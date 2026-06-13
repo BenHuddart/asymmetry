@@ -6,9 +6,12 @@ import pytest
 
 from asymmetry.core.instrument import (
     INSTRUMENT_NAMES,
+    PROJECTION_TINTS,
+    AsymmetryProjection,
     DetectorSegment,
     InstrumentLayout,
     PresetGrouping,
+    derive_projection_pairs,
     detect_instrument,
     get_instrument_layout,
 )
@@ -712,3 +715,109 @@ class TestInstrumentLayoutHelpers:
         for name in INSTRUMENT_NAMES:
             layout = get_instrument_layout(name)
             assert layout.default_preset_name == "Longitudinal"
+
+
+# ---------------------------------------------------------------------------
+# Asymmetry projections
+# ---------------------------------------------------------------------------
+
+
+class TestAsymmetryProjections:
+    def test_emu_vector_preset_declares_three_projections(self):
+        preset = get_instrument_layout("EMU").presets["Vector Polarization"]
+        labels = [p.label for p in preset.projections]
+        assert labels == ["P_x", "P_y", "P_z"]
+
+    def test_emu_projections_point_at_correct_group_pairs(self):
+        preset = get_instrument_layout("EMU").presets["Vector Polarization"]
+        by_label = {p.label: p for p in preset.projections}
+        # Pz = forward/backward banks (groups 1/2); Py = top/bottom (3/4);
+        # Px = left/right (5/6).
+        assert (by_label["P_z"].forward_group, by_label["P_z"].backward_group) == (1, 2)
+        assert (by_label["P_y"].forward_group, by_label["P_y"].backward_group) == (3, 4)
+        assert (by_label["P_x"].forward_group, by_label["P_x"].backward_group) == (5, 6)
+
+    def test_emu_projections_carry_semantic_tints(self):
+        preset = get_instrument_layout("EMU").presets["Vector Polarization"]
+        for proj in preset.projections:
+            assert proj.tint == PROJECTION_TINTS[proj.label]
+
+    def test_longitudinal_presets_declare_no_projections(self):
+        for name in INSTRUMENT_NAMES:
+            preset = get_instrument_layout(name).presets["Longitudinal"]
+            assert preset.projections == ()
+
+    def test_projection_to_payload_roundtrips(self):
+        proj = AsymmetryProjection("P_x", 5, 6, alpha=1.2, tint="#abcdef")
+        assert proj.to_payload() == {
+            "label": "P_x",
+            "forward_group": 5,
+            "backward_group": 6,
+            "alpha": 1.2,
+            "tint": "#abcdef",
+        }
+
+    def test_to_payload_omits_absent_tint(self):
+        assert "tint" not in AsymmetryProjection("X", 1, 2).to_payload()
+
+
+class TestDeriveProjectionPairs:
+    def _emu_groups(self):
+        preset = get_instrument_layout("EMU").presets["Vector Polarization"]
+        groups = {gid: list(gdef.detector_ids) for gid, gdef in preset.groups.items()}
+        names = {gid: gdef.name for gid, gdef in preset.groups.items()}
+        return preset, groups, names
+
+    def test_declared_projections_resolve_in_declaration_order(self):
+        preset, groups, _names = self._emu_groups()
+        pairs = derive_projection_pairs(groups, None, preset.projections)
+        assert list(pairs) == ["P_x", "P_y", "P_z"]
+        assert pairs == {"P_x": (5, 6), "P_y": (3, 4), "P_z": (1, 2)}
+
+    def test_legacy_name_fallback_matches_declared(self):
+        """With no declaration, the legacy group-name path reproduces the pairs."""
+        preset, groups, names = self._emu_groups()
+        declared = derive_projection_pairs(groups, names, preset.projections)
+        legacy = derive_projection_pairs(groups, names, None)
+        assert declared == legacy
+
+    def test_legacy_fallback_is_all_or_nothing(self):
+        _preset, groups, names = self._emu_groups()
+        # Drop one required group: the legacy path returns nothing.
+        groups.pop(5)
+        names.pop(5)
+        assert derive_projection_pairs(groups, names, None) == {}
+
+    def test_declared_projections_return_resolvable_subset(self):
+        """A two-projection (TF-style) declaration resolves just those pairs."""
+        groups = {1: [1, 2], 2: [3, 4], 3: [5, 6], 4: [7, 8]}
+        projections = [
+            AsymmetryProjection("Top-Bottom", 1, 2),
+            AsymmetryProjection("Fwd-Back", 3, 4),
+        ]
+        pairs = derive_projection_pairs(groups, None, projections)
+        assert pairs == {"Top-Bottom": (1, 2), "Fwd-Back": (3, 4)}
+
+    def test_declared_projection_with_missing_group_is_skipped(self):
+        groups = {1: [1, 2], 2: [3, 4]}
+        projections = [
+            AsymmetryProjection("A", 1, 2),
+            AsymmetryProjection("B", 1, 9),  # group 9 absent
+        ]
+        assert derive_projection_pairs(groups, None, projections) == {"A": (1, 2)}
+
+    def test_declared_projection_with_empty_group_is_skipped(self):
+        groups = {1: [1, 2], 2: []}
+        projections = [AsymmetryProjection("A", 1, 2)]
+        assert derive_projection_pairs(groups, None, projections) == {}
+
+    def test_payload_dict_projections_accepted(self):
+        """Projections persisted as plain dicts resolve like dataclasses."""
+        groups = {1: [1], 2: [2]}
+        projections = [{"label": "A", "forward_group": 1, "backward_group": 2}]
+        assert derive_projection_pairs(groups, None, projections) == {"A": (1, 2)}
+
+    def test_empty_or_non_vector_grouping_returns_empty(self):
+        assert derive_projection_pairs({}, None, None) == {}
+        assert derive_projection_pairs(None, None, None) == {}
+        assert derive_projection_pairs({1: [1], 2: [2]}, {1: "Forward", 2: "Backward"}) == {}

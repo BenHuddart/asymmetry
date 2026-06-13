@@ -3844,6 +3844,10 @@ class FitParametersPanel(QWidget):
         """Cancel and join the trend-curve recompute worker (called on close)."""
         self._tasks.shutdown()
 
+    def closeEvent(self, event) -> None:
+        self.shutdown_workers()
+        super().closeEvent(event)
+
     def _write_fit_files(
         self, gle_path: Path, x_key: str, y_params: list[str]
     ) -> dict[tuple[str, int], Path]:

@@ -57,9 +57,17 @@ class _OrphanThreadReaper(QObject):
         # and prune any thread that is no longer running instead: Qt sets
         # running=False before emitting finished(), so isRunning() is reliable
         # here even when called from a queued slot.
+        #
+        # Guard against RuntimeError: if _on_thread_finished fired first and
+        # called deleteLater(), the event loop may have destroyed the C++ object
+        # before this queued slot ran. Skip those entries — nothing left to do.
         remaining = []
         for t, w in self._threads:
-            if t.isRunning():
+            try:
+                running = t.isRunning()
+            except RuntimeError:
+                continue
+            if running:
                 remaining.append((t, w))
             else:
                 t.deleteLater()
@@ -270,6 +278,16 @@ class TaskRunner(QObject):
                 # polls). Unparent it from this runner and hand it to the
                 # process-level keep-alive: clearing _live below drops our
                 # only other reference, and GC-ing a running QThread aborts.
+                #
+                # Disconnect our own _on_thread_finished slot before handing
+                # off: the reaper's _reap will own cleanup, and leaving this
+                # connection would cause _on_thread_finished to call
+                # deleteLater() independently — potentially destroying the C++
+                # object before _reap gets to call isRunning() on it.
+                try:
+                    thread.finished.disconnect(self._on_thread_finished)
+                except RuntimeError:
+                    pass  # already disconnected (signal already fired)
                 thread.setParent(None)
                 retire_thread(thread, worker)
         self._live.clear()

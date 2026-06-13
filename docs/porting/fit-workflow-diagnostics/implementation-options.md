@@ -237,6 +237,27 @@ background file, no schema break.**
 - **Configurable R** — deferred; fixed 0.95, helper already supports configurability.
 - **In-batch co-add / re-fit-coadded; `fgAll`→Poisson cost-factory unification** —
   follow-ons per the directive (run-arithmetic dependency / separate refactor).
+  *Update (2026-06-13): the `fgAll`→Poisson cost-factory unification landed on
+  `feat/rrf-engine-pass`* — `FitEngine` gained the `cost_factory` seam and
+  grouped fits route through Poisson Cash by default; see
+  `docs/porting/count-domain-fit-modes/implementation-options.md` follow-on 1
+  for the design and the quantified low-count shift.
+  *Update (2026-06-13): in-batch co-add and re-fit-coadded landed on
+  `feat/batch-arithmetic` once the `combine_runs` kernel was on `main`.*
+  In-batch co-add is a "Co-add members" group-box on the Batch tab (Off / Bin /
+  Smooth + window size): `_compute_grouped_mode_context` transforms the member
+  datasets through the pure `combine.coadd_member_windows` partition (Smooth =
+  sliding step 1, Bin = non-overlapping step W, trailing partial dropped — WiMDA
+  `BatchFit.pas` ~375) then `combine_runs` + `reduce_combined_run` before the
+  grouped-series fit, so chain-seeding and the normalised-polarisation seed
+  contract see ordinary runs. Re-fit-coadded is the Data Browser context-menu
+  action "Re-fit as Co-added" (WiMDA `FitTableUnit.pas` right-click rows,
+  adapted): it combines the selected runs (`combine_runs`), fits them off-thread
+  with the active single-fit model (`FitPanel.single_fit_model_and_seed`), and
+  records a one-member computed `FitSeries` trend row with `combined_from`
+  provenance under a deterministic `refit-coadded-<digest>` batch id (model +
+  member set), so re-running the same selection replaces rather than duplicates
+  — mirroring the moments replace-not-duplicate pattern.
 - **Dedicated "Fit log" window** — rejected; existing surfaces suffice (Ben).
 
 ## Recorded follow-ons (built nothing; noted for later)

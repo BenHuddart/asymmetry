@@ -25,12 +25,14 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
+    QDialogButtonBox,
     QDoubleSpinBox,
     QFileDialog,
     QHBoxLayout,
     QInputDialog,
     QLabel,
     QLineEdit,
+    QMenu,
     QMessageBox,
     QPushButton,
     QScrollArea,
@@ -50,7 +52,9 @@ from asymmetry.core.transform.background import (
     available_background_modes,
     resolve_background_mode,
 )
-from asymmetry.core.transform.grouping import group_forward_backward
+from asymmetry.core.transform.grouping import good_event_count, group_forward_backward
+from asymmetry.core.transform.integral import integrate_curve
+from asymmetry.core.transform.peakfit import parabolic_peak
 from asymmetry.core.transform.rebin import rebin, resolve_binning_mode
 from asymmetry.core.utils.constants import (
     PeriodMode,
@@ -72,6 +76,7 @@ from asymmetry.gui.styles.plots import (
     style_legend,
 )
 from asymmetry.gui.styles.widgets import build_nav_button_qss
+from asymmetry.gui.widgets.projection_chip_bar import ProjectionChipBar
 from asymmetry.gui.widgets.rrf_controls import (
     install_rrf_controls,
     rrf_display_dataset,
@@ -163,9 +168,15 @@ class PlotPanel(QWidget):
     fit_range_changed = Signal(float, float)
     view_limits_changed = Signal(float, float, float, float)
     polarization_axis_changed = Signal(str)
+    #: Emitted with the projection label when a stacked subplot is clicked to
+    #: become the single-fit target (multi-subplot / ALL view only).
+    fit_target_projection_changed = Signal(str)
     overlay_toggled = Signal(bool)
     time_view_changed = Signal(str)
-    cursor_coords_changed = Signal(object, object)  # (x: float|None, y: float|None)
+    # Payload dict for the status-bar cursor readout, or None to clear. Keys:
+    # x, y (snapped where possible), err, snr, peak (x,y)|None,
+    # window (mean,err,n)|None. See _build_cursor_readout.
+    cursor_coords_changed = Signal(object)
     #: Spectral-moments overlay drags (frequency panel): window in canonical MHz.
     moments_window_changed = Signal(float, float)
     moments_cutoff_changed = Signal(float)  # new cutoff fraction in [0, 1)
@@ -269,16 +280,8 @@ class PlotPanel(QWidget):
             self._sync_navigation_buttons()
             layout.addLayout(self._limit_toolbar)
 
-            self._polarization_label = QLabel("Polarization:")
-            self._polarization_label.setAlignment(
-                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-            )
-            self._polarization_label.hide()
-
-            self._polarization_combo = QComboBox()
-            self._polarization_combo.setMinimumWidth(90)
-            self._polarization_combo.currentIndexChanged.connect(self._on_polarization_axis_changed)
-            self._polarization_combo.hide()
+            self._projection_bar = ProjectionChipBar()
+            self._projection_bar.selection_changed.connect(self._on_projection_selection_changed)
 
             nav_row = QHBoxLayout()
             nav_row.setContentsMargins(4, 0, 4, 0)
@@ -288,10 +291,10 @@ class PlotPanel(QWidget):
                 nav_row.addWidget(self._label_field_combo)
             nav_row.addWidget(self._time_view_label)
             nav_row.addWidget(self._time_view_combo)
+            nav_row.addWidget(self._log_counts_checkbox)
             nav_row.addWidget(self._overlay_checkbox)
             nav_row.addStretch()
-            nav_row.addWidget(self._polarization_label)
-            nav_row.addWidget(self._polarization_combo)
+            nav_row.addWidget(self._projection_bar)
             nav_row.addSpacing(4)
 
             _nav_qss = build_nav_button_qss()
@@ -325,6 +328,14 @@ class PlotPanel(QWidget):
             self._current_datasets: list[MuonDataset] = []
             self._limits_initialized = False
             self._current_polarization_axis: str | None = None
+            # Ordered projection specs ({"label", "tint"}) and the per-label tint
+            # lookup used for frame-tinting subplots; driven by the chip bar.
+            self._projection_specs: list[dict] = []
+            self._tint_by_label: dict[str, str] = {}
+            self._selected_projection_labels: list[str] = []
+            # Which stacked subplot is the active single-fit target (multi-view).
+            self._fit_target_projection: str | None = None
+            self._fit_target_artists: list = []
             self._y_limits_by_polarization: dict[str, tuple[float, float]] = {}
             self._subplot_axes_by_polarization: dict[str, object] = {}
             self._vector_subplot_datasets: dict[str, list[MuonDataset]] = {}
@@ -465,6 +476,21 @@ class PlotPanel(QWidget):
         self._time_view_label.hide()
         self._time_view_combo.hide()
 
+        # Log-count diagnostic: a log-y toggle that applies only on the
+        # raw-counts view. A pure muon-decay histogram is a straight line on a
+        # log count axis, so a mis-placed t0, a wrong background level, or
+        # high-rate deadtime curvature jump out without a fit.
+        self._log_counts_enabled = False
+        self._log_counts_checkbox = QCheckBox("Log scale")
+        self._log_counts_checkbox.setChecked(False)
+        self._log_counts_checkbox.setToolTip(
+            "Plot raw counts on a logarithmic y-axis — a pure decay is a "
+            "straight line, so t0, background and deadtime deviations are "
+            "obvious. Non-positive bins are dropped (log undefined)."
+        )
+        self._log_counts_checkbox.toggled.connect(self._on_log_counts_toggled)
+        self._log_counts_checkbox.hide()
+
         self._overlay_checkbox = QCheckBox("Overlay")
         self._overlay_checkbox.setChecked(False)
         self._overlay_checkbox.toggled.connect(self.overlay_toggled.emit)
@@ -573,9 +599,15 @@ class PlotPanel(QWidget):
         row.addWidget(self._add_label_btn)
         row.addStretch()
 
-        self._export_gle_btn = QPushButton("Export Plot(s) to GLE")
+        # One export button hosting a menu (no second export button, per the
+        # workflow-visualisation brief): GLE export and a plain-text data
+        # export that skips the GLE folder/script/compile.
+        self._export_gle_btn = QPushButton("Export…")
         self._export_gle_btn.setEnabled(False)
-        self._export_gle_btn.clicked.connect(self.export_plots_to_gle)
+        self._export_menu = QMenu(self._export_gle_btn)
+        self._export_menu.addAction("Export to GLE…", self.export_plots_to_gle)
+        self._export_menu.addAction("Export plotted data (text)…", self.export_plotted_data_as_text)
+        self._export_gle_btn.setMenu(self._export_menu)
         row.addWidget(self._export_gle_btn)
 
         row.addWidget(QLabel("Format:"))
@@ -1409,6 +1441,7 @@ class PlotPanel(QWidget):
         if mode == self._current_time_view_mode:
             return
         self._current_time_view_mode = mode
+        self._refresh_log_counts_visibility()
         self.time_view_changed.emit(mode)
 
     def current_time_view_mode(self) -> str:
@@ -1451,6 +1484,7 @@ class PlotPanel(QWidget):
         self._time_view_combo.setCurrentIndex(idx)
         self._time_view_combo.blockSignals(False)
         self._time_view_combo.setEnabled(len(cleaned) > 1)
+        self._refresh_log_counts_visibility()
 
     def set_current_time_view_mode(self, mode: str, *, emit_signal: bool = False) -> None:
         """Select the active time-domain view mode."""
@@ -1467,6 +1501,44 @@ class PlotPanel(QWidget):
         self._time_view_combo.setCurrentIndex(idx)
         self._time_view_combo.blockSignals(previous)
         self._current_time_view_mode = normalized
+        self._refresh_log_counts_visibility()
+
+    def _refresh_log_counts_visibility(self) -> None:
+        """Show the log-scale toggle only on the raw-counts view."""
+        checkbox = getattr(self, "_log_counts_checkbox", None)
+        if checkbox is None:
+            return
+        checkbox.setVisible(self._current_time_view_mode == "raw_counts")
+
+    def _log_counts_active(self) -> bool:
+        """True when the log-count diagnostic should apply to the render."""
+        return bool(
+            getattr(self, "_log_counts_enabled", False)
+            and self._current_time_view_mode == "raw_counts"
+        )
+
+    def _on_log_counts_toggled(self, checked: bool) -> None:
+        """Persist and apply the log-count diagnostic scale."""
+        self._log_counts_enabled = bool(checked)
+        self._redraw_current_view()
+
+    def _apply_log_counts_scale(self) -> None:
+        """Switch the raw-count subplots to a log y-axis (diagnostic view).
+
+        Applied after the linear limits so the axis is converted from already
+        positive count limits — matplotlib then autoscales to the positive data
+        and silently drops the non-positive (e.g. empty) bins.
+        """
+        if not self._has_mpl or not self._log_counts_active():
+            return
+        axes = list(getattr(self, "_subplot_axes_by_polarization", {}).values())
+        if not axes:
+            return
+        for ax in axes:
+            ax.set_yscale("log")
+            ax.relim()
+            ax.autoscale(axis="y")
+        self._canvas.draw_idle()
 
     def is_overlay_enabled(self) -> bool:
         """Return whether multi-selection overlays are currently enabled."""
@@ -1996,15 +2068,6 @@ class PlotPanel(QWidget):
         if hasattr(self, "_header_meta_label"):
             self._header_meta_label.setText(text or "")
 
-    def _axis_display_text(self, axis_key: str) -> str:
-        """Return UI label for canonical polarization keys."""
-        return {
-            "ALL": "All",
-            "P_x": "x",
-            "P_y": "y",
-            "P_z": "z",
-        }.get(str(axis_key), str(axis_key))
-
     def _axis_canonical_key(self, axis_text: str | None) -> str | None:
         """Normalize display/canonical axis text to canonical ``P_x`` form."""
         if axis_text is None:
@@ -2206,9 +2269,19 @@ class PlotPanel(QWidget):
         meta = self._fit_metadata.get(run_number)
         return meta if isinstance(meta, dict) else {}
 
+    def _active_y_axis(self) -> str | None:
+        """The axis whose y-limits the manual controls reflect and drive.
+
+        In the stacked multi-subplot view that is the selected (fit-target)
+        subplot; otherwise it is the single visible polarization axis.
+        """
+        if self._subplot_axes_by_polarization:
+            return self.fit_target_projection()
+        return self._current_polarization_axis
+
     def _cache_current_y_limits_for_axis(self) -> None:
-        """Store current y-limits under the active polarization axis, if any."""
-        axis = self._current_polarization_axis
+        """Store current y-limits under the active (focused) axis, if any."""
+        axis = self._active_y_axis()
         if axis is None or axis == "ALL":
             return
         y0 = float(self._y_min.value())
@@ -2217,47 +2290,65 @@ class PlotPanel(QWidget):
         self._y_limits_by_polarization[axis] = (lo, hi)
 
     def _restore_y_limits_for_axis(self, axis: str | None) -> None:
-        """Restore cached y-limits for the selected polarization axis."""
+        """Restore the y-limit controls to *axis*'s cached (or live) limits."""
         if axis is None or axis == "ALL":
             return
         limits = self._y_limits_by_polarization.get(axis)
+        if limits is None:
+            # No cached value yet — reflect the subplot's actual current limits.
+            ax = self._subplot_axes_by_polarization.get(axis)
+            if ax is not None and hasattr(ax, "get_ylim"):
+                try:
+                    limits = ax.get_ylim()
+                except Exception:
+                    limits = None
         if limits is None:
             return
         self._y_min.setValue(float(limits[0]))
         self._y_max.setValue(float(limits[1]))
 
-    def _on_polarization_axis_changed(self, _index: int) -> None:
-        """Emit polarization-axis changes from the plot header selector."""
-        axis = self._polarization_combo.currentData()
+    def _axis_for_selection(self, labels: list[str]) -> str | None:
+        """Map a chip selection onto the internal polarization-axis token.
+
+        One projection selected → that label (single-subplot mode); more than
+        one → the ``"ALL"`` sentinel (stacked-subplot mode); none → ``None``.
+        """
+        if len(labels) > 1:
+            return "ALL"
+        return labels[0] if labels else None
+
+    def _on_projection_selection_changed(self, labels: list[str]) -> None:
+        """Handle a projection chip-selection change from the header chip bar."""
+        self._selected_projection_labels = list(labels)
+        axis = self._axis_for_selection(list(labels))
         if axis is None:
-            axis = self._axis_canonical_key(self._polarization_combo.currentText())
-        if axis:
-            previous_axis = self._current_polarization_axis
-            if previous_axis != axis:
-                self._cache_current_y_limits_for_axis()
-                self._current_polarization_axis = str(axis)
-                self._restore_y_limits_for_axis(self._current_polarization_axis)
-                self._sync_y_controls_with_visible_axis()
-                self._update_y_limit_controls_for_axis(self._current_polarization_axis)
-                self._apply_limits()
-            self.polarization_axis_changed.emit(str(axis))
+            return
+        previous_axis = self._current_polarization_axis
+        if previous_axis != axis:
+            self._cache_current_y_limits_for_axis()
+            self._current_polarization_axis = str(axis)
+            self._restore_y_limits_for_axis(self._current_polarization_axis)
+            self._sync_y_controls_with_visible_axis()
+            self._update_y_limit_controls_for_axis(self._current_polarization_axis)
+            self._apply_limits()
+        self.polarization_axis_changed.emit(str(axis))
 
     def _update_y_limit_controls_for_axis(self, axis: str | None) -> None:
-        """Enable per-axis Y editing except when in vector ALL mode."""
-        disable_y_edit = bool(self._subplot_axes_by_polarization) and axis == "ALL"
+        """Keep the Y controls enabled, driving the focused (selected) subplot.
+
+        In the stacked view, manual Y now applies to the selected (fit-target)
+        subplot rather than being disabled; auto Y still rescales every
+        projection subplot.
+        """
+        in_subplots = bool(self._subplot_axes_by_polarization)
         manual_tooltip = (
-            "In All mode, Y limits are inherited from x, y, and z. "
-            "Select each polarization to set limits."
-            if disable_y_edit
+            "Y limits apply to the selected subplot — click another subplot to switch."
+            if in_subplots
             else ""
         )
-        auto_tooltip = (
-            "In All mode, Auto Y updates the visible x, y, and z polarization limits."
-            if disable_y_edit
-            else ""
-        )
-        self._y_min.setEnabled(not disable_y_edit)
-        self._y_max.setEnabled(not disable_y_edit)
+        auto_tooltip = "Auto Y rescales every projection subplot." if in_subplots else ""
+        self._y_min.setEnabled(True)
+        self._y_max.setEnabled(True)
         self._y_min.setToolTip(manual_tooltip)
         self._y_max.setToolTip(manual_tooltip)
         if hasattr(self, "_auto_y_btn"):
@@ -2276,11 +2367,14 @@ class PlotPanel(QWidget):
         return list(self._subplot_axes_by_polarization)
 
     def _sync_y_controls_with_visible_axis(self) -> None:
-        """Keep Y controls aligned with currently visible polarization context."""
+        """Align the Y controls with the focused (selected) subplot's limits."""
         if not self._subplot_axes_by_polarization:
             return
 
-        axis = self._current_polarization_axis
+        # The Y fields reflect the focused (fit-target) subplot, so a global
+        # auto-Y leaves them showing the selected projection's own range rather
+        # than a span across all of them.
+        axis = self._active_y_axis()
         if axis in self._subplot_axes_by_polarization:
             limits = self._y_limits_by_polarization.get(axis)
             if limits is not None:
@@ -2288,7 +2382,8 @@ class PlotPanel(QWidget):
                 self._y_max.setValue(float(limits[1]))
             return
 
-        # For ALL, show a global y-range spanning all visible subplot axes.
+        # No focused subplot (e.g. nothing selected yet): show a global y-range
+        # spanning all visible subplot axes.
         ranges: list[tuple[float, float]] = []
         for axis_key in self._all_mode_axes_order():
             limits = self._y_limits_by_polarization.get(axis_key)
@@ -2301,53 +2396,196 @@ class PlotPanel(QWidget):
         self._y_min.setValue(y_lo)
         self._y_max.setValue(y_hi)
 
-    def set_polarization_axes(
+    def set_projections(
         self,
-        axes: list[str],
-        current_axis: str | None = None,
+        projections: list[dict],
+        selected: list[str] | None = None,
     ) -> None:
-        """Show/update the polarization selector or hide it when unavailable."""
-        if not hasattr(self, "_polarization_combo"):
+        """Show/update the projection chip bar, or hide it when unavailable.
+
+        ``projections`` is an ordered list of ``{"label", "tint"?}`` dicts;
+        ``selected`` is the subset of labels to show as subplots (defaults to
+        all). The bar (and any multi-projection behaviour) is suppressed when
+        fewer than two projections exist.
+        """
+        if not hasattr(self, "_projection_bar"):
             return
 
-        cleaned = [str(a) for a in axes if str(a).strip()]
-        if not cleaned:
+        specs = [dict(p) for p in (projections or []) if p.get("label")]
+        if len(specs) < 2:
             self._cache_current_y_limits_for_axis()
             self._current_polarization_axis = None
+            self._projection_specs = []
+            self._tint_by_label = {}
+            self._selected_projection_labels = []
             self._vector_subplot_datasets = {}
-            self._polarization_combo.blockSignals(True)
-            self._polarization_combo.clear()
-            self._polarization_combo.blockSignals(False)
-            self._polarization_label.hide()
-            self._polarization_combo.hide()
+            self._projection_bar.set_projections([])
             self._update_y_limit_controls_for_axis(None)
             return
 
-        selected = str(current_axis) if current_axis in cleaned else cleaned[0]
+        self._projection_specs = specs
+        self._tint_by_label = {str(p["label"]): str(p["tint"]) for p in specs if p.get("tint")}
+        labels = [str(p["label"]) for p in specs]
+        wanted = set(selected) if selected else set(labels)
+        chosen = [lbl for lbl in labels if lbl in wanted] or list(labels)
+
+        self._projection_bar.set_projections(specs, chosen)
+        self._selected_projection_labels = self._projection_bar.selected_labels()
+
+        new_axis = self._axis_for_selection(self._selected_projection_labels)
         previous_axis = self._current_polarization_axis
-        if previous_axis != selected:
+        if previous_axis != new_axis:
             self._cache_current_y_limits_for_axis()
-
-        self._polarization_combo.blockSignals(True)
-        self._polarization_combo.clear()
-        for axis in cleaned:
-            self._polarization_combo.addItem(self._axis_display_text(axis), axis)
-        idx = self._polarization_combo.findData(selected)
-        if idx < 0:
-            idx = 0
-        self._polarization_combo.setCurrentIndex(idx)
-        self._polarization_combo.blockSignals(False)
-        self._polarization_label.show()
-        self._polarization_combo.show()
-        self._current_polarization_axis = selected
-
-        if previous_axis != selected:
-            self._restore_y_limits_for_axis(selected)
+        self._current_polarization_axis = new_axis
+        if previous_axis != new_axis:
+            self._restore_y_limits_for_axis(new_axis)
             self._sync_y_controls_with_visible_axis()
-            self._update_y_limit_controls_for_axis(selected)
+            self._update_y_limit_controls_for_axis(new_axis)
             self._apply_limits()
         else:
-            self._update_y_limit_controls_for_axis(selected)
+            self._update_y_limit_controls_for_axis(new_axis)
+
+    def selected_projection_labels(self) -> list[str]:
+        """Return the projection labels currently selected.
+
+        The chip bar is the source of truth once populated; the stored copy is
+        the fallback during project restore, before the bar has been rebuilt.
+        """
+        bar_selection = self._projection_bar.selected_labels()
+        return bar_selection or list(self._selected_projection_labels)
+
+    # ── stacked-subplot fit target (Step 4) ────────────────────────────────
+
+    def projection_tint(self, label: str | None) -> str | None:
+        """Return the frame/identity tint for a projection label, if any."""
+        if label is None:
+            return None
+        return self._tint_by_label.get(str(label))
+
+    def fit_target_projection(self) -> str | None:
+        """Return the projection whose subplot is the active single-fit target.
+
+        Only meaningful in the stacked multi-subplot view; ``None`` otherwise.
+        """
+        if self._fit_target_projection in self._subplot_axes_by_polarization:
+            return self._fit_target_projection
+        return None
+
+    def set_fit_target_projection(self, label: str | None, *, emit: bool = True) -> None:
+        """Mark *label*'s subplot as the single-fit target and redraw its box.
+
+        The fit target is also the focus for the manual Y-limit controls, so a
+        change caches the outgoing subplot's limits and surfaces the incoming
+        subplot's into the Y fields.
+        """
+        if label is not None and label not in self._subplot_axes_by_polarization:
+            return
+        changed = label != self._fit_target_projection
+        if not changed:
+            return  # no-op re-click: skip the tight-bbox recompute and redraw
+        in_subplots = bool(self._subplot_axes_by_polarization)
+        if in_subplots:
+            self._cache_current_y_limits_for_axis()  # caches the outgoing target
+        self._fit_target_projection = label
+        if in_subplots:
+            self._restore_y_limits_for_axis(label)
+            self._update_y_limit_controls_for_axis(self._current_polarization_axis)
+        self._refresh_fit_target_decoration()
+        if emit and label is not None:
+            self.fit_target_projection_changed.emit(str(label))
+
+    def _subplot_projection_at_event(self, event) -> str | None:
+        """Return the projection whose subplot axes contains the click event."""
+        inaxes = getattr(event, "inaxes", None)
+        if inaxes is None:
+            return None
+        for label, axis in self._subplot_axes_by_polarization.items():
+            if axis is inaxes:
+                return label
+        return None
+
+    def _default_fit_target(self) -> str | None:
+        """Pick a sensible default target: the active single axis, else the first."""
+        order = self._all_mode_axes_order()
+        if not order:
+            return None
+        axis = self._current_polarization_axis
+        if axis in order:
+            return axis
+        return order[0]
+
+    def _clear_fit_target_decoration(self) -> None:
+        for artist in self._fit_target_artists:
+            try:
+                artist.remove()
+            except Exception:
+                continue
+        self._fit_target_artists = []
+
+    def _refresh_fit_target_decoration(self) -> None:
+        """Draw a neutral focus ring + 'fit target' pill on the active subplot.
+
+        The ring/pill is *selection* state and is deliberately distinct from the
+        per-projection frame tint (which encodes projection identity).
+        """
+        if not self._has_mpl:
+            return
+        self._clear_fit_target_decoration()
+        target = self.fit_target_projection()
+        # Only decorate when there is a genuine choice (two or more subplots).
+        if target is None or len(self._subplot_axes_by_polarization) < 2:
+            self._canvas.draw_idle()
+            return
+
+        ax = self._subplot_axes_by_polarization[target]
+        # Decoration is best-effort chrome — a non-standard axis (e.g. a test
+        # double) must never break the click/selection path.
+        if not hasattr(ax, "get_position"):
+            self._canvas.draw_idle()
+            return
+
+        from matplotlib.patches import FancyBboxPatch
+
+        # Enclose the WHOLE subplot — tick labels and y-axis label included — by
+        # using the axes' tight bbox (display coords) rather than just the data
+        # area; fall back to the data-area position if no renderer is available.
+        pos = ax.get_position()
+        try:
+            renderer = self._figure.canvas.get_renderer()
+            tight = ax.get_tightbbox(renderer)
+            if tight is not None:
+                pos = tight.transformed(self._figure.transFigure.inverted())
+        except Exception:
+            pass
+        margin = 0.006  # small gap so the ring doesn't touch the labels
+        ring = FancyBboxPatch(
+            (pos.x0 - margin, pos.y0 - margin),
+            pos.width + 2 * margin,
+            pos.height + 2 * margin,
+            boxstyle="round,pad=0.002",
+            transform=self._figure.transFigure,
+            fill=False,
+            edgecolor=tokens.TEXT,
+            linewidth=1.6,
+            zorder=10,
+        )
+        self._figure.add_artist(ring)
+        self._fit_target_artists.append(ring)
+
+        pill = ax.text(
+            0.985,
+            0.94,
+            "fit target",
+            transform=ax.transAxes,
+            ha="right",
+            va="top",
+            fontsize=8,
+            color=tokens.SURFACE,
+            zorder=11,
+            bbox={"boxstyle": "round,pad=0.25", "facecolor": tokens.TEXT, "edgecolor": "none"},
+        )
+        self._fit_target_artists.append(pill)
+        self._canvas.draw_idle()
 
     def _polarization_ylabel(self, axis_key: str | None) -> str:
         """Return y-axis label for the provided polarization component."""
@@ -2491,12 +2729,43 @@ class PlotPanel(QWidget):
             )
         return None, None, None, None
 
+    def _projection_subplot_order(
+        self, datasets_by_axis: dict[str, list[MuonDataset]]
+    ) -> list[str]:
+        """Return the subplot order for the projections that have datasets.
+
+        Prefers the declared projection order, falling back to the canonical
+        vector order and finally to the dict's own order.
+        """
+        spec_order = [str(p["label"]) for p in self._projection_specs]
+        order = [a for a in spec_order if datasets_by_axis.get(a)]
+        if not order:
+            order = [a for a in ("P_x", "P_y", "P_z") if datasets_by_axis.get(a)]
+        if not order:
+            order = [a for a in datasets_by_axis if datasets_by_axis.get(a)]
+        return order
+
+    def _apply_projection_frame_tint(self, ax, axis_key: str) -> None:
+        """Tint a subplot's left rail and y-label with the projection's colour.
+
+        This is *projection identity* (chip ↔ subplot), deliberately distinct
+        from the data trace colour, which encodes run identity in RG mode.
+        """
+        tint = self._tint_by_label.get(str(axis_key))
+        if not tint:
+            return
+        ax.yaxis.label.set_color(tint)
+        left = ax.spines.get("left") if hasattr(ax.spines, "get") else ax.spines["left"]
+        if left is not None:
+            left.set_color(tint)
+            left.set_linewidth(2.0)
+
     def plot_vector_subplots(self, datasets_by_axis: dict[str, list[MuonDataset]]) -> None:
-        """Render P_x/P_y/P_z as stacked subplots for vector ``ALL`` mode."""
+        """Render the selected projections as stacked subplots."""
         if not self._has_mpl:
             return
 
-        order = [axis for axis in ("P_x", "P_y", "P_z") if datasets_by_axis.get(axis)]
+        order = self._projection_subplot_order(datasets_by_axis)
         if not order:
             return
         self._set_canvas_minimum_height_for_axes(len(order))
@@ -2529,6 +2798,7 @@ class PlotPanel(QWidget):
             t, a, e, low = self._plot_datasets_on_axis(
                 ax, self._vector_subplot_datasets.get(axis_key, []), axis_key
             )
+            self._apply_projection_frame_tint(ax, axis_key)
             if axis_key in self._y_limits_by_polarization:
                 y0, y1 = self._y_limits_by_polarization[axis_key]
                 ax.set_ylim(y0, y1)
@@ -2588,6 +2858,13 @@ class PlotPanel(QWidget):
         self._apply_auto_limits_if_enabled()
         self._connect_axis_limit_callbacks(list(self._subplot_axes_by_polarization.values()))
 
+        # Auto-select a fit target so fitting is never dead-on-arrival; keep the
+        # prior target when it is still visible. Emit so the fit panel rebinds.
+        if self._fit_target_projection not in self._subplot_axes_by_polarization:
+            self.set_fit_target_projection(self._default_fit_target())
+        else:
+            self._refresh_fit_target_decoration()
+
     def plot_grouped_time_domain_subplots(self, datasets: list[MuonDataset]) -> None:
         """Render grouped time-domain traces as stacked subplots."""
         if not self._has_mpl or not datasets:
@@ -2605,10 +2882,8 @@ class PlotPanel(QWidget):
         self._current_dataset = datasets[-1]
         self._update_plot_header()
         self._current_polarization_axis = None
-        if hasattr(self, "_polarization_label"):
-            self._polarization_label.hide()
-        if hasattr(self, "_polarization_combo"):
-            self._polarization_combo.hide()
+        if hasattr(self, "_projection_bar"):
+            self._projection_bar.hide()
 
         shared_ax = None
         last_arrays = (None, None, None, None)
@@ -2676,6 +2951,7 @@ class PlotPanel(QWidget):
         self._update_y_limit_controls_for_axis(self._current_polarization_axis)
         self._apply_limits(schedule_viewport_refresh=True)
         self._connect_axis_limit_callbacks(list(self._subplot_axes_by_polarization.values()))
+        self._apply_log_counts_scale()
 
     def plot_maxent_reconstruction(
         self, datasets: list[MuonDataset], *, combined: bool = False
@@ -2715,9 +2991,8 @@ class PlotPanel(QWidget):
         self._current_dataset = datasets[-1]
         self._update_plot_header()
         self._current_polarization_axis = None
-        for label in ("_polarization_label", "_polarization_combo"):
-            if hasattr(self, label):
-                getattr(self, label).hide()
+        if hasattr(self, "_projection_bar"):
+            self._projection_bar.hide()
 
         n = len(datasets)
         gridspec = self._figure.add_gridspec(2 * n, 1, height_ratios=[3, 1] * n, hspace=0.45)
@@ -2798,9 +3073,8 @@ class PlotPanel(QWidget):
         self._current_dataset = datasets[-1]
         self._update_plot_header()
         self._current_polarization_axis = None
-        for label in ("_polarization_label", "_polarization_combo"):
-            if hasattr(self, label):
-                getattr(self, label).hide()
+        if hasattr(self, "_projection_bar"):
+            self._projection_bar.hide()
 
         gridspec = self._figure.add_gridspec(2, 1, height_ratios=[3, 1], hspace=0.3)
         ax_main = self._figure.add_subplot(gridspec[0])
@@ -3417,17 +3691,19 @@ class PlotPanel(QWidget):
             self._draw_fit_range_artists()
             self._syncing_limits_from_axes = True
             try:
+                focused_axis = self._active_y_axis()
                 for axis_key, axis_obj in self._subplot_axes_by_polarization.items():
                     axis_obj.set_xlim(x0, x1)
-                    if self._current_polarization_axis == axis_key:
+                    # Manual Y applies only to the focused (selected) subplot.
+                    if focused_axis == axis_key:
                         lo, hi = (y0, y1) if y0 <= y1 else (y1, y0)
                         self._y_limits_by_polarization[axis_key] = (lo, hi)
                     limits = self._y_limits_by_polarization.get(axis_key)
                     if limits is not None:
                         axis_obj.set_ylim(float(limits[0]), float(limits[1]))
-                    elif self._current_polarization_axis == "ALL":
-                        # Fallback for axes without cached limits yet.
-                        axis_obj.set_ylim(y0, y1)
+                    # A non-focused subplot with no cached limit keeps its own
+                    # (auto-scaled) y-range — manual Y never bleeds across
+                    # subplots.
             finally:
                 self._syncing_limits_from_axes = False
             self._canvas.draw()
@@ -4359,6 +4635,11 @@ class PlotPanel(QWidget):
         if ann_idx is not None:
             self._active_annotation_idx = ann_idx
             self._annotation_drag_started = False
+        elif self._subplot_axes_by_polarization:
+            # A plain click inside a stacked subplot makes it the fit target.
+            projection = self._subplot_projection_at_event(event)
+            if projection is not None:
+                self.set_fit_target_projection(projection)
 
     def _on_canvas_motion_notify(self, event) -> None:
         """Drag the active fit-range handle while the mouse moves."""
@@ -4393,7 +4674,7 @@ class PlotPanel(QWidget):
                 artist.set_position((ann["x"], ann["y"]))
                 self._canvas.draw_idle()
 
-        # Emit cursor position for the status bar (no-op during drags).
+        # Emit cursor readout for the status bar (no-op during drags).
         if (
             self._active_fit_handle is None
             and self._active_annotation_idx is None
@@ -4402,9 +4683,83 @@ class PlotPanel(QWidget):
             and event.xdata is not None
             and event.ydata is not None
         ):
-            self.cursor_coords_changed.emit(float(event.xdata), float(event.ydata))
+            self.cursor_coords_changed.emit(
+                self._build_cursor_readout(float(event.xdata), float(event.ydata))
+            )
         else:
-            self.cursor_coords_changed.emit(None, None)
+            self.cursor_coords_changed.emit(None)
+
+    def _cursor_snap_arrays(self):
+        """Cached (t, y, err) for snapping, or None on multi-curve views.
+
+        Snapping is only well-defined when the cached arrays correspond to the
+        main axis. On stacked grouped/vector subplots the cache holds the last
+        subplot's data, so we decline to snap and report the raw cursor instead.
+        """
+        if getattr(self, "_grouped_time_subplot_datasets", None) or getattr(
+            self, "_vector_subplot_datasets", None
+        ):
+            return None
+        t = self._last_plot_time
+        y = self._last_plot_asymmetry
+        if t is None or y is None or len(t) == 0:
+            return None
+        return t, y, self._last_plot_error
+
+    def _build_cursor_readout(self, xdata: float, ydata: float) -> dict:
+        """Build the status-bar cursor payload, snapping to the nearest point.
+
+        Adds the spectrum-reading readouts (S/N, a 3-point parabolic peak, and
+        the windowed average over the visible x-range) when a single curve is in
+        view; falls back to the raw coordinate otherwise.
+        """
+        arrays = self._cursor_snap_arrays()
+        if arrays is None:
+            return {"x": xdata, "y": ydata, "snapped": False}
+
+        t, y, e = arrays
+        t = np.asarray(t, dtype=float)
+        y = np.asarray(y, dtype=float)
+        idx = int(np.argmin(np.abs(t - xdata)))
+        tx = float(t[idx])
+        ty = float(y[idx])
+        err = None
+        if e is not None and idx < len(e):
+            try:
+                err = float(e[idx])
+            except (TypeError, ValueError):
+                err = None
+        snr = None
+        if err is not None and np.isfinite(err) and err != 0.0:
+            snr = abs(ty / err)
+
+        peak = None
+        if 1 <= idx < len(t) - 1:
+            peak = parabolic_peak(t[idx - 1 : idx + 2], y[idx - 1 : idx + 2])
+
+        window = None
+        if not self._is_frequency_plot_panel():
+            lo = float(self._x_min.value())
+            hi = float(self._x_max.value())
+            err_arr = np.asarray(e, dtype=float) if e is not None else np.zeros_like(y)
+            try:
+                mean, mean_err = integrate_curve(
+                    t, y, err_arr, t_min=min(lo, hi), t_max=max(lo, hi)
+                )
+                n = int(np.count_nonzero((t >= min(lo, hi)) & (t <= max(lo, hi))))
+                window = (float(mean), float(mean_err), n)
+            except (ValueError, ZeroDivisionError):
+                window = None
+
+        return {
+            "x": tx,
+            "y": ty,
+            "err": err,
+            "snr": snr,
+            "peak": peak,
+            "window": window,
+            "snapped": True,
+        }
 
     def _on_canvas_button_release(self, event) -> None:
         """End drag and open numeric editor on click without drag."""
@@ -4498,6 +4853,13 @@ class PlotPanel(QWidget):
             except (TypeError, ValueError):
                 run_number = None
             axis_key = self._axis_key_for_dataset(self._current_dataset)
+        # In the stacked view the fit belongs to the SELECTED subplot, not the
+        # first projection that _current_dataset happens to point at — otherwise
+        # every fit would draw on the first subplot regardless of the target.
+        if self._subplot_axes_by_polarization:
+            target = self.fit_target_projection()
+            if target is not None:
+                axis_key = target
         self._fit_curve_run_number = run_number
 
         if run_number is not None:
@@ -4517,7 +4879,12 @@ class PlotPanel(QWidget):
 
         self._update_export_enabled()
 
-        if self._current_dataset is not None:
+        if self._subplot_axes_by_polarization and self._vector_subplot_datasets:
+            # Stacked multi-subplot view: re-render the subplots so the fit
+            # overlays the target projection's subplot (drawn per-axis from
+            # _fit_curves_by_key) without dropping the other projections.
+            self.plot_vector_subplots(self._vector_subplot_datasets)
+        elif self._current_dataset is not None:
             self.plot_dataset(self._current_dataset)
         else:
             self._ax.plot(t_fit, y_fit, "-", color=tokens.PLOT_FIT, linewidth=2, label=label)
@@ -4590,7 +4957,7 @@ class PlotPanel(QWidget):
             self._set_canvas_minimum_height_for_axes(1)
             self._set_navigation_mode("none")
             self._set_alpha_label(None)
-            self.set_polarization_axes([])
+            self.set_projections([])
             self._ax.clear()
             style_axes(self._ax)
             self._canvas.draw()
@@ -4824,46 +5191,9 @@ class PlotPanel(QWidget):
                         "events_total": total_events,
                     }
 
-                    def _safe_int(raw: object) -> int | None:
-                        try:
-                            return int(raw)
-                        except (TypeError, ValueError):
-                            return None
-
-                    if isinstance(grouping, dict):
-                        first_good = _safe_int(grouping.get("first_good_bin"))
-                        last_good = _safe_int(grouping.get("last_good_bin"))
-                        if first_good is not None and last_good is not None:
-                            lo = max(0, min(first_good, last_good))
-                            hi = max(first_good, last_good)
-
-                            grouped_total = 0.0
-                            n_hist = len(histograms)
-                            groups_raw = grouping.get("groups")
-                            if isinstance(groups_raw, dict):
-                                f_gid = _safe_int(grouping.get("forward_group"))
-                                b_gid = _safe_int(grouping.get("backward_group"))
-                                selected = []
-                                if f_gid is not None and f_gid in groups_raw:
-                                    selected.extend(groups_raw[f_gid])
-                                if b_gid is not None and b_gid in groups_raw:
-                                    selected.extend(groups_raw[b_gid])
-                                for det in selected:
-                                    det_idx = _safe_int(det)
-                                    if det_idx is None:
-                                        continue
-                                    hist_idx = det_idx - 1
-                                    if hist_idx < 0 or hist_idx >= n_hist:
-                                        continue
-                                    counts = np.asarray(histograms[hist_idx].counts, dtype=float)
-                                    if counts.size == 0:
-                                        continue
-                                    hi_clamped = min(hi, counts.size - 1)
-                                    if hi_clamped >= lo:
-                                        grouped_total += float(np.sum(counts[lo : hi_clamped + 1]))
-
-                            if grouped_total > 0:
-                                histogram_info["events_grouped"] = grouped_total
+                    grouped_total = good_event_count(histograms, grouping)
+                    if grouped_total is not None and grouped_total > 0:
+                        histogram_info["events_grouped"] = grouped_total
 
             rn = dataset.run_number
             fit_data = self._fit_curve_for_dataset(dataset)
@@ -5026,8 +5356,14 @@ class PlotPanel(QWidget):
         if show_legend:
             style_legend(ax.legend(loc="best"))
 
-    def _write_fit_file(self, fit_path: Path, payload: dict) -> None:
-        """Write a .fit file with fit-curve data and metadata header."""
+    def _write_fit_file(
+        self, fit_path: Path, payload: dict, *, x_range: tuple[float, float] | None = None
+    ) -> None:
+        """Write a .fit file with fit-curve data and metadata header.
+
+        ``x_range`` optionally restricts the written rows to ``[lo, hi]``;
+        ``None`` (the GLE-export default) writes the whole curve.
+        """
         fit = payload.get("fit") or {}
         t_fit = fit.get("t")
         y_fit = fit.get("y")
@@ -5057,13 +5393,27 @@ class PlotPanel(QWidget):
                         f.write(f"!   {p['name']} = {p['value']:.8g}\n")
             f.write("!\n")
             f.write("! time  asymmetry_fit\n")
+            lo, hi = (None, None) if x_range is None else (min(x_range), max(x_range))
             for t_val, y_val in zip(t_fit, y_fit):
-                f.write(f"{float(t_val):.10g} {float(y_val):.10g}\n")
+                tf = float(t_val)
+                if lo is not None and (tf < lo or tf > hi):
+                    continue
+                f.write(f"{tf:.10g} {float(y_val):.10g}\n")
 
     def _write_data_file(
-        self, dat_path: Path, payload: dict, *, label_text: object | None = None
+        self,
+        dat_path: Path,
+        payload: dict,
+        *,
+        label_text: object | None = None,
+        x_range: tuple[float, float] | None = None,
     ) -> None:
-        """Write a .dat file with spectra data and metadata header."""
+        """Write a .dat file with spectra data and metadata header.
+
+        ``x_range`` optionally restricts the written rows to ``[lo, hi]``
+        (inclusive); ``None`` (the default, used by the GLE export) writes every
+        point.
+        """
         data = payload.get("data") or {}
         t_data = data.get("t")
         y_data = data.get("y")
@@ -5250,8 +5600,12 @@ class PlotPanel(QWidget):
             f.write("! END OF DATA SET INFORMATION\n")
             f.write("! time  asymmetry  error\n")
             err_arr = y_err if y_err is not None else np.zeros_like(y_data)
+            lo, hi = (None, None) if x_range is None else (min(x_range), max(x_range))
             for t_val, y_val, e_val in zip(t_data, y_data, err_arr):
-                f.write(f"{float(t_val):.10g} {float(y_val):.10g} {float(e_val):.10g}\n")
+                tf = float(t_val)
+                if lo is not None and (tf < lo or tf > hi):
+                    continue
+                f.write(f"{tf:.10g} {float(y_val):.10g} {float(e_val):.10g}\n")
 
     def _show_export_result_dialog(self, title: str, summary: str, details: str) -> None:
         """Show export results with scrollable details and fixed bottom button."""
@@ -5368,12 +5722,11 @@ class PlotPanel(QWidget):
             # Preview is best-effort only; export should still succeed.
             return
 
-    def export_plots_to_gle(self) -> None:
-        """Export current main-plot view as GLE using gleplot.
+    def _collect_export_payloads(self) -> list[dict] | None:
+        """Assemble the current plot's export payloads (with the ALL fallback).
 
-        Data is plotted with error bars (no connecting lines), fit curves
-        with lines (no markers).  File names are derived from the Label
-        dropdown value for each dataset.
+        Shared by the GLE export and the plain-text data export so both see the
+        same per-dataset payloads.
         """
         payloads = self.get_current_plot_export_data()
         if (
@@ -5381,13 +5734,152 @@ class PlotPanel(QWidget):
             and self._current_polarization_axis == "ALL"
             and self._vector_subplot_datasets
         ):
-            first_axis_payloads = self.get_current_plot_export_data(
+            payloads = self.get_current_plot_export_data(
                 self._vector_subplot_datasets.get("P_x")
                 or self._vector_subplot_datasets.get("P_y")
                 or self._vector_subplot_datasets.get("P_z")
                 or []
             )
-            payloads = first_axis_payloads
+        return payloads
+
+    def _prompt_text_export_options(self) -> tuple[str, bool] | None:
+        """Ask for the data-only export content and x-range option.
+
+        Returns ``(content, limit_to_range)`` where content is one of
+        ``"data"`` / ``"data_fit"`` / ``"fit"``, or ``None`` if cancelled.
+        """
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Export plotted data (text)")
+        dialog.setModal(True)
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel("Content to export:"))
+        content_combo = QComboBox(dialog)
+        content_combo.addItem("Data only", "data")
+        content_combo.addItem("Data + fit", "data_fit")
+        content_combo.addItem("Fit only", "fit")
+        layout.addWidget(content_combo)
+        range_box = QCheckBox("Limit to current x-range", dialog)
+        range_box.setChecked(False)
+        layout.addWidget(range_box)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            parent=dialog,
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return str(content_combo.currentData()), bool(range_box.isChecked())
+
+    def export_plotted_data_as_text(self) -> None:
+        """Export the plotted curve(s) as plain text, without the GLE machinery.
+
+        Reuses the same ``.dat``/``.fit`` writers (and their provenance header)
+        as the GLE export, but writes only the text files — no ``.gleplot``
+        folder, GLE script, or compile. The content switch (data only / data +
+        fit / fit only) mirrors WiMDA's stData/stBoth/stFit.
+        """
+        payloads = self._collect_export_payloads()
+        if not payloads:
+            QMessageBox.warning(
+                self,
+                "Export unavailable",
+                "No plotted data is available to export.",
+            )
+            return
+
+        options = self._prompt_text_export_options()
+        if options is None:
+            return
+        content, limit_to_range = options
+        x_range = None
+        if limit_to_range:
+            x0 = float(self._x_min.value())
+            x1 = float(self._x_max.value())
+            if self._is_frequency_plot_panel():
+                x0 = self._convert_frequency_control_value_to_axis_limit(x0)
+                x1 = self._convert_frequency_control_value_to_axis_limit(x1)
+            x_range = (x0, x1)
+
+        if len(payloads) == 1:
+            token = self._safe_file_token(str(payloads[0].get("label", "dataset")))
+            path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Export plotted data (text)",
+                default_export_path(f"{token}.dat"),
+                "Data files (*.dat);;Text files (*.txt);;All files (*)",
+            )
+            if not path:
+                return
+            remember_export_path(path)
+            base = Path(path).with_suffix("")
+            written = self._write_payload_text_files(base, payloads[0], content, x_range)
+        else:
+            directory = QFileDialog.getExistingDirectory(
+                self,
+                "Export plotted data (text) — choose a folder",
+                default_export_path(""),
+            )
+            if not directory:
+                return
+            remember_export_path(directory)
+            export_dir = Path(directory)
+            written = []
+            for i, payload in enumerate(payloads):
+                token = self._safe_file_token(str(payload.get("label", f"dataset_{i}")))
+                written.extend(
+                    self._write_payload_text_files(export_dir / token, payload, content, x_range)
+                )
+
+        if not written:
+            QMessageBox.warning(
+                self,
+                "Nothing written",
+                "The selected content produced no files (for example 'fit only' "
+                "with no fit on the plot).",
+            )
+            return
+        files_text = "\n".join(str(p) for p in written)
+        self._show_export_result_dialog(
+            "Export Successful",
+            f"Wrote {len(written)} text file(s).",
+            files_text,
+        )
+
+    def _write_payload_text_files(
+        self,
+        base: Path,
+        payload: dict,
+        content: str,
+        x_range: tuple[float, float] | None,
+    ) -> list[Path]:
+        """Write the .dat and/or .fit text files for one payload."""
+        written: list[Path] = []
+        if content in ("data", "data_fit"):
+            dat_path = base.with_suffix(".dat")
+            self._write_data_file(
+                dat_path, payload, label_text=payload.get("label"), x_range=x_range
+            )
+            if dat_path.exists():
+                written.append(dat_path)
+        if content in ("data_fit", "fit"):
+            fit = payload.get("fit") or {}
+            if fit.get("t") is not None and fit.get("y") is not None:
+                fit_path = base.with_suffix(".fit")
+                self._write_fit_file(fit_path, payload, x_range=x_range)
+                if fit_path.exists():
+                    written.append(fit_path)
+        return written
+
+    def export_plots_to_gle(self) -> None:
+        """Export current main-plot view as GLE using gleplot.
+
+        Data is plotted with error bars (no connecting lines), fit curves
+        with lines (no markers).  File names are derived from the Label
+        dropdown value for each dataset.
+        """
+        payloads = self._collect_export_payloads()
         if not payloads:
             QMessageBox.warning(
                 self,
@@ -5574,6 +6066,47 @@ class PlotPanel(QWidget):
         """Export current main-plot view as GLE (with optional compiled output)."""
         self.export_plots_to_gle()
 
+    # ── rotating reference frame (Options → Advanced) ───────────────────
+
+    def set_rrf_feature_enabled(self, enabled: bool) -> None:
+        """Enable/disable the whole RRF surface (the Advanced toggle, app-level).
+
+        Forwards to the RRF controls (which appear/disappear under the usual
+        view condition) and redraws so the display reverts to or from the
+        rotating frame immediately.
+        """
+        controls = getattr(self, "_rrf_controls", None)
+        if controls is None:
+            return
+        controls.set_feature_enabled(bool(enabled))
+        self._redraw_current_view()
+
+    def rrf_has_active_parameters(self) -> bool:
+        """True when the RRF controls carry an active frame (enabled + ν₀ > 0).
+
+        Independent of the feature toggle: used on project open to decide
+        whether a stored RRF configuration should auto-enable the toggle so the
+        user's analysis is not silently hidden.
+        """
+        controls = getattr(self, "_rrf_controls", None)
+        if controls is None:
+            return False
+        return controls.has_active_frame()
+
+    def rrf_fit_frequency_mhz(self) -> float | None:
+        """Frame frequency ν₀ (MHz) when an RRF fit should be performed, else None.
+
+        The fit auto-couples to the plot's RRF controls: a single composite fit
+        runs in the rotating frame exactly when the RRF display is active (the
+        feature is on, the controls are enabled with ν₀ > 0, and the FB-asymmetry
+        time view is showing). The fit consumes raw data with this offset and
+        reports lab-frame frequencies (δν + ν₀).
+        """
+        controls = getattr(self, "_rrf_controls", None)
+        if controls is None or not controls.is_active() or not controls.applies_to_current_view():
+            return None
+        return controls.frequency_mhz()
+
     # ── project state helpers ──────────────────────────────────────────
 
     def get_state(self) -> dict:
@@ -5594,6 +6127,7 @@ class PlotPanel(QWidget):
                 self._current_dataset.run_number if self._current_dataset is not None else None
             ),
             "time_view_mode": self.current_time_view_mode(),
+            "log_counts_scale": bool(getattr(self, "_log_counts_enabled", False)),
             "label_field": self._label_field_combo.currentData() if self._has_mpl else "run",
             "default_label_field": self._default_label_field,
             "label_field_by_group": dict(self._label_field_by_group),
@@ -5606,6 +6140,7 @@ class PlotPanel(QWidget):
             "y_min": self._y_min.value() if self._has_mpl else -30.0,
             "y_max": self._y_max.value() if self._has_mpl else 30.0,
             "polarization_axis": self._current_polarization_axis,
+            "projection_selection": list(self._selected_projection_labels),
             "y_limits_by_polarization": {
                 axis: [float(lim[0]), float(lim[1])]
                 for axis, lim in self._y_limits_by_polarization.items()
@@ -5722,6 +6257,15 @@ class PlotPanel(QWidget):
 
         self._active_label_group_id = None
         self._current_polarization_axis = self._axis_canonical_key(state.get("polarization_axis"))
+        # Seed the selected subset so a restored stacked-subplot view reopens
+        # with the exact projections it was saved with (the chip bar is rebuilt
+        # later by _refresh_vector_axis_selector, which reads this).
+        raw_selection = state.get("projection_selection")
+        self._selected_projection_labels = (
+            [str(label) for label in raw_selection if label]
+            if isinstance(raw_selection, list)
+            else []
+        )
         self._y_limits_by_polarization = {}
         raw_y_limits_by_axis = state.get("y_limits_by_polarization", {})
         if isinstance(raw_y_limits_by_axis, dict):
@@ -5759,6 +6303,12 @@ class PlotPanel(QWidget):
             self._available_time_view_modes,
             current_mode=state.get("time_view_mode", self._current_time_view_mode),
         )
+        self._log_counts_enabled = bool(state.get("log_counts_scale", False))
+        if hasattr(self, "_log_counts_checkbox"):
+            self._log_counts_checkbox.blockSignals(True)
+            self._log_counts_checkbox.setChecked(self._log_counts_enabled)
+            self._log_counts_checkbox.blockSignals(False)
+        self._refresh_log_counts_visibility()
 
         if self._is_frequency_plot_panel():
             self._frequency_x_limits_by_unit = {}

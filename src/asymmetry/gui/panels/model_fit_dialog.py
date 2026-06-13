@@ -39,6 +39,7 @@ from asymmetry.core.fitting.parameter_models import (
     validate_fit_windows,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.gui.fit_settings import fit_quality_confidence
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import apply_param_table_style, make_formula_box
 from asymmetry.gui.tasks import TaskRunner
@@ -836,7 +837,9 @@ class ModelFitDialog(QDialog):
             # rather than implying the fit had no degrees of freedom.
             return ""
         n_free = len(fit_range.parameters.free_parameters)
-        quality = assess_fit_quality(result.chi_squared, result.n_points - n_free)
+        quality = assess_fit_quality(
+            result.chi_squared, result.n_points - n_free, fit_quality_confidence()
+        )
         if quality.verdict is None:
             return (
                 f'<span style="color:{tokens.ACCENT};">No χ² quality verdict '

@@ -80,7 +80,7 @@ def test_single_fit_writes_representation_slot(mw, monkeypatch):
     mw._plot_workspace.set_active_view("fb_asymmetry")
     monkeypatch.setattr(
         mw._fit_panel,
-        "get_single_state",
+        "get_single_form_state",
         lambda: {
             "composite_model": {"component_names": ["Exponential"], "operators": []},
             "parameters": [{"name": "A", "value": 0.2}],
@@ -96,6 +96,11 @@ def test_single_fit_writes_representation_slot(mw, monkeypatch):
     assert rep.fit.model["component_names"] == ["Exponential"]
     assert rep.fit.result["reduced_chi_squared"] == pytest.approx(0.7)
     assert rep.fit.result["parameters"]["A"] == pytest.approx(0.2)
+    # Provenance is stamped onto the persisted record (Item 2: enrich wiring).
+    assert rep.fit.result["model_name"] == "Exponential"
+    assert rep.fit.result["provenance"] == "single"
+    assert "timestamp" in rep.fit.result
+    assert rep.fit.result["npar"] == 2  # both A and Lambda carry a HESSE sigma
 
 
 def test_single_fit_slot_targets_active_domain(mw, monkeypatch):
@@ -106,7 +111,7 @@ def test_single_fit_slot_targets_active_domain(mw, monkeypatch):
     mw._plot_workspace.set_active_view("groups")
     monkeypatch.setattr(
         mw._fit_panel,
-        "get_single_state",
+        "get_single_form_state",
         lambda: {
             "composite_model": {"component_names": ["Gaussian"], "operators": []},
             "parameters": [],
@@ -149,6 +154,14 @@ def test_global_fit_creates_batch_and_member_slots(mw, monkeypatch):
     rep = mw._project_model.representation(11, RepresentationType.TIME_FB_ASYMMETRY)
     assert rep.fit.provenance == "batch"
     assert rep.fit.batch_id == batch.batch_id
+    # Every batch member record carries the composite model name + provenance.
+    for summary in batch.results_by_run.values():
+        assert summary["model_name"] == "Exponential + Constant"
+        assert summary["provenance"] == "batch"
+        assert "timestamp" in summary
+    # The member FitSlot result mirrors the series entry (no recompute drift).
+    assert rep.fit.result["model_name"] == "Exponential + Constant"
+    assert rep.fit.result["provenance"] == "batch"
 
 
 def test_global_classified_parameter_yields_global_provenance(mw, monkeypatch):
@@ -251,7 +264,7 @@ def test_add_compatible_single_fit_to_series(mw, monkeypatch):
     mw._on_dataset_selected(12)
     monkeypatch.setattr(
         mw._fit_panel,
-        "get_single_state",
+        "get_single_form_state",
         lambda: {"composite_model": model, "parameters": [], "result_html": ""},
     )
     mw._on_fit_completed(_result(), _CURVE, [])
@@ -266,7 +279,7 @@ def test_add_compatible_single_fit_to_series(mw, monkeypatch):
     mw._on_dataset_selected(13)
     monkeypatch.setattr(
         mw._fit_panel,
-        "get_single_state",
+        "get_single_form_state",
         lambda: {
             "composite_model": {"component_names": ["Gaussian"], "operators": []},
             "parameters": [],
@@ -301,7 +314,7 @@ def test_add_to_series_action_finds_and_adds_compatible_series(mw, monkeypatch):
     mw._on_dataset_selected(12)
     monkeypatch.setattr(
         mw._fit_panel,
-        "get_single_state",
+        "get_single_form_state",
         lambda: {"composite_model": model, "parameters": [], "result_html": ""},
     )
     mw._on_fit_completed(_result(), _CURVE, [])
@@ -336,7 +349,7 @@ def test_editing_member_model_diverges_and_excludes_from_trend(mw, monkeypatch):
     mw._on_dataset_selected(11)
     monkeypatch.setattr(
         mw._fit_panel,
-        "get_single_state",
+        "get_single_form_state",
         lambda: {
             "composite_model": {"component_names": ["Gaussian"], "operators": []},
             "parameters": [],

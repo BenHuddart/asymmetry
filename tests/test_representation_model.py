@@ -85,6 +85,36 @@ def test_fit_slot_round_trip_and_provenance_guard():
     assert FitSlot().is_empty()
 
 
+def test_fit_slot_result_provenance_keys_round_trip():
+    """The additive fit-log provenance keys (Item 2) survive .asymp persistence.
+
+    ``FitSlot.to_dict``/``from_dict`` pass the whole ``result`` dict through, so
+    the enriched model_name/fit_range/timestamp/provenance/npar/ndof keys stamped
+    by the GUI recorders persist verbatim.
+    """
+    result = {
+        "chi_squared": 2.0,
+        "reduced_chi_squared": 1.0,
+        "parameters": {"A": 0.2},
+        "uncertainties": {"A": 0.01},
+        "model_name": "Exponential + Constant",
+        "fit_range": "0.100–10.000 µs",
+        "timestamp": "2026-06-13T12:00:00+01:00",
+        "provenance": "single",
+        "npar": 1,
+        "ndof": 41,
+    }
+    slot = FitSlot(model={"component_names": ["Exponential"]}, result=result, provenance="single")
+    # Round-trip through JSON (the .asymp on-disk encoding), not just dict(): this
+    # also proves the provenance values are JSON-serialisable, which dict() alone
+    # would not catch.
+    import json
+
+    restored = FitSlot.from_dict(json.loads(json.dumps(slot.to_dict())))
+    for key in ("model_name", "fit_range", "timestamp", "provenance", "npar", "ndof"):
+        assert restored.result[key] == result[key]
+
+
 # ── TimeFBAsymmetry ────────────────────────────────────────────────────────
 
 
@@ -240,6 +270,122 @@ def test_representation_to_dict_excludes_arrays_and_round_trips():
     assert restored.fit.provenance == "single"
     assert restored.trend_state == {"x_key": "field"}
     assert restored.primary is None  # arrays not restored
+
+
+def test_fit_property_aliases_default_slot():
+    rep = make_representation(RepresentationType.TIME_FB_ASYMMETRY)
+    rep.fit = FitSlot(provenance="single")
+    # The default slot is the None-keyed entry; fit_for(None) is the same object.
+    assert rep.fit_for(None) is rep.fit
+    assert rep.fit.provenance == "single"
+    assert rep.projection_fits == {}
+
+
+def test_per_projection_fits_round_trip():
+    rep = make_representation(RepresentationType.TIME_FB_ASYMMETRY)
+    rep.fit = FitSlot(provenance="single")  # default (non-projection) slot
+    rep.set_fit_for("P_x", FitSlot(provenance="single", result={"chi2": 1.1}))
+    rep.set_fit_for("P_z", FitSlot(provenance="single", result={"chi2": 0.9}))
+
+    data = rep.to_dict()
+    assert set(data["projection_fits"]) == {"P_x", "P_z"}
+
+    restored = representation_from_dict(data)
+    assert restored.fit.provenance == "single"
+    assert restored.fit_for("P_x").result == {"chi2": 1.1}
+    assert restored.fit_for("P_z").result == {"chi2": 0.9}
+    assert set(restored.projection_fits) == {"P_x", "P_z"}
+    # An unfit projection yields a fresh empty slot, not a crash.
+    assert restored.fit_for("P_y").is_empty()
+
+
+def test_to_dict_omits_projection_fits_when_none():
+    rep = make_representation(RepresentationType.TIME_FB_ASYMMETRY)
+    rep.fit = FitSlot(provenance="single")
+    assert "projection_fits" not in rep.to_dict()
+
+
+def test_pre_v9_representation_loads_without_projection_fits():
+    """A representation dict lacking projection_fits (pre-v9) loads cleanly."""
+    legacy = {
+        "rep_type": "time_fb_asymmetry",
+        "recipe": {},
+        "fit": FitSlot(provenance="single").to_dict(),
+        "trend_state": {},
+        "result_metadata": {},
+    }
+    rep = representation_from_dict(legacy)
+    assert rep.fit.provenance == "single"
+    assert rep.projection_fits == {}
+
+
+def test_iter_fit_slots_includes_default_and_projections():
+    rep = make_representation(RepresentationType.TIME_FB_ASYMMETRY)
+    rep.set_fit_for("P_x", FitSlot(provenance="single"))
+    keys = {key for key, _slot in rep.iter_fit_slots()}
+    assert keys == {None, "P_x"}
+
+
+def test_fit_for_is_a_pure_read_and_does_not_insert():
+    # Inspecting an unfit projection must not leak an empty slot into the model.
+    rep = make_representation(RepresentationType.TIME_FB_ASYMMETRY)
+    slot = rep.fit_for("P_y")
+    assert slot.is_empty()
+    assert rep.projection_fits == {}
+    assert "projection_fits" not in rep.to_dict()
+
+
+def test_to_dict_skips_empty_projection_slots():
+    rep = make_representation(RepresentationType.TIME_FB_ASYMMETRY)
+    rep.set_fit_for("P_x", FitSlot())  # empty slot
+    rep.set_fit_for("P_z", FitSlot(provenance="single", result={"chi2": 1.0}))
+    data = rep.to_dict()
+    # Only the projection that actually carries a fit is persisted.
+    assert set(data["projection_fits"]) == {"P_z"}
+
+
+def test_all_sentinel_maps_to_default_slot():
+    rep = make_representation(RepresentationType.TIME_FB_ASYMMETRY)
+    rep.set_fit_for("ALL", FitSlot(provenance="single"))
+    assert rep.fit.provenance == "single"
+    assert rep.projection_fits == {}
+
+
+def test_fit_slot_ui_state_round_trips():
+    ui_state = {
+        "composite_model": {"components": ["Exponential"]},
+        "parameters": [{"name": "A", "value": 0.2}],
+        "result_html": "<b>χ²ᵣ = 1.05</b>",
+        "wizard_state": {"signature": {"run_number": 7}},
+    }
+    slot = FitSlot(provenance="single", ui_state=ui_state)
+    restored = FitSlot.from_dict(slot.to_dict())
+    assert restored.ui_state == ui_state
+    # The stored copy is independent of the source dict.
+    restored.ui_state["result_html"] = "mutated"
+    assert ui_state["result_html"] == "<b>χ²ᵣ = 1.05</b>"
+
+
+def test_fit_slot_to_dict_omits_empty_ui_state():
+    slot = FitSlot(provenance="single", result={"chi2": 1.0})
+    assert "ui_state" not in slot.to_dict()
+
+
+def test_fit_slot_from_dict_without_ui_state_defaults_empty():
+    """A pre-this-change slot dict (no ui_state) loads with an empty dict."""
+    legacy = FitSlot(provenance="single", result={"chi2": 1.0}).to_dict()
+    assert "ui_state" not in legacy
+    assert FitSlot.from_dict(legacy).ui_state == {}
+
+
+def test_per_projection_ui_state_round_trips_through_representation():
+    rep = make_representation(RepresentationType.TIME_FB_ASYMMETRY)
+    rep.set_fit_for(
+        "P_x",
+        FitSlot(provenance="single", result={"chi2": 1.1}, ui_state={"result_html": "x-fit"}),
+    )
+    restored = representation_from_dict(rep.to_dict())
+    assert restored.fit_for("P_x").ui_state == {"result_html": "x-fit"}
 
 
 # ── DatasetRepresentations container ───────────────────────────────────────

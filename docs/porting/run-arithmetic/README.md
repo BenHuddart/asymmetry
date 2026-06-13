@@ -122,13 +122,17 @@ statistics ratio (synthetic, see comparison.md).
 
 ## Out of scope (recorded)
 
-- In-batch co-add during sequential fitting — optional phase of
-  `fit-workflow-diagnostics`, which depends on this kernel.
+- ~~In-batch co-add during sequential fitting~~ — **done on
+  `feat/batch-arithmetic`** (Smooth/Bin co-add of successive batch-series
+  members via `combine.coadd_member_windows`); also the browser "Re-fit as
+  Co-added" action. See `docs/porting/fit-workflow-diagnostics/`.
 - Background-run *correction* (frame-ratio scaling that does not produce a
   combined dataset) — already shipped in `data-reduction-parity` Phase 2; the
   two share `subtract_scaled_counts`.
 - Event-mode arithmetic.
-- Symmetric / N-run signed co-subtract (see decision 1).
+- ~~Symmetric / N-run signed co-subtract (see decision 1).~~ — **done on
+  `feat/batch-arithmetic`** (`combine_runs(subtract_method="signed")` +
+  "Subtract Selected (signed)…").
 
 ## See also
 

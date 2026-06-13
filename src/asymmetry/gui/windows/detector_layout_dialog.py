@@ -90,6 +90,7 @@ class DetectorLayoutDialog(QDialog):
         forward_group: int = 1,
         backward_group: int = 2,
         excluded_detectors: list[int] | None = None,
+        projections: list[dict] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -99,6 +100,10 @@ class DetectorLayoutDialog(QDialog):
         self._instrument = instrument
         self._forward_group = forward_group
         self._backward_group = backward_group
+        # Declared projections (multi-projection presets). Seeded from the
+        # incoming grouping so an open→OK without re-applying a preset preserves
+        # them; replaced wholesale when a preset is applied.
+        self._applied_projections: list[dict] = [dict(p) for p in (projections or [])]
 
         # Internal group state: gid → set of 1-based detector IDs
         self._groups: dict[int, set[int]] = {gid: set(ids) for gid, ids in groups.items()}
@@ -468,6 +473,7 @@ class DetectorLayoutDialog(QDialog):
         self._forward_group = preset.forward_group
         self._backward_group = preset.backward_group
         self._applied_preset_name = preset_name
+        self._applied_projections = [p.to_payload() for p in preset.projections]
 
         self._sync_schematic()
         self._update_preset_status_label()
@@ -545,4 +551,5 @@ class DetectorLayoutDialog(QDialog):
             "instrument": self._instrument.name,
             "grouping_preset": self._applied_preset_name,
             "excluded_detectors": sorted(self._schematic.get_excluded_detectors()),
+            "projections": [dict(p) for p in self._applied_projections],
         }

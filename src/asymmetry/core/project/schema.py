@@ -11,7 +11,7 @@ Compatibility policy
 * Migration functions are one-per-step and retained for at least one major schema revision.
 * Unknown top-level fields in a valid schema are preserved on load/save cycles.
 
-Current schema (version 8)
+Current schema (version 9)
 --------------------------
 ::
 
@@ -103,9 +103,9 @@ import json
 import math
 from pathlib import Path
 
-CURRENT_SCHEMA_VERSION: int = 8
+CURRENT_SCHEMA_VERSION: int = 9
 
-_SUPPORTED_VERSIONS: frozenset[int] = frozenset({1, 2, 3, 4, 5, 6, 7, 8})
+_SUPPORTED_VERSIONS: frozenset[int] = frozenset({1, 2, 3, 4, 5, 6, 7, 8, 9})
 
 #: Fourier-state keys that describe the FFT generation recipe (recipe-only
 #: persistence carries these into each dataset's ``freq_fft`` representation).
@@ -191,6 +191,9 @@ def migrate_to_current(data: dict) -> dict:
         version = 7
     if version == 7:
         migrated = _migrate_v7_to_v8(migrated)
+        version = 8
+    if version == 8:
+        migrated = _migrate_v8_to_v9(migrated)
     return migrated
 
 
@@ -440,6 +443,20 @@ def _migrate_v7_to_v8(data: dict) -> dict:
                 updated_series.append(series)
         migrated["batches"] = updated_series
 
+    return migrated
+
+
+def _migrate_v8_to_v9(data: dict) -> dict:
+    """Migrate schema v8 project state to v9.
+
+    v9 adds optional per-projection fit slots to each representation
+    (``projection_fits``), so each polarization projection of a vector grouping
+    can keep its own fit. Pre-v9 projects simply carry no per-projection slots;
+    the migration is a lossless version bump — ``representation_from_dict``
+    already treats a missing ``projection_fits`` as "no per-projection fits".
+    """
+    migrated = dict(data)
+    migrated["schema_version"] = 9
     return migrated
 
 

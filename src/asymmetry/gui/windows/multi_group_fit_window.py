@@ -214,7 +214,10 @@ class MultiGroupFitWindow(QWidget):
         count_mode = mode != "all"
         self._side_combo.setEnabled(single)
         self._side_label.setEnabled(single)
-        self._cost_combo.setEnabled(count_mode)
+        # The Poisson/Gaussian cost now applies to every grouped target,
+        # including the lifetime-corrected fgAll ("all") fit — its grouped
+        # driver routes through the same Cash/√N cost-factory seam.
+        self._cost_combo.setEnabled(True)
         for widget in (
             self._exclude_min,
             self._exclude_max,
@@ -311,6 +314,12 @@ class MultiGroupFitWindow(QWidget):
         """Update fit-range spinboxes on both surfaces to match the plot range."""
         for tab in self._grouped_tabs():
             tab.set_fit_range_display(x_min, x_max)
+
+    def current_fit_range_text(self) -> str | None:
+        """Active grouped-fit range as a provenance string, from the current tab."""
+        tab = self._tabs.currentWidget()
+        getter = getattr(tab, "current_fit_range_text", None)
+        return getter() if callable(getter) else None
 
     def set_fit_blocked(self, blocked: bool, reason: str = "") -> None:
         """Apply fit blocking rules from the main window context to both surfaces."""

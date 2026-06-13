@@ -19,7 +19,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QMessageBox, QSizePolicy
 
-from asymmetry.core.data.dataset import MuonDataset, Run
+from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitCancelledError, FitResult
 from asymmetry.core.fitting.fit_wizard import (
@@ -391,6 +391,18 @@ def test_fit_panel_forwards_fit_wizard_apply_via_normal_fit_completed_signal(
     assert len(emitted["curve"][0]) >= 500
 
 
+def test_active_projection_echo_shows_and_hides(qapp: QApplication) -> None:
+    panel = FitPanel()
+    assert panel._projection_echo.isHidden()
+    panel.set_active_projection_label("P_x", "#534AB7")
+    assert not panel._projection_echo.isHidden()
+    assert "P_x" in panel._projection_echo.text()
+    assert "#534AB7" in panel._projection_echo.styleSheet()
+    panel.set_active_projection_label(None)
+    assert panel._projection_echo.isHidden()
+    assert panel._projection_echo.styleSheet() == ""
+
+
 def test_fit_panel_forwards_single_tab_preview(qapp: QApplication, dataset: MuonDataset) -> None:
     panel = FitPanel()
     panel.set_dataset(dataset)
@@ -406,6 +418,122 @@ def test_fit_panel_forwards_single_tab_preview(qapp: QApplication, dataset: Muon
 
     assert "curve" in emitted
     assert len(emitted["curve"][0]) == 500
+
+
+def test_get_single_form_state_returns_independent_copy(
+    qapp: QApplication, dataset: MuonDataset
+) -> None:
+    panel = FitPanel()
+    panel.set_dataset(dataset)
+    panel._single_tab._set_composite_model(
+        CompositeModel(["Gaussian", "Constant"], operators=["+"])
+    )
+
+    state = panel.get_single_form_state()
+    assert state["composite_model"]["component_names"] == ["Gaussian", "Constant"]
+    # Mutating the returned payload must not corrupt the live tab.
+    state["composite_model"]["component_names"] = ["mutated"]
+    assert panel._single_tab._composite_model.component_names == ["Gaussian", "Constant"]
+
+
+def test_restore_single_fit_ui_restores_form_from_payload(
+    qapp: QApplication, dataset: MuonDataset
+) -> None:
+    panel = FitPanel()
+    panel.set_dataset(dataset)
+    panel._single_tab._set_composite_model(
+        CompositeModel(["Gaussian", "Constant"], operators=["+"])
+    )
+    payload = panel.get_single_form_state()
+
+    # The projection store is authoritative for the form, so restore must leave
+    # the run-keyed blob (read by global seeding / group sharing) untouched.
+    blob_models_before = {
+        run: state.get("composite_model", {}).get("component_names")
+        for run, state in panel._single_state_by_run.items()
+    }
+
+    # Move the form elsewhere, then restore the captured payload.
+    panel._single_tab._set_composite_model(CompositeModel(["Exponential"], operators=[]))
+    panel.restore_single_fit_ui(payload)
+
+    assert panel._single_tab._composite_model.component_names == ["Gaussian", "Constant"]
+    blob_models_after = {
+        run: state.get("composite_model", {}).get("component_names")
+        for run, state in panel._single_state_by_run.items()
+    }
+    assert blob_models_after == blob_models_before
+
+
+def test_restore_single_fit_ui_empty_blanks_form(qapp: QApplication, dataset: MuonDataset) -> None:
+    panel = FitPanel()
+    panel.set_dataset(dataset)
+    panel._single_tab._set_composite_model(
+        CompositeModel(["Gaussian", "Constant"], operators=["+"])
+    )
+    panel._single_tab._result_label.setText("a stale fit result")
+
+    panel.restore_single_fit_ui({})
+
+    assert panel._single_tab._composite_model.component_names == ["Exponential", "Constant"]
+    assert panel._single_tab._result_label.text() == "No fit performed yet"
+
+
+def test_set_dataset_restore_provider_overrides_run_blob(
+    qapp: QApplication, dataset: MuonDataset
+) -> None:
+    panel = FitPanel()
+    panel.set_dataset(dataset)
+    panel._single_tab._set_composite_model(
+        CompositeModel(["Gaussian", "Constant"], operators=["+"])
+    )
+    persisted = panel.get_single_form_state()
+
+    # The run blob would restore the Exponential default; the provider supplies
+    # a different persisted payload that must win.
+    panel.set_dataset(None)
+    panel.set_single_fit_restore_provider(lambda _ds: persisted)
+    panel.set_dataset(dataset)
+
+    assert panel._single_tab._composite_model.component_names == ["Gaussian", "Constant"]
+
+
+def test_set_dataset_restore_provider_none_falls_back_to_run_blob(
+    qapp: QApplication, dataset: MuonDataset
+) -> None:
+    panel = FitPanel()
+    calls: list = []
+    panel.set_single_fit_restore_provider(lambda ds: calls.append(ds) or None)
+    panel.set_dataset(dataset)
+    panel._single_tab._set_composite_model(
+        CompositeModel(["Gaussian", "Constant"], operators=["+"])
+    )
+
+    # Navigate away and back; provider returns None so the run blob restores.
+    d2 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 999})
+    panel.set_dataset(d2)
+    panel.set_dataset(dataset)
+
+    assert calls  # provider was consulted
+    assert panel._single_tab._composite_model.component_names == ["Gaussian", "Constant"]
+
+
+def test_set_dataset_provider_empty_blanks_unfit_projection(
+    qapp: QApplication, dataset: MuonDataset
+) -> None:
+    """An empty payload from the provider blanks the form (unfit projection)."""
+    panel = FitPanel()
+    panel.set_dataset(dataset)
+    panel._single_tab._set_composite_model(
+        CompositeModel(["Gaussian", "Constant"], operators=["+"])
+    )
+
+    # Re-bind the same run with a provider that reports "no fit for this projection".
+    panel.set_single_fit_restore_provider(lambda _ds: {})
+    panel.set_dataset(dataset)
+
+    assert panel._single_tab._composite_model.component_names == ["Exponential", "Constant"]
+    assert panel._single_tab._result_label.text() == "No fit performed yet"
 
 
 def test_single_fit_invalid_value_shows_error(qapp: QApplication, dataset: MuonDataset) -> None:
@@ -635,6 +763,88 @@ def test_global_tab_set_datasets_states(qapp: QApplication, dataset: MuonDataset
     d2 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
     tab.set_datasets([dataset, d2])
     assert tab._fit_btn.isEnabled() is True
+
+
+def _grouped_run_dataset(run_number: int, temperature: float) -> MuonDataset:
+    """A run-bearing grouped dataset (2 detectors) for in-batch co-add tests."""
+    counts_f = np.array([100.0, 90.0, 80.0, 70.0], dtype=float)
+    counts_b = np.array([60.0, 55.0, 50.0, 45.0], dtype=float)
+    run = Run(
+        run_number=run_number,
+        histograms=[
+            Histogram(counts=counts_f, bin_width=0.1, t0_bin=0, good_bin_start=0, good_bin_end=3),
+            Histogram(counts=counts_b, bin_width=0.1, t0_bin=0, good_bin_start=0, good_bin_end=3),
+        ],
+        metadata={"title": "T-scan", "temperature": temperature, "field": 100.0},
+        grouping={
+            "groups": {1: [1], 2: [2]},
+            "group_names": {1: "Forward", 2: "Backward"},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 3,
+            "good_frames": 1000.0,
+        },
+    )
+    return MuonDataset(
+        time=np.array([0.0, 0.1, 0.2, 0.3]),
+        asymmetry=np.zeros(4),
+        error=np.ones(4),
+        metadata={"run_number": run_number, "temperature": temperature},
+        run=run,
+    )
+
+
+def test_inbatch_coadd_off_passes_members_through(qapp: QApplication) -> None:
+    tab = GlobalFitTab(member_kind="runs")
+    members = [_grouped_run_dataset(100 + i, 5.0 + i) for i in range(4)]
+    combined, note = tab._apply_inbatch_coadd(members)
+    assert combined is members  # untouched
+    assert note == ""
+
+
+def test_inbatch_coadd_bin_combines_successive_pairs(qapp: QApplication) -> None:
+    tab = GlobalFitTab(member_kind="runs")
+    members = [_grouped_run_dataset(100 + i, 5.0 + i) for i in range(4)]
+    tab._coadd_mode = "bin"
+    tab._coadd_window = 2
+    combined, note = tab._apply_inbatch_coadd(members)
+
+    assert len(combined) == 2
+    assert "2 combined members" in note
+    # Each combined member's run histograms are the per-bin sum of its pair.
+    for window, member in zip([(0, 1), (2, 3)], combined, strict=True):
+        for det in range(2):
+            np.testing.assert_array_equal(
+                member.run.histograms[det].counts,
+                members[window[0]].run.histograms[det].counts
+                + members[window[1]].run.histograms[det].counts,
+            )
+        # Event-weighted temperature lands between the pair's endpoints.
+        temp = float(member.run.metadata["temperature"])
+        lo = members[window[0]].run.metadata["temperature"]
+        hi = members[window[1]].run.metadata["temperature"]
+        assert lo <= temp <= hi
+
+
+def test_inbatch_coadd_smooth_slides_by_one(qapp: QApplication) -> None:
+    tab = GlobalFitTab(member_kind="runs")
+    members = [_grouped_run_dataset(100 + i, 5.0 + i) for i in range(4)]
+    tab._coadd_mode = "smooth"
+    tab._coadd_window = 2
+    combined, _note = tab._apply_inbatch_coadd(members)
+    assert len(combined) == 3  # n - W + 1 sliding windows
+
+
+def test_inbatch_coadd_window_exceeding_members_is_skipped(qapp: QApplication) -> None:
+    tab = GlobalFitTab(member_kind="runs")
+    members = [_grouped_run_dataset(100 + i, 5.0 + i) for i in range(2)]
+    tab._coadd_mode = "bin"
+    tab._coadd_window = 3
+    combined, note = tab._apply_inbatch_coadd(members)
+    assert combined is members
+    assert "exceeds" in note
 
 
 def test_global_fit_rejects_non_finite_value(qapp: QApplication, dataset: MuonDataset) -> None:

@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import functools
 import re
+from collections.abc import Callable
 
 import numpy as np
 from PySide6.QtCore import QEventLoop, QSignalBlocker, QSize, Qt, QTimer, Signal
@@ -27,6 +28,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizePolicy,
+    QSpinBox,
     QStyle,
     QStyledItemDelegate,
     QStyleOptionViewItem,
@@ -38,6 +40,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from asymmetry.core.data.combine import (
+    CombineError,
+    coadd_member_windows,
+    combine_runs,
+    reduce_combined_run,
+    runs_with_dataset_metadata,
+)
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.count_domain import (
@@ -84,6 +93,10 @@ from asymmetry.core.fitting.parameters import (
     split_parameter_name,
 )
 from asymmetry.core.fitting.result_summary import fit_result_summary
+from asymmetry.core.fitting.rrf_offset import (
+    UnsupportedRRFComponentError,
+    rrf_frequency_offsets,
+)
 from asymmetry.core.fitting.spectral import (
     append_frequency_field_derived_parameters,
     default_frequency_model,
@@ -95,6 +108,7 @@ from asymmetry.core.utils.constants import (
     MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
     MUON_LIFETIME_US,
 )
+from asymmetry.gui.fit_settings import fit_quality_confidence
 from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
 from asymmetry.gui.panels.initial_values_dialog import InitialValuesDialog
 from asymmetry.gui.styles import tokens
@@ -562,11 +576,33 @@ def _get_file_value_for_parameter(
 
 
 def _fit_quality_dict(result) -> dict | None:
-    """The χ² verdict dict for *result* via the shared summary (single source)."""
+    """The χ² verdict dict for *result* via the shared summary (single source).
+
+    Uses the user-configured quality-band confidence so the live fit-panel chip
+    matches the verdict persisted onto the fit record.
+    """
     try:
-        return fit_result_summary(result).get("quality")
+        return fit_result_summary(result, confidence=fit_quality_confidence()).get("quality")
     except Exception:
         return None
+
+
+def _fit_range_provenance_text(min_spin, max_spin, unit_label) -> str | None:
+    """Format the fit range as a provenance string, or ``None`` if degenerate.
+
+    Shared by the Single and Batch tabs (identical fit-range widgets) so the
+    ``fit_range`` stamped onto persisted records has one formatting source.
+    Reads the spin values, decimals, and the domain unit label (µs/MHz);
+    returns ``None`` when the spinboxes are disabled or the range is empty.
+    """
+    if not min_spin.isEnabled():
+        return None
+    lo = float(min_spin.value())
+    hi = float(max_spin.value())
+    if not hi > lo:
+        return None
+    decimals = min_spin.decimals()
+    return f"{lo:.{decimals}f}–{hi:.{decimals}f} {unit_label.text()}"
 
 
 def _fit_success_html(result) -> str:
@@ -934,6 +970,34 @@ def _size_param_table_to_content(table: QTableWidget) -> None:
     table.setFixedHeight(rows_height + header_height + frame + scrollbar)
 
 
+def _shift_rrf_parameters(
+    parameters: ParameterSet, offsets: dict[str, float], *, sign: int
+) -> ParameterSet:
+    """Shift the rotation parameters of a set by ±ν₀ (value and bounds together).
+
+    ``sign=-1`` maps a lab-frame seed to the rotating frame (δν = ν − ν₀) for
+    the engine, which fits the small offset; ``sign=+1`` maps a rotating-frame
+    fit result back to the lab frame for display/recording. The parameter table
+    stays entirely lab-frame — what the user reads and edits — while the engine
+    works in the better-conditioned δν, and a refit round-trips exactly.
+    """
+    shifted = ParameterSet()
+    for p in parameters:
+        delta = offsets.get(p.name, 0.0) * sign
+        shifted.add(
+            Parameter(
+                name=p.name,
+                value=float(p.value) + delta,
+                min=p.min + delta,  # ±inf + finite stays ±inf
+                max=p.max + delta,
+                fixed=getattr(p, "fixed", False),
+                expr=getattr(p, "expr", None),  # preserve constraints faithfully
+                link_group=getattr(p, "link_group", None),
+            )
+        )
+    return shifted
+
+
 class SingleFitTab(QWidget):
     """Single dataset fitting interface.
 
@@ -978,6 +1042,10 @@ class SingleFitTab(QWidget):
         self._cached_wizard_signature: dict[str, object] | None = None
         self._cached_wizard_log_text = ""
         self._updating_fraction_values = False
+        # Optional provider of the rotating-frame ν₀ (MHz) supplied by the host
+        # window; returns a frequency when an RRF fit should run (the plot's RRF
+        # display is active), else None. Default no-op keeps the tab standalone.
+        self._rrf_frequency_provider: Callable[[], float | None] = lambda: None
         self._last_fit_result: FitResult | None = None
         self._last_fit_parameters: ParameterSet | None = None
         self._pull_diagnostic_btn: QPushButton | None = None
@@ -1288,6 +1356,10 @@ class SingleFitTab(QWidget):
         self._pull_diagnostic_window = window
         window.show()
 
+    def set_rrf_frequency_provider(self, provider: Callable[[], float | None]) -> None:
+        """Install the host's rotating-frame ν₀ provider (see __init__)."""
+        self._rrf_frequency_provider = provider or (lambda: None)
+
     def set_fit_blocked(self, blocked: bool, reason: str = "") -> None:
         """Enable/disable single-fit actions while preserving the active dataset."""
         self._fit_blocked = bool(blocked)
@@ -1318,6 +1390,12 @@ class SingleFitTab(QWidget):
         self.fit_range_edit_committed.emit(
             self._fit_range_min_spin.value(),
             self._fit_range_max_spin.value(),
+        )
+
+    def current_fit_range_text(self) -> str | None:
+        """Active fit range as a provenance string (µs/MHz), or ``None``."""
+        return _fit_range_provenance_text(
+            self._fit_range_min_spin, self._fit_range_max_spin, self._fit_range_unit_label
         )
 
     def _wizard_context_signature(self) -> dict[str, object]:
@@ -1734,6 +1812,15 @@ class SingleFitTab(QWidget):
         preview_result = object()
         self.preview_requested.emit(preview_result, (t_fit, y_fit), component_curves)
 
+    def model_and_seed(self) -> tuple[CompositeModel, ParameterSet]:
+        """Return the active single-fit model and its current parameter seed.
+
+        For headless fits (e.g. the Data Browser's "Re-fit as co-added") that
+        reuse the configured single-fit model without touching the form. Raises
+        :class:`ValueError` on a malformed parameter value, like the fit run.
+        """
+        return self._composite_model, self._parameter_set_from_table()
+
     def _parameter_set_from_table(self) -> ParameterSet:
         """Build a :class:`ParameterSet` from the parameter table.
 
@@ -1815,6 +1902,35 @@ class SingleFitTab(QWidget):
             self._result_label.setText(f"ERROR: {exc}")
             return
 
+        # Resolve the rotating-reference-frame offset, if the host's RRF display
+        # is active. The fit then consumes RAW lab-frame data with the model's
+        # rotation frequencies offset by ν₀, so it keeps exact per-bin
+        # statistics while the engine's free parameter is the small, better-
+        # conditioned δν; the parameter table stays lab-frame throughout.
+        model = self._composite_model
+        rrf_offsets: dict[str, float] | None = None
+        rrf_nu0 = self._rrf_frequency_provider()
+        if rrf_nu0:
+            try:
+                rrf_offsets = rrf_frequency_offsets(model, float(rrf_nu0))
+            except UnsupportedRRFComponentError as exc:
+                # A composite with an oscillating component that is not a pure
+                # frame rotation (muonium, Bessel, …) cannot be safely offset;
+                # refuse rather than silently leave a line in the lab frame.
+                self._result_label.setText(
+                    f"ERROR: cannot fit in the rotating frame — {exc} "
+                    "Turn off the rotating frame (Options → Advanced) to fit this model."
+                )
+                return
+            except ValueError:
+                # No rotation component at all (e.g. a pure relaxation model):
+                # the rotating frame does not apply; fit normally.
+                rrf_offsets = None
+
+        fit_seed = (
+            _shift_rrf_parameters(parameters, rrf_offsets, sign=-1) if rrf_offsets else parameters
+        )
+
         # Run the fit on a worker thread; the GUI (and Stop button) stay live.
         self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
         self._result_label.setText("Fitting...")
@@ -1825,18 +1941,24 @@ class SingleFitTab(QWidget):
         # GUI thread with each launch's own context, so a late result can
         # never be applied against a different launch's snapshot.
         dataset = self._current_dataset
-        model = self._composite_model
+        # Only thread the RRF offset when one is active, so the ordinary fit
+        # path (and its test doubles) is unchanged.
+        fit_kwargs: dict = {"minos": self._minos_checkbox.isChecked()}
+        if rrf_offsets:
+            fit_kwargs["frequency_offsets"] = rrf_offsets
         self._fit_worker = _start_fit_call(
             self,
             functools.partial(
                 self._fit_engine.fit,
                 dataset,
                 model.function,
-                parameters,
-                minos=self._minos_checkbox.isChecked(),
+                fit_seed,
+                **fit_kwargs,
             ),
-            on_finished=lambda result, p=parameters, d=dataset, m=model, g=self._model_generation: (
-                self._apply_single_fit_result(result, p, d, m, g)
+            on_finished=(
+                lambda result, p=parameters, d=dataset, m=model, g=self._model_generation, off=rrf_offsets, nu0=rrf_nu0: (
+                    self._apply_single_fit_result(result, p, d, m, g, rrf_offsets=off, rrf_nu0=nu0)
+                )
             ),
             on_error=self._on_single_fit_error,
             on_cancelled=self._on_single_fit_cancelled,
@@ -1884,7 +2006,15 @@ class SingleFitTab(QWidget):
         return _wait_for_fit_thread(self, timeout_ms)
 
     def _apply_single_fit_result(
-        self, result, parameters, dataset, model, model_generation
+        self,
+        result,
+        parameters,
+        dataset,
+        model,
+        model_generation,
+        *,
+        rrf_offsets=None,
+        rrf_nu0=None,
     ) -> None:
         """Apply a completed single fit to the panel (GUI thread)."""
         self._set_fit_busy(False)
@@ -1894,6 +2024,21 @@ class SingleFitTab(QWidget):
             self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
             self._result_label.setText(f"<b>Fit failed:</b> {result.message}")
             return
+
+        # The engine fitted the rotating-frame offsets δν; shift the result back
+        # to the lab frame (ν = δν + ν₀, bounds with it) so every downstream
+        # surface — the parameter table, the overlay curve drawn on raw data,
+        # the recorded FitSlot, the pull diagnostic — reads in the lab frame. χ²,
+        # uncertainties and covariance are frame-invariant (the offset is an
+        # additive constant), so only the values/bounds move.
+        rrf_note = ""
+        if rrf_offsets:
+            result.parameters = _shift_rrf_parameters(result.parameters, rrf_offsets, sign=+1)
+            rrf_note = (
+                "<br><i>frame: ν_RRF = "
+                f"{float(rrf_nu0):.4f} MHz — fitted in the rotating frame; "
+                "frequencies reported in the lab frame.</i>"
+            )
 
         # A result is only "fresh" when the panel still shows the model AND run
         # it was fitted on. Otherwise the user navigated away mid-fit: applying
@@ -1907,7 +2052,7 @@ class SingleFitTab(QWidget):
         dataset_unchanged = self._current_dataset is dataset
 
         self._results_group.setStyleSheet(RESULT_BOX_SUCCESS_STYLE)
-        self._result_label.setText(_fit_success_html(result))
+        self._result_label.setText(_fit_success_html(result) + rrf_note)
         self._result_label.setToolTip(fit_quality_tooltip(_fit_quality_dict(result)))
 
         if not (model_unchanged and dataset_unchanged):
@@ -1918,6 +2063,7 @@ class SingleFitTab(QWidget):
                 reason = f"run {run_id} is no longer selected"
             self._result_label.setText(
                 _fit_success_html(result)
+                + rrf_note
                 + f"<br><i>This fit was not applied or recorded because {reason}. "
                 "Restore the original model and run, then refit to keep it.</i>"
             )
@@ -2212,6 +2358,11 @@ class GlobalFitTab(QWidget):
         # Batch-series seeding mode (menu-bar "Batch seeding"); "auto" picks
         # chain-from-previous for ordered scans, else independent seeds.
         self._batch_seeding_mode = "auto"
+        # In-batch co-add of successive grouped-series members before fitting
+        # (WiMDA BatchFit Smooth/Bin). "off" disables; "bin"/"smooth" co-add
+        # ``_coadd_window`` successive members per fit via combine_runs.
+        self._coadd_mode = "off"
+        self._coadd_window = 2
         # Count-domain fit target: "all" (fgAll, the existing grouped path),
         # "fb" (forward+backward with free alpha), or "single" (one histogram).
         self._count_fit_mode = "all"
@@ -2395,6 +2546,39 @@ class GlobalFitTab(QWidget):
         self._group_model_table.itemChanged.connect(self._on_group_model_table_item_changed)
         group_model_layout.addWidget(self._group_model_table)
         layout.addWidget(self._group_model_group)
+
+        # In-batch co-add (WiMDA BatchFit Smooth/Bin): co-add successive members
+        # through combine_runs before each series fit. Grouped-series mode only.
+        self._coadd_group, _coadd_box = make_section("Co-add members")
+        coadd_layout = QHBoxLayout()
+        coadd_layout.setContentsMargins(0, 0, 0, 0)
+        coadd_layout.setSpacing(6)
+        _coadd_box.addLayout(coadd_layout)
+        self._coadd_mode_combo = QComboBox()
+        self._coadd_mode_combo.addItem("Off", "off")
+        self._coadd_mode_combo.addItem("Bin (step N)", "bin")
+        self._coadd_mode_combo.addItem("Smooth (sliding)", "smooth")
+        self._coadd_mode_combo.setToolTip(
+            "Co-add successive runs before fitting (WiMDA Smooth/Bin):\n"
+            "• Bin — non-overlapping windows, one combined fit per N runs.\n"
+            "• Smooth — sliding window stepped by one run.\n"
+            "Counts are summed at the raw-histogram level, then fitted."
+        )
+        self._coadd_mode_combo.currentIndexChanged.connect(self._on_coadd_mode_changed)
+        self._coadd_window_spin = QSpinBox()
+        self._coadd_window_spin.setRange(2, 99)
+        self._coadd_window_spin.setValue(self._coadd_window)
+        self._coadd_window_spin.setToolTip("Number of successive runs co-added per fit.")
+        self._coadd_window_spin.valueChanged.connect(self._on_coadd_window_changed)
+        self._coadd_window_label = QLabel("runs per fit")
+        coadd_layout.addWidget(self._coadd_mode_combo)
+        coadd_layout.addWidget(self._coadd_window_spin)
+        coadd_layout.addWidget(self._coadd_window_label)
+        coadd_layout.addStretch()
+        self._coadd_window_spin.setEnabled(False)
+        self._coadd_window_label.setEnabled(False)
+        self._coadd_group.hide()
+        layout.addWidget(self._coadd_group)
 
         # Fit button
         btn_layout = QHBoxLayout()
@@ -2906,6 +3090,12 @@ class GlobalFitTab(QWidget):
         self.fit_range_edit_committed.emit(
             self._fit_range_min_spin.value(),
             self._fit_range_max_spin.value(),
+        )
+
+    def current_fit_range_text(self) -> str | None:
+        """Active fit range as a provenance string (µs/MHz), or ``None``."""
+        return _fit_range_provenance_text(
+            self._fit_range_min_spin, self._fit_range_max_spin, self._fit_range_unit_label
         )
 
     def _refresh_inherited_single_fit_defaults(self) -> None:
@@ -3766,6 +3956,7 @@ class GlobalFitTab(QWidget):
                 local_params,
                 initial_params,
                 minos=self._minos_checkbox.isChecked(),
+                cost=self._count_fit_cost,
             ),
             on_finished=lambda result, ds=grouped_datasets: self._on_grouped_fit_finished(
                 ds, result
@@ -4397,6 +4588,21 @@ class GlobalFitTab(QWidget):
         """Set the batch-series seeding mode from the menu ("auto"/"as_provided"/etc.)."""
         self._batch_seeding_mode = mode
 
+    def _on_coadd_mode_changed(self, _index: int) -> None:
+        """In-batch co-add mode changed: refresh the grouped-series context."""
+        self._coadd_mode = str(self._coadd_mode_combo.currentData() or "off")
+        self._coadd_window_spin.setEnabled(self._coadd_mode != "off")
+        self._coadd_window_label.setEnabled(self._coadd_mode != "off")
+        self._grouped_context_cache = None
+        self._update_mode_ui(preserve_result=False)
+
+    def _on_coadd_window_changed(self, value: int) -> None:
+        """In-batch co-add window size changed: refresh the grouped-series context."""
+        self._coadd_window = max(2, int(value))
+        if self._coadd_mode != "off":
+            self._grouped_context_cache = None
+            self._update_mode_ui(preserve_result=False)
+
     def _set_series_busy(self, busy: bool) -> None:
         """Swap the Fit button for a Stop button (and back) around a worker fit."""
         self._stop_btn.setVisible(busy)
@@ -4503,6 +4709,7 @@ class GlobalFitTab(QWidget):
                 minos=self._minos_checkbox.isChecked(),
                 seeding=self._batch_seeding_mode,
                 order_key=self._grouped_series_order_key(members),
+                cost=self._count_fit_cost,
             ),
             on_finished=lambda result, ds=grouped_datasets: self._on_grouped_series_fit_finished(
                 ds, result
@@ -5365,6 +5572,8 @@ class GlobalFitTab(QWidget):
         self._grouped_context_label.setVisible(grouped)
         self._group_param_group.setVisible(grouped)
         self._group_model_group.setVisible(grouped)
+        # In-batch co-add only applies to grouped-series fits (≥2 members).
+        self._coadd_group.setVisible(grouped)
         self._fit_btn.setText("Run Grouped Fit" if grouped else "Run Batch Fit")
         self._preview_btn.setVisible(grouped)
         _set_formula_label_text(
@@ -5443,7 +5652,7 @@ class GlobalFitTab(QWidget):
         """
         cache = getattr(self, "_grouped_context_cache", None)
         member_ids = tuple(id(ds) for ds in self._grouped_member_datasets())
-        key = (member_ids, bool(self._fit_blocked))
+        key = (member_ids, bool(self._fit_blocked), self._coadd_mode, int(self._coadd_window))
         if cache is not None and cache[0] == key:
             return cache[1]
         result = self._compute_grouped_mode_context()
@@ -5475,6 +5684,8 @@ class GlobalFitTab(QWidget):
                 "Grouped time-domain mode requires an active dataset in the "
                 "FB Asymmetry or Individual Groups workspace.",
             )
+
+        member_datasets, coadd_note = self._apply_inbatch_coadd(member_datasets)
 
         members: dict[int, list[object]] = {}
         grouped_datasets: list[MuonDataset] = []
@@ -5508,6 +5719,8 @@ class GlobalFitTab(QWidget):
                 if skipped
                 else "Grouped time-domain mode requires a non-empty active dataset."
             )
+            if coadd_note:
+                reason = f"{coadd_note} {reason}"
             return None, None, reason
 
         n_runs = len(members)
@@ -5519,9 +5732,60 @@ class GlobalFitTab(QWidget):
             message = (
                 f"{len(grouped_datasets)} grouped traces from {n_runs} runs are ready for fitting."
             )
+        if coadd_note:
+            message = f"{coadd_note} {message}"
         if skipped:
             message += f" (skipped {len(skipped)}: {'; '.join(skipped)})"
         return representative_groups, grouped_datasets, message
+
+    def _apply_inbatch_coadd(
+        self, member_datasets: list[MuonDataset]
+    ) -> tuple[list[MuonDataset], str]:
+        """Co-add successive members per the Smooth/Bin control before fitting.
+
+        Returns ``(transformed_members, note)``. With co-add off, fewer than two
+        members, or no source histograms available, the members pass through
+        unchanged. Each co-add window sums the raw histograms of its members via
+        :func:`combine_runs` and reduces the combined run to a member dataset, so
+        the chain-seeding and grouped-contract paths see ordinary runs.
+        """
+        if self._coadd_mode == "off" or len(member_datasets) < 2:
+            return member_datasets, ""
+
+        windows = coadd_member_windows(
+            len(member_datasets), mode=self._coadd_mode, window=self._coadd_window
+        )
+        if not windows:
+            return (
+                member_datasets,
+                f"Co-add window of {self._coadd_window} exceeds the "
+                f"{len(member_datasets)} selected runs; co-add skipped.",
+            )
+
+        verb = "binned" if self._coadd_mode == "bin" else "smoothed"
+        combined: list[MuonDataset] = []
+        failures = 0
+        for indices in windows:
+            window_datasets = [member_datasets[i] for i in indices]
+            # Carry each dataset's displayed scalar overrides onto the run copies
+            # so the combined member's event-weighted T/field match the browser.
+            runs = runs_with_dataset_metadata(window_datasets)
+            if len(runs) != len(window_datasets):
+                # A member without source histograms can't be co-added; keep the
+                # window's members un-combined rather than silently dropping data.
+                combined.extend(window_datasets)
+                failures += 1
+                continue
+            try:
+                combined_run = combine_runs(runs, sign=1)
+                combined.append(reduce_combined_run(combined_run))
+            except (CombineError, ValueError):
+                combined.extend(window_datasets)
+                failures += 1
+        note = f"Co-add ({verb}, {self._coadd_window} runs/fit): {len(windows)} combined members."
+        if failures:
+            note += f" ({failures} window(s) left un-combined — no source histograms.)"
+        return combined, note
 
     def _setup_group_nuisance_table(self) -> None:
         self._rebuild_group_nuisance_table(preserved_state=None)
@@ -6094,6 +6358,12 @@ class FitPanel(QWidget):
 
         self._single_state_by_run: dict[int, dict] = {}
         self._active_single_run_number: int | None = None
+        # Optional mediator that supplies a per-(run, representation, projection)
+        # single-fit restore payload, installed by the main window.  It keeps the
+        # panel decoupled from the project model: ``set_dataset`` asks it for the
+        # form payload to show, falling back to the run-keyed blob when unset or
+        # when it returns ``None``.  See ``set_single_fit_restore_provider``.
+        self._single_fit_restore_provider: Callable[[MuonDataset | None], dict | None] | None = None
         self._all_datasets: list[MuonDataset] = []  # Track all datasets for group sharing
         self._domain = "time"
         self._single_state_by_domain: dict[str, dict] = {}
@@ -6127,7 +6397,31 @@ class FitPanel(QWidget):
         self._global_tab.fit_range_edit_committed.connect(self.fit_range_edit_committed.emit)
         self._tabs.addTab(self._global_tab, "Batch")
 
+        # Echo of the projection a single fit is currently bound to (vector
+        # multi-subplot view); hidden when fitting the default/non-projection
+        # asymmetry. Driven by the main window via set_active_projection_label.
+        self._projection_echo = QLabel("")
+        self._projection_echo.setContentsMargins(6, 2, 6, 2)
+        self._projection_echo.hide()
+        layout.addWidget(self._projection_echo)
+
         layout.addWidget(self._tabs)
+
+    def set_active_projection_label(self, projection: str | None, tint: str | None = None) -> None:
+        """Show/hide the 'Fitting: <projection>' echo for the bound projection.
+
+        ``tint`` colours the text to match the projection's subplot frame.
+        """
+        if not hasattr(self, "_projection_echo"):
+            return
+        if projection:
+            self._projection_echo.setText(f"Fitting: {projection}")
+            self._projection_echo.setStyleSheet(f"color: {tint}; font-weight: 500;" if tint else "")
+            self._projection_echo.show()
+        else:
+            self._projection_echo.clear()
+            self._projection_echo.setStyleSheet("")
+            self._projection_echo.hide()
 
     def set_batch_seeding_mode(self, mode: str) -> None:
         """Forward the batch-series seeding mode to the Batch tab."""
@@ -6136,6 +6430,10 @@ class FitPanel(QWidget):
     def domain(self) -> str:
         """Return the current fitting domain."""
         return self._domain
+
+    def set_rrf_frequency_provider(self, provider: Callable[[], float | None]) -> None:
+        """Forward the rotating-frame ν₀ provider to the single-fit tab."""
+        self._single_tab.set_rrf_frequency_provider(provider)
 
     def set_domain(self, domain: str) -> None:
         """Switch the fit panel between time- and frequency-domain workflows."""
@@ -6215,17 +6513,68 @@ class FitPanel(QWidget):
         if run_number is None:
             return
 
-        if run_number in self._single_state_by_run:
+        # The main window's restore mediator is authoritative when it has an
+        # opinion: a payload (possibly an empty dict, meaning "blank this unfit
+        # projection") restores from the per-(run, representation, projection)
+        # slot — the canonical store for single fits. ``None`` means "no
+        # opinion", so fall back to the run-keyed blob (default slot / legacy
+        # projects). Consulting it first avoids restoring the form twice.
+        payload = (
+            self._single_fit_restore_provider(dataset)
+            if self._single_fit_restore_provider is not None
+            else None
+        )
+        if payload is not None:
+            self.restore_single_fit_ui(payload)
+        elif run_number in self._single_state_by_run:
             self._single_tab.restore_state(self._single_state_by_run[run_number])
         else:
             # Unseen datasets should not inherit another run's fit UI/result state.
-            default_model = (
-                default_frequency_model()
-                if self._domain == "frequency"
-                else CompositeModel(["Exponential", "Constant"], operators=["+"])
-            )
-            self._single_tab._set_composite_model(default_model)
-            self._single_tab._result_label.setText("No fit performed yet")
+            self._reset_single_fit_form()
+
+    def _reset_single_fit_form(self) -> None:
+        """Blank the single-fit form to its domain default ("No fit yet")."""
+        default_model = (
+            default_frequency_model()
+            if self._domain == "frequency"
+            else CompositeModel(["Exponential", "Constant"], operators=["+"])
+        )
+        self._single_tab._set_composite_model(default_model)
+        self._single_tab._result_label.setText("No fit performed yet")
+
+    def set_single_fit_restore_provider(
+        self, provider: Callable[[MuonDataset | None], dict | None] | None
+    ) -> None:
+        """Install the per-projection single-fit restore mediator (or clear it).
+
+        The main window passes a callable that maps the dataset being bound to
+        the persisted single-fit form payload for the active ``(run,
+        representation, projection)`` slot — or ``None`` to defer to the
+        panel's own run-keyed state (the default / legacy-project path).
+        """
+        self._single_fit_restore_provider = provider
+
+    def get_single_form_state(self) -> dict:
+        """Return the single-fit *form* payload (no per-run/domain wrapping).
+
+        This is exactly what :meth:`restore_single_fit_ui` consumes, so it is the
+        payload the main window stores as a slot's ``ui_state``.
+        """
+        return copy.deepcopy(self._single_tab.get_state())
+
+    def restore_single_fit_ui(self, payload: dict | None) -> None:
+        """Restore (or blank) the single-fit form from a slot ``ui_state`` payload.
+
+        A populated dict restores the form verbatim; an empty dict (or ``None``)
+        blanks it — an unfit projection must never inherit another projection's
+        fit. The run-keyed blob is deliberately *not* touched: it stays the
+        per-run store that global seeding and group sharing read, while the
+        per-projection slot is the source of truth for the single-fit form.
+        """
+        if isinstance(payload, dict) and payload:
+            self._single_tab.restore_state(payload)
+        else:
+            self._reset_single_fit_form()
 
     def set_datasets(self, datasets: list[MuonDataset]) -> None:
         """Set the datasets for global fitting tab and track for group sharing."""
@@ -6265,6 +6614,10 @@ class FitPanel(QWidget):
             return str(model.formula_string())
         except Exception:
             return None
+
+    def single_fit_model_and_seed(self) -> tuple[CompositeModel, ParameterSet]:
+        """Return the active single-fit model and seed (for headless re-fits)."""
+        return self._single_tab.model_and_seed()
 
     def global_fit_formula_string(self) -> str | None:
         """Return the active global-fit formula string, if available."""
@@ -6657,6 +7010,14 @@ class FitPanel(QWidget):
     def get_grouped_state(self) -> dict:
         """Return the grouped-fit classification (physics roles + nuisance block)."""
         return self._global_tab.get_grouped_state()
+
+    def single_fit_range_text(self) -> str | None:
+        """Active single-fit range as a provenance string (see SingleFitTab)."""
+        return self._single_tab.current_fit_range_text()
+
+    def batch_fit_range_text(self) -> str | None:
+        """Active batch/global/grouped fit range as a provenance string."""
+        return self._global_tab.current_fit_range_text()
 
     def send_single_model_to_batch(self) -> bool:
         """Copy the single-fit tab's model/fit function into the Batch tab.

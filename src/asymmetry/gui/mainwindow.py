@@ -24,6 +24,7 @@ import hashlib
 import os
 import time
 from contextlib import nullcontext
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -57,6 +58,7 @@ from asymmetry.core.fitting import (
     FitLog,
     as_composite_model,
     build_grouped_time_domain_datasets,
+    enrich_summary_provenance,
     fit_result_summary,
     fit_scan_baseline,
     fit_scan_model,
@@ -79,6 +81,7 @@ from asymmetry.core.fourier import (
 )
 from asymmetry.core.fourier.moments import moments_trend_row, spectrum_moments
 from asymmetry.core.fourier.units import FieldUnit, convert
+from asymmetry.core.instrument import PROJECTION_TINTS, derive_projection_pairs
 from asymmetry.core.io import resolve_background_reference
 from asymmetry.core.io.periods import (
     combine_mapped_periods,
@@ -139,6 +142,7 @@ from asymmetry.core.utils.constants import (
     PeriodMode,
 )
 from asymmetry.gui.export_paths import default_export_path, remember_export_path
+from asymmetry.gui.fit_settings import fit_quality_confidence, set_fit_quality_confidence
 from asymmetry.gui.gle_settings import GleSetupDialog
 from asymmetry.gui.panels.alc_panel import ALCFitPanel, ALCScanView
 from asymmetry.gui.panels.data_browser import DataBrowserPanel
@@ -186,6 +190,9 @@ _VIEW_MODE_COUNT = 3
 _PERF_LOGGING_SETTINGS_KEY = "debug/perf_logging"
 _PERF_LOGGING_ENV_VAR = "ASYMMETRY_PERF_LOGGING"
 _PLOT_DECIMATION_SETTINGS_KEY = "plot/enable_decimation"
+#: Options → Advanced → "Rotating reference frame" — an app-level chrome
+#: preference (like the dock/visibility toggles), NOT per-project. Default off.
+_RRF_ADVANCED_SETTINGS_KEY = "ui/rrf_advanced"
 _MAXENT_WARN_PEAK_MATRIX_BYTES = 1 * 1024**3
 _MAXENT_WARN_TOTAL_MATRIX_BYTES = 8 * 1024**3
 
@@ -497,6 +504,18 @@ class MainWindow(QMainWindow):
         self._maxent_active_config: MaxEntConfig | None = None
         self._maxent_active_cycles: int = 0
         self._maxent_started_at: float | None = None
+        # MaxEnt batch-reconstruct-then-send: a queue of run numbers driven
+        # through the single-run worker one at a time, reusing each run's
+        # resumable state, then a moments send. Cancel aborts the whole queue.
+        self._maxent_batch_active: bool = False
+        self._maxent_batch_queue: list[int] = []
+        self._maxent_batch_widget = None
+        self._maxent_batch_config: MaxEntConfig | None = None
+        self._maxent_batch_total: int = 0
+        self._maxent_batch_done: int = 0
+        # Live worker for the Data Browser "Re-fit as Co-added" action (one at a
+        # time; the handler gates relaunch while one is in flight).
+        self._refit_coadded_worker: TaskWorker | None = None
         # Frequency representation the fit-panel datasets were last collected
         # from, and its snapshot at global-fit launch.  The async completion
         # handler resolves run datasets against the LAUNCH snapshot: the
@@ -543,6 +562,11 @@ class MainWindow(QMainWindow):
         # until the first selection event runs the sync.
         self._sync_available_views()
 
+        # Apply the persisted Advanced RRF toggle to the plot panel now that it
+        # exists (the menu action's setChecked ran before the panel was built,
+        # so its toggled signal did not reach the panel).
+        self._apply_rrf_advanced_to_panels(self._rrf_advanced_is_enabled())
+
         # Check for SciPy availability and warn if using fallback
         from asymmetry.core.fitting.diffusion import is_scipy_available
 
@@ -572,6 +596,38 @@ class MainWindow(QMainWindow):
     def _plot_decimation_is_enabled(self) -> bool:
         """Return whether plot display decimation is enabled."""
         return _coerce_bool(self._settings.value(_PLOT_DECIMATION_SETTINGS_KEY), default=True)
+
+    def _rrf_advanced_is_enabled(self) -> bool:
+        """Return whether the Advanced rotating-reference-frame toggle is on."""
+        return _coerce_bool(self._settings.value(_RRF_ADVANCED_SETTINGS_KEY), default=False)
+
+    def _apply_rrf_advanced_to_panels(self, enabled: bool) -> None:
+        """Push the RRF feature flag to the time-domain plot panel."""
+        panel = getattr(self, "_plot_panel", None)
+        if panel is not None and hasattr(panel, "set_rrf_feature_enabled"):
+            panel.set_rrf_feature_enabled(enabled)
+
+    def _auto_enable_rrf_for_active_project(self) -> None:
+        """Auto-enable the Advanced RRF toggle when an opened project uses RRF.
+
+        If the restored project carries an active RRF frame but the app-level
+        toggle is off, reveal it so the user's configured rotating-frame
+        analysis is not silently hidden — for this session only. The persisted
+        global preference is the user's own explicit choice and is deliberately
+        left untouched (opening a project must not permanently opt a user into
+        an advanced feature); the action is checked with its signal blocked and
+        the feature applied directly, so a fresh launch returns to the user's
+        default until they reopen this project.
+        """
+        action = getattr(self, "_rrf_advanced_action", None)
+        panel = getattr(self, "_plot_panel", None)
+        if action is None or action.isChecked() or panel is None:
+            return
+        if hasattr(panel, "rrf_has_active_parameters") and panel.rrf_has_active_parameters():
+            action.blockSignals(True)
+            action.setChecked(True)
+            action.blockSignals(False)
+            self._apply_rrf_advanced_to_panels(True)
 
     def _perf_dataset_metrics(
         self, datasets: MuonDataset | list[MuonDataset] | None
@@ -709,6 +765,14 @@ class MainWindow(QMainWindow):
         self._use_temperature_from_log_action.toggled.connect(
             self._on_use_temperature_from_log_toggled
         )
+        self._use_field_from_log_action = options_menu.addAction("Use field from log")
+        self._use_field_from_log_action.setCheckable(True)
+        self._use_field_from_log_action.setToolTip(
+            "Show the mean of the magnetic-field log channel in the B column "
+            "instead of the header value (the analogue of 'Use temperature "
+            "from log')."
+        )
+        self._use_field_from_log_action.toggled.connect(self._on_use_field_from_log_toggled)
         self._perf_logging_action = options_menu.addAction("Enable performance logging")
         self._perf_logging_action.setCheckable(True)
         self._perf_logging_action.setChecked(self._perf_logging_is_enabled())
@@ -717,6 +781,20 @@ class MainWindow(QMainWindow):
         self._plot_decimation_action.setCheckable(True)
         self._plot_decimation_action.setChecked(self._plot_decimation_is_enabled())
         self._plot_decimation_action.toggled.connect(self._on_plot_decimation_toggled)
+        options_menu.addAction("Fit quality confidence…", self._on_fit_quality_confidence)
+
+        # Options → Advanced: home for niche toggles that should not consume
+        # layout for the majority of users. Scoped to RRF for now.
+        advanced_menu = options_menu.addMenu("Advanced")
+        self._rrf_advanced_action = advanced_menu.addAction("Rotating reference frame")
+        self._rrf_advanced_action.setCheckable(True)
+        self._rrf_advanced_action.setToolTip(
+            "Show the rotating-reference-frame display controls on the time plot "
+            "and fit the FB asymmetry in the rotating frame. Advanced/niche; off "
+            "by default so it consumes no plot-panel space."
+        )
+        self._rrf_advanced_action.setChecked(self._rrf_advanced_is_enabled())
+        self._rrf_advanced_action.toggled.connect(self._on_rrf_advanced_toggled)
 
         # Setup
         setup_menu = mb.addMenu("&Setup")
@@ -1320,6 +1398,8 @@ class MainWindow(QMainWindow):
             self._data_browser.grouping_requested.connect(self._on_grouping_requested)
         if hasattr(self._data_browser, "group_selected"):
             self._data_browser.group_selected.connect(self._on_group_selected)
+        if hasattr(self._data_browser, "refit_coadded_requested"):
+            self._data_browser.refit_coadded_requested.connect(self._on_refit_coadded_requested)
         self._data_browser.selection_changed.connect(self._update_selected_datasets)
         self._plot_panel.fit_range_changed.connect(self._on_fit_range_changed)
         if hasattr(self._frequency_plot_panel, "fit_range_changed"):
@@ -1337,6 +1417,14 @@ class MainWindow(QMainWindow):
             _widget.send_to_trend_requested.connect(
                 lambda w=_widget: self._on_moments_send_to_trend(w)
             )
+            # MaxEnt is per-run and lazy, so a multi-run moments send only records
+            # runs whose reconstruction already exists. Offer batch-reconstruct-
+            # then-send on the MaxEnt host so a B_rms(T) series builds in one click.
+            if _rep == RepresentationType.FREQ_MAXENT:
+                _widget.enable_batch_reconstruct(True)
+                _widget.batch_reconstruct_send_requested.connect(
+                    lambda w=_widget: self._on_maxent_batch_reconstruct_and_send(w)
+                )
         if hasattr(self._plot_panel, "cursor_coords_changed"):
             self._plot_panel.cursor_coords_changed.connect(self._on_cursor_coords_changed)
         if hasattr(self._fit_panel, "fit_range_edit_committed"):
@@ -1359,7 +1447,17 @@ class MainWindow(QMainWindow):
             self._plot_panel.polarization_axis_changed.connect(
                 self._on_plot_polarization_axis_changed
             )
+        if hasattr(self._plot_panel, "fit_target_projection_changed"):
+            self._plot_panel.fit_target_projection_changed.connect(
+                self._on_fit_target_projection_changed
+            )
         self._fit_panel.fit_completed.connect(self._on_fit_completed)
+        if hasattr(self._fit_panel, "set_single_fit_restore_provider"):
+            self._fit_panel.set_single_fit_restore_provider(self._single_fit_restore_payload)
+        # Auto-couple the single composite fit to the plot's RRF display: when
+        # the rotating frame is active there, the fit runs in that frame.
+        if hasattr(self._fit_panel, "set_rrf_frequency_provider"):
+            self._fit_panel.set_rrf_frequency_provider(self._plot_panel.rrf_fit_frequency_mhz)
         if hasattr(self._fit_panel, "global_fit_started"):
             self._fit_panel.global_fit_started.connect(self._on_global_fit_started)
         self._fit_panel.global_fit_completed.connect(self._on_global_fit_completed)
@@ -1566,42 +1664,28 @@ class MainWindow(QMainWindow):
         self,
         groups: dict[int, list[int]],
         group_names: dict[int, str] | None,
+        projections: object = None,
     ) -> dict[str, tuple[int, int]]:
-        """Return vector-axis pair mapping for EMU-style group names when present."""
-        if not isinstance(groups, dict) or not groups:
-            return {}
+        """Return projection pair mapping for a grouping.
 
-        names = group_names if isinstance(group_names, dict) else {}
-        by_name: dict[str, int] = {}
-        for gid, name in names.items():
-            try:
-                gid_int = int(gid)
-            except (TypeError, ValueError):
-                continue
-            by_name[str(name).strip().lower()] = gid_int
+        Prefers an explicit ``projections`` declaration and falls back to the
+        legacy canonical vector group names; see
+        :func:`asymmetry.core.instrument.derive_projection_pairs`.
+        """
+        return derive_projection_pairs(groups, group_names, projections)
 
-        def _find(*candidates: str) -> int | None:
-            for cand in candidates:
-                gid = by_name.get(cand)
-                if gid in groups and groups.get(gid):
-                    return gid
-            return None
+    @staticmethod
+    def _store_projections(grouping: dict, projections: list[dict] | None) -> None:
+        """Write the resolved projections onto *grouping*, clearing when empty.
 
-        pz_f = _find("pz forward")
-        pz_b = _find("pz backward")
-        py_a = _find("py top", "py up")
-        py_b = _find("py bottom", "py down")
-        px_a = _find("px left")
-        px_b = _find("px right")
-
-        if None in {pz_f, pz_b, py_a, py_b, px_a, px_b}:
-            return {}
-
-        return {
-            "P_z": (int(pz_f), int(pz_b)),
-            "P_y": (int(py_a), int(py_b)),
-            "P_x": (int(px_a), int(px_b)),
-        }
+        ``projections`` is already a freshly built list of fresh dicts, so it is
+        stored directly (no further copy). Shared by the time-domain and
+        count/global apply branches.
+        """
+        if projections:
+            grouping["projections"] = projections
+        else:
+            grouping.pop("projections", None)
 
     def _vector_axis_state_for_dataset(
         self, dataset
@@ -1631,7 +1715,9 @@ class MainWindow(QMainWindow):
                 if det_ids:
                     groups[gid] = det_ids
 
-        pairs = self._vector_axis_pairs_for_grouping(groups, grouping.get("group_names"))
+        pairs = self._vector_axis_pairs_for_grouping(
+            groups, grouping.get("group_names"), grouping.get("projections")
+        )
         if not pairs:
             return {}, None
 
@@ -1640,19 +1726,46 @@ class MainWindow(QMainWindow):
             axis = "P_z"
         return pairs, axis
 
+    def _projection_specs_for_dataset(
+        self,
+        dataset: MuonDataset,
+        pairs: dict[str, tuple[int, int]],
+    ) -> list[dict]:
+        """Return ordered ``[{"label", "tint"}]`` specs for *pairs*.
+
+        Tints come from the dataset's declared projections when present, else
+        the canonical :data:`PROJECTION_TINTS` fallback by label.
+        """
+        tint_by_label: dict[str, str] = {}
+        run = getattr(dataset, "run", None)
+        grouping = getattr(run, "grouping", None)
+        if isinstance(grouping, dict):
+            for proj in grouping.get("projections") or []:
+                if isinstance(proj, dict) and proj.get("label") and proj.get("tint"):
+                    tint_by_label[str(proj["label"])] = str(proj["tint"])
+
+        specs: list[dict] = []
+        for label in pairs:
+            spec: dict = {"label": label}
+            tint = tint_by_label.get(label) or PROJECTION_TINTS.get(label)
+            if tint:
+                spec["tint"] = tint
+            specs.append(spec)
+        return specs
+
     def _refresh_vector_axis_selector(self) -> None:
-        """Show/hide and synchronize the plot polarization selector."""
-        if not hasattr(self._plot_panel, "set_polarization_axes"):
+        """Show/hide and synchronize the projection chip bar."""
+        if not hasattr(self._plot_panel, "set_projections"):
             return
 
         if hasattr(self, "_plot_workspace") and self._plot_workspace.active_domain() != "time":
-            self._plot_panel.set_polarization_axes([])
+            self._plot_panel.set_projections([])
             return
         if (
             hasattr(self._plot_panel, "current_time_view_mode")
             and self._plot_panel.current_time_view_mode() != "fb_asymmetry"
         ):
-            self._plot_panel.set_polarization_axes([])
+            self._plot_panel.set_projections([])
             return
 
         selected = list(self._data_browser.get_selected_datasets())
@@ -1662,33 +1775,48 @@ class MainWindow(QMainWindow):
             targets = [self._current_dataset] if self._current_dataset else []
         targets = [ds for ds in targets if ds is not None]
         if not targets:
-            self._plot_panel.set_polarization_axes([])
+            self._plot_panel.set_projections([])
             return
 
         first_pairs, first_axis = self._vector_axis_state_for_dataset(targets[0])
         if not first_pairs:
-            self._plot_panel.set_polarization_axes([])
+            self._plot_panel.set_projections([])
             return
 
         for dataset in targets[1:]:
             pairs, _axis = self._vector_axis_state_for_dataset(dataset)
             if pairs != first_pairs:
-                self._plot_panel.set_polarization_axes([])
+                self._plot_panel.set_projections([])
                 return
 
-        axis_order = ["P_x", "P_y", "P_z"]
-        available = [axis for axis in axis_order if axis in first_pairs]
-        if available:
-            available = ["ALL", *available]
+        specs = self._projection_specs_for_dataset(targets[0], first_pairs)
+        labels = [spec["label"] for spec in specs]
 
-        current = None
+        # Preserve the live chip selection where it still applies; otherwise
+        # honour a restored ``ALL``/single axis (so a saved subplot view reopens
+        # as subplots), then fall back to the dataset's active single axis —
+        # which preserves the immediate fit workflow, since multi-select is a
+        # deliberate user action.
+        prior: list[str] = []
+        if hasattr(self._plot_panel, "selected_projection_labels"):
+            prior = [lbl for lbl in self._plot_panel.selected_projection_labels() if lbl in labels]
+        current_axis = None
         if hasattr(self._plot_panel, "get_current_polarization_axis"):
-            current = self._normalize_vector_axis(self._plot_panel.get_current_polarization_axis())
-        if current not in available:
-            current = (
-                first_axis if first_axis in available else (available[0] if available else None)
+            current_axis = self._normalize_vector_axis(
+                self._plot_panel.get_current_polarization_axis()
             )
-        self._plot_panel.set_polarization_axes(available, current)
+        if prior:
+            chosen = prior
+        elif current_axis == "ALL":
+            chosen = list(labels)
+        elif current_axis in labels:
+            chosen = [current_axis]
+        elif first_axis in labels:
+            chosen = [first_axis]
+        else:
+            chosen = labels[:1]
+
+        self._plot_panel.set_projections(specs, chosen)
 
     def _refresh_time_view_selector(self) -> None:
         """Keep the top-level plot tabs and internal time-view state in sync."""
@@ -1827,10 +1955,16 @@ class MainWindow(QMainWindow):
     def _build_vector_axis_datasets(
         self,
         datasets: list[MuonDataset],
+        labels: list[str] | None = None,
     ) -> dict[str, list[MuonDataset]]:
-        """Return per-axis cloned datasets for vector ``ALL`` subplot rendering."""
-        axis_map: dict[str, list[MuonDataset]] = {"P_x": [], "P_y": [], "P_z": []}
-        for axis in ("P_x", "P_y", "P_z"):
+        """Return per-projection cloned datasets for stacked-subplot rendering.
+
+        ``labels`` selects which projections to build (defaults to the canonical
+        vector triple); each clone is reduced with that projection's pair.
+        """
+        axis_labels = list(labels) if labels else ["P_x", "P_y", "P_z"]
+        axis_map: dict[str, list[MuonDataset]] = {label: [] for label in axis_labels}
+        for axis in axis_labels:
             for dataset in datasets:
                 payload = self._extract_grouping_overrides(dataset)
                 if not isinstance(payload, dict):
@@ -1840,7 +1974,9 @@ class MainWindow(QMainWindow):
                     continue
                 groups = payload.get("groups", {})
                 names = payload.get("group_names")
-                pairs = self._vector_axis_pairs_for_grouping(groups, names)
+                pairs = self._vector_axis_pairs_for_grouping(
+                    groups, names, payload.get("projections")
+                )
                 if axis not in pairs:
                     continue
 
@@ -1882,6 +2018,7 @@ class MainWindow(QMainWindow):
             pairs = self._vector_axis_pairs_for_grouping(
                 payload.get("groups", {}),
                 payload.get("group_names"),
+                payload.get("projections"),
             )
             if axis not in pairs:
                 continue
@@ -1950,13 +2087,16 @@ class MainWindow(QMainWindow):
                 )
 
             if active_axis == "ALL" and hasattr(self._plot_panel, "plot_vector_subplots"):
-                axis_datasets = self._build_vector_axis_datasets(targets)
-                if all(axis_datasets.get(axis) for axis in ("P_x", "P_y", "P_z")):
+                labels = (
+                    list(self._plot_panel.selected_projection_labels())
+                    if hasattr(self._plot_panel, "selected_projection_labels")
+                    else []
+                )
+                axis_datasets = self._build_vector_axis_datasets(targets, labels)
+                if labels and all(axis_datasets.get(label) for label in labels):
                     render_mode = "vector_all"
                     rendered_targets = [
-                        dataset
-                        for axis in ("P_x", "P_y", "P_z")
-                        for dataset in axis_datasets.get(axis, [])
+                        dataset for label in labels for dataset in axis_datasets.get(label, [])
                     ]
                     self._plot_panel.plot_vector_subplots(axis_datasets)
                     return
@@ -1993,8 +2133,10 @@ class MainWindow(QMainWindow):
                 self._plot_panel.get_current_polarization_axis()
             )
 
-        blocked = active_axis == "ALL"
-        reason = "Vector All mode is ambiguous for fitting. Select x, y, or z before running a fit."
+        # In the stacked multi-subplot view a fit acts on the selected subplot
+        # (the fit target). Only block if somehow nothing is selected.
+        blocked = active_axis == "ALL" and self._current_single_fit_projection() is None
+        reason = "Click a subplot to choose the projection to fit."
         return blocked, reason if blocked else ""
 
     def _update_fit_block_state(self) -> None:
@@ -2009,8 +2151,32 @@ class MainWindow(QMainWindow):
         blocked, reason = self._current_fit_block_state()
         if hasattr(self._fit_panel, "set_fit_blocked"):
             self._fit_panel.set_fit_blocked(blocked, reason)
+        if hasattr(self._fit_panel, "set_active_projection_label"):
+            projection = self._current_single_fit_projection()
+            tint = (
+                self._plot_panel.projection_tint(projection)
+                if projection and hasattr(self._plot_panel, "projection_tint")
+                else None
+            )
+            self._fit_panel.set_active_projection_label(projection, tint)
         if self._multi_group_fit_window is not None:
             self._multi_group_fit_window.set_fit_blocked(blocked, reason)
+
+    def _on_fit_target_projection_changed(self, label: str) -> None:
+        """Re-target the single fit when the user clicks a different subplot.
+
+        Critically, the fit must run on the *selected* projection's asymmetry,
+        not whatever axis the underlying dataset was last reduced to. The
+        stacked subplots are rendered from per-projection clones, so we re-reduce
+        the live target dataset(s) onto the selected projection's forward/backward
+        pair before rebinding the fit panel — otherwise a fit clicked on P_y would
+        minimise against P_x's curve yet be recorded under P_y.
+        """
+        projection = self._normalize_vector_axis(label)
+        if projection in ("P_x", "P_y", "P_z"):
+            self._synchronize_targets_to_axis(self._selected_or_current_datasets(), projection)
+        self._rebind_single_fit_to_active_projection()
+        self._update_fit_block_state()
 
     def _on_plot_polarization_axis_changed(self, axis_text: str) -> None:
         """Recompute displayed datasets using the selected vector polarization axis."""
@@ -2021,6 +2187,7 @@ class MainWindow(QMainWindow):
         if axis == "ALL":
             self._render_current_selection_plot()
             self._refresh_vector_axis_selector()
+            self._rebind_single_fit_to_active_projection()
             self._update_fit_block_state()
             self._log_panel.log("Set vector polarization axis to ALL.")
             return
@@ -2045,6 +2212,7 @@ class MainWindow(QMainWindow):
             pairs = self._vector_axis_pairs_for_grouping(
                 payload.get("groups", {}),
                 payload.get("group_names"),
+                payload.get("projections"),
             )
             if axis not in pairs:
                 continue
@@ -2063,8 +2231,23 @@ class MainWindow(QMainWindow):
         self._data_browser._rebuild_table()
         self._render_current_selection_plot()
         self._refresh_vector_axis_selector()
+        self._rebind_single_fit_to_active_projection()
         self._update_fit_block_state()
         self._log_panel.log(f"Set vector polarization axis to {axis} for {updated} dataset(s).")
+
+    def _rebind_single_fit_to_active_projection(self) -> None:
+        """Re-point the single-fit panel at the current dataset's active projection.
+
+        Switching the displayed polarization axis changes which per-projection
+        ``FitSlot`` the single-fit form should show. ``set_dataset`` re-runs the
+        restore mediator, so the form follows the selected projection's stored
+        fit (or blanks for an unfit one).
+        """
+        if self._current_dataset is None:
+            return
+        if self._plot_workspace.active_domain() != "time":
+            return
+        self._fit_panel.set_dataset(self._get_fit_dataset(self._current_dataset))
 
     # ── slots ──────────────────────────────────────────────────────────
 
@@ -2699,6 +2882,10 @@ class MainWindow(QMainWindow):
             included.add("temperature")
         else:
             included.discard("temperature")
+        if self._data_browser.dataset_uses_field_from_log(run_number):
+            included.add("field")
+        else:
+            included.discard("field")
         return included
 
     def _on_run_info_field_inclusion_changed(
@@ -2711,18 +2898,29 @@ class MainWindow(QMainWindow):
         if field_key == "temperature" and run_number is not None:
             self._data_browser.set_dataset_temperature_from_log(run_number, include)
             return
+        if field_key == "field" and run_number is not None:
+            self._data_browser.set_dataset_field_from_log(run_number, include)
+            return
         if include:
             self._data_browser.add_extra_column(field_key)
         else:
             self._data_browser.remove_extra_column(field_key)
         if field_key == "temperature":
             self._sync_temperature_log_option_action()
+        elif field_key == "field":
+            self._sync_field_log_option_action()
 
     def _on_use_temperature_from_log_toggled(self, checked: bool) -> None:
         """Toggle Data Browser temperature display between header and log mean."""
         if not hasattr(self, "_data_browser"):
             return
         self._data_browser.set_use_temperature_from_log(checked)
+
+    def _on_use_field_from_log_toggled(self, checked: bool) -> None:
+        """Toggle Data Browser field display between header and log mean."""
+        if not hasattr(self, "_data_browser"):
+            return
+        self._data_browser.set_use_field_from_log(checked)
 
     def _on_perf_logging_toggled(self, checked: bool) -> None:
         """Persist and report GUI performance logging state."""
@@ -2749,6 +2947,45 @@ class MainWindow(QMainWindow):
         self._log_panel.log(f"Plot decimation {state}.")
         self.statusBar().showMessage(f"Plot decimation {state}")
 
+    def _on_rrf_advanced_toggled(self, checked: bool) -> None:
+        """Persist and apply the Advanced rotating-reference-frame toggle.
+
+        App-level chrome (QSettings), not per-project. Gates the entire RRF
+        surface: the plot controls and the rotating-frame fit. RRF *parameters*
+        continue to live in ``plot_state["rrf"]``.
+        """
+        enabled = bool(checked)
+        self._settings.setValue(_RRF_ADVANCED_SETTINGS_KEY, enabled)
+        self._apply_rrf_advanced_to_panels(enabled)
+        state = "enabled" if enabled else "disabled"
+        self._log_panel.log(f"Rotating reference frame {state}.")
+        self.statusBar().showMessage(f"Rotating reference frame {state}")
+
+    def _on_fit_quality_confidence(self) -> None:
+        """Prompt for and persist the χ² quality-band confidence level (percent).
+
+        The band is the χ²ᵣ good/poor/overdone target; raising the confidence
+        widens it toward χ²ᵣ = 1. Stored in QSettings and read by every fit
+        surface (recorded records, the live fit-panel chip, the model-fit dialog)
+        on the next fit — a settings entry, not a per-fit control.
+        """
+        current = fit_quality_confidence(self._settings)
+        percent, ok = QInputDialog.getDouble(
+            self,
+            "Fit quality confidence",
+            "Two-sided χ² confidence level R (%):\n"
+            "the good/poor/overdone band; higher = more forgiving.",
+            value=current * 100.0,
+            minValue=50.0,
+            maxValue=99.9,
+            decimals=1,
+        )
+        if not ok:
+            return
+        stored = set_fit_quality_confidence(percent / 100.0, self._settings)
+        self._log_panel.log(f"Fit quality confidence set to {stored:.1%}.")
+        self.statusBar().showMessage(f"Fit quality confidence: {stored:.1%}")
+
     def _sync_temperature_log_option_action(self) -> None:
         """Keep the Options menu temperature action aligned with browser state."""
         action = getattr(self, "_use_temperature_from_log_action", None)
@@ -2756,6 +2993,15 @@ class MainWindow(QMainWindow):
             return
         action.blockSignals(True)
         action.setChecked(self._data_browser.use_temperature_from_log())
+        action.blockSignals(False)
+
+    def _sync_field_log_option_action(self) -> None:
+        """Keep the Options menu field action aligned with browser state."""
+        action = getattr(self, "_use_field_from_log_action", None)
+        if action is None or not hasattr(self, "_data_browser"):
+            return
+        action.blockSignals(True)
+        action.setChecked(self._data_browser.use_field_from_log())
         action.blockSignals(False)
 
     def _on_grouping_requested(self, run_number: int) -> None:
@@ -3067,6 +3313,10 @@ class MainWindow(QMainWindow):
         if vector_axis is not None:
             payload["vector_axis"] = vector_axis
 
+        projections_raw = grouping.get("projections")
+        if isinstance(projections_raw, list) and projections_raw:
+            payload["projections"] = [dict(p) for p in projections_raw if isinstance(p, dict)]
+
         group_names_raw = grouping.get("group_names")
         if isinstance(group_names_raw, dict) and group_names_raw:
             payload["group_names"] = {int(k): str(v) for k, v in group_names_raw.items()}
@@ -3229,13 +3479,35 @@ class MainWindow(QMainWindow):
         group_names_for_axis = grouping_result.get("group_names")
         if not isinstance(group_names_for_axis, dict) and isinstance(existing_grouping, dict):
             group_names_for_axis = existing_grouping.get("group_names")
-        axis_pairs = self._vector_axis_pairs_for_grouping(groups, group_names_for_axis)
+        # An explicit "projections" key (even an empty list, which the dialog
+        # always emits) is authoritative; only inherit from the existing grouping
+        # when the caller is a partial update that omits the key entirely.
+        # Otherwise switching a vector dataset to a single-pair preset would
+        # resurrect the stale vector projections.
+        if "projections" in grouping_result:
+            projections_for_axis = grouping_result.get("projections")
+        elif isinstance(existing_grouping, dict):
+            projections_for_axis = existing_grouping.get("projections")
+        else:
+            projections_for_axis = None
+        projections_to_store = (
+            [dict(p) for p in projections_for_axis if isinstance(p, dict)]
+            if isinstance(projections_for_axis, list) and projections_for_axis
+            else None
+        )
+        axis_pairs = self._vector_axis_pairs_for_grouping(
+            groups, group_names_for_axis, projections_for_axis
+        )
         vector_axis = self._normalize_vector_axis(
             grouping_result.get("vector_axis", existing_grouping.get("vector_axis"))
         )
         if axis_pairs:
+            # The selected axis may not be present (a partial subset, or a
+            # non-canonical projection set whose labels _normalize_vector_axis
+            # cannot represent); fall back to P_z when available, else the first
+            # declared projection, never indexing a missing key.
             if vector_axis not in axis_pairs:
-                vector_axis = "P_z"
+                vector_axis = "P_z" if "P_z" in axis_pairs else next(iter(axis_pairs))
             forward_gid, backward_gid = axis_pairs[vector_axis]
 
         vector_alphas = self._resolve_vector_alpha_values(grouping_result, existing_grouping)
@@ -3413,6 +3685,7 @@ class MainWindow(QMainWindow):
                 }
             if vector_axis and axis_pairs:
                 run.grouping["vector_axis"] = vector_axis
+            self._store_projections(run.grouping, projections_to_store)
             preset_name = grouping_result.get("grouping_preset")
             if preset_name:
                 run.grouping["grouping_preset"] = str(preset_name)
@@ -3757,6 +4030,7 @@ class MainWindow(QMainWindow):
             run.grouping["included_groups"] = {int(k): bool(v) for k, v in included_groups.items()}
         if vector_axis and axis_pairs:
             run.grouping["vector_axis"] = vector_axis
+        self._store_projections(run.grouping, projections_to_store)
         preset_name = grouping_result.get("grouping_preset")
         if preset_name:
             run.grouping["grouping_preset"] = str(preset_name)
@@ -4178,11 +4452,15 @@ class MainWindow(QMainWindow):
         records: list[tuple[str, dict]] = []
         for run_number, container in sorted(self._project_model.datasets.items()):
             for rep_type, representation in container.by_type.items():
-                slot = getattr(representation, "fit", None)
-                result = getattr(slot, "result", None) if slot is not None else None
-                if isinstance(result, dict) and result.get("parameters"):
-                    rep_label = getattr(rep_type, "value", str(rep_type))
-                    records.append((f"Run {run_number} · {rep_label}", result))
+                rep_label = getattr(rep_type, "value", str(rep_type))
+                # Include every stored slot — the default fit and each
+                # per-projection single fit — so a fit taken in a vector
+                # projection view is not silently absent from the report.
+                for projection, slot in representation.iter_fit_slots():
+                    result = getattr(slot, "result", None)
+                    if isinstance(result, dict) and result.get("parameters"):
+                        suffix = f" · {projection}" if projection else ""
+                        records.append((f"Run {run_number} · {rep_label}{suffix}", result))
         return records
 
     def _on_export_fit_report(self) -> None:
@@ -6527,9 +6805,18 @@ class MainWindow(QMainWindow):
         self._set_status_state("Computing MaxEnt…")
 
     def _on_cancel_maxent(self) -> None:
-        """Request cancellation of the active MaxEnt worker."""
+        """Request cancellation of the active MaxEnt worker (and any batch)."""
+        was_batch = self._maxent_batch_active
+        if was_batch:
+            # Abort the batch now (clears _maxent_batch_active), so that even if
+            # the in-flight run's cooperative cancel loses the race and it emits
+            # `finished` instead of `cancelled`, the terminal handler's
+            # `if self._maxent_batch_active` guard is already False — no further
+            # run launches and no moments send fires for a cancelled batch.
+            self._abort_maxent_batch()
         if self._maxent_worker is None:
-            self._set_fourier_status("No MaxEnt calculation is running.")
+            if not was_batch:
+                self._set_fourier_status("No MaxEnt calculation is running.")
             return
         self._maxent_worker.cancel()
         self._set_fourier_status("Cancelling MaxEnt calculation...")
@@ -6614,6 +6901,9 @@ class MainWindow(QMainWindow):
         self._log_panel.log(message)
         self._log_maxent_perf()
         self._finish_maxent()
+        if self._maxent_batch_active:
+            self._maxent_batch_done += 1
+            self._advance_maxent_batch()
 
     def _on_maxent_worker_error(self, message: str) -> None:
         """Handle a failed MaxEnt worker."""
@@ -6625,6 +6915,10 @@ class MainWindow(QMainWindow):
         self._log_panel.log(f"MaxEnt failed: {message}")
         self._log_maxent_perf()
         self._finish_maxent()
+        if self._maxent_batch_active:
+            # Skip the failed run and keep reconstructing the rest of the batch.
+            self._log_panel.log("MaxEnt batch: skipping the failed run.")
+            self._advance_maxent_batch()
 
     def _on_maxent_worker_cancelled(self) -> None:
         """Handle worker cancellation."""
@@ -6632,6 +6926,8 @@ class MainWindow(QMainWindow):
         self._log_panel.log("MaxEnt calculation cancelled.")
         self._log_maxent_perf()
         self._finish_maxent()
+        if self._maxent_batch_active:
+            self._abort_maxent_batch()
 
     def _finish_maxent(self) -> None:
         """Clear MaxEnt worker state after a terminal callback (GUI thread)."""
@@ -6701,6 +6997,126 @@ class MainWindow(QMainWindow):
             state=state,
             run_number=run_number,
         )
+
+    #: Cycle budget per run in a batch reconstruct (the engine early-stops at
+    #: convergence, so this is an upper bound, matching the Converge button).
+    _MAXENT_BATCH_CYCLES = 50
+
+    def _on_maxent_batch_reconstruct_and_send(self, widget) -> None:
+        """Reconstruct the selected runs' MaxEnt spectra, then send their moments.
+
+        Closes the spectral-moments gap that MaxEnt's per-run, lazy
+        reconstruction leaves: a multi-run moments send records only runs whose
+        reconstruction already exists. This queues the missing reconstructions —
+        driving the single-run worker one run at a time, reusing each run's
+        resumable state and its **own** stored MaxEnt settings (falling back to
+        the current panel settings for runs that have none) — then performs the
+        moments send, so a B_rms(T) series builds in one action. Cancel from the
+        MaxEnt panel aborts the whole queue.
+        """
+        if self._maxent_active or self._maxent_batch_active:
+            self._set_fourier_status("A MaxEnt calculation is already running.")
+            return
+
+        candidates = [
+            int(ds.run_number)
+            for ds in self._data_browser.get_selected_datasets()
+            if ds.run is not None and self._dataset_supports_maxent(ds)
+        ]
+        if not candidates:
+            self._set_fourier_status("Select grouped runs to reconstruct before sending moments.")
+            return
+
+        # Validate the active panel config — the fallback used for any run that
+        # has no stored MaxEnt settings of its own.
+        fallback = self._maxent_panel.maxent_config(cycles=self._MAXENT_BATCH_CYCLES)
+        if (
+            fallback.t_min_us is not None
+            and fallback.t_max_us is not None
+            and fallback.t_max_us <= fallback.t_min_us
+        ):
+            self._set_fourier_status("MaxEnt end time must be greater than the start time.")
+            return
+        if fallback.mode == "zf_lf" and len(self._maxent_panel.selected_group_ids()) != 2:
+            self._set_fourier_status(
+                "ZF/LF mode needs exactly two included groups (forward and backward)."
+            )
+            return
+
+        # Reconstruct only runs without a cached MaxEnt result; runs already
+        # reconstructed go straight to the moments send.
+        queue = [rn for rn in candidates if self._maxent_result_by_run.get(rn) is None]
+        self._maxent_batch_widget = widget
+        if not queue:
+            self._on_moments_send_to_trend(widget)
+            return
+
+        self._maxent_batch_config = fallback
+        self._maxent_batch_active = True
+        self._maxent_batch_queue = list(queue)
+        self._maxent_batch_total = len(queue)
+        self._maxent_batch_done = 0
+        self._advance_maxent_batch()
+
+    def _maxent_config_for_batch_run(self, dataset) -> MaxEntConfig:
+        """MaxEnt config for one batch run: its own stored settings, else fallback.
+
+        A run that has been visited or carries a persisted MaxEnt recipe is
+        reconstructed with *its* group selection / phases / window — not whichever
+        run happens to be displayed — so a heterogeneous selection reconstructs
+        each run faithfully. Runs with no settings of their own use the active
+        panel config captured at batch start (``_maxent_batch_config``).
+        """
+        run_number = int(dataset.run_number)
+        group_names = self._fourier_group_names_for_dataset(dataset)
+        state = self._maxent_panel_state_by_run.get(run_number)
+        if state is None:
+            state = self._maxent_state_from_representation(run_number, group_names)
+        if state is None:
+            return self._maxent_batch_config or self._maxent_panel.maxent_config(
+                cycles=self._MAXENT_BATCH_CYCLES
+            )
+        normalised = self._normalise_maxent_panel_state(dict(state), group_names)
+        return MaxEntConfig.from_dict({**normalised, "outer_cycles": self._MAXENT_BATCH_CYCLES})
+
+    def _advance_maxent_batch(self) -> None:
+        """Launch the next queued reconstruction, or send moments when drained."""
+        while self._maxent_batch_queue:
+            run_number = self._maxent_batch_queue.pop(0)
+            dataset = self._data_browser.get_dataset(run_number)
+            if dataset is None or dataset.run is None or not self._dataset_supports_maxent(dataset):
+                continue  # a run that can no longer be reconstructed is skipped
+            self._set_fourier_status(
+                f"MaxEnt batch: reconstructing run {run_number} "
+                f"({self._maxent_batch_done + 1}/{self._maxent_batch_total})…"
+            )
+            self._launch_maxent_worker(
+                run=dataset.run,
+                config=self._maxent_config_for_batch_run(dataset),
+                cycles=self._MAXENT_BATCH_CYCLES,
+                state=self._maxent_state_by_run.get(run_number),
+                run_number=run_number,
+            )
+            return
+
+        widget = self._maxent_batch_widget
+        sent = self._maxent_batch_done
+        self._maxent_batch_active = False
+        self._maxent_batch_widget = None
+        self._maxent_batch_config = None
+        if widget is not None:
+            self._on_moments_send_to_trend(widget)
+        self._set_fourier_status(
+            f"MaxEnt batch: reconstructed {sent} run(s); moments sent to trend."
+        )
+
+    def _abort_maxent_batch(self) -> None:
+        """Tear down batch state after a cancellation (records no moments send)."""
+        self._maxent_batch_active = False
+        self._maxent_batch_queue = []
+        self._maxent_batch_widget = None
+        self._maxent_batch_config = None
+        self._set_fourier_status("MaxEnt batch cancelled.")
 
     def _on_apply_maxent_to_selection(self) -> None:
         """Copy the active run's MaxEnt recipe to other selected runs."""
@@ -6845,13 +7261,13 @@ class MainWindow(QMainWindow):
                 self._sync_fourier_panel_for_dataset(dataset)
                 if hasattr(self._frequency_plot_panel, "update_frequency_reference"):
                     self._frequency_plot_panel.update_frequency_reference(dataset)
-                active_axis = None
-                if hasattr(self._plot_panel, "get_current_polarization_axis"):
-                    active_axis = self._normalize_vector_axis(
-                        self._plot_panel.get_current_polarization_axis()
-                    )
-                if active_axis in {"P_x", "P_y", "P_z"}:
-                    self._synchronize_targets_to_axis([dataset], active_axis)
+                # Reduce the newly selected run to the projection the fit will run
+                # on — the selected single axis, or the fit-target subplot in the
+                # stacked (ALL) view — so a fit binds to that projection's curve
+                # rather than whatever axis the run was last reduced to.
+                fit_projection = self._current_single_fit_projection()
+                if fit_projection in {"P_x", "P_y", "P_z"}:
+                    self._synchronize_targets_to_axis([dataset], fit_projection)
                 self._render_current_selection_plot()
                 self._sync_frequency_plot_for_current_dataset()
                 self._refresh_vector_axis_selector()
@@ -7152,13 +7568,63 @@ class MainWindow(QMainWindow):
         return super().eventFilter(obj, event)
 
     @staticmethod
-    def _fit_result_summary(fit_result) -> dict:
+    def _composite_model_label(composite: object) -> str | None:
+        """Human-readable model expression from a serialised composite model.
+
+        e.g. ``{"component_names": ["Exponential", "Constant"], "operators":
+        ["+"]}`` -> ``"Exponential + Constant"``. Returns ``None`` when the
+        structure is missing or empty.
+        """
+        if not isinstance(composite, dict):
+            return None
+        names = composite.get("component_names") or []
+        operators = composite.get("operators") or []
+        if not names:
+            return None
+        parts = [str(names[0])]
+        for op, name in zip(operators, names[1:]):
+            parts.append(str(op))
+            parts.append(str(name))
+        return " ".join(parts)
+
+    def _fit_result_summary(
+        self,
+        fit_result,
+        *,
+        provenance: str | None = None,
+        model_name: str | None = None,
+        fit_range: str | None = None,
+        timestamp: str | None = None,
+    ) -> dict:
         """Return a JSON-serialisable summary of a fit result.
 
         Delegates to the shared core helper so the run-batch and grouped-series
-        recording paths produce identically shaped ``results_by_run`` entries.
+        recording paths produce identically shaped ``results_by_run`` entries,
+        then stamps the additive provenance keys (``model_name``, ``fit_range``,
+        ``timestamp``, ``provenance``, ``npar``, ``ndof``) the Qt-free core
+        cannot source. ``npar`` is the free-parameter count (those carrying a
+        HESSE σ) and ``ndof`` is read back from the χ² quality block; both are
+        omitted when unavailable.
         """
-        return fit_result_summary(fit_result)
+        summary = fit_result_summary(fit_result, confidence=fit_quality_confidence(self._settings))
+        uncertainties = summary.get("uncertainties") or {}
+        quality = summary.get("quality") or {}
+        ndof = quality.get("dof") if isinstance(quality, dict) else None
+        enrich_summary_provenance(
+            summary,
+            model_name=model_name,
+            fit_range=fit_range,
+            timestamp=timestamp,
+            provenance=provenance,
+            npar=(len(uncertainties) or None),
+            ndof=ndof,
+        )
+        return summary
+
+    @staticmethod
+    def _fit_record_timestamp() -> str:
+        """ISO-8601 local timestamp for a freshly recorded fit (the core stays clock-free)."""
+        return datetime.now().astimezone().isoformat(timespec="seconds")
 
     # ── Representation-aware trend panel (Phase 4) ────────────────────────────
 
@@ -7365,28 +7831,106 @@ class MainWindow(QMainWindow):
         self._on_fit_parameters_group_fits_deleted(batch_id, runs)
         self._refresh_trend_panel()
 
+    def _current_single_fit_projection(self) -> str | None:
+        """Return the projection a single fit should be keyed under, or ``None``.
+
+        A single-axis vector view (``P_x``/``P_y``/``P_z``) keys the fit onto
+        that projection; the ``ALL`` aggregate, a non-vector view, and the
+        frequency domain all key onto the default slot (``None``). Reading the
+        main time plot's axis only in the time domain avoids mis-keying a
+        frequency fit onto a stale polarization axis.
+        """
+        if self._plot_workspace.active_domain() != "time":
+            return None
+        if not hasattr(self._plot_panel, "get_current_polarization_axis"):
+            return None
+        axis = self._normalize_vector_axis(self._plot_panel.get_current_polarization_axis())
+        if axis == "ALL":
+            # Stacked multi-subplot view: the selected subplot is the fit target.
+            if hasattr(self._plot_panel, "fit_target_projection"):
+                return self._plot_panel.fit_target_projection()
+            return None
+        return axis if axis is not None else None
+
+    def _single_fit_restore_payload(self, dataset) -> dict | None:
+        """Resolve the persisted single-fit form payload for *dataset*'s active slot.
+
+        Mediator for ``FitPanel.set_dataset`` (installed via
+        ``set_single_fit_restore_provider``). Returns the active ``(run,
+        representation, projection)`` slot's ``ui_state`` when present; an empty
+        dict to force a blank form for a genuine-but-unfit *projection* (so
+        projections never inherit each other's fit); or ``None`` to defer to the
+        panel's run-keyed restore (the default slot and legacy projects with no
+        stored ``ui_state``).
+        """
+        if dataset is None:
+            return None
+        rep_type = self._active_representation_type()
+        if rep_type is None:
+            return None
+        try:
+            run_number = int(dataset.run_number)
+        except (TypeError, ValueError):
+            return None
+        representation = self._project_model.representation(run_number, rep_type)
+        if representation is None:
+            return None
+        projection = self._current_single_fit_projection()
+        slot = representation.fit_for(projection)
+        ui_state = slot.ui_state if isinstance(slot.ui_state, dict) else {}
+        if ui_state:
+            return copy.deepcopy(ui_state)
+        # No persisted form payload for this slot. A genuine projection always
+        # blanks (it must never inherit another projection's fit). The default
+        # slot blanks too once *any* projection has been fit, because recording
+        # a projection fit writes that projection's form into the panel's
+        # run-keyed blob (`_on_single_fit_completed`) — deferring to it would let
+        # the ALL/aggregate view inherit a single projection's fit. Only a run
+        # with no projection fits defers to the blob (the default-slot and
+        # legacy-project path, where the blob is the authoritative single store).
+        if projection is not None or representation.projection_fits:
+            return {}
+        return None
+
     def _record_single_fit_slot(self, fit_result) -> None:
         """Write the active representation's single FitSlot into the project model."""
         rep_type = self._active_representation_type()
         if rep_type is None or self._current_dataset is None:
             return
-        if not hasattr(self._fit_panel, "get_single_state"):
+        if not hasattr(self._fit_panel, "get_single_form_state"):
             return
-        state = self._fit_panel.get_single_state()
-        if not isinstance(state, dict):
+        # One serialise of the single-fit form feeds both the structured slot
+        # fields and its ``ui_state`` restore payload.
+        form_state = self._fit_panel.get_single_form_state()
+        if not isinstance(form_state, dict):
             return
         run_number = int(self._current_dataset.run_number)
+        projection = self._current_single_fit_projection()
         representation = self._project_model.ensure_dataset(run_number).ensure(rep_type)
-        representation.fit = FitSlot(
-            model=state.get("composite_model"),
-            parameters=[dict(p) for p in state.get("parameters", []) if isinstance(p, dict)],
-            result={
-                **self._fit_result_summary(fit_result),
-                "result_html": state.get("result_html"),
-            },
-            provenance="single",
+        representation.set_fit_for(
+            projection,
+            FitSlot(
+                model=form_state.get("composite_model"),
+                parameters=[
+                    dict(p) for p in form_state.get("parameters", []) if isinstance(p, dict)
+                ],
+                result={
+                    **self._fit_result_summary(
+                        fit_result,
+                        provenance="single",
+                        model_name=self._composite_model_label(form_state.get("composite_model")),
+                        fit_range=self._fit_panel.single_fit_range_text(),
+                        timestamp=self._fit_record_timestamp(),
+                    ),
+                    "result_html": form_state.get("result_html"),
+                },
+                provenance="single",
+                ui_state=form_state,
+            ),
         )
-        # Editing a batch member's model via a single fit may diverge it.
+        # A single fit on the default slot (non-vector / ALL view) can change a
+        # batch member's model and diverge it; per-projection single fits are
+        # not series members, so they never affect divergence.
         self._project_model.refresh_divergence()
 
     def _record_global_fit_batch(self, normalized_payloads: dict, global_params) -> None:
@@ -7418,8 +7962,17 @@ class MainWindow(QMainWindow):
 
         member_runs = sorted(int(r) for r in normalized_payloads)
         canonical_model = state.get("composite_model")
+        model_label = self._composite_model_label(canonical_model)
+        fit_range = self._fit_panel.batch_fit_range_text()
+        timestamp = self._fit_record_timestamp()
         results_by_run = {
-            int(run): self._fit_result_summary(payload[0])
+            int(run): self._fit_result_summary(
+                payload[0],
+                provenance=provenance,
+                model_name=model_label,
+                fit_range=fit_range,
+                timestamp=timestamp,
+            )
             for run, payload in normalized_payloads.items()
         }
         batch = FitSeries(
@@ -7448,7 +8001,7 @@ class MainWindow(QMainWindow):
             representation.fit = FitSlot(
                 model=canonical_model,
                 parameters=template_parameters,
-                result=self._fit_result_summary(payload[0]),
+                result=dict(results_by_run[int(run)]),
                 provenance=provenance,
                 batch_id=batch.batch_id,
             )
@@ -7796,6 +8349,24 @@ class MainWindow(QMainWindow):
                 continue
             source_by_key[key] = int(metadata.get("source_run_number", abs(key) // 1000))
 
+        physics_roles = {
+            str(name): str(role)
+            for name, role in (state.get("param_roles") or {}).items()
+            if role in ("global", "local", "fixed")
+        }
+        nuisance_params = [str(name) for name in (state.get("nuisance_params") or [])]
+        canonical_model = state.get("composite_model")
+        provenance = "global" if any(r == "global" for r in physics_roles.values()) else "batch"
+        model_label = self._composite_model_label(canonical_model)
+        fit_range = None
+        if self._multi_group_fit_window is not None and hasattr(
+            self._multi_group_fit_window, "current_fit_range_text"
+        ):
+            fit_range = self._multi_group_fit_window.current_fit_range_text()
+        if fit_range is None:
+            fit_range = self._fit_panel.batch_fit_range_text()
+        timestamp = self._fit_record_timestamp()
+
         member_keys: list[int] = []
         member_source_run: dict[int, int] = {}
         results_by_run: dict[int, dict] = {}
@@ -7807,18 +8378,15 @@ class MainWindow(QMainWindow):
             fit_result = payload[0] if isinstance(payload, tuple) and payload else payload
             member_keys.append(key)
             member_source_run[key] = source_by_key.get(key, abs(key) // 1000)
-            results_by_run[key] = self._fit_result_summary(fit_result)
+            results_by_run[key] = self._fit_result_summary(
+                fit_result,
+                provenance=provenance,
+                model_name=model_label,
+                fit_range=fit_range,
+                timestamp=timestamp,
+            )
         if not member_keys:
             return
-
-        physics_roles = {
-            str(name): str(role)
-            for name, role in (state.get("param_roles") or {}).items()
-            if role in ("global", "local", "fixed")
-        }
-        nuisance_params = [str(name) for name in (state.get("nuisance_params") or [])]
-        canonical_model = state.get("composite_model")
-        provenance = "global" if any(r == "global" for r in physics_roles.values()) else "batch"
 
         series = FitSeries(
             f"batch-{self._next_batch_index}",
@@ -8548,6 +9116,145 @@ class MainWindow(QMainWindow):
             )
         )
 
+    def _on_refit_coadded_requested(self, run_numbers) -> None:
+        """Combine the selected runs and re-fit them as one co-added member.
+
+        Mirrors WiMDA's right-click "co-add and re-fit" (``FitTableUnit.pas``):
+        the selected runs are summed at the raw-count level (``combine_runs``)
+        and fitted off-thread with the active single-fit model, then recorded as
+        a one-member computed trend series carrying ``combined_from`` provenance.
+        A deterministic ``batch_id`` (model + member set) means re-running the
+        same selection replaces its row rather than duplicating it.
+        """
+        from asymmetry.core.data.combine import (
+            combine_runs,
+            reduce_combined_run,
+            runs_with_dataset_metadata,
+        )
+
+        runs = sorted({int(r) for r in (run_numbers or [])})
+        if len(runs) < 2:
+            return
+        if self._refit_coadded_worker is not None:
+            self.statusBar().showMessage("A co-added re-fit is already running.")
+            return
+
+        source_datasets = []
+        for rn in runs:
+            dataset = self._data_browser.get_dataset(rn)
+            if dataset is None or dataset.run is None or not dataset.run.histograms:
+                QMessageBox.warning(
+                    self,
+                    "Re-fit as Co-added",
+                    "Every selected run needs detector histograms to co-add and fit.",
+                )
+                return
+            source_datasets.append(dataset)
+        # Carry the browser's displayed scalar overrides onto the run copies so
+        # the combined member's event-weighted temperature/field — the trend
+        # row's x-coordinate — match what the user sees.
+        source_runs = runs_with_dataset_metadata(source_datasets)
+
+        rep_type = self._active_representation_type()
+        if rep_type is None:
+            QMessageBox.warning(
+                self,
+                "Re-fit as Co-added",
+                "Select a fittable representation before re-fitting a co-added selection.",
+            )
+            return
+        try:
+            model, seed = self._fit_panel.single_fit_model_and_seed()
+        except ValueError as exc:
+            QMessageBox.warning(self, "Re-fit as Co-added", f"Fix the fit parameters first: {exc}")
+            return
+        if model is None or seed is None:
+            return
+
+        member_key = self._refit_coadded_member_key(runs)
+        label = " + ".join(str(r) for r in runs)
+
+        from asymmetry.core.fitting.engine import FitEngine
+
+        def _work(_worker, src=source_runs, key=member_key, lbl=label, mdl=model, sd=seed):
+            combined_run = combine_runs(src, sign=1, run_number=key, label=lbl)
+            combined_dataset = reduce_combined_run(combined_run)
+            result = FitEngine().fit(combined_dataset, mdl.function, sd)
+            return combined_dataset, result
+
+        self.statusBar().showMessage(f"Re-fitting co-added runs {label}…")
+        self._refit_coadded_worker = self._tasks.start(
+            _work,
+            on_finished=lambda payload, r=runs, m=model, key=member_key, rt=rep_type, lbl=label: (
+                self._on_refit_coadded_finished(payload, r, m, key, rt, lbl)
+            ),
+            on_error=self._on_refit_coadded_error,
+        )
+
+    def _on_refit_coadded_finished(self, payload, runs, model, member_key, rep_type, label) -> None:
+        """Record a successful co-added re-fit as a computed trend row."""
+        self._refit_coadded_worker = None
+        combined_dataset, result = payload
+        if result is None or not getattr(result, "success", False):
+            self.statusBar().showMessage(f"Co-added re-fit of {label} did not converge.")
+            self._log_panel.log(f"Co-added re-fit of runs {label} did not converge.")
+            return
+
+        meta = combined_dataset.metadata if isinstance(combined_dataset.metadata, dict) else {}
+        values = {p.name: float(p.value) for p in result.parameters}
+        values["chi2_r"] = float(result.reduced_chi_squared)
+        summary = {
+            "success": True,
+            "parameters": values,
+            "uncertainties": {k: float(v) for k, v in result.uncertainties.items()},
+            "chi_squared": float(result.chi_squared),
+            "reduced_chi_squared": float(result.reduced_chi_squared),
+            "run_label": label,
+            "field": _safe_float(meta.get("field")),
+            "temperature": _safe_float(meta.get("temperature")),
+            "combined_from": list(runs),
+        }
+        batch_id = self._refit_coadded_batch_id(model, runs)
+        self._add_results_series(
+            batch_id,
+            rep_type,
+            f"Re-fit co-added: {label}",
+            [member_key],
+            {member_key: summary},
+            extra={"combined_from": list(runs)},
+        )
+        self._refresh_trend_panel()
+        chi = float(result.reduced_chi_squared)
+        self.statusBar().showMessage(f"Recorded co-added re-fit of {label} (χ²ᵣ = {chi:.3f}).")
+        self._log_panel.log(f"Re-fit co-added runs {label}: χ²ᵣ = {chi:.3f}")
+
+    def _on_refit_coadded_error(self, message) -> None:
+        self._refit_coadded_worker = None
+        self.statusBar().showMessage(f"Co-added re-fit failed: {message}")
+        self._log_panel.log(f"Co-added re-fit failed: {message}")
+
+    def _refit_coadded_member_key(self, runs: list[int]) -> int:
+        """Deterministic synthetic member key for a co-added re-fit selection.
+
+        Far below any real run or browser-combined id, and stable across re-runs
+        of the same selection so the replaced series keeps the same member key.
+        """
+        digest = hashlib.sha1(",".join(map(str, runs)).encode("utf-8")).hexdigest()[:8]
+        return -(2_100_000_000 + int(digest, 16) % 100_000_000)
+
+    def _refit_coadded_batch_id(self, model, runs: list[int]) -> str:
+        """Deterministic ``refit-coadded-<digest>`` id from model + member set.
+
+        Re-running the same selection with the same model replaces its series
+        (mirrors :meth:`_spectral_moments_batch_id`).
+        """
+        import json
+
+        model_key = json.dumps(model.to_dict(), sort_keys=True, default=str)
+        logical = f"{model_key}::{','.join(map(str, runs))}"
+        digest = hashlib.sha1(logical.encode("utf-8")).hexdigest()[:12]
+        return f"refit-coadded-{digest}"
+
     def _on_single_model_fit_completed(self, parameter_name, x_key, fit) -> None:
         """Record a single-series model fit's per-range outputs as a series."""
         self._record_single_model_fit_results_series(parameter_name, x_key, fit)
@@ -8657,14 +9364,12 @@ class MainWindow(QMainWindow):
     def _update_selected_datasets(self, *_args) -> None:
         """Update the fit panel with currently selected datasets."""
         selected = self._data_browser.get_selected_datasets()
-        active_axis = None
-        if hasattr(self._plot_panel, "get_current_polarization_axis"):
-            active_axis = self._normalize_vector_axis(
-                self._plot_panel.get_current_polarization_axis()
-            )
+        # Reduce the selection to the projection a fit will run on — the active
+        # single axis, or the fit-target subplot in the stacked (ALL) view.
+        fit_projection = self._current_single_fit_projection()
 
-        if selected and active_axis in {"P_x", "P_y", "P_z"}:
-            updated = self._synchronize_targets_to_axis(selected, active_axis)
+        if selected and fit_projection in {"P_x", "P_y", "P_z"}:
+            updated = self._synchronize_targets_to_axis(selected, fit_projection)
             if updated > 0:
                 self._data_browser._rebuild_table()
                 selected = self._data_browser.get_selected_datasets()
@@ -8825,20 +9530,36 @@ class MainWindow(QMainWindow):
         ):
             self._set_status_state("Idle")
 
-    def _on_cursor_coords_changed(self, x: object, y: object) -> None:
-        """Update the status bar right label with the current cursor position."""
+    def _on_cursor_coords_changed(self, payload: object) -> None:
+        """Update the status bar right label with the cursor readout.
+
+        *payload* is the dict emitted by the plot panel (snapped coordinate plus
+        the optional spectrum-reading readouts), or ``None`` to clear.
+        """
         if not hasattr(self, "_status_coords_label"):
             return
-        if x is None or y is None:
+        if not isinstance(payload, dict) or payload.get("x") is None or payload.get("y") is None:
             self._status_coords_label.setText("")
             return
+        x = float(payload["x"])
+        y = float(payload["y"])
         domain = self._plot_workspace.active_view() if hasattr(self, "_plot_workspace") else ""
         if domain == "frequency":
-            text = f"ν = {float(x):.3f} MHz  |F| = {float(y):.4g}"
+            text = f"ν = {x:.3f} MHz  |F| = {y:.4g}"
         else:
             # χ²/ν lives in its own permanent label (_status_chi2_label);
             # appending it here would show it twice.
-            text = f"x = {float(x):.3f} μs  y = {float(y):.2f} %"
+            text = f"t = {x:.3f} μs  A = {y:.2f} %"
+        snr = payload.get("snr")
+        if snr is not None:
+            text += f"  S/N = {float(snr):.3g}"
+        peak = payload.get("peak")
+        if peak is not None:
+            text += f"  peak {float(peak[0]):.3f}={float(peak[1]):.4g}"
+        window = payload.get("window")
+        if window is not None:
+            mean, mean_err, n = window
+            text += f"  ⟨{float(mean):.4g}±{float(mean_err):.2g}⟩ ({int(n)} pts)"
         self._status_coords_label.setText(text)
 
     def _get_fit_dataset(self, dataset):
@@ -9221,16 +9942,19 @@ class MainWindow(QMainWindow):
                 _append_dataset_entry(dataset)
 
         # Combined dataset definitions. The optional "operation" field is
-        # written only for reference subtractions, so co-add entries round-trip
+        # written only for subtractions, so co-add entries round-trip
         # byte-for-byte as before (additive schema; no version bump).
         combined_signs = getattr(self._data_browser, "_combined_signs", {})
+        combined_methods = getattr(self._data_browser, "_combined_methods", {})
         combined_datasets = []
         for crn, src_runs in self._data_browser._combined_datasets.items():
             entry = {
                 "combined_run_number": int(crn),
                 "source_run_numbers": [int(r) for r in src_runs],
             }
-            if combined_signs.get(crn, 1) == -1:
+            if combined_methods.get(crn) == "subtract_signed":
+                entry["operation"] = "subtract_signed"
+            elif combined_signs.get(crn, 1) == -1:
                 entry["operation"] = "subtract_reference"
             combined_datasets.append(entry)
 
@@ -9682,9 +10406,12 @@ class MainWindow(QMainWindow):
             for combined_info in state.get("combined_datasets", []):
                 old_id = combined_info.get("combined_run_number")
                 src_runs = combined_info.get("source_run_numbers", [])
-                sign = -1 if combined_info.get("operation") == "subtract_reference" else 1
+                operation = combined_info.get("operation")
+                sign = -1 if operation in ("subtract_reference", "subtract_signed") else 1
                 if all(rn in loaded_run_numbers for rn in src_runs):
-                    new_id = self._data_browser.add_combined_dataset(src_runs, sign=sign)
+                    new_id = self._data_browser.add_combined_dataset(
+                        src_runs, sign=sign, operation=operation
+                    )
                     if new_id is not None and old_id is not None:
                         combined_id_map[int(old_id)] = new_id
                     elif new_id is None:
@@ -9708,6 +10435,7 @@ class MainWindow(QMainWindow):
             ]
         self._data_browser.restore_state(browser_state)
         self._sync_temperature_log_option_action()
+        self._sync_field_log_option_action()
 
         # ── restore plot state ─────────────────────────────────────────
         plot_state = state.get("plot_state", {})
@@ -9720,6 +10448,7 @@ class MainWindow(QMainWindow):
         if current_dataset is not None:
             self._current_dataset = current_dataset
         self._plot_panel.restore_state(plot_state, current_dataset)
+        self._auto_enable_rrf_for_active_project()
         self._frequency_plot_panel.restore_state(plot_state.get("frequency_plot_state", {}), None)
         self._restore_view_modes_state(state.get("view_modes_state"))
         if state.get("view_modes_state") is not None:
@@ -9965,6 +10694,7 @@ class MainWindow(QMainWindow):
             self._global_parameter_fit_window = None
         self._update_global_parameter_fit_menu_style(False)
         self._sync_temperature_log_option_action()
+        self._sync_field_log_option_action()
 
     def _add_recent_project(self, path: str) -> None:
         """Add *path* to the front of the recent-projects list in QSettings."""

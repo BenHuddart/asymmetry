@@ -327,6 +327,32 @@ def test_muonium_lf_relaxation_quenches_with_field() -> None:
     assert low[0] == 1.0
 
 
+def test_muonium_lf_relaxation_matches_kadono_eq22() -> None:
+    """Pin lambda(B) to the cited Kadono PRL 64, 665 (1990) form, Eq. 22:
+
+        lambda = delta_ex^2 tau_c / (1 + (2 pi nu_12 tau_c)^2),
+
+    with nu_12 from the exact Breit-Rabi levels and NO (1 - delta) prefactor.
+    The earlier WiMDA transcription multiplied by (1 - delta); confirm the
+    shipped curve no longer carries it by checking lambda at tabulated fields.
+    """
+    delta_ex, tau_c = 0.5, 0.01
+    A = VACUUM_MUONIUM_A_HF_MHZ
+    for B in (0.0, 100.0, 1000.0, 5000.0):
+        _d, e1, e2, _e3, _e4 = _tf_levels(B, A)
+        nu12 = abs(e1 - e2)
+        omega12_tau = 2.0 * np.pi * nu12 * tau_c
+        lam_expected = delta_ex**2 * tau_c / (1.0 + omega12_tau**2)
+        curve = muonium_lf_relaxation(T, delta_ex, tau_c, B, A)
+        lam_actual = -np.log(curve[-1]) / T[-1]
+        assert lam_actual == pytest.approx(lam_expected, rel=1e-10)
+        # Guard against silent reintroduction of the spurious (1 - delta):
+        assert lam_actual != pytest.approx((1.0 - _d) * lam_expected, rel=1e-3) or _d < 1e-6
+    # At zero field lambda = delta_ex^2 tau_c exactly (nu_12 -> 0).
+    lam0 = -np.log(muonium_lf_relaxation(T, delta_ex, tau_c, 0.0, A)[-1]) / T[-1]
+    assert lam0 == pytest.approx(delta_ex**2 * tau_c, rel=1e-10)
+
+
 # --- nuclear dipolar ---------------------------------------------------------
 
 

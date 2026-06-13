@@ -163,18 +163,37 @@ consistency with the other muonium components.
 
 **Implementation-pass resolution.** The correct citation is Kadono et al.,
 PRL **64**, 665 (1990), *"Delocalization of muonium in NaCl"* (companion to
-Kiefl et al., PRL **62**, 792 (1989), KCl). The recent JPSJ treatment
-(J. Phys. Soc. Jpn. **94**, 064601 (2025); arXiv:2410.23575) quotes the same
-BPP form 1/T₁ ≈ Δₙ²ν/(ω₁₂²+ν²) and *also* builds its approximate ω₁₂ from
-(γ_e−γ_µ)-type averages — so WiMDA's choice is a literature convention, not
-purely a bug, though WiMDA's expression additionally mixes MHz and rad/µs
-units in `x`. **Implemented:** λ(B) = (1−δ)·δ_ex²·τ_c/(1+(2πν₁₂τ_c)²) with
-ν₁₂ from the exact Breit–Rabi levels (`_tf_levels`), δ = x/√(1+x²), δ_ex in
-MHz (≡ µs⁻¹, no 2π — consistent with Δ/ν conventions elsewhere in the
-registry). The (1−δ) repolarization-quench prefactor is retained from WiMDA
-(it gives the physically required λ→0 at high LF) but is **not** present in
-the JPSJ Eq. 22 — flagged for reviewer sign-off. Fitted δ_ex/τ_c values are
-not directly comparable with WiMDA's.
+Kiefl et al., PRL **62**, 792 (1989), KCl). The recent JPSJ treatment by the
+same lead author (T. U. Ito & R. Kadono, J. Phys. Soc. Jpn. **94**, 064601
+(2025); arXiv:2410.23575) restates the intra-triplet relaxation as its Eq. 22,
+
+> 1/T₁µ ≈ Δₙ²·ν/(ω₁₂²+ν²),   x₁₂ = ω₁₂/ω₀ ≃ ½[1 − √(1+x_p²) + x_p]   (Eq. 23)
+
+and **explicitly attributes Eq. 22 to reference [27], which is exactly Kadono
+et al., PRL 64, 665 (1990)** — i.e. the same paper WiMDA cites. With τ_c = 1/ν
+this is identically δ_ex²·τ_c/(1+(ω₁₂τ_c)²). It builds its approximate ω₁₂ from
+(γ_e−γ_µ)-type averages, so WiMDA's ω₁₂ choice is a literature convention; we
+use the *exact* Breit–Rabi ω₁₂ (`_tf_levels`) instead, which is strictly more
+accurate (it also recovers the high-field electron-flip splitting that Eq. 23's
+saturation at ω₀/2 drops).
+
+**Correction (2026-06-13, reviewer-approved).** The cited Eq. 22 carries **no
+field-dependent amplitude prefactor** — the LF decoupling enters *solely*
+through ω₁₂(B). WiMDA additionally multiplies by `(1 − δ)`,
+δ = x/√(1+x²); that factor is **not** in the cited source. It is also *not* the
+spin-exchange amplitude `a₂₄ = 1 − g_z(x_p)` of the same paper's Eq. 17 (which
+has a different functional form — `1−g_z ∝ 1/(1+x_p²)`, value ½ not 1 at x=0 —
+and rides the *ω₂₄* transition, not ω₁₂). So WiMDA's `(1 − δ)` matches neither
+mechanism: it force-quenches λ→0 at high LF, whereas the genuine Kadono
+intra-triplet rate quenches only as ω₁₂(B) carries the Lorentzian off-peak.
+**Resolution: the `(1 − δ)` prefactor is removed.** Shipped form:
+
+> λ(B) = δ_ex²·τ_c/(1+(2πν₁₂τ_c)²),  ν₁₂ from the exact Breit–Rabi levels,
+> δ_ex in MHz (≡ µs⁻¹, no 2π — consistent with Δ/ν conventions elsewhere).
+
+Pinned by `test_muonium_lf_relaxation_matches_kadono_eq22` at B ∈ {0, 100, 1000,
+5000} G. Fitted δ_ex/τ_c values are not directly comparable with WiMDA's (which
+retains the spurious prefactor and the approximate ω₁₂).
 
 ## C. Dipolar DLL gaps
 
@@ -324,18 +343,24 @@ options doc.
 | muonium TF/LowTF/ZF | `MuoniumTF`/`MuoniumLowTF`/`MuoniumZF` | prior port (muonium-triplet study; positive-frequency convention documented there) |
 | `FmuFdipole`/`FmuFdipoler` | `FmuF_Linear` | r ↔ ω_d mapping: ω_d/2π = 0.1804305903/r³ MHz (r in Å) per `dipolarfunctions.dpr:119` |
 
-## Non-textbook sources requiring reviewer sign-off
+## Non-textbook sources — reviewer sign-off
 
-1. Risch & Kehr, PRB **46**, 5246 (1992) — Risch–Kehr relaxation (A1).
-2. Kadono et al., PRL **64**, 665 (1990) — muonium LF spin-exchange relaxation
-   (B3); WiMDA implementation contains a probable transcription bug to resolve
-   against the paper.
-3. Celio & Meier, HFI **17–19**, 435 (1984) — spin-J dipole+quadrupole (C4).
-4. Meier, HFI **17–19**, 427 (1984) — spin-½ dipole pair (C5); math also
-   derivable from MS-Intro Eq. 4.80, so textbook notation can be used.
-5. Brewer et al., PRB **33**, 7813 (1986) — F–µ–F (cited by MS-Intro footnote
-   27; already the basis of the existing `FmuF_Linear`).
-6. Gaussian-broadened KT (C1) — no canonical citation in WiMDA; document as a
-   phenomenological Δ-distribution (cf. Noakes & Kalvius, PRB **56**, 2352
-   (1997) for the published Gaussian-broadened Gaussian KT, to be confirmed
-   during implementation).
+All non-textbook components shipped in this study were checked against their
+primary source or an independent numerical reference. The verification strategy
+favours an *independent* oracle (exact diagonalization, brute-force integration,
+or an established closed form) over transliterating the paper, since that also
+catches errors in the paper/WiMDA themselves (it did, twice: C4 and B3).
+
+| # | Source | Component(s) | Checked against | Verdict | Date |
+|---|---|---|---|---|---|
+| A1 | Risch & Kehr, PRB **46**, 5246 (1992) | `RischKehr` | Established 1D-diffusion closed form G(t)=e^{Γt}erfc(√Γt), evaluated via `erfcx`, plus the (πΓt)^{−1/2} long-time asymptote (`test_risch_kehr_matches_erfc_form_and_asymptote`) | ✅ Verified. WiMDA's negative-Γ mirror `2−RK` is an unphysical fitting convenience, deliberately **not** ported (Γ≥0 enforced). | 2026-06-13 |
+| B3 | Kadono et al., PRL **64**, 665 (1990) | `MuoniumLFRelax` | Eq. 22 of Ito & Kadono, JPSJ **94**, 064601 (2025) (= arXiv:2410.23575), which attributes that BPP form to this exact PRL ([27]); pinned at B∈{0,100,1000,5000} G (`test_muonium_lf_relaxation_matches_kadono_eq22`) | ⚠️→✅ **Corrected.** WiMDA's `(1−δ)` prefactor is in neither the cited Eq. 22 (NHF/intra-triplet, our ω₁₂ mechanism) nor Eq. 17 (spin exchange, amplitude `a₂₄=1−g_z`, transition ω₂₄). Prefactor **removed**; see the correction note in §B3 above. | 2026-06-13 |
+| C4 | Celio & Meier, HFI **17–19**, 435 (1984) | `DipolarSpinJ` | Exact diagonalization of H = ω_d(S·I − 3S_zI_z) + ω_q I_z² with polycrystalline (P_z+2P_x)/3 average, agreement <3×10⁻¹⁴ (`test_spin_j_matches_exact_diagonalization`) | ✅ Verified by independent exact diagonalization. **WiMDA's own `ZFdipgen` is wrong for every J>½** (drops the sign of cos 2α); our signed implementation is correct. Fitted params not comparable with WiMDA for J>½. | 2026-06-13 |
+| C5 | Meier, HFI **17–19**, 427 (1984) | `DipolarPairField`, `ProtonDipole`, `ElectronDipole` | Spin-½ closed form = MS-Intro Eq. 4.80 ⟨P_z⟩=⅙[1+cos ω_dt+2cos(ω_dt/2)·…]; J=½ limit of the exact-diag reference (`test_spin_half_reduces_to_meier_pair`) | ✅ Verified against the textbook closed form. Proton/electron γ-ratio scalings checked (`test_dipole_pair_frequency_scales_with_gyromagnetic_ratio`). | 2026-06-13 |
+| C5 | Brewer et al., PRB **33**, 7813 (1986) | `FmuF_Linear` (pre-existing) | Prior port; MS-Intro Eq. 4.80; r↔ω_d mapping ω_d/2π=0.1804305903/r³ MHz | ✅ Verified (pre-existing component, textbook-derivable). | 2026-06-13 |
+| C1 | *no canonical citation* (cf. Noakes & Kalvius, PRB **56**, 2352 (1997)) | `GaussianBroadenedKT` | Brute-force numerical average of the LF Gaussian KT over a Gaussian Δ-distribution, plus zero-width→LFKT limit (`test_gbkt_matches_brute_force_average`, `test_gbkt_zero_width_reduces_to_lf_kt`) | ✅ Verified as a phenomenological Δ-distribution via deterministic Gauss–Hermite quadrature (not WiMDA's ad-hoc 41-point grid). Documented as phenomenological, not paper-cited. | 2026-06-13 |
+| A3 | Overhauser (Bessel-modulated relaxation) | `Bessel` | j₀ Bessel-function form against direct numerical evaluation of the Overhauser integral (`test_bessel_matches_overhauser_integral`) | ✅ Verified against the integral form. | 2026-06-13 |
+
+**Outcome:** all sources signed off. One shipped-physics correction (B3, this
+session); two WiMDA-side bugs documented as divergences we deliberately do not
+reproduce (A1 negative-Γ mirror, C4 sign of cos 2α).
