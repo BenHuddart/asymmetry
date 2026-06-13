@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizePolicy,
+    QSpinBox,
     QStyle,
     QStyledItemDelegate,
     QStyleOptionViewItem,
@@ -38,6 +39,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from asymmetry.core.data.combine import (
+    CombineError,
+    coadd_member_windows,
+    combine_runs,
+    reduce_combined_run,
+    runs_with_dataset_metadata,
+)
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.count_domain import (
@@ -1747,6 +1755,15 @@ class SingleFitTab(QWidget):
         preview_result = object()
         self.preview_requested.emit(preview_result, (t_fit, y_fit), component_curves)
 
+    def model_and_seed(self) -> tuple[CompositeModel, ParameterSet]:
+        """Return the active single-fit model and its current parameter seed.
+
+        For headless fits (e.g. the Data Browser's "Re-fit as co-added") that
+        reuse the configured single-fit model without touching the form. Raises
+        :class:`ValueError` on a malformed parameter value, like the fit run.
+        """
+        return self._composite_model, self._parameter_set_from_table()
+
     def _parameter_set_from_table(self) -> ParameterSet:
         """Build a :class:`ParameterSet` from the parameter table.
 
@@ -2284,6 +2301,11 @@ class GlobalFitTab(QWidget):
         # Batch-series seeding mode (menu-bar "Batch seeding"); "auto" picks
         # chain-from-previous for ordered scans, else independent seeds.
         self._batch_seeding_mode = "auto"
+        # In-batch co-add of successive grouped-series members before fitting
+        # (WiMDA BatchFit Smooth/Bin). "off" disables; "bin"/"smooth" co-add
+        # ``_coadd_window`` successive members per fit via combine_runs.
+        self._coadd_mode = "off"
+        self._coadd_window = 2
         # Count-domain fit target: "all" (fgAll, the existing grouped path),
         # "fb" (forward+backward with free alpha), or "single" (one histogram).
         self._count_fit_mode = "all"
@@ -2456,6 +2478,38 @@ class GlobalFitTab(QWidget):
         self._group_model_table.itemChanged.connect(self._on_group_model_table_item_changed)
         group_model_layout.addWidget(self._group_model_table)
         layout.addWidget(self._group_model_group)
+
+        # In-batch co-add (WiMDA BatchFit Smooth/Bin): co-add successive members
+        # through combine_runs before each series fit. Grouped-series mode only.
+        self._coadd_group = QGroupBox("Co-add members")
+        coadd_layout = QHBoxLayout(self._coadd_group)
+        coadd_layout.setContentsMargins(6, 4, 6, 4)
+        coadd_layout.setSpacing(6)
+        self._coadd_mode_combo = QComboBox()
+        self._coadd_mode_combo.addItem("Off", "off")
+        self._coadd_mode_combo.addItem("Bin (step N)", "bin")
+        self._coadd_mode_combo.addItem("Smooth (sliding)", "smooth")
+        self._coadd_mode_combo.setToolTip(
+            "Co-add successive runs before fitting (WiMDA Smooth/Bin):\n"
+            "• Bin — non-overlapping windows, one combined fit per N runs.\n"
+            "• Smooth — sliding window stepped by one run.\n"
+            "Counts are summed at the raw-histogram level, then fitted."
+        )
+        self._coadd_mode_combo.currentIndexChanged.connect(self._on_coadd_mode_changed)
+        self._coadd_window_spin = QSpinBox()
+        self._coadd_window_spin.setRange(2, 99)
+        self._coadd_window_spin.setValue(self._coadd_window)
+        self._coadd_window_spin.setToolTip("Number of successive runs co-added per fit.")
+        self._coadd_window_spin.valueChanged.connect(self._on_coadd_window_changed)
+        self._coadd_window_label = QLabel("runs per fit")
+        coadd_layout.addWidget(self._coadd_mode_combo)
+        coadd_layout.addWidget(self._coadd_window_spin)
+        coadd_layout.addWidget(self._coadd_window_label)
+        coadd_layout.addStretch()
+        self._coadd_window_spin.setEnabled(False)
+        self._coadd_window_label.setEnabled(False)
+        self._coadd_group.hide()
+        layout.addWidget(self._coadd_group)
 
         # Fit button
         btn_layout = QHBoxLayout()
@@ -4462,6 +4516,21 @@ class GlobalFitTab(QWidget):
         """Set the batch-series seeding mode from the menu ("auto"/"as_provided"/etc.)."""
         self._batch_seeding_mode = mode
 
+    def _on_coadd_mode_changed(self, _index: int) -> None:
+        """In-batch co-add mode changed: refresh the grouped-series context."""
+        self._coadd_mode = str(self._coadd_mode_combo.currentData() or "off")
+        self._coadd_window_spin.setEnabled(self._coadd_mode != "off")
+        self._coadd_window_label.setEnabled(self._coadd_mode != "off")
+        self._grouped_context_cache = None
+        self._update_mode_ui(preserve_result=False)
+
+    def _on_coadd_window_changed(self, value: int) -> None:
+        """In-batch co-add window size changed: refresh the grouped-series context."""
+        self._coadd_window = max(2, int(value))
+        if self._coadd_mode != "off":
+            self._grouped_context_cache = None
+            self._update_mode_ui(preserve_result=False)
+
     def _set_series_busy(self, busy: bool) -> None:
         """Swap the Fit button for a Stop button (and back) around a worker fit."""
         self._stop_btn.setVisible(busy)
@@ -5431,6 +5500,8 @@ class GlobalFitTab(QWidget):
         self._grouped_context_label.setVisible(grouped)
         self._group_param_group.setVisible(grouped)
         self._group_model_group.setVisible(grouped)
+        # In-batch co-add only applies to grouped-series fits (≥2 members).
+        self._coadd_group.setVisible(grouped)
         self._fit_btn.setText("Run Grouped Fit" if grouped else "Run Batch Fit")
         self._preview_btn.setVisible(grouped)
         _set_formula_label_text(
@@ -5509,7 +5580,7 @@ class GlobalFitTab(QWidget):
         """
         cache = getattr(self, "_grouped_context_cache", None)
         member_ids = tuple(id(ds) for ds in self._grouped_member_datasets())
-        key = (member_ids, bool(self._fit_blocked))
+        key = (member_ids, bool(self._fit_blocked), self._coadd_mode, int(self._coadd_window))
         if cache is not None and cache[0] == key:
             return cache[1]
         result = self._compute_grouped_mode_context()
@@ -5541,6 +5612,8 @@ class GlobalFitTab(QWidget):
                 "Grouped time-domain mode requires an active dataset in the "
                 "FB Asymmetry or Individual Groups workspace.",
             )
+
+        member_datasets, coadd_note = self._apply_inbatch_coadd(member_datasets)
 
         members: dict[int, list[object]] = {}
         grouped_datasets: list[MuonDataset] = []
@@ -5574,6 +5647,8 @@ class GlobalFitTab(QWidget):
                 if skipped
                 else "Grouped time-domain mode requires a non-empty active dataset."
             )
+            if coadd_note:
+                reason = f"{coadd_note} {reason}"
             return None, None, reason
 
         n_runs = len(members)
@@ -5585,9 +5660,60 @@ class GlobalFitTab(QWidget):
             message = (
                 f"{len(grouped_datasets)} grouped traces from {n_runs} runs are ready for fitting."
             )
+        if coadd_note:
+            message = f"{coadd_note} {message}"
         if skipped:
             message += f" (skipped {len(skipped)}: {'; '.join(skipped)})"
         return representative_groups, grouped_datasets, message
+
+    def _apply_inbatch_coadd(
+        self, member_datasets: list[MuonDataset]
+    ) -> tuple[list[MuonDataset], str]:
+        """Co-add successive members per the Smooth/Bin control before fitting.
+
+        Returns ``(transformed_members, note)``. With co-add off, fewer than two
+        members, or no source histograms available, the members pass through
+        unchanged. Each co-add window sums the raw histograms of its members via
+        :func:`combine_runs` and reduces the combined run to a member dataset, so
+        the chain-seeding and grouped-contract paths see ordinary runs.
+        """
+        if self._coadd_mode == "off" or len(member_datasets) < 2:
+            return member_datasets, ""
+
+        windows = coadd_member_windows(
+            len(member_datasets), mode=self._coadd_mode, window=self._coadd_window
+        )
+        if not windows:
+            return (
+                member_datasets,
+                f"Co-add window of {self._coadd_window} exceeds the "
+                f"{len(member_datasets)} selected runs; co-add skipped.",
+            )
+
+        verb = "binned" if self._coadd_mode == "bin" else "smoothed"
+        combined: list[MuonDataset] = []
+        failures = 0
+        for indices in windows:
+            window_datasets = [member_datasets[i] for i in indices]
+            # Carry each dataset's displayed scalar overrides onto the run copies
+            # so the combined member's event-weighted T/field match the browser.
+            runs = runs_with_dataset_metadata(window_datasets)
+            if len(runs) != len(window_datasets):
+                # A member without source histograms can't be co-added; keep the
+                # window's members un-combined rather than silently dropping data.
+                combined.extend(window_datasets)
+                failures += 1
+                continue
+            try:
+                combined_run = combine_runs(runs, sign=1)
+                combined.append(reduce_combined_run(combined_run))
+            except (CombineError, ValueError):
+                combined.extend(window_datasets)
+                failures += 1
+        note = f"Co-add ({verb}, {self._coadd_window} runs/fit): {len(windows)} combined members."
+        if failures:
+            note += f" ({failures} window(s) left un-combined — no source histograms.)"
+        return combined, note
 
     def _setup_group_nuisance_table(self) -> None:
         self._rebuild_group_nuisance_table(preserved_state=None)
@@ -6400,6 +6526,10 @@ class FitPanel(QWidget):
             return str(model.formula_string())
         except Exception:
             return None
+
+    def single_fit_model_and_seed(self) -> tuple[CompositeModel, ParameterSet]:
+        """Return the active single-fit model and seed (for headless re-fits)."""
+        return self._single_tab.model_and_seed()
 
     def global_fit_formula_string(self) -> str | None:
         """Return the active global-fit formula string, if available."""

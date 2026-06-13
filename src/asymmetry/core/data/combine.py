@@ -51,9 +51,15 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 __all__ = [
     "CombineError",
+    "coadd_member_windows",
     "combine_runs",
     "reduce_combined_run",
+    "runs_with_dataset_metadata",
 ]
+
+#: Scalar metadata keys a dataset may override (display/log scalars not on the
+#: underlying run); merged onto run copies for combine's event-weighting.
+_DATASET_SCALAR_KEYS = ("temperature", "field", "title")
 
 #: Bin-width agreement tolerance (µs) for the count-level compatibility check.
 _BIN_WIDTH_RTOL = 1e-6
@@ -81,6 +87,7 @@ def combine_runs(
     scales: Sequence[float] | None = None,
     run_number: int | None = None,
     label: str | None = None,
+    subtract_method: str = "reference",
 ) -> Run:
     """Combine the raw histograms of ``runs`` at the count level.
 
@@ -105,6 +112,13 @@ def combine_runs(
     label
         Optional explicit ``run_label``; otherwise built from the constituents
         (``"a + b"`` for add, ``"a − b"`` for subtract).
+    subtract_method
+        For ``sign == -1`` only. ``"reference"`` (default) is the frame-scaled
+        reference subtraction ``[sample, reference]`` with ``scales =
+        [1.0, frame_ratio]`` (exactly two runs). ``"signed"`` is the symmetric
+        N-run signed co-subtract ``runs[0] − Σ scaleₖ·runsₖ`` (``k ≥ 1``), every
+        term contributing its own Poisson variance — for photo-µSR laser-on/off
+        and background-style differences over more than two runs.
 
     Returns
     -------
@@ -124,15 +138,17 @@ def combine_runs(
     sign = int(sign)
     if sign not in (1, -1):
         raise CombineError("sign must be +1 (co-add) or -1 (co-subtract)")
+    subtract_method = str(subtract_method)
+    if sign == -1 and subtract_method not in ("reference", "signed"):
+        raise CombineError("subtract_method must be 'reference' or 'signed'")
 
     runs = list(runs)
     if len(runs) < 2:
         raise CombineError("combine_runs needs at least two runs")
-    if sign == -1 and len(runs) != 2:
-        # The shipped co-subtract surface is reference-run only (one sample,
-        # one reference); symmetric / N-run signed subtraction is a recorded
-        # follow-on (docs/porting/run-arithmetic).
-        raise CombineError("co-subtract takes exactly two runs (sample, reference)")
+    if sign == -1 and subtract_method == "reference" and len(runs) != 2:
+        # The reference-run co-subtract is one sample, one reference. The
+        # symmetric N-run signed subtraction uses subtract_method="signed".
+        raise CombineError("reference co-subtract takes exactly two runs (sample, reference)")
 
     if scales is None:
         scales = [1.0] * len(runs)
@@ -169,6 +185,7 @@ def combine_runs(
         runs,
         scales=scales,
         sign=sign,
+        subtract_method=subtract_method,
         number=number,
         label=label,
         exposure=exposure,
@@ -236,6 +253,86 @@ def reduce_combined_run(run: Run) -> MuonDataset:
     metadata.setdefault("run_number", run.run_number)
     metadata.setdefault("run_label", str(run.run_number))
     return MuonDataset(time=time, asymmetry=asymmetry, error=error, metadata=metadata, run=run)
+
+
+# --- in-batch co-add windowing ------------------------------------------------
+
+
+def runs_with_dataset_metadata(datasets: Sequence[MuonDataset]) -> list[Run]:
+    """Shallow run copies whose scalar metadata reflects each dataset's overrides.
+
+    A :class:`MuonDataset`'s metadata is the display source of truth for scalars
+    like temperature/field (it may carry browser or from-log overrides that the
+    underlying :attr:`MuonDataset.run` metadata does not). Combining the raw runs
+    directly would event-weight on the stale run scalars, so this merges the
+    dataset's :data:`_DATASET_SCALAR_KEYS` onto a shallow run copy (sharing
+    histograms/grouping, which :func:`combine_runs` never mutates). Datasets
+    without a backing run are skipped. Use this to feed :func:`combine_runs` from
+    GUI datasets so the combined run's scalars match what the user sees.
+    """
+    from dataclasses import replace
+
+    runs: list[Run] = []
+    for dataset in datasets:
+        run = getattr(dataset, "run", None)
+        if run is None:
+            continue
+        merged = dict(run.metadata)
+        ds_metadata = dataset.metadata if isinstance(dataset.metadata, dict) else {}
+        for key in _DATASET_SCALAR_KEYS:
+            if key in ds_metadata:
+                merged[key] = ds_metadata[key]
+        runs.append(replace(run, metadata=merged))
+    return runs
+
+
+def coadd_member_windows(
+    n_members: int,
+    *,
+    mode: str,
+    window: int,
+) -> list[list[int]]:
+    """Index windows for in-batch co-add of successive batch-series members.
+
+    Mirrors WiMDA's ``BatchFit.pas`` sequential co-add (the "+ N runs" control):
+    a window co-adds ``window`` successive members. The two stepping modes match
+    WiMDA's Smooth/Bin radio buttons (``$WIMDA_SRC/src/BatchFit.pas`` ~375):
+
+    * ``"smooth"`` — sliding window, **step 1**: windows
+      ``[0, W)``, ``[1, 1 + W)``, … (``inc(i)``). Yields ``n - W + 1`` windows.
+    * ``"bin"`` — non-overlapping, **step W**: windows ``[0, W)``, ``[W, 2W)``, …
+      (``i := i + jump + 1``). Yields ``n // W`` windows.
+
+    In both modes WiMDA's loop guard (``until i + jump > nff``) requires a *full*
+    window, so a trailing partial window is dropped — this matches that exactly.
+
+    Parameters
+    ----------
+    n_members
+        Number of ordered members available to fit.
+    mode
+        ``"smooth"`` or ``"bin"``. Any other value (e.g. ``"off"``) returns one
+        singleton window per member (no co-add).
+    window
+        Members co-added per window (WiMDA ``jump + 1``). A value ``<= 1`` is the
+        no-op singleton partition; values are clamped to ``>= 1``.
+
+    Returns
+    -------
+    list[list[int]]
+        Each inner list holds the member indices for one co-add window, in order.
+        Empty when no full window fits (``window > n_members`` in a co-add mode);
+        callers fall back to no co-add and report it.
+    """
+    n = max(0, int(n_members))
+    width = max(1, int(window))
+    normalized = str(mode).strip().lower()
+    if normalized not in ("smooth", "bin") or width <= 1:
+        return [[i] for i in range(n)]
+    if width > n:
+        return []
+    step = 1 if normalized == "smooth" else width
+    return [list(range(start, start + width)) for start in range(0, n - width + 1, step)]
 
 
 # --- compatibility ------------------------------------------------------------
@@ -326,36 +423,52 @@ def _combine_histograms_subtract(
     runs: list[Run],
     scales: list[float],
 ) -> tuple[list[Histogram], list[NDArray[np.float64]], int]:
-    """Detector-wise ``sample − scale·reference`` via ``subtract_scaled_counts``.
+    """Detector-wise ``runs[0] − Σ scaleₖ·runsₖ`` via ``subtract_scaled_counts``.
 
     Returns the difference histograms, the per-detector variances (error²) so
     the reduction can propagate them, and the count of negative difference bins
-    (the unphysical-counts guard, RA5). ``runs`` is ``[sample, reference]``; the
-    reference scale is ``scales[1]``. The sample is taken at unit scale (a
-    reference subtraction is ``sample − scale·reference``, so ``scales[0]`` is
-    1.0 by contract and recorded for provenance only); passing it through the
-    chokepoint's variance term would give the wrong, linear-in-scale variance.
+    (the unphysical-counts guard, RA5). ``runs[0]`` is the sample at unit Poisson
+    variance ``clip(sample)``; each reference ``runs[k≥1]`` contributes
+    ``scaleₖ·counts`` to the difference (through the ``subtract_scaled_counts``
+    seam, F9) and ``scaleₖ²·clip(counts)`` to the variance. The empty-bin ``1.0``
+    sentinel (a zero-variance guard for the reduction) is applied **once** to the
+    final summed variance — not per reference, which would over-state the
+    variance of an N-run difference wherever any single term's bin is zero.
+
+    For the two-run reference case this matches a single
+    ``subtract_scaled_counts(sample, reference, scale₁)`` call: an exact
+    difference ``sample − scale₁·ref₁`` and variance
+    ``clip(sample) + scale₁²·clip(ref₁)`` with the same final zero→1.0 sentinel
+    (stored directly rather than as ``error*error``, so it agrees to
+    floating-point — the reduction takes its √ regardless).
     """
-    sample, reference = runs
-    reference_scale = scales[1]
+    sample = runs[0]
     n_detectors = len(sample.histograms)
     out: list[Histogram] = []
     variances: list[NDArray[np.float64]] = []
     negative_bins = 0
     for det in range(n_detectors):
-        arrays = [
-            np.asarray(sample.histograms[det].counts, dtype=np.float64),
-            np.asarray(reference.histograms[det].counts, dtype=np.float64),
-        ]
-        t0s = [int(sample.histograms[det].t0_bin), int(reference.histograms[det].t0_bin)]
-        (s_counts, r_counts), common_t0 = _aligned_detector_arrays(arrays, t0s)
-        # subtract_scaled_counts is the single count-level subtraction seam
-        # (F9): difference = sample − reference_scale·reference,
-        # variance = sample + reference_scale²·reference.
-        diff, error = subtract_scaled_counts(s_counts, r_counts, reference_scale)
+        arrays = [np.asarray(run.histograms[det].counts, dtype=np.float64) for run in runs]
+        t0s = [int(run.histograms[det].t0_bin) for run in runs]
+        aligned, common_t0 = _aligned_detector_arrays(arrays, t0s)
+        s_counts = aligned[0]
+        diff = s_counts.copy()
+        # Sample's Poisson variance; references add scaleₖ²·counts. The sentinel
+        # is deferred to the full sum below.
+        variance = np.clip(s_counts, 0.0, None)
+        for ref_counts, ref_scale in zip(aligned[1:], scales[1:], strict=True):
+            # The count-level subtraction routes through the chokepoint (F9); the
+            # difference is no longer Poisson, so its variance is summed here.
+            contrib, _contrib_error = subtract_scaled_counts(
+                np.zeros_like(ref_counts), ref_counts, ref_scale
+            )
+            diff = diff + contrib
+            variance = variance + ref_scale * ref_scale * np.clip(ref_counts, 0.0, None)
+        # Zero-variance guard once, matching subtract_scaled_counts' 1.0 sentinel.
+        variance = np.where(variance > 0.0, variance, 1.0)
         negative_bins += int(np.count_nonzero(diff < 0.0))
         out.append(_clone_geometry(sample.histograms[det], diff, common_t0))
-        variances.append(error * error)
+        variances.append(variance)
     return out, variances, negative_bins
 
 
@@ -477,6 +590,7 @@ def _combined_metadata(
     *,
     scales: list[float],
     sign: int,
+    subtract_method: str = "reference",
     number: int,
     label: str | None,
     exposure: float,
@@ -522,8 +636,12 @@ def _combined_metadata(
         }
         for run in runs
     ]
+    if sign == 1:
+        method = "coadd"
+    else:
+        method = "subtract_reference" if subtract_method == "reference" else "subtract_signed"
     combination: dict[str, Any] = {
-        "method": "coadd" if sign == 1 else "subtract_reference",
+        "method": method,
         "sign": sign,
         "scales": list(scales),
         "constituents": constituents,
@@ -532,11 +650,13 @@ def _combined_metadata(
     if good > 0.0:
         metadata.setdefault("good_frames", good)
     if sign == -1:
-        combination["reference_run_number"] = int(runs[1].run_number)
-        combination["reference_scale"] = float(scales[1])
         combination["negative_count_bins"] = int(negative_bins)
         if detector_variance is not None:
             combination["detector_variance"] = detector_variance
+        if subtract_method == "reference":
+            # The reference-run path records its single designated reference.
+            combination["reference_run_number"] = int(runs[1].run_number)
+            combination["reference_scale"] = float(scales[1])
 
     metadata["combination"] = combination
     return metadata
