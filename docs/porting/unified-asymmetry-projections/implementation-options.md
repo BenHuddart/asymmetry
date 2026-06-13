@@ -120,19 +120,20 @@ because fixing them piecemeal would half-build the chip-bar generality:
 
 ### From the Step 3 part-1 review (obligations for part 2)
 
-- **Divergence / trend must iterate projection slots.** Everything in
-  `core/representation/project_model.py` (`refresh_divergence` and the
-  series-divergence/trend helpers, `set_member_trend_inclusion`, `remove_batch`)
-  reads `representation.fit` (the default slot) only. Once part 2 writes
-  projection slots via `set_fit_for(axis, …)`, those helpers must iterate
-  `representation.iter_fit_slots()` so a projection's fit can diverge / be
-  excluded from trending / be toggled — otherwise a projection fit silently
-  contaminates the trend. (Acceptable in part 1: nothing writes projection slots
-  yet.)
-- **`set_fit_for` key contract.** Part-2 write sites should pass the *selected
-  single projection* (fitting is blocked in multi-select/ALL). `_fit_key` already
-  routes falsy / `"ALL"` to the default slot defensively, but the write site
-  should still pass the real axis, not the aggregate.
+- **Divergence / trend only matters for batch-per-projection (deferred).**
+  `core/representation/project_model.py` divergence/trend helpers read
+  `representation.fit` (the default slot). Per-projection **single** fits are not
+  series members, so they never touch divergence — no change needed for the
+  single-fit scope. *Only* when batch/global fits become per-projection (the
+  deferred prize) must those helpers iterate `representation.iter_fit_slots()`
+  and key series membership by `(run, projection)`.
+- **Part 2 single-fit scope = write site + projection-aware fit panel.** The
+  single-fit record site (`mainwindow._record_single_fit_slot`) writes
+  `set_fit_for(active_projection, slot)`; the fit panel keys its transient
+  single-fit state by `(run, projection)` and restores the persisted slot when
+  the active projection changes. `_fit_key` already routes falsy / `"ALL"` to the
+  default slot, so a fit taken in single-axis mode lands on that axis and one
+  taken outside vector mode lands on the default.
 
 ### From the Step 2 review (deferred to Step 4/5)
 
