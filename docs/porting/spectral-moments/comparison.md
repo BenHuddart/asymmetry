@@ -230,13 +230,17 @@ is bootstrap-primary (see [README.md](README.md) §"Implementation choices").
 
 From the high-effort code review (2026-06-12); deferred rather than churned:
 
-- **MaxEnt multi-run send.** "Send to trend" computes moments only for selected
-  runs whose spectrum is already cached. FFT spectra are pre-computable across a
-  selection ("Apply settings to selected runs"), but MaxEnt reconstructions are
-  per-run and lazy, so a multi-run MaxEnt send currently records only the runs
-  whose reconstruction exists (the status line reports the skipped count). A
-  batch-reconstruct-then-send action would close this; it needs the MaxEnt engine
-  and is out of scope for moments.
+- ~~**MaxEnt multi-run send.**~~ **Done on `feat/batch-arithmetic`
+  (2026-06-13).** The MaxEnt-hosted spectral-moments widget gained a
+  "Reconstruct selection & send" button (`enable_batch_reconstruct`). The host
+  (`_on_maxent_batch_reconstruct_and_send`) queues the selected runs that lack a
+  cached reconstruction, drives them through the single-run MaxEnt worker one at
+  a time — reusing each run's resumable `MaxEntState` and the panel's current
+  settings (cycles = Converge, with the engine's early-stop) — and on drain runs
+  the existing moments send, so a B_rms(T) series builds in one action. Cancel
+  from the MaxEnt panel empties the queue and aborts (records no send); a failed
+  run is skipped and the batch continues. Runs already reconstructed go straight
+  to the send.
 - **Field-scan windows.** The analysis window is in absolute field/frequency, so
   a single window suits a temperature scan (line roughly fixed) but can exclude
   runs in a *field* scan where the line moves run-to-run; those runs report an

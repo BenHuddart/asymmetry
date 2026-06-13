@@ -516,6 +516,15 @@ class MainWindow(QMainWindow):
         self._maxent_active_config: MaxEntConfig | None = None
         self._maxent_active_cycles: int = 0
         self._maxent_started_at: float | None = None
+        # MaxEnt batch-reconstruct-then-send: a queue of run numbers driven
+        # through the single-run worker one at a time, reusing each run's
+        # resumable state, then a moments send. Cancel aborts the whole queue.
+        self._maxent_batch_active: bool = False
+        self._maxent_batch_queue: list[int] = []
+        self._maxent_batch_widget = None
+        self._maxent_batch_config: MaxEntConfig | None = None
+        self._maxent_batch_total: int = 0
+        self._maxent_batch_done: int = 0
         # Live worker for the Data Browser "Re-fit as Co-added" action (one at a
         # time; the handler gates relaunch while one is in flight).
         self._refit_coadded_worker: TaskWorker | None = None
@@ -1420,6 +1429,14 @@ class MainWindow(QMainWindow):
             _widget.send_to_trend_requested.connect(
                 lambda w=_widget: self._on_moments_send_to_trend(w)
             )
+            # MaxEnt is per-run and lazy, so a multi-run moments send only records
+            # runs whose reconstruction already exists. Offer batch-reconstruct-
+            # then-send on the MaxEnt host so a B_rms(T) series builds in one click.
+            if _rep == RepresentationType.FREQ_MAXENT:
+                _widget.enable_batch_reconstruct(True)
+                _widget.batch_reconstruct_send_requested.connect(
+                    lambda w=_widget: self._on_maxent_batch_reconstruct_and_send(w)
+                )
         if hasattr(self._plot_panel, "cursor_coords_changed"):
             self._plot_panel.cursor_coords_changed.connect(self._on_cursor_coords_changed)
         if hasattr(self._fit_panel, "fit_range_edit_committed"):
@@ -6800,9 +6817,16 @@ class MainWindow(QMainWindow):
         self._set_status_state("Computing MaxEnt…")
 
     def _on_cancel_maxent(self) -> None:
-        """Request cancellation of the active MaxEnt worker."""
+        """Request cancellation of the active MaxEnt worker (and any batch)."""
+        if self._maxent_batch_active:
+            # Stop launching further runs; the active worker's cancelled callback
+            # aborts the batch (or, with no live worker, abort right here).
+            self._maxent_batch_queue = []
         if self._maxent_worker is None:
-            self._set_fourier_status("No MaxEnt calculation is running.")
+            if self._maxent_batch_active:
+                self._abort_maxent_batch()
+            else:
+                self._set_fourier_status("No MaxEnt calculation is running.")
             return
         self._maxent_worker.cancel()
         self._set_fourier_status("Cancelling MaxEnt calculation...")
@@ -6887,6 +6911,9 @@ class MainWindow(QMainWindow):
         self._log_panel.log(message)
         self._log_maxent_perf()
         self._finish_maxent()
+        if self._maxent_batch_active:
+            self._maxent_batch_done += 1
+            self._advance_maxent_batch()
 
     def _on_maxent_worker_error(self, message: str) -> None:
         """Handle a failed MaxEnt worker."""
@@ -6898,6 +6925,10 @@ class MainWindow(QMainWindow):
         self._log_panel.log(f"MaxEnt failed: {message}")
         self._log_maxent_perf()
         self._finish_maxent()
+        if self._maxent_batch_active:
+            # Skip the failed run and keep reconstructing the rest of the batch.
+            self._log_panel.log("MaxEnt batch: skipping the failed run.")
+            self._advance_maxent_batch()
 
     def _on_maxent_worker_cancelled(self) -> None:
         """Handle worker cancellation."""
@@ -6905,6 +6936,8 @@ class MainWindow(QMainWindow):
         self._log_panel.log("MaxEnt calculation cancelled.")
         self._log_maxent_perf()
         self._finish_maxent()
+        if self._maxent_batch_active:
+            self._abort_maxent_batch()
 
     def _finish_maxent(self) -> None:
         """Clear MaxEnt worker state after a terminal callback (GUI thread)."""
@@ -6974,6 +7007,102 @@ class MainWindow(QMainWindow):
             state=state,
             run_number=run_number,
         )
+
+    #: Cycle budget per run in a batch reconstruct (the engine early-stops at
+    #: convergence, so this is an upper bound, matching the Converge button).
+    _MAXENT_BATCH_CYCLES = 50
+
+    def _on_maxent_batch_reconstruct_and_send(self, widget) -> None:
+        """Reconstruct the selected runs' MaxEnt spectra, then send their moments.
+
+        Closes the spectral-moments gap that MaxEnt's per-run, lazy
+        reconstruction leaves: a multi-run moments send records only runs whose
+        reconstruction already exists. This queues the missing reconstructions —
+        driving the single-run worker one run at a time (reusing each run's
+        resumable state) with the current MaxEnt settings — then performs the
+        moments send, so a B_rms(T) series builds in one action. Cancel from the
+        MaxEnt panel aborts the whole queue.
+        """
+        if self._maxent_active or self._maxent_batch_active:
+            self._set_fourier_status("A MaxEnt calculation is already running.")
+            return
+
+        candidates = [
+            int(ds.run_number)
+            for ds in self._data_browser.get_selected_datasets()
+            if ds.run is not None and self._dataset_supports_maxent(ds)
+        ]
+        if not candidates:
+            self._set_fourier_status("Select grouped runs to reconstruct before sending moments.")
+            return
+
+        config = self._maxent_panel.maxent_config(cycles=self._MAXENT_BATCH_CYCLES)
+        if (
+            config.t_min_us is not None
+            and config.t_max_us is not None
+            and config.t_max_us <= config.t_min_us
+        ):
+            self._set_fourier_status("MaxEnt end time must be greater than the start time.")
+            return
+        if config.mode == "zf_lf" and len(self._maxent_panel.selected_group_ids()) != 2:
+            self._set_fourier_status(
+                "ZF/LF mode needs exactly two included groups (forward and backward)."
+            )
+            return
+
+        # Reconstruct only runs without a cached MaxEnt result; runs already
+        # reconstructed go straight to the moments send.
+        queue = [rn for rn in candidates if self._maxent_result_by_run.get(rn) is None]
+        self._maxent_batch_widget = widget
+        if not queue:
+            self._on_moments_send_to_trend(widget)
+            return
+
+        self._maxent_batch_config = config
+        self._maxent_batch_active = True
+        self._maxent_batch_queue = list(queue)
+        self._maxent_batch_total = len(queue)
+        self._maxent_batch_done = 0
+        self._advance_maxent_batch()
+
+    def _advance_maxent_batch(self) -> None:
+        """Launch the next queued reconstruction, or send moments when drained."""
+        while self._maxent_batch_queue:
+            run_number = self._maxent_batch_queue.pop(0)
+            dataset = self._data_browser.get_dataset(run_number)
+            if dataset is None or dataset.run is None or not self._dataset_supports_maxent(dataset):
+                continue  # a run that can no longer be reconstructed is skipped
+            self._set_fourier_status(
+                f"MaxEnt batch: reconstructing run {run_number} "
+                f"({self._maxent_batch_done + 1}/{self._maxent_batch_total})…"
+            )
+            self._launch_maxent_worker(
+                run=dataset.run,
+                config=self._maxent_batch_config or MaxEntConfig(),
+                cycles=self._MAXENT_BATCH_CYCLES,
+                state=self._maxent_state_by_run.get(run_number),
+                run_number=run_number,
+            )
+            return
+
+        widget = self._maxent_batch_widget
+        sent = self._maxent_batch_done
+        self._maxent_batch_active = False
+        self._maxent_batch_widget = None
+        self._maxent_batch_config = None
+        if widget is not None:
+            self._on_moments_send_to_trend(widget)
+        self._set_fourier_status(
+            f"MaxEnt batch: reconstructed {sent} run(s); moments sent to trend."
+        )
+
+    def _abort_maxent_batch(self) -> None:
+        """Tear down batch state after a cancellation (records no moments send)."""
+        self._maxent_batch_active = False
+        self._maxent_batch_queue = []
+        self._maxent_batch_widget = None
+        self._maxent_batch_config = None
+        self._set_fourier_status("MaxEnt batch cancelled.")
 
     def _on_apply_maxent_to_selection(self) -> None:
         """Copy the active run's MaxEnt recipe to other selected runs."""

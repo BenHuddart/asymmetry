@@ -5060,3 +5060,118 @@ class TestRefitCoadded:
         assert series is not None
         assert series.results_by_run[member_key]["combined_from"] == [501, 502]
         assert series.extra["combined_from"] == [501, 502]
+
+
+class TestMaxEntBatchReconstructSend:
+    """MaxEnt batch-reconstruct-then-send: queue + cancel + final moments send."""
+
+    @staticmethod
+    def _setup(mainwindow, monkeypatch, run_numbers):
+        from asymmetry.core.maxent import MaxEntConfig
+
+        datasets = [_make_dataset(rn, with_grouping=True) for rn in run_numbers]
+        for ds in datasets:
+            mainwindow._data_browser.add_dataset(ds)
+        monkeypatch.setattr(
+            mainwindow._data_browser, "get_selected_datasets", lambda: list(datasets)
+        )
+        monkeypatch.setattr(mainwindow, "_dataset_supports_maxent", lambda ds: True)
+        monkeypatch.setattr(
+            mainwindow._maxent_panel, "maxent_config", lambda *, cycles: MaxEntConfig()
+        )
+        monkeypatch.setattr(mainwindow._maxent_panel, "selected_group_ids", lambda: [1, 2])
+
+        launched: list[int] = []
+
+        def _fake_launch(*, run, config, cycles, state, run_number):
+            launched.append(int(run_number))
+            # Simulate a successful reconstruction caching its result, then the
+            # finished-callback tail that advances the batch.
+            mainwindow._maxent_result_by_run[int(run_number)] = ("result", config)
+            if mainwindow._maxent_batch_active:
+                mainwindow._maxent_batch_done += 1
+                mainwindow._advance_maxent_batch()
+
+        monkeypatch.setattr(mainwindow, "_launch_maxent_worker", _fake_launch)
+
+        sends: list[object] = []
+        monkeypatch.setattr(
+            mainwindow, "_on_moments_send_to_trend", lambda w: sends.append(w)
+        )
+        return launched, sends
+
+    def test_reconstructs_all_missing_then_sends(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        launched, sends = self._setup(mainwindow, monkeypatch, [701, 702, 703])
+        widget = mainwindow._maxent_panel.moments_widget
+
+        mainwindow._on_maxent_batch_reconstruct_and_send(widget)
+
+        assert launched == [701, 702, 703]
+        assert sends == [widget]  # one moments send, after the queue drains
+        assert mainwindow._maxent_batch_active is False
+        assert mainwindow._maxent_batch_queue == []
+
+    def test_skips_runs_with_cached_reconstruction(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        launched, sends = self._setup(mainwindow, monkeypatch, [701, 702, 703])
+        mainwindow._maxent_result_by_run[702] = ("cached", None)  # already reconstructed
+        widget = mainwindow._maxent_panel.moments_widget
+
+        mainwindow._on_maxent_batch_reconstruct_and_send(widget)
+
+        assert launched == [701, 703]
+        assert sends == [widget]
+
+    def test_all_cached_sends_immediately_without_reconstructing(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        launched, sends = self._setup(mainwindow, monkeypatch, [701, 702])
+        for rn in (701, 702):
+            mainwindow._maxent_result_by_run[rn] = ("cached", None)
+        widget = mainwindow._maxent_panel.moments_widget
+
+        mainwindow._on_maxent_batch_reconstruct_and_send(widget)
+
+        assert launched == []
+        assert sends == [widget]
+        assert mainwindow._maxent_batch_active is False
+
+    def test_no_selection_does_nothing(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(mainwindow._data_browser, "get_selected_datasets", lambda: [])
+        sends: list[object] = []
+        monkeypatch.setattr(mainwindow, "_on_moments_send_to_trend", lambda w: sends.append(w))
+        widget = mainwindow._maxent_panel.moments_widget
+        mainwindow._on_maxent_batch_reconstruct_and_send(widget)
+        assert sends == []
+        assert mainwindow._maxent_batch_active is False
+
+    def test_cancel_clears_queue_and_aborts(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Put the window in a mid-batch state by hand and confirm cancel aborts
+        # without a moments send.
+        sends: list[object] = []
+        monkeypatch.setattr(mainwindow, "_on_moments_send_to_trend", lambda w: sends.append(w))
+        widget = mainwindow._maxent_panel.moments_widget
+        mainwindow._maxent_batch_active = True
+        mainwindow._maxent_batch_queue = [801, 802]
+        mainwindow._maxent_batch_widget = widget
+        mainwindow._maxent_worker = None  # no live worker → cancel aborts here
+
+        mainwindow._on_cancel_maxent()
+
+        assert mainwindow._maxent_batch_active is False
+        assert mainwindow._maxent_batch_queue == []
+        assert mainwindow._maxent_batch_widget is None
+        assert sends == []  # aborted batch records nothing
+
+    def test_maxent_moments_widget_exposes_batch_button(self, mainwindow: MainWindow) -> None:
+        widget = mainwindow._maxent_panel.moments_widget
+        assert widget._batch_btn.isVisibleTo(widget)
+        fourier = mainwindow._fourier_panel.moments_widget
+        assert not fourier._batch_btn.isVisibleTo(fourier)
