@@ -14,6 +14,7 @@ import numpy as np
 from PySide6.QtCore import QEventLoop, QSignalBlocker, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
+    QAbstractSpinBox,
     QApplication,
     QCheckBox,
     QComboBox,
@@ -1051,10 +1052,14 @@ class SingleFitTab(QWidget):
         self._fit_range_min_spin.setRange(-1000.0, 1000.0)
         self._fit_range_min_spin.setSingleStep(0.1)
         self._fit_range_min_spin.setMinimumWidth(64)
-        # Cap the width: the wide ±1000 range otherwise inflates the spinbox's
-        # natural minimum to ~119px (it sizes for "-1000.000"), which on its own
-        # set the fit-range row near 280px. Realistic fit times need far less.
-        self._fit_range_min_spin.setMaximumWidth(84)
+        # Keep the fit-range fields compact: drop the spin arrows (the design's
+        # limit-field style) and the right-padding the global QSS reserves for
+        # them, and cap the width — otherwise the wide ±1000 range sizes the box
+        # for "-1000.000" (~132px) and bloats the row. 88px shows realistic fit
+        # times in full.
+        self._fit_range_min_spin.setMaximumWidth(88)
+        self._fit_range_min_spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        self._fit_range_min_spin.setStyleSheet("QAbstractSpinBox { padding-right: 6px; }")
         self._fit_range_min_spin.setFont(mono_font(11.0))
 
         self._fit_range_mid_label = QLabel("≤ <i>t</i> ≤")
@@ -1065,7 +1070,9 @@ class SingleFitTab(QWidget):
         self._fit_range_max_spin.setRange(-1000.0, 1000.0)
         self._fit_range_max_spin.setSingleStep(0.1)
         self._fit_range_max_spin.setMinimumWidth(64)
-        self._fit_range_max_spin.setMaximumWidth(84)
+        self._fit_range_max_spin.setMaximumWidth(88)
+        self._fit_range_max_spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        self._fit_range_max_spin.setStyleSheet("QAbstractSpinBox { padding-right: 6px; }")
         self._fit_range_max_spin.setFont(mono_font(11.0))
 
         self._fit_range_unit_label = QLabel("μs")
@@ -2293,10 +2300,14 @@ class GlobalFitTab(QWidget):
         self._fit_range_min_spin.setRange(-1000.0, 1000.0)
         self._fit_range_min_spin.setSingleStep(0.1)
         self._fit_range_min_spin.setMinimumWidth(64)
-        # Cap the width: the wide ±1000 range otherwise inflates the spinbox's
-        # natural minimum to ~119px (it sizes for "-1000.000"), which on its own
-        # set the fit-range row near 280px. Realistic fit times need far less.
-        self._fit_range_min_spin.setMaximumWidth(84)
+        # Keep the fit-range fields compact: drop the spin arrows (the design's
+        # limit-field style) and the right-padding the global QSS reserves for
+        # them, and cap the width — otherwise the wide ±1000 range sizes the box
+        # for "-1000.000" (~132px) and bloats the row. 88px shows realistic fit
+        # times in full.
+        self._fit_range_min_spin.setMaximumWidth(88)
+        self._fit_range_min_spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        self._fit_range_min_spin.setStyleSheet("QAbstractSpinBox { padding-right: 6px; }")
         self._fit_range_min_spin.setFont(mono_font(11.0))
 
         self._fit_range_mid_label = QLabel("≤ <i>t</i> ≤")
@@ -2307,7 +2318,9 @@ class GlobalFitTab(QWidget):
         self._fit_range_max_spin.setRange(-1000.0, 1000.0)
         self._fit_range_max_spin.setSingleStep(0.1)
         self._fit_range_max_spin.setMinimumWidth(64)
-        self._fit_range_max_spin.setMaximumWidth(84)
+        self._fit_range_max_spin.setMaximumWidth(88)
+        self._fit_range_max_spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        self._fit_range_max_spin.setStyleSheet("QAbstractSpinBox { padding-right: 6px; }")
         self._fit_range_max_spin.setFont(mono_font(11.0))
 
         _fr_layout.addWidget(self._fit_range_min_spin)
