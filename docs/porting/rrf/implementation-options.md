@@ -90,6 +90,23 @@ dict[param, offset]` resolver are separate from the thin callable wrapper,
 and an engine argument (or the fit panel) can consume the same resolver
 without re-deriving parameter semantics.
 
+**Closed (2026-06-13, feat/rrf-engine-pass).** Both follow-ons landed:
+
+- *Engine argument.* `FitEngine.fit` now takes `frequency_offsets:
+  dict[str, float]` (the resolver's output). The additive shift is factored
+  into `rrf_offset.offset_model_function`, shared by the engine path and the
+  standalone `rrf_offset_model` wrapper, so fitting raw data through either is
+  **bit-for-bit identical** (pinned by `TestEngineFrequencyOffset` in
+  `tests/test_rrf_offset.py` — same χ², same fitted δν, same σ). `None`/empty
+  offsets leave the fit byte-identical to the no-RRF path.
+- *Fit-panel GUI surface.* The plot panel's RRF ν₀ now auto-couples to the
+  single composite fit when the Options → Advanced "Rotating reference frame"
+  toggle is on (see §C below): the fit panel resolves `rrf_frequency_offsets`
+  once and passes the dict to `FitEngine.fit`, reports the fitted frequencies
+  back in the lab frame via `apply_rrf_offsets`, and the fitted-curve overlay
+  carries the "frame: ν_RRF = … MHz" annotation. The standalone wrapper is
+  kept (standalone callers + the equivalence pin).
+
 ## C. GUI integration
 
 ### Controls (`gui/widgets/rrf_controls.py`, W10)

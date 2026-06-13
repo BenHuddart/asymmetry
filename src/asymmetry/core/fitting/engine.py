@@ -225,6 +225,7 @@ class FitEngine:
         method: str = "migrad",
         minos: bool = False,
         cancel_callback: Callable[[], bool] | None = None,
+        frequency_offsets: dict[str, float] | None = None,
     ) -> FitResult:
         """Run a single-dataset fit.
 
@@ -243,6 +244,16 @@ class FitEngine:
         method : str
             Minimization method (``"migrad"`` for gradient-based,
             ``"simplex"`` for Nelder-Mead).
+        frequency_offsets : dict[str, float], optional
+            Rotating-reference-frame offsets ``{param: ν₀}`` resolved by
+            :func:`asymmetry.core.fitting.rrf_offset.rrf_frequency_offsets`.
+            When given, each named parameter is shifted by its offset before the
+            model is evaluated, so the *raw* lab-frame data is fitted while the
+            fitted values read as rotating-frame offsets δν (lab = δν + ν₀ via
+            :func:`~asymmetry.core.fitting.rrf_offset.apply_rrf_offsets`). This
+            is the engine-level home of the RRF offset wrapper — fitting through
+            it is bit-for-bit identical to wrapping ``model_fn`` with
+            :func:`~asymmetry.core.fitting.rrf_offset.rrf_offset_model`.
 
         Returns
         -------
@@ -250,6 +261,15 @@ class FitEngine:
             Container with fit results including χ², parameters, and uncertainties.
         """
         ds = dataset.time_range(t_min, t_max) if (t_min or t_max) else dataset
+
+        if frequency_offsets:
+            # Apply the rotating-frame offset through the shared shift seam, so
+            # this path and the standalone rrf_offset_model wrapper fit raw data
+            # identically. The reported parameters remain the rotating-frame δν;
+            # callers convert back via apply_rrf_offsets.
+            from asymmetry.core.fitting.rrf_offset import offset_model_function
+
+            model_fn = offset_model_function(model_fn, frequency_offsets)
 
         try:
             from iminuit import Minuit
