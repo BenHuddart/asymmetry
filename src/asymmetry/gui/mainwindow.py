@@ -79,7 +79,7 @@ from asymmetry.core.fourier import (
 )
 from asymmetry.core.fourier.moments import moments_trend_row, spectrum_moments
 from asymmetry.core.fourier.units import FieldUnit, convert
-from asymmetry.core.instrument import derive_projection_pairs
+from asymmetry.core.instrument import PROJECTION_TINTS, derive_projection_pairs
 from asymmetry.core.io import resolve_background_reference
 from asymmetry.core.io.periods import (
     combine_mapped_periods,
@@ -1641,19 +1641,46 @@ class MainWindow(QMainWindow):
             axis = "P_z"
         return pairs, axis
 
+    def _projection_specs_for_dataset(
+        self,
+        dataset: MuonDataset,
+        pairs: dict[str, tuple[int, int]],
+    ) -> list[dict]:
+        """Return ordered ``[{"label", "tint"}]`` specs for *pairs*.
+
+        Tints come from the dataset's declared projections when present, else
+        the canonical :data:`PROJECTION_TINTS` fallback by label.
+        """
+        tint_by_label: dict[str, str] = {}
+        run = getattr(dataset, "run", None)
+        grouping = getattr(run, "grouping", None)
+        if isinstance(grouping, dict):
+            for proj in grouping.get("projections") or []:
+                if isinstance(proj, dict) and proj.get("label") and proj.get("tint"):
+                    tint_by_label[str(proj["label"])] = str(proj["tint"])
+
+        specs: list[dict] = []
+        for label in pairs:
+            spec: dict = {"label": label}
+            tint = tint_by_label.get(label) or PROJECTION_TINTS.get(label)
+            if tint:
+                spec["tint"] = tint
+            specs.append(spec)
+        return specs
+
     def _refresh_vector_axis_selector(self) -> None:
-        """Show/hide and synchronize the plot polarization selector."""
-        if not hasattr(self._plot_panel, "set_polarization_axes"):
+        """Show/hide and synchronize the projection chip bar."""
+        if not hasattr(self._plot_panel, "set_projections"):
             return
 
         if hasattr(self, "_plot_workspace") and self._plot_workspace.active_domain() != "time":
-            self._plot_panel.set_polarization_axes([])
+            self._plot_panel.set_projections([])
             return
         if (
             hasattr(self._plot_panel, "current_time_view_mode")
             and self._plot_panel.current_time_view_mode() != "fb_asymmetry"
         ):
-            self._plot_panel.set_polarization_axes([])
+            self._plot_panel.set_projections([])
             return
 
         selected = list(self._data_browser.get_selected_datasets())
@@ -1663,33 +1690,48 @@ class MainWindow(QMainWindow):
             targets = [self._current_dataset] if self._current_dataset else []
         targets = [ds for ds in targets if ds is not None]
         if not targets:
-            self._plot_panel.set_polarization_axes([])
+            self._plot_panel.set_projections([])
             return
 
         first_pairs, first_axis = self._vector_axis_state_for_dataset(targets[0])
         if not first_pairs:
-            self._plot_panel.set_polarization_axes([])
+            self._plot_panel.set_projections([])
             return
 
         for dataset in targets[1:]:
             pairs, _axis = self._vector_axis_state_for_dataset(dataset)
             if pairs != first_pairs:
-                self._plot_panel.set_polarization_axes([])
+                self._plot_panel.set_projections([])
                 return
 
-        axis_order = ["P_x", "P_y", "P_z"]
-        available = [axis for axis in axis_order if axis in first_pairs]
-        if available:
-            available = ["ALL", *available]
+        specs = self._projection_specs_for_dataset(targets[0], first_pairs)
+        labels = [spec["label"] for spec in specs]
 
-        current = None
+        # Preserve the live chip selection where it still applies; otherwise
+        # honour a restored ``ALL``/single axis (so a saved subplot view reopens
+        # as subplots), then fall back to the dataset's active single axis —
+        # which preserves the immediate fit workflow, since multi-select is a
+        # deliberate user action.
+        prior: list[str] = []
+        if hasattr(self._plot_panel, "selected_projection_labels"):
+            prior = [lbl for lbl in self._plot_panel.selected_projection_labels() if lbl in labels]
+        current_axis = None
         if hasattr(self._plot_panel, "get_current_polarization_axis"):
-            current = self._normalize_vector_axis(self._plot_panel.get_current_polarization_axis())
-        if current not in available:
-            current = (
-                first_axis if first_axis in available else (available[0] if available else None)
+            current_axis = self._normalize_vector_axis(
+                self._plot_panel.get_current_polarization_axis()
             )
-        self._plot_panel.set_polarization_axes(available, current)
+        if prior:
+            chosen = prior
+        elif current_axis == "ALL":
+            chosen = list(labels)
+        elif current_axis in labels:
+            chosen = [current_axis]
+        elif first_axis in labels:
+            chosen = [first_axis]
+        else:
+            chosen = labels[:1]
+
+        self._plot_panel.set_projections(specs, chosen)
 
     def _refresh_time_view_selector(self) -> None:
         """Keep the top-level plot tabs and internal time-view state in sync."""
@@ -1828,10 +1870,16 @@ class MainWindow(QMainWindow):
     def _build_vector_axis_datasets(
         self,
         datasets: list[MuonDataset],
+        labels: list[str] | None = None,
     ) -> dict[str, list[MuonDataset]]:
-        """Return per-axis cloned datasets for vector ``ALL`` subplot rendering."""
-        axis_map: dict[str, list[MuonDataset]] = {"P_x": [], "P_y": [], "P_z": []}
-        for axis in ("P_x", "P_y", "P_z"):
+        """Return per-projection cloned datasets for stacked-subplot rendering.
+
+        ``labels`` selects which projections to build (defaults to the canonical
+        vector triple); each clone is reduced with that projection's pair.
+        """
+        axis_labels = list(labels) if labels else ["P_x", "P_y", "P_z"]
+        axis_map: dict[str, list[MuonDataset]] = {label: [] for label in axis_labels}
+        for axis in axis_labels:
             for dataset in datasets:
                 payload = self._extract_grouping_overrides(dataset)
                 if not isinstance(payload, dict):
@@ -1954,13 +2002,16 @@ class MainWindow(QMainWindow):
                 )
 
             if active_axis == "ALL" and hasattr(self._plot_panel, "plot_vector_subplots"):
-                axis_datasets = self._build_vector_axis_datasets(targets)
-                if all(axis_datasets.get(axis) for axis in ("P_x", "P_y", "P_z")):
+                labels = (
+                    list(self._plot_panel.selected_projection_labels())
+                    if hasattr(self._plot_panel, "selected_projection_labels")
+                    else []
+                )
+                axis_datasets = self._build_vector_axis_datasets(targets, labels)
+                if labels and all(axis_datasets.get(label) for label in labels):
                     render_mode = "vector_all"
                     rendered_targets = [
-                        dataset
-                        for axis in ("P_x", "P_y", "P_z")
-                        for dataset in axis_datasets.get(axis, [])
+                        dataset for label in labels for dataset in axis_datasets.get(label, [])
                     ]
                     self._plot_panel.plot_vector_subplots(axis_datasets)
                     return

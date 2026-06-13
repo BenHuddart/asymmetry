@@ -72,6 +72,7 @@ from asymmetry.gui.styles.plots import (
     style_legend,
 )
 from asymmetry.gui.styles.widgets import build_nav_button_qss
+from asymmetry.gui.widgets.projection_chip_bar import ProjectionChipBar
 from asymmetry.gui.widgets.rrf_controls import (
     install_rrf_controls,
     rrf_display_dataset,
@@ -269,16 +270,8 @@ class PlotPanel(QWidget):
             self._sync_navigation_buttons()
             layout.addLayout(self._limit_toolbar)
 
-            self._polarization_label = QLabel("Polarization:")
-            self._polarization_label.setAlignment(
-                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-            )
-            self._polarization_label.hide()
-
-            self._polarization_combo = QComboBox()
-            self._polarization_combo.setMinimumWidth(90)
-            self._polarization_combo.currentIndexChanged.connect(self._on_polarization_axis_changed)
-            self._polarization_combo.hide()
+            self._projection_bar = ProjectionChipBar()
+            self._projection_bar.selection_changed.connect(self._on_projection_selection_changed)
 
             nav_row = QHBoxLayout()
             nav_row.setContentsMargins(4, 0, 4, 0)
@@ -290,8 +283,7 @@ class PlotPanel(QWidget):
             nav_row.addWidget(self._time_view_combo)
             nav_row.addWidget(self._overlay_checkbox)
             nav_row.addStretch()
-            nav_row.addWidget(self._polarization_label)
-            nav_row.addWidget(self._polarization_combo)
+            nav_row.addWidget(self._projection_bar)
             nav_row.addSpacing(4)
 
             _nav_qss = build_nav_button_qss()
@@ -325,6 +317,11 @@ class PlotPanel(QWidget):
             self._current_datasets: list[MuonDataset] = []
             self._limits_initialized = False
             self._current_polarization_axis: str | None = None
+            # Ordered projection specs ({"label", "tint"}) and the per-label tint
+            # lookup used for frame-tinting subplots; driven by the chip bar.
+            self._projection_specs: list[dict] = []
+            self._tint_by_label: dict[str, str] = {}
+            self._selected_projection_labels: list[str] = []
             self._y_limits_by_polarization: dict[str, tuple[float, float]] = {}
             self._subplot_axes_by_polarization: dict[str, object] = {}
             self._vector_subplot_datasets: dict[str, list[MuonDataset]] = {}
@@ -1996,15 +1993,6 @@ class PlotPanel(QWidget):
         if hasattr(self, "_header_meta_label"):
             self._header_meta_label.setText(text or "")
 
-    def _axis_display_text(self, axis_key: str) -> str:
-        """Return UI label for canonical polarization keys."""
-        return {
-            "ALL": "All",
-            "P_x": "x",
-            "P_y": "y",
-            "P_z": "z",
-        }.get(str(axis_key), str(axis_key))
-
     def _axis_canonical_key(self, axis_text: str | None) -> str | None:
         """Normalize display/canonical axis text to canonical ``P_x`` form."""
         if axis_text is None:
@@ -2226,21 +2214,31 @@ class PlotPanel(QWidget):
         self._y_min.setValue(float(limits[0]))
         self._y_max.setValue(float(limits[1]))
 
-    def _on_polarization_axis_changed(self, _index: int) -> None:
-        """Emit polarization-axis changes from the plot header selector."""
-        axis = self._polarization_combo.currentData()
+    def _axis_for_selection(self, labels: list[str]) -> str | None:
+        """Map a chip selection onto the internal polarization-axis token.
+
+        One projection selected → that label (single-subplot mode); more than
+        one → the ``"ALL"`` sentinel (stacked-subplot mode); none → ``None``.
+        """
+        if len(labels) > 1:
+            return "ALL"
+        return labels[0] if labels else None
+
+    def _on_projection_selection_changed(self, labels: list[str]) -> None:
+        """Handle a projection chip-selection change from the header chip bar."""
+        self._selected_projection_labels = list(labels)
+        axis = self._axis_for_selection(list(labels))
         if axis is None:
-            axis = self._axis_canonical_key(self._polarization_combo.currentText())
-        if axis:
-            previous_axis = self._current_polarization_axis
-            if previous_axis != axis:
-                self._cache_current_y_limits_for_axis()
-                self._current_polarization_axis = str(axis)
-                self._restore_y_limits_for_axis(self._current_polarization_axis)
-                self._sync_y_controls_with_visible_axis()
-                self._update_y_limit_controls_for_axis(self._current_polarization_axis)
-                self._apply_limits()
-            self.polarization_axis_changed.emit(str(axis))
+            return
+        previous_axis = self._current_polarization_axis
+        if previous_axis != axis:
+            self._cache_current_y_limits_for_axis()
+            self._current_polarization_axis = str(axis)
+            self._restore_y_limits_for_axis(self._current_polarization_axis)
+            self._sync_y_controls_with_visible_axis()
+            self._update_y_limit_controls_for_axis(self._current_polarization_axis)
+            self._apply_limits()
+        self.polarization_axis_changed.emit(str(axis))
 
     def _update_y_limit_controls_for_axis(self, axis: str | None) -> None:
         """Enable per-axis Y editing except when in vector ALL mode."""
@@ -2301,53 +2299,59 @@ class PlotPanel(QWidget):
         self._y_min.setValue(y_lo)
         self._y_max.setValue(y_hi)
 
-    def set_polarization_axes(
+    def set_projections(
         self,
-        axes: list[str],
-        current_axis: str | None = None,
+        projections: list[dict],
+        selected: list[str] | None = None,
     ) -> None:
-        """Show/update the polarization selector or hide it when unavailable."""
-        if not hasattr(self, "_polarization_combo"):
+        """Show/update the projection chip bar, or hide it when unavailable.
+
+        ``projections`` is an ordered list of ``{"label", "tint"?}`` dicts;
+        ``selected`` is the subset of labels to show as subplots (defaults to
+        all). The bar (and any multi-projection behaviour) is suppressed when
+        fewer than two projections exist.
+        """
+        if not hasattr(self, "_projection_bar"):
             return
 
-        cleaned = [str(a) for a in axes if str(a).strip()]
-        if not cleaned:
+        specs = [dict(p) for p in (projections or []) if p.get("label")]
+        if len(specs) < 2:
             self._cache_current_y_limits_for_axis()
             self._current_polarization_axis = None
+            self._projection_specs = []
+            self._tint_by_label = {}
+            self._selected_projection_labels = []
             self._vector_subplot_datasets = {}
-            self._polarization_combo.blockSignals(True)
-            self._polarization_combo.clear()
-            self._polarization_combo.blockSignals(False)
-            self._polarization_label.hide()
-            self._polarization_combo.hide()
+            self._projection_bar.set_projections([])
             self._update_y_limit_controls_for_axis(None)
             return
 
-        selected = str(current_axis) if current_axis in cleaned else cleaned[0]
+        self._projection_specs = specs
+        self._tint_by_label = {str(p["label"]): str(p["tint"]) for p in specs if p.get("tint")}
+        labels = [str(p["label"]) for p in specs]
+        wanted = set(selected) if selected else set(labels)
+        chosen = [lbl for lbl in labels if lbl in wanted] or list(labels)
+
+        self._projection_bar.set_projections(specs)
+        self._projection_bar.set_selected(chosen)
+        self._selected_projection_labels = self._projection_bar.selected_labels()
+
+        new_axis = self._axis_for_selection(self._selected_projection_labels)
         previous_axis = self._current_polarization_axis
-        if previous_axis != selected:
+        if previous_axis != new_axis:
             self._cache_current_y_limits_for_axis()
-
-        self._polarization_combo.blockSignals(True)
-        self._polarization_combo.clear()
-        for axis in cleaned:
-            self._polarization_combo.addItem(self._axis_display_text(axis), axis)
-        idx = self._polarization_combo.findData(selected)
-        if idx < 0:
-            idx = 0
-        self._polarization_combo.setCurrentIndex(idx)
-        self._polarization_combo.blockSignals(False)
-        self._polarization_label.show()
-        self._polarization_combo.show()
-        self._current_polarization_axis = selected
-
-        if previous_axis != selected:
-            self._restore_y_limits_for_axis(selected)
+        self._current_polarization_axis = new_axis
+        if previous_axis != new_axis:
+            self._restore_y_limits_for_axis(new_axis)
             self._sync_y_controls_with_visible_axis()
-            self._update_y_limit_controls_for_axis(selected)
+            self._update_y_limit_controls_for_axis(new_axis)
             self._apply_limits()
         else:
-            self._update_y_limit_controls_for_axis(selected)
+            self._update_y_limit_controls_for_axis(new_axis)
+
+    def selected_projection_labels(self) -> list[str]:
+        """Return the projection labels currently selected in the chip bar."""
+        return list(self._selected_projection_labels)
 
     def _polarization_ylabel(self, axis_key: str | None) -> str:
         """Return y-axis label for the provided polarization component."""
@@ -2491,12 +2495,43 @@ class PlotPanel(QWidget):
             )
         return None, None, None, None
 
+    def _projection_subplot_order(
+        self, datasets_by_axis: dict[str, list[MuonDataset]]
+    ) -> list[str]:
+        """Return the subplot order for the projections that have datasets.
+
+        Prefers the declared projection order, falling back to the canonical
+        vector order and finally to the dict's own order.
+        """
+        spec_order = [str(p["label"]) for p in self._projection_specs]
+        order = [a for a in spec_order if datasets_by_axis.get(a)]
+        if not order:
+            order = [a for a in ("P_x", "P_y", "P_z") if datasets_by_axis.get(a)]
+        if not order:
+            order = [a for a in datasets_by_axis if datasets_by_axis.get(a)]
+        return order
+
+    def _apply_projection_frame_tint(self, ax, axis_key: str) -> None:
+        """Tint a subplot's left rail and y-label with the projection's colour.
+
+        This is *projection identity* (chip ↔ subplot), deliberately distinct
+        from the data trace colour, which encodes run identity in RG mode.
+        """
+        tint = self._tint_by_label.get(str(axis_key))
+        if not tint:
+            return
+        ax.yaxis.label.set_color(tint)
+        left = ax.spines.get("left") if hasattr(ax.spines, "get") else ax.spines["left"]
+        if left is not None:
+            left.set_color(tint)
+            left.set_linewidth(2.0)
+
     def plot_vector_subplots(self, datasets_by_axis: dict[str, list[MuonDataset]]) -> None:
-        """Render P_x/P_y/P_z as stacked subplots for vector ``ALL`` mode."""
+        """Render the selected projections as stacked subplots."""
         if not self._has_mpl:
             return
 
-        order = [axis for axis in ("P_x", "P_y", "P_z") if datasets_by_axis.get(axis)]
+        order = self._projection_subplot_order(datasets_by_axis)
         if not order:
             return
         self._set_canvas_minimum_height_for_axes(len(order))
@@ -2529,6 +2564,7 @@ class PlotPanel(QWidget):
             t, a, e, low = self._plot_datasets_on_axis(
                 ax, self._vector_subplot_datasets.get(axis_key, []), axis_key
             )
+            self._apply_projection_frame_tint(ax, axis_key)
             if axis_key in self._y_limits_by_polarization:
                 y0, y1 = self._y_limits_by_polarization[axis_key]
                 ax.set_ylim(y0, y1)
@@ -2605,10 +2641,8 @@ class PlotPanel(QWidget):
         self._current_dataset = datasets[-1]
         self._update_plot_header()
         self._current_polarization_axis = None
-        if hasattr(self, "_polarization_label"):
-            self._polarization_label.hide()
-        if hasattr(self, "_polarization_combo"):
-            self._polarization_combo.hide()
+        if hasattr(self, "_projection_bar"):
+            self._projection_bar.hide()
 
         shared_ax = None
         last_arrays = (None, None, None, None)
@@ -2715,9 +2749,8 @@ class PlotPanel(QWidget):
         self._current_dataset = datasets[-1]
         self._update_plot_header()
         self._current_polarization_axis = None
-        for label in ("_polarization_label", "_polarization_combo"):
-            if hasattr(self, label):
-                getattr(self, label).hide()
+        if hasattr(self, "_projection_bar"):
+            self._projection_bar.hide()
 
         n = len(datasets)
         gridspec = self._figure.add_gridspec(2 * n, 1, height_ratios=[3, 1] * n, hspace=0.45)
@@ -2798,9 +2831,8 @@ class PlotPanel(QWidget):
         self._current_dataset = datasets[-1]
         self._update_plot_header()
         self._current_polarization_axis = None
-        for label in ("_polarization_label", "_polarization_combo"):
-            if hasattr(self, label):
-                getattr(self, label).hide()
+        if hasattr(self, "_projection_bar"):
+            self._projection_bar.hide()
 
         gridspec = self._figure.add_gridspec(2, 1, height_ratios=[3, 1], hspace=0.3)
         ax_main = self._figure.add_subplot(gridspec[0])
@@ -4590,7 +4622,7 @@ class PlotPanel(QWidget):
             self._set_canvas_minimum_height_for_axes(1)
             self._set_navigation_mode("none")
             self._set_alpha_label(None)
-            self.set_polarization_axes([])
+            self.set_projections([])
             self._ax.clear()
             style_axes(self._ax)
             self._canvas.draw()

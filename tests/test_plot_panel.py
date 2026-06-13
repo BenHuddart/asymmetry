@@ -24,6 +24,46 @@ from asymmetry.gui.export_paths import resolve_gle_export_paths
 from asymmetry.gui.panels.plot_panel import PlotPanel, _FloatLimitField
 from asymmetry.gui.styles import tokens
 
+_PROJECTION_TINTS = {"P_x": "#534AB7", "P_y": "#BA7517", "P_z": "#0F6E56"}
+
+
+def _projection_specs(axes: list[str]) -> list[dict]:
+    """Build chip-bar specs from canonical axis labels (ignoring 'ALL')."""
+    return [{"label": a, "tint": _PROJECTION_TINTS.get(a, "#000000")} for a in axes if a != "ALL"]
+
+
+class _TintAxis:
+    """Minimal axis stub capturing frame-tint calls."""
+
+    def __init__(self) -> None:
+        self.label_color: str | None = None
+        self.spine_color: str | None = None
+        self.spine_lw: float | None = None
+        self.yaxis = SimpleNamespace(
+            label=SimpleNamespace(set_color=lambda c: setattr(self, "label_color", c))
+        )
+        spine = SimpleNamespace(
+            set_color=lambda c: setattr(self, "spine_color", c),
+            set_linewidth=lambda w: setattr(self, "spine_lw", w),
+        )
+        self.spines = {"left": spine}
+
+
+def _set_pol(panel: PlotPanel, axes: list[str], current: str | None) -> None:
+    """Drive the projection chip bar the way the old combo selector was driven.
+
+    ``current == "ALL"`` selects every projection (stacked subplots); a single
+    axis selects just that one.
+    """
+    specs = _projection_specs(axes)
+    if current == "ALL":
+        selected = [s["label"] for s in specs]
+    elif current:
+        selected = [current]
+    else:
+        selected = None
+    panel.set_projections(specs, selected)
+
 
 class _FakeAxis:
     def __init__(self) -> None:
@@ -907,38 +947,57 @@ class TestPlotPanel:
         assert panel.decimation_chip_text() is None
         assert panel._canvas.toolTip() == ""
 
-    def test_polarization_combo_uses_subscript_labels(self, panel: PlotPanel) -> None:
+    def test_projection_chip_bar_shows_each_projection(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
 
-        panel.set_polarization_axes(["P_x", "P_y", "P_z"], "P_x")
-        labels = [
-            panel._polarization_combo.itemText(i) for i in range(panel._polarization_combo.count())
-        ]
+        _set_pol(panel, ["P_x", "P_y", "P_z"], "P_x")
+        assert list(panel._projection_bar._chips) == ["P_x", "P_y", "P_z"]
+        assert not panel._projection_bar.isHidden()
+        assert panel.selected_projection_labels() == ["P_x"]
 
-        assert labels == ["x", "y", "z"]
-
-    def test_polarization_combo_change_updates_current_axis_state(self, panel: PlotPanel) -> None:
+    def test_chip_toggle_updates_current_axis_state(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
 
-        panel.set_polarization_axes(["P_x", "P_y", "P_z"], "P_z")
-        idx = panel._polarization_combo.findData("P_x")
-        assert idx >= 0
-        panel._polarization_combo.setCurrentIndex(idx)
-
+        _set_pol(panel, ["P_x", "P_y", "P_z"], "P_z")
+        assert panel.get_current_polarization_axis() == "P_z"
+        # Adding a second projection maps to the ALL (stacked) sentinel; dropping
+        # back to one selects that single axis.
+        panel._projection_bar._chips["P_x"].setChecked(True)
+        assert panel.get_current_polarization_axis() == "ALL"
+        panel._projection_bar._chips["P_z"].setChecked(False)
         assert panel.get_current_polarization_axis() == "P_x"
+        assert panel.selected_projection_labels() == ["P_x"]
 
-    def test_polarization_combo_supports_all_option(self, panel: PlotPanel) -> None:
+    def test_multiple_selected_projections_map_to_all(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
 
-        panel.set_polarization_axes(["ALL", "P_x", "P_y", "P_z"], "ALL")
-        labels = [
-            panel._polarization_combo.itemText(i) for i in range(panel._polarization_combo.count())
-        ]
+        _set_pol(panel, ["ALL", "P_x", "P_y", "P_z"], "ALL")
+        assert panel.get_current_polarization_axis() == "ALL"
+        assert panel.selected_projection_labels() == ["P_x", "P_y", "P_z"]
 
-        assert labels[0] == "All"
+    def test_projection_subplot_order_follows_declared_order(self, panel: PlotPanel) -> None:
+        panel._projection_specs = _projection_specs(["P_x", "P_y", "P_z"])
+        # Only two projections carry datasets: order is the declared order,
+        # restricted to those present.
+        order = panel._projection_subplot_order({"P_z": [object()], "P_x": [object()]})
+        assert order == ["P_x", "P_z"]
+
+    def test_frame_tint_colours_label_and_left_spine(self, panel: PlotPanel) -> None:
+        panel._tint_by_label = {"P_x": "#534AB7"}
+        ax = _TintAxis()
+        panel._apply_projection_frame_tint(ax, "P_x")
+        assert ax.label_color == "#534AB7"
+        assert ax.spine_color == "#534AB7"
+        assert ax.spine_lw == 2.0
+
+    def test_frame_tint_is_noop_without_a_tint(self, panel: PlotPanel) -> None:
+        panel._tint_by_label = {}
+        ax = _TintAxis()
+        panel._apply_projection_frame_tint(ax, "P_x")
+        assert ax.label_color is None
 
     def test_time_view_selector_supports_group_mode(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
@@ -1089,21 +1148,21 @@ class TestPlotPanel:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
 
-        panel.set_polarization_axes(["P_x", "P_y", "P_z"], "P_x")
+        _set_pol(panel, ["P_x", "P_y", "P_z"], "P_x")
         panel._y_min.setValue(-0.1)
         panel._y_max.setValue(0.3)
         panel._apply_limits()
 
-        panel.set_polarization_axes(["P_x", "P_y", "P_z"], "P_y")
+        _set_pol(panel, ["P_x", "P_y", "P_z"], "P_y")
         panel._y_min.setValue(-1.0)
         panel._y_max.setValue(1.0)
         panel._apply_limits()
 
-        panel.set_polarization_axes(["P_x", "P_y", "P_z"], "P_x")
+        _set_pol(panel, ["P_x", "P_y", "P_z"], "P_x")
         assert panel._y_min.value() == pytest.approx(-0.1)
         assert panel._y_max.value() == pytest.approx(0.3)
 
-        panel.set_polarization_axes(["P_x", "P_y", "P_z"], "P_y")
+        _set_pol(panel, ["P_x", "P_y", "P_z"], "P_y")
         assert panel._y_min.value() == pytest.approx(-1.0)
         assert panel._y_max.value() == pytest.approx(1.0)
         # Check if plot was created (canvas should have drawn something)
@@ -2632,7 +2691,7 @@ class TestPlotPanel:
             "P_y": _FakeAxis(),
             "P_z": _FakeAxis(),
         }
-        panel.set_polarization_axes(["ALL", "P_x", "P_y", "P_z"], "ALL")
+        _set_pol(panel, ["ALL", "P_x", "P_y", "P_z"], "ALL")
 
         assert not panel._y_min.isEnabled()
         assert not panel._y_max.isEnabled()
@@ -2641,7 +2700,7 @@ class TestPlotPanel:
         assert "Auto Y updates" in panel._auto_y_btn.toolTip()
         assert panel._y_min.toolTip() == panel._y_max.toolTip()
 
-        panel.set_polarization_axes(["ALL", "P_x", "P_y", "P_z"], "P_x")
+        _set_pol(panel, ["ALL", "P_x", "P_y", "P_z"], "P_x")
         assert panel._y_min.isEnabled()
         assert panel._y_max.isEnabled()
         assert panel._auto_y_btn.isEnabled()
@@ -2682,7 +2741,7 @@ class TestPlotPanel:
 
         panel._current_polarization_axis = "ALL"
         panel.plot_vector_subplots(datasets_by_axis)
-        panel.set_polarization_axes(["ALL", "P_x", "P_y", "P_z"], "ALL")
+        _set_pol(panel, ["ALL", "P_x", "P_y", "P_z"], "ALL")
         panel._x_min.setValue(0.0)
         panel._x_max.setValue(4.0)
 
@@ -2759,7 +2818,7 @@ class TestPlotPanel:
 
         panel._current_polarization_axis = "ALL"
         panel.plot_vector_subplots(initial)
-        panel.set_polarization_axes(["ALL", "P_x", "P_y", "P_z"], "ALL")
+        _set_pol(panel, ["ALL", "P_x", "P_y", "P_z"], "ALL")
         panel._auto_y_btn.click()
 
         first_px_limits = panel._subplot_axes_by_polarization["P_x"].get_ylim()
@@ -2806,13 +2865,13 @@ class TestPlotPanel:
 
         panel._current_polarization_axis = "ALL"
         panel.plot_vector_subplots(datasets_by_axis)
-        panel.set_polarization_axes(["ALL", "P_x", "P_y", "P_z"], "ALL")
+        _set_pol(panel, ["ALL", "P_x", "P_y", "P_z"], "ALL")
 
         panel._x_min.setValue(1.5)
         panel._x_max.setValue(5.5)
         panel._apply_limits()
 
-        panel.set_polarization_axes(["ALL", "P_x", "P_y", "P_z"], "P_x")
+        _set_pol(panel, ["ALL", "P_x", "P_y", "P_z"], "P_x")
         panel.plot_dataset(datasets_by_axis["P_x"][0])
 
         assert panel._x_min.value() == pytest.approx(1.5)

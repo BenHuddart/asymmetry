@@ -1884,17 +1884,17 @@ class TestMainWindowBasic:
         mainwindow._current_dataset = dataset
         mainwindow._refresh_vector_axis_selector()
 
-        assert mainwindow._plot_panel._polarization_combo.count() == 4
-        assert not mainwindow._plot_panel._polarization_combo.isHidden()
+        assert len(mainwindow._plot_panel._projection_bar._chips) == 3
+        assert not mainwindow._plot_panel._projection_bar.isHidden()
 
         mainwindow._plot_workspace.set_active_view("frequency")
 
-        assert mainwindow._plot_panel._polarization_combo.isHidden()
+        assert mainwindow._plot_panel._projection_bar.isHidden()
 
         mainwindow._plot_workspace.set_active_view("fb_asymmetry")
 
-        assert mainwindow._plot_panel._polarization_combo.count() == 4
-        assert not mainwindow._plot_panel._polarization_combo.isHidden()
+        assert len(mainwindow._plot_panel._projection_bar._chips) == 3
+        assert not mainwindow._plot_panel._projection_bar.isHidden()
 
     def test_grouped_view_hides_vector_selector_until_fb_returns(
         self,
@@ -1937,17 +1937,17 @@ class TestMainWindowBasic:
         mainwindow._refresh_time_view_selector()
         mainwindow._refresh_vector_axis_selector()
 
-        assert mainwindow._plot_panel._polarization_combo.count() == 4
-        assert not mainwindow._plot_panel._polarization_combo.isHidden()
+        assert len(mainwindow._plot_panel._projection_bar._chips) == 3
+        assert not mainwindow._plot_panel._projection_bar.isHidden()
 
         mainwindow._plot_workspace.set_active_view("groups")
 
-        assert mainwindow._plot_panel._polarization_combo.isHidden()
+        assert mainwindow._plot_panel._projection_bar.isHidden()
 
         mainwindow._plot_workspace.set_active_view("fb_asymmetry")
 
-        assert mainwindow._plot_panel._polarization_combo.count() == 4
-        assert not mainwindow._plot_panel._polarization_combo.isHidden()
+        assert len(mainwindow._plot_panel._projection_bar._chips) == 3
+        assert not mainwindow._plot_panel._projection_bar.isHidden()
 
     def test_set_compact_mode_is_legacy_no_op(self, mainwindow: MainWindow) -> None:
         """Legacy compact-mode API should leave the standard shell intact."""
