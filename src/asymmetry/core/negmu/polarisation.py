@@ -113,7 +113,7 @@ def build_capture_count_model_with_polarisation(
     components: Sequence[CaptureComponent],
     polarisation: str | None = None,
 ) -> Callable[..., NDArray[np.float64]]:
-    """Return f(t, **params) -> raw counts with optional polarisation multiplier.
+    """Return ``f(t, **params)`` → raw counts with optional polarisation multiplier.
 
     When ``polarisation`` is ``None`` the result is **bit-identical** to
     :func:`~asymmetry.core.negmu.model.build_capture_count_model` on the same

@@ -36,7 +36,7 @@ class CaptureComponent:
 def build_capture_count_model(
     components: Sequence[CaptureComponent],
 ) -> Callable[..., NDArray[np.float64]]:
-    """Return f(t, **params) -> raw counts for the fixed component order.
+    """Return ``f(t, **params)`` → raw counts for the fixed component order.
 
     Recognised params: ``amp_<label>`` (per component), optional ``tau_<label>``
     (overrides the component seed when the lifetime is freed), and ``background``
