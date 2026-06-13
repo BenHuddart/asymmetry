@@ -5527,7 +5527,7 @@ class MainWindow(QMainWindow):
     def _on_fourier_phase_estimate_finished(self, phases: dict) -> None:
         """Apply estimated group phases to the panel (GUI thread)."""
         self._fourier_phase_estimate_active = False
-        self._set_status_state("Idle")
+        self._clear_status_state_if_idle()
         if not phases:
             self._set_fourier_status("No detector groups are available for phase estimation.")
             return
@@ -5540,7 +5540,7 @@ class MainWindow(QMainWindow):
     def _on_fourier_phase_estimate_error(self, message: str) -> None:
         """Report a failed background phase estimation (GUI thread)."""
         self._fourier_phase_estimate_active = False
-        self._set_status_state("Idle")
+        self._clear_status_state_if_idle()
         self._set_fourier_status(f"Phase estimation failed: {message}")
         self._log_panel.log(f"Phase estimation failed: {message}")
 
@@ -5562,11 +5562,13 @@ class MainWindow(QMainWindow):
             int(group_id): float(phase)
             for group_id, phase in self._fourier_panel.group_phase_table().items()
         }
-        self._fourier_panel.clear_average_summary()
 
         if self._fourier_compute_active:
+            # Clear the summary only when we actually start a fresh compute;
+            # blanking it here would wipe the in-flight compute's S/N readout.
             self._set_fourier_status("A Fourier transform is already being computed.")
             return
+        self._fourier_panel.clear_average_summary()
         if self._current_dataset is None or self._current_dataset.run is None:
             self._set_fourier_status("Select a grouped run before computing the Fourier transform.")
             return
@@ -5751,7 +5753,7 @@ class MainWindow(QMainWindow):
     def _on_fourier_payload_finished(self, payload: dict, started_at: float) -> None:
         """Apply a completed averaged grouped FFT to the GUI (GUI thread)."""
         self._fourier_compute_active = False
-        self._set_status_state("Idle")
+        self._clear_status_state_if_idle()
         average_dataset = payload["average_dataset"]
         fourier_config = payload["config"]
         run_number = int(payload["run_number"])
@@ -5842,7 +5844,7 @@ class MainWindow(QMainWindow):
     def _on_fourier_payload_error(self, message: str, started_at: float) -> None:
         """Report a failed background Fourier compute (GUI thread)."""
         self._fourier_compute_active = False
-        self._set_status_state("Idle")
+        self._clear_status_state_if_idle()
         self._set_fourier_status(f"Fourier transform failed: {message}")
         self._log_panel.log(f"Fourier transform failed: {message}")
         self._log_perf_event("compute_fourier", started_at, spectra=0)
@@ -6393,9 +6395,9 @@ class MainWindow(QMainWindow):
 
     def _finish_maxent(self) -> None:
         """Clear MaxEnt worker state after a terminal callback (GUI thread)."""
-        self._set_status_state("Idle")
         self._maxent_panel.set_busy(False)
         self._maxent_active = False
+        self._clear_status_state_if_idle()
         self._maxent_worker = None
         self._maxent_active_run_number = None
         self._maxent_active_run = None
@@ -8567,6 +8569,21 @@ class MainWindow(QMainWindow):
         if label is not None:
             label.setText(f"● {text}")
 
+    def _clear_status_state_if_idle(self) -> None:
+        """Reset the state dot to Idle only when no background task remains.
+
+        The four feature flags share one status indicator, so a task that
+        finishes while another is still running must not stamp "Idle" over the
+        other's "Computing …" state.
+        """
+        if not (
+            self._maxent_active
+            or self._fourier_compute_active
+            or self._fourier_phase_estimate_active
+            or self._project_save_active
+        ):
+            self._set_status_state("Idle")
+
     def _on_cursor_coords_changed(self, x: object, y: object) -> None:
         """Update the status bar right label with the current cursor position."""
         if not hasattr(self, "_status_coords_label"):
@@ -8866,7 +8883,7 @@ class MainWindow(QMainWindow):
     def _on_project_save_finished(self, path: str) -> None:
         """Record a completed background save (GUI thread)."""
         self._project_save_active = False
-        self._set_status_state("Idle")
+        self._clear_status_state_if_idle()
         self._current_project_path = path
         self._add_recent_project(path)
         self._update_window_title()
@@ -8876,7 +8893,7 @@ class MainWindow(QMainWindow):
     def _on_project_save_error(self, path: str, message: str) -> None:
         """Report a failed background save (GUI thread)."""
         self._project_save_active = False
-        self._set_status_state("Idle")
+        self._clear_status_state_if_idle()
         QMessageBox.critical(self, "Save Failed", f"Could not save project:\n{message}")
         self._log_panel.log(f"ERROR saving project: {message}")
 
