@@ -18,7 +18,13 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.fitting.engine import FitCancelledError, FitEngine, FitResult
+from asymmetry.core.fitting.engine import (
+    COST_FACTORIES,
+    POISSON_COST,
+    FitCancelledError,
+    FitEngine,
+    FitResult,
+)
 from asymmetry.core.fitting.global_search.heuristics import (
     is_amplitude_parameter,
     is_background_parameter,
@@ -486,6 +492,39 @@ def build_count_group(
     )[0]
 
 
+def _raw_count_model(model_fn):
+    """Wrap a lifetime-corrected count model to predict raw counts.
+
+    ``build_grouped_count_model`` returns the lifetime-corrected expectation
+    (background carries ``e^(t/τ_μ)``); multiplying the whole thing by
+    ``e^(−t/τ_μ)`` gives the raw-count expectation the Cash statistic compares
+    against. Same construction the count-domain driver uses.
+    """
+
+    def raw(t, **kwargs):
+        time = np.asarray(t, dtype=float)
+        corrected = np.asarray(model_fn(time, **kwargs), dtype=float)
+        return corrected * np.exp(-time / float(MUON_LIFETIME_US))
+
+    return raw
+
+
+def _raw_group_counts(
+    time: NDArray[np.float64],
+    counts: NDArray[np.float64],
+    metadata: dict,
+) -> NDArray[np.float64]:
+    """Invert the lifetime correction on a trace to recover raw Poisson counts.
+
+    ``_build_one_count_group`` records whether it applied the ``e^(t/τ_μ)``
+    correction; when it did, ``raw = corrected · e^(−t/τ_μ)`` restores the
+    Poisson-distributed (rebinned) counts. An already-raw trace passes through.
+    """
+    if not bool(metadata.get("grouped_time_domain_lifetime_corrected", True)):
+        return np.asarray(counts, dtype=float)
+    return np.asarray(counts, dtype=float) * np.exp(-np.asarray(time, dtype=float) / float(MUON_LIFETIME_US))
+
+
 def fit_grouped_time_domain(
     groups: list[GroupedTimeDomainGroup],
     polarization_model_fn,
@@ -500,6 +539,7 @@ def fit_grouped_time_domain(
     max_calls: int = 10000,
     minos: bool = False,
     cancel_callback: Callable[[], bool] | None = None,
+    cost: str = "poisson",
 ) -> GroupedTimeDomainFitResult:
     """Fit one shared polarization model across several grouped count traces.
 
@@ -509,6 +549,20 @@ def fit_grouped_time_domain(
     - model-function parameters may be global or fixed only
     - local parameters may only come from the group nuisance block
     - the observed signal is assumed to be lifetime-corrected grouped counts
+
+    ``cost`` selects the fit objective, matching the count-domain modes'
+    convention:
+
+    - ``"poisson"`` (default) — the Cash statistic on the **raw** Poisson
+      counts (the lifetime correction is inverted and the model is multiplied
+      by ``e^(−t/τ_μ)`` to predict raw counts). This is the statistically
+      faithful objective: at low counts the √N-Gaussian weight biases the fit,
+      and Cash removes that bias. Reported ``chi_squared`` is the Cash value
+      (asymptotically χ²-distributed).
+    - ``"gaussian"`` — √N-weighted least squares on the lifetime-corrected
+      counts, WiMDA's weighting, kept byte-for-byte as the historical baseline.
+      (√N weighting is invariant to the lifetime correction, so this is exactly
+      the pre-cost-factory grouped fit.)
 
     Parameters
     ----------
@@ -557,7 +611,15 @@ def fit_grouped_time_domain(
                 f"Grouped time-domain parameters for {group_id!r} are missing: {missing_names}"
             )
 
-    model_fn = build_grouped_count_model(polarization_model_fn)
+    if cost not in COST_FACTORIES:
+        raise ValueError(f"Unknown grouped fit cost {cost!r}; expected one of {sorted(COST_FACTORIES)}")
+    # Poisson (Cash) fits the raw counts against a raw-count expectation, so the
+    # objective sees true Poisson statistics; Gaussian keeps the historical
+    # lifetime-corrected √N least squares (cost_factory=None → byte-identical).
+    use_poisson = cost == "poisson"
+    cost_factory = POISSON_COST if use_poisson else None
+    base_model_fn = build_grouped_count_model(polarization_model_fn)
+    model_fn = _raw_count_model(base_model_fn) if use_poisson else base_model_fn
 
     engine = fit_engine or FitEngine()
     temporary_datasets: list[MuonDataset] = []
@@ -574,6 +636,13 @@ def fit_grouped_time_domain(
             raise ValueError(
                 f"Grouped time-domain arrays for {group.group_id!r} must share one shape"
             )
+        if use_poisson:
+            # Recover the raw Poisson counts the Cash statistic needs: invert the
+            # lifetime correction the trace carries (a no-op for an already-raw
+            # group). The error is Poisson √N and unused by Cash, but global_fit
+            # rejects zero errors, so floor it.
+            counts = _raw_group_counts(time, counts, group.metadata)
+            error = np.sqrt(np.clip(counts, 1.0, None))
         metadata = dict(group.metadata)
         metadata.update(
             {
@@ -606,6 +675,7 @@ def fit_grouped_time_domain(
         max_calls=max_calls,
         minos=minos,
         cancel_callback=cancel_callback,
+        cost_factory=cost_factory,
     )
 
     group_results = {
@@ -870,6 +940,7 @@ def fit_grouped_series(
     cancel_callback: Callable[[], bool] | None = None,
     seeding: str = "as_provided",
     order_key: dict[int, float] | None = None,
+    cost: str = "poisson",
 ) -> GroupedSeriesFitResult:
     """Fit a series of grouped runs with one of three member relationships.
 
@@ -954,6 +1025,7 @@ def fit_grouped_series(
             seeding=recommendation.mode,
             seeding_reason=recommendation.reason,
             order_key=order_key,
+            cost=cost,
         )
     # A "global" series is one simultaneous fit, so sequential chaining does not
     # apply; the seeding choice is recorded as-is for transparency.
@@ -970,6 +1042,7 @@ def fit_grouped_series(
         max_calls=max_calls,
         minos=minos,
         cancel_callback=cancel_callback,
+        cost=cost,
     )
 
 
@@ -991,6 +1064,7 @@ def _fit_grouped_series_independent(
     seeding: str = "as_provided",
     seeding_reason: str = "",
     order_key: dict[int, float] | None = None,
+    cost: str = "poisson",
 ) -> GroupedSeriesFitResult:
     """Run one independent grouped joint fit per member run (no cross-run sharing).
 
@@ -1035,6 +1109,7 @@ def _fit_grouped_series_independent(
             max_calls=max_calls,
             minos=minos,
             cancel_callback=cancel_callback,
+            cost=cost,
         )
         # Only chain from a successful member; a failed fit resets the next member to
         # its provided seed rather than propagating a diverged seed down the scan.
@@ -1076,8 +1151,13 @@ def _fit_grouped_series_global(
     max_calls: int,
     minos: bool = False,
     cancel_callback: Callable[[], bool] | None = None,
+    cost: str = "poisson",
 ) -> GroupedSeriesFitResult:
     """Fit every ``(run, group)`` simultaneously, sharing physics across all runs."""
+    if cost not in COST_FACTORIES:
+        raise ValueError(f"Unknown grouped fit cost {cost!r}; expected one of {sorted(COST_FACTORIES)}")
+    use_poisson = cost == "poisson"
+    cost_factory = POISSON_COST if use_poisson else None
     temporary_datasets: list[MuonDataset] = []
     temporary_initial: dict[int, ParameterSet] = {}
     member_source_run: dict[int, int] = {}
@@ -1109,6 +1189,9 @@ def _fit_grouped_series_global(
                     f"Grouped-series arrays for run {run} group {group.group_id!r} "
                     "must share one shape"
                 )
+            if use_poisson:
+                counts = _raw_group_counts(time, counts, group.metadata)
+                error = np.sqrt(np.clip(counts, 1.0, None))
             metadata = dict(group.metadata)
             metadata.update(
                 {
@@ -1134,7 +1217,8 @@ def _fit_grouped_series_global(
     if len(temporary_datasets) < 2:
         raise ValueError("Global grouped-series fitting requires at least two (run, group) members")
 
-    model_fn = build_grouped_count_model(polarization_model_fn)
+    base_model_fn = build_grouped_count_model(polarization_model_fn)
+    model_fn = _raw_count_model(base_model_fn) if use_poisson else base_model_fn
     internal_results, shared_parameters = engine.global_fit(
         temporary_datasets,
         model_fn,
@@ -1147,6 +1231,7 @@ def _fit_grouped_series_global(
         max_calls=max_calls,
         minos=minos,
         cancel_callback=cancel_callback,
+        cost_factory=cost_factory,
     )
 
     member_results = {

@@ -3730,6 +3730,7 @@ class GlobalFitTab(QWidget):
                 local_params,
                 initial_params,
                 minos=self._minos_checkbox.isChecked(),
+                cost=self._count_fit_cost,
             ),
             on_finished=lambda result, ds=grouped_datasets: self._on_grouped_fit_finished(
                 ds, result
@@ -4467,6 +4468,7 @@ class GlobalFitTab(QWidget):
                 minos=self._minos_checkbox.isChecked(),
                 seeding=self._batch_seeding_mode,
                 order_key=self._grouped_series_order_key(members),
+                cost=self._count_fit_cost,
             ),
             on_finished=lambda result, ds=grouped_datasets: self._on_grouped_series_fit_finished(
                 ds, result

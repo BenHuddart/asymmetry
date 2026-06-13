@@ -164,6 +164,94 @@ def drive_minuit(
     return out or None
 
 
+# --- selectable fit cost ----------------------------------------------------
+
+
+def gaussian_chi2(
+    observed: NDArray[np.float64],
+    model: NDArray[np.float64],
+    errors: NDArray[np.float64],
+) -> float:
+    """Weighted least-squares cost Σ((n − μ)/σ)² for explicit per-point σ."""
+    return float(np.sum(((observed - model) / errors) ** 2))
+
+
+def poisson_cash(observed: NDArray[np.float64], model: NDArray[np.float64]) -> float:
+    """Cash statistic ``2·Σ(μ − n + n·ln(n/μ))`` for Poisson counts.
+
+    The single Cash-cost primitive (factored here from ``count_domain.py`` so
+    the count-domain fitters and the grouped/global driver share one
+    implementation). Scaled so ``errordef = 1`` yields correct parameter errors
+    (ΔC behaves like Δχ² near the minimum). ``n = 0`` bins reduce to ``2μ`` with
+    no logarithm; ``μ`` is floored to keep the log finite.
+    """
+    mu = np.clip(model, 1.0e-12, None)
+    term = mu - observed
+    positive = observed > 0.0
+    term[positive] += observed[positive] * np.log(observed[positive] / mu[positive])
+    return 2.0 * float(np.sum(term))
+
+
+@dataclass(frozen=True)
+class CostFactory:
+    """A pluggable objective for the single/global fit driver.
+
+    ``build`` constructs the iminuit objective over (possibly concatenated)
+    data; ``pointwise`` evaluates the *same* statistic on one (sub)dataset, for
+    the per-dataset reduced-statistic report a global fit produces. Both the
+    Gaussian (√-weighted least squares — the default everywhere) and the Poisson
+    (Cash) cost flow through this one seam, so a grouped/global fit can adopt the
+    count-domain modes' Poisson convention without the driver knowing which is
+    in play. ``build`` returns either an :mod:`iminuit.cost` object or a plain
+    ``cost(*params)`` callable carrying ``errordef``; both are accepted by
+    ``Minuit(cost, *initial, name=...)``.
+    """
+
+    name: str
+    build: Callable[..., object]
+    pointwise: Callable[[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]], float]
+
+
+def _build_least_squares(x, y, yerr, model):
+    from iminuit.cost import LeastSquares
+
+    return LeastSquares(x, y, yerr, model)
+
+
+def _build_poisson_cash(x, y, yerr, model):
+    # Cash fits the raw Poisson counts ``y`` against the model expectation μ;
+    # ``yerr`` is unused (the Poisson variance is μ itself, not a stored σ).
+    counts = np.asarray(y, dtype=float)
+    times = np.asarray(x, dtype=float)
+
+    def cost(*args) -> float:
+        return poisson_cash(counts, np.asarray(model(times, *args), dtype=float))
+
+    cost.errordef = 1.0
+    return cost
+
+
+#: √-weighted least squares — the historical default for every fit surface.
+GAUSSIAN_COST = CostFactory(
+    "gaussian",
+    _build_least_squares,
+    lambda observed, model, errors: gaussian_chi2(observed, model, errors),
+)
+#: Cash statistic on raw Poisson counts — the count-domain modes' default,
+#: extended to grouped fits via the cost-factory seam.
+POISSON_COST = CostFactory(
+    "poisson",
+    _build_poisson_cash,
+    lambda observed, model, _errors: poisson_cash(observed, model),
+)
+
+#: Resolve a cost name to its factory; ``None``/unknown → Gaussian.
+COST_FACTORIES: dict[str, CostFactory] = {
+    GAUSSIAN_COST.name: GAUSSIAN_COST,
+    POISSON_COST.name: POISSON_COST,
+}
+
+
 @dataclass
 class FitResult:
     """Container for the outcome of a fit."""
@@ -226,6 +314,7 @@ class FitEngine:
         minos: bool = False,
         cancel_callback: Callable[[], bool] | None = None,
         frequency_offsets: dict[str, float] | None = None,
+        cost_factory: CostFactory | None = None,
     ) -> FitResult:
         """Run a single-dataset fit.
 
@@ -244,6 +333,12 @@ class FitEngine:
         method : str
             Minimization method (``"migrad"`` for gradient-based,
             ``"simplex"`` for Nelder-Mead).
+        cost_factory : CostFactory, optional
+            Selectable fit objective (:data:`GAUSSIAN_COST` / :data:`POISSON_COST`).
+            ``None`` keeps the historical √-weighted least squares, byte-for-byte.
+            With :data:`POISSON_COST` the ``chi_squared``/``reduced_chi_squared``
+            report the Cash statistic (asymptotically χ²-distributed), and the
+            data must be raw Poisson counts with a count-expectation model.
         frequency_offsets : dict[str, float], optional
             Rotating-reference-frame offsets ``{param: ν₀}`` resolved by
             :func:`asymmetry.core.fitting.rrf_offset.rrf_frequency_offsets`.
@@ -306,8 +401,13 @@ class FitEngine:
                 kw[follower] = kw[main]
             return model_fn(t, **kw)
 
-        # Create least squares cost function
-        cost = LeastSquares(ds.time, ds.asymmetry, ds.error, model_wrapper)
+        # Build the cost. The default (no factory) is the historical √-weighted
+        # least squares, kept byte-identical; a factory swaps in the selectable
+        # objective (e.g. Poisson Cash on raw counts) through the shared seam.
+        if cost_factory is None:
+            cost = LeastSquares(ds.time, ds.asymmetry, ds.error, model_wrapper)
+        else:
+            cost = cost_factory.build(ds.time, ds.asymmetry, ds.error, model_wrapper)
 
         # Create Minuit object
         initial_values = [p.value for p in free]
@@ -414,6 +514,7 @@ class FitEngine:
         initial_step_sizes: dict[str, float] | None = None,
         minos: bool = False,
         cancel_callback: Callable[[], bool] | None = None,
+        cost_factory: CostFactory | None = None,
     ) -> tuple[dict[str, FitResult], ParameterSet]:
         """Simultaneous fit of multiple datasets with shared and local parameters.
 
@@ -498,6 +599,7 @@ class FitEngine:
                     method=method,
                     minos=minos,
                     cancel_callback=cancel_callback,
+                    cost_factory=cost_factory,
                 )
             return results, fitted_global
 
@@ -618,9 +720,16 @@ class FitEngine:
             if not np.isfinite(val):
                 raise ValueError(f"Parameter {param_names[i]} has non-finite initial value: {val}")
 
-        # Create cost function and Minuit object
+        # Create cost function and Minuit object. The default (no factory) keeps
+        # the historical √-weighted least squares byte-for-byte; a factory swaps
+        # in the selectable objective (Poisson Cash on the concatenated raw
+        # counts) — Cash is a bin-wise sum, so the dataset concatenation is
+        # transparent to it.
         try:
-            cost = LeastSquares(all_times, all_asymm, all_errors, model_wrapper)
+            if cost_factory is None:
+                cost = LeastSquares(all_times, all_asymm, all_errors, model_wrapper)
+            else:
+                cost = cost_factory.build(all_times, all_asymm, all_errors, model_wrapper)
             m = Minuit(cost, *initial_values, name=param_names)
         except Exception as e:
             raise RuntimeError(f"Failed to create Minuit cost function: {str(e)}")
@@ -744,11 +853,21 @@ class FitEngine:
                 if pname not in result_params:
                     result_params.add(Parameter(name=pname, value=value, fixed=True))
 
-            # Compute chi-squared for this dataset
+            # Compute the per-dataset cost. The Gaussian default keeps the
+            # √-weighted χ²; a factory reports its own statistic (Poisson Cash),
+            # so the per-group reduced value stays on the same footing as the
+            # joint objective the minimiser actually drove.
             param_dict = {p.name: p.value for p in result_params}
             model_vals = model_fn(ds.time, **param_dict)
             residuals = np.asarray(ds.asymmetry, dtype=float) - np.asarray(model_vals, dtype=float)
-            dataset_chi2 = np.sum(((ds.asymmetry - model_vals) / ds.error) ** 2)
+            if cost_factory is None:
+                dataset_chi2 = np.sum(((ds.asymmetry - model_vals) / ds.error) ** 2)
+            else:
+                dataset_chi2 = cost_factory.pointwise(
+                    np.asarray(ds.asymmetry, dtype=float),
+                    np.asarray(model_vals, dtype=float),
+                    np.asarray(ds.error, dtype=float),
+                )
 
             covariance_subset = None
             covariance_order: list[str] = []
