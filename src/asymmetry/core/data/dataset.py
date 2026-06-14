@@ -120,6 +120,20 @@ class MuonDataset:
 
     This is the primary object that users interact with after loading and
     reducing a run.
+
+    Scale convention
+    ----------------
+    ``asymmetry`` and ``error`` are stored on the **percent** scale (the
+    WiMDA-style convention the loaders and the time-domain fit models share —
+    a 16 % asymmetry is stored as ``16.0``, not ``0.16``, and the built-in
+    models default ``A0`` to ``25``). The low-level
+    :func:`asymmetry.core.transform.compute_asymmetry` primitive instead
+    returns the dimensionless **fraction** :math:`A \\in [-1, 1]`; the loaders
+    multiply by 100 to populate these arrays. When a specific scale is needed,
+    prefer the explicit :attr:`asymmetry_percent` / :attr:`asymmetry_fraction`
+    (and :attr:`error_percent` / :attr:`error_fraction`) accessors so the two
+    can never be silently confused — seeding a fit with fraction-scale
+    amplitudes against this percent-scale data converges to the wrong minimum.
     """
 
     time: NDArray[np.float64]
@@ -133,6 +147,33 @@ class MuonDataset:
     @property
     def n_points(self) -> int:
         return len(self.time)
+
+    # Scale accessors ---------------------------------------------------
+    #
+    # Explicit percent/fraction views over the stored ``asymmetry``/``error``
+    # arrays (which are percent — see the class docstring). These exist so
+    # callers state the scale they want rather than guessing, removing the
+    # percent-vs-fraction trap that otherwise corrupts fit seeds and trends.
+
+    @property
+    def asymmetry_percent(self) -> NDArray[np.float64]:
+        """Asymmetry on the percent scale (the stored convention)."""
+        return np.asarray(self.asymmetry, dtype=np.float64)
+
+    @property
+    def asymmetry_fraction(self) -> NDArray[np.float64]:
+        r"""Asymmetry as the dimensionless fraction :math:`A \in [-1, 1]` (percent / 100)."""
+        return np.asarray(self.asymmetry, dtype=np.float64) / 100.0
+
+    @property
+    def error_percent(self) -> NDArray[np.float64]:
+        """Asymmetry error on the percent scale (the stored convention)."""
+        return np.asarray(self.error, dtype=np.float64)
+
+    @property
+    def error_fraction(self) -> NDArray[np.float64]:
+        """Asymmetry error on the fractional scale (percent / 100)."""
+        return np.asarray(self.error, dtype=np.float64) / 100.0
 
     @property
     def run_number(self) -> int:
