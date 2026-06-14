@@ -113,6 +113,43 @@ def test_plot_panel_renders_combined_reconstruction_on_one_axis(qapp: QApplicati
         panel.deleteLater()
 
 
+@pytest.mark.parametrize("combined", [False, True])
+def test_reconstruction_survives_viewport_refresh_triggers(
+    qapp: QApplication, combined: bool
+) -> None:
+    """A reconstruction layout must not be clobbered by a viewport refresh.
+
+    Reconstructions are drawn with plain ``ax.plot`` (never decimated) and
+    ``_redraw_current_view`` cannot rebuild them — it falls through to a plain
+    dataset plot. Both editing the limit fields (pre-existing) and clicking
+    Auto X (which now schedules a viewport refresh to re-decimate normal views)
+    route through ``_schedule_viewport_refresh``; it must skip reconstruction
+    views so the data+model+residual layout stays intact.
+    """
+    panel = PlotPanel()
+    try:
+        if not getattr(panel, "_has_mpl", False):
+            pytest.skip("matplotlib not available")
+        datasets = _reconstruction_datasets()
+        panel.plot_maxent_reconstruction(datasets, combined=combined)
+        expected_axes = 2 if combined else 2 * len(datasets)
+        assert len(panel._figure.axes) == expected_axes
+
+        # Pre-existing trigger: editing the limit fields schedules a refresh.
+        panel._on_limit_fields_edited()
+        qapp.processEvents()
+        assert len(panel._figure.axes) == expected_axes
+
+        # New trigger from the Auto-X decimation fix.
+        panel._auto_x_btn.setChecked(True)
+        panel._on_auto_x_button_clicked(True)
+        qapp.processEvents()
+        assert len(panel._figure.axes) == expected_axes
+    finally:
+        panel.close()
+        panel.deleteLater()
+
+
 def test_maxent_panel_combined_reconstruction_toggle_round_trips_and_signals(
     qapp: QApplication,
 ) -> None:

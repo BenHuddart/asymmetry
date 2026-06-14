@@ -105,6 +105,11 @@ _FREQUENCY_X_UNIT_FIELD = {
     "field_tesla": "tesla",
 }
 
+# Neutral y-range for a stacked projection subplot whose asymmetry is entirely
+# non-finite (no data). Without it matplotlib keeps its default (0, 1) box,
+# which reads as "counts" rather than "asymmetry, no data".
+_EMPTY_PROJECTION_YLIM = (-0.3, 0.3)
+
 
 class _FloatLimitField(QLineEdit):
     """Plain text field that stores a floating-point axis limit."""
@@ -1332,6 +1337,20 @@ class PlotPanel(QWidget):
         finally:
             self._syncing_limits_from_axes = False
 
+    def _is_reconstruction_view(self) -> bool:
+        """True when the panel shows a MaxEnt reconstruction layout.
+
+        Reconstruction subplots are keyed ``recon:<run>:<idx>`` /
+        ``recon:combined:<run>``. They are drawn with plain ``ax.plot`` (never
+        decimated) and ``_redraw_current_view`` cannot rebuild them — it would
+        fall through to a plain dataset plot — so they must be excluded from the
+        viewport-refresh path.
+        """
+        return any(
+            isinstance(key, str) and key.startswith("recon:")
+            for key in self._subplot_axes_by_polarization
+        )
+
     def _schedule_viewport_refresh(self) -> None:
         """Coalesce viewport-triggered density refreshes onto the next event loop turn."""
         if (
@@ -1339,6 +1358,10 @@ class PlotPanel(QWidget):
             or not self._current_datasets
             or self._viewport_refresh_in_progress
             or self._viewport_refresh_pending
+            # MaxEnt reconstructions are not decimated and cannot be rebuilt by
+            # _redraw_current_view; refreshing one would replace it with a plain
+            # dataset plot. (Pre-existing: limit-field edits also route here.)
+            or self._is_reconstruction_view()
         ):
             return
         self._viewport_refresh_pending = True
@@ -2802,6 +2825,12 @@ class PlotPanel(QWidget):
             if axis_key in self._y_limits_by_polarization:
                 y0, y1 = self._y_limits_by_polarization[axis_key]
                 ax.set_ylim(y0, y1)
+            elif t is None:
+                # All-NaN projection: give it a neutral asymmetry range instead
+                # of matplotlib's default (0, 1). Not cached in
+                # _y_limits_by_polarization, so a later render with real data
+                # auto-scales normally.
+                ax.set_ylim(*_EMPTY_PROJECTION_YLIM)
             if idx == len(order) - 1:
                 x_label, _ = self._axis_labels_for_dataset(
                     self._vector_subplot_datasets.get(axis_key, [None])[0],
@@ -3786,7 +3815,15 @@ class PlotPanel(QWidget):
 
         self._x_min.setValue(self._convert_frequency_axis_limit_to_control_value(x_min))
         self._x_max.setValue(self._convert_frequency_axis_limit_to_control_value(x_max))
-        self._apply_limits()
+        # Widening the x-window past the previous (possibly zoomed-in) view leaves
+        # the rendered points decimated for the *old* narrow viewport — the data
+        # outside it stays missing until a redraw recomputes decimation. Schedule a
+        # viewport refresh so Auto X re-decimates over the full range it just set.
+        # (_last_plot_time is already full-resolution, so the computed range is
+        # correct; only the on-screen sample was stale.) The refresh is coalesced
+        # and self-suppresses while one is already in progress, so the render-path
+        # call via _apply_auto_limits_if_enabled cannot recurse.
+        self._apply_limits(schedule_viewport_refresh=True)
 
     def _auto_y_limits(self) -> None:
         """Auto-scale y-axis from visible, non-low-count points only."""
@@ -4824,6 +4861,7 @@ class PlotPanel(QWidget):
         component_curves: list[tuple[str, object]] | None = None,
         fit_result: object | None = None,
         fit_function: str | None = None,
+        run_number: int | None = None,
     ) -> None:
         """Overlay a fit curve on the current plot.
 
@@ -4839,20 +4877,47 @@ class PlotPanel(QWidget):
             Label for the fit curve in the legend.
         fit_result : object, optional
             FitResult containing chi_squared, parameters, uncertainties, etc.
+        run_number : int, optional
+            Run the fit was computed for. In a multi-run overlay stacked view
+            ``_current_dataset`` points at the first projection's *last* run, not
+            the fitted (selected) run, so the caller passes the fitted run
+            explicitly to keep the overlay key and the persisted single-fit slot
+            on the same run. Defaults to inferring it from ``_current_dataset``.
         """
         if not self._has_mpl:
             return
 
         # Store fit curve data for persistence across redraws (single fit)
         self._fit_curve = (t_fit, y_fit, label)
+        explicit_run = run_number
         run_number = None
-        axis_key = None
         if self._current_dataset is not None:
             try:
                 run_number = int(self._current_dataset.run_number)
             except (TypeError, ValueError):
                 run_number = None
-            axis_key = self._axis_key_for_dataset(self._current_dataset)
+        # The fitted run is authoritative when supplied: source it from the one
+        # place that knows it (the caller's selected dataset) so the curve is
+        # keyed under the same run the slot is recorded against.
+        if explicit_run is not None:
+            try:
+                run_number = int(explicit_run)
+            except (TypeError, ValueError):
+                pass
+        # Derive the axis from the dataset that actually matches the fitted run,
+        # not whichever one _current_dataset points at — in a multi-run overlay
+        # that is the last overlaid run, possibly a different projection — so the
+        # (run, axis) key is always self-consistent.
+        axis_source = self._current_dataset
+        if run_number is not None:
+            for dataset in self._current_datasets or ():
+                try:
+                    if int(dataset.run_number) == run_number:
+                        axis_source = dataset
+                        break
+                except (TypeError, ValueError):
+                    continue
+        axis_key = self._axis_key_for_dataset(axis_source) if axis_source is not None else None
         # In the stacked view the fit belongs to the SELECTED subplot, not the
         # first projection that _current_dataset happens to point at — otherwise
         # every fit would draw on the first subplot regardless of the target.
