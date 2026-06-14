@@ -440,6 +440,44 @@ def _tf_dataset_with_histograms(run_number: int = 4020) -> MuonDataset:
     )
 
 
+def _wep_dataset_with_histograms(run_number: int = 4030) -> MuonDataset:
+    """A non-canonical preset whose projections declare their own alpha — the
+    GPS ``WEP`` shape (FB alpha 0.75 / UD alpha 1.0)."""
+    h1 = Histogram(counts=np.array([100.0, 100.0, 100.0, 100.0]), bin_width=0.01)
+    h2 = Histogram(counts=np.array([50.0, 50.0, 50.0, 50.0]), bin_width=0.01)
+    run = Run(
+        run_number=run_number,
+        histograms=[h1, h2],
+        metadata={"run_number": run_number, "title": "WEP Grouping Test"},
+        grouping={
+            "groups": {1: [1], 2: [2], 3: [1], 4: [2]},
+            "group_names": {
+                1: "FB Forward",
+                2: "FB Backward",
+                3: "UD Up",
+                4: "UD Down",
+            },
+            "projections": [
+                {"label": "FB", "forward_group": 1, "backward_group": 2, "alpha": 0.75},
+                {"label": "UD", "forward_group": 3, "backward_group": 4, "alpha": 1.0},
+            ],
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 3,
+        },
+    )
+    t = np.array([0.0, 0.01, 0.02, 0.03])
+    return MuonDataset(
+        time=t,
+        asymmetry=np.zeros_like(t),
+        error=np.full_like(t, 0.01),
+        metadata={"run_number": run_number},
+        run=run,
+    )
+
+
 def test_vector_mode_shows_per_axis_alpha_controls(qapp: QApplication) -> None:
     dialog = GroupingDialog([_vector_dataset_with_histograms()])
 
@@ -448,35 +486,180 @@ def test_vector_mode_shows_per_axis_alpha_controls(qapp: QApplication) -> None:
     assert dialog._single_alpha_widget.isHidden()
 
 
-def test_transverse_field_preset_uses_single_alpha_controls(qapp: QApplication) -> None:
-    """A non-canonical (transverse-field) projection set must not show the
-    canonical per-axis alpha table — that table is hardcoded to P_x/P_y/P_z and
-    would render three empty rows. It falls back to the single-alpha control."""
+def test_transverse_field_preset_shows_per_projection_alpha_controls(
+    qapp: QApplication,
+) -> None:
+    """A non-canonical (transverse-field) projection set shows the generalized
+    per-projection alpha table — one row per declared projection — instead of
+    the single-alpha control, so users can recalibrate each projection's alpha."""
     dialog = GroupingDialog([_tf_dataset_with_histograms()])
 
     # The TF projections are detected (they drive the plot chip bar) ...
     assert set(dialog._vector_axis_pairs) == {"Top-Bottom", "Fwd-Back"}
-    # ... but the canonical vector-alpha table is hidden in favour of single alpha.
-    assert dialog._vector_alpha_widget.isHidden()
-    assert not dialog._single_alpha_widget.isHidden()
+    # ... and each gets a row in the per-projection alpha table.
+    assert set(dialog._vector_alpha_spins) == {"Top-Bottom", "Fwd-Back"}
+    assert not dialog._vector_alpha_widget.isHidden()
+    assert dialog._single_alpha_widget.isHidden()
+    # No canonical P_x/P_y/P_z rows leak into a non-canonical table.
+    assert "P_z" not in dialog._vector_alpha_spins
 
 
-def test_transverse_field_payload_uses_single_alpha_and_keeps_projections(
+def test_transverse_field_payload_persists_per_projection_alpha(
     qapp: QApplication,
 ) -> None:
-    """The TF grouping payload takes alpha from the single spin (not the stale
-    canonical P_z spin) and still carries the declared projections."""
+    """Editing a non-canonical projection's α writes it into that projection's
+    ``alpha`` in the projections payload, while the base alpha stays the single
+    spin and no canonical per-axis alpha keys leak."""
     dialog = GroupingDialog([_tf_dataset_with_histograms()])
     dialog._alpha_spin.setValue(1.42)
+    dialog._vector_alpha_spins["Top-Bottom"].setValue(0.83)
+    dialog._vector_alpha_spins["Fwd-Back"].setValue(1.17)
 
     payload = dialog._current_grouping_payload()
 
+    # Base alpha is the single spin (the projections' fallback), not a stale
+    # canonical P_z spin.
     assert payload["alpha"] == pytest.approx(1.42)
-    # No canonical per-axis alpha keys leak into a TF grouping.
+    # No canonical per-axis alpha keys leak into a non-canonical grouping.
     assert "alpha_x" not in payload
     assert "alpha_z" not in payload
-    # The projections survive so the chip bar / stacked subplots still work.
-    assert [p["label"] for p in payload["projections"]] == ["Top-Bottom", "Fwd-Back"]
+    # The edited per-projection alphas land inside the projections payload.
+    by_label = {p["label"]: p for p in payload["projections"]}
+    assert set(by_label) == {"Top-Bottom", "Fwd-Back"}
+    assert by_label["Top-Bottom"]["alpha"] == pytest.approx(0.83)
+    assert by_label["Fwd-Back"]["alpha"] == pytest.approx(1.17)
+
+
+def test_per_projection_alpha_seeds_from_declared_projection_alpha(
+    qapp: QApplication,
+) -> None:
+    """Each non-canonical row seeds from its projection's declared alpha (e.g.
+    GPS WEP's FB = 0.75 / UD = 1.0), so the table opens on the real values."""
+    dialog = GroupingDialog([_wep_dataset_with_histograms()])
+
+    assert set(dialog._vector_alpha_spins) == {"FB", "UD"}
+    assert dialog._vector_alpha_spins["FB"].value() == pytest.approx(0.75)
+    assert dialog._vector_alpha_spins["UD"].value() == pytest.approx(1.0)
+
+
+def test_per_projection_alpha_estimate_updates_and_persists(
+    qapp: QApplication,
+) -> None:
+    """Estimating a non-canonical projection updates its spin and the estimated
+    value persists into the projection payload."""
+    dialog = GroupingDialog([_tf_dataset_with_histograms()])
+    dialog._estimate_alpha_for_axis("Top-Bottom")
+    estimated = dialog._vector_alpha_spins["Top-Bottom"].value()
+
+    payload = dialog._current_grouping_payload()
+    by_label = {p["label"]: p for p in payload["projections"]}
+    assert by_label["Top-Bottom"]["alpha"] == pytest.approx(estimated)
+
+
+def test_per_projection_alpha_estimate_persists_provenance(qapp: QApplication) -> None:
+    """A non-canonical projection's estimate carries its reference-run provenance
+    into the projection payload, and a manual edit invalidates it — mirroring the
+    canonical per-axis provenance."""
+    dialog = GroupingDialog([_tf_dataset_with_histograms()])
+    dialog._estimate_alpha_for_axis("Top-Bottom")
+    estimated = dialog._vector_alpha_spins["Top-Bottom"].value()
+
+    payload = dialog._current_grouping_payload()
+    by_label = {p["label"]: p for p in payload["projections"]}
+    assert by_label["Top-Bottom"]["alpha"] == pytest.approx(estimated)
+    assert "alpha_reference_run" in by_label["Top-Bottom"]
+    # Fwd-Back was not estimated, so it carries a value but no provenance.
+    assert "alpha_reference_run" not in by_label["Fwd-Back"]
+
+    # A manual edit invalidates the provenance for that projection.
+    dialog._vector_alpha_spins["Top-Bottom"].setValue(estimated + 0.5)
+    payload2 = dialog._current_grouping_payload()
+    by_label2 = {p["label"]: p for p in payload2["projections"]}
+    assert "alpha_reference_run" not in by_label2["Top-Bottom"]
+
+
+def test_per_projection_alpha_edit_survives_detector_layout_accept(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unsaved per-projection alpha edit is preserved when the detector-layout
+    editor is accepted (its result carries the preset-declared alpha, which must
+    not clobber the user's edit for a surviving projection label)."""
+    dialog = GroupingDialog([_wep_dataset_with_histograms()])
+    dialog._vector_alpha_spins["FB"].setValue(0.83)  # unsaved table edit
+
+    result = {
+        "groups": {1: [1], 2: [2], 3: [1], 4: [2]},
+        "group_names": {1: "FB Forward", 2: "FB Backward", 3: "UD Up", 4: "UD Down"},
+        "forward_group": 1,
+        "backward_group": 2,
+        "excluded_detectors": [],
+        # The editor returns the preset-declared alphas (FB = 0.75), not the edit.
+        "projections": [
+            {"label": "FB", "forward_group": 1, "backward_group": 2, "alpha": 0.75},
+            {"label": "UD", "forward_group": 3, "backward_group": 4, "alpha": 1.0},
+        ],
+        "grouping_preset": "WEP",
+        "instrument": "GPS",
+    }
+
+    class _FakeDialog:
+        DialogCode = type("DialogCode", (), {"Accepted": 1})
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def exec(self):
+            return 1
+
+        def get_result(self):
+            return result
+
+    monkeypatch.setattr(
+        "asymmetry.gui.windows.detector_layout_dialog.DetectorLayoutDialog",
+        _FakeDialog,
+    )
+
+    dialog._on_detector_layout()
+
+    by_label = {p["label"]: p for p in dialog._projection_specs}
+    assert by_label["FB"]["alpha"] == pytest.approx(0.83)  # edit preserved
+    assert by_label["UD"]["alpha"] == pytest.approx(1.0)  # untouched projection intact
+    # The rebuilt table reflects the preserved edit.
+    assert dialog._vector_alpha_spins["FB"].value() == pytest.approx(0.83)
+
+
+def test_grp_round_trip_preserves_projections() -> None:
+    """serialize_grp/parse_grp round-trip the projections list (label, groups,
+    per-projection alpha, tint) so non-canonical per-projection alpha survives a
+    .grp save/load."""
+    payload = {
+        "groups": {1: [1], 2: [2], 3: [1], 4: [2]},
+        "forward_group": 1,
+        "backward_group": 2,
+        "alpha": 1.0,
+        "projections": [
+            {
+                "label": "FB",
+                "forward_group": 1,
+                "backward_group": 2,
+                "alpha": 0.75,
+                "tint": "#2E8B74",
+            },
+            {"label": "UD", "forward_group": 3, "backward_group": 4, "alpha": 1.0},
+        ],
+    }
+    text = GroupingDialog.serialize_grp(payload)
+    assert "projection.0=" in text
+    parsed = GroupingDialog.parse_grp(text)
+
+    projs = parsed["projections"]
+    assert [p["label"] for p in projs] == ["FB", "UD"]
+    assert projs[0]["forward_group"] == 1
+    assert projs[0]["backward_group"] == 2
+    assert projs[0]["alpha"] == pytest.approx(0.75)
+    assert projs[0]["tint"] == "#2E8B74"
+    assert projs[1]["alpha"] == pytest.approx(1.0)
+    assert "tint" not in projs[1]
 
 
 def test_vector_payload_contains_per_axis_alpha_values(qapp: QApplication) -> None:

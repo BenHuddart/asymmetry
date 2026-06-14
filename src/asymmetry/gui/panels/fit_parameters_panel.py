@@ -67,6 +67,7 @@ from asymmetry.gui.panels.cross_group_fit_dialog import CrossGroupFitDialog
 from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
 from asymmetry.gui.styles.widgets import (
     apply_param_table_style,
+    clear_layout,
     make_section,
     style_group_state_button,
 )
@@ -975,11 +976,7 @@ class FitParametersPanel(QWidget):
             button.blockSignals(False)
 
     def _rebuild_group_buttons(self) -> None:
-        while self._group_tabs_layout.count() > 0:
-            item = self._group_tabs_layout.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.deleteLater()
+        clear_layout(self._group_tabs_layout)
 
         self._group_button_map = {}
         groups = sorted(self._group_fit_results.values(), key=lambda g: g.group_name.lower())

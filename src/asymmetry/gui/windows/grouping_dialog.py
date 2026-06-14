@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.instrument import (
+    CANONICAL_VECTOR_AXES,
     derive_projection_pairs,
     detect_instrument,
     get_instrument_layout,
@@ -61,7 +62,7 @@ from asymmetry.core.transform import (
 )
 from asymmetry.core.transform.asymmetry import AlphaEstimate, estimate_alpha_detailed
 from asymmetry.core.utils.constants import PeriodMode
-from asymmetry.gui.styles.widgets import apply_param_table_style
+from asymmetry.gui.styles.widgets import apply_param_table_style, clear_layout
 
 #: Alpha estimation methods offered by the Estimate control: combo label,
 #: grouping-dict key, and a one-line explanation shown as the tooltip.
@@ -159,6 +160,7 @@ class GroupingDialog(QDialog):
         self._vector_forward_labels: dict[str, QLabel] = {}
         self._vector_backward_labels: dict[str, QLabel] = {}
         self._vector_estimate_buttons: dict[str, QPushButton] = {}
+        self._estimate_all_btn: QPushButton | None = None
         self._updating_deadtime_value_combo = False
         # Last successful estimate per slot ("single" or axis name):
         # (alpha, alpha_error, reference_run). Used to attach provenance to
@@ -508,51 +510,17 @@ class GroupingDialog(QDialog):
         form.addRow(self._alpha_row_label, self._single_alpha_widget)
         form.addRow("", self._alpha_result_label)
 
-        # Vector alpha widget: one row per axis (P_z primary, then P_y, P_x)
-        # Columns: axis label | Forward group | Backward group | α spin | Estimate button
+        # Vector alpha widget: one row per declared projection. The rows are
+        # built dynamically (see :meth:`_rebuild_vector_alpha_table`) because the
+        # projection set varies by preset — canonical EMU axes (P_z/P_y/P_x),
+        # GPS WEP's FB/UD, the MuSR/HiFi transverse pairs, etc. The grid below
+        # is the empty container; rows are (re)created from the current
+        # projection pairs whenever they change.
         self._vector_alpha_widget = QWidget()
-        vector_layout = QGridLayout(self._vector_alpha_widget)
-        vector_layout.setContentsMargins(0, 0, 0, 0)
-        vector_layout.setHorizontalSpacing(12)
-        vector_layout.setVerticalSpacing(8)
-
-        vector_layout.addWidget(QLabel("Forward"), 0, 1)
-        vector_layout.addWidget(QLabel("Backward"), 0, 2)
-        vector_layout.addWidget(QLabel("α"), 0, 3)
-
-        grouping_alpha = self._run.grouping if isinstance(self._run.grouping, dict) else {}
-        for row_idx, axis in enumerate(("P_z", "P_y", "P_x"), start=1):
-            vector_layout.addWidget(QLabel(axis), row_idx, 0)
-            fwd_label = QLabel("-")
-            bwd_label = QLabel("-")
-            vector_layout.addWidget(fwd_label, row_idx, 1)
-            vector_layout.addWidget(bwd_label, row_idx, 2)
-            self._vector_forward_labels[axis] = fwd_label
-            self._vector_backward_labels[axis] = bwd_label
-
-            spin = QDoubleSpinBox()
-            spin.setDecimals(6)
-            spin.setRange(0.01, 1000.0)
-            spin.setValue(
-                self._alpha_value_for_axis(grouping_alpha, axis, float(self._alpha_spin.value()))
-            )
-            vector_layout.addWidget(spin, row_idx, 3)
-            self._vector_alpha_spins[axis] = spin
-
-            btn = QPushButton("Estimate α")
-            btn.setAutoDefault(False)
-            btn.setDefault(False)
-            btn.clicked.connect(
-                lambda _checked=False, axis_key=axis: self._estimate_alpha_for_axis(axis_key)
-            )
-            vector_layout.addWidget(btn, row_idx, 4)
-            self._vector_estimate_buttons[axis] = btn
-
-        self._estimate_all_btn = QPushButton("Estimate All α")
-        self._estimate_all_btn.setAutoDefault(False)
-        self._estimate_all_btn.setDefault(False)
-        self._estimate_all_btn.clicked.connect(self._estimate_all_alpha)
-        vector_layout.addWidget(self._estimate_all_btn, 4, 0, 1, 5)
+        self._vector_alpha_layout = QGridLayout(self._vector_alpha_widget)
+        self._vector_alpha_layout.setContentsMargins(0, 0, 0, 0)
+        self._vector_alpha_layout.setHorizontalSpacing(12)
+        self._vector_alpha_layout.setVerticalSpacing(8)
 
         form.addRow(self._vector_alpha_widget)
 
@@ -1651,16 +1619,24 @@ class GroupingDialog(QDialog):
         only supplies the base alpha those projections fall back to when they do
         not declare one of their own.
         """
-        return any(axis in pairs for axis in ("P_x", "P_y", "P_z"))
+        return any(axis in pairs for axis in CANONICAL_VECTOR_AXES)
 
     def _update_vector_mode_controls(self, grouping_values: dict[str, Any] | None = None) -> None:
-        """Toggle between single-alpha and vector-alpha controls."""
+        """Toggle between single-alpha and per-projection alpha controls.
+
+        The per-projection alpha table is shown whenever the grouping resolves to
+        any projection pairs — the canonical EMU axes (P_z/P_y/P_x) *and* the
+        non-canonical presets (GPS WEP's FB/UD, the MuSR/HiFi transverse pairs).
+        Only a plain forward/backward grouping with no projections falls back to
+        the single-alpha control.
+        """
         if grouping_values is None:
             grouping_values = {}
 
         pairs = self._detect_vector_axis_pairs()
         self._vector_axis_pairs = pairs
-        vector_mode = self._is_canonical_vector_pairs(pairs)
+        canonical = self._is_canonical_vector_pairs(pairs)
+        vector_mode = bool(pairs)
 
         self._forward_row_label.setVisible(not vector_mode)
         self._forward_combo.setVisible(not vector_mode)
@@ -1671,6 +1647,7 @@ class GroupingDialog(QDialog):
         self._vector_alpha_widget.setVisible(vector_mode)
 
         if not vector_mode:
+            self._rebuild_vector_alpha_table([], grouping_values, canonical)
             if "alpha" in grouping_values:
                 try:
                     self._alpha_spin.setValue(float(grouping_values.get("alpha", 1.0)))
@@ -1678,34 +1655,107 @@ class GroupingDialog(QDialog):
                     pass
             return
 
-        fallback = float(self._alpha_spin.value())
-        for axis in ("P_x", "P_y", "P_z"):
-            fwd_gid, bwd_gid = pairs.get(axis, (None, None))
-            if fwd_gid is not None:
-                self._vector_forward_labels[axis].setText(self._group_display_name(int(fwd_gid)))
-            else:
-                self._vector_forward_labels[axis].setText("-")
-            if bwd_gid is not None:
-                self._vector_backward_labels[axis].setText(self._group_display_name(int(bwd_gid)))
-            else:
-                self._vector_backward_labels[axis].setText("-")
+        ordered = self._ordered_projection_labels(pairs, canonical)
+        self._rebuild_vector_alpha_table(ordered, grouping_values, canonical)
 
-            spin = self._vector_alpha_spins[axis]
-            try:
-                value = float(
-                    grouping_values.get(
-                        self._vector_alpha_key(axis), grouping_values.get("alpha", spin.value())
-                    )
-                )
-            except (TypeError, ValueError):
-                value = self._alpha_value_for_axis(grouping_values, axis, fallback)
-            spin.setValue(value)
-
-        if "P_z" in pairs:
+        # The canonical EMU table stays anchored to P_z: the single-alpha
+        # control (still the persisted base alpha) and the forward/backward
+        # combos track the P_z pair, matching the original behaviour.
+        if canonical and "P_z" in pairs:
             pz_fwd, pz_bwd = pairs["P_z"]
             self._set_combo_to_group(self._forward_combo, pz_fwd)
             self._set_combo_to_group(self._backward_combo, pz_bwd)
             self._alpha_spin.setValue(float(self._vector_alpha_spins["P_z"].value()))
+
+    @staticmethod
+    def _ordered_projection_labels(pairs: dict[str, tuple[int, int]], canonical: bool) -> list[str]:
+        """Order the per-projection alpha rows for display.
+
+        Canonical EMU keeps the historical P_z-first ordering; non-canonical
+        presets follow their declared projection order.
+        """
+        if canonical:
+            # P_z first, matching the historical per-axis table ordering.
+            return [axis for axis in reversed(CANONICAL_VECTOR_AXES) if axis in pairs]
+        return list(pairs)
+
+    def _projection_alpha_for_label(self, label: str, fallback: float) -> float:
+        """Return the declared alpha for a non-canonical projection *label*."""
+        for spec in self._projection_specs or []:
+            if isinstance(spec, dict) and str(spec.get("label")) == label:
+                try:
+                    return float(spec.get("alpha", fallback))
+                except (TypeError, ValueError):
+                    return float(fallback)
+        return float(fallback)
+
+    def _rebuild_vector_alpha_table(
+        self,
+        ordered_labels: list[str],
+        grouping_values: dict[str, Any],
+        canonical: bool,
+    ) -> None:
+        """Rebuild the per-projection alpha grid for the current projections.
+
+        Columns: projection label | Forward group | Backward group | α spin |
+        Estimate button, with a trailing "Estimate All α" button. Rows are keyed
+        by projection label (the canonical EMU labels are P_x/P_y/P_z), so the
+        spins, group labels and estimate buttons are all rebuilt whenever the
+        projection set changes.
+        """
+        layout = self._vector_alpha_layout
+        clear_layout(layout)
+        self._vector_alpha_spins.clear()
+        self._vector_forward_labels.clear()
+        self._vector_backward_labels.clear()
+        self._vector_estimate_buttons.clear()
+        self._estimate_all_btn = None
+        if not ordered_labels:
+            return
+
+        layout.addWidget(QLabel("Forward"), 0, 1)
+        layout.addWidget(QLabel("Backward"), 0, 2)
+        layout.addWidget(QLabel("α"), 0, 3)
+
+        fallback = float(self._alpha_spin.value())
+        for row_idx, label in enumerate(ordered_labels, start=1):
+            fwd_gid, bwd_gid = self._vector_axis_pairs.get(label, (None, None))
+            layout.addWidget(QLabel(label), row_idx, 0)
+            fwd_label = QLabel(
+                self._group_display_name(int(fwd_gid)) if fwd_gid is not None else "-"
+            )
+            bwd_label = QLabel(
+                self._group_display_name(int(bwd_gid)) if bwd_gid is not None else "-"
+            )
+            layout.addWidget(fwd_label, row_idx, 1)
+            layout.addWidget(bwd_label, row_idx, 2)
+            self._vector_forward_labels[label] = fwd_label
+            self._vector_backward_labels[label] = bwd_label
+
+            spin = QDoubleSpinBox()
+            spin.setDecimals(6)
+            spin.setRange(0.01, 1000.0)
+            if canonical:
+                spin.setValue(self._alpha_value_for_axis(grouping_values, label, fallback))
+            else:
+                spin.setValue(self._projection_alpha_for_label(label, fallback))
+            layout.addWidget(spin, row_idx, 3)
+            self._vector_alpha_spins[label] = spin
+
+            btn = QPushButton("Estimate α")
+            btn.setAutoDefault(False)
+            btn.setDefault(False)
+            btn.clicked.connect(
+                lambda _checked=False, slot=label: self._estimate_alpha_for_axis(slot)
+            )
+            layout.addWidget(btn, row_idx, 4)
+            self._vector_estimate_buttons[label] = btn
+
+        self._estimate_all_btn = QPushButton("Estimate All α")
+        self._estimate_all_btn.setAutoDefault(False)
+        self._estimate_all_btn.setDefault(False)
+        self._estimate_all_btn.clicked.connect(self._estimate_all_alpha)
+        layout.addWidget(self._estimate_all_btn, len(ordered_labels) + 1, 0, 1, 5)
 
     def _resolve_detector_layout(self, n_histo: int, metadata: dict[str, Any]):
         """Resolve the InstrumentLayout to show in the detector layout editor.
@@ -1793,8 +1843,26 @@ class GroupingDialog(QDialog):
 
         result = dlg.get_result()
         self._exclude_edit.setText(format_detector_list(result.get("excluded_detectors", [])))
+        # Preserve any per-projection alpha the user edited in the table: the
+        # layout editor returns each projection with its preset-declared alpha,
+        # which would otherwise silently revert an unsaved edit for a label that
+        # still exists. Live spin values are only flushed into the payload on
+        # Accept, so carry them across here for surviving labels.
+        edited_alpha = {
+            label: float(spin.value()) for label, spin in self._vector_alpha_spins.items()
+        }
         result_projections = result.get("projections")
-        self._projection_specs = result_projections if result_projections else None
+        if result_projections:
+            merged: list[dict[str, Any]] = []
+            for proj in result_projections:
+                proj = dict(proj)
+                label = str(proj.get("label"))
+                if label in edited_alpha:
+                    proj["alpha"] = edited_alpha[label]
+                merged.append(proj)
+            self._projection_specs = merged
+        else:
+            self._projection_specs = None
 
         # Write back: convert 1-based IDs back to 0-based internal indices
         new_groups_0based: dict[int, list[int]] = {}
@@ -2066,11 +2134,15 @@ class GroupingDialog(QDialog):
         return estimate
 
     def _estimate_alpha_for_axis(self, axis: str) -> None:
-        """Estimate alpha for one vector polarization axis pair."""
+        """Estimate alpha for one projection pair (canonical axis or otherwise).
+
+        *axis* is the projection slot/label — a canonical EMU axis (P_x/P_y/P_z)
+        or a non-canonical projection label (FB, Top-Bottom, …).
+        """
         pair = self._vector_axis_pairs.get(axis)
         if pair is None:
             QMessageBox.warning(
-                self, "Estimate Failed", f"No vector grouping pair is available for {axis}."
+                self, "Estimate Failed", f"No grouping pair is available for {axis}."
             )
             return
         estimate = self._estimate_alpha_for_group_ids(int(pair[0]), int(pair[1]))
@@ -2081,10 +2153,11 @@ class GroupingDialog(QDialog):
                 self._alpha_spin.setValue(float(estimate.alpha))
 
     def _estimate_all_alpha(self) -> None:
-        """Estimate alpha for all vector polarization axes."""
-        for axis in ("P_x", "P_y", "P_z"):
-            if axis in self._vector_axis_pairs:
-                self._estimate_alpha_for_axis(axis)
+        """Estimate alpha for every projection pair in the current table."""
+        for axis in self._ordered_projection_labels(
+            self._vector_axis_pairs, self._is_canonical_vector_pairs(self._vector_axis_pairs)
+        ):
+            self._estimate_alpha_for_axis(axis)
 
     def _reference_has_two_period_data(self) -> bool:
         """Return True when the reference run contains two-period histograms."""
@@ -2131,20 +2204,24 @@ class GroupingDialog(QDialog):
             "deadtime_correction": False,
             "deadtime_mode": "off",
         }
-        vector_mode = self._is_canonical_vector_pairs(self._vector_axis_pairs)
-        if vector_mode and "P_z" in self._vector_axis_pairs:
+        # The canonical EMU axes drive the base alpha (P_z) and dedicated
+        # alpha_x/y/z keys. Non-canonical projections persist their alpha inside
+        # the projections payload instead (see :meth:`_projection_payload`), so
+        # the base alpha they fall back to stays the single-alpha control.
+        canonical = self._is_canonical_vector_pairs(self._vector_axis_pairs)
+        if canonical and "P_z" in self._vector_axis_pairs:
             forward_gid, backward_gid = self._vector_axis_pairs["P_z"]
             self._set_combo_to_group(self._forward_combo, int(forward_gid))
             self._set_combo_to_group(self._backward_combo, int(backward_gid))
 
         alpha_value = float(self._alpha_spin.value())
-        if vector_mode:
+        if canonical and "P_z" in self._vector_alpha_spins:
             alpha_value = float(self._vector_alpha_spins["P_z"].value())
 
         # Attach estimate provenance only while the spin still holds the
         # value the estimator produced (a manual edit invalidates it).
         alpha_provenance: dict[str, Any] = {"alpha_method": self._current_alpha_method()}
-        slot = "P_z" if vector_mode else "single"
+        slot = "P_z" if canonical else "single"
         recorded = self._alpha_estimate_state.get(slot)
         if recorded is not None and abs(recorded[0] - alpha_value) < 1e-9:
             if recorded[1] is not None:
@@ -2184,12 +2261,49 @@ class GroupingDialog(QDialog):
                 else {}
             )
             | alpha_provenance
-            | (self._vector_alpha_payload() if vector_mode else {})
+            | (self._vector_alpha_payload() if canonical else {})
             # Always emit projections (empty when none) so the apply path can
             # distinguish "no projections" from "key omitted / don't touch".
-            | {"projections": list(self._projection_specs or [])}
+            # Non-canonical projections carry their edited per-projection alpha.
+            | {"projections": self._projection_payload(canonical)}
             | deadtime_payload
         )
+
+    def _projection_payload(self, canonical: bool) -> list[dict[str, Any]]:
+        """Return the projections list, injecting per-projection alpha edits.
+
+        For non-canonical projections (GPS WEP's FB/UD, the MuSR/HiFi transverse
+        pairs) each row's α spin is written back into that projection's ``alpha``,
+        which :meth:`MainWindow._resolve_vector_alpha_values` consumes. When the
+        spin still holds an estimate (a manual edit invalidates it), the estimate
+        provenance — ``alpha_error`` and ``alpha_reference_run`` — is attached to
+        the projection too, mirroring the canonical per-axis provenance in
+        :meth:`_vector_alpha_payload`; a manual edit drops any stale provenance
+        carried on the spec. The canonical EMU axes keep their alpha (and
+        provenance) in the dedicated ``alpha_x/y/z`` keys, so their projection
+        dicts are passed through untouched.
+        """
+        specs = self._projection_specs or []
+        result: list[dict[str, Any]] = []
+        for spec in specs:
+            if not isinstance(spec, dict):
+                continue
+            new_spec = dict(spec)
+            label = str(new_spec.get("label"))
+            if not canonical and label in self._vector_alpha_spins:
+                value = float(self._vector_alpha_spins[label].value())
+                new_spec["alpha"] = value
+                recorded = self._alpha_estimate_state.get(label)
+                if recorded is not None and abs(recorded[0] - value) < 1e-9:
+                    if recorded[1] is not None:
+                        new_spec["alpha_error"] = float(recorded[1])
+                    new_spec["alpha_reference_run"] = int(recorded[2])
+                else:
+                    # A manual edit (or no estimate) invalidates stale provenance.
+                    new_spec.pop("alpha_error", None)
+                    new_spec.pop("alpha_reference_run", None)
+            result.append(new_spec)
+        return result
 
     def _vector_alpha_payload(self) -> dict[str, Any]:
         """Per-axis alpha values plus estimate provenance for vector mode.
@@ -2202,6 +2316,8 @@ class GroupingDialog(QDialog):
         """
         payload: dict[str, Any] = {}
         for axis, key in (("P_x", "alpha_x"), ("P_y", "alpha_y"), ("P_z", "alpha_z")):
+            if axis not in self._vector_alpha_spins:
+                continue
             value = float(self._vector_alpha_spins[axis].value())
             payload[key] = value
             recorded = self._alpha_estimate_state.get(axis)
@@ -2301,16 +2417,28 @@ class GroupingDialog(QDialog):
                 forward_gid=int(payload.get("forward_group", 1)),
                 backward_gid=int(payload.get("backward_group", 2)),
             )
+        # Adopt any projections the .grp declared so the per-projection alpha
+        # table (rebuilt by _update_vector_mode_controls below) reflects the
+        # loaded grouping; a .grp without projections clears them.
+        loaded_projections = payload.get("projections")
+        if isinstance(loaded_projections, list) and loaded_projections:
+            self._projection_specs = [dict(p) for p in loaded_projections if isinstance(p, dict)]
+        else:
+            self._projection_specs = None
+
         self._alpha_spin.setValue(float(payload.get("alpha", 1.0)))
-        if "alpha_x" in payload or "alpha_px" in payload:
+        # Seed the canonical axis spins when present; the table is rebuilt (and
+        # re-seeded) by _update_vector_mode_controls below, but only the
+        # canonical rows exist as P_x/P_y/P_z slots.
+        if ("alpha_x" in payload or "alpha_px" in payload) and "P_x" in self._vector_alpha_spins:
             self._vector_alpha_spins["P_x"].setValue(
                 float(payload.get("alpha_x", payload.get("alpha_px", payload.get("alpha", 1.0))))
             )
-        if "alpha_y" in payload or "alpha_py" in payload:
+        if ("alpha_y" in payload or "alpha_py" in payload) and "P_y" in self._vector_alpha_spins:
             self._vector_alpha_spins["P_y"].setValue(
                 float(payload.get("alpha_y", payload.get("alpha_py", payload.get("alpha", 1.0))))
             )
-        if "alpha_z" in payload or "alpha_pz" in payload:
+        if ("alpha_z" in payload or "alpha_pz" in payload) and "P_z" in self._vector_alpha_spins:
             self._vector_alpha_spins["P_z"].setValue(
                 float(payload.get("alpha_z", payload.get("alpha_pz", payload.get("alpha", 1.0))))
             )
@@ -2407,6 +2535,30 @@ class GroupingDialog(QDialog):
                 include = 1 if bool(included_groups.get(gid, True)) else 0
                 lines.append(f"group_include.{gid}={include}")
 
+        # Per-projection rows carry the non-canonical per-projection alpha that
+        # has no scalar key (alpha_x/y/z only cover the canonical EMU axes).
+        # Format: projection.<n>=label,forward_group,backward_group,alpha[,tint].
+        # Projection labels are controlled (P_x, FB, Top-Bottom, …) and never
+        # contain commas, so a comma-delimited value is safe.
+        projections = payload.get("projections", [])
+        if isinstance(projections, list):
+            for idx, proj in enumerate(projections):
+                if not isinstance(proj, dict):
+                    continue
+                label = str(proj.get("label", "")).strip()
+                if not label:
+                    continue
+                fields = [
+                    label,
+                    str(int(proj.get("forward_group", 0))),
+                    str(int(proj.get("backward_group", 0))),
+                    f"{float(proj.get('alpha', 1.0)):.12g}",
+                ]
+                tint = proj.get("tint")
+                if tint:
+                    fields.append(str(tint))
+                lines.append(f"projection.{idx}={','.join(fields)}")
+
         return "\n".join(lines) + "\n"
 
     @staticmethod
@@ -2431,6 +2583,7 @@ class GroupingDialog(QDialog):
             "bin_index_base": 0,
         }
         saw_t_good_offset = False
+        projection_rows: dict[int, dict[str, Any]] = {}
 
         for raw in text.splitlines():
             line = raw.strip()
@@ -2459,6 +2612,21 @@ class GroupingDialog(QDialog):
                 gid = int(key.split(".", 1)[1])
                 dets = [int(v.strip()) for v in value.split(",") if v.strip()]
                 payload["groups"][gid] = dets
+                continue
+
+            if key.startswith("projection."):
+                parts = [p.strip() for p in value.split(",")]
+                if len(parts) >= 3 and parts[0]:
+                    proj: dict[str, Any] = {
+                        "label": parts[0],
+                        "forward_group": int(parts[1]),
+                        "backward_group": int(parts[2]),
+                    }
+                    if len(parts) >= 4:
+                        proj["alpha"] = float(parts[3])
+                    if len(parts) >= 5 and parts[4]:
+                        proj["tint"] = parts[4]
+                    projection_rows[int(key.split(".", 1)[1])] = proj
                 continue
 
             if key in {
@@ -2504,6 +2672,9 @@ class GroupingDialog(QDialog):
                     str(PeriodMode.GREEN_PLUS_RED),
                 }:
                     payload[key] = value
+
+        if projection_rows:
+            payload["projections"] = [projection_rows[idx] for idx in sorted(projection_rows)]
 
         alpha_scalar = float(payload.get("alpha", 1.0))
         payload.setdefault("alpha_x", float(payload.get("alpha_px", alpha_scalar)))

@@ -90,6 +90,24 @@ RESULT_BOX_SUCCESS_STYLE = (
     "}"
 )
 
+# ── Layout helpers ──────────────────────────────────────────────────────────
+
+
+def clear_layout(layout) -> None:
+    """Remove every widget from *layout* and schedule it for deletion.
+
+    Shared by panels that rebuild a dynamic section in place (parameter group
+    tabs, fit ranges, the per-projection alpha table). Takes each item off the
+    layout and calls ``deleteLater`` on its widget; sub-layout items (no widget)
+    are simply detached, matching the prior per-call-site loops.
+    """
+    while layout.count():
+        item = layout.takeAt(0)
+        widget = item.widget()
+        if widget is not None:
+            widget.deleteLater()
+
+
 # ── Table style ───────────────────────────────────────────────────────────────
 
 
