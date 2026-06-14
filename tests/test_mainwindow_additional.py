@@ -371,6 +371,37 @@ class TestMainWindowFourier:
         assert plotted.metadata["fourier_group_output"] == "average"
         assert plotted.metadata["group_ids"] == [1, 2]
 
+    def test_compute_fourier_unblocks_frequency_fit_on_active_view(
+        self, mainwindow: MainWindow
+    ) -> None:
+        """Computing an FFT while already on the FFT view must enable fitting.
+
+        Regression: entering the frequency view blocks the single fit ("compute a
+        spectrum first"). The compute completion re-renders on the *already-active*
+        view, so it emits no active_view_changed; the shared render path must clear
+        the stale block itself or the Fit button stays disabled after a successful
+        FFT (mainwindow.py:_render_frequency_spectra).
+        """
+        dataset = _make_fourier_ready_dataset(8806, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8806)
+
+        # Enter the FFT view first (the real workflow): no spectrum yet, so the
+        # single fit is correctly blocked.
+        mainwindow._on_domain_button_clicked("frequency")
+        single_tab = mainwindow._fit_panel._single_tab
+        assert single_tab._fit_blocked is True
+        assert single_tab._fit_btn.isEnabled() is False
+
+        _compute_fourier_sync(mainwindow)
+
+        # The spectrum now exists; the block must have cleared and the Fit button
+        # become enabled with no stale "compute a spectrum first" tooltip.
+        assert mainwindow._active_frequency_fit_dataset() is not None
+        assert single_tab._fit_blocked is False
+        assert single_tab._fit_btn.isEnabled() is True
+        assert single_tab._fit_btn.toolTip() == ""
+
     def test_group_phase_estimation_uses_field_centered_window(
         self,
         mainwindow: MainWindow,
