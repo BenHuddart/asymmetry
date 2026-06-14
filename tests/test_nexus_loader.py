@@ -34,6 +34,7 @@ def _write_v2_file(
     field_state: str | None = None,
     temp_setpoint: float = 12.5,
     temp_log_values: tuple[float, ...] = (12.0, 12.5, 13.0),
+    temp_log_style: str = "flat",
 ) -> None:
     """Create a synthetic V2 NeXus file used by loader unit tests.
 
@@ -111,10 +112,20 @@ def _write_v2_file(
         if field_state is not None:
             sample.create_dataset("magnetic_field_state", data=np.bytes_(field_state))
 
-        temp_log = sample.create_group("Temp_Sample")
         log_values = np.asarray(temp_log_values, dtype=np.float64)
-        temp_log.create_dataset("time", data=np.arange(log_values.size, dtype=np.float64) * 10.0)
-        temp_log.create_dataset("value", data=log_values)
+        log_times = np.arange(log_values.size, dtype=np.float64) * 10.0
+        if temp_log_style == "selog":
+            # ISIS selog convention: the NXlog lives in a ``value_log`` subgroup
+            # of the ``Temp_Sample`` block, e.g. ``selog/Temp_Sample/value_log``.
+            selog = entry.create_group("selog")
+            value_log = selog.create_group("Temp_Sample").create_group("value_log")
+            value_log.create_dataset("time", data=log_times)
+            value_log.create_dataset("value", data=log_values)
+        else:
+            # Flat convention: the NXlog is the ``Temp_Sample`` group itself.
+            temp_log = sample.create_group("Temp_Sample")
+            temp_log.create_dataset("time", data=log_times)
+            temp_log.create_dataset("value", data=log_values)
 
         if multiperiod:
             periods = entry.create_group("periods")
@@ -209,6 +220,46 @@ def test_logged_sample_temperature_distinct_from_setpoint(tmp_path, loader: Nexu
     assert ds.sample_temperature_logged != ds.metadata["temperature"]
     assert ds.run is not None
     assert ds.run.sample_temperature_logged == pytest.approx(5.0)
+
+
+def test_logged_sample_temperature_from_isis_selog_value_log(tmp_path, loader: NexusLoader) -> None:
+    # Real ISIS files nest the NXlog as ``selog/Temp_Sample/value_log`` rather
+    # than placing it flat on the block group. The logged value must still be
+    # recovered (regression: previously only the flat layout matched).
+    path = tmp_path / "run_selog_t.nxs"
+    _write_v2_file(
+        path,
+        temp_setpoint=1.0,
+        temp_log_values=(4.8, 5.0, 5.2),
+        temp_log_style="selog",
+    )
+
+    ds = loader.load(str(path))
+    assert not isinstance(ds, list)
+
+    # The series is captured under the nested selog path...
+    assert "selog/Temp_Sample/value_log" in ds.metadata["nexus_time_series"]
+    # ...and the logged temperature is recovered, distinct from the 1 K setpoint.
+    assert ds.metadata["temperature"] == pytest.approx(1.0)
+    assert ds.metadata["sample_temperature_logged"] == pytest.approx(5.0)
+    assert ds.sample_temperature_logged == pytest.approx(5.0)
+    assert ds.run is not None
+    assert ds.run.sample_temperature_logged == pytest.approx(5.0)
+
+
+def test_no_logged_series_leaves_temperature_unset(tmp_path, loader: NexusLoader) -> None:
+    # A file without any Temp_Sample log leaves the key absent and the accessor
+    # returning None.
+    path = tmp_path / "run_no_log.nxs"
+    _write_v2_file(path, temp_setpoint=12.5, temp_log_values=())
+
+    ds = loader.load(str(path))
+    assert not isinstance(ds, list)
+
+    assert "sample_temperature_logged" not in ds.metadata
+    assert ds.sample_temperature_logged is None
+    assert ds.run is not None
+    assert ds.run.sample_temperature_logged is None
 
 
 def test_empty_logged_series_emits_no_runtime_warning(tmp_path, loader: NexusLoader) -> None:
