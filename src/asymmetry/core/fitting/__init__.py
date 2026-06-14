@@ -12,6 +12,7 @@ from asymmetry.core.fitting.composite_parameters import (
     validate_composite_expression,
 )
 from asymmetry.core.fitting.engine import (
+    AsymmetryScaleWarning,
     FitCancelledError,
     FitEngine,
     FitResult,
@@ -105,6 +106,7 @@ __all__ = [
     "FitEngine",
     "FitResult",
     "FitCancelledError",
+    "AsymmetryScaleWarning",
     "drive_minuit",
     "RRF_ROTATION_COMPONENTS",
     "UnsupportedRRFComponentError",

@@ -33,8 +33,11 @@ def _write_v2_file(
     orientation: str = "L",
     field_state: str | None = None,
     temp_setpoint: float = 12.5,
+    temp_setpoint_units: str | None = None,
     temp_log_values: tuple[float, ...] = (12.0, 12.5, 13.0),
     temp_log_style: str = "flat",
+    temp_log_units: str | None = None,
+    temp_log_block: str = "Temp_Sample",
 ) -> None:
     """Create a synthetic V2 NeXus file used by loader unit tests.
 
@@ -107,7 +110,9 @@ def _write_v2_file(
         detector.create_dataset("orientation", data=np.bytes_(orientation))
 
         sample = entry.create_group("sample")
-        sample.create_dataset("temperature", data=temp_setpoint)
+        temperature_ds = sample.create_dataset("temperature", data=temp_setpoint)
+        if temp_setpoint_units is not None:
+            temperature_ds.attrs["units"] = np.bytes_(temp_setpoint_units)
         sample.create_dataset("magnetic_field", data=150.0)
         if field_state is not None:
             sample.create_dataset("magnetic_field_state", data=np.bytes_(field_state))
@@ -116,16 +121,18 @@ def _write_v2_file(
         log_times = np.arange(log_values.size, dtype=np.float64) * 10.0
         if temp_log_style == "selog":
             # ISIS selog convention: the NXlog lives in a ``value_log`` subgroup
-            # of the ``Temp_Sample`` block, e.g. ``selog/Temp_Sample/value_log``.
+            # of the block, e.g. ``selog/Temp_Sample/value_log``.
             selog = entry.create_group("selog")
-            value_log = selog.create_group("Temp_Sample").create_group("value_log")
+            value_log = selog.create_group(temp_log_block).create_group("value_log")
             value_log.create_dataset("time", data=log_times)
-            value_log.create_dataset("value", data=log_values)
+            value_ds = value_log.create_dataset("value", data=log_values)
         else:
-            # Flat convention: the NXlog is the ``Temp_Sample`` group itself.
-            temp_log = sample.create_group("Temp_Sample")
+            # Flat convention: the NXlog is the block group itself.
+            temp_log = sample.create_group(temp_log_block)
             temp_log.create_dataset("time", data=log_times)
-            temp_log.create_dataset("value", data=log_values)
+            value_ds = temp_log.create_dataset("value", data=log_values)
+        if temp_log_units is not None:
+            value_ds.attrs["units"] = np.bytes_(temp_log_units)
 
         if multiperiod:
             periods = entry.create_group("periods")
@@ -280,6 +287,80 @@ def test_empty_logged_series_emits_no_runtime_warning(tmp_path, loader: NexusLoa
     assert "sample_temperature_logged" not in ds.metadata
     series = ds.metadata["nexus_time_series"]["sample/Temp_Sample"]
     assert series["mean"] is None
+
+
+def test_temperature_setpoint_celsius_normalized_to_kelvin(tmp_path, loader: NexusLoader) -> None:
+    # A setpoint field carrying a Celsius units attribute is normalized to K.
+    path = tmp_path / "run_degc.nxs"
+    _write_v2_file(path, temp_setpoint=380.0, temp_setpoint_units="degC")
+
+    ds = loader.load(str(path))
+    assert not isinstance(ds, list)
+    assert ds.metadata["temperature"] == pytest.approx(380.0 + 273.15)
+
+
+@pytest.mark.parametrize("units", ["Kelvin", "K", None])
+def test_temperature_setpoint_kelvin_or_unitless_unchanged(
+    tmp_path, loader: NexusLoader, units
+) -> None:
+    # Kelvin, "K", or an absent units attribute pass the value through unchanged
+    # — we never guess a conversion the file did not declare. (This is also why
+    # a file that mislabels Celsius data as "Kelvin" is left as-is.)
+    path = tmp_path / f"run_k_{units}.nxs"
+    _write_v2_file(path, temp_setpoint=380.0, temp_setpoint_units=units)
+
+    ds = loader.load(str(path))
+    assert not isinstance(ds, list)
+    assert ds.metadata["temperature"] == pytest.approx(380.0)
+
+
+def test_logged_temperature_celsius_normalized_to_kelvin(tmp_path, loader: NexusLoader) -> None:
+    # The °C→K normalization also applies to the logged sample series.
+    path = tmp_path / "run_logged_degc.nxs"
+    _write_v2_file(
+        path,
+        temp_setpoint=1.0,
+        temp_log_values=(4.8, 5.0, 5.2),
+        temp_log_units="degC",
+    )
+
+    ds = loader.load(str(path))
+    assert not isinstance(ds, list)
+    # Mean of the logged series (5.0 °C) normalized to kelvin.
+    assert ds.sample_temperature_logged == pytest.approx(5.0 + 273.15)
+
+
+def test_logged_all_zero_series_returns_none(tmp_path, loader: NexusLoader) -> None:
+    # An all-zero Temp_Sample log is a disconnected/unlogged sensor (seen on EMU
+    # furnace runs), not a 0 K measurement: report None, not a misleading 0.0.
+    path = tmp_path / "run_zero_log.nxs"
+    _write_v2_file(path, temp_setpoint=350.0, temp_log_values=(0.0, 0.0, 0.0))
+
+    ds = loader.load(str(path))
+    assert not isinstance(ds, list)
+    assert ds.sample_temperature_logged is None
+    assert "sample_temperature_logged" not in ds.metadata
+
+
+def test_logged_furnace_controller_block_not_matched(tmp_path, loader: NexusLoader) -> None:
+    # An EMU furnace run logs controller/cryostat readbacks (Temp_RBV, …) but no
+    # sample thermometer. Those must NOT be reported as the logged sample T —
+    # None is the honest answer rather than a guess from the wrong sensor.
+    path = tmp_path / "run_furnace.nxs"
+    _write_v2_file(
+        path,
+        temp_setpoint=100.0,
+        temp_log_values=(95.0, 125.0, 210.0),
+        temp_log_style="selog",
+        temp_log_block="Temp_RBV",
+    )
+
+    ds = loader.load(str(path))
+    assert not isinstance(ds, list)
+    assert ds.sample_temperature_logged is None
+    assert "sample_temperature_logged" not in ds.metadata
+    # The readback series is still captured for the advanced info view.
+    assert "selog/Temp_RBV/value_log" in ds.metadata["nexus_time_series"]
 
 
 def test_load_v2_multiperiod(tmp_path, loader: NexusLoader) -> None:

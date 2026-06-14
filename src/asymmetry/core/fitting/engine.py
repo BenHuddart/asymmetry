@@ -6,6 +6,7 @@ without scipy dependencies (important for Python 3.13+ compatibility).
 
 from __future__ import annotations
 
+import warnings
 from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -15,6 +16,87 @@ from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+
+
+class AsymmetryScaleWarning(UserWarning):
+    """Emitted when fit seeds and data appear to be on different asymmetry scales.
+
+    The classic trap: a model seeded with fraction-scale amplitudes
+    (``A ∈ [-1, 1]``) is fitted against a loaded ``MuonDataset`` whose
+    ``asymmetry`` is on the **percent** scale (``×100``). The fit either
+    converges to a degenerate amplitude or to the wrong minimum. See
+    :class:`asymmetry.core.data.dataset.MuonDataset` and its
+    ``asymmetry_percent`` / ``asymmetry_fraction`` accessors.
+    """
+
+
+#: Upper bound on a peak magnitude that could plausibly be a *fraction*
+#: asymmetry. A true ``A`` lies in ``[-1, 1]``; the headroom absorbs noise and
+#: the ±1 one-sided sentinel. A peak above this can only be percent-scale.
+_FRACTION_SCALE_CEILING = 1.5
+
+#: Minimum peak ratio (on top of a fraction/percent boundary crossing) before a
+#: mismatch is flagged — keeps near-boundary noise quiet without masking the
+#: ~100× percent-vs-fraction trap.
+_SCALE_MISMATCH_RATIO = 10.0
+
+
+def _warn_on_scale_mismatch(
+    time: NDArray[np.float64],
+    asymmetry: NDArray[np.float64],
+    model_wrapper: Callable[..., NDArray[np.float64]],
+    initial_values: Sequence[float],
+) -> None:
+    """Warn when the data and the seeded model curve sit on different scales.
+
+    Compares the peak magnitude (max |·|) of the data to that of the model
+    evaluated at its seed. The peak is the amplitude proxy: a decaying model's
+    *median* sits in its near-zero tail and would mismeasure the amplitude,
+    whereas its peak tracks the seeded amplitude.
+
+    The flagged condition is a *fraction/percent boundary crossing*: one peak is
+    fraction-scale (``≤ 1.5`` — a true ``|A| ≤ 1`` cannot be more) while the
+    other can only be percent. An on-scale-but-poorly-guessed amplitude (both
+    peaks clearly percent) is deliberately NOT flagged, however far apart they
+    are — this guard is about scale confusion, not seed quality. Advisory only:
+    it never raises and never blocks the fit; any evaluation failure is swallowed
+    so the guard cannot change fit outcomes.
+    """
+    try:
+        asym = np.asarray(asymmetry, dtype=np.float64)
+        data_finite = asym[np.isfinite(asym) & (asym != 0.0)]
+        if data_finite.size == 0:
+            return
+        model_vals = np.asarray(model_wrapper(time, *initial_values), dtype=np.float64)
+        model_finite = model_vals[np.isfinite(model_vals) & (model_vals != 0.0)]
+        if model_finite.size == 0:
+            return
+        data_mag = float(np.max(np.abs(data_finite)))
+        model_mag = float(np.max(np.abs(model_finite)))
+        if data_mag <= 0.0 or model_mag <= 0.0:
+            return
+        low, high = sorted((data_mag, model_mag))
+        straddles_scale = low <= _FRACTION_SCALE_CEILING < high
+        ratio = high / low
+        if not straddles_scale or ratio < _SCALE_MISMATCH_RATIO:
+            return
+    except Exception:  # noqa: BLE001 - a guard must never break the fit it guards
+        return
+
+    data_is_larger = data_mag > model_mag
+    likely = (
+        "data looks percent-scale while the seeds look fraction-scale"
+        if data_is_larger
+        else "data looks fraction-scale while the seeds look percent-scale"
+    )
+    warnings.warn(
+        f"Asymmetry scale mismatch: the data magnitude (~{data_mag:.3g}) and the "
+        f"seeded model magnitude (~{model_mag:.3g}) differ by ~{ratio:.0f}×, so {likely}. "
+        "Loaded MuonDataset.asymmetry is on the percent scale (×100); seed amplitudes "
+        "to match, or pass ds.asymmetry_fraction / ds.asymmetry_percent explicitly.",
+        AsymmetryScaleWarning,
+        stacklevel=3,
+    )
 
 
 class FitCancelledError(RuntimeError):
@@ -411,6 +493,8 @@ class FitEngine:
 
         # Create Minuit object
         initial_values = [p.value for p in free]
+        # Advisory guard: flag the percent-vs-fraction trap before fitting.
+        _warn_on_scale_mismatch(ds.time, ds.asymmetry, model_wrapper, initial_values)
         m = Minuit(cost, *initial_values, name=param_names)
 
         # Set limits for parameters
