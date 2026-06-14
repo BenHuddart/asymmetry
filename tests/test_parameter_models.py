@@ -26,6 +26,7 @@ from asymmetry.core.fitting.parameter_models import (
     component_names_for_x,
     evaluate_parameter_model_fit,
     fit_parameter_model,
+    suggest_trend_seeds,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
@@ -1101,3 +1102,95 @@ def test_quadrature_operands_are_additive_components() -> None:
     # Each ⊕ operand is a distinct curve worth plotting (like +).
     model = ParameterCompositeModel.from_expression("PowerLaw ⊕ Constant")
     assert model.additive_component_indices() == [0, 1]
+
+
+# ---------------------------------------------------------------------------
+# Data-aware trend seeds (suggest_trend_seeds)
+# ---------------------------------------------------------------------------
+
+
+def test_suggest_trend_seeds_critical_divergence_tc_below_data() -> None:
+    # Spin-glass-like λ(T): diverges as T -> T_g from above. Tc should seed just
+    # below the lowest fitted T, never the unphysical default of 10.
+    model = ParameterCompositeModel(["CriticalDivergence"])
+    x = np.array([90.0, 91.0, 95.0, 120.0, 280.0])
+    y = np.array([0.59, 0.30, 0.14, 0.04, 0.017])
+
+    seeds = suggest_trend_seeds(model, x, y)
+
+    assert seeds["Tc"] < 90.0
+    # Just below the data, not miles away.
+    assert 90.0 - seeds["Tc"] < (280.0 - 90.0)
+    assert seeds["Tc"] != 10.0
+    # Baseline c seeded from the flat, far-from-Tc end (min of y).
+    assert seeds["c"] == pytest.approx(0.017)
+
+
+def test_suggest_trend_seeds_order_parameter_tc_above_data() -> None:
+    # Order parameter vanishes at Tc from below, so Tc seeds above the highest T
+    # and the amplitude y0 from the largest observed value.
+    model = ParameterCompositeModel(["OrderParameter"])
+    x = np.array([5.0, 20.0, 40.0, 60.0, 68.0])
+    y = np.array([100.0, 95.0, 80.0, 50.0, 20.0])
+
+    seeds = suggest_trend_seeds(model, x, y)
+
+    assert seeds["Tc"] > 68.0
+    assert seeds["y0"] == pytest.approx(100.0)
+    assert seeds["Tc"] != 10.0
+
+
+def test_suggest_trend_seeds_enables_convergence_without_manual_reseed() -> None:
+    # The whole point: a CriticalDivergence fit from the suggested seeds must
+    # converge near the true Tc where the bare default (Tc=10) would not.
+    true_tc, true_a, true_nu, true_c = 88.0, 0.4, 0.6, 0.02
+    x = np.array([90.0, 91.0, 95.0, 100.0, 120.0, 150.0, 221.0, 280.0])
+    y = true_a * np.abs(x - true_tc) ** (-true_nu) + true_c
+
+    model = ParameterCompositeModel(["CriticalDivergence"])
+    seeds = suggest_trend_seeds(model, x, y)
+
+    params = ParameterSet()
+    for pname in model.param_names:
+        params.add(
+            Parameter(name=pname, value=float(seeds.get(pname, model.param_defaults[pname])))
+        )
+    result = fit_parameter_model(x, y, None, model, params)
+
+    assert result.success
+    fitted = {p.name: p.value for p in result.parameters}
+    assert fitted["Tc"] == pytest.approx(true_tc, abs=2.0)
+
+
+def test_suggest_trend_seeds_ignores_non_trend_models() -> None:
+    model = ParameterCompositeModel(["Linear"])
+    x = np.array([1.0, 2.0, 3.0])
+    y = np.array([1.0, 2.0, 3.0])
+    assert suggest_trend_seeds(model, x, y) == {}
+
+
+def test_suggest_trend_seeds_handles_all_nan_x() -> None:
+    model = ParameterCompositeModel(["CriticalDivergence"])
+    x = np.array([np.nan, np.nan])
+    y = np.array([1.0, 2.0])
+    assert suggest_trend_seeds(model, x, y) == {}
+
+
+def test_suggest_trend_seeds_single_point_uses_floor_margin() -> None:
+    # Zero-span data must still produce a finite Tc offset from the point.
+    model = ParameterCompositeModel(["CriticalDivergence"])
+    x = np.array([50.0])
+    y = np.array([1.0])
+    seeds = suggest_trend_seeds(model, x, y)
+    assert seeds["Tc"] < 50.0
+    assert np.isfinite(seeds["Tc"])
+
+
+def test_suggest_trend_seeds_suffixed_params_for_repeated_component() -> None:
+    # Two CriticalDivergence components -> Tc_1 / Tc_2 unique names.
+    model = ParameterCompositeModel(["CriticalDivergence", "CriticalDivergence"])
+    x = np.array([90.0, 120.0, 280.0])
+    y = np.array([0.5, 0.1, 0.02])
+    seeds = suggest_trend_seeds(model, x, y)
+    assert "Tc_1" in seeds and "Tc_2" in seeds
+    assert all(name in model.param_names for name in seeds)
