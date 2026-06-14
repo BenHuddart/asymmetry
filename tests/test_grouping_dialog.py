@@ -402,12 +402,81 @@ def test_background_range_mode_disabled_for_non_psi_data(qapp: QApplication) -> 
     assert dialog._current_grouping_payload()["background_mode"] == "none"
 
 
+def _tf_dataset_with_histograms(run_number: int = 4020) -> MuonDataset:
+    """A dataset grouped with a transverse-field dual-grouping (non-canonical)
+    preset declaring two projections — the MuSR ``Transverse (Vector)`` shape."""
+    h1 = Histogram(counts=np.array([100.0, 100.0, 100.0, 100.0]), bin_width=0.01)
+    h2 = Histogram(counts=np.array([50.0, 50.0, 50.0, 50.0]), bin_width=0.01)
+    run = Run(
+        run_number=run_number,
+        histograms=[h1, h2],
+        metadata={"run_number": run_number, "title": "TF Grouping Test"},
+        grouping={
+            "groups": {1: [1], 2: [2], 3: [1], 4: [2]},
+            "group_names": {
+                1: "Top-Bottom Top",
+                2: "Top-Bottom Bottom",
+                3: "Fwd-Back Forward",
+                4: "Fwd-Back Backward",
+            },
+            "projections": [
+                {"label": "Top-Bottom", "forward_group": 1, "backward_group": 2},
+                {"label": "Fwd-Back", "forward_group": 3, "backward_group": 4},
+            ],
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 3,
+        },
+    )
+    t = np.array([0.0, 0.01, 0.02, 0.03])
+    return MuonDataset(
+        time=t,
+        asymmetry=np.zeros_like(t),
+        error=np.full_like(t, 0.01),
+        metadata={"run_number": run_number},
+        run=run,
+    )
+
+
 def test_vector_mode_shows_per_axis_alpha_controls(qapp: QApplication) -> None:
     dialog = GroupingDialog([_vector_dataset_with_histograms()])
 
     assert dialog._vector_axis_pairs
     assert not dialog._vector_alpha_widget.isHidden()
     assert dialog._single_alpha_widget.isHidden()
+
+
+def test_transverse_field_preset_uses_single_alpha_controls(qapp: QApplication) -> None:
+    """A non-canonical (transverse-field) projection set must not show the
+    canonical per-axis alpha table — that table is hardcoded to P_x/P_y/P_z and
+    would render three empty rows. It falls back to the single-alpha control."""
+    dialog = GroupingDialog([_tf_dataset_with_histograms()])
+
+    # The TF projections are detected (they drive the plot chip bar) ...
+    assert set(dialog._vector_axis_pairs) == {"Top-Bottom", "Fwd-Back"}
+    # ... but the canonical vector-alpha table is hidden in favour of single alpha.
+    assert dialog._vector_alpha_widget.isHidden()
+    assert not dialog._single_alpha_widget.isHidden()
+
+
+def test_transverse_field_payload_uses_single_alpha_and_keeps_projections(
+    qapp: QApplication,
+) -> None:
+    """The TF grouping payload takes alpha from the single spin (not the stale
+    canonical P_z spin) and still carries the declared projections."""
+    dialog = GroupingDialog([_tf_dataset_with_histograms()])
+    dialog._alpha_spin.setValue(1.42)
+
+    payload = dialog._current_grouping_payload()
+
+    assert payload["alpha"] == pytest.approx(1.42)
+    # No canonical per-axis alpha keys leak into a TF grouping.
+    assert "alpha_x" not in payload
+    assert "alpha_z" not in payload
+    # The projections survive so the chip bar / stacked subplots still work.
+    assert [p["label"] for p in payload["projections"]] == ["Top-Bottom", "Fwd-Back"]
 
 
 def test_vector_payload_contains_per_axis_alpha_values(qapp: QApplication) -> None:

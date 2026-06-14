@@ -2092,10 +2092,19 @@ class PlotPanel(QWidget):
             self._header_meta_label.setText(text or "")
 
     def _axis_canonical_key(self, axis_text: str | None) -> str | None:
-        """Normalize display/canonical axis text to canonical ``P_x`` form."""
+        """Normalize display/projection axis text to its identity key.
+
+        The canonical EMU vector aliases (``px``/``x`` → ``P_x`` …) and the
+        ``ALL`` sentinel are recognised; any other non-empty label passes
+        through unchanged so transverse-field projection labels survive.
+        Returns ``None`` only for an empty/absent axis.
+        """
         if axis_text is None:
             return None
-        token = str(axis_text).strip().lower().replace(" ", "")
+        raw = str(axis_text).strip()
+        if not raw:
+            return None
+        token = raw.lower().replace(" ", "")
         token = token.replace("ₓ", "x").replace("ᵧ", "y").replace("ᶻ", "z")
         token = token.replace("_", "")
         if token in {"all", "pall"}:
@@ -2106,7 +2115,7 @@ class PlotPanel(QWidget):
             return "P_y"
         if token in {"pz", "z"}:
             return "P_z"
-        return None
+        return raw
 
     def get_current_polarization_axis(self) -> str | None:
         """Return current polarization selector key (``P_*`` or ``ALL``)."""
@@ -2128,13 +2137,13 @@ class PlotPanel(QWidget):
         grouping = getattr(run, "grouping", None)
         if isinstance(grouping, dict):
             axis = self._axis_canonical_key(grouping.get("vector_axis"))
-            if axis in {"P_x", "P_y", "P_z"}:
+            if axis is not None and axis != "ALL":
                 return axis
 
         grouping_meta = dataset.metadata.get("grouping")
         if isinstance(grouping_meta, dict):
             axis = self._axis_canonical_key(grouping_meta.get("vector_axis"))
-            if axis in {"P_x", "P_y", "P_z"}:
+            if axis is not None and axis != "ALL":
                 return axis
 
         return None
@@ -2205,7 +2214,7 @@ class PlotPanel(QWidget):
             run_number, axis_key = storage_key
             if axis_key is not None:
                 has_axis_specific_fit = any(
-                    key_run == run_number and key_axis in {"P_x", "P_y", "P_z"}
+                    key_run == run_number and key_axis is not None
                     for key_run, key_axis in self._fit_curves_by_key
                 )
                 if has_axis_specific_fit:
@@ -2242,7 +2251,7 @@ class PlotPanel(QWidget):
             run_number, axis_key = storage_key
             if axis_key is not None:
                 has_axis_specific_components = any(
-                    key_run == run_number and key_axis in {"P_x", "P_y", "P_z"}
+                    key_run == run_number and key_axis is not None
                     for key_run, key_axis in self._fit_components_by_key
                 )
                 if has_axis_specific_components:
@@ -2279,7 +2288,7 @@ class PlotPanel(QWidget):
         run_number, axis_key = storage_key
         if axis_key is not None:
             has_axis_specific_meta = any(
-                key_run == run_number and key_axis in {"P_x", "P_y", "P_z"}
+                key_run == run_number and key_axis is not None
                 for key_run, key_axis in self._fit_metadata_by_key
             )
             if has_axis_specific_meta:
@@ -2379,9 +2388,18 @@ class PlotPanel(QWidget):
             self._auto_y_btn.setToolTip(auto_tooltip)
 
     def _all_mode_axes_order(self) -> list[str]:
-        """Return the axis order currently visible in ALL mode."""
+        """Return the axis order currently visible in ALL mode.
+
+        Prefers the declared projection order, then the canonical vector order,
+        and finally the subplot dict's own order — so transverse-field
+        projections order by their preset declaration, not a canonical filter.
+        """
         if not self._subplot_axes_by_polarization:
             return []
+        spec_order = [str(p["label"]) for p in self._projection_specs]
+        ordered = [a for a in spec_order if a in self._subplot_axes_by_polarization]
+        if ordered:
+            return ordered
         ordered = [
             axis for axis in ("P_x", "P_y", "P_z") if axis in self._subplot_axes_by_polarization
         ]
@@ -5799,11 +5817,10 @@ class PlotPanel(QWidget):
             and self._current_polarization_axis == "ALL"
             and self._vector_subplot_datasets
         ):
+            order = self._projection_subplot_order(self._vector_subplot_datasets)
+            first_axis = order[0] if order else None
             payloads = self.get_current_plot_export_data(
-                self._vector_subplot_datasets.get("P_x")
-                or self._vector_subplot_datasets.get("P_y")
-                or self._vector_subplot_datasets.get("P_z")
-                or []
+                self._vector_subplot_datasets.get(first_axis) if first_axis else []
             )
         return payloads
 
@@ -5995,7 +6012,7 @@ class PlotPanel(QWidget):
         dat_writes: list[tuple[Path, dict, object]] = []
 
         if self._current_polarization_axis == "ALL" and self._vector_subplot_datasets:
-            axis_order = [a for a in ("P_x", "P_y", "P_z") if self._vector_subplot_datasets.get(a)]
+            axis_order = self._projection_subplot_order(self._vector_subplot_datasets)
             if axis_order:
                 axes_objs = None
                 if hasattr(glp, "subplots"):

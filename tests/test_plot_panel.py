@@ -1161,6 +1161,53 @@ class TestPlotPanel:
         assert (9302, "P_y") in panel._fit_curves_by_key
         assert (9302, "P_x") not in panel._fit_curves_by_key
 
+    def test_axis_key_for_dataset_passes_through_tf_label(self, panel: PlotPanel) -> None:
+        """A transverse-field projection label keys the dataset's fit storage,
+        so per-projection overlays don't collide on the default (None) slot."""
+        ds = MuonDataset(
+            time=np.array([0.0, 1.0]),
+            asymmetry=np.zeros(2),
+            error=np.full(2, 0.01),
+            metadata={"run_number": 7700, "grouping": {"vector_axis": "Top-Bottom"}},
+        )
+        assert panel._axis_key_for_dataset(ds) == "Top-Bottom"
+
+    def test_all_mode_axes_order_follows_declared_tf_order(self, panel: PlotPanel) -> None:
+        panel._projection_specs = _projection_specs(["Top-Bottom", "Fwd-Back"])
+        # Subplots created in a different (dict) order still report the declared one.
+        panel._subplot_axes_by_polarization = {
+            "Fwd-Back": _FakeAxis(),
+            "Top-Bottom": _FakeAxis(),
+        }
+        assert panel._all_mode_axes_order() == ["Top-Bottom", "Fwd-Back"]
+
+    def test_plot_fit_keys_under_the_selected_tf_subplot(self, panel: PlotPanel) -> None:
+        """The fit overlay lands on the clicked transverse-field subplot."""
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+        t = np.linspace(0.0, 4.0, 5)
+        e = np.full_like(t, 0.01)
+        datasets_by_axis = {
+            axis: [
+                MuonDataset(
+                    time=t,
+                    asymmetry=np.zeros_like(t),
+                    error=e,
+                    metadata={"run_number": 9303, "grouping": {"vector_axis": axis}},
+                )
+            ]
+            for axis in ("Top-Bottom", "Fwd-Back")
+        }
+        panel._projection_specs = _projection_specs(["Top-Bottom", "Fwd-Back"])
+        panel._current_polarization_axis = "ALL"
+        panel.plot_vector_subplots(datasets_by_axis)
+        panel.set_fit_target_projection("Fwd-Back", emit=False)
+
+        panel.plot_fit(t, np.zeros_like(t), label="Fit")
+
+        assert (9303, "Fwd-Back") in panel._fit_curves_by_key
+        assert (9303, "Top-Bottom") not in panel._fit_curves_by_key
+
     def test_plot_fit_keys_under_the_explicit_fitted_run_in_multi_run_overlay(
         self, panel: PlotPanel
     ) -> None:

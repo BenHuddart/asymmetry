@@ -1635,6 +1635,20 @@ class GroupingDialog(QDialog):
         self._forward_combo.blockSignals(False)
         self._backward_combo.blockSignals(False)
 
+    @staticmethod
+    def _is_canonical_vector_pairs(pairs: dict[str, tuple[int, int]]) -> bool:
+        """True when the per-axis alpha table (P_x/P_y/P_z rows) can render *pairs*.
+
+        The vector-alpha table and the vector branches of the grouping payload
+        are hardcoded to the canonical EMU axes. A transverse-field dual-grouping
+        preset declares non-canonical projections (e.g. ``Top-Bottom`` /
+        ``Fwd-Back``); those drive the plot chip bar but are handled here with the
+        ordinary single-alpha control (the TF reduction uses the base ``alpha``,
+        and per-projection alpha is not yet consumed), so the canonical table is
+        skipped to avoid empty rows and a stale P_z-spin alpha.
+        """
+        return any(axis in pairs for axis in ("P_x", "P_y", "P_z"))
+
     def _update_vector_mode_controls(self, grouping_values: dict[str, Any] | None = None) -> None:
         """Toggle between single-alpha and vector-alpha controls."""
         if grouping_values is None:
@@ -1642,7 +1656,7 @@ class GroupingDialog(QDialog):
 
         pairs = self._detect_vector_axis_pairs()
         self._vector_axis_pairs = pairs
-        vector_mode = bool(pairs)
+        vector_mode = self._is_canonical_vector_pairs(pairs)
 
         self._forward_row_label.setVisible(not vector_mode)
         self._forward_combo.setVisible(not vector_mode)
@@ -2108,7 +2122,7 @@ class GroupingDialog(QDialog):
             "deadtime_correction": False,
             "deadtime_mode": "off",
         }
-        vector_mode = bool(self._vector_axis_pairs)
+        vector_mode = self._is_canonical_vector_pairs(self._vector_axis_pairs)
         if vector_mode and "P_z" in self._vector_axis_pairs:
             forward_gid, backward_gid = self._vector_axis_pairs["P_z"]
             self._set_combo_to_group(self._forward_combo, int(forward_gid))

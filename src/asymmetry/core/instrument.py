@@ -30,6 +30,7 @@ __all__ = [
     "InstrumentLayout",
     "INSTRUMENT_NAMES",
     "PROJECTION_TINTS",
+    "TRANSVERSE_PROJECTION_TINTS",
     "derive_projection_pairs",
     "get_instrument_layout",
     "detect_instrument",
@@ -181,6 +182,17 @@ PROJECTION_TINTS: Final[dict[str, str]] = {
     "P_x": "#534AB7",  # purple
     "P_y": "#BA7517",  # amber
     "P_z": "#0F6E56",  # teal
+}
+
+#: Fixed semantic frame tints for the transverse-field dual-grouping projections
+#: (MuSR / HiFi).  Like :data:`PROJECTION_TINTS` these are muted and chosen away
+#: from both the run-colour palette and the EMU vector tints, since the two
+#: instruments are never shown together.  ``Top-Bottom`` keeps the same rose tint
+#: on MuSR and HiFi for cross-instrument consistency.
+TRANSVERSE_PROJECTION_TINTS: Final[dict[str, str]] = {
+    "Top-Bottom": "#B0436E",  # rose
+    "Fwd-Back": "#2E8B74",  # jade
+    "Left-Right": "#3F6FA0",  # steel blue
 }
 
 
@@ -439,36 +451,31 @@ def _build_hifi() -> InstrumentLayout:
         backward_group=2,
     )
 
-    # Transverse — Left/Right orientated along beam direction
-    # Left  = detectors 5–13 (forward)  + 52–60 (backward)
-    # Right = detectors 21–29 (forward) + 36–44 (backward)
-    presets["Transverse (Left–Right)"] = PresetGrouping(
-        name="Transverse (Left–Right)",
+    # Transverse (Vector): both transverse detector pairs exposed as two
+    # asymmetry projections of the same run, mirroring the EMU vector model.
+    # Four distinct group IDs so the Left-Right and Top-Bottom pairs coexist
+    # (the legacy split presets reused IDs 1/2 and were mutually exclusive).
+    #   Left-Right:  Left  = 5–13 (forward) + 52–60 (backward)
+    #                Right = 21–29 (forward) + 36–44 (backward)
+    #   Top-Bottom:  Top    = 13–21 (forward) + 44–52 (backward)
+    #                Bottom = 1–5, 29–36 (forward) + 60–64 (backward)
+    presets["Transverse (Vector)"] = PresetGrouping(
+        name="Transverse (Vector)",
         groups={
-            1: GroupDefinition("Left", tuple(range(5, 14)) + tuple(range(52, 61))),
-            2: GroupDefinition("Right", tuple(range(21, 30)) + tuple(range(36, 45))),
-        },
-        forward_group=1,
-        backward_group=2,
-    )
-
-    # Transverse — Top/Bottom
-    # Top    = detectors 13–21 (forward) + 44–52 (backward)
-    # Bottom = detectors 1–5, 29–36 (forward) + 60–64 (backward)
-    presets["Transverse (Top–Bottom)"] = PresetGrouping(
-        name="Transverse (Top–Bottom)",
-        groups={
-            1: GroupDefinition(
-                "Top",
-                tuple(range(13, 22)) + tuple(range(44, 53)),
-            ),
-            2: GroupDefinition(
-                "Bottom",
+            1: GroupDefinition("Left-Right Left", tuple(range(5, 14)) + tuple(range(52, 61))),
+            2: GroupDefinition("Left-Right Right", tuple(range(21, 30)) + tuple(range(36, 45))),
+            3: GroupDefinition("Top-Bottom Top", tuple(range(13, 22)) + tuple(range(44, 53))),
+            4: GroupDefinition(
+                "Top-Bottom Bottom",
                 tuple(range(1, 6)) + tuple(range(29, 37)) + tuple(range(60, 65)),
             ),
         },
         forward_group=1,
         backward_group=2,
+        projections=(
+            AsymmetryProjection("Left-Right", 1, 2, tint=TRANSVERSE_PROJECTION_TINTS["Left-Right"]),
+            AsymmetryProjection("Top-Bottom", 3, 4, tint=TRANSVERSE_PROJECTION_TINTS["Top-Bottom"]),
+        ),
     )
 
     return InstrumentLayout(
@@ -556,30 +563,28 @@ def _build_musr() -> InstrumentLayout:
         backward_group=1,
     )
 
-    # Transverse — Top/Bottom
-    # Top    = 17–24 (backward ring) + 49–56 (forward ring)
-    # Bottom = 1–8   (backward ring) + 33–40 (forward ring)
-    presets["Transverse (Top–Bottom)"] = PresetGrouping(
-        name="Transverse (Top–Bottom)",
+    # Transverse (Vector): both transverse detector pairs exposed as two
+    # asymmetry projections of the same run, mirroring the EMU vector model.
+    # Four distinct group IDs so the Top-Bottom and Fwd-Back pairs coexist
+    # (the legacy split presets reused IDs 1/2 and were mutually exclusive).
+    #   Top-Bottom:  Top    = 17–24 (backward ring) + 49–56 (forward ring)
+    #                Bottom = 1–8   (backward ring) + 33–40 (forward ring)
+    #   Fwd-Back:    Forward  = 9–16  (backward ring) + 57–64 (forward ring)
+    #                Backward = 25–32 (backward ring) + 41–48 (forward ring)
+    presets["Transverse (Vector)"] = PresetGrouping(
+        name="Transverse (Vector)",
         groups={
-            1: GroupDefinition("Top", tuple(range(17, 25)) + tuple(range(49, 57))),
-            2: GroupDefinition("Bottom", tuple(range(1, 9)) + tuple(range(33, 41))),
+            1: GroupDefinition("Top-Bottom Top", tuple(range(17, 25)) + tuple(range(49, 57))),
+            2: GroupDefinition("Top-Bottom Bottom", tuple(range(1, 9)) + tuple(range(33, 41))),
+            3: GroupDefinition("Fwd-Back Forward", tuple(range(9, 17)) + tuple(range(57, 65))),
+            4: GroupDefinition("Fwd-Back Backward", tuple(range(25, 33)) + tuple(range(41, 49))),
         },
         forward_group=1,
         backward_group=2,
-    )
-
-    # Transverse — Forward/Backward (beam-direction)
-    # Forward  = 9–16  (backward ring) + 57–64 (forward ring)
-    # Backward = 25–32 (backward ring) + 41–48 (forward ring)
-    presets["Transverse (Forward–Backward)"] = PresetGrouping(
-        name="Transverse (Forward–Backward)",
-        groups={
-            1: GroupDefinition("Forward", tuple(range(9, 17)) + tuple(range(57, 65))),
-            2: GroupDefinition("Backward", tuple(range(25, 33)) + tuple(range(41, 49))),
-        },
-        forward_group=1,
-        backward_group=2,
+        projections=(
+            AsymmetryProjection("Top-Bottom", 1, 2, tint=TRANSVERSE_PROJECTION_TINTS["Top-Bottom"]),
+            AsymmetryProjection("Fwd-Back", 3, 4, tint=TRANSVERSE_PROJECTION_TINTS["Fwd-Back"]),
+        ),
     )
 
     return InstrumentLayout(
