@@ -82,7 +82,7 @@ for each tagged version:
 
 | Platform | Artifact |
 |----------|----------|
-| Windows | NSIS installer (`.exe`) with desktop/start-menu shortcuts |
+| Windows | Inno Setup installer (`.exe`) with desktop/start-menu shortcuts |
 | macOS (Apple Silicon) | `.dmg`, drag-to-Applications |
 | macOS (Intel) | `.dmg`, drag-to-Applications |
 
@@ -241,11 +241,11 @@ Executable GUI releases are built in GitHub Actions and attached to GitHub Relea
 - Runners:
   - `macos-15-intel` for Intel macOS DMG
   - `macos-14` for Apple Silicon macOS DMG
-  - `windows-latest` for NSIS installer
+  - `windows-2025` for the Inno Setup installer
 - Packaging:
   - PyInstaller `onedir` build for fast startup
   - macOS DMG output per architecture (dmgbuild settings + generated drag-to-Applications background)
-  - Windows NSIS installer with desktop/start-menu shortcuts and uninstaller
+  - Windows Inno Setup installer with desktop/start-menu shortcuts and uninstaller
 
 Release artifacts are built on shared runners and uploaded to the GitHub Release page; executables are not committed to the repository.
 
