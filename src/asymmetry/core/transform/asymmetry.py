@@ -26,6 +26,18 @@ def compute_asymmetry(
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """Calculate asymmetry and its statistical error.
 
+    Scale
+    -----
+    This primitive returns the dimensionless **fraction** ``A ∈ [-1, 1]``
+    (and a fractional error), matching the textbook definition above. Note
+    this differs from the loaded :class:`~asymmetry.core.data.dataset.MuonDataset`
+    surface: ``ds.asymmetry`` / ``ds.error`` are on the **percent** scale
+    (the loaders multiply this fraction by 100, the WiMDA-style convention the
+    time-domain fit models also use). When you need an explicit scale from a
+    dataset, use ``ds.asymmetry_fraction`` / ``ds.asymmetry_percent`` rather
+    than assuming one — seeding a fit with fraction-scale amplitudes against
+    percent-scale data converges to the wrong minimum.
+
     Parameters
     ----------
     forward, backward
@@ -36,7 +48,7 @@ def compute_asymmetry(
     Returns
     -------
     asymmetry, error
-        Arrays of the same length as the inputs.
+        Fractional arrays (``A ∈ [-1, 1]``) of the same length as the inputs.
     """
     f = np.asarray(forward, dtype=np.float64)
     b = np.asarray(backward, dtype=np.float64)

@@ -265,6 +265,13 @@ class FieldScan:
     The arrays are parallel and sorted by ``x`` ascending.  ``excluded`` lists
     ``(run_number, reason)`` for runs that could not contribute (for example a
     missing field log — Mantid skips such runs rather than failing the scan).
+
+    Scale note: ``value``/``error`` are the **fractional** integral asymmetry
+    (``A ∈ [-1, 1]``, from :func:`compute_asymmetry` on summed counts), which is
+    the scale the field-scan / ALC parameter models expect (e.g. ``GaussianLCR``
+    seeds ``f`` near 0.1). This differs from a loaded
+    :class:`~asymmetry.core.data.dataset.MuonDataset`, whose ``asymmetry`` is on
+    the percent scale; multiply by 100 if you need to compare the two directly.
     """
 
     x: NDArray[np.float64]

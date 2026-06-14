@@ -33,6 +33,53 @@ except ImportError:  # pragma: no cover - exercised when h5py is not installed
     h5py = None
 
 
+#: Unit tokens (lower-cased, with degree signs / spaces / dots stripped) that a
+#: NeXus ``units`` attribute may use to name the Celsius scale. ``celcius`` is a
+#: common misspelling seen in the wild.
+_CELSIUS_UNIT_TOKENS = frozenset(
+    {
+        "c",
+        "degc",
+        "celsius",
+        "celcius",
+        "centigrade",
+        "degreec",
+        "degreecelsius",
+        "degreescelsius",
+        "degcelsius",
+    }
+)
+_ABSOLUTE_ZERO_CELSIUS = 273.15
+
+
+def _normalize_temperature_to_kelvin(value: float | None, units: str | None) -> float | None:
+    """Convert a temperature to kelvin, honoring the NeXus ``units`` attribute.
+
+    A Celsius unit (``degC`` / ``°C`` / ``Celsius``) shifts the value by
+    ``+273.15``; Kelvin, an empty unit, or any unrecognized unit is passed
+    through unchanged — we never *guess* a conversion the file did not declare.
+    ``None`` propagates as ``None``.
+
+    Note this honors the *declared* unit only. A file that stores Celsius values
+    but mislabels the field ``Kelvin`` (seen on some EMU furnace runs) is left
+    as-is; silently "correcting" it would corrupt genuinely-cold Kelvin runs.
+    """
+    if value is None:
+        return None
+    token = (
+        str(units or "")
+        .strip()
+        .lower()
+        .replace("°", "")
+        .replace(" ", "")
+        .replace(".", "")
+        .replace("_", "")
+    )
+    if token in _CELSIUS_UNIT_TOKENS:
+        return float(value) + _ABSOLUTE_ZERO_CELSIUS
+    return float(value)
+
+
 @dataclass
 class _GroupingSelection:
     """Resolved detector-group selection used for asymmetry reduction."""
@@ -164,7 +211,7 @@ class NexusLoader(BaseLoader):
         )
 
         sample = self._read_optional(entry, "sample")
-        temperature = self._safe_float(self._read_optional(sample, "temperature"), default=0.0)
+        temperature = self._read_temperature_kelvin(sample)
         magnetic_field = self._safe_float(
             self._read_optional(sample, "magnetic_field"), default=0.0
         )
@@ -300,7 +347,7 @@ class NexusLoader(BaseLoader):
             )
 
         sample = self._read_optional(entry, "sample")
-        temperature = self._safe_float(self._read_optional(sample, "temperature"), default=0.0)
+        temperature = self._read_temperature_kelvin(sample)
         magnetic_field = self._safe_float(
             self._read_optional(sample, "magnetic_field"), default=0.0
         )
@@ -972,26 +1019,55 @@ class NexusLoader(BaseLoader):
         """Return a representative *logged* sample temperature, if available.
 
         Unlike ``metadata['temperature']`` (the ``sample/temperature``
-        setpoint), this is derived from the ``Temp_Sample`` NXlog — the actual
+        setpoint), this is derived from a sample-thermometer NXlog — the actual
         recorded sample temperature, which can differ from the parked setpoint
         (e.g. CdS parks at 1 K while the sample sits near 5 K). The series mean
         over the run is used as the representative value. Returns ``None`` when
         no usable logged series is present.
 
-        The ``Temp_Sample`` block can appear at different depths depending on
-        the file convention: flat as ``sample/Temp_Sample`` (NXlog directly on
-        the block group) or, on ISIS selog files, as
-        ``selog/Temp_Sample/value_log`` (the NXlog is a ``value_log`` subgroup).
-        Match the block name anywhere in the path so both are found.
+        Block matching is deliberately conservative: a candidate path must name
+        a *sample* thermometer (a segment containing both "sample" and "temp"),
+        which catches ``Temp_Sample`` at any depth — flat as
+        ``sample/Temp_Sample``, or nested on ISIS selog files as
+        ``selog/Temp_Sample/value_log``. Controller / cryostat / furnace
+        readbacks (``Temp_RBV``, ``Temp_Cryostat``, ``Temp_Set`` …) are **not**
+        matched: an EMU furnace run that logs only those has no sample
+        thermometer, so ``None`` is the honest answer rather than a guess.
+
+        Two robustness rules:
+
+        * The value is normalized to kelvin via the logged series' ``units``
+          attribute (a Celsius log → +273.15), mirroring the setpoint path.
+        * A logged sample temperature is a physical reading > 0 K. An all-zero
+          series (mean 0.0 K — a disconnected/unlogged sensor, seen on some EMU
+          runs) is skipped rather than reported as a misleading ``0.0``.
         """
         for path, entry in time_series.items():
-            segments = {segment.lower() for segment in str(path).split("/")}
-            if "temp_sample" not in segments:
+            if not self._is_sample_temperature_path(path):
                 continue
             mean = entry.get("mean")
-            if mean is not None and np.isfinite(mean):
-                return float(mean)
+            if mean is None or not np.isfinite(mean):
+                continue
+            kelvin = _normalize_temperature_to_kelvin(float(mean), entry.get("units", ""))
+            if kelvin is None or not np.isfinite(kelvin) or kelvin <= 0.0:
+                continue
+            return float(kelvin)
         return None
+
+    @staticmethod
+    def _is_sample_temperature_path(path: str) -> bool:
+        """True when a time-series path names a sample thermometer block.
+
+        Requires a single path segment to contain both "sample" and "temp"
+        (case-insensitive), so ``Temp_Sample`` / ``sample_temperature`` match
+        while controller readbacks like ``Temp_RBV`` or ``Temp_Cryostat`` do
+        not (they lack "sample").
+        """
+        for segment in str(path).split("/"):
+            seg = segment.lower()
+            if "sample" in seg and "temp" in seg:
+                return True
+        return False
 
     def _dataset_to_python(self, dataset: Any) -> Any:
         """Convert a dataset payload into JSON-safe Python data.
@@ -1108,6 +1184,31 @@ class NexusLoader(BaseLoader):
             "LF": "Longitudinal",
             "ZF": "Zero field",
         }.get(state, "")
+
+    def _read_temperature_kelvin(
+        self, sample: Any, name: str = "temperature", default: float = 0.0
+    ) -> float:
+        """Read ``sample/<name>`` as a temperature in kelvin.
+
+        Reads both the value and its NeXus ``units`` attribute so a Celsius
+        field (``degC`` / ``°C``) is normalized to kelvin via
+        :func:`_normalize_temperature_to_kelvin`. A Kelvin, missing, or
+        unrecognized unit passes the value through unchanged.
+        """
+        if sample is None or not hasattr(sample, "get"):
+            return float(default)
+        # Cannot use _read_optional here: it returns the unwrapped value and
+        # drops the node, but we need node.attrs['units'] to decide the scale.
+        node = sample.get(name)
+        if node is None:
+            return float(default)
+        raw = node[()] if hasattr(node, "dtype") else node
+        value = self._safe_float(raw, default=default)
+        units = ""
+        if hasattr(node, "attrs"):
+            units = self._safe_str(node.attrs.get("units", ""))
+        normalized = _normalize_temperature_to_kelvin(value, units)
+        return float(default) if normalized is None else float(normalized)
 
     def _read_optional(self, node: Any, name: str, default: Any = None) -> Any:
         """Read a dataset or nested path from a group-like object if present."""
