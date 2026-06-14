@@ -245,9 +245,7 @@ class TaskRunner(QObject):
             # connection would call deleteLater() inline while two concurrent workers
             # are both inside emit(), causing concurrent PySide6 signal-state access
             # and a segfault. The event loop processes this before quit() exits it.
-            terminal.connect(
-                worker.deleteLater, Qt.ConnectionType.QueuedConnection
-            )
+            terminal.connect(worker.deleteLater, Qt.ConnectionType.QueuedConnection)
         thread.finished.connect(relay.deleteLater)
         # Bound-method slot on a GUI-thread QObject => queued connection, so
         # bookkeeping never mutates _live from the worker thread.
