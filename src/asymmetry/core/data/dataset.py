@@ -73,7 +73,19 @@ class Run:
 
     @property
     def temperature(self) -> float:
+        """Sample temperature *setpoint* (``sample/temperature`` in NeXus)."""
         return float(self.metadata.get("temperature", 0.0))
+
+    @property
+    def sample_temperature_logged(self) -> float | None:
+        """Representative *logged* sample temperature, if recorded.
+
+        Sourced from the ``Temp_Sample`` NXlog (the actual measured sample
+        temperature), as distinct from :attr:`temperature` (the setpoint).
+        ``None`` when no logged series is present.
+        """
+        value = self.metadata.get("sample_temperature_logged")
+        return None if value is None else float(value)
 
     @property
     def field(self) -> float:
@@ -125,6 +137,17 @@ class MuonDataset:
     @property
     def run_number(self) -> int:
         return self.run.run_number if self.run else self.metadata.get("run_number", 0)
+
+    @property
+    def sample_temperature_logged(self) -> float | None:
+        """Representative *logged* sample temperature, if recorded.
+
+        Sourced from the ``Temp_Sample`` NXlog (the actual measured sample
+        temperature), as distinct from the ``metadata['temperature']``
+        setpoint. ``None`` when no logged series is present.
+        """
+        value = self.metadata.get("sample_temperature_logged")
+        return None if value is None else float(value)
 
     @property
     def run_label(self) -> str:
