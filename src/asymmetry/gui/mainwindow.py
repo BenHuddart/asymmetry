@@ -83,6 +83,7 @@ from asymmetry.core.fourier import (
 from asymmetry.core.fourier.moments import moments_trend_row, spectrum_moments
 from asymmetry.core.fourier.units import FieldUnit, convert
 from asymmetry.core.instrument import (
+    CANONICAL_VECTOR_AXES,
     PROJECTION_TINTS,
     TRANSVERSE_PROJECTION_TINTS,
     derive_projection_pairs,
@@ -1725,7 +1726,7 @@ class MainWindow(QMainWindow):
 
         # Canonical EMU axes override from their dedicated keys, falling back to
         # the base alpha (not the seeded projection alpha) so EMU is unchanged.
-        for axis in ("P_x", "P_y", "P_z"):
+        for axis in CANONICAL_VECTOR_AXES:
             key = self._vector_alpha_key(axis)
             legacy_key = self._legacy_vector_alpha_key(axis)
             raw = grouping_result.get(

@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PySide6.QtCore import QCoreApplication, QObject, QThread, Signal
+from PySide6.QtCore import QCoreApplication, QObject, Qt, QThread, Signal
 
 
 class TaskCancelledError(Exception):
@@ -240,9 +240,12 @@ class TaskRunner(QObject):
 
         for terminal in (worker.finished, worker.error, worker.cancelled):
             terminal.connect(thread.quit)
-            # Processed by the worker thread's event loop just before it quits;
-            # after the loop is gone a deleteLater would never run.
-            terminal.connect(worker.deleteLater)
+            # Queued so deleteLater() is posted to the worker thread's event loop
+            # and runs after emit() returns, not synchronously during it. A direct
+            # connection would call deleteLater() inline while two concurrent workers
+            # are both inside emit(), causing concurrent PySide6 signal-state access
+            # and a segfault. The event loop processes this before quit() exits it.
+            terminal.connect(worker.deleteLater, Qt.ConnectionType.QueuedConnection)
         thread.finished.connect(relay.deleteLater)
         # Bound-method slot on a GUI-thread QObject => queued connection, so
         # bookkeeping never mutates _live from the worker thread.

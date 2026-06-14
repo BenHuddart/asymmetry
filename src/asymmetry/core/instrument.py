@@ -35,6 +35,7 @@ __all__ = [
     "ReferenceArrow",
     "InstrumentLayout",
     "INSTRUMENT_NAMES",
+    "CANONICAL_VECTOR_AXES",
     "PROJECTION_TINTS",
     "TRANSVERSE_PROJECTION_TINTS",
     "derive_projection_pairs",
@@ -320,6 +321,13 @@ class InstrumentLayout:
 # ---------------------------------------------------------------------------
 # Projection derivation
 # ---------------------------------------------------------------------------
+
+#: Canonical EMU vector-polarization axes, in payload order. The single source
+#: of truth shared by the grouping dialog (per-projection alpha table ordering
+#: and canonical detection) and the main window's alpha resolver, so the axis
+#: set never drifts between them. The per-axis alpha table displays them P_z
+#: first (``reversed``).
+CANONICAL_VECTOR_AXES: Final[tuple[str, ...]] = ("P_x", "P_y", "P_z")
 
 #: Legacy canonical vector group names → axis label, used to infer projections
 #: for grouping payloads saved before projections were declared explicitly.

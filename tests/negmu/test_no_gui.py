@@ -91,7 +91,7 @@ def test_negmu_does_not_import_count_domain():
 
     negmu_dir = pathlib.Path(asymmetry.core.negmu.fit.__file__).parent
     for src in negmu_dir.glob("*.py"):
-        for lineno, line in enumerate(src.read_text().splitlines(), 1):
+        for lineno, line in enumerate(src.read_text(encoding="utf-8").splitlines(), 1):
             stripped = line.strip()
             if stripped.startswith("#"):
                 continue  # provenance comments are fine
