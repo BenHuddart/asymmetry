@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet, get_param_info
 
 
@@ -13,6 +15,18 @@ def test_parameter_is_constrained_for_fixed_or_expression() -> None:
     assert free.is_constrained is False
     assert fixed.is_constrained is True
     assert expr.is_constrained is True
+
+
+def test_parameter_set_integer_index_raises_helpful_type_error() -> None:
+    ps = ParameterSet([Parameter(name="A0", value=1.0)])
+
+    with pytest.raises(TypeError, match="indexed by parameter name"):
+        _ = ps[0]
+
+    # Name access still works; positional access is via list()/names.
+    assert ps["A0"].value == 1.0
+    assert list(ps)[0].name == "A0"
+    assert ps.names[0] == "A0"
 
 
 def test_parameter_set_basic_operations() -> None:

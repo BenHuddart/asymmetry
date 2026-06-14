@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -30,6 +32,8 @@ def _write_v2_file(
     last_good_time_us: float | None = None,
     orientation: str = "L",
     field_state: str | None = None,
+    temp_setpoint: float = 12.5,
+    temp_log_values: tuple[float, ...] = (12.0, 12.5, 13.0),
 ) -> None:
     """Create a synthetic V2 NeXus file used by loader unit tests.
 
@@ -102,14 +106,15 @@ def _write_v2_file(
         detector.create_dataset("orientation", data=np.bytes_(orientation))
 
         sample = entry.create_group("sample")
-        sample.create_dataset("temperature", data=12.5)
+        sample.create_dataset("temperature", data=temp_setpoint)
         sample.create_dataset("magnetic_field", data=150.0)
         if field_state is not None:
             sample.create_dataset("magnetic_field_state", data=np.bytes_(field_state))
 
         temp_log = sample.create_group("Temp_Sample")
-        temp_log.create_dataset("time", data=np.array([0.0, 10.0, 20.0], dtype=np.float64))
-        temp_log.create_dataset("value", data=np.array([12.0, 12.5, 13.0], dtype=np.float64))
+        log_values = np.asarray(temp_log_values, dtype=np.float64)
+        temp_log.create_dataset("time", data=np.arange(log_values.size, dtype=np.float64) * 10.0)
+        temp_log.create_dataset("value", data=log_values)
 
         if multiperiod:
             periods = entry.create_group("periods")
@@ -182,6 +187,48 @@ def test_load_v2_single_period(tmp_path, loader: NexusLoader) -> None:
     assert ds.run is not None
     assert ds.run.grouping.get("dead_time_us") == pytest.approx([0.01, 0.02])
     assert ds.run.grouping.get("good_frames") == pytest.approx(200000.0)
+
+
+def test_logged_sample_temperature_distinct_from_setpoint(tmp_path, loader: NexusLoader) -> None:
+    # Setpoint parked at 1 K while the logged sample series sits near 5 K.
+    path = tmp_path / "run_logged_t.nxs"
+    _write_v2_file(
+        path,
+        temp_setpoint=1.0,
+        temp_log_values=(4.8, 5.0, 5.2),
+    )
+
+    ds = loader.load(str(path))
+    assert not isinstance(ds, list)
+
+    # Setpoint is unchanged (no behaviour change for existing callers).
+    assert ds.metadata["temperature"] == pytest.approx(1.0)
+    # Logged temperature is the mean of the Temp_Sample series, distinct from it.
+    assert ds.metadata["sample_temperature_logged"] == pytest.approx(5.0)
+    assert ds.sample_temperature_logged == pytest.approx(5.0)
+    assert ds.sample_temperature_logged != ds.metadata["temperature"]
+    assert ds.run is not None
+    assert ds.run.sample_temperature_logged == pytest.approx(5.0)
+
+
+def test_empty_logged_series_emits_no_runtime_warning(tmp_path, loader: NexusLoader) -> None:
+    # An all-NaN logged series must not trigger nanmean/nanmin/nanmax warnings.
+    path = tmp_path / "run_empty_log.nxs"
+    _write_v2_file(
+        path,
+        temp_log_values=(float("nan"), float("nan")),
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        ds = loader.load(str(path))
+
+    assert not isinstance(ds, list)
+    # No logged value could be derived, but the load still succeeds.
+    assert ds.sample_temperature_logged is None
+    assert "sample_temperature_logged" not in ds.metadata
+    series = ds.metadata["nexus_time_series"]["sample/Temp_Sample"]
+    assert series["mean"] is None
 
 
 def test_load_v2_multiperiod(tmp_path, loader: NexusLoader) -> None:
