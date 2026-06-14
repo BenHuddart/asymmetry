@@ -111,6 +111,51 @@ def test_fit_scan_baseline_constant_model():
     assert result.fit.parameters["c"].value == pytest.approx(3.0, abs=1e-3)
 
 
+# True cubic baseline coefficients (well-conditioned over x in [0, 200]).
+_CUBIC = {"c0": 2.0, "c1": 0.01, "c2": -1e-4, "c3": 2e-7}
+
+
+def _cubic_value(x):
+    xx = np.asarray(x, dtype=float)
+    return _CUBIC["c0"] + _CUBIC["c1"] * xx + _CUBIC["c2"] * xx**2 + _CUBIC["c3"] * xx**3
+
+
+def test_cubic_component_evaluates_as_horner_polynomial():
+    # The registered Cubic component is the WiMDA/Mantid ALC background.
+    from asymmetry.core.fitting.parameter_models import PARAMETER_MODEL_COMPONENTS
+
+    cubic = PARAMETER_MODEL_COMPONENTS["Cubic"]
+    assert cubic.param_names == ["c0", "c1", "c2", "c3"]
+    x = np.array([0.0, 50.0, 200.0])
+    np.testing.assert_allclose(cubic.function(x, **_CUBIC), _cubic_value(x))
+
+
+def test_fit_scan_baseline_recovers_cubic_and_corrects():
+    # A curved/sloping ALC baseline Linear cannot match: a cubic background
+    # plus a Gaussian dip resonance at B0=100.
+    x = np.linspace(0.0, 200.0, 41)
+    scan = _scan(x, _cubic_value(x) + _gaussian_lcr(x, _TRUE_F, _TRUE_B0, _TRUE_BWID))
+    result = fit_scan_baseline(scan, [(0.0, 40.0), (160.0, 200.0)], model="Cubic")
+
+    assert result.success
+    for name, truth in _CUBIC.items():
+        assert result.fit.parameters[name].value == pytest.approx(truth, abs=1e-2, rel=1e-2)
+
+    # The corrected curve removes the cubic baseline: flat regions ~ 0, dip kept.
+    corrected = result.corrected
+    edge = (corrected.x <= 40.0) | (corrected.x >= 160.0)
+    assert np.allclose(corrected.value[edge], 0.0, atol=1e-3)
+    centre = int(np.argmin(np.abs(corrected.x - _TRUE_B0)))
+    assert corrected.value[centre] == pytest.approx(_TRUE_F, abs=2e-2)
+
+
+def test_fit_scan_baseline_cubic_rejects_underdetermined():
+    # Three points cannot constrain the 4-parameter Cubic baseline.
+    scan = _alc_scan()
+    with pytest.raises(ValueError, match="at least 4"):
+        fit_scan_baseline(scan, [(0.0, 10.0)], model="Cubic")
+
+
 def test_fit_scan_baseline_preserves_scan_structure():
     scan = _alc_scan()
     result = fit_scan_baseline(scan, [(0.0, 40.0), (160.0, 200.0)])

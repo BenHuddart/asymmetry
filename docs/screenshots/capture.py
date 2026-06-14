@@ -15,7 +15,31 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import threading
+import time
 from pathlib import Path
+
+# Hard cap on the entire capture process — if any scenario deadlocks or a fit
+# stall, this daemon thread exits the process rather than blocking the CI job
+# indefinitely.  ``continue-on-error: true`` on the workflow step means the
+# Sphinx build proceeds even when we exit with a non-zero code.
+_CAPTURE_TIMEOUT_S = 20 * 60  # 20 minutes
+
+
+def _start_watchdog(timeout_s: int = _CAPTURE_TIMEOUT_S) -> None:
+    """Start a daemon thread that hard-exits the process after *timeout_s* seconds."""
+
+    def _watchdog() -> None:
+        time.sleep(timeout_s)
+        print(
+            f"[screenshots] WATCHDOG: hard exit after {timeout_s}s — "
+            "a scenario may have hung; increase _CAPTURE_TIMEOUT_S if needed.",
+            flush=True,
+        )
+        os._exit(1)
+
+    t = threading.Thread(target=_watchdog, name="screenshot-watchdog", daemon=True)
+    t.start()
 
 
 def _ensure_offscreen_default() -> None:
@@ -142,6 +166,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _start_watchdog()
     args = _parse_args(argv)
 
     _ensure_offscreen_default()
@@ -180,8 +205,10 @@ def main(argv: list[str] | None = None) -> int:
 
     for name, scenario in selected.items():
         print(f"[screenshots] capturing {name}...", flush=True)
+        _t0 = time.monotonic()
         path = scenario.capture(ctx)
-        print(f"[screenshots] wrote {path}", flush=True)
+        _elapsed = time.monotonic() - _t0
+        print(f"[screenshots] wrote {path} ({_elapsed:.1f}s)", flush=True)
 
     return 0
 

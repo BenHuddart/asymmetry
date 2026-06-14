@@ -32,6 +32,12 @@ PARAMETER_MODEL_APPLICABILITY: dict[str, str] = {
         "fix c₃–c₅). Polynomials extrapolate poorly: keep the order as low as the residuals allow and "
         "interpret the coefficients only within the fitted window."
     ),
+    "Cubic": (
+        "Use as the curved or sloping background under an avoided-level-crossing (ALC) field scan, where "
+        "a straight line cannot follow the off-resonance baseline. Fitted over the non-resonant regions and "
+        "subtracted before the resonance peak is fitted. It is a well-conditioned third-order restriction of "
+        "the general Polynomial; like any polynomial background it extrapolates poorly outside the fitted window."
+    ),
     "PowerLaw": (
         "Use near scale-invariant regimes or crossover windows where the observable follows a power law. "
         "It is especially useful for phenomenological critical-like behavior without a full microscopic model. "
