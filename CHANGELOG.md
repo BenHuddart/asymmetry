@@ -7,8 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-06-14
+
+This release marks the completion of the Wimda parity programme: Asymmetry now
+covers the analysis workflows of the reference Wimda tool — including
+per-projection alpha estimation, grouped-series fitting, trend propagation, and
+the PSI GPS detector layouts — within the scriptable core and PySide6 desktop
+application.
+
 ### Added
 
+- **Per-projection alpha**: the asymmetry reduction now resolves alpha per
+  declared projection rather than only for the canonical EMU axes. The
+  vector-alpha table has one editable row per projection (rebuilt when
+  projections change), so non-canonical presets (GPS WEP FB/UD, the
+  MuSR/HiFi transverse pairs) can be recalibrated and estimate their own
+  alpha; values, errors, and reference-run provenance round-trip through
+  `.grp` save/load and survive detector-layout edits.
+- **PSI GPS detector layout**: built-in GPS detector geometry shipped in both
+  BIN and ROOT loader variants.
 - **Domain representation model** (`asymmetry.core.representation`): each
   dataset now carries up to four named representations (`time_fb_asymmetry`,
   `time_groups`, `freq_fft`, `freq_maxent`), each holding a recipe (for
