@@ -133,6 +133,18 @@ PARAMETER_MODEL_APPLICABILITY: dict[str, str] = {
         "Use as an additive field-independent relaxation background for λ-like observables. "
         "It is commonly combined with explicit field-dependent terms to capture residual broadening."
     ),
+    "RFResonanceMuP": (
+        "Use to fit a field-swept RF-µSR resonance scan of a muoniated radical (muon + electron + "
+        "one dominant proton, e.g. cyclohexadienyl C₆H₆Mu) and extract the muon and proton hyperfine "
+        "couplings A_µ and A_p simultaneously. At fixed RF frequency ν_RF the swept-field asymmetry "
+        "shows two Lorentzian features whose positions are the resonance fields B₁, B₂ where an "
+        "RF-driven muon-spin-flip transition of the three-spin Hamiltonian matches ν_RF; these are "
+        "found by exact diagonalisation rather than the high-field-limit linear relation, which is "
+        "inaccurate at the low fields (hundreds of G) typical of these scans. The mean field tracks "
+        "A_µ and the splitting tracks A_p. Set ampl negative to fit resonance dips (the Red−Green "
+        "observable); hold ν_RF fixed at the applied frequency and give A_µ, A_p starting values "
+        "near the expected couplings, since the resonance condition is nonlinear."
+    ),
     "SC_SWave": (
         "Use for superconductors consistent with a single isotropic, fully gapped order parameter. "
         "It is the standard baseline for nodeless BCS-like superfluid-density behavior: σ(T) saturates "
@@ -550,6 +562,12 @@ PARAMETER_MODEL_REFERENCES: dict[str, tuple[str, ...]] = {
     "BallisticLF_3D": (
         "F. L. Pratt, J. Phys.: Conf. Ser. 2462, 012038 (2023).",
         "B. M. Huddart et al., Phys. Rev. B 103, L060405 (2021).",
+    ),
+    "RFResonanceMuP": (
+        "I. McKenzie, R. Scheuermann, S. P. Cottrell, J. S. Lord, and I. M. Tucker, "
+        "J. Phys. Chem. B 117, 13614 (2013).",
+        "E. Roduner, The Positive Muon as a Probe in Free Radical Chemistry, "
+        "Lecture Notes in Chemistry Vol. 40 (Springer, Berlin, 1988).",
     ),
 }
 
