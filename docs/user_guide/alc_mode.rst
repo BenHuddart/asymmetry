@@ -174,6 +174,71 @@ The FWHM is derived from the fitted width per shape
 (:math:`\mathrm{FWHM} = 2\sqrt{2\ln 2}\,B_\mathrm{wid} \approx 2.355\,B_\mathrm{wid}`
 for a Gaussian; :math:`2\,B_\mathrm{wid}` for a Lorentzian).
 
+Fitting a scan from the API: single *and* multiple resonances
+-------------------------------------------------------------
+
+The GUI peak fitter above fits centred Gaussian/Lorentzian peaks on a
+baseline-corrected scan. The same scan can also be fit programmatically with
+:func:`~asymmetry.core.fitting.fit_scan_model`, which fits a model *and* its
+background to the raw scan in a single call. The ``model`` argument is flexible::
+
+   fit_scan_model(scan, model, *, parameters=None, initial=None,
+                  x_min=None, x_max=None, method="migrad")
+
+* ``model`` accepts a ``str``, a ``list[str]``, or a
+  :class:`~asymmetry.core.fitting.ParameterCompositeModel` — so it is **not**
+  limited to one resonance. Several resonances plus a polynomial background can
+  be fit *simultaneously*; fitting overlapping peaks one at a time is neither
+  necessary nor reliable.
+* ``initial`` is an override dict (``{name: value}``) layered on the model's
+  defaults; ``parameters`` is a full :class:`~asymmetry.core.fitting.ParameterSet`.
+  The two are mutually exclusive — pass one or the other, not both.
+
+Single resonance:
+
+.. code-block:: python
+
+   from asymmetry.core.fitting import fit_scan_model
+
+   # scan is a FieldScan (e.g. built by the ALC mode "Build Scan" step,
+   # or constructed directly from per-run integral-asymmetry values).
+   result = fit_scan_model(scan, "LorentzianLCR")
+
+Multiple resonances share a single fit. The component parameters are numbered
+across the expression (``f_1``/``B0_1``/``Bwid_1`` for the first peak,
+``f_2``/``B0_2``/``Bwid_2`` for the second, …) and the ``Polynomial``
+background contributes ``c0`` … ``c5``:
+
+.. code-block:: python
+
+   from asymmetry.core.fitting import ParameterCompositeModel, fit_scan_model
+
+   # Two Lorentzians on a polynomial background, fit together:
+   pcm = ParameterCompositeModel.from_expression(
+       "LorentzianLCR + LorentzianLCR + Polynomial"
+   )
+   print(pcm.param_names)
+   # ['f_1', 'B0_1', 'Bwid_1', 'f_2', 'B0_2', 'Bwid_2',
+   #  'c0', 'c1', 'c2', 'c3', 'c4', 'c5']
+
+   result = fit_scan_model(
+       scan,
+       "LorentzianLCR + LorentzianLCR + Polynomial",
+       initial={"B0_1": 3000.0, "B0_2": 3300.0},
+   )
+
+The motivating case is a multi-resonance ALC spectrum such as the
+corannulene-style four-resonance scan, which fits cleanly as one mixed
+Gaussian/Lorentzian model on a polynomial background::
+
+   "GaussianLCR + LorentzianLCR + LorentzianLCR + LorentzianLCR + Polynomial"
+
+Because every resonance and the background share one minimisation, overlapping
+peaks are deconvolved correctly — which sequential single-peak fits cannot do.
+The component parameter names follow the composite-model scheme documented in
+:doc:`composite_models`; call ``.param_names`` (as above) before building an
+``initial`` override or a ``ParameterSet`` so the names always match.
+
 Repolarisation: a complementary route through parameter trending
 ----------------------------------------------------------------
 

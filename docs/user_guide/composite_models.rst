@@ -103,6 +103,58 @@ For fraction groups, the final effective weights are always normalized even if
 the raw fit parameters move during minimization, so the grouped amplitudes stay
 on a physically interpretable simplex.
 
+Always read ``.param_names`` before building a ``ParameterSet``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The numbering is **collision-driven**, not blanket per-component, so the only
+reliable way to know the parameter names is to ask the compiled model. A symbol
+that appears in more than one component is suffixed with that component's
+1-based position; a symbol that is unique across the whole expression stays
+bare. So in ``Oscillatory * Exponential + Constant`` the amplitude ``A``
+collides (shared across the ``*`` chain → ``A_1``) and ``Constant`` contributes
+``A_bg``, but ``frequency``, ``phase``, and ``Lambda`` are each unique and keep
+their plain names:
+
+.. code-block:: python
+
+   from asymmetry.core.fitting import CompositeModel
+
+   model = CompositeModel.from_expression("Oscillatory * Exponential + Constant")
+   print(model.param_names)
+   # ['A_1', 'frequency', 'phase', 'Lambda', 'A_bg']
+   # note: 'Lambda' (unique) is NOT 'Lambda_1'; 'Constant' contributes 'A_bg'
+
+``model.param_names`` and ``model.to_model_definition().param_names`` return the
+same list. Build your :class:`~asymmetry.core.fitting.ParameterSet` from that
+list rather than from guessed names — guessing ``Lambda_1`` or ``A_3`` here
+would silently fail to bind.
+
+Expression (``COMPONENTS``) names are not the standalone (``MODELS``) names
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The names used **inside a composite expression** come from the ``COMPONENTS``
+registry and differ from the keys of the standalone ``MODELS`` registry, and so
+do their parameter names:
+
+* In an expression you write ``Exponential`` (a ``COMPONENTS`` key); its
+  parameters are ``A`` and ``Lambda``, which the parser mangles to ``A_1`` /
+  ``A_bg`` / etc. as described above.
+* The standalone model is ``MODELS["ExponentialRelaxation"]`` — a *different*
+  key — and its parameters are ``A0``, ``Lambda``, ``baseline`` (not ``A`` /
+  ``A_bg``).
+
+Mixing the two vocabularies is a common source of "unknown parameter" errors.
+Decide which API you are using (composite expression vs standalone ``MODELS``
+entry) and take the names from that one.
+
+The authoritative component list is the live registry — the
+`Available Components`_ table below is a commonly-used subset. Print the full
+set with::
+
+   from asymmetry.core.fitting import COMPONENTS, MODELS
+   sorted(COMPONENTS)   # names usable inside CompositeModel expressions
+   sorted(MODELS)       # standalone model keys (different names)
+
 Evaluate Model and Components
 -----------------------------
 

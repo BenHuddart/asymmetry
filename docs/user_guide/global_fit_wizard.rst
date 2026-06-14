@@ -239,3 +239,8 @@ Notes
 - Completed wizard states are cached with the current global-fit tab context,
   so reopening the wizard does not force you to rebuild an unchanged screening
   table or rerun finished candidate optimizations.
+- This wizard is the **asymmetry-domain** shared-parameter workflow, driven from
+  the GUI. To share fit-function parameters across runs **programmatically**,
+  use the **count-domain** API ``fit_grouped_series(relationship="global", ...)``
+  — see :ref:`grouped-cross-run-global-api` in
+  :doc:`grouped_time_domain_fitting`.
