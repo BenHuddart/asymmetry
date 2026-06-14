@@ -393,6 +393,92 @@ def test_build_field_scan_invalid_order_key():
         build_field_scan([], order_key="pressure")
 
 
+# --- build_field_scan: filter ------------------------------------------------
+
+
+def _period_run(run_number, field, level, period_label):
+    """A scan run carrying a ``period_label`` (red/green) in its metadata."""
+    run = _scan_run(run_number, field=field, level=level)
+    run.metadata["period_label"] = period_label
+    return run
+
+
+def test_build_field_scan_filter_selects_one_period():
+    # Two periods recorded at each field (e.g. RF-on / RF-off): without a
+    # selector both land in one scan, mixing two asymmetry levels per field.
+    runs = [
+        _period_run(1, field=700.0, level=10.0, period_label="red"),
+        _period_run(2, field=700.0, level=25.0, period_label="green"),
+        _period_run(3, field=800.0, level=12.0, period_label="red"),
+        _period_run(4, field=800.0, level=27.0, period_label="green"),
+    ]
+    # Default: every run kept -> two points per field (the mixing this guards).
+    mixed = build_field_scan(runs, order_key="field")
+    assert mixed.run_numbers == [1, 2, 3, 4]
+    assert list(mixed.x) == [700.0, 700.0, 800.0, 800.0]
+
+    # Red-only: one clean point per field, no green level leaking in.
+    red = build_field_scan(
+        runs, order_key="field", filter=lambda r: r.metadata["period_label"] == "red"
+    )
+    assert red.run_numbers == [1, 3]
+    assert red.value == pytest.approx([0.10, 0.12])
+    # The dropped green runs are recorded for provenance, not silently lost.
+    assert red.excluded == [(2, "excluded by filter"), (4, "excluded by filter")]
+
+
+def test_build_field_scan_filter_drops_calibration_runs():
+    # Repolarisation scan polluted by interleaved 100 G alpha-calibration runs
+    # (same field, different asymmetry level). Drop them by run number.
+    cal = {15958, 15999}
+    runs = [
+        _scan_run(15958, field=100.0, level=40.0),  # calibration
+        _scan_run(15959, field=3.0, level=10.0),  # signal
+        _scan_run(15960, field=5.0, level=11.0),  # signal
+        _scan_run(15999, field=100.0, level=40.0),  # calibration
+    ]
+    scan = build_field_scan(runs, order_key="field", filter=lambda r: r.run_number not in cal)
+    assert scan.run_numbers == [15959, 15960]
+    assert sorted(n for n, _ in scan.excluded) == [15958, 15999]
+
+
+def test_build_field_scan_filter_none_is_backward_compatible():
+    # filter=None must reproduce the no-argument behaviour exactly.
+    runs = [
+        _scan_run(3, field=300.0, level=30.0),
+        _scan_run(1, field=100.0, level=10.0),
+        _scan_run(2, field=200.0, level=20.0),
+    ]
+    default = build_field_scan(runs, order_key="field")
+    explicit = build_field_scan(runs, order_key="field", filter=None)
+    assert explicit.run_numbers == default.run_numbers
+    assert list(explicit.x) == list(default.x)
+    assert explicit.value == pytest.approx(default.value)
+    assert explicit.excluded == default.excluded == []
+
+
+def test_build_field_scan_filter_must_be_callable():
+    with pytest.raises(TypeError, match="filter must be callable or None"):
+        build_field_scan([], order_key="field", filter="red")
+
+
+def test_build_field_scan_filter_that_raises_excludes_only_that_run():
+    # A predicate that blows up on one run must exclude that run, not the scan.
+    def picky(run):
+        if run.run_number == 2:
+            raise KeyError("period_label")
+        return True
+
+    runs = [
+        _scan_run(1, field=100.0, level=10.0),
+        _scan_run(2, field=200.0, level=20.0),
+        _scan_run(3, field=300.0, level=30.0),
+    ]
+    scan = build_field_scan(runs, order_key="field", filter=picky)
+    assert scan.run_numbers == [1, 3]
+    assert scan.excluded == [(2, "filter raised: 'period_label'")]
+
+
 # --- differentiate_scan ------------------------------------------------------
 
 

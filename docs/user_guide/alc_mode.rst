@@ -265,6 +265,78 @@ In short: use the ALC scan for sharp resonances read off model-free, and the
 hyperfine constant is the quantity you want. The integral-asymmetry observable
 built here feeds both.
 
+Building a scan from one period or run type
+-------------------------------------------
+
+A field scan must not mix distinct measurement periods or run types recorded at
+the same field, or the resonance positions shift and the fitted hyperfine
+constants are biased. Two cases are common:
+
+* **Period mode** (RF-on / RF-off, light-on / light-off, ALC steps): a single
+  file holds several periods, and the swept observable is one period — or the
+  difference of two.
+* **Interleaved calibration runs**: a repolarisation or ALC scan often has
+  reference runs (for example a 100 G α-calibration) repeated through the sweep;
+  they sit at a different asymmetry level and pollute the scan.
+
+:func:`~asymmetry.core.transform.build_field_scan` takes a ``filter`` predicate
+``run -> bool`` for exactly this. It is called with each resolved run before
+reduction; runs for which it returns false are dropped and listed in
+``scan.excluded`` (reason ``"excluded by filter"``) so nothing is silently lost.
+The default ``filter=None`` keeps every run — the historical behaviour.
+
+To split a multi-period *file* into its periods first, select each period
+upstream with :func:`asymmetry.core.io.periods.select_period`
+(period extraction lives in ``io``; the scan transform stays free of it).
+
+Worked example — the benzene RF-µSR resonance (DEVA runs 56426–56462, Red =
+RF-on, Green = RF-off). Reduce each period separately and form the Green − Red
+difference, then fit the muon+proton resonance model:
+
+.. code-block:: python
+
+   import numpy as np
+   from asymmetry.core.io import load
+   from asymmetry.core.io.periods import select_period
+   from asymmetry.core.transform import build_field_scan, FieldScan
+   from asymmetry.core.fitting import fit_scan_model
+
+   combined = [load(f) for f in rf_files]          # 2-period (red/green) files
+   red = [select_period(d, "red") for d in combined]    # RF on
+   green = [select_period(d, "green") for d in combined]  # RF off
+
+   sr = build_field_scan(red, order_key="field", t_min=0.1, t_max=8.0)
+   sg = build_field_scan(green, order_key="field", t_min=0.1, t_max=8.0)
+   # The two scans are each sorted independently and may drop runs into
+   # ``excluded``; subtracting by index is only valid when they stayed aligned.
+   assert sr.run_numbers == sg.run_numbers, (sr.excluded, sg.excluded)
+   diff = FieldScan(                                # Green - Red (the RF observable)
+       x=sr.x.copy(), value=sg.value - sr.value,
+       error=np.hypot(sr.error, sg.error), run_numbers=list(sr.run_numbers),
+       order_key="field", method="integral", x_label="B (G)",
+   )
+   result = fit_scan_model(
+       diff, "RFResonanceMuP",
+       initial={"A_mu": 515.0, "A_p": 124.0, "nu_RF": 218.5,
+                "ampl1": 0.017, "wid1": 20.0, "ampl2": 0.017, "wid2": 20.0, "BG": 0.002},
+   )
+   # A_mu ~ 515.5 MHz, A_p ~ 124.9 MHz (ground truth 514.8 / 124.6).
+
+Period-separated reduction places the two RF resonances at ~775 G and ~865 G
+(splitting ~90 G), recovering the literature ``A_µ`` and ``A_p``. Mixing the
+RF-on and RF-off periods into one scan instead shifts the apparent resonance
+positions and badly biases the fitted ``A_p``.
+
+When the periods appear as *separate runs or datasets* in the series (rather
+than periods of one file), ``filter`` selects one directly — for example
+``filter=lambda run: run.metadata.get("period_label") == "red"``. And to drop
+interleaved calibration runs from a repolarisation scan::
+
+   scan = build_field_scan(
+       runs, order_key="field",
+       filter=lambda run: run.run_number not in calibration_run_numbers,
+   )
+
 Saving and reopening
 --------------------
 
