@@ -351,6 +351,86 @@ second-moment level rather than by direct addition.
 .. autofunction:: asymmetry.core.fitting.sc.models.sc_s_plus_g_q
    :no-index:
 
+Field-Dependent Vortex-Lattice Line Width (Brandt)
+--------------------------------------------------
+
+The models above fit the line width as a function of **temperature** at fixed
+field. The complementary measurement sweeps the **applied field** at fixed
+(low) temperature: in a type-II superconductor the vortex-lattice
+field-distribution second moment depends on field through Brandt's
+Ginzburg-Landau result [5], and fitting it yields the absolute penetration
+depth :math:`\lambda` and the upper critical field :math:`B_{c2}` directly.
+
+For an ideal triangular flux-line lattice (:math:`\kappa \gg 1`) the Gaussian
+muon depolarisation rate is
+
+.. math::
+
+   \sigma(B_0) = \sigma_0(\lambda)\,\frac{(1-b)\,[1 + 1.21\,(1-\sqrt{b})^3]}
+   {1 + 1.21},\qquad b = \frac{B_0}{B_{c2}},
+
+where :math:`\sigma_0(\lambda)=\gamma_\mu\,C_B\,\Phi_0/\lambda^2` is the
+field-independent London limit (the :math:`b\to 0` maximum, the same scale used
+by :func:`asymmetry.core.fitting.sc.constants.lambda_nm_to_sigma_us`). The
+field factor is normalised so that :math:`\sigma(b\to0)=\sigma_0(\lambda)` and
+:math:`\sigma(b\ge1)=0`. Equivalently, in the commonly cited single-crystal
+form, :math:`\sigma\,[\mu s^{-1}] \approx 4.85\times10^{4}\,(1-b)[1+1.21
+(1-\sqrt{b})^3]\,\lambda^{-2}\,[\mathrm{nm}^{-2}]` [6].
+
+The field width is what the literature often reports as
+:math:`B_{\mathrm{rms}} = \sigma/\gamma_\mu`; fitting in :math:`\sigma`
+(:math:`\mu s^{-1}`) keeps the workflow identical to the time-domain Gaussian
+rate. An optional field-independent nuclear/background channel ``sigma_bg``
+adds in quadrature, :math:`\sigma=\sqrt{\sigma_{VL}^2+\sigma_{bg}^2}` (Pratt
+*et al.* Eq. (2) [6]).
+
+These are **field-scope** components (they appear for field-trend fits, not
+temperature trends). ``x`` is the applied field in **gauss**; ``Bc2`` is a
+parameter in **tesla**; ``lambda_ab`` is in **nm**.
+
+``SC_Brandt_VortexLattice``
+   Single-crystal Brandt :math:`\sigma(B_0)` for a type-II superconductor.
+
+``SC_Brandt_VortexLattice_Powder``
+   Polycrystalline variant applying the :math:`3^{1/4}` ab-plane powder
+   average (so the line width is the single-crystal value divided by
+   :math:`\sqrt{3}`, Pratt Eq. (3) [6]). Use this for powder samples — a
+   single-crystal fit of powder data under-estimates :math:`\lambda_{ab}` by a
+   factor :math:`3^{1/4}=1.316`.
+
+.. autofunction:: asymmetry.core.fitting.sc.models.brandt_field_width_sigma
+   :no-index:
+
+.. autofunction:: asymmetry.core.fitting.sc.models.brandt_field_factor
+   :no-index:
+
+Worked example: extract lambda from sigma(B0)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Fit a field sweep (line widths already extracted per run in the time domain) of
+a powder type-II superconductor, recovering :math:`\lambda_{ab}` in nm:
+
+.. code-block:: python
+
+   import numpy as np
+   from asymmetry.core.fitting import Parameter, ParameterSet, ParameterCompositeModel
+   from asymmetry.core.fitting.parameter_models import fit_parameter_model
+
+   # Applied transverse field in gauss; sigma in us^-1 (one point per run).
+   B0 = np.array([100.0, 200.0, 800.0, 1600.0, 3200.0, 4000.0, 6000.0])
+   model = ParameterCompositeModel(["SC_Brandt_VortexLattice_Powder"])
+
+   params = ParameterSet([
+       Parameter("lambda_ab", value=200.0, min=0.0),  # nm
+       Parameter("Bc2", value=20.0, min=0.0),          # tesla
+       Parameter("sigma_bg", value=0.0, min=0.0, fixed=True),
+   ])
+
+   sigma = model.function(B0, lambda_ab=195.0, Bc2=25.0, sigma_bg=0.0)
+   sigma_err = np.full_like(B0, 0.02)
+   result = fit_parameter_model(B0, sigma, sigma_err, model, params)
+   # result.parameters -> lambda_ab ~ 195 nm; B_rms = sigma / gamma_mu.
+
 Shared Parameter Semantics
 --------------------------
 
@@ -365,6 +445,14 @@ Shared Parameter Semantics
 
 ``Tc``
    Critical temperature in K.
+
+``lambda_ab``
+   Magnetic (ab-plane) penetration depth in nm, fitted directly by the Brandt
+   field-dependence models.
+
+``Bc2``
+   Upper critical field in tesla, setting the reduced field :math:`b=B_0/B_{c2}`
+   in the Brandt vortex-lattice line width.
 
 ``gap_ratio``, ``gap_ratio_*``
    Dimensionless :math:`\Delta_0/(k_B T_c)` values.
@@ -468,3 +556,9 @@ References
 [4] R. Prozorov, M. A. Tanatar, R. T. Gordon, C. Martin, H. Kim, V. G. Kogan,
 N. Ni, M. E. Tillman, S. L. Bud'ko, and P. C. Canfield, Physica C 469, 582
 (2009).
+
+[5] E. H. Brandt, Phys. Rev. B 37, 2349 (1988); Phys. Rev. B 68, 054506 (2003).
+
+[6] F. L. Pratt, P. J. Baker, S. J. Blundell, T. Lancaster, H. J. Lewtas,
+P. Adamson, M. J. Pitcher, D. R. Parker, and S. J. Clarke, Phys. Rev. B 79,
+052508 (2009).

@@ -39,12 +39,26 @@ from numpy.typing import NDArray
 
 from asymmetry.core.fitting.sc import gaps
 from asymmetry.core.fitting.sc.bcs import delta_generalized, resolve_gap_ratio
+from asymmetry.core.fitting.sc.constants import lambda_nm_to_sigma_us
 from asymmetry.core.fitting.sc.kernel import superfluid_density, superfluid_density_3d
+from asymmetry.core.utils.constants import GAUSS_TO_TESLA
 
 ArrayLikeFloat = NDArray[np.float64]
 
 _D_WAVE_SHAPE_FACTOR = 4.0 / 3.0
 _S_PLUS_G_SHAPE_FACTOR = 2.0
+
+#: Powder-average length correction for the ab-plane penetration depth of a
+#: uniaxial superconductor: the line width uses ``(3**0.25 * lambda_ab)**2`` in
+#: the denominator (Pratt et al., PRB 79, 052508 (2009), Eq. (3)), i.e. the
+#: powder sigma is the single-crystal value divided by ``sqrt(3)``.
+_POWDER_LAMBDA_FACTOR = 3.0**0.25
+
+#: Brandt field-dependence bracket evaluated at zero reduced field,
+#: ``(1 - b) * [1 + 1.21 * (1 - sqrt(b))**3]`` at ``b = 0``. Used to normalise
+#: the field factor so that ``brandt_field_factor(0) == 1`` and the ``b -> 0``
+#: limit of the model reproduces :func:`lambda_nm_to_sigma_us`.
+_BRANDT_BRACKET_AT_ZERO = 1.0 + 1.21
 _EXTENDED_S_SHAPE_FACTOR = _D_WAVE_SHAPE_FACTOR
 
 
@@ -624,6 +638,117 @@ def sc_s_plus_g_q(
     """
     rho = rho_s_plus_g(T, Tc=Tc, gap_ratio=gap_ratio, gap_mev=gap_mev)
     return _sigma_quadrature(rho, sigma_sc=sigma_sc, sigma_nm=sigma_nm)
+
+
+def brandt_field_factor(b: NDArray[np.float64] | list[float] | float) -> ArrayLikeFloat:
+    r"""Return the normalised Brandt field-dependence factor :math:`g(b)`.
+
+    .. math::
+
+        g(b) = \frac{(1-b)\,[1 + 1.21\,(1-\sqrt{b})^3]}{1 + 1.21},
+        \qquad b = B_0/B_{c2}.
+
+    This is Brandt's Ginzburg-Landau result for the field dependence of the
+    second moment of an ideal triangular vortex lattice
+    (Brandt, Phys. Rev. B 68, 054506 (2003)), normalised so that
+    :math:`g(0)=1`. For :math:`b \ge 1` (at or above :math:`B_{c2}` there is no
+    vortex lattice) the factor is clamped to ``0``; negative ``b`` is clamped to
+    ``0`` so the ``sqrt`` stays real.
+    """
+    bb = np.asarray(b, dtype=float)
+    b_clipped = np.clip(bb, 0.0, 1.0)
+    bracket = 1.0 + 1.21 * np.power(1.0 - np.sqrt(b_clipped), 3)
+    factor = (1.0 - b_clipped) * bracket / _BRANDT_BRACKET_AT_ZERO
+    # Above Bc2 (and at exactly Bc2) the vortex lattice is destroyed.
+    return np.asarray(np.where(bb >= 1.0, 0.0, factor), dtype=float)
+
+
+def brandt_field_width_sigma(
+    B0: NDArray[np.float64] | list[float] | float,
+    lambda_ab: float,
+    Bc2: float,
+    sigma_bg: float = 0.0,
+    *,
+    powder: bool = False,
+) -> ArrayLikeFloat:
+    r"""Brandt field-dependent vortex-lattice line width :math:`\sigma(B_0)`.
+
+    Returns the Gaussian muon depolarisation rate of a type-II superconductor
+    as a function of applied transverse field, from which the magnetic
+    penetration depth is extracted:
+
+    .. math::
+
+        \sigma(B_0) = \sigma_0(\lambda)\,g(b),
+        \qquad b = B_0/B_{c2},
+
+    where :math:`\sigma_0(\lambda)=\gamma_\mu\,C_B\,\Phi_0/\lambda^2` is the
+    field-independent London limit (the :math:`b\to 0` maximum, supplied by
+    :func:`asymmetry.core.fitting.sc.constants.lambda_nm_to_sigma_us`) and
+    :math:`g(b)` is the normalised Brandt factor (:func:`brandt_field_factor`).
+    Equivalently, in the commonly cited single-crystal form,
+
+    .. math::
+
+        \sigma(B_0)\,[\mu s^{-1}] \approx 4.85\times10^{4}\,(1-b)
+        [1 + 1.21(1-\sqrt{b})^3]\,\lambda^{-2}\,[\mathrm{nm}^{-2}].
+
+    Parameters
+    ----------
+    B0
+        Applied transverse field in **gauss** (the field-scope x convention).
+    lambda_ab
+        Magnetic penetration depth in **nm**. For ``powder=True`` this is the
+        ab-plane depth :math:`\lambda_{ab}`.
+    Bc2
+        Upper critical field :math:`B_{c2}` in **tesla**.
+    sigma_bg
+        Optional field-independent (e.g. nuclear) Gaussian rate in
+        :math:`\mu s^{-1}`, added in quadrature
+        :math:`\sigma=\sqrt{\sigma_{VL}^2+\sigma_{bg}^2}` (Pratt et al.,
+        PRB 79, 052508 (2009), Eq. (2)). Default ``0``.
+    powder
+        When ``True`` apply the polycrystalline ab-plane average, replacing
+        :math:`\lambda_{ab}` by :math:`3^{1/4}\lambda_{ab}` so the line width is
+        the single-crystal value divided by :math:`\sqrt{3}` (Pratt Eq. (3)).
+
+    Returns
+    -------
+    numpy.ndarray
+        :math:`\sigma(B_0)` in :math:`\mu s^{-1}`.
+
+    References
+    ----------
+    E. H. Brandt, Phys. Rev. B 37, 2349 (1988); 68, 054506 (2003).
+    """
+    field_tesla = np.abs(np.asarray(B0, dtype=float)) * GAUSS_TO_TESLA
+    bc2_safe = max(float(Bc2), 1e-12)
+    b = field_tesla / bc2_safe
+
+    effective_lambda = float(lambda_ab)
+    if powder:
+        effective_lambda *= _POWDER_LAMBDA_FACTOR
+
+    sigma_0 = lambda_nm_to_sigma_us(effective_lambda)
+    sigma_vl = np.asarray(sigma_0 * brandt_field_factor(b), dtype=float)
+    return np.hypot(sigma_vl, float(sigma_bg))
+
+
+def brandt_field_width_sigma_powder(
+    B0: NDArray[np.float64] | list[float] | float,
+    lambda_ab: float,
+    Bc2: float,
+    sigma_bg: float = 0.0,
+) -> ArrayLikeFloat:
+    r"""Polycrystalline variant of :func:`brandt_field_width_sigma`.
+
+    Thin wrapper with ``powder=True`` so it can be registered as its own
+    parameter-trend component (the registry invokes ``function(x, **params)``
+    with only the fitted parameters as keywords).
+    """
+    return brandt_field_width_sigma(
+        B0, lambda_ab=lambda_ab, Bc2=Bc2, sigma_bg=sigma_bg, powder=True
+    )
 
 
 def rho_to_lambda_inv_sq(
