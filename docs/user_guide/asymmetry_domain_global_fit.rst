@@ -69,6 +69,89 @@ Basic usage
    for key, fit in result.dataset_results.items():
        print(key, fit.parameters["amp"].value)
 
+Worked example — Keren shared across fields, ``B_L`` fixed per field
+--------------------------------------------------------------------
+
+The motivating case in full: a longitudinal-field decoupling series at one
+temperature, fitted with the dynamic Keren function. The dynamic width
+:math:`\Delta` and fluctuation rate :math:`\nu` are **genuinely shared** across
+fields, the applied longitudinal field ``B_L`` is **known and fixed** at each
+dataset's setpoint, and the amplitude floats per field. So ``Delta`` and ``nu``
+are *global*, ``B_L`` is a *local* parameter held ``fixed=True`` at a different
+value in each dataset, and the amplitude is *local* and free.
+
+Build the model from a composite expression and take the parameter names from
+the compiled model — the Keren amplitude is mangled to ``A_1`` and the background
+to ``A_bg`` (see :ref:`components-vs-models`), so the global/local lists must use
+those mangled names, not ``A``:
+
+.. code-block:: python
+
+   from asymmetry.core.fitting import (
+       CompositeModel, fit_global, Parameter, ParameterSet,
+   )
+   from asymmetry.core.io import load
+
+   model_def = CompositeModel.from_expression("Keren + Constant")
+   print(model_def.param_names)
+   # ['A_1', 'Delta', 'nu', 'B_L', 'A_bg']   <- names the seeds must use
+   model = model_def.to_model_definition().function
+
+   # One dataset per applied longitudinal field, keyed by the field in gauss.
+   fields_g = {5.0: "lf_5G.nxs", 20.0: "lf_20G.nxs", 100.0: "lf_100G.nxs"}
+   datasets = {b_l: load(path) for b_l, path in fields_g.items()}
+
+   # Per-dataset seeds: same physics seed everywhere, but B_L is fixed at this
+   # dataset's own field, so we need a mapping key -> ParameterSet (not one
+   # broadcast set).
+   seeds = {
+       b_l: ParameterSet([
+           Parameter("A_1", value=0.20, min=0.0, max=1.0),   # local, free
+           Parameter("Delta", value=0.25, min=0.0, max=5.0),  # global
+           Parameter("nu", value=0.4, min=0.0, max=20.0),     # global
+           Parameter("B_L", value=b_l, fixed=True),           # local, fixed per field
+           Parameter("A_bg", value=0.0),                      # local, free, unbounded
+       ])
+       for b_l in datasets
+   }
+
+   result = fit_global(
+       datasets,
+       model,
+       global_params=["Delta", "nu"],
+       local_params=["A_1", "B_L", "A_bg"],
+       initial_params=seeds,
+   )
+
+   print("shared Delta =", result.global_parameters["Delta"].value,
+         "±", result.global_uncertainties["Delta"])
+   print("shared nu    =", result.global_parameters["nu"].value,
+         "±", result.global_uncertainties["nu"])
+   print("combined χ²ᵣ  =", result.reduced_chi_squared)
+   for b_l, fit in result.dataset_results.items():
+       print(f"{b_l:>6.0f} G: A_1 = {fit.parameters['A_1'].value:.3f}, "
+             f"B_L = {fit.parameters['B_L'].value:.0f} (fixed)")
+
+Key points this case illustrates:
+
+* **A fixed-per-dataset parameter is a local parameter held fixed.** Put ``B_L``
+  in ``local_params`` (so each dataset gets its own copy) and mark it
+  ``fixed=True`` in every seed with that dataset's own field value. A fixed local
+  is held constant during the fit and does not count toward the degrees of
+  freedom.
+* **Per-dataset fixed values require the mapping form of** ``initial_params``.
+  A single broadcast ``ParameterSet`` would force the *same* ``B_L`` everywhere;
+  pass ``key -> ParameterSet`` so each dataset carries its own field.
+* **The amplitude is** ``A_1``, **not** ``A``. Composite expressions mangle
+  component parameters; always read ``model_def.param_names`` first and build the
+  seeds from that list.
+* **Leave** ``A_bg`` **unbounded** so a negative TF-style background can settle
+  (see :ref:`fit-bg-amplitude-tf` in :doc:`fitting`).
+
+Sharing ``Delta`` and ``nu`` across the series pins them far more tightly than
+any single-field fit, and the shared ``nu`` measured at several temperatures is
+what feeds an activation-energy (Arrhenius) analysis of the fluctuation rate.
+
 Inputs and keying
 -----------------
 

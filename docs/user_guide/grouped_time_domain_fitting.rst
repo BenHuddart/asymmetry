@@ -241,11 +241,13 @@ The returned ``GroupedSeriesFitResult`` carries the cross-run
 
 .. note::
 
-   **There is no asymmetry-domain global fit in a single call.** This API shares
-   parameters across runs only in the **count domain**. Sharing parameters
-   across several ``.asymmetry`` traces in one call is not currently exposed; in
-   the GUI, the asymmetry-domain shared-parameter workflow is the interactive
-   :doc:`global_fit_wizard` instead.
+   **This API shares parameters in the count domain.** It fits lifetime-corrected
+   grouped detector counts with a Cash/Poisson statistic — the statistically
+   faithful choice for low-count data. To share parameters across several
+   ``.asymmetry`` traces in a single call instead, use the asymmetry-domain
+   :func:`~asymmetry.core.fitting.fit_global` (Gaussian weighted least squares);
+   see :doc:`asymmetry_domain_global_fit`. In the GUI, the asymmetry-domain
+   shared-parameter workflow is the interactive :doc:`global_fit_wizard`.
 
 Current Limitations
 -------------------
