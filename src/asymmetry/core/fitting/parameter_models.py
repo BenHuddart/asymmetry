@@ -1391,6 +1391,77 @@ class ParameterCompositeModel:
         )
 
 
+#: Trend components whose default ``Tc = 10`` seed is unphysical for real
+#: field/temperature scans (which sit at tens-to-hundreds of K or G). The
+#: critical temperature must instead be inferred from the fitted x-range,
+#: otherwise the trend fit fails to converge until the user reseeds Tc by hand.
+_TREND_TC_COMPONENTS = frozenset({"CriticalDivergence", "OrderParameter"})
+
+
+def suggest_trend_seeds(
+    model: ParameterCompositeModel,
+    x: NDArray,
+    y: NDArray,
+) -> dict[str, float]:
+    """Data-aware seed overrides for critical-temperature trend components.
+
+    The :data:`CriticalDivergence` and :data:`OrderParameter` components default
+    to ``Tc = 10``, which is far from where real datasets transition (spin-glass
+    ``T_g ≈ 88 K``, EuO ``T_c ≈ 69 K``), so the trend fit will not converge until
+    ``Tc`` is reseeded by hand. This helper derives a starting ``Tc`` from the
+    boundary of the fitted x-range — and a cheap amplitude/baseline seed — so the
+    fit converges out of the box.
+
+    Returns a mapping of *unique* parameter name (matching ``model.param_names``,
+    accounting for repeated-component suffixing) to suggested value. Only the
+    parameters it is confident about are returned; the caller merges these over
+    ``model.param_defaults`` and leaves everything else untouched. Returns an
+    empty mapping when the model has no trend component or the data is unusable
+    (all-NaN x). Pure and Qt-free.
+
+    The seed direction follows each model's physics:
+
+    * ``CriticalDivergence`` (``a·|x − Tc|^{-ν} + c``) diverges *at* ``Tc`` and is
+      fitted with data *above* it, so ``Tc`` is placed just below ``min(x)`` (a
+      small margin keeps the nearest point off the singularity) and the baseline
+      ``c`` is seeded from the flat, far-from-``Tc`` end of the trace.
+    * ``OrderParameter`` (``y0·[1 − (T/Tc)^α]^β``) vanishes *at* ``Tc`` and is
+      fitted with data *below* it, so ``Tc`` is placed just above ``max(x)`` and
+      the amplitude ``y0`` is seeded from the largest observed value.
+
+    Exponents (``ν``, ``β``, ``α``) keep their physical defaults.
+    """
+    xf = np.asarray(x, dtype=float)
+    yf = np.asarray(y, dtype=float)
+    finite = np.isfinite(xf)
+    if not np.any(finite):
+        return {}
+
+    x_valid = xf[finite]
+    x_min = float(np.min(x_valid))
+    x_max = float(np.max(x_valid))
+    span = x_max - x_min
+    # A few percent of the span keeps Tc just off the data; the absolute floor
+    # covers a single-point or zero-span trace where a relative margin vanishes.
+    margin = max(span * 0.05, abs(x_max) * 0.01, 1e-3)
+
+    y_finite = yf[np.isfinite(yf)]
+    y_min = float(np.min(y_finite)) if y_finite.size else None
+    y_max = float(np.max(y_finite)) if y_finite.size else None
+
+    seeds: dict[str, float] = {}
+    for component, mapping in zip(model.components, model._param_mappings, strict=True):
+        if component.name == "CriticalDivergence":
+            seeds[mapping["Tc"]] = x_min - margin
+            if y_min is not None:
+                seeds[mapping["c"]] = y_min
+        elif component.name == "OrderParameter":
+            seeds[mapping["Tc"]] = x_max + margin
+            if y_max is not None:
+                seeds[mapping["y0"]] = y_max
+    return seeds
+
+
 class ErrorMode(str, Enum):
     """How per-point σ values are assigned when weighting a model fit.
 

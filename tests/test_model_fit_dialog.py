@@ -270,6 +270,56 @@ def test_edit_model_to_redfield_resets_m_to_default(qapp: QApplication, monkeypa
     assert params["m"].value == pytest.approx(2.0)
 
 
+def test_edit_model_to_critical_divergence_seeds_tc_from_data(
+    qapp: QApplication, monkeypatch
+) -> None:
+    # Switching to a trend model must seed Tc from the data, not the unphysical
+    # default of 10, so the trend fit converges without a manual reseed.
+    x = np.array([90.0, 120.0, 280.0])
+    y = np.array([0.59, 0.04, 0.017])
+    yerr = np.full_like(x, 0.01)
+
+    fit = ParameterModelFit(
+        parameter_name="Lambda",
+        x_key="temperature",
+        ranges=[
+            ModelFitRange(
+                x_min=90.0,
+                x_max=280.0,
+                model=ParameterCompositeModel(["Linear"], []),
+                parameters=ParameterSet([Parameter("m", 0.01), Parameter("b", 0.2)]),
+            )
+        ],
+    )
+    dlg = ModelFitDialog(
+        parameter_name="Lambda",
+        x_key="temperature",
+        x_values=x,
+        y_values=y,
+        y_errors=yerr,
+        existing_fit=fit,
+    )
+
+    class _FakeBuilder:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def get_model(self):
+            return ParameterCompositeModel(["CriticalDivergence"], [])
+
+    monkeypatch.setattr(
+        "asymmetry.gui.panels.model_fit_dialog.ParameterModelBuilderDialog", _FakeBuilder
+    )
+    dlg._edit_model(0)
+
+    params = dlg.get_model_fit().ranges[0].parameters
+    assert params["Tc"].value < 90.0
+    assert params["Tc"].value != pytest.approx(10.0)
+
+
 def test_edit_model_to_sc_component_keeps_shape_factor_a_fixed_by_default(
     qapp: QApplication, monkeypatch
 ) -> None:

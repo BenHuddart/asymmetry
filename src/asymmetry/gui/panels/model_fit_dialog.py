@@ -36,6 +36,7 @@ from asymmetry.core.fitting.parameter_models import (
     ParameterModelFit,
     component_names_for_x,
     fit_parameter_model,
+    suggest_trend_seeds,
     validate_fit_windows,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
@@ -896,6 +897,13 @@ class ModelFitDialog(QDialog):
 
         fit_range.model = model
 
+        # Critical-temperature trend components (CriticalDivergence,
+        # OrderParameter) default to an unphysical Tc=10; seed Tc (and a cheap
+        # amplitude/baseline) from the actual x/y data so the fit converges
+        # without a manual reseed. Only newly reset params adopt these — params
+        # carried over from the previous model keep the user's value.
+        trend_seeds = suggest_trend_seeds(model, self._x, self._y)
+
         new_params = ParameterSet()
         for pname in model.param_names:
             if pname in fit_range.parameters and not _should_reset_param_on_model_change(
@@ -911,7 +919,7 @@ class ModelFitDialog(QDialog):
                 new_params.add(
                     Parameter(
                         name=pname,
-                        value=float(model.param_defaults[pname]),
+                        value=float(trend_seeds.get(pname, model.param_defaults[pname])),
                         fixed=(pname == "shape_factor_a"),
                     )
                 )
