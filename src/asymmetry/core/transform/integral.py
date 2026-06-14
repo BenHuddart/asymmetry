@@ -58,6 +58,8 @@ from asymmetry.core.transform.grouping import effective_grouping, group_forward_
 from asymmetry.core.utils.constants import ORDER_KEYS
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from collections.abc import Callable
+
     from numpy.typing import NDArray
 
 __all__ = [
@@ -309,6 +311,7 @@ def build_field_scan(
     alpha: float | None = None,
     order_key: str = "field",
     grouping_ref: dict | None = None,
+    filter: Callable[[Run], bool] | None = None,
 ) -> FieldScan:
     """Assemble a field scan from a series of loaded runs.
 
@@ -324,6 +327,22 @@ def build_field_scan(
     order_key
         ``"field"``, ``"temperature"``, or ``"run"`` — the x-axis variable the
         points are ordered by (the same :data:`ORDER_KEYS` ``FitSeries`` uses).
+    filter
+        Optional predicate ``run -> bool`` used to keep a *subset* of the runs in
+        a single scan, so distinct measurement periods or run types taken at the
+        same field are not mixed into one curve. It is called with each resolved
+        :class:`Run` (giving its ``run_number`` and ``metadata``) **before**
+        reduction; runs for which it returns a falsy value are dropped and listed
+        in ``excluded`` with the reason ``"excluded by filter"``. Use it to keep
+        one period (``run.metadata.get("period_label") == "red"``), one run type,
+        or to drop interleaved calibration runs (``run.run_number not in cal``).
+        A predicate that raises excludes that one run (reason ``"filter raised:
+        …"``) rather than aborting the scan. Default ``None`` keeps every run —
+        identical to the historical behaviour. (To split a multi-period *file*
+        into its periods first, use
+        :func:`asymmetry.core.io.periods.select_period` upstream — period
+        extraction lives in ``io``, which depends on this transform, not the
+        reverse.)
 
     Returns
     -------
@@ -333,6 +352,8 @@ def build_field_scan(
     _validate_method(method)
     if order_key not in ORDER_KEYS:
         raise ValueError(f"order_key must be one of {ORDER_KEYS}, got {order_key!r}")
+    if filter is not None and not callable(filter):
+        raise TypeError(f"filter must be callable or None, got {type(filter).__name__}")
 
     points: list[FieldScanPoint] = []
     excluded: list[tuple[int, str]] = []
@@ -346,6 +367,15 @@ def build_field_scan(
             excluded.append((_excluded_run_number(item), str(exc)))
             continue
         run_number = int(run.run_number)
+        if filter is not None:
+            try:
+                keep = bool(filter(run))
+            except Exception as exc:  # noqa: BLE001 - one bad predicate must not abort the scan
+                excluded.append((run_number, f"filter raised: {exc}"))
+                continue
+            if not keep:
+                excluded.append((run_number, "excluded by filter"))
+                continue
         x_value = _order_value(run, order_key)
         if x_value is None:
             excluded.append((run_number, f"no {order_key} value"))
