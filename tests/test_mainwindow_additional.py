@@ -2647,6 +2647,120 @@ class TestMainWindowBasic:
         assert dataset.run.grouping["forward_group"] == 1
         assert dataset.run.grouping["backward_group"] == 2
 
+    @staticmethod
+    def _tf_grouping() -> dict:
+        """A MuSR transverse-field dual-grouping payload (two TF projections)."""
+        return {
+            "groups": {1: [1], 2: [2], 3: [1], 4: [2]},
+            "group_names": {
+                1: "Top-Bottom Top",
+                2: "Top-Bottom Bottom",
+                3: "Fwd-Back Forward",
+                4: "Fwd-Back Backward",
+            },
+            "projections": [
+                {"label": "Top-Bottom", "forward_group": 1, "backward_group": 2},
+                {"label": "Fwd-Back", "forward_group": 3, "backward_group": 4},
+            ],
+            "forward_group": 1,
+            "backward_group": 2,
+            "vector_axis": "Top-Bottom",
+            "instrument": "MuSR",
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 3,
+            "bunching_factor": 1,
+            "deadtime_correction": False,
+        }
+
+    def test_normalize_vector_axis_passes_through_tf_label(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """Non-canonical projection labels survive normalization; ALL/None kept."""
+        assert mainwindow._normalize_vector_axis("Top-Bottom") == "Top-Bottom"
+        assert mainwindow._normalize_vector_axis("Fwd-Back") == "Fwd-Back"
+        assert mainwindow._normalize_vector_axis("  Left-Right ") == "Left-Right"
+        assert mainwindow._normalize_vector_axis("All") == "ALL"
+        assert mainwindow._normalize_vector_axis(None) is None
+        assert mainwindow._normalize_vector_axis("") is None
+        # Canonical aliases still fold to the canonical form.
+        assert mainwindow._normalize_vector_axis("px") == "P_x"
+
+    def test_fit_target_change_reduces_dataset_to_tf_projection(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """Clicking a transverse-field subplot must re-reduce the dataset to that
+        projection's pair — the non-canonical path that previously skipped the
+        re-reduce (reopening the fit-on-wrong-curve bug for TF labels)."""
+        dataset = _make_dataset(7471, with_grouping=False)
+        assert dataset.run is not None
+        dataset.run.grouping.update(self._tf_grouping())
+        mainwindow._current_dataset = dataset
+        mainwindow._data_browser.get_selected_datasets = lambda: [dataset]
+        # Stacked (ALL) view with the Fwd-Back subplot as the fit target.
+        mainwindow._plot_panel.get_current_polarization_axis = lambda: "ALL"
+        mainwindow._plot_panel.fit_target_projection = lambda: "Fwd-Back"
+
+        mainwindow._on_fit_target_projection_changed("Fwd-Back")
+
+        # Re-reduced to Fwd-Back's forward/backward pair (3/4): a fit now
+        # minimises against Fwd-Back's asymmetry, not the stale Top-Bottom curve.
+        assert dataset.run.grouping["vector_axis"] == "Fwd-Back"
+        assert dataset.run.grouping["forward_group"] == 3
+        assert dataset.run.grouping["backward_group"] == 4
+
+    def test_selecting_dataset_in_all_mode_reduces_to_tf_fit_target(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Selecting a run in the stacked view re-reduces it to the carried TF
+        fit-target projection (the run-selection sync path, non-canonical label)."""
+        dataset = _make_dataset(7472, with_grouping=False)
+        assert dataset.run is not None
+        dataset.run.grouping.update(self._tf_grouping())
+        mainwindow._current_dataset = dataset
+        mainwindow._data_browser.get_selected_datasets = lambda: [dataset]
+        mainwindow._plot_panel.get_current_polarization_axis = lambda: "ALL"
+        mainwindow._plot_panel.fit_target_projection = lambda: "Fwd-Back"
+        monkeypatch.setattr(mainwindow, "_render_current_selection_plot", lambda: None)
+        monkeypatch.setattr(mainwindow, "_refresh_vector_axis_selector", lambda: None)
+
+        mainwindow._update_selected_datasets()
+
+        assert dataset.run.grouping["vector_axis"] == "Fwd-Back"
+        assert dataset.run.grouping["forward_group"] == 3
+        assert dataset.run.grouping["backward_group"] == 4
+
+    def test_single_fit_slot_recorded_under_tf_projection(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A fit taken on a TF subplot is keyed under that projection's slot."""
+        dataset = _make_dataset(7473, with_grouping=True)
+        assert dataset.run is not None
+        dataset.run.grouping.update(self._tf_grouping())
+        mainwindow._current_dataset = dataset
+        # Stacked view, Fwd-Back is the clicked fit target.
+        monkeypatch.setattr(mainwindow._plot_panel, "get_current_polarization_axis", lambda: "ALL")
+        monkeypatch.setattr(mainwindow._plot_panel, "fit_target_projection", lambda: "Fwd-Back")
+        state = {"composite_model": {"component_names": ["Gaussian"]}, "result_html": "fb-fit"}
+        monkeypatch.setattr(mainwindow._fit_panel, "get_single_form_state", lambda: dict(state))
+
+        mainwindow._record_single_fit_slot(self._single_fit_result())
+
+        rep = mainwindow._project_model.representation(7473, RepresentationType.TIME_FB_ASYMMETRY)
+        assert rep is not None
+        assert rep.fit.is_empty()  # default slot untouched
+        fb = rep.fit_for("Fwd-Back")
+        assert fb.provenance == "single"
+        assert fb.ui_state == state
+        # Top-Bottom remains unfit — projections never inherit each other.
+        assert rep.fit_for("Top-Bottom").is_empty()
+
     def test_extract_grouping_overrides_includes_vector_axis(
         self,
         mainwindow: MainWindow,

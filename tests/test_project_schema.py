@@ -533,6 +533,49 @@ class TestProjectIO:
         # The default slot stays empty — the fits live only on their projections.
         assert restored.fit.is_empty()
 
+    def test_per_projection_fit_persists_for_transverse_field_labels(self, tmp_path):
+        """Transverse-field projection labels round-trip on their own slots too,
+        proving the per-projection storage is genuinely label-agnostic."""
+        from asymmetry.core.representation import (
+            FitSlot,
+            RepresentationType,
+            make_representation,
+            representation_from_dict,
+        )
+
+        rep = make_representation(RepresentationType.TIME_FB_ASYMMETRY)
+        rep.set_fit_for(
+            "Top-Bottom",
+            FitSlot(provenance="single", result={"chi2": 1.2}, ui_state={"result_html": "tb-fit"}),
+        )
+        rep.set_fit_for(
+            "Fwd-Back",
+            FitSlot(provenance="single", result={"chi2": 0.8}, ui_state={"result_html": "fb-fit"}),
+        )
+
+        state = _minimal_state()
+        state["datasets"] = [
+            {
+                "run_number": 7110,
+                "source_file": "/tmp/run7110.nxs",
+                "metadata_overrides": {"field": 100.0},
+                "grouping_overrides": {},
+                "representations": {RepresentationType.TIME_FB_ASYMMETRY.value: rep.to_dict()},
+            }
+        ]
+        path = tmp_path / "tf_projection_fit_roundtrip.asymp"
+
+        save_project(state, path)
+        loaded = load_project(path)
+
+        rep_dict = loaded["datasets"][0]["representations"][
+            RepresentationType.TIME_FB_ASYMMETRY.value
+        ]
+        restored = representation_from_dict(rep_dict)
+        assert restored.fit_for("Top-Bottom").ui_state == {"result_html": "tb-fit"}
+        assert restored.fit_for("Fwd-Back").ui_state == {"result_html": "fb-fit"}
+        assert restored.fit.is_empty()
+
     def test_file_is_valid_json(self, tmp_path):
         state = _minimal_state()
         path = tmp_path / "test.asymp"
