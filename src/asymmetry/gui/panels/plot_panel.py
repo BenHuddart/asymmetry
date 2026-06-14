@@ -1332,6 +1332,20 @@ class PlotPanel(QWidget):
         finally:
             self._syncing_limits_from_axes = False
 
+    def _is_reconstruction_view(self) -> bool:
+        """True when the panel shows a MaxEnt reconstruction layout.
+
+        Reconstruction subplots are keyed ``recon:<run>:<idx>`` /
+        ``recon:combined:<run>``. They are drawn with plain ``ax.plot`` (never
+        decimated) and ``_redraw_current_view`` cannot rebuild them — it would
+        fall through to a plain dataset plot — so they must be excluded from the
+        viewport-refresh path.
+        """
+        return any(
+            isinstance(key, str) and key.startswith("recon:")
+            for key in self._subplot_axes_by_polarization
+        )
+
     def _schedule_viewport_refresh(self) -> None:
         """Coalesce viewport-triggered density refreshes onto the next event loop turn."""
         if (
@@ -1339,6 +1353,10 @@ class PlotPanel(QWidget):
             or not self._current_datasets
             or self._viewport_refresh_in_progress
             or self._viewport_refresh_pending
+            # MaxEnt reconstructions are not decimated and cannot be rebuilt by
+            # _redraw_current_view; refreshing one would replace it with a plain
+            # dataset plot. (Pre-existing: limit-field edits also route here.)
+            or self._is_reconstruction_view()
         ):
             return
         self._viewport_refresh_pending = True
@@ -3786,7 +3804,15 @@ class PlotPanel(QWidget):
 
         self._x_min.setValue(self._convert_frequency_axis_limit_to_control_value(x_min))
         self._x_max.setValue(self._convert_frequency_axis_limit_to_control_value(x_max))
-        self._apply_limits()
+        # Widening the x-window past the previous (possibly zoomed-in) view leaves
+        # the rendered points decimated for the *old* narrow viewport — the data
+        # outside it stays missing until a redraw recomputes decimation. Schedule a
+        # viewport refresh so Auto X re-decimates over the full range it just set.
+        # (_last_plot_time is already full-resolution, so the computed range is
+        # correct; only the on-screen sample was stale.) The refresh is coalesced
+        # and self-suppresses while one is already in progress, so the render-path
+        # call via _apply_auto_limits_if_enabled cannot recurse.
+        self._apply_limits(schedule_viewport_refresh=True)
 
     def _auto_y_limits(self) -> None:
         """Auto-scale y-axis from visible, non-low-count points only."""

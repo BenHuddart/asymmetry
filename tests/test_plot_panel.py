@@ -947,6 +947,83 @@ class TestPlotPanel:
         assert panel.decimation_chip_text() is None
         assert panel._canvas.toolTip() == ""
 
+    @staticmethod
+    def _widest_rendered_line_extent(ax) -> tuple[float, float]:
+        """Return the (min, max) x-span of the densest data line on ``ax``."""
+        lines = [line for line in ax.get_lines() if len(line.get_xdata()) > 2]
+        densest = max(lines, key=lambda line: len(line.get_xdata()))
+        xd = np.asarray(densest.get_xdata(), dtype=float)
+        return float(np.min(xd)), float(np.max(xd))
+
+    def test_auto_x_redecimates_full_window_in_stacked_view(self, qapp: QApplication) -> None:
+        """Auto X must re-render the full data in the stacked projection view.
+
+        Regression (EMU Vector Polarization stacked view): display decimation
+        samples only the *visible* window, so after zooming into a narrow x-range
+        the rendered points cover just that window. Clicking Auto X widens the
+        axis back to the full range. In the stacked view ``_apply_limits`` sets
+        each subplot's xlim under the ``_syncing_limits_from_axes`` guard, which
+        suppresses the axis-limit callback that would otherwise schedule a
+        redraw — so without this fix decimation was never recomputed and the data
+        outside the old narrow window stayed missing until a manual re-render.
+        Auto X now schedules a viewport refresh itself.
+
+        (The single-axis path is not affected: there ``_apply_limits`` sets xlim
+        without the guard, so the callback already schedules the refresh.)
+        """
+        panel = PlotPanel()
+        try:
+            if not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            def _vector_dataset(axis: str) -> MuonDataset:
+                t = np.linspace(0.0, 32.0, 20000)
+                return MuonDataset(
+                    time=t,
+                    asymmetry=0.2 * np.exp(-0.3 * t) * np.cos(2.0 * t),
+                    error=np.full_like(t, 0.005),
+                    metadata={"run_number": 7779, "grouping": {"vector_axis": axis}},
+                )
+
+            panel._current_polarization_axis = "ALL"
+            panel.plot_vector_subplots(
+                {axis: [_vector_dataset(axis)] for axis in ("P_x", "P_y", "P_z")}
+            )
+            qapp.processEvents()
+            assert panel.decimation_enabled()
+            assert len(panel._subplot_axes_by_polarization) == 3
+
+            # The densest data line on a subplot reflects what decimation kept;
+            # re-fetch the live axes each time because a refresh rebuilds them.
+            def _first_subplot_extent() -> tuple[float, float]:
+                ax = next(iter(panel._subplot_axes_by_polarization.values()))
+                return self._widest_rendered_line_extent(ax)
+
+            full_lo, full_hi = _first_subplot_extent()
+            assert full_lo == pytest.approx(0.0, abs=0.05)
+            assert full_hi == pytest.approx(32.0, abs=0.05)
+
+            # Zoom a subplot into a narrow window the way the toolbar would, then
+            # let the coalesced viewport refresh re-decimate for that window.
+            ax0 = next(iter(panel._subplot_axes_by_polarization.values()))
+            ax0.set_xlim(5.0, 8.0)
+            panel._on_axis_limits_changed(ax0)
+            qapp.processEvents()
+            narrow_lo, narrow_hi = _first_subplot_extent()
+            assert narrow_lo >= 4.9
+            assert narrow_hi <= 8.1
+
+            # Auto X: the rendered points must once again span the full window.
+            panel._auto_x_btn.setChecked(True)
+            panel._on_auto_x_button_clicked(True)
+            qapp.processEvents()
+            recovered_lo, recovered_hi = _first_subplot_extent()
+            assert recovered_lo == pytest.approx(0.0, abs=0.05)
+            assert recovered_hi == pytest.approx(32.0, abs=0.05)
+        finally:
+            panel.close()
+            panel.deleteLater()
+
     def test_projection_chip_bar_shows_each_projection(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
