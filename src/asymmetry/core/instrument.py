@@ -462,15 +462,9 @@ def _build_hifi() -> InstrumentLayout:
     presets["Transverse (Vector)"] = PresetGrouping(
         name="Transverse (Vector)",
         groups={
-            1: GroupDefinition(
-                "Left-Right Left", tuple(range(5, 14)) + tuple(range(52, 61))
-            ),
-            2: GroupDefinition(
-                "Left-Right Right", tuple(range(21, 30)) + tuple(range(36, 45))
-            ),
-            3: GroupDefinition(
-                "Top-Bottom Top", tuple(range(13, 22)) + tuple(range(44, 53))
-            ),
+            1: GroupDefinition("Left-Right Left", tuple(range(5, 14)) + tuple(range(52, 61))),
+            2: GroupDefinition("Left-Right Right", tuple(range(21, 30)) + tuple(range(36, 45))),
+            3: GroupDefinition("Top-Bottom Top", tuple(range(13, 22)) + tuple(range(44, 53))),
             4: GroupDefinition(
                 "Top-Bottom Bottom",
                 tuple(range(1, 6)) + tuple(range(29, 37)) + tuple(range(60, 65)),
@@ -479,12 +473,8 @@ def _build_hifi() -> InstrumentLayout:
         forward_group=1,
         backward_group=2,
         projections=(
-            AsymmetryProjection(
-                "Left-Right", 1, 2, tint=TRANSVERSE_PROJECTION_TINTS["Left-Right"]
-            ),
-            AsymmetryProjection(
-                "Top-Bottom", 3, 4, tint=TRANSVERSE_PROJECTION_TINTS["Top-Bottom"]
-            ),
+            AsymmetryProjection("Left-Right", 1, 2, tint=TRANSVERSE_PROJECTION_TINTS["Left-Right"]),
+            AsymmetryProjection("Top-Bottom", 3, 4, tint=TRANSVERSE_PROJECTION_TINTS["Top-Bottom"]),
         ),
     )
 
@@ -584,28 +574,16 @@ def _build_musr() -> InstrumentLayout:
     presets["Transverse (Vector)"] = PresetGrouping(
         name="Transverse (Vector)",
         groups={
-            1: GroupDefinition(
-                "Top-Bottom Top", tuple(range(17, 25)) + tuple(range(49, 57))
-            ),
-            2: GroupDefinition(
-                "Top-Bottom Bottom", tuple(range(1, 9)) + tuple(range(33, 41))
-            ),
-            3: GroupDefinition(
-                "Fwd-Back Forward", tuple(range(9, 17)) + tuple(range(57, 65))
-            ),
-            4: GroupDefinition(
-                "Fwd-Back Backward", tuple(range(25, 33)) + tuple(range(41, 49))
-            ),
+            1: GroupDefinition("Top-Bottom Top", tuple(range(17, 25)) + tuple(range(49, 57))),
+            2: GroupDefinition("Top-Bottom Bottom", tuple(range(1, 9)) + tuple(range(33, 41))),
+            3: GroupDefinition("Fwd-Back Forward", tuple(range(9, 17)) + tuple(range(57, 65))),
+            4: GroupDefinition("Fwd-Back Backward", tuple(range(25, 33)) + tuple(range(41, 49))),
         },
         forward_group=1,
         backward_group=2,
         projections=(
-            AsymmetryProjection(
-                "Top-Bottom", 1, 2, tint=TRANSVERSE_PROJECTION_TINTS["Top-Bottom"]
-            ),
-            AsymmetryProjection(
-                "Fwd-Back", 3, 4, tint=TRANSVERSE_PROJECTION_TINTS["Fwd-Back"]
-            ),
+            AsymmetryProjection("Top-Bottom", 1, 2, tint=TRANSVERSE_PROJECTION_TINTS["Top-Bottom"]),
+            AsymmetryProjection("Fwd-Back", 3, 4, tint=TRANSVERSE_PROJECTION_TINTS["Fwd-Back"]),
         ),
     )
 
