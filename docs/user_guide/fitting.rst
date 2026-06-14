@@ -111,6 +111,40 @@ the parameter uncertainties on the fitted values will be inflated
 correspondingly and should be re-derived against a calibrated error
 model.
 
+.. _fit-bg-amplitude-tf:
+
+A stuck χ² ≈ 200? Free the background amplitude (TF data)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A frequent cause of a huge, stubborn reduced :math:`\chi^2` (often
+:math:`\chi^2_r \approx 200`) on **muSR transverse-field** data is a background
+amplitude pinned at a non-physical lower bound. The constant background term
+``A_bg`` (and the standalone ``baseline``) defaults to a **zero lower bound**,
+but for TF data the fitted background is routinely **negative** — commonly around
+:math:`-20\%` of the full asymmetry — because of detector-pair imbalance and the
+asymmetry baseline convention. Clamped at zero, the minimiser cannot reach the
+true minimum and the fit parks at a large :math:`\chi^2`.
+
+The fix is to initialise the background **unbounded** (or with an explicitly
+negative lower bound) so it can go negative:
+
+.. code-block:: python
+
+   from asymmetry.core.fitting.parameters import Parameter
+
+   # WRONG for TF data: a zero floor traps A_bg → χ²ᵣ stuck near 200
+   bad = Parameter("A_bg", value=0.0, min=0.0)
+
+   # RIGHT: leave it unbounded so the background can settle negative
+   bg = Parameter("A_bg", value=0.0)              # min=-inf, max=+inf by default
+   # ...or pin a generous negative floor if you want some guard rails:
+   bg = Parameter("A_bg", value=-0.05, min=-0.5, max=0.5)
+
+In the GUI parameter table, clear the ``min`` cell for the background row (or set
+it negative) before fitting TF data. If a TF fit converges with a glued-to-zero
+background and a :math:`\chi^2_r` in the hundreds, this bound is the first thing
+to check.
+
 Parameter values and Hessian uncertainties come from
 ``result.parameters`` and ``result.uncertainties``:
 

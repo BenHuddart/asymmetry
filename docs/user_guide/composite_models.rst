@@ -124,36 +124,171 @@ their plain names:
    # ['A_1', 'frequency', 'phase', 'Lambda', 'A_bg']
    # note: 'Lambda' (unique) is NOT 'Lambda_1'; 'Constant' contributes 'A_bg'
 
+The 1-based position is counted across **every** component in the expression,
+not per repeated symbol — so when a symbol first collides at a later component,
+its suffix is that component's index, which can *skip* numbers. Add a second
+``Oscillatory`` and the precession symbols of the two oscillatory terms become
+``_1`` and ``_3`` (their component positions), never ``_1`` and ``_2``:
+
+.. code-block:: python
+
+   model = CompositeModel.from_expression(
+       "Oscillatory * Exponential + Oscillatory + Constant"
+   )
+   print(model.param_names)
+   # ['A_1', 'frequency_1', 'phase_1', 'Lambda', 'A_3',
+   #  'frequency_3', 'phase_3', 'A_bg']
+   # the second Oscillatory is component #3 → frequency_3 / phase_3, NOT _2
+
 ``model.param_names`` and ``model.to_model_definition().param_names`` return the
 same list. Build your :class:`~asymmetry.core.fitting.ParameterSet` from that
-list rather than from guessed names — guessing ``Lambda_1`` or ``A_3`` here
-would silently fail to bind.
+list rather than from guessed names — guessing ``Lambda_1`` or ``frequency_2``
+here would silently fail to bind.
+
+A ``ParameterSet`` is keyed **by parameter name**, not by position. Look a
+parameter up with its name; integer indexing raises ``KeyError`` (it is treated
+as a missing name, not a sequence index). Its own name list is the ``.names``
+attribute (a plain ``list``, not a method):
+
+.. code-block:: python
+
+   from asymmetry.core.fitting import Parameter, ParameterSet
+
+   ps = ParameterSet([Parameter("A_1", value=0.2), Parameter("Lambda", value=0.4)])
+   ps.names          # ['A_1', 'Lambda']  (attribute, not ps.names())
+   ps["A_1"]         # Parameter(name='A_1', value=0.2, ...)
+   ps[0]             # KeyError: 0  — there is no positional access
+
+So the safe recipe is always: compile the model, read ``model.param_names``,
+then build the ``ParameterSet`` entries under those exact names.
+
+.. _components-vs-models:
 
 Expression (``COMPONENTS``) names are not the standalone (``MODELS``) names
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The names used **inside a composite expression** come from the ``COMPONENTS``
-registry and differ from the keys of the standalone ``MODELS`` registry, and so
-do their parameter names:
+.. important::
 
-* In an expression you write ``Exponential`` (a ``COMPONENTS`` key); its
-  parameters are ``A`` and ``Lambda``, which the parser mangles to ``A_1`` /
-  ``A_bg`` / etc. as described above.
-* The standalone model is ``MODELS["ExponentialRelaxation"]`` — a *different*
-  key — and its parameters are ``A0``, ``Lambda``, ``baseline`` (not ``A`` /
-  ``A_bg``).
+   **"GaussianRelaxation is not a component" is a naming mismatch, not a missing
+   feature.** ``GaussianRelaxation`` is a key of the standalone ``MODELS``
+   registry; inside a composite expression the same physics is the component
+   ``Gaussian``. Likewise ``ExponentialRelaxation`` → ``Exponential`` and
+   ``LFKuboToyabe`` → ``LongitudinalFieldKT``. If a name you expect is "absent"
+   from ``COMPONENTS``, check the table below before concluding the model does
+   not exist.
+
+Asymmetry keeps **two** registries, and they use different names for the same
+physics:
+
+* ``COMPONENTS`` — the building blocks you combine **inside a composite
+  expression** (``CompositeModel.from_expression(...)`` and the GUI builder).
+  Their natural parameters are baseline-free (``A``, ``Lambda``, ``sigma``, …)
+  and the parser then *mangles* them into the composite names (``A_1`` / ``A_bg``
+  / ``Lambda_2`` / …) described above.
+* ``MODELS`` — the **standalone** models you hand straight to
+  ``FitEngine().fit(...)`` (see :doc:`fitting`). Their parameters carry an
+  explicit amplitude and baseline (``A0``, …, ``baseline``).
+
+Most names are shared between the two registries, but three of the everyday
+relaxation forms are spelled differently — exactly the ones testers most often
+report as "missing":
+
+.. list-table:: ``MODELS`` (standalone) ↔ ``COMPONENTS`` (expression) name map
+   :header-rows: 1
+   :widths: 30 18 26 26
+
+   * - Standalone ``MODELS`` key
+     - Its parameters
+     - Expression ``COMPONENTS`` name
+     - Its parameters
+   * - ``ExponentialRelaxation`` ⚠
+     - ``A0``, ``Lambda``, ``baseline``
+     - ``Exponential`` ``+ Constant``
+     - ``A``, ``Lambda`` (+ ``A_bg``)
+   * - ``GaussianRelaxation`` ⚠
+     - ``A0``, ``sigma``, ``baseline``
+     - ``Gaussian`` ``+ Constant``
+     - ``A``, ``sigma`` (+ ``A_bg``)
+   * - ``LFKuboToyabe`` ⚠
+     - ``A0``, ``Delta``, ``B_L``, ``baseline``
+     - ``LongitudinalFieldKT`` ``+ Constant``
+     - ``A``, ``Delta``, ``B_L`` (+ ``A_bg``)
+   * - ``StretchedExponential``
+     - ``A0``, ``Lambda``, ``beta``, ``baseline``
+     - ``StretchedExponential``
+     - ``A``, ``Lambda``, ``beta``
+   * - ``StaticGKT_ZF``
+     - ``A0``, ``Delta``, ``baseline``
+     - ``StaticGKT_ZF``
+     - ``A``, ``Delta``
+   * - ``Abragam``
+     - ``A0``, ``Delta``, ``nu``, ``baseline``
+     - ``Abragam``
+     - ``A``, ``Delta``, ``nu``
+   * - ``Keren``
+     - ``A0``, ``Delta``, ``nu``, ``B_L``, ``baseline``
+     - ``Keren``
+     - ``A``, ``Delta``, ``nu``, ``B_L``
+   * - ``DynamicGaussianKT``
+     - ``A0``, ``Delta``, ``nu``, ``B_L``, ``baseline``
+     - ``DynamicGaussianKT``
+     - ``A``, ``Delta``, ``nu``, ``B_L``
+   * - ``DynamicLorentzianKT``
+     - ``A0``, ``a_L``, ``nu``, ``B_L``, ``baseline``
+     - ``DynamicLorentzianKT``
+     - ``A``, ``a_L``, ``nu``, ``B_L``
+   * - ``Oscillatory``
+     - ``A0``, ``frequency``, ``phase``, ``Lambda``, ``baseline``
+     - ``Oscillatory``
+     - ``A``, ``frequency``, ``phase``
+
+The rows marked ⚠ are the three where the **name itself differs**; the rest
+share a name but still differ in their parameters (standalone models add an
+explicit ``A0`` amplitude and ``baseline``; the matching ``Constant`` component
+supplies the ``A_bg`` background in an expression). The standalone ``Oscillatory``
+also carries its own ``Lambda`` damping and ``baseline`` that the bare
+``Oscillatory`` component does not.
 
 Mixing the two vocabularies is a common source of "unknown parameter" errors.
 Decide which API you are using (composite expression vs standalone ``MODELS``
 entry) and take the names from that one.
 
+Worked example — building ``GaussianRelaxation`` inside an expression
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+A standalone ``GaussianRelaxation`` is :math:`A_0\,e^{-(\sigma t)^2} +
+\mathrm{baseline}`. The expression-domain equivalent is the ``Gaussian``
+component plus a ``Constant`` background — note how the amplitude is mangled to
+``A_1`` and the baseline becomes ``A_bg``:
+
+.. code-block:: python
+
+   from asymmetry.core.fitting import CompositeModel
+
+   model = CompositeModel.from_expression("Gaussian + Constant")
+   print(model.param_names)
+   # ['A_1', 'sigma', 'A_bg']
+   # A_1 ≡ standalone A0, sigma ≡ sigma, A_bg ≡ standalone baseline
+
 The authoritative component list is the live registry — the
-`Available Components`_ table below is a commonly-used subset. Print the full
-set with::
+`Available Components`_ table below is a commonly-used subset. Print the full set
+(the output below is current as of this writing)::
 
    from asymmetry.core.fitting import COMPONENTS, MODELS
    sorted(COMPONENTS)   # names usable inside CompositeModel expressions
+   # ['Abragam', 'Bessel', 'Constant', 'ConstantBackground', 'DipolarPairField',
+   #  'DipolarSpinJ', 'DynamicFmuF', 'DynamicGaussianKT', 'DynamicLorentzianKT',
+   #  'ElectronDipole', 'Exponential', 'FmuF_General', 'FmuF_Linear',
+   #  'FmuF_Triangle', 'Gaussian', 'GaussianBroadenedKT', 'GaussianPeak', 'Keren',
+   #  'LinearBackground', 'LongitudinalFieldKT', 'LorentzianPeak', 'MuF',
+   #  'MuoniumHighTF', 'MuoniumHighTFAniso', 'MuoniumLFRelax', 'MuoniumLowTF',
+   #  'MuoniumTF', 'MuoniumZF', 'Oscillatory', 'OscillatoryField', 'ProtonDipole',
+   #  'RischKehr', 'StaticGKT_ZF', 'StretchedExponential']
+
    sorted(MODELS)       # standalone model keys (different names)
+   # ['Abragam', 'DynamicGaussianKT', 'DynamicLorentzianKT',
+   #  'ExponentialRelaxation', 'GaussianRelaxation', 'Keren', 'LFKuboToyabe',
+   #  'Oscillatory', 'StaticGKT_ZF', 'StretchedExponential']
 
 Evaluate Model and Components
 -----------------------------
