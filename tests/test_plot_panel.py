@@ -947,6 +947,83 @@ class TestPlotPanel:
         assert panel.decimation_chip_text() is None
         assert panel._canvas.toolTip() == ""
 
+    @staticmethod
+    def _widest_rendered_line_extent(ax) -> tuple[float, float]:
+        """Return the (min, max) x-span of the densest data line on ``ax``."""
+        lines = [line for line in ax.get_lines() if len(line.get_xdata()) > 2]
+        densest = max(lines, key=lambda line: len(line.get_xdata()))
+        xd = np.asarray(densest.get_xdata(), dtype=float)
+        return float(np.min(xd)), float(np.max(xd))
+
+    def test_auto_x_redecimates_full_window_in_stacked_view(self, qapp: QApplication) -> None:
+        """Auto X must re-render the full data in the stacked projection view.
+
+        Regression (EMU Vector Polarization stacked view): display decimation
+        samples only the *visible* window, so after zooming into a narrow x-range
+        the rendered points cover just that window. Clicking Auto X widens the
+        axis back to the full range. In the stacked view ``_apply_limits`` sets
+        each subplot's xlim under the ``_syncing_limits_from_axes`` guard, which
+        suppresses the axis-limit callback that would otherwise schedule a
+        redraw — so without this fix decimation was never recomputed and the data
+        outside the old narrow window stayed missing until a manual re-render.
+        Auto X now schedules a viewport refresh itself.
+
+        (The single-axis path is not affected: there ``_apply_limits`` sets xlim
+        without the guard, so the callback already schedules the refresh.)
+        """
+        panel = PlotPanel()
+        try:
+            if not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            def _vector_dataset(axis: str) -> MuonDataset:
+                t = np.linspace(0.0, 32.0, 20000)
+                return MuonDataset(
+                    time=t,
+                    asymmetry=0.2 * np.exp(-0.3 * t) * np.cos(2.0 * t),
+                    error=np.full_like(t, 0.005),
+                    metadata={"run_number": 7779, "grouping": {"vector_axis": axis}},
+                )
+
+            panel._current_polarization_axis = "ALL"
+            panel.plot_vector_subplots(
+                {axis: [_vector_dataset(axis)] for axis in ("P_x", "P_y", "P_z")}
+            )
+            qapp.processEvents()
+            assert panel.decimation_enabled()
+            assert len(panel._subplot_axes_by_polarization) == 3
+
+            # The densest data line on a subplot reflects what decimation kept;
+            # re-fetch the live axes each time because a refresh rebuilds them.
+            def _first_subplot_extent() -> tuple[float, float]:
+                ax = next(iter(panel._subplot_axes_by_polarization.values()))
+                return self._widest_rendered_line_extent(ax)
+
+            full_lo, full_hi = _first_subplot_extent()
+            assert full_lo == pytest.approx(0.0, abs=0.05)
+            assert full_hi == pytest.approx(32.0, abs=0.05)
+
+            # Zoom a subplot into a narrow window the way the toolbar would, then
+            # let the coalesced viewport refresh re-decimate for that window.
+            ax0 = next(iter(panel._subplot_axes_by_polarization.values()))
+            ax0.set_xlim(5.0, 8.0)
+            panel._on_axis_limits_changed(ax0)
+            qapp.processEvents()
+            narrow_lo, narrow_hi = _first_subplot_extent()
+            assert narrow_lo >= 4.9
+            assert narrow_hi <= 8.1
+
+            # Auto X: the rendered points must once again span the full window.
+            panel._auto_x_btn.setChecked(True)
+            panel._on_auto_x_button_clicked(True)
+            qapp.processEvents()
+            recovered_lo, recovered_hi = _first_subplot_extent()
+            assert recovered_lo == pytest.approx(0.0, abs=0.05)
+            assert recovered_hi == pytest.approx(32.0, abs=0.05)
+        finally:
+            panel.close()
+            panel.deleteLater()
+
     def test_projection_chip_bar_shows_each_projection(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
@@ -1083,6 +1160,132 @@ class TestPlotPanel:
         # The fit is keyed under the selected projection (P_y), not P_x.
         assert (9302, "P_y") in panel._fit_curves_by_key
         assert (9302, "P_x") not in panel._fit_curves_by_key
+
+    def test_plot_fit_keys_under_the_explicit_fitted_run_in_multi_run_overlay(
+        self, panel: PlotPanel
+    ) -> None:
+        """The fit overlay keys under the caller's fitted run, not the panel's.
+
+        Regression: in a multi-run overlay stacked view ``_current_dataset``
+        points at the *last* run of the first projection. The single-fit slot is
+        recorded against the selected (clicked) run, so if ``plot_fit`` keyed the
+        overlay under ``_current_dataset``'s run instead, the displayed curve and
+        the persisted slot would disagree on the run. ``plot_fit`` now takes the
+        fitted run explicitly and keys the curve under it.
+        """
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+        t = np.linspace(0.0, 4.0, 5)
+        e = np.full_like(t, 0.01)
+
+        def _ds(run: int, axis: str) -> MuonDataset:
+            return MuonDataset(
+                time=t,
+                asymmetry=np.zeros_like(t),
+                error=e,
+                metadata={"run_number": run, "grouping": {"vector_axis": axis}},
+            )
+
+        # Two runs (501 first, 502 last) overlaid across three projections.
+        datasets_by_axis = {
+            axis: [_ds(501, axis), _ds(502, axis)] for axis in ("P_x", "P_y", "P_z")
+        }
+        panel._current_polarization_axis = "ALL"
+        panel.plot_vector_subplots(datasets_by_axis)
+        # The panel's own current dataset is the last overlaid run, 502.
+        assert int(panel._current_dataset.run_number) == 502
+        panel.set_fit_target_projection("P_y", emit=False)
+
+        # The user fitted the FIRST run (501); the caller passes it explicitly.
+        panel.plot_fit(t, np.zeros_like(t), label="Fit", run_number=501)
+
+        assert (501, "P_y") in panel._fit_curves_by_key
+        assert (502, "P_y") not in panel._fit_curves_by_key
+        assert panel._fit_curve_run_number == 501
+
+    def test_plot_fit_axis_key_follows_the_fitted_run_in_mixed_axis_overlay(
+        self, panel: PlotPanel
+    ) -> None:
+        """The overlay's (run, axis) key is self-consistent for the fitted run.
+
+        When the fitted run is sourced explicitly, the axis must come from the
+        dataset matching that run, not from ``_current_dataset`` (the last
+        overlaid dataset, possibly a different projection). Otherwise the curve
+        could be stored under (fitted_run, wrong_axis) and never matched back.
+        """
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+        t = np.linspace(0.0, 4.0, 5)
+        e = np.full_like(t, 0.01)
+
+        def _ds(run: int, axis: str) -> MuonDataset:
+            return MuonDataset(
+                time=t,
+                asymmetry=np.zeros_like(t),
+                error=e,
+                metadata={"run_number": run, "grouping": {"vector_axis": axis}},
+            )
+
+        # Flat (non-stacked) overlay of two different projections.
+        panel.plot_datasets([_ds(601, "P_x"), _ds(602, "P_y")])
+        assert not panel._subplot_axes_by_polarization
+        assert int(panel._current_dataset.run_number) == 602  # last overlaid (P_y)
+
+        # Fit the first run (601, P_x); its key must use P_x, not the panel's P_y.
+        panel.plot_fit(t, np.zeros_like(t), label="Fit", run_number=601)
+
+        assert (601, "P_x") in panel._fit_curves_by_key
+        assert (601, "P_y") not in panel._fit_curves_by_key
+
+    def test_empty_projection_subplot_uses_neutral_y_range(self, panel: PlotPanel) -> None:
+        """An all-NaN projection subplot gets a neutral asymmetry range, not (0, 1).
+
+        Regression: dropping the ``elif ALL`` y-fallback left a projection with no
+        finite asymmetry showing matplotlib's default (0, 1) box. The render loop
+        now seeds such a subplot with a neutral range, and does NOT cache it, so a
+        later render with real data still auto-scales.
+        """
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+        t = np.linspace(0.0, 8.0, 40)
+        e = np.full_like(t, 0.01)
+
+        def _ds(axis: str, *, empty: bool) -> MuonDataset:
+            asym = np.full_like(t, np.nan) if empty else 0.2 * np.exp(-0.2 * t)
+            return MuonDataset(
+                time=t,
+                asymmetry=asym,
+                error=e,
+                metadata={"run_number": 4242, "grouping": {"vector_axis": axis}},
+            )
+
+        panel._current_polarization_axis = "ALL"
+        # P_y carries no finite asymmetry.
+        panel.plot_vector_subplots(
+            {
+                "P_x": [_ds("P_x", empty=False)],
+                "P_y": [_ds("P_y", empty=True)],
+                "P_z": [_ds("P_z", empty=False)],
+            }
+        )
+
+        empty_ax = panel._subplot_axes_by_polarization["P_y"]
+        lo, hi = empty_ax.get_ylim()
+        # Neutral asymmetry range, not the matplotlib (0, 1) default.
+        assert lo < 0.0 < hi
+        assert (lo, hi) != (0.0, 1.0)
+        # Not cached, so it does not pin a later render with real data.
+        assert "P_y" not in panel._y_limits_by_polarization
+
+        panel.plot_vector_subplots(
+            {
+                "P_x": [_ds("P_x", empty=False)],
+                "P_y": [_ds("P_y", empty=False)],
+                "P_z": [_ds("P_z", empty=False)],
+            }
+        )
+        relo, rehi = panel._subplot_axes_by_polarization["P_y"].get_ylim()
+        assert rehi < 0.5  # auto-scaled to the ~0.2 data, not stuck at the neutral 0.3
 
     def test_active_y_axis_follows_fit_target_in_subplots(self, panel: PlotPanel) -> None:
         panel._subplot_axes_by_polarization = {"P_x": _FakeAxis(), "P_z": _FakeAxis()}
