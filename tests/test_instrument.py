@@ -267,8 +267,7 @@ class TestHiFiLayout:
 
     def test_presets_present(self, layout):
         assert "Longitudinal" in layout.presets
-        assert "Transverse (Left\u2013Right)" in layout.presets
-        assert "Transverse (Top\u2013Bottom)" in layout.presets
+        assert "Transverse (Vector)" in layout.presets
 
     def test_longitudinal_forward_group(self, layout):
         preset = layout.presets["Longitudinal"]
@@ -283,29 +282,39 @@ class TestHiFiLayout:
         assert preset.groups[2].name == "Backward"
 
     def test_transverse_lr_left_detectors(self, layout):
-        preset = layout.presets["Transverse (Left\u2013Right)"]
+        preset = layout.presets["Transverse (Vector)"]
         left_ids = set(preset.groups[1].detector_ids)
         assert set(range(5, 14)).issubset(left_ids)
         assert set(range(52, 61)).issubset(left_ids)
 
     def test_transverse_lr_right_detectors(self, layout):
-        preset = layout.presets["Transverse (Left\u2013Right)"]
+        preset = layout.presets["Transverse (Vector)"]
         right_ids = set(preset.groups[2].detector_ids)
         assert set(range(21, 30)).issubset(right_ids)
         assert set(range(36, 45)).issubset(right_ids)
 
     def test_transverse_tb_top_detectors(self, layout):
-        preset = layout.presets["Transverse (Top\u2013Bottom)"]
-        top_ids = set(preset.groups[1].detector_ids)
+        preset = layout.presets["Transverse (Vector)"]
+        top_ids = set(preset.groups[3].detector_ids)
         assert set(range(13, 22)).issubset(top_ids)
         assert set(range(44, 53)).issubset(top_ids)
 
     def test_transverse_tb_bottom_detectors(self, layout):
-        preset = layout.presets["Transverse (Top\u2013Bottom)"]
-        bottom_ids = set(preset.groups[2].detector_ids)
+        preset = layout.presets["Transverse (Vector)"]
+        bottom_ids = set(preset.groups[4].detector_ids)
         assert set(range(1, 6)).issubset(bottom_ids)
         assert set(range(29, 37)).issubset(bottom_ids)
         assert set(range(60, 65)).issubset(bottom_ids)
+
+    def test_transverse_vector_declares_two_projections(self, layout):
+        preset = layout.presets["Transverse (Vector)"]
+        labels = [p.label for p in preset.projections]
+        assert labels == ["Left-Right", "Top-Bottom"]
+        pairs = derive_projection_pairs(
+            {gid: list(g.detector_ids) for gid, g in preset.groups.items()},
+            projections=[p.to_payload() for p in preset.projections],
+        )
+        assert pairs == {"Left-Right": (1, 2), "Top-Bottom": (3, 4)}
 
     def test_preset_detector_ids_in_valid_range(self, layout):
         for preset in layout.presets.values():
@@ -476,7 +485,7 @@ class TestMuSRLayout:
         assert set(preset.groups[2].detector_ids) == set(range(33, 65))
 
     def test_transverse_top_bottom_preset(self, layout):
-        preset = layout.presets["Transverse (Top\u2013Bottom)"]
+        preset = layout.presets["Transverse (Vector)"]
         top = set(preset.groups[1].detector_ids)
         bottom = set(preset.groups[2].detector_ids)
         # Verify expected detectors
@@ -486,13 +495,23 @@ class TestMuSRLayout:
         assert set(range(33, 41)).issubset(bottom)
 
     def test_transverse_fwd_bwd_preset(self, layout):
-        preset = layout.presets["Transverse (Forward\u2013Backward)"]
-        fwd = set(preset.groups[1].detector_ids)
-        bwd = set(preset.groups[2].detector_ids)
+        preset = layout.presets["Transverse (Vector)"]
+        fwd = set(preset.groups[3].detector_ids)
+        bwd = set(preset.groups[4].detector_ids)
         assert set(range(9, 17)).issubset(fwd)
         assert set(range(57, 65)).issubset(fwd)
         assert set(range(25, 33)).issubset(bwd)
         assert set(range(41, 49)).issubset(bwd)
+
+    def test_transverse_vector_declares_two_projections(self, layout):
+        preset = layout.presets["Transverse (Vector)"]
+        labels = [p.label for p in preset.projections]
+        assert labels == ["Top-Bottom", "Fwd-Back"]
+        pairs = derive_projection_pairs(
+            {gid: list(g.detector_ids) for gid, g in preset.groups.items()},
+            projections=[p.to_payload() for p in preset.projections],
+        )
+        assert pairs == {"Top-Bottom": (1, 2), "Fwd-Back": (3, 4)}
 
     def test_preset_detector_ids_in_valid_range(self, layout):
         for preset in layout.presets.values():
