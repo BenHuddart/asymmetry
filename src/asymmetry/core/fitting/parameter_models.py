@@ -99,6 +99,23 @@ def _polynomial(
     return result
 
 
+def _cubic(
+    x: NDArray,
+    c0: float = 0.0,
+    c1: float = 0.0,
+    c2: float = 0.0,
+    c3: float = 0.0,
+) -> NDArray[np.float64]:
+    xx = np.asarray(x, dtype=float)
+    # Horner evaluation of the cubic. This is the WiMDA/Mantid-prescribed ALC
+    # background (a curved/sloping baseline a Linear fit cannot match); it is a
+    # well-conditioned 4-parameter restriction of the quintic `Polynomial`.
+    result = np.full_like(xx, float(c3))
+    for coeff in (c2, c1, c0):
+        result = result * xx + float(coeff)
+    return result
+
+
 def _power_law_quad_bg(x: NDArray, a: float, n: float, BG: float = 0.0) -> NDArray[np.float64]:
     xx = np.asarray(x, dtype=float)
     safe_x = np.maximum(np.abs(xx), 1e-12)
@@ -347,6 +364,17 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         formula_template="{c0} + {c1}*x + {c2}*x^2 + {c3}*x^3 + {c4}*x^4 + {c5}*x^5",
         latex_equation=r"y(x) = c_0 + c_1 x + c_2 x^2 + c_3 x^3 + c_4 x^4 + c_5 x^5",
         scopes=("common",),
+    ),
+    "Cubic": ParameterModelComponentDefinition(
+        name="Cubic",
+        description="c0 + c1*x + c2*x^2 + c3*x^3",
+        function=_cubic,
+        param_names=["c0", "c1", "c2", "c3"],
+        param_defaults={"c0": 0.0, "c1": 1.0, "c2": 0.0, "c3": 0.0},
+        param_info={f"c{k}": get_param_info(f"c{k}") for k in range(4)},
+        formula_template="{c0} + {c1}*x + {c2}*x^2 + {c3}*x^3",
+        latex_equation=r"y(x) = c_0 + c_1 x + c_2 x^2 + c_3 x^3",
+        scopes=("common", "field", "temperature"),
     ),
     "PowerLaw": ParameterModelComponentDefinition(
         name="PowerLaw",

@@ -615,6 +615,32 @@ def test_alc_data_table_dialog(mainwindow: MainWindow, monkeypatch):
     assert view._data_table.rowCount() == 3
 
 
+def test_alc_baseline_combo_offers_cubic(qapp: QApplication):
+    # Issue 1: the WiMDA/Mantid-prescribed cubic ALC background is selectable.
+    view = ALCScanView()
+    options = [
+        view._baseline_model_combo.itemText(i) for i in range(view._baseline_model_combo.count())
+    ]
+    assert "Cubic" in options
+    view._baseline_model_combo.setCurrentText("Cubic")
+    assert view.baseline_model() == "Cubic"
+
+
+def test_alc_analysis_sections_live_in_scroll_area(qapp: QApplication):
+    # Issue 2: the fitted-parameter (Baseline/Peaks) sections are wrapped in a
+    # scroll area so they stay reachable instead of falling below the fold when
+    # the plot grabs the dock height.
+    from PySide6.QtWidgets import QScrollArea
+
+    view = ALCScanView()
+    assert isinstance(view._analysis_scroll, QScrollArea)
+    assert view._analysis_scroll.widgetResizable()
+    # Both parameter tables are descendants of the scroll area's widget.
+    content = view._analysis_scroll.widget()
+    assert content.isAncestorOf(view._regions_table)
+    assert content.isAncestorOf(view._peaks_table)
+
+
 def _seed_view_scan(view: ALCScanView) -> None:
     view.show_scan(
         np.array([0.0, 100.0, 200.0, 300.0]),
