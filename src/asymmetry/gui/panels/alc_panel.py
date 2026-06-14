@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QPushButton,
+    QScrollArea,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -196,19 +197,33 @@ class ALCScanView(QWidget):
 
         self._figure = Figure(constrained_layout=True)
         self._canvas = FigureCanvasQTAgg(self._figure)
-        self._canvas.setMinimumHeight(260)
+        self._canvas.setMinimumHeight(200)
         self._ax = self._figure.add_subplot(111)
         # Drag baseline-region edges and peak centres directly on the plot.
         self._canvas.mpl_connect("button_press_event", self._on_canvas_press)
         self._canvas.mpl_connect("motion_notify_event", self._on_canvas_motion)
         self._canvas.mpl_connect("button_release_event", self._on_canvas_release)
-        # The plot takes all spare vertical space; the analysis sections below
-        # are collapsible so the plot keeps the room when they are not in use.
-        layout.addWidget(self._canvas, 1)
+        # The plot is the dominant pane, but the fitted-parameter tables below
+        # must stay reachable: rather than let the canvas grab every spare pixel
+        # (pushing the Baseline/Peaks sections below the fold), the analysis
+        # sections live in their own scroll area with a guaranteed minimum
+        # height. On a tall dock everything is visible; on a short one the
+        # analysis area scrolls internally instead of vanishing.
+        layout.addWidget(self._canvas, 3)
 
-        layout.addWidget(self._build_baseline_group())
-        layout.addWidget(self._build_peaks_group())
-        layout.addStretch(0)
+        analysis = QWidget()
+        analysis_layout = QVBoxLayout(analysis)
+        analysis_layout.setContentsMargins(0, 0, 0, 0)
+        analysis_layout.addWidget(self._build_baseline_group())
+        analysis_layout.addWidget(self._build_peaks_group())
+        analysis_layout.addStretch(0)
+        self._analysis_scroll = QScrollArea()
+        self._analysis_scroll.setWidgetResizable(True)
+        self._analysis_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._analysis_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        self._analysis_scroll.setMinimumHeight(170)
+        self._analysis_scroll.setWidget(analysis)
+        layout.addWidget(self._analysis_scroll, 2)
 
         self.clear()
 
@@ -232,7 +247,9 @@ class ALCScanView(QWidget):
         row = QHBoxLayout()
         row.addWidget(QLabel("Model:"))
         self._baseline_model_combo = QComboBox()
-        self._baseline_model_combo.addItems(["Linear", "Constant"])
+        # Cubic is the WiMDA/Mantid-prescribed ALC background (a curved/sloping
+        # baseline Linear cannot match); fitted over the non-resonant regions.
+        self._baseline_model_combo.addItems(["Linear", "Constant", "Cubic"])
         row.addWidget(self._baseline_model_combo)
         row.addStretch()
         self._fit_baseline_btn = QPushButton("Fit baseline")
