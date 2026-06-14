@@ -5624,6 +5624,11 @@ class MainWindow(QMainWindow):
                 self._fit_panel.set_domain("frequency")
             self._fit_panel.set_dataset(self._active_frequency_fit_dataset())
             self._set_frequency_fit_datasets_for_selection()
+            # A just-rendered spectrum changes fittability: the block flag set on
+            # frequency-view entry ("compute a spectrum first") must clear now that
+            # one exists. Compute completions and re-renders on the already-active
+            # view don't emit active_view_changed, so nothing else refreshes it.
+            self._update_fit_block_state()
         self._refresh_spectral_moments()
 
     def _start_async_frequency_recompute(
