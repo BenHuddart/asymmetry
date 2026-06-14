@@ -995,8 +995,9 @@ def _gps_presets(
             backward_group=2,
         ),
         # WEP: follows musrfit's spin-rotated GPS setup -- F/B/U/D as four groups
-        # exposed as the FB and UD asymmetry pairs (FB alpha = 0.75). See
-        # _build_gps for the verbatim musrfit definition and provenance.
+        # exposed as the FB and UD asymmetry pairs, each reduced with its own
+        # declared alpha (FB = 0.75, UD = 1.0). See _build_gps for the verbatim
+        # musrfit definition and provenance.
         "WEP (spin-rotated)": PresetGrouping(
             name="WEP (spin-rotated)",
             groups={
@@ -1077,13 +1078,12 @@ def _build_gps() -> InstrumentLayout:
         logic_asym_detector  UD forward=3 backward=4  alpha=1.0
 
     The preset here maps F/B/U/D to four groups exposed as the **FB** and **UD**
-    projections.  The FB projection declares musrfit's default ``alpha = 0.75`` so
-    the value is recorded with the grouping; note, however, that the reduction
-    currently applies a single base ``alpha`` to all projections of a preset and
-    does **not** yet consume per-projection alpha for non-canonical (non
-    P_x/P_y/P_z) pairs, so the FB α here is informational until that framework
-    support lands — calibrate/enter alpha for the FB pair as usual.  The
-    per-detector phase offsets musrfit uses to encode the rotation are likewise a
+    projections.  The FB projection declares musrfit's default ``alpha = 0.75``
+    and the UD projection ``alpha = 1.0``; the reduction **applies each
+    projection's own declared alpha**, so reducing or fitting the FB pair uses
+    0.75 and the UD pair uses 1.0 (see
+    :meth:`asymmetry.gui.mainwindow.MainWindow._resolve_vector_alpha_values`).
+    The per-detector phase offsets musrfit uses to encode the rotation are a
     fitting detail not stored in the layout — only the groupings.
     (``Spin-rotated (F+U/B+D)`` above is *our* combined-pair alternative for the
     same physics, not a musrfit construct.)
