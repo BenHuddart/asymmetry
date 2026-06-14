@@ -43,6 +43,14 @@ _EDGE_COLOUR = (0.35, 0.35, 0.35, 1.0)  # dark grey edge
 _BEAM_HOLE_COLOUR = (0.80, 0.88, 0.95, 1.0)  # pale blue for beam hole
 _HOVER_EDGE_COLOUR = (0.0, 0.0, 0.0, 1.0)
 
+# Read-only / context styling for multi-panel plan layouts: a detector shown for
+# spatial context in a panel where it is edited elsewhere (dashed grey box, or a
+# grey end-on ⊙/⊗ marker).
+_READONLY_FACE = (0.93, 0.93, 0.93, 1.0)
+_READONLY_EDGE = (0.60, 0.60, 0.60, 1.0)
+_ENDON_COLOUR = (0.55, 0.58, 0.62, 1.0)
+_SAMPLE_FACE = (0.46, 0.38, 0.85, 1.0)
+
 
 def _group_colour(group_id: int) -> tuple[float, float, float, float]:
     """Return RGBA face colour for *group_id* (1-based)."""
@@ -90,8 +98,12 @@ class DetectorSchematicWidget(QWidget):
         self._groups: dict[int, set[int]] = {}
         self._active_group: int = 1
 
-        # Patch map: detector_id → matplotlib patch
+        # Patch map: detector_id → clickable (active) matplotlib patch
         self._patches: dict[int, Wedge | Rectangle] = {}
+        # Read-only context rectangles (a detector shown in a panel where it is
+        # edited elsewhere); kept so exclusion hatching stays consistent across
+        # both panels. Entries are (detector_id, patch).
+        self._readonly_patches: list[tuple[int, Rectangle]] = []
         # Axis map: bank index → polar axes
         self._axes: list = []
 
@@ -106,7 +118,7 @@ class DetectorSchematicWidget(QWidget):
 
     def _setup_ui(self) -> None:
         """Create the matplotlib figure canvas."""
-        n_banks = 1 if self._instrument.view == "plan" else len(self._instrument.banks)
+        n_banks = len(self._instrument.banks)
         fig_width = max(4.0, n_banks * 3.2)
         fig_height = 4.6 if self._instrument.view == "plan" else 3.8
 
@@ -129,6 +141,7 @@ class DetectorSchematicWidget(QWidget):
         """Draw all detector banks onto the figure."""
         self._fig.clear()
         self._patches.clear()
+        self._readonly_patches.clear()
         self._axes.clear()
 
         if self._instrument.view == "plan":
@@ -172,31 +185,153 @@ class DetectorSchematicWidget(QWidget):
         self._canvas.draw_idle()
 
     def _build_plan_schematic(self) -> None:
-        """Draw a single top-view rectangular detector layout."""
-        ax = self._fig.add_subplot(1, 1, 1)
-        ax.set_aspect("equal")
-        ax.axis("off")
-        ax.set_title(self._instrument.banks[0].name, fontsize=10, fontweight="bold", pad=4)
-        self._axes.append(ax)
+        """Draw one or more top-view (plan) detector panels side by side.
 
-        segments = self._instrument.all_segments
-        for seg in segments:
-            patch = self._make_rectangle(seg)
-            ax.add_patch(patch)
-            self._patches[seg.detector_id] = patch
-            self._add_label(ax, seg)
+        Single-panel instruments (FLAME) render one top view with their
+        reference arrows.  Multi-panel instruments (GPS: top + side view) render
+        one panel per bank; a detector is clickable in its home panel and shown
+        read-only (dashed box or end-on ⊙/⊗ marker) in the others.
+        """
+        banks = self._instrument.banks
+        multi = len(banks) > 1
+        for bi, bank in enumerate(banks):
+            ax = self._fig.add_subplot(1, len(banks), bi + 1)
+            ax.set_aspect("equal")
+            ax.axis("off")
+            ax.set_title(bank.name, fontsize=10, fontweight="bold", pad=4)
+            self._axes.append(ax)
+            self._draw_plan_panel(ax, bank, multi=multi)
 
-        sample = Circle(
-            (0, 0),
-            radius=0.16,
-            facecolor=(0.46, 0.38, 0.85, 1.0),
-            edgecolor=(0.1, 0.1, 0.1, 1.0),
-            linewidth=0.8,
-            zorder=6,
+        self._fig.tight_layout(pad=0.4)
+        self._canvas.draw_idle()
+
+    def _draw_plan_panel(self, ax, bank, *, multi: bool) -> None:
+        """Draw the detectors, sample and axis cues for one plan panel."""
+        bound_segs: list[DetectorSegment] = []
+        for seg in bank.segments:
+            if seg.shape == "rectangle":
+                patch = self._make_rectangle(seg)
+                ax.add_patch(patch)
+                self._add_label(ax, seg)
+                bound_segs.append(seg)
+                if seg.read_only:
+                    self._apply_read_only_style(patch)
+                    self._readonly_patches.append((seg.detector_id, patch))
+                else:
+                    # Only active (clickable) segments take a group colour.
+                    self._patches[seg.detector_id] = patch
+            elif seg.shape in ("endon_out", "endon_in"):
+                self._draw_endon(ax, seg)
+
+        ax.add_patch(
+            Circle(
+                (0, 0),
+                radius=0.16,
+                facecolor=_SAMPLE_FACE,
+                edgecolor=(0.1, 0.1, 0.1, 1.0),
+                linewidth=0.8,
+                zorder=6,
+            )
         )
-        ax.add_patch(sample)
-        ax.text(0, -0.28, "sample", ha="center", va="top", fontsize=8, color="#333333")
 
+        min_x, max_x, min_y, max_y = self._plan_bounds(bound_segs or bank.segments)
+
+        # Direction cues are driven by the layout's data, not the panel count:
+        # an instrument that declares reference_arrows always gets them (so a
+        # future multi-panel instrument is not silently stripped of its cues);
+        # otherwise a beam (+z) arrow is drawn. The sample label and +z/+y axis
+        # indicators stay on single-panel views to avoid crowding multi panels.
+        if self._instrument.reference_arrows:
+            self._draw_reference_arrows(ax)
+        else:
+            self._draw_beam_arrow(ax, min_x, max_x, min_y)
+        if not multi:
+            ax.text(0, -0.28, "sample", ha="center", va="top", fontsize=8, color="#333333")
+            self._draw_plan_axes(ax, min_x, max_x, min_y, max_y)
+
+        ax.set_xlim(min_x - 0.45, max_x + 0.8)
+        ax.set_ylim(min_y - 0.55, max_y + 0.55)
+
+    def _apply_read_only_style(self, patch: Rectangle) -> None:
+        """Style a detector rectangle as read-only context (dashed grey box)."""
+        patch.set_facecolor(_READONLY_FACE)
+        patch.set_edgecolor(_READONLY_EDGE)
+        patch.set_linestyle((0, (4, 3)))
+        patch.set_linewidth(1.0)
+
+    def _draw_endon(self, ax, seg: DetectorSegment) -> None:
+        """Draw a detector seen end-on: ⊙ (toward viewer) or ⊗ (away)."""
+        x, y = seg.x_center, seg.y_center
+        r = 0.16
+        ax.add_patch(
+            Circle(
+                (x, y),
+                radius=r,
+                facecolor="none",
+                edgecolor=_ENDON_COLOUR,
+                linewidth=1.4,
+                zorder=4,
+            )
+        )
+        if seg.shape == "endon_out":
+            ax.add_patch(Circle((x, y), radius=0.035, facecolor=_ENDON_COLOUR, zorder=4))
+        else:
+            d = r * 0.6
+            ax.plot(
+                [x - d, x + d],
+                [y - d, y + d],
+                color=_ENDON_COLOUR,
+                linewidth=1.4,
+                zorder=4,
+            )
+            ax.plot(
+                [x - d, x + d],
+                [y + d, y - d],
+                color=_ENDON_COLOUR,
+                linewidth=1.4,
+                zorder=4,
+            )
+        if seg.label:
+            # For a split (_B/_F) pair sitting side by side, place each label
+            # *outward* (left member to its left, right member to its right) so
+            # neither label crowds the central sample or the other member. A lone
+            # centred marker (e.g. Mobile, or the 6-detector Up/Down) labels below.
+            if seg.x_center < -1e-6:
+                ax.text(
+                    x - r - 0.08, y, seg.label, ha="right", va="center",
+                    fontsize=7, color=_ENDON_COLOUR, zorder=4,
+                )
+            elif seg.x_center > 1e-6:
+                ax.text(
+                    x + r + 0.08, y, seg.label, ha="left", va="center",
+                    fontsize=7, color=_ENDON_COLOUR, zorder=4,
+                )
+            else:
+                ax.text(
+                    x, y - r - 0.06, seg.label, ha="center", va="top",
+                    fontsize=7, color=_ENDON_COLOUR, zorder=4,
+                )
+
+    def _draw_beam_arrow(self, ax, min_x: float, max_x: float, min_y: float) -> None:
+        """Draw the muon-beam (+z) arrow along the bottom of a plan panel."""
+        y = min_y - 0.30
+        x0 = min_x * 0.55
+        x1 = max_x * 0.55
+        ax.add_patch(
+            FancyArrowPatch(
+                (x0, y),
+                (x1, y),
+                arrowstyle="-|>",
+                mutation_scale=12,
+                linewidth=1.4,
+                color="#555555",
+                zorder=5,
+            )
+        )
+        ax.text(x0, y - 0.05, "beam  +z →", ha="left", va="top", fontsize=8, color="#555555")
+
+    def _draw_reference_arrows(self, ax) -> None:
+        """Draw the instrument-level reference arrows (single-panel plan)."""
         for arrow in self._instrument.reference_arrows:
             ax.add_patch(
                 FancyArrowPatch(
@@ -213,33 +348,34 @@ class DetectorSchematicWidget(QWidget):
             if "beam" in label_lower:
                 label_x = (arrow.start[0] + arrow.end[0]) / 2.0
                 label_y = arrow.start[1] - 0.16
-                ha = "center"
-                va = "top"
+                ha, va = "center", "top"
             elif "spin" in label_lower:
                 label_x = (arrow.start[0] + arrow.end[0]) / 2.0
                 label_y = arrow.start[1] + 0.16
-                ha = "center"
-                va = "bottom"
+                ha, va = "center", "bottom"
             else:
                 label_x = arrow.end[0] + 0.08
                 label_y = arrow.end[1] + 0.08
-                ha = "left"
-                va = "bottom"
-            ax.text(
-                label_x,
-                label_y,
-                arrow.label,
-                ha=ha,
-                va=va,
-                fontsize=8,
-                color=arrow.color,
-            )
+                ha, va = "left", "bottom"
+            ax.text(label_x, label_y, arrow.label, ha=ha, va=va, fontsize=8, color=arrow.color)
 
+    def _draw_plan_axes(
+        self,
+        ax,
+        min_x: float,
+        max_x: float,
+        min_y: float,
+        max_y: float,
+    ) -> None:
+        """Draw +z / +y coordinate indicator arrows for a single-panel plan view."""
         axis_colour = "#555555"
+        z_y = min_y - 0.30
+        z_x_end = max_x - 0.05
+        z_x_start = z_x_end - 0.5
         ax.add_patch(
             FancyArrowPatch(
-                (2.75, -1.22),
-                (3.25, -1.22),
+                (z_x_start, z_y),
+                (z_x_end, z_y),
                 arrowstyle="-|>",
                 mutation_scale=10,
                 linewidth=1.0,
@@ -247,11 +383,14 @@ class DetectorSchematicWidget(QWidget):
                 zorder=5,
             )
         )
-        ax.text(2.68, -1.22, "+z", ha="right", va="center", fontsize=8, color=axis_colour)
+        ax.text(z_x_start - 0.08, z_y, "+z", ha="right", va="center", fontsize=8, color=axis_colour)
+        y_x = min_x - 0.30
+        y_y_start = max_y - 0.65
+        y_y_end = max_y - 0.05
         ax.add_patch(
             FancyArrowPatch(
-                (-4.25, 1.05),
-                (-4.25, 1.72),
+                (y_x, y_y_start),
+                (y_x, y_y_end),
                 arrowstyle="-|>",
                 mutation_scale=10,
                 linewidth=1.0,
@@ -259,21 +398,7 @@ class DetectorSchematicWidget(QWidget):
                 zorder=5,
             )
         )
-        ax.text(
-            -4.25,
-            0.96,
-            "+y",
-            ha="center",
-            va="top",
-            fontsize=8,
-            color=axis_colour,
-        )
-
-        min_x, max_x, min_y, max_y = self._plan_bounds(segments)
-        ax.set_xlim(min_x - 0.45, max_x + 0.8)
-        ax.set_ylim(min_y - 0.55, max_y + 0.55)
-        self._fig.tight_layout(pad=0.4)
-        self._canvas.draw_idle()
+        ax.text(y_x, y_y_start - 0.08, "+y", ha="center", va="top", fontsize=8, color=axis_colour)
 
     def _make_wedge(self, seg: DetectorSegment) -> Wedge:
         """Create a matplotlib :class:`~matplotlib.patches.Wedge` for *seg*."""
@@ -338,6 +463,9 @@ class DetectorSchematicWidget(QWidget):
                 label = f"{seg.detector_id}\n{seg.label}" if seg.label else str(seg.detector_id)
             else:
                 label = seg.label if seg.label else str(seg.detector_id)
+            # Read-only context plates use a muted label so they read as
+            # non-clickable, matching their dashed-grey box.
+            colour = _ENDON_COLOUR if seg.read_only else (0.15, 0.15, 0.15)
             ax.text(
                 seg.x_center,
                 seg.y_center,
@@ -345,7 +473,7 @@ class DetectorSchematicWidget(QWidget):
                 ha="center",
                 va="center",
                 fontsize=8,
-                color=(0.15, 0.15, 0.15),
+                color=colour,
                 zorder=3,
             )
             return
@@ -464,6 +592,15 @@ class DetectorSchematicWidget(QWidget):
             else:
                 patch.set_facecolor(_EMPTY_COLOUR)
                 patch.set_linewidth(0.6)
+
+        # Read-only context plates (the same detector shown in another panel) keep
+        # their dashed-grey style, but mirror the exclusion hatch so an excluded
+        # detector reads as excluded in every panel it appears in.
+        for det_id, patch in self._readonly_patches:
+            if det_id in self._excluded:
+                patch.set_hatch("xx")
+            else:
+                patch.set_hatch(None)
         self._canvas.draw_idle()
 
     # ------------------------------------------------------------------
@@ -485,9 +622,13 @@ class DetectorSchematicWidget(QWidget):
         bank_idx = self._axes.index(ax)
         bank = self._instrument.banks[bank_idx]
 
-        # Hit-test: find the topmost patch at click position
+        # Hit-test: find the topmost patch at click position. Read-only context
+        # segments (dashed boxes, end-on ⊙/⊗ markers) are not clickable here —
+        # they are edited in the panel where the detector lies in-plane.
         hit_seg: DetectorSegment | None = None
         for seg in bank.segments:
+            if seg.read_only:
+                continue
             if self._point_in_segment(event.xdata, event.ydata, seg):
                 # In case of stacked patches (e.g. EMU rings), pick the smallest
                 if hit_seg is None or (
@@ -527,6 +668,9 @@ class DetectorSchematicWidget(QWidget):
     def _point_in_segment(x: float, y: float, seg: DetectorSegment) -> bool:
         """Return ``True`` if the point (x, y) falls within *seg*."""
         if x is None or y is None:
+            return False
+        if seg.shape in ("endon_out", "endon_in"):
+            # End-on markers are read-only context only.
             return False
         if seg.shape == "rectangle":
             return DetectorSchematicWidget._point_in_rectangle(x, y, seg)
@@ -592,5 +736,5 @@ class DetectorSchematicWidget(QWidget):
         self._build_schematic()
 
     def sizeHint(self) -> QSize:
-        n_banks = 1 if self._instrument.view == "plan" else len(self._instrument.banks)
+        n_banks = len(self._instrument.banks)
         return QSize(max(380, n_banks * 200), 280)

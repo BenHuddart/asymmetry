@@ -1,11 +1,17 @@
 """Instrument layout definitions for muon spectrometers.
 
 This module provides static geometric descriptions of the detector arrangements
-for HiFi, EMU, MuSR, PSI FLAME, and PSI HAL-9500, along with standard grouping
-presets.  The
-data here is used by the interactive detector layout editor
+for HiFi, EMU, MuSR, PSI FLAME, PSI HAL-9500, and PSI GPS (in two variants — the
+6-detector PSI-BIN layout ``GPS`` and the 11-detector ROOT sub-detector layout
+``GPS-RD``, both shown to the user as "GPS"), along with standard grouping
+presets.  The data here is used by the interactive detector layout editor
 (:class:`~asymmetry.gui.windows.detector_layout_dialog.DetectorLayoutDialog`)
 but has no GUI dependencies and can be used independently.
+
+Some grouping presets follow musrfit's instrument definitions
+(``musredit_qt5/musrWiz/instrument_defs/instrument_def_psi.xml``) so that GPS
+analyses match the conventions PSI users already know — see the GPS ``WEP``
+preset in :func:`_build_gps`.
 
 Detector IDs are always **1-based** in this module, matching the instrument
 manual conventions.  Conversion to 0-based indices for internal computation
@@ -33,6 +39,9 @@ __all__ = [
     "TRANSVERSE_PROJECTION_TINTS",
     "derive_projection_pairs",
     "get_instrument_layout",
+    "instrument_display_name",
+    "instrument_choices_for",
+    "variant_for_histograms",
     "detect_instrument",
 ]
 
@@ -66,11 +75,19 @@ class DetectorSegment:
     shape:
         Rendering primitive. ``"wedge"`` is used for circular ISIS detector
         banks; ``"rectangle"`` is used for top-view detector plates such as
-        PSI FLAME.
+        PSI FLAME.  ``"endon_out"`` / ``"endon_in"`` draw a detector seen
+        end-on — pointing toward (``⊙``) or away from (``⊗``) the viewer — used
+        in multi-panel plan layouts to show a detector that is perpendicular to
+        the current view (and therefore editable in the other panel).
     label:
         Optional short detector label displayed alongside the detector ID.
     x_center, y_center, width, height, rotation_deg:
         Rectangle geometry in an arbitrary plan-view coordinate system.
+    read_only:
+        When ``True`` the segment is drawn for spatial context only — it is not
+        clickable and never takes a group colour.  A detector that appears in
+        more than one plan panel is *active* (clickable) in exactly one panel
+        and ``read_only`` in the others.
     """
 
     detector_id: int
@@ -87,6 +104,7 @@ class DetectorSegment:
     width: float = 0.0
     height: float = 0.0
     rotation_deg: float = 0.0
+    read_only: bool = False
 
     @property
     def angle_start_deg(self) -> float:
@@ -252,6 +270,13 @@ class InstrumentLayout:
         Schematic rendering mode, either ``"radial"`` or ``"plan"``.
     reference_arrows:
         Optional labelled arrows used by plan-view layouts.
+    display_name:
+        Optional user-facing name shown in the instrument dropdown.  Defaults to
+        :attr:`name`.  Layout *variants* of one physical instrument (e.g. the
+        6-detector PSI GPS BIN layout ``"GPS"`` and the 11-detector ROOT
+        sub-detector layout ``"GPS-RD"``) share a display name so the user only
+        ever sees the variant matching their loaded data, while ``name`` stays a
+        distinct registry key for detection and persistence.
     """
 
     name: str
@@ -260,14 +285,31 @@ class InstrumentLayout:
     presets: dict[str, PresetGrouping]
     view: str = "radial"
     reference_arrows: tuple[ReferenceArrow, ...] = ()
+    display_name: str | None = None
+
+    @property
+    def display(self) -> str:
+        """User-facing name (``display_name`` if set, else ``name``)."""
+        return self.display_name or self.name
 
     @property
     def all_segments(self) -> list[DetectorSegment]:
-        """All segments from all banks, in bank order."""
+        """All segments from all banks, in bank order.
+
+        In a multi-panel plan layout a detector may appear in more than one bank
+        (active in its home panel, ``read_only`` elsewhere), so this can contain
+        several segments per ``detector_id``.  Use :attr:`active_segments` for one
+        segment per physical detector.
+        """
         segs: list[DetectorSegment] = []
         for bank in self.banks:
             segs.extend(bank.segments)
         return segs
+
+    @property
+    def active_segments(self) -> list[DetectorSegment]:
+        """One clickable segment per detector (the non-``read_only`` segments)."""
+        return [seg for seg in self.all_segments if not seg.read_only]
 
     @property
     def default_preset_name(self) -> str:
@@ -372,8 +414,19 @@ def derive_projection_pairs(
 # Instrument registry
 # ---------------------------------------------------------------------------
 
-#: Canonical names of all supported instruments.
-INSTRUMENT_NAMES: Final[tuple[str, ...]] = ("HiFi", "MuSR", "EMU", "FLAME", "HAL")
+#: Registry keys of all supported instrument layouts.  ``"GPS"`` (6-detector
+#: PSI-BIN) and ``"GPS-RD"`` (11-detector ROOT sub-detectors) are two variants of
+#: the one physical GPS instrument; they share the display name "GPS" and are
+#: collapsed to a single dropdown entry by :func:`instrument_choices_for`.
+INSTRUMENT_NAMES: Final[tuple[str, ...]] = (
+    "HiFi",
+    "MuSR",
+    "EMU",
+    "FLAME",
+    "HAL",
+    "GPS",
+    "GPS-RD",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -759,15 +812,17 @@ def _build_emu() -> InstrumentLayout:
 # ---------------------------------------------------------------------------
 
 
-def _flame_rectangle(
+def _plan_rectangle(
     detector_id: int,
     name: str,
     x: float,
     y: float,
     width: float,
     height: float,
+    *,
+    read_only: bool = False,
 ) -> DetectorSegment:
-    """Return one FLAME detector plate in the top-view schematic."""
+    """Return one rectangular detector plate for a plan-view layout (FLAME, GPS)."""
     return DetectorSegment(
         detector_id=detector_id,
         sector_index=detector_id - 1,
@@ -782,6 +837,7 @@ def _flame_rectangle(
         y_center=y,
         width=width,
         height=height,
+        read_only=read_only,
     )
 
 
@@ -799,14 +855,14 @@ def _build_flame() -> InstrumentLayout:
     along +z and transverse left/right along y.
     """
     segments = (
-        _flame_rectangle(1, "Forward", 3.55, 0.0, 0.74, 1.72),
-        _flame_rectangle(2, "Backward", -3.55, 0.0, 0.74, 1.72),
-        _flame_rectangle(3, "Right", 0.0, -2.18, 2.18, 0.82),
-        _flame_rectangle(4, "Left", 0.0, 2.18, 2.18, 0.82),
-        _flame_rectangle(5, "R_F", 1.55, -2.18, 0.82, 0.82),
-        _flame_rectangle(6, "R_B", -1.55, -2.18, 0.82, 0.82),
-        _flame_rectangle(7, "L_F", 1.55, 2.18, 0.82, 0.82),
-        _flame_rectangle(8, "L_B", -1.55, 2.18, 0.82, 0.82),
+        _plan_rectangle(1, "Forward", 3.55, 0.0, 0.74, 1.72),
+        _plan_rectangle(2, "Backward", -3.55, 0.0, 0.74, 1.72),
+        _plan_rectangle(3, "Right", 0.0, -2.18, 2.18, 0.82),
+        _plan_rectangle(4, "Left", 0.0, 2.18, 2.18, 0.82),
+        _plan_rectangle(5, "R_F", 1.55, -2.18, 0.82, 0.82),
+        _plan_rectangle(6, "R_B", -1.55, -2.18, 0.82, 0.82),
+        _plan_rectangle(7, "L_F", 1.55, 2.18, 0.82, 0.82),
+        _plan_rectangle(8, "L_B", -1.55, 2.18, 0.82, 0.82),
     )
     banks = (BankLayout(name="FLAME top view", segments=segments),)
 
@@ -845,6 +901,307 @@ def _build_flame() -> InstrumentLayout:
             ),
             ReferenceArrow("initial muon spin", (0.0, 0.25), (-2.75, 0.25), "#5b2ea6"),
         ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# PSI GPS layout builder
+# ---------------------------------------------------------------------------
+
+
+def _gps_endon(detector_id: int, name: str, x: float, y: float, *, into: bool) -> DetectorSegment:
+    """Return a GPS detector seen end-on (⊙ toward / ⊗ away from the viewer).
+
+    End-on segments are always ``read_only`` context: the detector points
+    perpendicular to the current panel, so it is edited in the panel where it
+    lies in-plane.
+    """
+    return DetectorSegment(
+        detector_id=detector_id,
+        sector_index=detector_id - 1,
+        ring_index=0,
+        angle_center_deg=0.0,
+        angle_half_width_deg=0.0,
+        r_inner=0.0,
+        r_outer=0.0,
+        shape="endon_in" if into else "endon_out",
+        label=name,
+        x_center=x,
+        y_center=y,
+        read_only=True,
+    )
+
+
+#: Longitudinal preset shared by both GPS variants: Forward (1) vs Backward (2).
+def _gps_longitudinal_preset() -> PresetGrouping:
+    return PresetGrouping(
+        name="Longitudinal",
+        groups={
+            1: GroupDefinition("Forward", (1,)),
+            2: GroupDefinition("Backward", (2,)),
+        },
+        forward_group=1,
+        backward_group=2,
+    )
+
+
+def _gps_presets(
+    up: tuple[int, ...],
+    down: tuple[int, ...],
+    left: tuple[int, ...],
+    right: tuple[int, ...],
+) -> dict[str, PresetGrouping]:
+    """Build the shared GPS preset set for a variant.
+
+    *up/down/left/right* are the detector-id tuples for each transverse direction
+    — one id each for the 6-detector BIN layout, the two ``_B``/``_F``
+    sub-detector ids for the 11-detector ROOT layout.  Forward and Backward are
+    always detectors 1 and 2.  Both GPS variants share this builder so the preset
+    physics lives in one place and cannot drift between the two.
+    """
+    return {
+        "Longitudinal": _gps_longitudinal_preset(),
+        "Transverse (Vector)": PresetGrouping(
+            name="Transverse (Vector)",
+            groups={
+                1: GroupDefinition("Up-Down Up", up),
+                2: GroupDefinition("Up-Down Down", down),
+                3: GroupDefinition("Left-Right Left", left),
+                4: GroupDefinition("Left-Right Right", right),
+            },
+            forward_group=1,
+            backward_group=2,
+            projections=(
+                AsymmetryProjection("Up-Down", 1, 2, tint=TRANSVERSE_PROJECTION_TINTS["Top-Bottom"]),
+                AsymmetryProjection("Left-Right", 3, 4, tint=TRANSVERSE_PROJECTION_TINTS["Left-Right"]),
+            ),
+        ),
+        # Spin-rotated: with the spin rotator in transverse geometry the muon spin
+        # is tipped up by ~50 deg (GPS User Guide, Section 13), so the polarization
+        # points along the Forward-Up diagonal. Summing Forward+Up vs Backward+Down
+        # realigns one asymmetry axis with the rotated spin, recovering amplitude a
+        # plain Forward/Backward pair would lose.
+        "Spin-rotated (F+U/B+D)": PresetGrouping(
+            name="Spin-rotated (F+U/B+D)",
+            groups={
+                1: GroupDefinition("F+U", (1, *up)),
+                2: GroupDefinition("B+D", (2, *down)),
+            },
+            forward_group=1,
+            backward_group=2,
+        ),
+        # WEP: follows musrfit's spin-rotated GPS setup -- F/B/U/D as four groups
+        # exposed as the FB and UD asymmetry pairs (FB alpha = 0.75). See
+        # _build_gps for the verbatim musrfit definition and provenance.
+        "WEP (spin-rotated)": PresetGrouping(
+            name="WEP (spin-rotated)",
+            groups={
+                1: GroupDefinition("F", (1,)),
+                2: GroupDefinition("B", (2,)),
+                3: GroupDefinition("U", up),
+                4: GroupDefinition("D", down),
+            },
+            forward_group=1,
+            backward_group=2,
+            projections=(
+                AsymmetryProjection("FB", 1, 2, alpha=0.75, tint=TRANSVERSE_PROJECTION_TINTS["Fwd-Back"]),
+                AsymmetryProjection("UD", 3, 4, tint=TRANSVERSE_PROJECTION_TINTS["Top-Bottom"]),
+            ),
+        ),
+    }
+
+
+def _build_gps() -> InstrumentLayout:
+    """Build the PSI GPS detector layout (General Purpose Spectrometer, πM3.2).
+
+    GPS has six positron detectors defined with respect to the beam direction —
+    **Forward (F), Backward (B), Up (U), Down (D), Right (R), Left (L)** — around
+    the sample, plus a muon counter (M) and veto detectors (a backward veto
+    pyramid and a forward veto) that feed the coincidence logic but are *not*
+    stored as histograms.  U/D/R/L are each two physical subdetectors read by
+    SiPM arrays; in the PSI-BIN export each direction is one combined plate.
+    Source: *GPS User Guide* (A. Amato & H. Luetkens), Section 4 "The detectors".
+
+    PSI GPS ``deltat_tdc_gps_*.bin`` files store the six histograms in the fixed
+    order ``Forw, Back, Up, Down, Righ, Left`` (verified across runs from 2016
+    to 2025).  Because detector IDs in this module map positionally to histogram
+    indices (detector *N* → histogram ``N − 1``), the IDs are F→1, B→2, U→3,
+    D→4, R→5, L→6.
+
+    The six detectors lie on three orthogonal axes, so the schematic uses **two
+    plan panels** (following the FLAME beam convention, beam → +z = Forward):
+
+    * **Top view** (looking down) — the horizontal plane: Forward/Backward on the
+      beam axis, Left/Right in-plane (top/bottom); Up/Down point out of the page
+      and are drawn end-on (⊙/⊗) for context.
+    * **Side view** (from the left) — the vertical plane: Up/Down in-plane,
+      Forward/Backward shown read-only; Left/Right point out of the page (⊙/⊗).
+
+    Each detector is clickable (active) in its home panel and read-only in the
+    other, which keeps the 3-D geometry legible.
+
+    **Spin rotator and the F+U / B+D preset.** GPS sits behind a spin rotator on
+    πM3.2 — crossed electric and magnetic fields (a Wien filter), GPS User Guide
+    Section 13.  In *longitudinal geometry* it acts as a velocity separator that
+    cleans positron contamination from the beam (and tips the polarization up by
+    ~7°).  In *transverse geometry* the field is raised so the muon spin is
+    rotated **up by ~50°**, giving a large transverse component for TF work.  Once
+    the spin is rotated by ~45–50° in the vertical (beam–up) plane the initial
+    polarization points along the **Forward–Up diagonal**, so a plain
+    Forward/Backward asymmetry only sees its cosine projection and loses
+    amplitude.  Summing **Forward+Up** against **Backward+Down** realigns one
+    asymmetry axis with the rotated spin and recovers the full amplitude — this is
+    the ``Spin-rotated (F+U/B+D)`` preset.  The forward/backward sense follows the
+    rotation direction; swap the groups if a setup rotates the spin the other way.
+
+    **WEP mode — follows musrfit.** musrfit ships a GPS setup named
+    ``WEP`` for exactly this spin-rotated configuration, and the
+    ``WEP (spin-rotated)`` preset reproduces its grouping convention so analyses
+    match what PSI users already expect.  Source:
+    ``musredit_qt5/musrWiz/instrument_defs/instrument_def_psi.xml``,
+    ``<instrument name="GPS"><tf name="WEP">``.  musrfit does **not** sum
+    detectors; it keeps F, B, U, D as four separate logic detectors, each given a
+    relative phase that encodes the ~45° rotation, and fits two asymmetry pairs::
+
+        logic_detector       B  rel_phase=-45   forward=2  (histogram 1)
+        logic_detector       U  rel_phase=+45   forward=3  (histogram 2)
+        logic_detector       F  rel_phase=+135  forward=1  (histogram 0)
+        logic_detector       D  rel_phase=+225  forward=4  (histogram 3)
+        logic_asym_detector  FB forward=2 backward=1  alpha=0.75
+        logic_asym_detector  UD forward=3 backward=4  alpha=1.0
+
+    The preset here maps F/B/U/D to four groups exposed as the **FB** and **UD**
+    projections.  The FB projection declares musrfit's default ``alpha = 0.75`` so
+    the value is recorded with the grouping; note, however, that the reduction
+    currently applies a single base ``alpha`` to all projections of a preset and
+    does **not** yet consume per-projection alpha for non-canonical (non
+    P_x/P_y/P_z) pairs, so the FB α here is informational until that framework
+    support lands — calibrate/enter alpha for the FB pair as usual.  The
+    per-detector phase offsets musrfit uses to encode the rotation are likewise a
+    fitting detail not stored in the layout — only the groupings.
+    (``Spin-rotated (F+U/B+D)`` above is *our* combined-pair alternative for the
+    same physics, not a musrfit construct.)
+    """
+    top = BankLayout(
+        name="Top view",
+        segments=(
+            _plan_rectangle(1, "Forward", 2.70, 0.0, 0.75, 1.70),
+            _plan_rectangle(2, "Backward", -2.70, 0.0, 0.75, 1.70),
+            _plan_rectangle(6, "Left", 0.0, 1.95, 1.70, 0.75),
+            _plan_rectangle(5, "Right", 0.0, -1.95, 1.70, 0.75),
+            _gps_endon(3, "Up", 0.0, 0.70, into=False),
+            _gps_endon(4, "Down", 0.0, -0.70, into=True),
+        ),
+    )
+    side = BankLayout(
+        name="Side view",
+        segments=(
+            _plan_rectangle(3, "Up", 0.0, 1.95, 1.70, 0.75),
+            _plan_rectangle(4, "Down", 0.0, -1.95, 1.70, 0.75),
+            _plan_rectangle(1, "Forward", 2.70, 0.0, 0.75, 1.70, read_only=True),
+            _plan_rectangle(2, "Backward", -2.70, 0.0, 0.75, 1.70, read_only=True),
+            _gps_endon(6, "Left", 0.0, 0.70, into=False),
+            _gps_endon(5, "Right", 0.0, -0.70, into=True),
+        ),
+    )
+
+    # Transverse directions map to single combined detectors in the BIN export:
+    # U=3, D=4, L=6, R=5.
+    presets = _gps_presets((3,), (4,), (6,), (5,))
+
+    return InstrumentLayout(
+        name="GPS",
+        n_detectors=6,
+        banks=(top, side),
+        presets=presets,
+        view="plan",
+    )
+
+
+def _build_gps_subdetectors() -> InstrumentLayout:
+    """Build the PSI GPS **ROOT sub-detector** layout (11 histograms).
+
+    GPS ``deltat_tdc_gps_*.root`` (MusrRoot) files expose the *raw* sub-detectors
+    rather than the six combined detectors of the PSI-BIN export.  The
+    transverse detectors are each physically split into a backward (upstream,
+    ``_B``) and forward (downstream, ``_F``) part, and a Mobile detector is
+    added.  The histograms appear in this fixed order (verified on 2025 data):
+
+    ``Forw, Back, Up_B, Up_F, Down_B, Down_F, Right_B, Right_F, Left_B, Left_F,
+    Mob-RL`` → detector IDs 1…11 (detector *N* → histogram ``N − 1``).
+
+    Source: Amato *et al.*, *Rev. Sci. Instrum.* 88, 093301 (2017),
+    `arXiv:1705.10687 <https://arxiv.org/abs/1705.10687>`_, Section IIA:
+    ``R = R_back + R_forw (+ P_mob)``, ``L = L_back + L_forw (+ P_mob)``, and
+    "the detectors U and D are also physically split between a forward and a
+    backward part".
+
+    The **Mobile** detector (``P_mob`` / ``Mob-RL``) is mounted on the two
+    cryostat ports on the horizontal axis ⊥ to the beam; it is added to ``R``
+    (first port) *or* ``L`` (second port) depending on which port is in use —
+    information **not recorded in the data file**.  It is therefore left
+    *ungrouped* by default (matching musrfit, whose GPS definition does not
+    group it); the user assigns it to the side matching their setup.
+
+    This is the 11-detector variant of :func:`_build_gps`; both share the
+    display name "GPS" (see :class:`InstrumentLayout.display_name`) and the same
+    two-panel (top + side) presentation.  Each transverse plate is split along
+    the beam into a backward (``_B``, upstream/−z) and forward (``_F``,
+    downstream/+z) half, so split detectors render as two boxes side by side.
+    The **Mobile** detector rides on the horizontal Left–Right axis between the
+    cryostat ports; following Amato *et al.* Fig. 2 it is drawn as a bar at the
+    top of the chamber, just above the sample, and is left ungrouped (added to R
+    or L per the cryo port, which the file does not record).
+    """
+    top = BankLayout(
+        name="Top view",
+        segments=(
+            _plan_rectangle(1, "Forward", 2.95, 0.0, 0.78, 1.70),
+            _plan_rectangle(2, "Backward", -2.95, 0.0, 0.78, 1.70),
+            # In-plane Left (top) / Right (bottom), each split _B (−z) / _F (+z).
+            _plan_rectangle(9, "Left_B", -0.50, 1.95, 0.85, 0.75),
+            _plan_rectangle(10, "Left_F", 0.50, 1.95, 0.85, 0.75),
+            _plan_rectangle(7, "Right_B", -0.50, -1.95, 0.85, 0.75),
+            _plan_rectangle(8, "Right_F", 0.50, -1.95, 0.85, 0.75),
+            # Mobile bar at the top of the chamber, above the sample (Fig. 2).
+            _plan_rectangle(11, "Mob-RL", 0.0, 1.18, 0.95, 0.42),
+            # Up/Down point out of the page here -> end-on context markers.
+            _gps_endon(3, "Up_B", -0.48, 0.45, into=False),
+            _gps_endon(4, "Up_F", 0.48, 0.45, into=False),
+            _gps_endon(5, "Down_B", -0.48, -0.45, into=True),
+            _gps_endon(6, "Down_F", 0.48, -0.45, into=True),
+        ),
+    )
+    side = BankLayout(
+        name="Side view",
+        segments=(
+            # In-plane Up (top) / Down (bottom), each split _B (−z) / _F (+z).
+            _plan_rectangle(3, "Up_B", -0.50, 1.95, 0.85, 0.75),
+            _plan_rectangle(4, "Up_F", 0.50, 1.95, 0.85, 0.75),
+            _plan_rectangle(5, "Down_B", -0.50, -1.95, 0.85, 0.75),
+            _plan_rectangle(6, "Down_F", 0.50, -1.95, 0.85, 0.75),
+            _plan_rectangle(1, "Forward", 2.95, 0.0, 0.78, 1.70, read_only=True),
+            _plan_rectangle(2, "Backward", -2.95, 0.0, 0.78, 1.70, read_only=True),
+            # Left/Right point out of the page here; Mobile rides this same axis.
+            _gps_endon(9, "Left_B", -0.48, 0.45, into=False),
+            _gps_endon(10, "Left_F", 0.48, 0.45, into=False),
+            _gps_endon(7, "Right_B", -0.48, -0.45, into=True),
+            _gps_endon(8, "Right_F", 0.48, -0.45, into=True),
+            _gps_endon(11, "Mob-RL", 0.0, 1.30, into=False),
+        ),
+    )
+
+    # Each transverse direction combines its two _B/_F sub-detectors:
+    # U=(3,4), D=(5,6), L=(9,10), R=(7,8). Mob-RL (11) is left ungrouped.
+    presets = _gps_presets((3, 4), (5, 6), (9, 10), (7, 8))
+
+    return InstrumentLayout(
+        name="GPS-RD",
+        n_detectors=11,
+        banks=(top, side),
+        presets=presets,
+        view="plan",
+        display_name="GPS",
     )
 
 
@@ -990,6 +1347,8 @@ def _build_registry() -> dict[str, InstrumentLayout]:
         "EMU": _build_emu(),
         "FLAME": _build_flame(),
         "HAL": _build_hal(),
+        "GPS": _build_gps(),
+        "GPS-RD": _build_gps_subdetectors(),
     }
 
 
@@ -1017,6 +1376,75 @@ def get_instrument_layout(name: str) -> InstrumentLayout:
     return _LAYOUTS[name]
 
 
+def instrument_display_name(name: str) -> str:
+    """Return the user-facing dropdown name for a layout registry key.
+
+    Variant keys (e.g. ``"GPS-RD"``) map to their shared display name
+    (``"GPS"``); every other key maps to itself.
+    """
+    try:
+        return get_instrument_layout(name).display
+    except KeyError:
+        return name
+
+
+def _variant_families() -> dict[str, list[str]]:
+    """Map each display name to its registry keys, in ``INSTRUMENT_NAMES`` order.
+
+    Two layouts that share a ``display_name`` are variants of one physical
+    instrument (e.g. the 6-detector ``"GPS"`` and the 11-detector ``"GPS-RD"``
+    both display "GPS"); the first key listed is the family default.  The family
+    relationship is derived from the layouts themselves, so adding a variant only
+    requires giving it the shared ``display_name`` — no separate registry to keep
+    in sync.
+    """
+    families: dict[str, list[str]] = {}
+    for key in INSTRUMENT_NAMES:
+        families.setdefault(instrument_display_name(key), []).append(key)
+    return families
+
+
+def instrument_choices_for(active_name: str | None = None) -> list[tuple[str, str]]:
+    """Return ``[(display_name, registry_key)]`` for the instrument dropdown.
+
+    Variant families (e.g. the 6-detector PSI-BIN ``"GPS"`` and the 11-detector
+    ROOT ``"GPS-RD"``) collapse to a single entry under their shared display
+    name, so the user only ever sees one "GPS".  The variant exposed for a family
+    is the one whose key equals *active_name* (the currently-loaded layout);
+    otherwise the family default (first registry key) is used.
+    """
+    choices: list[tuple[str, str]] = []
+    for display, keys in _variant_families().items():
+        if len(keys) == 1:
+            choices.append((display, keys[0]))
+        else:
+            chosen = active_name if active_name in keys else keys[0]
+            choices.append((display, chosen))
+    return choices
+
+
+def variant_for_histograms(name: str, n_histograms: int) -> str:
+    """Return the registry key of *name*'s variant whose detector count fits the run.
+
+    Layout variants that share a display name (e.g. GPS BIN with 6 detectors vs
+    GPS ROOT with 11) are distinguished by detector count.  Given a layout *name*
+    and a run's ``n_histograms``, return the sibling variant whose
+    ``n_detectors`` equals that count, so the layout always matches the data.
+    Returns *name* unchanged when it has no sibling, the count is unknown, or no
+    sibling fits.
+    """
+    keys = _variant_families().get(instrument_display_name(name), [name])
+    if len(keys) <= 1 or not n_histograms:
+        return name
+    for key in keys:
+        try:
+            if get_instrument_layout(key).n_detectors == int(n_histograms):
+                return key
+        except KeyError:
+            continue
+    return name
+
+
 def _canonical_instrument_name(raw: object) -> str | None:
     """Normalize free-form instrument text to a canonical instrument name."""
     if raw is None:
@@ -1028,6 +1456,8 @@ def _canonical_instrument_name(raw: object) -> str | None:
     compact = re.sub(r"[^a-z0-9]+", "", token.lower())
     if "flame" in compact:
         return "FLAME"
+    if "gps" in compact:
+        return "GPS"
     if "hifi" in compact:
         return "HiFi"
     if "musr" in compact:
@@ -1086,6 +1516,80 @@ def _is_psi_hal(metadata: dict, source_file: str | None) -> bool:
     return "hifi" in compact or "hal9500" in compact
 
 
+def _labels_match_gps(labels: list[str], n_histograms: int) -> bool:
+    """Return True when detector labels match the GPS six-counter layout.
+
+    GPS ``deltat_tdc_gps_*.bin`` files store exactly six histograms labelled
+    ``Forw, Back, Up, Down, Righ, Left`` (the muon and veto counters are not
+    stored as histograms).
+    """
+    if n_histograms != 6:
+        return False
+    compact = {re.sub(r"[^a-z0-9]+", "", label.lower()) for label in labels}
+    if not compact:
+        return False
+    return (
+        bool({"forw", "forward"} & compact)
+        and bool({"back", "backward"} & compact)
+        and "up" in compact
+        and "down" in compact
+        and bool({"righ", "right"} & compact)
+        and "left" in compact
+    )
+
+
+def _labels_match_gps_subdetectors(labels: list[str]) -> bool:
+    """Return True when detector labels match the GPS ROOT sub-detector layout.
+
+    GPS ``deltat_tdc_gps_*.root`` (MusrRoot) files store the raw sub-detectors:
+    ``Forw, Back, Up_B, Up_F, Down_B, Down_F, Right_B, Right_F, Left_B, Left_F,
+    Mob-RL``.  Matching is on the label set alone (not the histogram count) so it
+    also serves as a fallback when the count is reported unexpectedly.
+    """
+    compact = {re.sub(r"[^a-z0-9]+", "", label.lower()) for label in labels}
+    if not compact:
+        return False
+    needed = {"upb", "upf", "downb", "downf", "rightb", "rightf", "leftb", "leftf"}
+    has_fb = bool({"forw", "forward"} & compact) and bool({"back", "backward"} & compact)
+    has_mobile = any("mob" in token for token in compact)
+    return has_fb and needed.issubset(compact) and has_mobile
+
+
+def _is_psi_gps(metadata: dict, source_file: str | None, n_histograms: int) -> bool:
+    """Return True when PSI metadata/filename identifies a GPS run.
+
+    GPS files report a ``GPS`` instrument string (BIN: ``"GPS"``; ROOT:
+    ``"LMU_BULKMUSR_GPS"``) and run names of the form ``deltat_tdc_gps_*``; both
+    carry the ``gps`` token (distinct from the GPD decay-channel instrument's
+    ``gpd`` token).  As a fallback, either the six-counter BIN label set or the
+    eleven-counter ROOT sub-detector label set identifies GPS.  Caller must
+    already have established that the data is from PSI.
+    """
+    tokens = [
+        str(metadata.get(key, ""))
+        for key in ("instrument", "instrument_name", "beamline", "spectrometer", "name")
+    ]
+    if source_file:
+        tokens.append(Path(source_file).stem)
+    compact = re.sub(r"[^a-z0-9]+", "", " ".join(tokens).lower())
+    if "gps" in compact:
+        return True
+    labels = _metadata_labels(metadata)
+    return _labels_match_gps(labels, n_histograms) or _labels_match_gps_subdetectors(labels)
+
+
+def _gps_variant(metadata: dict, n_histograms: int) -> str:
+    """Return the GPS layout registry key for a recognised GPS run.
+
+    The ROOT sub-detector export has 11 histograms; the PSI-BIN export has the 6
+    combined detectors.  Returns ``"GPS-RD"`` for the former and ``"GPS"`` for
+    the latter.
+    """
+    if n_histograms == 11 or _labels_match_gps_subdetectors(_metadata_labels(metadata)):
+        return "GPS-RD"
+    return "GPS"
+
+
 def detect_instrument(
     n_histograms: int,
     *,
@@ -1123,6 +1627,12 @@ def detect_instrument(
         # the generic ISIS-name resolution below (which would mis-map it).
         if psi_data and _is_psi_hal(metadata, source_file):
             return "HAL"
+        # PSI GPS (General Purpose Spectrometer): route by its "gps" token or the
+        # GPS label sets, before the generic PSI return-None path below would
+        # discard it.  Pick the 6-detector BIN ("GPS") or 11-detector ROOT
+        # sub-detector ("GPS-RD") variant by histogram count.
+        if psi_data and _is_psi_gps(metadata, source_file, n_histograms):
+            return _gps_variant(metadata, n_histograms)
         for key in (
             "instrument",
             "instrument_name",
@@ -1133,7 +1643,7 @@ def detect_instrument(
         ):
             resolved = _canonical_instrument_name(metadata.get(key))
             if resolved is not None:
-                if psi_data and resolved != "FLAME":
+                if psi_data and resolved not in {"FLAME", "GPS"}:
                     return None
                 return resolved
         if _labels_match_flame(_metadata_labels(metadata), n_histograms):
@@ -1142,7 +1652,7 @@ def detect_instrument(
     if source_file:
         path_token = _canonical_instrument_name(Path(source_file).stem)
         if path_token is not None:
-            if psi_data and path_token != "FLAME":
+            if psi_data and path_token not in {"FLAME", "GPS"}:
                 return None
             return path_token
 

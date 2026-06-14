@@ -12,7 +12,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication
 
-from asymmetry.core.instrument import INSTRUMENT_NAMES, get_instrument_layout
+from asymmetry.core.instrument import (
+    INSTRUMENT_NAMES,
+    get_instrument_layout,
+    instrument_choices_for,
+    instrument_display_name,
+)
 from asymmetry.gui.windows.detector_layout_dialog import _MAX_GROUPS, DetectorLayoutDialog
 
 
@@ -97,8 +102,11 @@ class TestConstruction:
         combo_texts = [
             dlg._instrument_combo.itemText(i) for i in range(dlg._instrument_combo.count())
         ]
-        for name in INSTRUMENT_NAMES:
-            assert name in combo_texts
+        # The dropdown shows display names, with the GPS variants collapsed to a
+        # single "GPS" entry.
+        for display, _key in instrument_choices_for(None):
+            assert display in combo_texts
+        assert combo_texts.count("GPS") == 1
 
     def test_preset_combo_populated_for_hifi(self, qapp):
         layout = get_instrument_layout("HiFi")
@@ -111,7 +119,22 @@ class TestConstruction:
             layout = get_instrument_layout(name)
             groups = {}
             dlg = DetectorLayoutDialog(layout, groups=groups)
-            assert dlg._instrument_combo.currentText() == name
+            # Combo shows the display name; itemData carries the registry key.
+            assert dlg._instrument_combo.currentText() == instrument_display_name(name)
+            assert dlg._instrument_combo.currentData() == name
+
+    def test_gps_root_variant_shown_as_gps(self, qapp):
+        # An 11-detector GPS ROOT run shows a single "GPS" entry mapping to the
+        # GPS-RD layout.
+        layout = get_instrument_layout("GPS-RD")
+        dlg = DetectorLayoutDialog(layout, groups={})
+        combo_texts = [
+            dlg._instrument_combo.itemText(i) for i in range(dlg._instrument_combo.count())
+        ]
+        assert combo_texts.count("GPS") == 1
+        assert dlg._instrument_combo.currentText() == "GPS"
+        assert dlg._instrument_combo.currentData() == "GPS-RD"
+        assert dlg.get_result()["instrument"] == "GPS-RD"
 
 
 # ---------------------------------------------------------------------------
