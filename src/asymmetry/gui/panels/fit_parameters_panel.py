@@ -22,7 +22,6 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
@@ -66,7 +65,11 @@ from asymmetry.gui.gle_settings import get_gle_executable
 from asymmetry.gui.panels.composite_parameter_dialog import CompositeParameterDialog
 from asymmetry.gui.panels.cross_group_fit_dialog import CrossGroupFitDialog
 from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
-from asymmetry.gui.styles.widgets import apply_param_table_style, style_group_state_button
+from asymmetry.gui.styles.widgets import (
+    apply_param_table_style,
+    make_section,
+    style_group_state_button,
+)
 from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.widgets.collapsible_section import CollapsibleSection
 from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
@@ -270,8 +273,7 @@ class FitParametersPanel(QWidget):
 
         layout = QVBoxLayout(self)
 
-        controls_group = QGroupBox("Parameter settings")
-        controls_layout = QVBoxLayout(controls_group)
+        controls_group, controls_layout = make_section("Parameter settings")
         controls_form = QFormLayout()
         controls_layout.addLayout(controls_form)
 
@@ -282,7 +284,8 @@ class FitParametersPanel(QWidget):
         self._group_tabs_widget.setVisible(False)
         controls_form.addRow(self._group_tabs_widget)
 
-        self._show_table_btn = QPushButton("Show fitted parameter table")
+        self._show_table_btn = QPushButton("Show table")
+        self._show_table_btn.setToolTip("Show the fitted parameter table.")
         self._show_table_btn.setEnabled(False)
         self._show_table_btn.clicked.connect(self._show_table_dialog)
         controls_form.addRow(self._show_table_btn)
@@ -333,15 +336,18 @@ class FitParametersPanel(QWidget):
 
         controls_form.addRow("Y parameters:", self._y_selector_table)
 
-        self._create_composite_btn = QPushButton("Create Composite Parameter")
+        self._create_composite_btn = QPushButton("New composite")
+        self._create_composite_btn.setToolTip("Create a composite (derived) parameter.")
         self._create_composite_btn.setEnabled(False)
         self._create_composite_btn.clicked.connect(self._open_composite_parameter_dialog)
 
-        self._edit_composite_btn = QPushButton("Edit Selected Composite")
+        self._edit_composite_btn = QPushButton("Edit composite")
+        self._edit_composite_btn.setToolTip("Edit the selected composite parameter.")
         self._edit_composite_btn.setEnabled(False)
         self._edit_composite_btn.clicked.connect(self._edit_selected_composite_parameter)
 
-        self._remove_composite_btn = QPushButton("Remove Selected Composite")
+        self._remove_composite_btn = QPushButton("Remove composite")
+        self._remove_composite_btn.setToolTip("Remove the selected composite parameter.")
         self._remove_composite_btn.setEnabled(False)
         self._remove_composite_btn.clicked.connect(self._remove_selected_composite_parameters)
 
@@ -393,19 +399,21 @@ class FitParametersPanel(QWidget):
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         apply_param_table_style(self._table)
 
-        self._plot_group = QGroupBox("Parameter Plot")
-        plot_layout = QVBoxLayout(self._plot_group)
-        plot_layout.setContentsMargins(8, 8, 8, 8)
+        self._plot_group, plot_layout = make_section("Parameter plot")
         plot_layout.setSpacing(8)
 
+        # Two-column grids (not a single wide row) so the plot toolbar does not
+        # set the Parameters dock's minimum width past the other tabs on a 13"
+        # screen; the buttons wrap to a second line instead of growing the dock.
         self._plot_labels_bar = QWidget(self._plot_group)
-        labels_row = QHBoxLayout(self._plot_labels_bar)
+        labels_row = QGridLayout(self._plot_labels_bar)
         labels_row.setContentsMargins(0, 0, 0, 0)
-        labels_row.setSpacing(6)
-        labels_row.addWidget(QLabel("Plot labels:"))
-        labels_row.addWidget(self._add_label_btn)
-        labels_row.addWidget(self._clear_labels_btn)
-        labels_row.addStretch()
+        labels_row.setHorizontalSpacing(6)
+        labels_row.setVerticalSpacing(4)
+        labels_row.addWidget(QLabel("Plot labels:"), 0, 0, 1, 2)
+        labels_row.addWidget(self._add_label_btn, 1, 0)
+        labels_row.addWidget(self._clear_labels_btn, 1, 1)
+        labels_row.setColumnStretch(2, 1)
         plot_layout.addWidget(self._plot_labels_bar)
 
         self._has_mpl = False
@@ -427,15 +435,15 @@ class FitParametersPanel(QWidget):
             self._trend_overlay = None
 
         self._plot_export_bar = QWidget(self._plot_group)
-        export_row = QHBoxLayout(self._plot_export_bar)
+        export_row = QGridLayout(self._plot_export_bar)
         export_row.setContentsMargins(0, 0, 0, 0)
-        export_row.setSpacing(6)
-        export_row.addWidget(QLabel("Export:"))
-        export_row.addWidget(self._export_csv_btn)
-        export_row.addWidget(self._export_gle_btn)
-        export_row.addWidget(QLabel("Format:"))
-        export_row.addWidget(self._gle_format_combo)
-        export_row.addStretch()
+        export_row.setHorizontalSpacing(6)
+        export_row.setVerticalSpacing(4)
+        export_row.addWidget(self._export_csv_btn, 0, 0)
+        export_row.addWidget(self._export_gle_btn, 0, 1)
+        export_row.addWidget(QLabel("Format:"), 1, 0)
+        export_row.addWidget(self._gle_format_combo, 1, 1)
+        export_row.setColumnStretch(2, 1)
         plot_layout.addWidget(self._plot_export_bar)
 
         controls_group.setMinimumHeight(0)

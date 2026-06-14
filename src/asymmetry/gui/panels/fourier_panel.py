@@ -37,6 +37,7 @@ from asymmetry.core.fourier.correlation import DEFAULT_CORR_ORDER
 from asymmetry.gui.panels.spectral_moments_widget import SpectralMomentsWidget
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
+from asymmetry.gui.styles.typography import status_font
 from asymmetry.gui.styles.widgets import apply_param_table_style, build_primary_button_qss
 from asymmetry.gui.utils.latex_renderer import render_latex_to_html_image
 
@@ -367,7 +368,8 @@ class FourierPanel(QWidget):
         phase_form.addRow("Auto method:", self._auto_method_combo)
         phase_layout.addLayout(phase_form)
 
-        self._auto_phase_btn = QPushButton("Fill Phase Estimates")
+        self._auto_phase_btn = QPushButton("Fill phases")
+        self._auto_phase_btn.setToolTip("Fill per-group phase estimates from the data.")
         phase_layout.addWidget(self._auto_phase_btn)
 
         content_layout.addWidget(phase_group)
@@ -417,7 +419,7 @@ class FourierPanel(QWidget):
         self._fft_btn.setStyleSheet(build_primary_button_qss())
         content_layout.addWidget(self._fft_btn)
 
-        self._apply_to_selection_btn = QPushButton("Apply settings to selected runs")
+        self._apply_to_selection_btn = QPushButton("Apply to selection")
         self._apply_to_selection_btn.setToolTip(
             "Copy this run's Fourier settings to the other selected runs and "
             "generate their spectra."
@@ -425,6 +427,8 @@ class FourierPanel(QWidget):
         content_layout.addWidget(self._apply_to_selection_btn)
 
         self._status_label = QLabel("")
+        self._status_label.setFont(status_font())
+        self._status_label.setWordWrap(True)
         content_layout.addWidget(self._status_label)
 
         content_layout.addStretch()
@@ -690,7 +694,7 @@ class FourierPanel(QWidget):
         """Set the status label below the Compute FFT button."""
         if success:
             self._status_label.setText(
-                f'<span style="color: {tokens.OK};">{html.escape(str(message))}</span>'
+                f'<span style="color: {tokens.OK};">● {html.escape(str(message))}</span>'
             )
         else:
             self._status_label.setText(str(message))
