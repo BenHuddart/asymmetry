@@ -6,7 +6,7 @@ import os
 import sys
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_dynamic_libs
+from PyInstaller.utils.hooks import collect_dynamic_libs, copy_metadata
 
 
 # SPECPATH points to the directory containing this spec file.
@@ -21,7 +21,8 @@ icon_path = os.environ.get("PYI_ICON_PATH", str(default_icon))
 if not Path(icon_path).is_file():
     icon_path = None
 
-datas = [(str(png_file), "asymmetry/resources") for png_file in resources_dir.glob("*.png")]
+datas = copy_metadata("asymmetry")
+datas += [(str(png_file), "asymmetry/resources") for png_file in resources_dir.glob("*.png")]
 datas += [(str(svg_file), "asymmetry/resources") for svg_file in resources_dir.glob("*.svg")]
 fonts_dir = resources_dir / "fonts"
 if fonts_dir.is_dir():
