@@ -12,18 +12,18 @@ import re
 from collections.abc import Callable
 
 import numpy as np
-from PySide6.QtCore import QEventLoop, QSignalBlocker, Qt, QTimer, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QEventLoop, QSignalBlocker, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QDoubleValidator
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
-    QDoubleSpinBox,
     QFormLayout,
+    QFrame,
     QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QPushButton,
     QSizePolicy,
@@ -113,16 +113,22 @@ from asymmetry.gui.panels.initial_values_dialog import InitialValuesDialog
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.widgets import (
-    RESULTS_GROUP_SUCCESS_STYLE,
+    RESULT_BOX_NEUTRAL_STYLE,
+    RESULT_BOX_OBJECT_NAME,
+    RESULT_BOX_SUCCESS_STYLE,
     apply_param_table_style,
     build_primary_button_qss,
     configure_formula_label,
     error_html,
     fit_quality_chip_html,
     fit_quality_tooltip,
+    make_formula_box,
+    make_section,
+    make_section_header,
     success_html,
 )
 from asymmetry.gui.tasks import TaskRunner, TaskWorker
+from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
 from asymmetry.gui.windows.fit_wizard_window import FitWizardWindow
 from asymmetry.gui.windows.global_fit_wizard_window import GlobalFitWizardWindow
 
@@ -598,6 +604,75 @@ def _fit_range_provenance_text(min_spin, max_spin, unit_label) -> str | None:
     return f"{lo:.{decimals}f}–{hi:.{decimals}f} {unit_label.text()}"
 
 
+class _FloatLimitField(QLineEdit):
+    """Compact text field for a fit-range limit (min/max).
+
+    Replaces ``QDoubleSpinBox`` for the fit range: a plain typed field (the
+    design's limit-field style) with no spin arrows and no reserved arrow
+    padding, so it stays narrow on a 13" dock. A ``QDoubleValidator`` keeps
+    entries numeric and in range. Exposes the small spinbox-compatible surface
+    (``value``/``setValue``/``decimals``/``setDecimals``/``setRange``) that the
+    shared fit-range plumbing already relies on, so both Fit tabs reuse it and
+    ``editingFinished`` (a built-in ``QLineEdit`` signal) keeps its old wiring.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._decimals = 3
+        self._value = 0.0
+        self._validator = QDoubleValidator(-1000.0, 1000.0, self._decimals, self)
+        self._validator.setNotation(QDoubleValidator.Notation.StandardNotation)
+        self.setValidator(self._validator)
+        self.setFont(mono_font(11.0))
+        # A bare QLineEdit sizes to ~17 chars; cap it so the min/max pair stays
+        # compact in the dock (fits "-1000.000" with room to spare).
+        self.setMinimumWidth(56)
+        self.setMaximumWidth(88)
+        self.setText(self._format(self._value))
+        # Normalise the display after a manual edit (e.g. "1" -> "1.000"). This
+        # connects first, so the external editingFinished handler reads the
+        # already-normalised text via value().
+        self.editingFinished.connect(self._normalise_text)
+
+    def _format(self, value: float) -> str:
+        return f"{float(value):.{self._decimals}f}"
+
+    def _clamp(self, value: float) -> float:
+        """Clamp to the validator's range, matching QDoubleSpinBox.
+
+        ``QDoubleValidator`` only rejects out-of-range *keystrokes*; it does not
+        bound a programmatic ``setValue`` or an Intermediate entry committed on
+        focus-out. The spinbox this replaces clamped both, so do the same here —
+        otherwise an out-of-range fit limit could reach the engine.
+        """
+        return min(max(float(value), self._validator.bottom()), self._validator.top())
+
+    def _normalise_text(self) -> None:
+        self.setText(self._format(self.value()))
+
+    def value(self) -> float:
+        """Current value (clamped to range), or the last set value if blank."""
+        try:
+            return self._clamp(float(self.text()))
+        except ValueError:
+            return self._value
+
+    def setValue(self, value: float) -> None:  # noqa: N802 — spinbox-API shim
+        self._value = self._clamp(value)
+        self.setText(self._format(self._value))
+
+    def decimals(self) -> int:
+        return self._decimals
+
+    def setDecimals(self, decimals: int) -> None:  # noqa: N802 — spinbox-API shim
+        self._decimals = int(decimals)
+        self._validator.setDecimals(self._decimals)
+        self.setText(self._format(self.value()))
+
+    def setRange(self, minimum: float, maximum: float) -> None:  # noqa: N802 — spinbox-API shim
+        self._validator.setRange(minimum, maximum, self._decimals)
+
+
 def _fit_success_html(result) -> str:
     """Return compact success HTML for the result label, with a χ² verdict chip."""
     npar = len(result.parameters.free_parameters)
@@ -712,10 +787,19 @@ def _set_param_batch_role_cell(table: QTableWidget, row: int, role: str | None) 
 
 
 _configure_formula_label = configure_formula_label
+_make_formula_box = make_formula_box
 
 
 def _set_formula_label_text(label: QLabel, formula: str, **_kwargs) -> None:
-    """Set formula text; tooltip preserves the raw string for reference."""
+    """Set formula text; tooltip preserves the raw string for reference.
+
+    When the label lives in a FormulaBox, route through it so the expression is
+    break-marked (wraps only at top-level operators) and the box re-measures.
+    """
+    box = getattr(label, "_formula_box", None)
+    if box is not None:
+        box.set_formula(formula)
+        return
     raw_text = str(formula)
     label.setText(raw_text)
     label.setToolTip(raw_text)
@@ -744,6 +828,9 @@ def _apply_domain_mismatch_warning(label: QLabel, model: CompositeModel, domain:
         f"{domain} domain. The model is kept as saved and can still be fitted; "
         "use Edit Function to repair it."
     )
+    box = getattr(label, "_formula_box", None)
+    if box is not None:
+        box.refresh_height()
 
 
 def _format_bounds_pair(min_val: float, max_val: float) -> str:
@@ -934,6 +1021,23 @@ class _ValueUncertaintyDelegate(QStyledItemDelegate):
         super().setModelData(editor, model, index)
 
 
+def _size_param_table_to_content(table: QTableWidget) -> None:
+    """Fix a parameter table's height to exactly its rows.
+
+    The inspector dock scrolls vertically as a whole, so the table does not need
+    to grow and scroll internally; sizing it to its content means a few-parameter
+    model leaves no empty rows, while a many-parameter model simply makes the
+    panel taller (and the dock scrolls — the natural axis). The horizontal
+    scrollbar's height is reserved so wide column sets never clip the last row.
+    """
+    table.resizeRowsToContents()
+    rows_height = table.verticalHeader().length()
+    header_height = table.horizontalHeader().sizeHint().height()
+    frame = 2 * table.frameWidth()
+    scrollbar = table.horizontalScrollBar().sizeHint().height()
+    table.setFixedHeight(rows_height + header_height + frame + scrollbar)
+
+
 def _shift_rrf_parameters(
     parameters: ParameterSet, offsets: dict[str, float], *, sign: int
 ) -> ParameterSet:
@@ -1025,19 +1129,21 @@ class SingleFitTab(QWidget):
         self._model_generation = 0
 
         # Model selection
-        model_group = QGroupBox("Model")
-        model_layout = QFormLayout(model_group)
-        self._formula_label = QLabel()
-        _configure_formula_label(self._formula_label)
+        model_group, model_box = make_section("Model")
+        model_layout = QFormLayout()
+        model_layout.setContentsMargins(0, 0, 0, 0)
+        model_box.addLayout(model_layout)
+        self._formula_box, self._formula_label = _make_formula_box()
         self._edit_model_btn = QPushButton("Edit Function...")
         self._edit_model_btn.clicked.connect(self._edit_function)
         self._fit_wizard_btn = QPushButton("Fit Wizard...")
         self._fit_wizard_btn.clicked.connect(self._open_fit_wizard)
         self._fit_wizard_btn.setEnabled(False)
-        self._share_group_btn = QPushButton("Share Function With Data Group")
+        self._share_group_btn = QPushButton("Share with Group")
+        self._share_group_btn.setToolTip("Share this fit function with the selected data group.")
         self._share_group_btn.clicked.connect(self._on_share_function_with_group)
         self._share_group_btn.setEnabled(False)
-        self._send_to_batch_btn = QPushButton("Send Model to Batch")
+        self._send_to_batch_btn = QPushButton("Send to Batch")
         self._send_to_batch_btn.setToolTip(
             "Copy this fit function into the Batch tab to seed a batch fit over the selected runs."
         )
@@ -1048,54 +1154,41 @@ class SingleFitTab(QWidget):
         )
         self._add_to_series_btn.clicked.connect(self.add_to_series_requested.emit)
 
-        model_button_layout = QGridLayout()
+        # Single column of natural-width buttons. A side-by-side grid forced the
+        # two button columns (~110px each) to set the whole Fit tab's minimum
+        # width; stacking them lets the dock get genuinely narrow on a 13" screen,
+        # and dropping the Expanding policy keeps each button only as wide as its
+        # label needs (left-aligned) instead of stretching to fill the row.
+        model_button_layout = QVBoxLayout()
         model_button_layout.setContentsMargins(0, 0, 0, 0)
-        model_button_layout.setHorizontalSpacing(6)
-        model_button_layout.setVerticalSpacing(6)
-        self._edit_model_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self._fit_wizard_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self._share_group_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self._send_to_batch_btn.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
-        )
-        self._add_to_series_btn.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
-        )
-        model_button_layout.addWidget(self._edit_model_btn, 0, 0)
-        model_button_layout.addWidget(self._fit_wizard_btn, 0, 1)
-        model_button_layout.addWidget(self._share_group_btn, 1, 0, 1, 2)
-        model_button_layout.addWidget(self._send_to_batch_btn, 2, 0)
-        model_button_layout.addWidget(self._add_to_series_btn, 2, 1)
-        model_button_layout.setColumnStretch(0, 1)
-        model_button_layout.setColumnStretch(1, 1)
+        model_button_layout.setSpacing(4)
+        for _model_btn in (
+            self._edit_model_btn,
+            self._fit_wizard_btn,
+            self._share_group_btn,
+            self._send_to_batch_btn,
+            self._add_to_series_btn,
+        ):
+            model_button_layout.addWidget(_model_btn, 0, Qt.AlignmentFlag.AlignLeft)
 
         self._formula_row_label = QLabel("A(t):")
-        model_layout.addRow(self._formula_row_label, self._formula_label)
+        model_layout.addRow(self._formula_row_label, self._formula_box)
         model_layout.addRow("", model_button_layout)
         layout.addWidget(model_group)
 
         # Fit range section
-        fit_range_group = QGroupBox("Fit range")
-        fit_range_layout = QHBoxLayout(fit_range_group)
-        fit_range_layout.setContentsMargins(6, 4, 6, 4)
+        fit_range_group, _fit_range_box = make_section("Fit range")
+        fit_range_layout = QHBoxLayout()
+        fit_range_layout.setContentsMargins(0, 0, 0, 0)
         fit_range_layout.setSpacing(4)
+        _fit_range_box.addLayout(fit_range_layout)
 
-        self._fit_range_min_spin = QDoubleSpinBox()
-        self._fit_range_min_spin.setDecimals(3)
-        self._fit_range_min_spin.setRange(-1000.0, 1000.0)
-        self._fit_range_min_spin.setSingleStep(0.1)
-        self._fit_range_min_spin.setMinimumWidth(90)
-        self._fit_range_min_spin.setFont(mono_font(11.0))
+        self._fit_range_min_spin = _FloatLimitField()
 
         self._fit_range_mid_label = QLabel("≤ <i>t</i> ≤")
         self._fit_range_mid_label.setTextFormat(Qt.TextFormat.RichText)
 
-        self._fit_range_max_spin = QDoubleSpinBox()
-        self._fit_range_max_spin.setDecimals(3)
-        self._fit_range_max_spin.setRange(-1000.0, 1000.0)
-        self._fit_range_max_spin.setSingleStep(0.1)
-        self._fit_range_max_spin.setMinimumWidth(90)
-        self._fit_range_max_spin.setFont(mono_font(11.0))
+        self._fit_range_max_spin = _FloatLimitField()
 
         self._fit_range_unit_label = QLabel("μs")
 
@@ -1110,37 +1203,40 @@ class SingleFitTab(QWidget):
         self._fit_range_max_spin.editingFinished.connect(self._on_fit_range_spinbox_committed)
 
         # Parameter table
-        param_group = QGroupBox("Parameters")
-        param_layout = QVBoxLayout(param_group)
+        param_group, param_layout = make_section("Parameters")
         self._param_table = QTableWidget(0, 7)
         self._param_table.setHorizontalHeaderLabels(
             ["Name", "Value", "Fix", "Min", "Max", "Batch", "Link"]
         )
         self._param_table.horizontalHeader().setStretchLastSection(False)
-        self._param_table.setColumnWidth(0, 80)  # Name
-        self._param_table.setColumnWidth(1, 100)  # Value
-        self._param_table.setColumnWidth(2, 40)  # Fix
-        self._param_table.setColumnWidth(3, 80)  # Min
-        self._param_table.setColumnWidth(4, 80)  # Max
-        self._param_table.setColumnWidth(5, 70)  # Batch role (read-only)
-        self._param_table.setColumnWidth(6, 60)  # Link group (equality tie)
+        # Tight default widths so the table fits a 13" dock without sideways
+        # scrolling in the common case; columns stay user-resizable and the
+        # horizontal scrollbar still appears on demand for wide bounds/roles.
+        self._param_table.setColumnWidth(0, 72)  # Name (incl. unit)
+        self._param_table.setColumnWidth(1, 88)  # Value ± σ
+        self._param_table.setColumnWidth(2, 30)  # Fix
+        self._param_table.setColumnWidth(3, 52)  # Min
+        self._param_table.setColumnWidth(4, 52)  # Max
+        self._param_table.setColumnWidth(5, 50)  # Batch role (read-only)
+        self._param_table.setColumnWidth(6, 40)  # Link group (equality tie)
 
         _apply_param_table_style(self._param_table)
         self._param_table.setItemDelegateForColumn(1, _ValueUncertaintyDelegate(self._param_table))
 
-        # Let the table grow with the dock and scroll when it can't show every
-        # row. A many-parameter model (e.g. the 13-param CdS three-line fit) must
-        # keep all rows reachable; without this the table collapses to a handful
-        # of rows with no scrollbar and the lower parameters become unreachable.
-        self._param_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self._param_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self._param_table.setMinimumHeight(160)
+        # Size the table to its rows (see _size_param_table_to_content). The
+        # inspector dock scrolls vertically, so the table itself never needs an
+        # internal vertical scrollbar; a 13-parameter model just makes the panel
+        # taller. This removes the empty rows a few-parameter model showed when
+        # the table expanded to fill the dock height.
+        self._param_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._param_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # Elide long names on one line rather than wrapping to two rows when the
+        # Name column is narrow (the unit suffix would otherwise wrap).
+        self._param_table.setWordWrap(False)
 
         self._param_table.itemChanged.connect(self._on_param_table_item_changed)
         param_layout.addWidget(self._param_table)
-        # Stretch factor 1 lets the Parameters group claim the dock's free
-        # vertical space ahead of the fixed-height Results group below it.
-        layout.addWidget(param_group, 1)
+        layout.addWidget(param_group)
 
         # Buttons
         btn_layout = QGridLayout()
@@ -1167,7 +1263,7 @@ class SingleFitTab(QWidget):
         )
         self._pull_diagnostic_btn.clicked.connect(self._on_pull_diagnostic)
         self._pull_diagnostic_btn.setEnabled(False)
-        self._minos_checkbox = QCheckBox("Asymmetric errors (MINOS)")
+        self._minos_checkbox = QCheckBox("Asymmetric errors")
         self._minos_checkbox.setToolTip(
             "After fitting, walk the χ² profile of each free parameter to get its "
             "asymmetric +/− 1σ interval (MINOS). Slower than the default symmetric "
@@ -1184,12 +1280,19 @@ class SingleFitTab(QWidget):
         layout.addLayout(btn_layout)
 
         # Results
-        self._results_group = QGroupBox("Fit Results")
+        layout.addWidget(make_section_header("Fit Results"))
+        self._results_group = QFrame()
+        self._results_group.setObjectName(RESULT_BOX_OBJECT_NAME)
+        self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
         results_layout = QVBoxLayout(self._results_group)
         self._result_label = QLabel("No fit performed yet")
         self._result_label.setWordWrap(True)
         results_layout.addWidget(self._result_label)
         layout.addWidget(self._results_group)
+
+        # Spare vertical height pools here, below the results box, instead of
+        # being claimed by an expanding parameter table.
+        layout.addStretch(1)
 
         self._set_composite_model(self._composite_model)
 
@@ -1478,6 +1581,7 @@ class SingleFitTab(QWidget):
         )
         self._updating_fraction_values = False
         self._synchronize_fraction_value_rows()
+        _size_param_table_to_content(self._param_table)
 
     def _synchronize_fraction_value_rows(self, edited_param_name: str | None = None) -> None:
         self._updating_fraction_values = True
@@ -1654,7 +1758,7 @@ class SingleFitTab(QWidget):
         wizard_note = f"Fit Wizard — {assessment.template.title}"
         if assessment.residual_gate_reasons:
             wizard_note += " ⚠"
-        self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
+        self._results_group.setStyleSheet(RESULT_BOX_SUCCESS_STYLE)
         detail = _fit_success_html(result).split("<br>", 1)[1]
         self._result_label.setText(success_html(wizard_note, detail=detail))
 
@@ -1875,7 +1979,7 @@ class SingleFitTab(QWidget):
         )
 
         # Run the fit on a worker thread; the GUI (and Stop button) stay live.
-        self._results_group.setStyleSheet("")
+        self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
         self._result_label.setText("Fitting...")
 
         # Snapshot launch-time context: the user may switch run or model while
@@ -1932,7 +2036,7 @@ class SingleFitTab(QWidget):
         """Handle a cancelled single fit: restore the panel, record nothing."""
         self._set_fit_busy(False)
         self._fit_worker = None
-        self._results_group.setStyleSheet("")
+        self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
         self._result_label.setText("Fit cancelled — no result recorded.")
 
     def _on_single_fit_error(self, message: str) -> None:
@@ -1964,7 +2068,7 @@ class SingleFitTab(QWidget):
         self._fit_worker = None
 
         if not result.success:
-            self._results_group.setStyleSheet("")
+            self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
             self._result_label.setText(f"<b>Fit failed:</b> {result.message}")
             return
 
@@ -1994,7 +2098,7 @@ class SingleFitTab(QWidget):
         )
         dataset_unchanged = self._current_dataset is dataset
 
-        self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
+        self._results_group.setStyleSheet(RESULT_BOX_SUCCESS_STYLE)
         self._result_label.setText(_fit_success_html(result) + rrf_note)
         self._result_label.setToolTip(fit_quality_tooltip(_fit_quality_dict(result)))
 
@@ -2356,52 +2460,44 @@ class GlobalFitTab(QWidget):
         self._group_param_group_specs: list[tuple[object, str]] = []
 
         # Model selection
-        model_group = QGroupBox("Model")
-        model_layout = QFormLayout(model_group)
-        self._formula_label = QLabel()
-        _configure_formula_label(self._formula_label)
+        model_group, model_box = make_section("Model")
+        model_layout = QFormLayout()
+        model_layout.setContentsMargins(0, 0, 0, 0)
+        model_box.addLayout(model_layout)
+        self._formula_box, self._formula_label = _make_formula_box()
         self._edit_model_btn = QPushButton("Edit Function...")
         self._edit_model_btn.clicked.connect(self._edit_function)
-        self._fit_wizard_btn = QPushButton("Global Fit Wizard...")
+        self._fit_wizard_btn = QPushButton("Global Wizard...")
+        self._fit_wizard_btn.setToolTip("Open the Global Fit Wizard.")
         self._fit_wizard_btn.clicked.connect(self._open_fit_wizard)
         self._fit_wizard_btn.setEnabled(False)
-        model_button_layout = QGridLayout()
+        # Single column of natural-width buttons (mirrors SingleFitTab): a
+        # side-by-side grid forced both button columns to set the tab's minimum
+        # width; stacking them left-aligned at natural width lets the Batch tab
+        # get as narrow as the Single tab on a 13" screen.
+        model_button_layout = QVBoxLayout()
         model_button_layout.setContentsMargins(0, 0, 0, 0)
-        model_button_layout.setHorizontalSpacing(6)
-        model_button_layout.setVerticalSpacing(6)
-        self._edit_model_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self._fit_wizard_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        model_button_layout.addWidget(self._edit_model_btn, 0, 0)
-        model_button_layout.addWidget(self._fit_wizard_btn, 0, 1)
-        model_button_layout.setColumnStretch(0, 1)
-        model_button_layout.setColumnStretch(1, 1)
+        model_button_layout.setSpacing(4)
+        for _model_btn in (self._edit_model_btn, self._fit_wizard_btn):
+            model_button_layout.addWidget(_model_btn, 0, Qt.AlignmentFlag.AlignLeft)
         self._formula_row_label = QLabel("A(t):")
-        model_layout.addRow(self._formula_row_label, self._formula_label)
+        model_layout.addRow(self._formula_row_label, self._formula_box)
         model_layout.addRow("", model_button_layout)
         layout.addWidget(model_group)
 
         # Fit range section
-        _fr_group = QGroupBox("Fit range")
-        _fr_layout = QHBoxLayout(_fr_group)
-        _fr_layout.setContentsMargins(6, 4, 6, 4)
+        _fr_group, _fr_box = make_section("Fit range")
+        _fr_layout = QHBoxLayout()
+        _fr_layout.setContentsMargins(0, 0, 0, 0)
         _fr_layout.setSpacing(4)
+        _fr_box.addLayout(_fr_layout)
 
-        self._fit_range_min_spin = QDoubleSpinBox()
-        self._fit_range_min_spin.setDecimals(3)
-        self._fit_range_min_spin.setRange(-1000.0, 1000.0)
-        self._fit_range_min_spin.setSingleStep(0.1)
-        self._fit_range_min_spin.setMinimumWidth(90)
-        self._fit_range_min_spin.setFont(mono_font(11.0))
+        self._fit_range_min_spin = _FloatLimitField()
 
         self._fit_range_mid_label = QLabel("≤ <i>t</i> ≤")
         self._fit_range_mid_label.setTextFormat(Qt.TextFormat.RichText)
 
-        self._fit_range_max_spin = QDoubleSpinBox()
-        self._fit_range_max_spin.setDecimals(3)
-        self._fit_range_max_spin.setRange(-1000.0, 1000.0)
-        self._fit_range_max_spin.setSingleStep(0.1)
-        self._fit_range_max_spin.setMinimumWidth(90)
-        self._fit_range_max_spin.setFont(mono_font(11.0))
+        self._fit_range_max_spin = _FloatLimitField()
 
         _fr_layout.addWidget(self._fit_range_min_spin)
         _fr_layout.addWidget(self._fit_range_mid_label)
@@ -2415,8 +2511,7 @@ class GlobalFitTab(QWidget):
         self._fit_range_max_spin.editingFinished.connect(self._on_fit_range_spinbox_committed)
 
         # Parameter classification table
-        self._param_group = QGroupBox("Parameter Classification")
-        param_layout = QVBoxLayout(self._param_group)
+        self._param_group, param_layout = make_section("Parameter Classification")
 
         param_header_layout = QHBoxLayout()
         param_header_layout.addStretch()
@@ -2430,11 +2525,17 @@ class GlobalFitTab(QWidget):
         self._param_table = QTableWidget(0, 4)
         self._param_table.setHorizontalHeaderLabels(["Parameter", "Value", "Type", "Bounds"])
         self._param_table.horizontalHeader().setStretchLastSection(False)
-        self._param_table.setColumnWidth(0, 80)  # Parameter name
-        self._param_table.setColumnWidth(1, 80)  # Initial value
-        self._param_table.setColumnWidth(2, 100)  # Type (dropdown)
-        self._param_table.setColumnWidth(3, 150)  # Bounds
+        self._param_table.setColumnWidth(0, 64)  # Parameter name
+        self._param_table.setColumnWidth(1, 76)  # Initial value
+        self._param_table.setColumnWidth(2, 86)  # Type (dropdown)
+        self._param_table.setColumnWidth(3, 104)  # Bounds
         _apply_param_table_style(self._param_table)
+        # Size to content (see _size_param_table_to_content): the dock scrolls
+        # vertically as a whole, so the table shows all rows with no internal
+        # scrollbar or empty rows.
+        self._param_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._param_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._param_table.setWordWrap(False)
         self._param_table.itemChanged.connect(self._on_param_table_item_changed)
         param_layout.addWidget(self._param_table)
         layout.addWidget(self._param_group)
@@ -2444,16 +2545,20 @@ class GlobalFitTab(QWidget):
         self._grouped_context_label.hide()
         layout.addWidget(self._grouped_context_label)
 
-        self._group_param_group = QGroupBox("Per-Group Parameters")
-        group_param_layout = QVBoxLayout(self._group_param_group)
+        self._group_param_group, group_param_layout = make_section("Per-Group Parameters")
         self._group_param_table = QTableWidget(0, 4)
         self._group_param_table.setHorizontalHeaderLabels(["Parameter", "Value", "Type", "Bounds"])
         self._group_param_table.horizontalHeader().setStretchLastSection(False)
-        self._group_param_table.setColumnWidth(0, 110)
-        self._group_param_table.setColumnWidth(1, 90)
-        self._group_param_table.setColumnWidth(2, 100)
-        self._group_param_table.setColumnWidth(3, 150)
+        self._group_param_table.setColumnWidth(0, 92)
+        self._group_param_table.setColumnWidth(1, 78)
+        self._group_param_table.setColumnWidth(2, 86)
+        self._group_param_table.setColumnWidth(3, 104)
         _apply_param_table_style(self._group_param_table)
+        self._group_param_table.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        self._group_param_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._group_param_table.setWordWrap(False)
         self._group_param_table.itemChanged.connect(self._on_group_param_item_changed)
         group_param_layout.addWidget(self._group_param_table)
         group_param_button_layout = QHBoxLayout()
@@ -2465,30 +2570,37 @@ class GlobalFitTab(QWidget):
         group_param_layout.addLayout(group_param_button_layout)
         layout.addWidget(self._group_param_group)
 
-        self._group_model_group = QGroupBox("Fit-Function Parameters")
-        group_model_layout = QVBoxLayout(self._group_model_group)
+        self._group_model_group, group_model_layout = make_section("Fit-Function Parameters")
         self._group_model_table = QTableWidget(0, 4)
         self._group_model_table.setHorizontalHeaderLabels(["Parameter", "Value", "Type", "Bounds"])
         self._group_model_table.horizontalHeader().setStretchLastSection(False)
-        self._group_model_table.setColumnWidth(0, 110)
-        self._group_model_table.setColumnWidth(1, 90)
-        self._group_model_table.setColumnWidth(2, 100)
-        self._group_model_table.setColumnWidth(3, 150)
+        self._group_model_table.setColumnWidth(0, 92)
+        self._group_model_table.setColumnWidth(1, 78)
+        self._group_model_table.setColumnWidth(2, 86)
+        self._group_model_table.setColumnWidth(3, 104)
         _apply_param_table_style(self._group_model_table)
+        self._group_model_table.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        self._group_model_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._group_model_table.setWordWrap(False)
         self._group_model_table.itemChanged.connect(self._on_group_model_table_item_changed)
         group_model_layout.addWidget(self._group_model_table)
         layout.addWidget(self._group_model_group)
 
         # In-batch co-add (WiMDA BatchFit Smooth/Bin): co-add successive members
         # through combine_runs before each series fit. Grouped-series mode only.
-        self._coadd_group = QGroupBox("Co-add members")
-        coadd_layout = QHBoxLayout(self._coadd_group)
-        coadd_layout.setContentsMargins(6, 4, 6, 4)
+        self._coadd_group, _coadd_box = make_section("Co-add members")
+        coadd_layout = QHBoxLayout()
+        coadd_layout.setContentsMargins(0, 0, 0, 0)
         coadd_layout.setSpacing(6)
+        _coadd_box.addLayout(coadd_layout)
         self._coadd_mode_combo = QComboBox()
+        # Short labels (the tooltip below spells out Bin vs Smooth) so the row
+        # does not set the Batch tab's minimum width past the other Fit tabs.
         self._coadd_mode_combo.addItem("Off", "off")
-        self._coadd_mode_combo.addItem("Bin (step N)", "bin")
-        self._coadd_mode_combo.addItem("Smooth (sliding)", "smooth")
+        self._coadd_mode_combo.addItem("Bin", "bin")
+        self._coadd_mode_combo.addItem("Smooth", "smooth")
         self._coadd_mode_combo.setToolTip(
             "Co-add successive runs before fitting (WiMDA Smooth/Bin):\n"
             "• Bin — non-overlapping windows, one combined fit per N runs.\n"
@@ -2511,40 +2623,49 @@ class GlobalFitTab(QWidget):
         self._coadd_group.hide()
         layout.addWidget(self._coadd_group)
 
-        # Fit button
-        btn_layout = QHBoxLayout()
+        # Fit buttons. A single-row HBox of these long-labelled actions
+        # ("Run Batch Fit" + "Preview" + "Initial Values..." + the checkbox) set
+        # the Batch tab's minimum width far past the Single tab; a compact grid
+        # (mirroring SingleFitTab) keeps the widest row to two buttons.
+        btn_layout = QGridLayout()
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_layout.setHorizontalSpacing(6)
+        btn_layout.setVerticalSpacing(6)
         self._fit_btn = QPushButton("Run Batch Fit")
         self._fit_btn.setStyleSheet(build_primary_button_qss())
         self._fit_btn.clicked.connect(self._run_global_fit)
         self._fit_btn.setEnabled(False)
-        btn_layout.addWidget(self._fit_btn)
         # Stop replaces the disabled Fit button while a worker-based fit runs.
         self._stop_btn = QPushButton("Stop")
         self._stop_btn.setToolTip("Cancel the running fit; no partial result is recorded.")
         self._stop_btn.clicked.connect(self._on_stop_fit)
         self._stop_btn.hide()
-        btn_layout.addWidget(self._stop_btn)
         self._preview_btn = QPushButton("Preview")
         self._preview_btn.clicked.connect(self._on_preview_requested)
         self._preview_btn.setEnabled(False)
-        btn_layout.addWidget(self._preview_btn)
         self._initial_values_btn = QPushButton("Initial Values...")
         self._initial_values_btn.setToolTip(
             "Edit per-member initial parameter values (per run, or per run/group for grouped fits)."
         )
         self._initial_values_btn.clicked.connect(self._open_initial_values_dialog)
-        btn_layout.addWidget(self._initial_values_btn)
-        self._minos_checkbox = QCheckBox("Asymmetric errors (MINOS)")
+        self._minos_checkbox = QCheckBox("Asymmetric errors")
         self._minos_checkbox.setToolTip(
             "After fitting, report asymmetric +/− 1σ MINOS intervals (slower; most "
             "useful at low statistics or near parameter bounds)."
         )
-        btn_layout.addWidget(self._minos_checkbox)
-        btn_layout.addStretch()
+        btn_layout.addWidget(self._fit_btn, 0, 0)
+        btn_layout.addWidget(self._stop_btn, 0, 0)
+        btn_layout.addWidget(self._preview_btn, 0, 1)
+        btn_layout.addWidget(self._initial_values_btn, 1, 0, 1, 2)
+        btn_layout.addWidget(self._minos_checkbox, 2, 0, 1, 2)
+        btn_layout.setColumnStretch(2, 1)
         layout.addLayout(btn_layout)
 
         # Results display
-        self._results_group = QGroupBox("Batch Fit Results")
+        layout.addWidget(make_section_header("Batch Fit Results"))
+        self._results_group = QFrame()
+        self._results_group.setObjectName(RESULT_BOX_OBJECT_NAME)
+        self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
         results_layout = QVBoxLayout(self._results_group)
         self._result_text = QTextEdit()
         self._result_text.setReadOnly(True)
@@ -3218,6 +3339,7 @@ class GlobalFitTab(QWidget):
             bounds_column=3,
             type_column=2,
         )
+        _size_param_table_to_content(self._param_table)
         self._rebuild_grouped_model_table(grouped_model_state)
         self._updating_fraction_values = False
         self._synchronize_fraction_value_rows()
@@ -3961,7 +4083,7 @@ class GlobalFitTab(QWidget):
         )
         before = next(iter(change["before"].values()), 0.0)
         after = next(iter(change["after"].values()), 0.0)
-        self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
+        self._results_group.setStyleSheet(RESULT_BOX_SUCCESS_STYLE)
         self._result_text.setHtml(
             success_html(
                 "Deadtime promoted to grouping",
@@ -4168,7 +4290,7 @@ class GlobalFitTab(QWidget):
     def _on_count_fit_error(self, message: str) -> None:
         self._set_series_busy(False)
         self._count_fit_worker = None
-        self._results_group.setStyleSheet("")
+        self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
         self._result_text.setHtml(error_html(f"Count-domain fit failed: {message}"))
 
     def _on_count_fit_cancelled(self) -> None:
@@ -4181,7 +4303,7 @@ class GlobalFitTab(QWidget):
     ) -> None:
         cost = cost if cost is not None else self._count_fit_cost
         if not result.success:
-            self._results_group.setStyleSheet("")
+            self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
             self._result_text.setHtml(error_html(result.message or "Forward/backward fit failed"))
             return
         fwd = result.group_results[forward]
@@ -4195,7 +4317,7 @@ class GlobalFitTab(QWidget):
             f"α = {self._fmt_value(alpha, alpha_err)} · χ²/ν = {fwd.reduced_chi_squared:.4f}{chip} "
             f"(cost: {cost})<br>" + "<br>".join(rows)
         )
-        self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
+        self._results_group.setStyleSheet(RESULT_BOX_SUCCESS_STYLE)
         self._result_text.setHtml(
             success_html(f"Forward/backward fit · groups {forward}/{backward}", detail=detail)
         )
@@ -4220,14 +4342,14 @@ class GlobalFitTab(QWidget):
         cost = cost if cost is not None else self._count_fit_cost
         side = side if side is not None else self._count_single_side
         if not result.success:
-            self._results_group.setStyleSheet("")
+            self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
             self._result_text.setHtml(error_html(result.message or "Single-histogram fit failed"))
             return
         self._store_count_deadtime(result, group_id)
         self._store_count_single_extras(dataset, result, group_id)
         rows = [self._count_param_row(result, name) for name in result.parameters.names]
         detail = f"χ²/ν = {result.reduced_chi_squared:.4f} (cost: {cost})<br>" + "<br>".join(rows)
-        self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
+        self._results_group.setStyleSheet(RESULT_BOX_SUCCESS_STYLE)
         self._result_text.setHtml(
             success_html(
                 f"Single-histogram fit · group {group_id} ({side})",
@@ -4466,7 +4588,7 @@ class GlobalFitTab(QWidget):
 
     def _announce_promote(self, title: str, detail: str) -> None:
         """Render a success banner for a calibration promote and notify the host."""
-        self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
+        self._results_group.setStyleSheet(RESULT_BOX_SUCCESS_STYLE)
         self._result_text.setHtml(success_html(title, detail=detail))
         if self._current_dataset is not None:
             self.count_grouping_promoted.emit(self._current_dataset)
@@ -4559,7 +4681,7 @@ class GlobalFitTab(QWidget):
         """Handle a cancelled series fit: restore the panel, record nothing."""
         self._set_series_busy(False)
         self._fit_worker = None
-        self._results_group.setStyleSheet("")
+        self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
         self._result_text.setText("Fit cancelled — no result recorded.")
 
     @staticmethod
@@ -4696,7 +4818,7 @@ class GlobalFitTab(QWidget):
         seeding_reason = getattr(series_result, "seeding_reason", "")
         if seeding_reason:
             stats += f"<br>Seeding: {seeding_reason}"
-        self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
+        self._results_group.setStyleSheet(RESULT_BOX_SUCCESS_STYLE)
         self._result_text.setHtml(success_html("Grouped series fit converged", detail=stats))
         self.grouped_fit_completed.emit(grouped_datasets, results_with_curves)
 
@@ -4846,7 +4968,7 @@ class GlobalFitTab(QWidget):
         avg_red_chi2 = sum(r.reduced_chi_squared for r in results_dict.values()) / n_datasets
         npar = len(global_param_names)
         stats = f"avg χ²/ν = {avg_red_chi2:.4f} · {n_datasets} datasets · npar = {npar}"
-        self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
+        self._results_group.setStyleSheet(RESULT_BOX_SUCCESS_STYLE)
         self._result_text.setHtml(success_html("Batch fit converged", detail=stats))
 
     def _results_with_curves(
@@ -5067,7 +5189,7 @@ class GlobalFitTab(QWidget):
             failed = [run for run, r in results_dict.items() if not r.success]
             run_label_by_number = {ds.run_number: ds.run_label for ds in self._datasets}
             failed_labels = [run_label_by_number.get(run, str(run)) for run in failed]
-            self._results_group.setStyleSheet("")
+            self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
             self._result_text.setText(
                 f"<b>Batch fit failed</b><br>Failed datasets: {failed_labels}"
             )
@@ -5077,7 +5199,7 @@ class GlobalFitTab(QWidget):
         self._set_series_busy(False)
         self._fit_worker = None
         self._update_mode_ui(preserve_result=True)
-        self._results_group.setStyleSheet("")
+        self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
         mode_label = "grouped fit" if self.is_grouped_time_domain_mode() else "global fit"
         self._result_text.setText(f"<b>Error during {mode_label}:</b><br>{error_msg}")
 
@@ -5275,7 +5397,7 @@ class GlobalFitTab(QWidget):
         )
         n_shared = len(grouped_result.shared_parameters)
         stats = f"{n_groups} groups · avg χ²/ν = {avg_red_chi2:.4f} · shared = {n_shared}"
-        self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
+        self._results_group.setStyleSheet(RESULT_BOX_SUCCESS_STYLE)
         self._result_text.setHtml(success_html("Grouped fit converged", detail=stats))
         self.grouped_fit_completed.emit(grouped_datasets, results_with_curves)
 
@@ -5805,11 +5927,11 @@ class GlobalFitTab(QWidget):
         self._group_param_table.setHorizontalHeaderLabels(
             ["Parameter", *value_headers, "Type", "Bounds"]
         )
-        self._group_param_table.setColumnWidth(0, 110)
+        self._group_param_table.setColumnWidth(0, 92)
         for offset in range(len(value_headers)):
-            self._group_param_table.setColumnWidth(1 + offset, 90)
-        self._group_param_table.setColumnWidth(self._group_param_type_column(), 100)
-        self._group_param_table.setColumnWidth(self._group_param_bounds_column(), 150)
+            self._group_param_table.setColumnWidth(1 + offset, 78)
+        self._group_param_table.setColumnWidth(self._group_param_type_column(), 86)
+        self._group_param_table.setColumnWidth(self._group_param_bounds_column(), 104)
         self._group_param_table.setRowCount(len(GROUP_NUISANCE_PARAMS))
 
         n0_defaults_by_group: dict[str, float] = {}
@@ -5878,6 +6000,7 @@ class GlobalFitTab(QWidget):
             )
             self._sync_group_param_row_values(row)
         self._group_param_table.blockSignals(previous_signal_state)
+        _size_param_table_to_content(self._group_param_table)
 
     def _sync_group_param_row_values(self, row: int, edited_column: int | None = None) -> None:
         if self._updating_group_param_values:
@@ -5965,6 +6088,7 @@ class GlobalFitTab(QWidget):
         )
         self._updating_group_model_fraction_values = False
         self._synchronize_grouped_model_fraction_rows()
+        _size_param_table_to_content(self._group_model_table)
 
     def _parse_grouped_parameter_configuration(self) -> dict[str, object]:
         global_params: list[str] = []
@@ -6247,6 +6371,20 @@ class GlobalFitTab(QWidget):
         )
 
 
+class _CurrentPageTabWidget(CurrentPageSizingMixin, QTabWidget):
+    """A QTabWidget sized by its *current* tab, not the maximum over all tabs.
+
+    A plain QTabWidget reports the largest size hint across every page, so the
+    wide Batch tab would impose its width on the dock even while the compact
+    Single tab is showing — forcing the inspector scroll area to scroll
+    horizontally (a second scrollbar on top of the parameter table's own).
+    Sizing to the visible tab (plus the tab bar) lets the dock follow it.
+    """
+
+    def _page_extra(self) -> QSize:
+        return self.tabBar().sizeHint()
+
+
 class FitPanel(QWidget):
     """Fit setup and results panel with tabbed interface.
 
@@ -6284,8 +6422,10 @@ class FitPanel(QWidget):
         self._global_state_by_domain: dict[str, dict] = {}
         self._ui_state_by_domain: dict[str, dict] = {}
 
-        # Create tab widget
-        self._tabs = QTabWidget()
+        # Create tab widget (sized to the visible tab so the wide Batch tab
+        # doesn't force the dock — and a window-level horizontal scrollbar —
+        # while the compact Single tab is showing).
+        self._tabs = _CurrentPageTabWidget()
 
         # Single fit tab
         self._single_tab = SingleFitTab()

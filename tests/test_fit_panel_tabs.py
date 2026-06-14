@@ -2053,7 +2053,19 @@ def test_formula_label_shows_raw_formula_and_tooltip(qapp: QApplication) -> None
 
     tab._set_composite_model(model)
 
-    assert tab._formula_label.text() == model.formula_string()
+    # The visible text carries invisible break markers (a ZWSP break point at
+    # top-level operators, a word joiner forbidding breaks everywhere else, and
+    # non-breaking spaces) so the box wraps only between functions; with those
+    # stripped, the text and the tooltip both round-trip to the raw formula.
+    from asymmetry.gui.styles.widgets import _FORMULA_BREAK, _FORMULA_JOIN
+
+    visible = (
+        tab._formula_label.text()
+        .replace(_FORMULA_BREAK, "")
+        .replace(_FORMULA_JOIN, "")
+        .replace("\u00a0", " ")
+    )
+    assert visible == model.formula_string()
     assert tab._formula_label.toolTip() == model.formula_string()
 
 
@@ -3072,10 +3084,16 @@ def test_many_parameter_model_keeps_every_row_reachable(qapp: QApplication) -> N
     tab._param_table.item(last_row, 1).setText("3.5")
     assert float(tab._param_table.item(last_row, 1).text()) == pytest.approx(3.5)
 
-    # The table is configured to scroll rather than clip: it grows with the
-    # dock and shows a scrollbar on demand instead of suppressing it.
-    assert tab._param_table.verticalScrollBarPolicy() != Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-    assert tab._param_table.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Expanding
+    # Reachability now comes from sizing the table to its content so every row
+    # is rendered (no internal clipping) while the inspector dock scrolls
+    # vertically — not from an internal table scrollbar. The fixed height must
+    # cover all 13 rows plus the header.
+    tab.show()
+    qapp.processEvents()
+    table = tab._param_table
+    assert table.height() >= table.verticalHeader().length() + table.horizontalHeader().height()
+    assert table.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    assert table.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Fixed
 
 
 def _set_row_link_group(tab: SingleFitTab, param_name: str, group: int | None) -> None:

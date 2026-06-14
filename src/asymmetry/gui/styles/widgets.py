@@ -10,33 +10,85 @@ from typing import Literal
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QGroupBox, QLabel, QPushButton, QSizePolicy, QTableWidget
+from PySide6.QtWidgets import (
+    QFrame,
+    QLabel,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QTableWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
-from asymmetry.gui.styles.typography import header_font
+from asymmetry.gui.styles.typography import header_font, section_label_font
 
-# ── Result group ──────────────────────────────────────────────────────────────
+# ── Flat section header ───────────────────────────────────────────────────────
 
-RESULTS_GROUP_SUCCESS_STYLE = (
-    "QGroupBox {"
-    f" background-color: {tokens.SUCCESS_BG};"
-    f" border: 1px solid {tokens.SUCCESS_BORDER};"
+#: objectName used to scope flat section-header QSS without touching other labels.
+SECTION_HEADER_OBJECT_NAME = "benchSectionHeader"
+
+
+def make_section_header(text: str) -> QLabel:
+    """Return a flat uppercase BENCH section-header label.
+
+    The inspector tabs (Fit, Parameters, Multi-group fit) introduce each block
+    with one of these instead of wrapping it in a QGroupBox — the design
+    handoff's "BSection": 9.5pt bold, +0.4px tracking, muted grey, uppercased.
+
+    Qt QSS ``text-transform`` is unreliable across platforms, so the text is
+    uppercased here in Python.
+    """
+    label = QLabel(text.upper())
+    label.setObjectName(SECTION_HEADER_OBJECT_NAME)
+    label.setFont(section_label_font())
+    label.setStyleSheet(f"QLabel {{ color: {tokens.TEXT_MUTED}; }}")
+    return label
+
+
+def make_section(title: str) -> tuple[QWidget, QVBoxLayout]:
+    """Return a ``(section widget, content layout)`` pair for a flat dock section.
+
+    The widget holds a :func:`make_section_header` followed by an empty,
+    margin-free content area. Add content to the returned layout (a widget, or a
+    sub-layout via ``addLayout`` for form/row content) and add the widget to the
+    parent layout. Because the header lives inside the widget, hiding the widget
+    hides its header too. Replaces the repeated
+    ``header + QWidget + zero-margin layout`` idiom across the inspector tabs.
+    """
+    container = QWidget()
+    layout = QVBoxLayout(container)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(4)
+    layout.addWidget(make_section_header(title))
+    return container, layout
+
+
+# ── Result box ────────────────────────────────────────────────────────────────
+
+#: objectName on the result-box QFrame so the tint rules below never cascade
+#: onto the child result label.
+RESULT_BOX_OBJECT_NAME = "benchResultBox"
+
+#: Neutral (no fit yet / cleared) result box — plain surface with a 1px border.
+RESULT_BOX_NEUTRAL_STYLE = (
+    f"QFrame#{RESULT_BOX_OBJECT_NAME} {{"
+    f" background-color: {tokens.SURFACE};"
+    f" border: 1px solid {tokens.BORDER};"
     " border-radius: 4px;"
-    " margin-top: 10px;"
     "}"
 )
 
-
-def apply_results_group_success(group: QGroupBox) -> None:
-    """Apply green-tint success style to a results QGroupBox."""
-    group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
-
-
-def clear_results_group_style(group: QGroupBox) -> None:
-    """Remove any inline style from a results QGroupBox (revert to bench.qss default)."""
-    group.setStyleSheet("")
-
+#: Converged result box — green success tint, matching the handoff's converged box.
+RESULT_BOX_SUCCESS_STYLE = (
+    f"QFrame#{RESULT_BOX_OBJECT_NAME} {{"
+    f" background-color: {tokens.SUCCESS_BG};"
+    f" border: 1px solid {tokens.SUCCESS_BORDER};"
+    " border-radius: 4px;"
+    "}"
+)
 
 # ── Table style ───────────────────────────────────────────────────────────────
 
@@ -61,19 +113,149 @@ def apply_param_table_style(table: QTableWidget) -> None:
 # ── Formula label ─────────────────────────────────────────────────────────────
 
 
+#: Zero-width space — an allowed line-break point (after a top-level operator).
+_FORMULA_BREAK = "​"
+#: Word joiner — forbids a line break at this position.
+_FORMULA_JOIN = "⁠"
+
+
+def insert_formula_break_points(formula: str) -> str:
+    """Return ``formula`` with line-break opportunities only at top-level operators.
+
+    A fit-function expression should wrap where ``*``/``+``/``-`` *combine
+    different functions* (e.g. ``cos(...) * exp(...) + A_bg``) but never inside a
+    function's arguments (``cos(2*pi*f*t + phi)``, ``exp(-(Delta^2/nu^2)*...)``) or
+    between a coefficient and its function (``A_1*cos(...)``). Those joining
+    operators are exactly the ones at parenthesis depth 0 *with* surrounding
+    spaces.
+
+    Qt's line breaker would otherwise also break at ``/``, ``-``, ``)`` etc. inside
+    a tightly-packed argument, so a WORD JOINER is inserted between *every* adjacent
+    pair to forbid breaks, and a ZERO-WIDTH SPACE replaces it only at the chosen
+    top-level operators. The result wraps only between functions; a single function
+    wider than the box scrolls horizontally instead of breaking.
+    """
+
+    def _is_token_char(ch: str) -> bool:
+        # Letters, digits and underscore form a name (exp, Lambda, A_1, 2*pi);
+        # Qt never breaks inside such a run, so no joiner is needed between two
+        # of them — which keeps whole names searchable in the visible text.
+        return ch.isalnum() or ch == "_"
+
+    out: list[str] = []
+    depth = 0
+    length = len(formula)
+    for index, char in enumerate(formula):
+        # Spaces become non-breaking; the only place a line may break is the
+        # explicit ZWSP inserted after a top-level operator below.
+        out.append("\u00a0" if char == " " else char)
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth = max(0, depth - 1)
+        if index == length - 1:
+            continue
+        nxt = formula[index + 1]
+        is_top_level_join = (
+            depth == 0
+            and index > 0  # guard: index-0 would read formula[-1] (the last char)
+            and char in "*+-"
+            and formula[index - 1] == " "
+            and nxt == " "
+        )
+        if is_top_level_join:
+            out.append(_FORMULA_BREAK)
+        elif not (_is_token_char(char) and _is_token_char(nxt)):
+            # A boundary touching an operator/parenthesis is where Qt would
+            # otherwise break (after '/', '-', ')', ...); forbid it.
+            out.append(_FORMULA_JOIN)
+    return "".join(out)
+
+
 def configure_formula_label(label: QLabel) -> None:
-    """Style a QLabel as a read-only mono code-box for formula display."""
+    """Configure the inner QLabel of a :class:`FormulaBox` (or a bare code-box).
+
+    The label is transparent — the code-box border/background lives on the
+    surrounding scroll area, so the domain-mismatch warning (which sets the
+    label's stylesheet to recolour the text) cannot clobber the box chrome. Word
+    wrap is on, but :func:`insert_formula_break_points` restricts where it may
+    actually break.
+    """
     label.setFont(mono_font(11.0))
     label.setWordWrap(True)
     label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
     label.setTextFormat(Qt.TextFormat.PlainText)
-    label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.MinimumExpanding)
-    label.setStyleSheet(
-        f"QLabel {{ background-color: {tokens.SURFACE_ALT}; border: 1px solid {tokens.BORDER};"
-        " border-radius: 3px; padding: 6px 8px; }"
-    )
-    line_height = label.fontMetrics().lineSpacing()
-    label.setMinimumHeight(line_height * 3 + 16)
+    label.setContentsMargins(6, 4, 6, 4)
+    label.setStyleSheet("QLabel { background: transparent; }")
+
+
+class FormulaBox(QScrollArea):
+    """A code-box for a fit-function expression.
+
+    Wraps the expression only at the top-level operators joining its terms (see
+    :func:`insert_formula_break_points`), keeps each function and its arguments
+    intact, scrolls horizontally when a single function is wider than the box,
+    and sizes its height to the wrapped content (the inspector dock scrolls
+    vertically for a very tall expression). Set the text via :meth:`set_formula`;
+    ``self.label`` stays a plain QLabel so ``text()``/``toolTip()`` and the
+    domain-mismatch warning keep working.
+    """
+
+    def __init__(self, parent: QLabel | None = None) -> None:
+        super().__init__(parent)
+        self.label = QLabel()
+        configure_formula_label(self.label)
+        self.label._formula_box = self  # back-ref so text setters can re-measure
+        self.setObjectName("formulaBox")
+        self.setWidget(self.label)
+        self.setWidgetResizable(True)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setStyleSheet(
+            f"QScrollArea#formulaBox {{ background-color: {tokens.SURFACE_ALT};"
+            f" border: 1px solid {tokens.BORDER}; border-radius: 3px; }}"
+            " QScrollArea#formulaBox > QWidget > QWidget { background: transparent; }"
+        )
+        self.refresh_height()
+
+    def set_formula(self, formula: str) -> None:
+        """Display ``formula`` (break-marked) and keep the raw text in the tooltip."""
+        raw = str(formula)
+        self.label.setText(insert_formula_break_points(raw))
+        self.label.setToolTip(raw)
+        self.refresh_height()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 — Qt override
+        super().resizeEvent(event)
+        self.refresh_height()
+
+    def refresh_height(self) -> None:
+        """Resize the box to fit the wrapped content at the current width."""
+        viewport_width = max(1, self.viewport().width())
+        segment_width = self.label.minimumSizeHint().width()  # widest unbreakable run
+        content_width = max(viewport_width, segment_width)
+        if self.label.hasHeightForWidth():
+            text_height = self.label.heightForWidth(content_width)
+        else:
+            text_height = self.label.sizeHint().height()
+        scrollbar = (
+            self.horizontalScrollBar().sizeHint().height() if segment_width > viewport_width else 0
+        )
+        line = self.label.fontMetrics().lineSpacing()
+        self.setFixedHeight(max(text_height, line) + scrollbar + 2 * self.frameWidth() + 6)
+
+
+def make_formula_box() -> tuple[FormulaBox, QLabel]:
+    """Return a ``(box, label)`` pair for displaying a fit-function formula.
+
+    Add ``box`` to the layout; keep ``label`` for the formula text-setter and the
+    domain-mismatch warning (both go through the label, which re-measures the box
+    via its back-reference).
+    """
+    box = FormulaBox()
+    return box, box.label
 
 
 # ── Table header font ─────────────────────────────────────────────────────────

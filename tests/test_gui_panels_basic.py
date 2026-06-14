@@ -58,7 +58,7 @@ def test_fourier_panel_defaults(qapp: QApplication) -> None:
     assert panel._subtract_average_signal_check.isChecked() is True
     assert panel._subtract_average_signal_check.text() == "Subtract average signal"
     assert panel._auto_method_combo.currentText() == "Peak"
-    assert panel._auto_phase_btn.text() == "Fill Phase Estimates"
+    assert panel._auto_phase_btn.text() == "Fill phases"
     assert panel._estimate_average_error_check.text() == "Average errors"
     assert panel._estimate_average_error_check.toolTip() == "Estimate errors for averaged spectra."
     assert "#1f4d8a" in panel._phase_opt_real_radio.styleSheet()
