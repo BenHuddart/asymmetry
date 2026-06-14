@@ -81,7 +81,11 @@ from asymmetry.core.fourier import (
 )
 from asymmetry.core.fourier.moments import moments_trend_row, spectrum_moments
 from asymmetry.core.fourier.units import FieldUnit, convert
-from asymmetry.core.instrument import PROJECTION_TINTS, derive_projection_pairs
+from asymmetry.core.instrument import (
+    PROJECTION_TINTS,
+    TRANSVERSE_PROJECTION_TINTS,
+    derive_projection_pairs,
+)
 from asymmetry.core.io import resolve_background_reference
 from asymmetry.core.io.periods import (
     combine_mapped_periods,
@@ -1751,7 +1755,8 @@ class MainWindow(QMainWindow):
         """Return ordered ``[{"label", "tint"}]`` specs for *pairs*.
 
         Tints come from the dataset's declared projections when present, else
-        the canonical :data:`PROJECTION_TINTS` fallback by label.
+        the canonical :data:`PROJECTION_TINTS` / transverse-field
+        :data:`TRANSVERSE_PROJECTION_TINTS` fallback by label.
         """
         tint_by_label: dict[str, str] = {}
         run = getattr(dataset, "run", None)
@@ -1764,7 +1769,11 @@ class MainWindow(QMainWindow):
         specs: list[dict] = []
         for label in pairs:
             spec: dict = {"label": label}
-            tint = tint_by_label.get(label) or PROJECTION_TINTS.get(label)
+            tint = (
+                tint_by_label.get(label)
+                or PROJECTION_TINTS.get(label)
+                or TRANSVERSE_PROJECTION_TINTS.get(label)
+            )
             if tint:
                 spec["tint"] = tint
             specs.append(spec)
