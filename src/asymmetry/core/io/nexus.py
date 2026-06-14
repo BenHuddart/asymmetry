@@ -977,9 +977,16 @@ class NexusLoader(BaseLoader):
         (e.g. CdS parks at 1 K while the sample sits near 5 K). The series mean
         over the run is used as the representative value. Returns ``None`` when
         no usable logged series is present.
+
+        The ``Temp_Sample`` block can appear at different depths depending on
+        the file convention: flat as ``sample/Temp_Sample`` (NXlog directly on
+        the block group) or, on ISIS selog files, as
+        ``selog/Temp_Sample/value_log`` (the NXlog is a ``value_log`` subgroup).
+        Match the block name anywhere in the path so both are found.
         """
         for path, entry in time_series.items():
-            if str(path).rsplit("/", 1)[-1].lower() != "temp_sample":
+            segments = {segment.lower() for segment in str(path).split("/")}
+            if "temp_sample" not in segments:
                 continue
             mean = entry.get("mean")
             if mean is not None and np.isfinite(mean):
