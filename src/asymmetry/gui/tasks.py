@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PySide6.QtCore import QCoreApplication, QObject, QThread, Qt, Signal
+from PySide6.QtCore import QCoreApplication, QObject, Qt, QThread, Signal
 
 
 class TaskCancelledError(Exception):
