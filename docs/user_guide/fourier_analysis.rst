@@ -234,11 +234,22 @@ Engine API
 
 .. warning::
 
+   **Pass** ``dataset.run``\ **, not the dataset.** ``maxent()`` operates on a
+   :class:`~asymmetry.core.data.Run` — the raw-histogram object — *not* on the
+   :class:`~asymmetry.core.data.dataset.MuonDataset` that ``load()`` returns.
+   The dataset exposes the required ``Run`` as its ``.run`` attribute, so the
+   call is ``maxent(dataset.run, config)``. Passing the ``MuonDataset`` itself
+   fails with ``AttributeError: 'MuonDataset' object has no attribute
+   'grouping'``.
+
+.. warning::
+
    ``MaxEntConfig`` is a dataclass whose **first** positional field is
    ``n_spectrum_points`` — *not* ``f_min_mhz``. Always construct it with
    **keyword arguments**. A positional call such as ``MaxEntConfig(0.0, 5.0)``
    silently misconfigures the run, binding your intended frequency bounds to
-   the wrong fields rather than raising an error.
+   the wrong fields rather than raising an error. The time-window fields are
+   ``t_min_us`` / ``t_max_us`` (microseconds), not ``t_min`` / ``t_max``.
 
 ``maxent(run, config, *, cycles=None, state=None, ...)`` returns a
 ``MaxEntResult`` with:

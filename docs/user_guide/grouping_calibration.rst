@@ -126,6 +126,78 @@ and have every run share the same definition.
    that sample before trusting the asymmetry. The auto-applied value is a
    convenience, not a measurement of the new sample.
 
+Recomputing asymmetry from the API (custom grouping and α)
+----------------------------------------------------------
+
+Everything the Grouping window does is also reachable from the core API, so a
+custom forward/backward grouping, an estimated :math:`\alpha`, and the
+recomputed asymmetry can all be produced in a script without the GUI. The
+pieces live in a few modules; this section is the map.
+
+.. warning::
+
+   **The default** :math:`\alpha = 1.0` **is wrong for most instruments.**
+   Reading ``dataset.asymmetry`` straight off a freshly loaded run uses
+   :math:`\alpha = 1.0`, which only holds when the forward and backward groups
+   are already perfectly balanced. On MUSR, EMU, and the PSI spectrometers it
+   is not, so any *quantitative* asymmetry needs an explicit :math:`\alpha`
+   estimate and a recompute. (For reference, the MUSR ``MUSR00044989``
+   calibration groups detectors **1–32 as Back** and **33–64 as Fwd**, giving
+   :math:`\alpha \approx 1.103`.)
+
+Where each function lives
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* :func:`~asymmetry.core.transform.estimate_alpha` /
+  :func:`~asymmetry.core.transform.estimate_alpha_detailed`
+  (``asymmetry.core.transform``) — estimate :math:`\alpha` from grouped counts.
+  The simple form is a count-ratio (:math:`\sum F / \sum B`, Mantid
+  ``AlphaCalc``); the **detailed** form (``method="diamagnetic"`` by default)
+  returns an :class:`~asymmetry.core.transform.AlphaEstimate` with an
+  uncertainty and is the one to use for the diamagnetic (TF balance) method.
+* ``apply_grouping(histograms, group_indices)``
+  (``asymmetry.core.io.nexus``; also re-exported from
+  ``asymmetry.core.transform``) — sums the listed detector histograms into one
+  grouped counts array. ``group_indices`` are **0-based** indices into the
+  run's histogram list.
+* :func:`~asymmetry.core.transform.compute_asymmetry`
+  (``asymmetry.core.transform``) — the standard fixed-width pair asymmetry
+  :math:`(F - \alpha B)/(F + \alpha B)` with a chosen :math:`\alpha`; returns
+  ``(asymmetry, error)``.
+* ``binned_fb_asymmetry`` (``asymmetry.core.representation.time``) — the
+  variable / constant-error binning path (it raises on the ``"fixed"`` binning
+  mode; use ``compute_asymmetry`` for ordinary fixed-width bins).
+* ``slice_to_good_window`` (``asymmetry.core.data.combine``) — trim a computed
+  asymmetry/error pair to the good-bin window.
+* ``prepare_histograms_with_deadtime`` (``asymmetry.core.fitting.grouped_time_domain``)
+  — apply deadtime correction to the histograms before grouping.
+
+Minimal workflow
+~~~~~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   from asymmetry.core.io import load
+   from asymmetry.core.transform import (
+       apply_grouping,
+       estimate_alpha,
+       compute_asymmetry,
+   )
+
+   ds = load("MUSR00044989.nxs")
+   histograms = ds.run.histograms
+
+   # MUSR F/B grouping: detectors 1–32 = Back, 33–64 = Fwd (1-based);
+   # apply_grouping takes 0-based histogram indices.
+   backward = apply_grouping(histograms, list(range(0, 32)))    # detectors 1–32
+   forward = apply_grouping(histograms, list(range(32, 64)))    # detectors 33–64
+
+   alpha = estimate_alpha(forward, backward)   # ≈ 1.103 for this run
+   asymmetry, error = compute_asymmetry(forward, backward, alpha=alpha)
+
+For the lower-level grouping/asymmetry APIs (deadtime-first ordering, the error
+model, PSI background correction) see :doc:`data_processing`.
+
 See also
 --------
 
