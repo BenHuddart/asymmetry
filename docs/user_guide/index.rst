@@ -48,6 +48,7 @@ material.
    fit_wizard
    global_fit_wizard
    grouped_time_domain_fitting
+   asymmetry_domain_global_fit
    count_domain_fitting
    alc_mode
 

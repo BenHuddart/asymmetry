@@ -1,6 +1,7 @@
 """Fitting engine for μSR data."""
 
 from asymmetry.core.fitting import muon_fluorine, sc
+from asymmetry.core.fitting.asymmetry_global import GlobalFitResult, fit_global
 from asymmetry.core.fitting.composite import COMPONENTS, ComponentDefinition, CompositeModel
 from asymmetry.core.fitting.composite_parameters import (
     CompositeEvaluation,
@@ -131,6 +132,8 @@ __all__ = [
     "GroupedTimeDomainFitResult",
     "GroupedTimeDomainGroup",
     "fit_grouped_series",
+    "GlobalFitResult",
+    "fit_global",
     "compute_information_criteria",
     "fingerprint_spectrum",
     "build_candidate_templates",
