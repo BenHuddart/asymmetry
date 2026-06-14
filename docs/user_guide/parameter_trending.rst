@@ -661,6 +661,83 @@ References
 4. D. York, N. M. Evensen, M. L. Martínez, and J. De Basabe Delgado, Am. J.
    Phys. **72**, 367 (2004).
 
+RF-µSR Resonance (muon + electron + proton)
+-------------------------------------------
+
+``RFResonanceMuP`` fits a **field-swept RF-µSR resonance scan** of a muoniated
+radical — muon plus electron plus one dominant proton, such as the
+cyclohexadienyl radical C₆H₆Mu formed in benzene — and extracts the **muon and
+proton hyperfine couplings** :math:`A_\mu` and :math:`A_p` simultaneously. This
+is the Asymmetry counterpart of WiMDA's ``RigiWorkshopFit`` exact-diagonalisation
+RF model.
+
+At a fixed applied RF frequency :math:`\nu_{\mathrm{RF}}`, the static field is
+swept and the (Red − Green) integral asymmetry shows two resonance features.
+A resonance occurs where an RF-driven muon-spin-flip transition of the
+three-spin Hamiltonian
+
+.. math::
+
+   H = A_\mu\,\mathbf{S}_e\!\cdot\!\mathbf{S}_\mu
+     + A_p\,\mathbf{S}_e\!\cdot\!\mathbf{S}_p
+     + (\gamma_e S_{e,z} - \gamma_\mu S_{\mu,z} - \gamma_p S_{p,z})\,B
+
+matches :math:`\nu_{\mathrm{RF}}`. The two resonance fields :math:`B_1, B_2` are
+found by **exact diagonalisation** of the 8×8 Hamiltonian (the high-field-limit
+linear relation :math:`B_\mathrm{res} = (\nu_{\mathrm{RF}} \pm \tfrac{1}{2}A_\mu)/\gamma_\mu`
+is inaccurate at the few-hundred-G fields these scans use), and the model is two
+Lorentzians on a flat background:
+
+.. math::
+
+   y(B) = \mathrm{BG}
+     + \sum_{i=1,2} \mathrm{ampl}_i\,
+       \frac{\mathrm{wid}_i^2}{\mathrm{wid}_i^2 + (B - B_i)^2}.
+
+The resonance **mean** tracks :math:`A_\mu` and the **splitting** tracks
+:math:`A_p`. Set the amplitudes negative to fit resonance dips (the usual
+Red − Green observable); hold :math:`\nu_{\mathrm{RF}}` fixed at the applied
+frequency and give :math:`A_\mu, A_p` starting values near the expected couplings
+— the resonance condition is nonlinear, so the field-swept curve only constrains
+the fit once the trial resonances fall inside the scanned window. :math:`A_\mu`
+(the mean) is well determined; :math:`A_p` (the splitting) is the weaker axis and
+benefits from a complementary ALC measurement.
+
+.. code-block:: python
+
+   import numpy as np
+   from asymmetry.core.fitting import (
+       Parameter,
+       ParameterSet,
+       ParameterCompositeModel,
+       fit_parameter_model,
+   )
+
+   field_G = np.array([580.0, 700.0, 780.0, 820.0, 870.0, 950.0, 1060.0])
+   asym = np.array([-1.6, -3.0, -16.0, -10.5, -17.0, -3.2, -1.5])  # Red-Green ×10⁻³
+   errors = np.full_like(asym, 0.3)
+
+   model = ParameterCompositeModel(["RFResonanceMuP"])
+   params = ParameterSet([
+       Parameter("A_mu", value=515.0, min=300.0, max=700.0),
+       Parameter("A_p", value=124.0, min=40.0, max=250.0),
+       Parameter("nu_RF", value=218.5, fixed=True),
+       Parameter("ampl1", value=-18.0), Parameter("wid1", value=25.0, min=1.0),
+       Parameter("ampl2", value=-18.0), Parameter("wid2", value=25.0, min=1.0),
+       Parameter("BG", value=-1.5),
+   ])
+
+   result = fit_parameter_model(field_G, asym, errors, model, params)
+   print({p.name: p.value for p in result.parameters})
+
+References
+~~~~~~~~~~
+
+1. I. McKenzie, R. Scheuermann, S. P. Cottrell, J. S. Lord, and I. M. Tucker,
+   J. Phys. Chem. B **117**, 13614 (2013).
+2. E. Roduner, *The Positive Muon as a Probe in Free Radical Chemistry*,
+   Lecture Notes in Chemistry Vol. 40 (Springer, Berlin, 1988).
+
 Migrating WiMDA Model Functions
 -------------------------------
 
@@ -711,6 +788,15 @@ direct counterpart or a composite recipe. Parameter names map as follows:
        :math:`A_{\mathrm{hf}}` in MHz with
        :math:`B_0 = A_{\mathrm{hf}}/(\gamma_e + \gamma_\mu)` derived
        (:math:`A_{\mathrm{hf}}[\mathrm{MHz}] = 2.816 \times B_0[\mathrm{G}]`).
+   * - RF resonance Mu+p (exact diag.)
+     - ``RFResonanceMuP``
+     - Port of ``RigiWorkshopFit``'s ``RFresonanceMuPlusProtonExact`` (the
+       analytic ``RFresonanceMuPlusProton`` variant is intentionally not a
+       separate component — it is inaccurate at low field). Parameters map
+       A → A_mu, Ap → A_p, RF → nu_RF, ampl1/wid1/ampl2/wid2/BG identical.
+       WiMDA's bespoke ``Eigenuni.pas`` Hermitian eigensolver is replaced by
+       :func:`numpy.linalg.eigvalsh` (basis-independent spectrum, identical
+       level differences).
 
 Composite Parameters in the Fit Parameters Panel
 ------------------------------------------------

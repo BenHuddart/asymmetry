@@ -19,6 +19,7 @@ from asymmetry.core.fitting.composite import (
     parse_component_expression,
 )
 from asymmetry.core.fitting.diffusion import lambda_total as diffusion_lambda_total
+from asymmetry.core.fitting.muon_proton import rf_resonance_mup
 from asymmetry.core.fitting.muonium import (
     G_E_MHZ_PER_G,
     G_MU_MHZ_PER_G,
@@ -621,6 +622,46 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         param_info={"lambda_BG": get_param_info("lambda_BG")},
         formula_template="{lambda_BG}",
         latex_equation=r"\lambda_{bg}(B) = \lambda_{BG}",
+        scopes=("field",),
+    ),
+    "RFResonanceMuP": ParameterModelComponentDefinition(
+        name="RFResonanceMuP",
+        description=(
+            "BG + two Lorentzians at the exact-diagonalisation RF resonance fields "
+            "B1(A_mu,A_p,nu_RF), B2(...) of the mu+e+p radical"
+        ),
+        function=rf_resonance_mup,
+        param_names=["A_mu", "A_p", "nu_RF", "ampl1", "wid1", "ampl2", "wid2", "BG"],
+        param_defaults={
+            "A_mu": 515.0,
+            "A_p": 124.0,
+            "nu_RF": 218.5,
+            "ampl1": -18.0,
+            "wid1": 25.0,
+            "ampl2": -18.0,
+            "wid2": 25.0,
+            "BG": 0.0,
+        },
+        param_info={
+            "A_mu": get_param_info("A_mu"),
+            "A_p": get_param_info("A_p"),
+            "nu_RF": get_param_info("nu_RF"),
+            "ampl1": get_param_info("ampl1"),
+            "wid1": get_param_info("wid1"),
+            "ampl2": get_param_info("ampl2"),
+            "wid2": get_param_info("wid2"),
+            "BG": get_param_info("BG"),
+        },
+        formula_template=(
+            "{BG} + {ampl1}*{wid1}^2/({wid1}^2 + (x-B1)^2)"
+            " + {ampl2}*{wid2}^2/({wid2}^2 + (x-B2)^2),"
+            " B1,B2 = exact-diag resonance fields(A_mu={A_mu}, A_p={A_p}, nu_RF={nu_RF})"
+        ),
+        latex_equation=(
+            r"y(B) = \mathrm{BG} + \sum_{i=1,2} \mathrm{ampl}_i\,"
+            r"\frac{\mathrm{wid}_i^2}{\mathrm{wid}_i^2 + (B - B_i)^2},\quad "
+            r"E(B_i; A_\mu, A_p) = \nu_{\mathrm{RF}}"
+        ),
         scopes=("field",),
     ),
 }

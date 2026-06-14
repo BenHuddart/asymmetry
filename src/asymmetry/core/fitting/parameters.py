@@ -192,6 +192,19 @@ PARAM_INFO_REGISTRY: dict[str, ParamInfo] = {
     ),
     "field": ParamInfo("field", "field", "B", r"$B$", r"{\it B}", "G"),
     "A_hf": ParamInfo("A_hf", "A_hf", "Aµ", r"$A_\mu$", r"{\it A}_{\mu}", "MHz", default_min=0.0),
+    "A_mu": ParamInfo("A_mu", "A_mu", "A_µ", r"$A_\mu$", r"{\it A}_{\mu}", "MHz", default_min=0.0),
+    "A_p": ParamInfo("A_p", "A_p", "A_p", r"$A_p$", r"{\it A}_{p}", "MHz", default_min=0.0),
+    "nu_RF": ParamInfo(
+        "nu_RF", "nu_RF", "ν_RF", r"$\nu_{\mathrm{RF}}$", r"\nu_{RF}", "MHz", default_min=0.0
+    ),
+    "ampl1": ParamInfo("ampl1", "ampl1", "ampl₁", r"$\mathrm{ampl}_1$", r"ampl_{1}"),
+    "ampl2": ParamInfo("ampl2", "ampl2", "ampl₂", r"$\mathrm{ampl}_2$", r"ampl_{2}"),
+    "wid1": ParamInfo(
+        "wid1", "wid1", "wid₁", r"$\mathrm{wid}_1$", r"wid_{1}", "G", default_min=0.0
+    ),
+    "wid2": ParamInfo(
+        "wid2", "wid2", "wid₂", r"$\mathrm{wid}_2$", r"wid_{2}", "G", default_min=0.0
+    ),
     "D_mu": ParamInfo("D_mu", "D_mu", "D_µ", r"$D_\mu$", r"{\it D}_{\mu}", "MHz"),
     "f_cut": ParamInfo(
         "f_cut", "f_cut", "f_cut", r"$f_{\mathrm{cut}}$", r"{\it f}_{cut}", "MHz", default_min=0.0
