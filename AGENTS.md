@@ -8,6 +8,7 @@ repo-local docs and use this file as the map.
 - [README.md](README.md): user-facing overview, install commands, and common workflows.
 - [CONTRIBUTING.md](CONTRIBUTING.md): contributor setup and review expectations.
 - [docs/INDEX.md](docs/INDEX.md): documentation table of contents.
+- [benhuddart.github.io/asymmetry](https://benhuddart.github.io/asymmetry/): published documentation site.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): system design, domain boundaries, and feature specs.
 - [docs/HARNESS.md](docs/HARNESS.md): agent harness workflow and validation ladder.
 - [docs/porting/README.md](docs/porting/README.md): mandatory study-first workflow for feature ports.

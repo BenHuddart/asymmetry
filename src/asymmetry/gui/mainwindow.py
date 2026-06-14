@@ -7366,6 +7366,7 @@ class MainWindow(QMainWindow):
         homepage = "https://github.com/BenHuddart/asymmetry"
         docs = "https://benhuddart.github.io/asymmetry/"
         issues = f"{homepage}/issues"
+        maintainer = "Ben Huddart"
         contact = "benjamin.huddart@physics.ox.ac.uk"
 
         QMessageBox.about(
@@ -7378,7 +7379,8 @@ class MainWindow(QMainWindow):
                 f'<p><a href="{homepage}">Project home</a> &nbsp;·&nbsp; '
                 f'<a href="{docs}">Documentation</a> &nbsp;·&nbsp; '
                 f'<a href="{issues}">Report an issue</a></p>'
-                f'<p>Contact: <a href="mailto:{contact}">{contact}</a></p>'
+                f"<p>Maintainer: {maintainer} "
+                f'(<a href="mailto:{contact}">{contact}</a>)</p>'
                 "<p>Released under the MIT License.<br>"
                 f"Built with PySide6 {_pyside_version}.</p>"
             ),

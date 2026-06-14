@@ -4,7 +4,10 @@ A Python toolkit for muon-spin spectroscopy (μSR) data reduction, fitting, and 
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Status: Alpha](https://img.shields.io/badge/status-alpha-orange.svg)](#project-status)
+[![Status: Beta](https://img.shields.io/badge/status-beta-yellow.svg)](#project-status)
+[![Documentation](https://img.shields.io/badge/docs-online-brightgreen.svg)](https://benhuddart.github.io/asymmetry/)
+
+📖 **[Documentation](https://benhuddart.github.io/asymmetry/)** · [Changelog](CHANGELOG.md) · [Issue tracker](https://github.com/BenHuddart/asymmetry/issues) · [Contributing](CONTRIBUTING.md)
 
 ## Overview
 
@@ -15,11 +18,11 @@ for later reuse.
 
 ## Project status
 
-> **Asymmetry is alpha software under active development.** The core analysis engine and GUI
-> are usable for real μSR workflows and covered by an extensive test suite, but the project is
-> not yet feature-complete: behaviour, APIs, and the `.asymp` project format may still change
-> between releases, and some rough edges are expected. Validate results against an established
-> tool before relying on them for published work, and please report issues you hit.
+> **Asymmetry is beta software.** With the WiMDA parity programme complete (v0.4.0), the core
+> analysis engine and GUI cover the full reference μSR workflow and are backed by an extensive
+> test suite. Behaviour, APIs, and the `.asymp` project format are stabilising but may still
+> change between minor releases. As with any analysis tool, validate results against an
+> established program before relying on them for published work, and please report issues you hit.
 
 ## Main functionality
 
@@ -258,6 +261,14 @@ literature (notably Blundell, De Renzi, Lancaster & Pratt, *Muon Spectroscopy: A
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
+
+## Contact
+
+Asymmetry is developed and maintained by **Ben Huddart** (University of Oxford,
+Department of Physics), <benjamin.huddart@physics.ox.ac.uk>.
+
+For bug reports and feature requests, please use the
+[issue tracker](https://github.com/BenHuddart/asymmetry/issues).
 
 ## Changelog
 
