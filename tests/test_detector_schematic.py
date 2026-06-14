@@ -101,9 +101,7 @@ class TestConstruction:
         top = next(b for b in layout.banks if b.name == "Top view")
         endon = next(s for s in top.segments if s.shape.startswith("endon"))
         assert endon.read_only
-        assert not DetectorSchematicWidget._point_in_segment(
-            endon.x_center, endon.y_center, endon
-        )
+        assert not DetectorSchematicWidget._point_in_segment(endon.x_center, endon.y_center, endon)
 
     def test_gps_exclusion_hatches_readonly_ghost(self, qapp):
         layout = get_instrument_layout("GPS")

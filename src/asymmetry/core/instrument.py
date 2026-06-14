@@ -972,8 +972,12 @@ def _gps_presets(
             forward_group=1,
             backward_group=2,
             projections=(
-                AsymmetryProjection("Up-Down", 1, 2, tint=TRANSVERSE_PROJECTION_TINTS["Top-Bottom"]),
-                AsymmetryProjection("Left-Right", 3, 4, tint=TRANSVERSE_PROJECTION_TINTS["Left-Right"]),
+                AsymmetryProjection(
+                    "Up-Down", 1, 2, tint=TRANSVERSE_PROJECTION_TINTS["Top-Bottom"]
+                ),
+                AsymmetryProjection(
+                    "Left-Right", 3, 4, tint=TRANSVERSE_PROJECTION_TINTS["Left-Right"]
+                ),
             ),
         ),
         # Spin-rotated: with the spin rotator in transverse geometry the muon spin
@@ -1004,7 +1008,9 @@ def _gps_presets(
             forward_group=1,
             backward_group=2,
             projections=(
-                AsymmetryProjection("FB", 1, 2, alpha=0.75, tint=TRANSVERSE_PROJECTION_TINTS["Fwd-Back"]),
+                AsymmetryProjection(
+                    "FB", 1, 2, alpha=0.75, tint=TRANSVERSE_PROJECTION_TINTS["Fwd-Back"]
+                ),
                 AsymmetryProjection("UD", 3, 4, tint=TRANSVERSE_PROJECTION_TINTS["Top-Bottom"]),
             ),
         ),

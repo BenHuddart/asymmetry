@@ -150,8 +150,17 @@ class TestDetectInstrument:
                 metadata={
                     "facility": "PSI",
                     "histogram_labels": [
-                        "Forw", "Back", "Up_B", "Up_F", "Down_B", "Down_F",
-                        "Right_B", "Right_F", "Left_B", "Left_F", "Mob-RL",
+                        "Forw",
+                        "Back",
+                        "Up_B",
+                        "Up_F",
+                        "Down_B",
+                        "Down_F",
+                        "Right_B",
+                        "Right_F",
+                        "Left_B",
+                        "Left_F",
+                        "Mob-RL",
                     ],
                 },
             )
@@ -171,8 +180,17 @@ class TestDetectInstrument:
             "facility": "PSI",
             "instrument": "GPS",
             "histogram_labels": [
-                "Forw", "Back", "Up_B", "Up_F", "Down_B", "Down_F",
-                "Right_B", "Right_F", "Left_B", "Left_F", "Mob-RL",
+                "Forw",
+                "Back",
+                "Up_B",
+                "Up_F",
+                "Down_B",
+                "Down_F",
+                "Right_B",
+                "Right_F",
+                "Left_B",
+                "Left_F",
+                "Mob-RL",
             ],
         }
         assert detect_instrument(99, metadata=md) == "GPS-RD"

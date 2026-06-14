@@ -915,8 +915,17 @@ def test_detector_layout_corrects_gps_variant_to_histogram_count(
     # stale stored "GPS".
     dataset.run.grouping["instrument"] = "GPS"
     dataset.run.grouping["histogram_labels"] = [
-        "Forw", "Back", "Up_B", "Up_F", "Down_B", "Down_F",
-        "Right_B", "Right_F", "Left_B", "Left_F", "Mob-RL",
+        "Forw",
+        "Back",
+        "Up_B",
+        "Up_F",
+        "Down_B",
+        "Down_F",
+        "Right_B",
+        "Right_F",
+        "Left_B",
+        "Left_F",
+        "Mob-RL",
     ]
     dataset.run.metadata["facility"] = "PSI"
     dataset.run.metadata["instrument"] = "LMU_BULKMUSR_GPS"

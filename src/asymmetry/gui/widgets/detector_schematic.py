@@ -298,18 +298,36 @@ class DetectorSchematicWidget(QWidget):
             # centred marker (e.g. Mobile, or the 6-detector Up/Down) labels below.
             if seg.x_center < -1e-6:
                 ax.text(
-                    x - r - 0.08, y, seg.label, ha="right", va="center",
-                    fontsize=7, color=_ENDON_COLOUR, zorder=4,
+                    x - r - 0.08,
+                    y,
+                    seg.label,
+                    ha="right",
+                    va="center",
+                    fontsize=7,
+                    color=_ENDON_COLOUR,
+                    zorder=4,
                 )
             elif seg.x_center > 1e-6:
                 ax.text(
-                    x + r + 0.08, y, seg.label, ha="left", va="center",
-                    fontsize=7, color=_ENDON_COLOUR, zorder=4,
+                    x + r + 0.08,
+                    y,
+                    seg.label,
+                    ha="left",
+                    va="center",
+                    fontsize=7,
+                    color=_ENDON_COLOUR,
+                    zorder=4,
                 )
             else:
                 ax.text(
-                    x, y - r - 0.06, seg.label, ha="center", va="top",
-                    fontsize=7, color=_ENDON_COLOUR, zorder=4,
+                    x,
+                    y - r - 0.06,
+                    seg.label,
+                    ha="center",
+                    va="top",
+                    fontsize=7,
+                    color=_ENDON_COLOUR,
+                    zorder=4,
                 )
 
     def _draw_beam_arrow(self, ax, min_x: float, max_x: float, min_y: float) -> None:
