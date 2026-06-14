@@ -119,7 +119,13 @@ def _gle_symbol_with_spacing_boundary(symbol: str) -> str:
 PARAM_INFO_REGISTRY: dict[str, ParamInfo] = {
     "A": ParamInfo("A", "A", "A", r"$A$", r"{\it A}", "%", default_min=0.0),
     "A0": ParamInfo("A0", "A0", "A₀", r"$A_0$", r"{\it A}_{0}", "%", default_min=0.0),
-    "A_bg": ParamInfo("A_bg", "A_bg", "A_bg", r"$A_{bg}$", r"{\it A}_{bg}", "%", default_min=0.0),
+    # A_bg is a *signed* DC baseline of the asymmetry, not a positive-definite
+    # amplitude: a 2-group F–B transverse-field asymmetry sits on a large
+    # negative offset (≈ −22 %), so a 0 lower bound would clamp the fit and
+    # collapse it. Leave default_min unset (= −inf) so the baseline is free to
+    # go negative; genuinely positive-definite quantities (amplitudes, rates,
+    # widths) keep their 0 floor.
+    "A_bg": ParamInfo("A_bg", "A_bg", "A_bg", r"$A_{bg}$", r"{\it A}_{bg}", "%"),
     "Lambda": ParamInfo("Lambda", "Lambda", "λ", r"$\lambda$", r"\lambda", "μs⁻¹", default_min=0.0),
     "sigma": ParamInfo("sigma", "sigma", "σ", r"$\sigma$", r"\sigma", "μs⁻¹", default_min=0.0),
     "Delta": ParamInfo("Delta", "Delta", "Δ", r"$\Delta$", r"\Delta", "μs⁻¹", default_min=0.0),
