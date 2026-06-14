@@ -139,6 +139,24 @@ class MuonDataset:
         return self.run.run_number if self.run else self.metadata.get("run_number", 0)
 
     @property
+    def temperature(self) -> float | None:
+        """Sample temperature setpoint (``metadata["temperature"]``), or ``None``.
+
+        Unlike :attr:`Run.temperature` (which floors a missing value to ``0.0``),
+        this returns ``None`` when no temperature was recorded so a trend point
+        with genuinely-missing metadata is marked off-axis rather than planted
+        at 0 K.
+        """
+        value = self.metadata.get("temperature")
+        return None if value is None else float(value)
+
+    @property
+    def field(self) -> float | None:
+        """Applied field in gauss (``metadata["field"]``), or ``None`` when absent."""
+        value = self.metadata.get("field")
+        return None if value is None else float(value)
+
+    @property
     def sample_temperature_logged(self) -> float | None:
         """Representative *logged* sample temperature, if recorded.
 

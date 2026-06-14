@@ -834,6 +834,7 @@ class FitParametersPanel(QWidget):
         series_entries: list[tuple[str, str, list[dict]]],
         *,
         highlight_runs_by_id: dict[str, list[int]] | None = None,
+        select_id: str | None = None,
     ) -> None:
         """Reload the panel to show all series for one representation.
 
@@ -853,6 +854,11 @@ class FitParametersPanel(QWidget):
             window to drive data-browser highlighting via
             :signal:`series_selection_changed`.  Pass ``None`` to leave the
             stored map unchanged.
+        select_id:
+            Optional ``batch_id`` to make the active selection (e.g. the
+            just-computed batch series). When present and still in the reloaded
+            set it overrides the "keep prior selection / fall back to newest"
+            default, so a freshly-recorded series is surfaced immediately.
         """
         self._sync_active_group_state()
 
@@ -913,9 +919,12 @@ class FitParametersPanel(QWidget):
         if highlight_runs_by_id is not None:
             self._series_run_numbers = dict(highlight_runs_by_id)
 
-        # Activate the most-recently-added series (last entry) if possible;
-        # otherwise keep the existing active group if it survived the reload.
-        if series_entries and self._active_group_id not in self._group_fit_results:
+        # Caller-requested selection (e.g. a just-computed batch) wins when it
+        # survived the reload; otherwise activate the most-recently-added series
+        # (last entry) if the prior selection is gone, else keep it.
+        if select_id is not None and select_id in self._group_fit_results:
+            self._active_group_id = select_id
+        elif series_entries and self._active_group_id not in self._group_fit_results:
             self._active_group_id = series_entries[-1][0]
         elif not self._group_fit_results:
             self._active_group_id = None
