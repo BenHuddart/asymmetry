@@ -42,7 +42,7 @@ from asymmetry.core.fitting.parameter_models import (
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.fit_settings import fit_quality_confidence
 from asymmetry.gui.styles import tokens
-from asymmetry.gui.styles.widgets import apply_param_table_style, make_formula_box
+from asymmetry.gui.styles.widgets import apply_param_table_style, clear_layout, make_formula_box
 from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.widgets.function_expression_builder import (
     ComponentSelectorButton as _ComponentSelectorButton,  # noqa: F401
@@ -607,11 +607,7 @@ class ModelFitDialog(QDialog):
     def _rebuild_ranges_ui(self) -> None:
         previous_idx = self._active_range_idx if self._active_range_idx is not None else 0
 
-        while self._ranges_host.count():
-            item = self._ranges_host.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.deleteLater()
+        clear_layout(self._ranges_host)
 
         self._range_widgets = []
 
