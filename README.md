@@ -5,6 +5,9 @@ A Python toolkit for muon-spin spectroscopy (μSR) data reduction, fitting, and 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Status: Alpha](https://img.shields.io/badge/status-alpha-orange.svg)](#project-status)
+[![Documentation](https://img.shields.io/badge/docs-online-brightgreen.svg)](https://benhuddart.github.io/asymmetry/)
+
+⬇️ **[Download the latest release](https://github.com/BenHuddart/asymmetry/releases/latest)** · 📖 [Documentation](https://benhuddart.github.io/asymmetry/) · [Changelog](CHANGELOG.md) · [Issue tracker](https://github.com/BenHuddart/asymmetry/issues) · [Contributing](CONTRIBUTING.md)
 
 ## Overview
 
@@ -15,11 +18,12 @@ for later reuse.
 
 ## Project status
 
-> **Asymmetry is alpha software under active development.** The core analysis engine and GUI
-> are usable for real μSR workflows and covered by an extensive test suite, but the project is
-> not yet feature-complete: behaviour, APIs, and the `.asymp` project format may still change
-> between releases, and some rough edges are expected. Validate results against an established
-> tool before relying on them for published work, and please report issues you hit.
+> **Asymmetry is alpha software under active development.** The WiMDA parity programme is
+> feature-complete as of v0.4.0, so the core analysis engine and GUI now cover the full reference
+> μSR workflow, but the inherited functionality still requires extensive real-world testing.
+> Behaviour, APIs, and the `.asymp` project format may still change between releases, and some
+> rough edges are expected. Validate results against an established tool before relying on them
+> for published work, and please report issues you hit.
 
 ## Main functionality
 
@@ -67,17 +71,34 @@ for later reuse.
 
 ## Installation
 
-Asymmetry requires Python 3.10 or later. For local or development use, installing from the Git
-repository is the recommended path.
+### Download the desktop application (recommended for most users)
 
-### Clone the repository
+The easiest way to run Asymmetry is the prebuilt desktop installer — no Python setup required.
+
+- **[Download the latest release →](https://github.com/BenHuddart/asymmetry/releases/latest)**
+
+Installers are published on the [Releases page](https://github.com/BenHuddart/asymmetry/releases)
+for each tagged version:
+
+| Platform | Artifact |
+|----------|----------|
+| Windows | Inno Setup installer (`.exe`) with desktop/start-menu shortcuts |
+| macOS (Apple Silicon) | `.dmg`, drag-to-Applications |
+| macOS (Intel) | `.dmg`, drag-to-Applications |
+
+### Install from source (Python users and contributors)
+
+For scripting against the library, or for development, install from the Git repository.
+Asymmetry requires Python 3.10 or later.
+
+#### Clone the repository
 
 ```bash
 git clone https://github.com/BenHuddart/asymmetry.git
 cd asymmetry
 ```
 
-### Recommended user install (full functionality, no dev tools)
+#### Recommended Python install (full functionality, no dev tools)
 
 ```bash
 python -m pip install -c constraints.txt ".[gui,hdf5,root,gle]"
@@ -86,7 +107,7 @@ python -m pip install -c constraints.txt ".[gui,hdf5,root,gle]"
 This installs the full end-user feature set (GUI + optional file/export support) without
 development dependencies.
 
-### Other install options from the checked-out repository
+#### Other install options from the checked-out repository
 
 ```bash
 # Core library only
@@ -105,7 +126,7 @@ python -m pip install -c constraints.txt ".[all]"
 python -m pip install -c constraints.txt -e ".[all]"
 ```
 
-### Install directly with pip from GitHub
+#### Install directly with pip from GitHub
 
 ```bash
 # Core library
@@ -118,7 +139,7 @@ python -m pip install "asymmetry[gui,hdf5,root,gle] @ git+https://github.com/Ben
 Using [constraints.txt](constraints.txt) is recommended for local installs so the scientific Python
 stack stays within the versions tested by the project.
 
-### Optional dependencies
+#### Optional dependencies
 
 | Component | Requirement |
 |-----------|-------------|
@@ -220,11 +241,11 @@ Executable GUI releases are built in GitHub Actions and attached to GitHub Relea
 - Runners:
   - `macos-15-intel` for Intel macOS DMG
   - `macos-14` for Apple Silicon macOS DMG
-  - `windows-latest` for NSIS installer
+  - `windows-2025` for the Inno Setup installer
 - Packaging:
   - PyInstaller `onedir` build for fast startup
   - macOS DMG output per architecture (dmgbuild settings + generated drag-to-Applications background)
-  - Windows NSIS installer with desktop/start-menu shortcuts and uninstaller
+  - Windows Inno Setup installer with desktop/start-menu shortcuts and uninstaller
 
 Release artifacts are built on shared runners and uploaded to the GitHub Release page; executables are not committed to the repository.
 
@@ -258,6 +279,14 @@ literature (notably Blundell, De Renzi, Lancaster & Pratt, *Muon Spectroscopy: A
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
+
+## Contact
+
+Asymmetry is developed and maintained by **Ben Huddart** (University of Oxford,
+Department of Physics), <benjamin.huddart@physics.ox.ac.uk>.
+
+For bug reports and feature requests, please use the
+[issue tracker](https://github.com/BenHuddart/asymmetry/issues).
 
 ## Changelog
 

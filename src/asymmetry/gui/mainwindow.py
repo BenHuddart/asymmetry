@@ -29,7 +29,7 @@ from datetime import datetime
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QEvent, QEventLoop, QObject, QSettings, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QEvent, QEventLoop, QObject, QSettings, Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QActionGroup, QGuiApplication, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -835,6 +835,9 @@ class MainWindow(QMainWindow):
 
         # Help
         help_menu = mb.addMenu("&Help")
+        help_menu.addAction("&Documentation", self._on_open_docs)
+        help_menu.addAction("&Report an Issue…", self._on_report_issue)
+        help_menu.addSeparator()
         help_menu.addAction("&About…", self._on_about)
 
     # ── toolbar ────────────────────────────────────────────────────────
@@ -7342,14 +7345,45 @@ class MainWindow(QMainWindow):
                 tag="user-fn",
             )
 
+    def _on_open_docs(self) -> None:
+        """Open the online documentation in the default browser."""
+        from PySide6.QtGui import QDesktopServices
+
+        QDesktopServices.openUrl(QUrl("https://benhuddart.github.io/asymmetry/"))
+
+    def _on_report_issue(self) -> None:
+        """Open the GitHub issue tracker in the default browser."""
+        from PySide6.QtGui import QDesktopServices
+
+        QDesktopServices.openUrl(QUrl("https://github.com/BenHuddart/asymmetry/issues"))
+
     def _on_about(self) -> None:
-        """Show the About dialog with version information."""
+        """Show the About dialog with version, links, contact, and license."""
+        from PySide6 import __version__ as _pyside_version
+
         from asymmetry import __version__
+
+        homepage = "https://github.com/BenHuddart/asymmetry"
+        docs = "https://benhuddart.github.io/asymmetry/"
+        issues = f"{homepage}/issues"
+        maintainer = "Ben Huddart"
+        contact = "benjamin.huddart@physics.ox.ac.uk"
 
         QMessageBox.about(
             self,
             "About Asymmetry",
-            f"Asymmetry v{__version__}\n\nA Python library for μSR data analysis.",
+            (
+                f"<h3>Asymmetry v{__version__}</h3>"
+                "<p>A Python library and desktop application for muon-spin "
+                "spectroscopy (μSR) data analysis.</p>"
+                f'<p><a href="{homepage}">Project home</a> &nbsp;·&nbsp; '
+                f'<a href="{docs}">Documentation</a> &nbsp;·&nbsp; '
+                f'<a href="{issues}">Report an issue</a></p>'
+                f"<p>Maintainer: {maintainer} "
+                f'(<a href="mailto:{contact}">{contact}</a>)</p>'
+                "<p>Released under the MIT License.<br>"
+                f"Built with PySide6 {_pyside_version}.</p>"
+            ),
         )
 
     def _reset_layout(self) -> None:
