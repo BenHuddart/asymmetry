@@ -14,6 +14,9 @@ from asymmetry.core.instrument import (
     derive_projection_pairs,
     detect_instrument,
     get_instrument_layout,
+    instrument_choices_for,
+    instrument_display_name,
+    variant_for_histograms,
 )
 
 # ---------------------------------------------------------------------------
@@ -96,6 +99,102 @@ class TestDetectInstrument:
             == "HAL"
         )
 
+    def test_psi_gps_detected_from_metadata_and_filename(self):
+        md = {"facility": "PSI", "psi_format": "psi-bin", "instrument": "GPS"}
+        assert detect_instrument(6, metadata=md) == "GPS"
+        assert (
+            detect_instrument(
+                6,
+                metadata={"facility": "PSI", "psi_format": "psi-bin", "instrument": ""},
+                source_file="/data/deltat_tdc_gps_5848.bin",
+            )
+            == "GPS"
+        )
+
+    def test_psi_gps_detected_from_detector_labels(self):
+        # The fixed six-counter F/B/U/D/R/L label set identifies GPS even when
+        # the instrument/filename token is absent.
+        assert (
+            detect_instrument(
+                6,
+                metadata={
+                    "facility": "PSI",
+                    "psi_format": "psi-bin",
+                    "histogram_labels": ["Forw", "Back", "Up", "Down", "Righ", "Left"],
+                },
+            )
+            == "GPS"
+        )
+
+    def test_psi_gpd_is_not_detected_as_gps(self):
+        # GPD (decay-channel instrument) carries a "gpd" token, not "gps".
+        assert (
+            detect_instrument(
+                6,
+                metadata={"facility": "PSI", "psi_format": "psi-bin", "instrument": "GPD"},
+                source_file="/data/deltat_tdc_gpd_0001.bin",
+            )
+            is None
+        )
+
+    def test_psi_gps_root_subdetectors_detected_as_gps_rd(self):
+        # ROOT export has 11 sub-detector histograms -> the GPS-RD variant.
+        md = {"facility": "PSI", "instrument": "LMU_BULKMUSR_GPS"}
+        assert detect_instrument(11, metadata=md) == "GPS-RD"
+
+    def test_psi_gps_root_detected_from_subdetector_labels(self):
+        # The 11-counter sub-detector label set identifies GPS-RD without a token.
+        assert (
+            detect_instrument(
+                11,
+                metadata={
+                    "facility": "PSI",
+                    "histogram_labels": [
+                        "Forw",
+                        "Back",
+                        "Up_B",
+                        "Up_F",
+                        "Down_B",
+                        "Down_F",
+                        "Right_B",
+                        "Right_F",
+                        "Left_B",
+                        "Left_F",
+                        "Mob-RL",
+                    ],
+                },
+            )
+            == "GPS-RD"
+        )
+
+    def test_gps_bin_and_root_select_different_variants(self):
+        # Same instrument token, different histogram count -> different variant.
+        md = {"facility": "PSI", "instrument": "GPS"}
+        assert detect_instrument(6, metadata=md) == "GPS"
+        assert detect_instrument(11, metadata=md) == "GPS-RD"
+
+    def test_gps_root_variant_falls_back_to_subdetector_labels(self):
+        # The sub-detector label set selects GPS-RD even when the histogram count
+        # is reported unexpectedly (the label match is not gated on count).
+        md = {
+            "facility": "PSI",
+            "instrument": "GPS",
+            "histogram_labels": [
+                "Forw",
+                "Back",
+                "Up_B",
+                "Up_F",
+                "Down_B",
+                "Down_F",
+                "Right_B",
+                "Right_F",
+                "Left_B",
+                "Left_F",
+                "Mob-RL",
+            ],
+        }
+        assert detect_instrument(99, metadata=md) == "GPS-RD"
+
     def test_isis_hifi_still_resolves_without_psi_flag(self):
         # Without a PSI marker, the bare "HiFi" name remains the ISIS layout.
         assert detect_instrument(64, metadata={"instrument": "HiFi"}) == "HiFi"
@@ -138,6 +237,9 @@ class TestGetInstrumentLayout:
 
     def test_freeform_flame_alias_returns_flame_layout(self):
         assert get_instrument_layout("LMU_BULKMUSR_FLAME").name == "FLAME"
+
+    def test_freeform_gps_alias_returns_gps_layout(self):
+        assert get_instrument_layout("PSI_GPS").name == "GPS"
 
 
 # ---------------------------------------------------------------------------
@@ -200,6 +302,250 @@ class TestFlameLayout:
         assert preset.backward_group == 2
         assert set(preset.groups[1].detector_ids) == {3, 5, 6}
         assert set(preset.groups[2].detector_ids) == {4, 7, 8}
+
+
+# ---------------------------------------------------------------------------
+# GPS layout
+# ---------------------------------------------------------------------------
+
+
+class TestGpsLayout:
+    @pytest.fixture(scope="class")
+    def layout(self):
+        return get_instrument_layout("GPS")
+
+    def test_n_detectors(self, layout):
+        assert layout.n_detectors == 6
+
+    def test_two_plan_panels(self, layout):
+        assert layout.view == "plan"
+        assert [bank.name for bank in layout.banks] == ["Top view", "Side view"]
+
+    def test_active_detectors_match_bin_histogram_order(self, layout):
+        # One clickable segment per detector; IDs map positionally to the BIN
+        # histogram order Forw,Back,Up,Down,Righ,Left (detector N -> histogram N-1).
+        labels = {seg.detector_id: seg.label for seg in layout.active_segments}
+        assert labels == {
+            1: "Forward",
+            2: "Backward",
+            3: "Up",
+            4: "Down",
+            5: "Right",
+            6: "Left",
+        }
+        assert len(layout.active_segments) == layout.n_detectors == 6
+        assert {seg.shape for seg in layout.active_segments} == {"rectangle"}
+
+    def test_each_detector_active_in_exactly_one_panel(self, layout):
+        ids = [seg.detector_id for seg in layout.active_segments]
+        assert sorted(ids) == [1, 2, 3, 4, 5, 6]
+        assert len(ids) == len(set(ids))
+
+    def test_home_panels(self, layout):
+        top = next(b for b in layout.banks if b.name == "Top view")
+        side = next(b for b in layout.banks if b.name == "Side view")
+        top_active = {s.detector_id for s in top.segments if not s.read_only}
+        side_active = {s.detector_id for s in side.segments if not s.read_only}
+        # Forward/Backward/Left/Right edited in the top view; Up/Down in the side.
+        assert top_active == {1, 2, 5, 6}
+        assert side_active == {3, 4}
+
+    def test_perpendicular_pairs_shown_end_on(self, layout):
+        top = next(b for b in layout.banks if b.name == "Top view")
+        side = next(b for b in layout.banks if b.name == "Side view")
+        top_endon = {s.detector_id for s in top.segments if s.shape.startswith("endon")}
+        side_endon = {s.detector_id for s in side.segments if s.shape.startswith("endon")}
+        assert top_endon == {3, 4}  # Up, Down point out of the top-view plane
+        assert side_endon == {5, 6}  # Right, Left point out of the side-view plane
+        assert all(s.read_only for s in layout.all_segments if s.shape.startswith("endon"))
+
+    def test_default_preset_is_longitudinal(self, layout):
+        assert layout.default_preset_name == "Longitudinal"
+
+    def test_longitudinal_preset(self, layout):
+        preset = layout.presets["Longitudinal"]
+        assert preset.forward_group == 1
+        assert preset.backward_group == 2
+        assert preset.groups[1].detector_ids == (1,)
+        assert preset.groups[2].detector_ids == (2,)
+
+    def test_transverse_vector_projections(self, layout):
+        preset = layout.presets["Transverse (Vector)"]
+        proj = {p.label: (p.forward_group, p.backward_group) for p in preset.projections}
+        assert proj == {"Up-Down": (1, 2), "Left-Right": (3, 4)}
+        # Up-Down pair = Up(3)/Down(4); Left-Right pair = Left(6)/Right(5).
+        assert preset.groups[1].detector_ids == (3,)
+        assert preset.groups[2].detector_ids == (4,)
+        assert preset.groups[3].detector_ids == (6,)
+        assert preset.groups[4].detector_ids == (5,)
+
+    def test_spin_rotated_preset(self, layout):
+        # For the ~50 deg upward-rotated spin: Forward+Up vs Backward+Down.
+        preset = layout.presets["Spin-rotated (F+U/B+D)"]
+        assert (preset.forward_group, preset.backward_group) == (1, 2)
+        assert set(preset.groups[1].detector_ids) == {1, 3}  # F + U
+        assert set(preset.groups[2].detector_ids) == {2, 4}  # B + D
+        assert preset.projections == ()
+
+    def test_wep_preset_matches_musrfit(self, layout):
+        # musrfit's WEP setup: separate F/B/U/D with FB and UD asymmetry pairs.
+        preset = layout.presets["WEP (spin-rotated)"]
+        pairs = {p.label: (p.forward_group, p.backward_group, p.alpha) for p in preset.projections}
+        assert pairs == {"FB": (1, 2, 0.75), "UD": (3, 4, 1.0)}
+        assert preset.groups[1].detector_ids == (1,)  # F
+        assert preset.groups[2].detector_ids == (2,)  # B
+        assert preset.groups[3].detector_ids == (3,)  # U
+        assert preset.groups[4].detector_ids == (4,)  # D
+
+
+# ---------------------------------------------------------------------------
+# GPS ROOT sub-detector layout (GPS-RD)
+# ---------------------------------------------------------------------------
+
+
+class TestGpsSubdetectorLayout:
+    @pytest.fixture(scope="class")
+    def layout(self):
+        return get_instrument_layout("GPS-RD")
+
+    def test_n_detectors(self, layout):
+        assert layout.n_detectors == 11
+
+    def test_two_plan_panels(self, layout):
+        assert layout.view == "plan"
+        assert [bank.name for bank in layout.banks] == ["Top view", "Side view"]
+
+    def test_displays_as_gps(self, layout):
+        # Distinct registry key, but shown to the user as plain "GPS".
+        assert layout.name == "GPS-RD"
+        assert layout.display == "GPS"
+
+    def test_active_detectors_match_root_histogram_order(self, layout):
+        # One clickable segment per detector; IDs map positionally to the ROOT
+        # histogram order (detector N -> histogram N-1).
+        labels = {seg.detector_id: seg.label for seg in layout.active_segments}
+        assert labels == {
+            1: "Forward",
+            2: "Backward",
+            3: "Up_B",
+            4: "Up_F",
+            5: "Down_B",
+            6: "Down_F",
+            7: "Right_B",
+            8: "Right_F",
+            9: "Left_B",
+            10: "Left_F",
+            11: "Mob-RL",
+        }
+        assert len(layout.active_segments) == layout.n_detectors == 11
+        assert {seg.shape for seg in layout.active_segments} == {"rectangle"}
+
+    def test_each_detector_active_in_exactly_one_panel(self, layout):
+        ids = [seg.detector_id for seg in layout.active_segments]
+        assert sorted(ids) == list(range(1, 12))
+        assert len(ids) == len(set(ids))
+
+    def test_subdetectors_split_upstream_downstream(self, layout):
+        # _B (backward/upstream) sits at -z, _F (forward/downstream) at +z, on
+        # the clickable (in-plane) segments.
+        segs = {seg.label: seg for seg in layout.active_segments}
+        for back, front in [
+            ("Up_B", "Up_F"),
+            ("Down_B", "Down_F"),
+            ("Right_B", "Right_F"),
+            ("Left_B", "Left_F"),
+        ]:
+            assert segs[back].x_center < 0 < segs[front].x_center
+
+    def test_mobile_active_in_top_view(self, layout):
+        top = next(b for b in layout.banks if b.name == "Top view")
+        mob = next(s for s in top.segments if s.detector_id == 11)
+        assert not mob.read_only and mob.shape == "rectangle"
+
+    def test_longitudinal_preset(self, layout):
+        preset = layout.presets["Longitudinal"]
+        assert (preset.forward_group, preset.backward_group) == (1, 2)
+        assert preset.groups[1].detector_ids == (1,)
+        assert preset.groups[2].detector_ids == (2,)
+
+    def test_transverse_vector_combines_subdetectors(self, layout):
+        preset = layout.presets["Transverse (Vector)"]
+        proj = {p.label: (p.forward_group, p.backward_group) for p in preset.projections}
+        assert proj == {"Up-Down": (1, 2), "Left-Right": (3, 4)}
+        # Up/Down/Left/Right each combine their two sub-detectors.
+        assert preset.groups[1].detector_ids == (3, 4)  # Up = Up_B + Up_F
+        assert preset.groups[2].detector_ids == (5, 6)  # Down = Down_B + Down_F
+        assert preset.groups[3].detector_ids == (9, 10)  # Left = Left_B + Left_F
+        assert preset.groups[4].detector_ids == (7, 8)  # Right = Right_B + Right_F
+
+    def test_spin_rotated_preset_sums_subdetectors(self, layout):
+        # Forward+Up vs Backward+Down, summing each direction's _B/_F halves.
+        preset = layout.presets["Spin-rotated (F+U/B+D)"]
+        assert (preset.forward_group, preset.backward_group) == (1, 2)
+        assert set(preset.groups[1].detector_ids) == {1, 3, 4}  # F + Up_B + Up_F
+        assert set(preset.groups[2].detector_ids) == {2, 5, 6}  # B + Down_B + Down_F
+
+    def test_wep_preset_sums_subdetectors(self, layout):
+        # musrfit WEP: FB + UD pairs, with Up/Down summing their _B/_F halves.
+        preset = layout.presets["WEP (spin-rotated)"]
+        pairs = {p.label: (p.forward_group, p.backward_group, p.alpha) for p in preset.projections}
+        assert pairs == {"FB": (1, 2, 0.75), "UD": (3, 4, 1.0)}
+        assert preset.groups[1].detector_ids == (1,)  # F
+        assert preset.groups[2].detector_ids == (2,)  # B
+        assert set(preset.groups[3].detector_ids) == {3, 4}  # U = Up_B + Up_F
+        assert set(preset.groups[4].detector_ids) == {5, 6}  # D = Down_B + Down_F
+
+    def test_mobile_detector_ungrouped_by_default(self, layout):
+        # Mob-RL (id 11) is added to R or L per the cryostat port, which is not
+        # recorded in the file, so no preset groups it by default.
+        for preset in layout.presets.values():
+            for gdef in preset.groups.values():
+                assert 11 not in gdef.detector_ids
+
+
+# ---------------------------------------------------------------------------
+# Instrument dropdown choices / variant collapsing
+# ---------------------------------------------------------------------------
+
+
+class TestInstrumentChoices:
+    def test_display_name_collapses_gps_variants(self):
+        assert instrument_display_name("GPS") == "GPS"
+        assert instrument_display_name("GPS-RD") == "GPS"
+        assert instrument_display_name("HiFi") == "HiFi"
+
+    def test_choices_show_single_gps_entry(self):
+        choices = instrument_choices_for(None)
+        displays = [display for display, _key in choices]
+        assert displays.count("GPS") == 1
+        # Default exposes the 6-detector BIN variant.
+        gps_key = next(key for display, key in choices if display == "GPS")
+        assert gps_key == "GPS"
+
+    def test_choices_expose_active_variant(self):
+        choices = instrument_choices_for("GPS-RD")
+        gps_key = next(key for display, key in choices if display == "GPS")
+        assert gps_key == "GPS-RD"
+        # Still only one GPS entry, and every key resolves to a real layout.
+        assert [d for d, _ in choices].count("GPS") == 1
+        for _display, key in choices:
+            assert get_instrument_layout(key).name == key
+
+
+class TestVariantForHistograms:
+    def test_picks_variant_matching_detector_count(self):
+        assert variant_for_histograms("GPS", 11) == "GPS-RD"  # 6-det name, 11-hist run
+        assert variant_for_histograms("GPS-RD", 6) == "GPS"  # 11-det name, 6-hist run
+        assert variant_for_histograms("GPS", 6) == "GPS"
+        assert variant_for_histograms("GPS-RD", 11) == "GPS-RD"
+
+    def test_single_member_family_unchanged(self):
+        assert variant_for_histograms("HiFi", 64) == "HiFi"
+        assert variant_for_histograms("FLAME", 8) == "FLAME"
+
+    def test_unknown_count_or_no_fit_returns_input(self):
+        assert variant_for_histograms("GPS", 0) == "GPS"  # unknown count
+        assert variant_for_histograms("GPS", 7) == "GPS"  # no sibling has 7 detectors
 
 
 # ---------------------------------------------------------------------------

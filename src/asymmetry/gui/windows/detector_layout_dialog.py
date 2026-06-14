@@ -40,9 +40,9 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.instrument import (
-    INSTRUMENT_NAMES,
     InstrumentLayout,
     get_instrument_layout,
+    instrument_choices_for,
 )
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.widgets.detector_schematic import _GROUP_COLOURS, DetectorSchematicWidget
@@ -215,10 +215,16 @@ class DetectorLayoutDialog(QDialog):
 
         preset_layout.addWidget(QLabel("Instrument:"))
         self._instrument_combo = QComboBox()
-        for name in INSTRUMENT_NAMES:
-            self._instrument_combo.addItem(name)
-        self._instrument_combo.setCurrentText(self._instrument.name)
-        self._instrument_combo.currentTextChanged.connect(self._on_instrument_changed)
+        # Items carry the registry key as itemData; the visible text is the
+        # display name. Variant families (GPS BIN vs GPS ROOT sub-detectors)
+        # collapse to one "GPS" entry mapping to the variant matching the loaded
+        # data, so the user only sees the GPS that fits their file format.
+        for display_name, registry_key in instrument_choices_for(self._instrument.name):
+            self._instrument_combo.addItem(display_name, registry_key)
+        current_idx = self._instrument_combo.findData(self._instrument.name)
+        if current_idx >= 0:
+            self._instrument_combo.setCurrentIndex(current_idx)
+        self._instrument_combo.currentIndexChanged.connect(self._on_instrument_index_changed)
         preset_layout.addWidget(self._instrument_combo)
 
         sep = QFrame()
@@ -418,6 +424,12 @@ class DetectorLayoutDialog(QDialog):
     # ------------------------------------------------------------------
     # Slot: instrument combo changed
     # ------------------------------------------------------------------
+
+    def _on_instrument_index_changed(self, _index: int) -> None:
+        """Combo slot: resolve the selected item's registry key, then load it."""
+        registry_key = self._instrument_combo.currentData()
+        if registry_key:
+            self._on_instrument_changed(str(registry_key))
 
     def _on_instrument_changed(self, name: str) -> None:
         """Load a different instrument layout and rebuild the schematic."""

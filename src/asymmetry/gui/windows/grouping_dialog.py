@@ -43,6 +43,7 @@ from asymmetry.core.instrument import (
     derive_projection_pairs,
     detect_instrument,
     get_instrument_layout,
+    variant_for_histograms,
 )
 from asymmetry.core.transform import (
     apply_grouping,
@@ -1739,6 +1740,11 @@ class GroupingDialog(QDialog):
 
         if instrument is None:
             instrument = get_instrument_layout("HiFi")
+        else:
+            # Correct to the layout variant whose detector count matches this run
+            # (e.g. GPS 6-detector BIN vs GPS-RD 11-detector ROOT), so a stored
+            # name does not pin the wrong-sized layout when the data format changes.
+            instrument = get_instrument_layout(variant_for_histograms(instrument.name, n_histo))
         return instrument
 
     def _on_detector_layout(self) -> None:
