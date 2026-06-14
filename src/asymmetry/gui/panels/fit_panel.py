@@ -870,7 +870,10 @@ _GLOBAL_FIT_PARAMETER_CLASSIFICATION_HELP_TEXT = (
     "Fixed: Held constant at the specified value for every dataset. Use this for "
     "known values or parameters you want excluded from optimization.\n\n"
     "File: Use the value from dataset metadata where available. This is offered for "
-    "field-like parameters such as B_L when the run file already stores the relevant value."
+    "field-like parameters such as B_L when the run file already stores the relevant value.\n\n"
+    "The Seed column is the shared initial value applied to every run in the batch — "
+    "it is not a per-run fitted result and does not change when you select different "
+    "runs. Per-run fitted values appear in the Parameters tab after the batch fit completes."
 )
 
 
@@ -2572,10 +2575,22 @@ class GlobalFitTab(QWidget):
         param_layout.addLayout(param_header_layout)
 
         self._param_table = QTableWidget(0, 4)
-        self._param_table.setHorizontalHeaderLabels(["Parameter", "Value", "Type", "Bounds"])
+        # "Seed" (not "Value"): this column is the shared initial value applied to
+        # every run in the batch, not a per-run fitted result. Per-run fitted
+        # values live in the Parameters (trend) tab. Naming it "Value" misled
+        # users into reading the static template as per-dataset output.
+        self._param_table.setHorizontalHeaderLabels(["Parameter", "Seed", "Type", "Bounds"])
         self._param_table.horizontalHeader().setStretchLastSection(False)
+        _seed_header = self._param_table.horizontalHeaderItem(1)
+        if _seed_header is not None:
+            _seed_header.setToolTip(
+                "Shared seed (initial value) applied to every run in the batch — "
+                "not a per-run fitted result.\nSelecting different runs does not "
+                "change it. Per-run fitted values appear in the Parameters tab "
+                "after the batch fit completes."
+            )
         self._param_table.setColumnWidth(0, 64)  # Parameter name
-        self._param_table.setColumnWidth(1, 76)  # Initial value
+        self._param_table.setColumnWidth(1, 76)  # Shared seed value
         self._param_table.setColumnWidth(2, 86)  # Type (dropdown)
         self._param_table.setColumnWidth(3, 104)  # Bounds
         _apply_param_table_style(self._param_table)

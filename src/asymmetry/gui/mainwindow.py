@@ -7706,6 +7706,27 @@ class MainWindow(QMainWindow):
 
     # ── Representation-aware trend panel (Phase 4) ────────────────────────────
 
+    def _dataset_trend_coords(self, run_number: int) -> dict[str, float | None]:
+        """Per-run ``field``/``temperature`` to stamp into a FitSeries summary.
+
+        Read from the data-browser dataset's metadata at record time so each
+        member's coordinate persists *with the series* — the trend then plots it
+        at the right T/B even when the dataset has left the browser or the
+        project has been saved and reopened. A coordinate with no recorded
+        metadata is ``None`` (JSON null → "off this axis"), never ``0``. This
+        mirrors the moments / co-add / cross-group computed-series paths.
+        """
+        dataset = (
+            self._data_browser.get_dataset(int(run_number))
+            if hasattr(self._data_browser, "get_dataset")
+            else None
+        )
+        meta = getattr(dataset, "metadata", {}) or {}
+        return {
+            "field": _safe_float(meta.get("field")),
+            "temperature": _safe_float(meta.get("temperature")),
+        }
+
     def _build_series_rows(self, series: FitSeries) -> list[dict]:
         """Build the row-dict list for one ``FitSeries`` to pass to the trend panel.
 
@@ -7761,7 +7782,11 @@ class MainWindow(QMainWindow):
                 if key in summary:
                     val = summary[key]
                     return float("nan") if val is None else float(val)
-                return float(meta.get(key, 0.0))
+                # Fallback for older series persisted before T/B was stamped into
+                # the summary: read the live dataset, but a genuinely-missing
+                # coordinate is off-axis (NaN), never planted at 0.
+                val = meta.get(key)
+                return float("nan") if val is None else float(val)
 
             field = _coord("field")
             temperature = _coord("temperature")
@@ -7778,12 +7803,16 @@ class MainWindow(QMainWindow):
             )
         return rows
 
-    def _refresh_trend_panel(self) -> None:
+    def _refresh_trend_panel(self, *, select_batch_id: str | None = None) -> None:
         """Reload the trend panel from the project model for the active representation.
 
         This is the *pull*-based entry point called after every fit that records
         a ``FitSeries`` and whenever the active representation changes.  It
         replaces the old per-fit UUID push.
+
+        ``select_batch_id`` requests that the trend panel make that series the
+        active selection (used after a batch completes so the just-computed
+        series is surfaced rather than left behind a stale prior selection).
         """
         if not hasattr(self, "_fit_parameters_panel"):
             return
@@ -7817,6 +7846,7 @@ class MainWindow(QMainWindow):
             self._fit_parameters_panel.load_representation_series(
                 entries,
                 highlight_runs_by_id=highlight_map,
+                select_id=select_batch_id,
             )
 
         if entries and hasattr(self, "_dock_fit_parameters"):
@@ -8028,7 +8058,7 @@ class MainWindow(QMainWindow):
         # not series members, so they never affect divergence.
         self._project_model.refresh_divergence()
 
-    def _record_global_fit_batch(self, normalized_payloads: dict, global_params) -> None:
+    def _record_global_fit_batch(self, normalized_payloads: dict, global_params) -> str | None:
         """Persist a completed batch/global fit as a FitSeries + member FitSlots.
 
         A batch fit (all parameters local/fixed) and a global fit (>=1 parameter
@@ -8060,19 +8090,24 @@ class MainWindow(QMainWindow):
         model_label = self._composite_model_label(canonical_model)
         fit_range = self._fit_panel.batch_fit_range_text()
         timestamp = self._fit_record_timestamp()
-        results_by_run = {
-            int(run): self._fit_result_summary(
+        results_by_run = {}
+        for run, payload in normalized_payloads.items():
+            summary = self._fit_result_summary(
                 payload[0],
                 provenance=provenance,
                 model_name=model_label,
                 fit_range=fit_range,
                 timestamp=timestamp,
             )
-            for run, payload in normalized_payloads.items()
-        }
+            # Persist each run's T/B with the series so the trend reads its real
+            # coordinate even after the dataset leaves the browser or the project
+            # is saved/reloaded (see _dataset_trend_coords).
+            summary.update(self._dataset_trend_coords(int(run)))
+            results_by_run[int(run)] = summary
         batch = FitSeries(
             f"batch-{self._next_batch_index}",
             rep_type,
+            label=self._default_batch_series_label(model_label, member_runs),
             member_run_numbers=member_runs,
             order_key="field",
             canonical_model=canonical_model,
@@ -8102,6 +8137,7 @@ class MainWindow(QMainWindow):
             )
         # Fresh batch members all share the canonical model (no divergence yet).
         self._project_model.refresh_divergence()
+        return batch.batch_id
 
     #: Display quantity name for the integral-asymmetry scan (percent units).
     _SCAN_QUANTITY = "Integral asymmetry (%)"
@@ -8417,7 +8453,7 @@ class MainWindow(QMainWindow):
             return self._fit_panel.get_grouped_state()
         return {}
 
-    def _record_grouped_fit_series(self, grouped_datasets, results_dict) -> None:
+    def _record_grouped_fit_series(self, grouped_datasets, results_dict) -> str | None:
         """Persist a completed grouped fit as a ``FitSeries(member_kind="groups")``.
 
         Each ``(run, group)`` member is keyed by its synthetic group key so the
@@ -8427,12 +8463,12 @@ class MainWindow(QMainWindow):
         grouped representation gets one pointer ``FitSlot`` into the series.
         """
         if not isinstance(grouped_datasets, list) or not isinstance(results_dict, dict):
-            return
+            return None
         if not results_dict:
-            return
+            return None
         state = self._active_grouped_state()
         if not isinstance(state, dict) or not state:
-            return
+            return None
 
         rep_type = RepresentationType.TIME_GROUPS
         source_by_key: dict[int, int] = {}
@@ -8472,20 +8508,29 @@ class MainWindow(QMainWindow):
                 continue
             fit_result = payload[0] if isinstance(payload, tuple) and payload else payload
             member_keys.append(key)
-            member_source_run[key] = source_by_key.get(key, abs(key) // 1000)
-            results_by_run[key] = self._fit_result_summary(
+            source_run = source_by_key.get(key, abs(key) // 1000)
+            member_source_run[key] = source_run
+            summary = self._fit_result_summary(
                 fit_result,
                 provenance=provenance,
                 model_name=model_label,
                 fit_range=fit_range,
                 timestamp=timestamp,
             )
+            # Stamp the source run's T/B so each (run, group) member trends at its
+            # real coordinate, robust to browser/reload state (see issue notes on
+            # _dataset_trend_coords).
+            summary.update(self._dataset_trend_coords(int(source_run)))
+            results_by_run[key] = summary
         if not member_keys:
-            return
+            return None
 
         series = FitSeries(
             f"batch-{self._next_batch_index}",
             rep_type,
+            label=self._default_batch_series_label(
+                model_label, list(member_source_run.values()), groups=True
+            ),
             member_kind="groups",
             member_run_numbers=member_keys,
             member_source_run=member_source_run,
@@ -8517,6 +8562,7 @@ class MainWindow(QMainWindow):
         # Fresh group-series members all share the canonical model; clear stale
         # divergence state from any earlier series on the same representations.
         self._project_model.refresh_divergence()
+        return series.batch_id
 
     def _add_single_fit_to_series(self, run_number: int, series_id: str) -> bool:
         """Add a compatible single fit (one run) as a member of an existing series.
@@ -8551,6 +8597,26 @@ class MainWindow(QMainWindow):
         series.sort_members(runs_by_number)
         self._project_model.refresh_divergence()
         return True
+
+    @staticmethod
+    def _default_batch_series_label(
+        model_label: str, runs: list[int], *, groups: bool = False
+    ) -> str:
+        """Informative default name for a freshly-recorded batch FitSeries.
+
+        Combines the model and the run range (e.g. ``"StretchedExp+Const ·
+        1276–1289"``) so the just-computed series is identifiable in the trend
+        panel's selector among any older series, rather than a bare "Series N".
+        The user can still rename it.
+        """
+        numbers = sorted({int(r) for r in runs}) if runs else []
+        if numbers:
+            span = f"{numbers[0]}" if len(numbers) == 1 else f"{numbers[0]}–{numbers[-1]}"
+            run_part = f"groups {span}" if groups else span
+        else:
+            run_part = "groups" if groups else "batch"
+        model = (model_label or "").strip()
+        return f"{model} · {run_part}" if model else run_part
 
     def _series_fallback_name(self, series) -> str:
         """Return the positional "Series N" fallback label consistent with the trend panel."""
@@ -8767,7 +8833,7 @@ class MainWindow(QMainWindow):
             )
 
         self._fit_panel.register_global_fit_results(normalized_payloads)
-        self._record_global_fit_batch(normalized_payloads, global_params)
+        new_batch_id = self._record_global_fit_batch(normalized_payloads, global_params)
 
         # Set all fit curves in plot panel
         panel = self._frequency_plot_panel if is_frequency_fit else self._plot_panel
@@ -8776,8 +8842,9 @@ class MainWindow(QMainWindow):
         # Reload the trend panel from the project model (pull-based, Phase 4).
         # _record_global_fit_batch has already stored the new FitSeries, so
         # _refresh_trend_panel picks it up keyed by series batch_id rather than
-        # the old ad-hoc UUID group_id.
-        self._refresh_trend_panel()
+        # the old ad-hoc UUID group_id. Surface the just-computed series as the
+        # active selection so it is not lost among older series.
+        self._refresh_trend_panel(select_batch_id=new_batch_id)
 
         # Log summary
         successful_results = [
@@ -8812,9 +8879,10 @@ class MainWindow(QMainWindow):
         if not isinstance(grouped_datasets, list) or not isinstance(results_dict, dict):
             return
 
-        self._record_grouped_fit_series(grouped_datasets, results_dict)
-        # Pull-based refresh: show the newly recorded series in the trend panel.
-        self._refresh_trend_panel()
+        new_batch_id = self._record_grouped_fit_series(grouped_datasets, results_dict)
+        # Pull-based refresh: surface the newly recorded series as the active
+        # selection in the trend panel so it is not lost among older series.
+        self._refresh_trend_panel(select_batch_id=new_batch_id)
 
         fit_curves = {}
         if fit_function is None and hasattr(self._fit_panel, "global_fit_formula_string"):
