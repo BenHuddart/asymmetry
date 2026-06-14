@@ -78,6 +78,26 @@ than the local width is averaged away — check with fixed binning first that
 nothing oscillates; and the final bin, truncated by the good-data window,
 carries fewer counts than the rest.
 
+Rebinning programmatically
+--------------------------
+
+Fixed bunching is also available directly on a reduced dataset.
+:meth:`MuonDataset.rebin <asymmetry.core.data.dataset.MuonDataset.rebin>`
+merges every ``factor`` consecutive bins and returns a *new* dataset, leaving
+the original untouched — convenient for high-rate continuous-source data
+(e.g. PSI GPS 1.25 ns bins) without dropping to manual array work:
+
+.. code-block:: python
+
+   coarse = dataset.rebin(8)   # merge 8 raw bins → 10 ns effective width
+
+It is a thin wrapper over the array-level
+:func:`~asymmetry.core.transform.rebin.rebin` primitive: ``factor = 1`` is a
+no-op copy, a length that is not a multiple of ``factor`` drops the trailing
+remainder bins, and the per-point error shrinks as
+:math:`\sigma_\text{new} = \sqrt{\sum \sigma^2} / factor` (i.e.
+:math:`\propto 1/\sqrt{factor}` on flat data).
+
 Notes
 -----
 

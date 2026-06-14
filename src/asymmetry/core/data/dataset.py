@@ -164,6 +164,34 @@ class MuonDataset:
                 return text
         return str(self.run_number)
 
+    def rebin(self, factor: int) -> MuonDataset:
+        r"""Return a copy with every ``factor`` consecutive bins merged.
+
+        Thin convenience wrapper over
+        :func:`asymmetry.core.transform.rebin.rebin`: the time/asymmetry/error
+        arrays are rebinned by that primitive and a *new* dataset is returned
+        with the same metadata and run (this dataset is left unchanged).
+
+        Combining ``factor`` adjacent bins trades time resolution for
+        statistics — the per-point error shrinks as :math:`1/\sqrt{factor}` on
+        flat data. ``factor = 1`` is a no-op copy; a length that is not a
+        multiple of ``factor`` drops the trailing remainder bins; ``factor < 1``
+        raises ``ValueError``.
+
+        Useful on high-rate continuous-source data (e.g. PSI GPS 1.25 ns bins)
+        where the raw sampling is far finer than the physics requires.
+        """
+        from asymmetry.core.transform.rebin import rebin
+
+        time, asymmetry, error = rebin(self.time, self.asymmetry, self.error, factor)
+        return MuonDataset(
+            time=time,
+            asymmetry=asymmetry,
+            error=error,
+            metadata=dict(self.metadata),
+            run=self.run,
+        )
+
     def time_range(self, t_min: float | None = None, t_max: float | None = None) -> MuonDataset:
         """Return a copy restricted to [t_min, t_max]."""
         mask = np.ones(self.n_points, dtype=bool)
