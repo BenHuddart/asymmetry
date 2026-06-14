@@ -12,9 +12,11 @@ import re
 from collections.abc import Callable
 
 import numpy as np
-from PySide6.QtCore import QEventLoop, QSignalBlocker, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QDoubleValidator
+from PySide6.QtCore import QEvent, QEventLoop, QSignalBlocker, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QDoubleValidator, QKeyEvent
 from PySide6.QtWidgets import (
+    QAbstractItemDelegate,
+    QAbstractItemView,
     QApplication,
     QCheckBox,
     QComboBox,
@@ -975,7 +977,44 @@ def _start_fit_call(
     )
 
 
-class _ValueUncertaintyDelegate(QStyledItemDelegate):
+class _CommitOnTabDelegate(QStyledItemDelegate):
+    """Item delegate that commits the open editor when Tab/Backtab is pressed.
+
+    The parameter tables interleave focusable cell widgets (the Fix checkbox,
+    the Type/Link combos) between the editable item cells. Pressing Tab in an
+    open cell editor makes Qt's focus traversal jump to the adjacent cell
+    widget *without* routing through the item-view's editor-commit path, so the
+    value the user just typed is silently discarded (Return and clicking away
+    commit normally — only Tab loses the edit). Intercepting Tab/Backtab here
+    and committing explicitly closes that gap: Tab now commits the typed value
+    and advances to the next editable cell, matching Return.
+    """
+
+    def eventFilter(self, editor: QWidget, event: QEvent) -> bool:  # noqa: N802
+        if event.type() == QEvent.Type.KeyPress and isinstance(event, QKeyEvent):
+            key = event.key()
+            if key in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
+                hint = (
+                    QAbstractItemDelegate.EndEditHint.EditPreviousItem
+                    if key == Qt.Key.Key_Backtab
+                    else QAbstractItemDelegate.EndEditHint.EditNextItem
+                )
+                # Commit directly (not via the commitData signal): emitting
+                # commitData lets a focus change to the adjacent cell widget reset
+                # the editor to the model value before setModelData reads it, so
+                # the typed value is lost. Calling setModelData here reads the
+                # editor while it still holds the typed text.
+                view = self.parent()
+                if isinstance(view, QAbstractItemView):
+                    index = view.currentIndex()
+                    if index.isValid():
+                        self.setModelData(editor, view.model(), index)
+                self.closeEditor.emit(editor, hint)
+                return True
+        return super().eventFilter(editor, event)
+
+
+class _ValueUncertaintyDelegate(_CommitOnTabDelegate):
     """Paints 'value  ±σ' in a table cell; editing shows only the bare value.
 
     Uncertainty is stored in UserRole+1 alongside the item text. When an opt-in
@@ -1016,9 +1055,16 @@ class _ValueUncertaintyDelegate(QStyledItemDelegate):
         painter.restore()
 
     def setModelData(self, editor, model, index) -> None:  # noqa: N802
+        # Write the edited value BEFORE clearing the ±σ overlay roles. Clearing a
+        # role calls model.setData, which emits dataChanged; while the editor is
+        # still open the view responds by re-pushing the model value back into the
+        # editor (setEditorData), so clearing first would overwrite the freshly
+        # typed text and super().setModelData would then read (and commit) the
+        # stale value. Committing first reads the real edit; the overlay clear
+        # follows (the fitted uncertainty no longer applies to a hand-edited value).
+        super().setModelData(editor, model, index)
         model.setData(index, None, self._UNC_ROLE)
         model.setData(index, None, self._MINOS_ROLE)
-        super().setModelData(editor, model, index)
 
 
 def _size_param_table_to_content(table: QTableWidget) -> None:
@@ -1221,6 +1267,9 @@ class SingleFitTab(QWidget):
         self._param_table.setColumnWidth(6, 40)  # Link group (equality tie)
 
         _apply_param_table_style(self._param_table)
+        # Tab commits the open editor on every editable column (Value, Min, Max);
+        # the Value column additionally paints the ±σ overlay.
+        self._param_table.setItemDelegate(_CommitOnTabDelegate(self._param_table))
         self._param_table.setItemDelegateForColumn(1, _ValueUncertaintyDelegate(self._param_table))
 
         # Size the table to its rows (see _size_param_table_to_content). The
@@ -2530,6 +2579,10 @@ class GlobalFitTab(QWidget):
         self._param_table.setColumnWidth(2, 86)  # Type (dropdown)
         self._param_table.setColumnWidth(3, 104)  # Bounds
         _apply_param_table_style(self._param_table)
+        # Tab commits the open editor on the editable columns (Value, Bounds);
+        # without this Qt's focus traversal jumps to the Type combo and the
+        # typed value is lost (see _CommitOnTabDelegate).
+        self._param_table.setItemDelegate(_CommitOnTabDelegate(self._param_table))
         # Size to content (see _size_param_table_to_content): the dock scrolls
         # vertically as a whole, so the table shows all rows with no internal
         # scrollbar or empty rows.
@@ -6581,8 +6634,28 @@ class FitPanel(QWidget):
         elif run_number in self._single_state_by_run:
             self._single_tab.restore_state(self._single_state_by_run[run_number])
         else:
-            # Unseen datasets should not inherit another run's fit UI/result state.
-            self._reset_single_fit_form()
+            # An unseen dataset the user has not customised inherits the model
+            # and parameter setup currently shown (carry-forward) instead of
+            # snapping back to the default on every row change. Its own model is
+            # still saved and restored on return; only the previous run's fit
+            # *result* is dropped (it belongs to the run it was computed on).
+            self._carry_forward_single_fit_form()
+
+    def _carry_forward_single_fit_form(self) -> None:
+        """Inherit the previous selection's model + parameter setup, sans result.
+
+        Reuses the seen-dataset restore path (so the composite model, seeds,
+        bounds, fixed/free flags and link groups all transfer faithfully) but
+        clears the fitted uncertainties and result label first — an unseen run
+        has not been fit, so it must not display another run's result.
+        """
+        state = self._single_tab.get_state()
+        for entry in state.get("parameters", []):
+            entry["uncertainty"] = None
+            entry["uncertainty_asymmetric"] = None
+        self._single_tab.restore_state(state)
+        if not self._single_tab._composite_model.missing_component_names:
+            self._single_tab._result_label.setText("No fit performed yet")
 
     def _reset_single_fit_form(self) -> None:
         """Blank the single-fit form to its domain default ("No fit yet")."""

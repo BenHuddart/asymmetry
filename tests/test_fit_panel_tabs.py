@@ -42,7 +42,12 @@ from asymmetry.core.utils.constants import (
     MUON_LIFETIME_US,
 )
 from asymmetry.gui.panels import fit_panel as fit_panel_module
-from asymmetry.gui.panels.fit_panel import FitPanel, GlobalFitTab, SingleFitTab
+from asymmetry.gui.panels.fit_panel import (
+    FitPanel,
+    GlobalFitTab,
+    SingleFitTab,
+    _ValueUncertaintyDelegate,
+)
 
 
 @pytest.fixture(scope="module")
@@ -273,6 +278,105 @@ def _global_wizard_recommendation_for_dataset(
     )
 
 
+def _drive_tab_commit(delegate, table, row, col, typed, key):
+    """Open the cell editor, type *typed*, route *key* through the delegate's
+    event filter, and return (committed text, close hint or None)."""
+    from PySide6.QtCore import QEvent
+    from PySide6.QtGui import QKeyEvent
+    from PySide6.QtWidgets import QLineEdit, QStyleOptionViewItem
+
+    index = table.model().index(row, col)
+    table.setCurrentCell(row, col)
+    editor = delegate.createEditor(table.viewport(), QStyleOptionViewItem(), index)
+    assert isinstance(editor, QLineEdit)
+    editor.setText(typed)
+    closed: list = []
+    delegate.closeEditor.connect(lambda _ed, hint: closed.append(hint))
+    consumed = delegate.eventFilter(
+        editor, QKeyEvent(QEvent.Type.KeyPress, key, Qt.KeyboardModifier.NoModifier)
+    )
+    return table.item(row, col).text(), (closed[0] if closed else None), consumed
+
+
+def test_commit_on_tab_delegate_commits_value_and_advances(qapp: QApplication) -> None:
+    # Tab/Backtab in a param-table cell editor must commit the typed value
+    # (the bug: focus traversal to the adjacent cell widget discarded the edit)
+    # and advance to the next/previous cell.
+    from PySide6.QtWidgets import QAbstractItemDelegate, QTableWidget, QTableWidgetItem
+
+    from asymmetry.gui.panels.fit_panel import _CommitOnTabDelegate
+
+    table = QTableWidget(1, 1)
+    table.setItem(0, 0, QTableWidgetItem("old"))
+    delegate = _CommitOnTabDelegate(table)
+    table.setItemDelegate(delegate)
+
+    text, hint, consumed = _drive_tab_commit(delegate, table, 0, 0, "new", Qt.Key.Key_Tab)
+    assert consumed is True
+    assert text == "new"  # committed, not reverted
+    assert hint == QAbstractItemDelegate.EndEditHint.EditNextItem
+
+    text, hint, consumed = _drive_tab_commit(delegate, table, 0, 0, "back", Qt.Key.Key_Backtab)
+    assert consumed is True
+    assert text == "back"
+    assert hint == QAbstractItemDelegate.EndEditHint.EditPreviousItem
+
+
+def test_value_delegate_commits_value_before_clearing_overlay(qapp: QApplication) -> None:
+    # The ±σ overlay roles must be cleared AFTER the value is written: clearing
+    # first emits dataChanged, which (with an open editor) re-pushes the model
+    # value back into the editor via setEditorData and clobbers the freshly typed
+    # text, so super().setModelData would then commit the stale value. This test
+    # simulates that setEditorData-on-dataChanged behaviour so it fails if the
+    # roles are cleared first.
+    from PySide6.QtWidgets import QTableWidget, QTableWidgetItem
+
+    from asymmetry.gui.panels.fit_panel import _ValueUncertaintyDelegate
+
+    table = QTableWidget(1, 1)
+    item = QTableWidgetItem("25.0")
+    item.setData(_ValueUncertaintyDelegate._UNC_ROLE, 0.05)
+    table.setItem(0, 0, item)
+    delegate = _ValueUncertaintyDelegate(table)
+    table.setItemDelegate(delegate)
+
+    index = table.model().index(0, 0)
+    table.setCurrentCell(0, 0)
+    from PySide6.QtWidgets import QStyleOptionViewItem
+
+    editor = delegate.createEditor(table.viewport(), QStyleOptionViewItem(), index)
+    editor.setText("7")
+
+    # Mimic the view re-pushing the model value into the open editor whenever the
+    # model changes (what QAbstractItemView does via setEditorData).
+    def _reset_editor(*_args) -> None:
+        delegate.setEditorData(editor, index)
+
+    table.model().dataChanged.connect(_reset_editor)
+
+    from PySide6.QtCore import QEvent
+    from PySide6.QtGui import QKeyEvent
+
+    delegate.eventFilter(
+        editor, QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Tab, Qt.KeyboardModifier.NoModifier)
+    )
+    assert table.item(0, 0).text() == "7"
+    assert table.item(0, 0).data(_ValueUncertaintyDelegate._UNC_ROLE) is None
+
+
+def test_param_tables_install_commit_on_tab_delegate(qapp: QApplication) -> None:
+    from asymmetry.gui.panels.fit_panel import _CommitOnTabDelegate, _ValueUncertaintyDelegate
+
+    single = SingleFitTab()
+    # The Value column paints ±σ and (being a subclass) also commits on Tab;
+    # the other editable columns get the plain commit-on-Tab delegate.
+    assert isinstance(single._param_table.itemDelegateForColumn(1), _ValueUncertaintyDelegate)
+    assert isinstance(single._param_table.itemDelegate(), _CommitOnTabDelegate)
+
+    batch = GlobalFitTab()
+    assert isinstance(batch._param_table.itemDelegate(), _CommitOnTabDelegate)
+
+
 def test_single_fit_requires_dataset(qapp: QApplication) -> None:
     tab = SingleFitTab()
     tab._current_dataset = None
@@ -477,6 +581,36 @@ def test_restore_single_fit_ui_empty_blanks_form(qapp: QApplication, dataset: Mu
 
     assert panel._single_tab._composite_model.component_names == ["Exponential", "Constant"]
     assert panel._single_tab._result_label.text() == "No fit performed yet"
+
+
+def test_unseen_dataset_inherits_custom_model_without_result(
+    qapp: QApplication, dataset: MuonDataset
+) -> None:
+    panel = FitPanel()
+    panel.set_dataset(dataset)
+    # Build a custom model and stamp a fit result onto the current run.
+    panel._single_tab._set_composite_model(
+        CompositeModel(["Gaussian", "Constant"], operators=["+"])
+    )
+    panel._single_tab._param_table.item(0, 1).setData(_ValueUncertaintyDelegate._UNC_ROLE, 0.05)
+    panel._single_tab._result_label.setText("Fit converged")
+
+    # Selecting an unseen run must carry the model forward (not reset to the
+    # default Exponential + Constant) but drop the previous run's result.
+    other = replace(dataset, metadata={"run_number": 202})
+    panel.set_dataset(other)
+    assert panel._single_tab._composite_model.component_names == ["Gaussian", "Constant"]
+    assert (
+        panel._single_tab._param_table.item(0, 1).data(_ValueUncertaintyDelegate._UNC_ROLE) is None
+    )
+    assert panel._single_tab._result_label.text() == "No fit performed yet"
+
+    # The carry chains to further unseen runs, and each run keeps its own model.
+    third = replace(dataset, metadata={"run_number": 303})
+    panel.set_dataset(third)
+    assert panel._single_tab._composite_model.component_names == ["Gaussian", "Constant"]
+    panel.set_dataset(dataset)
+    assert panel._single_tab._composite_model.component_names == ["Gaussian", "Constant"]
 
 
 def test_set_dataset_restore_provider_overrides_run_blob(
