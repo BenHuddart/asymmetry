@@ -586,6 +586,26 @@ def _resolve_frequency_window(run: Run, config: MaxEntConfig) -> tuple[float, fl
     return 0.0, max(10.0, center + half_width)
 
 
+def _require_run(obj: object) -> Run:
+    """Return *obj* if it is a :class:`Run`, else raise a pointing TypeError.
+
+    MaxEnt is a grouped raw-count algorithm: it needs the raw detector
+    histograms held by a :class:`Run`, not the reduced asymmetry curve held by a
+    :class:`MuonDataset`. Passing the dataset is the single most-repeated
+    discoverability miss, and previously failed with a bare
+    ``AttributeError: 'MuonDataset' object has no attribute 'grouping'``.
+    """
+    if isinstance(obj, Run):
+        return obj
+    if isinstance(obj, MuonDataset):
+        raise TypeError(
+            "MaxEnt expects a Run, not a MuonDataset: it works on the raw "
+            "detector histograms, not the reduced asymmetry curve. Pass the "
+            "dataset's .run, e.g. maxent(load(path).run)."
+        )
+    raise TypeError(f"MaxEnt expects a Run; got {type(obj).__name__}. Pass load(path).run.")
+
+
 def build_maxent_input(
     run: Run,
     config: MaxEntConfig | dict | None = None,
@@ -594,6 +614,7 @@ def build_maxent_input(
     reference_t0_bin: int | None = None,
 ) -> MaxEntInput:
     """Build grouped raw-count MaxEnt input from *run* and *config*."""
+    run = _require_run(run)
     resolved_config = config if isinstance(config, MaxEntConfig) else MaxEntConfig.from_dict(config)
     run = _run_with_maxent_binning(run, resolved_config)
     names_by_group = group_names(run)
@@ -1497,6 +1518,7 @@ def maxent(
     *cycles* is an upper bound: the run stops early at the χ² plateau unless
     *early_stop* is ``False``.
     """
+    run = _require_run(run)
     resolved_config = config if isinstance(config, MaxEntConfig) else MaxEntConfig.from_dict(config)
     _check_cancel(cancel_callback)
     maxent_input = build_maxent_input(run, resolved_config)

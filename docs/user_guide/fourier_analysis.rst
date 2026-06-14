@@ -239,8 +239,8 @@ Engine API
    :class:`~asymmetry.core.data.dataset.MuonDataset` that ``load()`` returns.
    The dataset exposes the required ``Run`` as its ``.run`` attribute, so the
    call is ``maxent(dataset.run, config)``. Passing the ``MuonDataset`` itself
-   fails with ``AttributeError: 'MuonDataset' object has no attribute
-   'grouping'``.
+   raises a ``TypeError`` that names the fix (*"MaxEnt expects a Run … pass the
+   dataset's .run"*).
 
 .. warning::
 
