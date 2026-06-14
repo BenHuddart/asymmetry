@@ -157,6 +157,96 @@ The grouped plot view itself shows the grouped lifetime-corrected traces built
 from the current grouped analysis dataset, while the grouped fit uses the
 active fit-range restricted dataset.
 
+.. _grouped-cross-run-global-api:
+
+Cross-run global fits from the API
+----------------------------------
+
+Sharing fit-function (physics) parameters across **several runs** — for example
+a global Keren fit that shares :math:`\Delta` and :math:`\nu` across a set of LF
+fields measured at one temperature — is done programmatically with
+:func:`~asymmetry.core.fitting.grouped_time_domain.fit_grouped_series`. This is
+the count-domain path: it operates on the raw, lifetime-corrected grouped
+**counts** (Cash/Poisson cost by default), the same
+:math:`N_0[1 + A\,P(t)] + B e^{t/\tau_\mu}` model documented above — it does
+**not** take ``.asymmetry`` arrays.
+
+The ``relationship`` argument selects the sharing mode. The valid values are
+``GROUPED_SERIES_RELATIONSHIPS`` — ``("individual", "batch", "global")``:
+
+* ``"individual"`` / ``"batch"`` — one independent grouped fit per run (recorded
+  together for trending).
+* ``"global"`` — shares the **physics** (fit-function) parameters in
+  ``global_params`` across *all* runs at once, while ``local_params`` (the
+  per-group nuisance parameters ``N0``, ``background``, ``amplitude``,
+  ``relative_phase``) stay free per group.
+
+Build each run's grouped count traces with
+:func:`~asymmetry.core.fitting.grouped_time_domain.build_grouped_time_domain_groups`
+(it returns a list of ``GroupedTimeDomainGroup`` objects per dataset), assemble
+the ``members`` and ``initial_params`` maps keyed by a per-run id, then call
+``fit_grouped_series``:
+
+.. code-block:: python
+
+   import numpy as np
+   from asymmetry.core.io import load
+   from asymmetry.core.fitting import Parameter, ParameterSet
+   from asymmetry.core.fitting.grouped_time_domain import (
+       build_grouped_time_domain_groups,
+       fit_grouped_series,
+       GROUP_NUISANCE_PARAMS,
+   )
+
+   # Shared physics polarization P(t; ...). First arg is time; the rest are the
+   # fit-function parameters. The engine wraps it in N0[1 + A·P(t)] + B·e^(t/τ).
+   def keren(t, Delta, nu):
+       ...  # return the Keren polarization for these parameters
+
+   # One LF field per run; the key is any per-run id (here the run number).
+   runs = {44000: load("run_44000.nxs"), 44001: load("run_44001.nxs")}
+   members = {
+       run_id: build_grouped_time_domain_groups(ds, t_min=0.1, t_max=8.0)
+       for run_id, ds in runs.items()
+   }
+
+   def seed():
+       return ParameterSet([
+           Parameter("N0", 1000.0, min=0.0),
+           Parameter("background", 0.0),
+           Parameter("amplitude", 0.2, min=0.0),
+           Parameter("relative_phase", 0.0),
+           Parameter("Delta", 0.3, min=0.0),   # physics — shared below
+           Parameter("nu", 0.5, min=0.0),      # physics — shared below
+       ])
+
+   initial_params = {
+       run_id: {group.group_id: seed() for group in groups}
+       for run_id, groups in members.items()
+   }
+
+   result = fit_grouped_series(
+       "global",
+       members,
+       keren,
+       global_params=["Delta", "nu"],            # shared across ALL runs
+       local_params=list(GROUP_NUISANCE_PARAMS),  # per-group nuisance
+       initial_params=initial_params,
+       cost="poisson",
+   )
+   print(result.success, result.shared_parameters)
+
+The returned ``GroupedSeriesFitResult`` carries the cross-run
+``shared_parameters`` plus per-member ``member_results``.
+
+.. note::
+
+   **There is no asymmetry-domain global fit in a single call.** This API shares
+   parameters across runs only in the **count domain**. Sharing parameters
+   across several ``.asymmetry`` traces in one call is not currently exposed; in
+   the GUI, the asymmetry-domain shared-parameter workflow is the interactive
+   :doc:`global_fit_wizard` instead.
+
 Current Limitations
 -------------------
 

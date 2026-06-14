@@ -163,26 +163,22 @@ Hayano *et al.* (1979). It introduces a third parameter :math:`\nu`
 (fluctuation rate, in :math:`\mu\mathrm{s}^{-1}`) and reduces to the
 static form as :math:`\nu \to 0`.
 
-**Asymmetry does not yet implement dynamic KT.** The
-`dynamic-kubo-toyabe
-<../../porting/candidates/dynamic-kubo-toyabe/>`_ candidate in the
-roadmap is a Now-tier item; the static workflow above is the upper
-bound on what Asymmetry can do today.
+**Asymmetry ships dynamic KT.** The strong-collision dynamic
+Kubo–Toyabe is available as two models: ``DynamicGaussianKT`` (dense
+nuclear-dipolar fields) and ``DynamicLorentzianKT`` (dilute or
+randomly-diluted moments). Both are registered in **both** registries —
+the ``COMPONENTS`` expression registry (so they combine in composite
+expressions, e.g. ``DynamicGaussianKT + Constant``) and the ``MODELS``
+standalone registry (``MODELS["DynamicGaussianKT"]``) — so you can fit
+the dynamic regime directly rather than approximating it.
 
-The workaround for dynamic data, until the candidate ships, is to:
-
-1. Fit the :math:`B_L = 0` run alone with
-   ``StaticGKT_ZF + Exponential`` (the exponential absorbs the
-   dynamic tail relaxation approximately).
-2. Trend the exponential rate :math:`\lambda` across the LF series.
-   It should approach a non-zero plateau
-   :math:`\lambda \to 2\Delta^2/\nu` at high :math:`B_L`; the plateau
-   value gives :math:`\nu`.
-3. Verify with the dynamicized-KT analytical limit
-   :math:`\lambda_{\mathrm{fast-fluc}} \approx \Delta^2 \tau`
-   (textbook eq 5.35).
-
-This is approximate; the dynamic-KT port will provide the exact form.
+The standard tactic for a dynamic LF/ZF series is to **fix the static
+width** :math:`\Delta` from a low-temperature (static) reference and
+**float only** the fluctuation rate :math:`\nu`. The worked example
+:doc:`dynamic_kt_copper` walks through this end-to-end on a copper run
+(muon diffusion); the reference pages :ref:`fit-dynamic-gaussian-kt`
+and :ref:`fit-dynamic-lorentzian-kt` give the parameter lists and
+formulas.
 
 Interpretation
 --------------
@@ -240,6 +236,8 @@ Cross-references
 ----------------
 
 - :doc:`/user_guide/fit_functions/kubo_toyabe` — the LF-KT reference page.
+- :doc:`dynamic_kt_copper` — the dynamic Kubo–Toyabe worked example
+  (fitting the fluctuation rate :math:`\nu`).
 - :doc:`/user_guide/global_fit_wizard` — the Global Fit Wizard.
 - :doc:`/user_guide/composite_models` — for composite envelopes.
 - :doc:`/user_guide/fit_wizard` — for model recommendation.
