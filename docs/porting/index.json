@@ -2,6 +2,29 @@
   "version": 1,
   "studies": [
     {
+      "slug": "sc-brandt-penetration-depth",
+      "feature_name": "Brandt field-dependent vortex-lattice penetration depth",
+      "status": "implemented",
+      "path": "docs/porting/sc-brandt-penetration-depth",
+      "references": [
+        "Brandt, Phys. Rev. B 37, 2349 (1988)",
+        "Brandt, Phys. Rev. B 68, 054506 (2003)",
+        "Pratt et al., Phys. Rev. B 79, 052508 (2009)",
+        "Sonier et al., Rev. Mod. Phys. 72, 769 (2000)"
+      ],
+      "docs": {
+        "readme": "docs/porting/sc-brandt-penetration-depth/README.md",
+        "comparison": "docs/porting/sc-brandt-penetration-depth/comparison.md",
+        "implementation_options": "docs/porting/sc-brandt-penetration-depth/implementation-options.md",
+        "test_data": "docs/porting/sc-brandt-penetration-depth/test-data.md",
+        "verification_plan": "docs/porting/sc-brandt-penetration-depth/verification-plan.md"
+      },
+      "tests_path": "tests/test_sc_brandt_field_width.py",
+      "src_path": "src/asymmetry/core/fitting/sc/models.py",
+      "updated": "2026-06-14",
+      "notes": "Adds the field-dependent vortex-lattice line width sigma(B0) = sigma0(lambda)*(1-b)[1+1.21(1-sqrt(b))^3]/2.21, b=B0/Bc2 (Brandt PRB 37,2349/68,054506), fitting lambda_ab (nm) and Bc2 (T) for a type-II superconductor. Core: brandt_field_width_sigma + brandt_field_factor in sc/models.py, reusing sc.constants.lambda_nm_to_sigma_us (the b->0 limit). Registered field-scope components SC_Brandt_VortexLattice and SC_Brandt_VortexLattice_Powder (3^(1/4) ab-plane powder average). Optional sigma_bg adds in quadrature (Pratt Eq.2). x=field in gauss, Bc2 in tesla. 11 tests; powder B_rms plateau reproduces Pratt 2009 Fig.1 (195 nm -> 1.91 mT, 244 nm -> 1.22 mT)."
+    },
+    {
       "slug": "asymmetry-domain-global-fit",
       "feature_name": "Asymmetry-domain global (shared-parameter) fit",
       "status": "implemented",
