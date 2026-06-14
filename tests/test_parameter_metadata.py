@@ -28,6 +28,24 @@ def test_get_param_info_shape_factor_a_has_expected_defaults() -> None:
     assert info.description is not None
 
 
+def test_signed_baseline_params_have_no_lower_bound() -> None:
+    # A_bg is a signed DC baseline of the asymmetry: a 2-group F–B transverse-
+    # field asymmetry sits on a large negative offset, so a 0 lower bound would
+    # clamp the fit. It (and its indexed variants) must default to −inf.
+    assert get_param_info("A_bg").default_min is None
+    assert get_param_info("A_bg_2").default_min is None
+    # Other signed baseline / offset / polynomial-constant params likewise.
+    for name in ("baseline", "c0", "c1", "bg", "slope"):
+        assert get_param_info(name).default_min is None, name
+
+
+def test_positive_definite_params_keep_zero_lower_bound() -> None:
+    # Amplitudes, relaxation rates and widths are physically non-negative and
+    # must keep their 0 floor (only genuinely-signed baselines were relaxed).
+    for name in ("A", "A0", "Lambda", "sigma", "Delta"):
+        assert get_param_info(name).default_min == 0.0, name
+
+
 def test_get_param_info_indexed_parameter_preserves_formats() -> None:
     info = get_param_info("A0_2")
     assert info.plain == "A0_2"
