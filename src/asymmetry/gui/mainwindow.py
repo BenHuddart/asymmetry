@@ -23,6 +23,7 @@ import copy
 import hashlib
 import os
 import time
+from collections.abc import Iterable
 from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
@@ -340,6 +341,32 @@ def _sync_grouping_keys(grouping: dict, payload: dict, keys: tuple[str, ...]) ->
             grouping[key] = payload.get(key)
         else:
             grouping.pop(key, None)
+
+
+def _run_number_gap_ranges(run_numbers: Iterable[int]) -> list[tuple[int, int]]:
+    """Contiguous runs of run numbers missing from ``[min..max]``.
+
+    Given the run numbers that were actually loaded, return the inclusive
+    ``(start, end)`` ranges of integers absent from the span they cover. Used to
+    warn when a multi-file load has gaps — usually because an OS file-picker
+    range selection silently dropped files, which would distort a field or
+    temperature scan. Returns ``[]`` when the runs are contiguous or fewer than
+    two distinct values are present (a single run can have no internal gap).
+    """
+    unique = sorted(set(run_numbers))
+    if len(unique) < 2:
+        return []
+    gaps: list[tuple[int, int]] = []
+    for prev, nxt in zip(unique, unique[1:], strict=False):
+        if nxt - prev > 1:
+            gaps.append((prev + 1, nxt - 1))
+    return gaps
+
+
+def _format_gap_ranges(gaps: list[tuple[int, int]]) -> str:
+    """Human-readable ``"a–b, c, d–e"`` rendering of gap ranges."""
+    parts = [str(lo) if lo == hi else f"{lo}–{hi}" for lo, hi in gaps]
+    return ", ".join(parts)
 
 
 class _InspectorStack(CurrentPageSizingMixin, QStackedWidget):
@@ -2601,6 +2628,7 @@ class MainWindow(QMainWindow):
         successful = 0
         failed = 0
         last_dataset = None
+        loaded_run_numbers: list[int] = []
         apply_comment_field_to_all = False
         overwrite_existing_to_all = False
         auto_grouping_payload = self._get_project_grouping_template()
@@ -2690,6 +2718,8 @@ class MainWindow(QMainWindow):
                     if dataset:
                         last_dataset = dataset
                         successful += 1
+                        if dataset.run_number is not None:
+                            loaded_run_numbers.append(int(dataset.run_number))
                 else:
                     self._log_panel.log(f"Loaded {path}", tag="load")
                     continue
@@ -2720,6 +2750,19 @@ class MainWindow(QMainWindow):
                 msg += f", {failed} failed"
             self._log_panel.log(msg)
             self.statusBar().showMessage(msg)
+            # The loader loads exactly the files it is handed, so a gap in the
+            # loaded run numbers means some files were never selected (commonly
+            # an OS file-picker range selection that broke across a scroll). Warn
+            # because a silent gap distorts a field/temperature scan.
+            gaps = _run_number_gap_ranges(loaded_run_numbers)
+            if gaps:
+                distinct = sorted(set(loaded_run_numbers))
+                self._log_panel.log(
+                    f"Loaded {len(distinct)} runs spanning {distinct[0]}–{distinct[-1]} "
+                    f"with a gap at {_format_gap_ranges(gaps)} — "
+                    "some files may not have been selected.",
+                    tag="warn",
+                )
         elif failed > 0:
             self.statusBar().showMessage(f"Failed to load {failed} file(s)")
 

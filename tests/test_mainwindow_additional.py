@@ -5241,3 +5241,30 @@ class TestMaxEntBatchReconstructSend:
         # the batch cycle budget was threaded in.
         assert captured["state"] == stored
         assert config.outer_cycles == mainwindow._MAXENT_BATCH_CYCLES
+
+
+class TestRunNumberGapDetection:
+    """Pure helpers behind the post-load run-number-gap warning."""
+
+    def test_contiguous_runs_have_no_gap(self) -> None:
+        assert mw_module._run_number_gap_ranges([5, 6, 7, 8]) == []
+
+    def test_single_run_has_no_gap(self) -> None:
+        assert mw_module._run_number_gap_ranges([42]) == []
+
+    def test_empty_has_no_gap(self) -> None:
+        assert mw_module._run_number_gap_ranges([]) == []
+
+    def test_single_contiguous_block_gap(self) -> None:
+        # The ALC/TCNQ repro: 19489-19502 + 19516-19519 loaded, 19503-19515 lost.
+        loaded = list(range(19489, 19503)) + list(range(19516, 19520))
+        assert mw_module._run_number_gap_ranges(loaded) == [(19503, 19515)]
+
+    def test_multiple_gaps(self) -> None:
+        assert mw_module._run_number_gap_ranges([1, 3, 5]) == [(2, 2), (4, 4)]
+
+    def test_order_and_duplicates_ignored(self) -> None:
+        assert mw_module._run_number_gap_ranges([8, 5, 6, 5, 8]) == [(7, 7)]
+
+    def test_format_gap_ranges_mixes_singletons_and_ranges(self) -> None:
+        assert mw_module._format_gap_ranges([(2, 2), (4, 6)]) == "2, 4–6"
