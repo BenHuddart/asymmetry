@@ -7,6 +7,7 @@ with :class:`asymmetry.core.fitting.engine.FitEngine`.
 
 from __future__ import annotations
 
+import difflib
 import re
 from collections import Counter
 from collections.abc import Callable
@@ -16,6 +17,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.fitting.models import (
+    MODELS,
     ModelDefinition,
     abragam,
     bessel_oscillation,
@@ -55,17 +57,77 @@ from asymmetry.core.fitting.nuclear_dipole import (
 from asymmetry.core.fitting.parameters import ParamInfo, get_param_info
 from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
 
+#: MODELS keys that have no COMPONENTS entry of the same name but DO map to a
+#: component under a different (expression) name. Fit *expressions* take
+#: COMPONENTS names; these are the standalone names in
+#: :data:`asymmetry.core.fitting.models.MODELS`. Mapping each to its expression
+#: name lets the parser point a mis-typed expression at the right token — the
+#: single most-repeated discoverability miss in clean-room API testing
+#: (e.g. ``GaussianRelaxation`` used in an expression where ``Gaussian`` is
+#: required). Drift is guarded by ``tests/test_composite_unknown_component_hint``.
+_MODEL_NAME_TO_COMPONENT: dict[str, str] = {
+    "GaussianRelaxation": "Gaussian",
+    "ExponentialRelaxation": "Exponential",
+    "LFKuboToyabe": "LongitudinalFieldKT",
+}
+
+
+def _unknown_component_hint(
+    name: str, allowed: set[str] | frozenset[str] | None = None
+) -> tuple[str, tuple[str, ...]]:
+    """Build a corrective message + suggestions for an unknown component name.
+
+    Returns ``(message, suggestions)`` where ``suggestions`` are valid
+    expression names the caller can actually type. ``allowed`` is the set the
+    name was checked against — defaults to the full ``COMPONENTS`` registry, but
+    a restricted grammar (e.g. parameter-domain models) passes its own set so
+    suggestions never point at names that are invalid in that context. Resolved
+    at call time so it sees the live ``COMPONENTS``/``MODELS`` registries.
+    """
+    available = COMPONENTS if allowed is None else allowed
+    base = f"Unknown component '{name}'"
+    alias = _MODEL_NAME_TO_COMPONENT.get(name)
+    if alias is not None and alias in available:
+        message = (
+            f"{base}. In fit expressions use '{alias}', not '{name}': "
+            f"'{name}' is the standalone name in MODELS, while expressions take "
+            f"COMPONENTS names (e.g. '{alias} + Constant')."
+        )
+        return message, (alias,)
+
+    # Suggest from the allowed set only, and never echo the rejected name back.
+    matches = difflib.get_close_matches(name, sorted(available), n=4, cutoff=0.6)
+    suggestions = tuple(m for m in matches if m != name)[:3]
+    if name in MODELS and name not in available:
+        # A MODELS name with no direct component analogue: still steer the
+        # caller toward COMPONENTS names, listing any near matches we found.
+        hint = f" Did you mean {', '.join(repr(s) for s in suggestions)}?" if suggestions else ""
+        message = (
+            f"{base}. '{name}' is a MODELS name; fit expressions take COMPONENTS "
+            f"names (see asymmetry.core.fitting.composite.COMPONENTS).{hint}"
+        )
+        return message, suggestions
+    if suggestions:
+        joined = ", ".join(repr(s) for s in suggestions)
+        message = f"{base}. Did you mean {joined}? (expressions take COMPONENTS names)"
+        return message, suggestions
+    return f"{base}.", ()
+
 
 class UnknownComponentError(ValueError):
     """An expression referenced a component name that is not registered.
 
     Carries the offending ``name`` so callers (e.g. the GUI builder) can
-    produce targeted guidance without parsing the message text.
+    produce targeted guidance without parsing the message text, and a tuple of
+    valid-expression-name ``suggestions`` (closest COMPONENTS names, or the
+    expression name for a mis-used MODELS key).
     """
 
-    def __init__(self, name: str) -> None:
-        super().__init__(f"Unknown component '{name}'")
+    def __init__(self, name: str, allowed: set[str] | frozenset[str] | None = None) -> None:
+        message, suggestions = _unknown_component_hint(name, allowed)
+        super().__init__(message)
         self.name = name
+        self.suggestions: tuple[str, ...] = suggestions
 
 
 @dataclass(frozen=True)
@@ -1036,7 +1098,7 @@ def parse_component_expression(
             if token in allowed_operators or token == ")":
                 raise ValueError(f"Expected component before '{token}'")
             if token not in allowed_components:
-                raise UnknownComponentError(token)
+                raise UnknownComponentError(token, allowed=set(allowed_components))
 
             component_names.append(token)
             open_parentheses.append(pending_open)

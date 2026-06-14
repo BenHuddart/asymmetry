@@ -5,7 +5,15 @@ This guide covers the main features and workflows of Asymmetry.
 New users coming from a real experiment should start with the
 :doc:`workflows/index` chapter, which walks through end-to-end
 analyses on textbook archetypes; everything else is reference
-material.
+material. If you are **scripting or driving Asymmetry from an agent**,
+jump straight to the :doc:`cookbook` for copy-paste recipes that link
+out to each detailed page.
+
+.. toctree::
+   :maxdepth: 1
+   :caption: API cookbook (scripting)
+
+   cookbook
 
 .. toctree::
    :maxdepth: 2
