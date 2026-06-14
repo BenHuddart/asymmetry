@@ -303,12 +303,11 @@ histogram *N − 1*). Presets:
   definition** (``musredit_qt5/musrWiz/instrument_defs/instrument_def_psi.xml``,
   ``<tf name="WEP">``): rather than summing detectors it keeps Forward, Backward,
   Up and Down as four separate groups and exposes the **FB** and **UD**
-  asymmetry pairs. The FB projection records musrfit's default ``alpha = 0.75``,
-  but note that the reduction currently applies a single base ``alpha`` to all
-  projections of a preset and does not yet consume per-projection alpha for
-  non-canonical pairs, so set the FB alpha as usual. The per-detector phase
-  offsets musrfit uses to encode the rotation are likewise a fitting detail and
-  are not stored in the layout.
+  asymmetry pairs. The FB projection declares musrfit's default ``alpha = 0.75``
+  and UD ``alpha = 1.0``, and the reduction applies each projection's own
+  declared alpha — reducing or fitting the FB pair uses 0.75 and the UD pair uses
+  1.0. The per-detector phase offsets musrfit uses to encode the rotation are a
+  fitting detail and are not stored in the layout.
 
 The Mobile sub-detector (``Mob-RL``) is left ungrouped by default: it is added
 to either the Right or Left detector depending on the cryostat port in use,

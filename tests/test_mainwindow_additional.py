@@ -107,6 +107,63 @@ def _make_dataset(run_number: int, *, with_grouping: bool) -> MuonDataset:
     )
 
 
+def _gps_wep_dataset(run_number: int = 6001) -> MuonDataset:
+    """A GPS run with four flat histograms (F, B, U, D) for WEP reduction.
+
+    Constant counts make the reduced asymmetry constant and easy to predict:
+    with A = (F - alpha B) / (F + alpha B),
+      FB (F=100, B=80): alpha 0.75 -> 0.25 (25%);  alpha 1.0 -> 0.111 (11.1%)
+      UD (U=120, D=60): alpha 1.0  -> 0.333 (33.3%)
+    """
+    n = 4
+    f = np.full(n, 100.0)
+    b = np.full(n, 80.0)
+    u = np.full(n, 120.0)
+    d = np.full(n, 60.0)
+    run = Run(
+        run_number=run_number,
+        histograms=[
+            Histogram(counts=f, bin_width=0.01, t0_bin=0),
+            Histogram(counts=b, bin_width=0.01, t0_bin=0),
+            Histogram(counts=u, bin_width=0.01, t0_bin=0),
+            Histogram(counts=d, bin_width=0.01, t0_bin=0),
+        ],
+        metadata={"run_number": run_number, "facility": "PSI"},
+        grouping={},
+    )
+    t = np.arange(n, dtype=float) * 0.01
+    return MuonDataset(
+        time=t,
+        asymmetry=np.zeros_like(t),
+        error=np.full_like(t, 0.01),
+        metadata={"run_number": run_number, "facility": "PSI"},
+        run=run,
+    )
+
+
+def _gps_wep_payload(vector_axis: str = "FB") -> dict:
+    """Grouping payload mirroring the GPS ``WEP`` preset (FB alpha 0.75, UD 1.0)."""
+    forward_group, backward_group = (1, 2) if vector_axis == "FB" else (3, 4)
+    return {
+        "groups": {1: [1], 2: [2], 3: [3], 4: [4]},
+        "group_names": {1: "F", 2: "B", 3: "U", 4: "D"},
+        "projections": [
+            {"label": "FB", "forward_group": 1, "backward_group": 2, "alpha": 0.75},
+            {"label": "UD", "forward_group": 3, "backward_group": 4, "alpha": 1.0},
+        ],
+        "forward_group": forward_group,
+        "backward_group": backward_group,
+        "vector_axis": vector_axis,
+        "instrument": "GPS",
+        "alpha": 1.0,
+        "t0_bin": 0,
+        "first_good_bin": 0,
+        "last_good_bin": 3,
+        "bunching_factor": 1,
+        "deadtime_correction": False,
+    }
+
+
 def _make_fourier_ready_dataset(run_number: int, *, with_grouping: bool) -> MuonDataset:
     time = np.arange(256, dtype=float) * 0.05
     frequency = 12.0 / (time.size * 0.05)
@@ -3202,6 +3259,139 @@ class TestMainWindowBasic:
         assert dataset.run.grouping["alpha_x"] == pytest.approx(1.4)
         assert dataset.run.grouping["alpha_y"] == pytest.approx(1.4)
         assert dataset.run.grouping["alpha_z"] == pytest.approx(1.4)
+
+    def test_resolve_vector_alpha_values_consumes_declared_projection_alpha(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """Each declared projection contributes its own alpha keyed by label."""
+        grouping = _gps_wep_payload()
+        resolved = mainwindow._resolve_vector_alpha_values(grouping, None)
+        assert resolved["FB"] == pytest.approx(0.75)
+        assert resolved["UD"] == pytest.approx(1.0)
+
+    def test_resolve_vector_alpha_values_projection_without_alpha_uses_base(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """A projection dict with no explicit alpha falls back to the base alpha
+        (legacy groupings whose projections predate per-projection alpha)."""
+        grouping = {
+            "alpha": 1.3,
+            "projections": [{"label": "Top-Bottom", "forward_group": 1, "backward_group": 2}],
+        }
+        resolved = mainwindow._resolve_vector_alpha_values(grouping, None)
+        assert resolved["Top-Bottom"] == pytest.approx(1.3)
+
+    def test_resolve_vector_alpha_values_canonical_keys_win_over_declared(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """EMU is one case: the alpha_x/y/z keys override the declared projection
+        alpha, so the canonical vector behaviour is unchanged."""
+        grouping = {
+            "alpha": 1.0,
+            "alpha_x": 1.7,
+            "projections": [
+                {"label": "P_x", "forward_group": 5, "backward_group": 6, "alpha": 1.0},
+                {"label": "P_y", "forward_group": 3, "backward_group": 4, "alpha": 1.0},
+                {"label": "P_z", "forward_group": 1, "backward_group": 2, "alpha": 1.0},
+            ],
+        }
+        resolved = mainwindow._resolve_vector_alpha_values(grouping, None)
+        assert resolved["P_x"] == pytest.approx(1.7)
+        # P_y/P_z have no override key -> base alpha, not the declared 1.0 path.
+        assert resolved["P_y"] == pytest.approx(1.0)
+        assert resolved["P_z"] == pytest.approx(1.0)
+
+    def test_apply_grouping_wep_reduces_fb_with_declared_alpha(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """The GPS WEP FB projection reduces with its declared alpha (0.75),
+        not the base alpha (which would give 11.1%)."""
+        dataset = _gps_wep_dataset()
+        applied, _ = mainwindow._apply_grouping_settings_to_dataset(dataset, _gps_wep_payload("FB"))
+        assert applied is True
+        assert dataset.run is not None
+        assert dataset.run.grouping["forward_group"] == 1
+        assert dataset.run.grouping["backward_group"] == 2
+        assert dataset.run.grouping["alpha"] == pytest.approx(0.75)
+        # A = (100 - 0.75*80) / (100 + 0.75*80) = 40/160 = 0.25 -> 25%.
+        np.testing.assert_allclose(dataset.asymmetry, 25.0)
+
+    def test_apply_grouping_wep_reduces_ud_with_declared_alpha(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """The GPS WEP UD projection reduces with its declared alpha (1.0)."""
+        dataset = _gps_wep_dataset()
+        applied, _ = mainwindow._apply_grouping_settings_to_dataset(dataset, _gps_wep_payload("UD"))
+        assert applied is True
+        assert dataset.run is not None
+        assert dataset.run.grouping["forward_group"] == 3
+        assert dataset.run.grouping["backward_group"] == 4
+        assert dataset.run.grouping["alpha"] == pytest.approx(1.0)
+        # A = (120 - 60) / (120 + 60) = 60/180 = 0.333 -> 33.3%.
+        np.testing.assert_allclose(dataset.asymmetry, 100.0 / 3.0)
+
+    def test_per_projection_alpha_round_trips_through_grouping_overrides(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """Per-projection alpha survives extract -> re-apply (project save/load),
+        so the FB pair still reduces with 0.75 on the reloaded dataset."""
+        source = _gps_wep_dataset(6002)
+        mainwindow._apply_grouping_settings_to_dataset(source, _gps_wep_payload("FB"))
+
+        overrides = mainwindow._extract_grouping_overrides(source)
+        assert overrides is not None
+        by_label = {p["label"]: p for p in overrides["projections"]}
+        assert by_label["FB"]["alpha"] == pytest.approx(0.75)
+        assert by_label["UD"]["alpha"] == pytest.approx(1.0)
+
+        reloaded = _gps_wep_dataset(6003)
+        applied, _ = mainwindow._apply_grouping_settings_to_dataset(reloaded, overrides)
+        assert applied is True
+        assert reloaded.run.grouping["alpha"] == pytest.approx(0.75)
+        np.testing.assert_allclose(reloaded.asymmetry, 25.0)
+
+    def test_apply_grouping_tf_projection_uses_declared_alpha_over_base(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """A MuSR/HiFi transverse-field projection reduces with its own declared
+        alpha, not the differing base alpha shared by the grouping."""
+        dataset = _gps_wep_dataset(6010)  # four flat histograms: F/B/U/D counts
+        payload = {
+            "groups": {1: [1], 2: [2], 3: [3], 4: [4]},
+            "group_names": {
+                1: "Top-Bottom Top",
+                2: "Top-Bottom Bottom",
+                3: "Fwd-Back Forward",
+                4: "Fwd-Back Backward",
+            },
+            "projections": [
+                {"label": "Top-Bottom", "forward_group": 1, "backward_group": 2, "alpha": 1.0},
+                {"label": "Fwd-Back", "forward_group": 3, "backward_group": 4, "alpha": 1.0},
+            ],
+            "forward_group": 1,
+            "backward_group": 2,
+            "vector_axis": "Top-Bottom",
+            "instrument": "MuSR",
+            "alpha": 1.5,  # differs from the declared 1.0 to prove it is ignored
+            "t0_bin": 0,
+            "first_good_bin": 0,
+            "last_good_bin": 3,
+            "bunching_factor": 1,
+            "deadtime_correction": False,
+        }
+        applied, _ = mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
+        assert applied is True
+        assert dataset.run.grouping["alpha"] == pytest.approx(1.0)
+        # A = (100 - 1.0*80) / (100 + 1.0*80) = 20/180 = 0.111 -> 11.1%
+        # (base alpha 1.5 would give (100-120)/(100+120) = -9.1%).
+        np.testing.assert_allclose(dataset.asymmetry, 100.0 / 9.0)
 
     def test_normalize_vector_axis_supports_all(self, mainwindow: MainWindow) -> None:
         assert mainwindow._normalize_vector_axis("All") == "ALL"
