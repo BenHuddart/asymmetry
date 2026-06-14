@@ -4,16 +4,19 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "asymmetry"
-version = "0.3.7"
+version = "0.4.0"
 description = "A Python library for muon-spin spectroscopy (μSR) data analysis"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [
-    { name = "Asymmetry Contributors" },
+    { name = "Ben Huddart", email = "benjamin.huddart@physics.ox.ac.uk" },
+]
+maintainers = [
+    { name = "Ben Huddart", email = "benjamin.huddart@physics.ox.ac.uk" },
 ]
 keywords = ["muon", "musr", "spectroscopy", "physics", "data-analysis"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
@@ -58,6 +61,8 @@ asymmetry-gui = "asymmetry.gui.app:main"
 [project.urls]
 Homepage = "https://github.com/BenHuddart/asymmetry"
 Documentation = "https://benhuddart.github.io/asymmetry/"
+Repository = "https://github.com/BenHuddart/asymmetry"
+Issues = "https://github.com/BenHuddart/asymmetry/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
