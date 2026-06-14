@@ -24,7 +24,7 @@ def qapp():
     return app
 
 
-@pytest.fixture(params=["HiFi", "MuSR", "EMU", "FLAME"])
+@pytest.fixture(params=["HiFi", "MuSR", "EMU", "FLAME", "GPS", "GPS-RD"])
 def instrument_name(request):
     return request.param
 
@@ -69,6 +69,50 @@ class TestConstruction:
         layout = get_instrument_layout("HAL")
         widget = DetectorSchematicWidget(layout)
         assert len(widget._patches) == 17
+
+    def test_gps_patch_count(self, qapp):
+        layout = get_instrument_layout("GPS")
+        widget = DetectorSchematicWidget(layout)
+        assert len(widget._patches) == 6
+
+    def test_gps_segments_render_as_rectangles(self, qapp):
+        from matplotlib.patches import Rectangle
+
+        layout = get_instrument_layout("GPS")
+        widget = DetectorSchematicWidget(layout)
+        for det_id in range(1, 7):
+            assert isinstance(widget._patches[det_id], Rectangle)
+
+    def test_gps_rd_patch_count(self, qapp):
+        layout = get_instrument_layout("GPS-RD")
+        widget = DetectorSchematicWidget(layout)
+        assert len(widget._patches) == 11
+
+    def test_gps_two_panels(self, qapp):
+        layout = get_instrument_layout("GPS")
+        widget = DetectorSchematicWidget(layout)
+        # Top view + Side view -> two axes; one clickable patch per detector.
+        assert len(widget._axes) == 2
+        assert set(widget._patches) == {1, 2, 3, 4, 5, 6}
+
+    def test_gps_endon_segments_not_clickable(self, qapp):
+        layout = get_instrument_layout("GPS")
+        # The Up/Down end-on markers in the top view are read-only context.
+        top = next(b for b in layout.banks if b.name == "Top view")
+        endon = next(s for s in top.segments if s.shape.startswith("endon"))
+        assert endon.read_only
+        assert not DetectorSchematicWidget._point_in_segment(endon.x_center, endon.y_center, endon)
+
+    def test_gps_exclusion_hatches_readonly_ghost(self, qapp):
+        layout = get_instrument_layout("GPS")
+        widget = DetectorSchematicWidget(layout)
+        # Forward (id 1) is active in the Top view and read-only in the Side view.
+        ghosts = [p for did, p in widget._readonly_patches if did == 1]
+        assert ghosts, "expected a read-only ghost for detector 1"
+        widget.set_excluded_detectors({1})
+        assert all(p.get_hatch() == "xx" for p in ghosts)
+        widget.set_excluded_detectors(set())
+        assert all(not p.get_hatch() for p in ghosts)
 
     def test_hal_ring_segments_render_as_rectangles(self, qapp):
         from matplotlib.patches import Rectangle

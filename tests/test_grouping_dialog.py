@@ -904,6 +904,55 @@ def test_detector_layout_retries_detection_when_saved_instrument_is_generic_psi(
     assert captured["instrument"] == "FLAME"
 
 
+def test_detector_layout_corrects_gps_variant_to_histogram_count(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset = _dataset_with_histograms()
+    assert dataset.run is not None
+    # Stored as the 6-detector BIN variant, but the data is an 11-histogram ROOT
+    # run: the layout editor must open on the matching GPS-RD variant, not the
+    # stale stored "GPS".
+    dataset.run.grouping["instrument"] = "GPS"
+    dataset.run.grouping["histogram_labels"] = [
+        "Forw",
+        "Back",
+        "Up_B",
+        "Up_F",
+        "Down_B",
+        "Down_F",
+        "Right_B",
+        "Right_F",
+        "Left_B",
+        "Left_F",
+        "Mob-RL",
+    ]
+    dataset.run.metadata["facility"] = "PSI"
+    dataset.run.metadata["instrument"] = "LMU_BULKMUSR_GPS"
+    dataset.run.histograms = [dataset.run.histograms[0]] * 11
+
+    captured: dict[str, str] = {}
+
+    class _FakeDialog:
+        DialogCode = type("DialogCode", (), {"Accepted": 1})
+
+        def __init__(self, *args, instrument, **kwargs):
+            captured["instrument"] = instrument.name
+
+        def exec(self):
+            return 0
+
+    monkeypatch.setattr(
+        "asymmetry.gui.windows.detector_layout_dialog.DetectorLayoutDialog",
+        _FakeDialog,
+    )
+
+    dialog = GroupingDialog([dataset])
+    dialog._on_detector_layout()
+
+    assert captured["instrument"] == "GPS-RD"
+
+
 def test_detector_layout_resolves_psi_hifi_to_hal(
     qapp: QApplication,
     monkeypatch: pytest.MonkeyPatch,

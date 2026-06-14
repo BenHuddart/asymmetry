@@ -10,8 +10,8 @@ per-detector amplitudes and phases needed for a paramagnetic Knight-shift
 measurement (:doc:`grouped_time_domain_fitting`); and a vector-polarisation
 experiment needs distinct pairs assigned to :math:`P_x`, :math:`P_y`, and
 :math:`P_z` (:doc:`vector_polarization`). For new data from any of the
-supported instruments — ISIS HiFi, MuSR, EMU and the PSI FLAME and HAL-9500
-spectrometers — the matching preset in the Detector Layout editor seeds
+supported instruments — ISIS HiFi, MuSR, EMU and the PSI FLAME, HAL-9500 and
+GPS spectrometers — the matching preset in the Detector Layout editor seeds
 sensible defaults that can then be refined graphically before being applied.
 
 Grouping is configured from the Grouping dialog and edited graphically
@@ -48,7 +48,10 @@ includes PSI instrument strings such as ``LMU_BULKMUSR_FLAME``. PSI HAL-9500
 runs (the high-field πE3 spectrometer) are recognised from their ``HIFI``
 instrument string and ``tdc_hifi_*`` run names and open with the HAL-9500
 octagonal layout; this is a distinct instrument from the ISIS HiFi
-spectrometer despite the shared ``hifi`` token. This behavior
+spectrometer despite the shared ``hifi`` token. PSI GPS BIN files
+(``deltat_tdc_gps_*`` with the six ``Forw/Back/Up/Down/Righ/Left`` histograms)
+select the GPS two-panel layout automatically (see `PSI GPS`_ below). This
+behavior
 follows the detector metadata exposed by musrfit's PSI raw-data reader, with
 Mantid's PSI-BIN loader used as a cross-check for BIN layout details.
 When labels repeat, Asymmetry keeps one visible group per histogram and makes
@@ -79,7 +82,9 @@ kept as separate visible groups with numeric suffixes.
 
 ROOT files with ``RunInfo/Instrument`` set to ``FLAME`` are opened with the
 FLAME detector layout available by default. If that metadata field is absent,
-Asymmetry also recognises ``flame`` in the source filename.
+Asymmetry also recognises ``flame`` in the source filename. GPS MusrRoot files
+(instrument ``LMU_BULKMUSR_GPS``) expose eleven raw sub-detectors and open with
+the eleven-detector GPS variant (see `PSI GPS`_ below).
 
 ROOT ``DetectorInfo`` entries can provide detector-specific ``Time Zero Bin``,
 ``First Good Bin``, and ``Last Good Bin`` values. Asymmetry stores these in the
@@ -250,6 +255,64 @@ PSI HAL-9500
    forward detector as its own group, defaulting to the F1–F5 diametric pair),
    and **Per-octant** (each azimuthal sector combining its forward and
    backward wedge).
+
+PSI GPS
+~~~~~~~
+
+.. figure:: images/gps-program-schematic.png
+   :width: 95%
+   :align: center
+   :alt: PSI GPS detector schematic generated from the program layout model.
+
+   PSI GPS layout, drawn as two plan panels. The beam runs along +z toward the
+   Forward detector. GPS surrounds the sample with six positron detectors on
+   three orthogonal axes — Forward/Backward (beam), Up/Down (vertical) and
+   Left/Right (horizontal-transverse) — so a single flat view cannot place all
+   six. The **Top view** shows the horizontal plane (Forward/Backward and
+   Left/Right in place; Up/Down drawn end-on, ⊙ toward you and ⊗ away); the
+   **Side view** shows the vertical plane (Up/Down in place; Forward/Backward
+   read-only; Left/Right end-on). Each detector is editable in its home panel and
+   shown read-only for context in the other.
+
+GPS is recognised automatically from PSI data carrying a ``GPS`` instrument
+string or a ``deltat_tdc_gps_*`` run name. Two histogram conventions are
+supported and presented to the user as a single "GPS" layout, selected
+automatically from the histogram count:
+
+* the **PSI-BIN** export with six combined detectors (``Forw, Back, Up, Down,
+  Righ, Left``); and
+* the **MusrRoot** export with eleven raw sub-detectors (``Forw, Back, Up_B,
+  Up_F, Down_B, Down_F, Right_B, Right_F, Left_B, Left_F, Mob-RL``), where each
+  transverse plate is split into an upstream (``_B``) and downstream (``_F``)
+  half and a Mobile detector is added.
+
+Detector IDs match the histogram order in each format (detector *N* maps to
+histogram *N − 1*). Presets:
+
+* **Longitudinal** (default) — Forward vs Backward.
+* **Transverse (Vector)** — the Up–Down and Left–Right pairs exposed as two
+  asymmetry projections (musrfit's ``WED(L)`` transverse setup).
+* **Spin-rotated (F+U/B+D)** — Forward+Up vs Backward+Down. When the spin
+  rotator (a Wien filter on πM3.2; GPS User Guide, Section 13) is used in
+  transverse geometry the muon spin is rotated up by about 50°, so the
+  polarisation points along the Forward–Up diagonal; summing those detectors
+  realigns one asymmetry axis with the rotated spin and recovers the full
+  amplitude.
+* **WEP (spin-rotated)** — the same rotated-spin mode following musrfit's
+  convention. This preset **follows musrfit's GPS instrument
+  definition** (``musredit_qt5/musrWiz/instrument_defs/instrument_def_psi.xml``,
+  ``<tf name="WEP">``): rather than summing detectors it keeps Forward, Backward,
+  Up and Down as four separate groups and exposes the **FB** and **UD**
+  asymmetry pairs. The FB projection records musrfit's default ``alpha = 0.75``,
+  but note that the reduction currently applies a single base ``alpha`` to all
+  projections of a preset and does not yet consume per-projection alpha for
+  non-canonical pairs, so set the FB alpha as usual. The per-detector phase
+  offsets musrfit uses to encode the rotation are likewise a fitting detail and
+  are not stored in the layout.
+
+The Mobile sub-detector (``Mob-RL``) is left ungrouped by default: it is added
+to either the Right or Left detector depending on the cryostat port in use,
+which the data file does not record.
 
 Related Topics
 --------------
