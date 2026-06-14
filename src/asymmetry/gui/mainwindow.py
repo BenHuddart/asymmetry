@@ -1682,7 +1682,22 @@ class MainWindow(QMainWindow):
         grouping_result: dict,
         existing_grouping: dict | None,
     ) -> dict[str, float]:
-        """Resolve per-axis alpha values with backward-compatible fallback."""
+        """Resolve per-projection alpha values keyed by projection label.
+
+        Each declared projection contributes its own alpha — the value carried in
+        the ``projections`` payload (e.g. the GPS ``WEP`` ``FB`` pair's ``0.75``,
+        written by :meth:`AsymmetryProjection.to_payload`) — so a non-canonical
+        projection (``FB``/``UD``, transverse-field ``Top-Bottom``/``Fwd-Back``,
+        …) reduces with *its* alpha instead of the shared base alpha. A projection
+        dict without an explicit ``alpha`` falls back to the base alpha, matching
+        legacy groupings whose projections predate per-projection alpha.
+
+        The canonical EMU axes ``P_x``/``P_y``/``P_z`` are simply one case of this:
+        they keep their dedicated ``alpha_x``/``alpha_y``/``alpha_z`` (and legacy
+        ``alpha_px`` …) keys, which the per-axis alpha table writes, and they fall
+        back to the base alpha — never to a seeded projection value — so the EMU
+        vector-polarization behaviour is unchanged.
+        """
         existing = existing_grouping if isinstance(existing_grouping, dict) else {}
         try:
             base_alpha = float(grouping_result.get("alpha", existing.get("alpha", 1.0)))
@@ -1690,6 +1705,26 @@ class MainWindow(QMainWindow):
             base_alpha = 1.0
 
         resolved: dict[str, float] = {}
+
+        # Seed every declared projection with its own alpha. Prefer the freshly
+        # applied projections, falling back to the persisted ones.
+        projections = grouping_result.get("projections")
+        if not (isinstance(projections, list) and projections):
+            projections = existing.get("projections")
+        if isinstance(projections, list):
+            for proj in projections:
+                if not isinstance(proj, dict):
+                    continue
+                label = proj.get("label")
+                if not label:
+                    continue
+                try:
+                    resolved[str(label)] = float(proj.get("alpha", base_alpha))
+                except (TypeError, ValueError):
+                    resolved[str(label)] = base_alpha
+
+        # Canonical EMU axes override from their dedicated keys, falling back to
+        # the base alpha (not the seeded projection alpha) so EMU is unchanged.
         for axis in ("P_x", "P_y", "P_z"):
             key = self._vector_alpha_key(axis)
             legacy_key = self._legacy_vector_alpha_key(axis)

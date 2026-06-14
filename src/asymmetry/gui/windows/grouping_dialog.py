@@ -1644,9 +1644,12 @@ class GroupingDialog(QDialog):
         are hardcoded to the canonical EMU axes. A transverse-field dual-grouping
         preset declares non-canonical projections (e.g. ``Top-Bottom`` /
         ``Fwd-Back``); those drive the plot chip bar but are handled here with the
-        ordinary single-alpha control (the TF reduction uses the base ``alpha``,
-        and per-projection alpha is not yet consumed), so the canonical table is
-        skipped to avoid empty rows and a stale P_z-spin alpha.
+        ordinary single-alpha control, so the canonical table is skipped to avoid
+        empty rows and a stale P_z-spin alpha. The reduction still consumes each
+        projection's own declared alpha (see
+        :meth:`MainWindow._resolve_vector_alpha_values`); the single-alpha control
+        only supplies the base alpha those projections fall back to when they do
+        not declare one of their own.
         """
         return any(axis in pairs for axis in ("P_x", "P_y", "P_z"))
 
