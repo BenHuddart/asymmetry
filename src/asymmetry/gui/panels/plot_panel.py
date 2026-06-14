@@ -4850,6 +4850,7 @@ class PlotPanel(QWidget):
         component_curves: list[tuple[str, object]] | None = None,
         fit_result: object | None = None,
         fit_function: str | None = None,
+        run_number: int | None = None,
     ) -> None:
         """Overlay a fit curve on the current plot.
 
@@ -4865,20 +4866,47 @@ class PlotPanel(QWidget):
             Label for the fit curve in the legend.
         fit_result : object, optional
             FitResult containing chi_squared, parameters, uncertainties, etc.
+        run_number : int, optional
+            Run the fit was computed for. In a multi-run overlay stacked view
+            ``_current_dataset`` points at the first projection's *last* run, not
+            the fitted (selected) run, so the caller passes the fitted run
+            explicitly to keep the overlay key and the persisted single-fit slot
+            on the same run. Defaults to inferring it from ``_current_dataset``.
         """
         if not self._has_mpl:
             return
 
         # Store fit curve data for persistence across redraws (single fit)
         self._fit_curve = (t_fit, y_fit, label)
+        explicit_run = run_number
         run_number = None
-        axis_key = None
         if self._current_dataset is not None:
             try:
                 run_number = int(self._current_dataset.run_number)
             except (TypeError, ValueError):
                 run_number = None
-            axis_key = self._axis_key_for_dataset(self._current_dataset)
+        # The fitted run is authoritative when supplied: source it from the one
+        # place that knows it (the caller's selected dataset) so the curve is
+        # keyed under the same run the slot is recorded against.
+        if explicit_run is not None:
+            try:
+                run_number = int(explicit_run)
+            except (TypeError, ValueError):
+                pass
+        # Derive the axis from the dataset that actually matches the fitted run,
+        # not whichever one _current_dataset points at — in a multi-run overlay
+        # that is the last overlaid run, possibly a different projection — so the
+        # (run, axis) key is always self-consistent.
+        axis_source = self._current_dataset
+        if run_number is not None:
+            for dataset in self._current_datasets or ():
+                try:
+                    if int(dataset.run_number) == run_number:
+                        axis_source = dataset
+                        break
+                except (TypeError, ValueError):
+                    continue
+        axis_key = self._axis_key_for_dataset(axis_source) if axis_source is not None else None
         # In the stacked view the fit belongs to the SELECTED subplot, not the
         # first projection that _current_dataset happens to point at — otherwise
         # every fit would draw on the first subplot regardless of the target.

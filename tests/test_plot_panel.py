@@ -1161,6 +1161,82 @@ class TestPlotPanel:
         assert (9302, "P_y") in panel._fit_curves_by_key
         assert (9302, "P_x") not in panel._fit_curves_by_key
 
+    def test_plot_fit_keys_under_the_explicit_fitted_run_in_multi_run_overlay(
+        self, panel: PlotPanel
+    ) -> None:
+        """The fit overlay keys under the caller's fitted run, not the panel's.
+
+        Regression: in a multi-run overlay stacked view ``_current_dataset``
+        points at the *last* run of the first projection. The single-fit slot is
+        recorded against the selected (clicked) run, so if ``plot_fit`` keyed the
+        overlay under ``_current_dataset``'s run instead, the displayed curve and
+        the persisted slot would disagree on the run. ``plot_fit`` now takes the
+        fitted run explicitly and keys the curve under it.
+        """
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+        t = np.linspace(0.0, 4.0, 5)
+        e = np.full_like(t, 0.01)
+
+        def _ds(run: int, axis: str) -> MuonDataset:
+            return MuonDataset(
+                time=t,
+                asymmetry=np.zeros_like(t),
+                error=e,
+                metadata={"run_number": run, "grouping": {"vector_axis": axis}},
+            )
+
+        # Two runs (501 first, 502 last) overlaid across three projections.
+        datasets_by_axis = {
+            axis: [_ds(501, axis), _ds(502, axis)] for axis in ("P_x", "P_y", "P_z")
+        }
+        panel._current_polarization_axis = "ALL"
+        panel.plot_vector_subplots(datasets_by_axis)
+        # The panel's own current dataset is the last overlaid run, 502.
+        assert int(panel._current_dataset.run_number) == 502
+        panel.set_fit_target_projection("P_y", emit=False)
+
+        # The user fitted the FIRST run (501); the caller passes it explicitly.
+        panel.plot_fit(t, np.zeros_like(t), label="Fit", run_number=501)
+
+        assert (501, "P_y") in panel._fit_curves_by_key
+        assert (502, "P_y") not in panel._fit_curves_by_key
+        assert panel._fit_curve_run_number == 501
+
+    def test_plot_fit_axis_key_follows_the_fitted_run_in_mixed_axis_overlay(
+        self, panel: PlotPanel
+    ) -> None:
+        """The overlay's (run, axis) key is self-consistent for the fitted run.
+
+        When the fitted run is sourced explicitly, the axis must come from the
+        dataset matching that run, not from ``_current_dataset`` (the last
+        overlaid dataset, possibly a different projection). Otherwise the curve
+        could be stored under (fitted_run, wrong_axis) and never matched back.
+        """
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+        t = np.linspace(0.0, 4.0, 5)
+        e = np.full_like(t, 0.01)
+
+        def _ds(run: int, axis: str) -> MuonDataset:
+            return MuonDataset(
+                time=t,
+                asymmetry=np.zeros_like(t),
+                error=e,
+                metadata={"run_number": run, "grouping": {"vector_axis": axis}},
+            )
+
+        # Flat (non-stacked) overlay of two different projections.
+        panel.plot_datasets([_ds(601, "P_x"), _ds(602, "P_y")])
+        assert not panel._subplot_axes_by_polarization
+        assert int(panel._current_dataset.run_number) == 602  # last overlaid (P_y)
+
+        # Fit the first run (601, P_x); its key must use P_x, not the panel's P_y.
+        panel.plot_fit(t, np.zeros_like(t), label="Fit", run_number=601)
+
+        assert (601, "P_x") in panel._fit_curves_by_key
+        assert (601, "P_y") not in panel._fit_curves_by_key
+
     def test_active_y_axis_follows_fit_target_in_subplots(self, panel: PlotPanel) -> None:
         panel._subplot_axes_by_polarization = {"P_x": _FakeAxis(), "P_z": _FakeAxis()}
         panel._current_polarization_axis = "ALL"

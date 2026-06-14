@@ -103,6 +103,53 @@ def test_single_fit_writes_representation_slot(mw, monkeypatch):
     assert rep.fit.result["npar"] == 2  # both A and Lambda carry a HESSE sigma
 
 
+def test_single_fit_overlay_and_slot_agree_on_run(mw, monkeypatch):
+    """The plotted overlay and the persisted slot key under the same run.
+
+    Regression: ``plot_fit`` used to key the overlay under the plot panel's own
+    ``_current_dataset`` while ``_record_single_fit_slot`` keyed the slot under
+    the main window's selected dataset. In a multi-run overlay stacked view
+    those differ, so the displayed curve and the saved fit disagreed on the run.
+    Both now source the run from ``_single_fit_run_number()`` (the selected
+    dataset). Here the panel's current dataset is forced to a *different* run to
+    prove the overlay still follows the selected one.
+    """
+    ds = _dataset(300)
+    mw._data_browser.add_dataset(ds)
+    mw._on_dataset_selected(300)
+    mw._plot_workspace.set_active_view("fb_asymmetry")
+    monkeypatch.setattr(
+        mw._fit_panel,
+        "get_single_form_state",
+        lambda: {
+            "composite_model": {"component_names": ["Exponential"], "operators": []},
+            "parameters": [{"name": "A", "value": 0.2}],
+            "result_html": "ok",
+        },
+    )
+
+    # Simulate the multi-run stacked view where the panel's current dataset is a
+    # different overlaid run (999) than the selected/fitted run (300).
+    mw._plot_panel._current_dataset = _dataset(999)
+
+    captured: dict[str, object] = {}
+    real_plot_fit = mw._plot_panel.plot_fit
+
+    def _capture(*args, **kwargs):
+        captured["run_number"] = kwargs.get("run_number")
+        return real_plot_fit(*args, **kwargs)
+
+    monkeypatch.setattr(mw._plot_panel, "plot_fit", _capture)
+
+    mw._on_fit_completed(_result(rchi=0.7), _CURVE, [])
+
+    # The overlay was keyed under the selected run, not the panel's stale 999.
+    assert captured["run_number"] == 300
+    # And the persisted slot lives under that same run.
+    assert mw._project_model.representation(300, RepresentationType.TIME_FB_ASYMMETRY) is not None
+    assert mw._project_model.representation(999, RepresentationType.TIME_FB_ASYMMETRY) is None
+
+
 def test_single_fit_slot_targets_active_domain(mw, monkeypatch):
     ds = _dataset(301)
     mw._data_browser.add_dataset(ds)

@@ -7488,6 +7488,7 @@ class MainWindow(QMainWindow):
             component_curves=component_curves,
             fit_result=fit_result,
             fit_function=fit_function,
+            run_number=self._single_fit_run_number(),
         )
         self._last_fit_chi2 = float(fit_result.reduced_chi_squared)
         self._set_status_chi2(self._last_fit_chi2)
@@ -7897,10 +7898,28 @@ class MainWindow(QMainWindow):
             return {}
         return None
 
+    def _single_fit_run_number(self) -> int | None:
+        """Run a single fit (and its plot overlay) is keyed under.
+
+        The selected dataset is the single source of truth for "which run this
+        single fit is for": the fit panel fits ``_current_dataset`` and the slot
+        is recorded against it. The plot panel's own ``_current_dataset`` can
+        point at a *different* overlaid run in a multi-run stacked view, so both
+        the overlay key (``plot_fit``) and the persisted slot
+        (``_record_single_fit_slot``) source the run from here to stay in sync.
+        """
+        if self._current_dataset is None:
+            return None
+        try:
+            return int(self._current_dataset.run_number)
+        except (TypeError, ValueError):
+            return None
+
     def _record_single_fit_slot(self, fit_result) -> None:
         """Write the active representation's single FitSlot into the project model."""
         rep_type = self._active_representation_type()
-        if rep_type is None or self._current_dataset is None:
+        run_number = self._single_fit_run_number()
+        if rep_type is None or run_number is None:
             return
         if not hasattr(self._fit_panel, "get_single_form_state"):
             return
@@ -7909,7 +7928,6 @@ class MainWindow(QMainWindow):
         form_state = self._fit_panel.get_single_form_state()
         if not isinstance(form_state, dict):
             return
-        run_number = int(self._current_dataset.run_number)
         projection = self._current_single_fit_projection()
         representation = self._project_model.ensure_dataset(run_number).ensure(rep_type)
         representation.set_fit_for(
@@ -8543,6 +8561,7 @@ class MainWindow(QMainWindow):
             component_curves=component_curves,
             fit_result=None,
             fit_function=fit_function,
+            run_number=self._single_fit_run_number(),
         )
 
     def _on_share_single_function_with_group(self, source_run_number: int) -> None:
