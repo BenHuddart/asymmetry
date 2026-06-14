@@ -544,6 +544,12 @@ class ParameterSet:
         self._params[param.name] = param
 
     def __getitem__(self, name: str) -> Parameter:
+        if not isinstance(name, str):
+            raise TypeError(
+                "ParameterSet is indexed by parameter name (str), not by "
+                f"position ({type(name).__name__}). Access by name, e.g. "
+                "ps['A0'], or use list(ps) / ps.names for positional access."
+            )
         return self._params[name]
 
     def __contains__(self, name: str) -> bool:

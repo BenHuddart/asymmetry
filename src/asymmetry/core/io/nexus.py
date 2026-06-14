@@ -198,6 +198,9 @@ class NexusLoader(BaseLoader):
         time_series = self._extract_time_series(entry)
         metadata_base["nexus_fields"] = nexus_fields
         metadata_base["nexus_time_series"] = time_series
+        logged_temperature = self._logged_sample_temperature(time_series)
+        if logged_temperature is not None:
+            metadata_base["sample_temperature_logged"] = logged_temperature
 
         first_good_bin = self._safe_int(self._read_optional(h_data, "first_good_bin"), default=0)
         last_good_bin_default = counts_periods[0].shape[-1] - 1
@@ -394,6 +397,9 @@ class NexusLoader(BaseLoader):
         time_series = self._extract_time_series(entry)
         metadata_base["nexus_fields"] = nexus_fields
         metadata_base["nexus_time_series"] = time_series
+        logged_temperature = self._logged_sample_temperature(time_series)
+        if logged_temperature is not None:
+            metadata_base["sample_temperature_logged"] = logged_temperature
 
         return self._build_period_datasets(
             counts_periods=counts_periods,
@@ -939,14 +945,18 @@ class NexusLoader(BaseLoader):
                 v_num = self._to_numeric_array(v)
                 units = self._safe_str(getattr(node[value_name], "attrs", {}).get("units", ""))
                 if v_num.size > 0:
+                    # Guard the all-NaN case: np.nanmean/nanmin/nanmax emit
+                    # "Mean of empty slice"/"All-NaN slice" RuntimeWarnings when
+                    # no finite values are present (seen on some ARGUS files).
+                    has_finite = bool(np.isfinite(v_num).any())
                     series[prefix] = {
                         "path": prefix,
                         "units": units,
                         "time": t_num.tolist(),
                         "values": v_num.tolist(),
-                        "mean": float(np.nanmean(v_num)),
-                        "min": float(np.nanmin(v_num)),
-                        "max": float(np.nanmax(v_num)),
+                        "mean": float(np.nanmean(v_num)) if has_finite else None,
+                        "min": float(np.nanmin(v_num)) if has_finite else None,
+                        "max": float(np.nanmax(v_num)) if has_finite else None,
                     }
 
             for child in node.keys():
@@ -957,6 +967,24 @@ class NexusLoader(BaseLoader):
 
         _walk(root, "")
         return series
+
+    def _logged_sample_temperature(self, time_series: dict[str, dict[str, Any]]) -> float | None:
+        """Return a representative *logged* sample temperature, if available.
+
+        Unlike ``metadata['temperature']`` (the ``sample/temperature``
+        setpoint), this is derived from the ``Temp_Sample`` NXlog — the actual
+        recorded sample temperature, which can differ from the parked setpoint
+        (e.g. CdS parks at 1 K while the sample sits near 5 K). The series mean
+        over the run is used as the representative value. Returns ``None`` when
+        no usable logged series is present.
+        """
+        for path, entry in time_series.items():
+            if str(path).rsplit("/", 1)[-1].lower() != "temp_sample":
+                continue
+            mean = entry.get("mean")
+            if mean is not None and np.isfinite(mean):
+                return float(mean)
+        return None
 
     def _dataset_to_python(self, dataset: Any) -> Any:
         """Convert a dataset payload into JSON-safe Python data.
