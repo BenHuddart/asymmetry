@@ -91,6 +91,28 @@ Per-axis alpha values are persisted in:
 This preserves axis-specific alpha values across save/load cycles and across
 axis switching in vector mode.
 
+Transverse-Field Dual Grouping
+------------------------------
+
+The same projection workflow generalises beyond EMU's three-axis vector mode.
+A forward/backward asymmetry *is* the muon polarisation projected onto the axis
+joining that detector pair, so any preset that exposes more than one such pair is
+a set of projections. MuSR and HiFi each ship a combined ``Transverse (Vector)``
+preset that exposes **two** transverse projections of the same run:
+
+* MuSR — ``Top-Bottom`` and ``Fwd-Back``
+* HiFi — ``Left-Right`` and ``Top-Bottom``
+
+Apply it from Detector Layout exactly as for EMU vector mode (select the
+instrument, apply the ``Transverse (Vector)`` preset). The projection chip bar
+then shows one chip per transverse projection; selecting two stacks them as
+subplots, and clicking a subplot makes it the fit target with its own
+per-projection single fit — identical behaviour to the EMU :math:`P_x`/
+:math:`P_y`/:math:`P_z` projections, including the tinted ``Fitting: <label>``
+echo and save/load persistence. Unlike EMU's octant model, the two transverse
+pairs use four distinct detector groups so both coexist (the legacy split
+presets reused the same group IDs and were mutually exclusive).
+
 Detector Group Composition
 --------------------------
 

@@ -81,7 +81,11 @@ from asymmetry.core.fourier import (
 )
 from asymmetry.core.fourier.moments import moments_trend_row, spectrum_moments
 from asymmetry.core.fourier.units import FieldUnit, convert
-from asymmetry.core.instrument import PROJECTION_TINTS, derive_projection_pairs
+from asymmetry.core.instrument import (
+    PROJECTION_TINTS,
+    TRANSVERSE_PROJECTION_TINTS,
+    derive_projection_pairs,
+)
 from asymmetry.core.io import resolve_background_reference
 from asymmetry.core.io.periods import (
     combine_mapped_periods,
@@ -1606,10 +1610,20 @@ class MainWindow(QMainWindow):
         self._ui_manager.show_panel(panel_key)
 
     def _normalize_vector_axis(self, axis: object) -> str | None:
-        """Normalize polarization-axis labels to one of ``P_x``, ``P_y``, ``P_z``."""
+        """Normalize a polarization/projection axis label.
+
+        The canonical EMU vector aliases (``px``/``x`` → ``P_x`` …) and the
+        ``ALL`` aggregate sentinel are recognised; any other non-empty label is
+        passed through unchanged, so transverse-field projection labels
+        (``"Top-Bottom"``, ``"Fwd-Back"`` …) survive end to end.  Returns
+        ``None`` only for an empty/absent axis.
+        """
         if axis is None:
             return None
-        token = str(axis).strip().lower().replace(" ", "").replace("_", "")
+        raw = str(axis).strip()
+        if not raw:
+            return None
+        token = raw.lower().replace(" ", "").replace("_", "")
         if token in {"all", "pall"}:
             return "ALL"
         if token in {"px", "x"}:
@@ -1618,7 +1632,7 @@ class MainWindow(QMainWindow):
             return "P_y"
         if token in {"pz", "z"}:
             return "P_z"
-        return None
+        return raw
 
     def _vector_alpha_key(self, axis: str | None) -> str | None:
         """Return grouping alpha key for a canonical vector axis."""
@@ -1728,7 +1742,9 @@ class MainWindow(QMainWindow):
 
         axis = self._normalize_vector_axis(grouping.get("vector_axis"))
         if axis not in pairs:
-            axis = "P_z"
+            # Fall back to the canonical primary axis when present (EMU), else
+            # the first declared projection (e.g. a transverse-field preset).
+            axis = "P_z" if "P_z" in pairs else next(iter(pairs))
         return pairs, axis
 
     def _projection_specs_for_dataset(
@@ -1739,7 +1755,8 @@ class MainWindow(QMainWindow):
         """Return ordered ``[{"label", "tint"}]`` specs for *pairs*.
 
         Tints come from the dataset's declared projections when present, else
-        the canonical :data:`PROJECTION_TINTS` fallback by label.
+        the canonical :data:`PROJECTION_TINTS` / transverse-field
+        :data:`TRANSVERSE_PROJECTION_TINTS` fallback by label.
         """
         tint_by_label: dict[str, str] = {}
         run = getattr(dataset, "run", None)
@@ -1752,7 +1769,11 @@ class MainWindow(QMainWindow):
         specs: list[dict] = []
         for label in pairs:
             spec: dict = {"label": label}
-            tint = tint_by_label.get(label) or PROJECTION_TINTS.get(label)
+            tint = (
+                tint_by_label.get(label)
+                or PROJECTION_TINTS.get(label)
+                or TRANSVERSE_PROJECTION_TINTS.get(label)
+            )
             if tint:
                 spec["tint"] = tint
             specs.append(spec)
@@ -1997,11 +2018,14 @@ class MainWindow(QMainWindow):
         targets: list[MuonDataset],
         axis: str | None,
     ) -> int:
-        """Ensure *targets* use a consistent vector-axis component.
+        """Ensure *targets* use a consistent projection component.
 
-        Returns the number of datasets updated.
+        Returns the number of datasets updated. ``axis`` is a real projection
+        label (canonical ``P_x``/``P_y``/``P_z`` or a transverse-field label
+        like ``"Top-Bottom"``); the per-dataset ``axis not in pairs`` guard
+        below skips datasets that don't expose it. ``None``/``ALL`` are no-ops.
         """
-        if axis not in {"P_x", "P_y", "P_z"}:
+        if not axis or axis == "ALL":
             return 0
 
         updated = 0
@@ -2178,7 +2202,7 @@ class MainWindow(QMainWindow):
         minimise against P_x's curve yet be recorded under P_y.
         """
         projection = self._normalize_vector_axis(label)
-        if projection in ("P_x", "P_y", "P_z"):
+        if projection and projection != "ALL":
             self._synchronize_targets_to_axis(self._selected_or_current_datasets(), projection)
         self._rebind_single_fit_to_active_projection()
         self._update_fit_block_state()
@@ -2677,7 +2701,7 @@ class MainWindow(QMainWindow):
                             active_axis = self._normalize_vector_axis(
                                 self._plot_panel.get_current_polarization_axis()
                             )
-                        if active_axis in {"P_x", "P_y", "P_z"}:
+                        if active_axis and active_axis != "ALL":
                             grouping_payload["vector_axis"] = active_axis
 
                         applied, _ = self._apply_grouping_settings_to_dataset(
@@ -7271,7 +7295,7 @@ class MainWindow(QMainWindow):
                 # stacked (ALL) view — so a fit binds to that projection's curve
                 # rather than whatever axis the run was last reduced to.
                 fit_projection = self._current_single_fit_projection()
-                if fit_projection in {"P_x", "P_y", "P_z"}:
+                if fit_projection and fit_projection != "ALL":
                     self._synchronize_targets_to_axis([dataset], fit_projection)
                 self._render_current_selection_plot()
                 self._sync_frequency_plot_for_current_dataset()
@@ -9392,7 +9416,7 @@ class MainWindow(QMainWindow):
         # single axis, or the fit-target subplot in the stacked (ALL) view.
         fit_projection = self._current_single_fit_projection()
 
-        if selected and fit_projection in {"P_x", "P_y", "P_z"}:
+        if selected and fit_projection and fit_projection != "ALL":
             updated = self._synchronize_targets_to_axis(selected, fit_projection)
             if updated > 0:
                 self._data_browser._rebuild_table()
