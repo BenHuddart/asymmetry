@@ -1237,6 +1237,56 @@ class TestPlotPanel:
         assert (601, "P_x") in panel._fit_curves_by_key
         assert (601, "P_y") not in panel._fit_curves_by_key
 
+    def test_empty_projection_subplot_uses_neutral_y_range(self, panel: PlotPanel) -> None:
+        """An all-NaN projection subplot gets a neutral asymmetry range, not (0, 1).
+
+        Regression: dropping the ``elif ALL`` y-fallback left a projection with no
+        finite asymmetry showing matplotlib's default (0, 1) box. The render loop
+        now seeds such a subplot with a neutral range, and does NOT cache it, so a
+        later render with real data still auto-scales.
+        """
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+        t = np.linspace(0.0, 8.0, 40)
+        e = np.full_like(t, 0.01)
+
+        def _ds(axis: str, *, empty: bool) -> MuonDataset:
+            asym = np.full_like(t, np.nan) if empty else 0.2 * np.exp(-0.2 * t)
+            return MuonDataset(
+                time=t,
+                asymmetry=asym,
+                error=e,
+                metadata={"run_number": 4242, "grouping": {"vector_axis": axis}},
+            )
+
+        panel._current_polarization_axis = "ALL"
+        # P_y carries no finite asymmetry.
+        panel.plot_vector_subplots(
+            {
+                "P_x": [_ds("P_x", empty=False)],
+                "P_y": [_ds("P_y", empty=True)],
+                "P_z": [_ds("P_z", empty=False)],
+            }
+        )
+
+        empty_ax = panel._subplot_axes_by_polarization["P_y"]
+        lo, hi = empty_ax.get_ylim()
+        # Neutral asymmetry range, not the matplotlib (0, 1) default.
+        assert lo < 0.0 < hi
+        assert (lo, hi) != (0.0, 1.0)
+        # Not cached, so it does not pin a later render with real data.
+        assert "P_y" not in panel._y_limits_by_polarization
+
+        panel.plot_vector_subplots(
+            {
+                "P_x": [_ds("P_x", empty=False)],
+                "P_y": [_ds("P_y", empty=False)],
+                "P_z": [_ds("P_z", empty=False)],
+            }
+        )
+        relo, rehi = panel._subplot_axes_by_polarization["P_y"].get_ylim()
+        assert rehi < 0.5  # auto-scaled to the ~0.2 data, not stuck at the neutral 0.3
+
     def test_active_y_axis_follows_fit_target_in_subplots(self, panel: PlotPanel) -> None:
         panel._subplot_axes_by_polarization = {"P_x": _FakeAxis(), "P_z": _FakeAxis()}
         panel._current_polarization_axis = "ALL"

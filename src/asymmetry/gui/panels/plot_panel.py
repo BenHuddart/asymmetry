@@ -105,6 +105,11 @@ _FREQUENCY_X_UNIT_FIELD = {
     "field_tesla": "tesla",
 }
 
+# Neutral y-range for a stacked projection subplot whose asymmetry is entirely
+# non-finite (no data). Without it matplotlib keeps its default (0, 1) box,
+# which reads as "counts" rather than "asymmetry, no data".
+_EMPTY_PROJECTION_YLIM = (-0.3, 0.3)
+
 
 class _FloatLimitField(QLineEdit):
     """Plain text field that stores a floating-point axis limit."""
@@ -2820,6 +2825,12 @@ class PlotPanel(QWidget):
             if axis_key in self._y_limits_by_polarization:
                 y0, y1 = self._y_limits_by_polarization[axis_key]
                 ax.set_ylim(y0, y1)
+            elif t is None:
+                # All-NaN projection: give it a neutral asymmetry range instead
+                # of matplotlib's default (0, 1). Not cached in
+                # _y_limits_by_polarization, so a later render with real data
+                # auto-scales normally.
+                ax.set_ylim(*_EMPTY_PROJECTION_YLIM)
             if idx == len(order) - 1:
                 x_label, _ = self._axis_labels_for_dataset(
                     self._vector_subplot_datasets.get(axis_key, [None])[0],
