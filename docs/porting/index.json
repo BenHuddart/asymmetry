@@ -2,6 +2,27 @@
   "version": 1,
   "studies": [
     {
+      "slug": "asymmetry-domain-global-fit",
+      "feature_name": "Asymmetry-domain global (shared-parameter) fit",
+      "status": "implemented",
+      "path": "docs/porting/asymmetry-domain-global-fit",
+      "references": [
+        "asymmetry.core (internal)",
+        "WiMDA Muon School corpus (motivating gap)"
+      ],
+      "docs": {
+        "readme": "docs/porting/asymmetry-domain-global-fit/README.md",
+        "comparison": "docs/porting/asymmetry-domain-global-fit/comparison.md",
+        "implementation_options": "docs/porting/asymmetry-domain-global-fit/implementation-options.md",
+        "test_data": "docs/porting/asymmetry-domain-global-fit/test-data.md",
+        "verification_plan": "docs/porting/asymmetry-domain-global-fit/verification-plan.md"
+      },
+      "tests_path": "tests/test_asymmetry_global_fit.py",
+      "src_path": "src/asymmetry/core/fitting/asymmetry_global.py",
+      "updated": "2026-06-14",
+      "notes": "Ergonomics/discoverability port of an existing internal capability: FitEngine.global_fit already does asymmetry-domain simultaneous least-squares (concatenates ds.asymmetry/ds.error, iminuit LeastSquares, shared globals + per-dataset locals); the count-domain fit_grouped_* family wraps it with a Cash factory. Gap was no first-class asymmetry-domain entry point and an undiscoverable contract (datasets must carry unique run_number; runless datasets collide on key 0). IMPLEMENTED (Option A): fit_global + GlobalFitResult in asymmetry_global.py wrap engine.global_fit with synthetic keying (sequence->positional, mapping->keys), single-ParameterSet broadcast, boundary validation (disjoint global/local, names present, finite positive errors), and a combined reduced chi2 (Sigma chi2_d over Sigma N_d - N_free_global - Sigma N_free_local_d). No minimiser duplication. Asymmetry-domain LSQ is the convenience default; count-domain Poisson/Cash remains statistically preferred for low counts (documented). Wizard left untouched (recommend vs execute separated)."
+    },
+    {
       "slug": "asymmetry-error-propagation",
       "feature_name": "Asymmetry statistical error: exact Poisson vs Mantid independent-propagation",
       "status": "implemented",
