@@ -1504,6 +1504,65 @@ class DataBrowserPanel(QWidget):
                 return float(np.mean(fallback_fields))
         return self._series_mean_for_field(dataset, "field")
 
+    def displayed_coordinate(self, run_number: int) -> dict[str, float | None]:
+        """The ``field``/``temperature`` the browser currently *displays* for a run.
+
+        Honours the log toggles and per-dataset overrides — the same resolution
+        as the fixed B/T columns (:meth:`_field_for_display`,
+        :meth:`_temperature_for_display`) — so a batch trend and its CSV export
+        plot each run at the abscissa the user sees in the table, not the parked
+        header setpoint. When the browser shows a logged value it replaces the
+        scalar; an axis with no recorded value is ``None`` (off that axis), never
+        ``0`` — preserving the trend's "missing coordinate" semantics rather than
+        the columns' ``0.0`` fallback.
+        """
+        dataset = self.get_dataset(int(run_number))
+        if dataset is None:
+            return {"field": None, "temperature": None}
+        rn = int(dataset.run_number)
+        return {
+            "field": self._displayed_axis_coordinate(
+                dataset,
+                "field",
+                uses_log=self.dataset_uses_field_from_log(rn),
+                log_value_source=lambda: self._field_from_log_for_display(dataset),
+            ),
+            "temperature": self._displayed_axis_coordinate(
+                dataset,
+                "temperature",
+                uses_log=self.dataset_uses_temperature_from_log(rn),
+                log_value_source=lambda: self._temperature_from_log_for_display(dataset),
+            ),
+        }
+
+    def _displayed_axis_coordinate(
+        self,
+        dataset: MuonDataset,
+        metadata_key: str,
+        *,
+        uses_log: bool,
+        log_value_source,
+    ) -> float | None:
+        """Displayed value for one trend axis: logged value if shown, else scalar.
+
+        ``log_value_source`` is resolved lazily so the (potentially weighted)
+        log mean is only computed when that axis is actually displaying the log
+        — the common setpoint path stays as cheap as the old metadata read.
+        Returns ``None`` (not ``0``) when no finite value is recorded.
+        """
+        if uses_log:
+            log_value = log_value_source()
+            if log_value is not None:
+                return float(log_value)
+        raw = dataset.metadata.get(metadata_key)
+        if raw is None:
+            return None
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return None
+        return value if np.isfinite(value) else None
+
     def _event_count_for_dataset(self, dataset: MuonDataset) -> float | None:
         """Return the total histogram counts used to weight combined-run summaries."""
         run = dataset.run

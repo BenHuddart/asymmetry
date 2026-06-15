@@ -68,6 +68,34 @@ show-components) are not decorations: they are remembered per window, not per
 fit. Legacy projects that stored decorations under the old window-state key
 still load, and migrate to the new home on the next save.
 
+.. _trend-abscissa-coordinate:
+
+How the T / B abscissa is sourced
+---------------------------------
+
+When a series is recorded, each member run's temperature and field are stamped
+into its summary so the trend plots every point at the right coordinate even
+after the dataset leaves the browser or the project is saved and reopened. That
+coordinate is the value the **Data Browser displays** for the run — not, in
+general, the raw header scalar.
+
+This matters for *parked-setpoint* series. If a scan was run with the cryostat
+setpoint left at a single value (e.g. every run logged as 1 K) while the true
+sample temperature drifted, the header temperature is identical for every run
+and a temperature trend would collapse onto one abscissa point. Enabling
+**Options → Use temperature from log** switches the T column to the logged
+sample temperature, and the trend X-axis and CSV export now follow: each point
+is placed at its logged temperature, so a :math:`T`-trend (or Arrhenius fit)
+becomes possible. The field axis behaves the same way under the analogous
+*use field from log* option, and per-dataset overrides (set from a single run's
+Get Info) are honoured too.
+
+With both toggles off (the default) the abscissa is the header setpoint exactly
+as before. A run with no recorded temperature or field stays *off that axis*
+(plotted as NaN), never planted at 0. Series recorded before this behaviour
+existed re-plot against the browser's currently displayed value when their
+runs are still loaded.
+
 Representation-Aware Trending
 ------------------------------
 

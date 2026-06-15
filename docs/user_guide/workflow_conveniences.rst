@@ -40,6 +40,10 @@ The choice can be made per run from the run-information dialog, and for a co-add
 run the field is the event-weighted mean of its constituents. When a run carries no
 field log, the header value stands — there is no silent substitution.
 
+As with temperature, the displayed B value is what a batch parameter trend plots
+and exports: a field trend follows the logged field when this option is on
+(see :ref:`trend-abscissa-coordinate`).
+
 Log-count diagnostic
 -------------------
 

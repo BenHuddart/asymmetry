@@ -68,6 +68,11 @@ same choice to every loaded run and clears any per-run overrides. Temperature
 cells whose value comes from a log are shown with red text. Untick the option
 to return the column to the scalar/header value.
 
+The value shown here is also the one a batch parameter trend plots against and
+exports to CSV: with the option on, a temperature trend uses each run's logged
+temperature rather than its parked setpoint — see
+:ref:`trend-abscissa-coordinate`.
+
 Data Browser Features
 ---------------------
 
