@@ -90,11 +90,51 @@ class TestSchemaMigration:
         assert result["schema_version"] == CURRENT_SCHEMA_VERSION
         assert result["datasets"] == []
 
-    def test_v8_migrates_to_v9(self):
+    def test_v8_migrates_to_current(self):
         # v9 adds optional per-projection fit slots; the migration is a lossless
         # version bump (pre-v9 representations simply carry no projection_fits).
         result = migrate_to_current({"schema_version": 8, "datasets": []})
-        assert result["schema_version"] == 9
+        assert result["schema_version"] == CURRENT_SCHEMA_VERSION
+
+    def test_v9_migrates_to_v10_promotes_extra_columns(self):
+        # v10 generalises browser_state.extra_columns from a list of metadata
+        # keys (strings) into a list of column-definition dicts so the browser can
+        # also hold user-editable custom columns and renamed metadata columns.
+        state = {
+            "schema_version": 9,
+            "datasets": [],
+            "browser_state": {
+                "extra_columns": ["run_info.points", "nexus_fields.sample.shape"],
+            },
+        }
+        result = migrate_to_current(state)
+        assert result["schema_version"] == CURRENT_SCHEMA_VERSION
+        columns = result["browser_state"]["extra_columns"]
+        assert columns == [
+            {
+                "id": "run_info.points",
+                "label": "run_info.points",
+                "kind": "metadata",
+                "source_key": "run_info.points",
+            },
+            {
+                "id": "nexus_fields.sample.shape",
+                "label": "nexus_fields.sample.shape",
+                "kind": "metadata",
+                "source_key": "nexus_fields.sample.shape",
+            },
+        ]
+
+    def test_v10_dict_extra_columns_pass_through(self):
+        # Already-v10 column dicts (incl. custom columns) survive a no-op migrate.
+        custom = {"id": "custom:ab12cd34", "label": "Anneal", "kind": "custom"}
+        state = {
+            "schema_version": 10,
+            "datasets": [],
+            "browser_state": {"extra_columns": [custom]},
+        }
+        result = migrate_to_current(state)
+        assert result["browser_state"]["extra_columns"] == [custom]
 
     def test_v1_migrates_to_v2(self):
         state = {"schema_version": 1, "datasets": []}
@@ -181,7 +221,7 @@ class TestSchemaMigration:
         validate(state)  # must not raise
 
     def test_current_schema_version_constant(self):
-        assert CURRENT_SCHEMA_VERSION == 9
+        assert CURRENT_SCHEMA_VERSION == 10
 
 
 def _composite_model_dict(component: str = "Exponential") -> dict:

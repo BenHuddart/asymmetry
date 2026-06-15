@@ -96,6 +96,12 @@ as before. A run with no recorded temperature or field stays *off that axis*
 existed re-plot against the browser's currently displayed value when their
 runs are still loaded.
 
+Beyond temperature, field and run number, the **X:** selector also offers any
+fitted parameter (parameter-vs-parameter trending) and any **custom data-browser
+column** (:ref:`logbook-columns`). Custom columns hold free-form text, so when
+one is the x-axis each value is coerced to a number and runs whose value is empty
+or non-numeric are dropped, with a note reporting how many were skipped.
+
 Representation-Aware Trending
 ------------------------------
 

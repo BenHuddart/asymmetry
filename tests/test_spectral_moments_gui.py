@@ -223,9 +223,10 @@ def test_non_overlapping_spectrum_resets_window_to_full():
 
 
 def test_no_schema_version_bump():
-    # Baseline guard: bumped to 9 for per-projection fit slots (unified-asymmetry
-    # -projections). A future accidental bump must consciously update this literal.
-    assert CURRENT_SCHEMA_VERSION == 9
+    # Baseline guard: bumped to 10 for data-browser custom/renamable columns
+    # (browser_state.extra_columns generalised from a key list to column-def
+    # dicts). A future accidental bump must consciously update this literal.
+    assert CURRENT_SCHEMA_VERSION == 10
 
 
 def test_restore_state_tolerates_absent_moments():
