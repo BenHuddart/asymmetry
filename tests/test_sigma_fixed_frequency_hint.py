@@ -18,16 +18,40 @@ it pass by emitting the warning.
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pytest
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
-from asymmetry.core.fitting.engine import FitEngine
+from asymmetry.core.fitting.engine import FitEngine, FixedFrequencyFieldMismatchWarning
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fourier.units import gauss_to_mhz
 
 pytest.importorskip("iminuit")
+
+
+def _free_seeded_params(model) -> ParameterSet:
+    """Same seeds as :func:`_seeded_params` but with ``frequency`` left *free*."""
+    params: list[Parameter] = []
+    for parameter in _seeded_params(model):
+        if "freq" in parameter.name.lower():
+            params.append(Parameter(parameter.name, parameter.value, fixed=False))
+        else:
+            params.append(parameter)
+    return ParameterSet(params)
+
+
+def _assert_no_fixed_frequency_warning(dataset, model, params, **fit_kwargs) -> None:
+    """Fail if the fixed-frequency guard fires for *params* on *dataset*."""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        FitEngine().fit(dataset, model.function, params, 0.05, 8.0, **fit_kwargs)
+    offenders = [w for w in caught if issubclass(w.category, FixedFrequencyFieldMismatchWarning)]
+    assert not offenders, (
+        f"unexpected fixed-frequency warning: {[str(w.message) for w in offenders]}"
+    )
 
 
 def _tf_dataset(field_gauss: float = 400.0) -> MuonDataset:
@@ -70,3 +94,38 @@ def test_fixed_frequency_far_from_field_warns() -> None:
 
     with pytest.warns(UserWarning, match=r"(?i)frequenc|field|gamma|γ"):
         FitEngine().fit(dataset, model.function, params, 0.05, 8.0)
+
+
+def _tf_model():
+    return CompositeModel.from_expression("Oscillatory * Gaussian + Constant").to_model_definition()
+
+
+def test_free_frequency_does_not_warn() -> None:
+    """A *free* frequency is the recommended cure, so it must never warn."""
+    model = _tf_model()
+    _assert_no_fixed_frequency_warning(_tf_dataset(400.0), model, _free_seeded_params(model))
+
+
+def test_zero_field_does_not_warn() -> None:
+    """ZF (field ≈ 0): γ_μ·B is not the relevant line, so the guard stays quiet."""
+    model = _tf_model()
+    tf = _tf_dataset(400.0)
+    dataset = MuonDataset(tf.time, tf.asymmetry, tf.error, {"field": 0.0, "run_number": 1277})
+    _assert_no_fixed_frequency_warning(dataset, model, _seeded_params(model))
+
+
+def test_rotating_frame_fixed_offset_does_not_warn() -> None:
+    """In the rotating frame the fixed seed is an offset δν, not a lab frequency.
+
+    Comparing that small δν to lab-frame γ_μ·B would misfire, so the guard must
+    be skipped whenever ``frequency_offsets`` is active.
+    """
+    model = _tf_model()
+    nu0 = 5.0
+    freq_name = next(n for n in model.param_names if "freq" in n.lower())
+    delta_nu = float(gauss_to_mhz(400.0)) - nu0  # ~0.42 MHz: a legitimate fixed offset
+    params = _seeded_params(model)
+    params[freq_name].value = delta_nu
+    _assert_no_fixed_frequency_warning(
+        _tf_dataset(400.0), model, params, frequency_offsets={freq_name: nu0}
+    )

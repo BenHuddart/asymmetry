@@ -309,6 +309,45 @@ Superconducting depolarisation-rate models live in
 See :doc:`sc_penetration_depth`.
 
 
+Transverse-field frequency: let it float
+----------------------------------------
+
+In a transverse-field (TF) fit the precession line sits at the Larmor frequency
+:math:`\nu = \gamma_\mu B / 2\pi` (use
+:func:`~asymmetry.core.fourier.units.gauss_to_mhz` to convert the run's field).
+It is tempting to **fix** ``frequency`` at the nominal applied field, but the
+*true* line can shift — most sharply in the vortex state of a type-II
+superconductor below :math:`T_c`, where the diamagnetic response lowers the
+internal field. Pinning the line away from its true position pushes the misfit
+into the damping term and **inflates the fitted Gaussian** ``sigma`` (~8% on a
+real BiSCCO run). Let the frequency float:
+
+.. code-block:: python
+
+   from asymmetry.core.fitting import FitEngine, Parameter, ParameterSet
+   from asymmetry.core.fitting.composite import CompositeModel
+   from asymmetry.core.fourier.units import gauss_to_mhz
+
+   model = CompositeModel.from_expression(
+       "Oscillatory * Gaussian + Constant"
+   ).to_model_definition()
+
+   params = ParameterSet([
+       Parameter("A_1", value=9.0),
+       Parameter("frequency_1", value=float(gauss_to_mhz(ds.field)), fixed=False),  # float it
+       Parameter("phase_1", value=0.0),
+       Parameter("sigma_1", value=1.0, min=0.0),
+       Parameter("A_bg", value=ds.asymmetry.mean()),
+   ])
+   result = FitEngine().fit(ds, model.function, params)
+
+If you do fix ``frequency`` and the seed sits more than ~2% from
+:math:`\gamma_\mu B` implied by the run's ``field`` metadata, the engine emits a
+:class:`~asymmetry.core.fitting.FixedFrequencyFieldMismatchWarning` pointing you
+back here. The guard stays silent for free frequencies and for zero-/low-field
+runs (where :math:`\gamma_\mu B` is not the relevant line).
+
+
 Parameter trends across runs
 ----------------------------
 
