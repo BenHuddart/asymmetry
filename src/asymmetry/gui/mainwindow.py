@@ -4871,7 +4871,22 @@ class MainWindow(QMainWindow):
                 tab_bar.show()
 
     def _on_fourier(self) -> None:
-        """Show and raise the Fourier dock panel."""
+        """Show the Fourier spectrum: enter the frequency view and raise its dock.
+
+        Opening the Fourier panel used to leave the central plot on the time
+        view, so a user who had not yet computed an FFT saw the time-domain
+        asymmetry and concluded the spectrum "never renders" (the Compute FFT
+        button sits below the fold). Switching to the frequency domain here means
+        the Fourier plot area is what they see — populated if a spectrum exists,
+        or showing the compute prompt if not. We only switch when not already in
+        the frequency domain, so an active MaxEnt view is left untouched.
+        """
+        if (
+            hasattr(self, "_plot_workspace")
+            and hasattr(self._plot_workspace, "set_active_domain")
+            and self._plot_workspace.active_domain() != "frequency"
+        ):
+            self._plot_workspace.set_active_domain("frequency")
         self._sync_spectrum_panel_for_view()
         self._show_panel("fourier")
         if self._current_dataset is not None:
@@ -4914,6 +4929,22 @@ class MainWindow(QMainWindow):
     def _frequency_status_name(self, rep_type: RepresentationType | None = None) -> str:
         resolved = rep_type or self._active_frequency_rep_type()
         return "MaxEnt" if resolved == RepresentationType.FREQ_MAXENT else "FFT"
+
+    def _frequency_empty_prompt(self, rep_type: RepresentationType | None = None) -> str:
+        """Return the on-canvas prompt shown when the active run has no spectrum.
+
+        The frequency views are compute-on-demand: a spectrum exists only after
+        the user configures the parameters and runs the transform. With nothing
+        computed the panel would otherwise be blank, so we draw a centred cue
+        (the same empty-state pattern as the time view and the ALC scan) telling
+        the user how to populate it — phrased for the active representation.
+        """
+        resolved = rep_type or self._active_frequency_rep_type()
+        if resolved == RepresentationType.FREQ_MAXENT:
+            return (
+                "No MaxEnt spectrum computed for this run. Configure the parameters and run MaxEnt."
+            )
+        return "No FFT computed for this run. Configure the FFT parameters and click Compute FFT."
 
     def _set_fourier_status(self, message: str, *, success: bool = False) -> None:
         """Update the Fourier panel status text and main-window status bar."""
@@ -5794,7 +5825,7 @@ class MainWindow(QMainWindow):
     ) -> None:
         """Draw *spectra* (or clear + status when empty) on the frequency tab."""
         if not spectra:
-            self._frequency_plot_panel.clear()
+            self._frequency_plot_panel.clear(message=self._frequency_empty_prompt(rep_type))
             if preserved_x_limits is not None and preserved_y_limits is not None:
                 self._frequency_plot_panel.set_view_limits(
                     preserved_x_limits[0],
@@ -5884,21 +5915,6 @@ class MainWindow(QMainWindow):
             self._frequency_overlay.hide()
         self._clear_status_state_if_idle()
 
-    def _revert_to_time_if_frequency_empty(self) -> None:
-        """Fall back to the time view when the frequency view has no content.
-
-        Skipped while a recompute is in flight — the content is still coming, so
-        the async completion handler re-runs this once the result has landed (or
-        confirmed empty).
-        """
-        if (
-            self._plot_workspace.active_domain() == "frequency"
-            and not self._frequency_recompute_active
-            and hasattr(self._frequency_plot_panel, "has_plot_content")
-            and not self._frequency_plot_panel.has_plot_content()
-        ):
-            self._plot_workspace.set_active_domain("time")
-
     def _on_frequency_recompute_finished(
         self,
         run_number: int,
@@ -5925,7 +5941,6 @@ class MainWindow(QMainWindow):
             self._render_frequency_spectra(
                 run_number, rep_type, resolved, preserved_x_limits, preserved_y_limits
             )
-            self._revert_to_time_if_frequency_empty()
 
     def _on_frequency_recompute_error(
         self,
@@ -5945,7 +5960,6 @@ class MainWindow(QMainWindow):
             self._render_frequency_spectra(
                 run_number, rep_type, spectra, preserved_x_limits, preserved_y_limits
             )
-            self._revert_to_time_if_frequency_empty()
 
     # ── spectral moments ───────────────────────────────────────────────────
 
@@ -10991,10 +11005,9 @@ class MainWindow(QMainWindow):
                             float(y_min),
                             float(y_max),
                         )
-        # If the frequency view is active but empty, fall back to the time view.
-        # When a lazy recompute is in flight the content is still coming, so the
-        # async completion handler re-runs this check once the result lands.
-        self._revert_to_time_if_frequency_empty()
+        # A restored frequency view with no computed spectrum keeps its compute
+        # prompt (drawn by _render_frequency_spectra) rather than silently
+        # bouncing to the time view — the user chose the frequency domain.
 
         # Propagate current dataset to fit panel.
         if current_dataset is not None:

@@ -169,8 +169,9 @@ class _StubPlotPanel(QWidget):
     def set_fit_range(self, x_min, x_max):
         return
 
-    def clear(self):
+    def clear(self, *, message=None):
         self.last_plotted_dataset = None
+        self.last_clear_message = message
         return
 
 
@@ -262,6 +263,10 @@ def test_mainwindow_smoke_paths(monkeypatch: pytest.MonkeyPatch, qapp: QApplicat
     window._on_fit()
     window._on_fourier()
     window._on_fit_parameters()
+    # _on_fourier now enters the frequency domain (so the user sees the Fourier
+    # plot, not the time view); the rest of this smoke path asserts time-domain
+    # fit propagation, so return to the time view first.
+    window._plot_workspace.set_active_domain("time")
 
     ds = MuonDataset(
         time=np.array([0.0, 1.0]),

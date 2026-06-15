@@ -57,6 +57,31 @@ def style_axes(ax: object) -> None:
         pass
 
 
+def draw_empty_state_message(ax: object, message: str) -> None:
+    """Draw a centred grey placeholder over an axis-off plot for an empty state.
+
+    The shared cue for a compute-on-demand view that has nothing to show yet —
+    the frequency panel before an FFT/MaxEnt is computed, or the ALC view before
+    a scan is built. *message* is centred in axes-fraction coordinates and the
+    axis is hidden, so the result reads as an intentional placeholder rather than
+    a blank graph. Callers ``ax.clear()`` first; this only adds the text.
+    """
+    try:
+        ax.text(  # type: ignore[union-attr]
+            0.5,
+            0.5,
+            message,
+            ha="center",
+            va="center",
+            transform=ax.transAxes,
+            color="gray",
+            wrap=True,
+        )
+        ax.set_axis_off()  # type: ignore[union-attr]
+    except Exception:
+        pass
+
+
 def draw_zero_line(ax: object) -> None:
     """Draw the handoff's y = 0 reference line, excluded from autoscaling.
 

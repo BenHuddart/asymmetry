@@ -69,6 +69,7 @@ from asymmetry.gui.panels.draggable_handles import nearest_handle
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.plots import (
+    draw_empty_state_message,
     draw_fit_range_span,
     draw_zero_line,
     style_axes,
@@ -5034,8 +5035,16 @@ class PlotPanel(QWidget):
         # Redraw current view while preserving multi-selection overlays.
         self._redraw_current_view()
 
-    def clear(self) -> None:
-        """Clear the plot and reset stored data."""
+    def clear(self, *, message: str | None = None) -> None:
+        """Clear the plot and reset stored data.
+
+        When *message* is given, draw it as a centred grey placeholder over the
+        (axis-off) plot area — the empty-state pattern used by
+        :meth:`asymmetry.gui.panels.alc_panel.AlcPanel.clear`. The frequency
+        panel passes a message to prompt the user to compute a spectrum (an FFT
+        is computed on demand, never automatically); every other caller leaves
+        *message* ``None`` and gets an unchanged blank plot.
+        """
         if self._has_mpl:
             self._set_canvas_minimum_height_for_axes(1)
             self._set_navigation_mode("none")
@@ -5043,6 +5052,8 @@ class PlotPanel(QWidget):
             self.set_projections([])
             self._ax.clear()
             style_axes(self._ax)
+            if message:
+                draw_empty_state_message(self._ax, message)
             self._canvas.draw()
             self._current_dataset = None
             self._current_datasets = []

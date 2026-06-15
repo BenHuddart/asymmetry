@@ -42,6 +42,7 @@ from PySide6.QtWidgets import (
 from asymmetry.gui.panels.draggable_handles import nearest_handle
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
+from asymmetry.gui.styles.plots import draw_empty_state_message
 from asymmetry.gui.styles.widgets import build_primary_button_qss
 
 
@@ -816,17 +817,7 @@ class ALCScanView(QWidget):
         self._peaks_results.setText("")
         self._rf_results.setText("")
         self._ax.clear()
-        self._ax.text(
-            0.5,
-            0.5,
-            message,
-            ha="center",
-            va="center",
-            transform=self._ax.transAxes,
-            color="gray",
-            wrap=True,
-        )
-        self._ax.set_axis_off()
+        draw_empty_state_message(self._ax, message)
         self._canvas.draw_idle()
         self._fill_data_table()
 
