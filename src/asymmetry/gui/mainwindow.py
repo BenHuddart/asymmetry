@@ -7980,18 +7980,25 @@ class MainWindow(QMainWindow):
     def _dataset_trend_coords(self, run_number: int) -> dict[str, float | None]:
         """Per-run ``field``/``temperature`` to stamp into a FitSeries summary.
 
-        Read from the data-browser dataset's metadata at record time so each
-        member's coordinate persists *with the series* — the trend then plots it
-        at the right T/B even when the dataset has left the browser or the
-        project has been saved and reopened. A coordinate with no recorded
-        metadata is ``None`` (JSON null → "off this axis"), never ``0``. This
-        mirrors the moments / co-add / cross-group computed-series paths.
+        Read from the data-browser dataset at record time so each member's
+        coordinate persists *with the series* — the trend then plots it at the
+        right T/B even when the dataset has left the browser or the project has
+        been saved and reopened. A coordinate with no recorded value is ``None``
+        (JSON null → "off this axis"), never ``0``. This mirrors the moments /
+        co-add / cross-group computed-series paths.
+
+        The coordinate is the value the browser **displays**, not the header
+        scalar: when ``Options → Use temperature from log`` (or the field-log
+        analogue, or a per-dataset override) is active the logged sample value
+        is used, so a parked-setpoint series (every run at the same setpoint)
+        spreads across its true logged abscissa instead of collapsing onto one
+        point. See :meth:`DataBrowserPanel.displayed_coordinate`.
         """
-        dataset = (
-            self._data_browser.get_dataset(int(run_number))
-            if hasattr(self._data_browser, "get_dataset")
-            else None
-        )
+        browser = self._data_browser
+        if hasattr(browser, "displayed_coordinate"):
+            return browser.displayed_coordinate(int(run_number))
+        # Fallback for a browser without the display-coordinate API (test doubles).
+        dataset = browser.get_dataset(int(run_number)) if hasattr(browser, "get_dataset") else None
         meta = getattr(dataset, "metadata", {}) or {}
         return {
             "field": _safe_float(meta.get("field")),
@@ -8021,6 +8028,11 @@ class MainWindow(QMainWindow):
             if not summary or not summary.get("success"):
                 continue
 
+            # Run number to consult the live data browser for (its displayed
+            # T/B honours the logged-temperature/field toggles). Frequency
+            # members read their own richer spectrum metadata, so they are not
+            # routed through the browser here.
+            browser_run: int | None = None
             if series.member_kind == "groups":
                 source_run = series.source_run_for(member_key)
                 dataset = (
@@ -8028,6 +8040,7 @@ class MainWindow(QMainWindow):
                     if hasattr(self._data_browser, "get_dataset")
                     else None
                 )
+                browser_run = source_run
                 group_idx = abs(member_key) % 1000
                 run_label = f"R{source_run}/G{group_idx}"
             else:
@@ -8039,24 +8052,40 @@ class MainWindow(QMainWindow):
                     dataset = spectra[0] if spectra else None
                 if dataset is None and hasattr(self._data_browser, "get_dataset"):
                     dataset = self._data_browser.get_dataset(member_key)
+                if not is_frequency:
+                    browser_run = member_key
                 run_label = None
 
             meta = getattr(dataset, "metadata", {}) or {}
             if run_label is None:
                 run_label = str(summary.get("run_label") or meta.get("run_label") or member_key)
 
+            # Fallback coordinate for older series persisted before T/B was
+            # Lazily resolve the browser's *displayed* coordinate (honouring the
+            # logged-T/B toggles) — only the legacy path below consults it, so a
+            # normal stamped series never pays for the browser lookup + log scan.
+            fallback_memo: list[dict] = []
+
+            def _fallback_coords() -> dict:
+                if not fallback_memo:
+                    fallback_memo.append(
+                        self._dataset_trend_coords(browser_run) if browser_run is not None else {}
+                    )
+                return fallback_memo[0]
+
             # Computed series (e.g. cross-group model-fit results) carry their own
             # field/temperature in the summary, since their synthetic members have
-            # no backing dataset; fall back to dataset metadata otherwise. A
+            # no backing dataset; fall back to the displayed coordinate otherwise. A
             # present-but-None summary value means "off this axis" → NaN.
             def _coord(key: str) -> float:
                 if key in summary:
                     val = summary[key]
                     return float("nan") if val is None else float(val)
-                # Fallback for older series persisted before T/B was stamped into
-                # the summary: read the live dataset, but a genuinely-missing
-                # coordinate is off-axis (NaN), never planted at 0.
-                val = meta.get(key)
+                # Older series persisted before T/B was stamped: use the browser's
+                # displayed value when a live dataset backs this member, so a
+                # re-plotted legacy series matches the table. A genuinely-missing
+                # coordinate is off-axis (NaN), never at 0.
+                val = _fallback_coords().get(key, meta.get(key))
                 return float("nan") if val is None else float(val)
 
             field = _coord("field")

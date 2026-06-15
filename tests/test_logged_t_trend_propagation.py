@@ -89,3 +89,76 @@ def test_trend_coords_use_logged_temperature_when_enabled(mw, monkeypatch):
         "trend coordinate used the parked setpoint (1 K) instead of the logged "
         "temperature the browser displays (268 K)"
     )
+
+
+def test_trend_coords_use_setpoint_when_toggle_off(mw):
+    # Toggle off (default): the trend keeps the header setpoint, unchanged.
+    ds = _dataset(20712, setpoint_temp=4.2)
+    mw._data_browser.add_dataset(ds)
+
+    coords = mw._dataset_trend_coords(20712)
+    assert coords["temperature"] == pytest.approx(4.2)
+    assert coords["field"] == pytest.approx(100.0)
+
+
+def test_trend_coords_honour_per_dataset_override(mw, monkeypatch):
+    # Global toggle off, but this one run is overridden to show the logged T.
+    ds = _dataset(20713, setpoint_temp=1.0)
+    mw._data_browser.add_dataset(ds)
+    monkeypatch.setattr(
+        mw._data_browser, "_temperature_from_log_for_display", lambda dataset: 270.0
+    )
+    mw._data_browser.set_dataset_temperature_from_log(20713, True)
+
+    coords = mw._dataset_trend_coords(20713)
+    assert coords["temperature"] == pytest.approx(270.0)
+
+
+def test_trend_coords_use_logged_field_when_enabled(mw, monkeypatch):
+    # The field axis honours the analogous "use field from log" toggle.
+    ds = _dataset(20714, setpoint_temp=4.2)
+    mw._data_browser.add_dataset(ds)
+    mw._data_browser.set_use_field_from_log(True)
+    monkeypatch.setattr(mw._data_browser, "_field_from_log_for_display", lambda dataset: 97.5)
+
+    coords = mw._dataset_trend_coords(20714)
+    assert coords["field"] == pytest.approx(97.5)
+    # Temperature stays on the setpoint — only the field toggle was enabled.
+    assert coords["temperature"] == pytest.approx(4.2)
+
+
+def test_trend_coords_missing_value_is_none_not_zero(mw):
+    # A run with no recorded temperature stays off-axis (None), never 0.
+    run = Run(
+        run_number=20715,
+        histograms=[
+            Histogram(np.array([10.0, 20.0]), 0.1, 0),
+            Histogram(np.array([8.0, 16.0]), 0.1, 0),
+        ],
+        metadata={"field": 100.0},
+        grouping={
+            "groups": {1: [1], 2: [2]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 1,
+        },
+    )
+    ds = MuonDataset(
+        np.array([0.0, 0.1]),
+        np.array([0.1, 0.1]),
+        np.array([0.01, 0.01]),
+        {"run_number": 20715, "field": 100.0},  # no "temperature"
+        run,
+    )
+    mw._data_browser.add_dataset(ds)
+
+    coords = mw._dataset_trend_coords(20715)
+    assert coords["temperature"] is None
+    assert coords["field"] == pytest.approx(100.0)
+
+
+def test_unknown_run_returns_none_coords(mw):
+    coords = mw._dataset_trend_coords(999999)
+    assert coords == {"field": None, "temperature": None}
