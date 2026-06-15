@@ -1391,6 +1391,17 @@ class DataBrowserPanel(QWidget):
             item = self._table.horizontalHeaderItem(col)
             if item is not None:
                 item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+        # Tooltip each extra-column header so a renamed metadata column still
+        # reveals the NeXus/metadata field it came from, and custom columns read
+        # as editable.
+        for offset, column in enumerate(self._visible_extra_columns()):
+            item = self._table.horizontalHeaderItem(len(self._COLUMNS) + offset)
+            if item is None:
+                continue
+            if column.is_custom:
+                item.setToolTip("Custom column — double-click a cell to edit")
+            elif column.source_key:
+                item.setToolTip(f"From metadata field: {column.source_key}")
 
     def _visible_extra_columns(self) -> list[ExtraColumn]:
         """Return extra columns that should appear beyond the fixed browser columns.
