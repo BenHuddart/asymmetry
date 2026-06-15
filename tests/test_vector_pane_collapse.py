@@ -87,3 +87,36 @@ def test_clearing_active_vector_projection_collapses_to_single_pane(panel):
         "set_projections([]) cleared the vector state but did not replot to a "
         "single pane (no _redraw_current_view / _apply_limits in the clear branch)"
     )
+
+
+def test_clearing_projections_in_grouped_time_mode_does_not_replot(panel):
+    """The collapse-redraw must key on the vector indicator, not the axis field.
+
+    ``plot_grouped_time_domain_subplots`` reuses ``_current_polarization_axis``
+    for a run key while leaving ``_vector_subplot_datasets`` empty. Gating the
+    collapse on the axis field would false-positive here and fire a full grouped
+    rebuild from inside ``clear()`` (which calls ``set_projections([])`` before
+    blanking the canvas) — wasteful, and on the wrong layer. The gate must use
+    ``_vector_subplot_datasets`` so a grouped-time view triggers no replot.
+    """
+    ds = _dataset()
+    panel.plot_dataset(ds)
+
+    # Simulate an active grouped-time subplot view: a non-None run-key axis but
+    # NO vector subplot data (the distinguishing state vs. the vector dual-pane).
+    panel._current_polarization_axis = "12345"
+    panel._vector_subplot_datasets = {}
+    panel._grouped_time_subplot_datasets = [ds]
+
+    calls: list[int] = []
+    original = panel._redraw_current_view
+    panel._redraw_current_view = lambda *a, **k: (calls.append(1), original(*a, **k))[1]
+
+    panel.set_projections([])
+
+    assert calls == [], (
+        "set_projections([]) replotted in grouped-time mode: the collapse-redraw "
+        "gate keyed on _current_polarization_axis (a run key here) instead of the "
+        "vector-only _vector_subplot_datasets indicator"
+    )
+    assert panel._current_polarization_axis is None

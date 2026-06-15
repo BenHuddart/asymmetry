@@ -2456,6 +2456,13 @@ class PlotPanel(QWidget):
         specs = [dict(p) for p in (projections or []) if p.get("label")]
         if len(specs) < 2:
             self._cache_current_y_limits_for_axis()
+            # Was a vector multi-pane (EMU ``ALL`` or stacked transverse
+            # projections) on screen? ``_vector_subplot_datasets`` is populated
+            # only by plot_vector_subplots and is the precise indicator — unlike
+            # ``_current_polarization_axis``, which grouped-time subplots also set
+            # to a run key, so keying on it would spuriously fire a full grouped
+            # rebuild from clear(). Capture before reset so we can collapse after.
+            had_vector_view = bool(self._vector_subplot_datasets)
             self._current_polarization_axis = None
             self._projection_specs = []
             self._tint_by_label = {}
@@ -2463,6 +2470,13 @@ class PlotPanel(QWidget):
             self._vector_subplot_datasets = {}
             self._projection_bar.set_projections([])
             self._update_y_limit_controls_for_axis(None)
+            # Replot only on the vector → non-vector transition. With the vector
+            # state cleared, _redraw_current_view falls through to the single-pane
+            # path, collapsing the dual-pane back to one Axes. Skipping this when
+            # no vector view was active avoids a spurious redraw on the common
+            # non-vector refresh path (set_projections([]) fires routinely).
+            if had_vector_view:
+                self._redraw_current_view()
             return
 
         self._projection_specs = specs
@@ -2637,8 +2651,22 @@ class PlotPanel(QWidget):
         return "Asymmetry (%)"
 
     def _ensure_single_axis_mode(self) -> None:
-        """Recreate a single-axis figure when leaving vector-subplot mode."""
-        if not self._subplot_axes_by_polarization:
+        """Recreate a single-axis figure when leaving any multi-axis mode.
+
+        The single-dataset path always renders onto exactly one ``self._ax``, so
+        the postcondition is one tracked axis. Rebuild whenever that does not
+        already hold: tracked vector subplots, *any* lingering extra axes (e.g. a
+        dual-pane left behind when a projection was cleared without replotting),
+        or a stale ``self._ax`` detached from the figure. Relying solely on
+        ``_subplot_axes_by_polarization`` was fragile — clearing the vector state
+        without clearing that dict still left the panes on the canvas.
+        """
+        already_single = (
+            not self._subplot_axes_by_polarization
+            and len(self._figure.axes) == 1
+            and getattr(self, "_ax", None) in self._figure.axes
+        )
+        if already_single:
             return
         self._disconnect_axis_limit_callbacks()
         self._figure.clf()
