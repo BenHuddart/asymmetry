@@ -124,6 +124,7 @@ ignore = ["E501"]  # Ruff format handles normal wrapping; long prose/UI strings 
 "tests/test_user_functions.py" = ["N803"]  # Physics parameter names (A, tau) in plugin fixtures
 "tests/test_user_functions_gui.py" = ["N803", "E402"]  # Physics names; importorskip before Qt imports
 "tests/test_integral_scan_gui.py" = ["E402"]  # pytest.importorskip before optional Qt imports
+"tests/test_rf_scan_panel_gui.py" = ["E402"]  # pytest.importorskip before optional Qt imports
 "tests/test_fitting_engine.py" = ["N803"]  # Physics-style model parameter names
 "tests/test_grouped_time_domain_fitting.py" = ["N803"]  # Physics parameter names (Lambda)
 "tests/test_wimda_parity_components.py" = ["N803", "N806"]  # Physics parameter names (J, A, B)
