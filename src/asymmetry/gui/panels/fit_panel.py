@@ -7,6 +7,7 @@ parameters, run the fit, and inspect results.
 from __future__ import annotations
 
 import copy
+import dataclasses
 import functools
 import html
 import re
@@ -5129,22 +5130,16 @@ class GlobalFitTab(QWidget):
                     result.parameters,
                     result.uncertainties,
                 )
-                emitted_results[run_number] = FitResult(
-                    success=result.success,
-                    chi_squared=result.chi_squared,
-                    reduced_chi_squared=result.reduced_chi_squared,
+                # Override only the two fields that change (the field-derived
+                # parameters and their uncertainties); replace() carries every
+                # other FitResult field through, so dof, minos_errors, warnings,
+                # and any field added later survive instead of resetting to
+                # defaults (a hand-copied constructor silently dropped dof and
+                # minos_errors — see PR #108 follow-up).
+                emitted_results[run_number] = dataclasses.replace(
+                    result,
                     parameters=params,
                     uncertainties=uncertainties,
-                    covariance=result.covariance,
-                    covariance_parameters=list(result.covariance_parameters),
-                    residuals=result.residuals,
-                    message=result.message,
-                    function_calls=result.function_calls,
-                    gradient_calls=result.gradient_calls,
-                    hessian_calls=result.hessian_calls,
-                    edm=result.edm,
-                    covariance_accurate=result.covariance_accurate,
-                    warnings=list(result.warnings),
                 )
             emitted_global, _global_unc = append_frequency_field_derived_parameters(
                 fitted_global,
