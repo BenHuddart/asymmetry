@@ -1482,6 +1482,8 @@ class MainWindow(QMainWindow):
             self._data_browser.group_selected.connect(self._on_group_selected)
         if hasattr(self._data_browser, "refit_coadded_requested"):
             self._data_browser.refit_coadded_requested.connect(self._on_refit_coadded_requested)
+        if hasattr(self._data_browser, "extra_columns_changed"):
+            self._data_browser.extra_columns_changed.connect(self._sync_custom_columns_to_consumers)
         self._data_browser.selection_changed.connect(self._update_selected_datasets)
         self._plot_panel.fit_range_changed.connect(self._on_fit_range_changed)
         if hasattr(self._frequency_plot_panel, "fit_range_changed"):
@@ -9900,6 +9902,18 @@ class MainWindow(QMainWindow):
             f"Deleted fit(s) for group {group_id}: cleared {len(normalized_runs)} dataset fit entry/entries"
         )
         self.statusBar().showMessage(f"Deleted fit(s) for group {group_id}")
+
+    def _sync_custom_columns_to_consumers(self) -> None:
+        """Re-offer the data browser's custom columns as plot labels / trend axes.
+
+        Called whenever the browser's extra columns change (add/remove/rename) and
+        after a project loads, so the plot legend-label combo and the parameter
+        trend x-axis stay in step with the user's custom columns.
+        """
+        fields = self._data_browser.custom_label_fields()
+        for panel in (self._plot_panel, self._frequency_plot_panel):
+            if hasattr(panel, "set_custom_label_fields"):
+                panel.set_custom_label_fields(fields)
 
     def _update_selected_datasets(self, *_args) -> None:
         """Update the fit panel with currently selected datasets."""

@@ -353,11 +353,6 @@ class PlotPanel(QWidget):
             # that window.
             self._stacked_axis_count: int = 1
 
-            # Legend label field preferences can be scoped per Data Group.
-            self._active_label_group_id: str | None = None
-            self._default_label_field: str = "run"
-            self._label_field_by_group: dict[str, str] = {}
-
             # Store fit curve data to persist across redraws
             self._fit_curve = None  # (t_fit, y_fit, label) for single fits
             self._fit_curve_run_number = None
@@ -467,10 +462,21 @@ class PlotPanel(QWidget):
         self._bunch_factor.valueChanged.connect(self._on_bunch_changed)
         self._bunch_factor.hide()
 
+        # Legend label-field preferences. Initialised unconditionally (not only on
+        # the matplotlib-available path) so the label combo can be built even in a
+        # headless/no-mpl panel. Preferences can be scoped per Data Group.
+        self._active_label_group_id: str | None = None
+        self._default_label_field: str = "run"
+        self._label_field_by_group: dict[str, str] = {}
+        #: User-defined data-browser custom columns offered as legend labels, as
+        #: ``(display_label, "custom:<id>")`` pairs pushed in by the host (see
+        #: :meth:`set_custom_label_fields`). Their per-run values are read straight
+        #: from ``dataset.metadata["custom_fields"]``.
+        self._custom_label_fields: list[tuple[str, str]] = []
+
         # Label and Overlay widgets are created here but placed in the nav row below.
         self._label_field_combo = QComboBox()
-        for display, key in _LABEL_FIELDS:
-            self._label_field_combo.addItem(display, userData=key)
+        self._rebuild_label_field_combo()
         self._label_field_combo.setMaximumWidth(140)
         self._label_field_combo.currentIndexChanged.connect(self._on_label_field_changed)
 
@@ -1398,11 +1404,89 @@ class PlotPanel(QWidget):
         """Apply edited limits and refresh display density for the new viewport."""
         self._apply_limits(schedule_viewport_refresh=True)
 
+    def _active_label_field_key(self) -> str:
+        """Return the label field that should currently be shown/used.
+
+        The per-group preference when a Data Group is active, otherwise the
+        default. This is the stored *intent*, which the combo targets on every
+        rebuild — so a saved custom column that is not yet offered (e.g. just
+        after project load) is selected the moment the host pushes it in.
+        """
+        if self._active_label_group_id is None:
+            return self._default_label_field
+        return self._label_field_by_group.get(
+            str(self._active_label_group_id), self._default_label_field
+        )
+
+    def _rebuild_label_field_combo(self) -> None:
+        """Populate the label-field combo with the built-ins plus custom columns.
+
+        Targets the active label-field intent (not the transient combo selection)
+        so adding/removing/renaming custom columns — or restoring a project whose
+        saved label is a not-yet-offered custom column — lands on the right entry.
+        """
+        combo = self._label_field_combo
+        target = self._active_label_field_key()
+        blocker = QSignalBlocker(combo)
+        combo.clear()
+        for display, key in _LABEL_FIELDS:
+            combo.addItem(display, userData=key)
+        for display, key in self._custom_label_fields:
+            combo.addItem(display, userData=key)
+        idx = combo.findData(target)
+        if idx < 0:
+            idx = combo.findData("run")
+        if idx >= 0:
+            combo.setCurrentIndex(idx)
+        del blocker
+
+    def set_custom_label_fields(self, fields: list[tuple[str, str]]) -> None:
+        """Set the data-browser custom columns offered as legend-label options.
+
+        ``fields`` is a list of ``(display_label, "custom:<id>")`` pairs. The
+        combo is rebuilt (selection preserved) and, if the active label field is
+        a custom column whose label changed, the plot is redrawn so the legend
+        tracks the rename.
+        """
+        normalized = [(str(label), str(key)) for label, key in fields]
+        if normalized == self._custom_label_fields:
+            return
+        active_is_custom = str(self._label_field_combo.currentData() or "").startswith("custom:")
+        self._custom_label_fields = normalized
+        self._rebuild_label_field_combo()
+        if active_is_custom and self._has_mpl and self._current_datasets:
+            self._redraw_current_view()
+
+    def _is_valid_label_field(self, field: object) -> bool:
+        """Whether ``field`` is a selectable label key (built-in or custom column).
+
+        Any ``custom:`` key is accepted even before its column is pushed in, so a
+        saved selection survives project load regardless of restore ordering; an
+        unknown custom column simply falls back to the run label until resolved.
+        """
+        if not isinstance(field, str):
+            return False
+        if field.startswith("custom:"):
+            return True
+        return field in {key for _, key in _LABEL_FIELDS}
+
+    def _custom_field_value(self, dataset: MuonDataset, field: str) -> str | None:
+        """Resolve a ``custom:<id>`` label key to a dataset's stored text."""
+        fields = dataset.metadata.get("custom_fields")
+        if isinstance(fields, dict):
+            value = fields.get(field)
+            if value is not None and str(value) != "":
+                return str(value)
+        return None
+
     def _dataset_label_for(self, dataset: MuonDataset) -> str:
         """Return the legend label for *dataset* using the selected label field."""
         field = self._label_field_combo.currentData()
         if field == "run":
             return str(dataset.run_label)
+        if isinstance(field, str) and field.startswith("custom:"):
+            value = self._custom_field_value(dataset, field)
+            return value if value is not None else str(dataset.run_label)
         run = dataset.run
         val = dataset.metadata.get(field)
         if val is None and run is not None:
@@ -6335,9 +6419,8 @@ class PlotPanel(QWidget):
         self._auto_x_btn.setChecked(bool(state.get("auto_x_enabled", False)))
         self._auto_y_btn.setChecked(bool(state.get("auto_y_enabled", False)))
 
-        valid_label_fields = {key for _, key in _LABEL_FIELDS}
         default_label_field = state.get("default_label_field", state.get("label_field", "run"))
-        if default_label_field not in valid_label_fields:
+        if not self._is_valid_label_field(default_label_field):
             default_label_field = "run"
         self._default_label_field = str(default_label_field)
 
@@ -6345,7 +6428,7 @@ class PlotPanel(QWidget):
         self._label_field_by_group = {}
         if isinstance(raw_group_label_fields, dict):
             for group_id, field in raw_group_label_fields.items():
-                if field in valid_label_fields:
+                if self._is_valid_label_field(field):
                     self._label_field_by_group[str(group_id)] = str(field)
 
         self._active_label_group_id = None
@@ -6377,19 +6460,14 @@ class PlotPanel(QWidget):
                     continue
                 self._y_limits_by_polarization[axis] = (lo, hi)
 
+        # Adopt the saved current selection as the default when valid, then let the
+        # combo target that intent. A saved *custom* column that the host has not
+        # pushed back yet is kept as the default (not clobbered to "run") and gets
+        # selected automatically once set_custom_label_fields offers it.
         label_field = state.get("label_field", self._default_label_field)
-        if label_field not in valid_label_fields:
-            label_field = "run"
-        idx = self._label_field_combo.findData(label_field)
-        if idx < 0:
-            idx = self._label_field_combo.findData("run")
-        if idx >= 0:
-            self._label_field_combo.blockSignals(True)
-            self._label_field_combo.setCurrentIndex(idx)
-            self._label_field_combo.blockSignals(False)
-            selected_field = self._label_field_combo.currentData()
-            if selected_field in valid_label_fields:
-                self._default_label_field = str(selected_field)
+        if self._is_valid_label_field(label_field) and self._active_label_group_id is None:
+            self._default_label_field = str(label_field)
+        self._rebuild_label_field_combo()
 
         self.set_overlay_enabled(bool(state.get("overlay_enabled", True)), emit_signal=False)
         self.set_time_view_modes(

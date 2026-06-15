@@ -468,6 +468,10 @@ class DataBrowserPanel(QWidget):
     group_selected = Signal(str)
     get_info_requested = Signal(int)
     grouping_requested = Signal(int)
+    # Emitted when the set or labels of extra columns change (add/remove/rename),
+    # so the host can refresh the custom-column options offered as the plot label
+    # and the parameter-trend x-axis.
+    extra_columns_changed = Signal()
     # Re-fit a co-added selection: the host combines the runs, fits with the
     # active single-fit model, and records a computed trend row (combined_from).
     refit_coadded_requested = Signal(object)  # list[int] source run numbers
@@ -1462,6 +1466,19 @@ class DataBrowserPanel(QWidget):
         """Return a copy of the current extra-column definitions (custom + metadata)."""
         return list(self._extra_columns)
 
+    def custom_label_fields(self) -> list[tuple[str, str]]:
+        """Return ``(label, "custom:<id>")`` pairs for the user's custom columns.
+
+        These are the columns offered as the plot legend label and the parameter
+        trend x-axis. Their per-run values live in
+        ``dataset.metadata["custom_fields"]`` keyed by the same id, so consumers
+        resolve them without reaching back into the browser.
+        """
+        return [(column.label, column.id) for column in self._extra_columns if column.is_custom]
+
+    def _notify_extra_columns_changed(self) -> None:
+        self.extra_columns_changed.emit()
+
     def add_extra_column(self, field_key: str) -> None:
         """Add a metadata-backed dynamic column to the browser table."""
         key = str(field_key).strip()
@@ -1477,6 +1494,7 @@ class DataBrowserPanel(QWidget):
         self._refresh_column_headers()
         self._rebuild_table()
         self._resize_columns_to_content()
+        self._notify_extra_columns_changed()
 
     def add_custom_column(self, label: str) -> ExtraColumn | None:
         """Create an empty, user-editable custom column and return its definition."""
@@ -1493,6 +1511,7 @@ class DataBrowserPanel(QWidget):
         self._refresh_column_headers()
         self._rebuild_table()
         self._resize_columns_to_content()
+        self._notify_extra_columns_changed()
         return column
 
     def _prompt_add_custom_column(self) -> None:
@@ -1510,6 +1529,7 @@ class DataBrowserPanel(QWidget):
         column.label = name
         self._refresh_column_headers()
         self._resize_columns_to_content()
+        self._notify_extra_columns_changed()
         return True
 
     def remove_extra_column(self, field_key_or_id: str) -> None:
@@ -1531,6 +1551,7 @@ class DataBrowserPanel(QWidget):
         self._refresh_column_headers()
         self._rebuild_table()
         self._resize_columns_to_content()
+        self._notify_extra_columns_changed()
 
     def get_extra_columns(self) -> list[str]:
         """Return the metadata source keys currently shown (for inclusion tracking).
@@ -3849,3 +3870,7 @@ class DataBrowserPanel(QWidget):
         keys: list[int | str] = list(selected_runs)
         keys.extend(f"{self._GROUP_SENTINEL_PREFIX}{gid}" for gid in selected_group_ids)
         self._restore_selection_by_keys(keys)
+
+        # Let the host re-offer the restored custom columns as plot labels / trend
+        # x-axes once project load has rebuilt them.
+        self._notify_extra_columns_changed()
