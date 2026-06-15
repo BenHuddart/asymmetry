@@ -8,9 +8,9 @@ i.e. vertical scroll only — so the over-wide row is **clipped** and the Fit bu
 overflows past the right screen edge at maximised width, with no way to reach it.
 
 Contract: the RF-resonance fit controls must be reachable at the deck's default
-width (~360 px) — the fix may wrap the row, or give the analysis area horizontal
-scrolling. This placeholder asserts the RF group's content does not demand more than
-the deck width. xfail(strict) until fixed; drop the marker when the row fits/scrolls.
+width (~360 px). Fixed by wrapping the seed spinboxes onto one labeled row each
+(``_build_rf_group``), so the group's content no longer demands more than the deck
+width. This test asserts that contract holds.
 """
 
 from __future__ import annotations
@@ -43,7 +43,6 @@ def _find_rf_fit_button(view) -> QPushButton:
     raise AssertionError("Fit RF resonance button not found in ALCScanView")
 
 
-@pytest.mark.xfail(reason="fix/rf-fit-row-clipping not yet implemented", strict=True)
 def test_rf_fit_controls_fit_the_deck_width(app):
     view = ALCScanView()
     try:

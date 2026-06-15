@@ -336,22 +336,27 @@ class ALCScanView(QWidget):
         group, outer = self._collapsible_group("RF resonance (A_µ, A_p)")
         group.setChecked(False)  # advanced; collapsed until needed
 
-        seeds_row = QHBoxLayout()
-        seeds_row.addWidget(QLabel("ν_RF:"))
+        # One labeled row per seed. A single horizontal row of three MHz
+        # spinboxes needs ~510px — wider than the ~360px inspector deck — and
+        # the analysis area scrolls vertically only, so it would clip the Fit
+        # button off-screen with no way to reach it (test_rf_fit_row_reachable).
+        def _seed_row(label: str, spin: QDoubleSpinBox) -> None:
+            row = QHBoxLayout()
+            row.addWidget(QLabel(label))
+            row.addWidget(spin)
+            row.addWidget(QLabel("MHz"))
+            row.addStretch()
+            outer.addLayout(row)
+
         self._rf_nu_spin = self._make_mhz_spin(218.5)
         self._rf_nu_spin.setToolTip("RF frequency (MHz); held fixed during the fit.")
-        seeds_row.addWidget(self._rf_nu_spin)
-        seeds_row.addWidget(QLabel("A_µ₀:"))
+        _seed_row("ν_RF:", self._rf_nu_spin)
         self._rf_a_mu_spin = self._make_mhz_spin(515.0)
         self._rf_a_mu_spin.setToolTip("Starting guess for the muon hyperfine coupling A_µ (MHz).")
-        seeds_row.addWidget(self._rf_a_mu_spin)
-        seeds_row.addWidget(QLabel("A_p₀:"))
+        _seed_row("A_µ₀:", self._rf_a_mu_spin)
         self._rf_a_p_spin = self._make_mhz_spin(124.0)
         self._rf_a_p_spin.setToolTip("Starting guess for the proton hyperfine coupling A_p (MHz).")
-        seeds_row.addWidget(self._rf_a_p_spin)
-        seeds_row.addWidget(QLabel("MHz"))
-        seeds_row.addStretch()
-        outer.addLayout(seeds_row)
+        _seed_row("A_p₀:", self._rf_a_p_spin)
 
         btn_row = QHBoxLayout()
         btn_row.addStretch()
