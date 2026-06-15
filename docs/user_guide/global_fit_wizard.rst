@@ -85,12 +85,20 @@ The wizard is organised into six pages.
 Series Overview
 ~~~~~~~~~~~~~~~
 
-The first page lists the ordered datasets and summarizes the same deterministic
-fingerprint hints used by the single-spectrum fit wizard:
+The first page lists the selected runs — one row per dataset — as soon as the
+series is loaded, with the **Run**, **Field (G)**, and **Temperature (K)**
+columns filled immediately (no need to run screening first). The remaining
+columns summarize the same deterministic fingerprint hints used by the
+single-spectrum fit wizard:
 
-- whether oscillations appear resolved
-- whether the shape looks Kubo-Toyabe-like
-- whether the envelope suggests more than one relaxation rate
+- whether oscillations appear resolved (**Osc.**)
+- whether the shape looks Kubo-Toyabe-like (**KT-like**)
+- whether the envelope suggests more than one relaxation rate (**Multi-rate**)
+
+These three hints are computed during screening, so before you build the
+screening table they read ``—``; once screening completes they fill with
+``Yes`` / ``No`` and the rows reorder to follow the inferred sweep axis. Until
+then the rows follow the order in which the runs were selected.
 
 The wizard infers one dominant sweep axis. Version 1 supports:
 
