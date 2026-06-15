@@ -583,6 +583,117 @@ def test_restore_single_fit_ui_empty_blanks_form(qapp: QApplication, dataset: Mu
     assert panel._single_tab._result_label.text() == "No fit performed yet"
 
 
+def test_partial_batch_failure_emits_converged_series_and_warns(
+    qapp: QApplication,
+) -> None:
+    """A partial batch fit emits a series from the converged runs and warns.
+
+    Exercises the real (un-mocked) ``_on_fit_finished`` path: the failed run must
+    be dropped from the emitted curves (``_results_with_curves`` must not KeyError
+    on it) and the result box must surface a non-blocking failure warning.
+    """
+    t = np.linspace(0.0, 4.0, 40)
+
+    def _ds(run_number: int) -> MuonDataset:
+        a = 0.2 * np.exp(-0.4 * t) + 0.01
+        return MuonDataset(
+            time=t, asymmetry=a, error=np.full_like(t, 0.01), metadata={"run_number": run_number}
+        )
+
+    tab = GlobalFitTab(member_kind="runs")
+    tab._datasets = [_ds(10), _ds(11)]
+    tab._current_model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    tab._current_global_params = []
+
+    emitted: dict[str, object] = {}
+    tab.global_fit_completed.connect(
+        lambda results, _global: emitted.update(results_with_curves=results)
+    )
+
+    ok = FitResult(
+        success=True,
+        chi_squared=1.0,
+        reduced_chi_squared=0.5,
+        parameters=ParameterSet(
+            [Parameter("A_1", 0.2), Parameter("Lambda", 0.4), Parameter("A_bg", 0.01)]
+        ),
+        uncertainties={"A_1": 0.01, "Lambda": 0.02, "A_bg": 0.001},
+    )
+    failed = FitResult(success=False, message="call limit reached")
+
+    tab._on_fit_finished({10: ok, 11: failed}, [])
+
+    assert set(emitted["results_with_curves"]) == {10}
+    assert "failed to converge" in tab._result_text.toPlainText()
+
+
+def test_batch_to_single_view_switch_preserves_model(
+    qapp: QApplication, dataset: MuonDataset
+) -> None:
+    """A hand-built single-fit model survives a Single→Batch→Single view switch.
+
+    Regression for GUI_LORE "Batch→Single view switch resets the single-fit model".
+    Once a run has been batched its per-projection slot exists but is empty, so the
+    restore provider returns ``{}`` and ``set_dataset`` blanks the live form to the
+    default model on re-bind. Switching back to Single must restore the model the
+    user built rather than leaving the default.
+    """
+    panel = FitPanel()
+    # Simulate a batched run: its single-fit slot is present but empty, so the
+    # restore mediator asks for a blank form on every re-bind.
+    panel.set_single_fit_restore_provider(lambda _ds: {})
+    panel.set_dataset(dataset)
+
+    # User builds a custom model on the Single tab.
+    panel._single_tab._set_composite_model(
+        CompositeModel(["Gaussian", "Constant"], operators=["+"])
+    )
+
+    single_index = panel._tabs.indexOf(panel._single_tab)
+    batch_index = panel._tabs.indexOf(panel._global_tab)
+
+    # Switch to Batch; a re-bind then blanks the live form to the default — the
+    # bug this guards against.
+    panel._tabs.setCurrentIndex(batch_index)
+    panel.set_dataset(dataset)
+    assert panel._single_tab._composite_model.component_names == ["Exponential", "Constant"]
+
+    # Switching back to Single restores the user's model for the same binding.
+    panel._tabs.setCurrentIndex(single_index)
+    assert panel._single_tab._composite_model.component_names == ["Gaussian", "Constant"]
+
+
+def test_view_switch_snapshot_does_not_override_a_persisted_fit(
+    qapp: QApplication, dataset: MuonDataset
+) -> None:
+    """A populated slot payload (a real saved fit) wins over a stale tab snapshot.
+
+    The snapshot only rescues an *unfit* hand-built form; when navigating to a
+    projection that has its own persisted fit, that fit must show — the snapshot
+    is invalidated, not replayed on return to Single.
+    """
+    panel = FitPanel()
+    panel.set_dataset(dataset)
+    panel._single_tab._set_composite_model(
+        CompositeModel(["Gaussian", "Constant"], operators=["+"])
+    )
+    # Capture a persisted-fit payload for a different model.
+    panel._single_tab._set_composite_model(CompositeModel(["StretchedExponential"], operators=[]))
+    persisted = panel.get_single_form_state()
+    panel._single_tab._set_composite_model(
+        CompositeModel(["Gaussian", "Constant"], operators=["+"])
+    )
+
+    batch_index = panel._tabs.indexOf(panel._global_tab)
+    single_index = panel._tabs.indexOf(panel._single_tab)
+
+    panel._tabs.setCurrentIndex(batch_index)  # snapshots Gaussian + Constant
+    panel.restore_single_fit_ui(persisted)  # loads the real saved fit; drops snapshot
+    panel._tabs.setCurrentIndex(single_index)
+
+    assert panel._single_tab._composite_model.component_names == ["StretchedExponential"]
+
+
 def test_unseen_dataset_inherits_custom_model_without_result(
     qapp: QApplication, dataset: MuonDataset
 ) -> None:
