@@ -524,16 +524,3 @@ def style_group_state_button(
             f" background: {tokens.SURFACE}; color: {tokens.TEXT_MUTED};"
             f" font-weight: 400; }}"
         )
-
-
-# ── Footer hint label ─────────────────────────────────────────────────────────
-
-
-def apply_footer_hint(label: QLabel) -> None:
-    """Apply the BENCH footer-hint style to a QLabel (surfaceAlt bg, muted text)."""
-    label.setStyleSheet(
-        f"QLabel {{ background-color: {tokens.SURFACE_ALT};"
-        f" color: {tokens.TEXT_MUTED};"
-        f" border-top: 1px solid {tokens.BORDER};"
-        f" padding: 5px 8px; font-size: 10px; }}"
-    )

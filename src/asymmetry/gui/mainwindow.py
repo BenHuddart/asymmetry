@@ -1482,6 +1482,8 @@ class MainWindow(QMainWindow):
             self._data_browser.group_selected.connect(self._on_group_selected)
         if hasattr(self._data_browser, "refit_coadded_requested"):
             self._data_browser.refit_coadded_requested.connect(self._on_refit_coadded_requested)
+        if hasattr(self._data_browser, "extra_columns_changed"):
+            self._data_browser.extra_columns_changed.connect(self._sync_custom_columns_to_consumers)
         self._data_browser.selection_changed.connect(self._update_selected_datasets)
         self._plot_panel.fit_range_changed.connect(self._on_fit_range_changed)
         if hasattr(self._frequency_plot_panel, "fit_range_changed"):
@@ -8091,6 +8093,17 @@ class MainWindow(QMainWindow):
             field = _coord("field")
             temperature = _coord("temperature")
 
+            # Custom data-browser column values for this member, read live from the
+            # backing dataset's metadata so an edited custom value re-plots at the
+            # right abscissa. Stored as raw text; the trend panel coerces to a
+            # numeric x and drops empty/non-numeric runs (with a note).
+            raw_custom = meta.get("custom_fields") if isinstance(meta, dict) else None
+            custom_values = (
+                {str(k): str(v) for k, v in raw_custom.items()}
+                if isinstance(raw_custom, dict)
+                else {}
+            )
+
             rows.append(
                 {
                     "run_number": member_key,
@@ -8099,6 +8112,7 @@ class MainWindow(QMainWindow):
                     "temperature": float(temperature),
                     "values": dict(summary.get("parameters", {})),
                     "errors": dict(summary.get("uncertainties", {})),
+                    "custom_values": custom_values,
                 }
             )
         return rows
@@ -9901,6 +9915,20 @@ class MainWindow(QMainWindow):
         )
         self.statusBar().showMessage(f"Deleted fit(s) for group {group_id}")
 
+    def _sync_custom_columns_to_consumers(self) -> None:
+        """Re-offer the data browser's custom columns as plot labels / trend axes.
+
+        Called whenever the browser's extra columns change (add/remove/rename) and
+        after a project loads, so the plot legend-label combo and the parameter
+        trend x-axis stay in step with the user's custom columns.
+        """
+        fields = self._data_browser.custom_label_fields()
+        for panel in (self._plot_panel, self._frequency_plot_panel):
+            if hasattr(panel, "set_custom_label_fields"):
+                panel.set_custom_label_fields(fields)
+        if hasattr(self._fit_parameters_panel, "set_custom_x_fields"):
+            self._fit_parameters_panel.set_custom_x_fields(fields)
+
     def _update_selected_datasets(self, *_args) -> None:
         """Update the fit panel with currently selected datasets."""
         selected = self._data_browser.get_selected_datasets()
@@ -10459,13 +10487,24 @@ class MainWindow(QMainWindow):
             if not source_file:
                 source_file = str(dataset.metadata.get("source_file", ""))
 
+            metadata_overrides = {
+                "field": float(dataset.metadata.get("field", 0.0)),
+            }
+            # Custom data-browser column values are per-run, editable text stored
+            # under dataset.metadata["custom_fields"] (keyed by column id). Persist
+            # them through the existing override mechanism so they round-trip with
+            # the run; the column *definitions* live in browser_state.
+            custom_fields = dataset.metadata.get("custom_fields")
+            if isinstance(custom_fields, dict) and custom_fields:
+                metadata_overrides["custom_fields"] = {
+                    str(key): str(value) for key, value in custom_fields.items()
+                }
+
             datasets.append(
                 {
                     "run_number": run_number,
                     "source_file": source_file,
-                    "metadata_overrides": {
-                        "field": float(dataset.metadata.get("field", 0.0)),
-                    },
+                    "metadata_overrides": metadata_overrides,
                     "grouping_overrides": self._extract_grouping_overrides(dataset),
                 }
             )

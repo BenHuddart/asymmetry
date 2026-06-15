@@ -361,7 +361,11 @@ def test_extra_column_roundtrip_in_state(qapp: QApplication) -> None:
 
     panel.add_extra_column("nexus_fields.sample.temperature")
     state = panel.get_state()
-    assert "nexus_fields.sample.temperature" in state["extra_columns"]
+    # extra_columns now serialise as column-definition dicts (id/label/kind/
+    # source_key), not bare metadata keys.
+    assert any(
+        col.get("source_key") == "nexus_fields.sample.temperature" for col in state["extra_columns"]
+    )
 
     panel.clear()
     panel.add_dataset(ds)

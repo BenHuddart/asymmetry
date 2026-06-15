@@ -50,7 +50,7 @@ from asymmetry.core.transform.grouping import good_event_count, good_frames
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.typography import header_font
-from asymmetry.gui.styles.widgets import apply_footer_hint
+from asymmetry.gui.styles.widgets import build_primary_button_qss
 
 _GROUP_TEMP_ABS_TOL_K = 5e-3
 _GROUP_TEMP_REL_TOL = 2e-3
@@ -61,6 +61,9 @@ _GROUP_HEADER_BACKGROUND = QColor(tokens.GROUP_HEADER_BG)
 _GROUP_MEMBER_BACKGROUND = QColor(tokens.GROUP_MEMBER_BG)
 #: Item-data role carrying the run comment shown as the Title cell's second line.
 _COMMENT_ROLE = Qt.ItemDataRole.UserRole + 1
+#: Item-data role carrying a custom column's id on its editable cells, so an edit
+#: routes back to the right per-run value regardless of column position.
+_CUSTOM_COLUMN_ROLE = Qt.ItemDataRole.UserRole + 2
 #: Column index of the two-line Title cell.
 _TITLE_COLUMN = 1
 # Soft red tint used to mark runs that belong to the active fit series in
@@ -116,6 +119,87 @@ class DataGroup:
     name: str
     member_run_numbers: list[int]
     collapsed: bool = False
+
+
+#: Discriminators for :class:`ExtraColumn.kind`.
+EXTRA_COLUMN_METADATA = "metadata"
+EXTRA_COLUMN_CUSTOM = "custom"
+
+#: Dataset-metadata key under which per-run custom-column values are stored,
+#: keyed by column id. Living in ``dataset.metadata`` (rather than on the column)
+#: lets the values ride the existing per-dataset override persistence and reach
+#: the plot-label / trend-x-axis resolvers, which already read dataset metadata.
+CUSTOM_FIELDS_METADATA_KEY = "custom_fields"
+
+
+@dataclass
+class ExtraColumn:
+    """A user-visible column beyond the fixed Run/Title/T/B browser columns.
+
+    Two kinds share one model so the header context menu, persistence, plot-label
+    and trend-x-axis integrations can treat every extra column uniformly:
+
+    * ``metadata`` — the value is *derived* (read-only) from each dataset's
+      metadata at :attr:`source_key` (a dotted path such as
+      ``nexus_fields.sample.shape`` or a synthetic ``run_info.*`` key).
+      :attr:`label` defaults to a humanised name but is user-renamable, while
+      :attr:`source_key` is always retained so the underlying NeXus/metadata
+      field the column was built from stays recoverable.
+    * ``custom`` — user-entered free-text, empty by default and editable in the
+      table. The per-run values are stored in ``dataset.metadata`` (under
+      :data:`CUSTOM_FIELDS_METADATA_KEY`, keyed by :attr:`id`), not on the
+      column; :attr:`source_key` is ``None``.
+    """
+
+    id: str
+    label: str
+    kind: str = EXTRA_COLUMN_METADATA
+    source_key: str | None = None
+
+    @property
+    def is_custom(self) -> bool:
+        return self.kind == EXTRA_COLUMN_CUSTOM
+
+    def to_dict(self) -> dict:
+        data: dict[str, object] = {"id": self.id, "label": self.label, "kind": self.kind}
+        if self.source_key is not None:
+            data["source_key"] = self.source_key
+        return data
+
+    @classmethod
+    def from_dict(cls, data: object) -> ExtraColumn | None:
+        """Build a column from saved state, tolerating the legacy string form.
+
+        Older projects stored ``extra_columns`` as a bare list of metadata keys
+        (strings); each promotes to a metadata column whose ``id``/``source_key``
+        is that key. New projects store the full dict form.
+        """
+        if isinstance(data, str):
+            key = data.strip()
+            return (
+                cls(id=key, label=key, kind=EXTRA_COLUMN_METADATA, source_key=key) if key else None
+            )
+        if not isinstance(data, dict):
+            return None
+        # Validate the discriminator at the boundary: an unknown kind (corrupt or
+        # forward-version project) is treated as a (read-only) metadata column
+        # rather than left to crash later as a non-custom column with no source.
+        kind = str(data.get("kind", EXTRA_COLUMN_METADATA))
+        if kind not in (EXTRA_COLUMN_METADATA, EXTRA_COLUMN_CUSTOM):
+            kind = EXTRA_COLUMN_METADATA
+        source_key = data.get("source_key")
+        source_key = str(source_key) if source_key is not None else None
+        col_id = str(data.get("id", "")).strip()
+        if not col_id and kind == EXTRA_COLUMN_METADATA:
+            col_id = source_key or ""
+        if not col_id:
+            return None
+        # A metadata column must always carry a source key for value resolution;
+        # fall back to its id if a project dropped/omitted source_key.
+        if kind == EXTRA_COLUMN_METADATA and source_key is None:
+            source_key = col_id
+        label = str(data.get("label", col_id))
+        return cls(id=col_id, label=label, kind=kind, source_key=source_key)
 
 
 class FilterDialog(QDialog):
@@ -393,6 +477,10 @@ class DataBrowserPanel(QWidget):
     group_selected = Signal(str)
     get_info_requested = Signal(int)
     grouping_requested = Signal(int)
+    # Emitted when the set or labels of extra columns change (add/remove/rename),
+    # so the host can refresh the custom-column options offered as the plot label
+    # and the parameter-trend x-axis.
+    extra_columns_changed = Signal()
     # Re-fit a co-added selection: the host combines the runs, fits with the
     # active single-fit model, and records a computed trend row (combined_from).
     refit_coadded_requested = Signal(object)  # list[int] source run numbers
@@ -449,7 +537,7 @@ class DataBrowserPanel(QWidget):
         self._display_order: list[int | str] = []
 
         self._column_filters: dict[int, set[str]] = {}
-        self._extra_columns: list[str] = []
+        self._extra_columns: list[ExtraColumn] = []
         self._use_temperature_from_log = False
         self._temperature_from_log_overrides: dict[int, bool] = {}
         self._use_field_from_log = False
@@ -526,11 +614,36 @@ class DataBrowserPanel(QWidget):
         self._table.currentItemChanged.connect(lambda *_: self._table.viewport().update())
         layout.addWidget(self._table)
 
+        # Footer band: the selection hint (left) and a themed "add custom column"
+        # action (bottom-right). The band lives on the container so the hint and
+        # button share one surfaceAlt strip with a single top border.
         _add_key = "⌘" if sys.platform == "darwin" else "Ctrl"
         self._footer_hint = QLabel(f"{_add_key}-click adds · shift-click ranges")
         self._footer_hint.setWordWrap(True)
-        apply_footer_hint(self._footer_hint)
-        layout.addWidget(self._footer_hint)
+        self._footer_hint.setStyleSheet(
+            f"QLabel {{ background: transparent; color: {tokens.TEXT_MUTED}; font-size: 10px; }}"
+        )
+
+        self._add_column_btn = QPushButton("＋ Column")
+        self._add_column_btn.setToolTip("Add a custom column you can fill in per run")
+        self._add_column_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._add_column_btn.setStyleSheet(build_primary_button_qss())
+        self._add_column_btn.clicked.connect(self._prompt_add_custom_column)
+
+        footer = QWidget()
+        footer.setObjectName("dataBrowserFooter")
+        footer.setStyleSheet(
+            f"#dataBrowserFooter {{ background-color: {tokens.SURFACE_ALT};"
+            f" border-top: 1px solid {tokens.BORDER}; }}"
+        )
+        footer_layout = QHBoxLayout(footer)
+        footer_layout.setContentsMargins(8, 4, 8, 4)
+        footer_layout.setSpacing(8)
+        footer_layout.addWidget(self._footer_hint, 1)
+        footer_layout.addWidget(
+            self._add_column_btn, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        layout.addWidget(footer)
         self.setMinimumWidth(250)
 
     # ------------------------------------------------------------------
@@ -993,10 +1106,17 @@ class DataBrowserPanel(QWidget):
             field_item.setFlags(field_item.flags() | Qt.ItemFlag.ItemIsEditable)
         self._table.setItem(row, 3, field_item)
 
-        for i, field_key in enumerate(self._visible_extra_columns(), start=len(self._COLUMNS)):
-            value = self._value_for_extra_column(dataset, field_key)
+        for i, column in enumerate(self._visible_extra_columns(), start=len(self._COLUMNS)):
+            value = self._value_for_extra_column(dataset, column)
             item = QTableWidgetItem(value)
-            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            if column.is_custom:
+                # Custom columns are user-editable; tag the cell with its column
+                # id so _on_item_changed can route the edit back to the right
+                # per-run value without relying on column position.
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+                item.setData(_CUSTOM_COLUMN_ROLE, column.id)
+            else:
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self._table.setItem(row, i, item)
 
         # Apply background: series-highlight takes priority over group-member tint.
@@ -1264,7 +1384,7 @@ class DataBrowserPanel(QWidget):
     def _refresh_column_headers(self) -> None:
         """Apply base and dynamic column labels to the table header."""
         labels = list(self._COLUMNS) + [
-            self._extra_column_header(key) for key in self._visible_extra_columns()
+            self._extra_column_header(column) for column in self._visible_extra_columns()
         ]
         # Column-count changes can emit section-resize signals for the new
         # sections; those are ours, not the user's (see _on_section_resized).
@@ -1280,17 +1400,104 @@ class DataBrowserPanel(QWidget):
             item = self._table.horizontalHeaderItem(col)
             if item is not None:
                 item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+        # Tooltip each extra-column header so a renamed metadata column still
+        # reveals the NeXus/metadata field it came from, and custom columns read
+        # as editable.
+        for offset, column in enumerate(self._visible_extra_columns()):
+            item = self._table.horizontalHeaderItem(len(self._COLUMNS) + offset)
+            if item is None:
+                continue
+            if column.is_custom:
+                item.setToolTip("Custom column — double-click a cell to edit")
+            elif column.source_key:
+                item.setToolTip(f"From metadata field: {column.source_key}")
 
-    def _visible_extra_columns(self) -> list[str]:
-        """Return extra columns that should appear beyond the fixed browser columns."""
-        return [key for key in self._extra_columns if key not in self._BASE_COLUMN_OVERRIDE_KEYS]
+    def _visible_extra_columns(self) -> list[ExtraColumn]:
+        """Return extra columns that should appear beyond the fixed browser columns.
 
-    def _extra_column_header(self, field_key: str) -> str:
-        """Return display header for an extra metadata-backed column."""
-        key = str(field_key).strip()
-        if not key:
-            return ""
-        return self._RUN_INFO_FIELD_LABELS.get(key, key)
+        Metadata columns whose source is a base override (temperature/field —
+        surfaced through the fixed T/B columns and the from-log toggles) are
+        hidden; custom columns are always visible.
+        """
+        return [
+            column
+            for column in self._extra_columns
+            if column.is_custom or column.source_key not in self._BASE_COLUMN_OVERRIDE_KEYS
+        ]
+
+    def _extra_column_header(self, column: ExtraColumn) -> str:
+        """Return the display header for an extra column (its gui-facing label)."""
+        return str(column.label).strip()
+
+    def _metadata_column(self, source_key: str, *, label: str | None = None) -> ExtraColumn:
+        """Build a metadata-backed column, defaulting its label from the registry."""
+        key = str(source_key).strip()
+        if label is None:
+            label = self._RUN_INFO_FIELD_LABELS.get(key, key)
+        return ExtraColumn(id=key, label=str(label), kind=EXTRA_COLUMN_METADATA, source_key=key)
+
+    def _find_extra_column(self, column_id: str) -> ExtraColumn | None:
+        for column in self._extra_columns:
+            if column.id == column_id:
+                return column
+        return None
+
+    def _next_custom_column_id(self) -> str:
+        """Return a fresh, collision-free id for a new custom column."""
+        existing = {column.id for column in self._extra_columns}
+        while True:
+            candidate = f"custom:{uuid.uuid4().hex[:8]}"
+            if candidate not in existing:
+                return candidate
+
+    def _parse_saved_extra_columns(self, raw: object) -> list[ExtraColumn]:
+        """Rebuild column defs from saved state (legacy string list or dict list)."""
+        columns: list[ExtraColumn] = []
+        seen_ids: set[str] = set()
+        if not isinstance(raw, (list, tuple)):
+            return columns
+        for entry in raw:
+            if isinstance(entry, str):
+                key = entry.strip()
+                if not key:
+                    continue
+                column = self._metadata_column(key)
+            else:
+                column = ExtraColumn.from_dict(entry)
+                if column is None:
+                    continue
+                # A metadata column with no explicit (renamed) label shows its
+                # registry name rather than the raw dotted source key.
+                if (
+                    not column.is_custom
+                    and column.source_key
+                    and column.label in ("", column.source_key)
+                ):
+                    column.label = self._RUN_INFO_FIELD_LABELS.get(
+                        column.source_key, column.source_key
+                    )
+            if column.id in seen_ids:
+                continue
+            seen_ids.add(column.id)
+            columns.append(column)
+        return columns
+
+    def extra_columns(self) -> list[ExtraColumn]:
+        """Return a copy of the current extra-column definitions (custom + metadata)."""
+        return list(self._extra_columns)
+
+    def custom_label_fields(self) -> list[tuple[str, str]]:
+        """Return ``(label, "custom:<id>")`` pairs for the user's custom columns.
+
+        These are the columns offered as the plot legend label and the parameter
+        trend x-axis. Their per-run values live in
+        ``dataset.metadata["custom_fields"]`` keyed by the same id, so consumers
+        resolve them without reaching back into the browser.
+        """
+        return [(column.label, column.id) for column in self._extra_columns if column.is_custom]
+
+    def _notify_extra_columns_changed(self) -> None:
+        self.extra_columns_changed.emit()
 
     def add_extra_column(self, field_key: str) -> None:
         """Add a metadata-backed dynamic column to the browser table."""
@@ -1301,31 +1508,82 @@ class DataBrowserPanel(QWidget):
         if key == "field":
             self.set_use_field_from_log(True)
             return
-        if not key or key in self._extra_columns:
+        if not key or any(c.source_key == key for c in self._extra_columns):
             return
-        self._extra_columns.append(key)
+        self._extra_columns.append(self._metadata_column(key))
         self._refresh_column_headers()
         self._rebuild_table()
         self._resize_columns_to_content()
+        self._notify_extra_columns_changed()
 
-    def remove_extra_column(self, field_key: str) -> None:
-        """Remove a dynamic metadata column from the browser table."""
-        if field_key == "temperature":
+    def add_custom_column(self, label: str) -> ExtraColumn | None:
+        """Create an empty, user-editable custom column and return its definition."""
+        name = str(label).strip()
+        if not name:
+            return None
+        column = ExtraColumn(
+            id=self._next_custom_column_id(),
+            label=name,
+            kind=EXTRA_COLUMN_CUSTOM,
+            source_key=None,
+        )
+        self._extra_columns.append(column)
+        self._refresh_column_headers()
+        self._rebuild_table()
+        self._resize_columns_to_content()
+        self._notify_extra_columns_changed()
+        return column
+
+    def _prompt_add_custom_column(self) -> None:
+        """Ask for a name and append an empty, user-editable custom column."""
+        name, ok = QInputDialog.getText(self, "Add custom column", "Column name:")
+        if ok:
+            self.add_custom_column(name)
+
+    def rename_extra_column(self, column_id: str, new_label: str) -> bool:
+        """Rename a column's gui-facing label (its source_key is untouched)."""
+        name = str(new_label).strip()
+        column = self._find_extra_column(column_id)
+        if column is None or not name or name == column.label:
+            return False
+        column.label = name
+        self._refresh_column_headers()
+        self._resize_columns_to_content()
+        self._notify_extra_columns_changed()
+        return True
+
+    def remove_extra_column(self, field_key_or_id: str) -> None:
+        """Remove an extra column by id or (for metadata columns) source key."""
+        if field_key_or_id == "temperature":
             self.set_use_temperature_from_log(False)
             return
-        if field_key == "field":
+        if field_key_or_id == "field":
             self.set_use_field_from_log(False)
             return
-        if field_key not in self._extra_columns:
+        remaining = [
+            column
+            for column in self._extra_columns
+            if column.id != field_key_or_id and column.source_key != field_key_or_id
+        ]
+        if len(remaining) == len(self._extra_columns):
             return
-        self._extra_columns = [key for key in self._extra_columns if key != field_key]
+        self._extra_columns = remaining
         self._refresh_column_headers()
         self._rebuild_table()
         self._resize_columns_to_content()
+        self._notify_extra_columns_changed()
 
     def get_extra_columns(self) -> list[str]:
-        """Return the current metadata-backed extra columns."""
-        columns = list(self._extra_columns)
+        """Return the metadata source keys currently shown (for inclusion tracking).
+
+        Custom columns have no metadata source and are intentionally excluded —
+        this drives the Get Info "Include in Data Browser" checkboxes, which only
+        concern NeXus/metadata fields. The from-log pseudo-keys are appended to
+        mirror the fixed T/B columns' include state.
+        """
+        columns = [
+            column.source_key for column in self._extra_columns if column.source_key is not None
+        ]
         if self._use_temperature_from_log:
             columns.append("temperature")
         if self._use_field_from_log:
@@ -1405,8 +1663,10 @@ class DataBrowserPanel(QWidget):
         rn = int(run_number)
         return bool(self._field_from_log_overrides.get(rn, self._use_field_from_log))
 
-    def _resolve_metadata_path(self, dataset: MuonDataset, field_key: str):
+    def _resolve_metadata_path(self, dataset: MuonDataset, field_key: str | None):
         """Resolve a metadata/synthetic key to a value for dynamic columns."""
+        if not field_key:
+            return None
         if field_key.startswith("run_info."):
             return self._resolve_run_info_value(dataset, field_key)
 
@@ -1703,10 +1963,49 @@ class DataBrowserPanel(QWidget):
         text = str(value)
         return text if text else "—"
 
-    def _value_for_extra_column(self, dataset: MuonDataset, field_key: str) -> str:
-        """Return rendered text for a metadata-backed extra column cell."""
-        value = self._resolve_metadata_path(dataset, field_key)
-        return self._format_extra_value(value)
+    def _value_for_extra_column(self, dataset: MuonDataset, column: ExtraColumn) -> str:
+        """Return rendered cell text for an extra column."""
+        if column.is_custom:
+            return self.custom_column_value(dataset, column.id)
+        return self._format_extra_value(self._resolve_metadata_path(dataset, column.source_key))
+
+    def _raw_value_for_column(self, dataset: MuonDataset, column: ExtraColumn):
+        """Return the raw (unformatted) value used for sorting an extra column."""
+        if column.is_custom:
+            text = self.custom_column_value(dataset, column.id)
+            if not text:
+                return None
+            try:
+                return float(text)
+            except ValueError:
+                return text
+        return self._resolve_metadata_path(dataset, column.source_key)
+
+    def custom_column_value(self, dataset: MuonDataset, column_id: str) -> str:
+        """Return the stored per-run text for a custom column (``""`` if unset)."""
+        fields = dataset.metadata.get(CUSTOM_FIELDS_METADATA_KEY)
+        if isinstance(fields, dict):
+            value = fields.get(column_id)
+            if value is not None:
+                return str(value)
+        return ""
+
+    def _set_custom_column_value(self, dataset: MuonDataset, column_id: str, text: str) -> None:
+        """Write (or clear) a custom column's per-run value in dataset metadata.
+
+        Copy-on-write: a *new* dict is bound rather than mutating the existing one
+        in place. The custom-fields dict can be shared by reference across a run's
+        ``dataset.metadata``/``run.metadata`` (restore) or with a shallow
+        :meth:`MuonDataset.copy` clone (co-add/period combine); rebinding here keeps
+        an edit on one from silently bleeding into the other.
+        """
+        existing = dataset.metadata.get(CUSTOM_FIELDS_METADATA_KEY)
+        fields = dict(existing) if isinstance(existing, dict) else {}
+        if text:
+            fields[column_id] = text
+        else:
+            fields.pop(column_id, None)
+        dataset.metadata[CUSTOM_FIELDS_METADATA_KEY] = fields
 
     # ------------------------------------------------------------------
     # Row and selection helpers
@@ -2217,7 +2516,9 @@ class DataBrowserPanel(QWidget):
         keeps Comment as its own column after the base columns.
         """
         headers = list(self._COLUMNS) + ["Comment"]
-        headers.extend(self._extra_column_header(key) for key in self._visible_extra_columns())
+        headers.extend(
+            self._extra_column_header(column) for column in self._visible_extra_columns()
+        )
         return headers
 
     def _export_sections(self) -> list[tuple[str, list[int]]]:
@@ -2256,8 +2557,8 @@ class DataBrowserPanel(QWidget):
             f"{float(meta.get('field', 0.0)):.1f}",
             str(meta.get("comment", "")),
         ]
-        for field_key in self._visible_extra_columns():
-            row.append(self._value_for_extra_column(dataset, field_key))
+        for column in self._visible_extra_columns():
+            row.append(self._value_for_extra_column(dataset, column))
         return row
 
     # ------------------------------------------------------------------
@@ -2267,6 +2568,12 @@ class DataBrowserPanel(QWidget):
     def _on_item_changed(self, item: QTableWidgetItem) -> None:
         if self._updating_table:
             return
+
+        custom_column_id = item.data(_CUSTOM_COLUMN_ROLE)
+        if isinstance(custom_column_id, str):
+            self._on_custom_column_edited(item, custom_column_id)
+            return
+
         if item.column() != 3:
             return
 
@@ -2299,6 +2606,21 @@ class DataBrowserPanel(QWidget):
         self._updating_table = True
         item.setText(f"{field_value:.1f}")
         self._updating_table = False
+
+    def _on_custom_column_edited(self, item: QTableWidgetItem, column_id: str) -> None:
+        """Persist a user edit to a custom-column cell into the dataset metadata."""
+        run_item = self._table.item(item.row(), 0)
+        if run_item is None:
+            return
+        run_number = run_item.data(self._GROUP_ROLE)
+        if not isinstance(run_number, int):
+            return
+        dataset = self._datasets.get(run_number)
+        if dataset is None:
+            return
+        # Free-text by design (numbers are inferred only where consumed, e.g. the
+        # trend x-axis): store the trimmed text verbatim, clearing on empty.
+        self._set_custom_column_value(dataset, column_id, item.text().strip())
 
     def _remove_run_number(self, run_number: int) -> None:
         self._datasets.pop(run_number, None)
@@ -2645,15 +2967,36 @@ class DataBrowserPanel(QWidget):
             extra_index = col_idx - len(self._COLUMNS)
             visible_extra_columns = self._visible_extra_columns()
             if 0 <= extra_index < len(visible_extra_columns):
-                field_key = visible_extra_columns[extra_index]
+                column = visible_extra_columns[extra_index]
                 menu.addAction(
-                    "Remove from Data Browser",
-                    lambda fk=field_key: self.remove_extra_column(fk),
+                    "Rename…",
+                    lambda cid=column.id: self._prompt_rename_extra_column(cid),
+                )
+                remove_label = "Delete column" if column.is_custom else "Remove from Data Browser"
+                menu.addAction(
+                    remove_label,
+                    lambda cid=column.id: self.remove_extra_column(cid),
                 )
 
         self._append_add_column_menu(menu)
         if not menu.isEmpty():
             menu.exec(self.cursor().pos())
+
+    def _prompt_rename_extra_column(self, column_id: str) -> None:
+        """Ask for a new gui-facing label for an extra column and apply it.
+
+        For a metadata column the underlying NeXus/metadata source key is kept and
+        shown so the user always knows which field they renamed.
+        """
+        column = self._find_extra_column(column_id)
+        if column is None:
+            return
+        prompt = "New column name:"
+        if not column.is_custom and column.source_key:
+            prompt = f"New name for '{column.source_key}':"
+        new_label, ok = QInputDialog.getText(self, "Rename column", prompt, text=column.label)
+        if ok:
+            self.rename_extra_column(column_id, new_label)
 
     def _append_add_column_menu(self, menu: QMenu) -> None:
         """Append an "Add column…" submenu of hideable run-quality columns.
@@ -2675,10 +3018,11 @@ class DataBrowserPanel(QWidget):
 
     def _addable_run_info_columns(self) -> list[str]:
         """``run_info.*`` run-quality columns not currently shown."""
+        shown_source_keys = {c.source_key for c in self._extra_columns}
         return [
             key
             for key in self._RUN_INFO_FIELD_LABELS
-            if key.startswith("run_info.") and key not in self._extra_columns
+            if key.startswith("run_info.") and key not in shown_source_keys
         ]
 
     def _on_header_clicked(self, logical_index: int) -> None:
@@ -2722,14 +3066,19 @@ class DataBrowserPanel(QWidget):
                 visible_extra_columns = self._visible_extra_columns()
                 if idx < 0 or idx >= len(visible_extra_columns):
                     return ""
-                value = self._resolve_metadata_path(dataset, visible_extra_columns[idx])
+                value = self._raw_value_for_column(dataset, visible_extra_columns[idx])
+                # Return a type-ranked key so a column with a *mix* of numeric and
+                # text/blank values (the norm for a custom column: empty by default
+                # with the odd number typed in) never compares float against str —
+                # which would raise TypeError mid-sort. Numerics sort first (rank
+                # 0), text/blank after (rank 1); the two ranks never cross-compare.
                 if isinstance(value, (int, float, np.integer, np.floating)):
-                    return float(value)
+                    return (0, float(value))
                 if isinstance(value, (list, tuple, np.ndarray)):
                     arr = np.asarray(value)
                     if arr.size and np.issubdtype(arr.dtype, np.number):
-                        return float(np.nanmean(arr.astype(np.float64)))
-                return "" if value is None else str(value)
+                        return (0, float(np.nanmean(arr.astype(np.float64))))
+                return (1, "" if value is None else str(value))
             return str(meta.get("comment", ""))
 
         runs = [entry for entry in self._display_order if isinstance(entry, int)]
@@ -3438,7 +3787,7 @@ class DataBrowserPanel(QWidget):
             "selected_run_numbers": self._get_selected_run_numbers(),
             "selected_group_ids": selected_group_ids,
             "data_groups": data_groups,
-            "extra_columns": list(self._extra_columns),
+            "extra_columns": [column.to_dict() for column in self._extra_columns],
             "use_temperature_from_log": bool(self._use_temperature_from_log),
             "temperature_from_log_overrides": {
                 str(rn): bool(enabled)
@@ -3485,9 +3834,15 @@ class DataBrowserPanel(QWidget):
             if sort_order_str == "ascending"
             else Qt.SortOrder.DescendingOrder
         )
-        saved_extra_columns = [str(v) for v in state.get("extra_columns", []) if str(v).strip()]
+        parsed_extra_columns = self._parse_saved_extra_columns(state.get("extra_columns", []))
+        # The from-log pseudo-keys are *not* real columns; detect a legacy
+        # "temperature" entry (a from-log request in old projects) before the
+        # base-override filter strips it.
+        saved_metadata_keys = {
+            column.source_key for column in parsed_extra_columns if column.source_key
+        }
         self._use_temperature_from_log = bool(
-            state.get("use_temperature_from_log", "temperature" in saved_extra_columns)
+            state.get("use_temperature_from_log", "temperature" in saved_metadata_keys)
         )
         # Default OFF when the key is absent: unlike "temperature" (always a
         # from-log pseudo-key), older projects could save "field" as an ordinary
@@ -3496,7 +3851,9 @@ class DataBrowserPanel(QWidget):
         # B column to the log mean on open).
         self._use_field_from_log = bool(state.get("use_field_from_log", False))
         self._extra_columns = [
-            key for key in saved_extra_columns if key not in self._BASE_COLUMN_OVERRIDE_KEYS
+            column
+            for column in parsed_extra_columns
+            if column.is_custom or column.source_key not in self._BASE_COLUMN_OVERRIDE_KEYS
         ]
         self._temperature_from_log_overrides = {}
         for run_number, enabled in state.get("temperature_from_log_overrides", {}).items():
@@ -3546,3 +3903,7 @@ class DataBrowserPanel(QWidget):
         keys: list[int | str] = list(selected_runs)
         keys.extend(f"{self._GROUP_SENTINEL_PREFIX}{gid}" for gid in selected_group_ids)
         self._restore_selection_by_keys(keys)
+
+        # Let the host re-offer the restored custom columns as plot labels / trend
+        # x-axes once project load has rebuilt them.
+        self._notify_extra_columns_changed()

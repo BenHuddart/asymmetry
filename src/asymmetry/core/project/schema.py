@@ -11,8 +11,8 @@ Compatibility policy
 * Migration functions are one-per-step and retained for at least one major schema revision.
 * Unknown top-level fields in a valid schema are preserved on load/save cycles.
 
-Current schema (version 9)
---------------------------
+Current schema (version 10)
+---------------------------
 ::
 
     {
@@ -22,7 +22,10 @@ Current schema (version 9)
             {
                 "run_number": 3077,
                 "source_file": "/abs/path/to/file.nxs",
-                "metadata_overrides": {"field": 150.0}
+                "metadata_overrides": {
+                    "field": 150.0,
+                    "custom_fields": {"custom:ab12cd34": "annealed"}
+                }
             }
         ],
         "combined_datasets": [
@@ -37,7 +40,12 @@ Current schema (version 9)
             "filters": {"3": ["150.0"]},
             "selected_run_numbers": [3077],
             "selected_group_ids": [],
-            "data_groups": []
+            "data_groups": [],
+            "extra_columns": [
+                {"id": "nexus_fields.sample.shape", "label": "Orientation",
+                 "kind": "metadata", "source_key": "nexus_fields.sample.shape"},
+                {"id": "custom:ab12cd34", "label": "Anneal", "kind": "custom"}
+            ]
         },
         "plot_state": {
             "current_run_number": 3077,
@@ -103,9 +111,9 @@ import json
 import math
 from pathlib import Path
 
-CURRENT_SCHEMA_VERSION: int = 9
+CURRENT_SCHEMA_VERSION: int = 10
 
-_SUPPORTED_VERSIONS: frozenset[int] = frozenset({1, 2, 3, 4, 5, 6, 7, 8, 9})
+_SUPPORTED_VERSIONS: frozenset[int] = frozenset({1, 2, 3, 4, 5, 6, 7, 8, 9, 10})
 
 #: Fourier-state keys that describe the FFT generation recipe (recipe-only
 #: persistence carries these into each dataset's ``freq_fft`` representation).
@@ -194,6 +202,9 @@ def migrate_to_current(data: dict) -> dict:
         version = 8
     if version == 8:
         migrated = _migrate_v8_to_v9(migrated)
+        version = 9
+    if version == 9:
+        migrated = _migrate_v9_to_v10(migrated)
     return migrated
 
 
@@ -457,6 +468,41 @@ def _migrate_v8_to_v9(data: dict) -> dict:
     """
     migrated = dict(data)
     migrated["schema_version"] = 9
+    return migrated
+
+
+def _migrate_v9_to_v10(data: dict) -> dict:
+    """Migrate schema v9 project state to v10.
+
+    v10 generalises the data browser's ``browser_state.extra_columns`` from a bare
+    list of metadata keys (strings) into a list of column definitions
+    ``{"id", "label", "kind", "source_key"}`` so the browser can carry both
+    derived *metadata* columns and user-editable *custom* columns, and so any
+    metadata column can be renamed while retaining its underlying source key. Each
+    legacy string promotes to a ``metadata`` column whose id/source_key is that
+    key; the gui-facing display label is resolved by the panel on load. Custom
+    column *values* live per-run in each dataset's ``metadata_overrides`` (under
+    ``custom_fields``) and need no migration here.
+    """
+    migrated = dict(data)
+    migrated["schema_version"] = 10
+
+    browser_state = dict(migrated.get("browser_state", {}))
+    raw_columns = browser_state.get("extra_columns")
+    if isinstance(raw_columns, list):
+        upgraded: list[dict] = []
+        for entry in raw_columns:
+            if isinstance(entry, str):
+                key = entry.strip()
+                if key:
+                    upgraded.append(
+                        {"id": key, "label": key, "kind": "metadata", "source_key": key}
+                    )
+            elif isinstance(entry, dict):
+                upgraded.append(entry)
+        browser_state["extra_columns"] = upgraded
+        migrated["browser_state"] = browser_state
+
     return migrated
 
 
