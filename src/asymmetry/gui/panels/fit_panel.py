@@ -128,6 +128,7 @@ from asymmetry.gui.styles.widgets import (
     make_section,
     make_section_header,
     success_html,
+    warning_html,
 )
 from asymmetry.gui.tasks import TaskRunner, TaskWorker
 from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
@@ -5048,7 +5049,11 @@ class GlobalFitTab(QWidget):
     ]:
         results_with_curves = {}
         for dataset in self._datasets:
-            result = results_dict[int(dataset.run_number)]
+            # A partial batch passes only the converged members here; a dataset
+            # whose fit failed has no entry, so skip it rather than KeyError.
+            result = results_dict.get(int(dataset.run_number))
+            if result is None:
+                continue
             param_dict = {parameter.name: parameter.value for parameter in result.parameters}
             n_samples = _fit_curve_sample_count(
                 model,
@@ -5245,18 +5250,29 @@ class GlobalFitTab(QWidget):
         model = self._current_model
         global_params = self._current_global_params
 
-        # Display results
-        if all(r.success for r in results_dict.values()):
+        # A partial batch failure must not discard the runs that converged: build
+        # the series from the successful members and surface the failures as a
+        # non-blocking warning. Only an all-failed batch takes the abort branch.
+        successful = {run: r for run, r in results_dict.items() if r.success}
+        failed = [run for run, r in results_dict.items() if not r.success]
+        run_label_by_number = {ds.run_number: ds.run_label for ds in self._datasets}
+        failed_labels = [run_label_by_number.get(run, str(run)) for run in failed]
+
+        if successful:
             self._emit_global_fit_success(
                 model=model,
-                results_dict=results_dict,
+                results_dict=successful,
                 fitted_global=fitted_global,
                 global_param_names=global_params,
             )
+            if failed:
+                # _emit_global_fit_success rendered the success box; append the
+                # failure warning as a new paragraph beneath it rather than
+                # overwriting it (non-blocking surfacing).
+                self._result_text.append(
+                    warning_html(f"{len(failed)} run(s) failed to converge: {failed_labels}")
+                )
         else:
-            failed = [run for run, r in results_dict.items() if not r.success]
-            run_label_by_number = {ds.run_number: ds.run_label for ds in self._datasets}
-            failed_labels = [run_label_by_number.get(run, str(run)) for run in failed]
             self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
             self._result_text.setText(
                 f"<b>Batch fit failed</b><br>Failed datasets: {failed_labels}"
@@ -6485,6 +6501,16 @@ class FitPanel(QWidget):
         # when it returns ``None``.  See ``set_single_fit_restore_provider``.
         self._single_fit_restore_provider: Callable[[MuonDataset | None], dict | None] | None = None
         self._all_datasets: list[MuonDataset] = []  # Track all datasets for group sharing
+        # Active single-fit projection (driven by the main window via
+        # ``set_active_projection_label``); part of the binding identity that
+        # guards the Single↔Batch tab-switch snapshot below.
+        self._active_single_projection: str | None = None
+        # Snapshot of the single-fit form taken when the user leaves the Single
+        # tab, restored when they return to it for the *same* binding. Without
+        # this, switching to Batch and back loses a hand-built (unfit) model:
+        # once a run has been batched its per-projection slot exists but is
+        # empty, so the restore provider blanks the form to the default model.
+        self._single_form_snapshot: dict | None = None
         self._domain = "time"
         self._single_state_by_domain: dict[str, dict] = {}
         self._global_state_by_domain: dict[str, dict] = {}
@@ -6517,6 +6543,10 @@ class FitPanel(QWidget):
         self._global_tab.fit_range_edit_committed.connect(self.fit_range_edit_committed.emit)
         self._tabs.addTab(self._global_tab, "Batch")
 
+        # Preserve the single-fit form across a Single↔Batch view switch (see #3
+        # / _single_form_snapshot). Connected last so both tabs exist.
+        self._tabs.currentChanged.connect(self._on_fit_tab_changed)
+
         # Echo of the projection a single fit is currently bound to (vector
         # multi-subplot view); hidden when fitting the default/non-projection
         # asymmetry. Driven by the main window via set_active_projection_label.
@@ -6532,6 +6562,11 @@ class FitPanel(QWidget):
 
         ``tint`` colours the text to match the projection's subplot frame.
         """
+        # Track the projection as part of the tab-switch snapshot's binding
+        # identity: a snapshot only restores onto the same (run, projection).
+        if projection != self._active_single_projection:
+            self._single_form_snapshot = None
+        self._active_single_projection = projection
         if not hasattr(self, "_projection_echo"):
             return
         if projection:
@@ -6542,6 +6577,26 @@ class FitPanel(QWidget):
             self._projection_echo.clear()
             self._projection_echo.setStyleSheet("")
             self._projection_echo.hide()
+
+    def _on_fit_tab_changed(self, index: int) -> None:
+        """Preserve the single-fit form across a Single↔Batch view switch.
+
+        Leaving the Single tab snapshots its form; returning restores that
+        snapshot when the binding (run + projection) is unchanged. This keeps a
+        hand-built but unfit model alive across the round trip — without it, once
+        a run has been batched its per-projection slot exists but is empty, so
+        the restore provider blanks the form to the default model on re-bind.
+        """
+        single_index = self._tabs.indexOf(self._single_tab)
+        if index == single_index:
+            snapshot = self._single_form_snapshot
+            if snapshot is not None and snapshot.get("run") == self._active_single_run_number:
+                self._single_tab.restore_state(snapshot["state"])
+        else:
+            self._single_form_snapshot = {
+                "run": self._active_single_run_number,
+                "state": self.get_single_form_state(),
+            }
 
     def set_batch_seeding_mode(self, mode: str) -> None:
         """Forward the batch-series seeding mode to the Batch tab."""
@@ -6588,6 +6643,10 @@ class FitPanel(QWidget):
         self._ui_state_by_domain = {}
         self._single_state_by_run = {}
         self._active_single_run_number = None
+        # Drop the tab-switch snapshot too, so a stale form can't be restored
+        # onto the cleared panel when setCurrentIndex(0) below re-enters Single.
+        self._single_form_snapshot = None
+        self._active_single_projection = None
         self._all_datasets = []
         self._domain = "time"
         self._single_tab.set_domain("time")
@@ -6713,6 +6772,9 @@ class FitPanel(QWidget):
         """
         if isinstance(payload, dict) and payload:
             self._single_tab.restore_state(payload)
+            # A real persisted fit is now shown; drop any stale tab-switch
+            # snapshot so it can't override this fit on the next return to Single.
+            self._single_form_snapshot = None
         else:
             self._reset_single_fit_form()
 
