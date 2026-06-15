@@ -10459,13 +10459,24 @@ class MainWindow(QMainWindow):
             if not source_file:
                 source_file = str(dataset.metadata.get("source_file", ""))
 
+            metadata_overrides = {
+                "field": float(dataset.metadata.get("field", 0.0)),
+            }
+            # Custom data-browser column values are per-run, editable text stored
+            # under dataset.metadata["custom_fields"] (keyed by column id). Persist
+            # them through the existing override mechanism so they round-trip with
+            # the run; the column *definitions* live in browser_state.
+            custom_fields = dataset.metadata.get("custom_fields")
+            if isinstance(custom_fields, dict) and custom_fields:
+                metadata_overrides["custom_fields"] = {
+                    str(key): str(value) for key, value in custom_fields.items()
+                }
+
             datasets.append(
                 {
                     "run_number": run_number,
                     "source_file": source_file,
-                    "metadata_overrides": {
-                        "field": float(dataset.metadata.get("field", 0.0)),
-                    },
+                    "metadata_overrides": metadata_overrides,
                     "grouping_overrides": self._extract_grouping_overrides(dataset),
                 }
             )
