@@ -309,6 +309,8 @@ Superconducting depolarisation-rate models live in
 See :doc:`sc_penetration_depth`.
 
 
+.. _cookbook-tf-frequency:
+
 Transverse-field frequency: let it float
 ----------------------------------------
 
@@ -345,7 +347,48 @@ If you do fix ``frequency`` and the seed sits more than ~2% from
 :math:`\gamma_\mu B` implied by the run's ``field`` metadata, the engine emits a
 :class:`~asymmetry.core.fitting.FixedFrequencyFieldMismatchWarning` pointing you
 back here. The guard stays silent for free frequencies and for zero-/low-field
-runs (where :math:`\gamma_\mu B` is not the relevant line).
+runs (where :math:`\gamma_\mu B` is not the relevant line). The message is carried
+on ``result.warnings`` and, **in the GUI, shown in the fit panel's result box**
+beneath the converged line, so the trap is visible without reading the log (see
+:ref:`fit-advisory-warnings`).
+
+
+.. _cookbook-asymmetry-scale:
+
+Match the asymmetry scale (percent vs fraction)
+-----------------------------------------------
+
+A loaded :class:`~asymmetry.core.data.dataset.MuonDataset` stores its
+``asymmetry`` on the **percent** scale (``×100``), so an amplitude seeded on the
+**fraction** scale (``A ∈ [-1, 1]``) is ~100× too small. The fit then either
+converges to a degenerate amplitude or parks at the wrong minimum. Seed amplitudes
+to match the data you are fitting:
+
+.. code-block:: python
+
+   ds = load("data.nxs")
+   print(ds.asymmetry.max())     # ~25 here -> percent scale
+
+   model = CompositeModel.from_expression("Gaussian + Constant").to_model_definition()
+   params = ParameterSet([
+       Parameter("A_1", value=20.0),   # percent-scale seed, matching ds.asymmetry
+       Parameter("sigma", value=0.3, min=0.0),
+       Parameter("A_bg", value=-20.0),
+   ])
+   result = FitEngine().fit(ds, model.function, params)
+
+   # ...or work on the fraction scale explicitly (then seed A_1 in [-1, 1]):
+   print(ds.asymmetry_fraction.max(), ds.asymmetry_percent.max())
+
+When the seeded model curve and the data straddle the fraction/percent boundary
+(one peak ``≤ 1.5``, the other clearly percent) the engine emits an
+:class:`~asymmetry.core.fitting.AsymmetryScaleWarning`. Like the fixed-frequency
+guard it is advisory only — it never raises or changes the fit — and its message
+is carried on ``result.warnings`` and **surfaced in the GUI fit panel's result
+box** (see :ref:`fit-advisory-warnings`). Use
+:attr:`~asymmetry.core.data.dataset.MuonDataset.asymmetry_fraction` /
+:attr:`~asymmetry.core.data.dataset.MuonDataset.asymmetry_percent` to pick the
+scale explicitly.
 
 
 Parameter trends across runs

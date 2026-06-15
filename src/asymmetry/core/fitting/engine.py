@@ -446,6 +446,13 @@ class FitResult:
     #: symmetric HESSE :attr:`uncertainties` are unchanged and remain the value
     #: every downstream surface (trends, export, propagation, promote) consumes.
     minos_errors: dict[str, tuple[float, float]] | None = None
+    #: Advisory warning messages emitted while fitting (the percent/fraction
+    #: scale trap and the fixed-frequency σ-inflation trap — see
+    #: :class:`AsymmetryScaleWarning` / :class:`FixedFrequencyFieldMismatchWarning`).
+    #: Captured off the Python ``warnings`` system so the GUI can surface them in
+    #: the fit panel; they are also *re-emitted*, so stderr/logging and any outer
+    #: ``catch_warnings`` still observe them exactly as before.
+    warnings: list[str] = field(default_factory=list)
 
 
 class FitEngine:
@@ -578,14 +585,34 @@ class FitEngine:
 
         # Create Minuit object
         initial_values = [p.value for p in free]
-        # Advisory guard: flag the percent-vs-fraction trap before fitting.
-        _warn_on_scale_mismatch(ds.time, ds.asymmetry, model_wrapper, initial_values)
-        # Advisory guard: flag a frequency pinned far from γ_μ·B(field) (the TF
-        # fixed-frequency trap that inflates sigma). Skip in the rotating frame:
-        # there the frequency seeds are *offsets* δν (lab = δν + ν₀), so a small
-        # fixed δν is correct and comparing it to lab-frame γ_μ·B would misfire.
-        if not frequency_offsets:
-            _warn_on_fixed_frequency_far_from_field(dataset, parameters)
+        # Run the advisory guards under a recording catch so their warnings can
+        # be carried back on the FitResult for the GUI to surface — then re-emit
+        # each, so stderr/logging and any outer catch_warnings still observe them
+        # exactly as before (the engine stays a transparent pass-through).
+        with warnings.catch_warnings(record=True) as caught_advisories:
+            warnings.simplefilter("always")
+            # Advisory guard: flag the percent-vs-fraction trap before fitting.
+            _warn_on_scale_mismatch(ds.time, ds.asymmetry, model_wrapper, initial_values)
+            # Advisory guard: flag a frequency pinned far from γ_μ·B(field) (the
+            # TF fixed-frequency trap that inflates sigma). Skip in the rotating
+            # frame: there the frequency seeds are *offsets* δν (lab = δν + ν₀),
+            # so a small fixed δν is correct and comparing it to lab-frame γ_μ·B
+            # would misfire.
+            if not frequency_offsets:
+                _warn_on_fixed_frequency_far_from_field(dataset, parameters)
+        # Carry only the two advisory categories to the GUI — the scale guard
+        # evaluates the seeded model inside this block, so an incidental numerical
+        # warning (e.g. a RuntimeWarning from overflow in exp at a poor seed) must
+        # not masquerade as a fit advisory. Re-emit *every* captured warning,
+        # though, so non-advisory ones still propagate to stderr/logging exactly
+        # as they did before this block existed.
+        advisory_warnings = [
+            str(w.message)
+            for w in caught_advisories
+            if issubclass(w.category, (AsymmetryScaleWarning, FixedFrequencyFieldMismatchWarning))
+        ]
+        for w in caught_advisories:
+            warnings.warn_explicit(w.message, w.category, w.filename, w.lineno)
         m = Minuit(cost, *initial_values, name=param_names)
 
         # Set limits for parameters
@@ -667,6 +694,7 @@ class FitEngine:
             ),
             dof=ndata - nfree,
             minos_errors=minos_errors or None,
+            warnings=advisory_warnings,
         )
 
     # --- global fit -----------------------------------------------------
