@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QObject, QSettings, QSize, Qt, Signal
+from PySide6.QtCore import QObject, QSettings, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QFont
 from PySide6.QtWidgets import (
     QApplication,
@@ -160,12 +160,17 @@ class UIManager(QObject):
         self._dock_fourier.setVisible(defaults["fourier"])
         self._dock_fit_parameters.setVisible(defaults["fit_parameters"])
         self._dock_log.setVisible(defaults["log"])
-        self._window.resizeDocks(
-            [self._dock_data_browser, self._dock_fit],
-            [330, 340],
-            Qt.Orientation.Horizontal,
-        )
+        self._window.resizeDocks([self._dock_data_browser], [330], Qt.Orientation.Horizontal)
         self._window.resizeDocks([self._dock_log], [112], Qt.Orientation.Vertical)
+        # Restore the inspector deck to its controls-fitting default width via
+        # the same helper the launch path uses — the deck panes are tabified into
+        # one region and must be resized as a group (the stale single-dock resize
+        # this replaced left Reset Layout inconsistent with the launch default).
+        # Mirror __init__ + showEvent: a synchronous pass seeds the layout, and a
+        # deferred pass makes the width stick once the relayout from the re-add/
+        # tabify above has settled.
+        self._window._apply_default_dock_widths()
+        QTimer.singleShot(0, self._window, self._window._apply_default_dock_widths)
 
     def build_stylesheet(self, scale: float) -> str:
         """Return the global stylesheet block for the requested scale."""

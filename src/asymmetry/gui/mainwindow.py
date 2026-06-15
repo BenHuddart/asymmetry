@@ -393,6 +393,16 @@ class _InspectorStack(CurrentPageSizingMixin, QStackedWidget):
     """
 
 
+#: Default width (px) the right-hand inspector deck opens at. Wide enough that
+#: its controls — per-parameter Model Fit buttons, MaxEnt frequency/time fields,
+#: parameter Min/Max columns — are visible without horizontal scrolling, while
+#: still leaving the central plot dominant on a 13-inch laptop. The dock floors
+#: at its own setMinimumWidth (narrower, for small screens); below this default
+#: each panel's own QScrollArea keeps its controls reachable, and the splitter
+#: widens the deck on demand.
+INSPECTOR_DOCK_DEFAULT_WIDTH = 360
+
+
 def _inspector_scroll_area(content: QWidget) -> QScrollArea:
     """Wrap an inspector dock's content so it scrolls instead of growing.
 
@@ -456,6 +466,12 @@ class MainWindow(QMainWindow):
         self._tasks = TaskRunner(self)
 
         self.compact_mode = False
+
+        #: First-show guard for the deferred inspector default-width pass (see
+        #: showEvent / _apply_default_dock_widths). Widths set in __init__ do not
+        #: stick until the dock area has real geometry, so they are re-applied
+        #: once the window is first shown.
+        self._default_dock_widths_applied = False
 
         # Set window icon from package resources
         icon = _load_window_icon()
@@ -1434,9 +1450,18 @@ class MainWindow(QMainWindow):
 
         # Set compact-friendly defaults while keeping the central plot dominant.
         # The width budget must leave the plot dominant on a 13-inch laptop
-        # (~1280 logical px): browser 330 + inspector deck 340 + plot ~600.
+        # (~1280 logical px): browser 330 + inspector deck 360 + plot ~590.
+        # The inspector deck is sized as a group (the three right docks are
+        # tabified into one region; resizing one alone is a no-op against its
+        # siblings). This pass seeds the layout; the width is re-applied in
+        # showEvent because it does not fully stick until the dock area has real
+        # geometry, once the window is shown (see _apply_default_dock_widths).
         self.resizeDocks([self._dock_data_browser], [330], Qt.Orientation.Horizontal)
-        self.resizeDocks([self._dock_fit], [340], Qt.Orientation.Horizontal)
+        self.resizeDocks(
+            [self._dock_fit, self._dock_fourier, self._dock_fit_parameters],
+            [INSPECTOR_DOCK_DEFAULT_WIDTH] * 3,
+            Qt.Orientation.Horizontal,
+        )
         self.resizeDocks([self._dock_log], [112], Qt.Orientation.Vertical)
 
         # Connect signals
@@ -4727,6 +4752,55 @@ class MainWindow(QMainWindow):
         # bar is rebuilt once the visibility changes settle.
         QTimer.singleShot(0, self, self._refresh_inspector_tab_bar)
 
+    def _inspector_deck_docks(self, *, visible_only: bool = False) -> list[QDockWidget]:
+        """The docked inspector panes (Spectrum / Fit / Parameters), tabified as
+        one right-dock region; layout ops act on them together since resizing one
+        tabified dock alone is a no-op against its siblings.
+
+        Floating panes are always excluded (not part of the region). A currently
+        hidden pane IS included by default: Qt only honours a group ``resizeDocks``
+        to a new width when every region member is in the list, so the width
+        application must keep the hidden pane. Pass ``visible_only=True`` when the
+        operation acts on what is on screen (e.g. preserving current widths).
+        """
+        docks = [
+            dock
+            for dock in (self._dock_fit, self._dock_fourier, self._dock_fit_parameters)
+            if not dock.isFloating()
+        ]
+        if visible_only:
+            docks = [dock for dock in docks if dock.isVisible()]
+        return docks
+
+    def showEvent(self, event) -> None:  # noqa: N802 — Qt override
+        super().showEvent(event)
+        # Dock widths set in __init__ do not stick because the dock area has no
+        # real geometry until the window is shown. Apply the inspector default
+        # once on first show, deferred to the event loop so the layout has
+        # settled — otherwise the deck opens at its squeezed minimum and clips.
+        if not self._default_dock_widths_applied:
+            self._default_dock_widths_applied = True
+            QTimer.singleShot(0, self, self._apply_default_dock_widths)
+
+    def _apply_default_dock_widths(self) -> None:
+        """Open the right inspector deck at its controls-fitting default width.
+
+        The deck panes are tabified into one region, so they are resized as a
+        group (the raised tab drives the region width). resizeDocks caps the
+        result to the room the central plot and left dock can yield, so on a
+        narrow window the deck simply opens as wide as fits — and each panel's
+        own QScrollArea keeps its controls reachable below that. Also used by
+        Reset Layout to restore the deck width.
+        """
+        inspector_docks = self._inspector_deck_docks()
+        if not inspector_docks:
+            return
+        self.resizeDocks(
+            inspector_docks,
+            [INSPECTOR_DOCK_DEFAULT_WIDTH] * len(inspector_docks),
+            Qt.Orientation.Horizontal,
+        )
+
     def _refresh_inspector_tab_bar(self) -> None:
         """Force the right dock area to relayout so its tab bar reappears.
 
@@ -4735,11 +4809,7 @@ class MainWindow(QMainWindow):
         walks the same relayout path as a manual window resize, which is the
         user-visible recovery for the missing tabs.
         """
-        docks = [
-            dock
-            for dock in (self._dock_fit, self._dock_fourier, self._dock_fit_parameters)
-            if dock.isVisible() and not dock.isFloating()
-        ]
+        docks = self._inspector_deck_docks(visible_only=True)
         if len(docks) < 2:
             return
         self.resizeDocks(docks, [dock.width() for dock in docks], Qt.Orientation.Horizontal)
