@@ -50,7 +50,7 @@ from asymmetry.core.transform.grouping import good_event_count, good_frames
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.typography import header_font
-from asymmetry.gui.styles.widgets import apply_footer_hint
+from asymmetry.gui.styles.widgets import build_primary_button_qss
 
 _GROUP_TEMP_ABS_TOL_K = 5e-3
 _GROUP_TEMP_REL_TOL = 2e-3
@@ -601,11 +601,36 @@ class DataBrowserPanel(QWidget):
         self._table.currentItemChanged.connect(lambda *_: self._table.viewport().update())
         layout.addWidget(self._table)
 
+        # Footer band: the selection hint (left) and a themed "add custom column"
+        # action (bottom-right). The band lives on the container so the hint and
+        # button share one surfaceAlt strip with a single top border.
         _add_key = "⌘" if sys.platform == "darwin" else "Ctrl"
         self._footer_hint = QLabel(f"{_add_key}-click adds · shift-click ranges")
         self._footer_hint.setWordWrap(True)
-        apply_footer_hint(self._footer_hint)
-        layout.addWidget(self._footer_hint)
+        self._footer_hint.setStyleSheet(
+            f"QLabel {{ background: transparent; color: {tokens.TEXT_MUTED}; font-size: 10px; }}"
+        )
+
+        self._add_column_btn = QPushButton("＋ Column")
+        self._add_column_btn.setToolTip("Add a custom column you can fill in per run")
+        self._add_column_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._add_column_btn.setStyleSheet(build_primary_button_qss())
+        self._add_column_btn.clicked.connect(self._prompt_add_custom_column)
+
+        footer = QWidget()
+        footer.setObjectName("dataBrowserFooter")
+        footer.setStyleSheet(
+            f"#dataBrowserFooter {{ background-color: {tokens.SURFACE_ALT};"
+            f" border-top: 1px solid {tokens.BORDER}; }}"
+        )
+        footer_layout = QHBoxLayout(footer)
+        footer_layout.setContentsMargins(8, 4, 8, 4)
+        footer_layout.setSpacing(8)
+        footer_layout.addWidget(self._footer_hint, 1)
+        footer_layout.addWidget(
+            self._add_column_btn, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        layout.addWidget(footer)
         self.setMinimumWidth(250)
 
     # ------------------------------------------------------------------
@@ -1469,6 +1494,12 @@ class DataBrowserPanel(QWidget):
         self._rebuild_table()
         self._resize_columns_to_content()
         return column
+
+    def _prompt_add_custom_column(self) -> None:
+        """Ask for a name and append an empty, user-editable custom column."""
+        name, ok = QInputDialog.getText(self, "Add custom column", "Column name:")
+        if ok:
+            self.add_custom_column(name)
 
     def rename_extra_column(self, column_id: str, new_label: str) -> bool:
         """Rename a column's gui-facing label (its source_key is untouched)."""

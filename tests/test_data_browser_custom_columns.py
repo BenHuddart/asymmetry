@@ -18,7 +18,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QInputDialog
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.gui.panels.data_browser import (
@@ -140,3 +140,40 @@ def test_rename_metadata_column_keeps_source_key(qapp):
     assert "nexus_fields.sample.shape" in panel.get_extra_columns()
     header = panel._table.horizontalHeaderItem(len(panel._COLUMNS)).text()
     assert header == "Crystal orientation"
+
+
+def test_add_column_button_is_themed_and_prompts(qapp, monkeypatch):
+    panel = DataBrowserPanel()
+    panel.add_dataset(_dataset(6))
+
+    # The button is present, carries a theme stylesheet and a helpful tooltip.
+    assert panel._add_column_btn.styleSheet()
+    assert "custom column" in panel._add_column_btn.toolTip().lower()
+
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("Anneal", True))
+    panel._add_column_btn.click()
+
+    cols = panel.extra_columns()
+    assert len(cols) == 1
+    assert cols[0].kind == EXTRA_COLUMN_CUSTOM
+    assert cols[0].label == "Anneal"
+
+
+def test_add_column_button_cancel_adds_nothing(qapp, monkeypatch):
+    panel = DataBrowserPanel()
+    panel.add_dataset(_dataset(7))
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("", False))
+    panel._add_column_btn.click()
+    assert panel.extra_columns() == []
+
+
+def test_delete_custom_column_removes_it(qapp):
+    panel = DataBrowserPanel()
+    panel.add_dataset(_dataset(8))
+    column = panel.add_custom_column("Anneal")
+    assert len(panel.extra_columns()) == 1
+
+    panel.remove_extra_column(column.id)
+    assert panel.extra_columns() == []
+    # The table no longer carries the column.
+    assert panel._table.columnCount() == len(panel._COLUMNS)
