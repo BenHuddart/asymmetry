@@ -30,6 +30,35 @@ class TestAppImports:
         assert hasattr(mainwindow, "MainWindow")
 
 
+class TestBenchStylesheetLoading:
+    def test_loads_from_source_tree(self) -> None:
+        """The bench stylesheet loads via the on-disk path in a source install."""
+        from asymmetry.gui import app
+
+        css = app._load_bench_stylesheet()
+        assert css
+        # Sentinel rule: scrollbar end-arrow buttons are zeroed out. If this is
+        # missing the app falls back to bare Fusion chrome (arrows reappear).
+        assert "QScrollBar::add-line" in css
+
+    def test_frozen_entry_point_file_falls_back_to_resources(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """bench.qss still loads when __file__ is relocated outside the package.
+
+        Reproduces the PyInstaller frozen build, where the entry script's
+        ``__file__`` points at the archive root rather than asymmetry/gui/,
+        so the ``Path(__file__).parent`` lookup misses and the
+        ``importlib.resources`` fallback must take over.
+        """
+        from asymmetry.gui import app
+
+        monkeypatch.setattr(app, "__file__", "/nonexistent/frozen/app.py")
+        css = app._load_bench_stylesheet()
+        assert css
+        assert "QScrollBar::add-line" in css
+
+
 class TestModuleStructure:
     def test_core_modules_exist(self) -> None:
         """Test that core modules can be imported."""
