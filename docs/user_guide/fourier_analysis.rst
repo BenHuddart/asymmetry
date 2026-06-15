@@ -559,8 +559,11 @@ The FFT spectrum does **not** compute automatically. Nothing is transformed
 until you click ``Compute FFT``, and — exactly like the MaxEnt panel's cycle
 buttons (see `Maximum Entropy Method`_) — that button sits below the fold in a
 scrollable panel, so on a narrow dock it is easy to miss. A run you have not
-computed shows an **empty Frequency-domain tab**: that is the expected
-"not computed yet" state, not a broken transform.
+computed shows a **centred prompt over the Frequency-domain plot** —
+*"No FFT computed for this run. Configure the FFT parameters and click Compute
+FFT."* — instead of a blank tab. That prompt is the expected
+"not computed yet" state, not a broken transform, and it clears the moment a
+spectrum is computed.
 
 To compute an FFT spectrum:
 
@@ -568,8 +571,10 @@ To compute an FFT spectrum:
    Fourier panel's ``Groups`` table (``Group 1`` / ``Group 2`` …). With no run
    selected the ``Groups`` table — and therefore the spectrum — stays empty.
 #. **Bring up the Fourier panel** if it is not already visible (the toolbar
-   ``FFT`` button raises it). This only surfaces the panel and syncs it to the
-   selected run; it does **not** run the transform.
+   ``FFT`` button raises it). The ``FFT`` button also switches the central plot
+   to the **Frequency Domain** tab, so you see the spectrum area (with the
+   compute prompt until you transform) rather than staying on the time view. It
+   does **not** run the transform.
 #. *(Optional)* **Tune the settings** — phase mode, apodisation, included
    groups, phases — using the controls described below.
 #. **Click** ``Compute FFT``. This button is at the **bottom** of the panel,
@@ -577,8 +582,9 @@ To compute an FFT spectrum:
    reach it. Only this click runs the transform and fills the
    **Frequency Domain** tab.
 
-If the Frequency-domain tab is empty, the status line reads ``No FFT computed
-for run <n>`` — select the run and click ``Compute FFT``.
+While the Frequency-domain tab has no computed spectrum, the plot shows the
+compute prompt above and the status line reads ``No FFT computed for run <n>`` —
+configure the parameters and click ``Compute FFT``.
 
 Before you click ``Compute FFT``, the docked Fourier panel lets you tune the
 WiMDA-first FFT workflow directly:
@@ -655,10 +661,15 @@ Frequency-Domain Plot Behavior
 
 FFT output is shown on the dedicated ``Frequency Domain`` tab in the central
 plot workspace. Each loaded run keeps its own frequency-domain view state in the
-session, and runs with no computed FFT remain empty on that tab until you click
-``Compute FFT`` for them (see `GUI Fourier Workflow`_). The current x-range is
-preserved when switching onto a run whose Fourier spectrum has not yet been
-computed.
+session, and a run with no computed FFT shows the centred compute prompt on that
+tab — *"No FFT computed for this run. Configure the FFT parameters and click
+Compute FFT."* — until you transform it (see `GUI Fourier Workflow`_). Entering
+the Frequency-domain view with nothing computed **stays** on that tab and shows
+the prompt; it no longer silently falls back to the time view, so the cue is
+always where you are looking. The current x-range is preserved when switching
+onto a run whose Fourier spectrum has not yet been computed. (The MaxEnt
+spectrum tab behaves the same way, with a *"No MaxEnt spectrum computed…"*
+prompt.)
 
 The frequency viewer keeps canonical FFT x-data in absolute MHz or Gauss on the
 axis itself. The main toolbar also provides an ``FFT X relative to field``

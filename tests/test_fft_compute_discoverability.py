@@ -16,9 +16,11 @@ and click **Compute FFT** — reusing the existing empty-state machinery. It mus
 clear once the FFT is computed (the not-computed marker, mainwindow ~L5598,
 already clears on recompute).
 
-xfail(strict) until implemented: today no such on-canvas prompt exists, so the
-assertion fails; when the overlay lands it passes and strict-xfail forces removing
-the marker.
+The prompt renders on the *frequency* plot panel (``_frequency_plot_panel``), which
+``_on_fourier`` now switches the central plot to — opening the Fourier panel used
+to leave the user on the time view (``_plot_panel``), the very reason the spectrum
+"never rendered". The silent fall-back to the time view is gone, so the empty
+frequency view stays and shows the prompt instead.
 """
 
 from __future__ import annotations
@@ -90,7 +92,6 @@ def _plot_text_blob(plot_panel) -> str:
     return " ".join(chunks).lower()
 
 
-@pytest.mark.xfail(reason="fix/fft-compute-discoverability not yet implemented", strict=True)
 def test_uncomputed_fft_view_prompts_to_compute(mw):
     mw._data_browser.add_dataset(_tf_dataset(20711))
     mw._on_dataset_selected(20711)
@@ -98,7 +99,11 @@ def test_uncomputed_fft_view_prompts_to_compute(mw):
     # Enter the Fourier view without computing an FFT.
     mw._on_fourier()
 
-    blob = _plot_text_blob(mw._plot_panel)
+    # Opening the Fourier panel must enter the frequency domain (not strand the
+    # user on the time view), so the prompt is drawn on the frequency panel.
+    assert mw._plot_workspace.active_domain() == "frequency"
+
+    blob = _plot_text_blob(mw._frequency_plot_panel)
     assert "compute fft" in blob, (
         "no on-canvas prompt: the uncomputed Fourier view must tell the user to "
         "configure parameters and click Compute FFT (instead of an empty plot or "
