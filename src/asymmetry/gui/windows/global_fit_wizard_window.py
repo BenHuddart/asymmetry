@@ -452,6 +452,15 @@ class GlobalFitWizardWindow(QMainWindow):
         self._metric_combo.setCurrentText(SelectionMetric.AICC.value)
         self._metric_combo.blockSignals(False)
         self._set_empty_state()
+        # Run / Field / Temperature are known now, so show the series immediately
+        # rather than an empty table until screening. The classification columns
+        # stay "—" until a recommendation is built (see _populate_overview_table).
+        self._populate_overview_table()
+        if self._datasets:
+            self._overview_banner.setText(
+                f"{len(self._datasets)} runs selected. "
+                "Run screening to classify each run (Osc. / KT-like / Multi-rate)."
+            )
         self._set_busy(False)
 
     def _build_overview_tab(self) -> None:
@@ -977,13 +986,27 @@ class GlobalFitWizardWindow(QMainWindow):
         self._update_apply_page()
 
     def _populate_overview_table(self) -> None:
-        if self._recommendation is None:
-            return
-        self._overview_table.setRowCount(len(self._datasets))
+        """List one row per selected run in the Series Overview.
+
+        Run / Field / Temperature are known as soon as the series is set, so the
+        overview is populated immediately by :meth:`set_analysis_context` — it no
+        longer sits empty until screening. The Osc. / KT-like / Multi-rate columns
+        come from per-run fingerprints, which only exist once screening has built
+        a recommendation; until then they show ``"—"``. Before screening the rows
+        follow the input order; once a recommendation exists they follow its
+        series-axis ordering (``dataset_order``).
+        """
+        recommendation = self._recommendation
+        if recommendation is not None:
+            run_order = [int(run_number) for run_number in recommendation.dataset_order]
+            fingerprints = recommendation.fingerprints_by_run
+        else:
+            run_order = [int(dataset.run_number) for dataset in self._datasets]
+            fingerprints = None
+        self._overview_table.setRowCount(len(run_order))
         by_run = {int(dataset.run_number): dataset for dataset in self._datasets}
-        for row, run_number in enumerate(self._recommendation.dataset_order):
+        for row, run_number in enumerate(run_order):
             dataset = by_run.get(int(run_number))
-            fingerprint = self._recommendation.fingerprints_by_run[int(run_number)]
             run_label = dataset.run_label if dataset else str(run_number)
             field_text = (
                 f"{float((dataset.metadata if dataset else {}).get('field', 0.0)):.6g}"
@@ -995,24 +1018,19 @@ class GlobalFitWizardWindow(QMainWindow):
                 if dataset
                 else "0"
             )
+            if fingerprints is not None:
+                fingerprint = fingerprints[int(run_number)]
+                osc_text = "Yes" if fingerprint.oscillatory_hint else "No"
+                kt_text = "Yes" if fingerprint.kt_like_hint else "No"
+                multi_text = "Yes" if fingerprint.multi_rate_hint else "No"
+            else:
+                osc_text = kt_text = multi_text = "—"
             self._overview_table.setItem(row, 0, QTableWidgetItem(run_label))
             self._overview_table.setItem(row, 1, QTableWidgetItem(field_text))
             self._overview_table.setItem(row, 2, QTableWidgetItem(temperature_text))
-            self._overview_table.setItem(
-                row,
-                3,
-                QTableWidgetItem("Yes" if fingerprint.oscillatory_hint else "No"),
-            )
-            self._overview_table.setItem(
-                row,
-                4,
-                QTableWidgetItem("Yes" if fingerprint.kt_like_hint else "No"),
-            )
-            self._overview_table.setItem(
-                row,
-                5,
-                QTableWidgetItem("Yes" if fingerprint.multi_rate_hint else "No"),
-            )
+            self._overview_table.setItem(row, 3, QTableWidgetItem(osc_text))
+            self._overview_table.setItem(row, 4, QTableWidgetItem(kt_text))
+            self._overview_table.setItem(row, 5, QTableWidgetItem(multi_text))
 
     def _populate_portfolio_table(self) -> None:
         if self._recommendation is None:
