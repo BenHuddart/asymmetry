@@ -2,6 +2,26 @@
   "version": 1,
   "studies": [
     {
+      "slug": "rf-resonance-gui",
+      "feature_name": "RF-µSR resonance: GUI surface (time-domain/scan picker + RF field-difference scan)",
+      "status": "study",
+      "path": "docs/porting/rf-resonance-gui",
+      "depends_on": ["rf-musr-resonance-fit"],
+      "references": [
+        "WiMDA",
+        "McKenzie et al., J. Phys. Chem. B 117, 13614 (2013)"
+      ],
+      "docs": {
+        "readme": "docs/porting/rf-resonance-gui/README.md",
+        "comparison": "docs/porting/rf-resonance-gui/comparison.md",
+        "implementation_options": "docs/porting/rf-resonance-gui/implementation-options.md",
+        "test_data": "docs/porting/rf-resonance-gui/test-data.md",
+        "verification_plan": "docs/porting/rf-resonance-gui/verification-plan.md"
+      },
+      "updated": "2026-06-15",
+      "notes": "GUI-surfacing of the already-implemented core RFResonanceMuP (slug rf-musr-resonance-fit, parameter_models.py field-scope component). Round-2 GUI finding: RFResonanceMuP is absent from the time-domain/ALC fit picker and there is no RF field-difference (Red-Green) scan control, so PC1 is unreachable from the GUI. Scope: register the model in the fit-function picker and add an RF period-difference scan path analogous to the integral-scan (ALC) flow."
+    },
+    {
       "slug": "sc-brandt-penetration-depth",
       "feature_name": "Brandt field-dependent vortex-lattice penetration depth",
       "status": "implemented",
