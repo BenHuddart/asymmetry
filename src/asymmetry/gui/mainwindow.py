@@ -33,6 +33,7 @@ from PySide6.QtCore import QEvent, QEventLoop, QObject, QSettings, Qt, QThread, 
 from PySide6.QtGui import QActionGroup, QGuiApplication, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QDialog,
     QDockWidget,
     QFileDialog,
     QFrame,
@@ -747,6 +748,7 @@ class MainWindow(QMainWindow):
         # File
         file_menu = mb.addMenu("&File")
         file_menu.addAction("Open Data File(s)\u2026", self._on_open)
+        file_menu.addAction("Load Run Range\u2026", self._on_load_run_range)
         file_menu.addAction("Generate Synthetic Run\u2026", self._on_generate_synthetic)
         file_menu.addAction("Generate Multi-Group Run\u2026", self._on_generate_multi_group)
         self._add_simulate_preset_menu(file_menu)
@@ -2403,6 +2405,44 @@ class MainWindow(QMainWindow):
                 self._last_open_dir = selected_dir
                 self._settings.setValue("io/last_open_dir", selected_dir)
             self._load_files(paths)
+
+    def _on_load_run_range(self) -> None:
+        """Load a contiguous run series by folder + first/last run number.
+
+        Bypasses the Open dialog's file-name length limit: a small dialog
+        collects a folder, prefix, and inclusive run range, and
+        :func:`resolve_run_range` expands that to the existing files. Resolution
+        is a fast filesystem scan and runs inline; the actual file loading goes
+        through :meth:`_load_files`, which uses the batch worker.
+        """
+        from asymmetry.core.io import resolve_run_range
+        from asymmetry.gui.windows.run_range_dialog import RunRangeDialog
+
+        dialog = RunRangeDialog(self, initial_dir=self._last_open_dir)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        folder = dialog.folder()
+        first, last = dialog.first_run(), dialog.last_run()
+        try:
+            paths = resolve_run_range(folder, first, last, prefix=dialog.prefix())
+        except ValueError as exc:
+            QMessageBox.warning(self, "Load Run Range", str(exc))
+            return
+
+        if not paths:
+            QMessageBox.information(
+                self,
+                "Load Run Range",
+                f"No run files found in {first}–{last} under:\n{folder}",
+            )
+            return
+
+        self._last_open_dir = folder
+        self._settings.setValue("io/last_open_dir", folder)
+        span = last - first + 1
+        self._log_panel.log(f"Loading run range {first}–{last}: {len(paths)} of {span} runs found.")
+        self._load_files([str(p) for p in paths])
 
     def _on_generate_synthetic(self) -> None:
         """Launch the Generate Synthetic Run dialog (File menu)."""

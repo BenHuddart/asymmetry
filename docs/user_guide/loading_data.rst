@@ -340,6 +340,61 @@ Loading Multiple Files
    
    print(f"Loaded {len(datasets)} datasets")
 
+.. _loading-a-run-range:
+
+Loading a Run Range
+~~~~~~~~~~~~~~~~~~~
+
+A contiguous run series — a field or temperature scan such as BiSCCO
+1276–1289 — can be loaded in one step from a folder plus a first/last run
+number, instead of selecting every file by hand.
+
+**Why this exists.** The native Open dialog's *File name* field holds only a
+bounded number of characters (~256), so a long quoted list of ~15 file names is
+silently truncated and the load has to be split into batches. The run-range
+path resolves the files itself and never passes them through that field, so a
+whole scan loads at once.
+
+**In the GUI.** Choose **File → Load Run Range…**. Pick the folder that holds
+the run files; the dialog prefills the run *Prefix* (e.g. ``MUSR``) and the
+first/last run numbers from the files it finds there. Adjust the range if you
+want a subset, then click **OK**. The matching runs are loaded through the
+ordinary multi-file path (duplicate prompts, auto-grouping, and the missing-run
+gap warning all apply). The log records how many of the requested runs were
+found, e.g. ``Loading run range 1276–1289: 14 of 14 runs found.``
+
+**In scripts.** :func:`~asymmetry.core.io.resolve_run_range` is the pure,
+GUI-free resolver behind the dialog. It scans a folder and returns the existing
+files for an inclusive run range, sorted by run number:
+
+.. code-block:: python
+
+   from asymmetry.core.io import load, resolve_run_range
+
+   files = resolve_run_range("data/BiSCCO", 1276, 1289, prefix="MUSR")
+   datasets = [load(str(path)) for path in files]
+
+Resolver semantics:
+
+* **Inclusive range.** Both ``first`` and ``last`` are included. The result is
+  sorted ascending by run number.
+* **Padding-agnostic.** The run number is parsed from the trailing digits of
+  each file name, so any zero-pad width matches — ``MUSR00001276.nxs`` resolves
+  to run ``1276``.
+* **Prefix.** ``prefix`` (the leading text before the run-number digits) is
+  matched case-insensitively. When omitted it is auto-detected: if the files in
+  range all share one prefix it is used, and if several prefixes are present a
+  :class:`ValueError` lists them so you can pass an explicit ``prefix=``.
+* **Extensions.** Only files with a loader-registered extension are considered
+  (so sidecar logs such as ``.mon``/``.txt`` are ignored). Pass ``ext="nxs"``
+  to restrict the scan to a single format.
+* **Missing runs are skipped.** Gaps in the range are not an error — the
+  resolver returns the runs that exist and omits the rest. The GUI separately
+  warns when the loaded runs are non-contiguous.
+* **Errors.** A missing or non-directory folder, or ``first > last``, raises
+  :class:`ValueError`. A valid folder with no matching runs in range returns an
+  empty list (the GUI reports this as "no run files found").
+
 Direct File Format Access
 --------------------------
 

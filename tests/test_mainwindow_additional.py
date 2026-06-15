@@ -5603,3 +5603,92 @@ class TestRunNumberGapDetection:
 
     def test_format_gap_ranges_mixes_singletons_and_ranges(self) -> None:
         assert mw_module._format_gap_ranges([(2, 2), (4, 6)]) == "2, 4–6"
+
+
+class TestLoadRunRange:
+    """The File → Load Run Range… handler resolves files and routes to load."""
+
+    def _make_runs(self, folder: Path, runs: list[int]) -> None:
+        for run in runs:
+            (folder / f"MUSR{run:08d}.nxs").write_bytes(b"")
+
+    def test_resolves_range_and_loads_existing_files(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        self._make_runs(tmp_path, [10, 11, 13])  # 12 missing → skipped
+
+        def _fake_dialog(_parent, *, initial_dir=None):
+            return SimpleNamespace(
+                exec=lambda: 1,  # QDialog.DialogCode.Accepted
+                folder=lambda: str(tmp_path),
+                first_run=lambda: 10,
+                last_run=lambda: 13,
+                prefix=lambda: "MUSR",
+            )
+
+        monkeypatch.setattr(
+            mw_module, "QDialog", SimpleNamespace(DialogCode=SimpleNamespace(Accepted=1))
+        )
+        monkeypatch.setattr("asymmetry.gui.windows.run_range_dialog.RunRangeDialog", _fake_dialog)
+
+        loaded: dict[str, list[str]] = {}
+        monkeypatch.setattr(mainwindow, "_load_files", lambda paths: loaded.update(paths=paths))
+
+        mainwindow._on_load_run_range()
+
+        assert "paths" in loaded
+        names = [Path(p).name for p in loaded["paths"]]
+        assert names == ["MUSR00000010.nxs", "MUSR00000011.nxs", "MUSR00000013.nxs"]
+
+    def test_no_files_in_range_does_not_load(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        self._make_runs(tmp_path, [10])
+
+        def _fake_dialog(_parent, *, initial_dir=None):
+            return SimpleNamespace(
+                exec=lambda: 1,
+                folder=lambda: str(tmp_path),
+                first_run=lambda: 50,
+                last_run=lambda: 60,
+                prefix=lambda: "MUSR",
+            )
+
+        monkeypatch.setattr(
+            mw_module, "QDialog", SimpleNamespace(DialogCode=SimpleNamespace(Accepted=1))
+        )
+        monkeypatch.setattr("asymmetry.gui.windows.run_range_dialog.RunRangeDialog", _fake_dialog)
+        monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a, **k: None))
+
+        called = {"n": 0}
+        monkeypatch.setattr(mainwindow, "_load_files", lambda paths: called.__setitem__("n", 1))
+
+        mainwindow._on_load_run_range()
+
+        assert called["n"] == 0
+
+    def test_cancelled_dialog_does_not_load(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        def _fake_dialog(_parent, *, initial_dir=None):
+            return SimpleNamespace(exec=lambda: 0)  # Rejected
+
+        monkeypatch.setattr(
+            mw_module, "QDialog", SimpleNamespace(DialogCode=SimpleNamespace(Accepted=1))
+        )
+        monkeypatch.setattr("asymmetry.gui.windows.run_range_dialog.RunRangeDialog", _fake_dialog)
+
+        called = {"n": 0}
+        monkeypatch.setattr(mainwindow, "_load_files", lambda paths: called.__setitem__("n", 1))
+
+        mainwindow._on_load_run_range()
+
+        assert called["n"] == 0

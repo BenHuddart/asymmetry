@@ -22,6 +22,7 @@ from asymmetry.core.io.periods import (
 )
 from asymmetry.core.io.psi import PsiLoader
 from asymmetry.core.io.root import RootLoader
+from asymmetry.core.io.run_range import resolve_run_range, scan_run_files
 from asymmetry.core.transform.grouping import good_frames
 
 # Register built-in loaders
@@ -224,6 +225,8 @@ __all__ = [
     "PsiLoader",
     "RootLoader",
     "load",
+    "resolve_run_range",
+    "scan_run_files",
     "period_count",
     "period_labels",
     "select_period",
