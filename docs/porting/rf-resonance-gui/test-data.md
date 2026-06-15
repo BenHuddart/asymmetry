@@ -6,13 +6,24 @@ Reuses the corpus the core port was verified on (see
 ## Benzene RF scan (paper-graded)
 - Corpus: `Chemistry/Muon spectroscopy of benzene/` (WiMDA muon-school corpus).
 - DEVA runs **56426–56462**, **ν_RF = 218.5 MHz**, 293 K (from the core study).
-- Observable: **(Red − Green) integral asymmetry vs swept static field**; W-shaped
+- Observable: **(Green − Red) integral asymmetry vs swept static field**; W-shaped
   double dip with resonances near **865 G / 773 G** (digitised).
 - Targets (paper, McKenzie 2013, Table 1): **A_µ = 514.78(4) MHz**, **A_p = 124.6(14) MHz**.
   Core port recovers A_µ=516.0, A_p=125.4, resonances 866/772 G, χ²/dof=1.6.
-- **TODO (study pass):** confirm the on-disk run list for the RF technique (the
-  benzene folder also holds ALC/repolarisation/high-TF runs); map which runs are
-  RF-on vs RF-off (or which detector groups are "Red"/"Green").
+- **On-disk layout (confirmed):** the RF runs are isolated under
+  `data/RF resonance/56426.nxs … 56462.nxs` (37 files + `logbook.rtf`); the
+  HDF5-converted copies live under `data_hdf5/RF resonance/`. Each run is a
+  **two-period NeXus file**: `detector_1/counts` has shape **(2, 32, 2000)** =
+  (periods, spectra, time bins), `periods/labels = "Period 1;Period 2"`,
+  `periods/number = 2`. `sample/magnetic_field` is the per-run static field (e.g.
+  56426 → **560 G**, LF), which is the scan x-axis. The ALC/repolarisation/high-TF
+  techniques live in sibling folders, so a simple folder/period filter selects the
+  RF set cleanly.
+- **Red/Green = the two periods (resolved):** period 1 (index 0) = **Red = RF on**,
+  period 2 (index 1) = **Green = RF off**, matching the loader's `{1: red,
+  2: green}` tag and `core/io/periods.py` conventions. The observable is
+  `Green − Red`. ν_RF is **not** stored in obvious sample metadata — it is supplied
+  by the user (seeded 218.5 MHz, held fixed by default).
 
 ## Headless test fixtures
 - Prefer a **core scan-builder unit test**: synthetic or corpus-conditional

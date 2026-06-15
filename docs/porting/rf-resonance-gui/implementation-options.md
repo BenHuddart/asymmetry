@@ -38,3 +38,50 @@ Pick one per axis in the study pass; record the choice + rationale here.
 ## Recommendation (provisional, to confirm)
 A2 + B1/B2 — a dedicated RF-scan panel mirroring `alc_panel`, with the scan builder
 in core so it is testable headlessly. Fall back to A1 if a panel is out of budget.
+
+## Chosen design (study pass — confirmed with maintainer 2026-06-15)
+
+The study pass found the gap is **narrower than the skeleton assumed**: the core
+already has the entire Green − Red period machinery (`PeriodMode`,
+`combine_period_asymmetry`, `select_period`, `integrate_curve`, two-period loader)
+and `RFResonanceMuP` already lists in the field-x parameter-trend Model-Fit picker.
+The missing pieces are only (1) a Green − Red *integral-scan acquisition* and (2) a
+way to *fit that scan with `RFResonanceMuP`* from the scan view. So a whole new
+panel (A2) would duplicate the ALC scaffold for little gain.
+
+**Chosen: extend the existing ALC integral-scan path (a blend of A2's discoverability
+with B2), not a new panel.**
+
+- **B2 — core scan-builder.** Add `build_rf_difference_scan(...)` (home:
+  `core/io/periods.py`, which already owns red/green and may import
+  `transform`; layering-clean since `io → transform`). Per run it pairs the two
+  periods (red, green), forms the **Green − Red** reduced curve via the existing
+  `combine_period_asymmetry(GREEN_MINUS_RED)` (single source of truth — no copied
+  arithmetic), `integrate_curve`s it over the window, and returns a
+  `FieldScan` in the **same fractional convention as `build_field_scan`** (÷100),
+  ordered by field. Two-period-only runs survive; others land in `excluded` with a
+  clear reason. GUI-agnostic and unit-testable headlessly.
+- **A (fit exposure) — reuse the scan fitter.** `fit_scan_model` already accepts any
+  component/expression, so it fits `RFResonanceMuP` with no new fitter. Surface it
+  in `ALCScanView` as an **"RF resonance (A_µ, A_p)"** fit action with a ν_RF input
+  (seeded 218.5 MHz, fixed by default) and **A_µ / A_p read-outs**. Reuses the
+  baseline step and the existing percent display scale.
+
+### Units (resolved)
+`RFResonanceMuP` was verified on a **percent**-scale W-dip (`test_rf_musr_resonance.py`
+seeds `ampl1=-18.0, BG=-1.5`). The ALC display path stores per-point values
+**fractional** and multiplies ×100 for display *and* for the fit it drives. So the
+builder returns fractional values (matching `build_field_scan`); the existing ×100
+display feeds percent to the RF fit, where the registered seeds are valid. No
+double-scaling, no special-casing of the display path.
+
+### Rejected / deferred
+- **A2 dedicated panel** — rejected: duplicates the ALC scaffold; the extend-path
+  gives the same discoverability + A_µ/A_p read-outs for a far smaller diff.
+- **B1 difference-mode on `build_field_scan`'s F/B path** — rejected: Green − Red is
+  a *period-asymmetry difference*, not a forward/backward count difference, so the
+  F/B `integrate_run` path cannot express it; a curve-level builder is correct.
+- **A3 time-domain picker entry** — rejected (unchanged): RF resonance is a
+  field-scan observable, not a per-run time fit.
+- **ν_RF from metadata** — deferred: not present in the NeXus sample metadata;
+  user-entered (seeded) is the contract.

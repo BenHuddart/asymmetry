@@ -5,13 +5,24 @@ GUI stops short. (Core numerics comparison lives in
 [`../rf-musr-resonance-fit/comparison.md`](../rf-musr-resonance-fit/comparison.md).)
 
 ## WiMDA (reference)
-- `RigiWorkshopFit` provides an RF-resonance fitting workshop: load the RF field
-  scan, form the (Red − Green) integral asymmetry vs swept static field, and fit
-  the resulting W-shaped double dip to the exact muon+electron+proton Hamiltonian
-  to extract A_µ and A_p. The scan acquisition and the model fit live in one path.
-- **TODO (study pass):** trace the WiMDA Pascal entry points for (a) building the
-  Red−Green scan from the run set and (b) seeding/fitting the resonance — cite
-  unit/file/line under `$WIMDA_SRC` as the other RF study does.
+- `RigiWorkshopFit` provides the RF-resonance **fit model** (the two-Lorentzian
+  exact-diagonalisation `RFresonanceMuPlusProtonExact`, ported as the core
+  `RFResonanceMuP`). The **scan acquisition** is NOT in `RigiWorkshopfit.dpr`
+  (that file holds only fit-function DLL entry points — verified by grepping it:
+  the only "red"/"period" hits are `Redfield/BPP` and the `select` doc string).
+  Acquisition lives in WiMDA's main data path / grouping ("RG box"), which the
+  corpus teaching guide describes operationally.
+- **Red/Green = two acquisition periods within each run, not detector groups and
+  not run pairs** (resolved). From the benzene corpus ground truth
+  (`Chemistry/Muon spectroscopy of benzene/GROUND_TRUTH.md` §3D): *"Red-Green
+  mode, RF at 218 MHz; **Green = RF off, Red = RF on**; grouping window selects
+  Red, Green, or **Green − Red** difference. Time-domain difference first
+  (bunch 3), then time-integral (bunch 500), build fit table from the first bin,
+  model integral asymmetry vs field as a sum of two Lorentzians."*
+- WiMDA workflow, restated: per field-stepped run, form the **(Green − Red)**
+  time-domain asymmetry, time-integrate it to one value, collect those vs swept
+  static field (the W-shaped double dip), fit with the exact Hamiltonian model →
+  A_µ (mean dip position) and A_p (dip splitting).
 
 ## Asymmetry — core (done)
 - `RFResonanceMuP` (parameter_models.py): field-scope trend component, params
@@ -30,7 +41,16 @@ GUI stops short. (Core numerics comparison lives in
 ## Adjacent Asymmetry surface to reuse
 - `alc_panel.py` integral-scan: load field-scan runs → set integration window →
   Build Scan → field-domain Baseline+Peaks fit. The RF scan is the same shape with
-  a **Red − Green difference** instead of a single integral, then a 2-Lorentzian +
-  BG fit driven by `RFResonanceMuP`. Reuse this scaffold rather than inventing one.
-- **TODO:** confirm whether "Red"/"Green" map to detector groups / RF-on vs RF-off
-  runs in the corpus, and how the GUI should pair them.
+  a **Green − Red period difference** instead of a single integral, then a
+  2-Lorentzian + BG fit driven by `RFResonanceMuP`. Reuse this scaffold.
+- **Green − Red machinery already exists in core** (resolved — no new arithmetic
+  needed): `PeriodMode.GREEN_MINUS_RED` (`core/utils/constants.py`),
+  `combine_period_asymmetry(..., mode)` and `select_period(...)`
+  (`core/io/periods.py`), and `integrate_curve(time, asym, err, ...)` explicitly
+  documented for *"a combined green∓red spectrum"* (`core/transform/integral.py`).
+  The NeXus loader already loads two-period RF runs as one run carrying both
+  `period_histograms` and a `period_reduced` cache, tagged `{1: red, 2: green}`.
+- **What the existing ALC path does NOT do:** `build_field_scan → integrate_run →
+  _reduce_run_to_fb` reduces from `run.histograms` (the **red** period only) and
+  ignores `period_mode`. So the integral scan integrates Red, never Green − Red.
+  This is the acquisition gap a small core scan-builder closes.

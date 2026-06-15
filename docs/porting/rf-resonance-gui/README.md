@@ -1,8 +1,27 @@
 # RF-µSR resonance — GUI surface (study)
 
-**Status:** study (skeleton — Round-2 GUI finding). **Depends on:** the implemented
-core port [`rf-musr-resonance-fit`](../rf-musr-resonance-fit/README.md) (closes
-parity gap PC1).
+**Status: IMPLEMENTED** — study complete + GUI surface shipped (see
+[implementation-options.md](implementation-options.md) "Chosen design"). The RF
+(Green − Red) scan acquisition and the `RFResonanceMuP` fit are reachable from the
+integral-scan path; verified by a corpus-conditional recovery test
+(`tests/test_rf_scan_builder.py`, A_µ ≈ 516 MHz on the benzene corpus) and an
+offscreen GUI smoke test (`tests/test_rf_scan_panel_gui.py`). **Depends on:** the
+implemented core port [`rf-musr-resonance-fit`](../rf-musr-resonance-fit/README.md)
+(closes parity gap PC1).
+
+## Study-pass findings (TL;DR)
+
+- **Red/Green are two acquisition periods within each run** (Red = RF on = period 1,
+  Green = RF off = period 2), not detector groups or run pairs. The benzene RF runs
+  56426–56462 each load as a two-period NeXus file (`counts (2, 32, 2000)`), one
+  static field per run. Observable = **(Green − Red) integral asymmetry vs field**.
+- **Most plumbing already exists:** `PeriodMode.GREEN_MINUS_RED`,
+  `combine_period_asymmetry`, `select_period`, `integrate_curve`, the two-period
+  loader, and `RFResonanceMuP` already listed in the field-x trend picker.
+- **Chosen design:** extend the existing ALC integral-scan path — a core
+  `build_rf_difference_scan` builder (B2) + an "RF resonance (A_µ, A_p)" fit on the
+  ALC scan view driven by `RFResonanceMuP` with a user-seeded ν_RF — **not** a new
+  panel. Rationale and rejected options in `implementation-options.md`.
 
 ## The gap (Round-2 GUI testing, Windows, v0.4.0 @ fbf8aae)
 
