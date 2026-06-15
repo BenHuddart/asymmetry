@@ -744,11 +744,14 @@ class FitParametersPanel(QWidget):
             self._apply_group_selection_to_view(sync_active=False)
         self._refresh_model_fit_button_labels()
 
-        # Prefer the resolved x-axis key so a param:<name> selection survives
-        # label collisions; fall back to the legacy combo-text match.
+        # Prefer the resolved x-axis key so a param:<name> or custom:<id> selection
+        # survives label collisions / renames; fall back to the legacy combo-text
+        # match for the fixed run-level axes.
         restored_x = False
         x_axis_key = state.get("x_axis_key")
-        if isinstance(x_axis_key, str) and x_axis_key.startswith("param:"):
+        if isinstance(x_axis_key, str) and (
+            x_axis_key.startswith("param:") or x_axis_key.startswith("custom:")
+        ):
             idx = self._x_combo.findData(x_axis_key)
             if idx >= 0:
                 self._x_combo.setCurrentIndex(idx)
@@ -1855,7 +1858,10 @@ class FitParametersPanel(QWidget):
 
     def _effective_x_key(self) -> str:
         data = self._x_combo.currentData()
-        if isinstance(data, str) and data.startswith("param:"):
+        # Both the parameter-vs-parameter (param:<name>) and the data-browser
+        # custom-column (custom:<id>) axes carry their key as item data; the fixed
+        # run-level axes carry none and are matched by display text below.
+        if isinstance(data, str) and (data.startswith("param:") or data.startswith("custom:")):
             return data
         selected = self._x_combo.currentText()
         if selected in {"B (G)", "𝐵 (G)"}:
@@ -3408,9 +3414,13 @@ class FitParametersPanel(QWidget):
             if not text:
                 return float("nan")
             try:
-                return float(text)
+                value = float(text)
             except ValueError:
                 return float("nan")
+            # "inf"/"nan" parse as floats but are not plottable abscissae; treat
+            # them as missing so they are dropped (and counted) like other
+            # non-numeric entries rather than corrupting the axis/fit.
+            return value if np.isfinite(value) else float("nan")
         if x_key == "field":
             return row.field
         if x_key == "temperature":

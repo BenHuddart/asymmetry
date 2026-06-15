@@ -177,3 +177,36 @@ def test_delete_custom_column_removes_it(qapp):
     assert panel.extra_columns() == []
     # The table no longer carries the column.
     assert panel._table.columnCount() == len(panel._COLUMNS)
+
+
+def test_sort_custom_column_with_mixed_values_does_not_crash(qapp):
+    # Regression: a custom column is empty by default with the odd numeric entry,
+    # so a sort key that returned float for some rows and str/"" for others would
+    # raise TypeError comparing float to str. Sorting must stay type-safe.
+    panel = DataBrowserPanel()
+    for rn in (1, 2, 3):
+        panel.add_dataset(_dataset(rn))
+    panel.add_custom_column("Anneal")
+    col_idx = len(panel._COLUMNS)
+    # Run 1 numeric, run 2 text, run 3 left blank.
+    panel._table.item(0, col_idx).setText("300")
+    panel._table.item(1, col_idx).setText("as-grown")
+
+    # Sort ascending then descending on the custom column — must not raise.
+    panel._current_sort_column = col_idx
+    panel._sort_table()
+    panel._on_header_clicked(col_idx)  # toggles to descending and re-sorts
+    assert panel._table.rowCount() == 3
+
+
+def test_corrupt_metadata_column_without_source_key_is_safe(qapp):
+    # A project that dropped source_key for a metadata column must not crash:
+    # from_dict backfills source_key from the id and the cell renders blank.
+    panel = DataBrowserPanel()
+    panel.add_dataset(_dataset(9))
+    panel.restore_state({"extra_columns": [{"id": "weird", "kind": "metadata"}]})
+    col = panel.extra_columns()[0]
+    assert col.source_key == "weird"
+    # Rendering the (unknown) metadata column does not raise.
+    panel._rebuild_table()
+    assert panel._table.columnCount() == len(panel._COLUMNS) + 1

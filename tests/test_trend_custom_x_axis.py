@@ -47,11 +47,28 @@ def test_x_value_nan_for_empty_or_non_numeric(qapp):
     assert np.isnan(panel._x_value(_row(3, {}), "custom:abc"))
 
 
+def test_x_value_inf_string_is_dropped(qapp):
+    panel = FitParametersPanel()
+    assert np.isnan(panel._x_value(_row(1, {"custom:abc": "inf"}), "custom:abc"))
+    assert np.isnan(panel._x_value(_row(2, {"custom:abc": "-inf"}), "custom:abc"))
+
+
 def test_custom_column_offered_in_x_combo_with_label(qapp):
     panel = FitParametersPanel()
     panel.set_custom_x_fields([("Anneal", "custom:abc")])
     assert panel._x_combo.findData("custom:abc") >= 0
     assert panel._x_axis_label_mpl("custom:abc") == "Anneal"
+
+
+def test_selecting_custom_column_sets_effective_x_key(qapp):
+    # Regression: _effective_x_key must translate a custom: combo selection into
+    # the custom key, otherwise the trend silently plots against the inferred
+    # field/temperature/run axis (the whole feature is a no-op).
+    panel = FitParametersPanel()
+    panel.set_custom_x_fields([("Anneal", "custom:abc")])
+    idx = panel._x_combo.findData("custom:abc")
+    panel._x_combo.setCurrentIndex(idx)
+    assert panel._effective_x_key() == "custom:abc"
 
 
 def test_skip_note_counts_dropped_runs(qapp):

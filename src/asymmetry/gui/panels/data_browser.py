@@ -181,7 +181,12 @@ class ExtraColumn:
             )
         if not isinstance(data, dict):
             return None
+        # Validate the discriminator at the boundary: an unknown kind (corrupt or
+        # forward-version project) is treated as a (read-only) metadata column
+        # rather than left to crash later as a non-custom column with no source.
         kind = str(data.get("kind", EXTRA_COLUMN_METADATA))
+        if kind not in (EXTRA_COLUMN_METADATA, EXTRA_COLUMN_CUSTOM):
+            kind = EXTRA_COLUMN_METADATA
         source_key = data.get("source_key")
         source_key = str(source_key) if source_key is not None else None
         col_id = str(data.get("id", "")).strip()
@@ -189,6 +194,10 @@ class ExtraColumn:
             col_id = source_key or ""
         if not col_id:
             return None
+        # A metadata column must always carry a source key for value resolution;
+        # fall back to its id if a project dropped/omitted source_key.
+        if kind == EXTRA_COLUMN_METADATA and source_key is None:
+            source_key = col_id
         label = str(data.get("label", col_id))
         return cls(id=col_id, label=label, kind=kind, source_key=source_key)
 
@@ -1654,8 +1663,10 @@ class DataBrowserPanel(QWidget):
         rn = int(run_number)
         return bool(self._field_from_log_overrides.get(rn, self._use_field_from_log))
 
-    def _resolve_metadata_path(self, dataset: MuonDataset, field_key: str):
+    def _resolve_metadata_path(self, dataset: MuonDataset, field_key: str | None):
         """Resolve a metadata/synthetic key to a value for dynamic columns."""
+        if not field_key:
+            return None
         if field_key.startswith("run_info."):
             return self._resolve_run_info_value(dataset, field_key)
 
@@ -1980,15 +1991,21 @@ class DataBrowserPanel(QWidget):
         return ""
 
     def _set_custom_column_value(self, dataset: MuonDataset, column_id: str, text: str) -> None:
-        """Write (or clear) a custom column's per-run value in dataset metadata."""
-        fields = dataset.metadata.get(CUSTOM_FIELDS_METADATA_KEY)
-        if not isinstance(fields, dict):
-            fields = {}
-            dataset.metadata[CUSTOM_FIELDS_METADATA_KEY] = fields
+        """Write (or clear) a custom column's per-run value in dataset metadata.
+
+        Copy-on-write: a *new* dict is bound rather than mutating the existing one
+        in place. The custom-fields dict can be shared by reference across a run's
+        ``dataset.metadata``/``run.metadata`` (restore) or with a shallow
+        :meth:`MuonDataset.copy` clone (co-add/period combine); rebinding here keeps
+        an edit on one from silently bleeding into the other.
+        """
+        existing = dataset.metadata.get(CUSTOM_FIELDS_METADATA_KEY)
+        fields = dict(existing) if isinstance(existing, dict) else {}
         if text:
             fields[column_id] = text
         else:
             fields.pop(column_id, None)
+        dataset.metadata[CUSTOM_FIELDS_METADATA_KEY] = fields
 
     # ------------------------------------------------------------------
     # Row and selection helpers
@@ -3050,13 +3067,18 @@ class DataBrowserPanel(QWidget):
                 if idx < 0 or idx >= len(visible_extra_columns):
                     return ""
                 value = self._raw_value_for_column(dataset, visible_extra_columns[idx])
+                # Return a type-ranked key so a column with a *mix* of numeric and
+                # text/blank values (the norm for a custom column: empty by default
+                # with the odd number typed in) never compares float against str —
+                # which would raise TypeError mid-sort. Numerics sort first (rank
+                # 0), text/blank after (rank 1); the two ranks never cross-compare.
                 if isinstance(value, (int, float, np.integer, np.floating)):
-                    return float(value)
+                    return (0, float(value))
                 if isinstance(value, (list, tuple, np.ndarray)):
                     arr = np.asarray(value)
                     if arr.size and np.issubdtype(arr.dtype, np.number):
-                        return float(np.nanmean(arr.astype(np.float64)))
-                return "" if value is None else str(value)
+                        return (0, float(np.nanmean(arr.astype(np.float64))))
+                return (1, "" if value is None else str(value))
             return str(meta.get("comment", ""))
 
         runs = [entry for entry in self._display_order if isinstance(entry, int)]
