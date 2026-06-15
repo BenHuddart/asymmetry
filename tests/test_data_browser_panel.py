@@ -1753,15 +1753,29 @@ def _fill_panel(panel: DataBrowserPanel, *, width: int = 330) -> None:
 
 
 def test_columns_fill_viewport_exactly_on_load(qapp: QApplication) -> None:
-    """Default load: the base columns sum to the viewport — no scrollbar."""
+    """A default load stretches Title so the base columns exactly fill the
+    viewport — no horizontal scrollbar.
+
+    The dock is sized wide rather than at a tight pixel width so the Title fit
+    is guaranteed to engage on every platform. The non-Title columns are
+    content-sized, and the font renders at different pixel widths across
+    platforms (IBM Plex Mono is wider on Windows than on the Linux CI host);
+    at a tight width those base columns can exceed the viewport on a wide-font
+    platform, correctly standing the fit down to honest overflow — that path
+    is covered by test_overflowing_extra_columns_fall_back_to_honest_scrolling.
+    A generous width keeps the *fill* invariant under test deterministic.
+    """
     panel = DataBrowserPanel()
-    _fill_panel(panel)
+    _fill_panel(panel, width=700)
     header = panel._table.horizontalHeader()
     total = sum(header.sectionSize(i) for i in range(panel._table.columnCount()))
     assert total == panel._table.viewport().width()
     assert panel._table.horizontalScrollBar().maximum() == 0
-    # Run is sized for six digits, not the old 72px floor.
-    assert header.sectionSize(0) <= 66
+    # Run hugs its (clamped) six-digit content — no artificial floor padding.
+    # Stated as the content-clamp result rather than an absolute pixel cap so
+    # the check holds whatever pixel width the platform font renders at; it
+    # still fails if a floor above the content (the old 72px) is reintroduced.
+    assert header.sectionSize(0) == min(150, max(56, panel._table.sizeHintForColumn(0)))
     panel.close()
 
 
