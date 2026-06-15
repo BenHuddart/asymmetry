@@ -257,7 +257,15 @@ class ALCScanView(QWidget):
         return group, QVBoxLayout(content)
 
     def _build_baseline_group(self) -> QGroupBox:
-        """Baseline controls: model + non-resonant regions table + Fit button."""
+        """Baseline controls: model + non-resonant regions table + Fit button.
+
+        The "Fit baseline" button sits on its own row at the bottom rather than at
+        the right end of the Model row: ``Model:`` + combo + the button together
+        need ~386px, wider than the ~360px inspector deck, and the analysis area
+        scrolls vertically only — so an over-wide row clips the button off the
+        right edge with no way to reach it (test_rf_fit_row_reachable; mirrors the
+        RF group's wrapping in ``_build_rf_group``).
+        """
         group, outer = self._collapsible_group("Baseline")
 
         row = QHBoxLayout()
@@ -268,9 +276,6 @@ class ALCScanView(QWidget):
         self._baseline_model_combo.addItems(["Linear", "Constant", "Cubic"])
         row.addWidget(self._baseline_model_combo)
         row.addStretch()
-        self._fit_baseline_btn = QPushButton("Fit baseline")
-        self._fit_baseline_btn.clicked.connect(self.baseline_fit_requested.emit)
-        row.addWidget(self._fit_baseline_btn)
         outer.addLayout(row)
 
         self._regions_table = QTableWidget(0, 2)
@@ -289,27 +294,44 @@ class ALCScanView(QWidget):
         btns.addWidget(remove_btn)
         btns.addStretch()
         outer.addLayout(btns)
+
+        fit_row = QHBoxLayout()
+        fit_row.addStretch()
+        self._fit_baseline_btn = QPushButton("Fit baseline")
+        self._fit_baseline_btn.clicked.connect(self.baseline_fit_requested.emit)
+        fit_row.addWidget(self._fit_baseline_btn)
+        outer.addLayout(fit_row)
         return group
 
     def _build_peaks_group(self) -> QGroupBox:
-        """Peak controls: add/remove Gaussian/Lorentzian peaks + Fit peaks."""
+        """Peak controls: add/remove Gaussian/Lorentzian peaks + Fit peaks.
+
+        The buttons are wrapped to fit the ~360px inspector deck (the analysis
+        area scrolls vertically only, so an over-wide row clips off the right
+        edge unreachably — test_rf_fit_row_reachable; mirrors ``_build_rf_group``).
+        A single row of all three add/remove buttons plus "Fit peaks" needs
+        ~536px, and even the three add/remove buttons alone need ~390px, so the
+        add pair and "− peak" sit on separate rows and "Fit peaks" gets its own
+        row beneath the table.
+        """
         group, outer = self._collapsible_group("Peaks")
 
-        row = QHBoxLayout()
+        add_row = QHBoxLayout()
         add_g = QPushButton("+ Gaussian")
         add_g.clicked.connect(lambda: self._add_peak("Gaussian"))
         add_l = QPushButton("+ Lorentzian")
         add_l.clicked.connect(lambda: self._add_peak("Lorentzian"))
+        add_row.addWidget(add_g)
+        add_row.addWidget(add_l)
+        add_row.addStretch()
+        outer.addLayout(add_row)
+
+        remove_row = QHBoxLayout()
         remove_peak = QPushButton("− peak")
         remove_peak.clicked.connect(self._remove_peak)
-        row.addWidget(add_g)
-        row.addWidget(add_l)
-        row.addWidget(remove_peak)
-        row.addStretch()
-        self._fit_peaks_btn = QPushButton("Fit peaks")
-        self._fit_peaks_btn.clicked.connect(self.peaks_fit_requested.emit)
-        row.addWidget(self._fit_peaks_btn)
-        outer.addLayout(row)
+        remove_row.addWidget(remove_peak)
+        remove_row.addStretch()
+        outer.addLayout(remove_row)
 
         self._peaks_table = QTableWidget(0, 4)
         self._peaks_table.setHorizontalHeaderLabels(["Type", "B0 (G)", "Width (G)", "Amp (%)"])
@@ -322,6 +344,13 @@ class ALCScanView(QWidget):
         self._peaks_results.setWordWrap(True)
         self._peaks_results.setStyleSheet(f"color: {tokens.ACCENT};")
         outer.addWidget(self._peaks_results)
+
+        fit_row = QHBoxLayout()
+        fit_row.addStretch()
+        self._fit_peaks_btn = QPushButton("Fit peaks")
+        self._fit_peaks_btn.clicked.connect(self.peaks_fit_requested.emit)
+        fit_row.addWidget(self._fit_peaks_btn)
+        outer.addLayout(fit_row)
         return group
 
     def _build_rf_group(self) -> QGroupBox:
