@@ -38,7 +38,15 @@ import numpy as np
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.transform.grouping import good_frames
-from asymmetry.core.utils.constants import PeriodMode
+from asymmetry.core.transform.integral import (
+    _X_LABELS,
+    FieldScan,
+    FieldScanPoint,
+    _excluded_run_number,
+    _order_value,
+    integrate_curve,
+)
+from asymmetry.core.utils.constants import ORDER_KEYS, PeriodMode
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from numpy.typing import NDArray
@@ -48,6 +56,7 @@ __all__ = [
     "GREEN_INDEX",
     "PERIOD_MAPPING_TARGETS",
     "PeriodMode",
+    "build_rf_difference_scan",
     "combine_mapped_periods",
     "combine_period_asymmetry",
     "normalise_period_mapping",
@@ -573,4 +582,164 @@ def combine_mapped_periods(
         error=np.asarray(reference.error, dtype=np.float64).copy(),
         metadata=metadata,
         run=run,
+    )
+
+
+# --- RF (Green − Red) field-difference scan -----------------------------------
+
+#: RF combination modes accepted by :func:`build_rf_difference_scan` (the WiMDA
+#: RF-µSR observable is ``Green − Red``; ``Green + Red`` is offered for symmetry).
+_RF_DIFFERENCE_MODES = (str(PeriodMode.GREEN_MINUS_RED), str(PeriodMode.GREEN_PLUS_RED))
+
+
+def _resolve_run_for_rf(item: MuonDataset | Run) -> Run:
+    """Return the :class:`Run` backing a loaded dataset or run.
+
+    Unlike :func:`asymmetry.core.transform.integral._resolve_run` (which needs
+    histograms), the RF scan reads the ``period_reduced`` cache, so the error
+    message names that instead.
+    """
+    if isinstance(item, Run):
+        return item
+    if isinstance(item, MuonDataset):
+        if item.run is None:
+            raise ValueError("MuonDataset has no source run; RF scan needs per-period data.")
+        return item.run
+    raise TypeError(f"Expected a MuonDataset or Run, got {type(item).__name__}")
+
+
+def _red_green_reduced(
+    run: Run,
+) -> (
+    tuple[
+        tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]],
+        tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]],
+    ]
+    | None
+):
+    """Return the red and green reduced ``(time, asym, err)`` curves, or ``None``.
+
+    Reads the loader's ``period_reduced`` cache (percent-scale asymmetry,
+    ``red = period 1``, ``green = period 2`` — see this module's period
+    conventions). Returns ``None`` when ``run`` is not a two-period (red/green)
+    run, so the caller can exclude it with a reason rather than crashing.
+    """
+    grouping = run.grouping if isinstance(run.grouping, dict) else {}
+    reduced = grouping.get("period_reduced")
+    if not (isinstance(reduced, list) and len(reduced) >= 2):
+        return None
+    red = reduced[RED_INDEX]
+    green = reduced[GREEN_INDEX]
+    if not (isinstance(red, tuple) and isinstance(green, tuple)):
+        return None
+    if len(red) != 3 or len(green) != 3:
+        return None
+    return red, green
+
+
+def build_rf_difference_scan(
+    runs: object,
+    *,
+    t_min: float | None = None,
+    t_max: float | None = None,
+    mode: PeriodMode | str = PeriodMode.GREEN_MINUS_RED,
+    order_key: str = "field",
+) -> FieldScan:
+    """Assemble an RF-µSR period-difference integral-asymmetry field scan.
+
+    This is the RF-resonance analogue of
+    :func:`asymmetry.core.transform.build_field_scan`. For each run it forms the
+    **(Green − Red)** time-domain asymmetry from the two acquisition periods
+    (Red = RF-on = period 1, Green = RF-off = period 2) via
+    :func:`combine_period_asymmetry`, time-integrates it over ``[t_min, t_max]``
+    with :func:`asymmetry.core.transform.integrate_curve`, and collects one value
+    per run ordered by *order_key* (the swept static field). The result is the
+    W-shaped double dip that :class:`RFResonanceMuP` fits for ``A_µ`` and ``A_p``.
+
+    Parameters
+    ----------
+    runs
+        Iterable of loaded :class:`MuonDataset` or :class:`Run` objects. Each must
+        be a two-period (red/green) run; single-period runs are skipped and listed
+        in :attr:`FieldScan.excluded`.
+    t_min, t_max
+        Inclusive integration window in μs. ``None`` integrates the whole curve.
+    mode
+        ``GREEN_MINUS_RED`` (default, the RF-µSR observable) or ``GREEN_PLUS_RED``.
+    order_key
+        ``"field"`` (default), ``"temperature"`` or ``"run"`` — the x-axis the
+        points are ordered by.
+
+    Returns
+    -------
+    FieldScan
+        Sorted parallel arrays plus the list of excluded runs. ``value``/``error``
+        are **fractional** (the percent ``period_reduced`` curves divided by 100),
+        matching :func:`build_field_scan`'s convention so the same display/fit
+        path applies.
+    """
+    mode_key = str(mode)
+    if mode_key not in _RF_DIFFERENCE_MODES:
+        raise ValueError(f"mode must be PeriodMode.GREEN_MINUS_RED or GREEN_PLUS_RED, got {mode!r}")
+    if order_key not in ORDER_KEYS:
+        raise ValueError(f"order_key must be one of {ORDER_KEYS}, got {order_key!r}")
+
+    points: list[FieldScanPoint] = []
+    excluded: list[tuple[int, str]] = []
+
+    for item in runs:
+        try:
+            run = _resolve_run_for_rf(item)
+        except (TypeError, ValueError) as exc:
+            excluded.append((_excluded_run_number(item), str(exc)))
+            continue
+        run_number = int(run.run_number)
+
+        rg = _red_green_reduced(run)
+        if rg is None:
+            excluded.append((run_number, "not a two-period (red/green) run"))
+            continue
+        (red_t, red_a, red_e), (green_t, green_a, green_e) = rg
+
+        time, diff, err = combine_period_asymmetry(
+            red_t, red_a, red_e, green_t, green_a, green_e, mode_key
+        )
+        if time.size == 0:
+            excluded.append((run_number, "red/green spectra do not overlap"))
+            continue
+
+        x_value = _order_value(run, order_key)
+        if x_value is None:
+            excluded.append((run_number, f"no {order_key} value"))
+            continue
+
+        try:
+            value, error = integrate_curve(time, diff, err, t_min=t_min, t_max=t_max)
+        except ValueError as exc:
+            excluded.append((run_number, str(exc)))
+            continue
+
+        # period_reduced is percent-scale; divide by 100 to return the fractional
+        # FieldScan convention build_field_scan uses (the ALC display path ×100s).
+        points.append(
+            FieldScanPoint(
+                run_number=run_number,
+                x=x_value,
+                value=float(value) / 100.0,
+                error=float(error) / 100.0,
+            )
+        )
+
+    points.sort(key=lambda p: (p.x, p.run_number))
+    label = "Green − Red" if mode_key == str(PeriodMode.GREEN_MINUS_RED) else "Green + Red"
+    return FieldScan(
+        x=np.array([p.x for p in points], dtype=np.float64),
+        value=np.array([p.value for p in points], dtype=np.float64),
+        error=np.array([p.error for p in points], dtype=np.float64),
+        run_numbers=[p.run_number for p in points],
+        order_key=order_key,
+        method="integral",
+        x_label=_X_LABELS[order_key],
+        y_label=f"Integral asymmetry ({label})",
+        excluded=excluded,
     )

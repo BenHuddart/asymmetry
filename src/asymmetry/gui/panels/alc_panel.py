@@ -98,12 +98,24 @@ class ALCFitPanel(QWidget):
         self._min_spin.editingFinished.connect(self._on_spin_committed)
         self._max_spin.editingFinished.connect(self._on_spin_committed)
 
+        self._rf_difference_check = QCheckBox("RF resonance (Green − Red)")
+        self._rf_difference_check.setToolTip(
+            "Build the RF-µSR observable: integrate the (Green − Red) period "
+            "difference per run (Green = RF-off, Red = RF-on), giving the "
+            "resonance curve vs field. Requires two-period (red/green) runs."
+        )
+        layout.addWidget(self._rf_difference_check)
+
         self._build_btn = QPushButton("Build Scan")
         self._build_btn.setStyleSheet(build_primary_button_qss())
         self._build_btn.clicked.connect(self.build_requested.emit)
         layout.addWidget(self._build_btn)
 
         layout.addStretch()
+
+    def rf_difference_enabled(self) -> bool:
+        """Return True when the scan should be built as a (Green − Red) RF scan."""
+        return self._rf_difference_check.isChecked()
 
     @staticmethod
     def _make_time_spin() -> QDoubleSpinBox:
@@ -152,6 +164,8 @@ class ALCScanView(QWidget):
     baseline_fit_requested = Signal()
     #: Emitted when the user requests a peak fit (Fit peaks button).
     peaks_fit_requested = Signal()
+    #: Emitted when the user requests an RF-resonance fit (Fit RF resonance button).
+    rf_fit_requested = Signal()
     #: Emitted when a region edit/drag invalidates the baseline-corrected scan.
     baseline_invalidated = Signal()
 
@@ -216,6 +230,7 @@ class ALCScanView(QWidget):
         analysis_layout.setContentsMargins(0, 0, 0, 0)
         analysis_layout.addWidget(self._build_baseline_group())
         analysis_layout.addWidget(self._build_peaks_group())
+        analysis_layout.addWidget(self._build_rf_group())
         analysis_layout.addStretch(0)
         self._analysis_scroll = QScrollArea()
         self._analysis_scroll.setWidgetResizable(True)
@@ -308,6 +323,76 @@ class ALCScanView(QWidget):
         outer.addWidget(self._peaks_results)
         return group
 
+    def _build_rf_group(self) -> QGroupBox:
+        """RF-resonance fit: exact muon+proton model → A_µ, A_p (collapsed by default).
+
+        Fits the (Green − Red) field scan with the ``RFResonanceMuP`` component:
+        ν_RF is a known acquisition constant (seeded 218.5 MHz, held fixed), and
+        A_µ / A_p seed the resonance position and splitting and are read off the
+        fit. The amplitudes/widths/background are seeded from the data by the core
+        helper, so only these three physics inputs are exposed here.
+        """
+        group, outer = self._collapsible_group("RF resonance (A_µ, A_p)")
+        group.setChecked(False)  # advanced; collapsed until needed
+
+        seeds_row = QHBoxLayout()
+        seeds_row.addWidget(QLabel("ν_RF:"))
+        self._rf_nu_spin = self._make_mhz_spin(218.5)
+        self._rf_nu_spin.setToolTip("RF frequency (MHz); held fixed during the fit.")
+        seeds_row.addWidget(self._rf_nu_spin)
+        seeds_row.addWidget(QLabel("A_µ₀:"))
+        self._rf_a_mu_spin = self._make_mhz_spin(515.0)
+        self._rf_a_mu_spin.setToolTip("Starting guess for the muon hyperfine coupling A_µ (MHz).")
+        seeds_row.addWidget(self._rf_a_mu_spin)
+        seeds_row.addWidget(QLabel("A_p₀:"))
+        self._rf_a_p_spin = self._make_mhz_spin(124.0)
+        self._rf_a_p_spin.setToolTip("Starting guess for the proton hyperfine coupling A_p (MHz).")
+        seeds_row.addWidget(self._rf_a_p_spin)
+        seeds_row.addWidget(QLabel("MHz"))
+        seeds_row.addStretch()
+        outer.addLayout(seeds_row)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        self._fit_rf_btn = QPushButton("Fit RF resonance")
+        self._fit_rf_btn.clicked.connect(self.rf_fit_requested.emit)
+        btn_row.addWidget(self._fit_rf_btn)
+        outer.addLayout(btn_row)
+
+        self._rf_results = QLabel("")
+        self._rf_results.setWordWrap(True)
+        self._rf_results.setStyleSheet(f"color: {tokens.ACCENT};")
+        outer.addWidget(self._rf_results)
+        return group
+
+    @staticmethod
+    def _make_mhz_spin(default: float) -> QDoubleSpinBox:
+        """A compact MHz spinbox for the RF seed inputs."""
+        spin = QDoubleSpinBox()
+        spin.setDecimals(2)
+        spin.setRange(0.0, 100000.0)
+        spin.setSingleStep(1.0)
+        spin.setValue(float(default))
+        spin.setMinimumWidth(80)
+        spin.setFont(mono_font(11.0))
+        return spin
+
+    def rf_nu(self) -> float:
+        """Return the user's RF frequency ν_RF (MHz)."""
+        return float(self._rf_nu_spin.value())
+
+    def rf_a_mu_seed(self) -> float:
+        """Return the starting guess for A_µ (MHz)."""
+        return float(self._rf_a_mu_spin.value())
+
+    def rf_a_p_seed(self) -> float:
+        """Return the starting guess for A_p (MHz)."""
+        return float(self._rf_a_p_spin.value())
+
+    def set_rf_results(self, summary: str) -> None:
+        """Show the RF-resonance fit read-out (A_µ / A_p)."""
+        self._rf_results.setText(summary)
+
     #: Derivative-checkbox label per x-axis (the y-quantity is dA/dx).
     _DERIV_LABELS = {"field": "dA/dB", "temperature": "dA/dT", "run": "dA/d(run)"}
 
@@ -329,6 +414,7 @@ class ALCScanView(QWidget):
         self._baseline_curve = None
         self._fit_curve = None
         self._peaks_results.setText("")
+        self._rf_results.setText("")
 
     # --- persistence ---------------------------------------------------------
 
@@ -352,6 +438,9 @@ class ALCScanView(QWidget):
             "peaks": peaks,
             "baseline_fitted": self._baseline_curve is not None,
             "peaks_fitted": self._fit_curve is not None,
+            "rf_nu": self.rf_nu(),
+            "rf_a_mu": self.rf_a_mu_seed(),
+            "rf_a_p": self.rf_a_p_seed(),
         }
 
     def restore_analysis_state(self, state: dict) -> None:
@@ -370,6 +459,17 @@ class ALCScanView(QWidget):
         model_idx = self._baseline_model_combo.findText(str(state.get("baseline_model", "Linear")))
         if model_idx >= 0:
             self._baseline_model_combo.setCurrentIndex(model_idx)
+
+        for key, spin in (
+            ("rf_nu", self._rf_nu_spin),
+            ("rf_a_mu", self._rf_a_mu_spin),
+            ("rf_a_p", self._rf_a_p_spin),
+        ):
+            if key in state:
+                try:
+                    spin.setValue(float(state[key]))
+                except (TypeError, ValueError):
+                    pass
 
         with QSignalBlocker(self._regions_table):
             self._regions_table.setRowCount(0)
@@ -714,6 +814,7 @@ class ALCScanView(QWidget):
             self._regions_table.setRowCount(0)
             self._peaks_table.setRowCount(0)
         self._peaks_results.setText("")
+        self._rf_results.setText("")
         self._ax.clear()
         self._ax.text(
             0.5,
@@ -754,6 +855,7 @@ class ALCScanView(QWidget):
         self._baseline_curve = None
         self._fit_curve = None
         self._peaks_results.setText("")
+        self._rf_results.setText("")
         self._render_plot()
         # Keep the data-table dialog in sync if it is open.
         if self._data_dialog is not None and self._data_dialog.isVisible():

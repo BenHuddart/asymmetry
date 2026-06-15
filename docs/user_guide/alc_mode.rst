@@ -289,43 +289,53 @@ To split a multi-period *file* into its periods first, select each period
 upstream with :func:`asymmetry.core.io.periods.select_period`
 (period extraction lives in ``io``; the scan transform stays free of it).
 
-Worked example — the benzene RF-µSR resonance (DEVA runs 56426–56462, Red =
-RF-on, Green = RF-off). Reduce each period separately and form the Green − Red
-difference, then fit the muon+proton resonance model:
+RF-µSR resonance (Green − Red): GUI and API
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+RF-µSR resonance is the **(Green − Red)** integral-asymmetry observable of a
+muoniated radical (Green = RF-off, Red = RF-on, recorded as two periods of each
+run): a W-shaped double dip whose two resonance fields give the muon
+(:math:`A_\mu`) and proton (:math:`A_p`) hyperfine couplings from one field scan.
+It has first-class support on the integral-scan path:
+
+* In ALC mode, tick **RF resonance (Green − Red)** in the build panel before
+  **Build Scan**. Each two-period run is reduced to its Green − Red period
+  difference and integrated over the window — no hand-assembly of separate
+  red/green scans.
+* In the scan view, open the **RF resonance (A_µ, A_p)** section, set
+  **ν_RF** (the RF frequency, held fixed) and the **A_µ₀ / A_p₀** starting
+  guesses, and press **Fit RF resonance**. The fit uses the exact muon + electron
+  + proton spin Hamiltonian (``RFResonanceMuP``) and reports :math:`A_\mu`
+  (mean dip position) and :math:`A_p` (dip splitting) with uncertainties.
+
+The same two steps from a script use
+:func:`~asymmetry.core.io.periods.build_rf_difference_scan` (the Green − Red
+scan builder) and :func:`~asymmetry.core.fitting.fit_rf_resonance` (which seeds
+the amplitudes/widths/background from the data and holds ν_RF fixed) — worked
+example: the benzene scan, DEVA runs 56426–56462:
 
 .. code-block:: python
 
-   import numpy as np
    from asymmetry.core.io import load
-   from asymmetry.core.io.periods import select_period
-   from asymmetry.core.transform import build_field_scan, FieldScan
-   from asymmetry.core.fitting import fit_scan_model
+   from asymmetry.core.io.periods import build_rf_difference_scan
+   from asymmetry.core.fitting import fit_rf_resonance
 
-   combined = [load(f) for f in rf_files]          # 2-period (red/green) files
-   red = [select_period(d, "red") for d in combined]    # RF on
-   green = [select_period(d, "green") for d in combined]  # RF off
+   combined = [load(f) for f in rf_files]  # 2-period (red/green) files
+   # Green − Red integral scan vs field; non-two-period runs land in `excluded`.
+   scan = build_rf_difference_scan(combined, order_key="field", t_min=0.0, t_max=1.0)
+   result = fit_rf_resonance(scan, nu_rf=218.5)  # A_µ₀/A_p₀ default to 515/124
+   # A_mu ~ 516 MHz, A_p ~ 124 MHz (ground truth 514.8 / 124.6); resonances ~775/865 G.
 
-   sr = build_field_scan(red, order_key="field", t_min=0.1, t_max=8.0)
-   sg = build_field_scan(green, order_key="field", t_min=0.1, t_max=8.0)
-   # The two scans are each sorted independently and may drop runs into
-   # ``excluded``; subtracting by index is only valid when they stayed aligned.
-   assert sr.run_numbers == sg.run_numbers, (sr.excluded, sg.excluded)
-   diff = FieldScan(                                # Green - Red (the RF observable)
-       x=sr.x.copy(), value=sg.value - sr.value,
-       error=np.hypot(sr.error, sg.error), run_numbers=list(sr.run_numbers),
-       order_key="field", method="integral", x_label="B (G)",
-   )
-   result = fit_scan_model(
-       diff, "RFResonanceMuP",
-       initial={"A_mu": 515.0, "A_p": 124.0, "nu_RF": 218.5,
-                "ampl1": 0.017, "wid1": 20.0, "ampl2": 0.017, "wid2": 20.0, "BG": 0.002},
-   )
-   # A_mu ~ 515.5 MHz, A_p ~ 124.9 MHz (ground truth 514.8 / 124.6).
+The two RF resonances sit at ~775 G and ~865 G (splitting ~90 G), recovering the
+literature ``A_µ`` and ``A_p``. Because the difference is taken **within** each
+run, mixing the RF-on and RF-off periods into one ordinary scan instead would
+shift the apparent resonance positions and badly bias the fitted ``A_p``.
 
-Period-separated reduction places the two RF resonances at ~775 G and ~865 G
-(splitting ~90 G), recovering the literature ``A_µ`` and ``A_p``. Mixing the
-RF-on and RF-off periods into one scan instead shifts the apparent resonance
-positions and badly biases the fitted ``A_p``.
+The lower-level route — reducing each period separately with
+:func:`~asymmetry.core.io.periods.select_period` and subtracting two
+``build_field_scan`` results — is still available when you need the individual
+red and green scans; ``build_rf_difference_scan`` is the one-call equivalent for
+the difference observable.
 
 When the periods appear as *separate runs or datasets* in the series (rather
 than periods of one file), ``filter`` selects one directly — for example

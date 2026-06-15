@@ -48,8 +48,14 @@ __all__ = [
     "as_composite_model",
     "fit_scan_model",
     "fit_scan_baseline",
+    "fit_rf_resonance",
+    "rf_resonance_seeds",
     "ScanBaselineResult",
 ]
+
+#: Component name of the RF-µSR muon+proton resonance model (registered field-scope
+#: in :mod:`asymmetry.core.fitting.parameter_models`).
+RF_RESONANCE_COMPONENT = "RFResonanceMuP"
 
 
 def as_composite_model(
@@ -130,6 +136,87 @@ def fit_scan_model(
         x_min=x_min,
         x_max=x_max,
         method=method,
+    )
+
+
+def rf_resonance_seeds(
+    scan: FieldScan,
+    *,
+    nu_rf: float,
+    a_mu: float = 515.0,
+    a_p: float = 124.0,
+) -> dict[str, float]:
+    """Seed values for an :data:`RF_RESONANCE_COMPONENT` fit of *scan*.
+
+    The two resonance fields ``B1, B2`` are derived inside the model from
+    ``A_µ``/``A_p``/``ν_RF``, so those three seed the *position* and *splitting*
+    (defaults 515/124 MHz put the dips near the benzene 866/772 G). The peak
+    amplitudes, widths and background are seeded **from the data** because the
+    registered defaults assume a paper-graded dip depth that an integrated scan
+    does not have: ``BG`` is the median value, ``ampl1 = ampl2`` is the signed
+    largest excursion from it (so the sign follows whether the observable shows
+    peaks or dips), and the widths are a small fraction of the field span. This
+    makes the fit robust to the scan's units (fractional vs percent) and depth.
+    """
+    value = np.asarray(scan.value, dtype=np.float64)
+    x = np.asarray(scan.x, dtype=np.float64)
+    finite = np.isfinite(value)
+    if np.any(finite):
+        bg = float(np.median(value[finite]))
+        deviations = value[finite] - bg
+        ampl = float(deviations[int(np.argmax(np.abs(deviations)))])
+    else:
+        bg, ampl = 0.0, 0.0
+    if ampl == 0.0:
+        ampl = 1.0
+    span = float(x.max() - x.min()) if x.size >= 2 else 0.0
+    width = span / 20.0 if span > 0.0 else 25.0
+    return {
+        "A_mu": float(a_mu),
+        "A_p": float(a_p),
+        "nu_RF": float(nu_rf),
+        "ampl1": ampl,
+        "wid1": width,
+        "ampl2": ampl,
+        "wid2": width,
+        "BG": bg,
+    }
+
+
+def fit_rf_resonance(
+    scan: FieldScan,
+    *,
+    nu_rf: float,
+    a_mu: float = 515.0,
+    a_p: float = 124.0,
+    fix_nu_rf: bool = True,
+    x_min: float | None = None,
+    x_max: float | None = None,
+    method: str = "migrad",
+) -> ParameterModelFitResult:
+    """Fit the RF-µSR muon+proton resonance model to an RF field scan.
+
+    Wraps :func:`fit_scan_model` for the :data:`RF_RESONANCE_COMPONENT` model so
+    the GUI and scripts share one seeding + fixing rule. The scan is the
+    **(Green − Red)** integral asymmetry vs field built by
+    :func:`asymmetry.core.io.periods.build_rf_difference_scan`. ``ν_RF`` is a
+    known acquisition constant and is **held fixed by default**; ``A_µ`` (mean dip
+    position) and ``A_p`` (dip splitting) are the couplings read off the result —
+    **check ``result.success`` first**. Seeds come from :func:`rf_resonance_seeds`.
+    """
+    composite = as_composite_model(RF_RESONANCE_COMPONENT)
+    seeds = rf_resonance_seeds(scan, nu_rf=nu_rf, a_mu=a_mu, a_p=a_p)
+    parameters = ParameterSet()
+    for name in composite.param_names:
+        parameters.add(
+            Parameter(
+                name=name,
+                value=float(seeds.get(name, composite.param_defaults.get(name, 0.0))),
+                fixed=(name == "nu_RF" and fix_nu_rf),
+            )
+        )
+    return fit_scan_model(
+        scan, composite, parameters=parameters, x_min=x_min, x_max=x_max, method=method
     )
 
 

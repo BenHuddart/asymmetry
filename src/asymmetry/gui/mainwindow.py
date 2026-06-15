@@ -61,6 +61,7 @@ from asymmetry.core.fitting import (
     build_grouped_time_domain_datasets,
     enrich_summary_provenance,
     fit_result_summary,
+    fit_rf_resonance,
     fit_scan_baseline,
     fit_scan_model,
     grouped_time_domain_available,
@@ -90,6 +91,7 @@ from asymmetry.core.instrument import (
 )
 from asymmetry.core.io import resolve_background_reference
 from asymmetry.core.io.periods import (
+    build_rf_difference_scan,
     combine_mapped_periods,
     combine_period_asymmetry,
     select_period_histograms,
@@ -526,6 +528,10 @@ class MainWindow(QMainWindow):
         self._alc_scan_points: list[dict] = []
         #: Project-model id of the current ALC scan series (replaced on rebuild).
         self._alc_scan_series_id: str | None = None
+        #: True when the current scan is an RF (Green − Red) difference scan.
+        self._alc_rf_mode = False
+        #: True once an RF-resonance fit has been applied to the current scan.
+        self._alc_rf_fitted = False
         #: Baseline-corrected scan from the last baseline fit (basis for peaks).
         self._alc_corrected_scan: FieldScan | None = None
         #: The fitted baseline curve (display units), for the total-fit overlay.
@@ -1540,6 +1546,7 @@ class MainWindow(QMainWindow):
         self._alc_scan_view.options_changed.connect(self._render_alc_scan)
         self._alc_scan_view.baseline_fit_requested.connect(self._on_fit_baseline)
         self._alc_scan_view.peaks_fit_requested.connect(self._on_fit_peaks)
+        self._alc_scan_view.rf_fit_requested.connect(self._on_fit_rf)
         self._alc_scan_view.baseline_invalidated.connect(self._on_alc_baseline_invalidated)
         if hasattr(self._fit_panel, "grouped_fit_completed"):
             self._fit_panel.grouped_fit_completed.connect(self._on_grouped_fit_completed)
@@ -8383,21 +8390,31 @@ class MainWindow(QMainWindow):
         if hasattr(self._plot_panel, "get_fit_range"):
             t_min, t_max = self._plot_panel.get_fit_range()
 
+        rf_mode = self._alc_fit_panel.rf_difference_enabled()
         try:
             # order_key="run" includes every integrable run; the scan view picks
             # the displayed x-axis (field / temperature / run). A run is only
-            # dropped here if it cannot be integrated at all (no grouping).
-            scan = build_field_scan(
-                runs, t_min=t_min, t_max=t_max, method="integral", order_key="run"
-            )
+            # dropped here if it cannot be integrated at all (no grouping). In RF
+            # mode each run is reduced to its (Green − Red) period difference
+            # instead of a single integral (non-two-period runs are excluded).
+            if rf_mode:
+                scan = build_rf_difference_scan(runs, t_min=t_min, t_max=t_max, order_key="run")
+            else:
+                scan = build_field_scan(
+                    runs, t_min=t_min, t_max=t_max, method="integral", order_key="run"
+                )
         except (ValueError, TypeError) as exc:
             QMessageBox.warning(self, "Integral scan", f"Could not build the scan: {exc}")
             return
         if scan.n_points < 2:
+            # A failed rebuild leaves the previous scan on screen; do NOT update
+            # _alc_rf_mode here, or it would desync from the still-displayed scan
+            # and let an RF fit run against a stale plain-integral observable.
             QMessageBox.warning(
                 self, "Integral scan", "The scan has too few usable points to plot."
             )
             return
+        self._alc_rf_mode = rf_mode
 
         if scan.excluded:
             dropped = ", ".join(f"{run} ({reason})" for run, reason in scan.excluded)
@@ -8426,10 +8443,11 @@ class MainWindow(QMainWindow):
             }
             for run_number, value, error in zip(scan.run_numbers, scan.value, scan.error)
         }
+        scan_kind = "RF scan" if rf_mode else "Integral scan"
         series = FitSeries(
             f"scan-{self._next_scan_index}",
             rep_type,
-            label=f"Integral scan {self._next_scan_index}",
+            label=f"{scan_kind} {self._next_scan_index}",
             member_run_numbers=list(scan.run_numbers),
             order_key="run",  # built/sorted by run; the view picks the display axis
             canonical_model=None,
@@ -8465,9 +8483,10 @@ class MainWindow(QMainWindow):
         view. Re-invoked whenever the scan or its view options change.
         """
         # Any re-render (rebuild or x-axis/derivative change) invalidates a
-        # previously-fitted baseline (it was tied to the old axis).
+        # previously-fitted baseline (it was tied to the old axis) and the RF fit.
         self._alc_corrected_scan = None
         self._alc_baseline_curve = None
+        self._alc_rf_fitted = False
         if not self._alc_scan_points:
             self._alc_scan_view.clear()
             return
@@ -8571,6 +8590,9 @@ class MainWindow(QMainWindow):
             return
         self._alc_corrected_scan = result.corrected
         self._alc_baseline_curve = result.baseline
+        # Baseline/peaks and the RF fit share one overlay slot; a baseline fit
+        # supersedes any RF fit so the persisted "rf_fitted" flag stays accurate.
+        self._alc_rf_fitted = False
         self._alc_scan_view.show_baseline_overlay(result.baseline)
         self._log_panel.log(f"Fitted {model} baseline over {len(regions)} region(s).")
 
@@ -8641,9 +8663,70 @@ class MainWindow(QMainWindow):
             baseline = np.asarray(self._alc_baseline_curve, dtype=float)
             if baseline.shape == peak_curve.shape:
                 total = baseline + peak_curve
+        self._alc_rf_fitted = False  # a peaks fit supersedes any RF fit overlay
         self._alc_scan_view.set_peak_results(results, "\n".join(summary_lines))
         self._alc_scan_view.show_fit_overlay(total)
         self._log_panel.log(f"Fitted {len(specs)} peak(s): " + "; ".join(summary_lines))
+
+    def _on_fit_rf(self) -> None:
+        """Fit the RF muon+proton resonance model to the (Green − Red) field scan.
+
+        Fits ``RFResonanceMuP`` directly on the field-axis scan (it carries its own
+        background, so no separate baseline step is needed), with ν_RF held fixed,
+        and reads off the couplings A_µ (mean dip position) and A_p (splitting).
+        """
+        if not self._alc_rf_mode:
+            self._alc_notify(
+                "RF resonance",
+                "Enable 'RF resonance (Green − Red)' and Build Scan first — the RF "
+                "model fits the period-difference observable.",
+            )
+            return
+        if self._alc_scan_view.derivative_enabled():
+            self._alc_notify("RF resonance", "Turn off dA/dB to fit the RF resonance.")
+            return
+        if self._alc_scan_view.x_key() != "field":
+            self._alc_notify(
+                "RF resonance", "Switch the x-axis to B (G) — the RF model fits vs field."
+            )
+            return
+        scan = self._alc_display_scan("field")
+        if scan is None:
+            self._alc_notify("RF resonance", "Build a scan with at least two points first.")
+            return
+        try:
+            fit = fit_rf_resonance(
+                scan,
+                nu_rf=self._alc_scan_view.rf_nu(),
+                a_mu=self._alc_scan_view.rf_a_mu_seed(),
+                a_p=self._alc_scan_view.rf_a_p_seed(),
+            )
+        except (ValueError, TypeError) as exc:
+            self._alc_notify("RF resonance", f"Could not fit: {exc}", warning=True)
+            return
+        if not fit.success:
+            self._alc_notify(
+                "RF resonance", f"RF fit did not converge: {fit.message}", warning=True
+            )
+            return
+
+        a_mu = fit.parameters["A_mu"].value
+        a_p = fit.parameters["A_p"].value
+        a_mu_err = fit.uncertainties.get("A_mu", 0.0)
+        a_p_err = fit.uncertainties.get("A_p", 0.0)
+        summary = (
+            f"A_µ = {a_mu:.2f} ± {a_mu_err:.2f} MHz, "
+            f"A_p = {a_p:.2f} ± {a_p_err:.2f} MHz "
+            f"(χ²/dof = {fit.reduced_chi_squared:.2g})"
+        )
+        self._alc_scan_view.set_rf_results(summary)
+        self._alc_rf_fitted = True
+
+        model = as_composite_model("RFResonanceMuP")
+        fitted_values = {name: fit.parameters[name].value for name in model.param_names}
+        curve = np.asarray(model.function(scan.x, **fitted_values), dtype=float)
+        self._alc_scan_view.show_fit_overlay(curve)
+        self._log_panel.log(f"Fitted RF resonance: {summary}")
 
     def _active_grouped_state(self) -> dict:
         """Return the grouped-fit classification from the active grouped surface.
@@ -10508,6 +10591,8 @@ class MainWindow(QMainWindow):
         extra = self._alc_scan_view.analysis_state()
         extra["kind"] = "alc_scan"
         extra["mode_active"] = self._alc_mode
+        extra["rf_mode"] = self._alc_rf_mode
+        extra["rf_fitted"] = self._alc_rf_fitted
         batch.extra = extra
 
     def _restore_alc_scan(self) -> None:
@@ -10525,6 +10610,7 @@ class MainWindow(QMainWindow):
         if series is None:
             return
         self._alc_scan_series_id = series.batch_id
+        self._alc_rf_mode = bool(series.extra.get("rf_mode", False))
         self._alc_scan_points = self._alc_points_from_series(series)
         if not self._alc_scan_points:
             return
@@ -10534,7 +10620,10 @@ class MainWindow(QMainWindow):
         # (deterministic: same data + inputs). Dialogs are silenced via the flag.
         self._alc_loading = True
         try:
-            if series.extra.get("baseline_fitted"):
+            if self._alc_rf_mode and series.extra.get("rf_fitted"):
+                # RF scans use the RF-resonance fit instead of baseline + peaks.
+                self._on_fit_rf()
+            elif series.extra.get("baseline_fitted"):
                 self._on_fit_baseline()
                 if self._alc_corrected_scan is None:
                     self._log_panel.log(
