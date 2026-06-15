@@ -47,14 +47,33 @@ def _resource_file_path(filename: str) -> str:
 
 
 def _load_bench_stylesheet() -> str:
-    """Read bench.qss from gui/styles/ and return its contents."""
+    """Read bench.qss from gui/styles/ and return its contents.
+
+    Tries the on-disk path first (source and editable installs), then falls
+    back to ``importlib.resources``. The fallback matters in a frozen
+    (PyInstaller) build: ``app.py`` is the entry script, so its ``__file__``
+    is relocated to the archive root rather than the ``asymmetry/gui/``
+    package tree, and the ``Path(__file__).parent`` lookup would otherwise
+    miss the bundled stylesheet — leaving the app on bare Fusion chrome.
+    """
     from pathlib import Path
 
     qss_path = Path(__file__).parent / "styles" / "bench.qss"
     try:
         return qss_path.read_text(encoding="utf-8")
     except OSError:
-        return ""
+        pass
+
+    try:
+        from importlib.resources import files
+
+        resource = files("asymmetry.gui.styles").joinpath("bench.qss")
+        if resource.is_file():
+            return resource.read_text(encoding="utf-8")
+    except (ImportError, ModuleNotFoundError, TypeError, AttributeError, OSError):
+        pass
+
+    return ""
 
 
 def _load_startup_pixmap(filename: str):
