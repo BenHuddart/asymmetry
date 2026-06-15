@@ -103,7 +103,7 @@ def _format_gle_legend_label(name: str) -> str:
     return get_param_info(name).gle
 
 
-def _format_x_label_gle(x_key: str) -> str:
+def _format_x_label_gle(x_key: str, custom_labels: dict[str, str] | None = None) -> str:
     if x_key == "field":
         return "{\\it{B}} (G)"
     if x_key == "temperature":
@@ -111,6 +111,9 @@ def _format_x_label_gle(x_key: str) -> str:
     name = _x_param_name(x_key)
     if name is not None:
         return _format_gle_label(name)
+    custom_id = _x_custom_id(x_key)
+    if custom_id is not None:
+        return str((custom_labels or {}).get(custom_id, custom_id))
     return "Run Number"
 
 
@@ -146,13 +149,16 @@ def _normalize_x_key(value: object) -> str:
     """Normalize persisted x-axis key to an internal identifier.
 
     Recognises the three reserved run-level axes (``field``/``temperature``/
-    ``run``) and the ``param:<name>`` namespace used for parameter-vs-parameter
-    trending (item 1). Anything else collapses to ``run``.
+    ``run``), the ``param:<name>`` namespace used for parameter-vs-parameter
+    trending (item 1), and the ``custom:<id>`` namespace for data-browser custom
+    columns. Anything else collapses to ``run``.
     """
     text = str(value or "").strip()
     if text in ("field", "temperature", "run"):
         return text
     if text.startswith("param:") and len(text) > len("param:"):
+        return text
+    if text.startswith("custom:") and len(text) > len("custom:"):
         return text
     return "run"
 
@@ -174,6 +180,32 @@ class _FitRow:
     errors: dict[str, float]
     combined_from: list[int] | None = None
     covariance: dict[str, dict[str, float]] | None = None
+    #: Per-run data-browser custom-column values, keyed by column id
+    #: (``custom:<hex>``). Stored as raw text — they are free-form and may be
+    #: empty or non-numeric for some runs; coercion to a float abscissa (and the
+    #: dropping of invalid points) happens lazily in :meth:`_x_value`.
+    custom_values: dict[str, str] = field(default_factory=dict)
+
+
+def _x_custom_id(x_key: str) -> str | None:
+    """Return the custom-column id for a ``custom:<id>`` x-key, else None."""
+    return x_key if isinstance(x_key, str) and x_key.startswith("custom:") else None
+
+
+def _custom_values_from_metadata(meta: object) -> dict[str, str]:
+    """Extract a dataset's custom-column values (``custom:<id>`` → text)."""
+    raw = meta.get("custom_fields") if isinstance(meta, dict) else None
+    if isinstance(raw, dict):
+        return {str(key): str(value) for key, value in raw.items()}
+    return {}
+
+
+def _custom_values_from_row_dict(entry: object) -> dict[str, str]:
+    """Extract persisted/serialised custom-column values from a row dict."""
+    raw = entry.get("custom_values") if isinstance(entry, dict) else None
+    if isinstance(raw, dict):
+        return {str(key): str(value) for key, value in raw.items()}
+    return {}
 
 
 @dataclass
@@ -227,6 +259,10 @@ class FitParametersPanel(QWidget):
         self._global_param_uncertainties: dict[str, float] = {}
         self._table_dialog: QDialog | None = None
         self._inferred_x_key = "field"
+        #: Data-browser custom columns offered as the trend x-axis, as
+        #: ``(display_label, "custom:<id>")`` pairs pushed in by the host. Their
+        #: per-run values ride on each row's ``custom_values`` (see _FitRow).
+        self._custom_x_fields: list[tuple[str, str]] = []
         self._y_controls: dict[str, _YParamControls] = {}
         self._selected_y_param_names: list[str] = []
         self._model_fits: dict[str, ParameterModelFit] = {}
@@ -520,6 +556,7 @@ class FitParametersPanel(QWidget):
                 "errors": {k: float(v) for k, v in row.errors.items()},
                 "combined_from": [int(v) for v in row.combined_from] if row.combined_from else None,
                 "covariance": self._serialize_row_covariance(row.covariance),
+                "custom_values": {k: str(v) for k, v in row.custom_values.items()},
             }
             for row in self._rows
         ]
@@ -603,6 +640,7 @@ class FitParametersPanel(QWidget):
                             if entry.get("combined_from")
                             else None,
                             covariance=self._deserialize_row_covariance(entry.get("covariance")),
+                            custom_values=_custom_values_from_row_dict(entry),
                         )
                     )
                 except Exception:
@@ -771,6 +809,7 @@ class FitParametersPanel(QWidget):
                     if meta.get("combined_from")
                     else None,
                     covariance=self._fit_result_covariance_map(fit_result),
+                    custom_values=_custom_values_from_metadata(meta),
                 )
             )
 
@@ -889,6 +928,7 @@ class FitParametersPanel(QWidget):
                             values=dict(rd.get("values") or {}),
                             errors=dict(rd.get("errors") or {}),
                             combined_from=rd.get("combined_from"),
+                            custom_values=_custom_values_from_row_dict(rd),
                         )
                     )
                 except Exception:
@@ -1452,6 +1492,7 @@ class FitParametersPanel(QWidget):
                         if row.combined_from
                         else None,
                         "covariance": self._serialize_row_covariance(row.covariance),
+                        "custom_values": {k: str(v) for k, v in row.custom_values.items()},
                     }
                     for row in group.rows
                 ],
@@ -1518,6 +1559,7 @@ class FitParametersPanel(QWidget):
                             covariance=self._deserialize_row_covariance(
                                 row_entry.get("covariance")
                             ),
+                            custom_values=_custom_values_from_row_dict(row_entry),
                         )
                     )
                 except Exception:
@@ -1987,6 +2029,23 @@ class FitParametersPanel(QWidget):
         inferred_label = {"field": "(B)", "temperature": "(T)", "run": "(Run)"}
         self._x_auto_hint.setText(inferred_label.get(self._inferred_x_key, "(Run)"))
 
+    def _update_custom_x_skip_note(self, x_key: str, x_vals: np.ndarray) -> None:
+        """Note how many runs a custom x-axis drops (empty/non-numeric values).
+
+        Only custom columns can carry non-numeric/empty abscissae, so the note is
+        scoped to them; matplotlib already omits the NaN points, this just tells
+        the user *why* some runs are missing. Cleared when nothing is dropped.
+        """
+        if _x_custom_id(x_key) is None:
+            return
+        values = np.asarray(x_vals, dtype=float)
+        total = int(values.size)
+        dropped = int(np.count_nonzero(~np.isfinite(values))) if total else 0
+        if dropped:
+            self._x_auto_hint.setText(f"⚠ {dropped}/{total} skipped (empty/non-numeric)")
+        else:
+            self._x_auto_hint.setText("")
+
     def _rebuild_x_axis_combo(self) -> None:
         """Re-populate the X-axis combo: the fixed run-level axes plus every
         currently-trendable fitted parameter (param-vs-param trending, item 1).
@@ -2004,8 +2063,14 @@ class FitParametersPanel(QWidget):
             combo.addItem(label)
         for name in self._display_y_parameters():
             combo.addItem(_format_param_label(name), userData=f"param:{name}")
+        # Data-browser custom columns (param:<…> and custom:<…> both carry their
+        # key as item data so the selection survives label collisions / renames).
+        for label, key in self._custom_x_fields:
+            combo.addItem(label, userData=key)
         restored = False
-        if isinstance(prev_data, str) and prev_data.startswith("param:"):
+        if isinstance(prev_data, str) and (
+            prev_data.startswith("param:") or prev_data.startswith("custom:")
+        ):
             idx = combo.findData(prev_data)
             if idx >= 0:
                 combo.setCurrentIndex(idx)
@@ -2014,6 +2079,26 @@ class FitParametersPanel(QWidget):
             idx = combo.findText(prev_text)
             combo.setCurrentIndex(idx if idx >= 0 else 0)
         combo.blockSignals(False)
+
+    def set_custom_x_fields(self, fields: list[tuple[str, str]]) -> None:
+        """Set the data-browser custom columns offered as the trend x-axis.
+
+        ``fields`` is a list of ``(display_label, "custom:<id>")`` pairs. The combo
+        is rebuilt (selection preserved); if a custom column is the active x-axis,
+        the plot is refreshed so a rename or value change is reflected.
+        """
+        normalized = [(str(label), str(key)) for label, key in fields]
+        if normalized == self._custom_x_fields:
+            return
+        active_is_custom = _x_custom_id(self._effective_x_key()) is not None
+        self._custom_x_fields = normalized
+        self._rebuild_x_axis_combo()
+        if active_is_custom:
+            self._refresh_plot()
+
+    def _custom_x_labels(self) -> dict[str, str]:
+        """Map each custom x-axis key (``custom:<id>``) to its display label."""
+        return {key: label for label, key in self._custom_x_fields}
 
     def _rebuild_y_controls(self, *, preferred_selected: list[str] | None = None) -> None:
         self._y_selector_table.blockSignals(True)
@@ -3128,6 +3213,7 @@ class FitParametersPanel(QWidget):
         x_vals = np.array([self._x_value(r, x_key) for r in rows], dtype=float)
         x_err = self._x_error_array(rows, x_key)
         x_label = self._x_axis_label_mpl(x_key)
+        self._update_custom_x_skip_note(x_key, x_vals)
 
         self._figure.clear()
         plot_mode = self._plot_mode_combo.currentText()
@@ -3302,6 +3388,9 @@ class FitParametersPanel(QWidget):
         name = _x_param_name(x_key)
         if name is not None:
             return _format_plot_label(name)
+        custom_id = _x_custom_id(x_key)
+        if custom_id is not None:
+            return self._custom_x_labels().get(custom_id, custom_id)
         return {"field": "$B$ (G)", "temperature": "$T$ (K)", "run": "Run Number"}.get(
             x_key, "Run Number"
         )
@@ -3310,6 +3399,18 @@ class FitParametersPanel(QWidget):
         name = _x_param_name(x_key)
         if name is not None:
             return float(row.values.get(name, float("nan")))
+        custom_id = _x_custom_id(x_key)
+        if custom_id is not None:
+            # Free-text custom columns: coerce to a numeric abscissa, with an
+            # empty/non-numeric value becoming NaN so the point is dropped (and
+            # counted in the "N runs skipped" note) rather than plotted at 0.
+            text = str(row.custom_values.get(custom_id, "")).strip()
+            if not text:
+                return float("nan")
+            try:
+                return float(text)
+            except ValueError:
+                return float("nan")
         if x_key == "field":
             return row.field
         if x_key == "temperature":
@@ -4198,7 +4299,7 @@ class FitParametersPanel(QWidget):
         if not y_params:
             return
 
-        x_label = _format_x_label_gle(x_key)
+        x_label = _format_x_label_gle(x_key, self._custom_x_labels())
         data_file_ref = data_path.name
         x_col = self._gle_x_column(x_key)
         plot_mode = self._plot_mode_combo.currentText()

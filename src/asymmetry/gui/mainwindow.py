@@ -8093,6 +8093,17 @@ class MainWindow(QMainWindow):
             field = _coord("field")
             temperature = _coord("temperature")
 
+            # Custom data-browser column values for this member, read live from the
+            # backing dataset's metadata so an edited custom value re-plots at the
+            # right abscissa. Stored as raw text; the trend panel coerces to a
+            # numeric x and drops empty/non-numeric runs (with a note).
+            raw_custom = meta.get("custom_fields") if isinstance(meta, dict) else None
+            custom_values = (
+                {str(k): str(v) for k, v in raw_custom.items()}
+                if isinstance(raw_custom, dict)
+                else {}
+            )
+
             rows.append(
                 {
                     "run_number": member_key,
@@ -8101,6 +8112,7 @@ class MainWindow(QMainWindow):
                     "temperature": float(temperature),
                     "values": dict(summary.get("parameters", {})),
                     "errors": dict(summary.get("uncertainties", {})),
+                    "custom_values": custom_values,
                 }
             )
         return rows
@@ -9914,6 +9926,8 @@ class MainWindow(QMainWindow):
         for panel in (self._plot_panel, self._frequency_plot_panel):
             if hasattr(panel, "set_custom_label_fields"):
                 panel.set_custom_label_fields(fields)
+        if hasattr(self._fit_parameters_panel, "set_custom_x_fields"):
+            self._fit_parameters_panel.set_custom_x_fields(fields)
 
     def _update_selected_datasets(self, *_args) -> None:
         """Update the fit panel with currently selected datasets."""
