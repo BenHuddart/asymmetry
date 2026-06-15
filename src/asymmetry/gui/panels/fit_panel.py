@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import functools
+import html
 import re
 from collections.abc import Callable
 
@@ -689,6 +690,23 @@ def _fit_success_html(result) -> str:
         stats += f" · Δ‖p‖ = {result.edm:.2e}"
     stats += fit_quality_chip_html(_fit_quality_dict(result))
     return success_html("Fit converged", detail=stats)
+
+
+def _fit_warnings_html(result) -> str:
+    """Return one warning row per advisory the engine emitted during the fit.
+
+    #100/#101 emit :class:`AsymmetryScaleWarning` /
+    :class:`FixedFrequencyFieldMismatchWarning` from the engine; the engine now
+    carries their messages on ``FitResult.warnings`` so the panel can surface them
+    here (they also still reach the Python log). Returns an empty string when the
+    fit warned about nothing, so callers can append unconditionally. Messages are
+    HTML-escaped — they interpolate user/run values (field, frequency, repr'd
+    parameter names) that must not be treated as markup.
+    """
+    messages = list(getattr(result, "warnings", None) or [])
+    if not messages:
+        return ""
+    return "".join(f"<br>{warning_html('⚠ ' + html.escape(str(m)))}" for m in messages)
 
 
 _apply_param_table_style = apply_param_table_style
@@ -2151,8 +2169,9 @@ class SingleFitTab(QWidget):
         )
         dataset_unchanged = self._current_dataset is dataset
 
+        warnings_note = _fit_warnings_html(result)
         self._results_group.setStyleSheet(RESULT_BOX_SUCCESS_STYLE)
-        self._result_label.setText(_fit_success_html(result) + rrf_note)
+        self._result_label.setText(_fit_success_html(result) + rrf_note + warnings_note)
         self._result_label.setToolTip(fit_quality_tooltip(_fit_quality_dict(result)))
 
         if not (model_unchanged and dataset_unchanged):
@@ -2164,6 +2183,7 @@ class SingleFitTab(QWidget):
             self._result_label.setText(
                 _fit_success_html(result)
                 + rrf_note
+                + warnings_note
                 + f"<br><i>This fit was not applied or recorded because {reason}. "
                 "Restore the original model and run, then refit to keep it.</i>"
             )
@@ -5090,6 +5110,16 @@ class GlobalFitTab(QWidget):
             fitted_global=fitted_global,
             global_param_names=global_param_names,
         )
+        # Surface the engine's advisory warnings (scale / fixed-frequency traps)
+        # beneath the success line. The same trap typically fires for every run,
+        # so dedupe to one row per distinct message (first-seen order) rather than
+        # repeating it per dataset.
+        seen: set[str] = set()
+        for run_result in results_dict.values():
+            for message in getattr(run_result, "warnings", None) or []:
+                if message not in seen:
+                    seen.add(message)
+                    self._result_text.append(warning_html("⚠ " + html.escape(str(message))))
         emitted_results = results_dict
         emitted_global = fitted_global
         if self._domain == "frequency":
@@ -5114,6 +5144,7 @@ class GlobalFitTab(QWidget):
                     hessian_calls=result.hessian_calls,
                     edm=result.edm,
                     covariance_accurate=result.covariance_accurate,
+                    warnings=list(result.warnings),
                 )
             emitted_global, _global_unc = append_frequency_field_derived_parameters(
                 fitted_global,
