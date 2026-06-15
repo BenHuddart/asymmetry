@@ -246,6 +246,15 @@ def _format_bytes(num_bytes: int) -> str:
 #: passes a snapshot captured on the GUI thread instead of reading the widget.
 _VIEW_FROM_WIDGET = object()
 
+#: Fraction of the peak per-bin detector counts below which the late-time tail is
+#: treated as statistically spent and excluded from the FFT time window. ISIS
+#: NeXus runs keep "good" bins out to ~32 µs, where the asymmetry is ±100 % noise;
+#: transforming that tail buries the physical line under low-frequency leakage so
+#: the FFT spectrum renders as an empty plot (the round-2 EMU/MUSR finding). This
+#: threshold corresponds to ≈4.6 muon lifetimes for an exponential pulsed-source
+#: decay; a continuous source never drops this low, so no tail is excluded there.
+_FOURIER_TAIL_COUNTS_FRACTION = 0.01
+
 
 def _write_text_file(path: str, content: str) -> None:
     """Write *content* to *path* (used as a TaskRunner worker for exports)."""
@@ -6131,6 +6140,61 @@ class MainWindow(QMainWindow):
             t_min, t_max = t_max, t_min
         return t_min, t_max
 
+    def _fourier_good_statistics_t_max(self, dataset: MuonDataset) -> float | None:
+        """Return the time (µs) past which counts are too sparse for a useful FFT.
+
+        Sums the per-bin detector counts and returns the first time after their
+        peak where they fall below :data:`_FOURIER_TAIL_COUNTS_FRACTION` of the
+        peak. Returns ``None`` when the run has no histograms or the counts never
+        decay that far (e.g. a continuous source), so no tail is excluded there.
+        """
+        run = getattr(dataset, "run", None)
+        histograms = list(getattr(run, "histograms", None) or [])
+        if not histograms:
+            return None
+        try:
+            counts = np.sum(
+                [np.asarray(histogram.counts, dtype=float) for histogram in histograms],
+                axis=0,
+            )
+            time_axis = np.asarray(histograms[0].time_axis, dtype=float)
+        except (AttributeError, ValueError):
+            return None
+        if counts.size == 0 or counts.size != time_axis.size:
+            return None
+        peak_index = int(np.argmax(counts))
+        peak = float(counts[peak_index])
+        if peak <= 0.0:
+            return None
+        spent = np.flatnonzero(counts[peak_index:] < peak * _FOURIER_TAIL_COUNTS_FRACTION)
+        if spent.size == 0:
+            return None
+        return float(time_axis[peak_index + int(spent[0])])
+
+    def _fourier_time_window_excluding_tail(
+        self,
+        dataset: MuonDataset,
+        t_min_us: float | None,
+        t_max_us: float | None,
+    ) -> tuple[float | None, float | None]:
+        """Cap the FFT window's upper bound at the run's good-statistics tail.
+
+        The time-domain fit range the FFT inherits defaults to the full data span
+        (~32 µs for ISIS NeXus), whose ±100 %-saturated tail swamps the physical
+        line in low-frequency leakage and renders the spectrum empty. Never extend
+        the FFT past the good-statistics tail, but honour a tighter user window.
+        """
+        tail_t_max = self._fourier_good_statistics_t_max(dataset)
+        if tail_t_max is None:
+            return t_min_us, t_max_us
+        if t_min_us is not None and tail_t_max <= float(t_min_us):
+            # The requested window already starts at/after the good-statistics
+            # tail (e.g. a user window deliberately set late). Capping to the tail
+            # would invert the window and empty the transform, so leave it as is.
+            return t_min_us, t_max_us
+        capped = tail_t_max if t_max_us is None else min(float(t_max_us), tail_t_max)
+        return t_min_us, capped
+
     def _on_fill_fourier_phases(self) -> None:
         """Estimate one phase correction per included detector group (off-thread)."""
         state = self._fourier_panel.get_state()
@@ -6228,6 +6292,12 @@ class MainWindow(QMainWindow):
         # Snapshot everything the compute needs; the worker must not read widgets
         # or _current_dataset (the user may navigate while it runs).
         dataset = self._current_dataset
+        # Keep the spent, ±100 %-saturated late-time tail out of the transform —
+        # otherwise its low-frequency leakage buries the physical line and the
+        # spectrum renders as an empty plot (round-2 ISIS NeXus EMU/MUSR finding).
+        fourier_t_min_us, fourier_t_max_us = self._fourier_time_window_excluding_tail(
+            dataset, fourier_t_min_us, fourier_t_max_us
+        )
         run_number = int(dataset.run_number)
         plot_window = self._capture_fourier_plot_window(dataset)
         started_at = time.perf_counter()
