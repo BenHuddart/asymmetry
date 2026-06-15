@@ -43,10 +43,8 @@ if _root is not None:
 
 
 @pytest.mark.skipif(_BISCCO is None, reason="WiMDA corpus BiSCCO runs not present")
-@pytest.mark.xfail(reason="fix/load-series-ergonomics not yet implemented", strict=True)
 def test_resolve_run_range_expands_contiguous_series() -> None:
-    # Implementer: provide a pure resolver (adjust import/signature to taste).
-    from asymmetry.core.io import resolve_run_range  # type: ignore[attr-defined]
+    from asymmetry.core.io import resolve_run_range
 
     files = resolve_run_range(_BISCCO, 1276, 1289, prefix="MUSR")
     # 1276–1289 inclusive = 14 contiguous runs, sorted by run number, all existing.
@@ -54,3 +52,106 @@ def test_resolve_run_range_expands_contiguous_series() -> None:
     assert all(Path(f).exists() for f in files)
     assert Path(files[0]).name.endswith("1276.nxs")
     assert Path(files[-1]).name.endswith("1289.nxs")
+
+
+# ── corpus-free unit coverage (runs on CI) ───────────────────────────────────
+
+
+def _touch(folder: Path, name: str) -> Path:
+    path = folder / name
+    path.write_bytes(b"")
+    return path
+
+
+def test_resolve_run_range_is_inclusive_sorted_and_padding_agnostic(tmp_path: Path) -> None:
+    from asymmetry.core.io import resolve_run_range
+
+    for run in (8, 9, 10, 11, 12):
+        _touch(tmp_path, f"MUSR{run:08d}.nxs")
+
+    files = resolve_run_range(tmp_path, 9, 11, prefix="MUSR")
+
+    assert [Path(f).name for f in files] == [
+        "MUSR00000009.nxs",
+        "MUSR00000010.nxs",
+        "MUSR00000011.nxs",
+    ]
+
+
+def test_resolve_run_range_skips_gaps_silently(tmp_path: Path) -> None:
+    from asymmetry.core.io import resolve_run_range
+
+    for run in (100, 102, 105):  # 101, 103, 104 missing
+        _touch(tmp_path, f"MUSR{run:08d}.nxs")
+
+    files = resolve_run_range(tmp_path, 100, 105, prefix="MUSR")
+
+    assert [Path(f).name for f in files] == [
+        "MUSR00000100.nxs",
+        "MUSR00000102.nxs",
+        "MUSR00000105.nxs",
+    ]
+
+
+def test_resolve_run_range_auto_detects_single_prefix(tmp_path: Path) -> None:
+    from asymmetry.core.io import resolve_run_range
+
+    for run in (5, 6, 7):
+        _touch(tmp_path, f"EMU{run:08d}.nxs")
+
+    files = resolve_run_range(tmp_path, 5, 7)  # no prefix given
+
+    assert len(files) == 3
+    assert all(Path(f).name.startswith("EMU") for f in files)
+
+
+def test_resolve_run_range_ignores_nonloader_extensions(tmp_path: Path) -> None:
+    from asymmetry.core.io import resolve_run_range
+
+    _touch(tmp_path, "MUSR00000020.nxs")
+    _touch(tmp_path, "MUSR00000021.nxs")
+    _touch(tmp_path, "MUSR00000020.txt")  # sidecar log — must be ignored
+    _touch(tmp_path, "MUSR00000022.log")
+
+    files = resolve_run_range(tmp_path, 20, 22, prefix="MUSR")
+
+    assert [Path(f).suffix for f in files] == [".nxs", ".nxs"]
+
+
+def test_resolve_run_range_can_restrict_to_one_extension(tmp_path: Path) -> None:
+    from asymmetry.core.io import resolve_run_range
+
+    _touch(tmp_path, "MUSR00000030.nxs")
+    _touch(tmp_path, "MUSR00000031.bin")
+
+    files = resolve_run_range(tmp_path, 30, 31, prefix="MUSR", ext="nxs")
+
+    assert [Path(f).name for f in files] == ["MUSR00000030.nxs"]
+
+
+def test_resolve_run_range_raises_on_mixed_prefixes_without_prefix(tmp_path: Path) -> None:
+    from asymmetry.core.io import resolve_run_range
+
+    _touch(tmp_path, "MUSR00000040.nxs")
+    _touch(tmp_path, "EMU00000041.nxs")
+
+    with pytest.raises(ValueError, match="Multiple run prefixes"):
+        resolve_run_range(tmp_path, 40, 41)
+
+
+def test_resolve_run_range_empty_when_nothing_in_range(tmp_path: Path) -> None:
+    from asymmetry.core.io import resolve_run_range
+
+    _touch(tmp_path, "MUSR00000050.nxs")
+
+    assert resolve_run_range(tmp_path, 60, 70, prefix="MUSR") == []
+
+
+def test_resolve_run_range_raises_on_bad_inputs(tmp_path: Path) -> None:
+    from asymmetry.core.io import resolve_run_range
+
+    with pytest.raises(ValueError, match="does not exist or is not a directory"):
+        resolve_run_range(tmp_path / "nope", 1, 5)
+
+    with pytest.raises(ValueError, match="is after end"):
+        resolve_run_range(tmp_path, 9, 1, prefix="MUSR")
