@@ -111,6 +111,42 @@ the parameter uncertainties on the fitted values will be inflated
 correspondingly and should be re-derived against a calibrated error
 model.
 
+.. _fit-advisory-warnings:
+
+Advisory warnings (``result.warnings``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Before it minimises, the engine runs a pair of *advisory guards* that flag the
+two setup traps most likely to produce a converged-but-wrong fit:
+
+- :class:`~asymmetry.core.fitting.AsymmetryScaleWarning` — the data and the
+  seeded model sit on different asymmetry scales (the classic percent-vs-fraction
+  mix-up; a loaded ``MuonDataset.asymmetry`` is on the **percent** scale, ``×100``).
+- :class:`~asymmetry.core.fitting.FixedFrequencyFieldMismatchWarning` — a
+  precession ``frequency`` is held **fixed** more than ~2 % from
+  :math:`\gamma_\mu B` implied by the run's ``field``; pinning the line away from
+  its true position leaks the misfit into the damping term and inflates the
+  fitted Gaussian ``sigma`` (the vortex-state TF trap).
+
+These are emitted through the Python :mod:`warnings` system (so they still reach
+the log/stderr), and their messages are now **also carried on the result** as a
+plain list, ``result.warnings``:
+
+.. code-block:: python
+
+   result = FitEngine().fit(ds, model.function, params)
+   for note in result.warnings:
+       print("⚠", note)
+
+The guards never raise and never change the fit outcome — they only point you at
+the fix. In the **GUI**, the fit panel surfaces these messages directly in the
+result box alongside the converged line: a single fit shows them beneath its
+``Fit converged`` summary, and a batch/global fit shows them (deduplicated, since
+the same trap usually fires for every run) beneath ``Batch fit converged``. The
+underlying science and the corrective recipe for each trap are in the cookbook —
+see :ref:`the transverse-field frequency entry <cookbook-tf-frequency>` and
+:ref:`the asymmetry-scale entry <cookbook-asymmetry-scale>`.
+
 .. _fit-bg-amplitude-tf:
 
 A stuck χ² ≈ 200? Free the background amplitude (TF data)
