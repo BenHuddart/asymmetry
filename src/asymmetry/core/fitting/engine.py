@@ -30,10 +30,38 @@ class AsymmetryScaleWarning(UserWarning):
     """
 
 
+class FixedFrequencyFieldMismatchWarning(UserWarning):
+    """Emitted when a fit pins a precession frequency far from γ_μ·B(field).
+
+    The TF trap: a transverse-field oscillation is fitted with its
+    ``frequency`` parameter *fixed* (``Parameter.fixed=True``) to a value that
+    disagrees with the Larmor frequency ``ν = γ_μ B / 2π`` implied by the run's
+    ``field`` metadata. Pinning the line away from its true position pushes the
+    misfit into the damping term, inflating the fitted Gaussian ``sigma`` (~8%
+    on a vortex-state superconductor, where the diamagnetic shift moves the
+    line below T_c). Letting ``frequency`` float removes the bias. See
+    :func:`asymmetry.core.fourier.units.gauss_to_mhz` for the conversion and the
+    "transverse-field frequency" cookbook entry.
+    """
+
+
 #: Upper bound on a peak magnitude that could plausibly be a *fraction*
 #: asymmetry. A true ``A`` lies in ``[-1, 1]``; the headroom absorbs noise and
 #: the ±1 one-sided sentinel. A peak above this can only be percent-scale.
 _FRACTION_SCALE_CEILING = 1.5
+
+#: Relative gap between a *fixed* frequency seed and γ_μ·B(field) above which the
+#: pin is flagged. 2% comfortably clears fit/rounding noise while still catching
+#: the few-percent vortex-state diamagnetic shift that inflates σ.
+_FIXED_FREQ_FIELD_REL_TOLERANCE = 0.02
+
+#: Floor on the field-implied reference frequency γ_μ·B (MHz) below which the
+#: guard stays silent. A single floor covers three cases at once: zero-field
+#: (field 0 → reference 0), a few gauss of stray/residual field, and the
+#: "needs a meaningful reference" requirement — below ~0.1 MHz (≈7 G) a fixed
+#: frequency is almost certainly not a γ_μ·B Larmor line, so second-guessing it
+#: would be a false positive.
+_MIN_REFERENCE_MHZ = 0.1
 
 #: Minimum peak ratio (on top of a fraction/percent boundary crossing) before a
 #: mismatch is flagged — keeps near-boundary noise quiet without masking the
@@ -97,6 +125,63 @@ def _warn_on_scale_mismatch(
         AsymmetryScaleWarning,
         stacklevel=3,
     )
+
+
+def _warn_on_fixed_frequency_far_from_field(
+    dataset: MuonDataset,
+    parameters: ParameterSet,
+) -> None:
+    """Warn when a *fixed* precession frequency disagrees with γ_μ·B(field).
+
+    Iterates the seeds for any parameter that is both ``fixed`` and named like a
+    frequency (``"freq"`` substring, matching the model convention), and compares
+    each to the Larmor frequency ``ν = γ_μ B / 2π`` implied by the run's ``field``
+    metadata. A pin further than :data:`_FIXED_FREQ_FIELD_REL_TOLERANCE` from that
+    reference is flagged, because the misfit then leaks into the damping term and
+    inflates the fitted ``sigma`` (the vortex-state TF trap).
+
+    Deliberately quiet for the cases where γ_μ·B is not the relevant line: a
+    *free* frequency (only ``fixed`` seeds are checked), a run with no ``field``
+    metadata, and zero-/stray-field runs whose reference frequency falls below
+    :data:`_MIN_REFERENCE_MHZ` (which also covers genuine ZF/LF relaxation models,
+    as those carry no frequency parameter at all). Advisory only: it never raises
+    and never blocks the fit; any failure is swallowed so the guard cannot change
+    fit outcomes.
+    """
+    try:
+        from asymmetry.core.fourier.units import gauss_to_mhz
+
+        field = dataset.field
+        if field is None:
+            return
+        reference = float(gauss_to_mhz(field))
+        if not np.isfinite(reference) or abs(reference) < _MIN_REFERENCE_MHZ:
+            return
+
+        for p in parameters:
+            if not getattr(p, "fixed", False) or "freq" not in p.name.lower():
+                continue
+            value = float(p.value)
+            if not np.isfinite(value):
+                continue
+            rel_gap = abs(value - reference) / abs(reference)
+            if rel_gap <= _FIXED_FREQ_FIELD_REL_TOLERANCE:
+                continue
+            warnings.warn(
+                f"Fixed-frequency trap: parameter {p.name!r} is pinned at "
+                f"{value:.4g} MHz, ~{rel_gap * 100:.0f}% away from γ_μ·B = "
+                f"{reference:.4g} MHz implied by the run's {float(field):.0f} G "
+                "field. Pinning a transverse-field precession line away from its "
+                "true position pushes the misfit into the damping term and "
+                "inflates the fitted Gaussian sigma (~8% on a vortex-state "
+                "superconductor, where the diamagnetic shift moves the line below "
+                f"T_c). Let {p.name!r} float (Parameter.fixed=False) to remove the "
+                "bias, or correct the pinned value to match the field.",
+                FixedFrequencyFieldMismatchWarning,
+                stacklevel=3,
+            )
+    except Exception:  # noqa: BLE001 - a guard must never break the fit it guards
+        return
 
 
 class FitCancelledError(RuntimeError):
@@ -495,6 +580,12 @@ class FitEngine:
         initial_values = [p.value for p in free]
         # Advisory guard: flag the percent-vs-fraction trap before fitting.
         _warn_on_scale_mismatch(ds.time, ds.asymmetry, model_wrapper, initial_values)
+        # Advisory guard: flag a frequency pinned far from γ_μ·B(field) (the TF
+        # fixed-frequency trap that inflates sigma). Skip in the rotating frame:
+        # there the frequency seeds are *offsets* δν (lab = δν + ν₀), so a small
+        # fixed δν is correct and comparing it to lab-frame γ_μ·B would misfire.
+        if not frequency_offsets:
+            _warn_on_fixed_frequency_far_from_field(dataset, parameters)
         m = Minuit(cost, *initial_values, name=param_names)
 
         # Set limits for parameters

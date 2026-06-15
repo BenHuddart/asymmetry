@@ -16,6 +16,7 @@ from asymmetry.core.fitting.engine import (
     FitCancelledError,
     FitEngine,
     FitResult,
+    FixedFrequencyFieldMismatchWarning,
     drive_minuit,
 )
 from asymmetry.core.fitting.field_scan import (
@@ -107,6 +108,7 @@ __all__ = [
     "FitResult",
     "FitCancelledError",
     "AsymmetryScaleWarning",
+    "FixedFrequencyFieldMismatchWarning",
     "drive_minuit",
     "RRF_ROTATION_COMPONENTS",
     "UnsupportedRRFComponentError",
