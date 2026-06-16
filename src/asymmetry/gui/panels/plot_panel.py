@@ -3110,6 +3110,7 @@ class PlotPanel(QWidget):
         self._sync_y_controls_with_visible_axis()
         self._update_y_limit_controls_for_axis(self._current_polarization_axis)
         self._apply_limits(schedule_viewport_refresh=True)
+        self._apply_auto_limits_if_enabled()
         self._connect_axis_limit_callbacks(list(self._subplot_axes_by_polarization.values()))
         self._apply_log_counts_scale()
 
@@ -3959,6 +3960,25 @@ class PlotPanel(QWidget):
     def _auto_y_limits(self) -> None:
         """Auto-scale y-axis from visible, non-low-count points only."""
         if not self._has_mpl:
+            return
+
+        if self._grouped_time_subplot_datasets and self._subplot_axes_by_polarization:
+            updated = False
+            for dataset in self._grouped_time_subplot_datasets:
+                axis_key = str(dataset.run_number)
+                if self._is_raw_counts_dataset(dataset):
+                    axis_key += ":raw"
+                if axis_key not in self._subplot_axes_by_polarization:
+                    continue
+                limits = self._auto_y_limits_for_datasets([dataset])
+                if limits is None:
+                    continue
+                self._y_limits_by_polarization[axis_key] = limits
+                updated = True
+            if not updated:
+                return
+            self._sync_y_controls_with_visible_axis()
+            self._apply_limits()
             return
 
         if self._subplot_axes_by_polarization and self._current_polarization_axis == "ALL":
