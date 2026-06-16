@@ -259,6 +259,13 @@ def main() -> None:
 
         RootLoader
 
+        # Verify the bundled HDF4 runtime loads in the frozen app (pyhdf + its
+        # HDF4 C library DLLs/dylibs). Raises ImportError if the runtime is not
+        # bundled/findable, failing the packaging smoke test.
+        from asymmetry.core.io.hdf4 import _require_pyhdf
+
+        _require_pyhdf()
+
     if QApplication is None:
         from PySide6.QtWidgets import QApplication as _QApplication
 

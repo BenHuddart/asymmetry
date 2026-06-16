@@ -27,8 +27,9 @@ for later reuse.
 
 ## Main functionality
 
-- **Data loading**: load ISIS muon NeXus `.nxs` / `.nexus`, PSI BIN/MDU, and ROOT files through
-  a common API, including multi-period NeXus runs.
+- **Data loading**: load ISIS muon NeXus `.nxs` / `.nexus` (modern HDF5 and legacy HDF4
+  containers), PSI BIN/MDU, and ROOT files through a common API, including multi-period
+  NeXus runs.
 - **Core data workflows**: apply grouping, estimate alpha, compute asymmetry, rebin data, and
   co-add compatible datasets with propagated uncertainties.
 - **Time-domain fitting**: fit single datasets or simultaneous multi-dataset series using built-in
@@ -101,7 +102,7 @@ cd asymmetry
 #### Recommended Python install (full functionality, no dev tools)
 
 ```bash
-python -m pip install -c constraints.txt ".[gui,hdf5,root,gle]"
+python -m pip install -c constraints.txt ".[gui,hdf5,hdf4,root,gle]"
 ```
 
 This installs the full end-user feature set (GUI + optional file/export support) without
@@ -117,7 +118,7 @@ python -m pip install -c constraints.txt .
 python -m pip install -c constraints.txt ".[gui]"
 
 # With GUI and optional file/export support
-python -m pip install -c constraints.txt ".[gui,hdf5,root,gle]"
+python -m pip install -c constraints.txt ".[gui,hdf5,hdf4,root,gle]"
 
 # Everything, including development dependencies
 python -m pip install -c constraints.txt ".[all]"
@@ -133,7 +134,7 @@ python -m pip install -c constraints.txt -e ".[all]"
 python -m pip install "git+https://github.com/BenHuddart/asymmetry.git"
 
 # Full end-user feature set (no development extras)
-python -m pip install "asymmetry[gui,hdf5,root,gle] @ git+https://github.com/BenHuddart/asymmetry.git"
+python -m pip install "asymmetry[gui,hdf5,hdf4,root,gle] @ git+https://github.com/BenHuddart/asymmetry.git"
 ```
 
 Using [constraints.txt](constraints.txt) is recommended for local installs so the scientific Python
@@ -146,9 +147,28 @@ stack stays within the versions tested by the project.
 | Core | NumPy, SciPy, iminuit |
 | GUI | PySide6, Matplotlib |
 | NeXus / HDF5 | h5py |
+| HDF4 (legacy ISIS `.nxs`) | pyhdf — see note below |
 | ROOT import | uproot |
 | GLE export | `gleplot` (current git version with foldered exports) plus a local GLE installation |
 | Development | pytest, pytest-cov, ruff, Sphinx |
+
+##### Reading legacy HDF4 `.nxs` files
+
+Pre-~2015 ISIS muon runs (the format WiMDA reads natively) are NeXus v1 stored
+in an **HDF4** container. Reading them needs the optional `hdf4` extra:
+
+```bash
+python -m pip install "asymmetry[hdf4]"
+```
+
+On **Linux and macOS** the `pyhdf` wheels bundle the HDF4 C library, so that is
+all you need. On **Windows**, `pyhdf` additionally requires the HDF4 runtime
+(`hdf.dll` / `mfhdf.dll`): install the conda-forge `hdf4` package, or run
+`python packaging/windows/fetch_hdf4_dlls.py <dir>` and point the
+`ASYMMETRY_HDF4_DLL_DIR` environment variable at `<dir>`. The **pre-built
+Windows and macOS binaries bundle the HDF4 runtime**, so no extra setup is
+needed there. See [docs/user_guide/loading_data](docs/user_guide/loading_data.rst)
+for details.
 
 ## Quick start
 
