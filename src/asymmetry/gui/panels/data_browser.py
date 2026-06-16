@@ -36,11 +36,13 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QStyle,
     QStyledItemDelegate,
     QStyleOptionViewItem,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -50,7 +52,6 @@ from asymmetry.core.transform.grouping import good_event_count, good_frames
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.typography import header_font
-from asymmetry.gui.styles.widgets import build_primary_button_qss
 
 _GROUP_TEMP_ABS_TOL_K = 5e-3
 _GROUP_TEMP_REL_TOL = 2e-3
@@ -612,23 +613,29 @@ class DataBrowserPanel(QWidget):
         # currentItemChanged doesn't automatically repaint both old and new rows
         # in all Qt versions; an explicit viewport update is cheap and safe.
         self._table.currentItemChanged.connect(lambda *_: self._table.viewport().update())
-        layout.addWidget(self._table)
 
-        # Footer band: the selection hint (left) and a themed "add custom column"
-        # action (bottom-right). The band lives on the container so the hint and
-        # button share one surfaceAlt strip with a single top border.
+        # Table sits beside a trailing "add custom field" rail: the "+" perches on
+        # a header-toned strip (so it reads as a final header slot) while the rail
+        # body below drops to the window tone, giving an "overhanging tab" that
+        # recedes into the main window. It is a sibling widget rather than a real
+        # table column because Qt paints gridlines over delegate fills, which would
+        # otherwise slice the recede into visible cells.
+        table_row = QWidget()
+        table_row_layout = QHBoxLayout(table_row)
+        table_row_layout.setContentsMargins(0, 0, 0, 0)
+        table_row_layout.setSpacing(0)
+        table_row_layout.addWidget(self._table, 1)
+        table_row_layout.addWidget(self._build_add_field_rail(), 0)
+        layout.addWidget(table_row)
+
+        # Footer band: the selection hint. The band lives on the container so the
+        # hint sits on one surfaceAlt strip with a single top border.
         _add_key = "⌘" if sys.platform == "darwin" else "Ctrl"
         self._footer_hint = QLabel(f"{_add_key}-click adds · shift-click ranges")
         self._footer_hint.setWordWrap(True)
         self._footer_hint.setStyleSheet(
             f"QLabel {{ background: transparent; color: {tokens.TEXT_MUTED}; font-size: 10px; }}"
         )
-
-        self._add_column_btn = QPushButton("＋ Column")
-        self._add_column_btn.setToolTip("Add a custom column you can fill in per run")
-        self._add_column_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._add_column_btn.setStyleSheet(build_primary_button_qss())
-        self._add_column_btn.clicked.connect(self._prompt_add_custom_column)
 
         footer = QWidget()
         footer.setObjectName("dataBrowserFooter")
@@ -640,11 +647,66 @@ class DataBrowserPanel(QWidget):
         footer_layout.setContentsMargins(8, 4, 8, 4)
         footer_layout.setSpacing(8)
         footer_layout.addWidget(self._footer_hint, 1)
-        footer_layout.addWidget(
-            self._add_column_btn, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-        )
         layout.addWidget(footer)
         self.setMinimumWidth(250)
+
+        # The "+" strip must line up with the table header; the header's final
+        # height is only known after the first layout pass.
+        QTimer.singleShot(0, self, self._sync_rail_header_height)
+
+    # ------------------------------------------------------------------
+    # Add-custom-field rail
+    # ------------------------------------------------------------------
+
+    _RAIL_WIDTH = 28
+
+    def _build_add_field_rail(self) -> QWidget:
+        """Build the trailing rail carrying the "add custom field" affordance.
+
+        A header-toned "+" button caps a window-toned filler so the button reads
+        as a final header slot while the rail recedes into the main window.
+        """
+        rail = QWidget()
+        rail.setObjectName("addFieldRail")
+        rail.setFixedWidth(self._RAIL_WIDTH)
+        rail.setStyleSheet(f"#addFieldRail {{ background-color: {tokens.BG}; }}")
+        rail_layout = QVBoxLayout(rail)
+        rail_layout.setContentsMargins(0, 0, 0, 0)
+        rail_layout.setSpacing(0)
+
+        self._add_field_btn = QToolButton()
+        self._add_field_btn.setText("+")
+        self._add_field_btn.setToolTip("Add a custom field")
+        self._add_field_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._add_field_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._add_field_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self._add_field_btn.setStyleSheet(
+            "QToolButton {"
+            f" background-color: {tokens.SURFACE_ALT};"
+            f" color: {tokens.ACCENT};"
+            " border: none;"
+            f" border-bottom: 1px solid {tokens.BORDER};"
+            " font-size: 15px; font-weight: 600; }"
+            f" QToolButton:hover {{ background-color: {tokens.SURFACE_HI}; }}"
+        )
+        self._add_field_btn.setFixedWidth(self._RAIL_WIDTH)
+        self._add_field_btn.clicked.connect(self._prompt_add_custom_column)
+
+        filler = QWidget()
+        filler.setObjectName("addFieldFiller")
+        filler.setStyleSheet(f"#addFieldFiller {{ background-color: {tokens.BG}; }}")
+
+        rail_layout.addWidget(self._add_field_btn, 0)
+        rail_layout.addWidget(filler, 1)
+        return rail
+
+    def _sync_rail_header_height(self) -> None:
+        """Match the "+" strip height to the table header so they align."""
+        if not hasattr(self, "_add_field_btn"):
+            return
+        height = self._table.horizontalHeader().height()
+        if height > 0:
+            self._add_field_btn.setFixedHeight(height)
 
     # ------------------------------------------------------------------
     # Batched updates
@@ -1338,6 +1400,7 @@ class DataBrowserPanel(QWidget):
         read the previous width.
         """
         super().resizeEvent(event)
+        self._sync_rail_header_height()
         if not self._user_sized_columns:
             # The context argument cancels the pending timer if the panel is
             # destroyed first — without it the callback fires against a
@@ -1365,6 +1428,7 @@ class DataBrowserPanel(QWidget):
         if event.type() in (QEvent.Type.FontChange, QEvent.Type.ApplicationFontChange):
             self._two_line_height_cache = None
             self._reapply_two_line_heights()
+            self._sync_rail_header_height()
 
     def _reapply_two_line_heights(self) -> None:
         """Reset the explicit two-line heights from the current table font."""

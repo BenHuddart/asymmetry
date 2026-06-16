@@ -142,16 +142,19 @@ def test_rename_metadata_column_keeps_source_key(qapp):
     assert header == "Crystal orientation"
 
 
-def test_add_column_button_is_themed_and_prompts(qapp, monkeypatch):
+def test_add_field_rail_button_is_themed_and_prompts(qapp, monkeypatch):
     panel = DataBrowserPanel()
     panel.add_dataset(_dataset(6))
 
-    # The button is present, carries a theme stylesheet and a helpful tooltip.
-    assert panel._add_column_btn.styleSheet()
-    assert "custom column" in panel._add_column_btn.toolTip().lower()
+    # The rail "+" is present, carries a theme stylesheet and a helpful tooltip,
+    # and there is no longer a footer add-column button.
+    assert panel._add_field_btn.text() == "+"
+    assert panel._add_field_btn.styleSheet()
+    assert "custom field" in panel._add_field_btn.toolTip().lower()
+    assert not hasattr(panel, "_add_column_btn")
 
     monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("Anneal", True))
-    panel._add_column_btn.click()
+    panel._add_field_btn.click()
 
     cols = panel.extra_columns()
     assert len(cols) == 1
@@ -159,12 +162,27 @@ def test_add_column_button_is_themed_and_prompts(qapp, monkeypatch):
     assert cols[0].label == "Anneal"
 
 
-def test_add_column_button_cancel_adds_nothing(qapp, monkeypatch):
+def test_add_field_rail_button_cancel_adds_nothing(qapp, monkeypatch):
     panel = DataBrowserPanel()
     panel.add_dataset(_dataset(7))
     monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("", False))
-    panel._add_column_btn.click()
+    panel._add_field_btn.click()
     assert panel.extra_columns() == []
+
+
+def test_add_field_rail_strip_aligns_with_header(qapp):
+    # The "+" strip height tracks the table header so the tab lines up.
+    panel = DataBrowserPanel()
+    panel.add_dataset(_dataset(9))
+    panel.resize(320, 200)
+    panel.show()
+    qapp.processEvents()
+    panel._sync_rail_header_height()
+    header_height = panel._table.horizontalHeader().height()
+    assert header_height > 0
+    assert panel._add_field_btn.height() == header_height
+    # The rail does not add a table column — it is a sibling widget.
+    assert panel._table.columnCount() == len(panel._COLUMNS)
 
 
 def test_delete_custom_column_removes_it(qapp):
