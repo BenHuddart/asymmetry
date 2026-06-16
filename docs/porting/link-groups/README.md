@@ -52,3 +52,12 @@ WiMDA exactly and needs no offset-tie machinery (explicitly out of scope per the
 brief). Equal spacing of the CdS satellites is recovered from the data, and the
 hyperfine constant is read off as `f₊ − f₋`. See the comparison doc for why this
 is faithful and what (1) would add later.
+
+> **Update (session-5 CdS follow-on).** Recovering equal spacing from free
+> frequencies left the satellite *amplitudes* noisy, so the Mu⁰ ionisation
+> energy E_i was un-extractable. A typed **`AffineTie`** was therefore added to
+> *enforce* equal spacing (`f_lo = f_c − δ`, `f_hi = f_c + δ`, δ free) — a
+> deliberate capability **beyond WiMDA**, not a port. It is *not* the rejected
+> `expr`-string route. See
+> [implementation-options.md § Affine ties](implementation-options.md#affine-ties-session-5-follow-on)
+> for the design and the CdS verification (E_i = 8.6 ± 3.1 meV, gap closed).

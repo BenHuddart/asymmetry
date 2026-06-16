@@ -107,5 +107,14 @@ seams, [test-data.md](test-data.md) for the synthetic fixtures, and
 [verification-plan.md](verification-plan.md) for the verification done.
 
 **Status: IMPLEMENTED — faithful WiMDA muonium components (positive-frequency
-convention), shipped as a general muonium feature; CdS remains served by link
-groups.**
+convention), shipped as a general muonium feature; CdS is served by independent
+lines, not these components.**
+
+> **Update (session-5 CdS follow-on).** These components were verified to
+> *over-fit* shallow-donor CdS (χ²ᵣ ≈ 22 — they also pin the central line to
+> γ_µ·B; see [comparison.md](comparison.md)). CdS equal spacing is now
+> *enforced* by the lighter, better-conditioned **`AffineTie`** route (central
+> line free + free half-splitting δ; only the satellite symmetry constrained),
+> layered on three independent lines + link groups. See
+> [../link-groups/implementation-options.md § Affine ties](../link-groups/implementation-options.md#affine-ties-session-5-follow-on).
+> These muonium components stay scoped to *genuine* muonium.

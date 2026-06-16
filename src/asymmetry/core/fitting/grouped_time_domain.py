@@ -24,6 +24,7 @@ from asymmetry.core.fitting.engine import (
     FitCancelledError,
     FitEngine,
     FitResult,
+    _reject_affine_ties,
 )
 from asymmetry.core.fitting.global_search.heuristics import (
     is_amplitude_parameter,
@@ -633,6 +634,7 @@ def fit_grouped_time_domain(
     missing_sets = [group_id for group_id in group_ids if group_id not in initial_params]
     if missing_sets:
         raise ValueError(f"Missing grouped time-domain initial parameters: {missing_sets}")
+    _reject_affine_ties(initial_params.values(), "Grouped time-domain fitting")
 
     required_names = set(GROUP_NUISANCE_PARAMS) | set(global_params) | set(local_params)
     for group_id in group_ids:
@@ -1020,6 +1022,10 @@ def fit_grouped_series(
         raise ValueError(
             f"Unknown grouped-series seeding {seeding!r}; expected one of {GROUPED_SERIES_SEEDING}"
         )
+    _reject_affine_ties(
+        (ps for run_sets in initial_params.values() for ps in run_sets.values()),
+        "Grouped time-domain fitting",
+    )
 
     engine = fit_engine or FitEngine()
     if relationship in ("individual", "batch"):

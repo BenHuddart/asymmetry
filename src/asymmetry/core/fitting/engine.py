@@ -6,6 +6,7 @@ without scipy dependencies (important for Python 3.13+ compatibility).
 
 from __future__ import annotations
 
+import inspect
 import warnings
 from collections import Counter
 from collections.abc import Callable, Sequence
@@ -219,6 +220,78 @@ def _make_cancel_guard(cancel_callback: Callable[[], bool] | None) -> Callable[[
             raise FitCancelledError("Fit cancelled.")
 
     return guard
+
+
+def _validate_tie_references(parameters, ties: dict) -> None:
+    """Validate affine-tie references before fitting.
+
+    Each ``main``/``offset`` must name a parameter in the set, must not be a
+    tie follower itself (no tie-to-tie chaining — the engine resolves ties in a
+    single pass), and a tied parameter must not also be link-grouped or fixed
+    (the tie would silently win, discarding the other constraint). Raising here
+    gives a clear error instead of a cryptic ``KeyError`` deep in the cost
+    function or a silently-ignored ``fixed`` flag.
+    """
+    for name, tie in ties.items():
+        if parameters[name].link_group is not None:
+            raise ValueError(
+                f"Parameter '{name}' cannot be both link-grouped and affinely tied; "
+                "use one constraint or the other."
+            )
+        if parameters[name].fixed:
+            raise ValueError(
+                f"Parameter '{name}' cannot be both fixed and affinely tied; "
+                "a tie derives its value, so drop the fixed flag."
+            )
+        for ref in tie.references():
+            if ref not in parameters:
+                raise ValueError(f"Affine tie on '{name}' references unknown parameter '{ref}'.")
+            if ref in ties:
+                raise ValueError(
+                    f"Affine tie on '{name}' references tied parameter '{ref}'; "
+                    "ties may not chain to other ties."
+                )
+
+
+def _reject_affine_ties(parameter_sets, context: str) -> None:
+    """Raise if any parameter set carries an affine tie on a path that lacks support.
+
+    Affine ties are currently honoured only by the single-run :meth:`FitEngine.fit`
+    path. Global, count-domain, and grouped/chained fits build their own parameter
+    partition and cost wrappers and do not resolve ``tie_followers()``; silently
+    ignoring a tie there would reintroduce the very free-frequency scatter the
+    feature removes. Fail loudly with a pointer to the supported path instead.
+    """
+    for ps in parameter_sets:
+        if ps is not None and ps.tie_followers():
+            raise NotImplementedError(
+                f"{context} does not support affine parameter ties yet; tied "
+                "parameters are honoured only by single-run FitEngine.fit(). "
+                "Fit each run individually, or remove the tie."
+            )
+
+
+def _model_kwarg_names(model_fn) -> set[str] | None:
+    """Keyword names ``model_fn`` accepts, or ``None`` if it takes ``**kwargs``.
+
+    Affine ties may introduce free *auxiliary* parameters (e.g. a half-splitting
+    ``delta``) that the model never consumes. Those must not be forwarded to a
+    model whose signature is explicit — it would raise ``TypeError`` on the
+    unexpected kwarg. A model that declares ``**kwargs`` (e.g.
+    :meth:`CompositeModel.function`) accepts everything, so no filtering is
+    needed (return ``None``). Un-introspectable callables are treated as
+    permissive.
+    """
+    try:
+        sig = inspect.signature(model_fn)
+    except (TypeError, ValueError):
+        return None
+    names: set[str] = set()
+    for p in sig.parameters.values():
+        if p.kind is inspect.Parameter.VAR_KEYWORD:
+            return None
+        names.add(p.name)
+    return names
 
 
 def _minuit_status_message(minuit, *, success_message: str, failure_prefix: str) -> str:
@@ -562,6 +635,23 @@ class FitEngine:
         # Equality link groups: each follower takes its group main's value, so
         # it drops out of the free-fit set (WiMDA "Ties").
         followers = parameters.link_followers()
+        # Affine ties: each follower is a linear map of other parameters
+        # (offset / equal-spacing constraints; a deliberate capability beyond
+        # WiMDA's equality links). Evaluated after link followers so a tie may
+        # reference a link-resolved value; tie references must themselves be
+        # free/fixed/link parameters (no tie-to-tie chaining).
+        ties = parameters.tie_followers()
+        _validate_tie_references(parameters, ties)
+        # A tie may add a free *auxiliary* parameter (e.g. the half-splitting
+        # ``delta``) that the model never consumes; strip such extras before
+        # calling an explicit-signature model. Only computed when ties exist, so
+        # the common no-tie path stays byte-identical (no filtering).
+        accepted_kwargs = _model_kwarg_names(model_fn) if ties else None
+
+        def _call_model(t, kw):
+            if accepted_kwargs is None:
+                return model_fn(t, **kw)
+            return model_fn(t, **{k: v for k, v in kw.items() if k in accepted_kwargs})
 
         # Create model wrapper that accepts free parameters
         param_names = [p.name for p in free]
@@ -573,7 +663,9 @@ class FitEngine:
             kw = {**fixed_kw, **dict(zip(param_names, args))}
             for follower, main in followers.items():
                 kw[follower] = kw[main]
-            return model_fn(t, **kw)
+            for name, tie in ties.items():
+                kw[name] = tie.evaluate(kw)
+            return _call_model(t, kw)
 
         # Build the cost. The default (no factory) is the historical √-weighted
         # least squares, kept byte-identical; a factory swaps in the selectable
@@ -631,10 +723,73 @@ class FitEngine:
         uncertainties: dict[str, float] = {}
         minos_errors: dict[str, tuple[float, float]] = {}
 
+        def _fitted_value(name: str) -> float:
+            """Resolve any parameter's post-fit value (free, fixed, or linked)."""
+            target = followers.get(name, name)  # a link follower tracks its main
+            if target in param_names:
+                return float(m.values[param_names.index(target)])
+            return float(parameters[target].value)  # fixed
+
+        def _free_index(name: str) -> int | None:
+            """Covariance-order index for a value, or None when it is fixed."""
+            target = followers.get(name, name)
+            return param_names.index(target) if target in param_names else None
+
+        def _tie_uncertainty(tie) -> float | None:
+            """Delta-method 1σ of an affine tie: var = JᵀCJ over its references.
+
+            Coefficients on the same underlying free parameter add (e.g. when
+            ``main`` and ``offset`` both link to one group main); fixed
+            references contribute no variance.
+            """
+            coeff_by_index: dict[int, float] = {}
+            terms = [(tie.main, tie.scale)]
+            if tie.offset is not None:
+                terms.append((tie.offset, tie.offset_scale))
+            for ref, coeff in terms:
+                idx = _free_index(ref)
+                if idx is not None:
+                    coeff_by_index[idx] = coeff_by_index.get(idx, 0.0) + coeff
+            if not coeff_by_index:
+                return None  # every reference is fixed → no free uncertainty
+            cov = m.covariance
+            var = 0.0
+            for i, ci in coeff_by_index.items():
+                for j, cj in coeff_by_index.items():
+                    if cov is not None:
+                        var += ci * cj * float(cov[i, j])
+                    elif i == j:
+                        # No covariance (HESSE failed): keep the diagonal terms.
+                        # Exact for a single reference; ignores correlations for
+                        # a multi-reference tie (a rare, already-degraded fit).
+                        var += ci * cj * float(m.errors[i]) ** 2
+            # A non-positive-semidefinite covariance can yield a tiny negative
+            # var for a well-determined tie; clamp to 0 so the entry is still
+            # reported (and ``np.sqrt`` never sees a negative).
+            return float(np.sqrt(max(var, 0.0)))
+
         for p in parameters:
             # Linking wins over fix (matching WiMDA): a follower always tracks its
             # group main, so this branch precedes the plain ``fixed`` case.
-            if p.name in followers:
+            if p.name in ties:
+                # Affine tie: derive the value from the fitted references and
+                # carry a delta-method uncertainty through the linear map.
+                tie = ties[p.name]
+                value = tie.evaluate({ref: _fitted_value(ref) for ref in tie.references()})
+                result_params.add(
+                    Parameter(
+                        name=p.name,
+                        value=value,
+                        min=p.min,
+                        max=p.max,
+                        link_group=p.link_group,
+                        tie=p.tie,
+                    )
+                )
+                sigma = _tie_uncertainty(tie)
+                if sigma is not None:
+                    uncertainties[p.name] = sigma
+            elif p.name in followers:
                 # Equality link: inherit the group main's fitted value and, by
                 # the delta method (∂follower/∂main = 1), its uncertainty.
                 main_name = followers[p.name]
@@ -675,7 +830,7 @@ class FitEngine:
         ndata = len(ds.time)
         nfree = len(free)
         red_chi2 = m.fval / max(ndata - nfree, 1)
-        fitted_values = model_fn(ds.time, **{p.name: p.value for p in result_params})
+        fitted_values = _call_model(ds.time, {p.name: p.value for p in result_params})
         residuals = np.asarray(ds.asymmetry, dtype=float) - np.asarray(fitted_values, dtype=float)
 
         return FitResult(
@@ -755,6 +910,7 @@ class FitEngine:
         """
         if not datasets:
             raise ValueError("No datasets provided for global fitting")
+        _reject_affine_ties(initial_params.values(), "Global fitting")
 
         dataset_run_numbers = [int(ds.run_number) for ds in datasets]
         duplicate_runs = [run for run, count in Counter(dataset_run_numbers).items() if count > 1]

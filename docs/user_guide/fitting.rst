@@ -242,6 +242,69 @@ late-time bins where the signal has decayed into the background and adds
 only noise to the fit. The same range is honoured by the fit wizard and
 the global-fit workflow.
 
+.. _affine-ties:
+
+Parameter ties (links and equal spacing)
+----------------------------------------
+
+A multi-line fit often shares a value across components, or constrains one
+parameter to track another. Asymmetry offers two constraint kinds, both set on
+the :class:`~asymmetry.core.fitting.parameters.Parameter` and both removing the
+follower from the free-fit set:
+
+**Equality link groups** (WiMDA "Ties") force ``follower == main``. Tag the
+members of a group with the same ``link_group`` id; the group's main is fitted
+and every follower inherits its value (and propagated uncertainty). Use these
+to share an amplitude, phase, or relaxation rate across lines::
+
+   Parameter("Lambda_2", value=0.3, link_group=1)
+   Parameter("Lambda_4", value=0.3, link_group=1)   # follower == Lambda_2
+
+**Affine ties** express an *offset* or *scaled* relationship that equality
+cannot — ``follower = scale·main + offset_scale·offset + const`` — where
+``offset`` may be a free **auxiliary** parameter the model itself never
+consumes. The canonical use is keeping muonium satellites **equally spaced**
+about a central line: a central frequency ``f_c`` and a free half-splitting
+``delta`` drive both satellites, so the three lines stay symmetric while only
+two frequencies are fitted. This stabilises the satellite amplitudes (the third
+free frequency would otherwise trade against them), which is what makes the
+shallow-donor ionisation energy extractable:
+
+.. code-block:: python
+
+   from asymmetry.core.fitting import AffineTie, Parameter, ParameterSet
+   from asymmetry.core.fitting.composite import CompositeModel
+   from asymmetry.core.fitting.engine import FitEngine
+
+   model = CompositeModel.from_expression(
+       "Oscillatory*Exponential + Oscillatory*Exponential "
+       "+ Oscillatory*Exponential + Constant"
+   )
+   ps = ParameterSet([
+       Parameter("A_1", 8.0, min=0), Parameter("frequency_1", 1.39),
+       # ... phases / relaxation shared via link_group as above ...
+       # Satellites derived from the centre and a free half-splitting:
+       Parameter("frequency_3", 1.27,
+                 tie=AffineTie(main="frequency_1", offset="delta", offset_scale=-1.0)),
+       Parameter("frequency_5", 1.51,
+                 tie=AffineTie(main="frequency_1", offset="delta", offset_scale=+1.0)),
+       Parameter("delta", 0.12, min=0.0),   # free auxiliary half-splitting
+   ])
+   result = FitEngine().fit(dataset, model.function, ps, t_min=0.1, t_max=8.0)
+   # The hyperfine constant is the satellite splitting, 2·delta, with its
+   # own (delta-method) uncertainty:
+   fitted = {p.name: p.value for p in result.parameters}
+   a_mu = 2.0 * fitted["delta"]
+
+A constant offset (no auxiliary parameter) pins a *known* splitting:
+``AffineTie(main="frequency_1", const=+0.12)``. Tie references must be free,
+fixed, or link-group parameters — ties may not chain to other ties, and a
+parameter cannot be both link-grouped and affinely tied. Affine ties are a
+deliberate capability beyond WiMDA (whose links are equality-only); see
+``docs/porting/link-groups/`` for the design rationale. General *nonlinear*
+expression constraints (``Parameter.expr``) remain reserved and are not yet
+evaluated by the engine.
+
 Global Fitting
 --------------
 
