@@ -21,7 +21,7 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QBrush, QColor, QFont, QFontMetrics, QPalette
+from PySide6.QtGui import QBrush, QColor, QCursor, QFont, QFontMetrics, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QToolButton,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -132,6 +133,13 @@ EXTRA_COLUMN_CUSTOM = "custom"
 #: the plot-label / trend-x-axis resolvers, which already read dataset metadata.
 CUSTOM_FIELDS_METADATA_KEY = "custom_fields"
 
+#: The special "Angle" field is a singleton custom column flagged ``is_angle``:
+#: it stores per-run numeric degrees (sample crystallographic axis vs the applied
+#: field) and is surfaced as a first-class trend x-axis. Fixed id + label so it is
+#: findable across save/reload regardless of creation order.
+ANGLE_COLUMN_ID = "angle"
+ANGLE_COLUMN_LABEL = "Angle (°)"
+
 
 @dataclass
 class ExtraColumn:
@@ -156,6 +164,10 @@ class ExtraColumn:
     label: str
     kind: str = EXTRA_COLUMN_METADATA
     source_key: str | None = None
+    #: ``True`` for the special "Angle" field — a custom column (so all the custom
+    #: value/edit/persistence plumbing applies) that additionally carries degree
+    #: semantics: numeric validation on edit and a first-class trend x-axis.
+    is_angle: bool = False
 
     @property
     def is_custom(self) -> bool:
@@ -165,6 +177,8 @@ class ExtraColumn:
         data: dict[str, object] = {"id": self.id, "label": self.label, "kind": self.kind}
         if self.source_key is not None:
             data["source_key"] = self.source_key
+        if self.is_angle:
+            data["is_angle"] = True
         return data
 
     @classmethod
@@ -200,7 +214,10 @@ class ExtraColumn:
         if kind == EXTRA_COLUMN_METADATA and source_key is None:
             source_key = col_id
         label = str(data.get("label", col_id))
-        return cls(id=col_id, label=label, kind=kind, source_key=source_key)
+        # ``is_angle`` is meaningful only for custom columns (degree semantics ride
+        # the custom value plumbing); ignore a stray flag on a metadata column.
+        is_angle = kind == EXTRA_COLUMN_CUSTOM and bool(data.get("is_angle", False))
+        return cls(id=col_id, label=label, kind=kind, source_key=source_key, is_angle=is_angle)
 
 
 class FilterDialog(QDialog):
@@ -698,7 +715,7 @@ class DataBrowserPanel(QWidget):
             f" QToolButton:hover {{ background-color: {tokens.SURFACE_HI}; }}"
         )
         self._add_field_btn.setFixedWidth(self._RAIL_WIDTH)
-        self._add_field_btn.clicked.connect(self._prompt_add_custom_column)
+        self._add_field_btn.clicked.connect(self._show_add_field_menu)
 
         filler = QWidget()
         filler.setObjectName("addFieldFiller")
@@ -723,6 +740,26 @@ class DataBrowserPanel(QWidget):
         if height > 0:
             frame_offset = header.geometry().top()
             self._add_field_btn.setFixedHeight(frame_offset + height)
+
+    def _build_add_field_menu(self) -> QMenu:
+        """Build the rail "+" menu: a free-text custom column or the Angle field.
+
+        The Angle entry is disabled once the singleton Angle field exists.
+        """
+        menu = QMenu(self)
+        menu.setToolTipsVisible(True)
+        menu.addAction("Custom column…", self._prompt_add_custom_column)
+        angle_action = menu.addAction(ANGLE_COLUMN_LABEL, self.add_angle_column)
+        if self.has_angle_column():
+            angle_action.setEnabled(False)
+            angle_action.setToolTip("An Angle field already exists")
+        return menu
+
+    def _show_add_field_menu(self) -> None:
+        """Pop the add-field menu just below the "+" strip."""
+        menu = self._build_add_field_menu()
+        below = self._add_field_btn.mapToGlobal(self._add_field_btn.rect().bottomLeft())
+        menu.exec(below)
 
     # ------------------------------------------------------------------
     # Batched updates
@@ -1487,7 +1524,9 @@ class DataBrowserPanel(QWidget):
             item = self._table.horizontalHeaderItem(len(self._COLUMNS) + offset)
             if item is None:
                 continue
-            if column.is_custom:
+            if column.is_angle:
+                item.setToolTip("Sample orientation angle in degrees — double-click a cell to edit")
+            elif column.is_custom:
                 item.setToolTip("Custom column — double-click a cell to edit")
             elif column.source_key:
                 item.setToolTip(f"From metadata field: {column.source_key}")
@@ -1619,6 +1658,33 @@ class DataBrowserPanel(QWidget):
         name, ok = QInputDialog.getText(self, "Add custom column", "Column name:")
         if ok:
             self.add_custom_column(name)
+
+    def has_angle_column(self) -> bool:
+        """Return ``True`` when the singleton special "Angle" field exists."""
+        return any(column.is_angle for column in self._extra_columns)
+
+    def add_angle_column(self) -> ExtraColumn | None:
+        """Add the singleton special "Angle (°)" field (numeric degrees per run).
+
+        Returns the existing Angle field if one is already present, so the action
+        is idempotent and never produces a duplicate.
+        """
+        existing = next((column for column in self._extra_columns if column.is_angle), None)
+        if existing is not None:
+            return existing
+        column = ExtraColumn(
+            id=ANGLE_COLUMN_ID,
+            label=ANGLE_COLUMN_LABEL,
+            kind=EXTRA_COLUMN_CUSTOM,
+            source_key=None,
+            is_angle=True,
+        )
+        self._extra_columns.append(column)
+        self._refresh_column_headers()
+        self._rebuild_table()
+        self._resize_columns_to_content()
+        self._notify_extra_columns_changed()
+        return column
 
     def rename_extra_column(self, column_id: str, new_label: str) -> bool:
         """Rename a column's gui-facing label (its source_key is untouched)."""
@@ -2698,9 +2764,22 @@ class DataBrowserPanel(QWidget):
         dataset = self._datasets.get(run_number)
         if dataset is None:
             return
+        text = item.text().strip()
+        # The Angle field is numeric degrees: reject a non-numeric (non-blank)
+        # entry, reverting the cell to its stored value with a brief warning.
+        # Blank clears; any real number is accepted (wrapping is applied downstream).
+        column = self._find_extra_column(column_id)
+        if column is not None and column.is_angle and text:
+            try:
+                float(text)
+            except ValueError:
+                with QSignalBlocker(self._table):
+                    item.setText(self.custom_column_value(dataset, column_id))
+                QToolTip.showText(QCursor.pos(), "Angle must be a number (degrees)")
+                return
         # Free-text by design (numbers are inferred only where consumed, e.g. the
         # trend x-axis): store the trimmed text verbatim, clearing on empty.
-        self._set_custom_column_value(dataset, column_id, item.text().strip())
+        self._set_custom_column_value(dataset, column_id, text)
 
     def _remove_run_number(self, run_number: int) -> None:
         self._datasets.pop(run_number, None)
