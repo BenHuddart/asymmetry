@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Send to Batch carries the current single-fit seeds**: the **Send Model to
+  Batch** action now seeds each batch parameter from the Single tab's current
+  table values (which reflect the latest fit once one has run) instead of only
+  copying the composite model. Previously the batch Parameter Classification
+  fell back to model defaults or stale preserved state — e.g. a leftover
+  frequency seed of 1.355 instead of the just-set value (BUG B8c).
+
 ## [0.4.0] - 2026-06-14
 
 This release marks the completion of the Wimda parity programme: Asymmetry now
