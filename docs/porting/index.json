@@ -1030,6 +1030,28 @@
       "src_path": "src/asymmetry/core/fitting/muon_proton.py",
       "updated": "2026-06-14",
       "notes": "Closes parity gap PC1 (RigiWorkshopFit RF-resonance / exact-diagonalisation fit). Ports WiMDA RFresonanceMuPlusProtonExact + muproton1: 8x8 isotropic contact Hamiltonian H = A_mu*Se.Smu + A_p*Se.Sp + (g_e*Sez - g_mu*Smuz - g_p*Spz)*B (MHz, field in G), diagonalised with numpy.linalg.eigvalsh (Eigenuni.pas superseded — Hermitian spectrum is basis-independent, so sorted level differences are identical to machine precision). RF resonance = fields where sorted transitions E7-E5 and E8-E6 (WiMDA selectors 75/86) equal nu_RF; model = BG + two Lorentzians. Implemented as field-scope parameter-trend component RFResonanceMuP in parameter_models.py (params A_mu,A_p,nu_RF,ampl1,wid1,ampl2,wid2,BG). Only the EXACT variant is registered; the analytic Breit-Rabi variant (kept as analytic_rf_transition_freqs for cross-check) under-splits at low field. Ap=0 reduces to muonium._tf_levels (validated). VERIFIED end-to-end on the benzene corpus (DEVA runs 56426-56462, nu_RF=218.5 MHz, 293 K): fitting the Green-Red integral-asymmetry field scan recovers A_mu=516.0 MHz (paper 514.78(4)) and A_p=125.4 MHz (paper 124.6(14), within stated sigma), resonances 866/772 G (digitised 865/773), chi2/dof=1.6. A_mu is the robust observable; A_p (the splitting) is the weak axis, as the paper notes. 19 new tests; 185 touched existing tests green."
+    },
+    {
+      "slug": "sc-vortex-lattice-lineshape",
+      "feature_name": "Vortex-lattice field-distribution lineshape (TF penetration depth)",
+      "status": "implemented",
+      "path": "docs/porting/sc-vortex-lattice-lineshape",
+      "references": [
+        "Brandt, Phys. Rev. B 68, 054506 (2003)",
+        "Sonier, Brewer, Kiefl, Rev. Mod. Phys. 72, 769 (2000)",
+        "Pratt et al., Phys. Rev. B 79, 052508 (2009)"
+      ],
+      "docs": {
+        "readme": "docs/porting/sc-vortex-lattice-lineshape/README.md",
+        "comparison": "docs/porting/sc-vortex-lattice-lineshape/comparison.md",
+        "implementation_options": "docs/porting/sc-vortex-lattice-lineshape/implementation-options.md",
+        "test_data": "docs/porting/sc-vortex-lattice-lineshape/test-data.md",
+        "verification_plan": "docs/porting/sc-vortex-lattice-lineshape/verification-plan.md"
+      },
+      "tests_path": "tests/test_sc_vl_lineshape.py",
+      "src_path": "src/asymmetry/core/fitting/sc/lineshape.py",
+      "updated": "2026-06-16",
+      "notes": "Adds time-domain vortex-lattice lineshape fit components VortexLattice and VortexLatticePowder: P(t)=A*Re[exp(i(2*pi*gamma_mu*B0*t+phase))*R(t)], R(t)=<exp(i 2pi gamma (B(r)-B0) t)>_r the characteristic function of the modified-London triangular-FLL field distribution p(B) (skewed: sharp low-field cutoff, high-field core tail). Fixes the single-Gaussian underestimate of sigma_VL (window/binning-dependent, 0.7-3.1 on LiFeAs run 3366) by fitting the lineshape directly. Width calibrated to brandt_field_width_sigma[_powder] so lambda/Bc2 match the SC_Brandt_VortexLattice trend models; modified-London supplies only the shape. Params [A, field, phase, lambda_ab, Bc2], field pre-fixed; powder uses 3^(1/4) lambda_ab. Core sc/lineshape.py (cached FLL build); 12 tests (anchor, skew, R(0), degenerate, lambda^-2, round-trip lambda=195.1+/-0.1 nm). LiFeAs powder headline remains data-degeneracy-limited (fast VL + slow nuclear + Ag background overlap); documented in the wimda-eval cookbook."
     }
   ]
 }
