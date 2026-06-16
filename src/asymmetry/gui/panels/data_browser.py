@@ -680,11 +680,15 @@ class DataBrowserPanel(QWidget):
         self._add_field_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._add_field_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._add_field_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        # Top + bottom borders continue the table's top frame line and the
+        # header's bottom line, so the "+" strip joins the header seamlessly
+        # (its height is sized to frame + header in _sync_rail_header_height).
         self._add_field_btn.setStyleSheet(
             "QToolButton {"
             f" background-color: {tokens.SURFACE_ALT};"
             f" color: {tokens.ACCENT};"
             " border: none;"
+            f" border-top: 1px solid {tokens.BORDER};"
             f" border-bottom: 1px solid {tokens.BORDER};"
             " font-size: 15px; font-weight: 600; }"
             f" QToolButton:hover {{ background-color: {tokens.SURFACE_HI}; }}"
@@ -701,12 +705,20 @@ class DataBrowserPanel(QWidget):
         return rail
 
     def _sync_rail_header_height(self) -> None:
-        """Match the "+" strip height to the table header so they align."""
+        """Match the "+" strip to the header rect (incl. the table's top frame).
+
+        The header is inset by the table's 1px frame, so the strip spans that
+        frame offset *plus* the header height; with its own top and bottom
+        borders the strip's lines then land exactly on the table's top frame
+        line and the header's bottom line.
+        """
         if not hasattr(self, "_add_field_btn"):
             return
-        height = self._table.horizontalHeader().height()
+        header = self._table.horizontalHeader()
+        height = header.height()
         if height > 0:
-            self._add_field_btn.setFixedHeight(height)
+            frame_offset = header.geometry().top()
+            self._add_field_btn.setFixedHeight(frame_offset + height)
 
     # ------------------------------------------------------------------
     # Batched updates

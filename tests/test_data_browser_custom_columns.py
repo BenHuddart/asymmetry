@@ -171,16 +171,26 @@ def test_add_field_rail_button_cancel_adds_nothing(qapp, monkeypatch):
 
 
 def test_add_field_rail_strip_aligns_with_header(qapp):
-    # The "+" strip height tracks the table header so the tab lines up.
+    # The "+" strip spans the table's top frame plus the header height so its
+    # top/bottom border lines land exactly on the header's, joining seamlessly.
     panel = DataBrowserPanel()
     panel.add_dataset(_dataset(9))
     panel.resize(320, 200)
     panel.show()
     qapp.processEvents()
     panel._sync_rail_header_height()
-    header_height = panel._table.horizontalHeader().height()
-    assert header_height > 0
-    assert panel._add_field_btn.height() == header_height
+    header = panel._table.horizontalHeader()
+    assert header.height() > 0
+    frame_offset = header.geometry().top()
+    assert panel._add_field_btn.height() == frame_offset + header.height()
+
+    # The button's bottom edge coincides with the header's bottom edge.
+    table_row = panel._table.parentWidget()
+    header_bottom = panel._table.mapTo(table_row, header.geometry().bottomLeft()).y()
+    btn = panel._add_field_btn
+    btn_bottom = btn.parentWidget().mapTo(table_row, btn.geometry().bottomLeft()).y()
+    assert btn_bottom == header_bottom
+
     # The rail does not add a table column — it is a sibling widget.
     assert panel._table.columnCount() == len(panel._COLUMNS)
 
