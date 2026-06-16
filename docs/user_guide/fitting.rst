@@ -305,6 +305,23 @@ deliberate capability beyond WiMDA (whose links are equality-only); see
 expression constraints (``Parameter.expr``) remain reserved and are not yet
 evaluated by the engine.
 
+In the **GUI**, the single-fit parameter table has a **Tie** column: click a
+row's button to open the tie editor and derive that parameter from the others
+in the table (``main``, ``scale``, ``offset``, ``offset scale``, ``const``, with
+a live formula preview). Setting a tie clears and disables that row's *Fix* and
+*Link* controls. Because the editor references parameters that already have a
+table row, equal spacing is expressed directly against existing lines — e.g. a
+lower satellite ``f_lo = 2·f_c − f_hi`` (``main=f_c, scale=2, offset=f_hi,
+offset_scale=-1``), which removes one free frequency exactly like the
+auxiliary-``delta`` form. The free-auxiliary form above (a ``delta`` parameter
+the model never consumes) is authored via the API; a project that uses it is
+**preserved** intact when opened and re-saved in the GUI, even though the GUI
+does not edit the auxiliary parameter directly.
+
+Affine ties are honoured by the single-run engine (``FitEngine.fit``). Global,
+count-domain, and grouped/series fits raise ``NotImplementedError`` when a tie is
+present rather than silently ignoring it — fit each run individually.
+
 Global Fitting
 --------------
 
