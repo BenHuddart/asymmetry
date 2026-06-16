@@ -95,7 +95,13 @@ from asymmetry.core.fitting.parameter_models import (
     validate_fit_windows,
     windows_mask,
 )
-from asymmetry.core.fitting.parameters import Parameter, ParameterSet, ParamInfo, get_param_info
+from asymmetry.core.fitting.parameters import (
+    AffineTie,
+    Parameter,
+    ParameterSet,
+    ParamInfo,
+    get_param_info,
+)
 from asymmetry.core.fitting.result_summary import fit_result_summary
 from asymmetry.core.fitting.rrf_offset import (
     RRF_ROTATION_COMPONENTS,
@@ -209,6 +215,7 @@ __all__ = [
     "get_param_info",
     "Parameter",
     "ParameterSet",
+    "AffineTie",
     "FREQUENCY_COMPONENT_NAMES",
     "append_frequency_field_derived_parameters",
     "default_frequency_model",

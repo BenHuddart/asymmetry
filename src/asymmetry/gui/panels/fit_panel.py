@@ -22,6 +22,9 @@ from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QDoubleSpinBox,
     QFormLayout,
     QFrame,
     QGridLayout,
@@ -90,6 +93,7 @@ from asymmetry.core.fitting.grouped_time_domain import (
     validate_grouped_model_contract,
 )
 from asymmetry.core.fitting.parameters import (
+    AffineTie,
     Parameter,
     ParameterSet,
     get_param_info,
@@ -729,7 +733,201 @@ _SINGLE_PARAM_LINK_COLUMN = 6
 #: WiMDA's four groups.
 _LINK_GROUP_COUNT = 4
 
+#: Column of the single-fit parameter table holding the affine-tie editor button
+#: (offset / equal-spacing ties; beyond WiMDA's equality links).
+_SINGLE_PARAM_TIE_COLUMN = 7
+
 _PARAM_ROLE_LABELS = {"global": "Global", "local": "Local", "fixed": "Fixed", "file": "File"}
+
+
+def _format_tie_formula(name: str, tie: AffineTie | None) -> str:
+    """Render an affine tie as a compact human-readable equation."""
+    if tie is None:
+        return f"{name} is free"
+    terms: list[str] = []
+    scale = tie.scale
+    if scale == 1.0:
+        terms.append(tie.main)
+    elif scale == -1.0:
+        terms.append(f"-{tie.main}")
+    else:
+        terms.append(f"{scale:g}·{tie.main}")
+    if tie.offset is not None and tie.offset_scale != 0.0:
+        sign = "-" if tie.offset_scale < 0 else "+"
+        mag = abs(tie.offset_scale)
+        terms.append(f"{sign} {tie.offset}" if mag == 1.0 else f"{sign} {mag:g}·{tie.offset}")
+    if tie.const:
+        terms.append(f"{'-' if tie.const < 0 else '+'} {abs(tie.const):g}")
+    return f"{name} = {' '.join(terms)}"
+
+
+class AffineTieDialog(QDialog):
+    """Edit an affine tie for one parameter: ``scale·main + offset_scale·offset + const``.
+
+    Offers the other (non-tied) parameters as the ``main``/``offset`` references,
+    so the resulting tie always references valid, untied parameters (the engine
+    rejects unknown refs and tie-to-tie chains). Equal spacing is expressed
+    against existing parameters, e.g. a lower satellite ``f_lo = 2·f_c − f_hi``.
+    The free-auxiliary-``delta`` form is authored via the API; this dialog edits
+    ties between parameters already in the table.
+    """
+
+    def __init__(
+        self,
+        param_name: str,
+        candidates: list[str],
+        current: AffineTie | None,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(f"Affine tie — {_format_param_label(param_name)}")
+        self._param_name = param_name
+        self._candidates = candidates
+
+        layout = QVBoxLayout(self)
+        self._enable = QCheckBox("Tie this parameter to others")
+        layout.addWidget(self._enable)
+
+        form_widget = QWidget()
+        form = QFormLayout(form_widget)
+        self._main = QComboBox()
+        self._main.addItems(candidates)
+        self._scale = self._make_coeff_spin(1.0)
+        self._offset = QComboBox()
+        self._offset.addItem("(none)", None)
+        for name in candidates:
+            self._offset.addItem(name, name)
+        self._offset_scale = self._make_coeff_spin(1.0)
+        self._const = self._make_coeff_spin(0.0)
+        form.addRow("Main (× scale):", self._main)
+        form.addRow("Scale:", self._scale)
+        form.addRow("Offset param:", self._offset)
+        form.addRow("Offset scale:", self._offset_scale)
+        form.addRow("Constant:", self._const)
+        layout.addWidget(form_widget)
+
+        self._formula = QLabel()
+        self._formula.setWordWrap(True)
+        layout.addWidget(self._formula)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        # Seed from the current tie (if any) and wire live updates.
+        if current is not None and current.main in candidates:
+            self._enable.setChecked(True)
+            self._main.setCurrentText(current.main)
+            self._scale.setValue(current.scale)
+            if current.offset is not None and current.offset in candidates:
+                self._offset.setCurrentIndex(self._offset.findData(current.offset))
+            self._offset_scale.setValue(current.offset_scale)
+            self._const.setValue(current.const)
+
+        self._enable.toggled.connect(self._refresh)
+        self._main.currentIndexChanged.connect(self._refresh)
+        self._scale.valueChanged.connect(self._refresh)
+        self._offset.currentIndexChanged.connect(self._refresh)
+        self._offset_scale.valueChanged.connect(self._refresh)
+        self._const.valueChanged.connect(self._refresh)
+        self._form_widget = form_widget
+        self._refresh()
+
+    @staticmethod
+    def _make_coeff_spin(default: float) -> QDoubleSpinBox:
+        spin = QDoubleSpinBox()
+        spin.setRange(-1e6, 1e6)
+        spin.setDecimals(4)
+        spin.setValue(default)
+        return spin
+
+    def _refresh(self) -> None:
+        enabled = self._enable.isChecked() and bool(self._candidates)
+        self._form_widget.setEnabled(enabled)
+        self._offset_scale.setEnabled(enabled and self._offset.currentData() is not None)
+        self._formula.setText(_format_tie_formula(self._param_name, self.tie()))
+
+    def tie(self) -> AffineTie | None:
+        if not self._enable.isChecked() or not self._candidates:
+            return None
+        offset = self._offset.currentData()
+        return AffineTie(
+            main=self._main.currentText(),
+            scale=float(self._scale.value()),
+            offset=offset,
+            offset_scale=float(self._offset_scale.value()),
+            const=float(self._const.value()),
+        )
+
+
+def _make_tie_button() -> QPushButton:
+    """Per-row affine-tie editor button for the single-fit table.
+
+    The button text shows ``—`` when untied and ``ƒ`` when a tie is set; the
+    current :class:`AffineTie` (or ``None``) is stashed on the button so the
+    table read-out and project round-trip can recover it.
+    """
+    button = QPushButton("—")
+    button.setFlat(True)
+    button.setMaximumWidth(36)
+    button._affine_tie = None  # type: ignore[attr-defined]
+    button.setToolTip("Affine tie: derive this parameter from others (offset / equal spacing).")
+    return button
+
+
+def _tie_button_value(button: QPushButton | None) -> AffineTie | None:
+    if not isinstance(button, QPushButton):
+        return None
+    return getattr(button, "_affine_tie", None)
+
+
+def _set_tie_button_value(button: QPushButton | None, tie: AffineTie | None) -> None:
+    if not isinstance(button, QPushButton):
+        return
+    button._affine_tie = tie  # type: ignore[attr-defined]
+    button.setText("ƒ" if tie is not None else "—")
+    if tie is not None:
+        button.setToolTip(_format_tie_formula(_param_name_from_tie_button(button), tie))
+    else:
+        button.setToolTip("Affine tie: derive this parameter from others (offset / equal spacing).")
+
+
+def _param_name_from_tie_button(button: QPushButton) -> str:
+    """Best-effort parameter name for a tie button's tooltip (set by the panel)."""
+    return getattr(button, "_param_name", "")
+
+
+def _coerce_bound(text, default: float) -> float:
+    """Parse a saved min/max value (number or '-inf'/'inf' text) to a float."""
+    if text is None:
+        return default
+    s = str(text).strip()
+    if s in ("", "-inf", "inf", "+inf"):
+        return default
+    try:
+        return float(s)
+    except ValueError:
+        return default
+
+
+def _parameter_from_state_dict(entry: dict) -> Parameter:
+    """Reconstruct a :class:`Parameter` from a saved single-fit param entry."""
+    raw_tie = entry.get("tie")
+    tie = AffineTie.from_dict(raw_tie) if isinstance(raw_tie, dict) else None
+    raw_link = entry.get("link_group")
+    link_group = int(raw_link) if isinstance(raw_link, (int, float)) else None
+    return Parameter(
+        name=str(entry.get("name", "")),
+        value=float(entry.get("value", 0.0) or 0.0),
+        min=_coerce_bound(entry.get("min"), -float("inf")),
+        max=_coerce_bound(entry.get("max"), float("inf")),
+        fixed=bool(entry.get("fixed", False)),
+        link_group=link_group,
+        tie=tie,
+    )
 
 
 def _make_link_group_combo() -> QComboBox:
@@ -1197,6 +1395,13 @@ class SingleFitTab(QWidget):
         #: identity alone would miss it), so the stale result is not applied.
         self._model_generation = 0
 
+        #: Saved parameter entries that have no table row — auxiliary, non-model
+        #: parameters (e.g. an API-authored affine-tie half-splitting ``delta``)
+        #: that the model itself never consumes. The GUI cannot edit them, but it
+        #: preserves them verbatim across save/restore and includes them in a
+        #: re-fit so a tie referencing them still resolves.
+        self._auxiliary_param_state: list[dict] = []
+
         # Model selection
         model_group, model_box = make_section("Model")
         model_layout = QFormLayout()
@@ -1273,9 +1478,9 @@ class SingleFitTab(QWidget):
 
         # Parameter table
         param_group, param_layout = make_section("Parameters")
-        self._param_table = QTableWidget(0, 7)
+        self._param_table = QTableWidget(0, 8)
         self._param_table.setHorizontalHeaderLabels(
-            ["Name", "Value", "Fix", "Min", "Max", "Batch", "Link"]
+            ["Name", "Value", "Fix", "Min", "Max", "Batch", "Link", "Tie"]
         )
         self._param_table.horizontalHeader().setStretchLastSection(False)
         # Tight default widths so the table fits a 13" dock without sideways
@@ -1288,6 +1493,7 @@ class SingleFitTab(QWidget):
         self._param_table.setColumnWidth(4, 52)  # Max
         self._param_table.setColumnWidth(5, 50)  # Batch role (read-only)
         self._param_table.setColumnWidth(6, 40)  # Link group (equality tie)
+        self._param_table.setColumnWidth(7, 40)  # Affine tie (offset / equal spacing)
 
         _apply_param_table_style(self._param_table)
         # Tab commits the open editor on every editable column (Value, Min, Max);
@@ -1578,8 +1784,11 @@ class SingleFitTab(QWidget):
         self._updating_fraction_values = True
         self._composite_model = model
         # Any model (re)build — including Reset, which reuses the same object —
-        # invalidates an in-flight fit's table/diagnostic write-back.
+        # invalidates an in-flight fit's table/diagnostic write-back, and drops
+        # any auxiliary (non-model) parameters carried from a previously loaded
+        # project (they belong to the old model's tie structure).
         self._model_generation += 1
+        self._auxiliary_param_state = []
         _set_formula_label_text(self._formula_label, model.formula_string())
         _apply_domain_mismatch_warning(self._formula_label, model, self._domain)
 
@@ -1645,6 +1854,13 @@ class SingleFitTab(QWidget):
             # the ambiguous combination can't be created.
             self._wire_fix_link_exclusion(fix_checkbox, link_combo)
 
+            # Tie column — affine (offset / equal-spacing) tie editor. A tie is
+            # mutually exclusive with Fix and Link (the engine rejects both).
+            tie_button = _make_tie_button()
+            tie_button._param_name = pname  # type: ignore[attr-defined]
+            self._param_table.setCellWidget(i, _SINGLE_PARAM_TIE_COLUMN, tie_button)
+            self._wire_tie_button(i, tie_button, fix_checkbox, link_combo)
+
         _configure_fraction_rows_in_table(
             self._param_table,
             model,
@@ -1708,6 +1924,76 @@ class SingleFitTab(QWidget):
 
         fix_checkbox.toggled.connect(on_fix_toggled)
         link_combo.currentIndexChanged.connect(on_link_changed)
+
+    def _tie_candidate_names(self, row: int) -> list[str]:
+        """Parameter names a row may reference in a tie: other, *untied* rows.
+
+        Excludes the row itself (no self-reference) and any already-tied row (the
+        engine forbids tie-to-tie chaining), so every offered reference is valid.
+        """
+        names: list[str] = []
+        for i in range(self._param_table.rowCount()):
+            if i == row:
+                continue
+            name_item = self._param_table.item(i, 0)
+            name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
+            if not isinstance(name, str):
+                continue
+            other_button = self._param_table.cellWidget(i, _SINGLE_PARAM_TIE_COLUMN)
+            if _tie_button_value(other_button) is not None:
+                continue
+            names.append(name)
+        # Auxiliary (non-model) parameters carried from a loaded project are also
+        # valid references — include them so a restored tie that points at one
+        # (e.g. an API-authored half-splitting ``delta``) survives a dialog edit.
+        for entry in self._auxiliary_param_state:
+            aux_name = entry.get("name")
+            if isinstance(aux_name, str) and aux_name not in names:
+                names.append(aux_name)
+        return names
+
+    def _wire_tie_button(
+        self,
+        row: int,
+        tie_button: QPushButton,
+        fix_checkbox: QCheckBox,
+        link_combo: QComboBox,
+    ) -> None:
+        """Open the affine-tie editor and keep Tie mutually exclusive with Fix/Link.
+
+        A tied parameter is derived from others, so it cannot also be fixed or
+        link-grouped (the engine raises on either combination). Setting a tie
+        clears and disables this row's Fix and Link controls; clearing the tie
+        re-enables them.
+        """
+
+        def on_clicked() -> None:
+            candidates = self._tie_candidate_names(row)
+            if not candidates:
+                QMessageBox.information(
+                    self,
+                    "Affine tie",
+                    "An affine tie needs at least one other free parameter to "
+                    "reference. Add or untie another parameter first.",
+                )
+                return
+            name = getattr(tie_button, "_param_name", "")
+            dialog = AffineTieDialog(name, candidates, _tie_button_value(tie_button), self)
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            tie = dialog.tie()
+            _set_tie_button_value(tie_button, tie)
+            self._updating_fraction_values = True
+            try:
+                if tie is not None:
+                    fix_checkbox.setChecked(False)
+                    _set_link_group_combo_value(link_combo, None)
+            finally:
+                self._updating_fraction_values = False
+            fix_checkbox.setEnabled(tie is None)
+            link_combo.setEnabled(tie is None)
+
+        tie_button.clicked.connect(on_clicked)
 
     def _edit_function(self) -> None:
         """Launch the fit-function builder dialog."""
@@ -1977,6 +2263,7 @@ class SingleFitTab(QWidget):
 
             link_combo = self._param_table.cellWidget(i, _SINGLE_PARAM_LINK_COLUMN)
             link_group = _link_group_combo_value(link_combo)
+            tie = _tie_button_value(self._param_table.cellWidget(i, _SINGLE_PARAM_TIE_COLUMN))
 
             parameters.add(
                 Parameter(
@@ -1986,8 +2273,13 @@ class SingleFitTab(QWidget):
                     max=max_val,
                     fixed=fixed,
                     link_group=link_group,
+                    tie=tie,
                 )
             )
+        # Re-add auxiliary (non-model) parameters preserved from a loaded project
+        # so a tie referencing them still resolves in a GUI re-fit.
+        for entry in self._auxiliary_param_state:
+            parameters.add(_parameter_from_state_dict(entry))
         return parameters
 
     def current_seed_values(self) -> dict[str, str]:
@@ -2313,6 +2605,7 @@ class SingleFitTab(QWidget):
             role_item = self._param_table.item(i, _SINGLE_PARAM_BATCH_COLUMN)
             role = role_item.data(_PARAM_BATCH_ROLE_DATA) if role_item is not None else None
             link_combo = self._param_table.cellWidget(i, _SINGLE_PARAM_LINK_COLUMN)
+            tie = _tie_button_value(self._param_table.cellWidget(i, _SINGLE_PARAM_TIE_COLUMN))
             params.append(
                 {
                     "name": param_name,
@@ -2324,8 +2617,13 @@ class SingleFitTab(QWidget):
                     "uncertainty_asymmetric": list(unc_asym) if unc_asym is not None else None,
                     "role": role if isinstance(role, str) else None,
                     "link_group": _link_group_combo_value(link_combo),
+                    "tie": tie.to_dict() if tie is not None else None,
                 }
             )
+
+        # Re-emit auxiliary (non-model) parameters preserved from a loaded
+        # project so they survive a GUI save (the table has no row for them).
+        params.extend(copy.deepcopy(entry) for entry in self._auxiliary_param_state)
 
         normalized_values = _normalized_model_param_values(
             self._composite_model,
@@ -2434,6 +2732,35 @@ class SingleFitTab(QWidget):
             _set_link_group_combo_value(
                 link_combo, int(raw_link) if isinstance(raw_link, (int, float)) else None
             )
+
+            # Affine tie — mutually exclusive with Fix/Link, which it overrides.
+            tie_button = self._param_table.cellWidget(i, _SINGLE_PARAM_TIE_COLUMN)
+            raw_tie = p_data.get("tie")
+            tie = AffineTie.from_dict(raw_tie) if isinstance(raw_tie, dict) else None
+            _set_tie_button_value(tie_button, tie)
+            if tie is not None:
+                if fix_checkbox is not None:
+                    fix_checkbox.setChecked(False)
+                _set_link_group_combo_value(link_combo, None)
+            if fix_checkbox is not None:
+                fix_checkbox.setEnabled(tie is None)
+            link_combo.setEnabled(tie is None)
+
+        # Preserve auxiliary (non-model) parameters that have no table row — e.g.
+        # an API-authored half-splitting `delta` an affine tie references — so a
+        # GUI save/re-fit does not silently drop them and break the tie.
+        row_names: set[str] = set()
+        for i in range(self._param_table.rowCount()):
+            ni = self._param_table.item(i, 0)
+            nm = ni.data(Qt.ItemDataRole.UserRole) if ni else None
+            if isinstance(nm, str):
+                row_names.add(nm)
+        self._auxiliary_param_state = [
+            copy.deepcopy(entry)
+            for entry in state.get("parameters", [])
+            if isinstance(entry, dict) and entry.get("name") not in row_names
+        ]
+
         self._updating_fraction_values = False
         self._synchronize_fraction_value_rows()
 

@@ -533,6 +533,66 @@ def param_info_map(param_names: list[str]) -> dict[str, ParamInfo]:
     return {name: get_param_info(name) for name in param_names}
 
 
+@dataclass(frozen=True)
+class AffineTie:
+    """An affine constraint deriving a follower from other parameters.
+
+    ``follower = scale * main + offset_scale * offset + const``
+
+    where ``main`` and the optional ``offset`` are parameter names. Unlike an
+    equality link group (which can only force ``follower == main``), this
+    expresses *offset* / *equal-spacing* ties such as the symmetric muonium
+    satellites ``f_lo = f_c - delta`` / ``f_hi = f_c + delta``. The ``offset``
+    may reference a free *auxiliary* parameter (e.g. the half-splitting
+    ``delta``) that the model itself does not consume — it exists only to drive
+    the ties, and is fitted with its own uncertainty.
+
+    This is a deliberate capability *beyond* WiMDA, which has no affine tie (see
+    docs/porting/link-groups/). It is intentionally a linear map of at most two
+    parameters plus a constant — enough for equal spacing, with a clean
+    delta-method uncertainty — rather than a general expression evaluator.
+    """
+
+    main: str
+    scale: float = 1.0
+    offset: str | None = None
+    offset_scale: float = 1.0
+    const: float = 0.0
+
+    def references(self) -> list[str]:
+        """Parameter names this tie depends on (main first, then offset)."""
+        names = [self.main]
+        if self.offset is not None:
+            names.append(self.offset)
+        return names
+
+    def evaluate(self, values: dict[str, float]) -> float:
+        """Compute the follower value from a name -> value mapping."""
+        result = self.scale * values[self.main] + self.const
+        if self.offset is not None:
+            result += self.offset_scale * values[self.offset]
+        return result
+
+    def to_dict(self) -> dict:
+        return {
+            "main": self.main,
+            "scale": self.scale,
+            "offset": self.offset,
+            "offset_scale": self.offset_scale,
+            "const": self.const,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> AffineTie:
+        return cls(
+            main=str(data["main"]),
+            scale=float(data.get("scale", 1.0)),
+            offset=(None if data.get("offset") is None else str(data["offset"])),
+            offset_scale=float(data.get("offset_scale", 1.0)),
+            const=float(data.get("const", 0.0)),
+        )
+
+
 @dataclass
 class Parameter:
     """A single fit parameter."""
@@ -544,10 +604,11 @@ class Parameter:
     fixed: bool = False
     expr: str | None = None  # Expression constraint (e.g. tie to another param)
     link_group: int | None = None  # Equality link group id (WiMDA-style); None = unlinked
+    tie: AffineTie | None = None  # Affine (offset/equal-spacing) tie to other params
 
     @property
     def is_constrained(self) -> bool:
-        return self.fixed or self.expr is not None
+        return self.fixed or self.expr is not None or self.tie is not None
 
 
 class ParameterSet:
@@ -624,6 +685,16 @@ class ParameterSet:
                 if member.name != main.name:
                     followers[member.name] = main.name
         return followers
+
+    # --- affine ties (offset / equal-spacing) --------------------------------
+
+    def tie_followers(self) -> dict[str, AffineTie]:
+        """Map each affinely-tied parameter name to its :class:`AffineTie`.
+
+        These followers are derived from other parameters at fit time and so
+        drop out of the free set (via :attr:`Parameter.is_constrained`).
+        """
+        return {p.name: p.tie for p in self if p.tie is not None}
 
     def values_array(self) -> list[float]:
         return [p.value for p in self]
