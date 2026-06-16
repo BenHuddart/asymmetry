@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import math
 import sys
 import uuid
 from contextlib import contextmanager
@@ -1706,18 +1707,36 @@ class DataBrowserPanel(QWidget):
         if field_key_or_id == "field":
             self.set_use_field_from_log(False)
             return
-        remaining = [
+        removed = [
             column
             for column in self._extra_columns
-            if column.id != field_key_or_id and column.source_key != field_key_or_id
+            if column.id == field_key_or_id or column.source_key == field_key_or_id
         ]
-        if len(remaining) == len(self._extra_columns):
+        if not removed:
             return
-        self._extra_columns = remaining
+        self._extra_columns = [column for column in self._extra_columns if column not in removed]
+        # Deleting a custom column deletes its data too: purge the per-run stored
+        # values so they can't silently resurrect on re-add. This matters for the
+        # Angle field (fixed id, so a re-add would otherwise reinherit old values)
+        # and also clears the orphan cruft that uuid-keyed custom columns leak.
+        for column in removed:
+            if column.is_custom:
+                self._purge_custom_column_values(column.id)
         self._refresh_column_headers()
         self._rebuild_table()
         self._resize_columns_to_content()
         self._notify_extra_columns_changed()
+
+    def _purge_custom_column_values(self, column_id: str) -> None:
+        """Remove a custom column's per-run value from every dataset's metadata."""
+        for dataset in self._datasets.values():
+            existing = dataset.metadata.get(CUSTOM_FIELDS_METADATA_KEY)
+            if isinstance(existing, dict) and column_id in existing:
+                # Copy-on-write: the dict can be shared across dataset/run clones
+                # (mirrors _set_custom_column_value), so rebind rather than mutate.
+                fields = dict(existing)
+                fields.pop(column_id, None)
+                dataset.metadata[CUSTOM_FIELDS_METADATA_KEY] = fields
 
     def get_extra_columns(self) -> list[str]:
         """Return the metadata source keys currently shown (for inclusion tracking).
@@ -2771,11 +2790,15 @@ class DataBrowserPanel(QWidget):
         column = self._find_extra_column(column_id)
         if column is not None and column.is_angle and text:
             try:
-                float(text)
+                valid = math.isfinite(float(text))
             except ValueError:
+                valid = False
+            if not valid:
+                # Reject non-numeric and non-finite (inf/nan) input alike: a
+                # non-finite "angle" would poison the trend x-axis downstream.
                 with QSignalBlocker(self._table):
                     item.setText(self.custom_column_value(dataset, column_id))
-                QToolTip.showText(QCursor.pos(), "Angle must be a number (degrees)")
+                QToolTip.showText(QCursor.pos(), "Angle must be a finite number (degrees)")
                 return
         # Free-text by design (numbers are inferred only where consumed, e.g. the
         # trend x-axis): store the trimmed text verbatim, clearing on empty.

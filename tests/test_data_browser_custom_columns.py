@@ -288,6 +288,38 @@ def test_angle_column_validates_numeric(qapp):
     panel._on_custom_column_edited(item, ANGLE_COLUMN_ID)
     assert panel.custom_column_value(dataset, ANGLE_COLUMN_ID) == ""
 
+    # Non-finite floats parse but are not valid angles — rejected like non-numeric.
+    item.setText("12")
+    panel._on_custom_column_edited(item, ANGLE_COLUMN_ID)
+    for bad in ("inf", "-inf", "nan", "1e999"):
+        item.setText(bad)
+        panel._on_custom_column_edited(item, ANGLE_COLUMN_ID)
+        assert panel.custom_column_value(dataset, ANGLE_COLUMN_ID) == "12"
+        assert item.text() == "12"
+
+
+def test_deleting_angle_field_clears_stored_values(qapp):
+    # Deleting the Angle field must purge its per-run values so they cannot
+    # resurrect when the (fixed-id) field is re-added.
+    panel = DataBrowserPanel()
+    panel.add_dataset(_dataset(8))
+    panel.add_angle_column()
+    panel._rebuild_table()
+    dataset = panel._datasets[8]
+
+    item = _angle_cell_item(panel)
+    item.setText("30")
+    panel._on_custom_column_edited(item, ANGLE_COLUMN_ID)
+    assert dataset.metadata[CUSTOM_FIELDS_METADATA_KEY] == {ANGLE_COLUMN_ID: "30"}
+
+    panel.remove_extra_column(ANGLE_COLUMN_ID)
+    assert ANGLE_COLUMN_ID not in dataset.metadata.get(CUSTOM_FIELDS_METADATA_KEY, {})
+
+    # Re-adding the Angle field starts blank rather than inheriting "30".
+    panel.add_angle_column()
+    panel._rebuild_table()
+    assert panel.custom_column_value(dataset, ANGLE_COLUMN_ID) == ""
+
 
 def test_add_field_rail_button_is_keyboard_reachable(qapp, monkeypatch):
     # The rail "+" is the sole affordance for adding a field, so it must stay
