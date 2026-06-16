@@ -690,6 +690,7 @@ class DataBrowserPanel(QWidget):
             " border: none;"
             f" border-top: 1px solid {tokens.BORDER};"
             f" border-bottom: 1px solid {tokens.BORDER};"
+            " border-radius: 0;"
             " font-size: 15px; font-weight: 600; }"
             f" QToolButton:hover {{ background-color: {tokens.SURFACE_HI}; }}"
         )
