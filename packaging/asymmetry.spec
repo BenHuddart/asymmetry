@@ -34,6 +34,12 @@ styles_dir = src_dir / "asymmetry" / "gui" / "styles"
 if styles_dir.is_dir():
     datas += [(str(f), "asymmetry/gui/styles") for f in styles_dir.glob("*.qss")]
 
+# Ship the bundled-binary third-party license notices (HDF4 et al.) next to the
+# app, as the HDF4 BSD-3 license requires for binary redistributions.
+third_party_licenses = project_root / "THIRD_PARTY_LICENSES.md"
+if third_party_licenses.is_file():
+    datas += [(str(third_party_licenses), ".")]
+
 hiddenimports = [
     "h5py",
     "h5py._errors",
@@ -41,9 +47,33 @@ hiddenimports = [
     "PySide6.QtSvg",
     "matplotlib.backends.backend_qtagg",
     "scipy.special._cdflib",
+    # pyhdf is imported lazily inside asymmetry.core.io.hdf4._require_pyhdf, so
+    # PyInstaller's static analysis misses it; list its submodules explicitly.
+    "pyhdf",
+    "pyhdf.HDF",
+    "pyhdf.SD",
+    "pyhdf.V",
+    "pyhdf.VS",
+    "pyhdf.error",
+    "pyhdf.hdfext",
 ]
 
 binaries = collect_dynamic_libs("awkward_cpp")
+
+# HDF4 read support (asymmetry[hdf4]). On macOS/Linux the pyhdf wheel bundles
+# the HDF4 C library next to its extension, so collect it. On Windows the wheel
+# ships only the extension; the HDF4 runtime (hdf.dll/mfhdf.dll + deps) is
+# staged into ASYMMETRY_HDF4_DLL_DIR at build time (packaging/windows/
+# fetch_hdf4_dlls.py) and bundled here so the frozen app reads HDF4 .nxs files
+# out of the box. The loader registers the bundle dir via os.add_dll_directory
+# (see asymmetry.core.io.hdf4._register_hdf4_runtime).
+try:
+    binaries += collect_dynamic_libs("pyhdf")
+except Exception:  # pyhdf not installed in this build environment
+    pass
+_hdf4_dll_dir = os.environ.get("ASYMMETRY_HDF4_DLL_DIR")
+if sys.platform == "win32" and _hdf4_dll_dir and Path(_hdf4_dll_dir).is_dir():
+    binaries += [(str(dll), ".") for dll in Path(_hdf4_dll_dir).glob("*.dll")]
 
 a = Analysis(
     [str(entry_script)],
