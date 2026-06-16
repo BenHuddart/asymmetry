@@ -80,18 +80,23 @@ parameter constraints already express them:
 
 **Scaled frequency rotation** (``otScaledFRotation``) — a cosine at
 ``frequency × scale``. Use ``Oscillatory`` and tie the frequency with an
-expression constraint, e.g. for a component locked to 1.2× the first
-component's frequency::
+**affine tie** (:ref:`affine-ties`), e.g. for a component locked to 1.2× the
+first component's frequency::
 
-   frequency_2 = 1.2 * frequency_1      (expr constraint on frequency_2)
+   from asymmetry.core.fitting import AffineTie, Parameter
+
+   Parameter("frequency_2", value=..., tie=AffineTie(main="frequency_1", scale=1.2))
 
 or use a link group when the ratio is exactly 1.
 
 **Frequency-normalised stretched exponential** (``rtFstr``) — a stretched
-exponential whose rate scales with the component's precession frequency. Use
-``Oscillatory * StretchedExponential`` and constrain::
-
-   Lambda = 2 * pi * c * frequency      (expr constraint on Lambda; fit c)
+exponential whose rate scales with the component's precession frequency
+(``Lambda = 2π·c·frequency``). This couples *two* fitted parameters
+multiplicatively, so it is **not** an affine tie; it needs the general
+expression constraint (``Parameter.expr``), which is reserved but not yet
+evaluated by the engine. Until then, fit ``Lambda`` directly, or fix
+``frequency`` and use an :ref:`affine tie <affine-ties>`
+``AffineTie(main="frequency", scale=2*pi*c)`` for a known ``c``.
 
 **Gaussian variants** (``rtGau2``, ``rtSig2``) — reparameterisations of
 ``Gaussian`` :math:`e^{-(\sigma t)^2}`: WiMDA's ``Gau2``

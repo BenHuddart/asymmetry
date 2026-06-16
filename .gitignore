@@ -38,6 +38,9 @@ docs/_build/
 docs/build/
 docs/_generated/
 
+# Local API scratch scripts (not committed)
+_api_scratch/
+
 # OS
 .DS_Store
 Thumbs.db

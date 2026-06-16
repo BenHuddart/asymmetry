@@ -35,6 +35,7 @@ from asymmetry.core.fitting.engine import (
     FitResult,
     _make_cancel_guard,
     _minuit_status_message,
+    _reject_affine_ties,
     drive_minuit,
     poisson_cash,
 )
@@ -686,6 +687,7 @@ def fit_single_histogram(
         amplitude=_single_histogram_amplitude(side),
         relative_phase=0.0,
     )
+    _reject_affine_ties([params], "Count-domain fitting")
     free = params.free_parameters
     free_names = [p.name for p in free]
     fixed_kw = {p.name: p.value for p in params if p.fixed}
@@ -840,6 +842,7 @@ def fit_fb_alpha(
     evfr_f = _deadtime_event_fraction(dataset, forward_group)
     evfr_b = _deadtime_event_fraction(dataset, backward_group)
 
+    _reject_affine_ties([params], "Count-domain fitting")
     free = params.free_parameters
     free_names = [p.name for p in free]
     fixed_kw = {p.name: p.value for p in params if p.fixed}

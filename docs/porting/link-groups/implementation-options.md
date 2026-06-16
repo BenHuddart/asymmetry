@@ -10,6 +10,13 @@ assume, it needs a mini expression evaluator + uncertainty propagation through
 arbitrary expressions, and it does **not** match WiMDA (equality only). Keep
 `expr` reserved; do not build on it here.
 
+> **Follow-on (session-5 CdS):** offset ties *were* later added — as a typed
+> `AffineTie`, see [§ Affine ties](#affine-ties-session-5-follow-on) — but
+> **not** via this `expr`-string route. The objection above (mini evaluator +
+> arbitrary-expression uncertainty) still stands, so `expr` remains reserved.
+> The typed tie is a linear map of at most two parameters, so its delta-method
+> uncertainty is closed-form. This option stays rejected *as stated*.
+
 ## Option 2 — first-class equality link groups (CHOSEN)
 
 A small, WiMDA-faithful equality constraint.
@@ -58,12 +65,52 @@ Per the study, equal spacing is **recovered from the data** with three free
 frequencies; link groups share amplitude/phase/relaxation. No offset tie. The
 hyperfine constant is the satellite splitting `f₊ − f₋`.
 
-## Future (out of scope here)
+## Affine ties (session-5 follow-on)
+
+The original brief scoped offset ties out (*match WiMDA; equality only*). The
+**session-5 API run** then surfaced a requirement WiMDA-parity does not serve:
+with three *free* satellite frequencies the CdS satellite **amplitudes scatter**
+(the third frequency trades against them), so the Mu⁰ **ionisation energy E_i is
+un-extractable** (the run got `E_i = 43 ± 1090 meV`). Enforcing *equal spacing*
+removes that free frequency and stabilises the amplitudes — but equality links
+cannot express `f_lo = f_c − δ`, `f_hi = f_c + δ`.
+
+**Decision: add a typed `AffineTie`** (a deliberate capability *beyond* WiMDA,
+which has no affine tie):
+
+```
+follower = scale · main + offset_scale · offset + const
+```
+
+- `main` and the optional `offset` are parameter names; `offset` may be a free
+  **auxiliary** parameter the model never consumes (e.g. the half-splitting
+  `delta`), fitted with its own uncertainty so the hyperfine constant `2·δ`
+  carries an error bar.
+- A tie follower drops out of the free set (via `Parameter.is_constrained`),
+  exactly like a link follower. The engine substitutes it at the same
+  `model_wrapper` seam as link followers, after them (so a tie may reference a
+  link-resolved value). Uncertainty propagates by the closed-form delta method
+  `var = JᵀCJ` over the tie's references (including their cross-covariance).
+- **Not** the rejected `expr`-string route (Option 1): a linear map of ≤2
+  parameters needs no expression evaluator and no general-uncertainty machinery.
+  `Parameter.expr` stays reserved for any future *nonlinear* ties.
+- Validation: a parameter cannot be both link-grouped and tied, and ties may not
+  chain to other ties (single-pass resolution).
+
+Verified against the real CdS corpus (`tests/test_cds_affine_ties_corpus.py`,
+corpus-conditional): the tied fit reaches χ²ᵣ ≈ 1, recovers `A_µ = 2δ ≈ 0.24 MHz`
+with a tight error, the satellites collapse by ~30 K, and **E_i = 8.6 ± 3.1 meV**
+(finite, physical, σ ≪ value — gap closed) versus the free fit's
+`39.5 ± 211 meV`.
+
+## Also future (still out of scope)
 
 A `MuoniumTriplet` / `ZFMuonium` model **component** parameterised by
 `(centre_frequency, splitting, amplitude, …)` would *enforce* satellite symmetry
-and expose the hyperfine constant as a single fitted parameter — the WiMDA
-`ZFmuonium` route (1). It composes cleanly with link groups (which would then
-share relaxation/phase across components) but is a separate model-library
-addition, not required to match WiMDA's link-group feature or to pass the CdS
-acceptance.
+inside a single line-shape — the WiMDA `ZFmuonium` route (1). This was in fact
+*shipped separately* (`MuoniumTF`/`MuoniumLowTF`/`MuoniumZF`, see
+[../muonium-triplet/](../muonium-triplet/README.md)) but **verified to over-fit
+CdS** (χ²ᵣ ≈ 22: it also pins the central line to γ_µ·B). The affine-tie route
+above is the lighter, better-conditioned constraint for shallow-donor CdS —
+enforcing only the satellite symmetry, leaving the central line and splitting
+free.
