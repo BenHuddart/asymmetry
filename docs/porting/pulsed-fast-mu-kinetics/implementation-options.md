@@ -82,7 +82,10 @@ independent verification of B on the truncated members).
 
 - **Concentration line.** `λ_Mu = λ₀ + k_Mu·[x]` over [x] ∈ {0 (water), 1
   (quarter), 2 (half), 4 (full)} at room T → slope k_Mu (relative units),
-  intercept λ₀. Weighted linear fit; `Linear` component (`a*x+b`) already exists.
+  intercept λ₀. A small analytic weighted least-squares (`_weighted_linear_fit`)
+  is used rather than routing the 2-parameter line through the iminuit `Linear`
+  component — exact, lighter, and gives directly-propagated slope/intercept errors
+  (the `Linear` component remains available for the GUI trend surface).
 - **Arrhenius.** Repeat per T (278–358 K) → k_Mu(T); fit the guide's
   `log₁₀ k_Mu = log₁₀ A − E/(2.3·R·T)`. **Unit caveat:** the built-in `Arrhenius`
   component is `a*exp(-Ea/(k_B·T))` (`parameter_models.py:424`) → Ea is

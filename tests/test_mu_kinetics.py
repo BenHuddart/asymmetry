@@ -137,6 +137,14 @@ class TestBimolecularRate:
         with pytest.raises(ValueError):
             fit_bimolecular_rate([0.0, 1.0, 2.0], [0.5, 3.0], [0.1, 0.1])
 
+    def test_unbounded_member_error_is_actionable(self):
+        # An inf lambda-error (unbounded series member) raises a pointed error
+        # rather than a low-level "sigma must be finite" message.
+        with pytest.raises(ValueError, match="not bounded by the relaxation fit"):
+            fit_bimolecular_rate(
+                [0.0, 1.0, 2.0, 4.0], [0.5, 1.0, 1.5, 2.0], [0.05, 0.05, 0.05, math.inf]
+            )
+
 
 class TestArrhenius:
     def test_recovers_activation_energy_kjmol(self):

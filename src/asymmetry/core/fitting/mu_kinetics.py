@@ -98,6 +98,8 @@ class BimolecularRateResult:
 
     ``k_mu`` is in µs⁻¹ per relative-concentration unit (the corpus supplies no
     molarity — see GROUND_TRUTH §9); ``lambda0`` is the water background in µs⁻¹.
+    ``reduced_chi_squared`` is ``nan`` when the fit was unweighted (no point
+    errors supplied).
     """
 
     k_mu: float
@@ -109,7 +111,10 @@ class BimolecularRateResult:
 
 @dataclass
 class ArrheniusResult:
-    """Activation energy from ``log₁₀ k_Mu = log₁₀ A − E/(2.3·R·T)``."""
+    """Activation energy from ``log₁₀ k_Mu = log₁₀ A − E/(2.3·R·T)``.
+
+    ``reduced_chi_squared`` is ``nan`` when the fit was unweighted (no ``k_errors``).
+    """
 
     activation_energy: float  # in ``energy_unit`` (default kJ·mol⁻¹)
     activation_energy_error: float
@@ -160,6 +165,23 @@ def _finite_error(value: float | None) -> float:
     if value is None or not math.isfinite(value):
         return math.inf
     return float(value)
+
+
+def _reject_unbounded_errors(errors: Sequence[float], *, name: str, hint: str) -> None:
+    """Raise a pointed error if any weight is non-finite (an unbounded member).
+
+    :func:`fit_mu_relaxation_series` returns ``+inf`` for a member whose rate the
+    fit could not bound; feeding that straight into a trend fit would otherwise
+    surface only the low-level "sigma must be finite" message. Point at the real
+    cause instead.
+    """
+    bad = [i for i, e in enumerate(errors) if e is None or not math.isfinite(e)]
+    if bad:
+        raise ValueError(
+            f"{name} has non-finite entries at index/indices {bad}: those series "
+            f"members were not bounded by the relaxation fit, so they carry no "
+            f"usable weight. {hint}"
+        )
 
 
 def fit_mu_relaxation_series(
@@ -374,8 +396,18 @@ def fit_bimolecular_rate(
     if len(concentrations) != len(lambdas):
         raise ValueError("concentrations and lambdas must have the same length")
     sigma = None if lambda_errors is None else list(lambda_errors)
-    if sigma is not None and len(sigma) != len(lambdas):
-        raise ValueError("lambda_errors must match the number of points")
+    if sigma is not None:
+        if len(sigma) != len(lambdas):
+            raise ValueError("lambda_errors must match the number of points")
+        _reject_unbounded_errors(
+            sigma,
+            name="lambda_errors",
+            hint=(
+                "Add a slow, well-surviving reference (e.g. deoxygenated water at "
+                "[x]=0) to pin the shared A_Mu, or drop the unbounded members "
+                "before fitting the rate."
+            ),
+        )
 
     slope, intercept, slope_err, intercept_err, reduced = _weighted_linear_fit(
         np.asarray(concentrations),
@@ -427,6 +459,11 @@ def fit_arrhenius(
         k_err = np.asarray(list(k_errors), dtype=float)
         if k_err.size != k_values.size:
             raise ValueError("k_errors must match the number of points")
+        _reject_unbounded_errors(
+            k_err.tolist(),
+            name="k_errors",
+            hint="Drop the temperatures whose k_Mu could not be bounded.",
+        )
         sigma_y = k_err / (k_values * math.log(10.0))
 
     slope, intercept, slope_err, intercept_err, reduced = _weighted_linear_fit(x, y, sigma_y)
