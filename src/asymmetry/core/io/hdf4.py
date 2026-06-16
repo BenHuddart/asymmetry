@@ -184,11 +184,13 @@ def _build_root(v, sd, hc, sdc) -> Group:
     info: dict[int, tuple[str, str]] = {}
     for r in refs:
         vg = v.attach(r)
-        info[r] = (vg._name, vg._class)
-        for tag, mref in vg.tagrefs():
-            if tag == hc.DFTAG_VG:
-                members.add(mref)
-        vg.detach()
+        try:
+            info[r] = (vg._name, vg._class)
+            for tag, mref in vg.tagrefs():
+                if tag == hc.DFTAG_VG:
+                    members.add(mref)
+        finally:
+            vg.detach()
 
     root = Group("/", "NXroot")
     for r in refs:
@@ -201,18 +203,20 @@ def _build_root(v, sd, hc, sdc) -> Group:
 
 def _read_vgroup(v, sd, ref, hc, sdc) -> Group:
     vg = v.attach(ref)
-    grp = Group(vg._name, vg._class)
-    for tag, r in vg.tagrefs():
-        if tag == hc.DFTAG_VG:
-            child = _read_vgroup(v, sd, r, hc, sdc)
-            grp.children[child.name] = child
-        elif tag == hc.DFTAG_NDG:  # scientific dataset
-            ds = _read_sds(sd, r, sdc)
-            if ds is not None:
-                grp.children[ds.name] = ds
-        # DFTAG_VH (vdata) does not occur in ISIS muon v1 files; ignored.
-    vg.detach()
-    return grp
+    try:
+        grp = Group(vg._name, vg._class)
+        for tag, r in vg.tagrefs():
+            if tag == hc.DFTAG_VG:
+                child = _read_vgroup(v, sd, r, hc, sdc)
+                grp.children[child.name] = child
+            elif tag == hc.DFTAG_NDG:  # scientific dataset
+                ds = _read_sds(sd, r, sdc)
+                if ds is not None:
+                    grp.children[ds.name] = ds
+            # DFTAG_VH (vdata) does not occur in ISIS muon v1 files; ignored.
+        return grp
+    finally:
+        vg.detach()
 
 
 def _read_sds(sd, ref, sdc) -> Dataset | None:
