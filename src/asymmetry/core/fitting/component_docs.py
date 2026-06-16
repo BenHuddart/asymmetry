@@ -244,6 +244,22 @@ FIT_COMPONENT_APPLICABILITY: dict[str, str] = {
         "with a relaxation component for additional damping; for commensurate order use "
         "Oscillatory/OscillatoryField instead."
     ),
+    "VortexLattice": (
+        "Use for transverse-field precession in the mixed state of a type-II superconductor, where the muon "
+        "samples the inhomogeneous field of the flux-line lattice. The line is non-Gaussian — a sharp "
+        "low-field cutoff, a most-probable field below the mean, and a long tail to high field near the "
+        "vortex cores — so a single Gaussian underestimates the second moment and biases the penetration "
+        "depth. This component fits the modified-London lineshape directly and returns the penetration depth "
+        "λ and upper critical field B_c2. Multiply by a Gaussian for nuclear dipolar broadening and add a "
+        "background Oscillatory + Constant for muons stopping outside the sample."
+    ),
+    "VortexLatticePowder": (
+        "Use for a polycrystalline type-II superconductor in the mixed state: the same skewed modified-London "
+        "vortex-lattice line as VortexLattice but with the ab-plane powder average, returning the ab-plane "
+        "penetration depth λ_ab. Prefer it over a single Gaussian for powder penetration-depth work, where "
+        "the skewed line otherwise biases λ_ab high. Multiply by a Gaussian for the nuclear background and "
+        "add an Oscillatory + Constant for the sample-holder signal."
+    ),
     "MuoniumTF": (
         "Use for transverse-field muonium (Mu⁰): the four hyperfine transitions about the applied field, "
         "parameterized by field B and the hyperfine coupling A_hf. In the shallow-donor (small A_hf) limit it "
@@ -485,6 +501,14 @@ FIT_COMPONENT_REFERENCES: dict[str, tuple[str, ...]] = {
     ),
     "RischKehr": ("R. Risch and K. W. Kehr, Phys. Rev. B 46, 5246 (1992).",),
     "Bessel": ("L. P. Le et al., Phys. Rev. B 48, 7284 (1993).",),
+    "VortexLattice": (
+        "E. H. Brandt, Phys. Rev. B 68, 054506 (2003).",
+        "J. E. Sonier, J. H. Brewer, and R. F. Kiefl, Rev. Mod. Phys. 72, 769 (2000).",
+    ),
+    "VortexLatticePowder": (
+        "E. H. Brandt, Phys. Rev. B 68, 054506 (2003).",
+        "F. L. Pratt et al., Phys. Rev. B 79, 052508 (2009).",
+    ),
     "StaticGKT_ZF": (
         "R. Kubo and T. Toyabe, in Magnetic Resonance and Relaxation, "
         "edited by R. Blinc (North-Holland, Amsterdam, 1967), p. 810.",
