@@ -1990,6 +1990,35 @@ class SingleFitTab(QWidget):
             )
         return parameters
 
+    def current_seed_values(self) -> dict[str, str]:
+        """Return the live parameter-table seed text keyed by parameter name.
+
+        Reads column 1 of each row verbatim. Once a fit has run the table
+        already holds its converged values (see ``_run_fit``), so this is the
+        current single-fit seed for every parameter. Used to seed the Batch
+        tab from these values rather than letting it fall back to model
+        defaults or stale preserved state (BUG B8c). Rows whose value is not a
+        finite number are skipped so one malformed cell never blocks the send.
+        """
+        seeds: dict[str, str] = {}
+        for row in range(self._param_table.rowCount()):
+            name_item = self._param_table.item(row, 0)
+            if name_item is None:
+                continue
+            name = name_item.data(Qt.ItemDataRole.UserRole)
+            if not isinstance(name, str):
+                continue
+            value_item = self._param_table.item(row, 1)
+            if value_item is None:
+                continue
+            text = value_item.text().strip()
+            try:
+                float(text)
+            except ValueError:
+                continue
+            seeds[name] = text
+        return seeds
+
     def _run_fit(self) -> None:
         """Execute the fit."""
         if self._fit_blocked:
@@ -3353,8 +3382,18 @@ class GlobalFitTab(QWidget):
             }
         return state
 
-    def _set_composite_model(self, model: CompositeModel) -> None:
-        """Set the active composite model and rebuild classification rows."""
+    def _set_composite_model(
+        self, model: CompositeModel, seed_values: dict[str, str] | None = None
+    ) -> None:
+        """Set the active composite model and rebuild classification rows.
+
+        ``seed_values`` (parameter name → value text) supplies initial values
+        that take priority over preserved state and model defaults. It is used
+        when seeding a batch from the single-fit tab so the batch starts from
+        the current single-fit seeds rather than defaults or stale preserved
+        state (BUG B8c).
+        """
+        seed_values = seed_values or {}
         preserved_state = self._current_parameter_row_state()
         grouped_model_state = self._current_grouped_model_row_state()
         # A new model invalidates any per-run initial values keyed by old names.
@@ -3394,7 +3433,12 @@ class GlobalFitTab(QWidget):
             default_val = frequency_overrides.get(
                 pname, field_overrides.get(pname, model.param_defaults.get(pname, 0.0))
             )
-            value_item = QTableWidgetItem(previous.get("value") or str(default_val))
+            seed_text = seed_values.get(pname)
+            if seed_text is not None:
+                value_text = seed_text
+            else:
+                value_text = previous.get("value") or str(default_val)
+            value_item = QTableWidgetItem(value_text)
             self._param_table.setItem(i, 1, value_item)
 
             # Type selection (Global/Local/Fixed/File dropdown)
@@ -7248,15 +7292,20 @@ class FitPanel(QWidget):
         return self._global_tab.current_fit_range_text()
 
     def send_single_model_to_batch(self) -> bool:
-        """Copy the single-fit tab's model/fit function into the Batch tab.
+        """Copy the single-fit tab's model and current seeds into the Batch tab.
 
         Returns ``True`` when a model was sent. The Single ⇄ Batch flow: build a
-        model in Single, send it to seed a batch over the selected runs.
+        model in Single, send it to seed a batch over the selected runs. The
+        batch parameter seeds are taken from the single tab's current table
+        values (which reflect the latest fit once one has run), so the batch
+        starts from the values the user just set rather than model defaults or
+        stale preserved state (BUG B8c).
         """
         model = getattr(self._single_tab, "_composite_model", None)
         if model is None:
             return False
-        self._global_tab._set_composite_model(model)
+        seed_values = self._single_tab.current_seed_values()
+        self._global_tab._set_composite_model(model, seed_values=seed_values)
         return True
 
     def _on_send_model_to_batch(self) -> None:
