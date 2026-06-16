@@ -69,6 +69,15 @@ from asymmetry.core.fitting.grouped_time_domain import (
     recommend_grouped_series_seeding,
 )
 from asymmetry.core.fitting.models import MODELS
+from asymmetry.core.fitting.mu_kinetics import (
+    ArrheniusResult,
+    BimolecularRateResult,
+    MuRelaxationSeriesResult,
+    fit_arrhenius,
+    fit_bimolecular_rate,
+    fit_mu_relaxation_series,
+    mu_relaxation_from_amplitude,
+)
 from asymmetry.core.fitting.parameter_models import (
     PARAMETER_MODEL_COMPONENTS,
     ErrorMode,
@@ -139,6 +148,13 @@ __all__ = [
     "fit_grouped_series",
     "GlobalFitResult",
     "fit_global",
+    "MuRelaxationSeriesResult",
+    "BimolecularRateResult",
+    "ArrheniusResult",
+    "fit_mu_relaxation_series",
+    "fit_bimolecular_rate",
+    "fit_arrhenius",
+    "mu_relaxation_from_amplitude",
     "compute_information_criteria",
     "fingerprint_spectrum",
     "build_candidate_templates",
