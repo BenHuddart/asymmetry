@@ -38,9 +38,7 @@ def test_unparseable_seed_edit_preserves_previous_value(qapp: QApplication) -> N
     err = np.full_like(x, 0.01)
 
     model = ParameterCompositeModel(["Arrhenius", "Constant"], ["+"])
-    params = ParameterSet(
-        [Parameter("a", 0.001), Parameter("Ea", -12.0), Parameter("c", 0.065)]
-    )
+    params = ParameterSet([Parameter("a", 0.001), Parameter("Ea", -12.0), Parameter("c", 0.065)])
     fit = ParameterModelFit(
         parameter_name="Lambda",
         x_key="temperature",
