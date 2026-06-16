@@ -26,6 +26,17 @@ For HDF5 support:
 
 * h5py >= 3.8
 
+For HDF4 support (reading legacy ISIS muon NeXus V1 ``.nxs`` files):
+
+* pyhdf >= 0.10
+
+  On Linux and macOS the ``pyhdf`` wheels bundle the HDF4 C library. On
+  **Windows** they do not: ``pyhdf`` also needs the HDF4 runtime
+  (``hdf.dll`` / ``mfhdf.dll``, e.g. from the conda-forge ``hdf4`` package or
+  ``packaging/windows/fetch_hdf4_dlls.py``), with ``ASYMMETRY_HDF4_DLL_DIR``
+  pointed at the directory holding them. See
+  :doc:`user_guide/loading_data`.
+
 For ROOT file support:
 
 * uproot >= 5.0
@@ -61,7 +72,7 @@ From a local repository checkout (recommended)
    cd asymmetry
 
    # Full end-user feature set (GUI + optional I/O/export support)
-   python -m pip install -c constraints.txt ".[gui,hdf5,root,gle]"
+   python -m pip install -c constraints.txt ".[gui,hdf5,hdf4,root,gle]"
 
 Other options from the same checkout:
 
@@ -85,7 +96,7 @@ Install directly from GitHub with pip
    python -m pip install "git+https://github.com/BenHuddart/asymmetry.git"
 
    # Full end-user feature set (no development extras)
-   python -m pip install "asymmetry[gui,hdf5,root,gle] @ git+https://github.com/BenHuddart/asymmetry.git"
+   python -m pip install "asymmetry[gui,hdf5,hdf4,root,gle] @ git+https://github.com/BenHuddart/asymmetry.git"
 
 Development Installation
 ~~~~~~~~~~~~~~~~~~~~~~~~

@@ -24,6 +24,7 @@ import numpy as np
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.io.base import BaseLoader, LoadResult
+from asymmetry.core.io.hdf4 import is_hdf4, open_hdf4
 from asymmetry.core.io.periods import combine_mapped_periods
 from asymmetry.core.transform import apply_grouping, compute_asymmetry
 
@@ -111,21 +112,37 @@ class NexusLoader(BaseLoader):
             Single dataset for single-period and two-period files. Files with
             more than two periods return one dataset per period.
         """
-        self._require_h5py()
         path = Path(filepath)
         if not path.exists():
             raise FileNotFoundError(f"File not found: {filepath}")
 
-        with h5py.File(path, "r") as handle:
-            version, entry = self._detect_layout(handle)
-            if version == "v1":
-                result = self._load_v1(handle, entry, str(path))
-            else:
-                result = self._load_v2(handle, entry, str(path))
+        # ``.nxs``/``.nexus`` share an extension across two containers: modern
+        # HDF5 (h5py) and legacy HDF4 (the v1 ``/run`` muonTD format WiMDA
+        # reads). The file magic disambiguates; h5py cannot open HDF4 at all.
+        if is_hdf4(str(path)):
+            handle = open_hdf4(str(path))  # raises ImportError if pyhdf absent
+            result = self._reduce_handle(handle, str(path))
+        else:
+            self._require_h5py()
+            with h5py.File(path, "r") as handle:
+                result = self._reduce_handle(handle, str(path))
 
         if len(result) == 1:
             return result[0]
         return result
+
+    def _reduce_handle(self, handle: Any, source_file: str) -> list[MuonDataset]:
+        """Detect the layout behind a handle and reduce to dataset(s).
+
+        The handle is either an ``h5py.File`` or the HDF4 adapter from
+        :func:`asymmetry.core.io.hdf4.open_hdf4`; both expose the same
+        read-only surface, so ``_detect_layout`` / ``_load_v1`` / ``_load_v2``
+        are container-agnostic.
+        """
+        version, entry = self._detect_layout(handle)
+        if version == "v1":
+            return self._load_v1(handle, entry, source_file)
+        return self._load_v2(handle, entry, source_file)
 
     def _require_h5py(self) -> None:
         """Ensure ``h5py`` is available before trying to read HDF5 content."""
@@ -165,6 +182,16 @@ class NexusLoader(BaseLoader):
         h_data = self._require_group(entry, "histogram_data_1")
 
         counts = np.asarray(self._require_dataset(h_data, "counts"), dtype=np.float64)
+        # Legacy v1 files store multi-period histograms as a single flat
+        # ``[n_periods * n_spectra, n_bins]`` block; ``switching_states`` gives
+        # the period count (e.g. HiFi RF/ALC runs: 64 = 2 x 32). Reshape
+        # period-major — identical to the v1->v2 converter — so periods split
+        # the same way the modern v2 ``[n_periods, n_spectra, n_bins]`` layout
+        # already does. Single-period files (absent or 1) are untouched.
+        n_switching = self._safe_int(self._read_optional(entry, "switching_states"), default=1) or 1
+        if counts.ndim == 2 and n_switching > 1 and counts.shape[0] % n_switching == 0:
+            n_spectra = counts.shape[0] // n_switching
+            counts = counts.reshape(n_switching, n_spectra, counts.shape[-1])
         counts_periods = self._split_period_counts(counts)
 
         corrected_time = np.asarray(
@@ -249,12 +276,42 @@ class NexusLoader(BaseLoader):
         if logged_temperature is not None:
             metadata_base["sample_temperature_logged"] = logged_temperature
 
-        first_good_bin = self._safe_int(self._read_optional(h_data, "first_good_bin"), default=0)
-        last_good_bin_default = counts_periods[0].shape[-1] - 1
-        last_good_bin = self._safe_int(
-            self._read_optional(h_data, "last_good_bin"),
-            default=last_good_bin_default,
+        # Real ISIS v1 files carry the good-data window and t0 as attributes on
+        # the ``counts`` SDS (1-based ``t0_bin`` / ``first_good_bin`` /
+        # ``last_good_bin``), exactly as the v2 layout does — not as child
+        # datasets of ``histogram_data_1``. Prefer those attributes; fall back
+        # to child datasets / defaults for synthetic or attribute-less files.
+        n_detectors, n_bins = counts_periods[0].shape
+        counts_ds = h_data.get("counts")
+        counts_attrs = getattr(counts_ds, "attrs", {}) if counts_ds is not None else {}
+
+        t0_bin_values = self._t0_bin_values_from_attr(
+            counts_attrs.get("t0_bin"), n_detectors=n_detectors
         )
+
+        first_good_bin_raw = self._safe_int(counts_attrs.get("first_good_bin"), default=None)
+        if first_good_bin_raw is None:
+            first_good_bin_raw = self._safe_int(
+                self._read_optional(h_data, "first_good_bin"), default=None
+            )
+        last_good_bin_raw = self._safe_int(counts_attrs.get("last_good_bin"), default=None)
+        if last_good_bin_raw is None:
+            last_good_bin_raw = self._safe_int(
+                self._read_optional(h_data, "last_good_bin"), default=None
+            )
+
+        first_good_bin = 0 if first_good_bin_raw is None else int(first_good_bin_raw)
+        last_good_bin = (n_bins - 1) if last_good_bin_raw is None else int(last_good_bin_raw)
+
+        # Normalize 1-based bin metadata to 0-based using the corrected-time
+        # axis, sharing the v2 inference so both layouts agree on the window.
+        reference_axis, _ = self._build_time_axis(corrected_time, n_bins)
+        index_offset = self._infer_v2_bin_index_offset(reference_axis, t0_bin_values)
+        if index_offset:
+            if t0_bin_values is not None:
+                t0_bin_values = np.maximum(0, t0_bin_values - index_offset)
+            first_good_bin = max(0, first_good_bin - index_offset)
+            last_good_bin = max(0, last_good_bin - index_offset)
 
         return self._build_period_datasets(
             counts_periods=counts_periods,
@@ -265,12 +322,12 @@ class NexusLoader(BaseLoader):
             dead_time_values=dead_time_values,
             time_zero_values=time_zero_values,
             time_zero_is_microseconds=False,
-            t0_bin_values=None,
+            t0_bin_values=t0_bin_values,
             metadata_base=metadata_base,
             run_number=run_number,
             first_good_bin=first_good_bin,
             last_good_bin=last_good_bin,
-            bin_index_base=0,
+            bin_index_base=int(index_offset),
             source_file=source_file,
         )
 
@@ -367,17 +424,10 @@ class NexusLoader(BaseLoader):
 
         t0_bin_values: np.ndarray | None = None
         if counts_ds is not None:
-            t0_bin_attr = getattr(counts_ds, "attrs", {}).get("t0_bin")
-            if t0_bin_attr is not None:
-                t0_bin_array = np.asarray(t0_bin_attr, dtype=np.float64).ravel()
-                if t0_bin_array.size == 1 and np.isfinite(t0_bin_array[0]):
-                    t0_bin_values = np.full(
-                        counts_periods[0].shape[0],
-                        int(round(float(t0_bin_array[0]))),
-                        dtype=np.int64,
-                    )
-                elif t0_bin_array.size == counts_periods[0].shape[0]:
-                    t0_bin_values = np.rint(t0_bin_array).astype(np.int64)
+            t0_bin_values = self._t0_bin_values_from_attr(
+                getattr(counts_ds, "attrs", {}).get("t0_bin"),
+                n_detectors=counts_periods[0].shape[0],
+            )
 
         first_good_bin_raw: int | None = None
         last_good_bin_raw: int | None = None
@@ -800,6 +850,22 @@ class NexusLoader(BaseLoader):
             hi = max(0, min(hi, n_bins - 1))
 
         return lo, hi
+
+    def _t0_bin_values_from_attr(self, t0_bin_attr: Any, *, n_detectors: int) -> np.ndarray | None:
+        """Build per-detector ``t0_bin`` values from a ``counts`` attribute.
+
+        Accepts a scalar (broadcast across detectors) or a per-detector array;
+        returns ``None`` when the attribute is missing or unusable. Shared by
+        the v1 and v2 layouts, which both store ``t0_bin`` on the counts SDS.
+        """
+        if t0_bin_attr is None:
+            return None
+        t0_bin_array = np.asarray(t0_bin_attr, dtype=np.float64).ravel()
+        if t0_bin_array.size == 1 and np.isfinite(t0_bin_array[0]):
+            return np.full(n_detectors, int(round(float(t0_bin_array[0]))), dtype=np.int64)
+        if t0_bin_array.size == n_detectors:
+            return np.rint(t0_bin_array).astype(np.int64)
+        return None
 
     def _infer_v2_bin_index_offset(
         self, time_axis: np.ndarray, t0_bin_values: np.ndarray | None

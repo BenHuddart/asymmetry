@@ -47,14 +47,39 @@ canonical (``first_good_bin``, ``last_good_bin``, and ``t0_bin``). When
 fallback if the corresponding integer bin attributes are missing.
 
 Asymmetry's internal ``Histogram`` and grouping bin indices are always
-zero-based array indices. For ISIS NeXus V2 files, some real files encode
+zero-based array indices. Real ISIS files (both V1 and V2) often encode
 integer bin metadata using one-based centre-bin numbering. The loader compares
 explicit ``t0_bin`` values with the time axis; when all available detector
 ``t0`` values point one sample past ``t = 0``, it subtracts one from
 ``t0_bin``, ``first_good_bin``, and ``last_good_bin`` and records
 ``bin_index_base = 1`` in grouping metadata. Otherwise it leaves the integers
-unchanged with ``bin_index_base = 0``. NeXus V1 is currently read as
-zero-based.
+unchanged with ``bin_index_base = 0``. For V1, this good-data window and
+``t0_bin`` are read from the attributes of the ``counts`` dataset (where ISIS
+stores them), matching the V2 behaviour.
+
+HDF4 container (legacy ``.nxs``)
+""""""""""""""""""""""""""""""""
+
+The V1 ``/run`` ``muonTD`` schema is the format WiMDA reads natively, and ISIS
+historically wrote it inside an **HDF4** container (pre-~2015 runs) rather than
+HDF5. Asymmetry detects the container from the file magic and reads HDF4 V1
+files directly — no manual pre-conversion to HDF5 is required. The same schema
+reader is used for both containers, so an HDF4 ``.nxs`` and its HDF5-converted
+twin reduce to identical asymmetry, counts, grouping, and metadata.
+
+HDF4 reading needs the optional ``pyhdf`` dependency, installed with the
+``hdf4`` extra::
+
+    pip install asymmetry[hdf4]
+
+On Linux and macOS the ``pyhdf`` wheels bundle the HDF4 C library, so this is
+all that is needed. On **Windows**, ``pyhdf``'s wheel does *not* bundle the
+HDF4 runtime: it also needs ``hdf.dll`` / ``mfhdf.dll`` (for example from the
+conda-forge ``hdf4`` package, as Mantid uses, or via
+``packaging/windows/fetch_hdf4_dlls.py``). Point the ``ASYMMETRY_HDF4_DLL_DIR``
+environment variable at the directory holding those DLLs. When ``pyhdf`` (or
+the Windows runtime) is absent, opening an HDF4 ``.nxs`` raises a clear error
+naming the ``hdf4`` extra; HDF5 ``.nxs`` loading is unaffected.
 
 PSI BIN/MDU (.bin, .mdu)
 ~~~~~~~~~~~~~~~~~~~~~~~~
