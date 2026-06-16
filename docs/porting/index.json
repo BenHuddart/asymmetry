@@ -2,6 +2,39 @@
   "version": 1,
   "studies": [
     {
+      "slug": "pulsed-fast-mu-kinetics",
+      "feature_name": "Pulsed-source fast-muonium reaction kinetics (truncated TF Mu: shared-amplitude λ_Mu → k_Mu → Arrhenius E_a)",
+      "status": "implemented",
+      "path": "docs/porting/pulsed-fast-mu-kinetics",
+      "depends_on": [
+        "asymmetry-domain-global-fit",
+        "time-integral-asymmetry",
+        "muonium-triplet",
+        "link-groups"
+      ],
+      "references": [
+        "WiMDA",
+        "Mantid",
+        "musrfit",
+        "Muonium reaction 2026.docx (ISIS EMU muon-school teaching guide)",
+        "D. C. Walker, Muon and Muonium Chemistry (CUP), Ch. 8",
+        "Percival, Roduner, Fischer et al., Chem. Phys. Lett. (1977)",
+        "Ng, Walker et al., J. Phys. Chem. 85, 454 (1981)",
+        "Ghandi et al., Phys. Chem. Chem. Phys. 4, 586 (2002)"
+      ],
+      "docs": {
+        "readme": "docs/porting/pulsed-fast-mu-kinetics/README.md",
+        "comparison": "docs/porting/pulsed-fast-mu-kinetics/comparison.md",
+        "implementation_options": "docs/porting/pulsed-fast-mu-kinetics/implementation-options.md",
+        "test_data": "docs/porting/pulsed-fast-mu-kinetics/test-data.md",
+        "verification_plan": "docs/porting/pulsed-fast-mu-kinetics/verification-plan.md"
+      },
+      "tests_path": "tests/test_mu_kinetics.py",
+      "src_path": "src/asymmetry/core/fitting/mu_kinetics.py",
+      "updated": "2026-06-16",
+      "notes": "IMPLEMENTED 2026-06-16 (Option B, signed off). core/fitting/mu_kinetics.py: fit_mu_relaxation_series (shared-A_Mu global fit over the 2 G series — globals A_1[=A_Mu]+phase, frequency fixed=f_mu, locals Lambda_2[=λ_Mu],A_3,Lambda_3; wraps fit_global on 'Oscillatory*Exponential+Exponential'), fit_bimolecular_rate (weighted-LSQ λ=λ0+k_Mu·[x]), fit_arrhenius (weighted-LSQ on the guide's log10 k vs 1/T → E_a, slope=−E/(ln10·R), default kJ/mol), mu_relaxation_from_amplitude (single-run cross-check: λ_Mu with A_Mu FIXED to a reference = analytic limit). All exported from asymmetry.core.fitting + cookbook recipe + docs/user_guide/muonium_kinetics.rst (closes DG-C6). KEY IMPLEMENTATION FINDING: the shared-amplitude fit needs ≥1 slow, well-surviving member (the deox-water [x]=0 run) to PIN A_Mu — a {quarter,half,full}-only triplet has no good anchor and the fit is under-determined (negative slope / χ²r≫1); adding the water reference fixes it. Encoded in the env-gated real-corpus test + documented as an .. important:: in the guide. VERIFIED: 8 synthetic planted-truth tests (simulate.py, no binary fixtures) pass deterministically in ~3.5s (degeneracy reproduced with share_amplitude=False → fast-member λ error ≫ shared; shared fit recovers planted λ_Mu/k_Mu/E_a; amplitude-inversion cross-check agrees). REAL CORPUS (env-gated ASYMMETRY_MALEIC_DIR, EMU 78251-78302): room-T line k_Mu=0.68±0.02 µs⁻¹/rel-conc, λ0=0.63 µs⁻¹, all four λ_Mu finite+monotonic (half/full no longer rail = the S5 ❌→✅ flip); Arrhenius 278/298/338 K → E_a=10.5±0.6 kJ/mol (diffusion-controlled order; lit ≈17.6). χ²r is high (13-28) — single-frequency model approximates the 4-line Mu⁰ TF spectrum + diamagnetic precession; slope/E_a robust regardless. k_Mu absolute not gradeable (no stock molarity → relative units only, GT §9). ---- ORIGINAL STUDY NOTE: closes the only S5 API ❌ (wimda-corpus windows-api maleic-acid kinetics; doc-gap DG-C6). Closes the only S5 API ❌ (wimda-corpus windows-api maleic-acid kinetics; doc-gap DG-C6). Gap: at a pulsed source the 2 G TF Mu signal decays before first_good_bin (t_g≈0.203 µs, EMU 78251-78302), so per-run A_Mu & λ_Mu are degenerate (A_Mu·exp(−λ·t_g) conserved) and a free fit rails — only water (λ≈0.47) and quarter (λ≈2.87) fit; half/full diverge; integrate_run is flat (TF oscillation averages to zero). Physical key: A_Mu(0) is the beam/solvent Mu fraction, common across the concentration/T series (FFT corroborates: water Mu amp 62.9 vs maleic ~12-14 = same A_Mu, different survival); maleic changes only λ_Mu. Rescue: SHARE A_Mu (+φ; f_Mu fixed) across the series, λ_Mu local — slow members pin A_Mu, which then forces λ for the truncated fast members. Seam is COMPOSITION of implemented parts: fit_global (asymmetry_global.py:174 shared globals/locals) + 'Oscillatory*Exponential+Exponential' (or MuoniumTF*Exponential) + Linear (λ=λ0+k_Mu·[x]) + built-in Arrhenius/log10-2.3R (E_a). MISSING: (1) encoded shared-A_Mu recipe; (2) discoverable kinetics entry point (series→λ_Mu→k_Mu/λ0→E_a); (3) concentration axis ([x] not in .nxs — caller-supplied vector); (4) amplitude/fraction inversion cross-check; (5) user-guide page. RECOMMENDED Option B: thin Qt-free core/fitting/mu_kinetics.py (fit_mu_relaxation_series + fit_bimolecular_rate + fit_arrhenius) + Option-C amplitude inversion as RED-test cross-check + docs. Reference programs ship NO turnkey fast-Mu kinetics workflow and NO fit log for this example (verification is synthetic-planted-truth-led + env-gated real-corpus physics check; no binary fixtures). CAVEAT: $WIMDA_SRC/$MUSRFIT_SRC/$MANTID_SRC not checked out locally — comparison rests on the teaching docx (read), Asymmetry's prior porting studies, and the muon-chemistry literature; WiMDA/Mantid muon-school recipe needs source re-trace before contracts harden. Arrhenius unit note: built-in component uses per-particle k_B; emit molar E_a (kJ/mol) via the guide's log10 k vs 1/T linear form (slope=−E/2.3R). k_Mu absolute not gradeable (no stock molarity) → relative-conc units + λ0 only."
+    },
+    {
       "slug": "rf-resonance-gui",
       "feature_name": "RF-µSR resonance: GUI surface (time-domain/scan picker + RF field-difference scan)",
       "status": "study",

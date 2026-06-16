@@ -255,6 +255,33 @@ For a model from a composite expression, take the global/local names from
 :doc:`asymmetry_domain_global_fit`.
 
 
+Fast-muonium reaction kinetics (pulsed source)
+----------------------------------------------
+
+When a transverse-field Mu signal has decayed before the first good bin, the Mu
+amplitude and rate are degenerate per run. Share the muonium amplitude across the
+concentration series (a slow water reference at ``[x] = 0`` anchors it), then
+trend to the rate constant and activation energy:
+
+.. code-block:: python
+
+   from asymmetry.core.fitting import (
+       fit_mu_relaxation_series, fit_bimolecular_rate, fit_arrhenius,
+   )
+
+   # 2 G Mu datasets at one temperature, ordered by relative concentration.
+   relax = fit_mu_relaxation_series(datasets, f_mu=2.78, share_amplitude=True)
+   rate = fit_bimolecular_rate(concentrations, relax.lambda_mu, relax.lambda_mu_error)
+   print(rate.k_mu, rate.lambda0)            # bimolecular rate, solvent background
+
+   # Repeat per temperature, then:
+   arr = fit_arrhenius(temperatures, k_values, k_errors)
+   print(arr.activation_energy)              # E_a in kJ/mol
+
+The series **must** include a slow, well-surviving member (deoxygenated water) to
+pin the shared amplitude. See :doc:`muonium_kinetics`.
+
+
 RF-resonance fit (muon–proton)
 ------------------------------
 
