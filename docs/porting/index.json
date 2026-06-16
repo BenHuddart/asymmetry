@@ -2,6 +2,28 @@
   "version": 1,
   "studies": [
     {
+      "slug": "hdf4-nexus-v1",
+      "feature_name": "HDF4 NeXus v1 (.nxs) read support",
+      "status": "study",
+      "path": "docs/porting/hdf4-nexus-v1",
+      "references": [
+        "WiMDA",
+        "Mantid (LoadMuonNexus1)",
+        "WiMDA-muon-school nxs4to5 converter (hdf4tree.py / v1_to_v2.py)"
+      ],
+      "docs": {
+        "readme": "docs/porting/hdf4-nexus-v1/README.md",
+        "comparison": "docs/porting/hdf4-nexus-v1/comparison.md",
+        "implementation_options": "docs/porting/hdf4-nexus-v1/implementation-options.md",
+        "test_data": "docs/porting/hdf4-nexus-v1/test-data.md",
+        "verification_plan": "docs/porting/hdf4-nexus-v1/verification-plan.md"
+      },
+      "tests_path": null,
+      "src_path": null,
+      "updated": "2026-06-16",
+      "notes": "PROPOSES REVERSING the standing exclusion in wimda-parity-gap/decision-record.md §1 ('HDF4 .nxs — Out, coverage boundary'). New grounds: HDF4 is WiMDA's native on-disk format (direct parity/usability); pyhdf is a pure-Python optional dep with wheels (asymmetry[hdf4] extra, like h5py); and the in-corpus nxs4to5 reader (hdf4tree.py+v1_to_v2.py) already reads all 1,913 corpus HDF4 files. KEY FINDING: the gap is the CONTAINER not the schema — NexusLoader._detect_layout/_load_v1 already parse the v1 /run muonTD schema; only h5py.File() fails on the HDF4 container (magic 0e031301). RECOMMENDED Option B: port hdf4tree.read_tree+is_hdf4 into core/io/hdf4.py, wrap in a thin h5py-compatible adapter (__contains__/__getitem__/keys/get/attrs/asarray) and branch load() on the HDF4 magic to feed the existing _load_v1 unchanged — reuses both Asymmetry's v1 reader and the corpus HDF4 reader; lighter than porting full v1→v2 (Option A) and avoids duplicating _load_v1 (Option C). Cross-format .nxs_v2/.RAW explicitly NOT a goal. Ready-made oracle: corpus ships every HDF4 file beside its converted data_hdf5/ twin → direct parity test. Write/export to v2 deferred. Surfaced by API session-5 (TRSB ships HDF4)."
+    },
+    {
       "slug": "rf-resonance-gui",
       "feature_name": "RF-µSR resonance: GUI surface (time-domain/scan picker + RF field-difference scan)",
       "status": "study",

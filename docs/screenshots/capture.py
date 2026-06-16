@@ -114,9 +114,17 @@ def _import_scenarios() -> None:
         fit_wizard_gkt,
         fit_wizard_portfolio,
         fourier_tf,
-        global_fit_lfkt,
+        # TODO: re-enable global_fit_lfkt and lf_kt_global_results once the global
+        # fit wizard has been further developed.  Both scenarios are temporarily
+        # excluded because lf_kt_global_results runs a synchronous 4-dataset global
+        # fit that takes several minutes on CI, and global_fit_lfkt is the companion
+        # setup screenshot for the same feature.  See docs/screenshots/scenarios/
+        # global_fit_lfkt.py and lf_kt_global_results.py — the files are intact and
+        # ready to be re-imported when the feature is ready.
+        #
+        # global_fit_lfkt,
+        # lf_kt_global_results,
         grouped_fit_ybco_knight,
-        lf_kt_global_results,
         lf_kt_series_plot,
         logbook_view,
         main_window,
