@@ -72,6 +72,7 @@ out to each detailed page.
    :caption: Parameter trending
 
    parameter_trending
+   muonium_kinetics
    diffusion_ballistic_lf
    sc_penetration_depth
 
