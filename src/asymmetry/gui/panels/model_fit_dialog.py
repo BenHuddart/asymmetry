@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 import numpy as np
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -1129,10 +1130,19 @@ class ModelFitDialog(QDialog):
             if not name:
                 continue
 
+            seed_rejected = False
             try:
                 value = float(value_item.text())
             except (TypeError, ValueError):
-                value = 0.0
+                # An unparseable / mangled seed edit (e.g. the Windows input
+                # layer turning "-10" into "--0"). Keep the parameter's
+                # previous value rather than silently committing 0, which
+                # would destroy the user's seed with no feedback.
+                if name in fit_range.parameters:
+                    value = fit_range.parameters[name].value
+                else:
+                    value = 0.0
+                seed_rejected = True
 
             try:
                 p_min = float(min_item.text()) if min_item is not None else -float("inf")
@@ -1149,6 +1159,12 @@ class ModelFitDialog(QDialog):
 
             if value_item is not None:
                 value_item.setText(f"{value:.8g}")
+                if seed_rejected:
+                    value_item.setBackground(QBrush(QColor(tokens.ACCENT_RED_SOFT)))
+                    value_item.setToolTip("Unrecognised number — kept the previous value.")
+                else:
+                    value_item.setBackground(QBrush())
+                    value_item.setToolTip("")
             if min_item is not None:
                 min_item.setText(f"{p_min:.8g}")
             if max_item is not None:
