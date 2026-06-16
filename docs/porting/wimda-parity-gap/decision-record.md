@@ -19,7 +19,7 @@ current open/closed picture see programme-complete.md and
 |---|---|---|
 | Eigen.pas eigensolvers | Out, permanently | Old-roadmap mislabel: Hermitian eigensolvers serving the F–μ–F DLL models, superseded by `np.linalg.eigh`; never a spectral estimator |
 | Kramers–Kronig transform | Out | Optical-spectroscopy utility; transforms no μSR observable |
-| HDF4 `.nxs` | Out (standing decision reaffirmed) | Coverage boundary, not a bug |
+| HDF4 `.nxs` | **In** (reversal) — shipped, read support | Reversed by the [`hdf4-nexus-v1`](../hdf4-nexus-v1/README.md) study: it is WiMDA's native on-disk format (every pre-~2015 ISIS run), the reader is a small optional `pyhdf` extra (`asymmetry[hdf4]`), and the gap was only the HDF4 *container* — `_load_v1` already reads the v1 `/run` schema, so an h5py-compatible adapter over a ported HDF4 tree reader closes it. Read-only; `.nxs_v2`/`.RAW` and v2 export remain out |
 | Burg all-poles MEM | **In** (reversal), diagnostic framing only | Shipped in PR #42 as "Resolution (Burg)" with documented pathologies |
 | Legacy formats (`.tri`, `.kek`, KEK binary, DeltaT, VMS PSI, MCS, 16 ns `.raw`, ARGUS/CHRONUS `.ral`), zip/bz2 loading, legacy `alc*` files, laser/aux `.mon` logs | Drop | Superseded by NeXus; no active data sources |
 | TRIUMF MUD loader | Not a parity item | WiMDA's own MUD support is a non-functional stub; stays on the general roadmap |

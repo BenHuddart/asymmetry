@@ -1,6 +1,6 @@
 # HDF4 NeXus v1 (`.nxs`) read support — study
 
-**Slug:** `hdf4-nexus-v1` · **Status:** study (no implementation yet) ·
+**Slug:** `hdf4-nexus-v1` · **Status:** shipped (Option B — read support) ·
 **References:** WiMDA (native reader), Mantid (`LoadMuonNexus1`), the
 WiMDA-muon-school `nxs4to5/` converter (proven pyhdf reader).
 
@@ -84,13 +84,25 @@ asymmetry, counts, t0/good-bins, grouping, and metadata. See
 - [verification-plan.md](verification-plan.md) — parity, dialect, and
   dependency-absent tests.
 
-## Open questions (resolve before implementation)
+## Open questions — resolved
 
-- Confirm the reversal of the standing HDF4 exclusion with the maintainer
-  (this brief is the proposal).
-- pyhdf on the project's Python (3.13) + the pinned numpy 2.2.x — confirm a wheel
-  resolves in the venv (the corpus converter runs under 3.13 per its
-  `__pycache__`).
-- Whether to also expose a one-shot `convert`/export path (write v2 HDF5) or read
-  HDF4 transparently only (this study scopes **read-only**; export is a possible
-  follow-on, reusing the same tree reader + the corpus `v1_to_v2.py` mapping).
+- **Reversal confirmed** by the maintainer; the decision-record HDF4 row is
+  flipped from "Out" to shipped, citing this study.
+- **pyhdf wheels are not uniform across platforms.** On Linux (manylinux,
+  ~771 KB) and macOS (~535 KB) the wheels bundle the HDF4 C library, so
+  `pip install asymmetry[hdf4]` works out of the box (CI is Linux → green with
+  no extra system package). The **Windows** wheel (~188 KB) is the
+  `_hdfext` extension only and links external `hdf.dll` / `mfhdf.dll`, which it
+  does **not** bundle — confirmed via `dumpbin /dependents`. Asymmetry sources
+  those DLLs from the conda-forge `hdf4` package (the same library Mantid
+  bundles in its Windows installer); `packaging/windows/fetch_hdf4_dlls.py`
+  fetches them and `ASYMMETRY_HDF4_DLL_DIR` / the frozen-app bundle dir makes
+  them discoverable (`os.add_dll_directory`). The graceful-`ImportError` path
+  keeps HDF4 optional on all platforms.
+- **Bundling the HDF4 runtime into the released Windows/macOS binaries** is a
+  scoped follow-on (PyInstaller spec + CI workflow): macOS via
+  `collect_dynamic_libs("pyhdf")`; Windows by staging the conda-forge DLLs into
+  the build. This PR ships the loader, parity tests, and docs.
+- **A one-shot `convert`/export path** (write v2 HDF5) remains a possible
+  follow-on, reusing the ported tree reader + the corpus `v1_to_v2.py` mapping.
+  This study is **read-only**.
