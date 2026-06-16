@@ -55,6 +55,10 @@ from asymmetry.core.fitting.nuclear_dipole import (
     proton_dipole,
 )
 from asymmetry.core.fitting.parameters import ParamInfo, get_param_info
+from asymmetry.core.fitting.sc.lineshape import (
+    vortex_lattice_component,
+    vortex_lattice_powder_component,
+)
 from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
 
 #: MODELS keys that have no COMPONENTS entry of the same name but DO map to a
@@ -473,6 +477,48 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         formula_template="{A}*cos(2*pi*gamma_mu*{field}*t + {phase})",
         latex_equation=r"A(t) = A \cos(2\pi \gamma_\mu B t + \phi)",
         category="Oscillation",
+    ),
+    "VortexLattice": ComponentDefinition(
+        name="VortexLattice",
+        description=(
+            "Single-crystal vortex-lattice TF oscillation with the modified-London "
+            "field distribution (non-Gaussian, skewed); fits lambda and Bc2"
+        ),
+        function=vortex_lattice_component,
+        param_names=["A", "field", "phase", "lambda_ab", "Bc2"],
+        param_defaults={"A": 20.0, "field": 100.0, "phase": 0.0, "lambda_ab": 200.0, "Bc2": 10.0},
+        param_info={
+            "A": get_param_info("A"),
+            "field": get_param_info("field"),
+            "phase": get_param_info("phase"),
+            "lambda_ab": get_param_info("lambda_ab"),
+            "Bc2": get_param_info("Bc2"),
+        },
+        formula_template="{A}*Re[exp(i(2*pi*gamma_mu*{field}*t + {phase})) * R_VL(t; {lambda_ab}, {Bc2})]",
+        latex_equation=r"A(t) = A\,\mathrm{Re}\!\left[e^{i(2\pi\gamma_\mu B t + \phi)} R_{VL}(t;\lambda,B_{c2})\right]",
+        category="Oscillation",
+        fixed_params=("field",),
+    ),
+    "VortexLatticePowder": ComponentDefinition(
+        name="VortexLatticePowder",
+        description=(
+            "Polycrystalline vortex-lattice TF oscillation (modified-London, skewed "
+            "line, 3^(1/4) powder average); fits ab-plane lambda_ab and Bc2"
+        ),
+        function=vortex_lattice_powder_component,
+        param_names=["A", "field", "phase", "lambda_ab", "Bc2"],
+        param_defaults={"A": 20.0, "field": 100.0, "phase": 0.0, "lambda_ab": 200.0, "Bc2": 10.0},
+        param_info={
+            "A": get_param_info("A"),
+            "field": get_param_info("field"),
+            "phase": get_param_info("phase"),
+            "lambda_ab": get_param_info("lambda_ab"),
+            "Bc2": get_param_info("Bc2"),
+        },
+        formula_template="{A}*Re[exp(i(2*pi*gamma_mu*{field}*t + {phase})) * R_VL_powder(t; {lambda_ab}, {Bc2})]",
+        latex_equation=r"A(t) = A\,\mathrm{Re}\!\left[e^{i(2\pi\gamma_\mu B t + \phi)} R_{VL}^{\mathrm{pow}}(t;\lambda_{ab},B_{c2})\right]",
+        category="Oscillation",
+        fixed_params=("field",),
     ),
     "Bessel": ComponentDefinition(
         name="Bessel",

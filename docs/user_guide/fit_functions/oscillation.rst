@@ -133,3 +133,59 @@ Name           Symbol        Unit   Description
 **References**
 
 - L. P. Le *et al.*, Phys. Rev. B **48**, 7284 (1993).
+
+.. _fit-vortex-lattice:
+
+VortexLattice / VortexLatticePowder
+-----------------------------------
+
+.. math::
+
+   A(t) = A\,\mathrm{Re}\!\left[e^{i(2\pi\gamma_\mu B t + \phi)}\,
+          R_{VL}(t;\lambda,B_{c2})\right]
+
+Transverse-field precession in the **mixed state of a type-II superconductor**.
+Below :math:`T_c` the muon samples the inhomogeneous field of the flux-line
+lattice, whose distribution :math:`p(B)` is strongly **non-Gaussian** — a sharp
+low-field cutoff at the saddle point, a most-probable field below the mean, and
+a long tail to high field near the vortex cores (a positively skewed line). The
+relaxation :math:`R(t)=\langle e^{i 2\pi\gamma_\mu(B-\bar B)t}\rangle` is the
+characteristic function of the *modified-London* field distribution of an ideal
+triangular lattice. Fitting the lineshape directly — rather than a single
+``Gaussian`` proxy, whose returned rate depends on the fit window and binning —
+gives a window-independent penetration depth :math:`\lambda` and upper critical
+field :math:`B_{c2}`.
+
+``VortexLatticePowder`` applies the :math:`3^{1/4}\lambda_{ab}` polycrystalline
+average and returns the ab-plane depth :math:`\lambda_{ab}`. The line's second
+moment is calibrated to the Brandt result (see :doc:`../sc_penetration_depth`),
+so the depth read from this lineshape matches the field-domain
+``SC_Brandt_VortexLattice`` trend models. Multiply by a ``Gaussian`` for the
+nuclear dipolar background and add ``Oscillatory + Constant`` for the
+(weakly relaxing) sample-holder signal:
+
+.. code-block:: text
+
+   VortexLatticePowder * Gaussian + Oscillatory + Constant
+
+==============  ===================  =====  =====================================
+Name            Symbol               Unit   Description
+==============  ===================  =====  =====================================
+``A``           :math:`A`            %      Component asymmetry amplitude.
+``field``       :math:`B`            G      Applied transverse field (usually fixed).
+``phase``       :math:`\phi`         rad    Phase offset.
+``lambda_ab``   :math:`\lambda`      nm     Penetration depth (ab-plane for powder).
+``Bc2``         :math:`B_{c2}`       T      Upper critical field (core-size cutoff).
+==============  ===================  =====  =====================================
+
+``field`` starts fixed at the applied value. :math:`B_{c2}` is weakly
+constrained by a single low-field run (where :math:`b=B/B_{c2}\to 0`); fix it
+from the literature or fit the field dependence to pin it. ``lambda_ab`` is
+strongly correlated with the nuclear ``Gaussian`` rate, so constrain the latter
+from a normal-state (above :math:`T_c`) measurement at the same field.
+
+**References**
+
+- E. H. Brandt, Phys. Rev. B **68**, 054506 (2003).
+- J. E. Sonier, J. H. Brewer, and R. F. Kiefl, Rev. Mod. Phys. **72**, 769 (2000).
+- F. L. Pratt *et al.*, Phys. Rev. B **79**, 052508 (2009).
