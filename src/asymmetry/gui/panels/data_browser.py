@@ -678,7 +678,10 @@ class DataBrowserPanel(QWidget):
         self._add_field_btn.setText("+")
         self._add_field_btn.setToolTip("Add a custom field")
         self._add_field_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._add_field_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        # Tab-reachable (so keyboard-only users can still add a field — it is the
+        # sole affordance) but not click-focusable, so a mouse click doesn't leave
+        # a focus ring lingering on the header strip.
+        self._add_field_btn.setFocusPolicy(Qt.FocusPolicy.TabFocus)
         self._add_field_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         # Top + bottom borders continue the table's top frame line and the
         # header's bottom line, so the "+" strip joins the header seamlessly

@@ -18,6 +18,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QInputDialog
 
 from asymmetry.core.data.dataset import MuonDataset
@@ -168,6 +169,28 @@ def test_add_field_rail_button_cancel_adds_nothing(qapp, monkeypatch):
     monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("", False))
     panel._add_field_btn.click()
     assert panel.extra_columns() == []
+
+
+def test_add_field_rail_button_is_keyboard_reachable(qapp, monkeypatch):
+    # The rail "+" is the sole affordance for adding a custom field, so it must
+    # stay keyboard-reachable (Tab) and activatable — not NoFocus.
+    panel = DataBrowserPanel()
+    panel.add_dataset(_dataset(11))
+    panel.resize(320, 200)
+    panel.show()
+    qapp.processEvents()
+
+    btn = panel._add_field_btn
+    assert btn.focusPolicy() != Qt.FocusPolicy.NoFocus
+    assert btn.focusPolicy() & Qt.FocusPolicy.TabFocus
+    btn.setFocus()
+    qapp.processEvents()
+    assert btn.hasFocus()
+
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("KeyAdd", True))
+    QTest.keyClick(btn, Qt.Key.Key_Space)
+    qapp.processEvents()
+    assert [c.label for c in panel.extra_columns()] == ["KeyAdd"]
 
 
 def test_add_field_rail_strip_aligns_with_header(qapp):
