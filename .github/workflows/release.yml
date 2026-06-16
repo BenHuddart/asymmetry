@@ -37,7 +37,7 @@ jobs:
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          pip install -c constraints.txt -e ".[gui,gle,hdf5,root]"
+          pip install -c constraints.txt -e ".[gui,gle,hdf5,hdf4,root]"
           pip install -c constraints.txt pyinstaller Pillow dmgbuild
 
       - name: Generate macOS icon (.icns)
@@ -110,7 +110,7 @@ jobs:
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          pip install -c constraints.txt -e ".[gui,gle,hdf5,root]"
+          pip install -c constraints.txt -e ".[gui,gle,hdf5,hdf4,root]"
           pip install -c constraints.txt pyinstaller Pillow dmgbuild
 
       - name: Generate macOS icon (.icns)
@@ -183,7 +183,7 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
-          pip install -c constraints.txt -e ".[gui,gle,hdf5,root]"
+          pip install -c constraints.txt -e ".[gui,gle,hdf5,hdf4,root]"
           pip install -c constraints.txt pyinstaller Pillow
 
       - name: Generate Windows icon (.ico)
@@ -192,9 +192,14 @@ jobs:
           New-Item -ItemType Directory -Force -Path build/icons | Out-Null
           python -c "from PIL import Image; img = Image.open('src/asymmetry/resources/logo_512x512.png'); img.save('build/icons/Asymmetry.ico', sizes=[(16,16),(24,24),(32,32),(48,48),(64,64),(128,128),(256,256)])"
 
+      - name: Stage HDF4 runtime DLLs
+        shell: pwsh
+        run: python packaging/windows/fetch_hdf4_dlls.py "$env:GITHUB_WORKSPACE\build\hdf4-dlls"
+
       - name: Build application with PyInstaller
         env:
           PYI_ICON_PATH: ${{ github.workspace }}\build\icons\Asymmetry.ico
+          ASYMMETRY_HDF4_DLL_DIR: ${{ github.workspace }}\build\hdf4-dlls
         shell: pwsh
         run: pyinstaller --clean --noconfirm packaging/asymmetry.spec
 
