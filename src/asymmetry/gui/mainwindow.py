@@ -10382,6 +10382,9 @@ class MainWindow(QMainWindow):
             self._multi_group_fit_window.set_member_datasets(analysis_datasets)
         if is_frequency_domain:
             self._apply_frequency_missing_spectra_status(len(analysis_datasets))
+            # The prep above is a pure cached read; fill any uncached recipe-backed
+            # runs off-thread (refreshes the fit datasets when they land).
+            self._kick_frequency_fit_recompute()
 
     def _selection_status_message(self, selected: list) -> str:
         """Return a compact status message for multi-run selections."""
@@ -10535,13 +10538,15 @@ class MainWindow(QMainWindow):
         )
 
     def _frequency_fit_datasets_for_selected_runs(self) -> list[MuonDataset]:
-        """Return cached spectra for selected runs; recompute uncached ones off-thread.
+        """Return the **cached** spectra for selected runs (pure; no side effects).
 
-        A **cached-only** read so multi-run frequency selection never blocks the
-        GUI thread: recomputable-but-uncached runs are recomputed asynchronously
-        and the fit datasets refresh (via :meth:`_set_frequency_fit_datasets_for_selection`)
-        when they land. Only genuinely non-recomputable runs (no recipe) are
-        reported as missing for the user to compute manually.
+        A cached-only read so multi-run frequency selection never blocks the GUI
+        thread. Recomputable-but-uncached runs are *recorded* in
+        ``_pending_frequency_fit_recompute`` (the off-thread fill is kicked
+        separately by :meth:`_kick_frequency_fit_recompute`, never from here — so
+        this method can be re-entered freely by the fill's completion without
+        re-triggering it). Genuinely non-recomputable runs (no recipe) land in
+        ``_last_frequency_fit_missing_run_numbers`` for the manual-compute status.
         """
         selected = self._data_browser.get_selected_datasets()
         datasets: list[MuonDataset] = []
@@ -10561,7 +10566,7 @@ class MainWindow(QMainWindow):
             spectra = self._cached_frequency_spectra(run_number, rep_type)
             if not spectra:
                 if self._frequency_recompute_target(run_number, rep_type) is not None:
-                    recompute_runs.append(run_number)  # recipe-backed → async-fill below
+                    recompute_runs.append(run_number)  # recipe-backed → kick fill later
                 else:
                     missing_run_numbers.append(run_number)  # needs a manual Compute
                 continue
@@ -10573,21 +10578,43 @@ class MainWindow(QMainWindow):
                 if safe_dataset is not None:
                     datasets.append(safe_dataset)
         self._last_frequency_fit_missing_run_numbers = missing_run_numbers
-        if recompute_runs:
-            # Fill the uncached recipe-backed spectra off-thread, then re-run the
-            # prep so the global-fit datasets include them — without blocking.
-            self._ensure_frequency_spectra_for_runs_async(
-                recompute_runs,
-                rep_type,
-                on_ready=self._set_frequency_fit_datasets_for_selection,
-            )
+        self._pending_frequency_fit_recompute = recompute_runs
         return datasets
 
-    def _set_frequency_fit_datasets_for_selection(self) -> list[MuonDataset]:
-        """Set frequency global-fit datasets and report selected uncached runs."""
+    def _refresh_frequency_fit_datasets(self) -> list[MuonDataset]:
+        """Read the (cached) spectra and push them to the fit panel + status.
+
+        Terminal: it does **not** kick a recompute, so it is safe as the
+        completion callback of the async fill — a run that still has no spectrum
+        (compute returned nothing, or failed) is simply reported as missing
+        rather than re-queued, which would loop.
+        """
         datasets = self._frequency_fit_datasets_for_selected_runs()
         self._fit_panel.set_datasets(datasets)
         self._apply_frequency_missing_spectra_status(len(datasets))
+        return datasets
+
+    def _kick_frequency_fit_recompute(self) -> None:
+        """Fill the selection's uncached recipe-backed spectra off-thread.
+
+        On completion the fit datasets refresh via the terminal
+        :meth:`_refresh_frequency_fit_datasets` (which does not kick again). Reads
+        the pending list recorded by the most recent
+        :meth:`_frequency_fit_datasets_for_selected_runs`.
+        """
+        pending = list(getattr(self, "_pending_frequency_fit_recompute", ()) or ())
+        if not pending:
+            return
+        self._ensure_frequency_spectra_for_runs_async(
+            pending,
+            self._active_frequency_rep_type(),
+            on_ready=self._refresh_frequency_fit_datasets,
+        )
+
+    def _set_frequency_fit_datasets_for_selection(self) -> list[MuonDataset]:
+        """Set frequency global-fit datasets, report missing, and fill the rest async."""
+        datasets = self._refresh_frequency_fit_datasets()
+        self._kick_frequency_fit_recompute()
         return datasets
 
     def _apply_frequency_missing_spectra_status(self, cached_count: int) -> None:

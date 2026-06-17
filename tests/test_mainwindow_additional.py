@@ -723,26 +723,49 @@ class TestMainWindowFourier:
         assert 8862 in mainwindow._frequency_spectra_by_run
 
     def test_frequency_fit_datasets_fill_asynchronously(self, mainwindow: MainWindow) -> None:
-        # Multi-run frequency selection must not block: the fit-dataset prep
-        # returns cached-only immediately and recomputes the rest off-thread,
-        # filling them in when they land.
+        # Multi-run frequency selection must not block: the setter returns
+        # cached-only immediately and recomputes the rest off-thread, filling
+        # them in when they land.
         ds1 = self._compute_run_fft(mainwindow, 8863)
         ds2 = self._compute_run_fft(mainwindow, 8864)
         state = mainwindow.collect_project_state()
         self._restore_recipe_only(mainwindow, state)
         mainwindow._data_browser.get_selected_datasets = lambda: [ds1, ds2]
 
-        # Cached-only read: nothing warm yet, so no datasets — and no GUI block.
-        datasets = mainwindow._frequency_fit_datasets_for_selected_runs()
-        assert datasets == []
-        assert mainwindow._frequency_recompute_active  # async fill kicked off
-        # Recipe-backed runs are NOT reported as "missing" (they auto-fill).
+        # The pure prep returns cached-only (nothing warm yet) and does NOT kick.
+        assert mainwindow._frequency_fit_datasets_for_selected_runs() == []
+        assert not mainwindow._frequency_recompute_active
+        # The setter sets cached-only datasets immediately and kicks the off-thread
+        # fill (no GUI block); recipe-backed runs are not reported as "missing".
+        assert mainwindow._set_frequency_fit_datasets_for_selection() == []
+        assert mainwindow._frequency_recompute_active
         assert mainwindow._last_frequency_fit_missing_run_numbers == []
 
         _wait_frequency_idle(mainwindow)
         # Now warm: the prep includes both runs.
         filled = mainwindow._frequency_fit_datasets_for_selected_runs()
         assert len(filled) == 2
+
+    def test_frequency_fit_datasets_setter_does_not_recurse_when_inflight(
+        self, mainwindow: MainWindow
+    ) -> None:
+        # Regression: when a selected run's recompute is already in flight, the
+        # setter must not recurse (the async-fill's completion is a terminal
+        # refresh that never re-kicks). Previously this looped to a RecursionError.
+        ds1 = self._compute_run_fft(mainwindow, 8865)
+        ds2 = self._compute_run_fft(mainwindow, 8866)
+        state = mainwindow.collect_project_state()
+        self._restore_recipe_only(mainwindow, state)
+        mainwindow._data_browser.get_selected_datasets = lambda: [ds1, ds2]
+
+        # Mark both runs as already in flight: the fill finds no new targets and
+        # fires its completion synchronously — which must terminate, not recurse.
+        rep = RepresentationType.FREQ_FFT
+        mainwindow._frequency_recompute_inflight.update({(8865, rep), (8866, rep)})
+        # Must return (no RecursionError) and report nothing missing (they are
+        # recipe-backed, just pending an in-flight recompute).
+        assert mainwindow._set_frequency_fit_datasets_for_selection() == []
+        mainwindow._frequency_recompute_inflight.clear()
 
     def test_async_recompute_failure_clears_overlay_and_logs(
         self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
