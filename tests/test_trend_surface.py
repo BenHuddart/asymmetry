@@ -445,6 +445,64 @@ class TestRefreshTrendPanel:
         # per source run, keyed by the run (42), not the synthetic group key.
         assert gdata.rows[0].run_number == 42
 
+    def _grouped_state_stub(self):
+        return {
+            "composite_model": {"component_names": ["Exponential"], "operators": []},
+            "param_roles": {"Lambda": "global"},
+            "nuisance_params": ["N0"],
+        }
+
+    def _group_member(self, source_run: int, group: int) -> MuonDataset:
+        return MuonDataset(
+            np.array([0.0, 0.1]),
+            np.array([1.0, 1.0]),
+            np.array([1.0, 1.0]),
+            {"run_number": -((source_run * 1000) + group), "source_run_number": source_run},
+            None,
+        )
+
+    def test_single_grouped_fit_does_not_surface_param_panel(self, mw, monkeypatch):
+        # A single grouped fit (one source run) stays on the plot/fit view like an
+        # ordinary single fit — it must not raise the fit-parameters dock.
+        mw._data_browser.add_dataset(_dataset(42))
+        mw._on_dataset_selected(42)
+        mw._plot_workspace.set_available_views(["fb_asymmetry", "groups"])
+        mw._plot_workspace.set_active_view("groups")
+        monkeypatch.setattr(
+            mw._multi_group_fit_window, "get_grouped_state", self._grouped_state_stub
+        )
+        surfaced: list[str] = []
+        monkeypatch.setattr(mw, "_show_panel", lambda key: surfaced.append(key))
+
+        # Two groups, one source run (42).
+        datasets = [self._group_member(42, 1), self._group_member(42, 2)]
+        results = {-42001: (_result(), _CURVE, []), -42002: (_result(), _CURVE, [])}
+        mw._on_grouped_fit_completed(datasets, results)
+
+        assert "fit_parameters" not in surfaced
+        # The series is still recorded and loaded into the panel.
+        assert mw._fit_parameters_panel._group_fit_results
+
+    def test_batch_grouped_fit_surfaces_param_panel(self, mw, monkeypatch):
+        # A multi-run batch grouped fit still surfaces the trend panel.
+        for rn in (42, 43):
+            mw._data_browser.add_dataset(_dataset(rn))
+        mw._on_dataset_selected(42)
+        mw._plot_workspace.set_available_views(["fb_asymmetry", "groups"])
+        mw._plot_workspace.set_active_view("groups")
+        monkeypatch.setattr(
+            mw._multi_group_fit_window, "get_grouped_state", self._grouped_state_stub
+        )
+        surfaced: list[str] = []
+        monkeypatch.setattr(mw, "_show_panel", lambda key: surfaced.append(key))
+
+        # One group each across two source runs (42, 43).
+        datasets = [self._group_member(42, 1), self._group_member(43, 1)]
+        results = {-42001: (_result(), _CURVE, []), -43001: (_result(), _CURVE, [])}
+        mw._on_grouped_fit_completed(datasets, results)
+
+        assert "fit_parameters" in surfaced
+
     def test_add_to_series_refreshes_trend_panel(self, mw, monkeypatch):
         """After Add-to-Series the trend panel shows the extended membership."""
         for rn in (10, 11):

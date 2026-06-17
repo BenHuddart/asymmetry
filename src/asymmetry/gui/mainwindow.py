@@ -8149,7 +8149,9 @@ class MainWindow(QMainWindow):
             )
         return rows
 
-    def _refresh_trend_panel(self, *, select_batch_id: str | None = None) -> None:
+    def _refresh_trend_panel(
+        self, *, select_batch_id: str | None = None, surface: bool = True
+    ) -> None:
         """Reload the trend panel from the project model for the active representation.
 
         This is the *pull*-based entry point called after every fit that records
@@ -8159,6 +8161,11 @@ class MainWindow(QMainWindow):
         ``select_batch_id`` requests that the trend panel make that series the
         active selection (used after a batch completes so the just-computed
         series is surfaced rather than left behind a stale prior selection).
+
+        ``surface`` raises the fit-parameters dock when the representation has
+        series. A *single* grouped fit passes ``surface=False`` so it stays on
+        the plot/fit view like an ordinary single fit (the series is still loaded
+        into the panel, just not brought to the front).
         """
         if not hasattr(self, "_fit_parameters_panel"):
             return
@@ -8195,7 +8202,7 @@ class MainWindow(QMainWindow):
                 select_id=select_batch_id,
             )
 
-        if entries and hasattr(self, "_dock_fit_parameters"):
+        if surface and entries and hasattr(self, "_dock_fit_parameters"):
             # Route through _show_panel so the per-representation closed-tab
             # memory is cleared — the app is deliberately surfacing the dock.
             self._show_panel("fit_parameters")
@@ -9302,9 +9309,13 @@ class MainWindow(QMainWindow):
             return
 
         new_batch_id = self._record_grouped_fit_series(grouped_datasets, results_dict)
-        # Pull-based refresh: surface the newly recorded series as the active
-        # selection in the trend panel so it is not lost among older series.
-        self._refresh_trend_panel(select_batch_id=new_batch_id)
+        # Pull-based refresh: surface the newly recorded series in the trend panel
+        # so it is not lost among older series — but only for a multi-run *batch*
+        # grouped fit. A single grouped fit (one source run) stays on the plot/fit
+        # view like an ordinary single fit (it still records + loads the series).
+        series = self._project_model.batch(new_batch_id) if new_batch_id else None
+        is_single_grouped = series is not None and len(set(series.member_source_run.values())) <= 1
+        self._refresh_trend_panel(select_batch_id=new_batch_id, surface=not is_single_grouped)
 
         fit_curves = {}
         if fit_function is None and hasattr(self._fit_panel, "global_fit_formula_string"):
