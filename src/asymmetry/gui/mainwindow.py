@@ -9505,11 +9505,24 @@ class MainWindow(QMainWindow):
         if resolved is None:
             return
         group_name, target_runs = resolved
+
+        # Resolve target datasets so that file-specific parameter defaults
+        # (e.g. B_L from the run's applied field) can be re-seeded per member.
+        all_browser_datasets: dict[int, MuonDataset] = {}
+        if hasattr(self._data_browser, "_datasets"):
+            for rn, ds in self._data_browser._datasets.items():
+                try:
+                    all_browser_datasets[int(rn)] = ds
+                except (TypeError, ValueError):
+                    pass
+
         updated = 0
         if hasattr(self._multi_group_fit_window, "share_single_grouped_function_state"):
             updated = int(
                 self._multi_group_fit_window.share_single_grouped_function_state(
-                    source_run_number, target_runs
+                    source_run_number,
+                    target_runs,
+                    datasets_by_run=all_browser_datasets or None,
                 )
             )
         self._log_panel.log(

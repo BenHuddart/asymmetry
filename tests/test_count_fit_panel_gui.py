@@ -552,6 +552,47 @@ def test_grouped_single_share_with_group_copies_to_peers(qapp):
     assert _single_model_names(win) == ["Gaussian", "Constant"]
 
 
+def test_grouped_single_share_reseeds_field_params_per_peer(qapp):
+    # Sharing a grouped Single function to a peer at a *different* applied field
+    # must re-seed that peer's field-specific parameters (e.g. B_L) from the
+    # peer's own dataset — in BOTH the grouped-fit "parameters" list and the
+    # per-group "group_model_parameters" list — rather than leaving the source
+    # run's field value. Mirrors the FB single-fit re-seeding.
+    win = MultiGroupFitWindow()
+    source = _grouped_run_dataset(714)
+    source.run.metadata["field"] = 50.0
+    peer = _grouped_run_dataset(715)
+    peer.run.metadata["field"] = 300.0
+
+    # Craft a source state carrying B_L at the source field (50 G) in both
+    # parameter lists, plus a non-field parameter that must stay put.
+    win._single_grouped_state_by_run[714] = {
+        "model_name": "Composite",
+        "result_html": "<b>source fit</b>",
+        "parameters": [
+            {"name": "B_L", "value": 50.0},
+            {"name": "A", "value": 0.2},
+        ],
+        "group_model_parameters": [
+            {"name": "B_L", "value": 50.0},
+            {"name": "Lambda", "value": 1.0},
+        ],
+    }
+
+    datasets_by_run = {714: source, 715: peer}
+    assert win.share_single_grouped_function_state(714, [715], datasets_by_run=datasets_by_run) == 1
+
+    shared = win._single_grouped_state_by_run[715]
+    params = {p["name"]: p["value"] for p in shared["parameters"]}
+    group_params = {p["name"]: p["value"] for p in shared["group_model_parameters"]}
+    # B_L re-seeded from the peer's 300 G field in both lists.
+    assert params["B_L"] == pytest.approx(300.0)
+    assert group_params["B_L"] == pytest.approx(300.0)
+    # Non-field parameters keep the shared source value.
+    assert params["A"] == pytest.approx(0.2)
+    assert group_params["Lambda"] == pytest.approx(1.0)
+
+
 def test_grouped_single_share_does_not_propagate_result_to_peers(qapp):
     # Sharing must copy the function but NOT the source run's fit result — an
     # unfit peer should never display a fit it did not perform.

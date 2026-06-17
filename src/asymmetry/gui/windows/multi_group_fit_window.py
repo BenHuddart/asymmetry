@@ -29,8 +29,12 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.parameters import split_parameter_name
 from asymmetry.core.transform import resolve_background_mode
-from asymmetry.gui.panels.fit_panel import GlobalFitTab
+from asymmetry.gui.panels.fit_panel import (
+    GlobalFitTab,
+    _get_file_value_for_parameter,
+)
 from asymmetry.gui.styles.widgets import make_section
 from asymmetry.gui.widgets.collapsible_section import CollapsibleSection
 
@@ -407,14 +411,24 @@ class MultiGroupFitWindow(QWidget):
                 "state": self._single_fit_tab.get_state(),
             }
 
-    def share_single_grouped_function_state(self, source_run: int, target_runs: list[int]) -> int:
+    def share_single_grouped_function_state(
+        self,
+        source_run: int,
+        target_runs: list[int],
+        datasets_by_run: dict[int, MuonDataset] | None = None,
+    ) -> int:
         """Copy the source run's grouped Single function into each target run's store.
 
         Each peer inherits the function (model + seeds + Fix/role setup) on its
         next selection via the per-run store, but **not** the source run's fit
         result (a peer has not been fit). Returns the number of peers written.
-        Mirrors ``FitPanel.share_single_function_state`` (which additionally
-        re-seeds per-peer file field defaults; that refinement is not yet ported).
+
+        Mirrors ``FitPanel.share_single_function_state``: for field-specific
+        parameters (like ``B_L``), the peer's own field-derived seed is applied
+        from its dataset when *datasets_by_run* is provided, so a peer at a
+        different applied field gets its own seed rather than the source run's.
+        Both the grouped-fit model parameters (``parameters``) and the per-group
+        model parameters (``group_model_parameters``) are re-seeded.
         """
         source = int(source_run)
         if source == self._active_single_grouped_run:
@@ -434,6 +448,17 @@ class MultiGroupFitWindow(QWidget):
             shared_state = copy.deepcopy(source_state)
             # The peer has not been fit; carry the function, not the result.
             shared_state["result_html"] = "No fit performed yet"
+
+            # Re-seed file-specific parameters (e.g. B_L) from the peer's own
+            # dataset so a peer at a different applied field is not stuck with
+            # the source run's field value.
+            target_dataset = (
+                datasets_by_run.get(target_run) if datasets_by_run is not None else None
+            )
+            if target_dataset is not None:
+                for key in ("parameters", "group_model_parameters"):
+                    self._reseed_field_params(shared_state.get(key), target_dataset)
+
             self._single_grouped_state_by_run[target_run] = shared_state
             # Refresh now only if this peer is the run currently on screen.
             if target_run == self._active_single_grouped_run:
@@ -441,6 +466,27 @@ class MultiGroupFitWindow(QWidget):
                 self._single_fit_tab._result_text.clear()
             written += 1
         return written
+
+    @staticmethod
+    def _reseed_field_params(param_entries: object, dataset: MuonDataset) -> None:
+        """Apply *dataset*'s file-specific seeds onto a parameter-entry list.
+
+        Each entry is a ``{"name": ..., "value": ...}`` dict; field-like
+        parameters (resolved via :func:`split_parameter_name`) get the dataset's
+        own field-derived value. Non-field parameters are left untouched.
+        """
+        if not isinstance(param_entries, list):
+            return
+        for param_dict in param_entries:
+            if not isinstance(param_dict, dict):
+                continue
+            pname = param_dict.get("name")
+            if not isinstance(pname, str):
+                continue
+            base_name, _index = split_parameter_name(pname)
+            file_value = _get_file_value_for_parameter(dataset, base_name)
+            if file_value is not None:
+                param_dict["value"] = file_value
 
     def clear_grouped_single_state(self) -> None:
         """Drop all per-run grouped Single forms (project close / new project).
