@@ -9926,8 +9926,19 @@ class MainWindow(QMainWindow):
         for panel in (self._plot_panel, self._frequency_plot_panel):
             if hasattr(panel, "set_custom_label_fields"):
                 panel.set_custom_label_fields(fields)
+        # The Angle field is promoted to a first-class trend x-axis, so it is
+        # routed separately and excluded from the generic custom-x list (which
+        # would otherwise also offer it, and as a non-"custom:" key resolve wrong).
+        angle_field = (
+            self._data_browser.angle_x_field()
+            if hasattr(self._data_browser, "angle_x_field")
+            else None
+        )
+        angle_key = angle_field[1] if angle_field else None
         if hasattr(self._fit_parameters_panel, "set_custom_x_fields"):
-            self._fit_parameters_panel.set_custom_x_fields(fields)
+            self._fit_parameters_panel.set_custom_x_fields([f for f in fields if f[1] != angle_key])
+        if hasattr(self._fit_parameters_panel, "set_angle_x_field"):
+            self._fit_parameters_panel.set_angle_x_field(angle_field)
 
     def _update_selected_datasets(self, *_args) -> None:
         """Update the fit panel with currently selected datasets."""
