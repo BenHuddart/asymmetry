@@ -54,6 +54,7 @@ class MultiGroupFitWindow(QWidget):
     fit_range_edit_committed = Signal(float, float)
     count_fit_completed = Signal(object, object)  # (dataset, {"result", "overlays"})
     count_grouping_promoted = Signal(object)  # (dataset) — a count calibration hit the grouping
+    share_function_with_group_requested = Signal(int)  # (source run) — push form to peers
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -72,6 +73,10 @@ class MultiGroupFitWindow(QWidget):
             tab.fit_range_edit_committed.connect(self.fit_range_edit_committed.emit)
             tab.count_fit_completed.connect(self.count_fit_completed.emit)
             tab.count_grouping_promoted.connect(self.count_grouping_promoted.emit)
+        # The Single surface can push its function to the run's data-group peers.
+        self._single_fit_tab.share_function_with_group_requested.connect(
+            self.share_function_with_group_requested.emit
+        )
         self._tabs.addTab(self._single_fit_tab, "Single")
         self._tabs.addTab(self._batch_fit_tab, "Batch")
         layout.addWidget(self._tabs)
@@ -81,6 +86,17 @@ class MultiGroupFitWindow(QWidget):
         self._single_grouped_restore_provider: (
             Callable[[MuonDataset | None], dict | None] | None
         ) = None
+        # Per-run grouped Single-surface form store (mirrors FitPanel's
+        # _single_state_by_run): keeps each run's in-progress function so moving
+        # away and back restores it, and an unseen run carries the current
+        # function forward instead of snapping to the default.
+        self._single_grouped_state_by_run: dict[int, dict] = {}
+        self._active_single_grouped_run: int | None = None
+        # Snapshot of the Single form taken when leaving the Single tab, restored
+        # on return (same run) so an in-progress unfit function survives a
+        # Single↔Batch toggle (mirrors FitPanel._single_form_snapshot).
+        self._single_grouped_form_snapshot: dict | None = None
+        self._tabs.currentChanged.connect(self._on_grouped_tab_changed)
         self._sync_count_fit_target()
 
     def _build_target_controls(self) -> QWidget:
@@ -317,20 +333,119 @@ class MultiGroupFitWindow(QWidget):
     def set_dataset(self, dataset: MuonDataset | None) -> None:
         """Update the active grouped-fit dataset shown by both surfaces.
 
-        After the surfaces re-bind to *dataset* (which rebuilds the grouped model
-        for its detector groups), the Single surface is repopulated from that
-        run's persisted grouped single-fit form, if any — so reselecting a run
-        shows its fit instead of the last-touched global form.
+        Mirrors ``FitPanel.set_dataset``: the leaving run's Single form is saved,
+        the surfaces re-bind to *dataset* (rebuilding the grouped model for its
+        detector groups), then the Single form is resolved by precedence —
+        recorded slot fit (restore provider) > this run's previously-edited form
+        > carry-forward (keep the current function, drop the stale result) for an
+        unseen, un-customised run.
         """
+        # Save the form the Single surface is leaving, so returning to that run
+        # restores its in-progress setup.
+        if self._active_single_grouped_run is not None:
+            self._single_grouped_state_by_run[self._active_single_grouped_run] = (
+                self._single_fit_tab.get_state()
+            )
+
         for tab in self._grouped_tabs():
             tab.set_current_dataset(dataset)
         self._update_background_note(dataset)
+
+        run_number: int | None = None
         if dataset is None:
             self._run_label = ""
         else:
             self._run_label = str(getattr(dataset, "run_label", dataset.run_number))
-        if self._single_grouped_restore_provider is not None:
-            self.restore_single_grouped_ui(self._single_grouped_restore_provider(dataset))
+            try:
+                run_number = int(dataset.run_number)
+            except (TypeError, ValueError):
+                run_number = None
+        self._active_single_grouped_run = run_number
+
+        if dataset is None:
+            return
+
+        payload = (
+            self._single_grouped_restore_provider(dataset)
+            if self._single_grouped_restore_provider is not None
+            else None
+        )
+        if isinstance(payload, dict) and payload:
+            self.restore_single_grouped_ui(payload)
+        elif run_number is not None and run_number in self._single_grouped_state_by_run:
+            self._single_fit_tab.restore_state(self._single_grouped_state_by_run[run_number])
+        else:
+            self._carry_forward_single_grouped_form()
+
+    def _carry_forward_single_grouped_form(self) -> None:
+        """Inherit the current Single function for an unseen run, dropping its result.
+
+        The grouped model already persists across ``set_current_dataset``; this
+        re-applies the current form with the fitted uncertainties cleared so an
+        unseen run never shows another run's result (mirrors
+        ``FitPanel._carry_forward_single_fit_form``).
+        """
+        state = self._single_fit_tab.get_state()
+        for entry in state.get("parameters", []):
+            if isinstance(entry, dict):
+                entry["uncertainty"] = None
+                entry["uncertainty_asymmetric"] = None
+        # The result summary describes the previous run's fit; an unseen run has
+        # not been fit, so carry the function/seeds forward but not the result.
+        # restore_state only *sets* a non-empty result_html, so clear the widget
+        # directly afterwards (mirrors FitPanel clearing the single result label).
+        state["result_html"] = ""
+        self._single_fit_tab.restore_state(state)
+        self._single_fit_tab._result_text.clear()
+
+    def _on_grouped_tab_changed(self, index: int) -> None:
+        """Preserve the Single form across a Single↔Batch tab switch.
+
+        Leaving Single snapshots its form; returning restores that snapshot when
+        the run is unchanged — keeping a hand-built but unfit grouped function
+        alive across the round trip (mirrors ``FitPanel._on_fit_tab_changed``).
+        """
+        if self._tabs.widget(index) is self._single_fit_tab:
+            snapshot = self._single_grouped_form_snapshot
+            if snapshot is not None and snapshot.get("run") == self._active_single_grouped_run:
+                self._single_fit_tab.restore_state(snapshot["state"])
+        else:
+            self._single_grouped_form_snapshot = {
+                "run": self._active_single_grouped_run,
+                "state": self._single_fit_tab.get_state(),
+            }
+
+    def share_single_grouped_function_state(self, source_run: int, target_runs: list[int]) -> int:
+        """Copy the source run's grouped Single form into each target run's store.
+
+        The peers inherit the function (model + seeds + Fix/role setup) on their
+        next selection via the per-run store. Returns the number of peers written.
+        Mirrors ``FitPanel.share_single_function_state``.
+        """
+        if int(source_run) == self._active_single_grouped_run:
+            source_state = self._single_fit_tab.get_state()
+        else:
+            source_state = self._single_grouped_state_by_run.get(int(source_run))
+        if not isinstance(source_state, dict) or not source_state:
+            return 0
+        written = 0
+        for target in target_runs:
+            try:
+                target_run = int(target)
+            except (TypeError, ValueError):
+                continue
+            if target_run == int(source_run):
+                continue
+            self._single_grouped_state_by_run[target_run] = copy.deepcopy(source_state)
+            written += 1
+        # If a target is the run currently shown, refresh the surface now.
+        if self._active_single_grouped_run in self._single_grouped_state_by_run and (
+            self._active_single_grouped_run != int(source_run)
+        ):
+            self._single_fit_tab.restore_state(
+                self._single_grouped_state_by_run[self._active_single_grouped_run]
+            )
+        return written
 
     def set_single_grouped_restore_provider(
         self, provider: Callable[[MuonDataset | None], dict | None] | None

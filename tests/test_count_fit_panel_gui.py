@@ -16,6 +16,7 @@ import pytest
 pytest.importorskip("PySide6")
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.simulate import (
     build_builtin_template,
     simulate_double_pulse_run,
@@ -467,3 +468,85 @@ def test_promote_uses_dedicated_signal_not_a_fit_none(qapp, fb_dataset):
     assert fit_payloads == []
     assert len(promoted) == 1
     assert promoted[0] is fb_dataset
+
+
+# ── FB-parity for the Single grouped surface (carry-forward / share / snapshot) ──
+
+
+def _grouped_run_dataset(run_number: int) -> MuonDataset:
+    """A grouped (F-B) dataset stamped with a distinct run number."""
+    template = build_builtin_template("ideal_pulsed_fb")
+    run = simulate_run(
+        template, _tf, {"A": 20.0, "f": 1.5, "phi": 0.3}, total_events=4e6, alpha=1.25, seed=1
+    )
+    run.run_number = run_number
+    return MuonDataset(
+        time=np.array([]), asymmetry=np.array([]), error=np.array([]), metadata={}, run=run
+    )
+
+
+def _set_single_model(window: MultiGroupFitWindow, names: list[str]) -> None:
+    window._single_fit_tab._set_composite_model(
+        CompositeModel(names, operators=["+"] * (len(names) - 1))
+    )
+
+
+def _single_model_names(window: MultiGroupFitWindow) -> list[str]:
+    return list(window._single_fit_tab._composite_model.component_names)
+
+
+def test_grouped_single_carries_function_forward_and_drops_result(qapp):
+    # Moving to an unseen run keeps the current function but drops the previous
+    # run's result (it belongs to the run it was computed on).
+    win = MultiGroupFitWindow()
+    a = _grouped_run_dataset(701)
+    b = _grouped_run_dataset(702)
+    win.set_dataset(a)
+    _set_single_model(win, ["Gaussian", "Constant"])
+    win._single_fit_tab._result_text.setHtml("<b>chi2 = 1.0</b>")
+
+    win.set_dataset(b)  # unseen run, no recorded fit, no stored form
+    assert _single_model_names(win) == ["Gaussian", "Constant"]  # function carried
+    assert win._single_fit_tab._result_text.toPlainText().strip() == ""  # result dropped
+
+
+def test_grouped_single_per_run_form_round_trips(qapp):
+    # Each run remembers its own in-progress function; switching away and back
+    # restores it rather than carrying the other run's function.
+    win = MultiGroupFitWindow()
+    a = _grouped_run_dataset(703)
+    b = _grouped_run_dataset(704)
+    win.set_dataset(a)
+    _set_single_model(win, ["Gaussian", "Constant"])
+    win.set_dataset(b)
+    _set_single_model(win, ["Exponential", "Constant"])
+
+    win.set_dataset(a)
+    assert _single_model_names(win) == ["Gaussian", "Constant"]
+    win.set_dataset(b)
+    assert _single_model_names(win) == ["Exponential", "Constant"]
+
+
+def test_grouped_single_form_survives_tab_switch(qapp):
+    # An in-progress (unfit) function survives a Single↔Batch round trip.
+    win = MultiGroupFitWindow()
+    win.set_dataset(_grouped_run_dataset(705))
+    _set_single_model(win, ["Gaussian", "Constant"])
+    win._tabs.setCurrentIndex(1)  # → Batch (snapshots the Single form)
+    _set_single_model(win, ["Exponential", "Constant"])  # disturb it
+    win._tabs.setCurrentIndex(0)  # → Single (restores the snapshot)
+    assert _single_model_names(win) == ["Gaussian", "Constant"]
+
+
+def test_grouped_single_share_with_group_copies_to_peers(qapp):
+    # Share-with-Group copies the function into each peer run's stored form, so
+    # selecting a peer inherits it.
+    win = MultiGroupFitWindow()
+    a = _grouped_run_dataset(706)
+    b = _grouped_run_dataset(707)
+    win.set_dataset(a)
+    _set_single_model(win, ["Gaussian", "Constant"])
+
+    assert win.share_single_grouped_function_state(706, [707]) == 1
+    win.set_dataset(b)
+    assert _single_model_names(win) == ["Gaussian", "Constant"]

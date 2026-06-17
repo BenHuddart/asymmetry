@@ -1547,6 +1547,10 @@ class MainWindow(QMainWindow):
             self._multi_group_fit_window.set_single_grouped_restore_provider(
                 self._grouped_single_restore_payload
             )
+        if hasattr(self._multi_group_fit_window, "share_function_with_group_requested"):
+            self._multi_group_fit_window.share_function_with_group_requested.connect(
+                self._on_share_grouped_function_with_group
+            )
         # Auto-couple the single composite fit to the plot's RRF display: when
         # the rotating frame is active there, the fit runs in that frame.
         if hasattr(self._fit_panel, "set_rrf_frequency_provider"):
@@ -9430,28 +9434,43 @@ class MainWindow(QMainWindow):
             run_number=self._single_fit_run_number(),
         )
 
-    def _on_share_single_function_with_group(self, source_run_number: int) -> None:
-        """Copy single-fit function settings from one run to its data-group peers."""
+    def _data_group_peer_runs(self, source_run_number: int) -> tuple[object, list[int]] | None:
+        """Return ``(group_name, peer_run_numbers)`` for *source_run*'s data group.
+
+        Sets an explanatory status message and returns ``None`` when the browser
+        has no data groups, the run is ungrouped, or the group has no other
+        members. Shared by the FB and grouped "Share with Group" handlers.
+        """
         if not hasattr(self._data_browser, "get_group_id_for_run"):
             self.statusBar().showMessage("Data-group sharing unavailable in this browser mode")
-            return
-
+            return None
         group_id = self._data_browser.get_group_id_for_run(source_run_number)
         if not group_id:
             self.statusBar().showMessage("Selected run is not in a data group")
-            return
-
+            return None
         member_runs = []
         if hasattr(self._data_browser, "get_group_member_run_numbers"):
             member_runs = self._data_browser.get_group_member_run_numbers(group_id)
         if not member_runs:
             self.statusBar().showMessage("No data-group members found to share with")
-            return
-
+            return None
         target_runs = [rn for rn in member_runs if int(rn) != int(source_run_number)]
         if not target_runs:
             self.statusBar().showMessage("Data group has no other members to share with")
+            return None
+        group_name = (
+            self._data_browser.get_group_name(group_id)
+            if hasattr(self._data_browser, "get_group_name")
+            else group_id
+        )
+        return group_name, target_runs
+
+    def _on_share_single_function_with_group(self, source_run_number: int) -> None:
+        """Copy single-fit function settings from one run to its data-group peers."""
+        resolved = self._data_group_peer_runs(source_run_number)
+        if resolved is None:
             return
+        group_name, target_runs = resolved
 
         # Resolve target datasets so that file-specific parameter defaults
         # (e.g. B_L from the run's applied field) can be seeded per member.
@@ -9473,16 +9492,32 @@ class MainWindow(QMainWindow):
                 )
             )
 
-        group_name = (
-            self._data_browser.get_group_name(group_id)
-            if hasattr(self._data_browser, "get_group_name")
-            else group_id
-        )
         self._log_panel.log(
             f"Shared fit function from run {source_run_number} to {updated} run(s) in group {group_name}"
         )
         self.statusBar().showMessage(
             f"Shared fit function to {updated} run(s) in group {group_name}"
+        )
+
+    def _on_share_grouped_function_with_group(self, source_run_number: int) -> None:
+        """Copy the grouped single-fit function from one run to its data-group peers."""
+        resolved = self._data_group_peer_runs(source_run_number)
+        if resolved is None:
+            return
+        group_name, target_runs = resolved
+        updated = 0
+        if hasattr(self._multi_group_fit_window, "share_single_grouped_function_state"):
+            updated = int(
+                self._multi_group_fit_window.share_single_grouped_function_state(
+                    source_run_number, target_runs
+                )
+            )
+        self._log_panel.log(
+            f"Shared grouped fit function from run {source_run_number} "
+            f"to {updated} run(s) in group {group_name}"
+        )
+        self.statusBar().showMessage(
+            f"Shared grouped fit function to {updated} run(s) in group {group_name}"
         )
 
     def _on_global_fit_started(self) -> None:
