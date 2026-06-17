@@ -10287,6 +10287,8 @@ class MainWindow(QMainWindow):
 
         self._fit_panel.clear_fits_for_runs(normalized_runs)
         self._plot_panel.clear_fits_for_runs(normalized_runs)
+        if hasattr(self._multi_group_fit_window, "prune_grouped_single_state"):
+            self._multi_group_fit_window.prune_grouped_single_state(normalized_runs)
         self._log_panel.log(
             f"Deleted fit(s) for group {group_id}: cleared {len(normalized_runs)} dataset fit entry/entries"
         )
@@ -11714,6 +11716,8 @@ class MainWindow(QMainWindow):
         else:
             self._fit_panel.set_dataset(None)
             self._fit_panel.set_datasets([])
+        if hasattr(self._multi_group_fit_window, "clear_grouped_single_state"):
+            self._multi_group_fit_window.clear_grouped_single_state()
         self._fit_parameters_panel.clear()
         if self._global_parameter_fit_window is not None:
             self._global_parameter_fit_window.close()

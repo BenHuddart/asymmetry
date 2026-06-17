@@ -550,3 +550,45 @@ def test_grouped_single_share_with_group_copies_to_peers(qapp):
     assert win.share_single_grouped_function_state(706, [707]) == 1
     win.set_dataset(b)
     assert _single_model_names(win) == ["Gaussian", "Constant"]
+
+
+def test_grouped_single_share_does_not_propagate_result_to_peers(qapp):
+    # Sharing must copy the function but NOT the source run's fit result — an
+    # unfit peer should never display a fit it did not perform.
+    win = MultiGroupFitWindow()
+    a = _grouped_run_dataset(708)
+    b = _grouped_run_dataset(709)
+    win.set_dataset(a)
+    _set_single_model(win, ["Gaussian", "Constant"])
+    win._single_fit_tab._result_text.setHtml("<b>chi2 = 1.0 CONVERGED</b>")
+
+    win.share_single_grouped_function_state(708, [709])
+    win.set_dataset(b)
+    assert _single_model_names(win) == ["Gaussian", "Constant"]  # function shared
+    assert "chi2" not in win._single_fit_tab._result_text.toPlainText()  # result not shared
+
+
+def test_grouped_single_state_cleared_on_project_reset(qapp):
+    # The per-run form store must not bleed across projects: clearing drops it,
+    # so a reused run number starts clean instead of inheriting a stale function.
+    win = MultiGroupFitWindow()
+    win.set_dataset(_grouped_run_dataset(710))
+    _set_single_model(win, ["Gaussian", "Constant"])
+    win.set_dataset(_grouped_run_dataset(711))  # stores 710's form
+    assert 710 in win._single_grouped_state_by_run
+
+    win.clear_grouped_single_state()
+    assert win._single_grouped_state_by_run == {}
+    assert win._active_single_grouped_run is None
+
+
+def test_grouped_single_state_pruned_on_run_removal(qapp):
+    # Removing/refitting a run forgets its stored grouped form.
+    win = MultiGroupFitWindow()
+    win.set_dataset(_grouped_run_dataset(712))
+    _set_single_model(win, ["Gaussian", "Constant"])
+    win.set_dataset(_grouped_run_dataset(713))  # stores 712's form
+    assert 712 in win._single_grouped_state_by_run
+
+    win.prune_grouped_single_state([712])
+    assert 712 not in win._single_grouped_state_by_run
