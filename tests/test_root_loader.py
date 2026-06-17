@@ -230,15 +230,12 @@ def test_root_loader_groups_gps_subdetectors_like_psi_bin(tmp_path) -> None:
     assert ds.run.grouping["backward_group"] == 1
 
 
-def _write_nongps_subdetector_root_directory(path: Path) -> None:
+def _write_labeled_root_directory(path: Path, *, instrument: str, labels: list[str]) -> None:
     edges = np.arange(-0.5, 5.5, 1.0)
-    # Same <base>_B/_F label shape as GPS, but on a non-GPS instrument these are
-    # genuinely distinct detectors that must NOT be silently combined.
-    labels = ["Forward", "Backward", "Up_B", "Up_F", "Down_B", "Down_F"]
     with uproot.recreate(path) as root_file:
         root_file["RunHeader/RunInfo/Run Number"] = "5849"
         root_file["RunHeader/RunInfo/Laboratory"] = "PSI"
-        root_file["RunHeader/RunInfo/Instrument"] = "DOLLY"
+        root_file["RunHeader/RunInfo/Instrument"] = instrument
         root_file["RunHeader/RunInfo/No of Histos"] = str(len(labels))
         root_file["RunHeader/RunInfo/Time Resolution"] = "10 ns"
         for index, label in enumerate(labels, start=1):
@@ -254,25 +251,39 @@ def _write_nongps_subdetector_root_directory(path: Path) -> None:
             )
 
 
-def test_root_loader_does_not_merge_subdetectors_off_gps(tmp_path) -> None:
-    # The split-sub-detector merge is GPS-only. A non-GPS instrument whose labels
-    # merely look like <base>_B/<base>_F must load one group per histogram, never
-    # collapsing genuinely distinct detectors.
-    path = tmp_path / "nongps_subdetectors.root"
-    _write_nongps_subdetector_root_directory(path)
+def test_root_loader_merges_paired_subdetectors_regardless_of_instrument(tmp_path) -> None:
+    # Real GPS files may not report Instrument == "GPS", so the split-half merge
+    # is detected structurally: a transverse base present as BOTH _B and _F halves
+    # is the GPS convention and is combined whatever the instrument label reads.
+    path = tmp_path / "paired_subdetectors.root"
+    _write_labeled_root_directory(
+        path,
+        instrument="",  # instrument label missing / non-"GPS"
+        labels=["Forw", "Back", "Up_B", "Up_F", "Down_B", "Down_F"],
+    )
 
     ds = RootLoader().load(str(path))
 
     assert ds.run is not None
-    assert ds.run.grouping["groups"] == {1: [1], 2: [2], 3: [3], 4: [4], 5: [5], 6: [6]}
-    assert ds.run.grouping["group_names"] == {
-        1: "Forward",
-        2: "Backward",
-        3: "Up_B",
-        4: "Up_F",
-        5: "Down_B",
-        6: "Down_F",
-    }
+    assert ds.run.grouping["groups"] == {1: [1], 2: [2], 3: [3, 4], 4: [5, 6]}
+    assert ds.run.grouping["group_names"] == {1: "Forw", 2: "Back", 3: "Up", 4: "Down"}
+
+
+def test_root_loader_does_not_merge_unpaired_subdetectors(tmp_path) -> None:
+    # Without a genuine _B/_F pair (here a lone Up_F), nothing is merged — each
+    # histogram stays its own group.
+    path = tmp_path / "unpaired_subdetectors.root"
+    _write_labeled_root_directory(
+        path,
+        instrument="DOLLY",
+        labels=["Forward", "Backward", "Up_F", "Left"],
+    )
+
+    ds = RootLoader().load(str(path))
+
+    assert ds.run is not None
+    assert ds.run.grouping["groups"] == {1: [1], 2: [2], 3: [3], 4: [4]}
+    assert ds.run.grouping["group_names"] == {1: "Forward", 2: "Backward", 3: "Up_F", 4: "Left"}
 
 
 def test_load_musrroot_directory_reads_header_histograms_and_grouping(tmp_path) -> None:

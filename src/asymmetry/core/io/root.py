@@ -701,18 +701,27 @@ class RootLoader(BaseLoader):
     #: presets U=(Up_B, Up_F), D, L, R and the six-group PSI-BIN GPS default).
     _TRANSVERSE_BASES = ("up", "down", "left", "right", "top", "bottom")
 
-    @staticmethod
-    def _combines_split_subdetectors(instrument: str) -> bool:
-        """Whether *instrument* exposes split ``_B``/``_F`` transverse halves.
+    def _combines_split_subdetectors(self, labels: list[str], instrument: str) -> bool:
+        """Whether the detector labels expose split ``_B``/``_F`` transverse halves.
 
-        Only the PSI **GPS** spectrometer splits each transverse plate into a
+        The PSI **GPS** spectrometer splits each transverse plate into a
         backward/forward pair that must be recombined into one physical group.
-        Gating on the instrument keeps the merge from silently collapsing
-        genuinely distinct detectors on any other instrument whose labels happen
-        to look like ``<base>_B``/``<base>_F`` — those load one group per
-        histogram, as before.
+        Detection is structural — a transverse base that appears as *both* its
+        ``_B`` and ``_F`` halves is the GPS split convention by construction (a
+        lone ``Up_F`` or genuinely distinct detectors never trip it) — so the
+        merge fires for real GPS files whatever their instrument label reads,
+        while non-paired layouts still load one group per histogram. The
+        instrument name is accepted as an additional, explicit trigger.
         """
-        return str(instrument).strip().upper().startswith("GPS")
+        if str(instrument).strip().upper().startswith("GPS"):
+            return True
+        half_suffixes: dict[str, set[str]] = {}
+        for label in labels:
+            token = re.sub(r"[^a-z0-9]+", "", str(label).lower())
+            match = re.fullmatch(rf"({'|'.join(self._TRANSVERSE_BASES)})(b|f)", token)
+            if match is not None:
+                half_suffixes.setdefault(match.group(1), set()).add(match.group(2))
+        return any({"b", "f"} <= suffixes for suffixes in half_suffixes.values())
 
     def _transverse_base(self, label: str) -> str | None:
         """Return the transverse direction a split sub-detector belongs to.
@@ -737,15 +746,15 @@ class RootLoader(BaseLoader):
     ) -> tuple[dict[int, list[int]], dict[int, str]]:
         """Build default detector groups, combining split transverse sub-detectors.
 
-        On the **GPS** instrument each histogram is its own group, except the
-        ``_B``/``_F`` halves of a transverse direction, which are merged so ROOT
+        When the labels carry the GPS split-half convention (a transverse base
+        present as both ``_B`` and ``_F`` halves), those halves are merged so ROOT
         GPS data loads with the same six-group default (Forward, Backward, Up,
         Down, Left, Right) as the PSI-BIN export; the ungrouped GPS Mobile
-        detector stays on its own. On every other instrument the merge is off
-        (one group per histogram), so labels that merely *look* like
-        ``<base>_B``/``<base>_F`` are never silently collapsed.
+        detector stays on its own. Otherwise the merge is off (one group per
+        histogram), so a lone ``<base>_F`` or genuinely distinct detectors are
+        never silently collapsed.
         """
-        combine = self._combines_split_subdetectors(instrument)
+        combine = self._combines_split_subdetectors(labels, instrument)
         base_to_gid: dict[str, int] = {}
         groups: dict[int, list[int]] = {}
         ordered_names: list[str] = []
