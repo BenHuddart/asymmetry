@@ -12,6 +12,7 @@ import functools
 import html
 import re
 from collections.abc import Callable
+from contextlib import contextmanager
 
 import numpy as np
 from PySide6.QtCore import QEvent, QEventLoop, QSignalBlocker, QSize, Qt, QTimer, Signal
@@ -1331,6 +1332,451 @@ def _shift_rrf_parameters(
             )
         )
     return shifted
+
+
+class FitParameterTable(QTableWidget):
+    """Reusable fit-parameter table: Name·Value·Fix·Min·Max·Batch·Link·Tie.
+
+    Shared by the single-fit panel (:class:`SingleFitTab`) and the single
+    grouped (individual-groups) fit. It owns the per-row Fix checkbox, equality
+    Link-group selector and affine Tie button (with their mutual-exclusion
+    wiring), the value±uncertainty / commit-on-Tab delegates, fraction-row
+    synchronisation, and the parameter read / seed / state round-trip. Hosts
+    wrap it for the composite-model, result-text and wizard concerns that are
+    not part of the table itself.
+    """
+
+    COL_NAME = 0
+    COL_VALUE = 1
+    COL_FIX = 2
+    COL_MIN = 3
+    COL_MAX = 4
+    COL_BATCH = _SINGLE_PARAM_BATCH_COLUMN  # 5
+    COL_LINK = _SINGLE_PARAM_LINK_COLUMN  # 6
+    COL_TIE = _SINGLE_PARAM_TIE_COLUMN  # 7
+
+    #: Emitted with the parameter name whose Value cell the user just edited.
+    value_edited = Signal(str)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(0, 8, parent)
+        self.setHorizontalHeaderLabels(
+            ["Name", "Value", "Fix", "Min", "Max", "Batch", "Link", "Tie"]
+        )
+        self.horizontalHeader().setStretchLastSection(False)
+        for col, width in ((0, 72), (1, 88), (2, 30), (3, 52), (4, 52), (5, 50), (6, 40), (7, 40)):
+            self.setColumnWidth(col, width)
+        _apply_param_table_style(self)
+        # Tab commits the open editor on every editable column; the Value column
+        # additionally paints the ±σ overlay.
+        self.setItemDelegate(_CommitOnTabDelegate(self))
+        self.setItemDelegateForColumn(self.COL_VALUE, _ValueUncertaintyDelegate(self))
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setWordWrap(False)
+
+        #: Guards programmatic cell writes so they don't fire fraction-sync /
+        #: value_edited (the host sets this around bulk updates via ``suspend``).
+        self._updating = False
+        self._composite_model: CompositeModel | None = None
+        #: Non-model parameters carried from a loaded project (no table row) that
+        #: a tie/seed may still reference; preserved across read/state.
+        self._auxiliary_param_state: list[dict] = []
+        self.itemChanged.connect(self._on_item_changed)
+
+    @contextmanager
+    def suspend(self):
+        """Suspend value-edit reactions (fraction sync / ``value_edited``).
+
+        Wrap programmatic cell writes (populate, restore, fit-result write-back)
+        so they don't trip the user-edit handler.
+        """
+        prev = self._updating
+        self._updating = True
+        try:
+            yield
+        finally:
+            self._updating = prev
+
+    @property
+    def is_updating(self) -> bool:
+        return self._updating
+
+    def set_batch_column_visible(self, visible: bool) -> None:
+        """Show/hide the read-only Batch-role column (hidden for grouped fits)."""
+        self.setColumnHidden(self.COL_BATCH, not visible)
+
+    # ── populate ────────────────────────────────────────────────────────────
+
+    def populate(
+        self,
+        model: CompositeModel,
+        *,
+        value_overrides: dict[str, float] | None = None,
+        fixed_names: frozenset[str] | set[str] = frozenset(),
+    ) -> None:
+        """Build one row per model parameter, seeding values and the Fix state."""
+        self._composite_model = model
+        # A fresh model build owns the parameter namespace: drop auxiliaries from a
+        # previous (different-model) restore so they can't resurrect as ghost
+        # parameters in read_parameter_set()/parameters_state(). restore_parameters
+        # re-establishes them for the matching model.
+        self._auxiliary_param_state = []
+        overrides = value_overrides or {}
+        with self.suspend():
+            self.setRowCount(len(model.param_names))
+            for i, pname in enumerate(model.param_names):
+                self.setItem(
+                    i, self.COL_NAME, _make_param_name_item(_format_param_label(pname), pname)
+                )
+
+                default_val = overrides.get(pname, model.param_defaults.get(pname, 0.0))
+                value_item = QTableWidgetItem(str(default_val))
+                value_item.setFont(mono_font(11.0))
+                self.setItem(i, self.COL_VALUE, value_item)
+
+                fix_widget = QWidget()
+                fix_layout = QHBoxLayout(fix_widget)
+                fix_layout.setContentsMargins(0, 0, 0, 0)
+                fix_checkbox = QCheckBox()
+                if pname in fixed_names:
+                    fix_checkbox.setChecked(True)
+                fix_layout.addWidget(fix_checkbox)
+                fix_layout.setAlignment(fix_checkbox, Qt.AlignmentFlag.AlignCenter)
+                self.setCellWidget(i, self.COL_FIX, fix_widget)
+
+                default_min = get_param_info(pname).default_min
+                min_text = str(default_min) if default_min is not None else "-inf"
+                min_item = QTableWidgetItem(min_text)
+                min_item.setFont(mono_font(11.0))
+                self.setItem(i, self.COL_MIN, min_item)
+
+                max_item = QTableWidgetItem("inf")
+                max_item.setFont(mono_font(11.0))
+                self.setItem(i, self.COL_MAX, max_item)
+
+                _set_param_batch_role_cell(self, i, None)
+
+                link_combo = _make_link_group_combo()
+                self.setCellWidget(i, self.COL_LINK, link_combo)
+                # Fix and Link are mutually exclusive (linking wins in the engine,
+                # so allowing both would silently discard the fixed value).
+                self._wire_fix_link_exclusion(fix_checkbox, link_combo)
+
+                tie_button = _make_tie_button()
+                tie_button._param_name = pname  # type: ignore[attr-defined]
+                self.setCellWidget(i, self.COL_TIE, tie_button)
+                self._wire_tie_button(i, tie_button, fix_checkbox, link_combo)
+
+            _configure_fraction_rows_in_table(
+                self, model, min_column=self.COL_MIN, max_column=self.COL_MAX
+            )
+        self.synchronize_fractions()
+        _size_param_table_to_content(self)
+
+    # ── fraction-row sync ───────────────────────────────────────────────────
+
+    def synchronize_fractions(self, edited_param_name: str | None = None) -> None:
+        if self._composite_model is None:
+            return
+        with self.suspend():
+            _synchronize_fraction_group_values_in_table(
+                self, self._composite_model, edited_param_name=edited_param_name
+            )
+
+    def _on_item_changed(self, item: QTableWidgetItem) -> None:
+        if self._updating or item.column() != self.COL_VALUE:
+            return
+        name_item = self.item(item.row(), self.COL_NAME)
+        name = name_item.data(Qt.ItemDataRole.UserRole) if name_item is not None else None
+        if isinstance(name, str):
+            self.synchronize_fractions(name)
+            self.value_edited.emit(name)
+
+    # ── Fix / Link / Tie wiring ─────────────────────────────────────────────
+
+    def _wire_fix_link_exclusion(self, fix_checkbox: QCheckBox, link_combo: QComboBox) -> None:
+        """Keep a row's Fix checkbox and Link-group combo mutually exclusive."""
+
+        def on_fix_toggled(checked: bool) -> None:
+            if self._updating:
+                return
+            if checked and _link_group_combo_value(link_combo) is not None:
+                with self.suspend():
+                    _set_link_group_combo_value(link_combo, None)
+            link_combo.setEnabled(not checked)
+
+        def on_link_changed(_index: int) -> None:
+            if self._updating:
+                return
+            linked = _link_group_combo_value(link_combo) is not None
+            if linked and fix_checkbox.isChecked():
+                with self.suspend():
+                    fix_checkbox.setChecked(False)
+            fix_checkbox.setEnabled(not linked)
+
+        fix_checkbox.toggled.connect(on_fix_toggled)
+        link_combo.currentIndexChanged.connect(on_link_changed)
+
+    def _tie_candidate_names(self, row: int) -> list[str]:
+        """Names a row may reference in a tie: other, *untied* rows + auxiliaries."""
+        names: list[str] = []
+        for i in range(self.rowCount()):
+            if i == row:
+                continue
+            name_item = self.item(i, self.COL_NAME)
+            name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
+            if not isinstance(name, str):
+                continue
+            if _tie_button_value(self.cellWidget(i, self.COL_TIE)) is not None:
+                continue
+            names.append(name)
+        for entry in self._auxiliary_param_state:
+            aux_name = entry.get("name")
+            if isinstance(aux_name, str) and aux_name not in names:
+                names.append(aux_name)
+        return names
+
+    def _wire_tie_button(
+        self, row: int, tie_button: QPushButton, fix_checkbox: QCheckBox, link_combo: QComboBox
+    ) -> None:
+        """Open the affine-tie editor and keep Tie exclusive with Fix/Link."""
+
+        def on_clicked() -> None:
+            candidates = self._tie_candidate_names(row)
+            if not candidates:
+                QMessageBox.information(
+                    self,
+                    "Affine tie",
+                    "An affine tie needs at least one other free parameter to "
+                    "reference. Add or untie another parameter first.",
+                )
+                return
+            name = getattr(tie_button, "_param_name", "")
+            dialog = AffineTieDialog(name, candidates, _tie_button_value(tie_button), self)
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            tie = dialog.tie()
+            _set_tie_button_value(tie_button, tie)
+            with self.suspend():
+                if tie is not None:
+                    fix_checkbox.setChecked(False)
+                    _set_link_group_combo_value(link_combo, None)
+            fix_checkbox.setEnabled(tie is None)
+            link_combo.setEnabled(tie is None)
+
+        tie_button.clicked.connect(on_clicked)
+
+    # ── read / seed / state ─────────────────────────────────────────────────
+
+    def read_parameter_set(self) -> ParameterSet:
+        """Build a :class:`ParameterSet` from the table (raises on a bad value)."""
+        parameters = ParameterSet()
+        for i in range(self.rowCount()):
+            name_item = self.item(i, self.COL_NAME)
+            param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
+            if not isinstance(param_name, str):
+                param_name = name_item.text() if name_item else f"param_{i}"
+
+            try:
+                value = float(self.item(i, self.COL_VALUE).text())
+            except (ValueError, AttributeError) as exc:
+                raise ValueError(f"Invalid value for {_format_param_label(param_name)}") from exc
+
+            fix_widget = self.cellWidget(i, self.COL_FIX)
+            fix_checkbox = fix_widget.findChild(QCheckBox) if fix_widget else None
+            fixed = fix_checkbox.isChecked() if fix_checkbox else False
+
+            try:
+                min_text = self.item(i, self.COL_MIN).text()
+                min_val = float(min_text) if min_text and min_text != "-inf" else -float("inf")
+            except (ValueError, AttributeError):
+                min_val = -float("inf")
+            try:
+                max_text = self.item(i, self.COL_MAX).text()
+                max_val = float(max_text) if max_text and max_text != "inf" else float("inf")
+            except (ValueError, AttributeError):
+                max_val = float("inf")
+
+            link_group = _link_group_combo_value(self.cellWidget(i, self.COL_LINK))
+            tie = _tie_button_value(self.cellWidget(i, self.COL_TIE))
+
+            parameters.add(
+                Parameter(
+                    name=param_name,
+                    value=value,
+                    min=min_val,
+                    max=max_val,
+                    fixed=fixed,
+                    link_group=link_group,
+                    tie=tie,
+                )
+            )
+        for entry in self._auxiliary_param_state:
+            parameters.add(_parameter_from_state_dict(entry))
+        return parameters
+
+    def current_seed_values(self) -> dict[str, str]:
+        """Return the live seed text per parameter name (skips non-finite cells)."""
+        seeds: dict[str, str] = {}
+        for row in range(self.rowCount()):
+            name_item = self.item(row, self.COL_NAME)
+            if name_item is None:
+                continue
+            name = name_item.data(Qt.ItemDataRole.UserRole)
+            if not isinstance(name, str):
+                continue
+            value_item = self.item(row, self.COL_VALUE)
+            if value_item is None:
+                continue
+            text = value_item.text().strip()
+            try:
+                float(text)
+            except ValueError:
+                continue
+            seeds[name] = text
+        return seeds
+
+    def parameters_state(self) -> list[dict]:
+        """Serialise the table rows (+ auxiliaries) as parameter-state dicts."""
+        params: list[dict] = []
+        for i in range(self.rowCount()):
+            name_item = self.item(i, self.COL_NAME)
+            param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else f"param_{i}"
+            if not isinstance(param_name, str):
+                param_name = name_item.text() if name_item else f"param_{i}"
+
+            value_item = self.item(i, self.COL_VALUE)
+            try:
+                value = float(value_item.text()) if value_item else 0.0
+            except ValueError:
+                value = 0.0
+            unc = value_item.data(_ValueUncertaintyDelegate._UNC_ROLE) if value_item else None
+            unc_asym = (
+                value_item.data(_ValueUncertaintyDelegate._MINOS_ROLE) if value_item else None
+            )
+
+            fix_widget = self.cellWidget(i, self.COL_FIX)
+            fix_checkbox = fix_widget.findChild(QCheckBox) if fix_widget else None
+            fixed = fix_checkbox.isChecked() if fix_checkbox else False
+
+            min_item = self.item(i, self.COL_MIN)
+            max_item = self.item(i, self.COL_MAX)
+            role_item = self.item(i, self.COL_BATCH)
+            role = role_item.data(_PARAM_BATCH_ROLE_DATA) if role_item is not None else None
+            tie = _tie_button_value(self.cellWidget(i, self.COL_TIE))
+            params.append(
+                {
+                    "name": param_name,
+                    "value": value,
+                    "fixed": fixed,
+                    "min": min_item.text() if min_item else "-inf",
+                    "max": max_item.text() if max_item else "inf",
+                    "uncertainty": unc,
+                    "uncertainty_asymmetric": list(unc_asym) if unc_asym is not None else None,
+                    "role": role if isinstance(role, str) else None,
+                    "link_group": _link_group_combo_value(self.cellWidget(i, self.COL_LINK)),
+                    "tie": tie.to_dict() if tie is not None else None,
+                }
+            )
+        params.extend(copy.deepcopy(entry) for entry in self._auxiliary_param_state)
+        if self._composite_model is not None:
+            normalized = _normalized_model_param_values(
+                self._composite_model,
+                {str(entry["name"]): float(entry.get("value", 0.0)) for entry in params},
+            )
+            params = [
+                {**entry, "value": normalized.get(str(entry["name"]), entry["value"])}
+                for entry in params
+            ]
+        return params
+
+    def restore_parameters(self, params_data: dict[str, dict]) -> None:
+        """Apply saved parameter-state dicts onto the current rows (+ auxiliaries).
+
+        ``populate`` must have been called for the matching model first.
+        """
+        model = self._composite_model
+        normalized_state_values = (
+            _normalized_model_param_values(
+                model,
+                {
+                    str(name): float(entry.get("value", 0.0))
+                    for name, entry in params_data.items()
+                    if entry.get("value") is not None
+                },
+            )
+            if model is not None
+            else {}
+        )
+        with self.suspend():
+            for i in range(self.rowCount()):
+                name_item = self.item(i, self.COL_NAME)
+                param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
+                if not isinstance(param_name, str) and name_item:
+                    param_name = name_item.text()
+                if param_name not in params_data:
+                    continue
+                p_data = params_data[param_name]
+
+                value_item = self.item(i, self.COL_VALUE)
+                if value_item:
+                    value_item.setText(
+                        str(normalized_state_values.get(param_name, p_data.get("value", 0.0)))
+                    )
+                    value_item.setData(
+                        _ValueUncertaintyDelegate._UNC_ROLE, p_data.get("uncertainty")
+                    )
+                    value_item.setData(
+                        _ValueUncertaintyDelegate._MINOS_ROLE,
+                        p_data.get("uncertainty_asymmetric"),
+                    )
+
+                fix_widget = self.cellWidget(i, self.COL_FIX)
+                fix_checkbox = fix_widget.findChild(QCheckBox) if fix_widget else None
+                if fix_checkbox:
+                    fix_checkbox.setChecked(bool(p_data.get("fixed", False)))
+
+                min_item = self.item(i, self.COL_MIN)
+                if min_item:
+                    min_item.setText(str(p_data.get("min", "-inf")))
+                max_item = self.item(i, self.COL_MAX)
+                if max_item:
+                    max_item.setText(str(p_data.get("max", "inf")))
+
+                _set_param_batch_role_cell(self, i, p_data.get("role"))
+
+                link_combo = self.cellWidget(i, self.COL_LINK)
+                raw_link = p_data.get("link_group")
+                _set_link_group_combo_value(
+                    link_combo, int(raw_link) if isinstance(raw_link, (int, float)) else None
+                )
+
+                tie_button = self.cellWidget(i, self.COL_TIE)
+                raw_tie = p_data.get("tie")
+                tie = AffineTie.from_dict(raw_tie) if isinstance(raw_tie, dict) else None
+                _set_tie_button_value(tie_button, tie)
+                if tie is not None:
+                    if fix_checkbox is not None:
+                        fix_checkbox.setChecked(False)
+                    _set_link_group_combo_value(link_combo, None)
+                if fix_checkbox is not None:
+                    fix_checkbox.setEnabled(tie is None)
+                if link_combo is not None:
+                    link_combo.setEnabled(tie is None)
+
+            row_names: set[str] = set()
+            for i in range(self.rowCount()):
+                ni = self.item(i, self.COL_NAME)
+                nm = ni.data(Qt.ItemDataRole.UserRole) if ni else None
+                if isinstance(nm, str):
+                    row_names.add(nm)
+            self._auxiliary_param_state = [
+                copy.deepcopy(entry)
+                for entry in params_data.values()
+                if isinstance(entry, dict) and entry.get("name") not in row_names
+            ]
+        self.synchronize_fractions()
 
 
 class SingleFitTab(QWidget):
