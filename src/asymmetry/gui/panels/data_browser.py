@@ -1616,6 +1616,15 @@ class DataBrowserPanel(QWidget):
         """
         return [(column.label, column.id) for column in self._extra_columns if column.is_custom]
 
+    def angle_x_field(self) -> tuple[str, str] | None:
+        """Return ``(label, id)`` for the special Angle field, or None if absent.
+
+        The Angle field is promoted to a first-class trend x-axis rather than
+        offered among the generic custom columns, so consumers route it separately.
+        """
+        column = next((c for c in self._extra_columns if c.is_angle), None)
+        return (column.label, column.id) if column is not None else None
+
     def _notify_extra_columns_changed(self) -> None:
         self.extra_columns_changed.emit()
 

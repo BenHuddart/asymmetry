@@ -97,3 +97,44 @@ def test_custom_values_round_trip_through_state(qapp):
     restored.restore_state(state)
     assert restored._rows[0].custom_values == {"custom:abc": "12.5"}
     assert restored._x_value(restored._rows[0], "custom:abc") == pytest.approx(12.5)
+
+
+# --- First-class Angle (°) x-axis --------------------------------------------
+
+
+def test_angle_axis_is_first_class_after_run(qapp):
+    panel = FitParametersPanel()
+    panel.set_angle_x_field(("Angle (°)", "angle"))
+    # Listed with the fixed run-level axes, right after "Run".
+    fixed = [panel._x_combo.itemText(i) for i in range(5)]
+    assert fixed == ["Auto", "𝐵 (G)", "𝑇 (K)", "Run", "Angle (°)"]
+    assert panel._x_combo.itemData(4) == "angle"
+    assert panel._x_axis_label_mpl("angle") == "Angle (°)"
+
+
+def test_angle_axis_resolves_angle_values_not_run_number(qapp):
+    # The Angle key has no "custom:" prefix; it must resolve from the row's
+    # per-run angle value, not silently fall through to the run number.
+    panel = FitParametersPanel()
+    panel.set_angle_x_field(("Angle (°)", "angle"))
+    assert panel._x_value(_row(7, {"angle": "30"}), "angle") == pytest.approx(30.0)
+    assert panel._x_value(_row(7, {"angle": "-45.5"}), "angle") == pytest.approx(-45.5)
+    # Empty / non-numeric / non-finite all drop to NaN (not the run number).
+    assert np.isnan(panel._x_value(_row(7, {"angle": ""}), "angle"))
+    assert np.isnan(panel._x_value(_row(7, {"angle": "tilt"}), "angle"))
+    assert np.isnan(panel._x_value(_row(7, {"angle": "inf"}), "angle"))
+
+
+def test_angle_axis_gets_skip_note(qapp):
+    panel = FitParametersPanel()
+    panel.set_angle_x_field(("Angle (°)", "angle"))
+    panel._update_custom_x_skip_note("angle", np.array([0.0, np.nan, 30.0]))
+    assert "1/3" in panel._x_auto_hint.text()
+
+
+def test_clearing_angle_field_removes_it_from_combo(qapp):
+    panel = FitParametersPanel()
+    panel.set_angle_x_field(("Angle (°)", "angle"))
+    assert panel._x_combo.findData("angle") >= 0
+    panel.set_angle_x_field(None)
+    assert panel._x_combo.findData("angle") < 0
