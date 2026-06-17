@@ -678,8 +678,7 @@ class RootLoader(BaseLoader):
         self,
         labels: list[str],
     ) -> tuple[dict[int, list[int]], dict[int, str], int, int]:
-        groups = {gid: [gid] for gid in range(1, len(labels) + 1)}
-        group_names = self._unique_names(labels)
+        groups, group_names = self._merge_subdetector_groups(labels)
         beam_forward_gid = self._first_explicit_group_matching(group_names, "forward")
         beam_backward_gid = self._first_explicit_group_matching(group_names, "backward")
         if beam_forward_gid is not None and beam_backward_gid is not None:
@@ -692,6 +691,57 @@ class RootLoader(BaseLoader):
         if backward_gid is None:
             backward_gid = 2 if len(groups) >= 2 and forward_gid != 2 else 1
         return groups, group_names, int(forward_gid), int(backward_gid)
+
+    #: Transverse direction bases whose split ``_B``/``_F`` sub-detectors are
+    #: combined into one group by default (matches the GPS-RD instrument
+    #: presets U=(Up_B, Up_F), D, L, R and the six-group PSI-BIN GPS default).
+    _TRANSVERSE_BASES = ("up", "down", "left", "right", "top", "bottom")
+
+    def _transverse_base(self, label: str) -> str | None:
+        """Return the transverse direction a split sub-detector belongs to.
+
+        GPS ROOT (MusrRoot) files expose each transverse plate as a backward
+        (``_B``, upstream) and forward (``_F``, downstream) half — e.g.
+        ``Up_B``/``Up_F``. These belong in one physical group, so the default
+        grouping combines them. Returns the lower-case base (``"up"``…) for a
+        ``<base>_B``/``<base>_F`` label, else ``None`` (the label stays in its
+        own group, so beam ``Forw``/``Back`` and single-letter ``R_F`` FLAME
+        sub-detectors are left untouched).
+        """
+        token = re.sub(r"[^a-z0-9]+", "", str(label).lower())
+        match = re.fullmatch(rf"({'|'.join(self._TRANSVERSE_BASES)})(b|f)", token)
+        return match.group(1) if match else None
+
+    def _merge_subdetector_groups(
+        self,
+        labels: list[str],
+    ) -> tuple[dict[int, list[int]], dict[int, str]]:
+        """Build default detector groups, combining split transverse sub-detectors.
+
+        Each histogram is its own group, except ``_B``/``_F`` halves of a
+        transverse direction, which are merged so ROOT GPS data loads with the
+        same six-group default (Forward, Backward, Up, Down, Left, Right) as the
+        PSI-BIN export; the ungrouped GPS Mobile detector stays on its own.
+        """
+        base_to_gid: dict[str, int] = {}
+        groups: dict[int, list[int]] = {}
+        ordered_names: list[str] = []
+        next_gid = 1
+        for detector_id, raw_label in enumerate(labels, start=1):
+            base = self._transverse_base(raw_label)
+            if base is not None and base in base_to_gid:
+                groups[base_to_gid[base]].append(detector_id)
+                continue
+            gid = next_gid
+            next_gid += 1
+            groups[gid] = [detector_id]
+            if base is not None:
+                base_to_gid[base] = gid
+                ordered_names.append(base.capitalize())
+            else:
+                label = str(raw_label).strip()
+                ordered_names.append(label or f"Detector {detector_id}")
+        return groups, self._unique_names(ordered_names)
 
     def _unique_names(self, labels: list[str]) -> dict[int, str]:
         seen: dict[str, int] = {}
