@@ -451,6 +451,82 @@ def test_fit_grouped_time_domain_poisson_uses_raw_count_model(monkeypatch) -> No
     assert result.success is True
 
 
+def test_fit_grouped_series_mixed_global_local_physics() -> None:
+    """A mixed grouped series fit shares one physics param across runs while
+    fitting another per run (the FB-style Global/Local split).
+
+    frequency is Global (shared across both runs); Lambda is Local (per run).
+    The fit must recover one shared frequency and two distinct Lambdas.
+    """
+
+    def _relaxing_cosine(t, frequency, Lambda, phase=0.0):  # noqa: N803
+        t = np.asarray(t, dtype=float)
+        return np.cos(2.0 * np.pi * frequency * t + phase) * np.exp(-Lambda * t)
+
+    time = np.linspace(0.0, 8.0, 1601)
+    frequency = 3.0
+    n0, background, amplitude = 5.0e4, 50.0, 0.22
+    true_lambda = {10: 0.3, 11: 1.0}
+
+    def _counts(lam: float, phase: float) -> np.ndarray:
+        pol = _relaxing_cosine(time, frequency, lam, phase)
+        return n0 * (1.0 + amplitude * pol) + background * np.exp(time / float(MUON_LIFETIME_US))
+
+    members: dict[int, list[GroupedTimeDomainGroup]] = {}
+    for run in (10, 11):
+        groups = []
+        for gid, phase in ((1, 0.2), (2, np.deg2rad(170.0))):
+            counts = _counts(true_lambda[run], phase)
+            groups.append(
+                GroupedTimeDomainGroup(
+                    group_id=gid,
+                    group_name=f"g{gid}",
+                    time=time.copy(),
+                    counts=counts,
+                    error=np.sqrt(np.clip(counts, 1.0, None)),
+                    metadata={"grouped_time_domain_lifetime_corrected": True},
+                )
+            )
+        members[run] = groups
+
+    def _initial() -> ParameterSet:
+        return ParameterSet(
+            [
+                Parameter("N0", 4.0e4),
+                Parameter("background", 40.0),
+                Parameter("amplitude", 0.2),
+                Parameter("relative_phase", 0.0, min=-2.0 * np.pi, max=2.0 * np.pi),
+                Parameter("frequency", 3.1),  # shared (slightly off)
+                Parameter("Lambda", 0.6, min=0.0, max=10.0),  # per run
+                Parameter("phase", 0.0, fixed=True),
+            ]
+        )
+
+    initial = {run: {g.group_id: _initial() for g in groups} for run, groups in members.items()}
+
+    result = fit_grouped_series(
+        "global",
+        members,
+        _relaxing_cosine,
+        global_params=["frequency", "Lambda", "phase"],
+        local_params=["N0", "background", "amplitude", "relative_phase"],
+        initial_params=initial,
+        cost="gaussian",
+        cross_run_local_params=["Lambda"],
+    )
+
+    assert result.success is True
+    # frequency is shared across runs (a single fitted value).
+    shared = {p.name: p.value for p in result.shared_parameters}
+    assert shared["frequency"] == pytest.approx(frequency, abs=1e-2)
+    assert "Lambda" not in shared  # Lambda is per-run, not a shared parameter
+    # Lambda is recovered per run, distinct between runs.
+    for run in (10, 11):
+        member_key = min(k for k, src in result.member_source_run.items() if src == run)
+        fitted = result.member_results[member_key].parameters["Lambda"].value
+        assert fitted == pytest.approx(true_lambda[run], abs=2e-2)
+
+
 def test_fit_grouped_time_domain_recovers_absolute_per_group_phase() -> None:
     """With the shared model phase fixed at zero, each group's free per-group
     phase nuisance recovers that group's *absolute* oscillation phase.

@@ -966,6 +966,7 @@ def fit_grouped_series(
     seeding: str = "as_provided",
     order_key: dict[int, float] | None = None,
     cost: str = "poisson",
+    cross_run_local_params: list[str] | None = None,
 ) -> GroupedSeriesFitResult:
     """Fit a series of grouped runs with one of three member relationships.
 
@@ -992,13 +993,10 @@ def fit_grouped_series(
         include the nuisance block plus the model parameters referenced by
         ``global_params`` / ``local_params``.
 
-    Note
-    ----
-    A *mixed* global fit (some physics shared across runs, others joined only
-    within a run) is not yet supported: the simultaneous engine shares a global
-    parameter across every dataset in the call, so per-run scoping would need an
-    engine-level change.  Use ``"global"`` to share all free physics across runs,
-    or ``"batch"`` to keep them per-run.
+    A *mixed* fit (some physics shared across runs, others fitted per run) is
+    expressed by routing through ``"global"`` and listing the per-run physics in
+    ``cross_run_local_params``: those become engine local parameters grouped by
+    source run, while the rest stay shared across all runs.
     """
     if relationship not in GROUPED_SERIES_RELATIONSHIPS:
         raise ValueError(
@@ -1072,6 +1070,7 @@ def fit_grouped_series(
         minos=minos,
         cancel_callback=cancel_callback,
         cost=cost,
+        cross_run_local_params=cross_run_local_params,
     )
 
 
@@ -1181,8 +1180,16 @@ def _fit_grouped_series_global(
     minos: bool = False,
     cancel_callback: Callable[[], bool] | None = None,
     cost: str = "poisson",
+    cross_run_local_params: list[str] | None = None,
 ) -> GroupedSeriesFitResult:
-    """Fit every ``(run, group)`` simultaneously, sharing physics across all runs."""
+    """Fit every ``(run, group)`` simultaneously.
+
+    Physics in ``global_params`` is shared across all runs and groups, except the
+    subset in ``cross_run_local_params``, which is shared across each run's groups
+    but fitted independently *per run* (the mixed Global/Local case). The
+    per-group nuisance block is always per ``(run, group)``.
+    """
+    cross_run_local = set(cross_run_local_params or [])
     use_poisson, cost_factory = _resolve_grouped_cost(cost)
     temporary_datasets: list[MuonDataset] = []
     temporary_initial: dict[int, ParameterSet] = {}
@@ -1242,13 +1249,22 @@ def _fit_grouped_series_global(
     if len(temporary_datasets) < 2:
         raise ValueError("Global grouped-series fitting requires at least two (run, group) members")
 
+    # Split physics: cross-run-global stays shared across every dataset; the
+    # per-run subset becomes an engine local parameter grouped by its source run,
+    # so a run's groups share one value while runs stay independent.
+    engine_global = [name for name in global_params if name not in cross_run_local]
+    engine_local = list(local_params) + [name for name in global_params if name in cross_run_local]
+    local_param_groups = (
+        {name: dict(member_source_run) for name in cross_run_local} if cross_run_local else None
+    )
+
     base_model_fn = build_grouped_count_model(polarization_model_fn)
     model_fn = _raw_count_model(base_model_fn) if use_poisson else base_model_fn
     internal_results, shared_parameters = engine.global_fit(
         temporary_datasets,
         model_fn,
-        global_params=global_params,
-        local_params=local_params,
+        global_params=engine_global,
+        local_params=engine_local,
         initial_params=temporary_initial,
         t_min=t_min,
         t_max=t_max,
@@ -1257,6 +1273,7 @@ def _fit_grouped_series_global(
         minos=minos,
         cancel_callback=cancel_callback,
         cost_factory=cost_factory,
+        local_param_groups=local_param_groups,
     )
 
     member_results = {

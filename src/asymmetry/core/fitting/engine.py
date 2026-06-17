@@ -9,7 +9,7 @@ from __future__ import annotations
 import inspect
 import warnings
 from collections import Counter
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Hashable, Sequence
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -873,6 +873,7 @@ class FitEngine:
         minos: bool = False,
         cancel_callback: Callable[[], bool] | None = None,
         cost_factory: CostFactory | None = None,
+        local_param_groups: dict[str, dict[int, Hashable]] | None = None,
     ) -> tuple[dict[str, FitResult], ParameterSet]:
         """Simultaneous fit of multiple datasets with shared and local parameters.
 
@@ -904,6 +905,12 @@ class FitEngine:
         global_result : ParameterSet
             The fitted global parameters with uncertainties.
 
+        local_param_groups
+            Optional per-local-parameter sharing. ``local_param_groups[pname]``
+            maps a dataset run number to a group key; datasets with the same key
+            share one fitted value for ``pname`` (a third scope between fully
+            global and fully per-dataset). Absent → ``pname`` is per-dataset.
+
         Notes
         -----
         Fixed parameters (where param.fixed=True) are held constant during fitting.
@@ -911,6 +918,12 @@ class FitEngine:
         if not datasets:
             raise ValueError("No datasets provided for global fitting")
         _reject_affine_ties(initial_params.values(), "Global fitting")
+
+        def _local_group_key(pname: str, run_number: int) -> Hashable:
+            """The sharing key for a local param on a dataset (run number by default)."""
+            if local_param_groups and pname in local_param_groups:
+                return local_param_groups[pname].get(run_number, run_number)
+            return run_number
 
         dataset_run_numbers = [int(ds.run_number) for ds in datasets]
         duplicate_runs = [run for run, count in Counter(dataset_run_numbers).items() if count > 1]
@@ -929,11 +942,26 @@ class FitEngine:
         first_params = initial_params[datasets[0].run_number]
         free_global_params = [pname for pname in global_params if not first_params[pname].fixed]
 
+        # A grouped local parameter (shared across a subset of datasets) ties those
+        # datasets together, so the objective is no longer block-separable even with
+        # no free globals.
+        grouped_local_ties = False
+        if local_param_groups:
+            for pname in local_params:
+                keys = [
+                    _local_group_key(pname, ds.run_number)
+                    for ds in datasets
+                    if not initial_params[ds.run_number][pname].fixed
+                ]
+                if len(keys) != len(set(keys)):
+                    grouped_local_ties = True
+                    break
+
         # When nothing is actually shared, the joint objective is block-separable.
         # Solving each dataset independently is equivalent and avoids a large,
         # ill-conditioned Minuit problem that is less stable than the proven
         # single-fit path.
-        if not free_global_params:
+        if not free_global_params and not grouped_local_ties:
             fitted_global = ParameterSet()
             for pname in global_params:
                 parameter = first_params[pname]
@@ -994,19 +1022,28 @@ class FitEngine:
             param_bounds.append((p.min, p.max))
             initial_values.append(p.value)
 
-        # Add local parameters for each dataset
+        # Add local parameters for each dataset. A grouped local param reuses one
+        # Minuit parameter (and index) for every dataset that shares its group key,
+        # so those datasets are fitted with a single shared value.
         dataset_param_indices = {}  # Maps (run_number, param_name) -> index in param_names
+        group_param_indices: dict[tuple[str, Hashable], int] = {}
         for ds in datasets:
             params = initial_params[ds.run_number]
             dataset_param_indices[ds.run_number] = {}
             for pname in local_params:
                 p = params[pname]
-                if not p.fixed:
+                if p.fixed:
+                    continue
+                group_key = _local_group_key(pname, ds.run_number)
+                cache_key = (pname, group_key)
+                idx = group_param_indices.get(cache_key)
+                if idx is None:
                     idx = len(param_names)
-                    param_names.append(f"{pname}_{ds.run_number}")
+                    param_names.append(f"{pname}_{group_key}")
                     param_bounds.append((p.min, p.max))
                     initial_values.append(p.value)
-                    dataset_param_indices[ds.run_number][pname] = idx
+                    group_param_indices[cache_key] = idx
+                dataset_param_indices[ds.run_number][pname] = idx
 
         # Build fixed parameter dictionaries for each dataset
         fixed_params = {}
@@ -1203,7 +1240,7 @@ class FitEngine:
                     result_params.add(Parameter(name=pname, value=value, min=p.min, max=p.max))
                     if m.errors[idx] is not None:
                         uncertainties[pname] = m.errors[idx]
-                    joint_name = f"{pname}_{ds.run_number}"
+                    joint_name = f"{pname}_{_local_group_key(pname, ds.run_number)}"
                     if minos_errors_raw and joint_name in minos_errors_raw:
                         minos_errors[pname] = minos_errors_raw[joint_name]
 

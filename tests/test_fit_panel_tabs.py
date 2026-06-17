@@ -2092,7 +2092,7 @@ def test_grouped_series_fit_dispatches_for_multiple_members(
     assert captured.get("called") is True
 
 
-def test_derive_grouped_relationship_maps_roles_and_rejects_mixing() -> None:
+def test_derive_grouped_relationship_maps_roles_and_allows_mixing() -> None:
     derive = GlobalFitTab._derive_grouped_relationship
     # One member is always "individual" regardless of roles.
     assert derive({"lambda": "global"}, 1) == ("individual", None)
@@ -2100,10 +2100,9 @@ def test_derive_grouped_relationship_maps_roles_and_rejects_mixing() -> None:
     assert derive({"lambda": "global"}, 3) == ("global", None)
     assert derive({"lambda": "local"}, 3) == ("batch", None)
     assert derive({}, 3) == ("batch", None)
-    # Mixing Global + Local physics is rejected (A1 engine limit).
-    relationship, error = derive({"a": "global", "b": "local"}, 3)
-    assert relationship is None
-    assert error is not None and "mix" in error.lower()
+    # Mixing Global + Local physics is now supported: it routes through the global
+    # simultaneous path (per-run physics via cross_run_local_params), no error.
+    assert derive({"a": "global", "b": "local"}, 3) == ("global", None)
 
 
 def test_send_single_model_to_batch_copies_model(qapp: QApplication) -> None:

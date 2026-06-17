@@ -5175,19 +5175,13 @@ class GlobalFitTab(QWidget):
         """Derive the grouped-series relationship from the physics roles.
 
         Returns ``(relationship, error)``. ``relationship`` is ``individual`` (one
-        member), ``global`` (≥1 physics param shared across runs), or ``batch``
-        (physics independent per run). ``error`` is non-``None`` when the physics
-        classification mixes Global and Local — the simultaneous engine can't
-        express that (A1), so the caller must reject the fit.
+        member), ``global`` (≥1 physics param shared across runs — including the
+        mixed case, where the per-run physics are routed through
+        ``cross_run_local_params``), or ``batch`` (all physics independent per
+        run). ``error`` is reserved for future invalid combinations; mixing Global
+        and Local is now supported, so it is always ``None`` here.
         """
         physics_global = [name for name, role in physics_roles.items() if role == "global"]
-        physics_local = [name for name, role in physics_roles.items() if role == "local"]
-        if physics_global and physics_local:
-            return None, (
-                "Grouped series fits can't mix Global and Local fit-function parameters. "
-                "Set them all Global (shared across runs) or all Local (independent per run). "
-                f"Global: {', '.join(physics_global)} · Local: {', '.join(physics_local)}."
-            )
         if n_members <= 1:
             return "individual", None
         return ("global" if physics_global else "batch"), None
@@ -5294,6 +5288,10 @@ class GlobalFitTab(QWidget):
             self._result_text.setText(mixing_error)
             self._fit_btn.setEnabled(True)
             return
+        # Physics with the "local" role are fitted per run (shared across that run's
+        # groups); the "global" ones stay shared across runs. The grouped engine
+        # routes the per-run subset via cross_run_local_params.
+        cross_run_local_params = [name for name, role in physics_roles.items() if role == "local"]
         initial_params = {
             run: self._build_grouped_initial_params(groups, grouped_config, run_number=run)
             for run, groups in members.items()
@@ -5320,6 +5318,7 @@ class GlobalFitTab(QWidget):
                 seeding=self._batch_seeding_mode,
                 order_key=self._grouped_series_order_key(members),
                 cost=self._count_fit_cost,
+                cross_run_local_params=cross_run_local_params,
             ),
             on_finished=lambda result, ds=grouped_datasets: self._on_grouped_series_fit_finished(
                 ds, result
