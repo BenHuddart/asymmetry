@@ -1989,6 +1989,43 @@ class TestPlotPanel:
         assert plot_calls
         assert plot_calls[-1].get("color") == tokens.PLOT_FIT
 
+    def test_grouped_time_domain_fit_line_uses_red_against_blue_data(
+        self, panel: PlotPanel
+    ) -> None:
+        # Each detector group sits on its own subplot in grouped time-domain mode,
+        # so the fit uses the canonical red fit colour (resolves against the blue
+        # data points) rather than matching the data-marker colour.
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.linspace(0.0, 8.0, 200)
+
+        def _group(run_number: int, phase: float) -> MuonDataset:
+            return MuonDataset(
+                time=t,
+                asymmetry=0.2 * np.cos(2.0 * np.pi * 3.0 * t + phase),
+                error=np.full_like(t, 0.01),
+                metadata={
+                    "run_number": run_number,
+                    "grouped_time_domain": True,
+                    "grouped_time_domain_lifetime_corrected": True,
+                },
+            )
+
+        g1, g2 = _group(1, 0.3), _group(2, -0.5)
+        panel.plot_grouped_time_domain_subplots([g1, g2])
+
+        assert panel._grouped_time_subplot_datasets
+        # Even though the data markers are C0 (blue), the fit overlay is red.
+        assert (
+            panel._fit_line_color_for_dataset(g1, default_color="C0", fit_label="Fit")
+            == tokens.PLOT_FIT
+        )
+        # Outside grouped mode an overlaid fit still matches its data colour so it
+        # visually belongs to its dataset.
+        panel._grouped_time_subplot_datasets = []
+        assert panel._fit_line_color_for_dataset(g1, default_color="C2", fit_label="Fit") == "C2"
+
     def test_plot_multiple_datasets(self, panel: PlotPanel, sample_dataset: MuonDataset) -> None:
         """Test plotting multiple datasets."""
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:

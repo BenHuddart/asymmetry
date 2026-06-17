@@ -3422,12 +3422,17 @@ class PlotPanel(QWidget):
     ) -> str:
         """Return the fit-line colour for a dataset.
 
-        Preview curves get a fixed accent colour; all other fits use the same
-        colour as the data markers so that in overlay mode each fit visually
-        belongs to its dataset.
+        Preview curves get a fixed accent colour. In grouped time-domain mode each
+        detector group sits on its own subplot, so there is no fit↔dataset overlay
+        to disambiguate — the fit uses the canonical red fit colour, which resolves
+        far better against the (blue) data points than matching the marker colour.
+        Every other fit matches its data markers so that in overlay mode each fit
+        visually belongs to its dataset.
         """
         if isinstance(fit_label, str) and "preview" in fit_label.lower():
             return "#d73a49"
+        if self._grouped_time_subplot_datasets:
+            return tokens.PLOT_FIT
         return default_color
 
     def set_fit_range(self, x_min: float, x_max: float) -> None:
