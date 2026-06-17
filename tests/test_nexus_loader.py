@@ -378,6 +378,62 @@ def test_load_v2_multiperiod(tmp_path, loader: NexusLoader) -> None:
     assert result.run.grouping.get("period_mode") == "red"
 
 
+def _write_v1_file_detector_deadtimes(path) -> None:
+    """V1 file whose dead times live at the legacy plural location only.
+
+    Mirrors real ISIS muon NeXus v1 files (and the HDF4 originals read directly
+    via the pyhdf path): the dead-time table is stored at
+    ``/run/instrument/detector/deadtimes`` (plural, different group), with
+    *nothing* under ``histogram_data_1``. The nxs4to5 converter maps
+    ``instrument/detector/deadtimes`` -> ``detector_1/dead_time`` (see
+    wimda-corpus/nxs4to5/README.md), so the HDF5 twins read fine; a directly
+    loaded v1 file must use this fallback or it gets an all-zeros table.
+    """
+    with h5py.File(path, "w") as f:
+        run = f.create_group("run")
+        run.create_dataset("analysis", data=np.bytes_("muonTD"))
+        run.create_dataset("IDF_version", data=1)
+        run.create_dataset("number", data=2469)
+        run.create_dataset("good_frames", data=np.array([100000], dtype=np.int32))
+
+        instrument = run.create_group("instrument")
+        detector = instrument.create_group("detector")
+        detector.create_dataset("orientation", data=np.bytes_("T"))
+        # Plural, in the detector group — NOT in histogram_data_1.
+        detector.create_dataset("deadtimes", data=np.array([0.011, 0.021], dtype=np.float64))
+
+        sample = run.create_group("sample")
+        sample.create_dataset("temperature", data=5.0)
+        sample.create_dataset("magnetic_field", data=20.0)
+
+        h_data = run.create_group("histogram_data_1")
+        h_data.create_dataset(
+            "counts",
+            data=np.array([[120, 140, 160, 180], [100, 120, 130, 150]], dtype=np.float64),
+        )
+        h_data.create_dataset(
+            "corrected_time", data=np.array([0.0, 0.01, 0.02, 0.03], dtype=np.float64)
+        )
+        h_data.create_dataset("grouping", data=np.array([1, 2], dtype=np.int32))
+
+
+def test_load_v1_reads_deadtimes_from_detector_group(tmp_path, loader: NexusLoader) -> None:
+    """Regression: v1 dead times stored only at instrument/detector/deadtimes.
+
+    Without the fallback, the loader reads dead times solely from
+    ``histogram_data_1`` and returns an all-zeros table for these (real) files.
+    """
+    path = tmp_path / "run_v1_detector_deadtimes.nxs"
+    _write_v1_file_detector_deadtimes(path)
+
+    ds = loader.load(str(path))
+    assert not isinstance(ds, list)
+    assert ds.metadata["nexus_version"] == "v1"
+    dead_times = ds.run.grouping.get("dead_time_us")
+    assert any(v != 0.0 for v in dead_times), "dead times should not be all-zeros"
+    assert dead_times == pytest.approx([0.011, 0.021])
+
+
 def test_load_v1_single_period(tmp_path, loader: NexusLoader) -> None:
     path = tmp_path / "run_v1.nxs"
     _write_v1_file(path)

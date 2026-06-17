@@ -227,6 +227,20 @@ class NexusLoader(BaseLoader):
                 self._read_optional(h_data, "deadtime", default=[]),
                 dtype=np.float64,
             )
+        # Legacy ISIS muon NeXus v1 files (and the HDF4 originals read directly)
+        # store the dead-time table at ``instrument/detector/deadtimes`` (plural,
+        # a different group) rather than under ``histogram_data_1``. The nxs4to5
+        # converter maps that location to ``detector_1/dead_time`` (read by
+        # _load_v2), so HDF5 twins are fine; a directly loaded v1 file needs this
+        # fallback or it returns an all-zeros table. (deadtimes is the real key;
+        # dead_time/deadtime are accepted defensively.)
+        for dead_time_key in ("deadtimes", "dead_time", "deadtime"):
+            if dead_time_values.size:
+                break
+            dead_time_values = np.asarray(
+                self._read_optional(entry, f"instrument/detector/{dead_time_key}", default=[]),
+                dtype=np.float64,
+            )
         time_zero_values = np.asarray(
             self._read_optional(h_data, "time_zero", default=[]),
             dtype=np.float64,
@@ -384,9 +398,13 @@ class NexusLoader(BaseLoader):
             self._read_optional(detector, "dead_time", default=[]),
             dtype=np.float64,
         )
-        if dead_time_values.size == 0:
+        # The converter writes ``dead_time``; accept the ``deadtime``/``deadtimes``
+        # spellings too so a hand-made or partially-converted v2 file still reads.
+        for dead_time_key in ("deadtime", "deadtimes"):
+            if dead_time_values.size:
+                break
             dead_time_values = np.asarray(
-                self._read_optional(detector, "deadtime", default=[]),
+                self._read_optional(detector, dead_time_key, default=[]),
                 dtype=np.float64,
             )
         time_zero_values = np.asarray(
