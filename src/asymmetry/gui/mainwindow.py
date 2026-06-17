@@ -5986,6 +5986,81 @@ class MainWindow(QMainWindow):
                 run_number, rep_type, spectra, preserved_x_limits, preserved_y_limits
             )
 
+    def _ensure_frequency_spectra_for_runs_async(
+        self,
+        run_numbers,
+        rep_type: RepresentationType,
+        on_ready,
+        *,
+        busy_message: str | None = None,
+    ) -> None:
+        """Recompute any uncached spectra for *run_numbers* off-thread, then ``on_ready()``.
+
+        The multi-run counterpart of :meth:`_start_async_frequency_recompute`,
+        for batch callers (send-moments, global fit-dataset prep) that previously
+        recomputed each run synchronously on the GUI thread. Only recomputable,
+        uncached, not-already-inflight runs are computed (the pure ``compute()``
+        runs on one worker); results promote into the shared representations on
+        the GUI thread before ``on_ready`` runs there. Runs that are cached,
+        not recomputable, or in flight are left as-is, so ``on_ready`` always
+        runs (once) even when nothing was recomputed.
+        """
+        targets: list[tuple[int, object, object]] = []
+        for raw in run_numbers:
+            try:
+                run_number = int(raw)
+            except (TypeError, ValueError):
+                continue
+            if (run_number, rep_type) in self._frequency_recompute_inflight:
+                continue
+            target = self._frequency_recompute_target(run_number, rep_type)
+            if target is not None:
+                representation, run = target
+                targets.append((run_number, representation, run))
+        if not targets:
+            on_ready()
+            return
+
+        name = self._frequency_status_name(rep_type)
+        for run_number, _rep, _run in targets:
+            self._frequency_recompute_inflight.add((run_number, rep_type))
+        self._frequency_overlay.show_message(
+            busy_message or f"Computing {name} for {len(targets)} run(s)…"
+        )
+        self._set_status_state(f"Computing {name}…")
+        started_at = time.perf_counter()
+        rep_by_run = {run_number: rep for (run_number, rep, _run) in targets}
+
+        def _worker(_worker_handle):
+            # compute() is pure (returns curves, mutates nothing) so the whole
+            # batch is safe off-thread; promotion happens in the completion.
+            return [(run_number, rep.compute(run)) for (run_number, rep, run) in targets]
+
+        def _finished(results):
+            for run_number, spectra in results:
+                self._frequency_recompute_inflight.discard((run_number, rep_type))
+                rep_by_run[run_number].cache_datasets(list(spectra) if spectra else [])
+                self._frequency_spectra_from_cache(run_number, rep_type)
+                self._lazy_recompute_failures.discard((run_number, rep_type))
+            self._finish_frequency_recompute_ui()
+            self._log_perf_event("batch_spectrum_recompute", started_at, runs=len(results))
+            on_ready()
+
+        def _error(message):
+            # The batch compute is one task, so a single bad recipe fails the
+            # lot; mark every target failed so the recompute is not retried in a
+            # loop (an explicit Compute FFT clears the marker). Runs are still
+            # recoverable manually.
+            for run_number, _rep, _run in targets:
+                self._frequency_recompute_inflight.discard((run_number, rep_type))
+                self._lazy_recompute_failures.add((run_number, rep_type))
+            self._finish_frequency_recompute_ui()
+            self._set_fourier_status(f"Could not recompute {name}: {message}")
+            # Proceed with whatever is cached; callers report still-missing runs.
+            on_ready()
+
+        self._tasks.start(_worker, on_finished=_finished, on_error=_error)
+
     # ── spectral moments ───────────────────────────────────────────────────
 
     def _spectral_moments_widgets(self) -> dict:
@@ -6161,6 +6236,17 @@ class MainWindow(QMainWindow):
         )
         if not selected and active_ds is not None:
             selected = [int(getattr(active_ds, "run_number", 0))]
+        # Recompute any uncached spectra off-thread first, then extract moments
+        # in the continuation (where every recomputable run is a cache hit) — so
+        # sending many runs' moments never blocks the GUI.
+        self._ensure_frequency_spectra_for_runs_async(
+            selected,
+            rep_type,
+            on_ready=lambda: self._finish_moments_send_to_trend(widget, selected, rep_type),
+        )
+
+    def _finish_moments_send_to_trend(self, widget, selected, rep_type) -> None:
+        """Extract moments for *selected* and record them as a computed series."""
         member_runs: list[int] = []
         results_by_run: dict[int, dict] = {}
         skipped: list[int] = []
@@ -10449,10 +10535,18 @@ class MainWindow(QMainWindow):
         )
 
     def _frequency_fit_datasets_for_selected_runs(self) -> list[MuonDataset]:
-        """Return cached spectra for selected browser runs in the active frequency view."""
+        """Return cached spectra for selected runs; recompute uncached ones off-thread.
+
+        A **cached-only** read so multi-run frequency selection never blocks the
+        GUI thread: recomputable-but-uncached runs are recomputed asynchronously
+        and the fit datasets refresh (via :meth:`_set_frequency_fit_datasets_for_selection`)
+        when they land. Only genuinely non-recomputable runs (no recipe) are
+        reported as missing for the user to compute manually.
+        """
         selected = self._data_browser.get_selected_datasets()
         datasets: list[MuonDataset] = []
         missing_run_numbers: list[int] = []
+        recompute_runs: list[int] = []
         # Pin the representation the fit datasets are collected from: the
         # async fit-completion handler must resolve run datasets against this
         # same cache, not whichever view happens to be active when the result
@@ -10464,9 +10558,12 @@ class MainWindow(QMainWindow):
                 run_number = int(source.run_number)
             except (TypeError, ValueError):
                 continue
-            spectra = self._ensure_frequency_spectra_for_run(run_number, rep_type)
+            spectra = self._cached_frequency_spectra(run_number, rep_type)
             if not spectra:
-                missing_run_numbers.append(run_number)
+                if self._frequency_recompute_target(run_number, rep_type) is not None:
+                    recompute_runs.append(run_number)  # recipe-backed → async-fill below
+                else:
+                    missing_run_numbers.append(run_number)  # needs a manual Compute
                 continue
             dataset = spectra[0]
             analysis_dataset = self._frequency_plot_panel.get_analysis_dataset(dataset)
@@ -10476,6 +10573,14 @@ class MainWindow(QMainWindow):
                 if safe_dataset is not None:
                     datasets.append(safe_dataset)
         self._last_frequency_fit_missing_run_numbers = missing_run_numbers
+        if recompute_runs:
+            # Fill the uncached recipe-backed spectra off-thread, then re-run the
+            # prep so the global-fit datasets include them — without blocking.
+            self._ensure_frequency_spectra_for_runs_async(
+                recompute_runs,
+                rep_type,
+                on_ready=self._set_frequency_fit_datasets_for_selection,
+            )
         return datasets
 
     def _set_frequency_fit_datasets_for_selection(self) -> list[MuonDataset]:

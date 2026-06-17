@@ -686,6 +686,64 @@ class TestMainWindowFourier:
         assert 8826 in mainwindow._frequency_spectra_by_run
         assert mainwindow._frequency_plot_panel._current_dataset is not None
 
+    def test_ensure_spectra_for_runs_async_is_noop_when_cached(
+        self, mainwindow: MainWindow
+    ) -> None:
+        # All runs cached → the continuation runs synchronously, no off-thread work.
+        self._compute_run_fft(mainwindow, 8860)
+        called: list = []
+        mainwindow._ensure_frequency_spectra_for_runs_async(
+            [8860], RepresentationType.FREQ_FFT, on_ready=lambda: called.append(True)
+        )
+        assert called == [True]
+        assert not mainwindow._frequency_recompute_active
+
+    def test_ensure_spectra_for_runs_async_recomputes_then_calls_ready(
+        self, mainwindow: MainWindow
+    ) -> None:
+        # Recipe-only (post-reload): the batch recomputes off-thread, then the
+        # continuation runs once every recomputable run is cached.
+        self._compute_run_fft(mainwindow, 8861)
+        self._compute_run_fft(mainwindow, 8862)
+        state = mainwindow.collect_project_state()
+        self._restore_recipe_only(mainwindow, state)
+        assert 8861 not in mainwindow._frequency_spectra_by_run
+
+        called: list = []
+        mainwindow._ensure_frequency_spectra_for_runs_async(
+            [8861, 8862], RepresentationType.FREQ_FFT, on_ready=lambda: called.append(True)
+        )
+        # Off-thread while in flight; not yet ready.
+        assert mainwindow._frequency_recompute_active
+        assert called == []
+
+        _wait_frequency_idle(mainwindow)
+        assert called == [True]
+        assert 8861 in mainwindow._frequency_spectra_by_run
+        assert 8862 in mainwindow._frequency_spectra_by_run
+
+    def test_frequency_fit_datasets_fill_asynchronously(self, mainwindow: MainWindow) -> None:
+        # Multi-run frequency selection must not block: the fit-dataset prep
+        # returns cached-only immediately and recomputes the rest off-thread,
+        # filling them in when they land.
+        ds1 = self._compute_run_fft(mainwindow, 8863)
+        ds2 = self._compute_run_fft(mainwindow, 8864)
+        state = mainwindow.collect_project_state()
+        self._restore_recipe_only(mainwindow, state)
+        mainwindow._data_browser.get_selected_datasets = lambda: [ds1, ds2]
+
+        # Cached-only read: nothing warm yet, so no datasets — and no GUI block.
+        datasets = mainwindow._frequency_fit_datasets_for_selected_runs()
+        assert datasets == []
+        assert mainwindow._frequency_recompute_active  # async fill kicked off
+        # Recipe-backed runs are NOT reported as "missing" (they auto-fill).
+        assert mainwindow._last_frequency_fit_missing_run_numbers == []
+
+        _wait_frequency_idle(mainwindow)
+        # Now warm: the prep includes both runs.
+        filled = mainwindow._frequency_fit_datasets_for_selected_runs()
+        assert len(filled) == 2
+
     def test_async_recompute_failure_clears_overlay_and_logs(
         self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
     ) -> None:
