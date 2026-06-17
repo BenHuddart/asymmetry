@@ -5715,21 +5715,19 @@ class MainWindow(QMainWindow):
         return self._frequency_spectra_from_cache(run_number, rep_type)
 
     def _serialize_frequency_spectra_state(self) -> dict[str, list[dict[str, object]]]:
-        """Return a serializable snapshot of cached Fourier spectra."""
-        serialized: dict[str, list[dict[str, object]]] = {}
-        for run_number, spectra in self._frequency_spectra_by_run.items():
-            run_payload: list[dict[str, object]] = []
-            for spectrum in spectra:
-                run_payload.append(
-                    {
-                        "time": np.asarray(spectrum.time, dtype=float).tolist(),
-                        "asymmetry": np.asarray(spectrum.asymmetry, dtype=float).tolist(),
-                        "error": np.asarray(spectrum.error, dtype=float).tolist(),
-                        "metadata": dict(spectrum.metadata),
-                    }
-                )
-            serialized[str(int(run_number))] = run_payload
-        return serialized
+        """Return the persisted Fourier-spectra state — deliberately empty.
+
+        FFT spectra are **not** persisted as arrays. Every cached spectrum is
+        backed by a recipe-only ``FREQ_FFT`` representation that recomputes it on
+        load (the project-wide recipe-only policy; ``recompute_on_load`` is True
+        and the FFT recipe round-trips bit-for-bit). Inlining the (often
+        100k+-point) time/asymmetry/error arrays only bloated the file — one
+        high-resolution project reached ~1.2 GB of ASCII floats. The empty payload
+        keeps the schema key stable; :meth:`_restore_frequency_spectra_state`
+        still reads legacy inlined arrays from projects saved before this change,
+        so old projects open unchanged and shrink on the next save.
+        """
+        return {}
 
     def _restore_frequency_spectra_state(self, state: object) -> None:
         """Restore cached Fourier spectra from serialized project state."""

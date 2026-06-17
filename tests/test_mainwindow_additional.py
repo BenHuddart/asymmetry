@@ -1550,7 +1550,7 @@ class TestMainWindowFourier:
         assert table.item(0, 2).text() == "33.000"
         assert table.item(1, 0).checkState() == Qt.CheckState.Unchecked
 
-    def test_project_restore_persists_cached_fourier_spectra(
+    def test_project_restore_recomputes_fourier_spectra_without_inlining(
         self,
         mainwindow: MainWindow,
         monkeypatch: pytest.MonkeyPatch,
@@ -1574,7 +1574,11 @@ class TestMainWindowFourier:
         mainwindow._frequency_plot_panel.set_view_limits(-0.8, 0.4, y_min, y_max)
 
         state = mainwindow.collect_project_state()
-        assert str(8816) in state.get("fourier_spectra_state", {})
+        # Recipe-only policy: FFT spectra are NOT inlined into the project (that
+        # bloated real high-resolution projects to ~1.2 GB of ASCII floats); they
+        # recompute from the FFT recipe on load. The restore-and-recompute below
+        # proves the spectrum still appears without any persisted arrays.
+        assert state.get("fourier_spectra_state") == {}
 
         restored_window = MainWindow()
 
