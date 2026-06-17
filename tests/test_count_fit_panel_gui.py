@@ -53,6 +53,30 @@ def test_target_selector_pushes_mode_to_both_tabs(qapp, fb_dataset):
     assert window._cost_combo.isEnabled()
 
 
+def test_advanced_fit_target_controls_collapsed_by_default(qapp, fb_dataset):
+    # The advanced count-fit options and calibration promotes are folded into
+    # two sections collapsed by default, so they don't push the model table down.
+    window = MultiGroupFitWindow()
+    window.set_dataset(fb_dataset)
+    assert not window._count_options_section.isExpanded()
+    assert not window._calibration_section.isExpanded()
+
+
+def test_side_row_visible_only_for_single_group_target(qapp, fb_dataset):
+    # Forward/Backward side only means anything for the single-group target, so
+    # its row is shown only then (rather than always present but greyed out).
+    window = MultiGroupFitWindow()
+    window.set_dataset(fb_dataset)
+    # Default target = All groups → Side hidden.
+    assert window._side_combo.isHidden()
+    # Single group → Side shown.
+    window._target_combo.setCurrentIndex(2)
+    assert not window._side_combo.isHidden()
+    # Forward + Backward → hidden again.
+    window._target_combo.setCurrentIndex(1)
+    assert window._side_combo.isHidden()
+
+
 def test_fb_count_fit_runs_and_recovers_alpha(qapp, fb_dataset):
     window = MultiGroupFitWindow()
     window.set_dataset(fb_dataset)

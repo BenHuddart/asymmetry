@@ -32,6 +32,7 @@ from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.transform import resolve_background_mode
 from asymmetry.gui.panels.fit_panel import GlobalFitTab
 from asymmetry.gui.styles.widgets import make_section
+from asymmetry.gui.widgets.collapsible_section import CollapsibleSection
 
 #: Fit-target choices (label, mode key) shown in the count-domain selector.
 #: Labels stay short so the selector does not set the Fit dock's minimum width;
@@ -83,11 +84,21 @@ class MultiGroupFitWindow(QWidget):
         self._sync_count_fit_target()
 
     def _build_target_controls(self) -> QWidget:
-        """Build the count-domain fit-target / cost / side selector row."""
+        """Build the fit-target selector + collapsed count-fit options / calibration.
+
+        Only the **Target** is everyday (and **Side** when the single-group
+        target is chosen); every other control configures a count fit (F+B /
+        Single group) and is disabled for the lifetime-corrected "All groups"
+        target, so the advanced count-fit options and the calibration promotes
+        live in two sections collapsed by default — they no longer push the
+        model table and Fit button down the dock.
+        """
         box, outer = make_section("Fit target")
-        form = QFormLayout()
-        form.setContentsMargins(0, 0, 0, 0)
-        outer.addLayout(form)
+
+        # ── Always visible: Target (+ Side, only for the single-group target). ──
+        self._target_form = QFormLayout()
+        self._target_form.setContentsMargins(0, 0, 0, 0)
+        outer.addLayout(self._target_form)
 
         # Store the mode key as item data so reordering the dropdowns can't remap
         # a selection to the wrong key.
@@ -95,21 +106,27 @@ class MultiGroupFitWindow(QWidget):
         for label, key in _FIT_TARGETS:
             self._target_combo.addItem(label, key)
         self._target_combo.currentIndexChanged.connect(self._sync_count_fit_target)
-
-        self._cost_combo = QComboBox()
-        for label, key in _FIT_COSTS:
-            self._cost_combo.addItem(label, key)
-        self._cost_combo.currentIndexChanged.connect(self._sync_count_fit_target)
+        self._target_form.addRow(QLabel("Target"), self._target_combo)
 
         self._side_combo = QComboBox()
         for label, key in _SINGLE_SIDES:
             self._side_combo.addItem(label, key)
         self._side_combo.currentIndexChanged.connect(self._sync_count_fit_target)
-
-        form.addRow(QLabel("Target"), self._target_combo)
-        form.addRow(QLabel("Cost"), self._cost_combo)
         self._side_label = QLabel("Single group")
-        form.addRow(self._side_label, self._side_combo)
+        self._target_form.addRow(self._side_label, self._side_combo)
+
+        # ── Collapsed: count-fit options (Cost / Skip / Nuisances / Double pulse). ──
+        self._count_options_section = CollapsibleSection("Count-fit options", expanded=False)
+        options_form = QFormLayout()
+        options_form.setContentsMargins(0, 0, 0, 0)
+        self._count_options_section.addLayout(options_form)
+        outer.addWidget(self._count_options_section)
+
+        self._cost_combo = QComboBox()
+        for label, key in _FIT_COSTS:
+            self._cost_combo.addItem(label, key)
+        self._cost_combo.currentIndexChanged.connect(self._sync_count_fit_target)
+        options_form.addRow(QLabel("Cost"), self._cost_combo)
 
         # Interior exclude window (μs): inactive while max ≤ min.
         self._exclude_min = QDoubleSpinBox()
@@ -135,7 +152,7 @@ class MultiGroupFitWindow(QWidget):
         # that keeps the FFT grid. The semantics differ; the labels now say so.
         self._exclude_label = QLabel("Skip (μs)")
         self._exclude_label.setToolTip("Interior bins to skip (exclude window, μs)")
-        form.addRow(self._exclude_label, exclude_row)
+        options_form.addRow(self._exclude_label, exclude_row)
 
         self._t0_check = QCheckBox("Fit t₀ offset")
         self._t0_check.toggled.connect(self._sync_count_fit_target)
@@ -153,7 +170,7 @@ class MultiGroupFitWindow(QWidget):
         nuisance_layout.addWidget(self._t0_check)
         nuisance_layout.addWidget(self._baseline_check)
         nuisance_layout.addWidget(self._deadtime_check)
-        form.addRow(QLabel("Nuisances"), nuisance_row)
+        options_form.addRow(QLabel("Nuisances"), nuisance_row)
 
         # Double-pulse separation (μs); 0 = single pulse. Fixed from the
         # instrument, or located by a coarse->fine scan when "fit" is ticked.
@@ -175,7 +192,14 @@ class MultiGroupFitWindow(QWidget):
         dpsep_layout.addWidget(self._dpsep_spin)
         dpsep_layout.addWidget(self._dpsep_fit_check)
         self._dpsep_label = QLabel("Double pulse (μs)")
-        form.addRow(self._dpsep_label, dpsep_row)
+        options_form.addRow(self._dpsep_label, dpsep_row)
+
+        # ── Collapsed: calibration (promote fitted count terms → the grouping). ──
+        self._calibration_section = CollapsibleSection("Calibration", expanded=False)
+        calibration_form = QFormLayout()
+        calibration_form.setContentsMargins(0, 0, 0, 0)
+        self._calibration_section.addLayout(calibration_form)
+        outer.addWidget(self._calibration_section)
 
         # Promote a fitted deadtime into the grouping correction (Send-to-Group).
         self._promote_btn = QPushButton("Promote DT₀")
@@ -188,8 +212,8 @@ class MultiGroupFitWindow(QWidget):
         promote_layout.setSpacing(2)
         promote_layout.addWidget(self._promote_btn)
         promote_layout.addWidget(self._promote_additive)
-        self._promote_label = QLabel("Calibrate")
-        form.addRow(self._promote_label, promote_row)
+        self._promote_label = QLabel("Deadtime")
+        calibration_form.addRow(self._promote_label, promote_row)
 
         # The α / t₀ / background promote siblings (suggest-only Send-to-Group):
         # each writes a fitted count-domain calibration into the grouping with
@@ -214,7 +238,7 @@ class MultiGroupFitWindow(QWidget):
         promote_layout2.addWidget(self._promote_t0_btn, 0, 1)
         promote_layout2.addWidget(self._promote_bg_btn, 1, 0, 1, 2)
         promote_layout2.setColumnStretch(2, 1)
-        form.addRow(QLabel(""), promote_row2)
+        calibration_form.addRow(QLabel("Promote"), promote_row2)
 
         # N3 interpretive guard: the count fit consumes raw counts, so a grouping
         # background correction does NOT reach it. Surface that when active so a
@@ -227,7 +251,7 @@ class MultiGroupFitWindow(QWidget):
         self._bg_active_note.setWordWrap(True)
         self._bg_active_note.setStyleSheet("color: palette(mid);")
         self._bg_active_note.setVisible(False)
-        form.addRow(self._bg_active_note)
+        outer.addWidget(self._bg_active_note)
         return box
 
     def _on_promote_deadtime(self) -> None:
@@ -241,8 +265,9 @@ class MultiGroupFitWindow(QWidget):
         side = self._side_combo.currentData()
         single = mode == "single"
         count_mode = mode != "all"
-        self._side_combo.setEnabled(single)
-        self._side_label.setEnabled(single)
+        # The Forward/Backward side only means anything for the single-group
+        # target, so its row is shown only then (rather than greyed out).
+        self._target_form.setRowVisible(self._side_combo, single)
         # The Poisson/Gaussian cost now applies to every grouped target,
         # including the lifetime-corrected fgAll ("all") fit — its grouped
         # driver routes through the same Cash/√N cost-factory seam.
