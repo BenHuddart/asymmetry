@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import math
 import sys
 import uuid
 from contextlib import contextmanager
@@ -21,7 +22,7 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QBrush, QColor, QFont, QFontMetrics, QPalette
+from PySide6.QtGui import QBrush, QColor, QCursor, QFont, QFontMetrics, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -36,11 +37,14 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QStyle,
     QStyledItemDelegate,
     QStyleOptionViewItem,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -50,7 +54,6 @@ from asymmetry.core.transform.grouping import good_event_count, good_frames
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.typography import header_font
-from asymmetry.gui.styles.widgets import build_primary_button_qss
 
 _GROUP_TEMP_ABS_TOL_K = 5e-3
 _GROUP_TEMP_REL_TOL = 2e-3
@@ -131,6 +134,13 @@ EXTRA_COLUMN_CUSTOM = "custom"
 #: the plot-label / trend-x-axis resolvers, which already read dataset metadata.
 CUSTOM_FIELDS_METADATA_KEY = "custom_fields"
 
+#: The special "Angle" field is a singleton custom column flagged ``is_angle``:
+#: it stores per-run numeric degrees (sample crystallographic axis vs the applied
+#: field) and is surfaced as a first-class trend x-axis. Fixed id + label so it is
+#: findable across save/reload regardless of creation order.
+ANGLE_COLUMN_ID = "angle"
+ANGLE_COLUMN_LABEL = "Angle (°)"
+
 
 @dataclass
 class ExtraColumn:
@@ -155,6 +165,10 @@ class ExtraColumn:
     label: str
     kind: str = EXTRA_COLUMN_METADATA
     source_key: str | None = None
+    #: ``True`` for the special "Angle" field — a custom column (so all the custom
+    #: value/edit/persistence plumbing applies) that additionally carries degree
+    #: semantics: numeric validation on edit and a first-class trend x-axis.
+    is_angle: bool = False
 
     @property
     def is_custom(self) -> bool:
@@ -164,6 +178,8 @@ class ExtraColumn:
         data: dict[str, object] = {"id": self.id, "label": self.label, "kind": self.kind}
         if self.source_key is not None:
             data["source_key"] = self.source_key
+        if self.is_angle:
+            data["is_angle"] = True
         return data
 
     @classmethod
@@ -199,7 +215,10 @@ class ExtraColumn:
         if kind == EXTRA_COLUMN_METADATA and source_key is None:
             source_key = col_id
         label = str(data.get("label", col_id))
-        return cls(id=col_id, label=label, kind=kind, source_key=source_key)
+        # ``is_angle`` is meaningful only for custom columns (degree semantics ride
+        # the custom value plumbing); ignore a stray flag on a metadata column.
+        is_angle = kind == EXTRA_COLUMN_CUSTOM and bool(data.get("is_angle", False))
+        return cls(id=col_id, label=label, kind=kind, source_key=source_key, is_angle=is_angle)
 
 
 class FilterDialog(QDialog):
@@ -612,23 +631,29 @@ class DataBrowserPanel(QWidget):
         # currentItemChanged doesn't automatically repaint both old and new rows
         # in all Qt versions; an explicit viewport update is cheap and safe.
         self._table.currentItemChanged.connect(lambda *_: self._table.viewport().update())
-        layout.addWidget(self._table)
 
-        # Footer band: the selection hint (left) and a themed "add custom column"
-        # action (bottom-right). The band lives on the container so the hint and
-        # button share one surfaceAlt strip with a single top border.
+        # Table sits beside a trailing "add custom field" rail: the "+" perches on
+        # a header-toned strip (so it reads as a final header slot) while the rail
+        # body below drops to the window tone, giving an "overhanging tab" that
+        # recedes into the main window. It is a sibling widget rather than a real
+        # table column because Qt paints gridlines over delegate fills, which would
+        # otherwise slice the recede into visible cells.
+        table_row = QWidget()
+        table_row_layout = QHBoxLayout(table_row)
+        table_row_layout.setContentsMargins(0, 0, 0, 0)
+        table_row_layout.setSpacing(0)
+        table_row_layout.addWidget(self._table, 1)
+        table_row_layout.addWidget(self._build_add_field_rail(), 0)
+        layout.addWidget(table_row)
+
+        # Footer band: the selection hint. The band lives on the container so the
+        # hint sits on one surfaceAlt strip with a single top border.
         _add_key = "⌘" if sys.platform == "darwin" else "Ctrl"
         self._footer_hint = QLabel(f"{_add_key}-click adds · shift-click ranges")
         self._footer_hint.setWordWrap(True)
         self._footer_hint.setStyleSheet(
             f"QLabel {{ background: transparent; color: {tokens.TEXT_MUTED}; font-size: 10px; }}"
         )
-
-        self._add_column_btn = QPushButton("＋ Column")
-        self._add_column_btn.setToolTip("Add a custom column you can fill in per run")
-        self._add_column_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._add_column_btn.setStyleSheet(build_primary_button_qss())
-        self._add_column_btn.clicked.connect(self._prompt_add_custom_column)
 
         footer = QWidget()
         footer.setObjectName("dataBrowserFooter")
@@ -640,11 +665,102 @@ class DataBrowserPanel(QWidget):
         footer_layout.setContentsMargins(8, 4, 8, 4)
         footer_layout.setSpacing(8)
         footer_layout.addWidget(self._footer_hint, 1)
-        footer_layout.addWidget(
-            self._add_column_btn, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-        )
         layout.addWidget(footer)
         self.setMinimumWidth(250)
+
+        # The "+" strip must line up with the table header; the header's final
+        # height is only known after the first layout pass.
+        QTimer.singleShot(0, self, self._sync_rail_header_height)
+
+    # ------------------------------------------------------------------
+    # Add-custom-field rail
+    # ------------------------------------------------------------------
+
+    _RAIL_WIDTH = 28
+
+    def _build_add_field_rail(self) -> QWidget:
+        """Build the trailing rail carrying the "add custom field" affordance.
+
+        A header-toned "+" button caps a window-toned filler so the button reads
+        as a final header slot while the rail recedes into the main window.
+        """
+        rail = QWidget()
+        rail.setObjectName("addFieldRail")
+        rail.setFixedWidth(self._RAIL_WIDTH)
+        rail.setStyleSheet(f"#addFieldRail {{ background-color: {tokens.BG}; }}")
+        rail_layout = QVBoxLayout(rail)
+        rail_layout.setContentsMargins(0, 0, 0, 0)
+        rail_layout.setSpacing(0)
+
+        self._add_field_btn = QToolButton()
+        self._add_field_btn.setText("+")
+        self._add_field_btn.setToolTip("Add a custom field")
+        self._add_field_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        # Tab-reachable (so keyboard-only users can still add a field — it is the
+        # sole affordance) but not click-focusable, so a mouse click doesn't leave
+        # a focus ring lingering on the header strip.
+        self._add_field_btn.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+        self._add_field_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        # Top + bottom borders continue the table's top frame line and the
+        # header's bottom line, so the "+" strip joins the header seamlessly
+        # (its height is sized to frame + header in _sync_rail_header_height).
+        self._add_field_btn.setStyleSheet(
+            "QToolButton {"
+            f" background-color: {tokens.SURFACE_ALT};"
+            f" color: {tokens.ACCENT};"
+            " border: none;"
+            f" border-top: 1px solid {tokens.BORDER};"
+            f" border-bottom: 1px solid {tokens.BORDER};"
+            " border-radius: 0;"
+            " font-size: 15px; font-weight: 600; }"
+            f" QToolButton:hover {{ background-color: {tokens.SURFACE_HI}; }}"
+        )
+        self._add_field_btn.setFixedWidth(self._RAIL_WIDTH)
+        self._add_field_btn.clicked.connect(self._show_add_field_menu)
+
+        filler = QWidget()
+        filler.setObjectName("addFieldFiller")
+        filler.setStyleSheet(f"#addFieldFiller {{ background-color: {tokens.BG}; }}")
+
+        rail_layout.addWidget(self._add_field_btn, 0)
+        rail_layout.addWidget(filler, 1)
+        return rail
+
+    def _sync_rail_header_height(self) -> None:
+        """Match the "+" strip to the header rect (incl. the table's top frame).
+
+        The header is inset by the table's 1px frame, so the strip spans that
+        frame offset *plus* the header height; with its own top and bottom
+        borders the strip's lines then land exactly on the table's top frame
+        line and the header's bottom line.
+        """
+        if not hasattr(self, "_add_field_btn"):
+            return
+        header = self._table.horizontalHeader()
+        height = header.height()
+        if height > 0:
+            frame_offset = header.geometry().top()
+            self._add_field_btn.setFixedHeight(frame_offset + height)
+
+    def _build_add_field_menu(self) -> QMenu:
+        """Build the rail "+" menu: a free-text custom column or the Angle field.
+
+        The Angle entry is disabled once the singleton Angle field exists.
+        """
+        menu = QMenu(self)
+        menu.setToolTipsVisible(True)
+        menu.addAction("Custom column…", self._prompt_add_custom_column)
+        angle_action = menu.addAction(ANGLE_COLUMN_LABEL, self.add_angle_column)
+        if self.has_angle_column():
+            angle_action.setEnabled(False)
+            angle_action.setToolTip("An Angle field already exists")
+        return menu
+
+    def _show_add_field_menu(self) -> None:
+        """Pop the add-field menu just below the "+" strip."""
+        menu = self._build_add_field_menu()
+        below = self._add_field_btn.mapToGlobal(self._add_field_btn.rect().bottomLeft())
+        menu.exec(below)
 
     # ------------------------------------------------------------------
     # Batched updates
@@ -1338,6 +1454,7 @@ class DataBrowserPanel(QWidget):
         read the previous width.
         """
         super().resizeEvent(event)
+        self._sync_rail_header_height()
         if not self._user_sized_columns:
             # The context argument cancels the pending timer if the panel is
             # destroyed first — without it the callback fires against a
@@ -1365,6 +1482,7 @@ class DataBrowserPanel(QWidget):
         if event.type() in (QEvent.Type.FontChange, QEvent.Type.ApplicationFontChange):
             self._two_line_height_cache = None
             self._reapply_two_line_heights()
+            self._sync_rail_header_height()
 
     def _reapply_two_line_heights(self) -> None:
         """Reset the explicit two-line heights from the current table font."""
@@ -1407,7 +1525,9 @@ class DataBrowserPanel(QWidget):
             item = self._table.horizontalHeaderItem(len(self._COLUMNS) + offset)
             if item is None:
                 continue
-            if column.is_custom:
+            if column.is_angle:
+                item.setToolTip("Sample orientation angle in degrees — double-click a cell to edit")
+            elif column.is_custom:
                 item.setToolTip("Custom column — double-click a cell to edit")
             elif column.source_key:
                 item.setToolTip(f"From metadata field: {column.source_key}")
@@ -1496,6 +1616,15 @@ class DataBrowserPanel(QWidget):
         """
         return [(column.label, column.id) for column in self._extra_columns if column.is_custom]
 
+    def angle_x_field(self) -> tuple[str, str] | None:
+        """Return ``(label, id)`` for the special Angle field, or None if absent.
+
+        The Angle field is promoted to a first-class trend x-axis rather than
+        offered among the generic custom columns, so consumers route it separately.
+        """
+        column = next((c for c in self._extra_columns if c.is_angle), None)
+        return (column.label, column.id) if column is not None else None
+
     def _notify_extra_columns_changed(self) -> None:
         self.extra_columns_changed.emit()
 
@@ -1540,6 +1669,33 @@ class DataBrowserPanel(QWidget):
         if ok:
             self.add_custom_column(name)
 
+    def has_angle_column(self) -> bool:
+        """Return ``True`` when the singleton special "Angle" field exists."""
+        return any(column.is_angle for column in self._extra_columns)
+
+    def add_angle_column(self) -> ExtraColumn | None:
+        """Add the singleton special "Angle (°)" field (numeric degrees per run).
+
+        Returns the existing Angle field if one is already present, so the action
+        is idempotent and never produces a duplicate.
+        """
+        existing = next((column for column in self._extra_columns if column.is_angle), None)
+        if existing is not None:
+            return existing
+        column = ExtraColumn(
+            id=ANGLE_COLUMN_ID,
+            label=ANGLE_COLUMN_LABEL,
+            kind=EXTRA_COLUMN_CUSTOM,
+            source_key=None,
+            is_angle=True,
+        )
+        self._extra_columns.append(column)
+        self._refresh_column_headers()
+        self._rebuild_table()
+        self._resize_columns_to_content()
+        self._notify_extra_columns_changed()
+        return column
+
     def rename_extra_column(self, column_id: str, new_label: str) -> bool:
         """Rename a column's gui-facing label (its source_key is untouched)."""
         name = str(new_label).strip()
@@ -1560,18 +1716,36 @@ class DataBrowserPanel(QWidget):
         if field_key_or_id == "field":
             self.set_use_field_from_log(False)
             return
-        remaining = [
+        removed = [
             column
             for column in self._extra_columns
-            if column.id != field_key_or_id and column.source_key != field_key_or_id
+            if column.id == field_key_or_id or column.source_key == field_key_or_id
         ]
-        if len(remaining) == len(self._extra_columns):
+        if not removed:
             return
-        self._extra_columns = remaining
+        self._extra_columns = [column for column in self._extra_columns if column not in removed]
+        # Deleting a custom column deletes its data too: purge the per-run stored
+        # values so they can't silently resurrect on re-add. This matters for the
+        # Angle field (fixed id, so a re-add would otherwise reinherit old values)
+        # and also clears the orphan cruft that uuid-keyed custom columns leak.
+        for column in removed:
+            if column.is_custom:
+                self._purge_custom_column_values(column.id)
         self._refresh_column_headers()
         self._rebuild_table()
         self._resize_columns_to_content()
         self._notify_extra_columns_changed()
+
+    def _purge_custom_column_values(self, column_id: str) -> None:
+        """Remove a custom column's per-run value from every dataset's metadata."""
+        for dataset in self._datasets.values():
+            existing = dataset.metadata.get(CUSTOM_FIELDS_METADATA_KEY)
+            if isinstance(existing, dict) and column_id in existing:
+                # Copy-on-write: the dict can be shared across dataset/run clones
+                # (mirrors _set_custom_column_value), so rebind rather than mutate.
+                fields = dict(existing)
+                fields.pop(column_id, None)
+                dataset.metadata[CUSTOM_FIELDS_METADATA_KEY] = fields
 
     def get_extra_columns(self) -> list[str]:
         """Return the metadata source keys currently shown (for inclusion tracking).
@@ -2618,9 +2792,26 @@ class DataBrowserPanel(QWidget):
         dataset = self._datasets.get(run_number)
         if dataset is None:
             return
+        text = item.text().strip()
+        # The Angle field is numeric degrees: reject a non-numeric (non-blank)
+        # entry, reverting the cell to its stored value with a brief warning.
+        # Blank clears; any real number is accepted (wrapping is applied downstream).
+        column = self._find_extra_column(column_id)
+        if column is not None and column.is_angle and text:
+            try:
+                valid = math.isfinite(float(text))
+            except ValueError:
+                valid = False
+            if not valid:
+                # Reject non-numeric and non-finite (inf/nan) input alike: a
+                # non-finite "angle" would poison the trend x-axis downstream.
+                with QSignalBlocker(self._table):
+                    item.setText(self.custom_column_value(dataset, column_id))
+                QToolTip.showText(QCursor.pos(), "Angle must be a finite number (degrees)")
+                return
         # Free-text by design (numbers are inferred only where consumed, e.g. the
         # trend x-axis): store the trimmed text verbatim, clearing on empty.
-        self._set_custom_column_value(dataset, column_id, item.text().strip())
+        self._set_custom_column_value(dataset, column_id, text)
 
     def _remove_run_number(self, run_number: int) -> None:
         self._datasets.pop(run_number, None)

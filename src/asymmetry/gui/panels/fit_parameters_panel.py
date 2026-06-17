@@ -114,6 +114,10 @@ def _format_x_label_gle(x_key: str, custom_labels: dict[str, str] | None = None)
     custom_id = _x_custom_id(x_key)
     if custom_id is not None:
         return str((custom_labels or {}).get(custom_id, custom_id))
+    # First-class Angle (and any non-"custom:" keyed label) resolves by direct
+    # key lookup in the supplied label map.
+    if custom_labels and x_key in custom_labels:
+        return str(custom_labels[x_key])
     return "Run Number"
 
 
@@ -192,6 +196,23 @@ def _x_custom_id(x_key: str) -> str | None:
     return x_key if isinstance(x_key, str) and x_key.startswith("custom:") else None
 
 
+def _coerce_abscissa(raw: object) -> float:
+    """Coerce a free-text custom/Angle cell value to a numeric abscissa.
+
+    Empty, non-numeric, and non-finite (``inf``/``nan``) values all map to NaN so
+    the point is dropped (and counted in the skip note) rather than plotted at 0
+    or corrupting the axis/fit.
+    """
+    text = str(raw).strip()
+    if not text:
+        return float("nan")
+    try:
+        value = float(text)
+    except ValueError:
+        return float("nan")
+    return value if np.isfinite(value) else float("nan")
+
+
 def _custom_values_from_metadata(meta: object) -> dict[str, str]:
     """Extract a dataset's custom-column values (``custom:<id>`` → text)."""
     raw = meta.get("custom_fields") if isinstance(meta, dict) else None
@@ -263,6 +284,10 @@ class FitParametersPanel(QWidget):
         #: ``(display_label, "custom:<id>")`` pairs pushed in by the host. Their
         #: per-run values ride on each row's ``custom_values`` (see _FitRow).
         self._custom_x_fields: list[tuple[str, str]] = []
+        #: The special Angle field promoted to a first-class x-axis, as a
+        #: ``(display_label, key)`` pair (or None). Its key is the column id, and
+        #: each row's per-run value rides on ``custom_values`` under that same key.
+        self._angle_x_field: tuple[str, str] | None = None
         self._y_controls: dict[str, _YParamControls] = {}
         self._selected_y_param_names: list[str] = []
         self._model_fits: dict[str, ParameterModelFit] = {}
@@ -2042,7 +2067,7 @@ class FitParametersPanel(QWidget):
         scoped to them; matplotlib already omits the NaN points, this just tells
         the user *why* some runs are missing. Cleared when nothing is dropped.
         """
-        if _x_custom_id(x_key) is None:
+        if _x_custom_id(x_key) is None and x_key != self._angle_x_key():
             return
         values = np.asarray(x_vals, dtype=float)
         total = int(values.size)
@@ -2067,6 +2092,10 @@ class FitParametersPanel(QWidget):
         combo.clear()
         for label in ("Auto", "𝐵 (G)", "𝑇 (K)", "Run"):
             combo.addItem(label)
+        # The Angle field is a first-class run-level axis, listed with the fixed
+        # axes (it carries its column id as item data, like the custom columns).
+        if self._angle_x_field is not None:
+            combo.addItem(self._angle_x_field[0], userData=self._angle_x_field[1])
         for name in self._display_y_parameters():
             combo.addItem(_format_param_label(name), userData=f"param:{name}")
         # Data-browser custom columns (param:<…> and custom:<…> both carry their
@@ -2074,9 +2103,9 @@ class FitParametersPanel(QWidget):
         for label, key in self._custom_x_fields:
             combo.addItem(label, userData=key)
         restored = False
-        if isinstance(prev_data, str) and (
-            prev_data.startswith("param:") or prev_data.startswith("custom:")
-        ):
+        if isinstance(prev_data, str) and prev_data:
+            # Restore by item data (param:/custom:/angle keys) so the selection
+            # survives label collisions and renames.
             idx = combo.findData(prev_data)
             if idx >= 0:
                 combo.setCurrentIndex(idx)
@@ -2102,9 +2131,32 @@ class FitParametersPanel(QWidget):
         if active_is_custom:
             self._refresh_plot()
 
+    def set_angle_x_field(self, field: tuple[str, str] | None) -> None:
+        """Set (or clear) the special Angle field offered as a first-class x-axis.
+
+        ``field`` is a ``(display_label, key)`` pair or None. Rebuilds the combo
+        (selection preserved); if Angle is the active x-axis, the plot is refreshed
+        so a value change or the field's removal is reflected.
+        """
+        normalized = (str(field[0]), str(field[1])) if field else None
+        if normalized == self._angle_x_field:
+            return
+        active_is_angle = self._effective_x_key() == self._angle_x_key()
+        self._angle_x_field = normalized
+        self._rebuild_x_axis_combo()
+        if active_is_angle:
+            self._refresh_plot()
+
+    def _angle_x_key(self) -> str | None:
+        """Return the key identifying the first-class Angle x-axis, or None."""
+        return self._angle_x_field[1] if self._angle_x_field is not None else None
+
     def _custom_x_labels(self) -> dict[str, str]:
-        """Map each custom x-axis key (``custom:<id>``) to its display label."""
-        return {key: label for label, key in self._custom_x_fields}
+        """Map each free-text x-axis key to its display label (custom + Angle)."""
+        labels = {key: label for label, key in self._custom_x_fields}
+        if self._angle_x_field is not None:
+            labels[self._angle_x_field[1]] = self._angle_x_field[0]
+        return labels
 
     def _rebuild_y_controls(self, *, preferred_selected: list[str] | None = None) -> None:
         self._y_selector_table.blockSignals(True)
@@ -3394,6 +3446,8 @@ class FitParametersPanel(QWidget):
         name = _x_param_name(x_key)
         if name is not None:
             return _format_plot_label(name)
+        if self._angle_x_field is not None and x_key == self._angle_x_field[1]:
+            return self._angle_x_field[0]
         custom_id = _x_custom_id(x_key)
         if custom_id is not None:
             return self._custom_x_labels().get(custom_id, custom_id)
@@ -3405,22 +3459,13 @@ class FitParametersPanel(QWidget):
         name = _x_param_name(x_key)
         if name is not None:
             return float(row.values.get(name, float("nan")))
-        custom_id = _x_custom_id(x_key)
-        if custom_id is not None:
-            # Free-text custom columns: coerce to a numeric abscissa, with an
-            # empty/non-numeric value becoming NaN so the point is dropped (and
-            # counted in the "N runs skipped" note) rather than plotted at 0.
-            text = str(row.custom_values.get(custom_id, "")).strip()
-            if not text:
-                return float("nan")
-            try:
-                value = float(text)
-            except ValueError:
-                return float("nan")
-            # "inf"/"nan" parse as floats but are not plottable abscissae; treat
-            # them as missing so they are dropped (and counted) like other
-            # non-numeric entries rather than corrupting the axis/fit.
-            return value if np.isfinite(value) else float("nan")
+        # The Angle field and the generic custom columns both store free text per
+        # run under their key in ``custom_values``; coerce to a numeric abscissa
+        # (empty/non-numeric/non-finite → NaN so the point is dropped and counted
+        # rather than plotted at 0 or corrupting the axis/fit).
+        value_key = x_key if x_key == self._angle_x_key() else _x_custom_id(x_key)
+        if value_key is not None:
+            return _coerce_abscissa(row.custom_values.get(value_key, ""))
         if x_key == "field":
             return row.field
         if x_key == "temperature":

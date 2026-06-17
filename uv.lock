@@ -33,6 +33,7 @@ all = [
     { name = "h5py" },
     { name = "matplotlib" },
     { name = "pillow" },
+    { name = "pyhdf" },
     { name = "pyside6" },
     { name = "pytest" },
     { name = "pytest-cov" },
@@ -64,6 +65,9 @@ gui = [
     { name = "matplotlib" },
     { name = "pyside6" },
 ]
+hdf4 = [
+    { name = "pyhdf" },
+]
 hdf5 = [
     { name = "h5py" },
 ]
@@ -73,13 +77,14 @@ root = [
 
 [package.metadata]
 requires-dist = [
-    { name = "asymmetry", extras = ["gui", "gle", "hdf5", "root", "dev"], marker = "extra == 'all'" },
+    { name = "asymmetry", extras = ["gui", "gle", "hdf5", "hdf4", "root", "dev"], marker = "extra == 'all'" },
     { name = "gleplot", marker = "extra == 'gle'", git = "https://github.com/BenHuddart/gleplot.git" },
     { name = "h5py", marker = "extra == 'hdf5'", specifier = ">=3.8,<4" },
     { name = "iminuit", specifier = ">=2.0,<3" },
     { name = "matplotlib", marker = "extra == 'gui'", specifier = ">=3.7,<3.11" },
     { name = "numpy", specifier = ">=1.24,<2.3" },
     { name = "pillow", marker = "extra == 'dev'", specifier = ">=10.0,<13" },
+    { name = "pyhdf", marker = "extra == 'hdf4'", specifier = ">=0.10,<1" },
     { name = "pyside6", marker = "extra == 'gui'", specifier = ">=6.5,<6.11" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0,<10" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0,<8" },
@@ -91,7 +96,7 @@ requires-dist = [
     { name = "sphinx-rtd-theme", marker = "extra == 'dev'", specifier = ">=2.0,<4" },
     { name = "uproot", marker = "extra == 'root'", specifier = ">=5.0,<6" },
 ]
-provides-extras = ["gui", "gle", "hdf5", "root", "dev", "all"]
+provides-extras = ["gui", "gle", "hdf5", "hdf4", "root", "dev", "all"]
 
 [[package]]
 name = "awkward"
@@ -1464,6 +1469,31 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/c3/b2/bc9c9196916376152d655522fdcebac55e66de6603a76a02bca1b6414f6c/pygments-2.20.0.tar.gz", hash = "sha256:6757cd03768053ff99f3039c1a36d6c0aa0b263438fcab17520b30a303a82b5f", size = 4955991, upload-time = "2026-03-29T13:29:33.898Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f4/7e/a72dd26f3b0f4f2bf1dd8923c85f7ceb43172af56d63c7383eb62b332364/pygments-2.20.0-py3-none-any.whl", hash = "sha256:81a9e26dd42fd28a23a2d169d86d7ac03b46e2f8b59ed4698fb4785f946d0176", size = 1231151, upload-time = "2026-03-29T13:29:30.038Z" },
+]
+
+[[package]]
+name = "pyhdf"
+version = "0.11.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b8/7b/ce37450155a25fe6edebb6aa7a4e3d928833ae88db73de4e47071973e836/pyhdf-0.11.6.tar.gz", hash = "sha256:9f6de3dd0a9651581e11e9a20f33ba16f4c79fb316c76082060ab33aeef98c5a", size = 150021, upload-time = "2025-01-05T04:02:36.913Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8f/07/9ad9b8fab57a7c8aef354245bf182c5567770f0688ced852cc8d521c3638/pyhdf-0.11.6-cp310-cp310-macosx_14_0_arm64.whl", hash = "sha256:3a374ac9373feedb2f42c07ddb728fe04587c5dc7a5519ef8b3dec7e7f47b419", size = 535105, upload-time = "2025-01-05T04:03:42.325Z" },
+    { url = "https://files.pythonhosted.org/packages/a5/6d/4b62c049ab2d0d01631e58947315f83c640e7484b3eaebfed60029ff3825/pyhdf-0.11.6-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:d9de62d364d4ec1d1badc1b8bd3f1eb991b840cbbba594f7692ad3cd8ef260e7", size = 770754, upload-time = "2025-01-05T04:03:45.495Z" },
+    { url = "https://files.pythonhosted.org/packages/ba/9a/6614798006ddd053870e7606638a19ece6aba326f433b93e0f9645112a09/pyhdf-0.11.6-cp310-cp310-win_amd64.whl", hash = "sha256:88b6755116b430f3261ca8f8a5bcf4b6c5572aca4f5df5ae6dc143cf3ef45975", size = 188138, upload-time = "2025-01-05T04:03:47.889Z" },
+    { url = "https://files.pythonhosted.org/packages/c5/98/5292994d56d09ebf2b539abf172bbe874f145af1c4a95597ec3e0a492a2b/pyhdf-0.11.6-cp311-cp311-macosx_14_0_arm64.whl", hash = "sha256:293d3fd3a4db332b756370cfb1fe6d2a10f07a6fd75bcb389ae56ff3ceec8fdb", size = 535106, upload-time = "2025-01-05T04:03:50.322Z" },
+    { url = "https://files.pythonhosted.org/packages/82/ad/c187ba2204f016a1f26a39533662520539d160b32c4214a724e20ff57769/pyhdf-0.11.6-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:4f6f622343c5a91d6cebf560c96d1d8ba4a0d89f52aa08251af38e868db2e583", size = 780327, upload-time = "2025-01-05T04:03:52.761Z" },
+    { url = "https://files.pythonhosted.org/packages/2c/53/dbce3370aca05d1d17b14c9bc3b6311ccb434b2e2695f5f7bc04cbf7c5b2/pyhdf-0.11.6-cp311-cp311-win_amd64.whl", hash = "sha256:d88e2988ca63164bec7690b437795d1e8e49b1816289859202c4edd9cd721ba6", size = 188140, upload-time = "2025-01-05T04:03:55.091Z" },
+    { url = "https://files.pythonhosted.org/packages/2e/ac/6dec1412b0fe5b441c242e9d1216adfec331f4b56bf46c095979b5dc4c4b/pyhdf-0.11.6-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:053142ed95142cf946d66281e8c864d2197a32ef0d15927098dd42a7c578fafa", size = 533888, upload-time = "2025-01-05T04:03:57.337Z" },
+    { url = "https://files.pythonhosted.org/packages/98/c7/2f4622b8b24585eab712aaa8d515e81673164ce5ffc2e99772fbc50d42dc/pyhdf-0.11.6-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:4ae014b96a5cab50226a8ee69f06275a37e9f0b3641694e34737196f593254c6", size = 780339, upload-time = "2025-01-05T04:04:00.116Z" },
+    { url = "https://files.pythonhosted.org/packages/1f/c4/69f0d35e789be4b0bc18ccfcaa3c59de9cf2ac3713cadb76bc93caf2f9b9/pyhdf-0.11.6-cp312-cp312-win_amd64.whl", hash = "sha256:39265924b78d43bef273ab512139a8ff5459991b8f7729563177e45b51b64a28", size = 188656, upload-time = "2025-01-05T04:04:02.457Z" },
+    { url = "https://files.pythonhosted.org/packages/51/fe/96a539be4a88cd4fbab3c30c8f0a89c0af69c4348ab3183bc586da498ee3/pyhdf-0.11.6-cp313-cp313-macosx_14_0_arm64.whl", hash = "sha256:5f681a6c50ce8d452d7cca0d41f24f7706ced85e0651a12d71051ebd2261af16", size = 533896, upload-time = "2025-01-05T04:04:06.556Z" },
+    { url = "https://files.pythonhosted.org/packages/09/de/7a274c2dcbfc7a1c8d65f0d1e5bda2829fdaf509f39e97463348661bab93/pyhdf-0.11.6-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:b068905a11a095444cea19b128c23cbb0e5935a4a3bde764a2288b59ec0eb4a5", size = 780316, upload-time = "2025-01-05T04:04:07.914Z" },
+    { url = "https://files.pythonhosted.org/packages/4b/ac/0849725e532eb4cc3578afce74685d0f0c8b8fe65cf18b688c7240cec54e/pyhdf-0.11.6-cp313-cp313-win_amd64.whl", hash = "sha256:2cce1f316ecc22472661a73470b4a7c92ce19ad17dbf58eed0615eecf6c8827d", size = 188666, upload-time = "2025-01-05T04:04:09.201Z" },
+    { url = "https://files.pythonhosted.org/packages/c8/a3/fb83498f479f4590a3cd25b74334a49b79e60ed23239e052ba1fcda9d1ee/pyhdf-0.11.6-pp310-pypy310_pp73-macosx_14_0_arm64.whl", hash = "sha256:50fc0967a0fa8bb4484da94bae32c9296cb690abcdf21d7e7d33bb361d1750b8", size = 529844, upload-time = "2025-01-05T04:04:32.792Z" },
+    { url = "https://files.pythonhosted.org/packages/40/01/d34f79febcb2755c19019bcea01394e05528dc89a117b16926cac755915d/pyhdf-0.11.6-pp310-pypy310_pp73-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:f1ccfd1368f8e9fc7155d104870b2abd83d4908cb4495cdbcfef68489382279b", size = 534257, upload-time = "2025-01-05T04:04:34.146Z" },
 ]
 
 [[package]]
