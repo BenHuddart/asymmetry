@@ -6337,8 +6337,13 @@ class MainWindow(QMainWindow):
         if self._fourier_phase_estimate_active:
             self._set_fourier_status("Phase estimation is already running.")
             return
-        # Preserve any live MaxEnt panel edits across the cascaded re-sync below
-        # (the Fourier sync also refreshes the MaxEnt group table).
+        # Preserve any live panel edits across the cascaded re-sync below. The
+        # sync restores both tables from their per-run stores, so live edits the
+        # stores haven't captured yet (e.g. Include-column toggles, which do not
+        # fire a store) would otherwise be clobbered — re-checking groups the
+        # user just disabled. Snapshot the live state into the stores first so
+        # the re-sync is a no-op for those edits.
+        self._store_fourier_group_phase_state_for_dataset(self._current_dataset)
         self._store_maxent_panel_state_for_dataset(self._current_dataset)
         self._sync_fourier_panel_for_dataset(self._current_dataset)
         # Snapshot launch-time context on the GUI thread; the estimation (FFT per
@@ -6404,8 +6409,13 @@ class MainWindow(QMainWindow):
             self._set_fourier_status("Select a grouped run before computing the Fourier transform.")
             return
 
-        # Preserve any live MaxEnt panel edits across the cascaded re-sync below
-        # (the Fourier sync also refreshes the MaxEnt group table).
+        # Preserve any live panel edits across the cascaded re-sync below. The
+        # sync restores both tables from their per-run stores, so live edits the
+        # stores haven't captured yet (e.g. Include-column toggles, which do not
+        # fire a store) would otherwise be clobbered — re-checking groups the
+        # user just disabled. Snapshot the live state into the stores first so
+        # the re-sync is a no-op for those edits.
+        self._store_fourier_group_phase_state_for_dataset(self._current_dataset)
         self._store_maxent_panel_state_for_dataset(self._current_dataset)
         self._sync_fourier_panel_for_dataset(self._current_dataset)
 

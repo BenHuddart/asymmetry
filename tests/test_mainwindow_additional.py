@@ -826,6 +826,40 @@ class TestMainWindowFourier:
         assert plotted is not None
         assert plotted.metadata["group_ids"] == [1]
 
+    def test_compute_fourier_preserves_live_include_toggle(self, mainwindow: MainWindow) -> None:
+        # Regression: unchecking a group in the Fourier "Groups" Include column and
+        # clicking Compute FFT must not re-enable it. The compute cascade re-syncs
+        # the panel from the per-run store; an Include toggle does not fire a store,
+        # so the live edit must be snapshotted before the sync (else the stale store
+        # is restored and the disabled group reappears in the average).
+        dataset = _make_fourier_ready_dataset(8808, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8808)
+
+        # Simulate a prior store (e.g. a dataset switch) that captured both groups
+        # enabled — the stale state the re-sync would otherwise restore.
+        mainwindow._fourier_group_phase_state_by_run[8808] = {
+            "group_enabled_table": {1: True, 2: True},
+            "group_phase_table": {1: 0.0, 2: 0.0},
+            "group_auto_filled_ids": [],
+        }
+
+        # User unchecks group 2 via the Include checkbox (column 0). This updates
+        # the live table only — itemChanged ignores column 0, so the per-run store
+        # stays stale.
+        panel = mainwindow._fourier_panel
+        row = panel._table_group_ids.index(2)
+        panel._phase_table.item(row, 0).setCheckState(Qt.CheckState.Unchecked)
+        assert panel.group_enabled_table().get(2) is False
+
+        _compute_fourier_sync(mainwindow)
+
+        plotted = mainwindow._frequency_plot_panel._current_dataset
+        assert plotted is not None
+        # The disabled group is left out of the average and stays unchecked.
+        assert plotted.metadata["group_ids"] == [1]
+        assert mainwindow._fourier_panel.group_enabled_table().get(2) is False
+
     def test_compute_group_fourier_can_average_selected_groups(
         self, mainwindow: MainWindow
     ) -> None:
