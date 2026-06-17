@@ -296,8 +296,8 @@ def _bounded_phase_seed_padding(n_points: int, *, desired: int = 8) -> int:
     return max(1, min(int(desired), int(max_factor)))
 
 
-def _seed_group_phase_estimates(grouped_groups: list[object]) -> tuple[float, dict[str, float]]:
-    """Return the first-group absolute phase and per-group relative phases in radians."""
+def _seed_group_phase_degrees(grouped_groups: list[object]) -> dict[str, float]:
+    """Return the FFT-estimated absolute phase (degrees) of each group's oscillation."""
     phase_degrees_by_group: dict[str, float] = {}
     for group in grouped_groups:
         group_id = str(getattr(group, "group_id", ""))
@@ -348,37 +348,25 @@ def _seed_group_phase_estimates(grouped_groups: list[object]) -> tuple[float, di
             max_frequency=max_frequency,
         )
 
-    if not phase_degrees_by_group:
-        return 0.0, {}
+    return phase_degrees_by_group
 
-    reference_group_id = str(getattr(grouped_groups[0], "group_id", ""))
-    reference_phase = phase_degrees_by_group.get(reference_group_id, 0.0)
-    reference_phase_rad = float(np.angle(np.exp(1j * np.deg2rad(reference_phase))))
-    relative_phases = {
-        group_id: float(np.angle(np.exp(1j * np.deg2rad(phase_deg - reference_phase))))
-        for group_id, phase_deg in phase_degrees_by_group.items()
+
+def _wrap_phase_rad(phase_deg: float) -> float:
+    """Wrap a phase in degrees to radians on ``(-pi, pi]``."""
+    return float(np.angle(np.exp(1j * np.deg2rad(phase_deg))))
+
+
+def _seed_group_absolute_phases(grouped_groups: list[object]) -> dict[str, float]:
+    """Return per-group *absolute* phase seeds in radians (wrapped to ``(-pi, pi]``).
+
+    Grouped fits hold the shared model phase at zero, so each group's per-group
+    phase nuisance carries the full FFT-estimated phase rather than an offset
+    relative to the first group.
+    """
+    return {
+        group_id: _wrap_phase_rad(phase_deg)
+        for group_id, phase_deg in _seed_group_phase_degrees(grouped_groups).items()
     }
-    return reference_phase_rad, relative_phases
-
-
-def _seed_group_relative_phases(grouped_groups: list[object]) -> dict[str, float]:
-    """Return per-group relative phase seeds in radians using FFT auto-phase estimation."""
-    _reference_phase, relative_phases = _seed_group_phase_estimates(grouped_groups)
-    return relative_phases
-
-
-def _grouped_model_phase_defaults(
-    grouped_model: CompositeModel,
-    grouped_groups: list[object],
-) -> dict[str, float]:
-    """Return grouped-model phase defaults seeded from the first group."""
-    reference_phase, _relative_phases = _seed_group_phase_estimates(grouped_groups)
-    phase_defaults: dict[str, float] = {}
-    for pname in grouped_model.param_names:
-        base_name, _index = split_parameter_name(pname)
-        if base_name == "phase":
-            phase_defaults[pname] = reference_phase
-    return phase_defaults
 
 
 def _grouped_formula_string(model: CompositeModel) -> str:
@@ -3397,40 +3385,15 @@ class GlobalFitTab(QWidget):
         self._applied_field_default_gauss = target_field
 
     def _refresh_group_phase_defaults_for_current_dataset(self) -> None:
-        """Refresh grouped-model phase defaults when the active dataset changes."""
-        if self._group_model_table.rowCount() == 0:
-            self._applied_group_phase_default_rad = 0.0
-            return
+        """Hold the shared model phase at zero when the active dataset changes.
 
-        grouped_model = self._grouped_fit_model()
-        grouped_groups, _grouped_datasets, _message = self._grouped_mode_context()
-        phase_defaults = _grouped_model_phase_defaults(grouped_model, grouped_groups or [])
-        if not phase_defaults:
-            self._applied_group_phase_default_rad = 0.0
-            return
-
-        previous_phase = float(self._applied_group_phase_default_rad)
-        current_phase = float(next(iter(phase_defaults.values())))
-        row_by_name = _param_table_rows_by_name(self._group_model_table)
-        previous_signal_state = self._group_model_table.blockSignals(True)
-        try:
-            for pname, default_value in phase_defaults.items():
-                row = row_by_name.get(pname)
-                if row is None:
-                    continue
-                value_item = self._group_model_table.item(row, 1)
-                if value_item is None:
-                    continue
-                try:
-                    existing_value = float(value_item.text())
-                except (TypeError, ValueError):
-                    existing_value = previous_phase
-                if value_item.text().strip() and not np.isclose(existing_value, previous_phase):
-                    continue
-                value_item.setText(f"{float(default_value):.6g}")
-        finally:
-            self._group_model_table.blockSignals(previous_signal_state)
-        self._applied_group_phase_default_rad = current_phase
+        Grouped fits (both the individual-groups Single surface and the multi-run
+        batch surface) fix the shared model phase at zero; the per-group phase is
+        carried by the per-group phase nuisance, reseeded from each group's data
+        by :meth:`_update_group_parameter_defaults`. There is therefore no shared
+        physics phase to refresh from the dataset.
+        """
+        self._applied_group_phase_default_rad = 0.0
 
     def _invalidate_wizard_cache_if_stale(self) -> None:
         self._sync_active_wizard_cache_from_selection()
@@ -3819,13 +3782,20 @@ class GlobalFitTab(QWidget):
         _set_formula_label_text(self._formula_label, model.formula_string())
         _apply_domain_mismatch_warning(self._formula_label, model, self._domain)
 
-        # Use the mean field across loaded datasets (if non-zero) as the default
-        # for any 'field' parameters.
-        dataset_fields = [
-            ds.run.field for ds in self._datasets if ds.run is not None and ds.run.field != 0.0
-        ]
-        mean_field = float(np.mean(dataset_fields)) if dataset_fields else 0.0
-        field_overrides = _field_value_overrides(model, mean_field)
+        # Seed any 'field' parameters from the applied field. The single grouped
+        # (individual-groups) surface fits one dataset at a time, so use that
+        # dataset's field — including for models with more than one oscillatory
+        # component (every 'field' param, not just the first). The multi-run
+        # batch surface uses the mean field across its loaded members.
+        if self._grouped_single:
+            single_field = _get_file_value_for_parameter(self._current_dataset, "field")
+            seed_field_gauss = float(single_field) if single_field is not None else 0.0
+        else:
+            dataset_fields = [
+                ds.run.field for ds in self._datasets if ds.run is not None and ds.run.field != 0.0
+            ]
+            seed_field_gauss = float(np.mean(dataset_fields)) if dataset_fields else 0.0
+        field_overrides = _field_value_overrides(model, seed_field_gauss)
         frequency_seed_values: dict[str, list[float]] = {}
         if self._domain == "frequency":
             for dataset in self._datasets:
@@ -3834,7 +3804,7 @@ class GlobalFitTab(QWidget):
         frequency_overrides = {
             key: float(np.mean(values)) for key, values in frequency_seed_values.items() if values
         }
-        self._applied_field_default_gauss = mean_field
+        self._applied_field_default_gauss = seed_field_gauss
 
         fixed_default_params = model.fixed_by_default_params()
         self._param_table.setRowCount(len(model.param_names))
@@ -4708,13 +4678,19 @@ class GlobalFitTab(QWidget):
                     seed = 20.0  # percent; typical transverse-field calibration amplitude
                 params.add(Parameter(name=name, value=seed, min=lo, max=hi))
             else:
+                # The individual-groups physics table fixes oscillation phase at 0
+                # by default (the phase lives in the per-group relative_phase
+                # nuisances of the asymmetry fit). The single-side / F+B count fits
+                # have no such nuisance, so they recover the phase directly — keep
+                # phase free here regardless of that default-fixed state.
+                base_name, _index = split_parameter_name(name)
                 params.add(
                     Parameter(
                         name=name,
                         value=float(model_values.get(name, 0.0)),
                         min=lo,
                         max=hi,
-                        fixed=name in fixed,
+                        fixed=(name in fixed) and base_name != "phase",
                     )
                 )
 
@@ -6506,7 +6482,11 @@ class GlobalFitTab(QWidget):
         n0_defaults_by_group: dict[str, float] = {}
         background_defaults_by_group: dict[str, float] = {}
         amplitude_defaults_by_group: dict[str, float] = {}
-        relative_phase_defaults_by_group = _seed_group_relative_phases(grouped_groups)
+        # Grouped fits hold the shared model phase fixed at zero (both the
+        # individual-groups Single surface and the multi-run batch surface), so
+        # each group's per-group phase nuisance carries the full *absolute* FFT
+        # phase estimate rather than an offset relative to the first group.
+        relative_phase_defaults_by_group = _seed_group_absolute_phases(grouped_groups)
         for group in grouped_groups:
             counts = np.asarray(getattr(group, "counts", []), dtype=float)
             if counts.size == 0:
@@ -6619,19 +6599,19 @@ class GlobalFitTab(QWidget):
     def _rebuild_grouped_model_table(self, preserved_state: dict[str, dict[str, str]]) -> None:
         grouped_model = self._grouped_fit_model()
         grouped_groups, _grouped_datasets, _message = self._grouped_mode_context()
-        phase_defaults = _grouped_model_phase_defaults(grouped_model, grouped_groups or [])
         visible_param_names = [
             pname for pname in grouped_model.param_names if not is_amplitude_parameter(pname)
         ]
         if self._grouped_single:
             self._rebuild_grouped_single_model_table(
-                grouped_model, visible_param_names, phase_defaults, preserved_state
+                grouped_model, visible_param_names, preserved_state
             )
             return
         self._updating_group_model_fraction_values = True
         self._group_model_table.setRowCount(len(visible_param_names))
         for row, pname in enumerate(visible_param_names):
             previous = preserved_state.get(pname, {})
+            base_name, _index = split_parameter_name(pname)
             name_item = _make_param_name_item(_format_param_label(pname), pname)
             self._group_model_table.setItem(row, 0, name_item)
 
@@ -6640,8 +6620,11 @@ class GlobalFitTab(QWidget):
             if is_background_parameter(pname):
                 default_val = 0.0
                 default_type = "Fixed"
-            elif pname in phase_defaults:
-                default_val = phase_defaults[pname]
+            elif base_name == "phase":
+                # The per-group phase nuisance carries the absolute phase, so the
+                # shared model phase is fixed at zero by default (user-adjustable).
+                default_val = 0.0
+                default_type = "Fixed"
             self._group_model_table.setItem(
                 row,
                 1,
@@ -6675,23 +6658,34 @@ class GlobalFitTab(QWidget):
         self,
         grouped_model: CompositeModel,
         visible_param_names: list[str],
-        phase_defaults: dict[str, float],
         preserved_state: dict[str, dict[str, str]],
     ) -> None:
         """Populate the single grouped fit's physics table (shared Fix tickbox).
 
         Reuses :class:`FitParameterTable`. ``preserved_state`` (the shared
         {value, type, bounds} shape, from the edit-rebuild capture or a restored
-        project) seeds value / Fix / bounds; otherwise background params default
-        fixed at 0 and phase params seed from the per-group estimate.
+        project) seeds value / Fix / bounds; otherwise:
+
+        - ``field``/``B_L`` params seed from the run's applied field (every such
+          param, so models with more than one oscillatory component all start at
+          the applied field rather than the 100 G component default);
+        - background params default fixed at 0;
+        - ``phase`` params default fixed at 0 — the individual-groups fit holds
+          the shared oscillation phase at zero and carries the full per-group
+          phase in the ``relative_phase`` nuisances, removing the degeneracy
+          between a shared phase and the per-group phase offsets.
         """
         table = self._group_model_table
+        field_overrides = _field_value_overrides(
+            grouped_model, float(self._applied_field_default_gauss)
+        )
         value_overrides: dict[str, float] = {}
         fixed_names: set[str] = set()
         preserved_bounds: dict[str, tuple[str, str]] = {}
         for pname in visible_param_names:
             prev = preserved_state.get(pname, {})
             prev_value = str(prev.get("value", "")).strip()
+            base_name, _index = split_parameter_name(pname)
             if prev_value:
                 try:
                     value_overrides[pname] = float(prev_value)
@@ -6699,12 +6693,13 @@ class GlobalFitTab(QWidget):
                     pass
             elif is_background_parameter(pname):
                 value_overrides[pname] = 0.0
-            elif pname in phase_defaults:
-                value_overrides[pname] = phase_defaults[pname]
+            elif base_name == "phase":
+                value_overrides[pname] = 0.0
+            elif pname in field_overrides:
+                value_overrides[pname] = field_overrides[pname]
 
-            if str(prev.get("type", "")) == "Fixed" or (
-                not prev and is_background_parameter(pname)
-            ):
+            default_fixed = is_background_parameter(pname) or base_name == "phase"
+            if str(prev.get("type", "")) == "Fixed" or (not prev and default_fixed):
                 fixed_names.add(pname)
 
             bounds_text = str(prev.get("bounds", "")).strip()

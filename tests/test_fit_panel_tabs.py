@@ -1604,7 +1604,10 @@ def test_grouped_fit_uses_per_group_seed_values_from_group_columns(
     assert initial_params[2]["amplitude"].value == pytest.approx(0.3)
 
 
-def test_grouped_phase_seed_uses_fft_peak_estimate_relative_to_first_group() -> None:
+def test_grouped_phase_seed_uses_absolute_fft_peak_estimate() -> None:
+    # The grouped fit seeds each group's phase nuisance with the group's
+    # *absolute* FFT phase (the shared model phase is held at zero), not an
+    # offset relative to the first group.
     time = np.linspace(0.0, 8.0, 801)
     frequency = 3.2
     background = 8.0
@@ -1637,17 +1640,19 @@ def test_grouped_phase_seed_uses_fft_peak_estimate_relative_to_first_group() -> 
         ),
     ]
 
-    phases = fit_panel_module._seed_group_relative_phases(grouped_groups)
+    phases = fit_panel_module._seed_group_absolute_phases(grouped_groups)
 
-    expected_delta = float(np.angle(np.exp(1j * (phase_b - phase_a))))
-    assert phases["1"] == pytest.approx(0.0, abs=0.2)
-    assert phases["2"] == pytest.approx(expected_delta, abs=0.3)
+    assert phases["1"] == pytest.approx(float(np.angle(np.exp(1j * phase_a))), abs=0.25)
+    assert phases["2"] == pytest.approx(float(np.angle(np.exp(1j * phase_b))), abs=0.25)
 
 
-def test_grouped_model_phase_seed_uses_first_group_estimate(
+def test_grouped_model_phase_fixed_at_zero(
     qapp: QApplication,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # The batch grouped physics table fixes the shared model phase at zero (the
+    # per-group phase nuisance carries the absolute phase), mirroring the Single
+    # surface.
     time = np.linspace(0.0, 8.0, 801)
     frequency = 3.2
     field = frequency / (MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA)
@@ -1691,16 +1696,85 @@ def test_grouped_model_phase_seed_uses_first_group_estimate(
     tab = GlobalFitTab(member_kind="groups")
     monkeypatch.setattr(tab, "_grouped_mode_context", lambda: (grouped_groups, [], "ready"))
     tab.set_current_dataset(dataset)
+    tab._set_composite_model(CompositeModel(["OscillatoryField", "Constant"], operators=["+"]))
 
     row_by_name = {
         tab._group_model_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row
         for row in range(tab._group_model_table.rowCount())
     }
-    reference_phase, _relative_phases = fit_panel_module._seed_group_phase_estimates(grouped_groups)
+    phase_row = row_by_name["phase"]
+    assert float(tab._group_model_table.item(phase_row, 1).text()) == pytest.approx(0.0)
+    type_combo = tab._group_model_table.cellWidget(phase_row, 2)
+    assert type_combo.currentText() == "Fixed"
 
-    assert float(tab._group_model_table.item(row_by_name["phase"], 1).text()) == pytest.approx(
-        reference_phase,
-        abs=0.2,
+
+def test_grouped_single_nuisance_phase_seeds_are_absolute(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The individual-groups (Single) surface seeds each group's phase nuisance
+    with its *absolute* FFT phase (the shared model phase is fixed at zero), so
+    the first group carries its own phase rather than being pinned to zero.
+    """
+    time = np.linspace(0.0, 8.0, 801)
+    frequency = 3.2
+    field = frequency / (MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA)
+    n0, background, amplitude = 100.0, 8.0, 0.18
+    phase_a = np.deg2rad(35.0)
+    phase_b = np.deg2rad(-60.0)
+
+    def _counts(phase: float) -> np.ndarray:
+        return n0 * (1.0 + amplitude * np.cos(2.0 * np.pi * frequency * time + phase)) + (
+            background * np.exp(time / float(MUON_LIFETIME_US))
+        )
+
+    grouped_groups = [
+        SimpleNamespace(
+            group_id=1,
+            group_name="Forward",
+            time=time,
+            counts=_counts(phase_a),
+            error=np.full_like(time, 0.05),
+            metadata={"field": field},
+        ),
+        SimpleNamespace(
+            group_id=2,
+            group_name="Backward",
+            time=time,
+            counts=_counts(phase_b),
+            error=np.full_like(time, 0.05),
+            metadata={"field": field},
+        ),
+    ]
+    dataset = MuonDataset(
+        time=time,
+        asymmetry=np.zeros_like(time),
+        error=np.full_like(time, 0.05),
+        metadata={"run_number": 101, "field": field},
+        run=Run(run_number=101, metadata={"field": field}),
+    )
+
+    tab = GlobalFitTab(member_kind="groups", grouped_single=True)
+    monkeypatch.setattr(tab, "_grouped_mode_context", lambda: (grouped_groups, [], "ready"))
+    tab.set_current_dataset(dataset)
+    tab._reset_group_parameter_estimates()  # seeds the nuisance estimates
+
+    row_by_name = {
+        tab._group_param_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row
+        for row in range(tab._group_param_table.rowCount())
+    }
+    rp_row = row_by_name["relative_phase"]
+    absolute = fit_panel_module._seed_group_absolute_phases(grouped_groups)
+    # The table stores the seed formatted to ~6 significant figures.
+    assert float(tab._group_param_table.item(rp_row, 1).text()) == pytest.approx(
+        absolute["1"], abs=1e-4
+    )
+    assert float(tab._group_param_table.item(rp_row, 2).text()) == pytest.approx(
+        absolute["2"], abs=1e-4
+    )
+    # The first group carries its own absolute phase (not pinned to zero).
+    assert float(tab._group_param_table.item(rp_row, 1).text()) == pytest.approx(
+        float(np.angle(np.exp(1j * phase_a))), abs=0.25
     )
 
 
@@ -1727,7 +1801,7 @@ def test_grouped_tab_reset_button_restores_estimated_values(
     backward_background, backward_n0, backward_amplitude = (
         fit_panel_module._seed_group_background_and_n0(np.array([80.0, 79.0]))
     )
-    relative_phase_defaults = fit_panel_module._seed_group_relative_phases(grouped_groups)
+    relative_phase_defaults = fit_panel_module._seed_group_absolute_phases(grouped_groups)
     tab._group_param_table.item(row_by_name["N0"], 1).setText("101")
     tab._group_param_table.item(row_by_name["N0"], 2).setText("202")
     tab._group_param_table.item(row_by_name["background"], 1).setText("1.5")

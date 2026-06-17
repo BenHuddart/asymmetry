@@ -15,6 +15,9 @@ import pytest
 
 pytest.importorskip("PySide6")
 
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QCheckBox
+
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.simulate import (
@@ -22,6 +25,7 @@ from asymmetry.core.simulate import (
     simulate_double_pulse_run,
     simulate_run,
 )
+from asymmetry.gui.panels.fit_panel import FitParameterTable
 from asymmetry.gui.windows.multi_group_fit_window import MultiGroupFitWindow
 
 
@@ -550,6 +554,55 @@ def test_grouped_single_share_with_group_copies_to_peers(qapp):
     assert win.share_single_grouped_function_state(706, [707]) == 1
     win.set_dataset(b)
     assert _single_model_names(win) == ["Gaussian", "Constant"]
+
+
+def _single_physics_rows(tab) -> dict[str, int]:
+    table = tab._group_model_table
+    return {
+        table.item(r, FitParameterTable.COL_NAME).data(Qt.ItemDataRole.UserRole): r
+        for r in range(table.rowCount())
+    }
+
+
+def test_grouped_single_multi_oscillatory_seeds_all_field_params(qapp):
+    # A model with more than one oscillatory component seeds *every* field param
+    # from the run's applied field, not just the first (the rest used to keep the
+    # 100 G component default).
+    win = MultiGroupFitWindow()
+    ds = _grouped_run_dataset(730)
+    ds.run.metadata["field"] = 250.0
+    win.set_dataset(ds)
+    tab = win._single_fit_tab
+    tab._set_composite_model(
+        CompositeModel(["OscillatoryField", "OscillatoryField", "Constant"], operators=["+", "+"])
+    )
+    table = tab._group_model_table
+    rows = _single_physics_rows(tab)
+    for fname in ("field_1", "field_2"):
+        assert float(table.item(rows[fname], FitParameterTable.COL_VALUE).text()) == pytest.approx(
+            250.0
+        )
+
+
+def test_grouped_single_oscillatory_phase_fixed_at_zero(qapp):
+    # The individual-groups fit holds every oscillation phase fixed at zero by
+    # default; the phase lives in the per-group relative_phase nuisances.
+    win = MultiGroupFitWindow()
+    ds = _grouped_run_dataset(731)
+    ds.run.metadata["field"] = 180.0
+    win.set_dataset(ds)
+    tab = win._single_fit_tab
+    tab._set_composite_model(
+        CompositeModel(["OscillatoryField", "OscillatoryField", "Constant"], operators=["+", "+"])
+    )
+    table = tab._group_model_table
+    rows = _single_physics_rows(tab)
+    for pname in ("phase_1", "phase_2"):
+        assert float(table.item(rows[pname], FitParameterTable.COL_VALUE).text()) == pytest.approx(
+            0.0
+        )
+        checkbox = table.cellWidget(rows[pname], FitParameterTable.COL_FIX).findChild(QCheckBox)
+        assert checkbox is not None and checkbox.isChecked()
 
 
 def test_grouped_single_share_reseeds_field_params_per_peer(qapp):

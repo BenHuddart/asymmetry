@@ -451,6 +451,66 @@ def test_fit_grouped_time_domain_poisson_uses_raw_count_model(monkeypatch) -> No
     assert result.success is True
 
 
+def test_fit_grouped_time_domain_recovers_absolute_per_group_phase() -> None:
+    """With the shared model phase fixed at zero, each group's free per-group
+    phase nuisance recovers that group's *absolute* oscillation phase.
+
+    This is the parameterisation the GUI seeds (model phase fixed at 0, per-group
+    phase carries the full phase): the fit must converge on distinct per-group
+    phases and a shared frequency from a clean two-group TF signal.
+    """
+    time = np.linspace(0.0, 8.0, 1601)
+    frequency = 3.0
+    n0, background, amplitude = 5.0e4, 50.0, 0.22
+    true_phase = {"g1": np.deg2rad(40.0), "g2": np.deg2rad(-100.0)}
+
+    def _counts(phase: float) -> np.ndarray:
+        return n0 * (
+            1.0 + amplitude * np.cos(2.0 * np.pi * frequency * time + phase)
+        ) + background * np.exp(time / float(MUON_LIFETIME_US))
+
+    groups = [
+        GroupedTimeDomainGroup(
+            group_id=gid,
+            group_name=gid,
+            time=time.copy(),
+            counts=_counts(true_phase[gid]),
+            error=np.sqrt(np.clip(_counts(true_phase[gid]), 1.0, None)),
+            metadata={"grouped_time_domain_lifetime_corrected": True},
+        )
+        for gid in ("g1", "g2")
+    ]
+
+    def _initial(gid: str) -> ParameterSet:
+        return ParameterSet(
+            [
+                Parameter("N0", 4.0e4),
+                Parameter("background", 40.0),
+                Parameter("amplitude", 0.2),
+                # Seed the per-group phase near (but not at) the true value.
+                Parameter("relative_phase", true_phase[gid] * 0.8, min=-np.pi, max=np.pi),
+                Parameter("frequency", 3.0),
+                Parameter("phase", 0.0, fixed=True),  # shared model phase held at zero
+            ]
+        )
+
+    result = fit_grouped_time_domain(
+        groups,
+        _cosine_polarization,
+        global_params=["frequency"],
+        local_params=["N0", "background", "amplitude", "relative_phase"],
+        initial_params={gid: _initial(gid) for gid in ("g1", "g2")},
+        cost="gaussian",
+    )
+
+    assert result.success is True
+    for gid in ("g1", "g2"):
+        fitted = result.group_results[gid].parameters["relative_phase"].value
+        assert float(np.angle(np.exp(1j * (fitted - true_phase[gid])))) == pytest.approx(
+            0.0, abs=1e-2
+        )
+
+
 def test_fit_grouped_time_domain_rejects_unknown_cost() -> None:
     groups = [
         GroupedTimeDomainGroup(
