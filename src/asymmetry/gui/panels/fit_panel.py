@@ -3062,20 +3062,38 @@ class GlobalFitTab(QWidget):
         layout.addWidget(self._group_param_group)
 
         self._group_model_group, group_model_layout = make_section("Fit-Function Parameters")
-        self._group_model_table = QTableWidget(0, 4)
-        self._group_model_table.setHorizontalHeaderLabels(["Parameter", "Value", "Type", "Bounds"])
-        self._group_model_table.horizontalHeader().setStretchLastSection(False)
-        self._group_model_table.setColumnWidth(0, 92)
-        self._group_model_table.setColumnWidth(1, 78)
-        self._group_model_table.setColumnWidth(2, 86)
-        self._group_model_table.setColumnWidth(3, 104)
-        _apply_param_table_style(self._group_model_table)
-        self._group_model_table.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
-        )
-        self._group_model_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._group_model_table.setWordWrap(False)
-        self._group_model_table.itemChanged.connect(self._on_group_model_table_item_changed)
+        if self._grouped_single:
+            # Single grouped fit: every detector group shares one fit-function,
+            # so the physics params take the single-fit-style Fix tickbox instead
+            # of the Global/Local/Fixed combo (per-group quantities are the
+            # nuisance block). Link/Tie are hidden — the grouped engine does not
+            # honour cross-parameter ties — and Batch role has no meaning here.
+            self._group_model_table = FitParameterTable()
+            for _hidden in (
+                FitParameterTable.COL_BATCH,
+                FitParameterTable.COL_LINK,
+                FitParameterTable.COL_TIE,
+            ):
+                self._group_model_table.setColumnHidden(_hidden, True)
+        else:
+            self._group_model_table = QTableWidget(0, 4)
+            self._group_model_table.setHorizontalHeaderLabels(
+                ["Parameter", "Value", "Type", "Bounds"]
+            )
+            self._group_model_table.horizontalHeader().setStretchLastSection(False)
+            self._group_model_table.setColumnWidth(0, 92)
+            self._group_model_table.setColumnWidth(1, 78)
+            self._group_model_table.setColumnWidth(2, 86)
+            self._group_model_table.setColumnWidth(3, 104)
+            _apply_param_table_style(self._group_model_table)
+            self._group_model_table.setSizePolicy(
+                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+            )
+            self._group_model_table.setVerticalScrollBarPolicy(
+                Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+            )
+            self._group_model_table.setWordWrap(False)
+            self._group_model_table.itemChanged.connect(self._on_group_model_table_item_changed)
         group_model_layout.addWidget(self._group_model_table)
         layout.addWidget(self._group_model_group)
 
@@ -6513,8 +6531,15 @@ class GlobalFitTab(QWidget):
                 self._group_param_table.setItem(row, offset, QTableWidgetItem(value_text))
 
             type_combo = QComboBox()
-            type_combo.addItems(["Global", "Local", "Fixed"])
-            type_combo.setCurrentText(str(previous.get("type") or type_text))
+            # The single grouped fit shares physics across the dataset's groups, so
+            # its nuisance "shared across groups" option reads "Shared"; "Global"
+            # (shared across runs) is reserved for the multi-run batch grouped fit.
+            shared_label = "Shared" if self._grouped_single else "Global"
+            type_combo.addItems([shared_label, "Local", "Fixed"])
+            current_type = str(previous.get("type") or type_text)
+            if current_type in ("Global", "Shared"):
+                current_type = shared_label
+            type_combo.setCurrentText(current_type)
             type_combo.currentTextChanged.connect(
                 lambda _text, row=row: self._on_group_param_type_changed(row)
             )
@@ -6573,6 +6598,11 @@ class GlobalFitTab(QWidget):
         visible_param_names = [
             pname for pname in grouped_model.param_names if not is_amplitude_parameter(pname)
         ]
+        if self._grouped_single:
+            self._rebuild_grouped_single_model_table(
+                grouped_model, visible_param_names, phase_defaults, preserved_state
+            )
+            return
         self._updating_group_model_fraction_values = True
         self._group_model_table.setRowCount(len(visible_param_names))
         for row, pname in enumerate(visible_param_names):
@@ -6615,6 +6645,70 @@ class GlobalFitTab(QWidget):
         self._updating_group_model_fraction_values = False
         self._synchronize_grouped_model_fraction_rows()
         _size_param_table_to_content(self._group_model_table)
+
+    def _rebuild_grouped_single_model_table(
+        self,
+        grouped_model: CompositeModel,
+        visible_param_names: list[str],
+        phase_defaults: dict[str, float],
+        preserved_state: dict[str, dict[str, str]],
+    ) -> None:
+        """Populate the single grouped fit's physics table (shared Fix tickbox).
+
+        Reuses :class:`FitParameterTable`. ``preserved_state`` (the shared
+        {value, type, bounds} shape, from the edit-rebuild capture or a restored
+        project) seeds value / Fix / bounds; otherwise background params default
+        fixed at 0 and phase params seed from the per-group estimate.
+        """
+        table = self._group_model_table
+        value_overrides: dict[str, float] = {}
+        fixed_names: set[str] = set()
+        preserved_bounds: dict[str, tuple[str, str]] = {}
+        for pname in visible_param_names:
+            prev = preserved_state.get(pname, {})
+            prev_value = str(prev.get("value", "")).strip()
+            if prev_value:
+                try:
+                    value_overrides[pname] = float(prev_value)
+                except ValueError:
+                    pass
+            elif is_background_parameter(pname):
+                value_overrides[pname] = 0.0
+            elif pname in phase_defaults:
+                value_overrides[pname] = phase_defaults[pname]
+
+            if str(prev.get("type", "")) == "Fixed" or (
+                not prev and is_background_parameter(pname)
+            ):
+                fixed_names.add(pname)
+
+            bounds_text = str(prev.get("bounds", "")).strip()
+            if bounds_text:
+                try:
+                    lo, hi = (part.strip() for part in bounds_text.split(",", maxsplit=1))
+                    preserved_bounds[pname] = (lo, hi)
+                except ValueError:
+                    pass
+
+        table.populate(
+            grouped_model,
+            param_names=visible_param_names,
+            value_overrides=value_overrides,
+            fixed_names=fixed_names,
+        )
+        # populate() resets bounds to defaults; restore any the user/project had.
+        for row in range(table.rowCount()):
+            name_item = table.item(row, FitParameterTable.COL_NAME)
+            name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
+            if not isinstance(name, str) or name not in preserved_bounds:
+                continue
+            lo, hi = preserved_bounds[name]
+            min_item = table.item(row, FitParameterTable.COL_MIN)
+            max_item = table.item(row, FitParameterTable.COL_MAX)
+            if min_item is not None:
+                min_item.setText(lo)
+            if max_item is not None:
+                max_item.setText(hi)
 
     def _parse_grouped_parameter_configuration(self) -> dict[str, object]:
         global_params: list[str] = []
@@ -6674,6 +6768,10 @@ class GlobalFitTab(QWidget):
 
             type_combo = self._group_param_table.cellWidget(row, group_type_column)
             type_text = type_combo.currentText() if isinstance(type_combo, QComboBox) else "Local"
+            # "Shared" is the single grouped fit's label for cross-group sharing;
+            # it behaves exactly like "Global" (shared across the run's groups).
+            if type_text == "Shared":
+                type_text = "Global"
             if type_text == "Global":
                 global_params.append(pname)
             elif type_text == "Local":
@@ -6694,53 +6792,91 @@ class GlobalFitTab(QWidget):
                 group_values[pname] = {group_id: shared_value for group_id in target_ids}
             bounds[pname] = (min_val, max_val)
 
-        for row in range(self._group_model_table.rowCount()):
-            name_item = self._group_model_table.item(row, 0)
-            pname = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
-            if not isinstance(pname, str):
-                pname = name_item.text() if name_item else f"model_param_{row}"
+        if self._grouped_single:
+            # Single grouped fit: physics params are read from the Fix-tickbox
+            # table. Every group shares the function, so a free param is "global"
+            # (shared across the dataset's groups) and a ticked one is "fixed";
+            # there is no per-run "local" classification for one dataset.
+            for param in self._group_model_table.read_parameter_set():
+                pname = param.name
+                value = float(param.value)
+                if not np.isfinite(value):
+                    raise ValueError(
+                        f"Error: Parameter {_format_param_label(pname)} must be finite, got {value}"
+                    )
+                min_val, max_val = float(param.min), float(param.max)
+                if np.isfinite(min_val) and value < min_val:
+                    raise ValueError(
+                        f"Error: Parameter {_format_param_label(pname)} value {value} "
+                        f"is below minimum {min_val}"
+                    )
+                if np.isfinite(max_val) and value > max_val:
+                    raise ValueError(
+                        f"Error: Parameter {_format_param_label(pname)} value {value} "
+                        f"is above maximum {max_val}"
+                    )
+                if param.fixed:
+                    fixed_params.append(pname)
+                    physics_roles[pname] = "fixed"
+                else:
+                    global_params.append(pname)
+                    physics_roles[pname] = "global"
+                model_values[pname] = value
+                bounds[pname] = (min_val, max_val)
+        else:
+            for row in range(self._group_model_table.rowCount()):
+                name_item = self._group_model_table.item(row, 0)
+                pname = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
+                if not isinstance(pname, str):
+                    pname = name_item.text() if name_item else f"model_param_{row}"
 
-            try:
-                value = float(self._group_model_table.item(row, 1).text())
-            except (TypeError, ValueError, AttributeError):
-                raise ValueError(f"Error: Invalid value for {_format_param_label(pname)}") from None
-            if not np.isfinite(value):
-                raise ValueError(
-                    f"Error: Parameter {_format_param_label(pname)} must be finite, got {value}"
+                try:
+                    value = float(self._group_model_table.item(row, 1).text())
+                except (TypeError, ValueError, AttributeError):
+                    raise ValueError(
+                        f"Error: Invalid value for {_format_param_label(pname)}"
+                    ) from None
+                if not np.isfinite(value):
+                    raise ValueError(
+                        f"Error: Parameter {_format_param_label(pname)} must be finite, got {value}"
+                    )
+
+                bounds_text = self._group_model_table.item(row, 3).text()
+                try:
+                    lo_text, hi_text = [part.strip() for part in bounds_text.split(",", maxsplit=1)]
+                    min_val = float(lo_text) if lo_text != "-inf" else -float("inf")
+                    max_val = float(hi_text) if hi_text != "inf" else float("inf")
+                except (TypeError, ValueError):
+                    min_val, max_val = -float("inf"), float("inf")
+
+                if np.isfinite(min_val) and value < min_val:
+                    raise ValueError(
+                        f"Error: Parameter {_format_param_label(pname)} value {value} "
+                        f"is below minimum {min_val}"
+                    )
+                if np.isfinite(max_val) and value > max_val:
+                    raise ValueError(
+                        f"Error: Parameter {_format_param_label(pname)} value {value} "
+                        f"is above maximum {max_val}"
+                    )
+
+                type_combo = self._group_model_table.cellWidget(row, 2)
+                type_text = (
+                    type_combo.currentText() if isinstance(type_combo, QComboBox) else "Global"
                 )
+                if type_text == "Fixed":
+                    fixed_params.append(pname)
+                    physics_roles[pname] = "fixed"
+                elif type_text == "Local":
+                    # Free, shared across a run's groups, independent across runs.
+                    global_params.append(pname)
+                    physics_roles[pname] = "local"
+                else:  # "Global" (and legacy "Shared"/"Free")
+                    global_params.append(pname)
+                    physics_roles[pname] = "global"
 
-            bounds_text = self._group_model_table.item(row, 3).text()
-            try:
-                lo_text, hi_text = [part.strip() for part in bounds_text.split(",", maxsplit=1)]
-                min_val = float(lo_text) if lo_text != "-inf" else -float("inf")
-                max_val = float(hi_text) if hi_text != "inf" else float("inf")
-            except (TypeError, ValueError):
-                min_val, max_val = -float("inf"), float("inf")
-
-            if np.isfinite(min_val) and value < min_val:
-                raise ValueError(
-                    f"Error: Parameter {_format_param_label(pname)} value {value} is below minimum {min_val}"
-                )
-            if np.isfinite(max_val) and value > max_val:
-                raise ValueError(
-                    f"Error: Parameter {_format_param_label(pname)} value {value} is above maximum {max_val}"
-                )
-
-            type_combo = self._group_model_table.cellWidget(row, 2)
-            type_text = type_combo.currentText() if isinstance(type_combo, QComboBox) else "Global"
-            if type_text == "Fixed":
-                fixed_params.append(pname)
-                physics_roles[pname] = "fixed"
-            elif type_text == "Local":
-                # Free, shared across a run's groups, independent across runs.
-                global_params.append(pname)
-                physics_roles[pname] = "local"
-            else:  # "Global" (and legacy "Shared"/"Free")
-                global_params.append(pname)
-                physics_roles[pname] = "global"
-
-            model_values[pname] = value
-            bounds[pname] = (min_val, max_val)
+                model_values[pname] = value
+                bounds[pname] = (min_val, max_val)
 
         grouped_model = self._grouped_fit_model()
         for pname in grouped_model.param_names:
@@ -6764,6 +6900,18 @@ class GlobalFitTab(QWidget):
 
     def _table_state_map(self, table: QTableWidget) -> dict[str, dict[str, str]]:
         state: dict[str, dict[str, str]] = {}
+        if isinstance(table, FitParameterTable):
+            # The single grouped physics table serialises in the same
+            # {value, type, bounds} shape as the combo tables, with type =
+            # Fixed / Shared (Shared = the run's groups share the value).
+            for entry in table.parameters_state():
+                name = str(entry["name"])
+                state[name] = {
+                    "value": str(entry.get("value", 0.0)),
+                    "type": "Fixed" if entry.get("fixed") else "Shared",
+                    "bounds": f"{entry.get('min', '-inf')}, {entry.get('max', 'inf')}",
+                }
+            return state
         for row in range(table.rowCount()):
             name_item = table.item(row, 0)
             if name_item is None:
@@ -6802,6 +6950,25 @@ class GlobalFitTab(QWidget):
         if not isinstance(payload, list):
             return
         by_name = {str(entry.get("name")): entry for entry in payload if isinstance(entry, dict)}
+        if isinstance(table, FitParameterTable):
+            # Apply the saved {value, type, bounds} entries onto the Fix-tickbox
+            # table: type "Fixed" → checked, bounds → min/max.
+            params_data: dict[str, dict] = {}
+            for name, entry in by_name.items():
+                bounds = str(entry.get("bounds", "-inf, inf"))
+                try:
+                    lo, hi = (part.strip() for part in bounds.split(",", maxsplit=1))
+                except ValueError:
+                    lo, hi = "-inf", "inf"
+                params_data[name] = {
+                    "name": name,
+                    "value": entry.get("value", 0.0),
+                    "fixed": str(entry.get("type", "")) == "Fixed",
+                    "min": lo,
+                    "max": hi,
+                }
+            table.restore_parameters(params_data)
+            return
         for row in range(table.rowCount()):
             name_item = table.item(row, 0)
             pname = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
