@@ -917,6 +917,68 @@ class TestMainWindowFourier:
         assert len(rendered) == 1
         assert int(rendered[0].run_number) == 8836
 
+    def test_frequency_overlay_blocks_single_fit(self, mainwindow: MainWindow, monkeypatch) -> None:
+        # A multi-run overlay has no single fit target (binding to one overlaid
+        # run would silently mis-attribute the result), so single fitting is
+        # blocked while the overlay is shown and re-enabled on a single-run view.
+        ds1 = self._compute_run_fft(mainwindow, 8840)
+        self._compute_run_fft(mainwindow, 8841)
+        monkeypatch.setattr(mainwindow._plot_workspace, "active_domain", lambda: "frequency")
+        mainwindow._frequency_plot_panel.set_overlay_enabled(True)
+        mainwindow._data_browser.get_selected_datasets = lambda: [
+            ds1,
+            mainwindow._data_browser.get_dataset(8841),
+        ]
+        mainwindow._sync_frequency_plot_for_current_dataset()
+
+        assert mainwindow._frequency_overlay_active is True
+        blocked, reason = mainwindow._current_fit_block_state()
+        assert blocked is True
+        assert "overlaid" in reason.lower()
+
+        # Dropping back to a single run clears the flag and unblocks fitting.
+        mainwindow._sync_frequency_plot_for_run(8840)
+        assert mainwindow._frequency_overlay_active is False
+        blocked_single, _ = mainwindow._current_fit_block_state()
+        assert blocked_single is False
+
+    def test_selection_change_refreshes_frequency_overlay(
+        self, mainwindow: MainWindow, monkeypatch
+    ) -> None:
+        # Extending the browser selection on the frequency tab must refresh the
+        # overlay (the time-panel render in _update_selected_datasets never
+        # touches the frequency panel).
+        ds1 = self._compute_run_fft(mainwindow, 8842)
+        ds2 = self._compute_run_fft(mainwindow, 8843)
+        monkeypatch.setattr(mainwindow._plot_workspace, "active_domain", lambda: "frequency")
+        mainwindow._frequency_plot_panel.set_overlay_enabled(True)
+        mainwindow._data_browser.get_selected_datasets = lambda: [ds1, ds2]
+
+        mainwindow._update_selected_datasets()
+
+        rendered = mainwindow._frequency_plot_panel._current_datasets
+        assert {int(d.run_number) for d in rendered} == {8842, 8843}
+
+    def test_frequency_overlay_fallback_shows_the_one_computed_run(
+        self, mainwindow: MainWindow
+    ) -> None:
+        # Two selected, only one computed: the overlay can't form, so the single
+        # computed run is shown (never hidden behind an empty prompt) even if the
+        # active dataset is the uncomputed one.
+        ds_done = self._compute_run_fft(mainwindow, 8844)
+        ds_todo = _make_fourier_ready_dataset(8845, with_grouping=True)
+        mainwindow._data_browser.add_dataset(ds_todo)
+        mainwindow._on_dataset_selected(8845)  # active = uncomputed run
+
+        mainwindow._frequency_plot_panel.set_overlay_enabled(True)
+        mainwindow._data_browser.get_selected_datasets = lambda: [ds_done, ds_todo]
+        mainwindow._sync_frequency_plot_for_current_dataset()
+
+        rendered = mainwindow._frequency_plot_panel._current_datasets
+        assert len(rendered) == 1
+        assert int(rendered[0].run_number) == 8844
+        assert mainwindow._frequency_overlay_active is False
+
     def test_compute_group_fourier_can_average_selected_groups(
         self, mainwindow: MainWindow
     ) -> None:

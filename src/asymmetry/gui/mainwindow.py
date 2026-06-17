@@ -512,6 +512,9 @@ class MainWindow(QMainWindow):
         self._frequency_recompute_inflight: set[tuple[int, RepresentationType]] = set()
         self._frequency_recompute_limits: dict[tuple[int, RepresentationType], tuple] = {}
         self._frequency_display_key: tuple[int, RepresentationType] | None = None
+        # True while the frequency view shows a multi-run overlay (a comparison
+        # display with no single fit/moments target). Gates single-fit blocking.
+        self._frequency_overlay_active: bool = False
         # Set when a project open is cancelled mid-prefetch: the loaded set is
         # known-incomplete, so saving would silently drop the unloaded runs.
         self._project_load_incomplete = False
@@ -2269,6 +2272,13 @@ class MainWindow(QMainWindow):
     def _current_fit_block_state(self) -> tuple[bool, str]:
         """Return whether the current plot context should block fitting."""
         if hasattr(self, "_plot_workspace") and self._plot_workspace.active_domain() == "frequency":
+            if getattr(self, "_frequency_overlay_active", False):
+                # A multi-run overlay has no single fit target; binding to one of
+                # the overlaid runs would silently mis-attribute the result.
+                return (
+                    True,
+                    "Multiple spectra overlaid — select a single run to fit in the frequency domain.",
+                )
             if self._active_frequency_fit_dataset() is None:
                 return (
                     True,
@@ -5774,6 +5784,8 @@ class MainWindow(QMainWindow):
         preserve_x_limits: bool = False,
     ) -> None:
         """Render the cached frequency spectra for *run_number*, or clear the tab."""
+        # This is the single-run render path; any prior multi-run overlay is gone.
+        self._frequency_overlay_active = False
         preserved_x_limits: tuple[float, float] | None = None
         preserved_y_limits: tuple[float, float] | None = None
         if hasattr(self._frequency_plot_panel, "get_view_limits"):
@@ -6280,10 +6292,13 @@ class MainWindow(QMainWindow):
                 missing.append(run_number)
 
         if len(rendered_runs) <= 1:
-            # Nothing to overlay (0 or 1 computed): render the active run as usual.
-            run_number = (
-                None if self._current_dataset is None else int(self._current_dataset.run_number)
-            )
+            # Nothing to overlay (0 or 1 computed): render the one computed run if
+            # there is one (so an available spectrum is never hidden behind an
+            # empty prompt), else the active run. _sync_frequency_plot_for_run
+            # clears _frequency_overlay_active.
+            run_number = rendered_runs[0] if rendered_runs else None
+            if run_number is None and self._current_dataset is not None:
+                run_number = int(self._current_dataset.run_number)
             self._sync_frequency_plot_for_run(run_number)
             return
 
@@ -6291,6 +6306,7 @@ class MainWindow(QMainWindow):
         # display key — a recompute completing for one member must not redraw
         # over the overlay.
         self._frequency_display_key = None
+        self._frequency_overlay_active = True
         self._render_frequency_spectra(rendered_runs[0], rep_type, spectra, None, None)
         if missing:
             name = self._frequency_status_name(rep_type)
@@ -10172,6 +10188,14 @@ class MainWindow(QMainWindow):
         # Multi-selection render mode depends on the plot-panel Overlay toggle.
         if len(selected) > 1:
             self._render_current_selection_plot()
+            # The frequency view tracks the selection too, so extending/shrinking
+            # the selection on the frequency tab refreshes the overlay (the time
+            # render above never touches the frequency panel).
+            if (
+                hasattr(self, "_plot_workspace")
+                and self._plot_workspace.active_domain() == "frequency"
+            ):
+                self._sync_frequency_plot_for_current_dataset()
             self._refresh_vector_axis_selector()
             self._update_fit_block_state()
             if self._overlay_enabled():
