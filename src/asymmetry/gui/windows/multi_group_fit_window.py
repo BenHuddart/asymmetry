@@ -9,6 +9,9 @@ in their member set (Single → the active run; Batch → the selection).
 
 from __future__ import annotations
 
+import copy
+from collections.abc import Callable
+
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
@@ -72,6 +75,11 @@ class MultiGroupFitWindow(QWidget):
         self._tabs.addTab(self._batch_fit_tab, "Batch")
         layout.addWidget(self._tabs)
         self._run_label = ""
+        # Per-run restore mediator for the Single (grouped) surface, installed by
+        # the main window. Mirrors FitPanel.set_single_fit_restore_provider.
+        self._single_grouped_restore_provider: (
+            Callable[[MuonDataset | None], dict | None] | None
+        ) = None
         self._sync_count_fit_target()
 
     def _build_target_controls(self) -> QWidget:
@@ -280,14 +288,46 @@ class MultiGroupFitWindow(QWidget):
         return current if isinstance(current, GlobalFitTab) else self._single_fit_tab
 
     def set_dataset(self, dataset: MuonDataset | None) -> None:
-        """Update the active grouped-fit dataset shown by both surfaces."""
+        """Update the active grouped-fit dataset shown by both surfaces.
+
+        After the surfaces re-bind to *dataset* (which rebuilds the grouped model
+        for its detector groups), the Single surface is repopulated from that
+        run's persisted grouped single-fit form, if any — so reselecting a run
+        shows its fit instead of the last-touched global form.
+        """
         for tab in self._grouped_tabs():
             tab.set_current_dataset(dataset)
         self._update_background_note(dataset)
         if dataset is None:
             self._run_label = ""
-            return
-        self._run_label = str(getattr(dataset, "run_label", dataset.run_number))
+        else:
+            self._run_label = str(getattr(dataset, "run_label", dataset.run_number))
+        if self._single_grouped_restore_provider is not None:
+            self.restore_single_grouped_ui(self._single_grouped_restore_provider(dataset))
+
+    def set_single_grouped_restore_provider(
+        self, provider: Callable[[MuonDataset | None], dict | None] | None
+    ) -> None:
+        """Install the per-run Single-surface restore mediator (or clear it)."""
+        self._single_grouped_restore_provider = provider
+
+    def single_grouped_form_state(self) -> dict:
+        """Full restorable form state of the Single (grouped) surface.
+
+        This is exactly what :meth:`restore_single_grouped_ui` consumes, so it is
+        the payload the main window stores as a grouped single fit's ``ui_state``.
+        """
+        return copy.deepcopy(self._single_fit_tab.get_state())
+
+    def restore_single_grouped_ui(self, payload: dict | None) -> None:
+        """Restore the Single surface from a slot ``ui_state`` payload.
+
+        A populated dict restores the form verbatim; ``None``/empty leaves the
+        surface untouched (a run with no grouped single fit must not blank a
+        model the user is setting up — there are no projections to confuse here).
+        """
+        if isinstance(payload, dict) and payload:
+            self._single_fit_tab.restore_state(payload)
 
     def _update_background_note(self, dataset: MuonDataset | None) -> None:
         """Show the N3 interpretive note when the run's grouping corrects background."""

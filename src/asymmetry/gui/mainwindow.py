@@ -1543,6 +1543,10 @@ class MainWindow(QMainWindow):
         self._fit_panel.fit_completed.connect(self._on_fit_completed)
         if hasattr(self._fit_panel, "set_single_fit_restore_provider"):
             self._fit_panel.set_single_fit_restore_provider(self._single_fit_restore_payload)
+        if hasattr(self._multi_group_fit_window, "set_single_grouped_restore_provider"):
+            self._multi_group_fit_window.set_single_grouped_restore_provider(
+                self._grouped_single_restore_payload
+            )
         # Auto-couple the single composite fit to the plot's RRF display: when
         # the rotating frame is active there, the fit runs in that frame.
         if hasattr(self._fit_panel, "set_rrf_frequency_provider"):
@@ -8472,6 +8476,33 @@ class MainWindow(QMainWindow):
             return {}
         return None
 
+    def _grouped_single_restore_payload(self, dataset) -> dict | None:
+        """Resolve the persisted grouped single-fit form for *dataset*'s run.
+
+        Mediator for ``MultiGroupFitWindow.set_dataset`` (installed via
+        ``set_single_grouped_restore_provider``). Returns the run's
+        ``TIME_GROUPS`` slot ``ui_state`` when it holds a grouped *single* fit
+        (provenance ``"single"``); otherwise ``None`` so the grouped form is left
+        untouched (a batch member's pointer slot or an unfit run must not
+        repopulate the surface). Mirrors :meth:`_single_fit_restore_payload`.
+        """
+        if dataset is None:
+            return None
+        try:
+            run_number = int(dataset.run_number)
+        except (TypeError, ValueError):
+            return None
+        representation = self._project_model.representation(
+            run_number, RepresentationType.TIME_GROUPS
+        )
+        if representation is None:
+            return None
+        slot = representation.fit
+        if slot is None or slot.provenance != "single":
+            return None
+        ui_state = slot.ui_state if isinstance(slot.ui_state, dict) else None
+        return copy.deepcopy(ui_state) if ui_state else None
+
     def _single_fit_run_number(self) -> int | None:
         """Run a single fit (and its plot overlay) is keyed under.
 
@@ -8488,6 +8519,45 @@ class MainWindow(QMainWindow):
             return int(self._current_dataset.run_number)
         except (TypeError, ValueError):
             return None
+
+    def _next_batch_id(self) -> str:
+        """Allocate the next ``batch-N`` series id and advance the counter."""
+        batch_id = f"batch-{self._next_batch_index}"
+        self._next_batch_index += 1
+        return batch_id
+
+    def _record_fit_series(
+        self,
+        series: FitSeries,
+        *,
+        slot_runs: list[int],
+        slot_factory,
+    ) -> str:
+        """Register *series* and write one member ``FitSlot`` per source run.
+
+        The shared multi→series core for every batch recording path: sort the
+        members against the loaded runs, store the series, write each source
+        run's pointer/result slot via ``slot_factory(run)``, and re-evaluate
+        divergence. ``slot_runs`` is the set of physical runs that own a slot
+        (member runs for a run-series, unique source runs for a group-series).
+        Returns the series' ``batch_id``.
+        """
+        runs_by_number: dict[int, object] = {}
+        if hasattr(self._data_browser, "get_dataset"):
+            for run in set(slot_runs):
+                dataset = self._data_browser.get_dataset(run)
+                if dataset is not None and dataset.run is not None:
+                    runs_by_number[run] = dataset.run
+        series.sort_members(runs_by_number)
+        self._project_model.add_batch(series)
+        for run in sorted(set(slot_runs)):
+            representation = self._project_model.ensure_dataset(int(run)).ensure(series.rep_type)
+            representation.fit = slot_factory(int(run))
+        # Fresh members all share the canonical model (no divergence yet); the
+        # refresh also clears stale divergence from any earlier series on these
+        # representations.
+        self._project_model.refresh_divergence()
+        return series.batch_id
 
     def _record_single_fit_slot(self, fit_result) -> None:
         """Write the active representation's single FitSlot into the project model."""
@@ -8576,8 +8646,9 @@ class MainWindow(QMainWindow):
             # is saved/reloaded (see _dataset_trend_coords).
             summary.update(self._dataset_trend_coords(int(run)))
             results_by_run[int(run)] = summary
+        batch_id = self._next_batch_id()
         batch = FitSeries(
-            f"batch-{self._next_batch_index}",
+            batch_id,
             rep_type,
             label=self._default_batch_series_label(model_label, member_runs),
             member_run_numbers=member_runs,
@@ -8586,30 +8657,18 @@ class MainWindow(QMainWindow):
             param_roles=param_roles,
             results_by_run=results_by_run,
         )
-        self._next_batch_index += 1
-
-        runs_by_number: dict[int, object] = {}
-        if hasattr(self._data_browser, "get_dataset"):
-            for run in member_runs:
-                dataset = self._data_browser.get_dataset(run)
-                if dataset is not None and dataset.run is not None:
-                    runs_by_number[run] = dataset.run
-        batch.sort_members(runs_by_number)
-        self._project_model.add_batch(batch)
-
         template_parameters = [dict(p) for p in state.get("parameters", []) if isinstance(p, dict)]
-        for run, payload in normalized_payloads.items():
-            representation = self._project_model.ensure_dataset(int(run)).ensure(rep_type)
-            representation.fit = FitSlot(
+        return self._record_fit_series(
+            batch,
+            slot_runs=member_runs,
+            slot_factory=lambda run: FitSlot(
                 model=canonical_model,
                 parameters=template_parameters,
                 result=dict(results_by_run[int(run)]),
                 provenance=provenance,
-                batch_id=batch.batch_id,
-            )
-        # Fresh batch members all share the canonical model (no divergence yet).
-        self._project_model.refresh_divergence()
-        return batch.batch_id
+                batch_id=batch_id,
+            ),
+        )
 
     #: Display quantity name for the integral-asymmetry scan (percent units).
     _SCAN_QUANTITY = "Integral asymmetry (%)"
@@ -9093,6 +9152,14 @@ class MainWindow(QMainWindow):
         if len(unique_source_runs) == 1:
             source_run = int(unique_source_runs[0])
             representation = self._project_model.ensure_dataset(source_run).ensure(rep_type)
+            # Capture the grouped single-fit form so reselecting/reopening the run
+            # repopulates it (mirrors the FB single fit's ui_state); restored by
+            # _grouped_single_restore_payload via the window's restore provider.
+            ui_state = None
+            if self._multi_group_fit_window is not None and hasattr(
+                self._multi_group_fit_window, "single_grouped_form_state"
+            ):
+                ui_state = self._multi_group_fit_window.single_grouped_form_state()
             # Stamp the stored per-group summaries with provenance "single" so they
             # agree with the slot (they were built with the series provenance,
             # "global"/"batch", which is meaningless without a series).
@@ -9106,14 +9173,16 @@ class MainWindow(QMainWindow):
                 },
                 provenance="single",
                 batch_id=None,
+                ui_state=ui_state,
             )
             # Drop any stale series association and re-evaluate divergence so an
             # earlier batch that included this run reflects the new single fit.
             self._project_model.refresh_divergence()
             return None
 
+        batch_id = self._next_batch_id()
         series = FitSeries(
-            f"batch-{self._next_batch_index}",
+            batch_id,
             rep_type,
             label=self._default_batch_series_label(
                 model_label, list(member_source_run.values()), groups=True
@@ -9127,29 +9196,17 @@ class MainWindow(QMainWindow):
             nuisance_params=nuisance_params,
             results_by_run=results_by_run,
         )
-        self._next_batch_index += 1
-
-        runs_by_number: dict[int, object] = {}
-        if hasattr(self._data_browser, "get_dataset"):
-            for run in set(member_source_run.values()):
-                dataset = self._data_browser.get_dataset(run)
-                if dataset is not None and dataset.run is not None:
-                    runs_by_number[run] = dataset.run
-        series.sort_members(runs_by_number)
-        self._project_model.add_batch(series)
-
-        for run in sorted(set(member_source_run.values())):
-            representation = self._project_model.ensure_dataset(int(run)).ensure(rep_type)
-            representation.fit = FitSlot(
+        # One pointer slot per source run; the series carries the per-group results.
+        return self._record_fit_series(
+            series,
+            slot_runs=unique_source_runs,
+            slot_factory=lambda run: FitSlot(
                 model=canonical_model,
-                result={"series_id": series.batch_id},
+                result={"series_id": batch_id},
                 provenance=provenance,
-                batch_id=series.batch_id,
-            )
-        # Fresh group-series members all share the canonical model; clear stale
-        # divergence state from any earlier series on the same representations.
-        self._project_model.refresh_divergence()
-        return series.batch_id
+                batch_id=batch_id,
+            ),
+        )
 
     def _add_single_fit_to_series(self, run_number: int, series_id: str) -> bool:
         """Add a compatible single fit (one run) as a member of an existing series.

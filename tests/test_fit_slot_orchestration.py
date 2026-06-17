@@ -328,6 +328,58 @@ def test_single_grouped_fit_writes_slot_not_series(mw, monkeypatch):
     assert rep.fit.result["groups"]["-42001"]["reduced_chi_squared"] == pytest.approx(0.3)
     # The stored per-group summaries agree with the slot's "single" provenance.
     assert rep.fit.result["groups"]["-42001"]["provenance"] == "single"
+    # The grouped single fit is restorable: the slot carries the grouped form
+    # (mirrors the FB single fit's ui_state), so reselect/reload can repopulate.
+    assert isinstance(rep.fit.ui_state, dict) and rep.fit.ui_state
+
+
+def test_grouped_single_restore_payload_round_trips(mw, monkeypatch):
+    # The restore mediator returns a run's grouped single-fit form when present,
+    # and None for an unfit run or a run with no grouped single fit.
+    mw._data_browser.add_dataset(_dataset(42))
+    mw._data_browser.add_dataset(_dataset(43))  # never fit
+    mw._on_dataset_selected(42)
+    mw._plot_workspace.set_available_views(["fb_asymmetry", "groups"])
+    mw._plot_workspace.set_active_view("groups")
+    monkeypatch.setattr(
+        mw._multi_group_fit_window,
+        "get_grouped_state",
+        lambda: {
+            "composite_model": {"component_names": ["Exponential"], "operators": []},
+            "param_roles": {"Lambda": "global"},
+            "nuisance_params": ["N0"],
+        },
+    )
+    mw._record_grouped_fit_series(
+        [_group_member(42, 1), _group_member(42, 2)],
+        {-42001: (_result(), _CURVE, []), -42002: (_result(), _CURVE, [])},
+    )
+
+    rep = mw._project_model.representation(42, RepresentationType.TIME_GROUPS)
+    payload = mw._grouped_single_restore_payload(mw._data_browser.get_dataset(42))
+    assert payload == rep.fit.ui_state
+    # Unfit run → None (the grouped form is left untouched).
+    assert mw._grouped_single_restore_payload(mw._data_browser.get_dataset(43)) is None
+
+
+def test_multi_group_window_set_dataset_invokes_restore_provider(mw, monkeypatch):
+    # set_dataset routes through the installed restore provider so reselecting a
+    # run repopulates the Single surface from its persisted form.
+    captured: list = []
+    monkeypatch.setattr(
+        mw._multi_group_fit_window,
+        "restore_single_grouped_ui",
+        lambda payload: captured.append(payload),
+    )
+    sentinel = {
+        "single": {"composite_model": {"component_names": ["Exponential"], "operators": []}}
+    }
+    mw._multi_group_fit_window.set_single_grouped_restore_provider(
+        lambda dataset: sentinel if dataset is not None else None
+    )
+    mw._data_browser.add_dataset(_dataset(42))
+    mw._multi_group_fit_window.set_dataset(mw._data_browser.get_dataset(42))
+    assert captured and captured[-1] == sentinel
 
 
 def test_add_compatible_single_fit_to_series(mw, monkeypatch):
