@@ -1525,6 +1525,8 @@ class MainWindow(QMainWindow):
             self._plot_panel.view_limits_changed.connect(self._on_plot_view_limits_changed)
         if hasattr(self._plot_panel, "overlay_toggled"):
             self._plot_panel.overlay_toggled.connect(self._on_overlay_toggled)
+        if hasattr(self._frequency_plot_panel, "overlay_toggled"):
+            self._frequency_plot_panel.overlay_toggled.connect(self._on_frequency_overlay_toggled)
         if hasattr(self._plot_panel, "time_view_changed"):
             self._plot_panel.time_view_changed.connect(self._on_plot_time_view_changed)
         if hasattr(self._plot_panel, "polarization_axis_changed"):
@@ -2028,6 +2030,13 @@ class MainWindow(QMainWindow):
         if hasattr(self._plot_panel, "is_overlay_enabled"):
             return bool(self._plot_panel.is_overlay_enabled())
         return True
+
+    def _frequency_overlay_enabled(self) -> bool:
+        """Return whether the frequency panel's multi-run overlay is enabled."""
+        panel = getattr(self, "_frequency_plot_panel", None)
+        if panel is not None and hasattr(panel, "is_overlay_enabled"):
+            return bool(panel.is_overlay_enabled())
+        return False
 
     @staticmethod
     def _run_numbers_match(dataset_a: MuonDataset | None, dataset_b: MuonDataset | None) -> bool:
@@ -6200,11 +6209,95 @@ class MainWindow(QMainWindow):
         self._set_fourier_status(note)
 
     def _sync_frequency_plot_for_current_dataset(self) -> None:
-        """Render the cached frequency spectra for the current dataset selection."""
+        """Render the cached frequency spectra for the current dataset selection.
+
+        With the overlay toggle on and more than one run selected, the selected
+        runs' cached spectra are overlaid on one axis; otherwise the active run
+        is rendered on its own (the single-run path, which can still recompute).
+        """
+        if self._frequency_overlay_enabled():
+            run_numbers = self._selected_frequency_run_numbers()
+            if len(run_numbers) > 1:
+                self._render_frequency_overlay(run_numbers)
+                return
         run_number = (
             None if self._current_dataset is None else int(self._current_dataset.run_number)
         )
         self._sync_frequency_plot_for_run(run_number)
+
+    def _on_frequency_overlay_toggled(self, _enabled: bool) -> None:
+        """Re-render the frequency view when the overlay toggle changes."""
+        self._sync_frequency_plot_for_current_dataset()
+
+    def _selected_frequency_run_numbers(self) -> list[int]:
+        """Ordered, de-duplicated run numbers of the current dataset selection."""
+        run_numbers: list[int] = []
+        seen: set[int] = set()
+        for dataset in self._selected_or_current_datasets():
+            try:
+                run_number = int(dataset.run_number)
+            except (TypeError, ValueError):
+                continue
+            if run_number not in seen:
+                seen.add(run_number)
+                run_numbers.append(run_number)
+        return run_numbers
+
+    def _cached_frequency_spectra(self, run_number: int, rep_type: RepresentationType) -> list:
+        """Pure read of a run's cached/primary spectra (no recompute, no markers).
+
+        Unlike :meth:`_frequency_spectra_from_cache`, this never promotes a
+        primary into the cache or clears pending-recompute markers — overlay
+        gathers many runs and must not perturb another run's recompute state.
+        """
+        cache = self._frequency_cache(rep_type)
+        cached = cache.get(run_number)
+        if cached:
+            return list(cached)
+        container = self._project_model.datasets.get(run_number)
+        representation = container.get(rep_type) if container is not None else None
+        if representation is not None and representation.primary is not None:
+            return [representation.primary]
+        return []
+
+    def _render_frequency_overlay(self, run_numbers: list[int]) -> None:
+        """Overlay the cached spectra of every selected run on one axis.
+
+        Runs whose spectrum has not been computed yet are skipped (and reported)
+        rather than triggering N recomputes. If fewer than two runs have a
+        spectrum, fall back to the single-run render of the active dataset.
+        """
+        rep_type = self._active_frequency_rep_type()
+        spectra: list = []
+        rendered_runs: list[int] = []
+        missing: list[int] = []
+        for run_number in run_numbers:
+            cached = self._cached_frequency_spectra(run_number, rep_type)
+            if cached:
+                spectra.extend(cached)
+                rendered_runs.append(run_number)
+            else:
+                missing.append(run_number)
+
+        if len(rendered_runs) <= 1:
+            # Nothing to overlay (0 or 1 computed): render the active run as usual.
+            run_number = (
+                None if self._current_dataset is None else int(self._current_dataset.run_number)
+            )
+            self._sync_frequency_plot_for_run(run_number)
+            return
+
+        # A multi-run overlay is not keyed to one (run, rep), so clear the
+        # display key — a recompute completing for one member must not redraw
+        # over the overlay.
+        self._frequency_display_key = None
+        self._render_frequency_spectra(rendered_runs[0], rep_type, spectra, None, None)
+        if missing:
+            name = self._frequency_status_name(rep_type)
+            self._set_fourier_status(
+                f"Overlaying {len(rendered_runs)} runs; {len(missing)} selected run(s) have no "
+                f"{name} yet — compute them to include."
+            )
 
     def _selected_fourier_group_ids(self, dataset: MuonDataset) -> list[int]:
         """Return the detector groups currently enabled for grouped Fourier transforms."""

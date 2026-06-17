@@ -860,6 +860,63 @@ class TestMainWindowFourier:
         assert plotted.metadata["group_ids"] == [1]
         assert mainwindow._fourier_panel.group_enabled_table().get(2) is False
 
+    def _compute_run_fft(self, mainwindow: MainWindow, run_number: int) -> MuonDataset:
+        """Add a fourier-ready run, select it, compute its FFT; return the dataset."""
+        dataset = _make_fourier_ready_dataset(run_number, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(run_number)
+        _compute_fourier_sync(mainwindow)
+        return dataset
+
+    def test_frequency_overlay_renders_multiple_run_spectra(self, mainwindow: MainWindow) -> None:
+        # With overlay on and >1 run selected, each selected run's cached spectrum
+        # is overlaid on one axis (parity with the FB-asymmetry overlay).
+        ds1 = self._compute_run_fft(mainwindow, 8830)
+        ds2 = self._compute_run_fft(mainwindow, 8831)
+        assert 8830 in mainwindow._frequency_spectra_by_run
+        assert 8831 in mainwindow._frequency_spectra_by_run
+
+        mainwindow._frequency_plot_panel.set_overlay_enabled(True)
+        mainwindow._data_browser.get_selected_datasets = lambda: [ds1, ds2]
+        mainwindow._sync_frequency_plot_for_current_dataset()
+
+        rendered = mainwindow._frequency_plot_panel._current_datasets
+        assert len(rendered) == 2
+        run_numbers = {int(d.run_number) for d in rendered}
+        assert run_numbers == {8830, 8831}
+
+    def test_frequency_overlay_skips_uncomputed_runs(self, mainwindow: MainWindow) -> None:
+        # A selected run with no computed spectrum is skipped (and reported),
+        # not recomputed; the computed runs still overlay.
+        ds1 = self._compute_run_fft(mainwindow, 8832)
+        ds2 = self._compute_run_fft(mainwindow, 8833)
+        ds3 = _make_fourier_ready_dataset(8834, with_grouping=True)  # never computed
+        mainwindow._data_browser.add_dataset(ds3)
+
+        mainwindow._frequency_plot_panel.set_overlay_enabled(True)
+        mainwindow._data_browser.get_selected_datasets = lambda: [ds1, ds2, ds3]
+        mainwindow._sync_frequency_plot_for_current_dataset()
+
+        rendered = mainwindow._frequency_plot_panel._current_datasets
+        assert {int(d.run_number) for d in rendered} == {8832, 8833}
+        assert 8834 not in mainwindow._frequency_spectra_by_run  # not recomputed
+        assert "8834" in mainwindow.statusBar().currentMessage() or "1 selected" in (
+            mainwindow.statusBar().currentMessage()
+        )
+
+    def test_frequency_overlay_off_renders_single_run(self, mainwindow: MainWindow) -> None:
+        # Overlay off: even with multiple runs selected, only the active run shows.
+        ds1 = self._compute_run_fft(mainwindow, 8835)
+        ds2 = self._compute_run_fft(mainwindow, 8836)  # selected last → active
+
+        mainwindow._frequency_plot_panel.set_overlay_enabled(False)
+        mainwindow._data_browser.get_selected_datasets = lambda: [ds1, ds2]
+        mainwindow._sync_frequency_plot_for_current_dataset()
+
+        rendered = mainwindow._frequency_plot_panel._current_datasets
+        assert len(rendered) == 1
+        assert int(rendered[0].run_number) == 8836
+
     def test_compute_group_fourier_can_average_selected_groups(
         self, mainwindow: MainWindow
     ) -> None:

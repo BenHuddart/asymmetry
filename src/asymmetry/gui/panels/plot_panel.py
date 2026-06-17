@@ -292,9 +292,11 @@ class PlotPanel(QWidget):
             nav_row = QHBoxLayout()
             nav_row.setContentsMargins(4, 0, 4, 0)
             nav_row.setSpacing(4)
-            if not self._is_frequency_plot_panel():
-                nav_row.addWidget(QLabel("Label:"))
-                nav_row.addWidget(self._label_field_combo)
+            # The label combo applies to both panels: it labels overlaid traces
+            # (multiple runs in the time panel; multiple runs' spectra in the
+            # frequency panel) by run / temperature / field / custom column.
+            nav_row.addWidget(QLabel("Label:"))
+            nav_row.addWidget(self._label_field_combo)
             nav_row.addWidget(self._time_view_label)
             nav_row.addWidget(self._time_view_combo)
             nav_row.addWidget(self._log_counts_checkbox)
