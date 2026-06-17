@@ -2901,7 +2901,6 @@ class GlobalFitTab(QWidget):
         self._fit_block_reason = ""
         self._composite_model = self._default_composite_model()
         self._applied_field_default_gauss = 0.0
-        self._applied_group_phase_default_rad = 0.0
         # Successful single-fit seeds keyed by run number.
         self._single_fit_seed_by_run: dict[int, dict[str, object]] = {}
         # Inherited seed cache for current dataset selection.
@@ -3349,7 +3348,8 @@ class GlobalFitTab(QWidget):
         # changes (its grouped groups depend only on this dataset).
         self._grouped_context_cache = None
         self._refresh_field_parameter_defaults_for_current_dataset()
-        self._refresh_group_phase_defaults_for_current_dataset()
+        # The shared model phase is held at zero in grouped fits; the per-group
+        # phase lives in the per-group phase nuisance, reseeded by the call below.
         self._update_group_parameter_defaults()
         self._update_mode_ui(preserve_result=False)
         if self._share_group_btn is not None:
@@ -3383,17 +3383,6 @@ class GlobalFitTab(QWidget):
             current_field_gauss=target_field,
         )
         self._applied_field_default_gauss = target_field
-
-    def _refresh_group_phase_defaults_for_current_dataset(self) -> None:
-        """Hold the shared model phase at zero when the active dataset changes.
-
-        Grouped fits (both the individual-groups Single surface and the multi-run
-        batch surface) fix the shared model phase at zero; the per-group phase is
-        carried by the per-group phase nuisance, reseeded from each group's data
-        by :meth:`_update_group_parameter_defaults`. There is therefore no shared
-        physics phase to refresh from the dataset.
-        """
-        self._applied_group_phase_default_rad = 0.0
 
     def _invalidate_wizard_cache_if_stale(self) -> None:
         self._sync_active_wizard_cache_from_selection()
@@ -6454,7 +6443,12 @@ class GlobalFitTab(QWidget):
             "N0": (100.0, "Local", "0, inf"),
             "background": (0.0, "Local", "0, inf"),
             "amplitude": (0.2, "Local", "-1, 1"),
-            "relative_phase": (0.0, "Local", f"{-np.pi:.6g}, {np.pi:.6g}"),
+            # Phase is periodic, so the bounds give a full 2*pi of slack on either
+            # side of the principal range. Absolute per-group seeds (wrapped to
+            # (-pi, pi]) routinely land near +/-pi — e.g. the backward group of an
+            # F-B pair sits ~pi from the forward group — and tight (-pi, pi] bounds
+            # would trap such a seed on a limit with no wrap-around room.
+            "relative_phase": (0.0, "Local", f"{-2.0 * np.pi:.6g}, {2.0 * np.pi:.6g}"),
         }
         grouped_groups = grouped_groups or []
         self._group_param_group_specs = self._grouped_parameter_specs(grouped_groups)

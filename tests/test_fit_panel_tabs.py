@@ -1776,6 +1776,13 @@ def test_grouped_single_nuisance_phase_seeds_are_absolute(
     assert float(tab._group_param_table.item(rp_row, 1).text()) == pytest.approx(
         float(np.angle(np.exp(1j * phase_a))), abs=0.25
     )
+    # Phase bounds span beyond the principal (-pi, pi] range so an absolute seed
+    # near +/-pi (e.g. a backward F-B group) has wrap-around room and is not
+    # trapped on a limit.
+    bounds_text = tab._group_param_table.item(rp_row, tab._group_param_bounds_column()).text()
+    lo_text, hi_text = (part.strip() for part in bounds_text.split(",", maxsplit=1))
+    assert float(lo_text) <= -2.0 * np.pi + 1e-6
+    assert float(hi_text) >= 2.0 * np.pi - 1e-6
 
 
 def test_grouped_tab_reset_button_restores_estimated_values(
