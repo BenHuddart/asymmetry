@@ -326,6 +326,8 @@ def test_single_grouped_fit_writes_slot_not_series(mw, monkeypatch):
     assert not rep.fit.is_empty()
     assert set(rep.fit.result["groups"]) == {"-42001", "-42002"}
     assert rep.fit.result["groups"]["-42001"]["reduced_chi_squared"] == pytest.approx(0.3)
+    # The stored per-group summaries agree with the slot's "single" provenance.
+    assert rep.fit.result["groups"]["-42001"]["provenance"] == "single"
 
 
 def test_add_compatible_single_fit_to_series(mw, monkeypatch):

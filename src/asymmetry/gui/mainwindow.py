@@ -8970,12 +8970,21 @@ class MainWindow(QMainWindow):
         # single trend point with no varying parameter, so it is un-trendable and
         # would only clutter the trend selector. A FitSeries is created only for a
         # multi-run batch — the unit parameter trending actually consumes.
-        if len(unique_source_runs) <= 1:
+        # ``member_keys`` is non-empty here, so there is always ≥1 source run.
+        if len(unique_source_runs) == 1:
             source_run = int(unique_source_runs[0])
             representation = self._project_model.ensure_dataset(source_run).ensure(rep_type)
+            # Stamp the stored per-group summaries with provenance "single" so they
+            # agree with the slot (they were built with the series provenance,
+            # "global"/"batch", which is meaningless without a series).
             representation.fit = FitSlot(
                 model=canonical_model,
-                result={"groups": {str(key): results_by_run[key] for key in member_keys}},
+                result={
+                    "groups": {
+                        str(key): {**results_by_run[key], "provenance": "single"}
+                        for key in member_keys
+                    }
+                },
                 provenance="single",
                 batch_id=None,
             )
