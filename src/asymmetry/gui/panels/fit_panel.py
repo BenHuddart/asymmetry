@@ -1822,7 +1822,6 @@ class SingleFitTab(QWidget):
         self._cached_wizard_recommendation: FitWizardRecommendation | None = None
         self._cached_wizard_signature: dict[str, object] | None = None
         self._cached_wizard_log_text = ""
-        self._updating_fraction_values = False
         # Optional provider of the rotating-frame ν₀ (MHz) supplied by the host
         # window; returns a frequency when an RRF fit should run (the plot's RRF
         # display is active), else None. Default no-op keeps the tab standalone.
@@ -1840,13 +1839,6 @@ class SingleFitTab(QWidget):
         #: Reset while the fit ran (Reset reuses the same object, so object
         #: identity alone would miss it), so the stale result is not applied.
         self._model_generation = 0
-
-        #: Saved parameter entries that have no table row — auxiliary, non-model
-        #: parameters (e.g. an API-authored affine-tie half-splitting ``delta``)
-        #: that the model itself never consumes. The GUI cannot edit them, but it
-        #: preserves them verbatim across save/restore and includes them in a
-        #: re-fit so a tie referencing them still resolves.
-        self._auxiliary_param_state: list[dict] = []
 
         # Model selection
         model_group, model_box = make_section("Model")
@@ -1922,43 +1914,11 @@ class SingleFitTab(QWidget):
         self._fit_range_min_spin.editingFinished.connect(self._on_fit_range_spinbox_committed)
         self._fit_range_max_spin.editingFinished.connect(self._on_fit_range_spinbox_committed)
 
-        # Parameter table
+        # Parameter table — the shared Name·Value·Fix·Min·Max·Batch·Link·Tie
+        # widget (columns/delegates/Fix-Link-Tie wiring/fraction sync live in
+        # FitParameterTable). It self-connects itemChanged for fraction sync.
         param_group, param_layout = make_section("Parameters")
-        self._param_table = QTableWidget(0, 8)
-        self._param_table.setHorizontalHeaderLabels(
-            ["Name", "Value", "Fix", "Min", "Max", "Batch", "Link", "Tie"]
-        )
-        self._param_table.horizontalHeader().setStretchLastSection(False)
-        # Tight default widths so the table fits a 13" dock without sideways
-        # scrolling in the common case; columns stay user-resizable and the
-        # horizontal scrollbar still appears on demand for wide bounds/roles.
-        self._param_table.setColumnWidth(0, 72)  # Name (incl. unit)
-        self._param_table.setColumnWidth(1, 88)  # Value ± σ
-        self._param_table.setColumnWidth(2, 30)  # Fix
-        self._param_table.setColumnWidth(3, 52)  # Min
-        self._param_table.setColumnWidth(4, 52)  # Max
-        self._param_table.setColumnWidth(5, 50)  # Batch role (read-only)
-        self._param_table.setColumnWidth(6, 40)  # Link group (equality tie)
-        self._param_table.setColumnWidth(7, 40)  # Affine tie (offset / equal spacing)
-
-        _apply_param_table_style(self._param_table)
-        # Tab commits the open editor on every editable column (Value, Min, Max);
-        # the Value column additionally paints the ±σ overlay.
-        self._param_table.setItemDelegate(_CommitOnTabDelegate(self._param_table))
-        self._param_table.setItemDelegateForColumn(1, _ValueUncertaintyDelegate(self._param_table))
-
-        # Size the table to its rows (see _size_param_table_to_content). The
-        # inspector dock scrolls vertically, so the table itself never needs an
-        # internal vertical scrollbar; a 13-parameter model just makes the panel
-        # taller. This removes the empty rows a few-parameter model showed when
-        # the table expanded to fill the dock height.
-        self._param_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self._param_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        # Elide long names on one line rather than wrapping to two rows when the
-        # Name column is narrow (the unit suffix would otherwise wrap).
-        self._param_table.setWordWrap(False)
-
-        self._param_table.itemChanged.connect(self._on_param_table_item_changed)
+        self._param_table = FitParameterTable()
         param_layout.addWidget(self._param_table)
         layout.addWidget(param_group)
 
@@ -2227,14 +2187,11 @@ class SingleFitTab(QWidget):
 
     def _set_composite_model(self, model: CompositeModel) -> None:
         """Set the active composite model and rebuild the parameter table."""
-        self._updating_fraction_values = True
         self._composite_model = model
         # Any model (re)build — including Reset, which reuses the same object —
-        # invalidates an in-flight fit's table/diagnostic write-back, and drops
-        # any auxiliary (non-model) parameters carried from a previously loaded
-        # project (they belong to the old model's tie structure).
+        # invalidates an in-flight fit's table/diagnostic write-back. (The table
+        # drops auxiliary non-model params from a prior restore in populate().)
         self._model_generation += 1
-        self._auxiliary_param_state = []
         _set_formula_label_text(self._formula_label, model.formula_string())
         _apply_domain_mismatch_warning(self._formula_label, model, self._domain)
 
@@ -2243,203 +2200,35 @@ class SingleFitTab(QWidget):
             if self._current_dataset is not None and self._current_dataset.run is not None
             else 0.0
         )
-        field_overrides = _field_value_overrides(model, dataset_field)
-        frequency_overrides = (
-            seed_peak_parameters_from_dataset(self._current_dataset, model)
-            if self._domain == "frequency" and self._current_dataset is not None
-            else {}
-        )
+        value_overrides = dict(_field_value_overrides(model, dataset_field))
+        if self._domain == "frequency" and self._current_dataset is not None:
+            # Frequency-domain peak seeds take precedence over the field seed.
+            value_overrides.update(seed_peak_parameters_from_dataset(self._current_dataset, model))
 
-        fixed_default_params = model.fixed_by_default_params()
-        self._param_table.setRowCount(len(model.param_names))
-        for i, pname in enumerate(model.param_names):
-            # Name column (read-only, bold mono)
-            name_item = _make_param_name_item(_format_param_label(pname), pname)
-            self._param_table.setItem(i, 0, name_item)
-
-            # Value column — use dataset field for 'field' parameters if available
-            default_val = frequency_overrides.get(
-                pname, field_overrides.get(pname, model.param_defaults.get(pname, 0.0))
-            )
-            value_item = QTableWidgetItem(str(default_val))
-            value_item.setFont(mono_font(11.0))
-            self._param_table.setItem(i, 1, value_item)
-
-            # Fix checkbox column
-            fix_widget = QWidget()
-            fix_layout = QHBoxLayout(fix_widget)
-            fix_layout.setContentsMargins(0, 0, 0, 0)
-            fix_checkbox = QCheckBox()
-            if pname == "shape_factor_a" or pname in fixed_default_params:
-                fix_checkbox.setChecked(True)
-            fix_layout.addWidget(fix_checkbox)
-            fix_layout.setAlignment(fix_checkbox, Qt.AlignmentFlag.AlignCenter)
-            self._param_table.setCellWidget(i, 2, fix_widget)
-
-            # Min column — default to 0 for physically positive-definite parameters
-            default_min = get_param_info(pname).default_min
-            min_text = str(default_min) if default_min is not None else "-inf"
-            min_item = QTableWidgetItem(min_text)
-            min_item.setFont(mono_font(11.0))
-            self._param_table.setItem(i, 3, min_item)
-
-            # Max column
-            max_item = QTableWidgetItem("inf")
-            max_item.setFont(mono_font(11.0))
-            self._param_table.setItem(i, 4, max_item)
-
-            # Batch role column — read-only; filled when a batch result is piped back.
-            _set_param_batch_role_cell(self._param_table, i, None)
-
-            # Link column — equality link-group selector (WiMDA "Ties").
-            link_combo = _make_link_group_combo()
-            self._param_table.setCellWidget(i, _SINGLE_PARAM_LINK_COLUMN, link_combo)
-            # Fix and Link are mutually exclusive: a linked follower tracks its
-            # group main (linking wins over fix in the engine), so allowing both
-            # would silently discard the fixed value. Couple the two controls so
-            # the ambiguous combination can't be created.
-            self._wire_fix_link_exclusion(fix_checkbox, link_combo)
-
-            # Tie column — affine (offset / equal-spacing) tie editor. A tie is
-            # mutually exclusive with Fix and Link (the engine rejects both).
-            tie_button = _make_tie_button()
-            tie_button._param_name = pname  # type: ignore[attr-defined]
-            self._param_table.setCellWidget(i, _SINGLE_PARAM_TIE_COLUMN, tie_button)
-            self._wire_tie_button(i, tie_button, fix_checkbox, link_combo)
-
-        _configure_fraction_rows_in_table(
-            self._param_table,
-            model,
-            min_column=3,
-            max_column=4,
-        )
-        self._updating_fraction_values = False
-        self._synchronize_fraction_value_rows()
-        _size_param_table_to_content(self._param_table)
+        # shape_factor_a (instrument normalisation) is held by default alongside
+        # the model's declared fixed-by-default parameters.
+        fixed_names = set(model.fixed_by_default_params()) | {"shape_factor_a"}
+        self._param_table.populate(model, value_overrides=value_overrides, fixed_names=fixed_names)
 
     def _synchronize_fraction_value_rows(self, edited_param_name: str | None = None) -> None:
-        self._updating_fraction_values = True
-        try:
-            _synchronize_fraction_group_values_in_table(
-                self._param_table,
-                self._composite_model,
-                edited_param_name=edited_param_name,
-            )
-        finally:
-            self._updating_fraction_values = False
+        self._param_table.synchronize_fractions(edited_param_name)
 
-    def _on_param_table_item_changed(self, item: QTableWidgetItem) -> None:
-        if self._updating_fraction_values or item.column() != 1:
-            return
-        name_item = self._param_table.item(item.row(), 0)
-        param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item is not None else None
-        if isinstance(param_name, str):
-            self._synchronize_fraction_value_rows(param_name)
+    @property
+    def _updating_fraction_values(self) -> bool:
+        """Proxy the parameter table's bulk-write guard.
 
-    def _wire_fix_link_exclusion(self, fix_checkbox: QCheckBox, link_combo: QComboBox) -> None:
-        """Keep a row's Fix checkbox and Link-group combo mutually exclusive.
-
-        Selecting a link group disables (and clears) Fix; ticking Fix disables
-        (and clears) the link group. Programmatic table updates set
-        ``_updating_fraction_values`` and are ignored, so restoring saved state
-        never fights itself.
+        The table owns the guard now; existing call sites that wrap programmatic
+        cell writes (fit-result write-back, RRF shift, restore) toggle this and
+        the suppression still works because both read the same flag.
         """
+        tbl = getattr(self, "_param_table", None)
+        return bool(tbl.is_updating) if tbl is not None else False
 
-        def on_fix_toggled(checked: bool) -> None:
-            if self._updating_fraction_values:
-                return
-            if checked and _link_group_combo_value(link_combo) is not None:
-                self._updating_fraction_values = True
-                try:
-                    _set_link_group_combo_value(link_combo, None)
-                finally:
-                    self._updating_fraction_values = False
-            link_combo.setEnabled(not checked)
-
-        def on_link_changed(_index: int) -> None:
-            if self._updating_fraction_values:
-                return
-            linked = _link_group_combo_value(link_combo) is not None
-            if linked and fix_checkbox.isChecked():
-                self._updating_fraction_values = True
-                try:
-                    fix_checkbox.setChecked(False)
-                finally:
-                    self._updating_fraction_values = False
-            fix_checkbox.setEnabled(not linked)
-
-        fix_checkbox.toggled.connect(on_fix_toggled)
-        link_combo.currentIndexChanged.connect(on_link_changed)
-
-    def _tie_candidate_names(self, row: int) -> list[str]:
-        """Parameter names a row may reference in a tie: other, *untied* rows.
-
-        Excludes the row itself (no self-reference) and any already-tied row (the
-        engine forbids tie-to-tie chaining), so every offered reference is valid.
-        """
-        names: list[str] = []
-        for i in range(self._param_table.rowCount()):
-            if i == row:
-                continue
-            name_item = self._param_table.item(i, 0)
-            name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
-            if not isinstance(name, str):
-                continue
-            other_button = self._param_table.cellWidget(i, _SINGLE_PARAM_TIE_COLUMN)
-            if _tie_button_value(other_button) is not None:
-                continue
-            names.append(name)
-        # Auxiliary (non-model) parameters carried from a loaded project are also
-        # valid references — include them so a restored tie that points at one
-        # (e.g. an API-authored half-splitting ``delta``) survives a dialog edit.
-        for entry in self._auxiliary_param_state:
-            aux_name = entry.get("name")
-            if isinstance(aux_name, str) and aux_name not in names:
-                names.append(aux_name)
-        return names
-
-    def _wire_tie_button(
-        self,
-        row: int,
-        tie_button: QPushButton,
-        fix_checkbox: QCheckBox,
-        link_combo: QComboBox,
-    ) -> None:
-        """Open the affine-tie editor and keep Tie mutually exclusive with Fix/Link.
-
-        A tied parameter is derived from others, so it cannot also be fixed or
-        link-grouped (the engine raises on either combination). Setting a tie
-        clears and disables this row's Fix and Link controls; clearing the tie
-        re-enables them.
-        """
-
-        def on_clicked() -> None:
-            candidates = self._tie_candidate_names(row)
-            if not candidates:
-                QMessageBox.information(
-                    self,
-                    "Affine tie",
-                    "An affine tie needs at least one other free parameter to "
-                    "reference. Add or untie another parameter first.",
-                )
-                return
-            name = getattr(tie_button, "_param_name", "")
-            dialog = AffineTieDialog(name, candidates, _tie_button_value(tie_button), self)
-            if dialog.exec() != QDialog.DialogCode.Accepted:
-                return
-            tie = dialog.tie()
-            _set_tie_button_value(tie_button, tie)
-            self._updating_fraction_values = True
-            try:
-                if tie is not None:
-                    fix_checkbox.setChecked(False)
-                    _set_link_group_combo_value(link_combo, None)
-            finally:
-                self._updating_fraction_values = False
-            fix_checkbox.setEnabled(tie is None)
-            link_combo.setEnabled(tie is None)
-
-        tie_button.clicked.connect(on_clicked)
+    @_updating_fraction_values.setter
+    def _updating_fraction_values(self, value: bool) -> None:
+        tbl = getattr(self, "_param_table", None)
+        if tbl is not None:
+            tbl._updating = bool(value)
 
     def _edit_function(self) -> None:
         """Launch the fit-function builder dialog."""
@@ -2679,83 +2468,15 @@ class SingleFitTab(QWidget):
         value (the only hard error; bad bounds fall back to ±inf). Shared by
         the fit run and the pull-distribution diagnostic.
         """
-        parameters = ParameterSet()
-        for i in range(self._param_table.rowCount()):
-            name_item = self._param_table.item(i, 0)
-            param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
-            if not isinstance(param_name, str):
-                param_name = name_item.text() if name_item else f"param_{i}"
-
-            try:
-                value = float(self._param_table.item(i, 1).text())
-            except (ValueError, AttributeError) as exc:
-                raise ValueError(f"Invalid value for {_format_param_label(param_name)}") from exc
-
-            fix_widget = self._param_table.cellWidget(i, 2)
-            fix_checkbox = fix_widget.findChild(QCheckBox)
-            fixed = fix_checkbox.isChecked() if fix_checkbox else False
-
-            try:
-                min_text = self._param_table.item(i, 3).text()
-                min_val = float(min_text) if min_text and min_text != "-inf" else -float("inf")
-            except (ValueError, AttributeError):
-                min_val = -float("inf")
-
-            try:
-                max_text = self._param_table.item(i, 4).text()
-                max_val = float(max_text) if max_text and max_text != "inf" else float("inf")
-            except (ValueError, AttributeError):
-                max_val = float("inf")
-
-            link_combo = self._param_table.cellWidget(i, _SINGLE_PARAM_LINK_COLUMN)
-            link_group = _link_group_combo_value(link_combo)
-            tie = _tie_button_value(self._param_table.cellWidget(i, _SINGLE_PARAM_TIE_COLUMN))
-
-            parameters.add(
-                Parameter(
-                    name=param_name,
-                    value=value,
-                    min=min_val,
-                    max=max_val,
-                    fixed=fixed,
-                    link_group=link_group,
-                    tie=tie,
-                )
-            )
-        # Re-add auxiliary (non-model) parameters preserved from a loaded project
-        # so a tie referencing them still resolves in a GUI re-fit.
-        for entry in self._auxiliary_param_state:
-            parameters.add(_parameter_from_state_dict(entry))
-        return parameters
+        return self._param_table.read_parameter_set()
 
     def current_seed_values(self) -> dict[str, str]:
         """Return the live parameter-table seed text keyed by parameter name.
 
-        Reads column 1 of each row verbatim. Once a fit has run the table
-        already holds its converged values (see ``_run_fit``), so this is the
-        current single-fit seed for every parameter. Used to seed the Batch
-        tab from these values rather than letting it fall back to model
-        defaults or stale preserved state (BUG B8c). Rows whose value is not a
-        finite number are skipped so one malformed cell never blocks the send.
+        Used to seed the Batch tab from the current single-fit values rather than
+        model defaults / stale state; non-finite cells are skipped.
         """
-        seeds: dict[str, str] = {}
-        for row in range(self._param_table.rowCount()):
-            name_item = self._param_table.item(row, 0)
-            if name_item is None:
-                continue
-            name = name_item.data(Qt.ItemDataRole.UserRole)
-            if not isinstance(name, str):
-                continue
-            value_item = self._param_table.item(row, 1)
-            if value_item is None:
-                continue
-            text = value_item.text().strip()
-            try:
-                float(text)
-            except ValueError:
-                continue
-            seeds[name] = text
-        return seeds
+        return self._param_table.current_seed_values()
 
     def _run_fit(self) -> None:
         """Execute the fit."""
@@ -3018,71 +2739,12 @@ class SingleFitTab(QWidget):
                     log_text=self._fit_wizard_window.current_log_text(),
                 )
 
-        params = []
-        for i in range(self._param_table.rowCount()):
-            name_item = self._param_table.item(i, 0)
-            param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else f"param_{i}"
-            if not isinstance(param_name, str):
-                param_name = name_item.text() if name_item else f"param_{i}"
-
-            value_item = self._param_table.item(i, 1)
-            try:
-                value = float(value_item.text()) if value_item else 0.0
-            except ValueError:
-                value = 0.0
-
-            unc = (
-                value_item.data(_ValueUncertaintyDelegate._UNC_ROLE)
-                if value_item is not None
-                else None
-            )
-            unc_asym = (
-                value_item.data(_ValueUncertaintyDelegate._MINOS_ROLE)
-                if value_item is not None
-                else None
-            )
-
-            fix_widget = self._param_table.cellWidget(i, 2)
-            fix_checkbox = fix_widget.findChild(QCheckBox) if fix_widget else None
-            fixed = fix_checkbox.isChecked() if fix_checkbox else False
-
-            min_item = self._param_table.item(i, 3)
-            max_item = self._param_table.item(i, 4)
-            role_item = self._param_table.item(i, _SINGLE_PARAM_BATCH_COLUMN)
-            role = role_item.data(_PARAM_BATCH_ROLE_DATA) if role_item is not None else None
-            link_combo = self._param_table.cellWidget(i, _SINGLE_PARAM_LINK_COLUMN)
-            tie = _tie_button_value(self._param_table.cellWidget(i, _SINGLE_PARAM_TIE_COLUMN))
-            params.append(
-                {
-                    "name": param_name,
-                    "value": value,
-                    "fixed": fixed,
-                    "min": min_item.text() if min_item else "-inf",
-                    "max": max_item.text() if max_item else "inf",
-                    "uncertainty": unc,
-                    "uncertainty_asymmetric": list(unc_asym) if unc_asym is not None else None,
-                    "role": role if isinstance(role, str) else None,
-                    "link_group": _link_group_combo_value(link_combo),
-                    "tie": tie.to_dict() if tie is not None else None,
-                }
-            )
-
-        # Re-emit auxiliary (non-model) parameters preserved from a loaded
-        # project so they survive a GUI save (the table has no row for them).
-        params.extend(copy.deepcopy(entry) for entry in self._auxiliary_param_state)
-
-        normalized_values = _normalized_model_param_values(
-            self._composite_model,
-            {str(entry["name"]): float(entry.get("value", 0.0)) for entry in params},
-        )
-
         state = {
             "model_name": "Composite",
             "composite_model": self._composite_model.to_dict(),
-            "parameters": [
-                {**entry, "value": normalized_values.get(str(entry["name"]), entry["value"])}
-                for entry in params
-            ],
+            # The table serialises its rows (incl. auxiliary non-model params and
+            # fraction-value normalisation).
+            "parameters": self._param_table.parameters_state(),
             "result_html": self._result_label.text(),
         }
         if (
@@ -3127,88 +2789,11 @@ class SingleFitTab(QWidget):
                         "see Setup → User functions…"
                     )
 
-        params_data = {p["name"]: p for p in state.get("parameters", [])}
-        normalized_state_values = _normalized_model_param_values(
-            self._composite_model,
-            {
-                str(name): float(entry.get("value", 0.0))
-                for name, entry in params_data.items()
-                if entry.get("value") is not None
-            },
-        )
-        self._updating_fraction_values = True
-        for i in range(self._param_table.rowCount()):
-            name_item = self._param_table.item(i, 0)
-            param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
-            if not isinstance(param_name, str) and name_item:
-                param_name = name_item.text()
-            if param_name not in params_data:
-                continue
-
-            p_data = params_data[param_name]
-
-            value_item = self._param_table.item(i, 1)
-            if value_item:
-                value_item.setText(
-                    str(normalized_state_values.get(param_name, p_data.get("value", 0.0)))
-                )
-                unc = p_data.get("uncertainty")
-                value_item.setData(_ValueUncertaintyDelegate._UNC_ROLE, unc)
-                value_item.setData(
-                    _ValueUncertaintyDelegate._MINOS_ROLE, p_data.get("uncertainty_asymmetric")
-                )
-
-            fix_widget = self._param_table.cellWidget(i, 2)
-            fix_checkbox = fix_widget.findChild(QCheckBox) if fix_widget else None
-            if fix_checkbox:
-                fix_checkbox.setChecked(bool(p_data.get("fixed", False)))
-
-            min_item = self._param_table.item(i, 3)
-            if min_item:
-                min_item.setText(str(p_data.get("min", "-inf")))
-
-            max_item = self._param_table.item(i, 4)
-            if max_item:
-                max_item.setText(str(p_data.get("max", "inf")))
-
-            _set_param_batch_role_cell(self._param_table, i, p_data.get("role"))
-
-            link_combo = self._param_table.cellWidget(i, _SINGLE_PARAM_LINK_COLUMN)
-            raw_link = p_data.get("link_group")
-            _set_link_group_combo_value(
-                link_combo, int(raw_link) if isinstance(raw_link, (int, float)) else None
-            )
-
-            # Affine tie — mutually exclusive with Fix/Link, which it overrides.
-            tie_button = self._param_table.cellWidget(i, _SINGLE_PARAM_TIE_COLUMN)
-            raw_tie = p_data.get("tie")
-            tie = AffineTie.from_dict(raw_tie) if isinstance(raw_tie, dict) else None
-            _set_tie_button_value(tie_button, tie)
-            if tie is not None:
-                if fix_checkbox is not None:
-                    fix_checkbox.setChecked(False)
-                _set_link_group_combo_value(link_combo, None)
-            if fix_checkbox is not None:
-                fix_checkbox.setEnabled(tie is None)
-            link_combo.setEnabled(tie is None)
-
-        # Preserve auxiliary (non-model) parameters that have no table row — e.g.
-        # an API-authored half-splitting `delta` an affine tie references — so a
-        # GUI save/re-fit does not silently drop them and break the tie.
-        row_names: set[str] = set()
-        for i in range(self._param_table.rowCount()):
-            ni = self._param_table.item(i, 0)
-            nm = ni.data(Qt.ItemDataRole.UserRole) if ni else None
-            if isinstance(nm, str):
-                row_names.add(nm)
-        self._auxiliary_param_state = [
-            copy.deepcopy(entry)
-            for entry in state.get("parameters", [])
-            if isinstance(entry, dict) and entry.get("name") not in row_names
-        ]
-
-        self._updating_fraction_values = False
-        self._synchronize_fraction_value_rows()
+        # The table applies the saved values/fix/bounds/link/tie onto its rows
+        # (the model was just rebuilt by _set_composite_model) and re-establishes
+        # auxiliary non-model parameters that have no row.
+        params_data = {p["name"]: p for p in state.get("parameters", []) if isinstance(p, dict)}
+        self._param_table.restore_parameters(params_data)
 
         result_html = state.get("result_html")
         if isinstance(result_html, str) and result_html:
