@@ -140,6 +140,20 @@ def test_populate_clears_stale_auxiliary_params_on_model_change(qapp):
     assert all(s["name"] != "delta" for s in table.parameters_state())
 
 
+def test_populate_param_names_restricts_rows(qapp):
+    # The grouped physics table renders only a subset (nuisance amplitudes omitted).
+    model = _model()
+    table = FitParameterTable()
+    subset = [n for n in model.param_names if n != "A_bg"]
+    table.populate(model, param_names=subset)
+    names = [
+        table.item(r, table.COL_NAME).data(Qt.ItemDataRole.UserRole)
+        for r in range(table.rowCount())
+    ]
+    assert names == subset
+    assert "A_bg" not in {p.name for p in table.read_parameter_set()}
+
+
 def test_batch_column_can_be_hidden(qapp):
     table = FitParameterTable()
     table.populate(_model())

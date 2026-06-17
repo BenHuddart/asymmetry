@@ -1414,8 +1414,15 @@ class FitParameterTable(QTableWidget):
         *,
         value_overrides: dict[str, float] | None = None,
         fixed_names: frozenset[str] | set[str] = frozenset(),
+        param_names: list[str] | None = None,
     ) -> None:
-        """Build one row per model parameter, seeding values and the Fix state."""
+        """Build one row per parameter, seeding values and the Fix state.
+
+        ``param_names`` restricts the rows to a subset of the model's parameters
+        (e.g. the grouped physics table, which omits per-group nuisance
+        amplitudes); fraction-row helpers locate rows by name, so a subset is
+        safe. Defaults to every model parameter.
+        """
         self._composite_model = model
         # A fresh model build owns the parameter namespace: drop auxiliaries from a
         # previous (different-model) restore so they can't resurrect as ghost
@@ -1423,9 +1430,10 @@ class FitParameterTable(QTableWidget):
         # re-establishes them for the matching model.
         self._auxiliary_param_state = []
         overrides = value_overrides or {}
+        names = list(model.param_names) if param_names is None else list(param_names)
         with self.suspend():
-            self.setRowCount(len(model.param_names))
-            for i, pname in enumerate(model.param_names):
+            self.setRowCount(len(names))
+            for i, pname in enumerate(names):
                 self.setItem(
                     i, self.COL_NAME, _make_param_name_item(_format_param_label(pname), pname)
                 )
@@ -2842,6 +2850,7 @@ class GlobalFitTab(QWidget):
         parent: QWidget | None = None,
         *,
         member_kind: str = "runs",
+        grouped_single: bool = False,
     ) -> None:
         super().__init__(parent)
         layout = QVBoxLayout(self)
@@ -2849,6 +2858,11 @@ class GlobalFitTab(QWidget):
         # the groups surface (Individual-groups representation) is group-membered,
         # every other surface is run-membered. (Phase 3: scope is derived, not selected.)
         self._member_kind = member_kind if member_kind in ("runs", "groups") else "runs"
+        # The single grouped fit (one dataset's detector groups) shares one
+        # fit-function across its groups, so its physics params take the
+        # single-fit-style Fix tickbox rather than the Global/Local/Fixed combo
+        # (which only makes sense for the multi-run batch grouped fit).
+        self._grouped_single = bool(grouped_single) and self._member_kind == "groups"
 
         self._fit_engine = FitEngine()
         self._domain = "time"

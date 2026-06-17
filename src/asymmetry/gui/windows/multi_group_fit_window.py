@@ -60,7 +60,7 @@ class MultiGroupFitWindow(QWidget):
 
         self._tabs = QTabWidget()
         # Single = the active run's multi-group fit; Batch = the multi-run series.
-        self._single_fit_tab = GlobalFitTab(self, member_kind="groups")
+        self._single_fit_tab = GlobalFitTab(self, member_kind="groups", grouped_single=True)
         self._batch_fit_tab = GlobalFitTab(self, member_kind="groups")
         for tab in (self._single_fit_tab, self._batch_fit_tab):
             tab.grouped_fit_completed.connect(self.grouped_fit_completed.emit)
