@@ -8025,6 +8025,15 @@ class MainWindow(QMainWindow):
             RepresentationType.FREQ_FFT,
             RepresentationType.FREQ_MAXENT,
         )
+        # A group series whose physics parameters are all global (none "local")
+        # holds one physics value per source run, replicated across that run's
+        # group members. Collapse it to one trend point per run so the parameter
+        # plots once per dataset rather than once per detector group. A series
+        # with a per-group (local) physics parameter keeps its per-member rows.
+        collapse_groups = series.member_kind == "groups" and not any(
+            role == "local" for role in series.param_roles.values()
+        )
+        seen_source_runs: set[int] = set()
         for member_key in series.member_run_numbers:
             summary = series.results_by_run.get(member_key)
             if not summary or not summary.get("success"):
@@ -8035,16 +8044,27 @@ class MainWindow(QMainWindow):
             # members read their own richer spectrum metadata, so they are not
             # routed through the browser here.
             browser_run: int | None = None
+            row_run_number = member_key
             if series.member_kind == "groups":
                 source_run = series.source_run_for(member_key)
+                if collapse_groups:
+                    if source_run in seen_source_runs:
+                        continue
+                    seen_source_runs.add(source_run)
                 dataset = (
                     self._data_browser.get_dataset(source_run)
                     if hasattr(self._data_browser, "get_dataset")
                     else None
                 )
                 browser_run = source_run
-                group_idx = abs(member_key) % 1000
-                run_label = f"R{source_run}/G{group_idx}"
+                if collapse_groups:
+                    # One point per run, keyed by the source run (matches the
+                    # browser-highlight mapping); label resolved from the dataset.
+                    row_run_number = source_run
+                    run_label = None
+                else:
+                    group_idx = abs(member_key) % 1000
+                    run_label = f"R{source_run}/G{group_idx}"
             else:
                 # Frequency-domain spectra may carry richer / more-accurate
                 # metadata than the time-domain entry in the data browser.
@@ -8060,7 +8080,7 @@ class MainWindow(QMainWindow):
 
             meta = getattr(dataset, "metadata", {}) or {}
             if run_label is None:
-                run_label = str(summary.get("run_label") or meta.get("run_label") or member_key)
+                run_label = str(summary.get("run_label") or meta.get("run_label") or row_run_number)
 
             # Fallback coordinate for older series persisted before T/B was
             # Lazily resolve the browser's *displayed* coordinate (honouring the
@@ -8104,14 +8124,26 @@ class MainWindow(QMainWindow):
                 else {}
             )
 
+            values = dict(summary.get("parameters", {}))
+            errors = dict(summary.get("uncertainties", {}))
+            if collapse_groups:
+                # The collapsed row represents the whole run via one group member,
+                # so drop the per-group nuisance parameters: only the cross-group
+                # physics params (global/fixed, identical across groups) are
+                # meaningful per run. Keeping a nuisance would expose it as a
+                # trend Y that silently plots just this one group's value.
+                for nuisance in series.nuisance_params:
+                    values.pop(nuisance, None)
+                    errors.pop(nuisance, None)
+
             rows.append(
                 {
-                    "run_number": member_key,
+                    "run_number": row_run_number,
                     "run_label": run_label,
                     "field": float(field),
                     "temperature": float(temperature),
-                    "values": dict(summary.get("parameters", {})),
-                    "errors": dict(summary.get("uncertainties", {})),
+                    "values": values,
+                    "errors": errors,
                     "custom_values": custom_values,
                 }
             )

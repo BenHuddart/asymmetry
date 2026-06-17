@@ -441,7 +441,9 @@ class TestRefreshTrendPanel:
         assert len(panel._group_fit_results) == 1
         gdata = next(iter(panel._group_fit_results.values()))
         assert len(gdata.rows) == 1
-        assert gdata.rows[0].run_number == -42001
+        # Physics is global (Lambda), so the series collapses to one trend point
+        # per source run, keyed by the run (42), not the synthetic group key.
+        assert gdata.rows[0].run_number == 42
 
     def test_add_to_series_refreshes_trend_panel(self, mw, monkeypatch):
         """After Add-to-Series the trend panel shows the extended membership."""
