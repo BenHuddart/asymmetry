@@ -8883,13 +8883,21 @@ class MainWindow(QMainWindow):
         return {}
 
     def _record_grouped_fit_series(self, grouped_datasets, results_dict) -> str | None:
-        """Persist a completed grouped fit as a ``FitSeries(member_kind="groups")``.
+        """Persist a completed grouped time-domain fit.
 
-        Each ``(run, group)`` member is keyed by its synthetic group key so the
-        series' ``results_by_run`` drives parameter trending exactly like a run
-        series.  The two-tier classification is recorded as physics ``param_roles``
-        plus the always-per-group ``nuisance_params`` block.  Each source run's
-        grouped representation gets one pointer ``FitSlot`` into the series.
+        A **multi-run batch** (≥2 source runs) is recorded as a
+        ``FitSeries(member_kind="groups")``: each ``(run, group)`` member is keyed
+        by its synthetic group key so the series' ``results_by_run`` drives
+        parameter trending exactly like a run series.  The two-tier classification
+        is recorded as physics ``param_roles`` plus the always-per-group
+        ``nuisance_params`` block, and each source run's grouped representation
+        gets one pointer ``FitSlot`` into the series.  Returns the new batch id.
+
+        A **single-dataset** grouped fit (one source run) is *not* a series — a
+        one-point series has no varying parameter to trend.  It is stored like an
+        ordinary single fit: the per-group results land directly on the dataset's
+        grouped ``FitSlot`` (provenance ``"single"``, no ``batch_id``) and the
+        method returns ``None``.
         """
         if not isinstance(grouped_datasets, list) or not isinstance(results_dict, dict):
             return None
@@ -8952,6 +8960,28 @@ class MainWindow(QMainWindow):
             summary.update(self._dataset_trend_coords(int(source_run)))
             results_by_run[key] = summary
         if not member_keys:
+            return None
+
+        unique_source_runs = sorted(set(member_source_run.values()))
+
+        # A single-dataset grouped fit behaves like an ordinary single fit: its
+        # per-group results are stored directly on the dataset's grouped FitSlot
+        # and NO FitSeries is created. A one-source-run series collapses to a
+        # single trend point with no varying parameter, so it is un-trendable and
+        # would only clutter the trend selector. A FitSeries is created only for a
+        # multi-run batch — the unit parameter trending actually consumes.
+        if len(unique_source_runs) <= 1:
+            source_run = int(unique_source_runs[0])
+            representation = self._project_model.ensure_dataset(source_run).ensure(rep_type)
+            representation.fit = FitSlot(
+                model=canonical_model,
+                result={"groups": {str(key): results_by_run[key] for key in member_keys}},
+                provenance="single",
+                batch_id=None,
+            )
+            # Drop any stale series association and re-evaluate divergence so an
+            # earlier batch that included this run reflects the new single fit.
+            self._project_model.refresh_divergence()
             return None
 
         series = FitSeries(
@@ -9311,11 +9341,11 @@ class MainWindow(QMainWindow):
         new_batch_id = self._record_grouped_fit_series(grouped_datasets, results_dict)
         # Pull-based refresh: surface the newly recorded series in the trend panel
         # so it is not lost among older series — but only for a multi-run *batch*
-        # grouped fit. A single grouped fit (one source run) stays on the plot/fit
-        # view like an ordinary single fit (it still records + loads the series).
-        series = self._project_model.batch(new_batch_id) if new_batch_id else None
-        is_single_grouped = series is not None and len(set(series.member_source_run.values())) <= 1
-        self._refresh_trend_panel(select_batch_id=new_batch_id, surface=not is_single_grouped)
+        # grouped fit, which is the only case that records a FitSeries. A single
+        # grouped fit (one source run) records its result on the dataset and
+        # returns no batch id, so it stays on the plot/fit view like an ordinary
+        # single fit.
+        self._refresh_trend_panel(select_batch_id=new_batch_id, surface=new_batch_id is not None)
 
         fit_curves = {}
         if fit_function is None and hasattr(self._fit_panel, "global_fit_formula_string"):
