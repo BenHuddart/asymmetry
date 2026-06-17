@@ -242,7 +242,9 @@ class MultiGroupFitWindow(QWidget):
 
         # N3 interpretive guard: the count fit consumes raw counts, so a grouping
         # background correction does NOT reach it. Surface that when active so a
-        # user does not fix the fit's background to zero and bias N0/α.
+        # user does not fix the fit's background to zero and bias N0/α. It lives
+        # inside Count-fit options (the section that owns the background term) so
+        # it does not occupy the always-visible header when collapsed.
         self._bg_active_note = QLabel(
             "Note: this run has a grouping background correction. The count fit "
             "reads raw counts, so its background term measures the full flat "
@@ -251,7 +253,7 @@ class MultiGroupFitWindow(QWidget):
         self._bg_active_note.setWordWrap(True)
         self._bg_active_note.setStyleSheet("color: palette(mid);")
         self._bg_active_note.setVisible(False)
-        outer.addWidget(self._bg_active_note)
+        self._count_options_section.addWidget(self._bg_active_note)
         return box
 
     def _on_promote_deadtime(self) -> None:
