@@ -6242,12 +6242,24 @@ class GlobalFitTab(QWidget):
 
         self._restore_group_param_table_state(state.get("group_parameters"))
         self._restore_table_state(self._group_model_table, state.get("group_model_parameters"))
-        _configure_fraction_rows_in_table(
-            self._group_model_table,
-            self._grouped_fit_model(),
-            bounds_column=3,
-            type_column=2,
-        )
+        if isinstance(self._group_model_table, FitParameterTable):
+            # The single grouped physics table has separate min/max columns (not a
+            # single "min, max" bounds column), so the fraction 0–1 bounds must go
+            # into COL_MIN/COL_MAX — matching the populate() path. Passing
+            # bounds_column=3 here would write "0, 1" into the min field.
+            _configure_fraction_rows_in_table(
+                self._group_model_table,
+                self._grouped_fit_model(),
+                min_column=FitParameterTable.COL_MIN,
+                max_column=FitParameterTable.COL_MAX,
+            )
+        else:
+            _configure_fraction_rows_in_table(
+                self._group_model_table,
+                self._grouped_fit_model(),
+                bounds_column=3,
+                type_column=2,
+            )
         self._synchronize_grouped_model_fraction_rows()
 
         result_html = state.get("result_html")

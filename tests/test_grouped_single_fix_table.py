@@ -84,6 +84,31 @@ def test_single_grouped_parse_roles_are_global_or_fixed(qapp):
     assert "local" not in state["param_roles"].values()
 
 
+def test_single_grouped_fraction_bounds_survive_restore(qapp):
+    # Regression: restore_state must place the fraction 0–1 bounds in the separate
+    # MIN/MAX columns of the Fix-tickbox table, not write the "0, 1" bounds string
+    # into the MIN field (which happened when fraction config used bounds_column=3).
+    tab = GlobalFitTab(member_kind="groups", grouped_single=True)
+    model = CompositeModel(["OscillatoryField", "Constant"], operators=["+"])
+    grouped = model.with_default_fraction_groups()
+    tab._composite_model = model
+    tab._grouped_fit_model = lambda: grouped  # type: ignore[method-assign]
+    tab._grouped_mode_context = lambda: ([], [], "")  # type: ignore[method-assign]
+    tab._rebuild_grouped_model_table({})
+
+    tab.restore_state(tab.get_state())
+
+    table = tab._group_model_table
+    rows = {
+        table.item(r, FitParameterTable.COL_NAME).data(Qt.ItemDataRole.UserRole): r
+        for r in range(table.rowCount())
+    }
+    for fraction in ("fraction_1", "fraction_2"):
+        assert fraction in rows
+        assert table.item(rows[fraction], FitParameterTable.COL_MIN).text() == "0.0"
+        assert table.item(rows[fraction], FitParameterTable.COL_MAX).text() == "1.0"
+
+
 def test_single_grouped_physics_state_round_trips(qapp):
     # The Fix-tickbox physics table serialises in the shared {value, type, bounds}
     # shape so project save/restore preserves value, Fix and bounds.
