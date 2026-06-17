@@ -2824,6 +2824,9 @@ class GlobalFitTab(QWidget):
     global_fit_started = Signal()  # emitted just before the worker launches
     global_fit_completed = Signal(object, object)  # (results_dict, global_params)
     grouped_fit_completed = Signal(object, object)  # (grouped_datasets, results_dict)
+    # (run_number, model, physics_values_by_name) — a converged single grouped
+    # fit's shared physics, so the batch grouped surface can chain-seed per run.
+    single_grouped_fit_recorded = Signal(int, object, object)
     grouped_preview_requested = Signal(object, object)  # (grouped_datasets, preview_curves)
     fit_range_edit_committed = Signal(float, float)  # (x_min, x_max) from spinbox commit
     # (dataset, {"result": FitResult|GroupedTimeDomainFitResult,
@@ -2833,6 +2836,7 @@ class GlobalFitTab(QWidget):
     count_fit_completed = Signal(object, object)
     count_grouping_promoted = Signal(object)  # (dataset) — a count calibration hit the grouping
     share_function_with_group_requested = Signal(int)  # (source run) — single grouped surface
+    send_grouped_model_to_batch_requested = Signal()  # single grouped surface → batch surface
 
     def __init__(
         self,
@@ -2866,6 +2870,9 @@ class GlobalFitTab(QWidget):
         self._member_datasets: list[MuonDataset] = []
         # Populated by the grouped-context builder: run_number -> list[groups].
         self._grouped_members: dict[int, list[object]] = {}
+        # Lazily-computed per-(run, group) nuisance auto-seeds, cached under the
+        # same key as the grouped context (invalidated together).
+        self._grouped_seed_cache: tuple[object, dict] | None = None
         # Batch-series seeding mode (menu-bar "Batch seeding"); "auto" picks
         # chain-from-previous for ordered scans, else independent seeds.
         self._batch_seeding_mode = "auto"
@@ -2954,6 +2961,12 @@ class GlobalFitTab(QWidget):
             self._share_group_btn.setEnabled(False)
             self._share_group_btn.clicked.connect(self._on_share_function_with_group)
             model_button_layout.addWidget(self._share_group_btn, 0, Qt.AlignmentFlag.AlignLeft)
+            self._send_to_batch_btn = QPushButton("Send to Batch")
+            self._send_to_batch_btn.setToolTip(
+                "Copy this grouped fit function and its seeds to the Batch surface."
+            )
+            self._send_to_batch_btn.clicked.connect(self.send_grouped_model_to_batch_requested.emit)
+            model_button_layout.addWidget(self._send_to_batch_btn, 0, Qt.AlignmentFlag.AlignLeft)
         self._formula_row_label = QLabel("A(t):")
         model_layout.addRow(self._formula_row_label, self._formula_box)
         model_layout.addRow("", model_button_layout)
@@ -3151,9 +3164,16 @@ class GlobalFitTab(QWidget):
         self._preview_btn = QPushButton("Preview")
         self._preview_btn.clicked.connect(self._on_preview_requested)
         self._preview_btn.setEnabled(False)
-        self._initial_values_btn = QPushButton("Initial Values...")
+        # The grouped batch surface hides the per-group table, so its per-(run,
+        # group) nuisances are edited only through this dialog — name it for that.
+        batch_grouped = self._member_kind == "groups" and not self._grouped_single
+        self._initial_values_btn = QPushButton(
+            "Edit per-group initial values…" if batch_grouped else "Initial Values..."
+        )
         self._initial_values_btn.setToolTip(
-            "Edit per-member initial parameter values (per run, or per run/group for grouped fits)."
+            "Edit each (run, group)'s initial nuisance values (auto-seeded per dataset)."
+            if batch_grouped
+            else "Edit per-member initial parameter values (per run, or per run/group for grouped fits)."
         )
         self._initial_values_btn.clicked.connect(self._open_initial_values_dialog)
         self._minos_checkbox = QCheckBox("Asymmetric errors")
@@ -3308,6 +3328,8 @@ class GlobalFitTab(QWidget):
         """
         self._member_datasets = [ds for ds in (datasets or []) if ds is not None]
         self._grouped_context_cache = None
+        self._grouped_seed_cache = None
+        self._refresh_inherited_single_fit_defaults()
         self._update_mode_ui(preserve_result=False)
 
     def _grouped_member_datasets(self) -> list[MuonDataset]:
@@ -3347,6 +3369,7 @@ class GlobalFitTab(QWidget):
         # Invalidate the grouped-context memo whenever the active dataset
         # changes (its grouped groups depend only on this dataset).
         self._grouped_context_cache = None
+        self._grouped_seed_cache = None
         self._refresh_field_parameter_defaults_for_current_dataset()
         # The shared model phase is held at zero in grouped fits; the per-group
         # phase lives in the per-group phase nuisance, reseeded by the call below.
@@ -3634,15 +3657,23 @@ class GlobalFitTab(QWidget):
         )
 
     def _refresh_inherited_single_fit_defaults(self) -> None:
-        """Apply single-fit seeds when every selected dataset shares one model."""
+        """Apply single-fit seeds when every selected dataset shares one model.
+
+        Works for both the FB batch surface (over ``_datasets``) and the grouped
+        batch surface (over ``_member_datasets``). For grouped the shared model is
+        adopted so the fit-time inheritance gate matches, but the FB parameter
+        table is not filled (the grouped physics table is built separately).
+        """
         self._inherited_seed_by_run = {}
         self._inherited_model_dict = None
 
-        if len(self._datasets) < 2:
+        grouped = self._member_kind == "groups"
+        datasets = self._member_datasets if grouped else self._datasets
+        if len(datasets) < 2:
             return
 
         run_numbers: list[int] = []
-        for ds in self._datasets:
+        for ds in datasets:
             try:
                 run_numbers.append(int(ds.run_number))
             except (TypeError, ValueError):
@@ -3688,24 +3719,25 @@ class GlobalFitTab(QWidget):
 
         self._set_composite_model(inherited_model)
 
-        averages = self._inherited_param_averages(
-            inherited_values_by_run,
-            inherited_model.param_names,
-        )
-        if averages:
-            self._updating_fraction_values = True
-            for row in range(self._param_table.rowCount()):
-                name_item = self._param_table.item(row, 0)
-                pname = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
-                if not isinstance(pname, str):
-                    pname = name_item.text() if name_item else ""
-                if pname not in averages:
-                    continue
-                value_item = self._param_table.item(row, 1)
-                if value_item is not None:
-                    value_item.setText(f"{averages[pname]:.6g}")
-            self._updating_fraction_values = False
-            self._synchronize_fraction_value_rows()
+        if not grouped:
+            averages = self._inherited_param_averages(
+                inherited_values_by_run,
+                inherited_model.param_names,
+            )
+            if averages:
+                self._updating_fraction_values = True
+                for row in range(self._param_table.rowCount()):
+                    name_item = self._param_table.item(row, 0)
+                    pname = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
+                    if not isinstance(pname, str):
+                        pname = name_item.text() if name_item else ""
+                    if pname not in averages:
+                        continue
+                    value_item = self._param_table.item(row, 1)
+                    if value_item is not None:
+                        value_item.setText(f"{averages[pname]:.6g}")
+                self._updating_fraction_values = False
+                self._synchronize_fraction_value_rows()
 
         self._inherited_seed_by_run = inherited_values_by_run
         self._inherited_model_dict = inherited_model.to_dict()
@@ -4280,15 +4312,27 @@ class GlobalFitTab(QWidget):
             self._result_text.setText(str(exc))
             return
         group_values = dict(config.get("group_values", {}))  # param -> {group_id: value}
+        # Default each (run, group) to its OWN dataset's auto-seed (per-dataset
+        # FFT phase / counts), falling back to the shared table value; explicit
+        # user overrides still win.
+        auto_seeds = self._grouped_member_nuisance_seeds()
 
         params = [(name, _format_param_label(name), "local") for name in GROUP_NUISANCE_PARAMS]
         members: list[tuple[int, str]] = []
         values: dict[int, dict[str, float]] = {}
-        for key, label, _run, group_id in self._grouped_member_specs():
+        for key, label, run, group_id in self._grouped_member_specs():
             members.append((key, label))
             user = self._user_grouped_initial_values.get(key, {})
+            auto_for_run = auto_seeds.get(int(run), {})
             values[key] = {
-                name: float(user.get(name, group_values.get(name, {}).get(group_id, 0.0)))
+                name: float(
+                    user.get(
+                        name,
+                        auto_for_run.get(name, {}).get(
+                            str(group_id), group_values.get(name, {}).get(group_id, 0.0)
+                        ),
+                    )
+                )
                 for name in GROUP_NUISANCE_PARAMS
             }
         if not members:
@@ -5158,6 +5202,7 @@ class GlobalFitTab(QWidget):
         self._coadd_window_spin.setEnabled(self._coadd_mode != "off")
         self._coadd_window_label.setEnabled(self._coadd_mode != "off")
         self._grouped_context_cache = None
+        self._grouped_seed_cache = None
         self._update_mode_ui(preserve_result=False)
 
     def _on_coadd_window_changed(self, value: int) -> None:
@@ -5165,6 +5210,7 @@ class GlobalFitTab(QWidget):
         self._coadd_window = max(2, int(value))
         if self._coadd_mode != "off":
             self._grouped_context_cache = None
+            self._grouped_seed_cache = None
             self._update_mode_ui(preserve_result=False)
 
     def _set_series_busy(self, busy: bool) -> None:
@@ -5399,6 +5445,32 @@ class GlobalFitTab(QWidget):
         bounds = dict(grouped_config["bounds"])
         fixed = set(grouped_config["fixed"])
 
+        # In batch grouped mode the per-group nuisance table is hidden, so each
+        # dataset's groups are seeded from their own data (FFT phase, counts).
+        # Precedence per nuisance: dialog override > per-(run, group) auto-seed >
+        # the table's shared group_values fallback. The single grouped surface
+        # keeps the table (user-editable) as the authoritative source.
+        auto_for_run: dict[str, dict[str, float]] = {}
+        if not self._grouped_single and run_number is not None:
+            auto_for_run = self._grouped_member_nuisance_seeds().get(int(run_number), {})
+
+        # Physics chain-seeding (batch only): when every member has a single
+        # grouped fit under the current model, seed each run's Local physics from
+        # its own single fit and Global/Fixed from the cross-run average — the
+        # grouped analogue of FB's _effective_initial_values_by_run.
+        physics_roles = dict(grouped_config.get("physics_roles", {}))
+        run_physics_seed: dict[str, float] = {}
+        physics_averages: dict[str, float] = {}
+        if not self._grouped_single and run_number is not None and self._inherited_seed_by_run:
+            if self._inherited_model_dict == self._composite_model.to_dict():
+                member_runs = {int(r) for r in self._grouped_members}
+                if member_runs and member_runs.issubset(self._inherited_seed_by_run):
+                    run_physics_seed = self._inherited_seed_by_run.get(int(run_number), {})
+                    physics_averages = self._inherited_param_averages(
+                        {r: self._inherited_seed_by_run[r] for r in member_runs},
+                        list(model_values),
+                    )
+
         for index, group in enumerate(grouped_groups, start=1):
             user_values: dict[str, float] = {}
             if run_number is not None:
@@ -5408,6 +5480,9 @@ class GlobalFitTab(QWidget):
             for name in GROUP_NUISANCE_PARAMS:
                 per_group_values = nuisance_group_values.get(name, {})
                 value = float(per_group_values.get(group.group_id, 0.0))
+                auto_value = auto_for_run.get(name, {}).get(str(group.group_id))
+                if auto_value is not None:
+                    value = float(auto_value)
                 if name in user_values:
                     value = float(user_values[name])
                 min_val, max_val = bounds[name]
@@ -5421,11 +5496,18 @@ class GlobalFitTab(QWidget):
                     )
                 )
             for name, value in model_values.items():
+                seed_value = value
+                if run_physics_seed or physics_averages:
+                    if physics_roles.get(name) == "local":
+                        if name in run_physics_seed:
+                            seed_value = float(run_physics_seed[name])
+                    elif name in physics_averages:  # global / fixed
+                        seed_value = float(physics_averages[name])
                 min_val, max_val = bounds[name]
                 params.add(
                     Parameter(
                         name=name,
-                        value=value,
+                        value=seed_value,
                         min=min_val,
                         max=max_val,
                         fixed=name in fixed,
@@ -5935,6 +6017,55 @@ class GlobalFitTab(QWidget):
         self._result_text.setHtml(success_html("Grouped fit converged", detail=stats))
         self.grouped_fit_completed.emit(grouped_datasets, results_with_curves)
 
+        # Publish the run's shared physics so the batch grouped surface can
+        # chain-seed each run from its own single grouped fit (FB parity).
+        if self._grouped_single and self._current_dataset is not None:
+            physics_values = {
+                str(parameter.name): float(parameter.value)
+                for parameter in getattr(grouped_result, "shared_parameters", [])
+                if isinstance(getattr(parameter, "name", None), str)
+                and np.isfinite(float(getattr(parameter, "value", float("nan"))))
+            }
+            try:
+                run_number = int(self._current_dataset.run_number)
+            except (TypeError, ValueError):
+                run_number = None
+            if run_number is not None and physics_values and self._composite_model is not None:
+                self.single_grouped_fit_recorded.emit(
+                    run_number, self._composite_model, physics_values
+                )
+
+    def register_grouped_single_fit_seed(
+        self, run_number: int, model: CompositeModel, values_by_name: dict[str, float]
+    ) -> None:
+        """Store a single grouped fit's shared physics for batch chain-seeding.
+
+        Mirrors :meth:`register_single_fit_seed` (which reads a ``FitResult``) but
+        takes the already-extracted physics values from a grouped fit, then
+        refreshes the inherited-seed cache (grouped-aware).
+        """
+        finite_values: dict[str, float] = {}
+        for name, value in (values_by_name or {}).items():
+            if not isinstance(name, str):
+                continue
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError):
+                continue
+            if np.isfinite(numeric):
+                finite_values[name] = numeric
+        if not finite_values:
+            return
+        try:
+            run_key = int(run_number)
+        except (TypeError, ValueError):
+            return
+        self._single_fit_seed_by_run[run_key] = {
+            "model": model.to_dict(),
+            "values": finite_values,
+        }
+        self._refresh_inherited_single_fit_defaults()
+
     def shutdown_workers(self) -> None:
         """Cancel any running fit and wait for its thread (window close).
 
@@ -6154,7 +6285,10 @@ class GlobalFitTab(QWidget):
         grouped = self.is_grouped_time_domain_mode()
         self._param_group.setVisible(not grouped)
         self._grouped_context_label.setVisible(grouped)
-        self._group_param_group.setVisible(grouped)
+        # The batch grouped surface hides the per-group nuisance table — its
+        # per-(run, group) values are auto-seeded and edited via the dialog
+        # ("Edit per-group initial values…"). The single grouped surface keeps it.
+        self._group_param_group.setVisible(grouped and self._grouped_single)
         self._group_model_group.setVisible(grouped)
         # In-batch co-add only applies to grouped-series fits (≥2 members).
         self._coadd_group.setVisible(grouped)
@@ -6374,6 +6508,44 @@ class GlobalFitTab(QWidget):
     def _setup_group_nuisance_table(self) -> None:
         self._rebuild_group_nuisance_table(preserved_state=None)
 
+    def _grouped_member_nuisance_seeds(self) -> dict[int, dict[str, dict[str, float]]]:
+        """Per-(run, group) nuisance auto-seeds: ``{run -> {param -> {group_id: value}}}``.
+
+        Each member dataset's own groups are seeded independently (its own FFT
+        phase and count statistics) via the shared seeding helpers, so a batch
+        fit starts every dataset from its own estimates rather than a single
+        representative run's. Computed lazily and cached under the same key as the
+        grouped context, so no FFTs run on table rebuilds or selection changes —
+        only when a fit launches or the per-group dialog opens.
+        """
+        self._grouped_mode_context()  # ensure _grouped_members is current
+        member_ids = tuple(id(ds) for ds in self._grouped_member_datasets())
+        key = (member_ids, bool(self._fit_blocked), self._coadd_mode, int(self._coadd_window))
+        cache = self._grouped_seed_cache
+        if cache is not None and cache[0] == key:
+            return cache[1]
+
+        seeds: dict[int, dict[str, dict[str, float]]] = {}
+        for run, groups in self._grouped_members.items():
+            phases = _seed_group_absolute_phases(groups)
+            per_param: dict[str, dict[str, float]] = {name: {} for name in GROUP_NUISANCE_PARAMS}
+            for group in groups:
+                gid = str(getattr(group, "group_id", ""))
+                counts = np.asarray(getattr(group, "counts", []), dtype=float)
+                if counts.size:
+                    background, n0, amplitude = _seed_group_background_and_n0(
+                        counts, time=getattr(group, "time", None)
+                    )
+                    per_param["N0"][gid] = n0
+                    per_param["background"][gid] = background
+                    per_param["amplitude"][gid] = amplitude
+                if gid in phases and "relative_phase" in per_param:
+                    per_param["relative_phase"][gid] = phases[gid]
+            seeds[int(run)] = per_param
+
+        self._grouped_seed_cache = (key, seeds)
+        return seeds
+
     def _grouped_parameter_specs(
         self,
         grouped_groups: list[object] | None = None,
@@ -6476,23 +6648,28 @@ class GlobalFitTab(QWidget):
         n0_defaults_by_group: dict[str, float] = {}
         background_defaults_by_group: dict[str, float] = {}
         amplitude_defaults_by_group: dict[str, float] = {}
-        # Grouped fits hold the shared model phase fixed at zero (both the
-        # individual-groups Single surface and the multi-run batch surface), so
-        # each group's per-group phase nuisance carries the full *absolute* FFT
-        # phase estimate rather than an offset relative to the first group.
-        relative_phase_defaults_by_group = _seed_group_absolute_phases(grouped_groups)
-        for group in grouped_groups:
-            counts = np.asarray(getattr(group, "counts", []), dtype=float)
-            if counts.size == 0:
-                continue
-            group_id = getattr(group, "group_id", None)
-            background_default, n0_default, amplitude_default = _seed_group_background_and_n0(
-                counts,
-                time=getattr(group, "time", None),
-            )
-            n0_defaults_by_group[str(group_id)] = n0_default
-            background_defaults_by_group[str(group_id)] = background_default
-            amplitude_defaults_by_group[str(group_id)] = amplitude_default
+        relative_phase_defaults_by_group: dict[str, float] = {}
+        # Only the (visible) single grouped table is FFT-seeded here. The batch
+        # table is hidden and its per-(run, group) seeds come from the lazy
+        # _grouped_member_nuisance_seeds helper at fit/dialog time, so skip the
+        # per-group FFT/count estimates here to avoid a rebuild-time FFT storm.
+        if self._grouped_single:
+            # Grouped fits hold the shared model phase fixed at zero, so each
+            # group's per-group phase nuisance carries the full *absolute* FFT
+            # phase estimate rather than an offset relative to the first group.
+            relative_phase_defaults_by_group = _seed_group_absolute_phases(grouped_groups)
+            for group in grouped_groups:
+                counts = np.asarray(getattr(group, "counts", []), dtype=float)
+                if counts.size == 0:
+                    continue
+                group_id = getattr(group, "group_id", None)
+                background_default, n0_default, amplitude_default = _seed_group_background_and_n0(
+                    counts,
+                    time=getattr(group, "time", None),
+                )
+                n0_defaults_by_group[str(group_id)] = n0_default
+                background_defaults_by_group[str(group_id)] = background_default
+                amplitude_defaults_by_group[str(group_id)] = amplitude_default
 
         for row, name in enumerate(GROUP_NUISANCE_PARAMS):
             label_item = _make_param_name_item(_format_param_label(name), name)
@@ -6589,6 +6766,41 @@ class GlobalFitTab(QWidget):
 
     def _current_grouped_model_row_state(self) -> dict[str, dict[str, str]]:
         return self._table_state_map(self._group_model_table)
+
+    def current_grouped_seed_values(self) -> dict[str, str]:
+        """Return the live grouped physics-table seed text keyed by parameter name.
+
+        The grouped analogue of :meth:`current_seed_values`: used to seed the
+        Batch grouped surface from the Single grouped surface's physics values.
+        """
+        return {
+            name: str(entry.get("value", ""))
+            for name, entry in self._current_grouped_model_row_state().items()
+            if str(entry.get("value", "")).strip()
+        }
+
+    def apply_grouped_physics_seeds(self, seed_values: dict[str, str]) -> None:
+        """Write physics seed values into the grouped physics table by name.
+
+        Both the single (FitParameterTable) and batch (combo) physics tables keep
+        the name in column 0 and the value in column 1, so one path serves both.
+        """
+        if not seed_values:
+            return
+        table = self._group_model_table
+        blocked = table.blockSignals(True)
+        try:
+            for row in range(table.rowCount()):
+                name_item = table.item(row, 0)
+                name = name_item.data(Qt.ItemDataRole.UserRole) if name_item is not None else None
+                if not isinstance(name, str):
+                    name = name_item.text() if name_item is not None else None
+                if name in seed_values:
+                    value_item = table.item(row, 1)
+                    if value_item is not None:
+                        value_item.setText(str(seed_values[name]))
+        finally:
+            table.blockSignals(blocked)
 
     def _rebuild_grouped_model_table(self, preserved_state: dict[str, dict[str, str]]) -> None:
         grouped_model = self._grouped_fit_model()

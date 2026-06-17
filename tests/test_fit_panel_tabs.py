@@ -1408,7 +1408,9 @@ def test_grouped_tab_shows_one_value_column_per_group(
     dataset: MuonDataset,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    tab = GlobalFitTab(member_kind="groups")
+    # Per-group value columns + FFT seeding are the single (Individual-Groups)
+    # surface's behaviour; the batch surface hides them (auto-seeded per dataset).
+    tab = GlobalFitTab(member_kind="groups", grouped_single=True)
     grouped_groups = [
         SimpleNamespace(group_id=1, group_name="Forward", counts=np.array([120.0, 118.0])),
         SimpleNamespace(group_id=2, group_name="Backward", counts=np.array([80.0, 79.0])),
@@ -1790,7 +1792,8 @@ def test_grouped_tab_reset_button_restores_estimated_values(
     dataset: MuonDataset,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    tab = GlobalFitTab(member_kind="groups")
+    # Per-group estimate seeding + Reset live on the single grouped surface.
+    tab = GlobalFitTab(member_kind="groups", grouped_single=True)
     grouped_groups = [
         SimpleNamespace(group_id=1, group_name="Forward", counts=np.array([120.0, 118.0])),
         SimpleNamespace(group_id=2, group_name="Backward", counts=np.array([80.0, 79.0])),
@@ -2297,7 +2300,8 @@ def test_grouped_mode_ui_refresh_rebuilds_group_value_columns_when_groups_appear
     dataset: MuonDataset,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    tab = GlobalFitTab(member_kind="groups")
+    # Per-group value columns are the single grouped surface's presentation.
+    tab = GlobalFitTab(member_kind="groups", grouped_single=True)
     grouped_groups = [
         SimpleNamespace(group_id=1, group_name="Forward", counts=np.array([120.0, 118.0])),
         SimpleNamespace(group_id=2, group_name="Backward", counts=np.array([80.0, 79.0])),

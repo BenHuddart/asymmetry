@@ -81,6 +81,15 @@ class MultiGroupFitWindow(QWidget):
         self._single_fit_tab.share_function_with_group_requested.connect(
             self.share_function_with_group_requested.emit
         )
+        # A converged single grouped fit chain-seeds the batch surface per run
+        # (mirrors how FB single fits seed the FB batch surface).
+        self._single_fit_tab.single_grouped_fit_recorded.connect(
+            self._batch_fit_tab.register_grouped_single_fit_seed
+        )
+        # "Send to Batch" copies the Single surface's model + seeds to Batch.
+        self._single_fit_tab.send_grouped_model_to_batch_requested.connect(
+            self._on_send_grouped_model_to_batch
+        )
         self._tabs.addTab(self._single_fit_tab, "Single")
         self._tabs.addTab(self._batch_fit_tab, "Batch")
         layout.addWidget(self._tabs)
@@ -410,6 +419,16 @@ class MultiGroupFitWindow(QWidget):
                 "run": self._active_single_grouped_run,
                 "state": self._single_fit_tab.get_state(),
             }
+
+    def _on_send_grouped_model_to_batch(self) -> None:
+        """Copy the Single grouped surface's model + physics seeds to the Batch surface."""
+        model = getattr(self._single_fit_tab, "_composite_model", None)
+        if model is None:
+            return
+        seeds = self._single_fit_tab.current_grouped_seed_values()
+        self._batch_fit_tab._set_composite_model(model)
+        self._batch_fit_tab.apply_grouped_physics_seeds(seeds)
+        self._tabs.setCurrentWidget(self._batch_fit_tab)
 
     def share_single_grouped_function_state(
         self,
