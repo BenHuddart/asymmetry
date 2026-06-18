@@ -8323,6 +8323,45 @@ class MainWindow(QMainWindow):
         except (ValueError, KeyError, TypeError):
             return {}
 
+    @staticmethod
+    def _fraction_weights_for_series(series: FitSeries) -> dict[str, float]:
+        """Normalised fraction weights (fraction_i / Σ per group) for a series.
+
+        Raw fitted fractions are un-normalised relative weights — the model
+        divides each by its group sum at evaluation, so they need not sum to 1
+        (and the fixed last fraction is usually hidden from the variable table).
+        This recomputes the physical partition from the series' model and a
+        representative member's parameters (which include the fixed fraction).
+        Returns ``{}`` for model-less series or models without fraction groups.
+        """
+        model = getattr(series, "canonical_model", None)
+        if not model:
+            return {}
+        try:
+            composite = CompositeModel.from_dict(model, allow_missing=True)
+        except (ValueError, KeyError, TypeError):
+            return {}
+        groups = composite.fraction_parameter_groups()
+        if not groups:
+            return {}
+        full: dict[str, float] = {}
+        for summary in series.results_by_run.values():
+            if summary and summary.get("success") and isinstance(summary.get("parameters"), dict):
+                full = {str(k): float(v) for k, v in summary["parameters"].items()}
+                break
+        if not full:
+            return {}
+        try:
+            normalized = composite.normalized_parameter_values(full)
+        except (KeyError, ValueError, ZeroDivisionError):
+            return {}
+        return {
+            name: float(normalized[name])
+            for group in groups
+            for name in group
+            if name in normalized
+        }
+
     def _build_series_rows(self, series: FitSeries) -> list[dict]:
         """Build the row-dict list for one ``FitSeries`` to pass to the trend panel.
 
@@ -8508,6 +8547,10 @@ class MainWindow(QMainWindow):
         # components (excludes e.g. muonium's applied field). Absent for computed /
         # model-less series; the panel then falls back to a name-based heuristic.
         knight_observables_by_id: dict[str, dict[str, str]] = {}
+        # Per-series normalised fraction weights (fraction_i / Σ over each group),
+        # so the panel can show the physical amplitude partition — the raw fitted
+        # fractions are un-normalised relative weights and can sum to > 1.
+        fraction_weights_by_id: dict[str, dict[str, float]] = {}
         for idx, series in enumerate(series_for_rep, start=1):
             row_dicts = self._build_series_rows(series)
             if not row_dicts:
@@ -8521,6 +8564,9 @@ class MainWindow(QMainWindow):
             observables = self._knight_observables_for_series(series)
             if observables:
                 knight_observables_by_id[batch_id] = observables
+            weights = self._fraction_weights_for_series(series)
+            if weights:
+                fraction_weights_by_id[batch_id] = weights
             # Runs to highlight: source runs for group series, member keys for run series.
             if series.member_kind == "groups":
                 highlight_map[batch_id] = sorted(set(series.member_source_run.values()))
@@ -8534,6 +8580,7 @@ class MainWindow(QMainWindow):
                 select_id=select_batch_id,
                 global_params_by_id=global_params_by_id,
                 knight_observables_by_id=knight_observables_by_id,
+                fraction_weights_by_id=fraction_weights_by_id,
             )
 
         if surface and entries and hasattr(self, "_dock_fit_parameters"):

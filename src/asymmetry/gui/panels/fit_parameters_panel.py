@@ -88,6 +88,7 @@ from asymmetry.gui.panels.composite_parameter_dialog import CompositeParameterDi
 from asymmetry.gui.panels.cross_group_fit_dialog import CrossGroupFitDialog
 from asymmetry.gui.panels.knight_shift_dialog import KnightShiftDialog
 from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
+from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import (
     apply_param_table_style,
     clear_layout,
@@ -331,6 +332,10 @@ class FitParametersPanel(QWidget):
         #: Derived-param labels this panel registered globally, so they can be
         #: unregistered when the conversion changes / the panel is cleared.
         self._registered_knight_labels: set[str] = set()
+        #: Per-series normalised fraction weights (batch_id → {fraction: weight}),
+        #: supplied by the host so the table dialog can show the physical amplitude
+        #: partition alongside the raw (un-normalised) fitted fractions.
+        self._fraction_weights_by_id: dict[str, dict[str, float]] = {}
         #: Crossing/degeneracy events flagged on the active series (for annotation).
         self._knight_shift_crossings: list[object] = []
         #: The x-axis key the crossings were computed against (so stale markers are
@@ -623,6 +628,7 @@ class FitParametersPanel(QWidget):
         self._reset_angle_fold()
         self._knight_shift_crossings = []
         self._knight_shift_crossing_x_key = None
+        self._fraction_weights_by_id = {}
         self._group_fit_results = {}
         self._group_button_map = {}
         self._active_group_id = None
@@ -983,6 +989,7 @@ class FitParametersPanel(QWidget):
         select_id: str | None = None,
         global_params_by_id: dict[str, dict[str, dict[str, float]]] | None = None,
         knight_observables_by_id: dict[str, dict[str, str]] | None = None,
+        fraction_weights_by_id: dict[str, dict[str, float]] | None = None,
     ) -> None:
         """Reload the panel to show all series for one representation.
 
@@ -1078,6 +1085,12 @@ class FitParametersPanel(QWidget):
         # Update per-series run-number map for browser highlighting.
         if highlight_runs_by_id is not None:
             self._series_run_numbers = dict(highlight_runs_by_id)
+        # Normalised fraction weights for the table dialog (keyed by series id, so
+        # they survive group switches without per-group plumbing).
+        self._fraction_weights_by_id = {
+            str(k): {str(n): float(w) for n, w in v.items()}
+            for k, v in (fraction_weights_by_id or {}).items()
+        }
 
         # Caller-requested selection (e.g. a just-computed batch) wins when it
         # survived the reload; otherwise activate the most-recently-added series
@@ -4000,6 +4013,28 @@ class FitParametersPanel(QWidget):
             return errs
         return None
 
+    def _fraction_weights_note(self) -> str:
+        """Footnote giving the normalised fraction weights for the active series.
+
+        The raw fitted fractions shown in the header are un-normalised relative
+        weights (the model divides each by its group sum), so they need not add to
+        1; this line reports the physical partition fraction_i / Σ — including the
+        usually-hidden fixed last fraction — which does sum to 1 per group.
+        """
+        weights = self._fraction_weights_by_id.get(self._active_group_id or "")
+        if not weights:
+            return ""
+
+        def _order(name: str) -> tuple[int, str]:
+            _, index = split_parameter_name(name)
+            return (int(index) if index is not None else 0, name)
+
+        parts = [f"{name} = {weights[name]:.3g}" for name in sorted(weights, key=_order)]
+        return (
+            "Normalised fraction weights (relative; each group sums to 1): "
+            + ", ".join(parts)
+        )
+
     def _show_table_dialog(self) -> None:
         if self._table.rowCount() == 0 or self._table.columnCount() == 0:
             return
@@ -4035,6 +4070,14 @@ class FitParametersPanel(QWidget):
         header_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         header_label.setWordWrap(True)
         layout.addWidget(header_label)
+
+        fraction_note = self._fraction_weights_note()
+        if fraction_note:
+            note_label = QLabel(fraction_note)
+            note_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            note_label.setWordWrap(True)
+            note_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+            layout.addWidget(note_label)
 
         table_view = QTableWidget(self._table.rowCount(), self._table.columnCount(), dialog)
         table_view.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)

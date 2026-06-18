@@ -238,6 +238,30 @@ def test_crossings_detected_but_markers_suppressed(qapp):
     assert not axvlines, "crossing markers should be suppressed"
 
 
+def test_fraction_weights_note_shows_normalised_partition(qapp):
+    # Raw fractions can sum to >1 (relative weights); the note reports the
+    # normalised partition that sums to 1, including the fixed last fraction.
+    panel = FitParametersPanel()
+    panel.load_representation_series(
+        [("batch-1", "S", [_row(1, 7000.0, {"field_1": 7050.0})])],
+        fraction_weights_by_id={
+            "batch-1": {"fraction_1": 0.465, "fraction_2": 0.310, "fraction_3": 0.225}
+        },
+    )
+    note = panel._fraction_weights_note()
+    assert "Normalised fraction weights" in note
+    assert "fraction_1 = 0.465" in note
+    assert "fraction_3 = 0.225" in note  # the otherwise-hidden fixed fraction
+    # Ordered by component index.
+    assert note.index("fraction_1") < note.index("fraction_2") < note.index("fraction_3")
+
+
+def test_fraction_weights_note_empty_without_data(qapp):
+    panel = FitParametersPanel()
+    panel.load_representation_series([("batch-1", "S", [_row(1, 7000.0, {"field_1": 7050.0})])])
+    assert panel._fraction_weights_note() == ""
+
+
 def test_config_round_trips_through_state(qapp):
     panel = FitParametersPanel()
     _load(panel, [_row(1, 7000.0, {"frequency": 94.0, "frequency_2": 94.2})])
