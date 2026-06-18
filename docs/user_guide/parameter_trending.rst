@@ -872,6 +872,80 @@ where :math:`J` is the gradient of the expression with respect to source
 parameters and :math:`\Sigma` is the parameter covariance matrix when
 available (falling back to diagonal variances otherwise).
 
+.. _knight-shift:
+
+Knight Shift
+------------
+
+A muon in a metal or paramagnet precesses not at the bare Larmor frequency of the
+applied field but at a frequency shifted by the local hyperfine field — the
+field-induced polarisation of the conduction electrons (Fermi contact) together
+with the dipolar and RKKY-mediated contact fields of any local moments. That
+fractional shift is the muon **Knight shift**, the muon analogue of the NMR Knight
+shift and a direct, site-resolved probe of the local magnetic response. The panel
+converts a fitted precession frequency :math:`\nu` to
+
+.. math::
+
+   K = \frac{\nu - \nu_{\mathrm{ref}}}{\nu_{\mathrm{ref}}}
+
+against one of two references, chosen from the **Knight shift…** button in the
+*Derived parameters* section:
+
+* **Applied field** — :math:`\nu_{\mathrm{ref}} = \gamma_\mu B`, the free-muon
+  Larmor frequency of the applied field
+  (:math:`\gamma_\mu/2\pi = 135.5\ \mathrm{MHz\,T^{-1}}`). This needs no reference
+  line and is the default; use it whenever a separate unshifted signal is absent
+  (a low-background sample) and the applied field is known.
+* **Designated component** — :math:`\nu_{\mathrm{ref}}` is the fitted frequency of
+  a chosen oscillation component, such as a co-measured diamagnetic line. Because
+  :math:`\nu` and :math:`\nu_{\mathrm{ref}}` then come from the same fit, their
+  covariance is carried through the error propagation; the applied-field reference
+  treats :math:`B` as exact.
+
+K is dimensionless. It is stored internally as a fraction and shown in a unit you
+select, with an **Auto** mode that reads parts per million for a diamagnet
+(typically tens of ppm) and per cent for a paramagnet (up to a few per cent). The
+conversion yields the directly measured shift :math:`K_{\mathrm{exp}}`; the small
+Lorentz and demagnetising corrections that recover the intrinsic :math:`K_\mu`
+require the sample geometry and bulk susceptibility and are left to the user.
+
+**Angle dependence.** Rotating a single crystal in the applied field maps out
+:math:`K(\theta)`. The contact term is isotropic, while the dipolar term carries
+the full angular dependence through the dipolar coupling tensor, so :math:`K(\theta)`
+constrains the muon stopping site. Add an **Angle (°)** column
+(:ref:`logbook-columns`), fit each orientation, and select **Angle (°)** as the
+trend x-axis to plot each component's shift against orientation.
+
+**Component identity and crossings.** Across an orientation (or temperature, or
+field) scan, each oscillation component keeps its stable label (``frequency``,
+``frequency_2``, …) and is converted independently, so the trend follows one
+component through the scan. Where two component frequencies approach or cross, that
+identification becomes ambiguous — the fit is free to interchange the two — and the
+converted trace can jump. The panel detects these points (a frequency crossing, or
+a relabelling that better preserves continuity than the raw label order) and marks
+them on the trend; it does not silently reassign the components, leaving the
+judgement to you. Seeding each fit from its neighbour (chained batch seeding) keeps
+the labelling stable through an ordered scan and minimises such crossings in the
+first place.
+
+*When to use this.* Convert to the Knight shift whenever the quantity of interest
+is the *shift* of a precession frequency from the applied-field value — tracking a
+local susceptibility, determining a muon site from :math:`K(\theta)`, or building a
+Clogston–Jaccarino :math:`K`–:math:`\chi` plot. Keep the raw frequency trend when
+the absolute precession frequency itself is the observable (an internal field, a
+magnetic order parameter).
+
+References
+~~~~~~~~~~
+
+1. A. Amato and E. Morenzoni, *Introduction to Muon Spin Spectroscopy:
+   Applications to Solid State and Material Sciences*, Lecture Notes in Physics
+   Vol. 961 (Springer, Cham, 2024).
+2. S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
+   Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022).
+3. W. D. Knight, Phys. Rev. **76**, 1259 (1949).
+
 Runnable Example
 ----------------
 
