@@ -939,6 +939,14 @@ judgement to you. Seeding each fit from its neighbour (chained batch seeding) ke
 the labelling stable through an ordered scan and minimises such crossings in the
 first place.
 
+To *resolve* a crossing rather than just flag it, select two or more
+Knight-shift traces with **Angle** as the x-axis and use **Joint K(θ) fit…**.
+This fits one K(θ) curve per component simultaneously and, at each angle, assigns
+that angle's component points one-to-one to the curves they best fit (a Hungarian
+matching), iterating fit ↔ reassignment to convergence. The result is a set of
+continuous ``K⟨1⟩…`` track traces — each following one physical site through the
+crossings — with the per-curve fits overlaid and the resolved crossings marked.
+
 **Fitting the anisotropy** :math:`K(\theta)`. With **Angle (°)** as the trend
 x-axis, the model-fit builder offers two angle-only basis models alongside the
 usual ones:
