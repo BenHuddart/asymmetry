@@ -10,6 +10,7 @@ import copy
 import dataclasses
 import functools
 import html
+import os
 import re
 from collections.abc import Callable
 from contextlib import contextmanager
@@ -5319,6 +5320,15 @@ class GlobalFitTab(QWidget):
                 order_key=self._grouped_series_order_key(members),
                 cost=self._count_fit_cost,
                 cross_run_local_params=cross_run_local_params,
+                # Independent (as_provided) batches are embarrassingly parallel; let the
+                # engine fan the per-run fits across processes. For a large "global"
+                # series the same pool drives the block-separable solver's inner per-run
+                # fits (no-op for chain).
+                max_workers=os.cpu_count(),
+                # Large mixed global/local fits are near-separable (runs couple only
+                # through the shared physics); let the engine alternate block-wise above
+                # its free-parameter threshold instead of one monolithic minimisation.
+                block_separable=True,
             ),
             on_finished=lambda result, ds=grouped_datasets: self._on_grouped_series_fit_finished(
                 ds, result
