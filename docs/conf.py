@@ -67,6 +67,7 @@ napoleon_type_aliases = None
 napoleon_attr_annotations = True
 
 # intersphinx
+intersphinx_timeout = 10  # seconds; prevents a stalled CDN from blocking sphinx-build forever
 intersphinx_mapping = {
     'python': ('https://docs.python.org/3', None),
     'numpy': ('https://numpy.org/doc/stable/', None),
