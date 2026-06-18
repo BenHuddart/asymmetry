@@ -903,6 +903,7 @@ class FitParametersPanel(QWidget):
         *,
         highlight_runs_by_id: dict[str, list[int]] | None = None,
         select_id: str | None = None,
+        global_names_by_id: dict[str, list[str]] | None = None,
     ) -> None:
         """Reload the panel to show all series for one representation.
 
@@ -967,6 +968,12 @@ class FitParametersPanel(QWidget):
             prev = preserved.get(batch_id, {})
             composite_params = list(prev.get("composite_parameters", []))
             global_uncert = dict(prev.get("global_param_uncertainties", {}))
+            # Rebuild the shared ("Global fitting parameters") set from the series'
+            # global names: a global fit shares one value across all members, so read
+            # it (and its error) from any row. Without this the header shows "None".
+            series_global_params = self._reconstruct_global_params(
+                rows, (global_names_by_id or {}).get(batch_id, []), global_uncert
+            )
             varying = self._detect_varying_parameters(rows)
             inferred_x = self._infer_x_key(rows)
             self._apply_composite_parameters_to_rows(rows, composite_params, global_uncert)
@@ -975,7 +982,7 @@ class FitParametersPanel(QWidget):
                 group_id=batch_id,
                 group_name=series_name,
                 rows=rows,
-                global_params=None,
+                global_params=series_global_params,
                 varying_params=varying,
                 inferred_x_key=inferred_x,
                 model_fits=dict(prev.get("model_fits", {})),
@@ -1006,6 +1013,43 @@ class FitParametersPanel(QWidget):
         # fire immediately rather than waiting for the user to click a button.
         if self._active_group_id is not None:
             self.series_selection_changed.emit(self._active_group_id)
+
+    @staticmethod
+    def _reconstruct_global_params(
+        rows: list[_FitRow],
+        names: list[str],
+        global_uncert: dict[str, float],
+    ) -> ParameterSet | None:
+        """Rebuild the shared-parameter set for a series from its member rows.
+
+        A global fit shares one value across every member, so the value (and its
+        error) for each ``names`` entry is read from the first row that carries it.
+        Errors are written into ``global_uncert`` so the header can show ``v ± e``.
+        Returns ``None`` when no shared parameter resolves (e.g. a pure batch fit).
+        """
+        if not names or not rows:
+            return None
+        params = ParameterSet()
+        for name in names:
+            value: float | None = None
+            err: float | None = None
+            for row in rows:
+                if name in row.values:
+                    value = row.values[name]
+                    err = row.errors.get(name)
+                    break
+            if value is None:
+                continue
+            try:
+                params.add(Parameter(name=str(name), value=float(value)))
+            except (TypeError, ValueError):
+                continue
+            if err is not None:
+                try:
+                    global_uncert[str(name)] = float(err)
+                except (TypeError, ValueError):
+                    pass
+        return params if len(params) else None
 
     def _sync_active_group_state(self) -> None:
         """Persist current view state into the active group snapshot."""

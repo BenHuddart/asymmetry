@@ -8393,6 +8393,11 @@ class MainWindow(QMainWindow):
 
         entries: list[tuple[str, str, list[dict]]] = []
         highlight_map: dict[str, list[int]] = {}
+        # Names of the cross-run-shared (role "global") physics params per series, so
+        # the trend panel can rebuild the "Global fitting parameters" header from the
+        # shared values/errors carried in each member summary (a global fit shares one
+        # value across all members). Without this the reloaded series shows "None".
+        global_names_by_id: dict[str, list[str]] = {}
         for idx, series in enumerate(series_for_rep, start=1):
             row_dicts = self._build_series_rows(series)
             if not row_dicts:
@@ -8400,6 +8405,9 @@ class MainWindow(QMainWindow):
             batch_id = series.batch_id
             name = series.display_name(f"Series {idx}")
             entries.append((batch_id, name, row_dicts))
+            global_names = series.global_params()
+            if global_names:
+                global_names_by_id[batch_id] = global_names
             # Runs to highlight: source runs for group series, member keys for run series.
             if series.member_kind == "groups":
                 highlight_map[batch_id] = sorted(set(series.member_source_run.values()))
@@ -8411,6 +8419,7 @@ class MainWindow(QMainWindow):
                 entries,
                 highlight_runs_by_id=highlight_map,
                 select_id=select_batch_id,
+                global_names_by_id=global_names_by_id,
             )
 
         if surface and entries and hasattr(self, "_dock_fit_parameters"):
@@ -9269,12 +9278,17 @@ class MainWindow(QMainWindow):
             return None
 
         batch_id = self._next_batch_id()
+        # When the batch was launched from a data-group header, name the series after
+        # that group (e.g. "T = 150 K") rather than the model formula + run span.
+        series_label = self._data_group_name_for_runs(
+            unique_source_runs
+        ) or self._default_batch_series_label(
+            model_label, list(member_source_run.values()), groups=True
+        )
         series = FitSeries(
             batch_id,
             rep_type,
-            label=self._default_batch_series_label(
-                model_label, list(member_source_run.values()), groups=True
-            ),
+            label=series_label,
             member_kind="groups",
             member_run_numbers=member_keys,
             member_source_run=member_source_run,
@@ -9329,6 +9343,30 @@ class MainWindow(QMainWindow):
         series.sort_members(runs_by_number)
         self._project_model.refresh_divergence()
         return True
+
+    def _data_group_name_for_runs(self, runs) -> str | None:
+        """Data-group name shared by every run, or ``None``.
+
+        Returns the name when all ``runs`` belong to one data group (i.e. the batch
+        was launched from that group's header), so the series can be named after the
+        group (e.g. "T = 150 K") rather than the model formula + run span.
+        """
+        run_list = [int(r) for r in (runs or [])]
+        if not run_list:
+            return None
+        browser = self._data_browser
+        if not (
+            hasattr(browser, "get_group_id_for_run") and hasattr(browser, "get_group_name")
+        ):
+            return None
+        group_ids = {browser.get_group_id_for_run(r) for r in run_list}
+        if len(group_ids) != 1:
+            return None
+        group_id = next(iter(group_ids))
+        if not group_id:
+            return None
+        name = browser.get_group_name(group_id)
+        return name.strip() if isinstance(name, str) and name.strip() else None
 
     @staticmethod
     def _default_batch_series_label(

@@ -291,6 +291,33 @@ def test_grouped_batch_creates_group_series_and_pointer_slot(mw, monkeypatch):
     assert rep.fit.batch_id == series.batch_id
 
 
+def test_grouped_batch_series_named_after_data_group(mw, monkeypatch):
+    # A batch launched from a data-group header names the series after the group
+    # (e.g. "T = 150 K") rather than the model formula + run span.
+    for rn in (42, 43):
+        mw._data_browser.add_dataset(_dataset(rn))
+    mw._data_browser.create_data_group([42, 43], name="T = 150 K")
+    mw._on_dataset_selected(42)
+    mw._plot_workspace.set_available_views(["fb_asymmetry", "groups"])
+    mw._plot_workspace.set_active_view("groups")
+    monkeypatch.setattr(
+        mw._multi_group_fit_window,
+        "get_grouped_state",
+        lambda: {
+            "composite_model": {"component_names": ["Exponential"], "operators": []},
+            "param_roles": {"Lambda": "global"},
+            "nuisance_params": ["N0", "background", "amplitude", "relative_phase"],
+        },
+    )
+    grouped_datasets = [_group_member(42, 1), _group_member(43, 1)]
+    results = {-42001: (_result(rchi=0.3), _CURVE, []), -43001: (_result(rchi=0.6), _CURVE, [])}
+
+    mw._record_grouped_fit_series(grouped_datasets, results)
+
+    series = next(iter(mw._project_model.batches.values()))
+    assert series.label == "T = 150 K"
+
+
 def test_single_grouped_fit_writes_slot_not_series(mw, monkeypatch):
     # A single-dataset grouped fit (one source run) behaves like an ordinary
     # single fit: NO FitSeries is created (a one-point series is un-trendable);
