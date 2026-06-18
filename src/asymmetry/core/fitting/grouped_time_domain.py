@@ -972,6 +972,7 @@ def fit_grouped_series(
     cross_run_local_params: list[str] | None = None,
     max_workers: int | None = None,
     block_separable: bool = False,
+    profile_shared_errors: bool = False,
 ) -> GroupedSeriesFitResult:
     """Fit a series of grouped runs with one of three member relationships.
 
@@ -1098,6 +1099,7 @@ def fit_grouped_series(
         cross_run_local_params=cross_run_local_params,
         max_workers=max_workers,
         block_separable=block_separable,
+        profile_shared_errors=profile_shared_errors,
     )
 
 
@@ -1402,6 +1404,7 @@ def _fit_grouped_series_global(
     cross_run_local_params: list[str] | None = None,
     max_workers: int | None = None,
     block_separable: bool = False,
+    profile_shared_errors: bool = False,
 ) -> GroupedSeriesFitResult:
     """Fit every ``(run, group)`` simultaneously.
 
@@ -1527,6 +1530,7 @@ def _fit_grouped_series_global(
             cost=cost,
             cancel_callback=cancel_callback,
             max_workers=max_workers,
+            profile_shared_errors=profile_shared_errors,
         )
 
     internal_results, shared_parameters = engine.global_fit(
@@ -1907,6 +1911,7 @@ def _fit_grouped_series_global_blockwise(
     cost: str,
     cancel_callback: Callable[[], bool] | None,
     max_workers: int | None,
+    profile_shared_errors: bool = False,
     max_rounds: int = 12,
     tol: float = 1.0e-4,
 ) -> GroupedSeriesFitResult:
@@ -1930,10 +1935,13 @@ def _fit_grouped_series_global_blockwise(
         int(run): {gid: _copy_param_set_with(ps) for gid, ps in groups.items()}
         for run, groups in initial_params.items()
     }
+    representative = temporary_initial[next(iter(temporary_initial))]
     shared_values: dict[str, float] = {
-        name: float(temporary_initial[next(iter(temporary_initial))][name].value)
-        for name in truly_global
+        name: float(representative[name].value) for name in truly_global
     }
+    # Captured from the ORIGINAL seeds: the round loop pins the shared params fixed in
+    # run_seeds, so their free/fixed status must be read before that mutation.
+    free_shared = [name for name in truly_global if not representative[name].fixed]
     inner_global = list(per_run_physics) + list(truly_global)
 
     # One persistent pool for the whole solve — the inner per-run fits repeat every
@@ -1974,12 +1982,44 @@ def _fit_grouped_series_global_blockwise(
             max_rounds=max_rounds,
             tol=tol,
         )
+        # Rigorous (marginal) shared-parameter errors: profile the few shared params,
+        # re-optimising all locals at each probe (the numerical Schur complement), while
+        # the pool is still alive. Falls back to the conditional errors on any failure.
+        profiled_errors = (
+            _profile_shared_covariance(
+                truly_global=truly_global,
+                free_shared=free_shared,
+                shared_values=shared_values,
+                conditional=shared_uncertainties,
+                run_seeds=run_seeds,
+                run_order=run_order,
+                members=members,
+                polarization_model_fn=polarization_model_fn,
+                inner_global=inner_global,
+                nuisances=nuisances,
+                engine=engine,
+                t_min=t_min,
+                t_max=t_max,
+                method=method,
+                max_calls=max_calls,
+                cost=cost,
+                cancel_callback=cancel_callback,
+                executor=executor,
+            )
+            if profile_shared_errors
+            else None
+        )
     finally:
         if executor is not None:
             executor.shutdown(wait=False, cancel_futures=True)
 
+    errors_profiled = bool(profiled_errors)
+    if profiled_errors:
+        shared_uncertainties = {**shared_uncertainties, **profiled_errors}
+
     # Final per-(run, group) results come from the last inner round; inject the converged
-    # shared values + their conditional uncertainties so each member reports the full set.
+    # shared values + their (conditional or profiled) uncertainties so each member reports
+    # the full set.
     member_results: dict[int, FitResult] = {}
     for key, run in member_source_run.items():
         result = inner_results.get(int(run))
@@ -2006,10 +2046,14 @@ def _fit_grouped_series_global_blockwise(
 
     success = bool(member_results) and all(r.success for r in member_results.values())
     if success:
+        error_note = (
+            "shared-parameter errors profiled over the locals"
+            if errors_profiled
+            else "shared-parameter errors are conditional on the fitted locals"
+        )
         message = (
             f"Grouped-series global fit successful (block-separable solver, "
-            f"{rounds_run} round{'s' if rounds_run != 1 else ''}; shared-parameter "
-            "errors are conditional on the fitted locals)"
+            f"{rounds_run} round{'s' if rounds_run != 1 else ''}; {error_note})"
         )
     elif member_results:
         failed = [str(member_group_id[key]) for key, r in member_results.items() if not r.success]
@@ -2066,3 +2110,140 @@ def _inject_shared_parameters(
     merged_unc.update(shared_uncertainties)
     group_result.uncertainties = merged_unc
     return group_result
+
+
+def _profile_shared_covariance(
+    *,
+    truly_global: list[str],
+    free_shared: list[str],
+    shared_values: dict[str, float],
+    conditional: dict[str, float],
+    run_seeds: dict[int, dict[Hashable, ParameterSet]],
+    run_order: list[int],
+    members: dict[int, list[GroupedTimeDomainGroup]],
+    polarization_model_fn,
+    inner_global: list[str],
+    nuisances: list[str],
+    engine: FitEngine,
+    t_min: float | None,
+    t_max: float | None,
+    method: str,
+    max_calls: int,
+    cost: str,
+    cancel_callback: Callable[[], bool] | None,
+    executor: ProcessPoolExecutor | None,
+) -> dict[str, float] | None:
+    """Marginal (profiled) uncertainties for the free shared params, or ``None``.
+
+    A *conditional* error (the shared-only outer step) ignores that the per-run locals
+    would readjust as a shared param moves. This profiles the objective in the shared
+    subspace: each probe re-optimises every local (one block inner round, reusing the
+    pool), so the resulting reduced Hessian — finite-differenced over the shared params,
+    inverted as ``2·H⁻¹`` — is the numerical Schur complement, i.e. the same marginal
+    covariance a full joint HESSE would give for those params, at a fraction of the cost.
+
+    Returns a name→σ map for the free shared params whose profiled variance is finite and
+    positive; ``None`` if the curvature is unusable (caller keeps the conditional errors).
+    """
+    # Only free shared params have an error to profile (a fixed shared param is held).
+    names = list(free_shared)
+    n = len(names)
+    if n == 0:
+        return None
+
+    fix_shared = set(truly_global)
+
+    def chi2_at(overrides: dict[str, float]) -> float:
+        values = dict(shared_values)
+        values.update(overrides)
+        seeds = {
+            int(run): {
+                gid: _copy_param_set_with(ps, fix=fix_shared, values=values)
+                for gid, ps in run_seeds[int(run)].items()
+            }
+            for run in run_order
+        }
+        try:
+            results = _blockwise_inner_fit_runs(
+                run_order,
+                members,
+                polarization_model_fn,
+                inner_global,
+                nuisances,
+                seeds,
+                executor=executor,
+                engine=engine,
+                t_min=t_min,
+                t_max=t_max,
+                method=method,
+                max_calls=max_calls,
+                cost=cost,
+                cancel_callback=cancel_callback,
+            )
+        except BrokenExecutor:
+            results = _blockwise_inner_fit_runs(
+                run_order,
+                members,
+                polarization_model_fn,
+                inner_global,
+                nuisances,
+                seeds,
+                executor=None,
+                engine=engine,
+                t_min=t_min,
+                t_max=t_max,
+                method=method,
+                max_calls=max_calls,
+                cost=cost,
+                cancel_callback=cancel_callback,
+            )
+        total = 0.0
+        for run in run_order:
+            grouped = results.get(int(run))
+            if grouped is None:
+                return float("nan")
+            for group_result in grouped.group_results.values():
+                total += float(getattr(group_result, "chi_squared", 0.0) or 0.0)
+        return total
+
+    deltas: dict[str, float] = {}
+    for name in names:
+        sigma = conditional.get(name)
+        if sigma is not None and np.isfinite(sigma) and sigma > 0.0:
+            step = float(sigma)
+        else:
+            step = 1.0e-3 * max(abs(shared_values[name]), 1.0)
+        deltas[name] = max(step, 1.0e-9)
+
+    chi0 = chi2_at({})
+    plus = {name: chi2_at({name: shared_values[name] + deltas[name]}) for name in names}
+    minus = {name: chi2_at({name: shared_values[name] - deltas[name]}) for name in names}
+    if not all(np.isfinite([chi0, *plus.values(), *minus.values()])):
+        return None
+
+    hessian = np.zeros((n, n))
+    for i, name in enumerate(names):
+        hessian[i, i] = (plus[name] - 2.0 * chi0 + minus[name]) / deltas[name] ** 2
+    for i in range(n):
+        for j in range(i + 1, n):
+            ni, nj = names[i], names[j]
+            corner = chi2_at(
+                {ni: shared_values[ni] + deltas[ni], nj: shared_values[nj] + deltas[nj]}
+            )
+            if not np.isfinite(corner):
+                return None
+            mixed = (corner - plus[ni] - plus[nj] + chi0) / (deltas[ni] * deltas[nj])
+            hessian[i, j] = hessian[j, i] = mixed
+
+    try:
+        # χ² (and Cash) are 2·NLL, so the parameter covariance is 2·(∂²χ²/∂θ²)⁻¹.
+        covariance = 2.0 * np.linalg.inv(hessian)
+    except np.linalg.LinAlgError:
+        return None
+
+    profiled: dict[str, float] = {}
+    for i, name in enumerate(names):
+        variance = covariance[i, i]
+        if np.isfinite(variance) and variance > 0.0:
+            profiled[name] = float(np.sqrt(variance))
+    return profiled or None

@@ -5329,6 +5329,9 @@ class GlobalFitTab(QWidget):
                 # through the shared physics); let the engine alternate block-wise above
                 # its free-parameter threshold instead of one monolithic minimisation.
                 block_separable=True,
+                # Report rigorous (marginal) shared-parameter errors by profiling them
+                # over the locals, rather than the cheaper conditional errors.
+                profile_shared_errors=True,
             ),
             on_finished=lambda result, ds=grouped_datasets: self._on_grouped_series_fit_finished(
                 ds, result

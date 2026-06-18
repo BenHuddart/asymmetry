@@ -1265,3 +1265,46 @@ def test_grouped_global_blockwise_parallel_matches_sequential(monkeypatch) -> No
             assert float(s.parameters[name].value) == pytest.approx(
                 float(p.parameters[name].value), rel=0, abs=0
             )
+
+
+def test_grouped_global_blockwise_profiled_errors_widen_and_recover(monkeypatch) -> None:
+    """Profiling the shared params yields marginal (>= conditional) errors, same values."""
+    members, frequency, common = _mixed_global_local_scenario({10: 0.3, 11: 1.0, 12: 0.6})
+    monkeypatch.setattr(
+        "asymmetry.core.fitting.grouped_time_domain._grouped_global_is_large",
+        lambda *a, **k: True,
+    )
+
+    def _freq_unc(result):
+        key = min(result.member_results)
+        return result.member_results[key].uncertainties.get("frequency")
+
+    conditional = fit_grouped_series(
+        "global",
+        members,
+        _relaxing_cosine_model,
+        block_separable=True,
+        max_workers=1,
+        profile_shared_errors=False,
+        **common,
+    )
+    profiled = fit_grouped_series(
+        "global",
+        members,
+        _relaxing_cosine_model,
+        block_separable=True,
+        max_workers=1,
+        profile_shared_errors=True,
+        **common,
+    )
+
+    assert "errors are conditional" in conditional.message
+    assert "errors profiled over the locals" in profiled.message
+    # Same physics; the profiled error marginalises over the locals so it cannot shrink.
+    cond_freq = {p.name: p.value for p in conditional.shared_parameters}["frequency"]
+    prof_freq = {p.name: p.value for p in profiled.shared_parameters}["frequency"]
+    assert prof_freq == pytest.approx(cond_freq, abs=1e-4)
+    assert prof_freq == pytest.approx(frequency, abs=1e-2)
+    cond_unc, prof_unc = _freq_unc(conditional), _freq_unc(profiled)
+    assert cond_unc is not None and prof_unc is not None
+    assert prof_unc >= cond_unc * (1.0 - 1e-6)
