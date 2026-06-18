@@ -189,6 +189,31 @@ def test_crossing_is_flagged(qapp):
     assert "order_swap" in kinds
 
 
+def test_crossings_use_raw_angle_not_folded(qapp):
+    # Crossing detection must follow the raw scan order, not the folded display:
+    # folding would collapse distinct orientations (e.g. 200° → 20°) onto one x.
+    panel = FitParametersPanel()
+    panel.set_angle_x_field(("Angle (°)", "angle"))
+
+    def _arow(angle: str, f1: float, f2: float) -> dict:
+        d = _row(int(float(angle)), 7000.0, {"field_1": f1, "field_2": f2})
+        d["custom_values"] = {"angle": angle}
+        return d
+
+    panel.load_representation_series(
+        [("b", "S", [_arow("0", 10.0, 20.0), _arow("90", 11.0, 30.0), _arow("200", 12.0, 5.0)])],
+        knight_observables_by_id={"b": {"field_1": "field", "field_2": "field"}},
+    )
+    panel._x_combo.setCurrentIndex(panel._x_combo.findData("angle"))
+    panel._angle_fold_combo.setCurrentIndex(panel._angle_fold_combo.findData(180.0))
+    panel.set_knight_shift_config(KnightShiftConfig(enabled=True, unit=KnightShiftUnit.FRACTION))
+
+    xs = {e.x_left for e in panel.knight_shift_crossings()}
+    xs |= {e.x_right for e in panel.knight_shift_crossings()}
+    assert 200.0 in xs  # raw angle used
+    assert 20.0 not in xs  # not the folded value
+
+
 def test_crossings_detected_but_markers_suppressed(qapp):
     panel = FitParametersPanel()
     _load(

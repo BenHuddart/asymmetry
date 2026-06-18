@@ -620,6 +620,7 @@ class FitParametersPanel(QWidget):
         self._knight_shift_names = {}
         self._knight_observables = {}
         self._unregister_knight_labels()
+        self._reset_angle_fold()
         self._knight_shift_crossings = []
         self._knight_shift_crossing_x_key = None
         self._group_fit_results = {}
@@ -2111,7 +2112,11 @@ class FitParametersPanel(QWidget):
                     Component(frequency=float(row.values[c])) for c in names if c in row.values
                 )
                 if len(comps) == len(names):
-                    points.append(ScanPoint(x=float(self._x_value(row, x_key)), components=comps))
+                    # Use the raw scan coordinate (fold=False): crossings follow the
+                    # true rotation order; a folded axis would collapse distinct
+                    # orientations onto one x and manufacture zero-width crossings.
+                    x = self._x_value(row, x_key, fold=False)
+                    points.append(ScanPoint(x=float(x), components=comps))
             events.extend(detect_crossings(points))
         self._knight_shift_crossing_x_key = x_key
         return events
@@ -2451,6 +2456,10 @@ class FitParametersPanel(QWidget):
         self._angle_wrap_period = float(period) if period is not None else None
         if self._angle_axis_active():
             self._refresh_views()
+
+    def _reset_angle_fold(self) -> None:
+        """Clear angle folding (combo + attribute) — used on New Project."""
+        self._restore_angle_fold(None)
 
     def _restore_angle_fold(self, period: object) -> None:
         """Restore the angle-fold period from saved state (combo + attribute)."""
@@ -3920,7 +3929,7 @@ class FitParametersPanel(QWidget):
             x_key, "Run Number"
         )
 
-    def _x_value(self, row: _FitRow, x_key: str) -> float:
+    def _x_value(self, row: _FitRow, x_key: str, *, fold: bool = True) -> float:
         name = _x_param_name(x_key)
         if name is not None:
             return float(row.values.get(name, float("nan")))
@@ -3933,7 +3942,10 @@ class FitParametersPanel(QWidget):
             value = _coerce_abscissa(row.custom_values.get(value_key, ""))
             # Fold the Angle axis into its chosen period so equivalent orientations
             # overlay (no-op for non-angle custom columns or when folding is off).
-            if x_key == self._angle_x_key() and self._angle_wrap_period is not None:
+            # ``fold=False`` recovers the raw scan coordinate — used by crossing
+            # detection, which must follow the true rotation order, not the folded
+            # display (folding would collapse distinct orientations onto one x).
+            if fold and x_key == self._angle_x_key() and self._angle_wrap_period is not None:
                 return wrap_angle_deg(value, self._angle_wrap_period)
             return value
         if x_key == "field":

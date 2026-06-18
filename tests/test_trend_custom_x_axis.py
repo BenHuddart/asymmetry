@@ -181,6 +181,17 @@ def test_fold_control_visible_only_for_angle_axis(qapp):
     assert not panel._angle_fold_combo.isHidden()
 
 
+def test_clear_resets_angle_fold(qapp):
+    # New Project (clear) must not leak the fold into the next project.
+    panel = FitParametersPanel()
+    panel.set_angle_x_field(("Angle (°)", "angle"))
+    panel._angle_fold_combo.setCurrentIndex(panel._angle_fold_combo.findData(180.0))
+    assert panel._angle_wrap_period == 180.0
+    panel.clear()
+    assert panel._angle_wrap_period is None
+    assert panel._angle_fold_combo.currentData() is None
+
+
 def test_angle_fold_round_trips_through_state(qapp):
     panel = FitParametersPanel()
     panel.set_angle_x_field(("Angle (°)", "angle"))
