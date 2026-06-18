@@ -8236,14 +8236,14 @@ class MainWindow(QMainWindow):
             RepresentationType.FREQ_FFT,
             RepresentationType.FREQ_MAXENT,
         )
-        # A group series whose physics parameters are all global (none "local")
-        # holds one physics value per source run, replicated across that run's
-        # group members. Collapse it to one trend point per run so the parameter
-        # plots once per dataset rather than once per detector group. A series
-        # with a per-group (local) physics parameter keeps its per-member rows.
-        collapse_groups = series.member_kind == "groups" and not any(
-            role == "local" for role in series.param_roles.values()
-        )
+        # Every model-function parameter in a grouped fit is shared across a run's
+        # detector groups (a "local"/"global" role is about sharing ACROSS runs, not
+        # within a run), so it holds one value per source run regardless of role. The
+        # only per-(run, group) quantities are the nuisance block, which are not
+        # trendable scientific parameters. So always collapse a group series to one
+        # trend point per source run and drop the nuisances — the parameters tab then
+        # shows only the model-function parameters, once per dataset.
+        collapse_groups = series.member_kind == "groups"
         seen_source_runs: set[int] = set()
         for member_key in series.member_run_numbers:
             summary = series.results_by_run.get(member_key)

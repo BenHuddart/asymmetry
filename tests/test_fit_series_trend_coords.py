@@ -227,11 +227,19 @@ def test_collapsed_group_row_drops_per_group_nuisance_values(win: MainWindow) ->
         assert "amp" not in row["errors"]
 
 
-def test_group_series_keeps_per_group_rows_when_a_physics_param_is_local(win: MainWindow) -> None:
+def test_group_series_collapses_to_one_row_per_run_even_with_local_physics(
+    win: MainWindow,
+) -> None:
+    # A "local" role means per-RUN (independent across runs); the model-function
+    # parameter is still shared across a run's detector groups (only the nuisance
+    # block is per-group). So the series collapses to one trend point per source run
+    # just like the all-global case — the parameters tab shows model params per run.
     series = _group_series(
         "batch-g2", [1276, 1280], 2, {"freq": "global", "amp": "local"}, {1276: 5.0, 1280: 6.0}
     )
     rows = win._build_series_rows(series)
-    # A local physics parameter differs per group → keep all (run, group) members.
-    assert len(rows) == 4
-    assert all(row["run_number"] < 0 for row in rows)
+    assert len(rows) == 2
+    by_run = {row["run_number"]: row for row in rows}
+    assert set(by_run) == {1276, 1280}
+    assert by_run[1276]["values"]["freq"] == pytest.approx(5.0)
+    assert by_run[1280]["values"]["freq"] == pytest.approx(6.0)
