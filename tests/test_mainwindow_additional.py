@@ -686,6 +686,87 @@ class TestMainWindowFourier:
         assert 8826 in mainwindow._frequency_spectra_by_run
         assert mainwindow._frequency_plot_panel._current_dataset is not None
 
+    def test_ensure_spectra_for_runs_async_is_noop_when_cached(
+        self, mainwindow: MainWindow
+    ) -> None:
+        # All runs cached → the continuation runs synchronously, no off-thread work.
+        self._compute_run_fft(mainwindow, 8860)
+        called: list = []
+        mainwindow._ensure_frequency_spectra_for_runs_async(
+            [8860], RepresentationType.FREQ_FFT, on_ready=lambda: called.append(True)
+        )
+        assert called == [True]
+        assert not mainwindow._frequency_recompute_active
+
+    def test_ensure_spectra_for_runs_async_recomputes_then_calls_ready(
+        self, mainwindow: MainWindow
+    ) -> None:
+        # Recipe-only (post-reload): the batch recomputes off-thread, then the
+        # continuation runs once every recomputable run is cached.
+        self._compute_run_fft(mainwindow, 8861)
+        self._compute_run_fft(mainwindow, 8862)
+        state = mainwindow.collect_project_state()
+        self._restore_recipe_only(mainwindow, state)
+        assert 8861 not in mainwindow._frequency_spectra_by_run
+
+        called: list = []
+        mainwindow._ensure_frequency_spectra_for_runs_async(
+            [8861, 8862], RepresentationType.FREQ_FFT, on_ready=lambda: called.append(True)
+        )
+        # Off-thread while in flight; not yet ready.
+        assert mainwindow._frequency_recompute_active
+        assert called == []
+
+        _wait_frequency_idle(mainwindow)
+        assert called == [True]
+        assert 8861 in mainwindow._frequency_spectra_by_run
+        assert 8862 in mainwindow._frequency_spectra_by_run
+
+    def test_frequency_fit_datasets_fill_asynchronously(self, mainwindow: MainWindow) -> None:
+        # Multi-run frequency selection must not block: the setter returns
+        # cached-only immediately and recomputes the rest off-thread, filling
+        # them in when they land.
+        ds1 = self._compute_run_fft(mainwindow, 8863)
+        ds2 = self._compute_run_fft(mainwindow, 8864)
+        state = mainwindow.collect_project_state()
+        self._restore_recipe_only(mainwindow, state)
+        mainwindow._data_browser.get_selected_datasets = lambda: [ds1, ds2]
+
+        # The pure prep returns cached-only (nothing warm yet) and does NOT kick.
+        assert mainwindow._frequency_fit_datasets_for_selected_runs() == []
+        assert not mainwindow._frequency_recompute_active
+        # The setter sets cached-only datasets immediately and kicks the off-thread
+        # fill (no GUI block); recipe-backed runs are not reported as "missing".
+        assert mainwindow._set_frequency_fit_datasets_for_selection() == []
+        assert mainwindow._frequency_recompute_active
+        assert mainwindow._last_frequency_fit_missing_run_numbers == []
+
+        _wait_frequency_idle(mainwindow)
+        # Now warm: the prep includes both runs.
+        filled = mainwindow._frequency_fit_datasets_for_selected_runs()
+        assert len(filled) == 2
+
+    def test_frequency_fit_datasets_setter_does_not_recurse_when_inflight(
+        self, mainwindow: MainWindow
+    ) -> None:
+        # Regression: when a selected run's recompute is already in flight, the
+        # setter must not recurse (the async-fill's completion is a terminal
+        # refresh that never re-kicks). Previously this looped to a RecursionError.
+        ds1 = self._compute_run_fft(mainwindow, 8865)
+        ds2 = self._compute_run_fft(mainwindow, 8866)
+        state = mainwindow.collect_project_state()
+        self._restore_recipe_only(mainwindow, state)
+        mainwindow._data_browser.get_selected_datasets = lambda: [ds1, ds2]
+
+        # Mark both runs as already in flight: the fill finds no new targets and
+        # fires its completion synchronously — which must terminate, not recurse.
+        rep = RepresentationType.FREQ_FFT
+        mainwindow._frequency_recompute_inflight.update({(8865, rep), (8866, rep)})
+        # Must return (no RecursionError) and report nothing missing (they are
+        # recipe-backed, just pending an in-flight recompute).
+        assert mainwindow._set_frequency_fit_datasets_for_selection() == []
+        mainwindow._frequency_recompute_inflight.clear()
+
     def test_async_recompute_failure_clears_overlay_and_logs(
         self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -825,6 +906,159 @@ class TestMainWindowFourier:
         plotted = mainwindow._frequency_plot_panel._current_dataset
         assert plotted is not None
         assert plotted.metadata["group_ids"] == [1]
+
+    def test_compute_fourier_preserves_live_include_toggle(self, mainwindow: MainWindow) -> None:
+        # Regression: unchecking a group in the Fourier "Groups" Include column and
+        # clicking Compute FFT must not re-enable it. The compute cascade re-syncs
+        # the panel from the per-run store; an Include toggle does not fire a store,
+        # so the live edit must be snapshotted before the sync (else the stale store
+        # is restored and the disabled group reappears in the average).
+        dataset = _make_fourier_ready_dataset(8808, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8808)
+
+        # Simulate a prior store (e.g. a dataset switch) that captured both groups
+        # enabled — the stale state the re-sync would otherwise restore.
+        mainwindow._fourier_group_phase_state_by_run[8808] = {
+            "group_enabled_table": {1: True, 2: True},
+            "group_phase_table": {1: 0.0, 2: 0.0},
+            "group_auto_filled_ids": [],
+        }
+
+        # User unchecks group 2 via the Include checkbox (column 0). This updates
+        # the live table only — itemChanged ignores column 0, so the per-run store
+        # stays stale.
+        panel = mainwindow._fourier_panel
+        row = panel._table_group_ids.index(2)
+        panel._phase_table.item(row, 0).setCheckState(Qt.CheckState.Unchecked)
+        assert panel.group_enabled_table().get(2) is False
+
+        _compute_fourier_sync(mainwindow)
+
+        plotted = mainwindow._frequency_plot_panel._current_dataset
+        assert plotted is not None
+        # The disabled group is left out of the average and stays unchecked.
+        assert plotted.metadata["group_ids"] == [1]
+        assert mainwindow._fourier_panel.group_enabled_table().get(2) is False
+
+    def _compute_run_fft(self, mainwindow: MainWindow, run_number: int) -> MuonDataset:
+        """Add a fourier-ready run, select it, compute its FFT; return the dataset."""
+        dataset = _make_fourier_ready_dataset(run_number, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(run_number)
+        _compute_fourier_sync(mainwindow)
+        return dataset
+
+    def test_frequency_overlay_renders_multiple_run_spectra(self, mainwindow: MainWindow) -> None:
+        # With overlay on and >1 run selected, each selected run's cached spectrum
+        # is overlaid on one axis (parity with the FB-asymmetry overlay).
+        ds1 = self._compute_run_fft(mainwindow, 8830)
+        ds2 = self._compute_run_fft(mainwindow, 8831)
+        assert 8830 in mainwindow._frequency_spectra_by_run
+        assert 8831 in mainwindow._frequency_spectra_by_run
+
+        mainwindow._frequency_plot_panel.set_overlay_enabled(True)
+        mainwindow._data_browser.get_selected_datasets = lambda: [ds1, ds2]
+        mainwindow._sync_frequency_plot_for_current_dataset()
+
+        rendered = mainwindow._frequency_plot_panel._current_datasets
+        assert len(rendered) == 2
+        run_numbers = {int(d.run_number) for d in rendered}
+        assert run_numbers == {8830, 8831}
+
+    def test_frequency_overlay_skips_uncomputed_runs(self, mainwindow: MainWindow) -> None:
+        # A selected run with no computed spectrum is skipped (and reported),
+        # not recomputed; the computed runs still overlay.
+        ds1 = self._compute_run_fft(mainwindow, 8832)
+        ds2 = self._compute_run_fft(mainwindow, 8833)
+        ds3 = _make_fourier_ready_dataset(8834, with_grouping=True)  # never computed
+        mainwindow._data_browser.add_dataset(ds3)
+
+        mainwindow._frequency_plot_panel.set_overlay_enabled(True)
+        mainwindow._data_browser.get_selected_datasets = lambda: [ds1, ds2, ds3]
+        mainwindow._sync_frequency_plot_for_current_dataset()
+
+        rendered = mainwindow._frequency_plot_panel._current_datasets
+        assert {int(d.run_number) for d in rendered} == {8832, 8833}
+        assert 8834 not in mainwindow._frequency_spectra_by_run  # not recomputed
+        assert "8834" in mainwindow.statusBar().currentMessage() or "1 selected" in (
+            mainwindow.statusBar().currentMessage()
+        )
+
+    def test_frequency_overlay_off_renders_single_run(self, mainwindow: MainWindow) -> None:
+        # Overlay off: even with multiple runs selected, only the active run shows.
+        ds1 = self._compute_run_fft(mainwindow, 8835)
+        ds2 = self._compute_run_fft(mainwindow, 8836)  # selected last → active
+
+        mainwindow._frequency_plot_panel.set_overlay_enabled(False)
+        mainwindow._data_browser.get_selected_datasets = lambda: [ds1, ds2]
+        mainwindow._sync_frequency_plot_for_current_dataset()
+
+        rendered = mainwindow._frequency_plot_panel._current_datasets
+        assert len(rendered) == 1
+        assert int(rendered[0].run_number) == 8836
+
+    def test_frequency_overlay_blocks_single_fit(self, mainwindow: MainWindow, monkeypatch) -> None:
+        # A multi-run overlay has no single fit target (binding to one overlaid
+        # run would silently mis-attribute the result), so single fitting is
+        # blocked while the overlay is shown and re-enabled on a single-run view.
+        ds1 = self._compute_run_fft(mainwindow, 8840)
+        self._compute_run_fft(mainwindow, 8841)
+        monkeypatch.setattr(mainwindow._plot_workspace, "active_domain", lambda: "frequency")
+        mainwindow._frequency_plot_panel.set_overlay_enabled(True)
+        mainwindow._data_browser.get_selected_datasets = lambda: [
+            ds1,
+            mainwindow._data_browser.get_dataset(8841),
+        ]
+        mainwindow._sync_frequency_plot_for_current_dataset()
+
+        assert mainwindow._frequency_overlay_active is True
+        blocked, reason = mainwindow._current_fit_block_state()
+        assert blocked is True
+        assert "overlaid" in reason.lower()
+
+        # Dropping back to a single run clears the flag and unblocks fitting.
+        mainwindow._sync_frequency_plot_for_run(8840)
+        assert mainwindow._frequency_overlay_active is False
+        blocked_single, _ = mainwindow._current_fit_block_state()
+        assert blocked_single is False
+
+    def test_selection_change_refreshes_frequency_overlay(
+        self, mainwindow: MainWindow, monkeypatch
+    ) -> None:
+        # Extending the browser selection on the frequency tab must refresh the
+        # overlay (the time-panel render in _update_selected_datasets never
+        # touches the frequency panel).
+        ds1 = self._compute_run_fft(mainwindow, 8842)
+        ds2 = self._compute_run_fft(mainwindow, 8843)
+        monkeypatch.setattr(mainwindow._plot_workspace, "active_domain", lambda: "frequency")
+        mainwindow._frequency_plot_panel.set_overlay_enabled(True)
+        mainwindow._data_browser.get_selected_datasets = lambda: [ds1, ds2]
+
+        mainwindow._update_selected_datasets()
+
+        rendered = mainwindow._frequency_plot_panel._current_datasets
+        assert {int(d.run_number) for d in rendered} == {8842, 8843}
+
+    def test_frequency_overlay_fallback_shows_the_one_computed_run(
+        self, mainwindow: MainWindow
+    ) -> None:
+        # Two selected, only one computed: the overlay can't form, so the single
+        # computed run is shown (never hidden behind an empty prompt) even if the
+        # active dataset is the uncomputed one.
+        ds_done = self._compute_run_fft(mainwindow, 8844)
+        ds_todo = _make_fourier_ready_dataset(8845, with_grouping=True)
+        mainwindow._data_browser.add_dataset(ds_todo)
+        mainwindow._on_dataset_selected(8845)  # active = uncomputed run
+
+        mainwindow._frequency_plot_panel.set_overlay_enabled(True)
+        mainwindow._data_browser.get_selected_datasets = lambda: [ds_done, ds_todo]
+        mainwindow._sync_frequency_plot_for_current_dataset()
+
+        rendered = mainwindow._frequency_plot_panel._current_datasets
+        assert len(rendered) == 1
+        assert int(rendered[0].run_number) == 8844
+        assert mainwindow._frequency_overlay_active is False
 
     def test_compute_group_fourier_can_average_selected_groups(
         self, mainwindow: MainWindow
@@ -1397,7 +1631,7 @@ class TestMainWindowFourier:
         assert table.item(0, 2).text() == "33.000"
         assert table.item(1, 0).checkState() == Qt.CheckState.Unchecked
 
-    def test_project_restore_persists_cached_fourier_spectra(
+    def test_project_restore_recomputes_fourier_spectra_without_inlining(
         self,
         mainwindow: MainWindow,
         monkeypatch: pytest.MonkeyPatch,
@@ -1421,7 +1655,11 @@ class TestMainWindowFourier:
         mainwindow._frequency_plot_panel.set_view_limits(-0.8, 0.4, y_min, y_max)
 
         state = mainwindow.collect_project_state()
-        assert str(8816) in state.get("fourier_spectra_state", {})
+        # Recipe-only policy: FFT spectra are NOT inlined into the project (that
+        # bloated real high-resolution projects to ~1.2 GB of ASCII floats); they
+        # recompute from the FFT recipe on load. The restore-and-recompute below
+        # proves the spectrum still appears without any persisted arrays.
+        assert state.get("fourier_spectra_state") == {}
 
         restored_window = MainWindow()
 
@@ -5692,3 +5930,63 @@ class TestLoadRunRange:
         mainwindow._on_load_run_range()
 
         assert called["n"] == 0
+
+
+def _grouped_view_dataset(run_number: int) -> MuonDataset:
+    """A run with two included detector groups so grouped time domain is available."""
+    counts = np.full(8, 100.0)
+    run = Run(
+        run_number=run_number,
+        histograms=[Histogram(counts=counts, bin_width=0.01, t0_bin=0) for _ in range(2)],
+        metadata={"run_number": run_number, "field": 100.0},
+        grouping={
+            "groups": {1: [1], 2: [2]},
+            "group_names": {1: "U", 2: "D"},
+            "included_groups": {1: True, 2: True},
+            "first_good_bin": 0,
+            "last_good_bin": 7,
+            "bunching_factor": 1,
+        },
+    )
+    t = np.arange(8.0) * 0.01
+    return MuonDataset(
+        time=t,
+        asymmetry=np.zeros(8),
+        error=np.ones(8),
+        metadata={"run_number": run_number, "field": 100.0},
+        run=run,
+    )
+
+
+def test_group_header_selection_keeps_individual_groups_view(mainwindow: MainWindow) -> None:
+    """Selecting a data-group header in 'groups' mode shows individual groups, not FB.
+
+    Regression: a group header expands to >1 dataset, so under overlay the groups
+    view was excluded and the plot fell back to the FB-asymmetry overlay.
+    """
+    mw = mainwindow
+    for rn in (701, 702):
+        mw._data_browser.add_dataset(_grouped_view_dataset(rn))
+    gid = mw._data_browser.create_data_group([701, 702], name="grp", collapsed=True)
+    assert gid is not None
+
+    mw._plot_workspace.set_active_view("groups")
+    mw._plot_panel.set_time_view_modes(
+        ["fb_asymmetry", "groups", "raw_counts", "integral_scan"], current_mode="groups"
+    )
+    mw._data_browser._restore_selection_by_keys([f"group:{gid}"])
+    assert mw._data_browser.is_single_group_selected()
+
+    # The groups view is offered for the group-header selection.
+    assert "groups" in mw._sync_available_views()
+
+    # The render path draws the grouped subplots for a representative member, not the
+    # FB-asymmetry overlay of every member.
+    captured: dict = {}
+    mw._plot_panel.plot_grouped_time_domain_subplots = lambda ds: captured.setdefault("grouped", ds)
+    mw._plot_panel.plot_datasets = lambda ds: captured.setdefault("overlay", ds)
+    mw._render_current_selection_plot()
+    assert "grouped" in captured
+    assert "overlay" not in captured
+    assert mw._current_dataset is not None
+    assert int(mw._current_dataset.run_number) in (701, 702)

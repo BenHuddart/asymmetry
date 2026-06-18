@@ -159,6 +159,133 @@ def _write_flame_root_directory(path: Path) -> None:
         )
 
 
+def _write_gps_subdetector_root_directory(path: Path) -> None:
+    edges = np.arange(-0.5, 5.5, 1.0)
+    # GPS MusrRoot exposes the raw split sub-detectors (verified histogram order).
+    labels = [
+        "Forw",
+        "Back",
+        "Up_B",
+        "Up_F",
+        "Down_B",
+        "Down_F",
+        "Right_B",
+        "Right_F",
+        "Left_B",
+        "Left_F",
+        "Mob-RL",
+    ]
+    with uproot.recreate(path) as root_file:
+        root_file["RunHeader/RunInfo/Run Number"] = "5848"
+        root_file["RunHeader/RunInfo/Laboratory"] = "PSI"
+        root_file["RunHeader/RunInfo/Instrument"] = "GPS"
+        root_file["RunHeader/RunInfo/No of Histos"] = str(len(labels))
+        root_file["RunHeader/RunInfo/Time Resolution"] = "10 ns"
+        for index, label in enumerate(labels, start=1):
+            prefix = f"RunHeader/DetectorInfo/Detector{index:03d}"
+            root_file[f"{prefix}/Name"] = label
+            root_file[f"{prefix}/Histo Number"] = str(index)
+            root_file[f"{prefix}/Time Zero Bin"] = "1"
+            root_file[f"{prefix}/First Good Bin"] = "1"
+            root_file[f"{prefix}/Last Good Bin"] = "4"
+            root_file[f"histos/DecayAnaModule/hDecay{index:03d}"] = (
+                np.arange(5, dtype=np.float64) + index,
+                edges,
+            )
+
+
+def test_root_loader_groups_gps_subdetectors_like_psi_bin(tmp_path) -> None:
+    # GPS ROOT (MusrRoot) splits each transverse plate into _B/_F halves; the
+    # default grouping must combine them so ROOT matches the six-group PSI-BIN
+    # GPS default (Forward, Backward, Up, Down, Left, Right), leaving the
+    # ungrouped Mobile detector on its own.
+    path = tmp_path / "gps_subdetectors.root"
+    _write_gps_subdetector_root_directory(path)
+
+    ds = RootLoader().load(str(path))
+
+    assert ds.run is not None
+    groups = ds.run.grouping["groups"]
+    names = ds.run.grouping["group_names"]
+    assert groups == {
+        1: [1],
+        2: [2],
+        3: [3, 4],
+        4: [5, 6],
+        5: [7, 8],
+        6: [9, 10],
+        7: [11],
+    }
+    assert names == {
+        1: "Forw",
+        2: "Back",
+        3: "Up",
+        4: "Down",
+        5: "Right",
+        6: "Left",
+        7: "Mob-RL",
+    }
+    # Beam Forward/Backward map to the muon-spin analysis pair (as for FLAME).
+    assert ds.run.grouping["forward_group"] == 2
+    assert ds.run.grouping["backward_group"] == 1
+
+
+def _write_labeled_root_directory(path: Path, *, instrument: str, labels: list[str]) -> None:
+    edges = np.arange(-0.5, 5.5, 1.0)
+    with uproot.recreate(path) as root_file:
+        root_file["RunHeader/RunInfo/Run Number"] = "5849"
+        root_file["RunHeader/RunInfo/Laboratory"] = "PSI"
+        root_file["RunHeader/RunInfo/Instrument"] = instrument
+        root_file["RunHeader/RunInfo/No of Histos"] = str(len(labels))
+        root_file["RunHeader/RunInfo/Time Resolution"] = "10 ns"
+        for index, label in enumerate(labels, start=1):
+            prefix = f"RunHeader/DetectorInfo/Detector{index:03d}"
+            root_file[f"{prefix}/Name"] = label
+            root_file[f"{prefix}/Histo Number"] = str(index)
+            root_file[f"{prefix}/Time Zero Bin"] = "1"
+            root_file[f"{prefix}/First Good Bin"] = "1"
+            root_file[f"{prefix}/Last Good Bin"] = "4"
+            root_file[f"histos/DecayAnaModule/hDecay{index:03d}"] = (
+                np.arange(5, dtype=np.float64) + index,
+                edges,
+            )
+
+
+def test_root_loader_merges_paired_subdetectors_regardless_of_instrument(tmp_path) -> None:
+    # Real GPS files may not report Instrument == "GPS", so the split-half merge
+    # is detected structurally: a transverse base present as BOTH _B and _F halves
+    # is the GPS convention and is combined whatever the instrument label reads.
+    path = tmp_path / "paired_subdetectors.root"
+    _write_labeled_root_directory(
+        path,
+        instrument="",  # instrument label missing / non-"GPS"
+        labels=["Forw", "Back", "Up_B", "Up_F", "Down_B", "Down_F"],
+    )
+
+    ds = RootLoader().load(str(path))
+
+    assert ds.run is not None
+    assert ds.run.grouping["groups"] == {1: [1], 2: [2], 3: [3, 4], 4: [5, 6]}
+    assert ds.run.grouping["group_names"] == {1: "Forw", 2: "Back", 3: "Up", 4: "Down"}
+
+
+def test_root_loader_does_not_merge_unpaired_subdetectors(tmp_path) -> None:
+    # Without a genuine _B/_F pair (here a lone Up_F), nothing is merged — each
+    # histogram stays its own group.
+    path = tmp_path / "unpaired_subdetectors.root"
+    _write_labeled_root_directory(
+        path,
+        instrument="DOLLY",
+        labels=["Forward", "Backward", "Up_F", "Left"],
+    )
+
+    ds = RootLoader().load(str(path))
+
+    assert ds.run is not None
+    assert ds.run.grouping["groups"] == {1: [1], 2: [2], 3: [3], 4: [4]}
+    assert ds.run.grouping["group_names"] == {1: "Forward", 2: "Backward", 3: "Up_F", 4: "Left"}
+
+
 def test_load_musrroot_directory_reads_header_histograms_and_grouping(tmp_path) -> None:
     path = tmp_path / "lem_synthetic.root"
     _write_musrroot_directory(path)

@@ -10,8 +10,10 @@ import copy
 import dataclasses
 import functools
 import html
+import os
 import re
 from collections.abc import Callable
+from contextlib import contextmanager
 
 import numpy as np
 from PySide6.QtCore import QEvent, QEventLoop, QSignalBlocker, QSize, Qt, QTimer, Signal
@@ -295,8 +297,8 @@ def _bounded_phase_seed_padding(n_points: int, *, desired: int = 8) -> int:
     return max(1, min(int(desired), int(max_factor)))
 
 
-def _seed_group_phase_estimates(grouped_groups: list[object]) -> tuple[float, dict[str, float]]:
-    """Return the first-group absolute phase and per-group relative phases in radians."""
+def _seed_group_phase_degrees(grouped_groups: list[object]) -> dict[str, float]:
+    """Return the FFT-estimated absolute phase (degrees) of each group's oscillation."""
     phase_degrees_by_group: dict[str, float] = {}
     for group in grouped_groups:
         group_id = str(getattr(group, "group_id", ""))
@@ -347,37 +349,25 @@ def _seed_group_phase_estimates(grouped_groups: list[object]) -> tuple[float, di
             max_frequency=max_frequency,
         )
 
-    if not phase_degrees_by_group:
-        return 0.0, {}
+    return phase_degrees_by_group
 
-    reference_group_id = str(getattr(grouped_groups[0], "group_id", ""))
-    reference_phase = phase_degrees_by_group.get(reference_group_id, 0.0)
-    reference_phase_rad = float(np.angle(np.exp(1j * np.deg2rad(reference_phase))))
-    relative_phases = {
-        group_id: float(np.angle(np.exp(1j * np.deg2rad(phase_deg - reference_phase))))
-        for group_id, phase_deg in phase_degrees_by_group.items()
+
+def _wrap_phase_rad(phase_deg: float) -> float:
+    """Wrap a phase in degrees to radians on ``(-pi, pi]``."""
+    return float(np.angle(np.exp(1j * np.deg2rad(phase_deg))))
+
+
+def _seed_group_absolute_phases(grouped_groups: list[object]) -> dict[str, float]:
+    """Return per-group *absolute* phase seeds in radians (wrapped to ``(-pi, pi]``).
+
+    Grouped fits hold the shared model phase at zero, so each group's per-group
+    phase nuisance carries the full FFT-estimated phase rather than an offset
+    relative to the first group.
+    """
+    return {
+        group_id: _wrap_phase_rad(phase_deg)
+        for group_id, phase_deg in _seed_group_phase_degrees(grouped_groups).items()
     }
-    return reference_phase_rad, relative_phases
-
-
-def _seed_group_relative_phases(grouped_groups: list[object]) -> dict[str, float]:
-    """Return per-group relative phase seeds in radians using FFT auto-phase estimation."""
-    _reference_phase, relative_phases = _seed_group_phase_estimates(grouped_groups)
-    return relative_phases
-
-
-def _grouped_model_phase_defaults(
-    grouped_model: CompositeModel,
-    grouped_groups: list[object],
-) -> dict[str, float]:
-    """Return grouped-model phase defaults seeded from the first group."""
-    reference_phase, _relative_phases = _seed_group_phase_estimates(grouped_groups)
-    phase_defaults: dict[str, float] = {}
-    for pname in grouped_model.param_names:
-        base_name, _index = split_parameter_name(pname)
-        if base_name == "phase":
-            phase_defaults[pname] = reference_phase
-    return phase_defaults
 
 
 def _grouped_formula_string(model: CompositeModel) -> str:
@@ -1333,6 +1323,459 @@ def _shift_rrf_parameters(
     return shifted
 
 
+class FitParameterTable(QTableWidget):
+    """Reusable fit-parameter table: Name·Value·Fix·Min·Max·Batch·Link·Tie.
+
+    Shared by the single-fit panel (:class:`SingleFitTab`) and the single
+    grouped (individual-groups) fit. It owns the per-row Fix checkbox, equality
+    Link-group selector and affine Tie button (with their mutual-exclusion
+    wiring), the value±uncertainty / commit-on-Tab delegates, fraction-row
+    synchronisation, and the parameter read / seed / state round-trip. Hosts
+    wrap it for the composite-model, result-text and wizard concerns that are
+    not part of the table itself.
+    """
+
+    COL_NAME = 0
+    COL_VALUE = 1
+    COL_FIX = 2
+    COL_MIN = 3
+    COL_MAX = 4
+    COL_BATCH = _SINGLE_PARAM_BATCH_COLUMN  # 5
+    COL_LINK = _SINGLE_PARAM_LINK_COLUMN  # 6
+    COL_TIE = _SINGLE_PARAM_TIE_COLUMN  # 7
+
+    #: Emitted with the parameter name whose Value cell the user just edited.
+    value_edited = Signal(str)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(0, 8, parent)
+        self.setHorizontalHeaderLabels(
+            ["Name", "Value", "Fix", "Min", "Max", "Batch", "Link", "Tie"]
+        )
+        self.horizontalHeader().setStretchLastSection(False)
+        for col, width in ((0, 72), (1, 88), (2, 30), (3, 52), (4, 52), (5, 50), (6, 40), (7, 40)):
+            self.setColumnWidth(col, width)
+        _apply_param_table_style(self)
+        # Tab commits the open editor on every editable column; the Value column
+        # additionally paints the ±σ overlay.
+        self.setItemDelegate(_CommitOnTabDelegate(self))
+        self.setItemDelegateForColumn(self.COL_VALUE, _ValueUncertaintyDelegate(self))
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setWordWrap(False)
+
+        #: Guards programmatic cell writes so they don't fire fraction-sync /
+        #: value_edited (the host sets this around bulk updates via ``suspend``).
+        self._updating = False
+        self._composite_model: CompositeModel | None = None
+        #: Non-model parameters carried from a loaded project (no table row) that
+        #: a tie/seed may still reference; preserved across read/state.
+        self._auxiliary_param_state: list[dict] = []
+        self.itemChanged.connect(self._on_item_changed)
+
+    @contextmanager
+    def suspend(self):
+        """Suspend value-edit reactions (fraction sync / ``value_edited``).
+
+        Wrap programmatic cell writes (populate, restore, fit-result write-back)
+        so they don't trip the user-edit handler.
+        """
+        prev = self._updating
+        self._updating = True
+        try:
+            yield
+        finally:
+            self._updating = prev
+
+    @property
+    def is_updating(self) -> bool:
+        return self._updating
+
+    def set_batch_column_visible(self, visible: bool) -> None:
+        """Show/hide the read-only Batch-role column (hidden for grouped fits)."""
+        self.setColumnHidden(self.COL_BATCH, not visible)
+
+    # ── populate ────────────────────────────────────────────────────────────
+
+    def populate(
+        self,
+        model: CompositeModel,
+        *,
+        value_overrides: dict[str, float] | None = None,
+        fixed_names: frozenset[str] | set[str] = frozenset(),
+        param_names: list[str] | None = None,
+    ) -> None:
+        """Build one row per parameter, seeding values and the Fix state.
+
+        ``param_names`` restricts the rows to a subset of the model's parameters
+        (e.g. the grouped physics table, which omits per-group nuisance
+        amplitudes); fraction-row helpers locate rows by name, so a subset is
+        safe. Defaults to every model parameter.
+        """
+        self._composite_model = model
+        # A fresh model build owns the parameter namespace: drop auxiliaries from a
+        # previous (different-model) restore so they can't resurrect as ghost
+        # parameters in read_parameter_set()/parameters_state(). restore_parameters
+        # re-establishes them for the matching model.
+        self._auxiliary_param_state = []
+        overrides = value_overrides or {}
+        names = list(model.param_names) if param_names is None else list(param_names)
+        with self.suspend():
+            self.setRowCount(len(names))
+            for i, pname in enumerate(names):
+                self.setItem(
+                    i, self.COL_NAME, _make_param_name_item(_format_param_label(pname), pname)
+                )
+
+                default_val = overrides.get(pname, model.param_defaults.get(pname, 0.0))
+                value_item = QTableWidgetItem(str(default_val))
+                value_item.setFont(mono_font(11.0))
+                self.setItem(i, self.COL_VALUE, value_item)
+
+                fix_widget = QWidget()
+                fix_layout = QHBoxLayout(fix_widget)
+                fix_layout.setContentsMargins(0, 0, 0, 0)
+                fix_checkbox = QCheckBox()
+                if pname in fixed_names:
+                    fix_checkbox.setChecked(True)
+                fix_layout.addWidget(fix_checkbox)
+                fix_layout.setAlignment(fix_checkbox, Qt.AlignmentFlag.AlignCenter)
+                self.setCellWidget(i, self.COL_FIX, fix_widget)
+
+                default_min = get_param_info(pname).default_min
+                min_text = str(default_min) if default_min is not None else "-inf"
+                min_item = QTableWidgetItem(min_text)
+                min_item.setFont(mono_font(11.0))
+                self.setItem(i, self.COL_MIN, min_item)
+
+                max_item = QTableWidgetItem("inf")
+                max_item.setFont(mono_font(11.0))
+                self.setItem(i, self.COL_MAX, max_item)
+
+                _set_param_batch_role_cell(self, i, None)
+
+                link_combo = _make_link_group_combo()
+                self.setCellWidget(i, self.COL_LINK, link_combo)
+                # Fix and Link are mutually exclusive (linking wins in the engine,
+                # so allowing both would silently discard the fixed value).
+                self._wire_fix_link_exclusion(fix_checkbox, link_combo)
+
+                tie_button = _make_tie_button()
+                tie_button._param_name = pname  # type: ignore[attr-defined]
+                self.setCellWidget(i, self.COL_TIE, tie_button)
+                self._wire_tie_button(i, tie_button, fix_checkbox, link_combo)
+
+            _configure_fraction_rows_in_table(
+                self, model, min_column=self.COL_MIN, max_column=self.COL_MAX
+            )
+        self.synchronize_fractions()
+        _size_param_table_to_content(self)
+
+    # ── fraction-row sync ───────────────────────────────────────────────────
+
+    def synchronize_fractions(self, edited_param_name: str | None = None) -> None:
+        if self._composite_model is None:
+            return
+        with self.suspend():
+            _synchronize_fraction_group_values_in_table(
+                self, self._composite_model, edited_param_name=edited_param_name
+            )
+
+    def _on_item_changed(self, item: QTableWidgetItem) -> None:
+        if self._updating or item.column() != self.COL_VALUE:
+            return
+        name_item = self.item(item.row(), self.COL_NAME)
+        name = name_item.data(Qt.ItemDataRole.UserRole) if name_item is not None else None
+        if isinstance(name, str):
+            self.synchronize_fractions(name)
+            self.value_edited.emit(name)
+
+    # ── Fix / Link / Tie wiring ─────────────────────────────────────────────
+
+    def _wire_fix_link_exclusion(self, fix_checkbox: QCheckBox, link_combo: QComboBox) -> None:
+        """Keep a row's Fix checkbox and Link-group combo mutually exclusive."""
+
+        def on_fix_toggled(checked: bool) -> None:
+            if self._updating:
+                return
+            if checked and _link_group_combo_value(link_combo) is not None:
+                with self.suspend():
+                    _set_link_group_combo_value(link_combo, None)
+            link_combo.setEnabled(not checked)
+
+        def on_link_changed(_index: int) -> None:
+            if self._updating:
+                return
+            linked = _link_group_combo_value(link_combo) is not None
+            if linked and fix_checkbox.isChecked():
+                with self.suspend():
+                    fix_checkbox.setChecked(False)
+            fix_checkbox.setEnabled(not linked)
+
+        fix_checkbox.toggled.connect(on_fix_toggled)
+        link_combo.currentIndexChanged.connect(on_link_changed)
+
+    def _tie_candidate_names(self, row: int) -> list[str]:
+        """Names a row may reference in a tie: other, *untied* rows + auxiliaries."""
+        names: list[str] = []
+        for i in range(self.rowCount()):
+            if i == row:
+                continue
+            name_item = self.item(i, self.COL_NAME)
+            name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
+            if not isinstance(name, str):
+                continue
+            if _tie_button_value(self.cellWidget(i, self.COL_TIE)) is not None:
+                continue
+            names.append(name)
+        for entry in self._auxiliary_param_state:
+            aux_name = entry.get("name")
+            if isinstance(aux_name, str) and aux_name not in names:
+                names.append(aux_name)
+        return names
+
+    def _wire_tie_button(
+        self, row: int, tie_button: QPushButton, fix_checkbox: QCheckBox, link_combo: QComboBox
+    ) -> None:
+        """Open the affine-tie editor and keep Tie exclusive with Fix/Link."""
+
+        def on_clicked() -> None:
+            candidates = self._tie_candidate_names(row)
+            if not candidates:
+                QMessageBox.information(
+                    self,
+                    "Affine tie",
+                    "An affine tie needs at least one other free parameter to "
+                    "reference. Add or untie another parameter first.",
+                )
+                return
+            name = getattr(tie_button, "_param_name", "")
+            dialog = AffineTieDialog(name, candidates, _tie_button_value(tie_button), self)
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            tie = dialog.tie()
+            _set_tie_button_value(tie_button, tie)
+            with self.suspend():
+                if tie is not None:
+                    fix_checkbox.setChecked(False)
+                    _set_link_group_combo_value(link_combo, None)
+            fix_checkbox.setEnabled(tie is None)
+            link_combo.setEnabled(tie is None)
+
+        tie_button.clicked.connect(on_clicked)
+
+    # ── read / seed / state ─────────────────────────────────────────────────
+
+    def read_parameter_set(self) -> ParameterSet:
+        """Build a :class:`ParameterSet` from the table (raises on a bad value)."""
+        parameters = ParameterSet()
+        for i in range(self.rowCount()):
+            name_item = self.item(i, self.COL_NAME)
+            param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
+            if not isinstance(param_name, str):
+                param_name = name_item.text() if name_item else f"param_{i}"
+
+            try:
+                value = float(self.item(i, self.COL_VALUE).text())
+            except (ValueError, AttributeError) as exc:
+                raise ValueError(f"Invalid value for {_format_param_label(param_name)}") from exc
+
+            fix_widget = self.cellWidget(i, self.COL_FIX)
+            fix_checkbox = fix_widget.findChild(QCheckBox) if fix_widget else None
+            fixed = fix_checkbox.isChecked() if fix_checkbox else False
+
+            try:
+                min_text = self.item(i, self.COL_MIN).text()
+                min_val = float(min_text) if min_text and min_text != "-inf" else -float("inf")
+            except (ValueError, AttributeError):
+                min_val = -float("inf")
+            try:
+                max_text = self.item(i, self.COL_MAX).text()
+                max_val = float(max_text) if max_text and max_text != "inf" else float("inf")
+            except (ValueError, AttributeError):
+                max_val = float("inf")
+
+            link_group = _link_group_combo_value(self.cellWidget(i, self.COL_LINK))
+            tie = _tie_button_value(self.cellWidget(i, self.COL_TIE))
+
+            parameters.add(
+                Parameter(
+                    name=param_name,
+                    value=value,
+                    min=min_val,
+                    max=max_val,
+                    fixed=fixed,
+                    link_group=link_group,
+                    tie=tie,
+                )
+            )
+        for entry in self._auxiliary_param_state:
+            parameters.add(_parameter_from_state_dict(entry))
+        return parameters
+
+    def current_seed_values(self) -> dict[str, str]:
+        """Return the live seed text per parameter name (skips non-finite cells)."""
+        seeds: dict[str, str] = {}
+        for row in range(self.rowCount()):
+            name_item = self.item(row, self.COL_NAME)
+            if name_item is None:
+                continue
+            name = name_item.data(Qt.ItemDataRole.UserRole)
+            if not isinstance(name, str):
+                continue
+            value_item = self.item(row, self.COL_VALUE)
+            if value_item is None:
+                continue
+            text = value_item.text().strip()
+            try:
+                float(text)
+            except ValueError:
+                continue
+            seeds[name] = text
+        return seeds
+
+    def parameters_state(self) -> list[dict]:
+        """Serialise the table rows (+ auxiliaries) as parameter-state dicts."""
+        params: list[dict] = []
+        for i in range(self.rowCount()):
+            name_item = self.item(i, self.COL_NAME)
+            param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else f"param_{i}"
+            if not isinstance(param_name, str):
+                param_name = name_item.text() if name_item else f"param_{i}"
+
+            value_item = self.item(i, self.COL_VALUE)
+            try:
+                value = float(value_item.text()) if value_item else 0.0
+            except ValueError:
+                value = 0.0
+            unc = value_item.data(_ValueUncertaintyDelegate._UNC_ROLE) if value_item else None
+            unc_asym = (
+                value_item.data(_ValueUncertaintyDelegate._MINOS_ROLE) if value_item else None
+            )
+
+            fix_widget = self.cellWidget(i, self.COL_FIX)
+            fix_checkbox = fix_widget.findChild(QCheckBox) if fix_widget else None
+            fixed = fix_checkbox.isChecked() if fix_checkbox else False
+
+            min_item = self.item(i, self.COL_MIN)
+            max_item = self.item(i, self.COL_MAX)
+            role_item = self.item(i, self.COL_BATCH)
+            role = role_item.data(_PARAM_BATCH_ROLE_DATA) if role_item is not None else None
+            tie = _tie_button_value(self.cellWidget(i, self.COL_TIE))
+            params.append(
+                {
+                    "name": param_name,
+                    "value": value,
+                    "fixed": fixed,
+                    "min": min_item.text() if min_item else "-inf",
+                    "max": max_item.text() if max_item else "inf",
+                    "uncertainty": unc,
+                    "uncertainty_asymmetric": list(unc_asym) if unc_asym is not None else None,
+                    "role": role if isinstance(role, str) else None,
+                    "link_group": _link_group_combo_value(self.cellWidget(i, self.COL_LINK)),
+                    "tie": tie.to_dict() if tie is not None else None,
+                }
+            )
+        params.extend(copy.deepcopy(entry) for entry in self._auxiliary_param_state)
+        if self._composite_model is not None:
+            normalized = _normalized_model_param_values(
+                self._composite_model,
+                {str(entry["name"]): float(entry.get("value", 0.0)) for entry in params},
+            )
+            params = [
+                {**entry, "value": normalized.get(str(entry["name"]), entry["value"])}
+                for entry in params
+            ]
+        return params
+
+    def restore_parameters(self, params_data: dict[str, dict]) -> None:
+        """Apply saved parameter-state dicts onto the current rows (+ auxiliaries).
+
+        ``populate`` must have been called for the matching model first.
+        """
+        model = self._composite_model
+        normalized_state_values = (
+            _normalized_model_param_values(
+                model,
+                {
+                    str(name): float(entry.get("value", 0.0))
+                    for name, entry in params_data.items()
+                    if entry.get("value") is not None
+                },
+            )
+            if model is not None
+            else {}
+        )
+        with self.suspend():
+            for i in range(self.rowCount()):
+                name_item = self.item(i, self.COL_NAME)
+                param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
+                if not isinstance(param_name, str) and name_item:
+                    param_name = name_item.text()
+                if param_name not in params_data:
+                    continue
+                p_data = params_data[param_name]
+
+                value_item = self.item(i, self.COL_VALUE)
+                if value_item:
+                    value_item.setText(
+                        str(normalized_state_values.get(param_name, p_data.get("value", 0.0)))
+                    )
+                    value_item.setData(
+                        _ValueUncertaintyDelegate._UNC_ROLE, p_data.get("uncertainty")
+                    )
+                    value_item.setData(
+                        _ValueUncertaintyDelegate._MINOS_ROLE,
+                        p_data.get("uncertainty_asymmetric"),
+                    )
+
+                fix_widget = self.cellWidget(i, self.COL_FIX)
+                fix_checkbox = fix_widget.findChild(QCheckBox) if fix_widget else None
+                if fix_checkbox:
+                    fix_checkbox.setChecked(bool(p_data.get("fixed", False)))
+
+                min_item = self.item(i, self.COL_MIN)
+                if min_item:
+                    min_item.setText(str(p_data.get("min", "-inf")))
+                max_item = self.item(i, self.COL_MAX)
+                if max_item:
+                    max_item.setText(str(p_data.get("max", "inf")))
+
+                _set_param_batch_role_cell(self, i, p_data.get("role"))
+
+                link_combo = self.cellWidget(i, self.COL_LINK)
+                raw_link = p_data.get("link_group")
+                _set_link_group_combo_value(
+                    link_combo, int(raw_link) if isinstance(raw_link, (int, float)) else None
+                )
+
+                tie_button = self.cellWidget(i, self.COL_TIE)
+                raw_tie = p_data.get("tie")
+                tie = AffineTie.from_dict(raw_tie) if isinstance(raw_tie, dict) else None
+                _set_tie_button_value(tie_button, tie)
+                if tie is not None:
+                    if fix_checkbox is not None:
+                        fix_checkbox.setChecked(False)
+                    _set_link_group_combo_value(link_combo, None)
+                if fix_checkbox is not None:
+                    fix_checkbox.setEnabled(tie is None)
+                if link_combo is not None:
+                    link_combo.setEnabled(tie is None)
+
+            row_names: set[str] = set()
+            for i in range(self.rowCount()):
+                ni = self.item(i, self.COL_NAME)
+                nm = ni.data(Qt.ItemDataRole.UserRole) if ni else None
+                if isinstance(nm, str):
+                    row_names.add(nm)
+            self._auxiliary_param_state = [
+                copy.deepcopy(entry)
+                for entry in params_data.values()
+                if isinstance(entry, dict) and entry.get("name") not in row_names
+            ]
+        self.synchronize_fractions()
+
+
 class SingleFitTab(QWidget):
     """Single dataset fitting interface.
 
@@ -1376,7 +1819,6 @@ class SingleFitTab(QWidget):
         self._cached_wizard_recommendation: FitWizardRecommendation | None = None
         self._cached_wizard_signature: dict[str, object] | None = None
         self._cached_wizard_log_text = ""
-        self._updating_fraction_values = False
         # Optional provider of the rotating-frame ν₀ (MHz) supplied by the host
         # window; returns a frequency when an RRF fit should run (the plot's RRF
         # display is active), else None. Default no-op keeps the tab standalone.
@@ -1394,13 +1836,6 @@ class SingleFitTab(QWidget):
         #: Reset while the fit ran (Reset reuses the same object, so object
         #: identity alone would miss it), so the stale result is not applied.
         self._model_generation = 0
-
-        #: Saved parameter entries that have no table row — auxiliary, non-model
-        #: parameters (e.g. an API-authored affine-tie half-splitting ``delta``)
-        #: that the model itself never consumes. The GUI cannot edit them, but it
-        #: preserves them verbatim across save/restore and includes them in a
-        #: re-fit so a tie referencing them still resolves.
-        self._auxiliary_param_state: list[dict] = []
 
         # Model selection
         model_group, model_box = make_section("Model")
@@ -1476,43 +1911,11 @@ class SingleFitTab(QWidget):
         self._fit_range_min_spin.editingFinished.connect(self._on_fit_range_spinbox_committed)
         self._fit_range_max_spin.editingFinished.connect(self._on_fit_range_spinbox_committed)
 
-        # Parameter table
+        # Parameter table — the shared Name·Value·Fix·Min·Max·Batch·Link·Tie
+        # widget (columns/delegates/Fix-Link-Tie wiring/fraction sync live in
+        # FitParameterTable). It self-connects itemChanged for fraction sync.
         param_group, param_layout = make_section("Parameters")
-        self._param_table = QTableWidget(0, 8)
-        self._param_table.setHorizontalHeaderLabels(
-            ["Name", "Value", "Fix", "Min", "Max", "Batch", "Link", "Tie"]
-        )
-        self._param_table.horizontalHeader().setStretchLastSection(False)
-        # Tight default widths so the table fits a 13" dock without sideways
-        # scrolling in the common case; columns stay user-resizable and the
-        # horizontal scrollbar still appears on demand for wide bounds/roles.
-        self._param_table.setColumnWidth(0, 72)  # Name (incl. unit)
-        self._param_table.setColumnWidth(1, 88)  # Value ± σ
-        self._param_table.setColumnWidth(2, 30)  # Fix
-        self._param_table.setColumnWidth(3, 52)  # Min
-        self._param_table.setColumnWidth(4, 52)  # Max
-        self._param_table.setColumnWidth(5, 50)  # Batch role (read-only)
-        self._param_table.setColumnWidth(6, 40)  # Link group (equality tie)
-        self._param_table.setColumnWidth(7, 40)  # Affine tie (offset / equal spacing)
-
-        _apply_param_table_style(self._param_table)
-        # Tab commits the open editor on every editable column (Value, Min, Max);
-        # the Value column additionally paints the ±σ overlay.
-        self._param_table.setItemDelegate(_CommitOnTabDelegate(self._param_table))
-        self._param_table.setItemDelegateForColumn(1, _ValueUncertaintyDelegate(self._param_table))
-
-        # Size the table to its rows (see _size_param_table_to_content). The
-        # inspector dock scrolls vertically, so the table itself never needs an
-        # internal vertical scrollbar; a 13-parameter model just makes the panel
-        # taller. This removes the empty rows a few-parameter model showed when
-        # the table expanded to fill the dock height.
-        self._param_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self._param_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        # Elide long names on one line rather than wrapping to two rows when the
-        # Name column is narrow (the unit suffix would otherwise wrap).
-        self._param_table.setWordWrap(False)
-
-        self._param_table.itemChanged.connect(self._on_param_table_item_changed)
+        self._param_table = FitParameterTable()
         param_layout.addWidget(self._param_table)
         layout.addWidget(param_group)
 
@@ -1781,14 +2184,11 @@ class SingleFitTab(QWidget):
 
     def _set_composite_model(self, model: CompositeModel) -> None:
         """Set the active composite model and rebuild the parameter table."""
-        self._updating_fraction_values = True
         self._composite_model = model
         # Any model (re)build — including Reset, which reuses the same object —
-        # invalidates an in-flight fit's table/diagnostic write-back, and drops
-        # any auxiliary (non-model) parameters carried from a previously loaded
-        # project (they belong to the old model's tie structure).
+        # invalidates an in-flight fit's table/diagnostic write-back. (The table
+        # drops auxiliary non-model params from a prior restore in populate().)
         self._model_generation += 1
-        self._auxiliary_param_state = []
         _set_formula_label_text(self._formula_label, model.formula_string())
         _apply_domain_mismatch_warning(self._formula_label, model, self._domain)
 
@@ -1797,203 +2197,35 @@ class SingleFitTab(QWidget):
             if self._current_dataset is not None and self._current_dataset.run is not None
             else 0.0
         )
-        field_overrides = _field_value_overrides(model, dataset_field)
-        frequency_overrides = (
-            seed_peak_parameters_from_dataset(self._current_dataset, model)
-            if self._domain == "frequency" and self._current_dataset is not None
-            else {}
-        )
+        value_overrides = dict(_field_value_overrides(model, dataset_field))
+        if self._domain == "frequency" and self._current_dataset is not None:
+            # Frequency-domain peak seeds take precedence over the field seed.
+            value_overrides.update(seed_peak_parameters_from_dataset(self._current_dataset, model))
 
-        fixed_default_params = model.fixed_by_default_params()
-        self._param_table.setRowCount(len(model.param_names))
-        for i, pname in enumerate(model.param_names):
-            # Name column (read-only, bold mono)
-            name_item = _make_param_name_item(_format_param_label(pname), pname)
-            self._param_table.setItem(i, 0, name_item)
-
-            # Value column — use dataset field for 'field' parameters if available
-            default_val = frequency_overrides.get(
-                pname, field_overrides.get(pname, model.param_defaults.get(pname, 0.0))
-            )
-            value_item = QTableWidgetItem(str(default_val))
-            value_item.setFont(mono_font(11.0))
-            self._param_table.setItem(i, 1, value_item)
-
-            # Fix checkbox column
-            fix_widget = QWidget()
-            fix_layout = QHBoxLayout(fix_widget)
-            fix_layout.setContentsMargins(0, 0, 0, 0)
-            fix_checkbox = QCheckBox()
-            if pname == "shape_factor_a" or pname in fixed_default_params:
-                fix_checkbox.setChecked(True)
-            fix_layout.addWidget(fix_checkbox)
-            fix_layout.setAlignment(fix_checkbox, Qt.AlignmentFlag.AlignCenter)
-            self._param_table.setCellWidget(i, 2, fix_widget)
-
-            # Min column — default to 0 for physically positive-definite parameters
-            default_min = get_param_info(pname).default_min
-            min_text = str(default_min) if default_min is not None else "-inf"
-            min_item = QTableWidgetItem(min_text)
-            min_item.setFont(mono_font(11.0))
-            self._param_table.setItem(i, 3, min_item)
-
-            # Max column
-            max_item = QTableWidgetItem("inf")
-            max_item.setFont(mono_font(11.0))
-            self._param_table.setItem(i, 4, max_item)
-
-            # Batch role column — read-only; filled when a batch result is piped back.
-            _set_param_batch_role_cell(self._param_table, i, None)
-
-            # Link column — equality link-group selector (WiMDA "Ties").
-            link_combo = _make_link_group_combo()
-            self._param_table.setCellWidget(i, _SINGLE_PARAM_LINK_COLUMN, link_combo)
-            # Fix and Link are mutually exclusive: a linked follower tracks its
-            # group main (linking wins over fix in the engine), so allowing both
-            # would silently discard the fixed value. Couple the two controls so
-            # the ambiguous combination can't be created.
-            self._wire_fix_link_exclusion(fix_checkbox, link_combo)
-
-            # Tie column — affine (offset / equal-spacing) tie editor. A tie is
-            # mutually exclusive with Fix and Link (the engine rejects both).
-            tie_button = _make_tie_button()
-            tie_button._param_name = pname  # type: ignore[attr-defined]
-            self._param_table.setCellWidget(i, _SINGLE_PARAM_TIE_COLUMN, tie_button)
-            self._wire_tie_button(i, tie_button, fix_checkbox, link_combo)
-
-        _configure_fraction_rows_in_table(
-            self._param_table,
-            model,
-            min_column=3,
-            max_column=4,
-        )
-        self._updating_fraction_values = False
-        self._synchronize_fraction_value_rows()
-        _size_param_table_to_content(self._param_table)
+        # shape_factor_a (instrument normalisation) is held by default alongside
+        # the model's declared fixed-by-default parameters.
+        fixed_names = set(model.fixed_by_default_params()) | {"shape_factor_a"}
+        self._param_table.populate(model, value_overrides=value_overrides, fixed_names=fixed_names)
 
     def _synchronize_fraction_value_rows(self, edited_param_name: str | None = None) -> None:
-        self._updating_fraction_values = True
-        try:
-            _synchronize_fraction_group_values_in_table(
-                self._param_table,
-                self._composite_model,
-                edited_param_name=edited_param_name,
-            )
-        finally:
-            self._updating_fraction_values = False
+        self._param_table.synchronize_fractions(edited_param_name)
 
-    def _on_param_table_item_changed(self, item: QTableWidgetItem) -> None:
-        if self._updating_fraction_values or item.column() != 1:
-            return
-        name_item = self._param_table.item(item.row(), 0)
-        param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item is not None else None
-        if isinstance(param_name, str):
-            self._synchronize_fraction_value_rows(param_name)
+    @property
+    def _updating_fraction_values(self) -> bool:
+        """Proxy the parameter table's bulk-write guard.
 
-    def _wire_fix_link_exclusion(self, fix_checkbox: QCheckBox, link_combo: QComboBox) -> None:
-        """Keep a row's Fix checkbox and Link-group combo mutually exclusive.
-
-        Selecting a link group disables (and clears) Fix; ticking Fix disables
-        (and clears) the link group. Programmatic table updates set
-        ``_updating_fraction_values`` and are ignored, so restoring saved state
-        never fights itself.
+        The table owns the guard now; existing call sites that wrap programmatic
+        cell writes (fit-result write-back, RRF shift, restore) toggle this and
+        the suppression still works because both read the same flag.
         """
+        tbl = getattr(self, "_param_table", None)
+        return bool(tbl.is_updating) if tbl is not None else False
 
-        def on_fix_toggled(checked: bool) -> None:
-            if self._updating_fraction_values:
-                return
-            if checked and _link_group_combo_value(link_combo) is not None:
-                self._updating_fraction_values = True
-                try:
-                    _set_link_group_combo_value(link_combo, None)
-                finally:
-                    self._updating_fraction_values = False
-            link_combo.setEnabled(not checked)
-
-        def on_link_changed(_index: int) -> None:
-            if self._updating_fraction_values:
-                return
-            linked = _link_group_combo_value(link_combo) is not None
-            if linked and fix_checkbox.isChecked():
-                self._updating_fraction_values = True
-                try:
-                    fix_checkbox.setChecked(False)
-                finally:
-                    self._updating_fraction_values = False
-            fix_checkbox.setEnabled(not linked)
-
-        fix_checkbox.toggled.connect(on_fix_toggled)
-        link_combo.currentIndexChanged.connect(on_link_changed)
-
-    def _tie_candidate_names(self, row: int) -> list[str]:
-        """Parameter names a row may reference in a tie: other, *untied* rows.
-
-        Excludes the row itself (no self-reference) and any already-tied row (the
-        engine forbids tie-to-tie chaining), so every offered reference is valid.
-        """
-        names: list[str] = []
-        for i in range(self._param_table.rowCount()):
-            if i == row:
-                continue
-            name_item = self._param_table.item(i, 0)
-            name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
-            if not isinstance(name, str):
-                continue
-            other_button = self._param_table.cellWidget(i, _SINGLE_PARAM_TIE_COLUMN)
-            if _tie_button_value(other_button) is not None:
-                continue
-            names.append(name)
-        # Auxiliary (non-model) parameters carried from a loaded project are also
-        # valid references — include them so a restored tie that points at one
-        # (e.g. an API-authored half-splitting ``delta``) survives a dialog edit.
-        for entry in self._auxiliary_param_state:
-            aux_name = entry.get("name")
-            if isinstance(aux_name, str) and aux_name not in names:
-                names.append(aux_name)
-        return names
-
-    def _wire_tie_button(
-        self,
-        row: int,
-        tie_button: QPushButton,
-        fix_checkbox: QCheckBox,
-        link_combo: QComboBox,
-    ) -> None:
-        """Open the affine-tie editor and keep Tie mutually exclusive with Fix/Link.
-
-        A tied parameter is derived from others, so it cannot also be fixed or
-        link-grouped (the engine raises on either combination). Setting a tie
-        clears and disables this row's Fix and Link controls; clearing the tie
-        re-enables them.
-        """
-
-        def on_clicked() -> None:
-            candidates = self._tie_candidate_names(row)
-            if not candidates:
-                QMessageBox.information(
-                    self,
-                    "Affine tie",
-                    "An affine tie needs at least one other free parameter to "
-                    "reference. Add or untie another parameter first.",
-                )
-                return
-            name = getattr(tie_button, "_param_name", "")
-            dialog = AffineTieDialog(name, candidates, _tie_button_value(tie_button), self)
-            if dialog.exec() != QDialog.DialogCode.Accepted:
-                return
-            tie = dialog.tie()
-            _set_tie_button_value(tie_button, tie)
-            self._updating_fraction_values = True
-            try:
-                if tie is not None:
-                    fix_checkbox.setChecked(False)
-                    _set_link_group_combo_value(link_combo, None)
-            finally:
-                self._updating_fraction_values = False
-            fix_checkbox.setEnabled(tie is None)
-            link_combo.setEnabled(tie is None)
-
-        tie_button.clicked.connect(on_clicked)
+    @_updating_fraction_values.setter
+    def _updating_fraction_values(self, value: bool) -> None:
+        tbl = getattr(self, "_param_table", None)
+        if tbl is not None:
+            tbl._updating = bool(value)
 
     def _edit_function(self) -> None:
         """Launch the fit-function builder dialog."""
@@ -2233,83 +2465,15 @@ class SingleFitTab(QWidget):
         value (the only hard error; bad bounds fall back to ±inf). Shared by
         the fit run and the pull-distribution diagnostic.
         """
-        parameters = ParameterSet()
-        for i in range(self._param_table.rowCount()):
-            name_item = self._param_table.item(i, 0)
-            param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
-            if not isinstance(param_name, str):
-                param_name = name_item.text() if name_item else f"param_{i}"
-
-            try:
-                value = float(self._param_table.item(i, 1).text())
-            except (ValueError, AttributeError) as exc:
-                raise ValueError(f"Invalid value for {_format_param_label(param_name)}") from exc
-
-            fix_widget = self._param_table.cellWidget(i, 2)
-            fix_checkbox = fix_widget.findChild(QCheckBox)
-            fixed = fix_checkbox.isChecked() if fix_checkbox else False
-
-            try:
-                min_text = self._param_table.item(i, 3).text()
-                min_val = float(min_text) if min_text and min_text != "-inf" else -float("inf")
-            except (ValueError, AttributeError):
-                min_val = -float("inf")
-
-            try:
-                max_text = self._param_table.item(i, 4).text()
-                max_val = float(max_text) if max_text and max_text != "inf" else float("inf")
-            except (ValueError, AttributeError):
-                max_val = float("inf")
-
-            link_combo = self._param_table.cellWidget(i, _SINGLE_PARAM_LINK_COLUMN)
-            link_group = _link_group_combo_value(link_combo)
-            tie = _tie_button_value(self._param_table.cellWidget(i, _SINGLE_PARAM_TIE_COLUMN))
-
-            parameters.add(
-                Parameter(
-                    name=param_name,
-                    value=value,
-                    min=min_val,
-                    max=max_val,
-                    fixed=fixed,
-                    link_group=link_group,
-                    tie=tie,
-                )
-            )
-        # Re-add auxiliary (non-model) parameters preserved from a loaded project
-        # so a tie referencing them still resolves in a GUI re-fit.
-        for entry in self._auxiliary_param_state:
-            parameters.add(_parameter_from_state_dict(entry))
-        return parameters
+        return self._param_table.read_parameter_set()
 
     def current_seed_values(self) -> dict[str, str]:
         """Return the live parameter-table seed text keyed by parameter name.
 
-        Reads column 1 of each row verbatim. Once a fit has run the table
-        already holds its converged values (see ``_run_fit``), so this is the
-        current single-fit seed for every parameter. Used to seed the Batch
-        tab from these values rather than letting it fall back to model
-        defaults or stale preserved state (BUG B8c). Rows whose value is not a
-        finite number are skipped so one malformed cell never blocks the send.
+        Used to seed the Batch tab from the current single-fit values rather than
+        model defaults / stale state; non-finite cells are skipped.
         """
-        seeds: dict[str, str] = {}
-        for row in range(self._param_table.rowCount()):
-            name_item = self._param_table.item(row, 0)
-            if name_item is None:
-                continue
-            name = name_item.data(Qt.ItemDataRole.UserRole)
-            if not isinstance(name, str):
-                continue
-            value_item = self._param_table.item(row, 1)
-            if value_item is None:
-                continue
-            text = value_item.text().strip()
-            try:
-                float(text)
-            except ValueError:
-                continue
-            seeds[name] = text
-        return seeds
+        return self._param_table.current_seed_values()
 
     def _run_fit(self) -> None:
         """Execute the fit."""
@@ -2572,71 +2736,12 @@ class SingleFitTab(QWidget):
                     log_text=self._fit_wizard_window.current_log_text(),
                 )
 
-        params = []
-        for i in range(self._param_table.rowCount()):
-            name_item = self._param_table.item(i, 0)
-            param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else f"param_{i}"
-            if not isinstance(param_name, str):
-                param_name = name_item.text() if name_item else f"param_{i}"
-
-            value_item = self._param_table.item(i, 1)
-            try:
-                value = float(value_item.text()) if value_item else 0.0
-            except ValueError:
-                value = 0.0
-
-            unc = (
-                value_item.data(_ValueUncertaintyDelegate._UNC_ROLE)
-                if value_item is not None
-                else None
-            )
-            unc_asym = (
-                value_item.data(_ValueUncertaintyDelegate._MINOS_ROLE)
-                if value_item is not None
-                else None
-            )
-
-            fix_widget = self._param_table.cellWidget(i, 2)
-            fix_checkbox = fix_widget.findChild(QCheckBox) if fix_widget else None
-            fixed = fix_checkbox.isChecked() if fix_checkbox else False
-
-            min_item = self._param_table.item(i, 3)
-            max_item = self._param_table.item(i, 4)
-            role_item = self._param_table.item(i, _SINGLE_PARAM_BATCH_COLUMN)
-            role = role_item.data(_PARAM_BATCH_ROLE_DATA) if role_item is not None else None
-            link_combo = self._param_table.cellWidget(i, _SINGLE_PARAM_LINK_COLUMN)
-            tie = _tie_button_value(self._param_table.cellWidget(i, _SINGLE_PARAM_TIE_COLUMN))
-            params.append(
-                {
-                    "name": param_name,
-                    "value": value,
-                    "fixed": fixed,
-                    "min": min_item.text() if min_item else "-inf",
-                    "max": max_item.text() if max_item else "inf",
-                    "uncertainty": unc,
-                    "uncertainty_asymmetric": list(unc_asym) if unc_asym is not None else None,
-                    "role": role if isinstance(role, str) else None,
-                    "link_group": _link_group_combo_value(link_combo),
-                    "tie": tie.to_dict() if tie is not None else None,
-                }
-            )
-
-        # Re-emit auxiliary (non-model) parameters preserved from a loaded
-        # project so they survive a GUI save (the table has no row for them).
-        params.extend(copy.deepcopy(entry) for entry in self._auxiliary_param_state)
-
-        normalized_values = _normalized_model_param_values(
-            self._composite_model,
-            {str(entry["name"]): float(entry.get("value", 0.0)) for entry in params},
-        )
-
         state = {
             "model_name": "Composite",
             "composite_model": self._composite_model.to_dict(),
-            "parameters": [
-                {**entry, "value": normalized_values.get(str(entry["name"]), entry["value"])}
-                for entry in params
-            ],
+            # The table serialises its rows (incl. auxiliary non-model params and
+            # fraction-value normalisation).
+            "parameters": self._param_table.parameters_state(),
             "result_html": self._result_label.text(),
         }
         if (
@@ -2681,88 +2786,11 @@ class SingleFitTab(QWidget):
                         "see Setup → User functions…"
                     )
 
-        params_data = {p["name"]: p for p in state.get("parameters", [])}
-        normalized_state_values = _normalized_model_param_values(
-            self._composite_model,
-            {
-                str(name): float(entry.get("value", 0.0))
-                for name, entry in params_data.items()
-                if entry.get("value") is not None
-            },
-        )
-        self._updating_fraction_values = True
-        for i in range(self._param_table.rowCount()):
-            name_item = self._param_table.item(i, 0)
-            param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
-            if not isinstance(param_name, str) and name_item:
-                param_name = name_item.text()
-            if param_name not in params_data:
-                continue
-
-            p_data = params_data[param_name]
-
-            value_item = self._param_table.item(i, 1)
-            if value_item:
-                value_item.setText(
-                    str(normalized_state_values.get(param_name, p_data.get("value", 0.0)))
-                )
-                unc = p_data.get("uncertainty")
-                value_item.setData(_ValueUncertaintyDelegate._UNC_ROLE, unc)
-                value_item.setData(
-                    _ValueUncertaintyDelegate._MINOS_ROLE, p_data.get("uncertainty_asymmetric")
-                )
-
-            fix_widget = self._param_table.cellWidget(i, 2)
-            fix_checkbox = fix_widget.findChild(QCheckBox) if fix_widget else None
-            if fix_checkbox:
-                fix_checkbox.setChecked(bool(p_data.get("fixed", False)))
-
-            min_item = self._param_table.item(i, 3)
-            if min_item:
-                min_item.setText(str(p_data.get("min", "-inf")))
-
-            max_item = self._param_table.item(i, 4)
-            if max_item:
-                max_item.setText(str(p_data.get("max", "inf")))
-
-            _set_param_batch_role_cell(self._param_table, i, p_data.get("role"))
-
-            link_combo = self._param_table.cellWidget(i, _SINGLE_PARAM_LINK_COLUMN)
-            raw_link = p_data.get("link_group")
-            _set_link_group_combo_value(
-                link_combo, int(raw_link) if isinstance(raw_link, (int, float)) else None
-            )
-
-            # Affine tie — mutually exclusive with Fix/Link, which it overrides.
-            tie_button = self._param_table.cellWidget(i, _SINGLE_PARAM_TIE_COLUMN)
-            raw_tie = p_data.get("tie")
-            tie = AffineTie.from_dict(raw_tie) if isinstance(raw_tie, dict) else None
-            _set_tie_button_value(tie_button, tie)
-            if tie is not None:
-                if fix_checkbox is not None:
-                    fix_checkbox.setChecked(False)
-                _set_link_group_combo_value(link_combo, None)
-            if fix_checkbox is not None:
-                fix_checkbox.setEnabled(tie is None)
-            link_combo.setEnabled(tie is None)
-
-        # Preserve auxiliary (non-model) parameters that have no table row — e.g.
-        # an API-authored half-splitting `delta` an affine tie references — so a
-        # GUI save/re-fit does not silently drop them and break the tie.
-        row_names: set[str] = set()
-        for i in range(self._param_table.rowCount()):
-            ni = self._param_table.item(i, 0)
-            nm = ni.data(Qt.ItemDataRole.UserRole) if ni else None
-            if isinstance(nm, str):
-                row_names.add(nm)
-        self._auxiliary_param_state = [
-            copy.deepcopy(entry)
-            for entry in state.get("parameters", [])
-            if isinstance(entry, dict) and entry.get("name") not in row_names
-        ]
-
-        self._updating_fraction_values = False
-        self._synchronize_fraction_value_rows()
+        # The table applies the saved values/fix/bounds/link/tie onto its rows
+        # (the model was just rebuilt by _set_composite_model) and re-establishes
+        # auxiliary non-model parameters that have no row.
+        params_data = {p["name"]: p for p in state.get("parameters", []) if isinstance(p, dict)}
+        self._param_table.restore_parameters(params_data)
 
         result_html = state.get("result_html")
         if isinstance(result_html, str) and result_html:
@@ -2797,6 +2825,9 @@ class GlobalFitTab(QWidget):
     global_fit_started = Signal()  # emitted just before the worker launches
     global_fit_completed = Signal(object, object)  # (results_dict, global_params)
     grouped_fit_completed = Signal(object, object)  # (grouped_datasets, results_dict)
+    # (run_number, model, physics_values_by_name) — a converged single grouped
+    # fit's shared physics, so the batch grouped surface can chain-seed per run.
+    single_grouped_fit_recorded = Signal(int, object, object)
     grouped_preview_requested = Signal(object, object)  # (grouped_datasets, preview_curves)
     fit_range_edit_committed = Signal(float, float)  # (x_min, x_max) from spinbox commit
     # (dataset, {"result": FitResult|GroupedTimeDomainFitResult,
@@ -2805,12 +2836,15 @@ class GlobalFitTab(QWidget):
     # lifetime-corrected scale).
     count_fit_completed = Signal(object, object)
     count_grouping_promoted = Signal(object)  # (dataset) — a count calibration hit the grouping
+    share_function_with_group_requested = Signal(int)  # (source run) — single grouped surface
+    send_grouped_model_to_batch_requested = Signal()  # single grouped surface → batch surface
 
     def __init__(
         self,
         parent: QWidget | None = None,
         *,
         member_kind: str = "runs",
+        grouped_single: bool = False,
     ) -> None:
         super().__init__(parent)
         layout = QVBoxLayout(self)
@@ -2818,6 +2852,11 @@ class GlobalFitTab(QWidget):
         # the groups surface (Individual-groups representation) is group-membered,
         # every other surface is run-membered. (Phase 3: scope is derived, not selected.)
         self._member_kind = member_kind if member_kind in ("runs", "groups") else "runs"
+        # The single grouped fit (one dataset's detector groups) shares one
+        # fit-function across its groups, so its physics params take the
+        # single-fit-style Fix tickbox rather than the Global/Local/Fixed combo
+        # (which only makes sense for the multi-run batch grouped fit).
+        self._grouped_single = bool(grouped_single) and self._member_kind == "groups"
 
         self._fit_engine = FitEngine()
         self._domain = "time"
@@ -2832,6 +2871,9 @@ class GlobalFitTab(QWidget):
         self._member_datasets: list[MuonDataset] = []
         # Populated by the grouped-context builder: run_number -> list[groups].
         self._grouped_members: dict[int, list[object]] = {}
+        # Lazily-computed per-(run, group) nuisance auto-seeds, cached under the
+        # same key as the grouped context (invalidated together).
+        self._grouped_seed_cache: tuple[object, dict] | None = None
         # Batch-series seeding mode (menu-bar "Batch seeding"); "auto" picks
         # chain-from-previous for ordered scans, else independent seeds.
         self._batch_seeding_mode = "auto"
@@ -2867,7 +2909,6 @@ class GlobalFitTab(QWidget):
         self._fit_block_reason = ""
         self._composite_model = self._default_composite_model()
         self._applied_field_default_gauss = 0.0
-        self._applied_group_phase_default_rad = 0.0
         # Successful single-fit seeds keyed by run number.
         self._single_fit_seed_by_run: dict[int, dict[str, object]] = {}
         # Inherited seed cache for current dataset selection.
@@ -2910,6 +2951,23 @@ class GlobalFitTab(QWidget):
         model_button_layout.setSpacing(4)
         for _model_btn in (self._edit_model_btn, self._fit_wizard_btn):
             model_button_layout.addWidget(_model_btn, 0, Qt.AlignmentFlag.AlignLeft)
+        # The single grouped surface can push its function to the run's
+        # data-group peers (mirrors SingleFitTab's "Share with Group").
+        self._share_group_btn: QPushButton | None = None
+        if self._grouped_single:
+            self._share_group_btn = QPushButton("Share with Group")
+            self._share_group_btn.setToolTip(
+                "Share this grouped fit function with the selected data group."
+            )
+            self._share_group_btn.setEnabled(False)
+            self._share_group_btn.clicked.connect(self._on_share_function_with_group)
+            model_button_layout.addWidget(self._share_group_btn, 0, Qt.AlignmentFlag.AlignLeft)
+            self._send_to_batch_btn = QPushButton("Send to Batch")
+            self._send_to_batch_btn.setToolTip(
+                "Copy this grouped fit function and its seeds to the Batch surface."
+            )
+            self._send_to_batch_btn.clicked.connect(self.send_grouped_model_to_batch_requested.emit)
+            model_button_layout.addWidget(self._send_to_batch_btn, 0, Qt.AlignmentFlag.AlignLeft)
         self._formula_row_label = QLabel("A(t):")
         model_layout.addRow(self._formula_row_label, self._formula_box)
         model_layout.addRow("", model_button_layout)
@@ -3017,20 +3075,38 @@ class GlobalFitTab(QWidget):
         layout.addWidget(self._group_param_group)
 
         self._group_model_group, group_model_layout = make_section("Fit-Function Parameters")
-        self._group_model_table = QTableWidget(0, 4)
-        self._group_model_table.setHorizontalHeaderLabels(["Parameter", "Value", "Type", "Bounds"])
-        self._group_model_table.horizontalHeader().setStretchLastSection(False)
-        self._group_model_table.setColumnWidth(0, 92)
-        self._group_model_table.setColumnWidth(1, 78)
-        self._group_model_table.setColumnWidth(2, 86)
-        self._group_model_table.setColumnWidth(3, 104)
-        _apply_param_table_style(self._group_model_table)
-        self._group_model_table.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
-        )
-        self._group_model_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._group_model_table.setWordWrap(False)
-        self._group_model_table.itemChanged.connect(self._on_group_model_table_item_changed)
+        if self._grouped_single:
+            # Single grouped fit: every detector group shares one fit-function,
+            # so the physics params take the single-fit-style Fix tickbox instead
+            # of the Global/Local/Fixed combo (per-group quantities are the
+            # nuisance block). Link/Tie are hidden — the grouped engine does not
+            # honour cross-parameter ties — and Batch role has no meaning here.
+            self._group_model_table = FitParameterTable()
+            for _hidden in (
+                FitParameterTable.COL_BATCH,
+                FitParameterTable.COL_LINK,
+                FitParameterTable.COL_TIE,
+            ):
+                self._group_model_table.setColumnHidden(_hidden, True)
+        else:
+            self._group_model_table = QTableWidget(0, 4)
+            self._group_model_table.setHorizontalHeaderLabels(
+                ["Parameter", "Value", "Type", "Bounds"]
+            )
+            self._group_model_table.horizontalHeader().setStretchLastSection(False)
+            self._group_model_table.setColumnWidth(0, 92)
+            self._group_model_table.setColumnWidth(1, 78)
+            self._group_model_table.setColumnWidth(2, 86)
+            self._group_model_table.setColumnWidth(3, 104)
+            _apply_param_table_style(self._group_model_table)
+            self._group_model_table.setSizePolicy(
+                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+            )
+            self._group_model_table.setVerticalScrollBarPolicy(
+                Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+            )
+            self._group_model_table.setWordWrap(False)
+            self._group_model_table.itemChanged.connect(self._on_group_model_table_item_changed)
         group_model_layout.addWidget(self._group_model_table)
         layout.addWidget(self._group_model_group)
 
@@ -3089,9 +3165,16 @@ class GlobalFitTab(QWidget):
         self._preview_btn = QPushButton("Preview")
         self._preview_btn.clicked.connect(self._on_preview_requested)
         self._preview_btn.setEnabled(False)
-        self._initial_values_btn = QPushButton("Initial Values...")
+        # The grouped batch surface hides the per-group table, so its per-(run,
+        # group) nuisances are edited only through this dialog — name it for that.
+        batch_grouped = self._member_kind == "groups" and not self._grouped_single
+        self._initial_values_btn = QPushButton(
+            "Edit per-group initial values…" if batch_grouped else "Initial Values..."
+        )
         self._initial_values_btn.setToolTip(
-            "Edit per-member initial parameter values (per run, or per run/group for grouped fits)."
+            "Edit each (run, group)'s initial nuisance values (auto-seeded per dataset)."
+            if batch_grouped
+            else "Edit per-member initial parameter values (per run, or per run/group for grouped fits)."
         )
         self._initial_values_btn.clicked.connect(self._open_initial_values_dialog)
         self._minos_checkbox = QCheckBox("Asymmetric errors")
@@ -3246,6 +3329,8 @@ class GlobalFitTab(QWidget):
         """
         self._member_datasets = [ds for ds in (datasets or []) if ds is not None]
         self._grouped_context_cache = None
+        self._grouped_seed_cache = None
+        self._refresh_inherited_single_fit_defaults()
         self._update_mode_ui(preserve_result=False)
 
     def _grouped_member_datasets(self) -> list[MuonDataset]:
@@ -3285,10 +3370,25 @@ class GlobalFitTab(QWidget):
         # Invalidate the grouped-context memo whenever the active dataset
         # changes (its grouped groups depend only on this dataset).
         self._grouped_context_cache = None
+        self._grouped_seed_cache = None
         self._refresh_field_parameter_defaults_for_current_dataset()
-        self._refresh_group_phase_defaults_for_current_dataset()
+        # The shared model phase is held at zero in grouped fits; the per-group
+        # phase lives in the per-group phase nuisance, reseeded by the call below.
         self._update_group_parameter_defaults()
         self._update_mode_ui(preserve_result=False)
+        if self._share_group_btn is not None:
+            self._share_group_btn.setEnabled(dataset is not None)
+
+    def _on_share_function_with_group(self) -> None:
+        """Emit the share-with-group request for the active run (single grouped)."""
+        dataset = self._current_dataset
+        if dataset is None:
+            return
+        try:
+            run_number = int(dataset.run_number)
+        except (TypeError, ValueError):
+            return
+        self.share_function_with_group_requested.emit(run_number)
 
     def _refresh_field_parameter_defaults_for_current_dataset(self) -> None:
         """Refresh auto-seeded field values when the active dataset changes."""
@@ -3307,42 +3407,6 @@ class GlobalFitTab(QWidget):
             current_field_gauss=target_field,
         )
         self._applied_field_default_gauss = target_field
-
-    def _refresh_group_phase_defaults_for_current_dataset(self) -> None:
-        """Refresh grouped-model phase defaults when the active dataset changes."""
-        if self._group_model_table.rowCount() == 0:
-            self._applied_group_phase_default_rad = 0.0
-            return
-
-        grouped_model = self._grouped_fit_model()
-        grouped_groups, _grouped_datasets, _message = self._grouped_mode_context()
-        phase_defaults = _grouped_model_phase_defaults(grouped_model, grouped_groups or [])
-        if not phase_defaults:
-            self._applied_group_phase_default_rad = 0.0
-            return
-
-        previous_phase = float(self._applied_group_phase_default_rad)
-        current_phase = float(next(iter(phase_defaults.values())))
-        row_by_name = _param_table_rows_by_name(self._group_model_table)
-        previous_signal_state = self._group_model_table.blockSignals(True)
-        try:
-            for pname, default_value in phase_defaults.items():
-                row = row_by_name.get(pname)
-                if row is None:
-                    continue
-                value_item = self._group_model_table.item(row, 1)
-                if value_item is None:
-                    continue
-                try:
-                    existing_value = float(value_item.text())
-                except (TypeError, ValueError):
-                    existing_value = previous_phase
-                if value_item.text().strip() and not np.isclose(existing_value, previous_phase):
-                    continue
-                value_item.setText(f"{float(default_value):.6g}")
-        finally:
-            self._group_model_table.blockSignals(previous_signal_state)
-        self._applied_group_phase_default_rad = current_phase
 
     def _invalidate_wizard_cache_if_stale(self) -> None:
         self._sync_active_wizard_cache_from_selection()
@@ -3594,15 +3658,23 @@ class GlobalFitTab(QWidget):
         )
 
     def _refresh_inherited_single_fit_defaults(self) -> None:
-        """Apply single-fit seeds when every selected dataset shares one model."""
+        """Apply single-fit seeds when every selected dataset shares one model.
+
+        Works for both the FB batch surface (over ``_datasets``) and the grouped
+        batch surface (over ``_member_datasets``). For grouped the shared model is
+        adopted so the fit-time inheritance gate matches, but the FB parameter
+        table is not filled (the grouped physics table is built separately).
+        """
         self._inherited_seed_by_run = {}
         self._inherited_model_dict = None
 
-        if len(self._datasets) < 2:
+        grouped = self._member_kind == "groups"
+        datasets = self._member_datasets if grouped else self._datasets
+        if len(datasets) < 2:
             return
 
         run_numbers: list[int] = []
-        for ds in self._datasets:
+        for ds in datasets:
             try:
                 run_numbers.append(int(ds.run_number))
             except (TypeError, ValueError):
@@ -3648,24 +3720,25 @@ class GlobalFitTab(QWidget):
 
         self._set_composite_model(inherited_model)
 
-        averages = self._inherited_param_averages(
-            inherited_values_by_run,
-            inherited_model.param_names,
-        )
-        if averages:
-            self._updating_fraction_values = True
-            for row in range(self._param_table.rowCount()):
-                name_item = self._param_table.item(row, 0)
-                pname = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
-                if not isinstance(pname, str):
-                    pname = name_item.text() if name_item else ""
-                if pname not in averages:
-                    continue
-                value_item = self._param_table.item(row, 1)
-                if value_item is not None:
-                    value_item.setText(f"{averages[pname]:.6g}")
-            self._updating_fraction_values = False
-            self._synchronize_fraction_value_rows()
+        if not grouped:
+            averages = self._inherited_param_averages(
+                inherited_values_by_run,
+                inherited_model.param_names,
+            )
+            if averages:
+                self._updating_fraction_values = True
+                for row in range(self._param_table.rowCount()):
+                    name_item = self._param_table.item(row, 0)
+                    pname = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
+                    if not isinstance(pname, str):
+                        pname = name_item.text() if name_item else ""
+                    if pname not in averages:
+                        continue
+                    value_item = self._param_table.item(row, 1)
+                    if value_item is not None:
+                        value_item.setText(f"{averages[pname]:.6g}")
+                self._updating_fraction_values = False
+                self._synchronize_fraction_value_rows()
 
         self._inherited_seed_by_run = inherited_values_by_run
         self._inherited_model_dict = inherited_model.to_dict()
@@ -3731,13 +3804,20 @@ class GlobalFitTab(QWidget):
         _set_formula_label_text(self._formula_label, model.formula_string())
         _apply_domain_mismatch_warning(self._formula_label, model, self._domain)
 
-        # Use the mean field across loaded datasets (if non-zero) as the default
-        # for any 'field' parameters.
-        dataset_fields = [
-            ds.run.field for ds in self._datasets if ds.run is not None and ds.run.field != 0.0
-        ]
-        mean_field = float(np.mean(dataset_fields)) if dataset_fields else 0.0
-        field_overrides = _field_value_overrides(model, mean_field)
+        # Seed any 'field' parameters from the applied field. The single grouped
+        # (individual-groups) surface fits one dataset at a time, so use that
+        # dataset's field — including for models with more than one oscillatory
+        # component (every 'field' param, not just the first). The multi-run
+        # batch surface uses the mean field across its loaded members.
+        if self._grouped_single:
+            single_field = _get_file_value_for_parameter(self._current_dataset, "field")
+            seed_field_gauss = float(single_field) if single_field is not None else 0.0
+        else:
+            dataset_fields = [
+                ds.run.field for ds in self._datasets if ds.run is not None and ds.run.field != 0.0
+            ]
+            seed_field_gauss = float(np.mean(dataset_fields)) if dataset_fields else 0.0
+        field_overrides = _field_value_overrides(model, seed_field_gauss)
         frequency_seed_values: dict[str, list[float]] = {}
         if self._domain == "frequency":
             for dataset in self._datasets:
@@ -3746,7 +3826,7 @@ class GlobalFitTab(QWidget):
         frequency_overrides = {
             key: float(np.mean(values)) for key, values in frequency_seed_values.items() if values
         }
-        self._applied_field_default_gauss = mean_field
+        self._applied_field_default_gauss = seed_field_gauss
 
         fixed_default_params = model.fixed_by_default_params()
         self._param_table.setRowCount(len(model.param_names))
@@ -4233,15 +4313,27 @@ class GlobalFitTab(QWidget):
             self._result_text.setText(str(exc))
             return
         group_values = dict(config.get("group_values", {}))  # param -> {group_id: value}
+        # Default each (run, group) to its OWN dataset's auto-seed (per-dataset
+        # FFT phase / counts), falling back to the shared table value; explicit
+        # user overrides still win.
+        auto_seeds = self._grouped_member_nuisance_seeds()
 
         params = [(name, _format_param_label(name), "local") for name in GROUP_NUISANCE_PARAMS]
         members: list[tuple[int, str]] = []
         values: dict[int, dict[str, float]] = {}
-        for key, label, _run, group_id in self._grouped_member_specs():
+        for key, label, run, group_id in self._grouped_member_specs():
             members.append((key, label))
             user = self._user_grouped_initial_values.get(key, {})
+            auto_for_run = auto_seeds.get(int(run), {})
             values[key] = {
-                name: float(user.get(name, group_values.get(name, {}).get(group_id, 0.0)))
+                name: float(
+                    user.get(
+                        name,
+                        auto_for_run.get(name, {}).get(
+                            str(group_id), group_values.get(name, {}).get(group_id, 0.0)
+                        ),
+                    )
+                )
                 for name in GROUP_NUISANCE_PARAMS
             }
         if not members:
@@ -4620,13 +4712,19 @@ class GlobalFitTab(QWidget):
                     seed = 20.0  # percent; typical transverse-field calibration amplitude
                 params.add(Parameter(name=name, value=seed, min=lo, max=hi))
             else:
+                # The individual-groups physics table fixes oscillation phase at 0
+                # by default (the phase lives in the per-group relative_phase
+                # nuisances of the asymmetry fit). The single-side / F+B count fits
+                # have no such nuisance, so they recover the phase directly — keep
+                # phase free here regardless of that default-fixed state.
+                base_name, _index = split_parameter_name(name)
                 params.add(
                     Parameter(
                         name=name,
                         value=float(model_values.get(name, 0.0)),
                         min=lo,
                         max=hi,
-                        fixed=name in fixed,
+                        fixed=(name in fixed) and base_name != "phase",
                     )
                 )
 
@@ -5078,19 +5176,13 @@ class GlobalFitTab(QWidget):
         """Derive the grouped-series relationship from the physics roles.
 
         Returns ``(relationship, error)``. ``relationship`` is ``individual`` (one
-        member), ``global`` (≥1 physics param shared across runs), or ``batch``
-        (physics independent per run). ``error`` is non-``None`` when the physics
-        classification mixes Global and Local — the simultaneous engine can't
-        express that (A1), so the caller must reject the fit.
+        member), ``global`` (≥1 physics param shared across runs — including the
+        mixed case, where the per-run physics are routed through
+        ``cross_run_local_params``), or ``batch`` (all physics independent per
+        run). ``error`` is reserved for future invalid combinations; mixing Global
+        and Local is now supported, so it is always ``None`` here.
         """
         physics_global = [name for name, role in physics_roles.items() if role == "global"]
-        physics_local = [name for name, role in physics_roles.items() if role == "local"]
-        if physics_global and physics_local:
-            return None, (
-                "Grouped series fits can't mix Global and Local fit-function parameters. "
-                "Set them all Global (shared across runs) or all Local (independent per run). "
-                f"Global: {', '.join(physics_global)} · Local: {', '.join(physics_local)}."
-            )
         if n_members <= 1:
             return "individual", None
         return ("global" if physics_global else "batch"), None
@@ -5105,6 +5197,7 @@ class GlobalFitTab(QWidget):
         self._coadd_window_spin.setEnabled(self._coadd_mode != "off")
         self._coadd_window_label.setEnabled(self._coadd_mode != "off")
         self._grouped_context_cache = None
+        self._grouped_seed_cache = None
         self._update_mode_ui(preserve_result=False)
 
     def _on_coadd_window_changed(self, value: int) -> None:
@@ -5112,6 +5205,7 @@ class GlobalFitTab(QWidget):
         self._coadd_window = max(2, int(value))
         if self._coadd_mode != "off":
             self._grouped_context_cache = None
+            self._grouped_seed_cache = None
             self._update_mode_ui(preserve_result=False)
 
     def _set_series_busy(self, busy: bool) -> None:
@@ -5195,6 +5289,10 @@ class GlobalFitTab(QWidget):
             self._result_text.setText(mixing_error)
             self._fit_btn.setEnabled(True)
             return
+        # Physics with the "local" role are fitted per run (shared across that run's
+        # groups); the "global" ones stay shared across runs. The grouped engine
+        # routes the per-run subset via cross_run_local_params.
+        cross_run_local_params = [name for name, role in physics_roles.items() if role == "local"]
         initial_params = {
             run: self._build_grouped_initial_params(groups, grouped_config, run_number=run)
             for run, groups in members.items()
@@ -5221,6 +5319,19 @@ class GlobalFitTab(QWidget):
                 seeding=self._batch_seeding_mode,
                 order_key=self._grouped_series_order_key(members),
                 cost=self._count_fit_cost,
+                cross_run_local_params=cross_run_local_params,
+                # Independent (as_provided) batches are embarrassingly parallel; let the
+                # engine fan the per-run fits across processes. For a large "global"
+                # series the same pool drives the block-separable solver's inner per-run
+                # fits (no-op for chain).
+                max_workers=os.cpu_count(),
+                # Large mixed global/local fits are near-separable (runs couple only
+                # through the shared physics); let the engine alternate block-wise above
+                # its free-parameter threshold instead of one monolithic minimisation.
+                block_separable=True,
+                # Report rigorous (marginal) shared-parameter errors by profiling them
+                # over the locals, rather than the cheaper conditional errors.
+                profile_shared_errors=True,
             ),
             on_finished=lambda result, ds=grouped_datasets: self._on_grouped_series_fit_finished(
                 ds, result
@@ -5346,6 +5457,32 @@ class GlobalFitTab(QWidget):
         bounds = dict(grouped_config["bounds"])
         fixed = set(grouped_config["fixed"])
 
+        # In batch grouped mode the per-group nuisance table is hidden, so each
+        # dataset's groups are seeded from their own data (FFT phase, counts).
+        # Precedence per nuisance: dialog override > per-(run, group) auto-seed >
+        # the table's shared group_values fallback. The single grouped surface
+        # keeps the table (user-editable) as the authoritative source.
+        auto_for_run: dict[str, dict[str, float]] = {}
+        if not self._grouped_single and run_number is not None:
+            auto_for_run = self._grouped_member_nuisance_seeds().get(int(run_number), {})
+
+        # Physics chain-seeding (batch only): when every member has a single
+        # grouped fit under the current model, seed each run's Local physics from
+        # its own single fit and Global/Fixed from the cross-run average — the
+        # grouped analogue of FB's _effective_initial_values_by_run.
+        physics_roles = dict(grouped_config.get("physics_roles", {}))
+        run_physics_seed: dict[str, float] = {}
+        physics_averages: dict[str, float] = {}
+        if not self._grouped_single and run_number is not None and self._inherited_seed_by_run:
+            if self._inherited_model_dict == self._composite_model.to_dict():
+                member_runs = {int(r) for r in self._grouped_members}
+                if member_runs and member_runs.issubset(self._inherited_seed_by_run):
+                    run_physics_seed = self._inherited_seed_by_run.get(int(run_number), {})
+                    physics_averages = self._inherited_param_averages(
+                        {r: self._inherited_seed_by_run[r] for r in member_runs},
+                        list(model_values),
+                    )
+
         for index, group in enumerate(grouped_groups, start=1):
             user_values: dict[str, float] = {}
             if run_number is not None:
@@ -5355,6 +5492,9 @@ class GlobalFitTab(QWidget):
             for name in GROUP_NUISANCE_PARAMS:
                 per_group_values = nuisance_group_values.get(name, {})
                 value = float(per_group_values.get(group.group_id, 0.0))
+                auto_value = auto_for_run.get(name, {}).get(str(group.group_id))
+                if auto_value is not None:
+                    value = float(auto_value)
                 if name in user_values:
                     value = float(user_values[name])
                 min_val, max_val = bounds[name]
@@ -5368,11 +5508,18 @@ class GlobalFitTab(QWidget):
                     )
                 )
             for name, value in model_values.items():
+                seed_value = value
+                if run_physics_seed or physics_averages:
+                    if physics_roles.get(name) == "local":
+                        if name in run_physics_seed:
+                            seed_value = float(run_physics_seed[name])
+                    elif name in physics_averages:  # global / fixed
+                        seed_value = float(physics_averages[name])
                 min_val, max_val = bounds[name]
                 params.add(
                     Parameter(
                         name=name,
-                        value=value,
+                        value=seed_value,
                         min=min_val,
                         max=max_val,
                         fixed=name in fixed,
@@ -5882,6 +6029,55 @@ class GlobalFitTab(QWidget):
         self._result_text.setHtml(success_html("Grouped fit converged", detail=stats))
         self.grouped_fit_completed.emit(grouped_datasets, results_with_curves)
 
+        # Publish the run's shared physics so the batch grouped surface can
+        # chain-seed each run from its own single grouped fit (FB parity).
+        if self._grouped_single and self._current_dataset is not None:
+            physics_values = {
+                str(parameter.name): float(parameter.value)
+                for parameter in getattr(grouped_result, "shared_parameters", [])
+                if isinstance(getattr(parameter, "name", None), str)
+                and np.isfinite(float(getattr(parameter, "value", float("nan"))))
+            }
+            try:
+                run_number = int(self._current_dataset.run_number)
+            except (TypeError, ValueError):
+                run_number = None
+            if run_number is not None and physics_values and self._composite_model is not None:
+                self.single_grouped_fit_recorded.emit(
+                    run_number, self._composite_model, physics_values
+                )
+
+    def register_grouped_single_fit_seed(
+        self, run_number: int, model: CompositeModel, values_by_name: dict[str, float]
+    ) -> None:
+        """Store a single grouped fit's shared physics for batch chain-seeding.
+
+        Mirrors :meth:`register_single_fit_seed` (which reads a ``FitResult``) but
+        takes the already-extracted physics values from a grouped fit, then
+        refreshes the inherited-seed cache (grouped-aware).
+        """
+        finite_values: dict[str, float] = {}
+        for name, value in (values_by_name or {}).items():
+            if not isinstance(name, str):
+                continue
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError):
+                continue
+            if np.isfinite(numeric):
+                finite_values[name] = numeric
+        if not finite_values:
+            return
+        try:
+            run_key = int(run_number)
+        except (TypeError, ValueError):
+            return
+        self._single_fit_seed_by_run[run_key] = {
+            "model": model.to_dict(),
+            "values": finite_values,
+        }
+        self._refresh_inherited_single_fit_defaults()
+
     def shutdown_workers(self) -> None:
         """Cancel any running fit and wait for its thread (window close).
 
@@ -6058,12 +6254,24 @@ class GlobalFitTab(QWidget):
 
         self._restore_group_param_table_state(state.get("group_parameters"))
         self._restore_table_state(self._group_model_table, state.get("group_model_parameters"))
-        _configure_fraction_rows_in_table(
-            self._group_model_table,
-            self._grouped_fit_model(),
-            bounds_column=3,
-            type_column=2,
-        )
+        if isinstance(self._group_model_table, FitParameterTable):
+            # The single grouped physics table has separate min/max columns (not a
+            # single "min, max" bounds column), so the fraction 0–1 bounds must go
+            # into COL_MIN/COL_MAX — matching the populate() path. Passing
+            # bounds_column=3 here would write "0, 1" into the min field.
+            _configure_fraction_rows_in_table(
+                self._group_model_table,
+                self._grouped_fit_model(),
+                min_column=FitParameterTable.COL_MIN,
+                max_column=FitParameterTable.COL_MAX,
+            )
+        else:
+            _configure_fraction_rows_in_table(
+                self._group_model_table,
+                self._grouped_fit_model(),
+                bounds_column=3,
+                type_column=2,
+            )
         self._synchronize_grouped_model_fraction_rows()
 
         result_html = state.get("result_html")
@@ -6101,7 +6309,10 @@ class GlobalFitTab(QWidget):
         grouped = self.is_grouped_time_domain_mode()
         self._param_group.setVisible(not grouped)
         self._grouped_context_label.setVisible(grouped)
-        self._group_param_group.setVisible(grouped)
+        # The batch grouped surface hides the per-group nuisance table — its
+        # per-(run, group) values are auto-seeded and edited via the dialog
+        # ("Edit per-group initial values…"). The single grouped surface keeps it.
+        self._group_param_group.setVisible(grouped and self._grouped_single)
         self._group_model_group.setVisible(grouped)
         # In-batch co-add only applies to grouped-series fits (≥2 members).
         self._coadd_group.setVisible(grouped)
@@ -6321,6 +6532,44 @@ class GlobalFitTab(QWidget):
     def _setup_group_nuisance_table(self) -> None:
         self._rebuild_group_nuisance_table(preserved_state=None)
 
+    def _grouped_member_nuisance_seeds(self) -> dict[int, dict[str, dict[str, float]]]:
+        """Per-(run, group) nuisance auto-seeds: ``{run -> {param -> {group_id: value}}}``.
+
+        Each member dataset's own groups are seeded independently (its own FFT
+        phase and count statistics) via the shared seeding helpers, so a batch
+        fit starts every dataset from its own estimates rather than a single
+        representative run's. Computed lazily and cached under the same key as the
+        grouped context, so no FFTs run on table rebuilds or selection changes —
+        only when a fit launches or the per-group dialog opens.
+        """
+        self._grouped_mode_context()  # ensure _grouped_members is current
+        member_ids = tuple(id(ds) for ds in self._grouped_member_datasets())
+        key = (member_ids, bool(self._fit_blocked), self._coadd_mode, int(self._coadd_window))
+        cache = self._grouped_seed_cache
+        if cache is not None and cache[0] == key:
+            return cache[1]
+
+        seeds: dict[int, dict[str, dict[str, float]]] = {}
+        for run, groups in self._grouped_members.items():
+            phases = _seed_group_absolute_phases(groups)
+            per_param: dict[str, dict[str, float]] = {name: {} for name in GROUP_NUISANCE_PARAMS}
+            for group in groups:
+                gid = str(getattr(group, "group_id", ""))
+                counts = np.asarray(getattr(group, "counts", []), dtype=float)
+                if counts.size:
+                    background, n0, amplitude = _seed_group_background_and_n0(
+                        counts, time=getattr(group, "time", None)
+                    )
+                    per_param["N0"][gid] = n0
+                    per_param["background"][gid] = background
+                    per_param["amplitude"][gid] = amplitude
+                if gid in phases and "relative_phase" in per_param:
+                    per_param["relative_phase"][gid] = phases[gid]
+            seeds[int(run)] = per_param
+
+        self._grouped_seed_cache = (key, seeds)
+        return seeds
+
     def _grouped_parameter_specs(
         self,
         grouped_groups: list[object] | None = None,
@@ -6390,7 +6639,12 @@ class GlobalFitTab(QWidget):
             "N0": (100.0, "Local", "0, inf"),
             "background": (0.0, "Local", "0, inf"),
             "amplitude": (0.2, "Local", "-1, 1"),
-            "relative_phase": (0.0, "Local", f"{-np.pi:.6g}, {np.pi:.6g}"),
+            # Phase is periodic, so the bounds give a full 2*pi of slack on either
+            # side of the principal range. Absolute per-group seeds (wrapped to
+            # (-pi, pi]) routinely land near +/-pi — e.g. the backward group of an
+            # F-B pair sits ~pi from the forward group — and tight (-pi, pi] bounds
+            # would trap such a seed on a limit with no wrap-around room.
+            "relative_phase": (0.0, "Local", f"{-2.0 * np.pi:.6g}, {2.0 * np.pi:.6g}"),
         }
         grouped_groups = grouped_groups or []
         self._group_param_group_specs = self._grouped_parameter_specs(grouped_groups)
@@ -6418,19 +6672,28 @@ class GlobalFitTab(QWidget):
         n0_defaults_by_group: dict[str, float] = {}
         background_defaults_by_group: dict[str, float] = {}
         amplitude_defaults_by_group: dict[str, float] = {}
-        relative_phase_defaults_by_group = _seed_group_relative_phases(grouped_groups)
-        for group in grouped_groups:
-            counts = np.asarray(getattr(group, "counts", []), dtype=float)
-            if counts.size == 0:
-                continue
-            group_id = getattr(group, "group_id", None)
-            background_default, n0_default, amplitude_default = _seed_group_background_and_n0(
-                counts,
-                time=getattr(group, "time", None),
-            )
-            n0_defaults_by_group[str(group_id)] = n0_default
-            background_defaults_by_group[str(group_id)] = background_default
-            amplitude_defaults_by_group[str(group_id)] = amplitude_default
+        relative_phase_defaults_by_group: dict[str, float] = {}
+        # Only the (visible) single grouped table is FFT-seeded here. The batch
+        # table is hidden and its per-(run, group) seeds come from the lazy
+        # _grouped_member_nuisance_seeds helper at fit/dialog time, so skip the
+        # per-group FFT/count estimates here to avoid a rebuild-time FFT storm.
+        if self._grouped_single:
+            # Grouped fits hold the shared model phase fixed at zero, so each
+            # group's per-group phase nuisance carries the full *absolute* FFT
+            # phase estimate rather than an offset relative to the first group.
+            relative_phase_defaults_by_group = _seed_group_absolute_phases(grouped_groups)
+            for group in grouped_groups:
+                counts = np.asarray(getattr(group, "counts", []), dtype=float)
+                if counts.size == 0:
+                    continue
+                group_id = getattr(group, "group_id", None)
+                background_default, n0_default, amplitude_default = _seed_group_background_and_n0(
+                    counts,
+                    time=getattr(group, "time", None),
+                )
+                n0_defaults_by_group[str(group_id)] = n0_default
+                background_defaults_by_group[str(group_id)] = background_default
+                amplitude_defaults_by_group[str(group_id)] = amplitude_default
 
         for row, name in enumerate(GROUP_NUISANCE_PARAMS):
             label_item = _make_param_name_item(_format_param_label(name), name)
@@ -6468,8 +6731,15 @@ class GlobalFitTab(QWidget):
                 self._group_param_table.setItem(row, offset, QTableWidgetItem(value_text))
 
             type_combo = QComboBox()
-            type_combo.addItems(["Global", "Local", "Fixed"])
-            type_combo.setCurrentText(str(previous.get("type") or type_text))
+            # The single grouped fit shares physics across the dataset's groups, so
+            # its nuisance "shared across groups" option reads "Shared"; "Global"
+            # (shared across runs) is reserved for the multi-run batch grouped fit.
+            shared_label = "Shared" if self._grouped_single else "Global"
+            type_combo.addItems([shared_label, "Local", "Fixed"])
+            current_type = str(previous.get("type") or type_text)
+            if current_type in ("Global", "Shared"):
+                current_type = shared_label
+            type_combo.setCurrentText(current_type)
             type_combo.currentTextChanged.connect(
                 lambda _text, row=row: self._on_group_param_type_changed(row)
             )
@@ -6521,17 +6791,57 @@ class GlobalFitTab(QWidget):
     def _current_grouped_model_row_state(self) -> dict[str, dict[str, str]]:
         return self._table_state_map(self._group_model_table)
 
+    def current_grouped_seed_values(self) -> dict[str, str]:
+        """Return the live grouped physics-table seed text keyed by parameter name.
+
+        The grouped analogue of :meth:`current_seed_values`: used to seed the
+        Batch grouped surface from the Single grouped surface's physics values.
+        """
+        return {
+            name: str(entry.get("value", ""))
+            for name, entry in self._current_grouped_model_row_state().items()
+            if str(entry.get("value", "")).strip()
+        }
+
+    def apply_grouped_physics_seeds(self, seed_values: dict[str, str]) -> None:
+        """Write physics seed values into the grouped physics table by name.
+
+        Both the single (FitParameterTable) and batch (combo) physics tables keep
+        the name in column 0 and the value in column 1, so one path serves both.
+        """
+        if not seed_values:
+            return
+        table = self._group_model_table
+        blocked = table.blockSignals(True)
+        try:
+            for row in range(table.rowCount()):
+                name_item = table.item(row, 0)
+                name = name_item.data(Qt.ItemDataRole.UserRole) if name_item is not None else None
+                if not isinstance(name, str):
+                    name = name_item.text() if name_item is not None else None
+                if name in seed_values:
+                    value_item = table.item(row, 1)
+                    if value_item is not None:
+                        value_item.setText(str(seed_values[name]))
+        finally:
+            table.blockSignals(blocked)
+
     def _rebuild_grouped_model_table(self, preserved_state: dict[str, dict[str, str]]) -> None:
         grouped_model = self._grouped_fit_model()
         grouped_groups, _grouped_datasets, _message = self._grouped_mode_context()
-        phase_defaults = _grouped_model_phase_defaults(grouped_model, grouped_groups or [])
         visible_param_names = [
             pname for pname in grouped_model.param_names if not is_amplitude_parameter(pname)
         ]
+        if self._grouped_single:
+            self._rebuild_grouped_single_model_table(
+                grouped_model, visible_param_names, preserved_state
+            )
+            return
         self._updating_group_model_fraction_values = True
         self._group_model_table.setRowCount(len(visible_param_names))
         for row, pname in enumerate(visible_param_names):
             previous = preserved_state.get(pname, {})
+            base_name, _index = split_parameter_name(pname)
             name_item = _make_param_name_item(_format_param_label(pname), pname)
             self._group_model_table.setItem(row, 0, name_item)
 
@@ -6540,8 +6850,11 @@ class GlobalFitTab(QWidget):
             if is_background_parameter(pname):
                 default_val = 0.0
                 default_type = "Fixed"
-            elif pname in phase_defaults:
-                default_val = phase_defaults[pname]
+            elif base_name == "phase":
+                # The per-group phase nuisance carries the absolute phase, so the
+                # shared model phase is fixed at zero by default (user-adjustable).
+                default_val = 0.0
+                default_type = "Fixed"
             self._group_model_table.setItem(
                 row,
                 1,
@@ -6570,6 +6883,82 @@ class GlobalFitTab(QWidget):
         self._updating_group_model_fraction_values = False
         self._synchronize_grouped_model_fraction_rows()
         _size_param_table_to_content(self._group_model_table)
+
+    def _rebuild_grouped_single_model_table(
+        self,
+        grouped_model: CompositeModel,
+        visible_param_names: list[str],
+        preserved_state: dict[str, dict[str, str]],
+    ) -> None:
+        """Populate the single grouped fit's physics table (shared Fix tickbox).
+
+        Reuses :class:`FitParameterTable`. ``preserved_state`` (the shared
+        {value, type, bounds} shape, from the edit-rebuild capture or a restored
+        project) seeds value / Fix / bounds; otherwise:
+
+        - ``field``/``B_L`` params seed from the run's applied field (every such
+          param, so models with more than one oscillatory component all start at
+          the applied field rather than the 100 G component default);
+        - background params default fixed at 0;
+        - ``phase`` params default fixed at 0 — the individual-groups fit holds
+          the shared oscillation phase at zero and carries the full per-group
+          phase in the ``relative_phase`` nuisances, removing the degeneracy
+          between a shared phase and the per-group phase offsets.
+        """
+        table = self._group_model_table
+        field_overrides = _field_value_overrides(
+            grouped_model, float(self._applied_field_default_gauss)
+        )
+        value_overrides: dict[str, float] = {}
+        fixed_names: set[str] = set()
+        preserved_bounds: dict[str, tuple[str, str]] = {}
+        for pname in visible_param_names:
+            prev = preserved_state.get(pname, {})
+            prev_value = str(prev.get("value", "")).strip()
+            base_name, _index = split_parameter_name(pname)
+            if prev_value:
+                try:
+                    value_overrides[pname] = float(prev_value)
+                except ValueError:
+                    pass
+            elif is_background_parameter(pname):
+                value_overrides[pname] = 0.0
+            elif base_name == "phase":
+                value_overrides[pname] = 0.0
+            elif pname in field_overrides:
+                value_overrides[pname] = field_overrides[pname]
+
+            default_fixed = is_background_parameter(pname) or base_name == "phase"
+            if str(prev.get("type", "")) == "Fixed" or (not prev and default_fixed):
+                fixed_names.add(pname)
+
+            bounds_text = str(prev.get("bounds", "")).strip()
+            if bounds_text:
+                try:
+                    lo, hi = (part.strip() for part in bounds_text.split(",", maxsplit=1))
+                    preserved_bounds[pname] = (lo, hi)
+                except ValueError:
+                    pass
+
+        table.populate(
+            grouped_model,
+            param_names=visible_param_names,
+            value_overrides=value_overrides,
+            fixed_names=fixed_names,
+        )
+        # populate() resets bounds to defaults; restore any the user/project had.
+        for row in range(table.rowCount()):
+            name_item = table.item(row, FitParameterTable.COL_NAME)
+            name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
+            if not isinstance(name, str) or name not in preserved_bounds:
+                continue
+            lo, hi = preserved_bounds[name]
+            min_item = table.item(row, FitParameterTable.COL_MIN)
+            max_item = table.item(row, FitParameterTable.COL_MAX)
+            if min_item is not None:
+                min_item.setText(lo)
+            if max_item is not None:
+                max_item.setText(hi)
 
     def _parse_grouped_parameter_configuration(self) -> dict[str, object]:
         global_params: list[str] = []
@@ -6629,6 +7018,10 @@ class GlobalFitTab(QWidget):
 
             type_combo = self._group_param_table.cellWidget(row, group_type_column)
             type_text = type_combo.currentText() if isinstance(type_combo, QComboBox) else "Local"
+            # "Shared" is the single grouped fit's label for cross-group sharing;
+            # it behaves exactly like "Global" (shared across the run's groups).
+            if type_text == "Shared":
+                type_text = "Global"
             if type_text == "Global":
                 global_params.append(pname)
             elif type_text == "Local":
@@ -6649,53 +7042,91 @@ class GlobalFitTab(QWidget):
                 group_values[pname] = {group_id: shared_value for group_id in target_ids}
             bounds[pname] = (min_val, max_val)
 
-        for row in range(self._group_model_table.rowCount()):
-            name_item = self._group_model_table.item(row, 0)
-            pname = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
-            if not isinstance(pname, str):
-                pname = name_item.text() if name_item else f"model_param_{row}"
+        if self._grouped_single:
+            # Single grouped fit: physics params are read from the Fix-tickbox
+            # table. Every group shares the function, so a free param is "global"
+            # (shared across the dataset's groups) and a ticked one is "fixed";
+            # there is no per-run "local" classification for one dataset.
+            for param in self._group_model_table.read_parameter_set():
+                pname = param.name
+                value = float(param.value)
+                if not np.isfinite(value):
+                    raise ValueError(
+                        f"Error: Parameter {_format_param_label(pname)} must be finite, got {value}"
+                    )
+                min_val, max_val = float(param.min), float(param.max)
+                if np.isfinite(min_val) and value < min_val:
+                    raise ValueError(
+                        f"Error: Parameter {_format_param_label(pname)} value {value} "
+                        f"is below minimum {min_val}"
+                    )
+                if np.isfinite(max_val) and value > max_val:
+                    raise ValueError(
+                        f"Error: Parameter {_format_param_label(pname)} value {value} "
+                        f"is above maximum {max_val}"
+                    )
+                if param.fixed:
+                    fixed_params.append(pname)
+                    physics_roles[pname] = "fixed"
+                else:
+                    global_params.append(pname)
+                    physics_roles[pname] = "global"
+                model_values[pname] = value
+                bounds[pname] = (min_val, max_val)
+        else:
+            for row in range(self._group_model_table.rowCount()):
+                name_item = self._group_model_table.item(row, 0)
+                pname = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
+                if not isinstance(pname, str):
+                    pname = name_item.text() if name_item else f"model_param_{row}"
 
-            try:
-                value = float(self._group_model_table.item(row, 1).text())
-            except (TypeError, ValueError, AttributeError):
-                raise ValueError(f"Error: Invalid value for {_format_param_label(pname)}") from None
-            if not np.isfinite(value):
-                raise ValueError(
-                    f"Error: Parameter {_format_param_label(pname)} must be finite, got {value}"
+                try:
+                    value = float(self._group_model_table.item(row, 1).text())
+                except (TypeError, ValueError, AttributeError):
+                    raise ValueError(
+                        f"Error: Invalid value for {_format_param_label(pname)}"
+                    ) from None
+                if not np.isfinite(value):
+                    raise ValueError(
+                        f"Error: Parameter {_format_param_label(pname)} must be finite, got {value}"
+                    )
+
+                bounds_text = self._group_model_table.item(row, 3).text()
+                try:
+                    lo_text, hi_text = [part.strip() for part in bounds_text.split(",", maxsplit=1)]
+                    min_val = float(lo_text) if lo_text != "-inf" else -float("inf")
+                    max_val = float(hi_text) if hi_text != "inf" else float("inf")
+                except (TypeError, ValueError):
+                    min_val, max_val = -float("inf"), float("inf")
+
+                if np.isfinite(min_val) and value < min_val:
+                    raise ValueError(
+                        f"Error: Parameter {_format_param_label(pname)} value {value} "
+                        f"is below minimum {min_val}"
+                    )
+                if np.isfinite(max_val) and value > max_val:
+                    raise ValueError(
+                        f"Error: Parameter {_format_param_label(pname)} value {value} "
+                        f"is above maximum {max_val}"
+                    )
+
+                type_combo = self._group_model_table.cellWidget(row, 2)
+                type_text = (
+                    type_combo.currentText() if isinstance(type_combo, QComboBox) else "Global"
                 )
+                if type_text == "Fixed":
+                    fixed_params.append(pname)
+                    physics_roles[pname] = "fixed"
+                elif type_text == "Local":
+                    # Free, shared across a run's groups, independent across runs.
+                    global_params.append(pname)
+                    physics_roles[pname] = "local"
+                else:  # "Global" (and legacy "Shared"/"Free")
+                    global_params.append(pname)
+                    physics_roles[pname] = "global"
 
-            bounds_text = self._group_model_table.item(row, 3).text()
-            try:
-                lo_text, hi_text = [part.strip() for part in bounds_text.split(",", maxsplit=1)]
-                min_val = float(lo_text) if lo_text != "-inf" else -float("inf")
-                max_val = float(hi_text) if hi_text != "inf" else float("inf")
-            except (TypeError, ValueError):
-                min_val, max_val = -float("inf"), float("inf")
-
-            if np.isfinite(min_val) and value < min_val:
-                raise ValueError(
-                    f"Error: Parameter {_format_param_label(pname)} value {value} is below minimum {min_val}"
-                )
-            if np.isfinite(max_val) and value > max_val:
-                raise ValueError(
-                    f"Error: Parameter {_format_param_label(pname)} value {value} is above maximum {max_val}"
-                )
-
-            type_combo = self._group_model_table.cellWidget(row, 2)
-            type_text = type_combo.currentText() if isinstance(type_combo, QComboBox) else "Global"
-            if type_text == "Fixed":
-                fixed_params.append(pname)
-                physics_roles[pname] = "fixed"
-            elif type_text == "Local":
-                # Free, shared across a run's groups, independent across runs.
-                global_params.append(pname)
-                physics_roles[pname] = "local"
-            else:  # "Global" (and legacy "Shared"/"Free")
-                global_params.append(pname)
-                physics_roles[pname] = "global"
-
-            model_values[pname] = value
-            bounds[pname] = (min_val, max_val)
+                model_values[pname] = value
+                bounds[pname] = (min_val, max_val)
 
         grouped_model = self._grouped_fit_model()
         for pname in grouped_model.param_names:
@@ -6719,6 +7150,18 @@ class GlobalFitTab(QWidget):
 
     def _table_state_map(self, table: QTableWidget) -> dict[str, dict[str, str]]:
         state: dict[str, dict[str, str]] = {}
+        if isinstance(table, FitParameterTable):
+            # The single grouped physics table serialises in the same
+            # {value, type, bounds} shape as the combo tables, with type =
+            # Fixed / Shared (Shared = the run's groups share the value).
+            for entry in table.parameters_state():
+                name = str(entry["name"])
+                state[name] = {
+                    "value": str(entry.get("value", 0.0)),
+                    "type": "Fixed" if entry.get("fixed") else "Shared",
+                    "bounds": f"{entry.get('min', '-inf')}, {entry.get('max', 'inf')}",
+                }
+            return state
         for row in range(table.rowCount()):
             name_item = table.item(row, 0)
             if name_item is None:
@@ -6757,6 +7200,25 @@ class GlobalFitTab(QWidget):
         if not isinstance(payload, list):
             return
         by_name = {str(entry.get("name")): entry for entry in payload if isinstance(entry, dict)}
+        if isinstance(table, FitParameterTable):
+            # Apply the saved {value, type, bounds} entries onto the Fix-tickbox
+            # table: type "Fixed" → checked, bounds → min/max.
+            params_data: dict[str, dict] = {}
+            for name, entry in by_name.items():
+                bounds = str(entry.get("bounds", "-inf, inf"))
+                try:
+                    lo, hi = (part.strip() for part in bounds.split(",", maxsplit=1))
+                except ValueError:
+                    lo, hi = "-inf", "inf"
+                params_data[name] = {
+                    "name": name,
+                    "value": entry.get("value", 0.0),
+                    "fixed": str(entry.get("type", "")) == "Fixed",
+                    "min": lo,
+                    "max": hi,
+                }
+            table.restore_parameters(params_data)
+            return
         for row in range(table.rowCount()):
             name_item = table.item(row, 0)
             pname = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None

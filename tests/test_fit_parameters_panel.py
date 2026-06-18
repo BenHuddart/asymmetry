@@ -2336,3 +2336,59 @@ def test_cache_present_missing_param_does_not_sample_inline(
     panel._draw_plot()
 
     assert sampled_calls == [], "must not sample the model inline when a cache is present"
+
+
+def test_load_representation_series_reconstructs_global_params(panel: FitParametersPanel) -> None:
+    """A reloaded global/grouped series rebuilds the 'Global fitting parameters' set.
+
+    The shared param's value/error live in every member summary (a global fit shares
+    one value); the panel must surface them rather than reporting None.
+    """
+    row_dicts = [
+        {
+            "run_number": 1658,
+            "run_label": "R1658/G4",
+            "field": 7800.0,
+            "temperature": 150.0,
+            "values": {"fraction_1": 0.0604, "Lambda_1": 0.1418},
+            "errors": {"fraction_1": 0.0012, "Lambda_1": 0.111},
+        },
+        {
+            "run_number": 1657,
+            "run_label": "R1657/G4",
+            "field": 7800.0,
+            "temperature": 150.0,
+            "values": {"fraction_1": 0.0604, "Lambda_1": 0.4352},
+            "errors": {"fraction_1": 0.0012, "Lambda_1": 0.108},
+        },
+    ]
+    panel.load_representation_series(
+        [("batch-1", "Series 1", row_dicts)],
+        global_params_by_id={"batch-1": {"fraction_1": {"value": 0.0604, "error": 0.0012}}},
+        select_id="batch-1",
+    )
+
+    assert panel._global_params is not None
+    names = {p.name: p.value for p in panel._global_params}
+    assert names == pytest.approx({"fraction_1": 0.0604})
+    assert panel._global_param_uncertainties.get("fraction_1") == pytest.approx(0.0012)
+    # A purely-local param is not promoted to the shared header.
+    assert "Lambda_1" not in {p.name for p in panel._global_params}
+
+
+def test_load_representation_series_without_global_names_reports_none(
+    panel: FitParametersPanel,
+) -> None:
+    """A pure batch fit (no shared params) keeps the header empty."""
+    row_dicts = [
+        {
+            "run_number": 1,
+            "run_label": "1",
+            "field": 100.0,
+            "temperature": 10.0,
+            "values": {"Lambda": 0.1},
+            "errors": {"Lambda": 0.01},
+        }
+    ]
+    panel.load_representation_series([("batch-2", "Series 2", row_dicts)], select_id="batch-2")
+    assert panel._global_params is None

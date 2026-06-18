@@ -9,6 +9,9 @@ in their member set (Single → the active run; Batch → the selection).
 
 from __future__ import annotations
 
+import copy
+from collections.abc import Callable
+
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
@@ -26,9 +29,14 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.parameters import split_parameter_name
 from asymmetry.core.transform import resolve_background_mode
-from asymmetry.gui.panels.fit_panel import GlobalFitTab
+from asymmetry.gui.panels.fit_panel import (
+    GlobalFitTab,
+    _get_file_value_for_parameter,
+)
 from asymmetry.gui.styles.widgets import make_section
+from asymmetry.gui.widgets.collapsible_section import CollapsibleSection
 
 #: Fit-target choices (label, mode key) shown in the count-domain selector.
 #: Labels stay short so the selector does not set the Fit dock's minimum width;
@@ -50,6 +58,7 @@ class MultiGroupFitWindow(QWidget):
     fit_range_edit_committed = Signal(float, float)
     count_fit_completed = Signal(object, object)  # (dataset, {"result", "overlays"})
     count_grouping_promoted = Signal(object)  # (dataset) — a count calibration hit the grouping
+    share_function_with_group_requested = Signal(int)  # (source run) — push form to peers
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -60,7 +69,7 @@ class MultiGroupFitWindow(QWidget):
 
         self._tabs = QTabWidget()
         # Single = the active run's multi-group fit; Batch = the multi-run series.
-        self._single_fit_tab = GlobalFitTab(self, member_kind="groups")
+        self._single_fit_tab = GlobalFitTab(self, member_kind="groups", grouped_single=True)
         self._batch_fit_tab = GlobalFitTab(self, member_kind="groups")
         for tab in (self._single_fit_tab, self._batch_fit_tab):
             tab.grouped_fit_completed.connect(self.grouped_fit_completed.emit)
@@ -68,18 +77,57 @@ class MultiGroupFitWindow(QWidget):
             tab.fit_range_edit_committed.connect(self.fit_range_edit_committed.emit)
             tab.count_fit_completed.connect(self.count_fit_completed.emit)
             tab.count_grouping_promoted.connect(self.count_grouping_promoted.emit)
+        # The Single surface can push its function to the run's data-group peers.
+        self._single_fit_tab.share_function_with_group_requested.connect(
+            self.share_function_with_group_requested.emit
+        )
+        # A converged single grouped fit chain-seeds the batch surface per run
+        # (mirrors how FB single fits seed the FB batch surface).
+        self._single_fit_tab.single_grouped_fit_recorded.connect(
+            self._batch_fit_tab.register_grouped_single_fit_seed
+        )
+        # "Send to Batch" copies the Single surface's model + seeds to Batch.
+        self._single_fit_tab.send_grouped_model_to_batch_requested.connect(
+            self._on_send_grouped_model_to_batch
+        )
         self._tabs.addTab(self._single_fit_tab, "Single")
         self._tabs.addTab(self._batch_fit_tab, "Batch")
         layout.addWidget(self._tabs)
         self._run_label = ""
+        # Per-run restore mediator for the Single (grouped) surface, installed by
+        # the main window. Mirrors FitPanel.set_single_fit_restore_provider.
+        self._single_grouped_restore_provider: (
+            Callable[[MuonDataset | None], dict | None] | None
+        ) = None
+        # Per-run grouped Single-surface form store (mirrors FitPanel's
+        # _single_state_by_run): keeps each run's in-progress function so moving
+        # away and back restores it, and an unseen run carries the current
+        # function forward instead of snapping to the default.
+        self._single_grouped_state_by_run: dict[int, dict] = {}
+        self._active_single_grouped_run: int | None = None
+        # Snapshot of the Single form taken when leaving the Single tab, restored
+        # on return (same run) so an in-progress unfit function survives a
+        # Single↔Batch toggle (mirrors FitPanel._single_form_snapshot).
+        self._single_grouped_form_snapshot: dict | None = None
+        self._tabs.currentChanged.connect(self._on_grouped_tab_changed)
         self._sync_count_fit_target()
 
     def _build_target_controls(self) -> QWidget:
-        """Build the count-domain fit-target / cost / side selector row."""
+        """Build the fit-target selector + collapsed count-fit options / calibration.
+
+        Only the **Target** is everyday (and **Side** when the single-group
+        target is chosen); every other control configures a count fit (F+B /
+        Single group) and is disabled for the lifetime-corrected "All groups"
+        target, so the advanced count-fit options and the calibration promotes
+        live in two sections collapsed by default — they no longer push the
+        model table and Fit button down the dock.
+        """
         box, outer = make_section("Fit target")
-        form = QFormLayout()
-        form.setContentsMargins(0, 0, 0, 0)
-        outer.addLayout(form)
+
+        # ── Always visible: Target (+ Side, only for the single-group target). ──
+        self._target_form = QFormLayout()
+        self._target_form.setContentsMargins(0, 0, 0, 0)
+        outer.addLayout(self._target_form)
 
         # Store the mode key as item data so reordering the dropdowns can't remap
         # a selection to the wrong key.
@@ -87,21 +135,27 @@ class MultiGroupFitWindow(QWidget):
         for label, key in _FIT_TARGETS:
             self._target_combo.addItem(label, key)
         self._target_combo.currentIndexChanged.connect(self._sync_count_fit_target)
-
-        self._cost_combo = QComboBox()
-        for label, key in _FIT_COSTS:
-            self._cost_combo.addItem(label, key)
-        self._cost_combo.currentIndexChanged.connect(self._sync_count_fit_target)
+        self._target_form.addRow(QLabel("Target"), self._target_combo)
 
         self._side_combo = QComboBox()
         for label, key in _SINGLE_SIDES:
             self._side_combo.addItem(label, key)
         self._side_combo.currentIndexChanged.connect(self._sync_count_fit_target)
-
-        form.addRow(QLabel("Target"), self._target_combo)
-        form.addRow(QLabel("Cost"), self._cost_combo)
         self._side_label = QLabel("Single group")
-        form.addRow(self._side_label, self._side_combo)
+        self._target_form.addRow(self._side_label, self._side_combo)
+
+        # ── Collapsed: count-fit options (Cost / Skip / Nuisances / Double pulse). ──
+        self._count_options_section = CollapsibleSection("Count-fit options", expanded=False)
+        options_form = QFormLayout()
+        options_form.setContentsMargins(0, 0, 0, 0)
+        self._count_options_section.addLayout(options_form)
+        outer.addWidget(self._count_options_section)
+
+        self._cost_combo = QComboBox()
+        for label, key in _FIT_COSTS:
+            self._cost_combo.addItem(label, key)
+        self._cost_combo.currentIndexChanged.connect(self._sync_count_fit_target)
+        options_form.addRow(QLabel("Cost"), self._cost_combo)
 
         # Interior exclude window (μs): inactive while max ≤ min.
         self._exclude_min = QDoubleSpinBox()
@@ -127,7 +181,7 @@ class MultiGroupFitWindow(QWidget):
         # that keeps the FFT grid. The semantics differ; the labels now say so.
         self._exclude_label = QLabel("Skip (μs)")
         self._exclude_label.setToolTip("Interior bins to skip (exclude window, μs)")
-        form.addRow(self._exclude_label, exclude_row)
+        options_form.addRow(self._exclude_label, exclude_row)
 
         self._t0_check = QCheckBox("Fit t₀ offset")
         self._t0_check.toggled.connect(self._sync_count_fit_target)
@@ -145,7 +199,7 @@ class MultiGroupFitWindow(QWidget):
         nuisance_layout.addWidget(self._t0_check)
         nuisance_layout.addWidget(self._baseline_check)
         nuisance_layout.addWidget(self._deadtime_check)
-        form.addRow(QLabel("Nuisances"), nuisance_row)
+        options_form.addRow(QLabel("Nuisances"), nuisance_row)
 
         # Double-pulse separation (μs); 0 = single pulse. Fixed from the
         # instrument, or located by a coarse->fine scan when "fit" is ticked.
@@ -167,7 +221,14 @@ class MultiGroupFitWindow(QWidget):
         dpsep_layout.addWidget(self._dpsep_spin)
         dpsep_layout.addWidget(self._dpsep_fit_check)
         self._dpsep_label = QLabel("Double pulse (μs)")
-        form.addRow(self._dpsep_label, dpsep_row)
+        options_form.addRow(self._dpsep_label, dpsep_row)
+
+        # ── Collapsed: calibration (promote fitted count terms → the grouping). ──
+        self._calibration_section = CollapsibleSection("Calibration", expanded=False)
+        calibration_form = QFormLayout()
+        calibration_form.setContentsMargins(0, 0, 0, 0)
+        self._calibration_section.addLayout(calibration_form)
+        outer.addWidget(self._calibration_section)
 
         # Promote a fitted deadtime into the grouping correction (Send-to-Group).
         self._promote_btn = QPushButton("Promote DT₀")
@@ -180,8 +241,8 @@ class MultiGroupFitWindow(QWidget):
         promote_layout.setSpacing(2)
         promote_layout.addWidget(self._promote_btn)
         promote_layout.addWidget(self._promote_additive)
-        self._promote_label = QLabel("Calibrate")
-        form.addRow(self._promote_label, promote_row)
+        self._promote_label = QLabel("Deadtime")
+        calibration_form.addRow(self._promote_label, promote_row)
 
         # The α / t₀ / background promote siblings (suggest-only Send-to-Group):
         # each writes a fitted count-domain calibration into the grouping with
@@ -206,11 +267,13 @@ class MultiGroupFitWindow(QWidget):
         promote_layout2.addWidget(self._promote_t0_btn, 0, 1)
         promote_layout2.addWidget(self._promote_bg_btn, 1, 0, 1, 2)
         promote_layout2.setColumnStretch(2, 1)
-        form.addRow(QLabel(""), promote_row2)
+        calibration_form.addRow(QLabel("Promote"), promote_row2)
 
         # N3 interpretive guard: the count fit consumes raw counts, so a grouping
         # background correction does NOT reach it. Surface that when active so a
-        # user does not fix the fit's background to zero and bias N0/α.
+        # user does not fix the fit's background to zero and bias N0/α. It lives
+        # inside Count-fit options (the section that owns the background term) so
+        # it does not occupy the always-visible header when collapsed.
         self._bg_active_note = QLabel(
             "Note: this run has a grouping background correction. The count fit "
             "reads raw counts, so its background term measures the full flat "
@@ -219,7 +282,7 @@ class MultiGroupFitWindow(QWidget):
         self._bg_active_note.setWordWrap(True)
         self._bg_active_note.setStyleSheet("color: palette(mid);")
         self._bg_active_note.setVisible(False)
-        form.addRow(self._bg_active_note)
+        self._count_options_section.addWidget(self._bg_active_note)
         return box
 
     def _on_promote_deadtime(self) -> None:
@@ -233,8 +296,9 @@ class MultiGroupFitWindow(QWidget):
         side = self._side_combo.currentData()
         single = mode == "single"
         count_mode = mode != "all"
-        self._side_combo.setEnabled(single)
-        self._side_label.setEnabled(single)
+        # The Forward/Backward side only means anything for the single-group
+        # target, so its row is shown only then (rather than greyed out).
+        self._target_form.setRowVisible(self._side_combo, single)
         # The Poisson/Gaussian cost now applies to every grouped target,
         # including the lifetime-corrected fgAll ("all") fit — its grouped
         # driver routes through the same Cash/√N cost-factory seam.
@@ -280,14 +344,218 @@ class MultiGroupFitWindow(QWidget):
         return current if isinstance(current, GlobalFitTab) else self._single_fit_tab
 
     def set_dataset(self, dataset: MuonDataset | None) -> None:
-        """Update the active grouped-fit dataset shown by both surfaces."""
+        """Update the active grouped-fit dataset shown by both surfaces.
+
+        Mirrors ``FitPanel.set_dataset``: the leaving run's Single form is saved,
+        the surfaces re-bind to *dataset* (rebuilding the grouped model for its
+        detector groups), then the Single form is resolved by precedence —
+        recorded slot fit (restore provider) > this run's previously-edited form
+        > carry-forward (keep the current function, drop the stale result) for an
+        unseen, un-customised run.
+        """
+        # Save the form the Single surface is leaving, so returning to that run
+        # restores its in-progress setup.
+        if self._active_single_grouped_run is not None:
+            self._single_grouped_state_by_run[self._active_single_grouped_run] = (
+                self._single_fit_tab.get_state()
+            )
+
         for tab in self._grouped_tabs():
             tab.set_current_dataset(dataset)
         self._update_background_note(dataset)
+
+        run_number: int | None = None
         if dataset is None:
             self._run_label = ""
+        else:
+            self._run_label = str(getattr(dataset, "run_label", dataset.run_number))
+            try:
+                run_number = int(dataset.run_number)
+            except (TypeError, ValueError):
+                run_number = None
+        self._active_single_grouped_run = run_number
+
+        if dataset is None:
             return
-        self._run_label = str(getattr(dataset, "run_label", dataset.run_number))
+
+        payload = (
+            self._single_grouped_restore_provider(dataset)
+            if self._single_grouped_restore_provider is not None
+            else None
+        )
+        if isinstance(payload, dict) and payload:
+            self.restore_single_grouped_ui(payload)
+        elif run_number is not None and run_number in self._single_grouped_state_by_run:
+            self._single_fit_tab.restore_state(self._single_grouped_state_by_run[run_number])
+        else:
+            self._carry_forward_single_grouped_form()
+
+    def _carry_forward_single_grouped_form(self) -> None:
+        """Inherit the current Single function for an unseen run, dropping its result.
+
+        The grouped model already persists across ``set_current_dataset``, so
+        re-applying the current form keeps the function/seeds; the previous run's
+        result is then cleared (an unseen run has not been fit). Mirrors
+        ``FitPanel._carry_forward_single_fit_form``.
+        """
+        # restore_state only *sets* a non-empty result_html, so the result widget
+        # is cleared directly (mirrors FitPanel clearing the single result label).
+        self._single_fit_tab.restore_state(self._single_fit_tab.get_state())
+        self._single_fit_tab._result_text.clear()
+
+    def _on_grouped_tab_changed(self, index: int) -> None:
+        """Preserve the Single form across a Single↔Batch tab switch.
+
+        Leaving Single snapshots its form; returning restores that snapshot when
+        the run is unchanged — keeping a hand-built but unfit grouped function
+        alive across the round trip (mirrors ``FitPanel._on_fit_tab_changed``).
+        """
+        if self._tabs.widget(index) is self._single_fit_tab:
+            snapshot = self._single_grouped_form_snapshot
+            if snapshot is not None and snapshot.get("run") == self._active_single_grouped_run:
+                self._single_fit_tab.restore_state(snapshot["state"])
+        else:
+            self._single_grouped_form_snapshot = {
+                "run": self._active_single_grouped_run,
+                "state": self._single_fit_tab.get_state(),
+            }
+
+    def _on_send_grouped_model_to_batch(self) -> None:
+        """Copy the Single grouped surface's model + physics seeds to the Batch surface."""
+        model = getattr(self._single_fit_tab, "_composite_model", None)
+        if model is None:
+            return
+        seeds = self._single_fit_tab.current_grouped_seed_values()
+        self._batch_fit_tab._set_composite_model(model)
+        self._batch_fit_tab.apply_grouped_physics_seeds(seeds)
+        self._tabs.setCurrentWidget(self._batch_fit_tab)
+
+    def share_single_grouped_function_state(
+        self,
+        source_run: int,
+        target_runs: list[int],
+        datasets_by_run: dict[int, MuonDataset] | None = None,
+    ) -> int:
+        """Copy the source run's grouped Single function into each target run's store.
+
+        Each peer inherits the function (model + seeds + Fix/role setup) on its
+        next selection via the per-run store, but **not** the source run's fit
+        result (a peer has not been fit). Returns the number of peers written.
+
+        Mirrors ``FitPanel.share_single_function_state``: for field-specific
+        parameters (like ``B_L``), the peer's own field-derived seed is applied
+        from its dataset when *datasets_by_run* is provided, so a peer at a
+        different applied field gets its own seed rather than the source run's.
+        Both the grouped-fit model parameters (``parameters``) and the per-group
+        model parameters (``group_model_parameters``) are re-seeded.
+        """
+        source = int(source_run)
+        if source == self._active_single_grouped_run:
+            source_state = self._single_fit_tab.get_state()
+        else:
+            source_state = self._single_grouped_state_by_run.get(source)
+        if not isinstance(source_state, dict) or not source_state:
+            return 0
+        written = 0
+        for target in target_runs:
+            try:
+                target_run = int(target)
+            except (TypeError, ValueError):
+                continue
+            if target_run == source:
+                continue
+            shared_state = copy.deepcopy(source_state)
+            # The peer has not been fit; carry the function, not the result.
+            shared_state["result_html"] = "No fit performed yet"
+
+            # Re-seed file-specific parameters (e.g. B_L) from the peer's own
+            # dataset so a peer at a different applied field is not stuck with
+            # the source run's field value.
+            target_dataset = (
+                datasets_by_run.get(target_run) if datasets_by_run is not None else None
+            )
+            if target_dataset is not None:
+                for key in ("parameters", "group_model_parameters"):
+                    self._reseed_field_params(shared_state.get(key), target_dataset)
+
+            self._single_grouped_state_by_run[target_run] = shared_state
+            # Refresh now only if this peer is the run currently on screen.
+            if target_run == self._active_single_grouped_run:
+                self._single_fit_tab.restore_state(shared_state)
+                self._single_fit_tab._result_text.clear()
+            written += 1
+        return written
+
+    @staticmethod
+    def _reseed_field_params(param_entries: object, dataset: MuonDataset) -> None:
+        """Apply *dataset*'s file-specific seeds onto a parameter-entry list.
+
+        Each entry is a ``{"name": ..., "value": ...}`` dict; field-like
+        parameters (resolved via :func:`split_parameter_name`) get the dataset's
+        own field-derived value. Non-field parameters are left untouched.
+        """
+        if not isinstance(param_entries, list):
+            return
+        for param_dict in param_entries:
+            if not isinstance(param_dict, dict):
+                continue
+            pname = param_dict.get("name")
+            if not isinstance(pname, str):
+                continue
+            base_name, _index = split_parameter_name(pname)
+            file_value = _get_file_value_for_parameter(dataset, base_name)
+            if file_value is not None:
+                param_dict["value"] = file_value
+
+    def clear_grouped_single_state(self) -> None:
+        """Drop all per-run grouped Single forms (project close / new project).
+
+        Mirrors ``FitPanel.clear`` resetting ``_single_state_by_run`` — without
+        this the session-only store bleeds a closed project's forms into the
+        next project's runs that reuse the same run numbers.
+        """
+        self._single_grouped_state_by_run = {}
+        self._active_single_grouped_run = None
+        self._single_grouped_form_snapshot = None
+
+    def prune_grouped_single_state(self, run_numbers) -> None:
+        """Forget stored grouped Single forms for *run_numbers* (removed / refit).
+
+        Mirrors ``FitPanel.clear_fits_for_runs`` so a removed or re-loaded run
+        does not resurrect a stale function.
+        """
+        for raw in run_numbers:
+            try:
+                run_number = int(raw)
+            except (TypeError, ValueError):
+                continue
+            self._single_grouped_state_by_run.pop(run_number, None)
+            if self._active_single_grouped_run == run_number:
+                self._active_single_grouped_run = None
+
+    def set_single_grouped_restore_provider(
+        self, provider: Callable[[MuonDataset | None], dict | None] | None
+    ) -> None:
+        """Install the per-run Single-surface restore mediator (or clear it)."""
+        self._single_grouped_restore_provider = provider
+
+    def single_grouped_form_state(self) -> dict:
+        """Full restorable form state of the Single (grouped) surface.
+
+        This is exactly what :meth:`restore_single_grouped_ui` consumes, so it is
+        the payload the main window stores as a grouped single fit's ``ui_state``.
+        """
+        return copy.deepcopy(self._single_fit_tab.get_state())
+
+    def restore_single_grouped_ui(self, payload: dict | None) -> None:
+        """Restore the Single surface from a slot ``ui_state`` payload.
+
+        A populated dict restores the form verbatim; ``None``/empty leaves the
+        surface untouched (a run with no grouped single fit must not blank a
+        model the user is setting up — there are no projections to confuse here).
+        """
+        if isinstance(payload, dict) and payload:
+            self._single_fit_tab.restore_state(payload)
 
     def _update_background_note(self, dataset: MuonDataset | None) -> None:
         """Show the N3 interpretive note when the run's grouping corrects background."""

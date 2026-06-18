@@ -483,7 +483,9 @@ class RootLoader(BaseLoader):
             first_good_bins.append(first_good)
             last_good_bins.append(last_good)
 
-        groups, group_names, forward_gid, backward_gid = self._default_groups(labels)
+        groups, group_names, forward_gid, backward_gid = self._default_groups(
+            labels, instrument=str(header.get("RunInfo/Instrument", ""))
+        )
         forward_idx = [det - 1 for det in groups[forward_gid]]
         backward_idx = [det - 1 for det in groups[backward_gid]]
         common_t0 = common_t0_for_groups(histograms, forward_idx, backward_idx)
@@ -677,9 +679,10 @@ class RootLoader(BaseLoader):
     def _default_groups(
         self,
         labels: list[str],
+        *,
+        instrument: str = "",
     ) -> tuple[dict[int, list[int]], dict[int, str], int, int]:
-        groups = {gid: [gid] for gid in range(1, len(labels) + 1)}
-        group_names = self._unique_names(labels)
+        groups, group_names = self._merge_subdetector_groups(labels, instrument=instrument)
         beam_forward_gid = self._first_explicit_group_matching(group_names, "forward")
         beam_backward_gid = self._first_explicit_group_matching(group_names, "backward")
         if beam_forward_gid is not None and beam_backward_gid is not None:
@@ -692,6 +695,85 @@ class RootLoader(BaseLoader):
         if backward_gid is None:
             backward_gid = 2 if len(groups) >= 2 and forward_gid != 2 else 1
         return groups, group_names, int(forward_gid), int(backward_gid)
+
+    #: Transverse direction bases whose split ``_B``/``_F`` sub-detectors are
+    #: combined into one group by default (matches the GPS-RD instrument
+    #: presets U=(Up_B, Up_F), D, L, R and the six-group PSI-BIN GPS default).
+    _TRANSVERSE_BASES = ("up", "down", "left", "right", "top", "bottom")
+
+    def _combines_split_subdetectors(self, labels: list[str], instrument: str) -> bool:
+        """Whether the detector labels expose split ``_B``/``_F`` transverse halves.
+
+        The PSI **GPS** spectrometer splits each transverse plate into a
+        backward/forward pair that must be recombined into one physical group.
+        Detection is structural — a transverse base that appears as *both* its
+        ``_B`` and ``_F`` halves is the GPS split convention by construction (a
+        lone ``Up_F`` or genuinely distinct detectors never trip it) — so the
+        merge fires for real GPS files whatever their instrument label reads,
+        while non-paired layouts still load one group per histogram. The
+        instrument name is accepted as an additional, explicit trigger.
+        """
+        if str(instrument).strip().upper().startswith("GPS"):
+            return True
+        half_suffixes: dict[str, set[str]] = {}
+        for label in labels:
+            token = re.sub(r"[^a-z0-9]+", "", str(label).lower())
+            match = re.fullmatch(rf"({'|'.join(self._TRANSVERSE_BASES)})(b|f)", token)
+            if match is not None:
+                half_suffixes.setdefault(match.group(1), set()).add(match.group(2))
+        return any({"b", "f"} <= suffixes for suffixes in half_suffixes.values())
+
+    def _transverse_base(self, label: str) -> str | None:
+        """Return the transverse direction a split sub-detector belongs to.
+
+        GPS ROOT (MusrRoot) files expose each transverse plate as a backward
+        (``_B``, upstream) and forward (``_F``, downstream) half — e.g.
+        ``Up_B``/``Up_F``. These belong in one physical group, so the default
+        grouping combines them. Returns the lower-case base (``"up"``…) for a
+        ``<base>_B``/``<base>_F`` label, else ``None`` (the label stays in its
+        own group, so beam ``Forw``/``Back`` and single-letter ``R_F`` FLAME
+        sub-detectors are left untouched).
+        """
+        token = re.sub(r"[^a-z0-9]+", "", str(label).lower())
+        match = re.fullmatch(rf"({'|'.join(self._TRANSVERSE_BASES)})(b|f)", token)
+        return match.group(1) if match else None
+
+    def _merge_subdetector_groups(
+        self,
+        labels: list[str],
+        *,
+        instrument: str = "",
+    ) -> tuple[dict[int, list[int]], dict[int, str]]:
+        """Build default detector groups, combining split transverse sub-detectors.
+
+        When the labels carry the GPS split-half convention (a transverse base
+        present as both ``_B`` and ``_F`` halves), those halves are merged so ROOT
+        GPS data loads with the same six-group default (Forward, Backward, Up,
+        Down, Left, Right) as the PSI-BIN export; the ungrouped GPS Mobile
+        detector stays on its own. Otherwise the merge is off (one group per
+        histogram), so a lone ``<base>_F`` or genuinely distinct detectors are
+        never silently collapsed.
+        """
+        combine = self._combines_split_subdetectors(labels, instrument)
+        base_to_gid: dict[str, int] = {}
+        groups: dict[int, list[int]] = {}
+        ordered_names: list[str] = []
+        next_gid = 1
+        for detector_id, raw_label in enumerate(labels, start=1):
+            base = self._transverse_base(raw_label) if combine else None
+            if base is not None and base in base_to_gid:
+                groups[base_to_gid[base]].append(detector_id)
+                continue
+            gid = next_gid
+            next_gid += 1
+            groups[gid] = [detector_id]
+            if base is not None:
+                base_to_gid[base] = gid
+                ordered_names.append(base.capitalize())
+            else:
+                label = str(raw_label).strip()
+                ordered_names.append(label or f"Detector {detector_id}")
+        return groups, self._unique_names(ordered_names)
 
     def _unique_names(self, labels: list[str]) -> dict[int, str]:
         seen: dict[str, int] = {}

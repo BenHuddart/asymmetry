@@ -11,6 +11,7 @@ from __future__ import annotations
 import inspect
 import math
 from collections.abc import Callable, Hashable, Sequence
+from concurrent.futures import BrokenExecutor, ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -21,6 +22,7 @@ from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.engine import (
     COST_FACTORIES,
     POISSON_COST,
+    CostFactory,
     FitCancelledError,
     FitEngine,
     FitResult,
@@ -31,6 +33,7 @@ from asymmetry.core.fitting.global_search.heuristics import (
     is_background_parameter,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet, split_parameter_name
+from asymmetry.core.fitting.process_pool import open_spawn_pool
 from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
 from asymmetry.core.transform.grouping import (
     apply_grouping_aligned,
@@ -966,6 +969,10 @@ def fit_grouped_series(
     seeding: str = "as_provided",
     order_key: dict[int, float] | None = None,
     cost: str = "poisson",
+    cross_run_local_params: list[str] | None = None,
+    max_workers: int | None = None,
+    block_separable: bool = False,
+    profile_shared_errors: bool = False,
 ) -> GroupedSeriesFitResult:
     """Fit a series of grouped runs with one of three member relationships.
 
@@ -992,13 +999,29 @@ def fit_grouped_series(
         include the nuisance block plus the model parameters referenced by
         ``global_params`` / ``local_params``.
 
-    Note
-    ----
-    A *mixed* global fit (some physics shared across runs, others joined only
-    within a run) is not yet supported: the simultaneous engine shares a global
-    parameter across every dataset in the call, so per-run scoping would need an
-    engine-level change.  Use ``"global"`` to share all free physics across runs,
-    or ``"batch"`` to keep them per-run.
+    A *mixed* fit (some physics shared across runs, others fitted per run) is
+    expressed by routing through ``"global"`` and listing the per-run physics in
+    ``cross_run_local_params``: those become engine local parameters grouped by
+    source run, while the rest stay shared across all runs.
+
+    ``max_workers`` opts into process-level parallelism of the independent
+    (``"as_provided"``) batch path, where each run's joint fit is fully
+    independent. ``None`` (the default) keeps the sequential, in-process path; a
+    positive count dispatches up to ``min(max_workers, n_runs)`` runs across a
+    spawn-based pool (the GUI passes ``os.cpu_count()``). For a ``"global"`` series
+    it instead parallelises the inner per-run fits of the block-separable solver
+    (see ``block_separable``); for chained seeding it has no effect (each run
+    depends on the previous, so the chain is inherently sequential).
+
+    ``block_separable`` permits the ``"global"`` path to solve large mixed fits by
+    *alternating block minimisation* instead of one monolithic Minuit problem: the
+    runs are independent except for the handful of cross-run-shared physics params,
+    so the solver alternates between fitting each run independently (the shared
+    params held — the same per-run work the batch path parallelises) and a small fit
+    of just the shared params. This scales linearly in run count where the monolithic
+    fit blows up superlinearly. It engages only above a free-parameter threshold
+    (small global fits keep the monolithic path and its exact joint covariance); the
+    shared-parameter uncertainties it reports are conditional on the fitted locals.
     """
     if relationship not in GROUPED_SERIES_RELATIONSHIPS:
         raise ValueError(
@@ -1055,6 +1078,7 @@ def fit_grouped_series(
             seeding_reason=recommendation.reason,
             order_key=order_key,
             cost=cost,
+            max_workers=max_workers,
         )
     # A "global" series is one simultaneous fit, so sequential chaining does not
     # apply; the seeding choice is recorded as-is for transparency.
@@ -1072,6 +1096,10 @@ def fit_grouped_series(
         minos=minos,
         cancel_callback=cancel_callback,
         cost=cost,
+        cross_run_local_params=cross_run_local_params,
+        max_workers=max_workers,
+        block_separable=block_separable,
+        profile_shared_errors=profile_shared_errors,
     )
 
 
@@ -1094,6 +1122,7 @@ def _fit_grouped_series_independent(
     seeding_reason: str = "",
     order_key: dict[int, float] | None = None,
     cost: str = "poisson",
+    max_workers: int | None = None,
 ) -> GroupedSeriesFitResult:
     """Run one independent grouped joint fit per member run (no cross-run sharing).
 
@@ -1101,6 +1130,11 @@ def _fit_grouped_series_independent(
     values (re-normalised to the grouped contract), iterating in ``order_key`` order
     so the chain follows the physical scan; a failed member resets the next member to
     its provided seed.
+
+    With ``seeding="as_provided"`` the per-run fits share no state, so a positive
+    ``max_workers`` dispatches them across a process pool (``None``/``1`` → the
+    in-process sequential path). Results are independent of worker count. Chained
+    seeding always runs sequentially.
     """
     # Chaining follows the physical scan order; fall back to the caller's member order
     # when no order key is supplied.
@@ -1111,40 +1145,11 @@ def _fit_grouped_series_independent(
     member_results: dict[int, FitResult] = {}
     member_source_run: dict[int, int] = {}
     member_group_id: dict[int, Hashable] = {}
-    messages: list[str] = []
-    previous: GroupedTimeDomainFitResult | None = None
-    for raw_run in run_order:
-        groups = members[raw_run]
-        # Cooperative cancel between member fits (the minimum abort granularity): a
-        # cancelled series records nothing and the loop stops cleanly here.
-        if cancel_callback is not None and bool(cancel_callback()):
-            raise FitCancelledError("Fit cancelled.")
-        run = int(raw_run)
-        provided = initial_params.get(run, {})
-        if seeding == "chain" and previous is not None:
-            run_initial = _chained_initial_from_member(previous, provided)
-        else:
-            run_initial = provided
-        result = fit_grouped_time_domain(
-            groups,
-            polarization_model_fn,
-            global_params=global_params,
-            local_params=local_params,
-            initial_params=run_initial,
-            fit_engine=engine,
-            t_min=t_min,
-            t_max=t_max,
-            method=method,
-            max_calls=max_calls,
-            minos=minos,
-            cancel_callback=cancel_callback,
-            cost=cost,
-        )
-        # Only chain from a successful member; a failed fit resets the next member to
-        # its provided seed rather than propagating a diverged seed down the scan.
-        previous = result if result.success else None
-        messages.append(f"run {run}: {result.message}")
-        for index, group in enumerate(groups, start=1):
+    messages: dict[int, str] = {}
+
+    def record(run: int, result: GroupedTimeDomainFitResult) -> None:
+        messages[run] = f"run {run}: {result.message}"
+        for index, group in enumerate(members[run], start=1):
             key = _group_dataset_run_number(run, index)
             group_result = result.group_results.get(group.group_id)
             if group_result is None:
@@ -1152,6 +1157,76 @@ def _fit_grouped_series_independent(
             member_results[key] = group_result
             member_source_run[key] = run
             member_group_id[key] = group.group_id
+
+    parallel_results: dict[int, GroupedTimeDomainFitResult] | None = None
+    workers = _resolve_grouped_series_workers(max_workers, len(run_order))
+    if (
+        seeding != "chain"
+        and workers > 1
+        and _grouped_series_payload_picklable(polarization_model_fn)
+    ):
+        # Independent seeds → the members share no state, so each run's joint fit is
+        # a self-contained, deterministic problem. Dispatch them across processes
+        # (iminuit calls back into Python for every cost evaluation, so threads would
+        # serialise on the GIL; processes give real parallelism). Results are
+        # bit-identical to the sequential path regardless of worker count; a pool that
+        # cannot start (or breaks) returns ``None`` and we fall through to sequential.
+        parallel_results = _fit_members_parallel(
+            run_order,
+            members,
+            polarization_model_fn,
+            global_params,
+            local_params,
+            initial_params,
+            t_min=t_min,
+            t_max=t_max,
+            method=method,
+            max_calls=max_calls,
+            minos=minos,
+            cost=cost,
+            cancel_callback=cancel_callback,
+            workers=workers,
+        )
+
+    if parallel_results is not None:
+        for run in (int(r) for r in run_order):
+            record(run, parallel_results[run])
+    else:
+        previous: GroupedTimeDomainFitResult | None = None
+        for raw_run in run_order:
+            groups = members[raw_run]
+            # Cooperative cancel between member fits (the minimum abort granularity):
+            # a cancelled series records nothing and the loop stops cleanly here.
+            if cancel_callback is not None and bool(cancel_callback()):
+                raise FitCancelledError("Fit cancelled.")
+            run = int(raw_run)
+            provided = initial_params.get(run, {})
+            if seeding == "chain" and previous is not None:
+                run_initial = _chained_initial_from_member(previous, provided)
+            else:
+                run_initial = provided
+            result = fit_grouped_time_domain(
+                groups,
+                polarization_model_fn,
+                global_params=global_params,
+                local_params=local_params,
+                initial_params=run_initial,
+                fit_engine=engine,
+                t_min=t_min,
+                t_max=t_max,
+                method=method,
+                max_calls=max_calls,
+                minos=minos,
+                cancel_callback=cancel_callback,
+                cost=cost,
+            )
+            # Only chain from a successful member; a failed fit resets the next member
+            # to its provided seed rather than propagating a diverged seed down the scan.
+            previous = result if result.success else None
+            record(run, result)
+
+    # Report messages in the (physical-scan) run order, independent of completion order.
+    ordered_messages = [messages[int(r)] for r in run_order if int(r) in messages]
     success = bool(member_results) and all(r.success for r in member_results.values())
     return GroupedSeriesFitResult(
         success=success,
@@ -1160,10 +1235,154 @@ def _fit_grouped_series_independent(
         member_source_run=member_source_run,
         member_group_id=member_group_id,
         shared_parameters=ParameterSet(),
-        message="; ".join(messages),
+        message="; ".join(ordered_messages),
         seeding_used=seeding,
         seeding_reason=seeding_reason,
     )
+
+
+def _resolve_grouped_series_workers(max_workers: int | None, n_runs: int) -> int:
+    """Resolve the worker count for an independent batch (clamped to ``[1, n_runs]``).
+
+    Parallelism is opt-in: ``None`` (the default) keeps the sequential, in-process
+    path so programmatic callers and spies are unaffected. A positive count is
+    honoured but never exceeds the run count (extra workers would just sit idle).
+    The GUI passes ``os.cpu_count()`` to auto-size the pool to the host.
+    """
+    if max_workers is None or n_runs <= 1:
+        return 1
+    return max(1, min(int(max_workers), n_runs))
+
+
+def _grouped_series_payload_picklable(model_fn) -> bool:
+    """Whether the per-run payload can cross a process boundary.
+
+    The group arrays and :class:`ParameterSet` seeds are always picklable; the one
+    real risk is the polarization model function (e.g. a user-defined Python model
+    captured as a closure). If it cannot be pickled the caller falls back to the
+    in-process sequential path rather than crashing on dispatch.
+    """
+    import pickle
+
+    try:
+        pickle.dumps(model_fn)
+    except Exception:
+        return False
+    return True
+
+
+def _grouped_member_worker(payload):
+    """Process-pool entry point: fit one run's groups and return ``(run, result)``.
+
+    Module-level (so it survives the ``spawn`` start method) and engine-free — each
+    worker builds its own :class:`FitEngine`. Cancellation is handled in the parent
+    between completions, so no cancel callback crosses the boundary.
+    """
+    (
+        run,
+        groups,
+        polarization_model_fn,
+        global_params,
+        local_params,
+        run_initial,
+        t_min,
+        t_max,
+        method,
+        max_calls,
+        minos,
+        cost,
+    ) = payload
+    result = fit_grouped_time_domain(
+        groups,
+        polarization_model_fn,
+        global_params=global_params,
+        local_params=local_params,
+        initial_params=run_initial,
+        fit_engine=None,
+        t_min=t_min,
+        t_max=t_max,
+        method=method,
+        max_calls=max_calls,
+        minos=minos,
+        cancel_callback=None,
+        cost=cost,
+    )
+    return run, result
+
+
+def _fit_members_parallel(
+    run_order: list[int],
+    members: dict[int, list[GroupedTimeDomainGroup]],
+    polarization_model_fn,
+    global_params: list[str],
+    local_params: list[str],
+    initial_params: dict[int, dict[Hashable, ParameterSet]],
+    *,
+    t_min: float | None,
+    t_max: float | None,
+    method: str,
+    max_calls: int,
+    minos: bool,
+    cost: str,
+    cancel_callback: Callable[[], bool] | None,
+    workers: int,
+) -> dict[int, GroupedTimeDomainFitResult] | None:
+    """Fit every independent member across a process pool; return ``{run: result}``.
+
+    Members are dispatched to a spawn-based :class:`ProcessPoolExecutor` and collected
+    as they complete (the caller folds them in by run number, so completion order does
+    not matter). Results are bit-identical to the sequential path regardless of worker
+    count. Returns ``None`` — signalling the caller to run sequentially instead — when
+    a spawn-safe pool cannot start or the pool breaks mid-run (a constrained or frozen
+    environment); raises :class:`FitCancelledError` on a cooperative cancel.
+
+    Cancellation is coarse: a requested cancel stops collecting further results, but an
+    in-flight member fit runs to completion (the same per-member abort granularity as
+    the sequential path).
+    """
+    payloads = [
+        (
+            int(raw_run),
+            members[raw_run],
+            polarization_model_fn,
+            global_params,
+            local_params,
+            initial_params.get(int(raw_run), {}),
+            t_min,
+            t_max,
+            method,
+            max_calls,
+            minos,
+            cost,
+        )
+        for raw_run in run_order
+    ]
+    if cancel_callback is not None and bool(cancel_callback()):
+        raise FitCancelledError("Fit cancelled.")
+    # No spawn-safe workers here (e.g. a restricted sandbox) → the caller falls back to
+    # the sequential path, which produces identical results.
+    executor = open_spawn_pool(workers)
+    if executor is None:
+        return None
+    results: dict[int, GroupedTimeDomainFitResult] = {}
+    try:
+        futures = {
+            executor.submit(_grouped_member_worker, payload): payload[0] for payload in payloads
+        }
+        for future in as_completed(futures):
+            if cancel_callback is not None and bool(cancel_callback()):
+                raise FitCancelledError("Fit cancelled.")
+            run, result = future.result()
+            results[run] = result
+    except BrokenExecutor:
+        # A worker died for an environmental reason (not a fit failure — failed fits
+        # return success=False without raising). Abandon parallelism and let the
+        # caller re-run the batch sequentially rather than report partial results.
+        return None
+    finally:
+        # Drop pending work immediately; in-flight processes finish on their own.
+        executor.shutdown(wait=False, cancel_futures=True)
+    return results
 
 
 def _fit_grouped_series_global(
@@ -1181,8 +1400,23 @@ def _fit_grouped_series_global(
     minos: bool = False,
     cancel_callback: Callable[[], bool] | None = None,
     cost: str = "poisson",
+    cross_run_local_params: list[str] | None = None,
+    max_workers: int | None = None,
+    block_separable: bool = False,
+    profile_shared_errors: bool = False,
 ) -> GroupedSeriesFitResult:
-    """Fit every ``(run, group)`` simultaneously, sharing physics across all runs."""
+    """Fit every ``(run, group)`` simultaneously.
+
+    Physics in ``global_params`` is shared across all runs and groups, except the
+    subset in ``cross_run_local_params``, which is shared across each run's groups
+    but fitted independently *per run* (the mixed Global/Local case). The
+    per-group nuisance block is always per ``(run, group)``.
+
+    With ``block_separable`` and a large free-parameter count the joint problem is
+    solved by alternating block minimisation (see :func:`_fit_grouped_series_global_blockwise`)
+    rather than one monolithic Minuit fit; otherwise the monolithic path runs.
+    """
+    cross_run_local = set(cross_run_local_params or [])
     use_poisson, cost_factory = _resolve_grouped_cost(cost)
     temporary_datasets: list[MuonDataset] = []
     temporary_initial: dict[int, ParameterSet] = {}
@@ -1242,13 +1476,67 @@ def _fit_grouped_series_global(
     if len(temporary_datasets) < 2:
         raise ValueError("Global grouped-series fitting requires at least two (run, group) members")
 
+    # Split physics: cross-run-global stays shared across every dataset; the
+    # per-run subset becomes an engine local parameter grouped by its source run,
+    # so a run's groups share one value while runs stay independent.
+    engine_global = [name for name in global_params if name not in cross_run_local]
+    engine_local = list(local_params) + [name for name in global_params if name in cross_run_local]
+    local_param_groups = (
+        {name: dict(member_source_run) for name in cross_run_local} if cross_run_local else None
+    )
+
     base_model_fn = build_grouped_count_model(polarization_model_fn)
     model_fn = _raw_count_model(base_model_fn) if use_poisson else base_model_fn
+
+    # The joint objective is a sum over (run, group) coupled across runs ONLY through
+    # the cross-run-shared physics (engine_global); for fixed shared values the runs
+    # are independent. A monolithic Minuit fit ignores that structure and scales
+    # superlinearly, so for a large free-parameter count solve it by alternating block
+    # minimisation instead (shared params held → independent per-run fits, then a small
+    # shared-only fit). Small fits keep the monolithic path and its exact joint errors.
+    representative = temporary_initial[next(iter(temporary_initial))]
+    free_global = [name for name in engine_global if not representative[name].fixed]
+    if (
+        block_separable
+        and free_global
+        and _grouped_global_is_large(
+            representative,
+            truly_global=engine_global,
+            per_run_physics=list(cross_run_local),
+            nuisances=list(local_params),
+            n_runs=len(members),
+            n_members=len(temporary_datasets),
+        )
+    ):
+        return _fit_grouped_series_global_blockwise(
+            members,
+            polarization_model_fn,
+            truly_global=engine_global,
+            per_run_physics=list(cross_run_local),
+            nuisances=list(local_params),
+            initial_params=initial_params,
+            temporary_datasets=temporary_datasets,
+            temporary_initial=temporary_initial,
+            member_source_run=member_source_run,
+            member_group_id=member_group_id,
+            model_fn=model_fn,
+            cost_factory=cost_factory,
+            engine=engine,
+            t_min=t_min,
+            t_max=t_max,
+            method=method,
+            max_calls=max_calls,
+            cost=cost,
+            cancel_callback=cancel_callback,
+            max_workers=max_workers,
+            profile_shared_errors=profile_shared_errors,
+        )
+
     internal_results, shared_parameters = engine.global_fit(
         temporary_datasets,
         model_fn,
-        global_params=global_params,
-        local_params=local_params,
+        global_params=engine_global,
+        local_params=engine_local,
         initial_params=temporary_initial,
         t_min=t_min,
         t_max=t_max,
@@ -1257,6 +1545,7 @@ def _fit_grouped_series_global(
         minos=minos,
         cancel_callback=cancel_callback,
         cost_factory=cost_factory,
+        local_param_groups=local_param_groups,
     )
 
     member_results = {
@@ -1279,3 +1568,709 @@ def _fit_grouped_series_global(
         shared_parameters=shared_parameters,
         message=message,
     )
+
+
+#: Below this many free parameters the monolithic global fit is fast and gives exact
+#: joint errors, so block minimisation is not worth its conditional-error trade-off.
+_BLOCK_SEPARABLE_MIN_FREE_PARAMS = 64
+
+
+def _grouped_global_is_large(
+    representative: ParameterSet,
+    *,
+    truly_global: list[str],
+    per_run_physics: list[str],
+    nuisances: list[str],
+    n_runs: int,
+    n_members: int,
+    threshold: int = _BLOCK_SEPARABLE_MIN_FREE_PARAMS,
+) -> bool:
+    """Whether the monolithic joint fit would carry enough free params to be worth
+    block minimisation.
+
+    Counts free shared params once, free per-run physics once per run, and free
+    nuisances once per ``(run, group)`` member — the same accounting the engine uses
+    to build the Minuit vector.
+    """
+    free_global = sum(1 for name in truly_global if not representative[name].fixed)
+    free_phys = sum(1 for name in per_run_physics if not representative[name].fixed)
+    free_nuis = sum(1 for name in nuisances if not representative[name].fixed)
+    free_total = free_global + free_phys * n_runs + free_nuis * n_members
+    return free_total >= threshold
+
+
+def _copy_param_set_with(
+    source: ParameterSet,
+    *,
+    fix: set[str] | None = None,
+    free: set[str] | None = None,
+    values: dict[str, float] | None = None,
+) -> ParameterSet:
+    """Return a copy of ``source`` with selected parameters re-fixed/-freed/-revalued.
+
+    Preserves every parameter's bounds and link metadata; only the ``fixed`` flag (for
+    names in ``fix``/``free``) and ``value`` (for names in ``values``) are overridden.
+    """
+    fix = fix or set()
+    free = free or set()
+    values = values or {}
+    out = ParameterSet()
+    for p in source:
+        fixed = p.fixed
+        if p.name in fix:
+            fixed = True
+        if p.name in free:
+            fixed = False
+        out.add(
+            Parameter(
+                name=p.name,
+                value=float(values.get(p.name, p.value)),
+                min=p.min,
+                max=p.max,
+                fixed=fixed,
+                link_group=p.link_group,
+            )
+        )
+    return out
+
+
+def _blockwise_inner_payload(
+    run,
+    members,
+    polarization_model_fn,
+    inner_global,
+    nuisances,
+    run_seeds,
+    t_min,
+    t_max,
+    method,
+    max_calls,
+    cost,
+):
+    """Build the ``_grouped_member_worker`` argument tuple for one run's inner fit."""
+    return (
+        int(run),
+        members[run],
+        polarization_model_fn,
+        inner_global,
+        nuisances,
+        run_seeds[int(run)],
+        t_min,
+        t_max,
+        method,
+        max_calls,
+        False,
+        cost,
+    )
+
+
+def _blockwise_inner_fit_runs(
+    run_order: list[int],
+    members: dict[int, list[GroupedTimeDomainGroup]],
+    polarization_model_fn,
+    inner_global: list[str],
+    nuisances: list[str],
+    run_seeds: dict[int, dict[Hashable, ParameterSet]],
+    *,
+    engine: FitEngine,
+    t_min: float | None,
+    t_max: float | None,
+    method: str,
+    max_calls: int,
+    cost: str,
+    cancel_callback: Callable[[], bool] | None,
+    executor: ProcessPoolExecutor | None,
+) -> dict[int, GroupedTimeDomainFitResult]:
+    """Fit every run independently for one block-minimisation round → ``{run: result}``.
+
+    With the shared params held (they are fixed inside ``run_seeds``) each run is a
+    self-contained grouped fit. When ``executor`` is supplied the per-run fits are
+    submitted to that persistent pool (created once for the whole solve, not per
+    round, so the spawn cost is paid only at start-up); otherwise they run in a
+    sequential loop. A broken pool raises :class:`BrokenExecutor` for the caller to
+    handle.
+    """
+    if executor is not None:
+        futures = {
+            executor.submit(
+                _grouped_member_worker,
+                _blockwise_inner_payload(
+                    run,
+                    members,
+                    polarization_model_fn,
+                    inner_global,
+                    nuisances,
+                    run_seeds,
+                    t_min,
+                    t_max,
+                    method,
+                    max_calls,
+                    cost,
+                ),
+            ): int(run)
+            for run in run_order
+        }
+        results: dict[int, GroupedTimeDomainFitResult] = {}
+        for future in as_completed(futures):
+            if cancel_callback is not None and bool(cancel_callback()):
+                raise FitCancelledError("Fit cancelled.")
+            run, result = future.result()
+            results[run] = result
+        return results
+
+    results = {}
+    for raw_run in run_order:
+        if cancel_callback is not None and bool(cancel_callback()):
+            raise FitCancelledError("Fit cancelled.")
+        run = int(raw_run)
+        results[run] = fit_grouped_time_domain(
+            members[raw_run],
+            polarization_model_fn,
+            global_params=inner_global,
+            local_params=nuisances,
+            initial_params=run_seeds[run],
+            fit_engine=engine,
+            t_min=t_min,
+            t_max=t_max,
+            method=method,
+            max_calls=max_calls,
+            minos=False,
+            cancel_callback=cancel_callback,
+            cost=cost,
+        )
+    return results
+
+
+def _inner_round_with_fallback(
+    executor: ProcessPoolExecutor | None,
+    run_order: list[int],
+    members: dict[int, list[GroupedTimeDomainGroup]],
+    polarization_model_fn,
+    inner_global: list[str],
+    nuisances: list[str],
+    run_seeds: dict[int, dict[Hashable, ParameterSet]],
+    *,
+    engine: FitEngine,
+    t_min: float | None,
+    t_max: float | None,
+    method: str,
+    max_calls: int,
+    cost: str,
+    cancel_callback: Callable[[], bool] | None,
+) -> tuple[dict[int, GroupedTimeDomainFitResult], ProcessPoolExecutor | None]:
+    """Run one inner block round; on a broken pool, retry sequentially.
+
+    Returns ``(results, executor)`` where the returned executor is ``None`` once the
+    pool has broken for an environmental reason, so callers stop dispatching to a dead
+    pool on later rounds. The single home for the pool-failure policy shared by the
+    alternating loop and the error-profiling probes.
+    """
+    kwargs = dict(
+        engine=engine,
+        t_min=t_min,
+        t_max=t_max,
+        method=method,
+        max_calls=max_calls,
+        cost=cost,
+        cancel_callback=cancel_callback,
+    )
+    if executor is not None:
+        try:
+            results = _blockwise_inner_fit_runs(
+                run_order,
+                members,
+                polarization_model_fn,
+                inner_global,
+                nuisances,
+                run_seeds,
+                executor=executor,
+                **kwargs,
+            )
+            return results, executor
+        except BrokenExecutor:
+            executor = None
+    results = _blockwise_inner_fit_runs(
+        run_order,
+        members,
+        polarization_model_fn,
+        inner_global,
+        nuisances,
+        run_seeds,
+        executor=None,
+        **kwargs,
+    )
+    return results, None
+
+
+def _blockwise_run_rounds(
+    *,
+    run_order: list[int],
+    members: dict[int, list[GroupedTimeDomainGroup]],
+    polarization_model_fn,
+    truly_global: list[str],
+    per_run_physics: list[str],
+    nuisances: list[str],
+    inner_global: list[str],
+    run_seeds: dict[int, dict[Hashable, ParameterSet]],
+    shared_values: dict[str, float],
+    temporary_datasets: list[MuonDataset],
+    member_source_run: dict[int, int],
+    member_group_id: dict[int, Hashable],
+    model_fn,
+    cost_factory: CostFactory | None,
+    engine: FitEngine,
+    t_min: float | None,
+    t_max: float | None,
+    method: str,
+    max_calls: int,
+    cost: str,
+    cancel_callback: Callable[[], bool] | None,
+    executor: ProcessPoolExecutor | None,
+    max_rounds: int,
+    tol: float,
+) -> tuple[dict[int, GroupedTimeDomainFitResult], dict[str, float], dict[str, float], int]:
+    """Run the alternating rounds; return ``(inner_results, shared, shared_unc, rounds)``.
+
+    Each round: (a) fit every run independently with the shared params held, then
+    (b) fit only the shared params with all locals held. A broken pool drops to the
+    sequential path for that round and the rest of the solve.
+    """
+    inner_results: dict[int, GroupedTimeDomainFitResult] = {}
+    shared_uncertainties: dict[str, float] = {}
+    rounds_run = 0
+    for _round in range(max_rounds):
+        if cancel_callback is not None and bool(cancel_callback()):
+            raise FitCancelledError("Fit cancelled.")
+        rounds_run += 1
+
+        # (a) Pin the shared params, then fit each run independently.
+        for run in run_order:
+            run = int(run)
+            run_seeds[run] = {
+                gid: _copy_param_set_with(ps, fix=set(truly_global), values=shared_values)
+                for gid, ps in run_seeds[run].items()
+            }
+        inner_results, executor = _inner_round_with_fallback(
+            executor,
+            run_order,
+            members,
+            polarization_model_fn,
+            inner_global,
+            nuisances,
+            run_seeds,
+            engine=engine,
+            t_min=t_min,
+            t_max=t_max,
+            method=method,
+            max_calls=max_calls,
+            cost=cost,
+            cancel_callback=cancel_callback,
+        )
+
+        # Warm-start the next round: carry each fitted local value back into the seeds.
+        updatable = set(per_run_physics) | set(nuisances)
+        for run in run_order:
+            run = int(run)
+            result = inner_results.get(run)
+            if result is None:
+                continue
+            for gid, seed in run_seeds[run].items():
+                fitted = result.group_results.get(gid)
+                if fitted is None:
+                    continue
+                carried = {
+                    name: float(fitted.parameters[name].value)
+                    for name in updatable
+                    if name in fitted.parameters.names
+                }
+                run_seeds[run][gid] = _copy_param_set_with(seed, values=carried)
+
+        # (b) Hold all locals at their fitted values; fit only the shared params.
+        outer_initial = {
+            key: _copy_param_set_with(
+                run_seeds[member_source_run[key]][member_group_id[key]],
+                fix=set(per_run_physics) | set(nuisances),
+                free=set(truly_global),
+                values=shared_values,
+            )
+            for key in member_source_run
+        }
+        outer_results, outer_shared = engine.global_fit(
+            temporary_datasets,
+            model_fn,
+            global_params=list(truly_global),
+            local_params=list(nuisances) + list(per_run_physics),
+            initial_params=outer_initial,
+            t_min=t_min,
+            t_max=t_max,
+            method=method,
+            max_calls=max_calls,
+            minos=False,
+            cancel_callback=cancel_callback,
+            cost_factory=cost_factory,
+            minuit_strategy=0,
+        )
+        new_shared = {name: float(outer_shared[name].value) for name in truly_global}
+        shared_uncertainties = {
+            p.name: float(u)
+            for p in outer_shared
+            for u in (_param_uncertainty(outer_results, p.name),)
+            if u is not None
+        }
+
+        # The shared params are the ONLY cross-run coupling, so once a full alternation
+        # leaves them unchanged the inner fits reproduce the same locals and the
+        # iteration is at its fixed point — that is the convergence test.
+        shared_converged = all(
+            _relative_change(shared_values[name], new_shared[name]) <= tol for name in truly_global
+        )
+        shared_values = new_shared
+        if rounds_run >= 2 and shared_converged:
+            break
+
+    return inner_results, shared_values, shared_uncertainties, rounds_run
+
+
+def _fit_grouped_series_global_blockwise(
+    members: dict[int, list[GroupedTimeDomainGroup]],
+    polarization_model_fn,
+    *,
+    truly_global: list[str],
+    per_run_physics: list[str],
+    nuisances: list[str],
+    initial_params: dict[int, dict[Hashable, ParameterSet]],
+    temporary_datasets: list[MuonDataset],
+    temporary_initial: dict[int, ParameterSet],
+    member_source_run: dict[int, int],
+    member_group_id: dict[int, Hashable],
+    model_fn,
+    cost_factory: CostFactory | None,
+    engine: FitEngine,
+    t_min: float | None,
+    t_max: float | None,
+    method: str,
+    max_calls: int,
+    cost: str,
+    cancel_callback: Callable[[], bool] | None,
+    max_workers: int | None,
+    profile_shared_errors: bool = False,
+    max_rounds: int = 12,
+    tol: float = 1.0e-4,
+) -> GroupedSeriesFitResult:
+    """Solve the mixed global/local grouped fit by alternating block minimisation.
+
+    The joint objective couples runs only through ``truly_global`` (the cross-run
+    shared physics). Each round (a) holds those shared params and fits every run
+    independently — its per-run physics ``per_run_physics`` shared across the run's
+    groups, ``nuisances`` per ``(run, group)`` — then (b) holds all locals and fits
+    only the shared params. Iterating to a fixed point reaches the joint optimum while
+    each sub-problem stays small and well-conditioned, so cost scales linearly in run
+    count. Shared-parameter uncertainties come from step (b) and are conditional on the
+    fitted locals; per-(run, group) uncertainties come from step (a).
+    """
+    run_order = list(members)
+    workers = _resolve_grouped_series_workers(max_workers, len(run_order))
+
+    # Mutable per-run seeds carry the structural template (bounds, fixed phases) and the
+    # latest fitted values across rounds; the shared params are pinned fixed for step (a).
+    run_seeds: dict[int, dict[Hashable, ParameterSet]] = {
+        int(run): {gid: _copy_param_set_with(ps) for gid, ps in groups.items()}
+        for run, groups in initial_params.items()
+    }
+    representative = temporary_initial[next(iter(temporary_initial))]
+    shared_values: dict[str, float] = {
+        name: float(representative[name].value) for name in truly_global
+    }
+    # Captured from the ORIGINAL seeds: the round loop pins the shared params fixed in
+    # run_seeds, so their free/fixed status must be read before that mutation.
+    free_shared = [name for name in truly_global if not representative[name].fixed]
+    inner_global = list(per_run_physics) + list(truly_global)
+
+    # One persistent pool for the whole solve — the inner per-run fits repeat every
+    # round, so creating the (spawn) pool per round would pay the import cost N times
+    # and erase the parallel gain. Created once here, reused across rounds, torn down
+    # in finally (covering the cancel path).
+    executor: ProcessPoolExecutor | None = None
+    if workers > 1 and _grouped_series_payload_picklable(polarization_model_fn):
+        executor = open_spawn_pool(workers)
+
+    try:
+        inner_results, shared_values, shared_uncertainties, rounds_run = _blockwise_run_rounds(
+            run_order=run_order,
+            members=members,
+            polarization_model_fn=polarization_model_fn,
+            truly_global=truly_global,
+            per_run_physics=per_run_physics,
+            nuisances=nuisances,
+            inner_global=inner_global,
+            run_seeds=run_seeds,
+            shared_values=shared_values,
+            temporary_datasets=temporary_datasets,
+            member_source_run=member_source_run,
+            member_group_id=member_group_id,
+            model_fn=model_fn,
+            cost_factory=cost_factory,
+            engine=engine,
+            t_min=t_min,
+            t_max=t_max,
+            method=method,
+            max_calls=max_calls,
+            cost=cost,
+            cancel_callback=cancel_callback,
+            executor=executor,
+            max_rounds=max_rounds,
+            tol=tol,
+        )
+        # Rigorous (marginal) shared-parameter errors: profile the few shared params,
+        # re-optimising all locals at each probe (the numerical Schur complement), while
+        # the pool is still alive. Falls back to the conditional errors on any failure.
+        profiled_errors = (
+            _profile_shared_covariance(
+                truly_global=truly_global,
+                free_shared=free_shared,
+                shared_values=shared_values,
+                conditional=shared_uncertainties,
+                run_seeds=run_seeds,
+                run_order=run_order,
+                members=members,
+                polarization_model_fn=polarization_model_fn,
+                inner_global=inner_global,
+                nuisances=nuisances,
+                engine=engine,
+                t_min=t_min,
+                t_max=t_max,
+                method=method,
+                max_calls=max_calls,
+                cost=cost,
+                cancel_callback=cancel_callback,
+                executor=executor,
+            )
+            if profile_shared_errors
+            else None
+        )
+    finally:
+        if executor is not None:
+            executor.shutdown(wait=False, cancel_futures=True)
+
+    errors_profiled = bool(profiled_errors)
+    if profiled_errors:
+        shared_uncertainties = {**shared_uncertainties, **profiled_errors}
+
+    # Final per-(run, group) results come from the last inner round; inject the converged
+    # shared values + their (conditional or profiled) uncertainties so each member reports
+    # the full set.
+    member_results: dict[int, FitResult] = {}
+    for key, run in member_source_run.items():
+        result = inner_results.get(int(run))
+        if result is None:
+            continue
+        group_result = result.group_results.get(member_group_id[key])
+        if group_result is None:
+            continue
+        member_results[key] = _inject_shared_parameters(
+            group_result, shared_values, shared_uncertainties
+        )
+
+    shared_parameters = ParameterSet(
+        [
+            Parameter(
+                name=name,
+                value=shared_values[name],
+                min=temporary_initial[next(iter(temporary_initial))][name].min,
+                max=temporary_initial[next(iter(temporary_initial))][name].max,
+            )
+            for name in truly_global
+        ]
+    )
+
+    success = bool(member_results) and all(r.success for r in member_results.values())
+    if success:
+        error_note = (
+            "shared-parameter errors profiled over the locals"
+            if errors_profiled
+            else "shared-parameter errors are conditional on the fitted locals"
+        )
+        message = (
+            f"Grouped-series global fit successful (block-separable solver, "
+            f"{rounds_run} round{'s' if rounds_run != 1 else ''}; {error_note})"
+        )
+    elif member_results:
+        failed = [str(member_group_id[key]) for key, r in member_results.items() if not r.success]
+        message = f"Grouped-series global fit failed for groups: {', '.join(failed)}"
+    else:
+        message = "Grouped-series global fit produced no results"
+    return GroupedSeriesFitResult(
+        success=success,
+        relationship="global",
+        member_results=member_results,
+        member_source_run=member_source_run,
+        member_group_id=member_group_id,
+        shared_parameters=shared_parameters,
+        message=message,
+    )
+
+
+def _relative_change(old: float, new: float) -> float:
+    """Scale-free change between two scalars (absolute when ``old`` is ~0)."""
+    denom = max(abs(old), abs(new), 1.0e-12)
+    return abs(new - old) / denom
+
+
+def _param_uncertainty(results: dict[int, FitResult], name: str) -> float | None:
+    """First finite uncertainty reported for ``name`` across per-dataset results."""
+    for result in results.values():
+        unc = getattr(result, "uncertainties", None) or {}
+        value = unc.get(name)
+        if value is not None and np.isfinite(float(value)):
+            return float(value)
+    return None
+
+
+def _inject_shared_parameters(
+    group_result: FitResult,
+    shared_values: dict[str, float],
+    shared_uncertainties: dict[str, float],
+) -> FitResult:
+    """Return ``group_result`` with the converged shared params set on its parameter set.
+
+    The per-run inner fit held the shared params fixed at the round's value; this stamps
+    the final converged value (and conditional uncertainty) so each member reports the
+    complete physics set, matching the monolithic path's per-member result shape.
+    """
+    params = group_result.parameters
+    rebuilt = ParameterSet()
+    for p in params:
+        if p.name in shared_values:
+            rebuilt.add(Parameter(name=p.name, value=shared_values[p.name], min=p.min, max=p.max))
+        else:
+            rebuilt.add(p)
+    group_result.parameters = rebuilt
+    merged_unc = dict(getattr(group_result, "uncertainties", None) or {})
+    merged_unc.update(shared_uncertainties)
+    group_result.uncertainties = merged_unc
+    return group_result
+
+
+def _profile_shared_covariance(
+    *,
+    truly_global: list[str],
+    free_shared: list[str],
+    shared_values: dict[str, float],
+    conditional: dict[str, float],
+    run_seeds: dict[int, dict[Hashable, ParameterSet]],
+    run_order: list[int],
+    members: dict[int, list[GroupedTimeDomainGroup]],
+    polarization_model_fn,
+    inner_global: list[str],
+    nuisances: list[str],
+    engine: FitEngine,
+    t_min: float | None,
+    t_max: float | None,
+    method: str,
+    max_calls: int,
+    cost: str,
+    cancel_callback: Callable[[], bool] | None,
+    executor: ProcessPoolExecutor | None,
+) -> dict[str, float] | None:
+    """Marginal (profiled) uncertainties for the free shared params, or ``None``.
+
+    A *conditional* error (the shared-only outer step) ignores that the per-run locals
+    would readjust as a shared param moves. This profiles the objective in the shared
+    subspace: each probe re-optimises every local (one block inner round, reusing the
+    pool), so the resulting reduced Hessian — finite-differenced over the shared params,
+    inverted as ``2·H⁻¹`` — is the numerical Schur complement, i.e. the same marginal
+    covariance a full joint HESSE would give for those params, at a fraction of the cost.
+
+    Returns a name→σ map for the free shared params whose profiled variance is finite and
+    positive; ``None`` if the curvature is unusable (caller keeps the conditional errors).
+    """
+    # Only free shared params have an error to profile (a fixed shared param is held).
+    names = list(free_shared)
+    n = len(names)
+    if n == 0:
+        return None
+
+    fix_shared = set(truly_global)
+    # The pool is reused across probes; a probe that breaks it reverts to sequential.
+    pool = [executor]
+
+    def chi2_at(overrides: dict[str, float]) -> float:
+        values = dict(shared_values)
+        values.update(overrides)
+        seeds = {
+            int(run): {
+                gid: _copy_param_set_with(ps, fix=fix_shared, values=values)
+                for gid, ps in run_seeds[int(run)].items()
+            }
+            for run in run_order
+        }
+        results, pool[0] = _inner_round_with_fallback(
+            pool[0],
+            run_order,
+            members,
+            polarization_model_fn,
+            inner_global,
+            nuisances,
+            seeds,
+            engine=engine,
+            t_min=t_min,
+            t_max=t_max,
+            method=method,
+            max_calls=max_calls,
+            cost=cost,
+            cancel_callback=cancel_callback,
+        )
+        total = 0.0
+        for run in run_order:
+            grouped = results.get(int(run))
+            # A failed probe fit reports chi_squared=0.0 by default; summing it would
+            # understate this probe's objective and corrupt the finite-difference
+            # Hessian. Treat any non-converged probe as unusable → the caller keeps the
+            # conditional errors rather than profiling from a poisoned curvature.
+            if grouped is None or not grouped.success:
+                return float("nan")
+            for group_result in grouped.group_results.values():
+                total += float(getattr(group_result, "chi_squared", 0.0) or 0.0)
+        return total
+
+    deltas: dict[str, float] = {}
+    for name in names:
+        sigma = conditional.get(name)
+        if sigma is not None and np.isfinite(sigma) and sigma > 0.0:
+            step = float(sigma)
+        else:
+            step = 1.0e-3 * max(abs(shared_values[name]), 1.0)
+        deltas[name] = max(step, 1.0e-9)
+
+    chi0 = chi2_at({})
+    plus = {name: chi2_at({name: shared_values[name] + deltas[name]}) for name in names}
+    minus = {name: chi2_at({name: shared_values[name] - deltas[name]}) for name in names}
+    if not all(np.isfinite([chi0, *plus.values(), *minus.values()])):
+        return None
+
+    hessian = np.zeros((n, n))
+    for i, name in enumerate(names):
+        hessian[i, i] = (plus[name] - 2.0 * chi0 + minus[name]) / deltas[name] ** 2
+    for i in range(n):
+        for j in range(i + 1, n):
+            ni, nj = names[i], names[j]
+            corner = chi2_at(
+                {ni: shared_values[ni] + deltas[ni], nj: shared_values[nj] + deltas[nj]}
+            )
+            if not np.isfinite(corner):
+                return None
+            mixed = (corner - plus[ni] - plus[nj] + chi0) / (deltas[ni] * deltas[nj])
+            hessian[i, j] = hessian[j, i] = mixed
+
+    try:
+        # χ² (and Cash) are 2·NLL, so the parameter covariance is 2·(∂²χ²/∂θ²)⁻¹.
+        covariance = 2.0 * np.linalg.inv(hessian)
+    except np.linalg.LinAlgError:
+        return None
+
+    profiled: dict[str, float] = {}
+    for i, name in enumerate(names):
+        variance = covariance[i, i]
+        if np.isfinite(variance) and variance > 0.0:
+            profiled[name] = float(np.sqrt(variance))
+    return profiled or None

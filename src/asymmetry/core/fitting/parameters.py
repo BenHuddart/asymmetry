@@ -142,6 +142,10 @@ PARAM_INFO_REGISTRY: dict[str, ParamInfo] = {
         description="Saturated (T=0) value of an order-parameter trend.",
     ),
     "phase": ParamInfo("phase", "phase", "φ", r"$\phi$", r"\phi", "rad"),
+    # The grouped fit's per-group phase nuisance. It carries the full (absolute)
+    # phase of each detector group's oscillation — the shared model phase is held
+    # at zero — so it reads as "phase" (φ) rather than a relative offset.
+    "relative_phase": ParamInfo("relative_phase", "phase", "φ", r"$\phi$", r"\phi", "rad"),
     "frequency": ParamInfo(
         "frequency", "frequency", "f", r"$f$", r"{\it f}", "MHz", default_min=0.0
     ),
@@ -408,6 +412,10 @@ _PARAM_DESCRIPTIONS: dict[str, str] = {
     "a_L": "Static Lorentzian field-distribution half-width (rate) in Lorentzian Kubo-Toyabe models.",
     "beta": "Stretching exponent controlling deviation from simple exponential relaxation.",
     "phase": "Phase offset of oscillatory precession.",
+    "relative_phase": (
+        "Per-group oscillation phase in a grouped fit. With the shared model "
+        "phase held at zero it carries each detector group's absolute phase."
+    ),
     "frequency": "Muon spin precession frequency.",
     "field": "Applied or effective magnetic field magnitude.",
     "A_hf": "Muonium hyperfine coupling constant; sets the satellite splitting about the central line.",

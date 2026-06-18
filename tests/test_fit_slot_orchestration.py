@@ -237,7 +237,91 @@ def test_global_classified_parameter_yields_global_provenance(mw, monkeypatch):
     assert rep.fit.batch_id == batch.batch_id
 
 
-def test_grouped_fit_creates_group_series_and_pointer_slot(mw, monkeypatch):
+def _group_member(source_run: int, group: int) -> MuonDataset:
+    """Synthetic grouped-fit member dataset for one (run, group)."""
+    return MuonDataset(
+        np.array([0.0, 0.1]),
+        np.array([1.0, 1.0]),
+        np.array([1.0, 1.0]),
+        {
+            "run_number": -((source_run * 1000) + group),
+            "source_run_number": source_run,
+            "group_id": group,
+            "group_name": f"g{group}",
+        },
+        None,
+    )
+
+
+def test_grouped_batch_creates_group_series_and_pointer_slot(mw, monkeypatch):
+    # A multi-run batch (≥2 source runs) is the unit that records a FitSeries.
+    for rn in (42, 43):
+        mw._data_browser.add_dataset(_dataset(rn))
+    mw._on_dataset_selected(42)
+    mw._plot_workspace.set_available_views(["fb_asymmetry", "groups"])
+    mw._plot_workspace.set_active_view("groups")
+    monkeypatch.setattr(
+        mw._multi_group_fit_window,
+        "get_grouped_state",
+        lambda: {
+            "composite_model": {"component_names": ["Exponential"], "operators": []},
+            "param_roles": {"Lambda": "global"},
+            "nuisance_params": ["N0", "background", "amplitude", "relative_phase"],
+        },
+    )
+    # One group each across two source runs (42, 43).
+    grouped_datasets = [_group_member(42, 1), _group_member(43, 1)]
+    results = {-42001: (_result(rchi=0.3), _CURVE, []), -43001: (_result(rchi=0.6), _CURVE, [])}
+
+    mw._record_grouped_fit_series(grouped_datasets, results)
+
+    assert len(mw._project_model.batches) == 1
+    series = next(iter(mw._project_model.batches.values()))
+    assert series.member_kind == "groups"
+    assert set(series.member_run_numbers) == {-42001, -43001}
+    assert series.member_source_run == {-42001: 42, -43001: 43}
+    assert set(series.results_by_run) == {-42001, -43001}
+    assert series.results_by_run[-42001]["reduced_chi_squared"] == pytest.approx(0.3)
+    assert series.is_global()  # Lambda global -> global provenance
+    assert series.nuisance_params == ["N0", "background", "amplitude", "relative_phase"]
+
+    rep = mw._project_model.representation(42, RepresentationType.TIME_GROUPS)
+    assert rep is not None
+    assert rep.fit.provenance == "global"
+    assert rep.fit.batch_id == series.batch_id
+
+
+def test_grouped_batch_series_named_after_data_group(mw, monkeypatch):
+    # A batch launched from a data-group header names the series after the group
+    # (e.g. "T = 150 K") rather than the model formula + run span.
+    for rn in (42, 43):
+        mw._data_browser.add_dataset(_dataset(rn))
+    mw._data_browser.create_data_group([42, 43], name="T = 150 K")
+    mw._on_dataset_selected(42)
+    mw._plot_workspace.set_available_views(["fb_asymmetry", "groups"])
+    mw._plot_workspace.set_active_view("groups")
+    monkeypatch.setattr(
+        mw._multi_group_fit_window,
+        "get_grouped_state",
+        lambda: {
+            "composite_model": {"component_names": ["Exponential"], "operators": []},
+            "param_roles": {"Lambda": "global"},
+            "nuisance_params": ["N0", "background", "amplitude", "relative_phase"],
+        },
+    )
+    grouped_datasets = [_group_member(42, 1), _group_member(43, 1)]
+    results = {-42001: (_result(rchi=0.3), _CURVE, []), -43001: (_result(rchi=0.6), _CURVE, [])}
+
+    mw._record_grouped_fit_series(grouped_datasets, results)
+
+    series = next(iter(mw._project_model.batches.values()))
+    assert series.label == "T = 150 K"
+
+
+def test_single_grouped_fit_writes_slot_not_series(mw, monkeypatch):
+    # A single-dataset grouped fit (one source run) behaves like an ordinary
+    # single fit: NO FitSeries is created (a one-point series is un-trendable);
+    # the per-group results are stored on the dataset's grouped FitSlot instead.
     mw._data_browser.add_dataset(_dataset(42))
     mw._on_dataset_selected(42)
     mw._plot_workspace.set_available_views(["fb_asymmetry", "groups"])
@@ -251,41 +335,78 @@ def test_grouped_fit_creates_group_series_and_pointer_slot(mw, monkeypatch):
             "nuisance_params": ["N0", "background", "amplitude", "relative_phase"],
         },
     )
-    # Synthetic group members for run 42 (groups 1 and 2).
-    grouped_datasets = [
-        MuonDataset(
-            np.array([0.0, 0.1]),
-            np.array([1.0, 1.0]),
-            np.array([1.0, 1.0]),
-            {"run_number": -42001, "source_run_number": 42, "group_id": 1, "group_name": "Fwd"},
-            None,
-        ),
-        MuonDataset(
-            np.array([0.0, 0.1]),
-            np.array([1.0, 1.0]),
-            np.array([1.0, 1.0]),
-            {"run_number": -42002, "source_run_number": 42, "group_id": 2, "group_name": "Bwd"},
-            None,
-        ),
-    ]
+    grouped_datasets = [_group_member(42, 1), _group_member(42, 2)]
     results = {-42001: (_result(rchi=0.3), _CURVE, []), -42002: (_result(rchi=0.6), _CURVE, [])}
 
-    mw._record_grouped_fit_series(grouped_datasets, results)
+    batch_id = mw._record_grouped_fit_series(grouped_datasets, results)
 
-    assert len(mw._project_model.batches) == 1
-    series = next(iter(mw._project_model.batches.values()))
-    assert series.member_kind == "groups"
-    assert set(series.member_run_numbers) == {-42001, -42002}
-    assert series.member_source_run == {-42001: 42, -42002: 42}
-    assert set(series.results_by_run) == {-42001, -42002}
-    assert series.results_by_run[-42001]["reduced_chi_squared"] == pytest.approx(0.3)
-    assert series.is_global()  # Lambda global -> global provenance
-    assert series.nuisance_params == ["N0", "background", "amplitude", "relative_phase"]
+    # No series recorded.
+    assert batch_id is None
+    assert mw._project_model.batches == {}
 
+    # The grouped representation's FitSlot carries the single fit's per-group
+    # results (provenance "single", no batch id).
     rep = mw._project_model.representation(42, RepresentationType.TIME_GROUPS)
     assert rep is not None
-    assert rep.fit.provenance == "global"
-    assert rep.fit.batch_id == series.batch_id
+    assert rep.fit.provenance == "single"
+    assert rep.fit.batch_id is None
+    assert not rep.fit.is_empty()
+    assert set(rep.fit.result["groups"]) == {"-42001", "-42002"}
+    assert rep.fit.result["groups"]["-42001"]["reduced_chi_squared"] == pytest.approx(0.3)
+    # The stored per-group summaries agree with the slot's "single" provenance.
+    assert rep.fit.result["groups"]["-42001"]["provenance"] == "single"
+    # The grouped single fit is restorable: the slot carries the grouped form
+    # (mirrors the FB single fit's ui_state), so reselect/reload can repopulate.
+    assert isinstance(rep.fit.ui_state, dict) and rep.fit.ui_state
+
+
+def test_grouped_single_restore_payload_round_trips(mw, monkeypatch):
+    # The restore mediator returns a run's grouped single-fit form when present,
+    # and None for an unfit run or a run with no grouped single fit.
+    mw._data_browser.add_dataset(_dataset(42))
+    mw._data_browser.add_dataset(_dataset(43))  # never fit
+    mw._on_dataset_selected(42)
+    mw._plot_workspace.set_available_views(["fb_asymmetry", "groups"])
+    mw._plot_workspace.set_active_view("groups")
+    monkeypatch.setattr(
+        mw._multi_group_fit_window,
+        "get_grouped_state",
+        lambda: {
+            "composite_model": {"component_names": ["Exponential"], "operators": []},
+            "param_roles": {"Lambda": "global"},
+            "nuisance_params": ["N0"],
+        },
+    )
+    mw._record_grouped_fit_series(
+        [_group_member(42, 1), _group_member(42, 2)],
+        {-42001: (_result(), _CURVE, []), -42002: (_result(), _CURVE, [])},
+    )
+
+    rep = mw._project_model.representation(42, RepresentationType.TIME_GROUPS)
+    payload = mw._grouped_single_restore_payload(mw._data_browser.get_dataset(42))
+    assert payload == rep.fit.ui_state
+    # Unfit run → None (the grouped form is left untouched).
+    assert mw._grouped_single_restore_payload(mw._data_browser.get_dataset(43)) is None
+
+
+def test_multi_group_window_set_dataset_invokes_restore_provider(mw, monkeypatch):
+    # set_dataset routes through the installed restore provider so reselecting a
+    # run repopulates the Single surface from its persisted form.
+    captured: list = []
+    monkeypatch.setattr(
+        mw._multi_group_fit_window,
+        "restore_single_grouped_ui",
+        lambda payload: captured.append(payload),
+    )
+    sentinel = {
+        "single": {"composite_model": {"component_names": ["Exponential"], "operators": []}}
+    }
+    mw._multi_group_fit_window.set_single_grouped_restore_provider(
+        lambda dataset: sentinel if dataset is not None else None
+    )
+    mw._data_browser.add_dataset(_dataset(42))
+    mw._multi_group_fit_window.set_dataset(mw._data_browser.get_dataset(42))
+    assert captured and captured[-1] == sentinel
 
 
 def test_add_compatible_single_fit_to_series(mw, monkeypatch):
