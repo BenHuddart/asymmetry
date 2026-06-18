@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QSignalBlocker, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -77,6 +77,7 @@ from asymmetry.core.fitting.parameters import (
     split_parameter_name,
     unregister_derived_param_info,
 )
+from asymmetry.core.utils.angles import wrap_angle_deg
 from asymmetry.gui.export_paths import (
     default_export_path,
     remember_export_path,
@@ -313,6 +314,8 @@ class FitParametersPanel(QWidget):
         #: ``(display_label, key)`` pair (or None). Its key is the column id, and
         #: each row's per-run value rides on ``custom_values`` under that same key.
         self._angle_x_field: tuple[str, str] | None = None
+        #: Period (degrees) to fold the Angle abscissa into, or None for no folding.
+        self._angle_wrap_period: float | None = None
         self._y_controls: dict[str, _YParamControls] = {}
         self._selected_y_param_names: list[str] = []
         self._model_fits: dict[str, ParameterModelFit] = {}
@@ -397,6 +400,13 @@ class FitParametersPanel(QWidget):
         self._x_combo.addItems(["Auto", "𝐵 (G)", "𝑇 (K)", "Run"])
         self._x_combo.currentTextChanged.connect(self._on_x_axis_changed)
         self._x_auto_hint = QLabel("")
+        # Fold a periodic Angle abscissa into one period so equivalent crystal
+        # orientations overlay (visible only when Angle is the x-axis).
+        self._angle_fold_label = QLabel("Fold:")
+        self._angle_fold_combo = QComboBox()
+        for text, period in (("Off", None), ("180°", 180.0), ("360°", 360.0)):
+            self._angle_fold_combo.addItem(text, userData=period)
+        self._angle_fold_combo.currentIndexChanged.connect(self._on_angle_fold_changed)
         self._log_x_check = QCheckBox("log")
         log_x_width = self._log_x_check.fontMetrics().horizontalAdvance("log") + 28
         self._log_x_check.setMinimumWidth(log_x_width)
@@ -408,10 +418,13 @@ class FitParametersPanel(QWidget):
         x_row.addWidget(self._x_combo)
         x_row.addWidget(self._x_auto_hint)
         x_row.addStretch()
+        x_row.addWidget(self._angle_fold_label)
+        x_row.addWidget(self._angle_fold_combo)
         x_row.addWidget(self._log_x_check)
         x_container = QWidget()
         x_container.setLayout(x_row)
         controls_form.addRow("X axis:", x_container)
+        self._update_angle_fold_visibility()
 
         self._y_selector_table = QTableWidget(0, 3)
         self._y_selector_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -655,6 +668,7 @@ class FitParametersPanel(QWidget):
             "inferred_x_key": self._inferred_x_key,
             "x_axis": self._x_combo.currentText(),
             "x_axis_key": self._effective_x_key(),
+            "angle_wrap_period": self._angle_wrap_period,
             "selected_y_params": selected_y,
             "log_x": bool(self._log_x_check.isChecked()),
             "log_y_params": log_y,
@@ -851,6 +865,7 @@ class FitParametersPanel(QWidget):
                     self._x_combo.setCurrentIndex(idx)
 
         self._log_x_check.setChecked(bool(state.get("log_x", False)))
+        self._restore_angle_fold(state.get("angle_wrap_period"))
 
         plot_mode = state.get("plot_mode")
         if isinstance(plot_mode, str):
@@ -2417,7 +2432,35 @@ class FitParametersPanel(QWidget):
 
     def _on_x_axis_changed(self, *_args: object) -> None:
         self._update_x_axis_auto_hint()
+        self._update_angle_fold_visibility()
         self._refresh_views()
+
+    def _angle_axis_active(self) -> bool:
+        """Whether the Angle field is the current trend x-axis."""
+        angle_key = self._angle_x_key()
+        return angle_key is not None and self._effective_x_key() == angle_key
+
+    def _update_angle_fold_visibility(self) -> None:
+        """Show the fold control only while the Angle axis is selected."""
+        visible = self._angle_axis_active()
+        self._angle_fold_label.setVisible(visible)
+        self._angle_fold_combo.setVisible(visible)
+
+    def _on_angle_fold_changed(self, *_args: object) -> None:
+        period = self._angle_fold_combo.currentData()
+        self._angle_wrap_period = float(period) if period is not None else None
+        if self._angle_axis_active():
+            self._refresh_views()
+
+    def _restore_angle_fold(self, period: object) -> None:
+        """Restore the angle-fold period from saved state (combo + attribute)."""
+        value = float(period) if isinstance(period, (int, float)) else None
+        self._angle_wrap_period = value
+        idx = self._angle_fold_combo.findData(value)
+        if idx >= 0:
+            with QSignalBlocker(self._angle_fold_combo):
+                self._angle_fold_combo.setCurrentIndex(idx)
+        self._update_angle_fold_visibility()
 
     def _update_x_axis_auto_hint(self) -> None:
         if self._x_combo.currentText() != "Auto":
@@ -2510,6 +2553,7 @@ class FitParametersPanel(QWidget):
         active_is_angle = self._effective_x_key() == self._angle_x_key()
         self._angle_x_field = normalized
         self._rebuild_x_axis_combo()
+        self._update_angle_fold_visibility()
         if active_is_angle:
             self._refresh_plot()
 
@@ -3865,7 +3909,10 @@ class FitParametersPanel(QWidget):
         if name is not None:
             return _format_plot_label(name)
         if self._angle_x_field is not None and x_key == self._angle_x_field[1]:
-            return self._angle_x_field[0]
+            label = self._angle_x_field[0]
+            if self._angle_wrap_period is not None:
+                label = f"{label} (folded {self._angle_wrap_period:g}°)"
+            return label
         custom_id = _x_custom_id(x_key)
         if custom_id is not None:
             return self._custom_x_labels().get(custom_id, custom_id)
@@ -3883,7 +3930,12 @@ class FitParametersPanel(QWidget):
         # rather than plotted at 0 or corrupting the axis/fit).
         value_key = x_key if x_key == self._angle_x_key() else _x_custom_id(x_key)
         if value_key is not None:
-            return _coerce_abscissa(row.custom_values.get(value_key, ""))
+            value = _coerce_abscissa(row.custom_values.get(value_key, ""))
+            # Fold the Angle axis into its chosen period so equivalent orientations
+            # overlay (no-op for non-angle custom columns or when folding is off).
+            if x_key == self._angle_x_key() and self._angle_wrap_period is not None:
+                return wrap_angle_deg(value, self._angle_wrap_period)
+            return value
         if x_key == "field":
             return row.field
         if x_key == "temperature":

@@ -919,7 +919,13 @@ require the sample geometry and bulk susceptibility and are left to the user.
 the full angular dependence through the dipolar coupling tensor, so :math:`K(\theta)`
 constrains the muon stopping site. Add an **Angle (°)** column
 (:ref:`logbook-columns`), fit each orientation, and select **Angle (°)** as the
-trend x-axis to plot each component's shift against orientation.
+trend x-axis to plot each component's shift against orientation. Because the
+dependence is periodic (the dipolar term goes as :math:`\cos^2\theta`, period
+180°), the **Fold** control next to the x-axis selector folds the angle into one
+period (180° or 360°) so equivalent orientations from a wide or wrap-around scan
+overlay — doubling the effective angular sampling and exposing the periodic shape
+for a model fit. Folding is a display/analysis choice; the stored angles are
+untouched.
 
 **Component identity and crossings.** Across an orientation (or temperature, or
 field) scan, each oscillation component keeps its stable label (``frequency``,

@@ -151,3 +151,45 @@ def test_clearing_angle_field_removes_it_from_combo(qapp):
     assert panel._x_combo.findData("angle") >= 0
     panel.set_angle_x_field(None)
     assert panel._x_combo.findData("angle") < 0
+
+
+# --- Angle folding / periodicity (Phase 4) -----------------------------------
+
+
+def test_angle_fold_folds_x_value(qapp):
+    panel = FitParametersPanel()
+    panel.set_angle_x_field(("Angle (°)", "angle"))
+    panel._angle_fold_combo.setCurrentIndex(panel._angle_fold_combo.findData(180.0))
+    assert panel._x_value(_row(1, {"angle": "190"}), "angle") == pytest.approx(10.0)
+    assert panel._x_value(_row(2, {"angle": "-10"}), "angle") == pytest.approx(170.0)
+    # A generic custom column is never folded, even with the same numeric value.
+    panel.set_custom_x_fields([("Anneal", "custom:abc")])
+    assert panel._x_value(_row(3, {"custom:abc": "190"}), "custom:abc") == pytest.approx(190.0)
+
+
+def test_angle_fold_off_returns_raw_value(qapp):
+    panel = FitParametersPanel()
+    panel.set_angle_x_field(("Angle (°)", "angle"))
+    assert panel._x_value(_row(1, {"angle": "190"}), "angle") == pytest.approx(190.0)
+
+
+def test_fold_control_visible_only_for_angle_axis(qapp):
+    panel = FitParametersPanel()
+    panel.set_angle_x_field(("Angle (°)", "angle"))
+    assert panel._angle_fold_combo.isHidden()  # default Auto axis
+    panel._x_combo.setCurrentIndex(panel._x_combo.findData("angle"))
+    assert not panel._angle_fold_combo.isHidden()
+
+
+def test_angle_fold_round_trips_through_state(qapp):
+    panel = FitParametersPanel()
+    panel.set_angle_x_field(("Angle (°)", "angle"))
+    panel._angle_fold_combo.setCurrentIndex(panel._angle_fold_combo.findData(360.0))
+    state = panel.get_state()
+    assert state["angle_wrap_period"] == 360.0
+
+    restored = FitParametersPanel()
+    restored.set_angle_x_field(("Angle (°)", "angle"))
+    restored.restore_state(state)
+    assert restored._angle_wrap_period == 360.0
+    assert restored._angle_fold_combo.currentData() == 360.0
