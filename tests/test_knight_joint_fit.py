@@ -13,6 +13,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication
 
+from asymmetry.core.fitting.component_tracking import CrossingEvent
 from asymmetry.core.fitting.knight_shift import KnightShiftConfig, KnightShiftUnit
 from asymmetry.core.fitting.parameter_models import PARAMETER_MODEL_COMPONENTS
 from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
@@ -87,6 +88,31 @@ def test_joint_fit_creates_track_traces_and_overlays(qapp):
     # The realignment found the crossing → markers are enabled and populated.
     assert panel._DRAW_CROSSING_MARKERS is True
     assert panel.knight_shift_crossings()
+
+
+def test_crossing_bands_merge_adjacent():
+    events = [
+        CrossingEvent(0, 0.0, 10.0, (0, 1), "order_swap"),
+        CrossingEvent(1, 10.0, 20.0, (0, 1), "order_swap"),
+        CrossingEvent(2, 20.0, 30.0, (0, 1), "order_swap"),
+        CrossingEvent(8, 80.0, 90.0, (0, 1), "order_swap"),
+    ]
+    bands = FitParametersPanel._cluster_crossing_bands(events)
+    # The three consecutive transitions merge into one band; the far one stays separate.
+    assert len(bands) == 2
+    assert bands[0][0] <= 0.0 and bands[0][1] >= 30.0
+    assert bands[1][0] <= 80.0 and bands[1][1] >= 90.0
+
+
+def test_joint_fit_draws_crossing_bands(qapp):
+    panel = _setup_panel(qapp, swap_past_crossing=True)
+    panel._run_joint_knight_fit(sorted(panel._knight_shift_names), "KnightAnisotropy", 25)
+    panel._draw_plot()
+    spans = [patch for ax in panel._figure.axes for patch in ax.patches]
+    assert spans  # crossing bands are drawn as shaded spans
+    # Bands never outnumber the raw crossing events (adjacent ones are merged).
+    bands = panel._cluster_crossing_bands(panel.knight_shift_crossings())
+    assert 0 < len(bands) <= len(panel.knight_shift_crossings())
 
 
 def test_remove_track_traces_cleans_up_everything(qapp):

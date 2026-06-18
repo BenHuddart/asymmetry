@@ -2443,13 +2443,43 @@ class FitParametersPanel(QWidget):
     #: re-enable the markers once that lands and presents them more robustly.
     _DRAW_CROSSING_MARKERS = False
 
+    @staticmethod
+    def _cluster_crossing_bands(events: list[object]) -> list[tuple[float, float]]:
+        """Merge neighbouring crossing transitions into ``(lo, hi)`` bands.
+
+        Each crossing spans one scan step ``[x_left, x_right]``; runs of adjacent
+        crossings (e.g. repeated near-degeneracies around one physical crossing)
+        are merged into a single band so each crossing shows once instead of as
+        several near-identical lines. An isolated crossing is padded to a thin,
+        visible band.
+        """
+        intervals = sorted(
+            (float(min(e.x_left, e.x_right)), float(max(e.x_left, e.x_right))) for e in events
+        )
+        if not intervals:
+            return []
+        widths = [hi - lo for lo, hi in intervals if hi > lo]
+        step = float(np.median(widths)) if widths else 0.0
+        tol = 1.5 * step  # merge crossings within ~1.5 scan steps of each other
+        pad = 0.25 * step  # so a lone crossing is a visible band, not a hairline
+        bands: list[tuple[float, float]] = []
+        lo, hi = intervals[0]
+        for next_lo, next_hi in intervals[1:]:
+            if next_lo - hi <= tol:
+                hi = max(hi, next_hi)
+            else:
+                bands.append((lo, hi))
+                lo, hi = next_lo, next_hi
+        bands.append((lo, hi))
+        return [(low - pad, high + pad) for low, high in bands]
+
     def _draw_knight_shift_crossings(self, axes_by_tag: dict[str, object], x_key: str) -> None:
-        """Mark detected component crossings with faint vertical lines + a note.
+        """Shade angle bands where oscillation components cross.
 
         Drawn only while a Knight-shift conversion is active and the plotted
         x-axis matches the one the crossings were computed against (so changing
-        the x-axis doesn't leave stale markers). Detection only — the K traces
-        still follow the raw component labels.
+        the x-axis doesn't leave stale markers). Adjacent crossings are merged
+        into one band (see :meth:`_cluster_crossing_bands`).
         """
         if not self._DRAW_CROSSING_MARKERS:
             return
@@ -2457,20 +2487,17 @@ class FitParametersPanel(QWidget):
             return
         if x_key != self._knight_shift_crossing_x_key:
             return
-        midpoints = sorted(
-            {(float(e.x_left) + float(e.x_right)) / 2.0 for e in self._knight_shift_crossings}
-        )
-        if not midpoints:
+        bands = self._cluster_crossing_bands(self._knight_shift_crossings)
+        if not bands:
             return
         for ax in axes_by_tag.values():
-            for first, x in enumerate(midpoints):
-                ax.axvline(
-                    x,
+            for first, (lo, hi) in enumerate(bands):
+                ax.axvspan(
+                    lo,
+                    hi,
                     color="#b5651d",
-                    linestyle=":",
-                    linewidth=1.0,
-                    alpha=0.7,
-                    zorder=2,
+                    alpha=0.12,
+                    zorder=1,
                     label="component crossing" if first == 0 else None,
                 )
 
