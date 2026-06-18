@@ -2286,6 +2286,13 @@ class FitParametersPanel(QWidget):
         self._add_label_btn.setChecked(False)
         self._refresh_plot()
 
+    #: On-plot crossing markers are suppressed for now: when components run close
+    #: together throughout a scan the near-degeneracy flag fires at almost every
+    #: angle and the markers swamp the plot. Crossings are still *detected* (the
+    #: dialog reports the count and the events feed the future realignment step);
+    #: re-enable the markers once that lands and presents them more robustly.
+    _DRAW_CROSSING_MARKERS = False
+
     def _draw_knight_shift_crossings(self, axes_by_tag: dict[str, object], x_key: str) -> None:
         """Mark detected component crossings with faint vertical lines + a note.
 
@@ -2294,6 +2301,8 @@ class FitParametersPanel(QWidget):
         the x-axis doesn't leave stale markers). Detection only — the K traces
         still follow the raw component labels.
         """
+        if not self._DRAW_CROSSING_MARKERS:
+            return
         if not self._knight_shift_crossings or not self._knight_shift_names:
             return
         if x_key != self._knight_shift_crossing_x_key:
