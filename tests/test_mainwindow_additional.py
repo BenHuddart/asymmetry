@@ -5930,3 +5930,63 @@ class TestLoadRunRange:
         mainwindow._on_load_run_range()
 
         assert called["n"] == 0
+
+
+def _grouped_view_dataset(run_number: int) -> MuonDataset:
+    """A run with two included detector groups so grouped time domain is available."""
+    counts = np.full(8, 100.0)
+    run = Run(
+        run_number=run_number,
+        histograms=[Histogram(counts=counts, bin_width=0.01, t0_bin=0) for _ in range(2)],
+        metadata={"run_number": run_number, "field": 100.0},
+        grouping={
+            "groups": {1: [1], 2: [2]},
+            "group_names": {1: "U", 2: "D"},
+            "included_groups": {1: True, 2: True},
+            "first_good_bin": 0,
+            "last_good_bin": 7,
+            "bunching_factor": 1,
+        },
+    )
+    t = np.arange(8.0) * 0.01
+    return MuonDataset(
+        time=t,
+        asymmetry=np.zeros(8),
+        error=np.ones(8),
+        metadata={"run_number": run_number, "field": 100.0},
+        run=run,
+    )
+
+
+def test_group_header_selection_keeps_individual_groups_view(mainwindow: MainWindow) -> None:
+    """Selecting a data-group header in 'groups' mode shows individual groups, not FB.
+
+    Regression: a group header expands to >1 dataset, so under overlay the groups
+    view was excluded and the plot fell back to the FB-asymmetry overlay.
+    """
+    mw = mainwindow
+    for rn in (701, 702):
+        mw._data_browser.add_dataset(_grouped_view_dataset(rn))
+    gid = mw._data_browser.create_data_group([701, 702], name="grp", collapsed=True)
+    assert gid is not None
+
+    mw._plot_workspace.set_active_view("groups")
+    mw._plot_panel.set_time_view_modes(
+        ["fb_asymmetry", "groups", "raw_counts", "integral_scan"], current_mode="groups"
+    )
+    mw._data_browser._restore_selection_by_keys([f"group:{gid}"])
+    assert mw._data_browser.is_single_group_selected()
+
+    # The groups view is offered for the group-header selection.
+    assert "groups" in mw._sync_available_views()
+
+    # The render path draws the grouped subplots for a representative member, not the
+    # FB-asymmetry overlay of every member.
+    captured: dict = {}
+    mw._plot_panel.plot_grouped_time_domain_subplots = lambda ds: captured.setdefault("grouped", ds)
+    mw._plot_panel.plot_datasets = lambda ds: captured.setdefault("overlay", ds)
+    mw._render_current_selection_plot()
+    assert "grouped" in captured
+    assert "overlay" not in captured
+    assert mw._current_dataset is not None
+    assert int(mw._current_dataset.run_number) in (701, 702)

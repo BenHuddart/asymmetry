@@ -2000,10 +2000,15 @@ class MainWindow(QMainWindow):
         # where building a field scan from the selected runs is its workflow.
         modes = ["fb_asymmetry", "integral_scan"]
         selected = list(self._data_browser.get_selected_datasets())
-        if not (len(selected) > 1 and self._overlay_enabled()):
-            # Overlaying several runs has no single run to transform, so the
+        # A single data-group header selects all its members but, like a single run,
+        # has one representative member for the per-run (data-gated) views.
+        group_target = self._single_group_view_target(selected)
+        if group_target is not None or not (len(selected) > 1 and self._overlay_enabled()):
+            # Overlaying several unrelated runs has no single run to transform, so the
             # data-gated views are unavailable there.
-            target = self._current_dataset or (selected[0] if len(selected) == 1 else None)
+            target = group_target or self._current_dataset or (
+                selected[0] if len(selected) == 1 else None
+            )
             if self._grouped_time_domain_available(target):
                 modes.extend(["groups", "raw_counts"])
             if self._dataset_supports_maxent(target):
@@ -2035,6 +2040,23 @@ class MainWindow(QMainWindow):
         if self._current_dataset is not None:
             return [self._current_dataset]
         return []
+
+    def _single_group_view_target(self, selected: list[MuonDataset]) -> MuonDataset | None:
+        """Representative member for the per-run views when one data group is selected.
+
+        A group header selects all its members, but the groups / raw-counts / MaxEnt
+        views transform a *single* run, so for a single-group selection they behave
+        like a single-run selection on a representative member (the current run within
+        the group, else its first member). Returns ``None`` for any other selection.
+        """
+        if len(selected) <= 1:
+            return None
+        if not (
+            hasattr(self._data_browser, "is_single_group_selected")
+            and self._data_browser.is_single_group_selected()
+        ):
+            return None
+        return self._select_non_overlay_target(selected)
 
     def _overlay_enabled(self) -> bool:
         """Return whether multi-selection overlays should be shown."""
@@ -2211,18 +2233,25 @@ class MainWindow(QMainWindow):
                 if hasattr(self._plot_panel, "current_time_view_mode")
                 else "fb_asymmetry"
             )
+            # A single data-group header selects all its members; the groups/raw-counts
+            # views show one run's detector groups, so render a representative member.
+            group_target = self._single_group_view_target(targets)
             if (
                 time_view_mode in ("groups", "raw_counts")
                 and self._plot_workspace.active_domain() == "time"
-                and len(targets) == 1
+                and (len(targets) == 1 or group_target is not None)
             ):
+                primary = targets[0] if len(targets) == 1 else group_target
                 grouped_targets = self._grouped_time_domain_display_datasets(
-                    targets[0],
+                    primary,
                     lifetime_corrected=time_view_mode != "raw_counts",
                 )
                 if grouped_targets and hasattr(
                     self._plot_panel, "plot_grouped_time_domain_subplots"
                 ):
+                    # Bind the current run to the representative member so fits and
+                    # labels follow the run whose groups are shown.
+                    self._current_dataset = primary
                     render_mode = "grouped_time"
                     rendered_targets = list(grouped_targets)
                     self._plot_panel.plot_grouped_time_domain_subplots(grouped_targets)
