@@ -125,6 +125,19 @@ def test_angle_axis_resolves_angle_values_not_run_number(qapp):
     assert np.isnan(panel._x_value(_row(7, {"angle": "inf"}), "angle"))
 
 
+def test_selecting_angle_axis_sets_effective_x_key(qapp):
+    # Regression: _effective_x_key must translate an Angle combo selection into
+    # the "angle" key. The Angle item data has no "param:"/"custom:" prefix, so
+    # without an explicit match it silently falls through to the inferred
+    # field/temperature/run axis and the angle axis becomes a no-op (the bug
+    # observed in grouped-fit trending).
+    panel = FitParametersPanel()
+    panel.set_angle_x_field(("Angle (°)", "angle"))
+    idx = panel._x_combo.findData("angle")
+    panel._x_combo.setCurrentIndex(idx)
+    assert panel._effective_x_key() == "angle"
+
+
 def test_angle_axis_gets_skip_note(qapp):
     panel = FitParametersPanel()
     panel.set_angle_x_field(("Angle (°)", "angle"))

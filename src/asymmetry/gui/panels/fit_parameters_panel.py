@@ -1917,10 +1917,15 @@ class FitParametersPanel(QWidget):
 
     def _effective_x_key(self) -> str:
         data = self._x_combo.currentData()
-        # Both the parameter-vs-parameter (param:<name>) and the data-browser
-        # custom-column (custom:<id>) axes carry their key as item data; the fixed
-        # run-level axes carry none and are matched by display text below.
-        if isinstance(data, str) and (data.startswith("param:") or data.startswith("custom:")):
+        # The parameter-vs-parameter (param:<name>), data-browser custom-column
+        # (custom:<id>), and first-class Angle axes all carry their key as item
+        # data; the fixed run-level axes carry none and are matched by display
+        # text below. The Angle key has no "param:"/"custom:" prefix, so match it
+        # explicitly — otherwise selecting Angle silently falls through to the
+        # inferred field/temperature/run axis (the whole axis becomes a no-op).
+        if isinstance(data, str) and (
+            data.startswith("param:") or data.startswith("custom:") or data == self._angle_x_key()
+        ):
             return data
         selected = self._x_combo.currentText()
         if selected in {"B (G)", "𝐵 (G)"}:
