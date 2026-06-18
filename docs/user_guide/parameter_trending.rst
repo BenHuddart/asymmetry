@@ -892,11 +892,15 @@ converts a fitted precession frequency :math:`\nu` to
 against one of two references, chosen from the **Knight shift…** button in the
 *Derived parameters* section:
 
-* **Applied field** — :math:`\nu_{\mathrm{ref}} = \gamma_\mu B`, the free-muon
-  Larmor frequency of the applied field
-  (:math:`\gamma_\mu/2\pi = 135.5\ \mathrm{MHz\,T^{-1}}`). This needs no reference
-  line and is the default; use it whenever a separate unshifted signal is absent
-  (a low-background sample) and the applied field is known.
+* **Applied field** — the precession is referenced to the bare applied field. For
+  a frequency-parameterised component (MHz) the reference is the free-muon Larmor
+  frequency :math:`\nu_{\mathrm{ref}} = \gamma_\mu B`
+  (:math:`\gamma_\mu/2\pi = 135.5\ \mathrm{MHz\,T^{-1}}`); for a component
+  parameterised directly by the local field :math:`B_\mu` (Gauss, as in the
+  ``OscillatoryField`` family) the reference is the applied field itself, giving
+  the most direct form :math:`K = (B_\mu - B)/B`. This needs no reference line and
+  is the default; use it whenever a separate unshifted signal is absent (a
+  low-background sample) and the applied field is known.
 * **Designated component** — :math:`\nu_{\mathrm{ref}}` is the fitted frequency of
   a chosen oscillation component, such as a co-measured diamagnetic line. Because
   :math:`\nu` and :math:`\nu_{\mathrm{ref}}` then come from the same fit, their

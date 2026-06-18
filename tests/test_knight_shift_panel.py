@@ -59,6 +59,25 @@ def test_applied_field_knight_shift_values(qapp):
     assert ks == pytest.approx([0.001, 0.002], rel=1e-6)
 
 
+def test_field_parameterised_components_use_direct_field_ratio(qapp):
+    # Oscillations parameterised by local field B_µ (Gauss), as in OscillatoryField
+    # models: K = (B_µ − B_ext)/B_ext directly, no γ_µ. Regression for the real
+    # perovskite project, whose components are field_1/field_2/field_3.
+    panel = FitParametersPanel()
+    b_ext = 7800.0
+    _load(
+        panel,
+        [
+            _row(1637, b_ext, {"field_1": 7849.0, "field_2": 7800.9}),
+            _row(1638, b_ext, {"field_1": 7860.0, "field_2": 7805.0}),
+        ],
+    )
+    panel.set_knight_shift_config(KnightShiftConfig(enabled=True, unit=KnightShiftUnit.FRACTION))
+    assert "K[field_1]" in panel._knight_shift_names
+    k1 = panel._rows[0].values["K[field_1]"]
+    assert k1 == pytest.approx((7849.0 - b_ext) / b_ext, rel=1e-9)
+
+
 def test_component_reference_excludes_reference_and_uses_it(qapp):
     panel = FitParametersPanel()
     _load(

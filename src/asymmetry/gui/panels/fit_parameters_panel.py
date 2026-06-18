@@ -1924,29 +1924,42 @@ class FitParametersPanel(QWidget):
         self._apply_knight_shift_to_rows(rows)
 
     # ── Knight-shift conversion (Phase 3) ──────────────────────────────────
-    @staticmethod
-    def _oscillation_frequency_names(rows: list[_FitRow]) -> list[str]:
-        """Frequency parameter names present in the rows, in composite order.
+    #: Oscillation components can be parameterised by precession *frequency*
+    #: (MHz; reference ν_ref = γ_µ·B) or directly by the local *field* (Gauss;
+    #: reference is the applied field B itself). Both are converted to a Knight
+    #: shift; the base parameter name distinguishes them.
+    _KNIGHT_COMPONENT_KINDS = ("frequency", "field")
 
-        ``frequency`` (the first component) sorts before ``frequency_2``,
-        ``frequency_3``, … so the discovered order matches the model's component
-        order — the basis for stable per-component Knight-shift identity.
+    @classmethod
+    def _oscillation_components(cls, rows: list[_FitRow]) -> list[tuple[str, str]]:
+        """``(parameter_name, kind)`` oscillation components present in the rows.
+
+        ``kind`` is ``"frequency"`` or ``"field"``. Ordered by kind then component
+        index (``field_1`` before ``field_2`` …) so the order matches the model's
+        component order — the basis for stable per-component Knight-shift identity.
         """
-        names: set[str] = set()
+        found: dict[str, str] = {}
         for row in rows:
-            names.update(n for n in row.values if n == "frequency" or n.startswith("frequency_"))
+            for name in row.values:
+                base, _index = split_parameter_name(name)
+                if base in cls._KNIGHT_COMPONENT_KINDS:
+                    found[name] = base
 
-        def _order(name: str) -> tuple[int, str]:
-            base, index = split_parameter_name(name)
-            if base == "frequency":
-                return (int(index) if index is not None else 1, "")
-            return (10_000, name)
+        def _order(item: tuple[str, str]) -> tuple[int, int, str]:
+            name, base = item
+            _b, index = split_parameter_name(name)
+            kind_rank = cls._KNIGHT_COMPONENT_KINDS.index(base)
+            return (kind_rank, int(index) if index is not None else 1, name)
 
-        return sorted(names, key=_order)
+        return sorted(found.items(), key=_order)
 
-    def _knight_shift_subscript(self, frequency_name: str) -> str:
-        """1-based component ordinal for a frequency parameter (for the K symbol)."""
-        _, index = split_parameter_name(frequency_name)
+    def _oscillation_component_names(self, rows: list[_FitRow]) -> list[str]:
+        """Just the component parameter names (see :meth:`_oscillation_components`)."""
+        return [name for name, _kind in self._oscillation_components(rows)]
+
+    def _knight_shift_subscript(self, component_name: str) -> str:
+        """1-based component ordinal for a component name (for the K symbol)."""
+        _, index = split_parameter_name(component_name)
         return index if index is not None else "1"
 
     def _apply_knight_shift_to_rows(self, rows: list[_FitRow]) -> None:
@@ -1967,25 +1980,30 @@ class FitParametersPanel(QWidget):
         config = self._knight_shift_config
         if not rows or config is None or not config.enabled:
             return
-        components = self._oscillation_frequency_names(rows)
+        components = self._oscillation_components(rows)
         if not components:
             return
+        kind_by_name = dict(components)
 
-        selected = [c for c in components if (not config.components or c in config.components)]
+        selected = [
+            (name, kind)
+            for name, kind in components
+            if (not config.components or name in config.components)
+        ]
         ref_name = config.reference_component
         if config.reference_mode != REFERENCE_APPLIED_FIELD:
-            if ref_name not in components:
+            if ref_name not in kind_by_name:
                 return  # designated reference is gone; emit nothing rather than guess
-            selected = [c for c in selected if c != ref_name]
+            selected = [(name, kind) for name, kind in selected if name != ref_name]
         if not selected:
             return
 
         # First pass: compute the dimensionless shifts so AUTO can pick a unit.
         shifts: dict[str, list[tuple[_FitRow, float, float]]] = {}
-        for comp in selected:
+        for comp, kind in selected:
             per_row: list[tuple[_FitRow, float, float]] = []
             for row in rows:
-                k, sigma_k = self._row_knight_shift(row, comp, ref_name)
+                k, sigma_k = self._row_knight_shift(row, comp, kind, ref_name)
                 per_row.append((row, k, sigma_k))
             shifts[comp] = per_row
 
@@ -1994,7 +2012,7 @@ class FitParametersPanel(QWidget):
         scale = scale_for_unit(unit)
         unit_label = label_for_unit(unit)
 
-        for comp in selected:
+        for comp, _kind in selected:
             kname = f"K[{comp}]"
             self._knight_shift_names[kname] = comp
             self._register_knight_label(kname, self._knight_shift_subscript(comp), unit_label)
@@ -2005,7 +2023,9 @@ class FitParametersPanel(QWidget):
         # Flag component crossings/degeneracies across the scan (detection only;
         # the K traces still follow the raw component labels). Uses all discovered
         # components so a crossing between any pair is surfaced.
-        self._knight_shift_crossings = self._detect_component_crossings(rows, components)
+        self._knight_shift_crossings = self._detect_component_crossings(
+            rows, [name for name, _kind in components]
+        )
 
     def _detect_component_crossings(
         self, rows: list[_FitRow], components: list[str]
@@ -2027,22 +2047,29 @@ class FitParametersPanel(QWidget):
         return detect_crossings(points)
 
     def _row_knight_shift(
-        self, row: _FitRow, frequency_name: str, reference_name: str | None
+        self, row: _FitRow, component_name: str, kind: str, reference_name: str | None
     ) -> tuple[float, float]:
-        """Dimensionless Knight shift (and σ) for one component on one row."""
-        nu = row.values.get(frequency_name)
+        """Dimensionless Knight shift (and σ) for one component on one row.
+
+        ``kind`` selects the applied-field reference: a *frequency* component
+        (MHz) is referenced to the Larmor frequency γ_µ·B, a *field* component
+        (Gauss; the fitted local field B_µ) directly to the applied field B —
+        i.e. K = (B_µ − B)/B, the most direct form of the shift.
+        """
+        nu = row.values.get(component_name)
         if nu is None:
             return float("nan"), float("nan")
-        sigma_nu = float(row.errors.get(frequency_name, 0.0) or 0.0)
+        sigma_nu = float(row.errors.get(component_name, 0.0) or 0.0)
         if self._knight_shift_config.reference_mode == REFERENCE_APPLIED_FIELD:
-            return knight_shift(nu, larmor_frequency_mhz(row.field), sigma_nu=sigma_nu)
+            nu_ref = row.field if kind == "field" else larmor_frequency_mhz(row.field)
+            return knight_shift(nu, nu_ref, sigma_nu=sigma_nu)
         nu_ref = row.values.get(reference_name)
         if nu_ref is None:
             return float("nan"), float("nan")
         sigma_ref = float(row.errors.get(reference_name, 0.0) or 0.0)
         cov = 0.0
         if row.covariance is not None:
-            cov = float(row.covariance.get(frequency_name, {}).get(reference_name, 0.0))
+            cov = float(row.covariance.get(component_name, {}).get(reference_name, 0.0))
         return knight_shift(nu, nu_ref, sigma_nu=sigma_nu, sigma_ref=sigma_ref, cov=cov)
 
     @staticmethod
@@ -2632,7 +2659,7 @@ class FitParametersPanel(QWidget):
 
     def available_oscillation_components(self) -> list[str]:
         """Frequency parameter names available to convert, in component order."""
-        return self._oscillation_frequency_names(self._rows)
+        return self._oscillation_component_names(self._rows)
 
     def knight_shift_crossings(self) -> list[object]:
         """Crossing events flagged on the active series (for annotation/reporting)."""
