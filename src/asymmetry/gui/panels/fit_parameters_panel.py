@@ -2570,12 +2570,33 @@ class FitParametersPanel(QWidget):
         """Return the key identifying the first-class Angle x-axis, or None."""
         return self._angle_x_field[1] if self._angle_x_field is not None else None
 
+    def _angle_fold_suffix(self) -> str:
+        """Axis-label suffix noting the active angle fold (empty when off)."""
+        if self._angle_wrap_period is None:
+            return ""
+        return f" (folded {self._angle_wrap_period:g}°)"
+
     def _custom_x_labels(self) -> dict[str, str]:
-        """Map each free-text x-axis key to its display label (custom + Angle)."""
+        """Map each free-text x-axis key to its display label (custom + Angle).
+
+        The Angle label carries the fold note so every consumer (GLE export,
+        export column headers) stays consistent with the on-screen plot.
+        """
         labels = {key: label for label, key in self._custom_x_fields}
         if self._angle_x_field is not None:
-            labels[self._angle_x_field[1]] = self._angle_x_field[0]
+            labels[self._angle_x_field[1]] = self._angle_x_field[0] + self._angle_fold_suffix()
         return labels
+
+    def _export_abscissa_key(self) -> str | None:
+        """Active x-axis key when it is a free-text column (Angle or custom).
+
+        These are the only x-axes not already emitted as a fixed Run/B/T/param
+        column, so an export must add them explicitly. Returns None otherwise.
+        """
+        x_key = self._effective_x_key()
+        if x_key == self._angle_x_key() or _x_custom_id(x_key) is not None:
+            return x_key
+        return None
 
     def _rebuild_y_controls(self, *, preferred_selected: list[str] | None = None) -> None:
         self._y_selector_table.blockSignals(True)
@@ -3522,6 +3543,12 @@ class FitParametersPanel(QWidget):
         for name in display_params:
             label = _format_param_label(name)
             columns.extend([label, f"err {label}"])
+        # A free-text x-axis (Angle / custom column) is not one of the fixed
+        # columns, so add it explicitly (folded as displayed) — otherwise the
+        # table/CSV would not show the abscissa the plot is drawn against.
+        abscissa_key = self._export_abscissa_key()
+        if abscissa_key is not None:
+            columns.append(self._custom_x_labels().get(abscissa_key, abscissa_key))
 
         self._table.setColumnCount(len(columns))
         self._table.setHorizontalHeaderLabels(columns)
@@ -3538,6 +3565,8 @@ class FitParametersPanel(QWidget):
                 self._table.setItem(i, col, QTableWidgetItem(f"{val:.6g}"))
                 self._table.setItem(i, col + 1, QTableWidgetItem(f"{err:.3g}"))
                 col += 2
+            if abscissa_key is not None:
+                self._table.setItem(i, col, QTableWidgetItem(f"{self._x_value(row, abscissa_key):.6g}"))
 
         self._table.resizeColumnsToContents()
 
@@ -3918,10 +3947,7 @@ class FitParametersPanel(QWidget):
         if name is not None:
             return _format_plot_label(name)
         if self._angle_x_field is not None and x_key == self._angle_x_field[1]:
-            label = self._angle_x_field[0]
-            if self._angle_wrap_period is not None:
-                label = f"{label} (folded {self._angle_wrap_period:g}°)"
-            return label
+            return self._angle_x_field[0] + self._angle_fold_suffix()
         custom_id = _x_custom_id(x_key)
         if custom_id is not None:
             return self._custom_x_labels().get(custom_id, custom_id)
@@ -4057,6 +4083,12 @@ class FitParametersPanel(QWidget):
                 headers.extend([f"{name} ({unit})", f"err_{name} ({unit})"])
             else:
                 headers.extend([name, f"err_{name}"])
+        # The Angle/custom abscissa is appended by _refresh_table as a trailing
+        # column; mirror it here so the header row matches the data cells read
+        # from the table below.
+        abscissa_key = self._export_abscissa_key()
+        if abscissa_key is not None:
+            headers.append(self._custom_x_labels().get(abscissa_key, abscissa_key))
 
         with open(path, "w", newline="", encoding="utf-8") as csvfile:
             writer = csv.writer(csvfile)
@@ -4603,6 +4635,11 @@ class FitParametersPanel(QWidget):
                     headers.extend([f"{name} ({unit})", f"err_{name} ({unit})"])
                 else:
                     headers.extend([name, f"err_{name}"])
+            # A free-text x-axis (Angle/custom) is appended as a trailing column so
+            # GLE can plot against it; param columns keep their fixed indices.
+            abscissa_key = self._export_abscissa_key()
+            if abscissa_key is not None:
+                headers.append(self._custom_x_labels().get(abscissa_key, abscissa_key))
 
             f.write("! Column map:\n")
             for col_idx, name in enumerate(headers, start=1):
@@ -4626,6 +4663,8 @@ class FitParametersPanel(QWidget):
                 for name in self._display_y_parameters():
                     values.append(row.values.get(name, np.nan))
                     values.append(row.errors.get(name, np.nan))
+                if abscissa_key is not None:
+                    values.append(self._x_value(row, abscissa_key))
                 f.write(" ".join(f"{v:>16.8g}" for v in values) + "\n")
 
     def _gle_x_column(self, x_key: str) -> int:
@@ -4639,7 +4678,11 @@ class FitParametersPanel(QWidget):
             return 1
         if x_key == "field":
             return 2
-        return 3
+        if x_key == "temperature":
+            return 3
+        # Angle / custom column: the trailing column appended by _write_gle_data_file
+        # (after Run/B/T and the 2-per-parameter columns).
+        return 4 + 2 * len(self._display_y_parameters())
 
     def _gle_columns_for_param(self, name: str) -> tuple[int, int] | None:
         display_params = self._display_y_parameters()
