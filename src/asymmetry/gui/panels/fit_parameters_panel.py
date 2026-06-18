@@ -473,8 +473,10 @@ class FitParametersPanel(QWidget):
         self._edit_composite_btn.setEnabled(False)
         self._edit_composite_btn.clicked.connect(self._edit_selected_composite_parameter)
 
-        self._remove_composite_btn = QPushButton("Remove composite")
-        self._remove_composite_btn.setToolTip("Remove the selected composite parameter.")
+        self._remove_composite_btn = QPushButton("Remove derived")
+        self._remove_composite_btn.setToolTip(
+            "Remove the selected derived quantities (composite parameters or K(θ) fit tracks)."
+        )
         self._remove_composite_btn.setEnabled(False)
         self._remove_composite_btn.clicked.connect(self._remove_selected_composite_parameters)
 
@@ -1940,11 +1942,26 @@ class FitParametersPanel(QWidget):
             if name in selected and name in composite_names
         ]
 
+    @staticmethod
+    def _is_joint_track_name(name: str) -> bool:
+        """True for a joint K(θ) fit track trace (``K⟨1⟩``, ``K⟨2⟩``, …)."""
+        return name.startswith("K⟨") and name.endswith("⟩")
+
+    def _selected_joint_track_names(self) -> list[str]:
+        """Selected joint-fit track traces (removable derived quantities)."""
+        selected = set(self._selected_y_parameters())
+        return [
+            name
+            for name in self._display_y_parameters()
+            if name in selected and self._is_joint_track_name(name)
+        ]
+
     def _update_composite_action_buttons(self) -> None:
         has_rows = bool(self._rows)
         selected_composites = self._selected_composite_parameter_names()
+        n_removable = len(selected_composites) + len(self._selected_joint_track_names())
         self._edit_composite_btn.setEnabled(has_rows and len(selected_composites) == 1)
-        self._remove_composite_btn.setEnabled(has_rows and len(selected_composites) >= 1)
+        self._remove_composite_btn.setEnabled(has_rows and n_removable >= 1)
 
     def _available_composite_source_parameters(self) -> list[str]:
         composite_names = {definition.name for definition in self._composite_parameters}
@@ -3076,44 +3093,60 @@ class FitParametersPanel(QWidget):
         self._refresh_after_composite_change(preferred_selected=preferred_selected)
 
     def _remove_selected_composite_parameters(self) -> None:
-        selected = self._selected_composite_parameter_names()
+        composites = self._selected_composite_parameter_names()
+        tracks = self._selected_joint_track_names()
+        selected = composites + tracks
         if not selected:
             return
 
         if len(selected) == 1:
-            message = f"Remove composite parameter '{selected[0]}'?"
+            message = f"Remove derived quantity '{selected[0]}'?"
         else:
-            names = ", ".join(selected)
-            message = f"Remove selected composite parameters ({names})?"
-
-        confirm = QMessageBox.question(
-            self,
-            "Remove Composite Parameter",
-            message,
-        )
+            message = f"Remove selected derived quantities ({', '.join(selected)})?"
+        confirm = QMessageBox.question(self, "Remove Derived Quantity", message)
         if confirm != QMessageBox.StandardButton.Yes:
             return
 
-        names_to_remove = set(selected)
-        self._composite_parameters = [
-            definition
-            for definition in self._composite_parameters
-            if definition.name not in names_to_remove
-        ]
-        for name in names_to_remove:
-            self._model_fits.pop(name, None)
+        if composites:
+            composite_set = set(composites)
+            self._composite_parameters = [
+                definition
+                for definition in self._composite_parameters
+                if definition.name not in composite_set
+            ]
+            for name in composite_set:
+                self._model_fits.pop(name, None)
+            self._apply_composite_parameters_to_rows(
+                self._rows,
+                self._composite_parameters,
+                self._global_param_uncertainties,
+                drop_names=composite_set,
+            )
+        if tracks:
+            self._remove_track_traces(tracks)
 
-        self._apply_composite_parameters_to_rows(
-            self._rows,
-            self._composite_parameters,
-            self._global_param_uncertainties,
-            drop_names=names_to_remove,
-        )
-
-        preferred_selected = [
-            name for name in self._selected_y_param_names if name not in names_to_remove
-        ]
+        removed = set(selected)
+        preferred_selected = [name for name in self._selected_y_param_names if name not in removed]
         self._refresh_after_composite_change(preferred_selected=preferred_selected)
+
+    def _remove_track_traces(self, names: list[str]) -> None:
+        """Delete joint-fit track traces: columns, overlays, labels and markers."""
+        name_set = set(names)
+        for name in name_set:
+            self._model_fits.pop(name, None)
+            unregister_derived_param_info(name)
+            self._registered_knight_labels.discard(name)
+        for row in self._rows:
+            for name in name_set:
+                row.values.pop(name, None)
+                row.errors.pop(name, None)
+        self._varying_params = [v for v in self._varying_params if v not in name_set]
+        # If no joint-fit track remains, the assignment-derived crossing markers no
+        # longer apply — turn them off and clear them.
+        if not any(self._is_joint_track_name(n) for row in self._rows for n in row.values):
+            self._DRAW_CROSSING_MARKERS = False
+            self._knight_shift_crossings = []
+            self._knight_shift_crossing_x_key = None
 
     def _open_model_fit_dialog(self, param_name: str) -> None:
         selected_group_ids = self._selected_group_ids_from_buttons()

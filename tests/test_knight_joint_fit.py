@@ -89,6 +89,44 @@ def test_joint_fit_creates_track_traces_and_overlays(qapp):
     assert panel.knight_shift_crossings()
 
 
+def test_remove_track_traces_cleans_up_everything(qapp):
+    panel = _setup_panel(qapp, swap_past_crossing=True)
+    panel._run_joint_knight_fit(sorted(panel._knight_shift_names), "KnightAnisotropy", 25)
+    assert "K⟨1⟩" in panel._rows[0].values
+
+    panel._remove_track_traces(["K⟨1⟩", "K⟨2⟩"])
+
+    for row in panel._rows:
+        assert "K⟨1⟩" not in row.values and "K⟨2⟩" not in row.values
+    assert "K⟨1⟩" not in panel._model_fits and "K⟨2⟩" not in panel._model_fits
+    assert "K⟨1⟩" not in panel._varying_params
+    assert "K⟨1⟩" not in panel._display_y_parameters()
+    # All tracks gone → the assignment-derived markers are turned off.
+    assert panel._DRAW_CROSSING_MARKERS is False
+    assert panel.knight_shift_crossings() == []
+
+
+def test_remove_button_enabled_for_selected_track(qapp):
+    panel = _setup_panel(qapp, swap_past_crossing=True)
+    panel._run_joint_knight_fit(sorted(panel._knight_shift_names), "KnightAnisotropy", 25)
+    # The fit auto-selects the new track traces, so the Remove action is enabled.
+    assert panel._selected_joint_track_names()
+    assert panel._remove_composite_btn.isEnabled()
+
+
+def test_remove_handler_deletes_selected_tracks(qapp, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    panel = _setup_panel(qapp, swap_past_crossing=True)
+    panel._run_joint_knight_fit(sorted(panel._knight_shift_names), "KnightAnisotropy", 25)
+    monkeypatch.setattr(
+        QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes)
+    )
+    panel._remove_selected_composite_parameters()  # tracks are the current selection
+    assert "K⟨1⟩" not in panel._rows[0].values
+    assert "K⟨1⟩" not in panel._model_fits
+
+
 def test_joint_fit_recovers_continuous_curves(qapp):
     panel = _setup_panel(qapp, swap_past_crossing=True)
     panel._run_joint_knight_fit(sorted(panel._knight_shift_names), "KnightAnisotropy", 25)
