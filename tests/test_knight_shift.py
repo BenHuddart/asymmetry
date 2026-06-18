@@ -9,6 +9,7 @@ import pytest
 from asymmetry.core.fitting.knight_shift import (
     MUON_LARMOR_MHZ_PER_G,
     KnightShiftUnit,
+    clogston_jaccarino_fit,
     concrete_unit,
     knight_shift,
     label_for_unit,
@@ -87,6 +88,42 @@ def test_auto_unit_empty_defaults_to_ppm():
 def test_concrete_unit_resolves_auto_but_passes_explicit_through():
     assert concrete_unit(KnightShiftUnit.AUTO, [1e-5]) is KnightShiftUnit.PPM
     assert concrete_unit(KnightShiftUnit.PERCENT, [1e-5]) is KnightShiftUnit.PERCENT
+
+
+def test_clogston_jaccarino_recovers_slope_and_intercept():
+    chi = [1.0, 2.0, 3.0, 4.0, 5.0]
+    knight = [2.0 * c + 3.0 for c in chi]  # K = 2χ + 3
+    result = clogston_jaccarino_fit(chi, knight)
+    assert result.slope == pytest.approx(2.0)
+    assert result.intercept == pytest.approx(3.0)
+    assert result.n == 5
+
+
+def test_clogston_jaccarino_weighting_downweights_outlier():
+    chi = [1.0, 2.0, 3.0, 4.0]
+    knight = [5.0, 7.0, 9.0, 100.0]  # last point is a wild outlier (true line K=2χ+3)
+    sigma = [0.1, 0.1, 0.1, 1e6]  # but with a huge error bar
+    result = clogston_jaccarino_fit(chi, knight, sigma)
+    assert result.slope == pytest.approx(2.0, abs=1e-3)
+    assert result.intercept == pytest.approx(3.0, abs=1e-3)
+
+
+def test_clogston_jaccarino_drops_non_finite_points():
+    chi = [1.0, 2.0, float("nan"), 3.0]
+    knight = [5.0, 7.0, 0.0, 9.0]
+    result = clogston_jaccarino_fit(chi, knight)
+    assert result.n == 3
+    assert result.slope == pytest.approx(2.0)
+
+
+def test_clogston_jaccarino_constant_chi_raises():
+    with pytest.raises(ValueError):
+        clogston_jaccarino_fit([1.0, 1.0, 1.0], [2.0, 3.0, 4.0])
+
+
+def test_clogston_jaccarino_too_few_points_raises():
+    with pytest.raises(ValueError):
+        clogston_jaccarino_fit([1.0], [2.0])
 
 
 def test_scale_and_label():

@@ -939,6 +939,44 @@ judgement to you. Seeding each fit from its neighbour (chained batch seeding) ke
 the labelling stable through an ordered scan and minimises such crossings in the
 first place.
 
+**Fitting the anisotropy** :math:`K(\theta)`. With **Angle (°)** as the trend
+x-axis, the model-fit builder offers two angle-only basis models alongside the
+usual ones:
+
+.. math::
+
+   K(\theta) = K_{\mathrm{iso}} + K_{\mathrm{ax}}\,\frac{3\cos^2\theta - 1}{2}
+   \qquad\text{(}\texttt{KnightAnisotropy}\text{)}
+
+for the axial dipolar form — the isotropic contact term :math:`K_{\mathrm{iso}}`
+plus the traceless dipolar anisotropy :math:`K_{\mathrm{ax}}` — and the general
+two-fold modulation
+
+.. math::
+
+   K(\theta) = K_{\mathrm{avg}} + K_{\mathrm{amp}}\cos 2(\theta - \theta_0)
+   \qquad\text{(}\texttt{AngularCos2}\text{)}
+
+for a crystal rotated in a plane, with :math:`\theta_0` the principal-axis
+offset. Both take :math:`\theta` in degrees, so they fit directly against the
+Angle axis (folded or not). The diagonal dipolar-tensor components recovered for
+rotations about the crystal axes constrain the muon stopping site.
+
+**Clogston–Jaccarino** (:math:`K` vs :math:`\chi`). Plotting the Knight shift
+against the bulk susceptibility with temperature as the implicit parameter gives
+a straight line whose slope :math:`\mathrm{d}K/\mathrm{d}\chi` measures the muon
+hyperfine coupling and whose intercept is the :math:`\chi`-independent shift. The
+muon experiment does not itself measure :math:`\chi`, so this is **API-only** —
+pair the exported Knight shift with an independent susceptibility:
+
+.. code-block:: python
+
+   from asymmetry.core.fitting.knight_shift import clogston_jaccarino_fit
+
+   result = clogston_jaccarino_fit(chi, knight, sigma_knight)  # χ, K, σ_K per T
+   print(result.slope, result.slope_err)   # dK/dχ ∝ hyperfine coupling
+   print(result.intercept)                 # χ-independent (orbital) shift
+
 *When to use this.* Convert to the Knight shift whenever the quantity of interest
 is the *shift* of a precession frequency from the applied-field value — tracking a
 local susceptibility, determining a muon site from :math:`K(\theta)`, or building a
@@ -955,6 +993,7 @@ References
 2. S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
    Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022).
 3. W. D. Knight, Phys. Rev. **76**, 1259 (1949).
+4. A. M. Clogston, V. Jaccarino, and Y. Yafet, Phys. Rev. **134**, A650 (1964).
 
 Runnable Example
 ----------------

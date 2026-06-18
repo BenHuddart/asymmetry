@@ -28,9 +28,11 @@ display unit from the data.
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
+
+import numpy as np
 
 from asymmetry.core.fitting.spectral import field_gauss_to_frequency_mhz
 
@@ -204,3 +206,77 @@ class KnightShiftConfig:
             unit=unit,
             components=tuple(str(c) for c in components),
         )
+
+
+@dataclass(frozen=True)
+class ClogstonJaccarinoResult:
+    """Linear K-vs-χ fit (Clogston–Jaccarino), with temperature implicit.
+
+    ``slope`` is ``dK/dχ`` — proportional to the muon hyperfine coupling at the
+    site — and ``intercept`` is the χ-independent (orbital/diamagnetic) shift K0.
+    ``*_err`` are 1σ uncertainties; ``n`` is the number of points used.
+    """
+
+    slope: float
+    intercept: float
+    slope_err: float
+    intercept_err: float
+    n: int
+
+
+def clogston_jaccarino_fit(
+    chi: Sequence[float],
+    knight: Sequence[float],
+    sigma_knight: Sequence[float] | None = None,
+) -> ClogstonJaccarinoResult:
+    """Weighted linear fit of Knight shift vs susceptibility (API-only).
+
+    Fits ``K = slope·χ + intercept`` with temperature as the implicit parameter —
+    the Clogston–Jaccarino construction — where the slope ``dK/dχ`` measures the
+    muon hyperfine coupling and the intercept the χ-independent shift. Points with
+    a non-finite χ, K, or σ are dropped; ``sigma_knight`` (if given) weights the
+    fit by ``1/σ²`` (else unit weights). Raises ``ValueError`` with fewer than two
+    points or no spread in χ (the slope is then undetermined).
+
+    There is no GUI entry point because the muon experiment does not measure χ;
+    pair the trended Knight shift (exported per :ref:`knight-shift`) with an
+    independent susceptibility and call this directly.
+    """
+    x = np.asarray(chi, dtype=float)
+    y = np.asarray(knight, dtype=float)
+    if x.shape != y.shape:
+        raise ValueError("chi and knight must have the same length")
+    if sigma_knight is None:
+        w = np.ones_like(x)
+    else:
+        sig = np.asarray(sigma_knight, dtype=float)
+        if sig.shape != x.shape:
+            raise ValueError("sigma_knight must match chi/knight length")
+        # Guard zero/negative/non-finite errors so a single bad point cannot make
+        # the weight blow up or go negative.
+        with np.errstate(divide="ignore"):
+            w = np.where(np.isfinite(sig) & (sig > 0.0), 1.0 / np.square(sig), np.nan)
+
+    mask = np.isfinite(x) & np.isfinite(y) & np.isfinite(w)
+    x, y, w = x[mask], y[mask], w[mask]
+    if x.size < 2:
+        raise ValueError("Clogston–Jaccarino fit needs at least two finite points")
+
+    s = float(np.sum(w))
+    sx = float(np.sum(w * x))
+    sy = float(np.sum(w * y))
+    sxx = float(np.sum(w * x * x))
+    sxy = float(np.sum(w * x * y))
+    delta = s * sxx - sx * sx
+    if delta <= 0.0:
+        raise ValueError("Clogston–Jaccarino fit needs spread in χ (χ is constant)")
+
+    slope = (s * sxy - sx * sy) / delta
+    intercept = (sxx * sy - sx * sxy) / delta
+    return ClogstonJaccarinoResult(
+        slope=slope,
+        intercept=intercept,
+        slope_err=math.sqrt(s / delta),
+        intercept_err=math.sqrt(sxx / delta),
+        n=int(x.size),
+    )
