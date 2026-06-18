@@ -14,8 +14,11 @@ from asymmetry.core.fitting import (
     fit_grouped_series,
     fit_grouped_time_domain,
 )
+from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.grouped_time_domain import (
+    _grouped_global_is_large,
+    _resolve_grouped_series_workers,
     build_grouped_count_model,
     validate_grouped_model_contract,
 )
@@ -451,6 +454,142 @@ def test_fit_grouped_time_domain_poisson_uses_raw_count_model(monkeypatch) -> No
     assert result.success is True
 
 
+def test_fit_grouped_series_mixed_global_local_physics() -> None:
+    """A mixed grouped series fit shares one physics param across runs while
+    fitting another per run (the FB-style Global/Local split).
+
+    frequency is Global (shared across both runs); Lambda is Local (per run).
+    The fit must recover one shared frequency and two distinct Lambdas.
+    """
+
+    def _relaxing_cosine(t, frequency, Lambda, phase=0.0):  # noqa: N803
+        t = np.asarray(t, dtype=float)
+        return np.cos(2.0 * np.pi * frequency * t + phase) * np.exp(-Lambda * t)
+
+    time = np.linspace(0.0, 8.0, 1601)
+    frequency = 3.0
+    n0, background, amplitude = 5.0e4, 50.0, 0.22
+    true_lambda = {10: 0.3, 11: 1.0}
+
+    def _counts(lam: float, phase: float) -> np.ndarray:
+        pol = _relaxing_cosine(time, frequency, lam, phase)
+        return n0 * (1.0 + amplitude * pol) + background * np.exp(time / float(MUON_LIFETIME_US))
+
+    members: dict[int, list[GroupedTimeDomainGroup]] = {}
+    for run in (10, 11):
+        groups = []
+        for gid, phase in ((1, 0.2), (2, np.deg2rad(170.0))):
+            counts = _counts(true_lambda[run], phase)
+            groups.append(
+                GroupedTimeDomainGroup(
+                    group_id=gid,
+                    group_name=f"g{gid}",
+                    time=time.copy(),
+                    counts=counts,
+                    error=np.sqrt(np.clip(counts, 1.0, None)),
+                    metadata={"grouped_time_domain_lifetime_corrected": True},
+                )
+            )
+        members[run] = groups
+
+    def _initial() -> ParameterSet:
+        return ParameterSet(
+            [
+                Parameter("N0", 4.0e4),
+                Parameter("background", 40.0),
+                Parameter("amplitude", 0.2),
+                Parameter("relative_phase", 0.0, min=-2.0 * np.pi, max=2.0 * np.pi),
+                Parameter("frequency", 3.1),  # shared (slightly off)
+                Parameter("Lambda", 0.6, min=0.0, max=10.0),  # per run
+                Parameter("phase", 0.0, fixed=True),
+            ]
+        )
+
+    initial = {run: {g.group_id: _initial() for g in groups} for run, groups in members.items()}
+
+    result = fit_grouped_series(
+        "global",
+        members,
+        _relaxing_cosine,
+        global_params=["frequency", "Lambda", "phase"],
+        local_params=["N0", "background", "amplitude", "relative_phase"],
+        initial_params=initial,
+        cost="gaussian",
+        cross_run_local_params=["Lambda"],
+    )
+
+    assert result.success is True
+    # frequency is shared across runs (a single fitted value).
+    shared = {p.name: p.value for p in result.shared_parameters}
+    assert shared["frequency"] == pytest.approx(frequency, abs=1e-2)
+    assert "Lambda" not in shared  # Lambda is per-run, not a shared parameter
+    # Lambda is recovered per run, distinct between runs.
+    for run in (10, 11):
+        member_key = min(k for k, src in result.member_source_run.items() if src == run)
+        fitted = result.member_results[member_key].parameters["Lambda"].value
+        assert fitted == pytest.approx(true_lambda[run], abs=2e-2)
+
+
+def test_fit_grouped_time_domain_recovers_absolute_per_group_phase() -> None:
+    """With the shared model phase fixed at zero, each group's free per-group
+    phase nuisance recovers that group's *absolute* oscillation phase.
+
+    This is the parameterisation the GUI seeds (model phase fixed at 0, per-group
+    phase carries the full phase): the fit must converge on distinct per-group
+    phases and a shared frequency from a clean two-group TF signal.
+    """
+    time = np.linspace(0.0, 8.0, 1601)
+    frequency = 3.0
+    n0, background, amplitude = 5.0e4, 50.0, 0.22
+    true_phase = {"g1": np.deg2rad(40.0), "g2": np.deg2rad(-100.0)}
+
+    def _counts(phase: float) -> np.ndarray:
+        return n0 * (
+            1.0 + amplitude * np.cos(2.0 * np.pi * frequency * time + phase)
+        ) + background * np.exp(time / float(MUON_LIFETIME_US))
+
+    groups = [
+        GroupedTimeDomainGroup(
+            group_id=gid,
+            group_name=gid,
+            time=time.copy(),
+            counts=_counts(true_phase[gid]),
+            error=np.sqrt(np.clip(_counts(true_phase[gid]), 1.0, None)),
+            metadata={"grouped_time_domain_lifetime_corrected": True},
+        )
+        for gid in ("g1", "g2")
+    ]
+
+    def _initial(gid: str) -> ParameterSet:
+        return ParameterSet(
+            [
+                Parameter("N0", 4.0e4),
+                Parameter("background", 40.0),
+                Parameter("amplitude", 0.2),
+                # Seed the per-group phase near (but not at) the true value.
+                Parameter("relative_phase", true_phase[gid] * 0.8, min=-np.pi, max=np.pi),
+                Parameter("frequency", 3.0),
+                Parameter("phase", 0.0, fixed=True),  # shared model phase held at zero
+            ]
+        )
+
+    result = fit_grouped_time_domain(
+        groups,
+        _cosine_polarization,
+        global_params=["frequency"],
+        local_params=["N0", "background", "amplitude", "relative_phase"],
+        initial_params={gid: _initial(gid) for gid in ("g1", "g2")},
+        cost="gaussian",
+    )
+
+    assert result.success is True
+    for gid in ("g1", "g2"):
+        fitted = result.group_results[gid].parameters["relative_phase"].value
+        assert float(np.angle(np.exp(1j * (fitted - true_phase[gid])))) == pytest.approx(
+            0.0, abs=1e-2
+        )
+
+
 def test_fit_grouped_time_domain_rejects_unknown_cost() -> None:
     groups = [
         GroupedTimeDomainGroup(
@@ -845,3 +984,327 @@ def test_grouped_time_domain_available_matches_build_outcome() -> None:
     assert not grouped_time_domain_available(one_group)
     with pytest.raises(ValueError):
         build_grouped_time_domain_datasets(one_group)
+
+
+def _parallel_oscillatory_model() -> CompositeModel:
+    """A real (picklable) damped-oscillation model for cross-process batch tests."""
+    return CompositeModel(["Exponential", "OscillatoryField"], operators=["*"])
+
+
+def _parallel_series_seed(model: CompositeModel) -> ParameterSet:
+    ps = ParameterSet()
+    for name in model.param_names:
+        if name.startswith("A"):
+            ps.add(Parameter(name, 1.0, fixed=True))  # amplitude owned by per-group block
+        elif "field" in name:
+            ps.add(Parameter(name, 150.0, min=-1.0e9, max=1.0e9))
+        elif "phase" in name:
+            ps.add(Parameter(name, 0.0, fixed=True))
+        else:
+            ps.add(Parameter(name, 1.0, min=0.0, max=1.0e6))
+    ps.add(Parameter("N0", 120.0, min=0.0, max=1.0e9))
+    ps.add(Parameter("background", 40.0, min=0.0, max=1.0e9))
+    ps.add(Parameter("amplitude", 0.1, min=-1.0, max=1.0))
+    ps.add(Parameter("relative_phase", 0.0, min=-7.0, max=7.0))
+    return ps
+
+
+def _parallel_members(model: CompositeModel, n_runs: int = 3, n_bins: int = 800):
+    members: dict[int, list[GroupedTimeDomainGroup]] = {}
+    initial: dict[int, dict] = {}
+    rng = np.random.default_rng(7)
+    t = np.linspace(0.01, 8.0, n_bins)
+    for run in range(1600, 1600 + n_runs):
+        groups = []
+        for gi in range(2):
+            mu = 120.0 * np.exp(-t / 2.197) * (1.0 + 0.15 * np.cos(2.0 * np.pi * t + gi)) + 40.0
+            counts = rng.poisson(mu).astype(float)
+            groups.append(
+                GroupedTimeDomainGroup(
+                    group_id=f"g{gi}",
+                    group_name=f"G{gi}",
+                    time=t,
+                    counts=counts,
+                    error=np.sqrt(np.clip(counts, 1.0, None)),
+                    source_run_number=run,
+                )
+            )
+        members[run] = groups
+        initial[run] = {g.group_id: _parallel_series_seed(model) for g in groups}
+    return members, initial
+
+
+def test_resolve_grouped_series_workers_is_opt_in_and_clamped() -> None:
+    # Parallelism is opt-in: None keeps the sequential path.
+    assert _resolve_grouped_series_workers(None, 10) == 1
+    assert _resolve_grouped_series_workers(1, 10) == 1
+    # A positive count is honoured but never exceeds the run count.
+    assert _resolve_grouped_series_workers(4, 10) == 4
+    assert _resolve_grouped_series_workers(16, 3) == 3
+    # A degenerate batch never spins up a pool.
+    assert _resolve_grouped_series_workers(8, 1) == 1
+
+
+def test_fit_grouped_series_parallel_matches_sequential() -> None:
+    model = _parallel_oscillatory_model()
+    members, initial = _parallel_members(model)
+    global_params = [name for name in model.param_names if not name.startswith("A")]
+    local_params = list(GROUP_NUISANCE_PARAMS)
+
+    common = dict(
+        members=members,
+        polarization_model_fn=model.function,
+        global_params=global_params,
+        local_params=local_params,
+        initial_params=initial,
+        seeding="as_provided",
+        cost="poisson",
+    )
+    serial = fit_grouped_series("batch", max_workers=1, **common)
+    parallel = fit_grouped_series("batch", max_workers=4, **common)
+
+    # Same members produced, and the per-(run,group) fitted values are bit-identical:
+    # the independent path shares no state, so the worker count cannot change results.
+    assert set(serial.member_results) == set(parallel.member_results)
+    for key, serial_result in serial.member_results.items():
+        parallel_result = parallel.member_results[key]
+        for name in serial_result.parameters.names:
+            assert float(serial_result.parameters[name].value) == pytest.approx(
+                float(parallel_result.parameters[name].value), rel=0, abs=0
+            )
+    # Messages are reported in run order regardless of completion order.
+    assert serial.message == parallel.message
+    assert serial.success == parallel.success
+
+
+def test_fit_grouped_series_parallel_falls_back_for_unpicklable_model() -> None:
+    # A model captured as a local closure cannot cross a process boundary; the batch
+    # must still complete by transparently falling back to the sequential path.
+    base = _parallel_oscillatory_model()
+    members, initial = _parallel_members(base, n_runs=2, n_bins=400)
+    global_params = [name for name in base.param_names if not name.startswith("A")]
+
+    def _closure_model(t, **kwargs):  # not picklable (local function)
+        return base.function(t, **kwargs)
+
+    result = fit_grouped_series(
+        "batch",
+        members,
+        _closure_model,
+        global_params=global_params,
+        local_params=list(GROUP_NUISANCE_PARAMS),
+        initial_params=initial,
+        seeding="as_provided",
+        cost="poisson",
+        max_workers=4,
+    )
+    assert set(result.member_results) == {-1600001, -1600002, -1601001, -1601002}
+
+
+def _relaxing_cosine_model(t, frequency, Lambda, phase=0.0):  # noqa: N803
+    """Module-level damped cosine (picklable for the parallel block-solver test)."""
+    t = np.asarray(t, dtype=float)
+    return np.cos(2.0 * np.pi * frequency * t + phase) * np.exp(-Lambda * t)
+
+
+def _mixed_global_local_scenario(true_lambda):
+    """Build a mixed grouped series: shared frequency, per-run Lambda, 2 groups/run.
+
+    Returns ``(members, initial, common_kwargs)`` ready for ``fit_grouped_series``.
+    """
+    time = np.linspace(0.0, 8.0, 1601)
+    frequency = 3.0
+    n0, background, amplitude = 5.0e4, 50.0, 0.22
+
+    def _counts(lam, phase):
+        pol = _relaxing_cosine_model(time, frequency, lam, phase)
+        return n0 * (1.0 + amplitude * pol) + background * np.exp(time / float(MUON_LIFETIME_US))
+
+    members: dict[int, list[GroupedTimeDomainGroup]] = {}
+    for run, lam in true_lambda.items():
+        groups = []
+        for gid, phase in ((1, 0.2), (2, np.deg2rad(170.0))):
+            counts = _counts(lam, phase)
+            groups.append(
+                GroupedTimeDomainGroup(
+                    group_id=gid,
+                    group_name=f"g{gid}",
+                    time=time.copy(),
+                    counts=counts,
+                    error=np.sqrt(np.clip(counts, 1.0, None)),
+                    metadata={},
+                )
+            )
+        members[run] = groups
+
+    def _initial() -> ParameterSet:
+        return ParameterSet(
+            [
+                Parameter("N0", 4.0e4),
+                Parameter("background", 40.0),
+                Parameter("amplitude", 0.2),
+                Parameter("relative_phase", 0.0, min=-2.0 * np.pi, max=2.0 * np.pi),
+                Parameter("frequency", 3.1),
+                Parameter("Lambda", 0.6, min=0.0, max=10.0),
+                Parameter("phase", 0.0, fixed=True),
+            ]
+        )
+
+    initial = {run: {g.group_id: _initial() for g in groups} for run, groups in members.items()}
+    common = dict(
+        global_params=["frequency", "Lambda", "phase"],
+        local_params=["N0", "background", "amplitude", "relative_phase"],
+        initial_params=initial,
+        cost="gaussian",
+        cross_run_local_params=["Lambda"],
+    )
+    return members, frequency, common
+
+
+def test_grouped_global_is_large_counts_free_params() -> None:
+    rep = ParameterSet(
+        [
+            Parameter("frequency", 3.0),  # shared, free
+            Parameter("phase", 0.0, fixed=True),  # shared, fixed
+            Parameter("Lambda", 0.5),  # per-run, free
+            Parameter("N0", 1.0),
+            Parameter("background", 1.0),
+            Parameter("amplitude", 0.1),
+            Parameter("relative_phase", 0.0),  # 4 nuisances, free
+        ]
+    )
+    # 2 runs x 2 groups: 1 shared + 1 per-run*2 + 4 nuis*4 = 19 (< 64 default → monolithic).
+    assert not _grouped_global_is_large(
+        rep,
+        truly_global=["frequency", "phase"],
+        per_run_physics=["Lambda"],
+        nuisances=["N0", "background", "amplitude", "relative_phase"],
+        n_runs=2,
+        n_members=4,
+    )
+    # 8 runs x 2 groups: 1 + 1*8 + 4*16 = 73 (>= 64 → block-separable).
+    assert _grouped_global_is_large(
+        rep,
+        truly_global=["frequency", "phase"],
+        per_run_physics=["Lambda"],
+        nuisances=["N0", "background", "amplitude", "relative_phase"],
+        n_runs=8,
+        n_members=16,
+    )
+
+
+def test_grouped_global_blockwise_matches_monolithic(monkeypatch) -> None:
+    """The block-separable solver recovers the same physics as the monolithic fit."""
+    true_lambda = {10: 0.3, 11: 1.0, 12: 0.6, 13: 1.4}
+    members, frequency, common = _mixed_global_local_scenario(true_lambda)
+
+    monolithic = fit_grouped_series("global", members, _relaxing_cosine_model, **common)
+
+    # Force the block-separable route regardless of size, then re-fit the same problem.
+    monkeypatch.setattr(
+        "asymmetry.core.fitting.grouped_time_domain._grouped_global_is_large",
+        lambda *a, **k: True,
+    )
+    block = fit_grouped_series(
+        "global",
+        members,
+        _relaxing_cosine_model,
+        block_separable=True,
+        max_workers=1,
+        **common,
+    )
+
+    assert monolithic.success and block.success
+    assert "block-separable solver" in block.message
+    shared_block = {p.name: p.value for p in block.shared_parameters}
+    assert shared_block["frequency"] == pytest.approx(frequency, abs=1e-3)
+    for run, lam in true_lambda.items():
+        mono_key = min(k for k, src in monolithic.member_source_run.items() if src == run)
+        block_key = min(k for k, src in block.member_source_run.items() if src == run)
+        mono_lambda = monolithic.member_results[mono_key].parameters["Lambda"].value
+        block_lambda = block.member_results[block_key].parameters["Lambda"].value
+        assert block_lambda == pytest.approx(mono_lambda, abs=2e-3)
+        assert block_lambda == pytest.approx(lam, abs=2e-2)
+        # Each member carries the shared frequency + a (conditional) uncertainty.
+        member = block.member_results[block_key]
+        assert member.parameters["frequency"].value == pytest.approx(frequency, abs=1e-3)
+        assert member.uncertainties.get("frequency") is not None
+
+
+def test_grouped_global_blockwise_default_is_monolithic_below_threshold() -> None:
+    """Below the free-parameter threshold a global fit stays monolithic even when allowed."""
+    members, _frequency, common = _mixed_global_local_scenario({10: 0.3, 11: 1.0})
+    result = fit_grouped_series(
+        "global", members, _relaxing_cosine_model, block_separable=True, **common
+    )
+    assert result.success
+    assert "block-separable solver" not in result.message
+
+
+def test_grouped_global_blockwise_parallel_matches_sequential(monkeypatch) -> None:
+    """Block-solver results are independent of inner-fit worker count."""
+    members, _frequency, common = _mixed_global_local_scenario({10: 0.3, 11: 1.0, 12: 0.6})
+    monkeypatch.setattr(
+        "asymmetry.core.fitting.grouped_time_domain._grouped_global_is_large",
+        lambda *a, **k: True,
+    )
+    serial = fit_grouped_series(
+        "global", members, _relaxing_cosine_model, block_separable=True, max_workers=1, **common
+    )
+    parallel = fit_grouped_series(
+        "global", members, _relaxing_cosine_model, block_separable=True, max_workers=3, **common
+    )
+    assert serial.success and parallel.success
+    assert {p.name: p.value for p in serial.shared_parameters} == pytest.approx(
+        {p.name: p.value for p in parallel.shared_parameters}, rel=0, abs=0
+    )
+    assert set(serial.member_results) == set(parallel.member_results)
+    for key, s in serial.member_results.items():
+        p = parallel.member_results[key]
+        for name in s.parameters.names:
+            assert float(s.parameters[name].value) == pytest.approx(
+                float(p.parameters[name].value), rel=0, abs=0
+            )
+
+
+def test_grouped_global_blockwise_profiled_errors_widen_and_recover(monkeypatch) -> None:
+    """Profiling the shared params yields marginal (>= conditional) errors, same values."""
+    members, frequency, common = _mixed_global_local_scenario({10: 0.3, 11: 1.0, 12: 0.6})
+    monkeypatch.setattr(
+        "asymmetry.core.fitting.grouped_time_domain._grouped_global_is_large",
+        lambda *a, **k: True,
+    )
+
+    def _freq_unc(result):
+        key = min(result.member_results)
+        return result.member_results[key].uncertainties.get("frequency")
+
+    conditional = fit_grouped_series(
+        "global",
+        members,
+        _relaxing_cosine_model,
+        block_separable=True,
+        max_workers=1,
+        profile_shared_errors=False,
+        **common,
+    )
+    profiled = fit_grouped_series(
+        "global",
+        members,
+        _relaxing_cosine_model,
+        block_separable=True,
+        max_workers=1,
+        profile_shared_errors=True,
+        **common,
+    )
+
+    assert "errors are conditional" in conditional.message
+    assert "errors profiled over the locals" in profiled.message
+    # Same physics; the profiled error marginalises over the locals so it cannot shrink.
+    cond_freq = {p.name: p.value for p in conditional.shared_parameters}["frequency"]
+    prof_freq = {p.name: p.value for p in profiled.shared_parameters}["frequency"]
+    assert prof_freq == pytest.approx(cond_freq, abs=1e-4)
+    assert prof_freq == pytest.approx(frequency, abs=1e-2)
+    cond_unc, prof_unc = _freq_unc(conditional), _freq_unc(profiled)
+    assert cond_unc is not None and prof_unc is not None
+    assert prof_unc >= cond_unc * (1.0 - 1e-6)

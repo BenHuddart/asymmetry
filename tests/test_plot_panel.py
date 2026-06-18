@@ -1989,6 +1989,43 @@ class TestPlotPanel:
         assert plot_calls
         assert plot_calls[-1].get("color") == tokens.PLOT_FIT
 
+    def test_grouped_time_domain_fit_line_uses_red_against_blue_data(
+        self, panel: PlotPanel
+    ) -> None:
+        # Each detector group sits on its own subplot in grouped time-domain mode,
+        # so the fit uses the canonical red fit colour (resolves against the blue
+        # data points) rather than matching the data-marker colour.
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.linspace(0.0, 8.0, 200)
+
+        def _group(run_number: int, phase: float) -> MuonDataset:
+            return MuonDataset(
+                time=t,
+                asymmetry=0.2 * np.cos(2.0 * np.pi * 3.0 * t + phase),
+                error=np.full_like(t, 0.01),
+                metadata={
+                    "run_number": run_number,
+                    "grouped_time_domain": True,
+                    "grouped_time_domain_lifetime_corrected": True,
+                },
+            )
+
+        g1, g2 = _group(1, 0.3), _group(2, -0.5)
+        panel.plot_grouped_time_domain_subplots([g1, g2])
+
+        assert panel._grouped_time_subplot_datasets
+        # Even though the data markers are C0 (blue), the fit overlay is red.
+        assert (
+            panel._fit_line_color_for_dataset(g1, default_color="C0", fit_label="Fit")
+            == tokens.PLOT_FIT
+        )
+        # Outside grouped mode an overlaid fit still matches its data colour so it
+        # visually belongs to its dataset.
+        panel._grouped_time_subplot_datasets = []
+        assert panel._fit_line_color_for_dataset(g1, default_color="C2", fit_label="Fit") == "C2"
+
     def test_plot_multiple_datasets(self, panel: PlotPanel, sample_dataset: MuonDataset) -> None:
         """Test plotting multiple datasets."""
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
@@ -2575,13 +2612,16 @@ class TestPlotPanel:
             pytest.skip("matplotlib not available")
 
         panel.plot_dataset(sample_dataset)
+        view_before = (panel._x_min.value(), panel._x_max.value())
         panel.set_fit_range(-1.0, 12.0)
 
         x_min, x_max = panel.get_fit_range()
         assert x_min == pytest.approx(-1.0)
         assert x_max == pytest.approx(12.0)
-        assert panel._x_min.value() == pytest.approx(-1.0)
-        assert panel._x_max.value() == pytest.approx(12.0)
+        # Fit range and view are independent: an out-of-data fit range does not
+        # pan/zoom the view (it stays on the plotted data extent).
+        assert panel._x_min.value() == pytest.approx(view_before[0])
+        assert panel._x_max.value() == pytest.approx(view_before[1])
 
         fit_ds = panel.get_fit_dataset(sample_dataset)
         assert fit_ds is not None
@@ -2603,8 +2643,21 @@ class TestPlotPanel:
         x_min, x_max = panel.get_fit_range()
         assert x_min == pytest.approx(-1.0)
         assert x_max == pytest.approx(12.0)
-        assert panel._x_min.value() == pytest.approx(-1.0)
-        assert panel._x_max.value() == pytest.approx(12.0)
+
+    def test_fit_range_does_not_change_the_view(
+        self, panel: PlotPanel, sample_dataset: MuonDataset
+    ) -> None:
+        """Setting the fit range must never move the view — even when zoomed in."""
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.plot_dataset(sample_dataset)
+        # Zoom in to a sub-window, then change the fit range to the full extent.
+        panel.set_view_limits(2.0, 4.0, -30.0, 30.0)
+        panel.set_fit_range(0.0, float(sample_dataset.time.max()))
+
+        assert panel._x_min.value() == pytest.approx(2.0)
+        assert panel._x_max.value() == pytest.approx(4.0)
 
     def test_fit_range_prompt_allows_min_below_dataset_extent(
         self, panel: PlotPanel, sample_dataset: MuonDataset
@@ -2624,7 +2677,6 @@ class TestPlotPanel:
         x_min, x_max = panel.get_fit_range()
         assert x_min == pytest.approx(-1.0)
         assert x_max == pytest.approx(float(sample_dataset.time.max()))
-        assert panel._x_min.value() == pytest.approx(-1.0)
 
     def test_get_current_plot_export_data_available_with_plotted_data(
         self, panel: PlotPanel, sample_dataset: MuonDataset

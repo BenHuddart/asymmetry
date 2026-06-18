@@ -512,6 +512,9 @@ class MainWindow(QMainWindow):
         self._frequency_recompute_inflight: set[tuple[int, RepresentationType]] = set()
         self._frequency_recompute_limits: dict[tuple[int, RepresentationType], tuple] = {}
         self._frequency_display_key: tuple[int, RepresentationType] | None = None
+        # True while the frequency view shows a multi-run overlay (a comparison
+        # display with no single fit/moments target). Gates single-fit blocking.
+        self._frequency_overlay_active: bool = False
         # Set when a project open is cancelled mid-prefetch: the loaded set is
         # known-incomplete, so saving would silently drop the unloaded runs.
         self._project_load_incomplete = False
@@ -1525,6 +1528,8 @@ class MainWindow(QMainWindow):
             self._plot_panel.view_limits_changed.connect(self._on_plot_view_limits_changed)
         if hasattr(self._plot_panel, "overlay_toggled"):
             self._plot_panel.overlay_toggled.connect(self._on_overlay_toggled)
+        if hasattr(self._frequency_plot_panel, "overlay_toggled"):
+            self._frequency_plot_panel.overlay_toggled.connect(self._on_frequency_overlay_toggled)
         if hasattr(self._plot_panel, "time_view_changed"):
             self._plot_panel.time_view_changed.connect(self._on_plot_time_view_changed)
         if hasattr(self._plot_panel, "polarization_axis_changed"):
@@ -1538,6 +1543,14 @@ class MainWindow(QMainWindow):
         self._fit_panel.fit_completed.connect(self._on_fit_completed)
         if hasattr(self._fit_panel, "set_single_fit_restore_provider"):
             self._fit_panel.set_single_fit_restore_provider(self._single_fit_restore_payload)
+        if hasattr(self._multi_group_fit_window, "set_single_grouped_restore_provider"):
+            self._multi_group_fit_window.set_single_grouped_restore_provider(
+                self._grouped_single_restore_payload
+            )
+        if hasattr(self._multi_group_fit_window, "share_function_with_group_requested"):
+            self._multi_group_fit_window.share_function_with_group_requested.connect(
+                self._on_share_grouped_function_with_group
+            )
         # Auto-couple the single composite fit to the plot's RRF display: when
         # the rotating frame is active there, the fit runs in that frame.
         if hasattr(self._fit_panel, "set_rrf_frequency_provider"):
@@ -1987,10 +2000,17 @@ class MainWindow(QMainWindow):
         # where building a field scan from the selected runs is its workflow.
         modes = ["fb_asymmetry", "integral_scan"]
         selected = list(self._data_browser.get_selected_datasets())
-        if not (len(selected) > 1 and self._overlay_enabled()):
-            # Overlaying several runs has no single run to transform, so the
+        # A single data-group header selects all its members but, like a single run,
+        # has one representative member for the per-run (data-gated) views.
+        group_target = self._single_group_view_target(selected)
+        if group_target is not None or not (len(selected) > 1 and self._overlay_enabled()):
+            # Overlaying several unrelated runs has no single run to transform, so the
             # data-gated views are unavailable there.
-            target = self._current_dataset or (selected[0] if len(selected) == 1 else None)
+            target = (
+                group_target
+                or self._current_dataset
+                or (selected[0] if len(selected) == 1 else None)
+            )
             if self._grouped_time_domain_available(target):
                 modes.extend(["groups", "raw_counts"])
             if self._dataset_supports_maxent(target):
@@ -2023,11 +2043,35 @@ class MainWindow(QMainWindow):
             return [self._current_dataset]
         return []
 
+    def _single_group_view_target(self, selected: list[MuonDataset]) -> MuonDataset | None:
+        """Representative member for the per-run views when one data group is selected.
+
+        A group header selects all its members, but the groups / raw-counts / MaxEnt
+        views transform a *single* run, so for a single-group selection they behave
+        like a single-run selection on a representative member (the current run within
+        the group, else its first member). Returns ``None`` for any other selection.
+        """
+        if len(selected) <= 1:
+            return None
+        if not (
+            hasattr(self._data_browser, "is_single_group_selected")
+            and self._data_browser.is_single_group_selected()
+        ):
+            return None
+        return self._select_non_overlay_target(selected)
+
     def _overlay_enabled(self) -> bool:
         """Return whether multi-selection overlays should be shown."""
         if hasattr(self._plot_panel, "is_overlay_enabled"):
             return bool(self._plot_panel.is_overlay_enabled())
         return True
+
+    def _frequency_overlay_enabled(self) -> bool:
+        """Return whether the frequency panel's multi-run overlay is enabled."""
+        panel = getattr(self, "_frequency_plot_panel", None)
+        if panel is not None and hasattr(panel, "is_overlay_enabled"):
+            return bool(panel.is_overlay_enabled())
+        return False
 
     @staticmethod
     def _run_numbers_match(dataset_a: MuonDataset | None, dataset_b: MuonDataset | None) -> bool:
@@ -2191,18 +2235,25 @@ class MainWindow(QMainWindow):
                 if hasattr(self._plot_panel, "current_time_view_mode")
                 else "fb_asymmetry"
             )
+            # A single data-group header selects all its members; the groups/raw-counts
+            # views show one run's detector groups, so render a representative member.
+            group_target = self._single_group_view_target(targets)
             if (
                 time_view_mode in ("groups", "raw_counts")
                 and self._plot_workspace.active_domain() == "time"
-                and len(targets) == 1
+                and (len(targets) == 1 or group_target is not None)
             ):
+                primary = targets[0] if len(targets) == 1 else group_target
                 grouped_targets = self._grouped_time_domain_display_datasets(
-                    targets[0],
+                    primary,
                     lifetime_corrected=time_view_mode != "raw_counts",
                 )
                 if grouped_targets and hasattr(
                     self._plot_panel, "plot_grouped_time_domain_subplots"
                 ):
+                    # Bind the current run to the representative member so fits and
+                    # labels follow the run whose groups are shown.
+                    self._current_dataset = primary
                     render_mode = "grouped_time"
                     rendered_targets = list(grouped_targets)
                     self._plot_panel.plot_grouped_time_domain_subplots(grouped_targets)
@@ -2260,6 +2311,13 @@ class MainWindow(QMainWindow):
     def _current_fit_block_state(self) -> tuple[bool, str]:
         """Return whether the current plot context should block fitting."""
         if hasattr(self, "_plot_workspace") and self._plot_workspace.active_domain() == "frequency":
+            if getattr(self, "_frequency_overlay_active", False):
+                # A multi-run overlay has no single fit target; binding to one of
+                # the overlaid runs would silently mis-attribute the result.
+                return (
+                    True,
+                    "Multiple spectra overlaid — select a single run to fit in the frequency domain.",
+                )
             if self._active_frequency_fit_dataset() is None:
                 return (
                     True,
@@ -5692,21 +5750,19 @@ class MainWindow(QMainWindow):
         return self._frequency_spectra_from_cache(run_number, rep_type)
 
     def _serialize_frequency_spectra_state(self) -> dict[str, list[dict[str, object]]]:
-        """Return a serializable snapshot of cached Fourier spectra."""
-        serialized: dict[str, list[dict[str, object]]] = {}
-        for run_number, spectra in self._frequency_spectra_by_run.items():
-            run_payload: list[dict[str, object]] = []
-            for spectrum in spectra:
-                run_payload.append(
-                    {
-                        "time": np.asarray(spectrum.time, dtype=float).tolist(),
-                        "asymmetry": np.asarray(spectrum.asymmetry, dtype=float).tolist(),
-                        "error": np.asarray(spectrum.error, dtype=float).tolist(),
-                        "metadata": dict(spectrum.metadata),
-                    }
-                )
-            serialized[str(int(run_number))] = run_payload
-        return serialized
+        """Return the persisted Fourier-spectra state — deliberately empty.
+
+        FFT spectra are **not** persisted as arrays. Every cached spectrum is
+        backed by a recipe-only ``FREQ_FFT`` representation that recomputes it on
+        load (the project-wide recipe-only policy; ``recompute_on_load`` is True
+        and the FFT recipe round-trips bit-for-bit). Inlining the (often
+        100k+-point) time/asymmetry/error arrays only bloated the file — one
+        high-resolution project reached ~1.2 GB of ASCII floats. The empty payload
+        keeps the schema key stable; :meth:`_restore_frequency_spectra_state`
+        still reads legacy inlined arrays from projects saved before this change,
+        so old projects open unchanged and shrink on the next save.
+        """
+        return {}
 
     def _restore_frequency_spectra_state(self, state: object) -> None:
         """Restore cached Fourier spectra from serialized project state."""
@@ -5765,6 +5821,8 @@ class MainWindow(QMainWindow):
         preserve_x_limits: bool = False,
     ) -> None:
         """Render the cached frequency spectra for *run_number*, or clear the tab."""
+        # This is the single-run render path; any prior multi-run overlay is gone.
+        self._frequency_overlay_active = False
         preserved_x_limits: tuple[float, float] | None = None
         preserved_y_limits: tuple[float, float] | None = None
         if hasattr(self._frequency_plot_panel, "get_view_limits"):
@@ -5963,6 +6021,81 @@ class MainWindow(QMainWindow):
                 run_number, rep_type, spectra, preserved_x_limits, preserved_y_limits
             )
 
+    def _ensure_frequency_spectra_for_runs_async(
+        self,
+        run_numbers,
+        rep_type: RepresentationType,
+        on_ready,
+        *,
+        busy_message: str | None = None,
+    ) -> None:
+        """Recompute any uncached spectra for *run_numbers* off-thread, then ``on_ready()``.
+
+        The multi-run counterpart of :meth:`_start_async_frequency_recompute`,
+        for batch callers (send-moments, global fit-dataset prep) that previously
+        recomputed each run synchronously on the GUI thread. Only recomputable,
+        uncached, not-already-inflight runs are computed (the pure ``compute()``
+        runs on one worker); results promote into the shared representations on
+        the GUI thread before ``on_ready`` runs there. Runs that are cached,
+        not recomputable, or in flight are left as-is, so ``on_ready`` always
+        runs (once) even when nothing was recomputed.
+        """
+        targets: list[tuple[int, object, object]] = []
+        for raw in run_numbers:
+            try:
+                run_number = int(raw)
+            except (TypeError, ValueError):
+                continue
+            if (run_number, rep_type) in self._frequency_recompute_inflight:
+                continue
+            target = self._frequency_recompute_target(run_number, rep_type)
+            if target is not None:
+                representation, run = target
+                targets.append((run_number, representation, run))
+        if not targets:
+            on_ready()
+            return
+
+        name = self._frequency_status_name(rep_type)
+        for run_number, _rep, _run in targets:
+            self._frequency_recompute_inflight.add((run_number, rep_type))
+        self._frequency_overlay.show_message(
+            busy_message or f"Computing {name} for {len(targets)} run(s)…"
+        )
+        self._set_status_state(f"Computing {name}…")
+        started_at = time.perf_counter()
+        rep_by_run = {run_number: rep for (run_number, rep, _run) in targets}
+
+        def _worker(_worker_handle):
+            # compute() is pure (returns curves, mutates nothing) so the whole
+            # batch is safe off-thread; promotion happens in the completion.
+            return [(run_number, rep.compute(run)) for (run_number, rep, run) in targets]
+
+        def _finished(results):
+            for run_number, spectra in results:
+                self._frequency_recompute_inflight.discard((run_number, rep_type))
+                rep_by_run[run_number].cache_datasets(list(spectra) if spectra else [])
+                self._frequency_spectra_from_cache(run_number, rep_type)
+                self._lazy_recompute_failures.discard((run_number, rep_type))
+            self._finish_frequency_recompute_ui()
+            self._log_perf_event("batch_spectrum_recompute", started_at, runs=len(results))
+            on_ready()
+
+        def _error(message):
+            # The batch compute is one task, so a single bad recipe fails the
+            # lot; mark every target failed so the recompute is not retried in a
+            # loop (an explicit Compute FFT clears the marker). Runs are still
+            # recoverable manually.
+            for run_number, _rep, _run in targets:
+                self._frequency_recompute_inflight.discard((run_number, rep_type))
+                self._lazy_recompute_failures.add((run_number, rep_type))
+            self._finish_frequency_recompute_ui()
+            self._set_fourier_status(f"Could not recompute {name}: {message}")
+            # Proceed with whatever is cached; callers report still-missing runs.
+            on_ready()
+
+        self._tasks.start(_worker, on_finished=_finished, on_error=_error)
+
     # ── spectral moments ───────────────────────────────────────────────────
 
     def _spectral_moments_widgets(self) -> dict:
@@ -6138,6 +6271,17 @@ class MainWindow(QMainWindow):
         )
         if not selected and active_ds is not None:
             selected = [int(getattr(active_ds, "run_number", 0))]
+        # Recompute any uncached spectra off-thread first, then extract moments
+        # in the continuation (where every recomputable run is a cache hit) — so
+        # sending many runs' moments never blocks the GUI.
+        self._ensure_frequency_spectra_for_runs_async(
+            selected,
+            rep_type,
+            on_ready=lambda: self._finish_moments_send_to_trend(widget, selected, rep_type),
+        )
+
+    def _finish_moments_send_to_trend(self, widget, selected, rep_type) -> None:
+        """Extract moments for *selected* and record them as a computed series."""
         member_runs: list[int] = []
         results_by_run: dict[int, dict] = {}
         skipped: list[int] = []
@@ -6200,11 +6344,99 @@ class MainWindow(QMainWindow):
         self._set_fourier_status(note)
 
     def _sync_frequency_plot_for_current_dataset(self) -> None:
-        """Render the cached frequency spectra for the current dataset selection."""
+        """Render the cached frequency spectra for the current dataset selection.
+
+        With the overlay toggle on and more than one run selected, the selected
+        runs' cached spectra are overlaid on one axis; otherwise the active run
+        is rendered on its own (the single-run path, which can still recompute).
+        """
+        if self._frequency_overlay_enabled():
+            run_numbers = self._selected_frequency_run_numbers()
+            if len(run_numbers) > 1:
+                self._render_frequency_overlay(run_numbers)
+                return
         run_number = (
             None if self._current_dataset is None else int(self._current_dataset.run_number)
         )
         self._sync_frequency_plot_for_run(run_number)
+
+    def _on_frequency_overlay_toggled(self, _enabled: bool) -> None:
+        """Re-render the frequency view when the overlay toggle changes."""
+        self._sync_frequency_plot_for_current_dataset()
+
+    def _selected_frequency_run_numbers(self) -> list[int]:
+        """Ordered, de-duplicated run numbers of the current dataset selection."""
+        run_numbers: list[int] = []
+        seen: set[int] = set()
+        for dataset in self._selected_or_current_datasets():
+            try:
+                run_number = int(dataset.run_number)
+            except (TypeError, ValueError):
+                continue
+            if run_number not in seen:
+                seen.add(run_number)
+                run_numbers.append(run_number)
+        return run_numbers
+
+    def _cached_frequency_spectra(self, run_number: int, rep_type: RepresentationType) -> list:
+        """Pure read of a run's cached/primary spectra (no recompute, no markers).
+
+        Unlike :meth:`_frequency_spectra_from_cache`, this never promotes a
+        primary into the cache or clears pending-recompute markers — overlay
+        gathers many runs and must not perturb another run's recompute state.
+        """
+        cache = self._frequency_cache(rep_type)
+        cached = cache.get(run_number)
+        if cached:
+            return list(cached)
+        container = self._project_model.datasets.get(run_number)
+        representation = container.get(rep_type) if container is not None else None
+        if representation is not None and representation.primary is not None:
+            return [representation.primary]
+        return []
+
+    def _render_frequency_overlay(self, run_numbers: list[int]) -> None:
+        """Overlay the cached spectra of every selected run on one axis.
+
+        Runs whose spectrum has not been computed yet are skipped (and reported)
+        rather than triggering N recomputes. If fewer than two runs have a
+        spectrum, fall back to the single-run render of the active dataset.
+        """
+        rep_type = self._active_frequency_rep_type()
+        spectra: list = []
+        rendered_runs: list[int] = []
+        missing: list[int] = []
+        for run_number in run_numbers:
+            cached = self._cached_frequency_spectra(run_number, rep_type)
+            if cached:
+                spectra.extend(cached)
+                rendered_runs.append(run_number)
+            else:
+                missing.append(run_number)
+
+        if len(rendered_runs) <= 1:
+            # Nothing to overlay (0 or 1 computed): render the one computed run if
+            # there is one (so an available spectrum is never hidden behind an
+            # empty prompt), else the active run. _sync_frequency_plot_for_run
+            # clears _frequency_overlay_active.
+            run_number = rendered_runs[0] if rendered_runs else None
+            if run_number is None and self._current_dataset is not None:
+                run_number = int(self._current_dataset.run_number)
+            self._sync_frequency_plot_for_run(run_number)
+            return
+
+        # A multi-run overlay is not keyed to one (run, rep), so clear the
+        # display key — a recompute completing for one member must not redraw
+        # over the overlay.
+        self._frequency_display_key = None
+        self._frequency_overlay_active = True
+        self._render_frequency_spectra(rendered_runs[0], rep_type, spectra, None, None)
+        if missing:
+            name = self._frequency_status_name(rep_type)
+            self._set_fourier_status(
+                f"Overlaying {len(rendered_runs)} runs; {len(missing)} selected run(s) have no "
+                f"{name} yet — compute them to include."
+            )
 
     def _selected_fourier_group_ids(self, dataset: MuonDataset) -> list[int]:
         """Return the detector groups currently enabled for grouped Fourier transforms."""
@@ -6337,8 +6569,13 @@ class MainWindow(QMainWindow):
         if self._fourier_phase_estimate_active:
             self._set_fourier_status("Phase estimation is already running.")
             return
-        # Preserve any live MaxEnt panel edits across the cascaded re-sync below
-        # (the Fourier sync also refreshes the MaxEnt group table).
+        # Preserve any live panel edits across the cascaded re-sync below. The
+        # sync restores both tables from their per-run stores, so live edits the
+        # stores haven't captured yet (e.g. Include-column toggles, which do not
+        # fire a store) would otherwise be clobbered — re-checking groups the
+        # user just disabled. Snapshot the live state into the stores first so
+        # the re-sync is a no-op for those edits.
+        self._store_fourier_group_phase_state_for_dataset(self._current_dataset)
         self._store_maxent_panel_state_for_dataset(self._current_dataset)
         self._sync_fourier_panel_for_dataset(self._current_dataset)
         # Snapshot launch-time context on the GUI thread; the estimation (FFT per
@@ -6404,8 +6641,13 @@ class MainWindow(QMainWindow):
             self._set_fourier_status("Select a grouped run before computing the Fourier transform.")
             return
 
-        # Preserve any live MaxEnt panel edits across the cascaded re-sync below
-        # (the Fourier sync also refreshes the MaxEnt group table).
+        # Preserve any live panel edits across the cascaded re-sync below. The
+        # sync restores both tables from their per-run stores, so live edits the
+        # stores haven't captured yet (e.g. Include-column toggles, which do not
+        # fire a store) would otherwise be clobbered — re-checking groups the
+        # user just disabled. Snapshot the live state into the stores first so
+        # the re-sync is a no-op for those edits.
+        self._store_fourier_group_phase_state_for_dataset(self._current_dataset)
         self._store_maxent_panel_state_for_dataset(self._current_dataset)
         self._sync_fourier_panel_for_dataset(self._current_dataset)
 
@@ -8025,6 +8267,15 @@ class MainWindow(QMainWindow):
             RepresentationType.FREQ_FFT,
             RepresentationType.FREQ_MAXENT,
         )
+        # Every model-function parameter in a grouped fit is shared across a run's
+        # detector groups (a "local"/"global" role is about sharing ACROSS runs, not
+        # within a run), so it holds one value per source run regardless of role. The
+        # only per-(run, group) quantities are the nuisance block, which are not
+        # trendable scientific parameters. So always collapse a group series to one
+        # trend point per source run and drop the nuisances — the parameters tab then
+        # shows only the model-function parameters, once per dataset.
+        collapse_groups = series.member_kind == "groups"
+        seen_source_runs: set[int] = set()
         for member_key in series.member_run_numbers:
             summary = series.results_by_run.get(member_key)
             if not summary or not summary.get("success"):
@@ -8035,16 +8286,27 @@ class MainWindow(QMainWindow):
             # members read their own richer spectrum metadata, so they are not
             # routed through the browser here.
             browser_run: int | None = None
+            row_run_number = member_key
             if series.member_kind == "groups":
                 source_run = series.source_run_for(member_key)
+                if collapse_groups:
+                    if source_run in seen_source_runs:
+                        continue
+                    seen_source_runs.add(source_run)
                 dataset = (
                     self._data_browser.get_dataset(source_run)
                     if hasattr(self._data_browser, "get_dataset")
                     else None
                 )
                 browser_run = source_run
-                group_idx = abs(member_key) % 1000
-                run_label = f"R{source_run}/G{group_idx}"
+                if collapse_groups:
+                    # One point per run, keyed by the source run (matches the
+                    # browser-highlight mapping); label resolved from the dataset.
+                    row_run_number = source_run
+                    run_label = None
+                else:
+                    group_idx = abs(member_key) % 1000
+                    run_label = f"R{source_run}/G{group_idx}"
             else:
                 # Frequency-domain spectra may carry richer / more-accurate
                 # metadata than the time-domain entry in the data browser.
@@ -8060,7 +8322,7 @@ class MainWindow(QMainWindow):
 
             meta = getattr(dataset, "metadata", {}) or {}
             if run_label is None:
-                run_label = str(summary.get("run_label") or meta.get("run_label") or member_key)
+                run_label = str(summary.get("run_label") or meta.get("run_label") or row_run_number)
 
             # Fallback coordinate for older series persisted before T/B was
             # Lazily resolve the browser's *displayed* coordinate (honouring the
@@ -8104,20 +8366,34 @@ class MainWindow(QMainWindow):
                 else {}
             )
 
+            values = dict(summary.get("parameters", {}))
+            errors = dict(summary.get("uncertainties", {}))
+            if collapse_groups:
+                # The collapsed row represents the whole run via one group member,
+                # so drop the per-group nuisance parameters: only the cross-group
+                # physics params (global/fixed, identical across groups) are
+                # meaningful per run. Keeping a nuisance would expose it as a
+                # trend Y that silently plots just this one group's value.
+                for nuisance in series.nuisance_params:
+                    values.pop(nuisance, None)
+                    errors.pop(nuisance, None)
+
             rows.append(
                 {
-                    "run_number": member_key,
+                    "run_number": row_run_number,
                     "run_label": run_label,
                     "field": float(field),
                     "temperature": float(temperature),
-                    "values": dict(summary.get("parameters", {})),
-                    "errors": dict(summary.get("uncertainties", {})),
+                    "values": values,
+                    "errors": errors,
                     "custom_values": custom_values,
                 }
             )
         return rows
 
-    def _refresh_trend_panel(self, *, select_batch_id: str | None = None) -> None:
+    def _refresh_trend_panel(
+        self, *, select_batch_id: str | None = None, surface: bool = True
+    ) -> None:
         """Reload the trend panel from the project model for the active representation.
 
         This is the *pull*-based entry point called after every fit that records
@@ -8127,6 +8403,11 @@ class MainWindow(QMainWindow):
         ``select_batch_id`` requests that the trend panel make that series the
         active selection (used after a batch completes so the just-computed
         series is surfaced rather than left behind a stale prior selection).
+
+        ``surface`` raises the fit-parameters dock when the representation has
+        series. A *single* grouped fit passes ``surface=False`` so it stays on
+        the plot/fit view like an ordinary single fit (the series is still loaded
+        into the panel, just not brought to the front).
         """
         if not hasattr(self, "_fit_parameters_panel"):
             return
@@ -8143,6 +8424,11 @@ class MainWindow(QMainWindow):
 
         entries: list[tuple[str, str, list[dict]]] = []
         highlight_map: dict[str, list[int]] = {}
+        # The fitted cross-run-shared (role "global") parameters per series, so the
+        # trend panel can show the "Global fitting parameters" header. The model owns
+        # this (FitSeries.shared_parameters reads its own recorded results); without it
+        # a reloaded global/grouped series shows "None".
+        global_params_by_id: dict[str, dict[str, dict[str, float]]] = {}
         for idx, series in enumerate(series_for_rep, start=1):
             row_dicts = self._build_series_rows(series)
             if not row_dicts:
@@ -8150,6 +8436,9 @@ class MainWindow(QMainWindow):
             batch_id = series.batch_id
             name = series.display_name(f"Series {idx}")
             entries.append((batch_id, name, row_dicts))
+            shared = series.shared_parameters()
+            if shared:
+                global_params_by_id[batch_id] = shared
             # Runs to highlight: source runs for group series, member keys for run series.
             if series.member_kind == "groups":
                 highlight_map[batch_id] = sorted(set(series.member_source_run.values()))
@@ -8161,9 +8450,10 @@ class MainWindow(QMainWindow):
                 entries,
                 highlight_runs_by_id=highlight_map,
                 select_id=select_batch_id,
+                global_params_by_id=global_params_by_id,
             )
 
-        if entries and hasattr(self, "_dock_fit_parameters"):
+        if surface and entries and hasattr(self, "_dock_fit_parameters"):
             # Route through _show_panel so the per-representation closed-tab
             # memory is cleared — the app is deliberately surfacing the dock.
             self._show_panel("fit_parameters")
@@ -8314,6 +8604,33 @@ class MainWindow(QMainWindow):
             return {}
         return None
 
+    def _grouped_single_restore_payload(self, dataset) -> dict | None:
+        """Resolve the persisted grouped single-fit form for *dataset*'s run.
+
+        Mediator for ``MultiGroupFitWindow.set_dataset`` (installed via
+        ``set_single_grouped_restore_provider``). Returns the run's
+        ``TIME_GROUPS`` slot ``ui_state`` when it holds a grouped *single* fit
+        (provenance ``"single"``); otherwise ``None`` so the grouped form is left
+        untouched (a batch member's pointer slot or an unfit run must not
+        repopulate the surface). Mirrors :meth:`_single_fit_restore_payload`.
+        """
+        if dataset is None:
+            return None
+        try:
+            run_number = int(dataset.run_number)
+        except (TypeError, ValueError):
+            return None
+        representation = self._project_model.representation(
+            run_number, RepresentationType.TIME_GROUPS
+        )
+        if representation is None:
+            return None
+        slot = representation.fit
+        if slot is None or slot.provenance != "single":
+            return None
+        ui_state = slot.ui_state if isinstance(slot.ui_state, dict) else None
+        return copy.deepcopy(ui_state) if ui_state else None
+
     def _single_fit_run_number(self) -> int | None:
         """Run a single fit (and its plot overlay) is keyed under.
 
@@ -8330,6 +8647,45 @@ class MainWindow(QMainWindow):
             return int(self._current_dataset.run_number)
         except (TypeError, ValueError):
             return None
+
+    def _next_batch_id(self) -> str:
+        """Allocate the next ``batch-N`` series id and advance the counter."""
+        batch_id = f"batch-{self._next_batch_index}"
+        self._next_batch_index += 1
+        return batch_id
+
+    def _record_fit_series(
+        self,
+        series: FitSeries,
+        *,
+        slot_runs: list[int],
+        slot_factory,
+    ) -> str:
+        """Register *series* and write one member ``FitSlot`` per source run.
+
+        The shared multi→series core for every batch recording path: sort the
+        members against the loaded runs, store the series, write each source
+        run's pointer/result slot via ``slot_factory(run)``, and re-evaluate
+        divergence. ``slot_runs`` is the set of physical runs that own a slot
+        (member runs for a run-series, unique source runs for a group-series).
+        Returns the series' ``batch_id``.
+        """
+        runs_by_number: dict[int, object] = {}
+        if hasattr(self._data_browser, "get_dataset"):
+            for run in set(slot_runs):
+                dataset = self._data_browser.get_dataset(run)
+                if dataset is not None and dataset.run is not None:
+                    runs_by_number[run] = dataset.run
+        series.sort_members(runs_by_number)
+        self._project_model.add_batch(series)
+        for run in sorted(set(slot_runs)):
+            representation = self._project_model.ensure_dataset(int(run)).ensure(series.rep_type)
+            representation.fit = slot_factory(int(run))
+        # Fresh members all share the canonical model (no divergence yet); the
+        # refresh also clears stale divergence from any earlier series on these
+        # representations.
+        self._project_model.refresh_divergence()
+        return series.batch_id
 
     def _record_single_fit_slot(self, fit_result) -> None:
         """Write the active representation's single FitSlot into the project model."""
@@ -8418,40 +8774,35 @@ class MainWindow(QMainWindow):
             # is saved/reloaded (see _dataset_trend_coords).
             summary.update(self._dataset_trend_coords(int(run)))
             results_by_run[int(run)] = summary
+        batch_id = self._next_batch_id()
+        # When launched from a data-group header, name the series after that group
+        # (e.g. "T = 150 K") rather than the model formula + run span — matching the
+        # grouped path so the same "fit from group header" action labels consistently.
+        batch_label = self._data_group_name_for_runs(
+            member_runs
+        ) or self._default_batch_series_label(model_label, member_runs)
         batch = FitSeries(
-            f"batch-{self._next_batch_index}",
+            batch_id,
             rep_type,
-            label=self._default_batch_series_label(model_label, member_runs),
+            label=batch_label,
             member_run_numbers=member_runs,
             order_key="field",
             canonical_model=canonical_model,
             param_roles=param_roles,
             results_by_run=results_by_run,
         )
-        self._next_batch_index += 1
-
-        runs_by_number: dict[int, object] = {}
-        if hasattr(self._data_browser, "get_dataset"):
-            for run in member_runs:
-                dataset = self._data_browser.get_dataset(run)
-                if dataset is not None and dataset.run is not None:
-                    runs_by_number[run] = dataset.run
-        batch.sort_members(runs_by_number)
-        self._project_model.add_batch(batch)
-
         template_parameters = [dict(p) for p in state.get("parameters", []) if isinstance(p, dict)]
-        for run, payload in normalized_payloads.items():
-            representation = self._project_model.ensure_dataset(int(run)).ensure(rep_type)
-            representation.fit = FitSlot(
+        return self._record_fit_series(
+            batch,
+            slot_runs=member_runs,
+            slot_factory=lambda run: FitSlot(
                 model=canonical_model,
                 parameters=template_parameters,
                 result=dict(results_by_run[int(run)]),
                 provenance=provenance,
-                batch_id=batch.batch_id,
-            )
-        # Fresh batch members all share the canonical model (no divergence yet).
-        self._project_model.refresh_divergence()
-        return batch.batch_id
+                batch_id=batch_id,
+            ),
+        )
 
     #: Display quantity name for the integral-asymmetry scan (percent units).
     _SCAN_QUANTITY = "Integral asymmetry (%)"
@@ -8844,13 +9195,21 @@ class MainWindow(QMainWindow):
         return {}
 
     def _record_grouped_fit_series(self, grouped_datasets, results_dict) -> str | None:
-        """Persist a completed grouped fit as a ``FitSeries(member_kind="groups")``.
+        """Persist a completed grouped time-domain fit.
 
-        Each ``(run, group)`` member is keyed by its synthetic group key so the
-        series' ``results_by_run`` drives parameter trending exactly like a run
-        series.  The two-tier classification is recorded as physics ``param_roles``
-        plus the always-per-group ``nuisance_params`` block.  Each source run's
-        grouped representation gets one pointer ``FitSlot`` into the series.
+        A **multi-run batch** (≥2 source runs) is recorded as a
+        ``FitSeries(member_kind="groups")``: each ``(run, group)`` member is keyed
+        by its synthetic group key so the series' ``results_by_run`` drives
+        parameter trending exactly like a run series.  The two-tier classification
+        is recorded as physics ``param_roles`` plus the always-per-group
+        ``nuisance_params`` block, and each source run's grouped representation
+        gets one pointer ``FitSlot`` into the series.  Returns the new batch id.
+
+        A **single-dataset** grouped fit (one source run) is *not* a series — a
+        one-point series has no varying parameter to trend.  It is stored like an
+        ordinary single fit: the per-group results land directly on the dataset's
+        grouped ``FitSlot`` (provenance ``"single"``, no ``batch_id``) and the
+        method returns ``None``.
         """
         if not isinstance(grouped_datasets, list) or not isinstance(results_dict, dict):
             return None
@@ -8915,12 +9274,58 @@ class MainWindow(QMainWindow):
         if not member_keys:
             return None
 
+        unique_source_runs = sorted(set(member_source_run.values()))
+
+        # A single-dataset grouped fit behaves like an ordinary single fit: its
+        # per-group results are stored directly on the dataset's grouped FitSlot
+        # and NO FitSeries is created. A one-source-run series collapses to a
+        # single trend point with no varying parameter, so it is un-trendable and
+        # would only clutter the trend selector. A FitSeries is created only for a
+        # multi-run batch — the unit parameter trending actually consumes.
+        # ``member_keys`` is non-empty here, so there is always ≥1 source run.
+        if len(unique_source_runs) == 1:
+            source_run = int(unique_source_runs[0])
+            representation = self._project_model.ensure_dataset(source_run).ensure(rep_type)
+            # Capture the grouped single-fit form so reselecting/reopening the run
+            # repopulates it (mirrors the FB single fit's ui_state); restored by
+            # _grouped_single_restore_payload via the window's restore provider.
+            ui_state = None
+            if self._multi_group_fit_window is not None and hasattr(
+                self._multi_group_fit_window, "single_grouped_form_state"
+            ):
+                ui_state = self._multi_group_fit_window.single_grouped_form_state()
+            # Stamp the stored per-group summaries with provenance "single" so they
+            # agree with the slot (they were built with the series provenance,
+            # "global"/"batch", which is meaningless without a series).
+            representation.fit = FitSlot(
+                model=canonical_model,
+                result={
+                    "groups": {
+                        str(key): {**results_by_run[key], "provenance": "single"}
+                        for key in member_keys
+                    }
+                },
+                provenance="single",
+                batch_id=None,
+                ui_state=ui_state,
+            )
+            # Drop any stale series association and re-evaluate divergence so an
+            # earlier batch that included this run reflects the new single fit.
+            self._project_model.refresh_divergence()
+            return None
+
+        batch_id = self._next_batch_id()
+        # When the batch was launched from a data-group header, name the series after
+        # that group (e.g. "T = 150 K") rather than the model formula + run span.
+        series_label = self._data_group_name_for_runs(
+            unique_source_runs
+        ) or self._default_batch_series_label(
+            model_label, list(member_source_run.values()), groups=True
+        )
         series = FitSeries(
-            f"batch-{self._next_batch_index}",
+            batch_id,
             rep_type,
-            label=self._default_batch_series_label(
-                model_label, list(member_source_run.values()), groups=True
-            ),
+            label=series_label,
             member_kind="groups",
             member_run_numbers=member_keys,
             member_source_run=member_source_run,
@@ -8930,29 +9335,17 @@ class MainWindow(QMainWindow):
             nuisance_params=nuisance_params,
             results_by_run=results_by_run,
         )
-        self._next_batch_index += 1
-
-        runs_by_number: dict[int, object] = {}
-        if hasattr(self._data_browser, "get_dataset"):
-            for run in set(member_source_run.values()):
-                dataset = self._data_browser.get_dataset(run)
-                if dataset is not None and dataset.run is not None:
-                    runs_by_number[run] = dataset.run
-        series.sort_members(runs_by_number)
-        self._project_model.add_batch(series)
-
-        for run in sorted(set(member_source_run.values())):
-            representation = self._project_model.ensure_dataset(int(run)).ensure(rep_type)
-            representation.fit = FitSlot(
+        # One pointer slot per source run; the series carries the per-group results.
+        return self._record_fit_series(
+            series,
+            slot_runs=unique_source_runs,
+            slot_factory=lambda run: FitSlot(
                 model=canonical_model,
-                result={"series_id": series.batch_id},
+                result={"series_id": batch_id},
                 provenance=provenance,
-                batch_id=series.batch_id,
-            )
-        # Fresh group-series members all share the canonical model; clear stale
-        # divergence state from any earlier series on the same representations.
-        self._project_model.refresh_divergence()
-        return series.batch_id
+                batch_id=batch_id,
+            ),
+        )
 
     def _add_single_fit_to_series(self, run_number: int, series_id: str) -> bool:
         """Add a compatible single fit (one run) as a member of an existing series.
@@ -8987,6 +9380,28 @@ class MainWindow(QMainWindow):
         series.sort_members(runs_by_number)
         self._project_model.refresh_divergence()
         return True
+
+    def _data_group_name_for_runs(self, runs) -> str | None:
+        """Data-group name shared by every run, or ``None``.
+
+        Returns the name when all ``runs`` belong to one data group (i.e. the batch
+        was launched from that group's header), so the series can be named after the
+        group (e.g. "T = 150 K") rather than the model formula + run span.
+        """
+        run_list = [int(r) for r in (runs or [])]
+        if not run_list:
+            return None
+        browser = self._data_browser
+        if not (hasattr(browser, "get_group_id_for_run") and hasattr(browser, "get_group_name")):
+            return None
+        group_ids = {browser.get_group_id_for_run(r) for r in run_list}
+        if len(group_ids) != 1:
+            return None
+        group_id = next(iter(group_ids))
+        if not group_id:
+            return None
+        name = browser.get_group_name(group_id)
+        return name.strip() if isinstance(name, str) and name.strip() else None
 
     @staticmethod
     def _default_batch_series_label(
@@ -9092,28 +9507,43 @@ class MainWindow(QMainWindow):
             run_number=self._single_fit_run_number(),
         )
 
-    def _on_share_single_function_with_group(self, source_run_number: int) -> None:
-        """Copy single-fit function settings from one run to its data-group peers."""
+    def _data_group_peer_runs(self, source_run_number: int) -> tuple[object, list[int]] | None:
+        """Return ``(group_name, peer_run_numbers)`` for *source_run*'s data group.
+
+        Sets an explanatory status message and returns ``None`` when the browser
+        has no data groups, the run is ungrouped, or the group has no other
+        members. Shared by the FB and grouped "Share with Group" handlers.
+        """
         if not hasattr(self._data_browser, "get_group_id_for_run"):
             self.statusBar().showMessage("Data-group sharing unavailable in this browser mode")
-            return
-
+            return None
         group_id = self._data_browser.get_group_id_for_run(source_run_number)
         if not group_id:
             self.statusBar().showMessage("Selected run is not in a data group")
-            return
-
+            return None
         member_runs = []
         if hasattr(self._data_browser, "get_group_member_run_numbers"):
             member_runs = self._data_browser.get_group_member_run_numbers(group_id)
         if not member_runs:
             self.statusBar().showMessage("No data-group members found to share with")
-            return
-
+            return None
         target_runs = [rn for rn in member_runs if int(rn) != int(source_run_number)]
         if not target_runs:
             self.statusBar().showMessage("Data group has no other members to share with")
+            return None
+        group_name = (
+            self._data_browser.get_group_name(group_id)
+            if hasattr(self._data_browser, "get_group_name")
+            else group_id
+        )
+        return group_name, target_runs
+
+    def _on_share_single_function_with_group(self, source_run_number: int) -> None:
+        """Copy single-fit function settings from one run to its data-group peers."""
+        resolved = self._data_group_peer_runs(source_run_number)
+        if resolved is None:
             return
+        group_name, target_runs = resolved
 
         # Resolve target datasets so that file-specific parameter defaults
         # (e.g. B_L from the run's applied field) can be seeded per member.
@@ -9135,16 +9565,45 @@ class MainWindow(QMainWindow):
                 )
             )
 
-        group_name = (
-            self._data_browser.get_group_name(group_id)
-            if hasattr(self._data_browser, "get_group_name")
-            else group_id
-        )
         self._log_panel.log(
             f"Shared fit function from run {source_run_number} to {updated} run(s) in group {group_name}"
         )
         self.statusBar().showMessage(
             f"Shared fit function to {updated} run(s) in group {group_name}"
+        )
+
+    def _on_share_grouped_function_with_group(self, source_run_number: int) -> None:
+        """Copy the grouped single-fit function from one run to its data-group peers."""
+        resolved = self._data_group_peer_runs(source_run_number)
+        if resolved is None:
+            return
+        group_name, target_runs = resolved
+
+        # Resolve target datasets so that file-specific parameter defaults
+        # (e.g. B_L from the run's applied field) can be re-seeded per member.
+        all_browser_datasets: dict[int, MuonDataset] = {}
+        if hasattr(self._data_browser, "_datasets"):
+            for rn, ds in self._data_browser._datasets.items():
+                try:
+                    all_browser_datasets[int(rn)] = ds
+                except (TypeError, ValueError):
+                    pass
+
+        updated = 0
+        if hasattr(self._multi_group_fit_window, "share_single_grouped_function_state"):
+            updated = int(
+                self._multi_group_fit_window.share_single_grouped_function_state(
+                    source_run_number,
+                    target_runs,
+                    datasets_by_run=all_browser_datasets or None,
+                )
+            )
+        self._log_panel.log(
+            f"Shared grouped fit function from run {source_run_number} "
+            f"to {updated} run(s) in group {group_name}"
+        )
+        self.statusBar().showMessage(
+            f"Shared grouped fit function to {updated} run(s) in group {group_name}"
         )
 
     def _on_global_fit_started(self) -> None:
@@ -9270,9 +9729,13 @@ class MainWindow(QMainWindow):
             return
 
         new_batch_id = self._record_grouped_fit_series(grouped_datasets, results_dict)
-        # Pull-based refresh: surface the newly recorded series as the active
-        # selection in the trend panel so it is not lost among older series.
-        self._refresh_trend_panel(select_batch_id=new_batch_id)
+        # Pull-based refresh: surface the newly recorded series in the trend panel
+        # so it is not lost among older series — but only for a multi-run *batch*
+        # grouped fit, which is the only case that records a FitSeries. A single
+        # grouped fit (one source run) records its result on the dataset and
+        # returns no batch id, so it stays on the plot/fit view like an ordinary
+        # single fit.
+        self._refresh_trend_panel(select_batch_id=new_batch_id, surface=new_batch_id is not None)
 
         fit_curves = {}
         if fit_function is None and hasattr(self._fit_panel, "global_fit_formula_string"):
@@ -9910,6 +10373,8 @@ class MainWindow(QMainWindow):
 
         self._fit_panel.clear_fits_for_runs(normalized_runs)
         self._plot_panel.clear_fits_for_runs(normalized_runs)
+        if hasattr(self._multi_group_fit_window, "prune_grouped_single_state"):
+            self._multi_group_fit_window.prune_grouped_single_state(normalized_runs)
         self._log_panel.log(
             f"Deleted fit(s) for group {group_id}: cleared {len(normalized_runs)} dataset fit entry/entries"
         )
@@ -9987,6 +10452,14 @@ class MainWindow(QMainWindow):
         # Multi-selection render mode depends on the plot-panel Overlay toggle.
         if len(selected) > 1:
             self._render_current_selection_plot()
+            # The frequency view tracks the selection too, so extending/shrinking
+            # the selection on the frequency tab refreshes the overlay (the time
+            # render above never touches the frequency panel).
+            if (
+                hasattr(self, "_plot_workspace")
+                and self._plot_workspace.active_domain() == "frequency"
+            ):
+                self._sync_frequency_plot_for_current_dataset()
             self._refresh_vector_axis_selector()
             self._update_fit_block_state()
             if self._overlay_enabled():
@@ -10032,6 +10505,9 @@ class MainWindow(QMainWindow):
             self._multi_group_fit_window.set_member_datasets(analysis_datasets)
         if is_frequency_domain:
             self._apply_frequency_missing_spectra_status(len(analysis_datasets))
+            # The prep above is a pure cached read; fill any uncached recipe-backed
+            # runs off-thread (refreshes the fit datasets when they land).
+            self._kick_frequency_fit_recompute()
 
     def _selection_status_message(self, selected: list) -> str:
         """Return a compact status message for multi-run selections."""
@@ -10185,10 +10661,20 @@ class MainWindow(QMainWindow):
         )
 
     def _frequency_fit_datasets_for_selected_runs(self) -> list[MuonDataset]:
-        """Return cached spectra for selected browser runs in the active frequency view."""
+        """Return the **cached** spectra for selected runs (pure; no side effects).
+
+        A cached-only read so multi-run frequency selection never blocks the GUI
+        thread. Recomputable-but-uncached runs are *recorded* in
+        ``_pending_frequency_fit_recompute`` (the off-thread fill is kicked
+        separately by :meth:`_kick_frequency_fit_recompute`, never from here — so
+        this method can be re-entered freely by the fill's completion without
+        re-triggering it). Genuinely non-recomputable runs (no recipe) land in
+        ``_last_frequency_fit_missing_run_numbers`` for the manual-compute status.
+        """
         selected = self._data_browser.get_selected_datasets()
         datasets: list[MuonDataset] = []
         missing_run_numbers: list[int] = []
+        recompute_runs: list[int] = []
         # Pin the representation the fit datasets are collected from: the
         # async fit-completion handler must resolve run datasets against this
         # same cache, not whichever view happens to be active when the result
@@ -10200,9 +10686,12 @@ class MainWindow(QMainWindow):
                 run_number = int(source.run_number)
             except (TypeError, ValueError):
                 continue
-            spectra = self._ensure_frequency_spectra_for_run(run_number, rep_type)
+            spectra = self._cached_frequency_spectra(run_number, rep_type)
             if not spectra:
-                missing_run_numbers.append(run_number)
+                if self._frequency_recompute_target(run_number, rep_type) is not None:
+                    recompute_runs.append(run_number)  # recipe-backed → kick fill later
+                else:
+                    missing_run_numbers.append(run_number)  # needs a manual Compute
                 continue
             dataset = spectra[0]
             analysis_dataset = self._frequency_plot_panel.get_analysis_dataset(dataset)
@@ -10212,13 +10701,43 @@ class MainWindow(QMainWindow):
                 if safe_dataset is not None:
                     datasets.append(safe_dataset)
         self._last_frequency_fit_missing_run_numbers = missing_run_numbers
+        self._pending_frequency_fit_recompute = recompute_runs
         return datasets
 
-    def _set_frequency_fit_datasets_for_selection(self) -> list[MuonDataset]:
-        """Set frequency global-fit datasets and report selected uncached runs."""
+    def _refresh_frequency_fit_datasets(self) -> list[MuonDataset]:
+        """Read the (cached) spectra and push them to the fit panel + status.
+
+        Terminal: it does **not** kick a recompute, so it is safe as the
+        completion callback of the async fill — a run that still has no spectrum
+        (compute returned nothing, or failed) is simply reported as missing
+        rather than re-queued, which would loop.
+        """
         datasets = self._frequency_fit_datasets_for_selected_runs()
         self._fit_panel.set_datasets(datasets)
         self._apply_frequency_missing_spectra_status(len(datasets))
+        return datasets
+
+    def _kick_frequency_fit_recompute(self) -> None:
+        """Fill the selection's uncached recipe-backed spectra off-thread.
+
+        On completion the fit datasets refresh via the terminal
+        :meth:`_refresh_frequency_fit_datasets` (which does not kick again). Reads
+        the pending list recorded by the most recent
+        :meth:`_frequency_fit_datasets_for_selected_runs`.
+        """
+        pending = list(getattr(self, "_pending_frequency_fit_recompute", ()) or ())
+        if not pending:
+            return
+        self._ensure_frequency_spectra_for_runs_async(
+            pending,
+            self._active_frequency_rep_type(),
+            on_ready=self._refresh_frequency_fit_datasets,
+        )
+
+    def _set_frequency_fit_datasets_for_selection(self) -> list[MuonDataset]:
+        """Set frequency global-fit datasets, report missing, and fill the rest async."""
+        datasets = self._refresh_frequency_fit_datasets()
+        self._kick_frequency_fit_recompute()
         return datasets
 
     def _apply_frequency_missing_spectra_status(self, cached_count: int) -> None:
@@ -11283,6 +11802,8 @@ class MainWindow(QMainWindow):
         else:
             self._fit_panel.set_dataset(None)
             self._fit_panel.set_datasets([])
+        if hasattr(self._multi_group_fit_window, "clear_grouped_single_state"):
+            self._multi_group_fit_window.clear_grouped_single_state()
         self._fit_parameters_panel.clear()
         if self._global_parameter_fit_window is not None:
             self._global_parameter_fit_window.close()

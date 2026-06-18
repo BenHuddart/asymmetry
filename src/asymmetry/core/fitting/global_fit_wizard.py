@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import multiprocessing as mp
 import os
 import threading
 from collections.abc import Callable
@@ -48,6 +47,7 @@ from asymmetry.core.fitting.global_search.heuristics import (
     parameter_localisation_priority,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.fitting.process_pool import open_spawn_pool
 
 _ROLE_DELTA_THRESHOLD = 2.0
 _COMPARABLE_SCORE_DELTA = 2.0
@@ -409,28 +409,20 @@ def _single_fit_table_worker_count(task_count: int) -> int:
     return max(1, min(task_count, _MAX_TEMPLATE_WORKERS))
 
 
-def _spawn_context() -> mp.context.BaseContext:
-    return mp.get_context("spawn")
-
-
 def _try_open_process_pool(
     *,
     max_workers: int,
     progress_callback: Callable[[str], None] | None = None,
     activity: str,
 ) -> ProcessPoolExecutor | None:
-    try:
-        return ProcessPoolExecutor(
-            max_workers=max_workers,
-            mp_context=_spawn_context(),
-        )
-    except (OSError, PermissionError, ValueError):
+    executor = open_spawn_pool(max_workers)
+    if executor is None:
         _progress_log(
             progress_callback,
             f"{activity}: spawn-safe workers unavailable in this environment; "
             "falling back to serial execution.",
         )
-        return None
+    return executor
 
 
 def _shutdown_process_pool(executor: ProcessPoolExecutor) -> None:

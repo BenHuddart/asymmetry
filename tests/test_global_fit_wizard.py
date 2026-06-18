@@ -371,10 +371,6 @@ def test_build_or_complete_single_fit_tables_uses_spawn_safe_executor(
             return self._value
 
     class _FakeExecutor:
-        def __init__(self, *, max_workers, mp_context):
-            created_with["max_workers"] = max_workers
-            created_with["mp_context"] = mp_context
-
         def __enter__(self):
             return self
 
@@ -384,7 +380,15 @@ def test_build_or_complete_single_fit_tables_uses_spawn_safe_executor(
         def submit(self, fn, *args):
             return _FakeFuture(fn(*args))
 
-    monkeypatch.setattr(global_fit_wizard_module, "ProcessPoolExecutor", _FakeExecutor)
+        def shutdown(self, *args, **kwargs):
+            return None
+
+    def _fake_open(max_workers):
+        created_with["max_workers"] = max_workers
+        return _FakeExecutor()
+
+    # Pool creation is delegated to the shared spawn-safe helper; intercept it there.
+    monkeypatch.setattr(global_fit_wizard_module, "open_spawn_pool", _fake_open)
     monkeypatch.setattr(global_fit_wizard_module, "as_completed", lambda futures: list(futures))
 
     _portfolio, recommendations_by_run, generated_runs = (
@@ -395,7 +399,6 @@ def test_build_or_complete_single_fit_tables_uses_spawn_safe_executor(
     )
 
     assert created_with["max_workers"] == 3
-    assert created_with["mp_context"] == global_fit_wizard_module._spawn_context()
     assert set(recommendations_by_run) == {int(dataset.run_number) for dataset in datasets}
     assert set(generated_runs) == {int(dataset.run_number) for dataset in datasets}
 

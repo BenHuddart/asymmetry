@@ -15,12 +15,17 @@ import pytest
 
 pytest.importorskip("PySide6")
 
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QCheckBox
+
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.simulate import (
     build_builtin_template,
     simulate_double_pulse_run,
     simulate_run,
 )
+from asymmetry.gui.panels.fit_panel import FitParameterTable
 from asymmetry.gui.windows.multi_group_fit_window import MultiGroupFitWindow
 
 
@@ -51,6 +56,30 @@ def test_target_selector_pushes_mode_to_both_tabs(qapp, fb_dataset):
     window._target_combo.setCurrentIndex(0)
     assert window._single_fit_tab._count_fit_mode == "all"
     assert window._cost_combo.isEnabled()
+
+
+def test_advanced_fit_target_controls_collapsed_by_default(qapp, fb_dataset):
+    # The advanced count-fit options and calibration promotes are folded into
+    # two sections collapsed by default, so they don't push the model table down.
+    window = MultiGroupFitWindow()
+    window.set_dataset(fb_dataset)
+    assert not window._count_options_section.isExpanded()
+    assert not window._calibration_section.isExpanded()
+
+
+def test_side_row_visible_only_for_single_group_target(qapp, fb_dataset):
+    # Forward/Backward side only means anything for the single-group target, so
+    # its row is shown only then (rather than always present but greyed out).
+    window = MultiGroupFitWindow()
+    window.set_dataset(fb_dataset)
+    # Default target = All groups → Side hidden.
+    assert window._side_combo.isHidden()
+    # Single group → Side shown.
+    window._target_combo.setCurrentIndex(2)
+    assert not window._side_combo.isHidden()
+    # Forward + Backward → hidden again.
+    window._target_combo.setCurrentIndex(1)
+    assert window._side_combo.isHidden()
 
 
 def test_fb_count_fit_runs_and_recovers_alpha(qapp, fb_dataset):
@@ -443,3 +472,217 @@ def test_promote_uses_dedicated_signal_not_a_fit_none(qapp, fb_dataset):
     assert fit_payloads == []
     assert len(promoted) == 1
     assert promoted[0] is fb_dataset
+
+
+# ── FB-parity for the Single grouped surface (carry-forward / share / snapshot) ──
+
+
+def _grouped_run_dataset(run_number: int) -> MuonDataset:
+    """A grouped (F-B) dataset stamped with a distinct run number."""
+    template = build_builtin_template("ideal_pulsed_fb")
+    run = simulate_run(
+        template, _tf, {"A": 20.0, "f": 1.5, "phi": 0.3}, total_events=4e6, alpha=1.25, seed=1
+    )
+    run.run_number = run_number
+    return MuonDataset(
+        time=np.array([]), asymmetry=np.array([]), error=np.array([]), metadata={}, run=run
+    )
+
+
+def _set_single_model(window: MultiGroupFitWindow, names: list[str]) -> None:
+    window._single_fit_tab._set_composite_model(
+        CompositeModel(names, operators=["+"] * (len(names) - 1))
+    )
+
+
+def _single_model_names(window: MultiGroupFitWindow) -> list[str]:
+    return list(window._single_fit_tab._composite_model.component_names)
+
+
+def test_grouped_single_carries_function_forward_and_drops_result(qapp):
+    # Moving to an unseen run keeps the current function but drops the previous
+    # run's result (it belongs to the run it was computed on).
+    win = MultiGroupFitWindow()
+    a = _grouped_run_dataset(701)
+    b = _grouped_run_dataset(702)
+    win.set_dataset(a)
+    _set_single_model(win, ["Gaussian", "Constant"])
+    win._single_fit_tab._result_text.setHtml("<b>chi2 = 1.0</b>")
+
+    win.set_dataset(b)  # unseen run, no recorded fit, no stored form
+    assert _single_model_names(win) == ["Gaussian", "Constant"]  # function carried
+    assert win._single_fit_tab._result_text.toPlainText().strip() == ""  # result dropped
+
+
+def test_grouped_single_per_run_form_round_trips(qapp):
+    # Each run remembers its own in-progress function; switching away and back
+    # restores it rather than carrying the other run's function.
+    win = MultiGroupFitWindow()
+    a = _grouped_run_dataset(703)
+    b = _grouped_run_dataset(704)
+    win.set_dataset(a)
+    _set_single_model(win, ["Gaussian", "Constant"])
+    win.set_dataset(b)
+    _set_single_model(win, ["Exponential", "Constant"])
+
+    win.set_dataset(a)
+    assert _single_model_names(win) == ["Gaussian", "Constant"]
+    win.set_dataset(b)
+    assert _single_model_names(win) == ["Exponential", "Constant"]
+
+
+def test_grouped_single_form_survives_tab_switch(qapp):
+    # An in-progress (unfit) function survives a Single↔Batch round trip.
+    win = MultiGroupFitWindow()
+    win.set_dataset(_grouped_run_dataset(705))
+    _set_single_model(win, ["Gaussian", "Constant"])
+    win._tabs.setCurrentIndex(1)  # → Batch (snapshots the Single form)
+    _set_single_model(win, ["Exponential", "Constant"])  # disturb it
+    win._tabs.setCurrentIndex(0)  # → Single (restores the snapshot)
+    assert _single_model_names(win) == ["Gaussian", "Constant"]
+
+
+def test_grouped_single_share_with_group_copies_to_peers(qapp):
+    # Share-with-Group copies the function into each peer run's stored form, so
+    # selecting a peer inherits it.
+    win = MultiGroupFitWindow()
+    a = _grouped_run_dataset(706)
+    b = _grouped_run_dataset(707)
+    win.set_dataset(a)
+    _set_single_model(win, ["Gaussian", "Constant"])
+
+    assert win.share_single_grouped_function_state(706, [707]) == 1
+    win.set_dataset(b)
+    assert _single_model_names(win) == ["Gaussian", "Constant"]
+
+
+def _single_physics_rows(tab) -> dict[str, int]:
+    table = tab._group_model_table
+    return {
+        table.item(r, FitParameterTable.COL_NAME).data(Qt.ItemDataRole.UserRole): r
+        for r in range(table.rowCount())
+    }
+
+
+def test_grouped_single_multi_oscillatory_seeds_all_field_params(qapp):
+    # A model with more than one oscillatory component seeds *every* field param
+    # from the run's applied field, not just the first (the rest used to keep the
+    # 100 G component default).
+    win = MultiGroupFitWindow()
+    ds = _grouped_run_dataset(730)
+    ds.run.metadata["field"] = 250.0
+    win.set_dataset(ds)
+    tab = win._single_fit_tab
+    tab._set_composite_model(
+        CompositeModel(["OscillatoryField", "OscillatoryField", "Constant"], operators=["+", "+"])
+    )
+    table = tab._group_model_table
+    rows = _single_physics_rows(tab)
+    for fname in ("field_1", "field_2"):
+        assert float(table.item(rows[fname], FitParameterTable.COL_VALUE).text()) == pytest.approx(
+            250.0
+        )
+
+
+def test_grouped_single_oscillatory_phase_fixed_at_zero(qapp):
+    # The individual-groups fit holds every oscillation phase fixed at zero by
+    # default; the phase lives in the per-group relative_phase nuisances.
+    win = MultiGroupFitWindow()
+    ds = _grouped_run_dataset(731)
+    ds.run.metadata["field"] = 180.0
+    win.set_dataset(ds)
+    tab = win._single_fit_tab
+    tab._set_composite_model(
+        CompositeModel(["OscillatoryField", "OscillatoryField", "Constant"], operators=["+", "+"])
+    )
+    table = tab._group_model_table
+    rows = _single_physics_rows(tab)
+    for pname in ("phase_1", "phase_2"):
+        assert float(table.item(rows[pname], FitParameterTable.COL_VALUE).text()) == pytest.approx(
+            0.0
+        )
+        checkbox = table.cellWidget(rows[pname], FitParameterTable.COL_FIX).findChild(QCheckBox)
+        assert checkbox is not None and checkbox.isChecked()
+
+
+def test_grouped_single_share_reseeds_field_params_per_peer(qapp):
+    # Sharing a grouped Single function to a peer at a *different* applied field
+    # must re-seed that peer's field-specific parameters (e.g. B_L) from the
+    # peer's own dataset — in BOTH the grouped-fit "parameters" list and the
+    # per-group "group_model_parameters" list — rather than leaving the source
+    # run's field value. Mirrors the FB single-fit re-seeding.
+    win = MultiGroupFitWindow()
+    source = _grouped_run_dataset(714)
+    source.run.metadata["field"] = 50.0
+    peer = _grouped_run_dataset(715)
+    peer.run.metadata["field"] = 300.0
+
+    # Craft a source state carrying B_L at the source field (50 G) in both
+    # parameter lists, plus a non-field parameter that must stay put.
+    win._single_grouped_state_by_run[714] = {
+        "model_name": "Composite",
+        "result_html": "<b>source fit</b>",
+        "parameters": [
+            {"name": "B_L", "value": 50.0},
+            {"name": "A", "value": 0.2},
+        ],
+        "group_model_parameters": [
+            {"name": "B_L", "value": 50.0},
+            {"name": "Lambda", "value": 1.0},
+        ],
+    }
+
+    datasets_by_run = {714: source, 715: peer}
+    assert win.share_single_grouped_function_state(714, [715], datasets_by_run=datasets_by_run) == 1
+
+    shared = win._single_grouped_state_by_run[715]
+    params = {p["name"]: p["value"] for p in shared["parameters"]}
+    group_params = {p["name"]: p["value"] for p in shared["group_model_parameters"]}
+    # B_L re-seeded from the peer's 300 G field in both lists.
+    assert params["B_L"] == pytest.approx(300.0)
+    assert group_params["B_L"] == pytest.approx(300.0)
+    # Non-field parameters keep the shared source value.
+    assert params["A"] == pytest.approx(0.2)
+    assert group_params["Lambda"] == pytest.approx(1.0)
+
+
+def test_grouped_single_share_does_not_propagate_result_to_peers(qapp):
+    # Sharing must copy the function but NOT the source run's fit result — an
+    # unfit peer should never display a fit it did not perform.
+    win = MultiGroupFitWindow()
+    a = _grouped_run_dataset(708)
+    b = _grouped_run_dataset(709)
+    win.set_dataset(a)
+    _set_single_model(win, ["Gaussian", "Constant"])
+    win._single_fit_tab._result_text.setHtml("<b>chi2 = 1.0 CONVERGED</b>")
+
+    win.share_single_grouped_function_state(708, [709])
+    win.set_dataset(b)
+    assert _single_model_names(win) == ["Gaussian", "Constant"]  # function shared
+    assert "chi2" not in win._single_fit_tab._result_text.toPlainText()  # result not shared
+
+
+def test_grouped_single_state_cleared_on_project_reset(qapp):
+    # The per-run form store must not bleed across projects: clearing drops it,
+    # so a reused run number starts clean instead of inheriting a stale function.
+    win = MultiGroupFitWindow()
+    win.set_dataset(_grouped_run_dataset(710))
+    _set_single_model(win, ["Gaussian", "Constant"])
+    win.set_dataset(_grouped_run_dataset(711))  # stores 710's form
+    assert 710 in win._single_grouped_state_by_run
+
+    win.clear_grouped_single_state()
+    assert win._single_grouped_state_by_run == {}
+    assert win._active_single_grouped_run is None
+
+
+def test_grouped_single_state_pruned_on_run_removal(qapp):
+    # Removing/refitting a run forgets its stored grouped form.
+    win = MultiGroupFitWindow()
+    win.set_dataset(_grouped_run_dataset(712))
+    _set_single_model(win, ["Gaussian", "Constant"])
+    win.set_dataset(_grouped_run_dataset(713))  # stores 712's form
+    assert 712 in win._single_grouped_state_by_run
+
+    win.prune_grouped_single_state([712])
+    assert 712 not in win._single_grouped_state_by_run

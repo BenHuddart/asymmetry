@@ -149,6 +149,38 @@ class FitSeries:
     def fixed_params(self) -> list[str]:
         return self.params_with_role("fixed")
 
+    def shared_parameters(self) -> dict[str, dict[str, float]]:
+        """Fitted shared (``global``-role) parameters as ``{name: {"value", "error"}}``.
+
+        A global fit shares one value across every member, so each global parameter's
+        value (and uncertainty, when present) is taken from the first successful
+        member's recorded result. Returns an empty mapping when the series has no
+        ``global``-role parameters. This is the model-side source for the trend
+        panel's "Global fitting parameters" header, so the GUI need not re-derive it
+        from the displayed rows.
+        """
+        names = self.global_params()
+        if not names:
+            return {}
+        shared: dict[str, dict[str, float]] = {}
+        for member in self.member_run_numbers:
+            summary = self.results_by_run.get(member)
+            if not summary or not summary.get("success"):
+                continue
+            params = summary.get("parameters") or {}
+            errors = summary.get("uncertainties") or {}
+            for name in names:
+                if name in shared or name not in params:
+                    continue
+                entry: dict[str, float] = {"value": float(params[name])}
+                error = errors.get(name)
+                if error is not None:
+                    entry["error"] = float(error)
+                shared[name] = entry
+            if len(shared) == len(names):
+                break
+        return shared
+
     # ── membership ─────────────────────────────────────────────────────────
 
     def source_run_for(self, member_key: int) -> int:

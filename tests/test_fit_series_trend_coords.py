@@ -145,3 +145,117 @@ def test_missing_metadata_point_is_off_axis_not_zero(win: MainWindow) -> None:
     (row,) = win._build_series_rows(series)
     assert math.isnan(row["temperature"])
     assert math.isnan(row["field"])
+
+
+def _group_series(
+    batch_id: str,
+    runs: list[int],
+    n_groups: int,
+    roles: dict[str, str],
+    freq_by_run: dict[int, float],
+) -> FitSeries:
+    """Build a TIME_GROUPS FitSeries: each (run, group) member shares the run's
+    global physics value, replicated across that run's groups."""
+    member_run_numbers: list[int] = []
+    member_source_run: dict[int, int] = {}
+    results_by_run: dict[int, dict] = {}
+    for run in runs:
+        for g in range(1, n_groups + 1):
+            key = -(run * 1000 + g)
+            member_run_numbers.append(key)
+            member_source_run[key] = run
+            results_by_run[key] = {
+                "success": True,
+                "parameters": {"freq": freq_by_run[run], "amp": 0.2 + 0.01 * g},
+                "uncertainties": {"freq": 0.01, "amp": 0.001},
+                "temperature": 10.0,
+                "field": 400.0,
+            }
+    return FitSeries(
+        batch_id,
+        RepresentationType.TIME_GROUPS,
+        member_kind="groups",
+        member_run_numbers=member_run_numbers,
+        member_source_run=member_source_run,
+        param_roles=roles,
+        nuisance_params=[],
+        results_by_run=results_by_run,
+    )
+
+
+def test_group_series_collapses_to_one_row_per_run_when_physics_global(win: MainWindow) -> None:
+    # Per-run angle values ride on the source-run dataset metadata.
+    for run, angle in ((1276, "0"), (1280, "30")):
+        win._data_browser.add_dataset(
+            MuonDataset(
+                time=np.linspace(0.0, 16.0, 8),
+                asymmetry=np.zeros(8),
+                error=np.ones(8),
+                metadata={
+                    "run_number": run,
+                    "temperature": 10.0,
+                    "field": 400.0,
+                    "custom_fields": {"angle": angle},
+                },
+            )
+        )
+    series = _group_series("batch-g", [1276, 1280], 2, {"freq": "global"}, {1276: 5.0, 1280: 6.0})
+
+    rows = win._build_series_rows(series)
+    # Two runs × two groups, but a single global physics value per run → 2 rows.
+    assert len(rows) == 2
+    by_run = {row["run_number"]: row for row in rows}
+    assert set(by_run) == {1276, 1280}
+    assert by_run[1276]["values"]["freq"] == pytest.approx(5.0)
+    assert by_run[1280]["values"]["freq"] == pytest.approx(6.0)
+    # The source-run angle reaches the collapsed row (drives the Angle trend axis).
+    assert by_run[1276]["custom_values"]["angle"] == "0"
+    assert by_run[1280]["custom_values"]["angle"] == "30"
+
+
+def test_collapsed_group_row_drops_per_group_nuisance_values(win: MainWindow) -> None:
+    # A collapsed row represents the whole run via one group member, so a per-group
+    # nuisance ("amp") must NOT survive — otherwise it is offered as a trend Y that
+    # silently plots only the representative group's value per run.
+    series = _group_series("batch-g3", [1276, 1280], 2, {"freq": "global"}, {1276: 5.0, 1280: 6.0})
+    series.nuisance_params = ["amp"]
+    rows = win._build_series_rows(series)
+    assert len(rows) == 2
+    for row in rows:
+        assert "freq" in row["values"]
+        assert "amp" not in row["values"]
+        assert "amp" not in row["errors"]
+
+
+def test_group_series_collapses_to_one_row_per_run_even_with_local_physics(
+    win: MainWindow,
+) -> None:
+    # A "local" role means per-RUN (independent across runs); the model-function
+    # parameter is still shared across a run's detector groups (only the nuisance
+    # block is per-group). So the series collapses to one trend point per source run
+    # just like the all-global case — the parameters tab shows model params per run.
+    series = _group_series(
+        "batch-g2", [1276, 1280], 2, {"freq": "global", "amp": "local"}, {1276: 5.0, 1280: 6.0}
+    )
+    rows = win._build_series_rows(series)
+    assert len(rows) == 2
+    by_run = {row["run_number"]: row for row in rows}
+    assert set(by_run) == {1276, 1280}
+    assert by_run[1276]["values"]["freq"] == pytest.approx(5.0)
+    assert by_run[1280]["values"]["freq"] == pytest.approx(6.0)
+
+
+def test_fit_series_shared_parameters_reads_global_roles_from_results() -> None:
+    """FitSeries.shared_parameters surfaces the global-role params' value + error."""
+    series = _group_series(
+        "batch-sp", [1276, 1280], 2, {"freq": "global", "amp": "local"}, {1276: 5.0, 1280: 6.0}
+    )
+    shared = series.shared_parameters()
+    assert set(shared) == {"freq"}  # only the global-role param
+    assert shared["freq"]["value"] == pytest.approx(5.0)  # first member's shared value
+    assert shared["freq"]["error"] == pytest.approx(0.01)
+    # A series with no global role has no shared parameters.
+    assert (
+        _group_series("batch-b", [1276], 2, {"freq": "local"}, {1276: 5.0}).shared_parameters()
+        == {}
+    )

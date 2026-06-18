@@ -382,6 +382,7 @@ class TestRefreshTrendPanel:
                 "nuisance_params": [],
             },
         )
+        # A multi-run batch (10, 11) records a groups series.
         grouped_datasets = [
             MuonDataset(
                 np.array([0.0, 0.1]),
@@ -390,8 +391,15 @@ class TestRefreshTrendPanel:
                 {"run_number": -10001, "source_run_number": 10},
                 None,
             ),
+            MuonDataset(
+                np.array([0.0, 0.1]),
+                np.array([1.0, 1.0]),
+                np.array([1.0, 1.0]),
+                {"run_number": -11001, "source_run_number": 11},
+                None,
+            ),
         ]
-        results = {-10001: (_result(), _CURVE, [])}
+        results = {-10001: (_result(), _CURVE, []), -11001: (_result(), _CURVE, [])}
         mw._on_grouped_fit_completed(grouped_datasets, results)
 
         # Now the panel should show the groups series.
@@ -410,9 +418,14 @@ class TestRefreshTrendPanel:
             assert batch is not None
             assert batch.rep_type == RepresentationType.TIME_FB_ASYMMETRY
 
-    def test_grouped_fit_result_appears_in_trend_panel(self, mw, monkeypatch):
-        """Grouped fits were previously invisible to the trend panel; Phase 4 fixes that."""
-        mw._data_browser.add_dataset(_dataset(42))
+    def test_grouped_batch_result_appears_in_trend_panel(self, mw, monkeypatch):
+        """Grouped fits were previously invisible to the trend panel; Phase 4 fixes that.
+
+        A grouped *batch* (≥2 source runs) records a series and, with global
+        physics, collapses to one trend point per source run.
+        """
+        for rn in (42, 43):
+            mw._data_browser.add_dataset(_dataset(rn))
         mw._on_dataset_selected(42)
         mw._plot_workspace.set_available_views(["fb_asymmetry", "groups"])
         mw._plot_workspace.set_active_view("groups")
@@ -425,23 +438,81 @@ class TestRefreshTrendPanel:
                 "nuisance_params": ["N0"],
             },
         )
-        grouped_datasets = [
-            MuonDataset(
-                np.array([0.0, 0.1]),
-                np.array([1.0, 1.0]),
-                np.array([1.0, 1.0]),
-                {"run_number": -42001, "source_run_number": 42},
-                None,
-            ),
-        ]
-        results = {-42001: (_result(rchi=0.35), _CURVE, [])}
+        grouped_datasets = [self._group_member(42, 1), self._group_member(43, 1)]
+        results = {
+            -42001: (_result(rchi=0.35), _CURVE, []),
+            -43001: (_result(rchi=0.4), _CURVE, []),
+        }
         mw._on_grouped_fit_completed(grouped_datasets, results)
 
         panel = mw._fit_parameters_panel
         assert len(panel._group_fit_results) == 1
         gdata = next(iter(panel._group_fit_results.values()))
-        assert len(gdata.rows) == 1
-        assert gdata.rows[0].run_number == -42001
+        # Physics is global (Lambda), so the series collapses to one trend point
+        # per source run, keyed by the run (42, 43), not the synthetic group key.
+        assert {r.run_number for r in gdata.rows} == {42, 43}
+
+    def _grouped_state_stub(self):
+        return {
+            "composite_model": {"component_names": ["Exponential"], "operators": []},
+            "param_roles": {"Lambda": "global"},
+            "nuisance_params": ["N0"],
+        }
+
+    def _group_member(self, source_run: int, group: int) -> MuonDataset:
+        return MuonDataset(
+            np.array([0.0, 0.1]),
+            np.array([1.0, 1.0]),
+            np.array([1.0, 1.0]),
+            {"run_number": -((source_run * 1000) + group), "source_run_number": source_run},
+            None,
+        )
+
+    def test_single_grouped_fit_does_not_surface_param_panel(self, mw, monkeypatch):
+        # A single grouped fit (one source run) stays on the plot/fit view like an
+        # ordinary single fit — it must not raise the fit-parameters dock.
+        mw._data_browser.add_dataset(_dataset(42))
+        mw._on_dataset_selected(42)
+        mw._plot_workspace.set_available_views(["fb_asymmetry", "groups"])
+        mw._plot_workspace.set_active_view("groups")
+        monkeypatch.setattr(
+            mw._multi_group_fit_window, "get_grouped_state", self._grouped_state_stub
+        )
+        surfaced: list[str] = []
+        monkeypatch.setattr(mw, "_show_panel", lambda key: surfaced.append(key))
+
+        # Two groups, one source run (42).
+        datasets = [self._group_member(42, 1), self._group_member(42, 2)]
+        results = {-42001: (_result(), _CURVE, []), -42002: (_result(), _CURVE, [])}
+        mw._on_grouped_fit_completed(datasets, results)
+
+        assert "fit_parameters" not in surfaced
+        # A single grouped fit records no series — it stores its result on the
+        # dataset's grouped FitSlot like an ordinary single fit.
+        assert mw._project_model.batches == {}
+        assert mw._fit_parameters_panel._group_fit_results == {}
+        rep = mw._project_model.representation(42, RepresentationType.TIME_GROUPS)
+        assert rep is not None and rep.fit.provenance == "single"
+
+    def test_batch_grouped_fit_surfaces_param_panel(self, mw, monkeypatch):
+        # A multi-run batch grouped fit still surfaces the trend panel.
+        for rn in (42, 43):
+            mw._data_browser.add_dataset(_dataset(rn))
+        mw._on_dataset_selected(42)
+        mw._plot_workspace.set_available_views(["fb_asymmetry", "groups"])
+        mw._plot_workspace.set_active_view("groups")
+        monkeypatch.setattr(
+            mw._multi_group_fit_window, "get_grouped_state", self._grouped_state_stub
+        )
+        surfaced: list[str] = []
+        monkeypatch.setattr(mw, "_show_panel", lambda key: surfaced.append(key))
+
+        # One group each across two source runs (42, 43).
+        datasets = [self._group_member(42, 1), self._group_member(43, 1)]
+        results = {-42001: (_result(), _CURVE, []), -43001: (_result(), _CURVE, [])}
+        mw._on_grouped_fit_completed(datasets, results)
+
+        assert "fit_parameters" in surfaced
 
     def test_add_to_series_refreshes_trend_panel(self, mw, monkeypatch):
         """After Add-to-Series the trend panel shows the extended membership."""
@@ -617,7 +688,12 @@ class TestReviewFindings:
         assert rep.fit.include_in_trend is True
 
     def test_grouped_fit_calls_refresh_divergence(self, mw, monkeypatch):
-        """Fix #2: _record_grouped_fit_series calls refresh_divergence at the end."""
+        """Fix #2: _record_grouped_fit_series calls refresh_divergence at the end.
+
+        A single grouped fit records no series, but it still writes the source
+        run's grouped FitSlot and refreshes divergence so any earlier series that
+        included this run is re-evaluated against the new fit.
+        """
         mw._data_browser.add_dataset(_dataset(42))
         mw._plot_workspace.set_available_views(["fb_asymmetry", "groups"])
         mw._plot_workspace.set_active_view("groups")
@@ -641,28 +717,26 @@ class TestReviewFindings:
         ]
         results = {-42001: (_result(), _CURVE, [])}
 
-        # Plant a stale diverged_runs entry that should be cleared.
+        # Plant a stale series (same Exponential model) pre-marked diverged.
         stale = FitSeries(
             "old-series",
             RepresentationType.TIME_GROUPS,
             member_kind="groups",
             member_run_numbers=[-42001],
             member_source_run={-42001: 42},
-            canonical_model={"component_names": ["Gaussian"], "operators": []},
+            canonical_model={"component_names": ["Exponential"], "operators": []},
         )
         stale.mark_diverged(-42001)
         mw._project_model.add_batch(stale)
 
-        mw._record_grouped_fit_series(grouped_datasets, results)
+        batch_id = mw._record_grouped_fit_series(grouped_datasets, results)
 
-        # refresh_divergence should have been called; the new canonical model
-        # (Exponential) is written onto run 42's representation, so divergence
-        # from the old Gaussian model should now be cleared for the new series.
-        new_series = next(
-            s for s in mw._project_model.batches.values() if s.batch_id != "old-series"
-        )
-        # The new FitSlot has the new model; refresh_divergence must clear stale state.
-        assert not new_series.is_diverged(-42001)
+        # The single fit records no new series.
+        assert batch_id is None
+        assert set(mw._project_model.batches) == {"old-series"}
+        # refresh_divergence ran: run 42's FitSlot now carries the matching
+        # Exponential model, so the stale series' diverged flag is cleared.
+        assert not stale.is_diverged(-42001)
 
     def test_build_series_rows_frequency_uses_spectra_cache(self, mw, monkeypatch):
         """Fix #3: _build_series_rows uses _frequency_spectra_by_run for FFT series."""

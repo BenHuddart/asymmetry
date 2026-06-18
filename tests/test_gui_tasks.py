@@ -31,9 +31,14 @@ def _wait_until(predicate, timeout_ms: int = 10_000) -> None:
     check = QTimer()
     check.timeout.connect(lambda: loop.quit() if predicate() else None)
     check.start(10)
-    QTimer.singleShot(timeout_ms, loop.quit)
+    # Named (not singleShot) so guard.stop() can release loop.quit before return.
+    guard = QTimer()
+    guard.setSingleShot(True)
+    guard.timeout.connect(loop.quit)
+    guard.start(timeout_ms)
     loop.exec()
     check.stop()
+    guard.stop()
     assert predicate(), "timed out waiting for background task"
 
 

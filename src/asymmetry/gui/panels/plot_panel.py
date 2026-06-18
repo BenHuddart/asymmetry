@@ -292,9 +292,11 @@ class PlotPanel(QWidget):
             nav_row = QHBoxLayout()
             nav_row.setContentsMargins(4, 0, 4, 0)
             nav_row.setSpacing(4)
-            if not self._is_frequency_plot_panel():
-                nav_row.addWidget(QLabel("Label:"))
-                nav_row.addWidget(self._label_field_combo)
+            # The label combo applies to both panels: it labels overlaid traces
+            # (multiple runs in the time panel; multiple runs' spectra in the
+            # frequency panel) by run / temperature / field / custom column.
+            nav_row.addWidget(QLabel("Label:"))
+            nav_row.addWidget(self._label_field_combo)
             nav_row.addWidget(self._time_view_label)
             nav_row.addWidget(self._time_view_combo)
             nav_row.addWidget(self._log_counts_checkbox)
@@ -3110,6 +3112,7 @@ class PlotPanel(QWidget):
         self._sync_y_controls_with_visible_axis()
         self._update_y_limit_controls_for_axis(self._current_polarization_axis)
         self._apply_limits(schedule_viewport_refresh=True)
+        self._apply_auto_limits_if_enabled()
         self._connect_axis_limit_callbacks(list(self._subplot_axes_by_polarization.values()))
         self._apply_log_counts_scale()
 
@@ -3419,12 +3422,17 @@ class PlotPanel(QWidget):
     ) -> str:
         """Return the fit-line colour for a dataset.
 
-        Preview curves get a fixed accent colour; all other fits use the same
-        colour as the data markers so that in overlay mode each fit visually
-        belongs to its dataset.
+        Preview curves get a fixed accent colour. In grouped time-domain mode each
+        detector group sits on its own subplot, so there is no fit↔dataset overlay
+        to disambiguate — the fit uses the canonical red fit colour, which resolves
+        far better against the (blue) data points than matching the marker colour.
+        Every other fit matches its data markers so that in overlay mode each fit
+        visually belongs to its dataset.
         """
         if isinstance(fit_label, str) and "preview" in fit_label.lower():
             return "#d73a49"
+        if self._grouped_time_subplot_datasets:
+            return tokens.PLOT_FIT
         return default_color
 
     def set_fit_range(self, x_min: float, x_max: float) -> None:
@@ -3961,6 +3969,25 @@ class PlotPanel(QWidget):
         if not self._has_mpl:
             return
 
+        if self._grouped_time_subplot_datasets and self._subplot_axes_by_polarization:
+            updated = False
+            for dataset in self._grouped_time_subplot_datasets:
+                axis_key = str(dataset.run_number)
+                if self._is_raw_counts_dataset(dataset):
+                    axis_key += ":raw"
+                if axis_key not in self._subplot_axes_by_polarization:
+                    continue
+                limits = self._auto_y_limits_for_datasets([dataset])
+                if limits is None:
+                    continue
+                self._y_limits_by_polarization[axis_key] = limits
+                updated = True
+            if not updated:
+                return
+            self._sync_y_controls_with_visible_axis()
+            self._apply_limits()
+            return
+
         if self._subplot_axes_by_polarization and self._current_polarization_axis == "ALL":
             updated = False
             for axis_key in self._all_mode_axes_order():
@@ -4473,17 +4500,9 @@ class PlotPanel(QWidget):
         self._fit_x_min = lo
         self._fit_x_max = hi
 
-        # Widen the X-axis view to keep fit bounds that fall outside the plotted
-        # data extent visible. Only ever expand the view (never shrink it), so an
-        # in-data fit range leaves the user's current limits untouched.
-        view_min = min(float(self._x_min.value()), lo)
-        view_max = max(float(self._x_max.value()), hi)
-        if view_min != float(self._x_min.value()) or view_max != float(self._x_max.value()):
-            self._set_limit_field_value(self._x_min, view_min)
-            self._set_limit_field_value(self._x_max, view_max)
-            if redraw:
-                self._apply_limits()
-
+        # The fit range and the plot view are independent: setting the fit range
+        # never pans/zooms the view (so a zoomed-in view survives a fit-range
+        # edit). An out-of-view fit-range span is simply clipped by the axes.
         if redraw:
             self._draw_fit_range_artists()
             self._canvas.draw_idle()
