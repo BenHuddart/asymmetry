@@ -255,4 +255,7 @@ def test_fit_series_shared_parameters_reads_global_roles_from_results() -> None:
     assert shared["freq"]["value"] == pytest.approx(5.0)  # first member's shared value
     assert shared["freq"]["error"] == pytest.approx(0.01)
     # A series with no global role has no shared parameters.
-    assert _group_series("batch-b", [1276], 2, {"freq": "local"}, {1276: 5.0}).shared_parameters() == {}
+    assert (
+        _group_series("batch-b", [1276], 2, {"freq": "local"}, {1276: 5.0}).shared_parameters()
+        == {}
+    )
