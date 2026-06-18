@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import inspect
 import math
-import multiprocessing as mp
 from collections.abc import Callable, Hashable, Sequence
 from concurrent.futures import BrokenExecutor, ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -34,6 +33,7 @@ from asymmetry.core.fitting.global_search.heuristics import (
     is_background_parameter,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet, split_parameter_name
+from asymmetry.core.fitting.process_pool import open_spawn_pool
 from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
 from asymmetry.core.transform.grouping import (
     apply_grouping_aligned,
@@ -1359,11 +1359,10 @@ def _fit_members_parallel(
     ]
     if cancel_callback is not None and bool(cancel_callback()):
         raise FitCancelledError("Fit cancelled.")
-    try:
-        executor = ProcessPoolExecutor(max_workers=workers, mp_context=mp.get_context("spawn"))
-    except (OSError, PermissionError, ValueError):
-        # No spawn-safe workers here (e.g. a restricted sandbox); the caller falls back
-        # to the sequential path, which produces identical results.
+    # No spawn-safe workers here (e.g. a restricted sandbox) → the caller falls back to
+    # the sequential path, which produces identical results.
+    executor = open_spawn_pool(workers)
+    if executor is None:
         return None
     results: dict[int, GroupedTimeDomainFitResult] = {}
     try:
@@ -1742,6 +1741,67 @@ def _blockwise_inner_fit_runs(
     return results
 
 
+def _inner_round_with_fallback(
+    executor: ProcessPoolExecutor | None,
+    run_order: list[int],
+    members: dict[int, list[GroupedTimeDomainGroup]],
+    polarization_model_fn,
+    inner_global: list[str],
+    nuisances: list[str],
+    run_seeds: dict[int, dict[Hashable, ParameterSet]],
+    *,
+    engine: FitEngine,
+    t_min: float | None,
+    t_max: float | None,
+    method: str,
+    max_calls: int,
+    cost: str,
+    cancel_callback: Callable[[], bool] | None,
+) -> tuple[dict[int, GroupedTimeDomainFitResult], ProcessPoolExecutor | None]:
+    """Run one inner block round; on a broken pool, retry sequentially.
+
+    Returns ``(results, executor)`` where the returned executor is ``None`` once the
+    pool has broken for an environmental reason, so callers stop dispatching to a dead
+    pool on later rounds. The single home for the pool-failure policy shared by the
+    alternating loop and the error-profiling probes.
+    """
+    kwargs = dict(
+        engine=engine,
+        t_min=t_min,
+        t_max=t_max,
+        method=method,
+        max_calls=max_calls,
+        cost=cost,
+        cancel_callback=cancel_callback,
+    )
+    if executor is not None:
+        try:
+            results = _blockwise_inner_fit_runs(
+                run_order,
+                members,
+                polarization_model_fn,
+                inner_global,
+                nuisances,
+                run_seeds,
+                executor=executor,
+                **kwargs,
+            )
+            return results, executor
+        except BrokenExecutor:
+            executor = None
+    results = _blockwise_inner_fit_runs(
+        run_order,
+        members,
+        polarization_model_fn,
+        inner_global,
+        nuisances,
+        run_seeds,
+        executor=None,
+        **kwargs,
+    )
+    return results, None
+
+
 def _blockwise_run_rounds(
     *,
     run_order: list[int],
@@ -1790,7 +1850,14 @@ def _blockwise_run_rounds(
                 gid: _copy_param_set_with(ps, fix=set(truly_global), values=shared_values)
                 for gid, ps in run_seeds[run].items()
             }
-        inner_kwargs = dict(
+        inner_results, executor = _inner_round_with_fallback(
+            executor,
+            run_order,
+            members,
+            polarization_model_fn,
+            inner_global,
+            nuisances,
+            run_seeds,
             engine=engine,
             t_min=t_min,
             t_max=t_max,
@@ -1799,31 +1866,6 @@ def _blockwise_run_rounds(
             cost=cost,
             cancel_callback=cancel_callback,
         )
-        try:
-            inner_results = _blockwise_inner_fit_runs(
-                run_order,
-                members,
-                polarization_model_fn,
-                inner_global,
-                nuisances,
-                run_seeds,
-                executor=executor,
-                **inner_kwargs,
-            )
-        except BrokenExecutor:
-            # The pool died for an environmental reason; abandon it and finish on the
-            # sequential path (here and for every remaining round).
-            executor = None
-            inner_results = _blockwise_inner_fit_runs(
-                run_order,
-                members,
-                polarization_model_fn,
-                inner_global,
-                nuisances,
-                run_seeds,
-                executor=None,
-                **inner_kwargs,
-            )
 
         # Warm-start the next round: carry each fitted local value back into the seeds.
         updatable = set(per_run_physics) | set(nuisances)
@@ -1950,10 +1992,7 @@ def _fit_grouped_series_global_blockwise(
     # in finally (covering the cancel path).
     executor: ProcessPoolExecutor | None = None
     if workers > 1 and _grouped_series_payload_picklable(polarization_model_fn):
-        try:
-            executor = ProcessPoolExecutor(max_workers=workers, mp_context=mp.get_context("spawn"))
-        except (OSError, PermissionError, ValueError):
-            executor = None
+        executor = open_spawn_pool(workers)
 
     try:
         inner_results, shared_values, shared_uncertainties, rounds_run = _blockwise_run_rounds(
@@ -2152,6 +2191,8 @@ def _profile_shared_covariance(
         return None
 
     fix_shared = set(truly_global)
+    # The pool is reused across probes; a probe that breaks it reverts to sequential.
+    pool = [executor]
 
     def chi2_at(overrides: dict[str, float]) -> float:
         values = dict(shared_values)
@@ -2163,44 +2204,30 @@ def _profile_shared_covariance(
             }
             for run in run_order
         }
-        try:
-            results = _blockwise_inner_fit_runs(
-                run_order,
-                members,
-                polarization_model_fn,
-                inner_global,
-                nuisances,
-                seeds,
-                executor=executor,
-                engine=engine,
-                t_min=t_min,
-                t_max=t_max,
-                method=method,
-                max_calls=max_calls,
-                cost=cost,
-                cancel_callback=cancel_callback,
-            )
-        except BrokenExecutor:
-            results = _blockwise_inner_fit_runs(
-                run_order,
-                members,
-                polarization_model_fn,
-                inner_global,
-                nuisances,
-                seeds,
-                executor=None,
-                engine=engine,
-                t_min=t_min,
-                t_max=t_max,
-                method=method,
-                max_calls=max_calls,
-                cost=cost,
-                cancel_callback=cancel_callback,
-            )
+        results, pool[0] = _inner_round_with_fallback(
+            pool[0],
+            run_order,
+            members,
+            polarization_model_fn,
+            inner_global,
+            nuisances,
+            seeds,
+            engine=engine,
+            t_min=t_min,
+            t_max=t_max,
+            method=method,
+            max_calls=max_calls,
+            cost=cost,
+            cancel_callback=cancel_callback,
+        )
         total = 0.0
         for run in run_order:
             grouped = results.get(int(run))
-            if grouped is None:
+            # A failed probe fit reports chi_squared=0.0 by default; summing it would
+            # understate this probe's objective and corrupt the finite-difference
+            # Hessian. Treat any non-converged probe as unusable → the caller keeps the
+            # conditional errors rather than profiling from a poisoned curvature.
+            if grouped is None or not grouped.success:
                 return float("nan")
             for group_result in grouped.group_results.values():
                 total += float(getattr(group_result, "chi_squared", 0.0) or 0.0)

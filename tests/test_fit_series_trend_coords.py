@@ -243,3 +243,16 @@ def test_group_series_collapses_to_one_row_per_run_even_with_local_physics(
     assert set(by_run) == {1276, 1280}
     assert by_run[1276]["values"]["freq"] == pytest.approx(5.0)
     assert by_run[1280]["values"]["freq"] == pytest.approx(6.0)
+
+
+def test_fit_series_shared_parameters_reads_global_roles_from_results() -> None:
+    """FitSeries.shared_parameters surfaces the global-role params' value + error."""
+    series = _group_series(
+        "batch-sp", [1276, 1280], 2, {"freq": "global", "amp": "local"}, {1276: 5.0, 1280: 6.0}
+    )
+    shared = series.shared_parameters()
+    assert set(shared) == {"freq"}  # only the global-role param
+    assert shared["freq"]["value"] == pytest.approx(5.0)  # first member's shared value
+    assert shared["freq"]["error"] == pytest.approx(0.01)
+    # A series with no global role has no shared parameters.
+    assert _group_series("batch-b", [1276], 2, {"freq": "local"}, {1276: 5.0}).shared_parameters() == {}

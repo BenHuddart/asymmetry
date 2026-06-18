@@ -2006,8 +2006,10 @@ class MainWindow(QMainWindow):
         if group_target is not None or not (len(selected) > 1 and self._overlay_enabled()):
             # Overlaying several unrelated runs has no single run to transform, so the
             # data-gated views are unavailable there.
-            target = group_target or self._current_dataset or (
-                selected[0] if len(selected) == 1 else None
+            target = (
+                group_target
+                or self._current_dataset
+                or (selected[0] if len(selected) == 1 else None)
             )
             if self._grouped_time_domain_available(target):
                 modes.extend(["groups", "raw_counts"])
@@ -8422,11 +8424,11 @@ class MainWindow(QMainWindow):
 
         entries: list[tuple[str, str, list[dict]]] = []
         highlight_map: dict[str, list[int]] = {}
-        # Names of the cross-run-shared (role "global") physics params per series, so
-        # the trend panel can rebuild the "Global fitting parameters" header from the
-        # shared values/errors carried in each member summary (a global fit shares one
-        # value across all members). Without this the reloaded series shows "None".
-        global_names_by_id: dict[str, list[str]] = {}
+        # The fitted cross-run-shared (role "global") parameters per series, so the
+        # trend panel can show the "Global fitting parameters" header. The model owns
+        # this (FitSeries.shared_parameters reads its own recorded results); without it
+        # a reloaded global/grouped series shows "None".
+        global_params_by_id: dict[str, dict[str, dict[str, float]]] = {}
         for idx, series in enumerate(series_for_rep, start=1):
             row_dicts = self._build_series_rows(series)
             if not row_dicts:
@@ -8434,9 +8436,9 @@ class MainWindow(QMainWindow):
             batch_id = series.batch_id
             name = series.display_name(f"Series {idx}")
             entries.append((batch_id, name, row_dicts))
-            global_names = series.global_params()
-            if global_names:
-                global_names_by_id[batch_id] = global_names
+            shared = series.shared_parameters()
+            if shared:
+                global_params_by_id[batch_id] = shared
             # Runs to highlight: source runs for group series, member keys for run series.
             if series.member_kind == "groups":
                 highlight_map[batch_id] = sorted(set(series.member_source_run.values()))
@@ -8448,7 +8450,7 @@ class MainWindow(QMainWindow):
                 entries,
                 highlight_runs_by_id=highlight_map,
                 select_id=select_batch_id,
-                global_names_by_id=global_names_by_id,
+                global_params_by_id=global_params_by_id,
             )
 
         if surface and entries and hasattr(self, "_dock_fit_parameters"):
@@ -8773,10 +8775,16 @@ class MainWindow(QMainWindow):
             summary.update(self._dataset_trend_coords(int(run)))
             results_by_run[int(run)] = summary
         batch_id = self._next_batch_id()
+        # When launched from a data-group header, name the series after that group
+        # (e.g. "T = 150 K") rather than the model formula + run span — matching the
+        # grouped path so the same "fit from group header" action labels consistently.
+        batch_label = self._data_group_name_for_runs(
+            member_runs
+        ) or self._default_batch_series_label(model_label, member_runs)
         batch = FitSeries(
             batch_id,
             rep_type,
-            label=self._default_batch_series_label(model_label, member_runs),
+            label=batch_label,
             member_run_numbers=member_runs,
             order_key="field",
             canonical_model=canonical_model,
@@ -9384,9 +9392,7 @@ class MainWindow(QMainWindow):
         if not run_list:
             return None
         browser = self._data_browser
-        if not (
-            hasattr(browser, "get_group_id_for_run") and hasattr(browser, "get_group_name")
-        ):
+        if not (hasattr(browser, "get_group_id_for_run") and hasattr(browser, "get_group_name")):
             return None
         group_ids = {browser.get_group_id_for_run(r) for r in run_list}
         if len(group_ids) != 1:

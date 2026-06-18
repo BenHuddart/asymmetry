@@ -903,7 +903,7 @@ class FitParametersPanel(QWidget):
         *,
         highlight_runs_by_id: dict[str, list[int]] | None = None,
         select_id: str | None = None,
-        global_names_by_id: dict[str, list[str]] | None = None,
+        global_params_by_id: dict[str, dict[str, dict[str, float]]] | None = None,
     ) -> None:
         """Reload the panel to show all series for one representation.
 
@@ -968,11 +968,10 @@ class FitParametersPanel(QWidget):
             prev = preserved.get(batch_id, {})
             composite_params = list(prev.get("composite_parameters", []))
             global_uncert = dict(prev.get("global_param_uncertainties", {}))
-            # Rebuild the shared ("Global fitting parameters") set from the series'
-            # global names: a global fit shares one value across all members, so read
-            # it (and its error) from any row. Without this the header shows "None".
-            series_global_params = self._reconstruct_global_params(
-                rows, (global_names_by_id or {}).get(batch_id, []), global_uncert
+            # Build the shared ("Global fitting parameters") set from the model-supplied
+            # values (FitSeries.shared_parameters); without it the header shows "None".
+            series_global_params = self._build_global_params(
+                (global_params_by_id or {}).get(batch_id, {}), global_uncert
             )
             varying = self._detect_varying_parameters(rows)
             inferred_x = self._infer_x_key(rows)
@@ -1015,38 +1014,29 @@ class FitParametersPanel(QWidget):
             self.series_selection_changed.emit(self._active_group_id)
 
     @staticmethod
-    def _reconstruct_global_params(
-        rows: list[_FitRow],
-        names: list[str],
+    def _build_global_params(
+        shared: dict[str, dict[str, float]],
         global_uncert: dict[str, float],
     ) -> ParameterSet | None:
-        """Rebuild the shared-parameter set for a series from its member rows.
+        """Build the shared-parameter set from model-supplied ``{name: {value, error}}``.
 
-        A global fit shares one value across every member, so the value (and its
-        error) for each ``names`` entry is read from the first row that carries it.
-        Errors are written into ``global_uncert`` so the header can show ``v ± e``.
-        Returns ``None`` when no shared parameter resolves (e.g. a pure batch fit).
+        ``shared`` comes from :meth:`FitSeries.shared_parameters`, so the GUI does not
+        re-derive which parameters are global or harvest their values from the rows.
+        Errors are copied into ``global_uncert`` so the header can show ``v ± e``.
+        Returns ``None`` when there are no shared parameters (e.g. a pure batch fit).
         """
-        if not names or not rows:
+        if not shared:
             return None
         params = ParameterSet()
-        for name in names:
-            value: float | None = None
-            err: float | None = None
-            for row in rows:
-                if name in row.values:
-                    value = row.values[name]
-                    err = row.errors.get(name)
-                    break
-            if value is None:
-                continue
+        for name, info in shared.items():
             try:
-                params.add(Parameter(name=str(name), value=float(value)))
-            except (TypeError, ValueError):
+                params.add(Parameter(name=str(name), value=float(info["value"])))
+            except (TypeError, ValueError, KeyError):
                 continue
-            if err is not None:
+            error = info.get("error")
+            if error is not None:
                 try:
-                    global_uncert[str(name)] = float(err)
+                    global_uncert[str(name)] = float(error)
                 except (TypeError, ValueError):
                     pass
         return params if len(params) else None

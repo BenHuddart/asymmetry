@@ -2364,7 +2364,7 @@ def test_load_representation_series_reconstructs_global_params(panel: FitParamet
     ]
     panel.load_representation_series(
         [("batch-1", "Series 1", row_dicts)],
-        global_names_by_id={"batch-1": ["fraction_1"]},
+        global_params_by_id={"batch-1": {"fraction_1": {"value": 0.0604, "error": 0.0012}}},
         select_id="batch-1",
     )
 
