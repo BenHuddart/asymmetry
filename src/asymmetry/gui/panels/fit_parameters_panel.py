@@ -39,8 +39,13 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.angular_assignment import (
+    AngularAssignmentResult,
+    fit_assigned_angular_curves,
+)
 from asymmetry.core.fitting.component_tracking import (
     Component,
+    CrossingEvent,
     ScanPoint,
     detect_crossings,
 )
@@ -86,6 +91,7 @@ from asymmetry.gui.export_paths import (
 from asymmetry.gui.gle_settings import get_gle_executable
 from asymmetry.gui.panels.composite_parameter_dialog import CompositeParameterDialog
 from asymmetry.gui.panels.cross_group_fit_dialog import CrossGroupFitDialog
+from asymmetry.gui.panels.knight_joint_fit_dialog import KnightJointFitDialog
 from asymmetry.gui.panels.knight_shift_dialog import KnightShiftDialog
 from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
 from asymmetry.gui.styles import tokens
@@ -479,6 +485,15 @@ class FitParametersPanel(QWidget):
         self._knight_shift_btn.setEnabled(False)
         self._knight_shift_btn.clicked.connect(self._open_knight_shift_dialog)
 
+        self._joint_knight_btn = QPushButton("Joint K(θ) fit…")
+        self._joint_knight_btn.setToolTip(
+            "Fit several K(θ) curves at once, assigning each angle's components to the "
+            "curve they fit best (resolves crossings). Select ≥2 Knight-shift traces "
+            "with Angle as the x-axis."
+        )
+        self._joint_knight_btn.setEnabled(False)
+        self._joint_knight_btn.clicked.connect(self._open_joint_knight_fit_dialog)
+
         self._derived_section = CollapsibleSection("Derived parameters", expanded=False)
         self._derived_section.setObjectName("fit-parameters-derived-section")
         composite_row = QGridLayout()
@@ -489,6 +504,7 @@ class FitParametersPanel(QWidget):
         composite_row.addWidget(self._edit_composite_btn, 0, 1)
         composite_row.addWidget(self._remove_composite_btn, 1, 0, 1, 2)
         composite_row.addWidget(self._knight_shift_btn, 2, 0, 1, 2)
+        composite_row.addWidget(self._joint_knight_btn, 3, 0, 1, 2)
         composite_row.setColumnStretch(2, 1)
         self._derived_section.addLayout(composite_row)
         controls_layout.addWidget(self._derived_section)
@@ -642,6 +658,7 @@ class FitParametersPanel(QWidget):
         self._edit_composite_btn.setEnabled(False)
         self._remove_composite_btn.setEnabled(False)
         self._knight_shift_btn.setEnabled(False)
+        self._joint_knight_btn.setEnabled(False)
         self._rebuild_y_controls()
         self._refresh_plot()
 
@@ -1473,7 +1490,17 @@ class FitParametersPanel(QWidget):
     def _on_y_selection_changed(self) -> None:
         self._selected_y_param_names = self._selected_y_parameters()
         self._update_composite_action_buttons()
+        self._update_joint_fit_button()
         self._plot_refresh_timer.start()
+
+    def _selected_knight_traces(self) -> list[str]:
+        """Currently-selected Knight-shift Y traces (eligible for the joint fit)."""
+        return [name for name in self._selected_y_parameters() if name in self._knight_shift_names]
+
+    def _update_joint_fit_button(self) -> None:
+        """Enable the joint K(θ) fit only for Angle x-axis + ≥2 selected K traces."""
+        ready = self._angle_axis_active() and len(self._selected_knight_traces()) >= 2
+        self._joint_knight_btn.setEnabled(ready)
 
     def _copy_parameter_set(self, source: ParameterSet) -> ParameterSet:
         copied = ParameterSet()
@@ -2451,6 +2478,7 @@ class FitParametersPanel(QWidget):
     def _on_x_axis_changed(self, *_args: object) -> None:
         self._update_x_axis_auto_hint()
         self._update_angle_fold_visibility()
+        self._update_joint_fit_button()
         self._refresh_views()
 
     def _angle_axis_active(self) -> bool:
@@ -2883,6 +2911,114 @@ class FitParametersPanel(QWidget):
         config = dialog.knight_shift_config()
         if config is not None:
             self.set_knight_shift_config(config)
+
+    # ── Joint K(θ) fit with per-angle assignment (Phase 6) ─────────────────
+    def _open_joint_knight_fit_dialog(self) -> None:
+        traces = self._selected_knight_traces()
+        if len(traces) < 2 or not self._angle_axis_active():
+            QMessageBox.information(
+                self,
+                "Joint K(θ) Fit",
+                "Select at least two Knight-shift traces with Angle as the x-axis.",
+            )
+            return
+        dialog = KnightJointFitDialog(n_curves=len(traces), parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        config = dialog.joint_fit_config()
+        if config is not None:
+            model_name, max_iter = config
+            self._run_joint_knight_fit(traces, model_name, max_iter)
+
+    def _run_joint_knight_fit(self, traces: list[str], model_name: str, max_iter: int) -> None:
+        """Compute and apply a joint K(θ) fit over the selected Knight-shift traces."""
+        x_key = self._effective_x_key()
+        rows = sorted(self._rows, key=lambda r: self._x_value(r, x_key))
+        angles = [self._x_value(r, x_key) for r in rows]
+        values = [[r.values.get(name, float("nan")) for name in traces] for r in rows]
+        errors = [[r.errors.get(name, float("nan")) for name in traces] for r in rows]
+        result = fit_assigned_angular_curves(
+            angles, values, errors, model_name=model_name, max_iter=max_iter
+        )
+        if not result.curves:
+            QMessageBox.information(
+                self, "Joint K(θ) Fit", result.message or "The joint fit produced no curves."
+            )
+            return
+        self._apply_joint_knight_fit(result, rows, x_key, model_name)
+
+    def _apply_joint_knight_fit(
+        self,
+        result: AngularAssignmentResult,
+        rows: list[_FitRow],
+        x_key: str,
+        model_name: str,
+    ) -> None:
+        """Write realigned track traces, store per-curve overlays, mark crossings."""
+        unit_label = get_param_info(self._selected_knight_traces()[0]).unit or ""
+        angles = [self._x_value(r, x_key) for r in rows]
+        finite_angles = [a for a in angles if np.isfinite(a)]
+        x_min = min(finite_angles) if finite_angles else None
+        x_max = max(finite_angles) if finite_angles else None
+
+        track_names: list[str] = []
+        for curve in range(len(result.curves)):
+            name = f"K⟨{curve + 1}⟩"  # K⟨1⟩, K⟨2⟩, … (realigned tracks)
+            track_names.append(name)
+            self._register_knight_label(name, str(curve + 1), unit_label)
+            for i, row in enumerate(rows):
+                row.values[name] = float(result.curve_values[curve][i])
+                row.errors[name] = float(result.curve_errors[curve][i])
+            fit_result = result.curves[curve]
+            self._model_fits[name] = ParameterModelFit(
+                parameter_name=name,
+                x_key=x_key,
+                ranges=[
+                    ModelFitRange(
+                        x_min=x_min,
+                        x_max=x_max,
+                        model=ParameterCompositeModel([model_name]),
+                        parameters=fit_result.parameters,
+                        result=fit_result,
+                    )
+                ],
+                active=True,
+            )
+
+        for name in track_names:
+            if name not in self._varying_params:
+                self._varying_params.append(name)
+
+        self._knight_shift_crossings = self._joint_fit_crossings(result, rows, x_key)
+        self._knight_shift_crossing_x_key = x_key
+        # The suppressed markers are exactly what the joint fit now justifies: show
+        # them at the angles where the assignment swaps.
+        self._DRAW_CROSSING_MARKERS = True
+
+        self._sync_active_group_state()
+        self._rebuild_y_controls(preferred_selected=track_names)
+        self._refresh_model_fit_button_labels()
+        self._refresh_views()
+
+    @staticmethod
+    def _joint_fit_crossings(
+        result: AngularAssignmentResult, rows: list[_FitRow], x_key: str
+    ) -> list[object]:
+        """Crossing markers at angles where the joint-fit assignment swaps."""
+        events: list[object] = []
+        assignment = result.assignment
+        for k in range(len(assignment) - 1):
+            if assignment[k] != assignment[k + 1]:
+                changed = [
+                    c for c in range(len(assignment[k])) if assignment[k][c] != assignment[k + 1][c]
+                ]
+                pair = (changed[0], changed[1]) if len(changed) >= 2 else (changed[0], changed[0])
+                events.append(
+                    CrossingEvent(
+                        k, float(result.angles[k]), float(result.angles[k + 1]), pair, "order_swap"
+                    )
+                )
+        return events
 
     def _edit_selected_composite_parameter(self) -> None:
         selected = self._selected_composite_parameter_names()
