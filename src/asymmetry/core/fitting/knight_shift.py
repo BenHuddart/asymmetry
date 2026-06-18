@@ -32,20 +32,18 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import Enum
 
-from asymmetry.core.utils.constants import (
-    GAUSS_TO_TESLA,
-    MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
-)
+from asymmetry.core.fitting.spectral import field_gauss_to_frequency_mhz
 
 #: Free-muon Larmor frequency per unit applied field, γ_µ/(2π) in MHz/G
-#: (≈ 0.013554 MHz/G). Derived from the canonical MHz/T constant so the two
-#: cannot drift.
-MUON_LARMOR_MHZ_PER_G = MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA
+#: (≈ 0.013554 MHz/G). Derived from the single γ_µ·B conversion in
+#: :mod:`asymmetry.core.fitting.spectral` so the Larmor slope cannot drift from
+#: the frequency-domain field axis.
+MUON_LARMOR_MHZ_PER_G = field_gauss_to_frequency_mhz(1.0)
 
 
 def larmor_frequency_mhz(field_gauss: float) -> float:
     """Free-muon Larmor frequency (MHz) for an applied field in Gauss."""
-    return MUON_LARMOR_MHZ_PER_G * float(field_gauss)
+    return field_gauss_to_frequency_mhz(float(field_gauss))
 
 
 def knight_shift(
@@ -78,14 +76,20 @@ def knight_shift(
     # Partial derivatives: ∂K/∂ν = 1/ν_ref, ∂K/∂ν_ref = −ν/ν_ref².
     d_nu = 1.0 / nu_ref
     d_ref = -nu / (nu_ref * nu_ref)
-    variance = (
-        d_nu * d_nu * float(sigma_nu) ** 2
-        + d_ref * d_ref * float(sigma_ref) ** 2
-        + 2.0 * d_nu * d_ref * float(cov)
-    )
-    # Round-off (or a pathological negative covariance) can push the variance
-    # slightly below zero; clamp rather than emit a NaN sigma.
-    sigma_k = math.sqrt(variance) if variance > 0.0 else 0.0
+    term_nu = d_nu * d_nu * float(sigma_nu) ** 2
+    term_ref = d_ref * d_ref * float(sigma_ref) ** 2
+    term_cov = 2.0 * d_nu * d_ref * float(cov)
+    variance = term_nu + term_ref + term_cov
+    if variance >= 0.0:
+        sigma_k = math.sqrt(variance)
+    elif variance >= -1e-9 * (abs(term_nu) + abs(term_ref) + abs(term_cov)):
+        # Round-off around zero: clamp rather than emit NaN.
+        sigma_k = 0.0
+    else:
+        # A genuinely negative variance (e.g. an over-large reported covariance)
+        # means the propagation is ill-posed; surface NaN rather than a
+        # misleadingly precise zero uncertainty.
+        sigma_k = float("nan")
     return k, sigma_k
 
 

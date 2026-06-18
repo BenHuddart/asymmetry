@@ -103,6 +103,48 @@ def test_component_reference_excludes_reference_and_uses_it(qapp):
     assert k2 == pytest.approx((94.2 - 94.0) / 94.0, rel=1e-9)
 
 
+def test_model_observable_map_excludes_non_local_field(qapp):
+    # A series with two `field` params where the model marks only field_1 as a
+    # local-field observable (field_2 being e.g. a muonium applied field): only
+    # field_1 is converted. Mirrors the muonium-conflation fix.
+    panel = FitParametersPanel()
+    panel.load_representation_series(
+        [("batch-1", "Series", [_row(1, 7000.0, {"field_1": 7050.0, "field_2": 7000.0})])],
+        knight_observables_by_id={"batch-1": {"field_1": "field"}},
+    )
+    panel.set_knight_shift_config(KnightShiftConfig(enabled=True, unit=KnightShiftUnit.FRACTION))
+    assert "K[field_1]" in panel._knight_shift_names
+    assert "K[field_2]" not in panel._knight_shift_names
+
+
+def test_component_reference_only_converts_same_kind(qapp):
+    # With a field reference, a frequency component (different unit) must NOT be
+    # converted against it.
+    panel = FitParametersPanel()
+    panel.load_representation_series(
+        [
+            (
+                "batch-1",
+                "Series",
+                [_row(1, 7000.0, {"frequency": 94.0, "field_1": 7050.0, "field_2": 7080.0})],
+            )
+        ],
+        knight_observables_by_id={
+            "batch-1": {"frequency": "frequency", "field_1": "field", "field_2": "field"}
+        },
+    )
+    panel.set_knight_shift_config(
+        KnightShiftConfig(
+            enabled=True,
+            reference_mode=REFERENCE_COMPONENT,
+            reference_component="field_1",
+            unit=KnightShiftUnit.FRACTION,
+        )
+    )
+    assert "K[field_2]" in panel._knight_shift_names
+    assert "K[frequency]" not in panel._knight_shift_names  # different kind than the ref
+
+
 def test_auto_unit_resolves_to_ppm_for_small_shift(qapp):
     panel = FitParametersPanel()
     field = 7000.0
@@ -111,6 +153,18 @@ def test_auto_unit_resolves_to_ppm_for_small_shift(qapp):
     panel.set_knight_shift_config(KnightShiftConfig(enabled=True, unit=KnightShiftUnit.AUTO))
     # 50 ppm shift → AUTO picks ppm → stored value ≈ 50.
     assert panel._rows[0].values["K[frequency]"] == pytest.approx(50.0, rel=1e-4)
+
+
+def test_stale_knight_columns_are_stripped_when_disabled(qapp):
+    # A persisted K[...] column (e.g. from a project saved with the conversion on)
+    # must not survive as a frozen trend parameter once the conversion is off.
+    panel = FitParametersPanel()
+    panel.load_representation_series(
+        [("batch-1", "S", [_row(1, 7000.0, {"frequency": 94.0, "K[frequency]": 12.3})])]
+    )
+    # Default config is disabled.
+    assert not any(name == "K[frequency]" for name in panel._rows[0].values)
+    assert "K[frequency]" not in panel._display_y_parameters()
 
 
 def test_disabled_config_produces_no_knight_shift(qapp):

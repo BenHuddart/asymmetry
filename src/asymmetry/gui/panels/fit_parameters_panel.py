@@ -75,6 +75,7 @@ from asymmetry.core.fitting.parameters import (
     get_param_info,
     register_derived_param_info,
     split_parameter_name,
+    unregister_derived_param_info,
 )
 from asymmetry.gui.export_paths import (
     default_export_path,
@@ -268,6 +269,9 @@ class _GroupFitData:
     plot_annotations: list[dict[str, object]]
     global_param_uncertainties: dict[str, float] = field(default_factory=dict)
     composite_parameters: list[CompositeParameterDefinition] = field(default_factory=list)
+    #: Fitted-param → Knight-shift kind for this series' convertible components,
+    #: derived from its model (empty for computed/model-less series).
+    knight_observables: dict[str, str] = field(default_factory=dict)
 
 
 class FitParametersPanel(QWidget):
@@ -318,6 +322,12 @@ class FitParametersPanel(QWidget):
         #: Generated Knight-shift Y-quantity name → source frequency parameter,
         #: for the active series (rebuilt whenever derived quantities are applied).
         self._knight_shift_names: dict[str, str] = {}
+        #: Active series' fitted-param → Knight-shift kind, from its model (empty
+        #: → fall back to the name-based heuristic in _oscillation_components).
+        self._knight_observables: dict[str, str] = {}
+        #: Derived-param labels this panel registered globally, so they can be
+        #: unregistered when the conversion changes / the panel is cleared.
+        self._registered_knight_labels: set[str] = set()
         #: Crossing/degeneracy events flagged on the active series (for annotation).
         self._knight_shift_crossings: list[object] = []
         #: The x-axis key the crossings were computed against (so stale markers are
@@ -595,6 +605,8 @@ class FitParametersPanel(QWidget):
         self._composite_parameters = []
         self._knight_shift_config = KnightShiftConfig()
         self._knight_shift_names = {}
+        self._knight_observables = {}
+        self._unregister_knight_labels()
         self._knight_shift_crossings = []
         self._knight_shift_crossing_x_key = None
         self._group_fit_results = {}
@@ -729,7 +741,10 @@ class FitParametersPanel(QWidget):
 
         varying = state.get("varying_params", [])
         if isinstance(varying, list) and all(isinstance(v, str) for v in varying):
-            self._varying_params = list(varying)
+            # Drop any persisted K[...] names: live Knight-shift columns are
+            # re-added via _knight_shift_names, and stale ones must not survive as
+            # frozen Y parameters.
+            self._varying_params = [v for v in varying if not self._is_knight_shift_name(v)]
         else:
             self._varying_params = self._detect_varying_parameters(self._rows)
 
@@ -951,6 +966,7 @@ class FitParametersPanel(QWidget):
         highlight_runs_by_id: dict[str, list[int]] | None = None,
         select_id: str | None = None,
         global_params_by_id: dict[str, dict[str, dict[str, float]]] | None = None,
+        knight_observables_by_id: dict[str, dict[str, str]] | None = None,
     ) -> None:
         """Reload the panel to show all series for one representation.
 
@@ -1022,6 +1038,11 @@ class FitParametersPanel(QWidget):
             )
             varying = self._detect_varying_parameters(rows)
             inferred_x = self._infer_x_key(rows)
+            observables = dict((knight_observables_by_id or {}).get(batch_id, {}))
+            # Apply the derived quantities with *this* series' observable map so its
+            # K columns are computed from its own model (activation re-applies for
+            # the active series).
+            self._knight_observables = observables
             self._apply_composite_parameters_to_rows(rows, composite_params, global_uncert)
 
             self._group_fit_results[batch_id] = _GroupFitData(
@@ -1035,6 +1056,7 @@ class FitParametersPanel(QWidget):
                 plot_annotations=list(prev.get("plot_annotations", [])),
                 global_param_uncertainties=global_uncert,
                 composite_parameters=composite_params,
+                knight_observables=observables,
             )
 
         # Update per-series run-number map for browser highlighting.
@@ -1108,6 +1130,7 @@ class FitParametersPanel(QWidget):
             plot_annotations=list(self._plot_annotations),
             global_param_uncertainties=dict(self._global_param_uncertainties),
             composite_parameters=list(self._composite_parameters),
+            knight_observables=dict(self._knight_observables),
         )
 
     def _selected_group_ids_from_buttons(self) -> list[str]:
@@ -1364,6 +1387,7 @@ class FitParametersPanel(QWidget):
             self._inferred_x_key = group.inferred_x_key
             self._model_fits = dict(group.model_fits)
             self._composite_parameters = list(group.composite_parameters)
+            self._knight_observables = dict(group.knight_observables)
             self._plot_annotations = list(group.plot_annotations)
         else:
             active_gid = (
@@ -1390,6 +1414,7 @@ class FitParametersPanel(QWidget):
             self._inferred_x_key = active_group.inferred_x_key
             self._model_fits = dict(active_group.model_fits)
             self._composite_parameters = list(active_group.composite_parameters)
+            self._knight_observables = dict(active_group.knight_observables)
             self._plot_annotations = list(active_group.plot_annotations)
 
         has_rows = bool(self._rows)
@@ -1930,25 +1955,36 @@ class FitParametersPanel(QWidget):
     #: shift; the base parameter name distinguishes them.
     _KNIGHT_COMPONENT_KINDS = ("frequency", "field")
 
-    @classmethod
-    def _oscillation_components(cls, rows: list[_FitRow]) -> list[tuple[str, str]]:
-        """``(parameter_name, kind)`` oscillation components present in the rows.
+    def _oscillation_components(self, rows: list[_FitRow]) -> list[tuple[str, str]]:
+        """``(parameter_name, kind)`` Knight-convertible components in the rows.
 
-        ``kind`` is ``"frequency"`` or ``"field"``. Ordered by kind then component
-        index (``field_1`` before ``field_2`` …) so the order matches the model's
-        component order — the basis for stable per-component Knight-shift identity.
+        ``kind`` is ``"frequency"`` or ``"field"``. When the active series carries
+        a model-derived observable map (``self._knight_observables``) it is used —
+        this excludes components whose ``field`` is the *applied* field (muonium),
+        which a bare name match cannot tell apart. For computed / model-less series
+        the map is empty and we fall back to matching the base parameter name.
+        Ordered by kind then component index so the order matches the model's
+        component order — the basis for stable per-component identity.
         """
-        found: dict[str, str] = {}
+        present: set[str] = set()
         for row in rows:
-            for name in row.values:
+            present.update(row.values)
+
+        found: dict[str, str] = {}
+        if self._knight_observables:
+            for name, kind in self._knight_observables.items():
+                if name in present and kind in self._KNIGHT_COMPONENT_KINDS:
+                    found[name] = kind
+        else:
+            for name in present:
                 base, _index = split_parameter_name(name)
-                if base in cls._KNIGHT_COMPONENT_KINDS:
+                if base in self._KNIGHT_COMPONENT_KINDS:
                     found[name] = base
 
         def _order(item: tuple[str, str]) -> tuple[int, int, str]:
-            name, base = item
+            name, kind = item
             _b, index = split_parameter_name(name)
-            kind_rank = cls._KNIGHT_COMPONENT_KINDS.index(base)
+            kind_rank = self._KNIGHT_COMPONENT_KINDS.index(kind)
             return (kind_rank, int(index) if index is not None else 1, name)
 
         return sorted(found.items(), key=_order)
@@ -1962,20 +1998,28 @@ class FitParametersPanel(QWidget):
         _, index = split_parameter_name(component_name)
         return index if index is not None else "1"
 
+    @staticmethod
+    def _is_knight_shift_name(name: str) -> bool:
+        """True for a generated Knight-shift column name (``K[...]``)."""
+        return name.startswith("K[") and name.endswith("]")
+
     def _apply_knight_shift_to_rows(self, rows: list[_FitRow]) -> None:
         """Compute Knight-shift Y-quantities for the rows from the active config.
 
-        Stores ``K[<frequency_name>]`` columns (scaled to the resolved display
-        unit) on each row, registers display metadata so labels render as
-        ``K_n (ppm)``, and records detected component crossings for annotation.
-        Idempotent: previously-generated K columns are cleared first.
+        Stores ``K[<component>]`` columns (scaled to the resolved display unit) on
+        each row, registers display metadata so labels render as ``K_n (ppm)``,
+        and (for the active series) records detected component crossings.
+        Idempotent: *all* prior ``K[...]`` columns are stripped first, so columns
+        persisted in a saved project (or left by a previous config) never linger
+        as stale trend parameters.
         """
-        for name in self._knight_shift_names:
-            for row in rows:
+        for row in rows:
+            for name in [n for n in row.values if self._is_knight_shift_name(n)]:
                 row.values.pop(name, None)
                 row.errors.pop(name, None)
         self._knight_shift_names = {}
         self._knight_shift_crossings = []
+        self._unregister_knight_labels()
 
         config = self._knight_shift_config
         if not rows or config is None or not config.enabled:
@@ -1992,9 +2036,14 @@ class FitParametersPanel(QWidget):
         ]
         ref_name = config.reference_component
         if config.reference_mode != REFERENCE_APPLIED_FIELD:
-            if ref_name not in kind_by_name:
+            ref_kind = kind_by_name.get(ref_name)
+            if ref_kind is None:
                 return  # designated reference is gone; emit nothing rather than guess
-            selected = [(name, kind) for name, kind in selected if name != ref_name]
+            # Only convert components of the *same kind* as the reference: dividing
+            # a frequency (MHz) by a field (Gauss), or vice versa, is meaningless.
+            selected = [
+                (name, kind) for name, kind in selected if name != ref_name and kind == ref_kind
+            ]
         if not selected:
             return
 
@@ -2021,30 +2070,36 @@ class FitParametersPanel(QWidget):
                 row.errors[kname] = sigma_k * scale
 
         # Flag component crossings/degeneracies across the scan (detection only;
-        # the K traces still follow the raw component labels). Uses all discovered
-        # components so a crossing between any pair is surfaced.
-        self._knight_shift_crossings = self._detect_component_crossings(
-            rows, [name for name, _kind in components]
-        )
+        # the K traces still follow the raw component labels). Only the active
+        # series feeds the panel-global crossing state — running it for every
+        # series in the load loop would be wasted work (only the last survives).
+        if rows is self._rows:
+            self._knight_shift_crossings = self._detect_component_crossings(components)
 
-    def _detect_component_crossings(
-        self, rows: list[_FitRow], components: list[str]
-    ) -> list[object]:
-        """Detect oscillation-component crossings along the active x-axis."""
+    def _detect_component_crossings(self, components: list[tuple[str, str]]) -> list[object]:
+        """Detect oscillation-component crossings along the active x-axis.
+
+        Components are grouped by kind so the frequency-continuity matcher never
+        compares a frequency (MHz) against a field (Gauss); a mixed-unit gap would
+        otherwise dominate the tolerance and mask real crossings.
+        """
         self._knight_shift_crossing_x_key = None
-        if len(components) < 2:
-            return []
         x_key = self._effective_x_key()
-        points: list[ScanPoint] = []
-        for row in rows:
-            x = self._x_value(row, x_key)
-            comps = tuple(
-                Component(frequency=float(row.values[c])) for c in components if c in row.values
-            )
-            if len(comps) == len(components):
-                points.append(ScanPoint(x=float(x), components=comps))
+        events: list[object] = []
+        for kind in self._KNIGHT_COMPONENT_KINDS:
+            names = [name for name, k in components if k == kind]
+            if len(names) < 2:
+                continue
+            points: list[ScanPoint] = []
+            for row in self._rows:
+                comps = tuple(
+                    Component(frequency=float(row.values[c])) for c in names if c in row.values
+                )
+                if len(comps) == len(names):
+                    points.append(ScanPoint(x=float(self._x_value(row, x_key)), components=comps))
+            events.extend(detect_crossings(points))
         self._knight_shift_crossing_x_key = x_key
-        return detect_crossings(points)
+        return events
 
     def _row_knight_shift(
         self, row: _FitRow, component_name: str, kind: str, reference_name: str | None
@@ -2072,9 +2127,13 @@ class FitParametersPanel(QWidget):
             cov = float(row.covariance.get(component_name, {}).get(reference_name, 0.0))
         return knight_shift(nu, nu_ref, sigma_nu=sigma_nu, sigma_ref=sigma_ref, cov=cov)
 
-    @staticmethod
-    def _register_knight_label(kname: str, subscript: str, unit_label: str) -> None:
-        """Register display metadata so a Knight-shift quantity renders as K_n (unit)."""
+    def _register_knight_label(self, kname: str, subscript: str, unit_label: str) -> None:
+        """Register display metadata so a Knight-shift quantity renders as K_n (unit).
+
+        The registered name is tracked so it can be removed again
+        (:meth:`_unregister_knight_labels`), bounding the global registry's growth
+        and clearing stale metadata when the conversion changes or the panel closes.
+        """
         sub_unicode = subscript.translate(str.maketrans("0123456789", "₀₁₂₃₄₅₆₇₈₉"))
         register_derived_param_info(
             kname,
@@ -2084,13 +2143,27 @@ class FitParametersPanel(QWidget):
             gle=f"K_{{{subscript}}}",
             unit=unit_label or None,
         )
+        self._registered_knight_labels.add(kname)
+
+    def _unregister_knight_labels(self) -> None:
+        """Drop every derived-label this panel registered for Knight-shift columns."""
+        for kname in self._registered_knight_labels:
+            unregister_derived_param_info(kname)
+        self._registered_knight_labels = set()
 
     def _detect_varying_parameters(self, rows: list[_FitRow]) -> list[str]:
         if not rows:
             return []
 
         composite_names = {definition.name for definition in self._composite_parameters}
-        all_names = sorted(name for name in rows[0].values.keys() if name not in composite_names)
+        # Knight-shift columns surface only via _knight_shift_names; never let a
+        # K[...] column (incl. one persisted in a saved project) be picked up as a
+        # generic varying parameter.
+        all_names = sorted(
+            name
+            for name in rows[0].values.keys()
+            if name not in composite_names and not self._is_knight_shift_name(name)
+        )
         varying: list[str] = []
         for name in all_names:
             vals = [r.values.get(name, np.nan) for r in rows]
@@ -4357,6 +4430,7 @@ class FitParametersPanel(QWidget):
 
     def closeEvent(self, event) -> None:
         self.shutdown_workers()
+        self._unregister_knight_labels()
         super().closeEvent(event)
 
     def _write_fit_files(

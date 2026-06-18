@@ -507,6 +507,10 @@ PARAM_INFO_REGISTRY = {
     name: _attach_description(info) for name, info in PARAM_INFO_REGISTRY.items()
 }
 
+#: Built-in parameter names, captured before any derived-quantity registration,
+#: so :func:`unregister_derived_param_info` can never evict a real parameter.
+_BUILTIN_PARAM_NAMES = frozenset(PARAM_INFO_REGISTRY)
+
 
 def get_param_info(name: str) -> ParamInfo:
     """Return metadata for a parameter name, including indexed variants."""
@@ -560,6 +564,18 @@ def register_derived_param_info(
     the indexed-variant split).
     """
     PARAM_INFO_REGISTRY[name] = ParamInfo(name, plain, unicode, latex, gle, unit)
+
+
+def unregister_derived_param_info(name: str) -> None:
+    """Remove a previously registered derived-quantity entry (idempotent).
+
+    Lets a transient producer (e.g. a GUI panel's Knight-shift conversion) bound
+    the lifetime of its registered labels so the global registry does not grow
+    without limit or retain stale metadata after the producer goes away. Built-in
+    parameters are never removed by this call.
+    """
+    if name not in _BUILTIN_PARAM_NAMES:
+        PARAM_INFO_REGISTRY.pop(name, None)
 
 
 @dataclass(frozen=True)

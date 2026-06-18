@@ -50,10 +50,19 @@ def test_positive_covariance_reduces_uncertainty():
     assert sigma_pos_cov < sigma_no_cov
 
 
-def test_negative_variance_clamps_to_zero_sigma():
-    # A pathological covariance that drives the variance negative yields σ=0, not NaN.
+def test_genuinely_negative_variance_is_nan():
+    # A covariance large enough to drive the variance meaningfully below zero is
+    # ill-posed; surface NaN rather than a misleadingly precise zero uncertainty.
     _, sigma_k = knight_shift(10.0, 10.0, sigma_nu=0.1, sigma_ref=0.1, cov=1.0)
-    assert sigma_k == 0.0
+    assert math.isnan(sigma_k)
+
+
+def test_roundoff_near_zero_variance_is_finite():
+    # Perfectly correlated equal errors nearly cancel in the ratio; the result is a
+    # finite (≈0) uncertainty, never NaN, despite floating-point round-off.
+    _, sigma_k = knight_shift(10.0, 10.0, sigma_nu=0.1, sigma_ref=0.1, cov=0.01)
+    assert math.isfinite(sigma_k)
+    assert sigma_k == pytest.approx(0.0, abs=1e-6)
 
 
 def test_zero_reference_is_nan():

@@ -150,11 +150,13 @@ def detect_crossings(
         x_left, x_right = ordered[k].x, ordered[k + 1].x
         perm = _best_assignment(left, right)
 
-        # order_swap: the continuity-best assignment departs from raw order.
+        # order_swap: the continuity-best assignment departs from raw order. Report
+        # every moved component paired with its destination — this covers 3-cycles
+        # and longer cycles, not just simple transpositions. Pairs are deduplicated.
         if perm != tuple(range(n)):
-            for i, j in enumerate(perm):
-                if i < j and perm[j] == i:  # report each transposed pair once
-                    events.append(CrossingEvent(k, x_left, x_right, (i, j), "order_swap"))
+            swapped_pairs = {(min(i, j), max(i, j)) for i, j in enumerate(perm) if i != j}
+            for pair in sorted(swapped_pairs):
+                events.append(CrossingEvent(k, x_left, x_right, pair, "order_swap"))
 
         # near_degenerate: a frequency crossing (sign flip of the gap) or an
         # approach within tolerance, evaluated on the raw indices.

@@ -67,6 +67,7 @@ from asymmetry.core.fitting import (
     fit_scan_model,
     grouped_time_domain_available,
 )
+from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.parameter_models import (
     CrossGroupFitResult,
     effective_range_bounds,
@@ -8305,6 +8306,23 @@ class MainWindow(QMainWindow):
             "temperature": _safe_float(meta.get("temperature")),
         }
 
+    @staticmethod
+    def _knight_observables_for_series(series: FitSeries) -> dict[str, str]:
+        """Fitted-param → Knight-shift kind for a series' convertible components.
+
+        Derived from the series' model so the conversion only ever offers genuine
+        local field/frequency components (see ``CompositeModel.knight_observable_params``).
+        Returns ``{}`` for computed / model-less series, where the panel falls back
+        to a name-based heuristic.
+        """
+        model = getattr(series, "canonical_model", None)
+        if not model:
+            return {}
+        try:
+            return CompositeModel.from_dict(model, allow_missing=True).knight_observable_params()
+        except (ValueError, KeyError, TypeError):
+            return {}
+
     def _build_series_rows(self, series: FitSeries) -> list[dict]:
         """Build the row-dict list for one ``FitSeries`` to pass to the trend panel.
 
@@ -8485,6 +8503,11 @@ class MainWindow(QMainWindow):
         # this (FitSeries.shared_parameters reads its own recorded results); without it
         # a reloaded global/grouped series shows "None".
         global_params_by_id: dict[str, dict[str, dict[str, float]]] = {}
+        # Per-series map of fitted parameter → Knight-shift kind, derived from the
+        # series' model so the conversion only offers genuine local-field/frequency
+        # components (excludes e.g. muonium's applied field). Absent for computed /
+        # model-less series; the panel then falls back to a name-based heuristic.
+        knight_observables_by_id: dict[str, dict[str, str]] = {}
         for idx, series in enumerate(series_for_rep, start=1):
             row_dicts = self._build_series_rows(series)
             if not row_dicts:
@@ -8495,6 +8518,9 @@ class MainWindow(QMainWindow):
             shared = series.shared_parameters()
             if shared:
                 global_params_by_id[batch_id] = shared
+            observables = self._knight_observables_for_series(series)
+            if observables:
+                knight_observables_by_id[batch_id] = observables
             # Runs to highlight: source runs for group series, member keys for run series.
             if series.member_kind == "groups":
                 highlight_map[batch_id] = sorted(set(series.member_source_run.values()))
@@ -8507,6 +8533,7 @@ class MainWindow(QMainWindow):
                 highlight_runs_by_id=highlight_map,
                 select_id=select_batch_id,
                 global_params_by_id=global_params_by_id,
+                knight_observables_by_id=knight_observables_by_id,
             )
 
         if surface and entries and hasattr(self, "_dock_fit_parameters"):

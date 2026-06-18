@@ -62,6 +62,19 @@ def test_three_component_swap():
     assert all(e.component_pair != (0, 1) and e.component_pair != (0, 2) for e in swaps)
 
 
+def test_three_cycle_swap_is_flagged():
+    # A 3-cycle relabelling (comp0→1, comp1→2, comp2→0) is not a transposition;
+    # it must still be reported, not silently missed.
+    points = [
+        _point(0.0, 10.0, 20.0, 30.0),
+        _point(30.0, 29.0, 11.0, 21.0),  # continuity-best perm is the cycle (2,0,1)
+    ]
+    events = detect_crossings(points)
+    swaps = {e.component_pair for e in events if e.kind == "order_swap"}
+    # The cycle touches all three components, so all three pairs are reported.
+    assert swaps == {(0, 1), (0, 2), (1, 2)}
+
+
 def test_amplitude_breaks_frequency_ties():
     # Frequencies are identical at the right point, so amplitude continuity decides:
     # comp0 (amp 0.5) should match the amp-0.5 right component (the swapped one).
