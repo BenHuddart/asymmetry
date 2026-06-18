@@ -84,6 +84,7 @@ from asymmetry.gui.export_paths import (
 from asymmetry.gui.gle_settings import get_gle_executable
 from asymmetry.gui.panels.composite_parameter_dialog import CompositeParameterDialog
 from asymmetry.gui.panels.cross_group_fit_dialog import CrossGroupFitDialog
+from asymmetry.gui.panels.knight_shift_dialog import KnightShiftDialog
 from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
 from asymmetry.gui.styles.widgets import (
     apply_param_table_style,
@@ -319,6 +320,9 @@ class FitParametersPanel(QWidget):
         self._knight_shift_names: dict[str, str] = {}
         #: Crossing/degeneracy events flagged on the active series (for annotation).
         self._knight_shift_crossings: list[object] = []
+        #: The x-axis key the crossings were computed against (so stale markers are
+        #: not drawn after the x-axis changes).
+        self._knight_shift_crossing_x_key: str | None = None
         self._plot_annotations: list[dict[str, object]] = []
         self._axes_tag_map: dict[int, str] = {}
         self._active_annotation_idx: int | None = None
@@ -440,6 +444,13 @@ class FitParametersPanel(QWidget):
         self._remove_composite_btn.setEnabled(False)
         self._remove_composite_btn.clicked.connect(self._remove_selected_composite_parameters)
 
+        self._knight_shift_btn = QPushButton("Knight shift…")
+        self._knight_shift_btn.setToolTip(
+            "Convert fitted precession frequencies to the Knight shift K = (ν − ν_ref)/ν_ref."
+        )
+        self._knight_shift_btn.setEnabled(False)
+        self._knight_shift_btn.clicked.connect(self._open_knight_shift_dialog)
+
         self._derived_section = CollapsibleSection("Derived parameters", expanded=False)
         self._derived_section.setObjectName("fit-parameters-derived-section")
         composite_row = QGridLayout()
@@ -449,6 +460,7 @@ class FitParametersPanel(QWidget):
         composite_row.addWidget(self._create_composite_btn, 0, 0)
         composite_row.addWidget(self._edit_composite_btn, 0, 1)
         composite_row.addWidget(self._remove_composite_btn, 1, 0, 1, 2)
+        composite_row.addWidget(self._knight_shift_btn, 2, 0, 1, 2)
         composite_row.setColumnStretch(2, 1)
         self._derived_section.addLayout(composite_row)
         controls_layout.addWidget(self._derived_section)
@@ -584,6 +596,7 @@ class FitParametersPanel(QWidget):
         self._knight_shift_config = KnightShiftConfig()
         self._knight_shift_names = {}
         self._knight_shift_crossings = []
+        self._knight_shift_crossing_x_key = None
         self._group_fit_results = {}
         self._group_button_map = {}
         self._active_group_id = None
@@ -596,6 +609,7 @@ class FitParametersPanel(QWidget):
         self._create_composite_btn.setEnabled(False)
         self._edit_composite_btn.setEnabled(False)
         self._remove_composite_btn.setEnabled(False)
+        self._knight_shift_btn.setEnabled(False)
         self._rebuild_y_controls()
         self._refresh_plot()
 
@@ -711,6 +725,7 @@ class FitParametersPanel(QWidget):
         self._create_composite_btn.setEnabled(bool(self._rows))
         self._edit_composite_btn.setEnabled(False)
         self._remove_composite_btn.setEnabled(False)
+        self._knight_shift_btn.setEnabled(bool(self._rows))
 
         varying = state.get("varying_params", [])
         if isinstance(varying, list) and all(isinstance(v, str) for v in varying):
@@ -1328,6 +1343,7 @@ class FitParametersPanel(QWidget):
             self._create_composite_btn.setEnabled(False)
             self._edit_composite_btn.setEnabled(False)
             self._remove_composite_btn.setEnabled(False)
+            self._knight_shift_btn.setEnabled(False)
             self._rebuild_y_controls(preferred_selected=previous_selected_y)
             self._refresh_model_fit_button_labels()
             self._update_x_axis_auto_hint()
@@ -1389,6 +1405,7 @@ class FitParametersPanel(QWidget):
         self._export_gle_btn.setEnabled(has_rows)
         self._gle_format_combo.setEnabled(has_rows)
         self._create_composite_btn.setEnabled(has_rows)
+        self._knight_shift_btn.setEnabled(has_rows)
 
         display_params = set(self._display_y_parameters())
         self._model_fits = {k: v for k, v in self._model_fits.items() if k in display_params}
@@ -1994,6 +2011,7 @@ class FitParametersPanel(QWidget):
         self, rows: list[_FitRow], components: list[str]
     ) -> list[object]:
         """Detect oscillation-component crossings along the active x-axis."""
+        self._knight_shift_crossing_x_key = None
         if len(components) < 2:
             return []
         x_key = self._effective_x_key()
@@ -2005,6 +2023,7 @@ class FitParametersPanel(QWidget):
             )
             if len(comps) == len(components):
                 points.append(ScanPoint(x=float(x), components=comps))
+        self._knight_shift_crossing_x_key = x_key
         return detect_crossings(points)
 
     def _row_knight_shift(
@@ -2239,6 +2258,35 @@ class FitParametersPanel(QWidget):
         )
         self._add_label_btn.setChecked(False)
         self._refresh_plot()
+
+    def _draw_knight_shift_crossings(self, axes_by_tag: dict[str, object], x_key: str) -> None:
+        """Mark detected component crossings with faint vertical lines + a note.
+
+        Drawn only while a Knight-shift conversion is active and the plotted
+        x-axis matches the one the crossings were computed against (so changing
+        the x-axis doesn't leave stale markers). Detection only — the K traces
+        still follow the raw component labels.
+        """
+        if not self._knight_shift_crossings or not self._knight_shift_names:
+            return
+        if x_key != self._knight_shift_crossing_x_key:
+            return
+        midpoints = sorted(
+            {(float(e.x_left) + float(e.x_right)) / 2.0 for e in self._knight_shift_crossings}
+        )
+        if not midpoints:
+            return
+        for ax in axes_by_tag.values():
+            for first, x in enumerate(midpoints):
+                ax.axvline(
+                    x,
+                    color="#b5651d",
+                    linestyle=":",
+                    linewidth=1.0,
+                    alpha=0.7,
+                    zorder=2,
+                    label="component crossing" if first == 0 else None,
+                )
 
     def _draw_plot_annotations(self, axes_by_tag: dict[str, object]) -> None:
         """Draw stored annotations on currently visible parameter axes."""
@@ -2606,6 +2654,27 @@ class FitParametersPanel(QWidget):
         preferred = [n for n in self._selected_y_param_names if n not in previous_k]
         preferred.extend(n for n in self._knight_shift_names if n not in preferred)
         self._refresh_after_composite_change(preferred_selected=preferred)
+
+    def _open_knight_shift_dialog(self) -> None:
+        components = self.available_oscillation_components()
+        if not components:
+            QMessageBox.information(
+                self,
+                "Knight Shift",
+                "No oscillation-frequency components were found in this series.",
+            )
+            return
+        dialog = KnightShiftDialog(
+            available_components=components,
+            config=self._knight_shift_config,
+            crossing_count=len(self._knight_shift_crossings),
+            parent=self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        config = dialog.knight_shift_config()
+        if config is not None:
+            self.set_knight_shift_config(config)
 
     def _edit_selected_composite_parameter(self) -> None:
         selected = self._selected_composite_parameter_names()
@@ -3671,6 +3740,7 @@ class FitParametersPanel(QWidget):
                 ax.set_xscale("log" if self._log_x_check.isChecked() else "linear")
                 ax.grid(True, alpha=0.3)
 
+        self._draw_knight_shift_crossings(axes_by_tag, x_key)
         self._draw_plot_annotations(axes_by_tag)
 
         if getattr(self._figure, "get_constrained_layout", lambda: False)():

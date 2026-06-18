@@ -116,6 +116,28 @@ def test_crossing_is_flagged(qapp):
     assert "order_swap" in kinds
 
 
+def test_draw_plot_marks_crossing_without_error(qapp):
+    panel = FitParametersPanel()
+    _load(
+        panel,
+        [
+            _row(1, 7000.0, {"frequency": 10.0, "frequency_2": 20.0}),
+            _row(2, 7000.0, {"frequency": 21.0, "frequency_2": 11.0}),
+        ],
+    )
+    panel.set_knight_shift_config(KnightShiftConfig(enabled=True, unit=KnightShiftUnit.FRACTION))
+    # A K quantity is auto-selected, so the draw path runs the crossing annotation.
+    panel._draw_plot()
+    midpoint = 1.5  # between run 1 and run 2 on the inferred run x-axis
+    axvlines = [
+        line
+        for ax in panel._figure.axes
+        for line in ax.lines
+        if len(line.get_xdata()) == 2 and line.get_xdata()[0] == line.get_xdata()[1] == midpoint
+    ]
+    assert axvlines, "expected a vertical crossing marker at the midpoint"
+
+
 def test_config_round_trips_through_state(qapp):
     panel = FitParametersPanel()
     _load(panel, [_row(1, 7000.0, {"frequency": 94.0, "frequency_2": 94.2})])
