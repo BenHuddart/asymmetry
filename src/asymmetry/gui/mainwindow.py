@@ -8307,59 +8307,65 @@ class MainWindow(QMainWindow):
         }
 
     @staticmethod
-    def _knight_observables_for_series(series: FitSeries) -> dict[str, str]:
-        """Fitted-param → Knight-shift kind for a series' convertible components.
+    def _composite_model_for_series(series: FitSeries) -> CompositeModel | None:
+        """Reconstruct a series' time-domain model, or None if unavailable.
 
-        Derived from the series' model so the conversion only ever offers genuine
-        local field/frequency components (see ``CompositeModel.knight_observable_params``).
-        Returns ``{}`` for computed / model-less series, where the panel falls back
-        to a name-based heuristic.
+        Shared by the Knight-shift-observable and fraction-weight derivations so
+        the canonical model is parsed once per series.
         """
         model = getattr(series, "canonical_model", None)
         if not model:
-            return {}
+            return None
         try:
-            return CompositeModel.from_dict(model, allow_missing=True).knight_observable_params()
+            return CompositeModel.from_dict(model, allow_missing=True)
         except (ValueError, KeyError, TypeError):
-            return {}
+            return None
 
     @staticmethod
-    def _fraction_weights_for_series(series: FitSeries) -> dict[str, float]:
+    def _knight_observables_for_model(composite: CompositeModel | None) -> dict[str, str]:
+        """Fitted-param → Knight-shift kind for a model's convertible components.
+
+        Only genuine local field/frequency components (see
+        ``CompositeModel.knight_observable_params``); ``{}`` for a missing model,
+        where the panel falls back to a name-based heuristic.
+        """
+        return composite.knight_observable_params() if composite is not None else {}
+
+    @staticmethod
+    def _fraction_weights_for_series(
+        series: FitSeries, composite: CompositeModel | None
+    ) -> dict[str, float]:
         """Normalised fraction weights (fraction_i / Σ per group) for a series.
 
-        Raw fitted fractions are un-normalised relative weights — the model
-        divides each by its group sum at evaluation, so they need not sum to 1
-        (and the fixed last fraction is usually hidden from the variable table).
-        This recomputes the physical partition from the series' model and a
-        representative member's parameters (which include the fixed fraction).
-        Returns ``{}`` for model-less series or models without fraction groups.
+        Raw fitted fractions are un-normalised relative weights — the model divides
+        each by its group sum at evaluation, so they need not sum to 1 (and the
+        fixed last fraction is usually hidden from the variable table). This returns
+        the physical partition (via ``CompositeModel.fraction_weights``), but ONLY
+        when it is a single series-wide partition: if a group's raw fractions differ
+        across the successful members (a per-run/local fraction), it is omitted
+        rather than presenting one member's split as the whole series'. Returns
+        ``{}`` for a model-less series or one without fraction groups.
         """
-        model = getattr(series, "canonical_model", None)
-        if not model:
+        if composite is None:
             return {}
-        try:
-            composite = CompositeModel.from_dict(model, allow_missing=True)
-        except (ValueError, KeyError, TypeError):
+        members = [
+            {str(k): float(v) for k, v in summary["parameters"].items()}
+            for summary in series.results_by_run.values()
+            if summary and summary.get("success") and isinstance(summary.get("parameters"), dict)
+        ]
+        if not members:
             return {}
-        groups = composite.fraction_parameter_groups()
-        if not groups:
-            return {}
-        full: dict[str, float] = {}
-        for summary in series.results_by_run.values():
-            if summary and summary.get("success") and isinstance(summary.get("parameters"), dict):
-                full = {str(k): float(v) for k, v in summary["parameters"].items()}
-                break
-        if not full:
-            return {}
-        try:
-            normalized = composite.normalized_parameter_values(full)
-        except (KeyError, ValueError, ZeroDivisionError):
-            return {}
+        weights = composite.fraction_weights(members[0])
+        # Keep only fractions that are identical across every member (global/fixed),
+        # so a per-run-varying fraction is not shown as a series-wide partition.
         return {
-            name: float(normalized[name])
-            for group in groups
-            for name in group
-            if name in normalized
+            name: weight
+            for name, weight in weights.items()
+            if all(
+                name in member
+                and bool(np.isclose(member[name], members[0][name], rtol=1e-9, atol=1e-12))
+                for member in members
+            )
         }
 
     def _build_series_rows(self, series: FitSeries) -> list[dict]:
@@ -8561,10 +8567,11 @@ class MainWindow(QMainWindow):
             shared = series.shared_parameters()
             if shared:
                 global_params_by_id[batch_id] = shared
-            observables = self._knight_observables_for_series(series)
+            composite = self._composite_model_for_series(series)
+            observables = self._knight_observables_for_model(composite)
             if observables:
                 knight_observables_by_id[batch_id] = observables
-            weights = self._fraction_weights_for_series(series)
+            weights = self._fraction_weights_for_series(series, composite)
             if weights:
                 fraction_weights_by_id[batch_id] = weights
             # Runs to highlight: source runs for group series, member keys for run series.

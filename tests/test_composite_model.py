@@ -146,6 +146,31 @@ def test_fraction_group_accepts_sum_of_products() -> None:
     assert np.allclose(out, expected)
 
 
+def test_fraction_weights_normalises_relative_fractions() -> None:
+    # Raw fractions need not sum to 1; fraction_weights returns the partition
+    # fraction_i / Σ (which does), matching the weighting used at evaluation.
+    model = CompositeModel.from_expression("( Oscillatory + Oscillatory + Oscillatory ){frac}")
+    weights = model.fraction_weights(
+        {"fraction_1": 0.6895, "fraction_2": 0.4591, "fraction_3": 0.334}
+    )
+    total = 0.6895 + 0.4591 + 0.334
+    assert weights == pytest.approx(
+        {
+            "fraction_1": 0.6895 / total,
+            "fraction_2": 0.4591 / total,
+            "fraction_3": 0.334 / total,
+        }
+    )
+    assert sum(weights.values()) == pytest.approx(1.0)
+
+
+def test_fraction_weights_skips_group_with_missing_fraction() -> None:
+    # A group is skipped entirely (not reported with raw values) when any of its
+    # fractions is absent, so callers never mislabel un-normalised values.
+    model = CompositeModel.from_expression("( Oscillatory + Oscillatory + Oscillatory ){frac}")
+    assert model.fraction_weights({"fraction_1": 0.5, "fraction_2": 0.3}) == {}
+
+
 def test_with_default_fraction_groups_wraps_top_level_additive_expression() -> None:
     model = CompositeModel(["Exponential", "Constant"], operators=["+"])
 

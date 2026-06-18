@@ -253,8 +253,10 @@ def clogston_jaccarino_fit(
         if sig.shape != x.shape:
             raise ValueError("sigma_knight must match chi/knight length")
         # Guard zero/negative/non-finite errors so a single bad point cannot make
-        # the weight blow up or go negative.
-        with np.errstate(divide="ignore"):
+        # the weight blow up or go negative. np.where evaluates both branches, so
+        # 1/σ² is computed for the bad entries too — suppress the resulting
+        # divide-by-zero and invalid (NaN σ) warnings; those entries are masked out.
+        with np.errstate(divide="ignore", invalid="ignore"):
             w = np.where(np.isfinite(sig) & (sig > 0.0), 1.0 / np.square(sig), np.nan)
 
     mask = np.isfinite(x) & np.isfinite(y) & np.isfinite(w)

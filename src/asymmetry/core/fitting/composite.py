@@ -1647,6 +1647,27 @@ class CompositeModel:
             normalized = [value / total for value in raw_weights]
         return dict(zip(component_indices, normalized, strict=True))
 
+    def fraction_weights(self, values: dict[str, float]) -> dict[str, float]:
+        """Return ``{fraction_param: normalized_weight}`` for each fraction group.
+
+        The weight is ``fraction_i / Σ fraction`` over the group — the physical
+        amplitude partition (sums to 1 per group), as applied at evaluation. A
+        group is **skipped entirely** when any of its fraction parameters is
+        missing from ``values``, so callers never receive raw, un-normalized
+        values mislabeled as weights.
+        """
+        out: dict[str, float] = {}
+        for group in self.fraction_groups:
+            names = [
+                self._fraction_param_name(idx) for idx in self._fraction_group_term_starts(group)
+            ]
+            if not all(name in values for name in names):
+                continue
+            weights = self._fraction_group_weights(group, values)
+            for idx, weight in weights.items():
+                out[self._fraction_param_name(idx)] = weight
+        return out
+
     def normalized_parameter_values(self, values: dict[str, float]) -> dict[str, float]:
         """Return a copy with fraction-group parameters normalized for display."""
         normalized = dict(values)

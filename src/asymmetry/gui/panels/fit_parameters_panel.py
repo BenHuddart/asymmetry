@@ -2611,6 +2611,18 @@ class FitParametersPanel(QWidget):
             return x_key
         return None
 
+    def _export_abscissa_column(self) -> tuple[str, str] | None:
+        """``(x_key, header_label)`` for the Angle/custom abscissa export column.
+
+        The single source of the trailing free-text x-axis column added to the
+        table, CSV, and GLE data file (label folded as displayed). ``None`` when
+        the x-axis is already a fixed Run/B/T/param column.
+        """
+        key = self._export_abscissa_key()
+        if key is None:
+            return None
+        return key, self._custom_x_labels().get(key, key)
+
     def _rebuild_y_controls(self, *, preferred_selected: list[str] | None = None) -> None:
         self._y_selector_table.blockSignals(True)
         self._y_selector_table.clearContents()
@@ -3559,9 +3571,10 @@ class FitParametersPanel(QWidget):
         # A free-text x-axis (Angle / custom column) is not one of the fixed
         # columns, so add it explicitly (folded as displayed) — otherwise the
         # table/CSV would not show the abscissa the plot is drawn against.
-        abscissa_key = self._export_abscissa_key()
-        if abscissa_key is not None:
-            columns.append(self._custom_x_labels().get(abscissa_key, abscissa_key))
+        abscissa = self._export_abscissa_column()
+        abscissa_key = abscissa[0] if abscissa is not None else None
+        if abscissa is not None:
+            columns.append(abscissa[1])
 
         self._table.setColumnCount(len(columns))
         self._table.setHorizontalHeaderLabels(columns)
@@ -3579,7 +3592,9 @@ class FitParametersPanel(QWidget):
                 self._table.setItem(i, col + 1, QTableWidgetItem(f"{err:.3g}"))
                 col += 2
             if abscissa_key is not None:
-                self._table.setItem(i, col, QTableWidgetItem(f"{self._x_value(row, abscissa_key):.6g}"))
+                self._table.setItem(
+                    i, col, QTableWidgetItem(f"{self._x_value(row, abscissa_key):.6g}")
+                )
 
         self._table.resizeColumnsToContents()
 
@@ -4030,10 +4045,7 @@ class FitParametersPanel(QWidget):
             return (int(index) if index is not None else 0, name)
 
         parts = [f"{name} = {weights[name]:.3g}" for name in sorted(weights, key=_order)]
-        return (
-            "Normalised fraction weights (relative; each group sums to 1): "
-            + ", ".join(parts)
-        )
+        return "Normalised fraction weights (relative; each group sums to 1): " + ", ".join(parts)
 
     def _show_table_dialog(self) -> None:
         if self._table.rowCount() == 0 or self._table.columnCount() == 0:
@@ -4129,9 +4141,9 @@ class FitParametersPanel(QWidget):
         # The Angle/custom abscissa is appended by _refresh_table as a trailing
         # column; mirror it here so the header row matches the data cells read
         # from the table below.
-        abscissa_key = self._export_abscissa_key()
-        if abscissa_key is not None:
-            headers.append(self._custom_x_labels().get(abscissa_key, abscissa_key))
+        abscissa = self._export_abscissa_column()
+        if abscissa is not None:
+            headers.append(abscissa[1])
 
         with open(path, "w", newline="", encoding="utf-8") as csvfile:
             writer = csv.writer(csvfile)
@@ -4680,9 +4692,10 @@ class FitParametersPanel(QWidget):
                     headers.extend([name, f"err_{name}"])
             # A free-text x-axis (Angle/custom) is appended as a trailing column so
             # GLE can plot against it; param columns keep their fixed indices.
-            abscissa_key = self._export_abscissa_key()
-            if abscissa_key is not None:
-                headers.append(self._custom_x_labels().get(abscissa_key, abscissa_key))
+            abscissa = self._export_abscissa_column()
+            abscissa_key = abscissa[0] if abscissa is not None else None
+            if abscissa is not None:
+                headers.append(abscissa[1])
 
             f.write("! Column map:\n")
             for col_idx, name in enumerate(headers, start=1):
