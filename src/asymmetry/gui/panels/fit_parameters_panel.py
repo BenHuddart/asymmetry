@@ -39,12 +39,26 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.component_tracking import (
+    Component,
+    ScanPoint,
+    detect_crossings,
+)
 from asymmetry.core.fitting.composite_parameters import (
     CompositeExpression,
     CompositeExpressionError,
     CompositeParameterDefinition,
 )
 from asymmetry.core.fitting.engine import FitResult
+from asymmetry.core.fitting.knight_shift import (
+    REFERENCE_APPLIED_FIELD,
+    KnightShiftConfig,
+    concrete_unit,
+    knight_shift,
+    label_for_unit,
+    larmor_frequency_mhz,
+    scale_for_unit,
+)
 from asymmetry.core.fitting.parameter_models import (
     CrossGroupFitResult,
     ModelFitRange,
@@ -55,7 +69,13 @@ from asymmetry.core.fitting.parameter_models import (
     effective_range_bounds,
     parse_fit_windows,
 )
-from asymmetry.core.fitting.parameters import Parameter, ParameterSet, get_param_info
+from asymmetry.core.fitting.parameters import (
+    Parameter,
+    ParameterSet,
+    get_param_info,
+    register_derived_param_info,
+    split_parameter_name,
+)
 from asymmetry.gui.export_paths import (
     default_export_path,
     remember_export_path,
@@ -292,6 +312,13 @@ class FitParametersPanel(QWidget):
         self._selected_y_param_names: list[str] = []
         self._model_fits: dict[str, ParameterModelFit] = {}
         self._composite_parameters: list[CompositeParameterDefinition] = []
+        #: Knight-shift conversion (panel-global; applies to the active series).
+        self._knight_shift_config = KnightShiftConfig()
+        #: Generated Knight-shift Y-quantity name → source frequency parameter,
+        #: for the active series (rebuilt whenever derived quantities are applied).
+        self._knight_shift_names: dict[str, str] = {}
+        #: Crossing/degeneracy events flagged on the active series (for annotation).
+        self._knight_shift_crossings: list[object] = []
         self._plot_annotations: list[dict[str, object]] = []
         self._axes_tag_map: dict[int, str] = {}
         self._active_annotation_idx: int | None = None
@@ -554,6 +581,9 @@ class FitParametersPanel(QWidget):
         self._global_param_uncertainties = {}
         self._model_fits = {}
         self._composite_parameters = []
+        self._knight_shift_config = KnightShiftConfig()
+        self._knight_shift_names = {}
+        self._knight_shift_crossings = []
         self._group_fit_results = {}
         self._group_button_map = {}
         self._active_group_id = None
@@ -595,6 +625,7 @@ class FitParametersPanel(QWidget):
             "composite_parameters": self._serialize_composite_parameters(
                 self._composite_parameters
             ),
+            "knight_shift": self._knight_shift_config.to_dict(),
             "inferred_x_key": self._inferred_x_key,
             "x_axis": self._x_combo.currentText(),
             "x_axis_key": self._effective_x_key(),
@@ -643,6 +674,7 @@ class FitParametersPanel(QWidget):
         self._composite_parameters = self._deserialize_composite_parameters(
             state.get("composite_parameters", [])
         )
+        self._knight_shift_config = KnightShiftConfig.from_dict(state.get("knight_shift"))
         restored_rows: list[_FitRow] = []
         if isinstance(rows_data, list):
             for entry in rows_data:
@@ -1796,6 +1828,9 @@ class FitParametersPanel(QWidget):
         for definition in self._composite_parameters:
             if definition.name and definition.name not in params:
                 params.append(definition.name)
+        for kname in self._knight_shift_names:
+            if kname not in params:
+                params.append(kname)
         return params
 
     def _selected_composite_parameter_names(self) -> list[str]:
@@ -1843,31 +1878,166 @@ class FitParametersPanel(QWidget):
                     row.values.pop(name, None)
                     row.errors.pop(name, None)
 
-        if not definitions:
+        if definitions:
+            for row in rows:
+                symbol_values = dict(row.values)
+                symbol_uncertainties = dict(row.errors)
+                if global_uncertainties:
+                    for name, value in global_uncertainties.items():
+                        symbol_uncertainties.setdefault(name, value)
+
+                for definition in definitions:
+                    try:
+                        parsed = CompositeExpression(definition.expression)
+                        evaluation = parsed.evaluate_with_uncertainty(
+                            symbol_values,
+                            symbol_uncertainties,
+                            covariance=row.covariance,
+                        )
+                        row.values[definition.name] = float(evaluation.value)
+                        row.errors[definition.name] = float(evaluation.uncertainty)
+                        symbol_values[definition.name] = float(evaluation.value)
+                        symbol_uncertainties[definition.name] = float(evaluation.uncertainty)
+                    except (CompositeExpressionError, ValueError):
+                        row.values[definition.name] = float("nan")
+                        row.errors[definition.name] = float("nan")
+
+        # Knight-shift quantities are derived from the (just-applied) frequencies
+        # the same way composites are, so apply them through the same chokepoint.
+        self._apply_knight_shift_to_rows(rows)
+
+    # ── Knight-shift conversion (Phase 3) ──────────────────────────────────
+    @staticmethod
+    def _oscillation_frequency_names(rows: list[_FitRow]) -> list[str]:
+        """Frequency parameter names present in the rows, in composite order.
+
+        ``frequency`` (the first component) sorts before ``frequency_2``,
+        ``frequency_3``, … so the discovered order matches the model's component
+        order — the basis for stable per-component Knight-shift identity.
+        """
+        names: set[str] = set()
+        for row in rows:
+            names.update(n for n in row.values if n == "frequency" or n.startswith("frequency_"))
+
+        def _order(name: str) -> tuple[int, str]:
+            base, index = split_parameter_name(name)
+            if base == "frequency":
+                return (int(index) if index is not None else 1, "")
+            return (10_000, name)
+
+        return sorted(names, key=_order)
+
+    def _knight_shift_subscript(self, frequency_name: str) -> str:
+        """1-based component ordinal for a frequency parameter (for the K symbol)."""
+        _, index = split_parameter_name(frequency_name)
+        return index if index is not None else "1"
+
+    def _apply_knight_shift_to_rows(self, rows: list[_FitRow]) -> None:
+        """Compute Knight-shift Y-quantities for the rows from the active config.
+
+        Stores ``K[<frequency_name>]`` columns (scaled to the resolved display
+        unit) on each row, registers display metadata so labels render as
+        ``K_n (ppm)``, and records detected component crossings for annotation.
+        Idempotent: previously-generated K columns are cleared first.
+        """
+        for name in self._knight_shift_names:
+            for row in rows:
+                row.values.pop(name, None)
+                row.errors.pop(name, None)
+        self._knight_shift_names = {}
+        self._knight_shift_crossings = []
+
+        config = self._knight_shift_config
+        if not rows or config is None or not config.enabled:
+            return
+        components = self._oscillation_frequency_names(rows)
+        if not components:
             return
 
-        for row in rows:
-            symbol_values = dict(row.values)
-            symbol_uncertainties = dict(row.errors)
-            if global_uncertainties:
-                for name, value in global_uncertainties.items():
-                    symbol_uncertainties.setdefault(name, value)
+        selected = [c for c in components if (not config.components or c in config.components)]
+        ref_name = config.reference_component
+        if config.reference_mode != REFERENCE_APPLIED_FIELD:
+            if ref_name not in components:
+                return  # designated reference is gone; emit nothing rather than guess
+            selected = [c for c in selected if c != ref_name]
+        if not selected:
+            return
 
-            for definition in definitions:
-                try:
-                    parsed = CompositeExpression(definition.expression)
-                    evaluation = parsed.evaluate_with_uncertainty(
-                        symbol_values,
-                        symbol_uncertainties,
-                        covariance=row.covariance,
-                    )
-                    row.values[definition.name] = float(evaluation.value)
-                    row.errors[definition.name] = float(evaluation.uncertainty)
-                    symbol_values[definition.name] = float(evaluation.value)
-                    symbol_uncertainties[definition.name] = float(evaluation.uncertainty)
-                except (CompositeExpressionError, ValueError):
-                    row.values[definition.name] = float("nan")
-                    row.errors[definition.name] = float("nan")
+        # First pass: compute the dimensionless shifts so AUTO can pick a unit.
+        shifts: dict[str, list[tuple[_FitRow, float, float]]] = {}
+        for comp in selected:
+            per_row: list[tuple[_FitRow, float, float]] = []
+            for row in rows:
+                k, sigma_k = self._row_knight_shift(row, comp, ref_name)
+                per_row.append((row, k, sigma_k))
+            shifts[comp] = per_row
+
+        all_fractions = [k for per_row in shifts.values() for _, k, _ in per_row]
+        unit = concrete_unit(config.unit, all_fractions)
+        scale = scale_for_unit(unit)
+        unit_label = label_for_unit(unit)
+
+        for comp in selected:
+            kname = f"K[{comp}]"
+            self._knight_shift_names[kname] = comp
+            self._register_knight_label(kname, self._knight_shift_subscript(comp), unit_label)
+            for row, k, sigma_k in shifts[comp]:
+                row.values[kname] = k * scale
+                row.errors[kname] = sigma_k * scale
+
+        # Flag component crossings/degeneracies across the scan (detection only;
+        # the K traces still follow the raw component labels). Uses all discovered
+        # components so a crossing between any pair is surfaced.
+        self._knight_shift_crossings = self._detect_component_crossings(rows, components)
+
+    def _detect_component_crossings(
+        self, rows: list[_FitRow], components: list[str]
+    ) -> list[object]:
+        """Detect oscillation-component crossings along the active x-axis."""
+        if len(components) < 2:
+            return []
+        x_key = self._effective_x_key()
+        points: list[ScanPoint] = []
+        for row in rows:
+            x = self._x_value(row, x_key)
+            comps = tuple(
+                Component(frequency=float(row.values[c])) for c in components if c in row.values
+            )
+            if len(comps) == len(components):
+                points.append(ScanPoint(x=float(x), components=comps))
+        return detect_crossings(points)
+
+    def _row_knight_shift(
+        self, row: _FitRow, frequency_name: str, reference_name: str | None
+    ) -> tuple[float, float]:
+        """Dimensionless Knight shift (and σ) for one component on one row."""
+        nu = row.values.get(frequency_name)
+        if nu is None:
+            return float("nan"), float("nan")
+        sigma_nu = float(row.errors.get(frequency_name, 0.0) or 0.0)
+        if self._knight_shift_config.reference_mode == REFERENCE_APPLIED_FIELD:
+            return knight_shift(nu, larmor_frequency_mhz(row.field), sigma_nu=sigma_nu)
+        nu_ref = row.values.get(reference_name)
+        if nu_ref is None:
+            return float("nan"), float("nan")
+        sigma_ref = float(row.errors.get(reference_name, 0.0) or 0.0)
+        cov = 0.0
+        if row.covariance is not None:
+            cov = float(row.covariance.get(frequency_name, {}).get(reference_name, 0.0))
+        return knight_shift(nu, nu_ref, sigma_nu=sigma_nu, sigma_ref=sigma_ref, cov=cov)
+
+    @staticmethod
+    def _register_knight_label(kname: str, subscript: str, unit_label: str) -> None:
+        """Register display metadata so a Knight-shift quantity renders as K_n (unit)."""
+        sub_unicode = subscript.translate(str.maketrans("0123456789", "₀₁₂₃₄₅₆₇₈₉"))
+        register_derived_param_info(
+            kname,
+            plain=f"K{subscript}",
+            unicode=f"K{sub_unicode}",
+            latex=f"$K_{{{subscript}}}$",
+            gle=f"K_{{{subscript}}}",
+            unit=unit_label or None,
+        )
 
     def _detect_varying_parameters(self, rows: list[_FitRow]) -> list[str]:
         if not rows:
@@ -2406,6 +2576,36 @@ class FitParametersPanel(QWidget):
         if definition.name not in preferred_selected:
             preferred_selected.append(definition.name)
         self._refresh_after_composite_change(preferred_selected=preferred_selected)
+
+    # ── Knight-shift public API (driven by the dedicated dialog, Phase 3d) ──
+    def knight_shift_config(self) -> KnightShiftConfig:
+        """Return a copy of the active Knight-shift configuration."""
+        return KnightShiftConfig.from_dict(self._knight_shift_config.to_dict())
+
+    def available_oscillation_components(self) -> list[str]:
+        """Frequency parameter names available to convert, in component order."""
+        return self._oscillation_frequency_names(self._rows)
+
+    def knight_shift_crossings(self) -> list[object]:
+        """Crossing events flagged on the active series (for annotation/reporting)."""
+        return list(self._knight_shift_crossings)
+
+    def set_knight_shift_config(self, config: KnightShiftConfig) -> None:
+        """Apply a new Knight-shift configuration and refresh the trend.
+
+        Newly-generated K quantities are auto-selected (and the previous ones
+        de-selected) so enabling the conversion immediately shows the result.
+        """
+        previous_k = set(self._knight_shift_names)
+        self._knight_shift_config = config
+        self._apply_composite_parameters_to_rows(
+            self._rows,
+            self._composite_parameters,
+            self._global_param_uncertainties,
+        )
+        preferred = [n for n in self._selected_y_param_names if n not in previous_k]
+        preferred.extend(n for n in self._knight_shift_names if n not in preferred)
+        self._refresh_after_composite_change(preferred_selected=preferred)
 
     def _edit_selected_composite_parameter(self) -> None:
         selected = self._selected_composite_parameter_names()

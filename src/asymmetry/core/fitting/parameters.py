@@ -541,6 +541,27 @@ def param_info_map(param_names: list[str]) -> dict[str, ParamInfo]:
     return {name: get_param_info(name) for name in param_names}
 
 
+def register_derived_param_info(
+    name: str,
+    *,
+    plain: str,
+    unicode: str,
+    latex: str,
+    gle: str,
+    unit: str | None = None,
+) -> None:
+    """Register display metadata for a derived/computed quantity (e.g. a Knight shift).
+
+    Lets a computed trend quantity carry a proper symbol + unit so every label
+    path (table, matplotlib, GLE, legend) renders it correctly via
+    :func:`get_param_info`, without special-casing the name at each call site.
+    Idempotent: re-registering the same name overwrites its metadata (so a unit
+    change is picked up). The name should not end in ``_<digits>`` (that triggers
+    the indexed-variant split).
+    """
+    PARAM_INFO_REGISTRY[name] = ParamInfo(name, plain, unicode, latex, gle, unit)
+
+
 @dataclass(frozen=True)
 class AffineTie:
     """An affine constraint deriving a follower from other parameters.

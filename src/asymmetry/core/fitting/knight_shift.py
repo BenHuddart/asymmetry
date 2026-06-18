@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterable
+from dataclasses import dataclass, field
 from enum import Enum
 
 from asymmetry.core.utils.constants import (
@@ -146,3 +147,56 @@ def scale_for_unit(unit: KnightShiftUnit) -> float:
 def label_for_unit(unit: KnightShiftUnit) -> str:
     """Short unit suffix for an axis/legend label (empty for a bare fraction)."""
     return _UNIT_LABEL[unit]
+
+
+#: Reference conventions for the Knight shift.
+REFERENCE_APPLIED_FIELD = "applied_field"
+REFERENCE_COMPONENT = "component"
+
+
+@dataclass
+class KnightShiftConfig:
+    """User configuration for converting fitted frequencies to Knight shifts.
+
+    ``reference_mode`` is ``"applied_field"`` (ν_ref = γ_µ·B, needs no reference
+    line) or ``"component"`` (ν_ref is ``reference_component``'s fitted frequency).
+    ``components`` lists the oscillation-frequency parameter names to convert; an
+    empty tuple means "all discovered components". ``unit`` is the display unit
+    (the conversion is stored internally as a dimensionless fraction).
+    """
+
+    enabled: bool = False
+    reference_mode: str = REFERENCE_APPLIED_FIELD
+    reference_component: str | None = None
+    unit: KnightShiftUnit = KnightShiftUnit.AUTO
+    components: tuple[str, ...] = field(default_factory=tuple)
+
+    def to_dict(self) -> dict:
+        return {
+            "enabled": bool(self.enabled),
+            "reference_mode": str(self.reference_mode),
+            "reference_component": self.reference_component,
+            "unit": self.unit.value,
+            "components": list(self.components),
+        }
+
+    @classmethod
+    def from_dict(cls, data: object) -> KnightShiftConfig:
+        if not isinstance(data, dict):
+            return cls()
+        try:
+            unit = KnightShiftUnit(str(data.get("unit", KnightShiftUnit.AUTO.value)))
+        except ValueError:
+            unit = KnightShiftUnit.AUTO
+        mode = str(data.get("reference_mode", REFERENCE_APPLIED_FIELD))
+        if mode not in (REFERENCE_APPLIED_FIELD, REFERENCE_COMPONENT):
+            mode = REFERENCE_APPLIED_FIELD
+        ref = data.get("reference_component")
+        components = data.get("components") or []
+        return cls(
+            enabled=bool(data.get("enabled", False)),
+            reference_mode=mode,
+            reference_component=str(ref) if ref else None,
+            unit=unit,
+            components=tuple(str(c) for c in components),
+        )
