@@ -111,6 +111,19 @@ _FREQUENCY_X_UNIT_FIELD = {
 # which reads as "counts" rather than "asymmetry, no data".
 _EMPTY_PROJECTION_YLIM = (-0.3, 0.3)
 
+# Forward/backward asymmetry saturates at ±100 % in early/late bad bins (zero or
+# one-sided counts). These sentinel values are not signal; if autoscale picks them
+# up the few-to-tens-of-% real asymmetry is squashed into an invisible band. They
+# are clipped from the asymmetry-percent y-autoscale (never from frequency a.u. or
+# raw-count axes, where large magnitudes are legitimate).
+_ASYMMETRY_SATURATION_PERCENT = 100.0
+
+# How far above the non-DC baseline (median) the dominant non-DC spectral peak
+# must rise before the frequency plot auto-frames to it on first paint. Below
+# this the spectrum is treated as DC-only / featureless and the full Nyquist span
+# is kept rather than zooming to a noise spike.
+_FREQUENCY_PEAK_PROMINENCE = 4.0
+
 
 class _FloatLimitField(QLineEdit):
     """Plain text field that stores a floating-point axis limit."""
@@ -2283,6 +2296,14 @@ class PlotPanel(QWidget):
             and dataset.metadata.get("grouped_time_domain_lifetime_corrected") is False
         )
 
+    def _grouped_subplot_axis_key(self, dataset: MuonDataset) -> str:
+        """Subplot key for a grouped-time dataset (raw and corrected builds share
+        a run number but live on different y scales, so raw gets a ``:raw`` suffix)."""
+        key = str(dataset.run_number)
+        if self._is_raw_counts_dataset(dataset):
+            key += ":raw"
+        return key
+
     def _fit_curve_for_dataset(
         self,
         dataset: MuonDataset | None,
@@ -2993,6 +3014,9 @@ class PlotPanel(QWidget):
             xpad = (x_max - x_min) * 0.05
             self._x_min.setValue(self._convert_frequency_axis_limit_to_control_value(x_min - xpad))
             self._x_max.setValue(self._convert_frequency_axis_limit_to_control_value(x_max + xpad))
+            # Frame each subplot to its own signal so first paint isn't squashed by
+            # matplotlib autoscaling over sentinel/late-tail points.
+            self._frame_subplot_axes_to_signal()
             self._limits_initialized = True
 
         if vector_x_ranges and (self._fit_x_min is None or self._fit_x_max is None):
@@ -3055,9 +3079,7 @@ class PlotPanel(QWidget):
             # Raw and corrected builds share synthetic run numbers but live on
             # very different y scales; qualify the key so pinned y-limits from
             # one mode are not applied to the other.
-            axis_key = str(dataset.run_number)
-            if self._is_raw_counts_dataset(dataset):
-                axis_key += ":raw"
+            axis_key = self._grouped_subplot_axis_key(dataset)
             ordered_keys.append(axis_key)
             ax = self._figure.add_subplot(len(datasets), 1, idx + 1, sharex=shared_ax)
             style_axes(ax)
@@ -3098,6 +3120,9 @@ class PlotPanel(QWidget):
             xpad = (x_max - x_min) * 0.05
             self._x_min.setValue(self._convert_frequency_axis_limit_to_control_value(x_min - xpad))
             self._x_max.setValue(self._convert_frequency_axis_limit_to_control_value(x_max + xpad))
+            # Frame each group's subplot to its own signal so first paint isn't
+            # squashed by matplotlib autoscaling over sentinel/late-tail points.
+            self._frame_subplot_axes_to_signal()
             self._limits_initialized = True
 
         if grouped_x_ranges and (self._fit_x_min is None or self._fit_x_max is None):
@@ -3566,19 +3591,24 @@ class PlotPanel(QWidget):
                 t_all = self._last_plot_time
                 a_all = self._last_plot_asymmetry
                 e_all = self._last_plot_error
-                x_min, x_max = float(t_all.min()), float(t_all.max())
-                y_min = float((a_all - e_all).min())
-                y_max = float((a_all + e_all).max())
-                xpad = (x_max - x_min) * 0.05
-                ypad = (y_max - y_min) * 0.05
-                self._x_min.setValue(
-                    self._convert_frequency_axis_limit_to_control_value(x_min - xpad)
-                )
-                self._x_max.setValue(
-                    self._convert_frequency_axis_limit_to_control_value(x_max + xpad)
-                )
-                self._y_min.setValue(y_min - ypad)
-                self._y_max.setValue(y_max + ypad)
+                # X first: time panels span the full data; frequency panels frame
+                # the dominant non-DC peak (high-TF Larmor lines sit far above the
+                # DC peak that would otherwise dominate the full-Nyquist view).
+                x_limits = self._default_x_limits(t_all, a_all)
+                if x_limits is not None:
+                    self._x_min.setValue(x_limits[0])
+                    self._x_max.setValue(x_limits[1])
+                # Y framed to the signal within that window, ignoring ±100 %
+                # saturation sentinels and the error-divergent tail. Fall back to
+                # the raw envelope only when no good-bin points exist.
+                y_limits = self._signal_y_limits_from_last_plot()
+                if y_limits is None:
+                    y_min = float((a_all - e_all).min())
+                    y_max = float((a_all + e_all).max())
+                    ypad = (y_max - y_min) * 0.05
+                    y_limits = (y_min - ypad, y_max + ypad)
+                self._y_min.setValue(y_limits[0])
+                self._y_max.setValue(y_limits[1])
                 self._limits_initialized = True
 
             # Set fit range to span all datasets (raw axes — see _raw_fit_seed_range).
@@ -3805,21 +3835,24 @@ class PlotPanel(QWidget):
 
         # Initialize limits once; preserve user-set limits on redraw.
         if not self._limits_initialized:
-            x_min, x_max = float(time.min()), float(time.max())
-            y_min = float((asymmetry - error).min())
-            y_max = float((asymmetry + error).max())
-
-            x_padding = (x_max - x_min) * 0.05
-            y_padding = (y_max - y_min) * 0.05
-
-            self._x_min.setValue(
-                self._convert_frequency_axis_limit_to_control_value(x_min - x_padding)
-            )
-            self._x_max.setValue(
-                self._convert_frequency_axis_limit_to_control_value(x_max + x_padding)
-            )
-            self._y_min.setValue(y_min - y_padding)
-            self._y_max.setValue(y_max + y_padding)
+            # X first: time panels span the full data; frequency panels frame the
+            # dominant non-DC peak so high-TF Larmor lines aren't squashed off the
+            # full-Nyquist view by the DC peak.
+            x_limits = self._default_x_limits(time, asymmetry)
+            if x_limits is not None:
+                self._x_min.setValue(x_limits[0])
+                self._x_max.setValue(x_limits[1])
+            # Y framed to the signal within that window, ignoring ±100 % saturation
+            # sentinels and the error-divergent late-time tail. Fall back to the raw
+            # envelope only when no good-bin points exist.
+            y_limits = self._signal_y_limits_from_last_plot()
+            if y_limits is None:
+                y_min = float((asymmetry - error).min())
+                y_max = float((asymmetry + error).max())
+                y_padding = (y_max - y_min) * 0.05
+                y_limits = (y_min - y_padding, y_max + y_padding)
+            self._y_min.setValue(y_limits[0])
+            self._y_max.setValue(y_limits[1])
             self._limits_initialized = True
 
         if self._fit_x_min is None or self._fit_x_max is None:
@@ -3928,6 +3961,79 @@ class PlotPanel(QWidget):
             )
             ann["artist"] = artist
 
+    def _default_x_limits(
+        self, time: np.ndarray, asymmetry: np.ndarray
+    ) -> tuple[float, float] | None:
+        """Initial x-limits (in control-value units) for a freshly plotted dataset.
+
+        Time panels frame the full data span. Frequency panels frame the dominant
+        non-DC spectral peak when one stands out, so high-transverse-field Larmor
+        lines are visible on first paint instead of being squashed off-screen by a
+        full-Nyquist view dominated by the DC peak.
+        """
+        finite = np.isfinite(time)
+        if not np.any(finite):
+            return None
+        t = time[finite]
+        x_min = float(np.min(t))
+        x_max = float(np.max(t))
+
+        # Correlation-axis frequency mode is a coupling coordinate, not a Larmor
+        # spectrum, so dominant-peak framing is not meaningful there.
+        if self._is_frequency_plot_panel() and not self._frequency_axis_is_correlation:
+            peak_upper = self._frequency_peak_upper_bound(time, asymmetry)
+            if peak_upper is not None and peak_upper > x_min:
+                # Keep the data's own lower edge (an rfft spectrum starts at the DC
+                # bin); only pull the upper edge in to frame the peak. Injecting an
+                # absolute 0 here would misbehave on reference-relative / field axes.
+                x_max = peak_upper
+
+        if x_max <= x_min:
+            pad = max(abs(x_min) * 0.05, 1e-6)
+        else:
+            pad = (x_max - x_min) * 0.05
+        return (
+            self._convert_frequency_axis_limit_to_control_value(x_min - pad),
+            self._convert_frequency_axis_limit_to_control_value(x_max + pad),
+        )
+
+    def _frequency_peak_upper_bound(self, freqs: np.ndarray, values: np.ndarray) -> float | None:
+        """Upper frequency-axis bound that frames the dominant non-DC peak.
+
+        Returns ``None`` (keep the full span) for DC-only or featureless spectra,
+        where the largest non-DC bin barely clears the baseline and zooming would
+        merely chase a noise spike.
+        """
+        f = np.asarray(freqs, dtype=float)
+        v = np.abs(np.asarray(values, dtype=float))
+        finite = np.isfinite(f) & np.isfinite(v)
+        f = f[finite]
+        v = v[finite]
+        if f.size < 4:
+            return None
+        f_max = float(np.max(f))
+        if f_max <= 0.0:
+            return None
+
+        # Exclude the DC region (zero-frequency peak + filter rolloff): the lowest
+        # 2 % of the span. The DC peak typically dwarfs the signal, so it must not
+        # count as "the dominant peak".
+        dc_cut = f_max * 0.02
+        nondc = f > dc_cut
+        if np.count_nonzero(nondc) < 2:
+            return None
+        f_nondc = f[nondc]
+        v_nondc = v[nondc]
+        peak_idx = int(np.argmax(v_nondc))
+        peak_f = float(f_nondc[peak_idx])
+        peak_v = float(v_nondc[peak_idx])
+        baseline = float(np.median(v_nondc))
+        if peak_v <= 0.0 or peak_v <= baseline * _FREQUENCY_PEAK_PROMINENCE:
+            return None
+
+        # Frame the peak with head-room, never past the available data.
+        return float(min(f_max, peak_f * 1.5))
+
     def _auto_x_limits(self) -> None:
         """Auto-scale x-axis and update x-limit controls."""
         if not self._has_mpl:
@@ -3972,9 +4078,7 @@ class PlotPanel(QWidget):
         if self._grouped_time_subplot_datasets and self._subplot_axes_by_polarization:
             updated = False
             for dataset in self._grouped_time_subplot_datasets:
-                axis_key = str(dataset.run_number)
-                if self._is_raw_counts_dataset(dataset):
-                    axis_key += ":raw"
+                axis_key = self._grouped_subplot_axis_key(dataset)
                 if axis_key not in self._subplot_axes_by_polarization:
                     continue
                 limits = self._auto_y_limits_for_datasets([dataset])
@@ -4004,12 +4108,31 @@ class PlotPanel(QWidget):
             self._apply_limits()
             return
 
+        limits = self._signal_y_limits_from_last_plot()
+        if limits is None:
+            return
+        y_min, y_max = limits
+
+        self._y_min.setValue(y_min)
+        self._y_max.setValue(y_max)
+
+        self._apply_limits()
+
+    def _signal_y_limits_from_last_plot(self) -> tuple[float, float] | None:
+        """Robust y-limits framing the signal in the current x-window.
+
+        Restricts to finite, in-window, non-low-count bins (good-bin/signal
+        region) and drops ±100 % saturation sentinels, so the error-divergent
+        late-time tail and bad-bin sentinels never blow the range out. Falls
+        back to progressively looser masks when the window is empty. Returns
+        ``None`` when no usable points exist (callers keep their prior limits).
+        """
         if (
             self._last_plot_time is None
             or self._last_plot_asymmetry is None
             or self._last_plot_error is None
         ):
-            return
+            return None
 
         x_lo = float(self._x_min.value())
         x_hi = float(self._x_max.value())
@@ -4039,17 +4162,41 @@ class PlotPanel(QWidget):
         if not np.any(mask):
             mask = np.isfinite(asymmetry) & np.isfinite(error)
         if not np.any(mask):
-            return
+            return None
 
-        limits = self._auto_y_limits_from_arrays(asymmetry, error, mask)
-        if limits is None:
-            return
-        y_min, y_max = limits
+        return self._auto_y_limits_from_arrays(asymmetry, error, mask)
 
-        self._y_min.setValue(y_min)
-        self._y_max.setValue(y_max)
+    def _y_axis_is_asymmetry_percent(self) -> bool:
+        """True only when the y-axis shows F-B / group asymmetry in percent.
 
-        self._apply_limits()
+        That is the one axis the ±100 % saturation sentinel applies to. The
+        frequency view (a.u.) and the raw-counts time view (counts in the
+        hundreds–thousands) are *not* percent, and their large magnitudes are
+        legitimate signal, so the sentinel clip must never touch them.
+        """
+        if self._is_frequency_plot_panel():
+            return False
+        return getattr(self, "_current_time_view_mode", "fb_asymmetry") != "raw_counts"
+
+    def _mask_without_saturation_sentinels(
+        self, asymmetry: np.ndarray, mask: np.ndarray
+    ) -> np.ndarray:
+        """Drop ±100 % saturation sentinels from *mask* on the percent axis.
+
+        Only the asymmetry-percent axis carries this sentinel; the frequency
+        (a.u.) and raw-counts axes hold legitimately large magnitudes, so the
+        mask is returned unchanged there. If clipping would empty the mask the
+        original is kept, so a degenerate all-saturated window still yields
+        *some* limits rather than none.
+        """
+        if not self._y_axis_is_asymmetry_percent():
+            return mask
+        finite_asym = np.isfinite(asymmetry)
+        sentinel = finite_asym & (np.abs(asymmetry) >= _ASYMMETRY_SATURATION_PERCENT)
+        if not np.any(sentinel):
+            return mask
+        trimmed = mask & ~sentinel
+        return trimmed if np.any(trimmed) else mask
 
     def _auto_y_limits_from_arrays(
         self,
@@ -4058,6 +4205,10 @@ class PlotPanel(QWidget):
         mask: np.ndarray,
     ) -> tuple[float, float] | None:
         """Return padded y-limits for the masked asymmetry arrays."""
+        if not np.any(mask):
+            return None
+
+        mask = self._mask_without_saturation_sentinels(asymmetry, mask)
         if not np.any(mask):
             return None
 
@@ -4134,6 +4285,42 @@ class PlotPanel(QWidget):
             mask = np.isfinite(asymmetry) & np.isfinite(error)
 
         return self._auto_y_limits_from_arrays(asymmetry, error, mask)
+
+    def _subplot_datasets_for_axis(self, axis_key: str) -> list[MuonDataset]:
+        """Datasets feeding the stacked subplot keyed by *axis_key*."""
+        if self._grouped_time_subplot_datasets:
+            return [
+                dataset
+                for dataset in self._grouped_time_subplot_datasets
+                if self._grouped_subplot_axis_key(dataset) == axis_key
+            ]
+        return list(self._vector_subplot_datasets.get(axis_key, []))
+
+    def _frame_subplot_axes_to_signal(self) -> None:
+        """Frame each stacked subplot's y-axis to its own signal envelope.
+
+        Used at first paint so the Individual-groups / vector views open framed on
+        the good-bin region (sentinels and the error-divergent tail excluded)
+        instead of matplotlib's raw autoscale over every plotted point. Mirrors
+        what the Auto Y button does per axis; manual/cached limits still win in
+        :meth:`_apply_limits`.
+        """
+        if not self._subplot_axes_by_polarization:
+            return
+        for axis_key, ax in self._subplot_axes_by_polarization.items():
+            # Respect an already-cached (e.g. restored or manually pinned) limit,
+            # matching the build loop which only auto-scales axes without one.
+            if axis_key in self._y_limits_by_polarization:
+                continue
+            datasets = self._subplot_datasets_for_axis(axis_key)
+            if not datasets:
+                continue
+            limits = self._auto_y_limits_for_datasets(datasets)
+            if limits is None:
+                continue
+            self._y_limits_by_polarization[axis_key] = limits
+            if hasattr(ax, "set_ylim"):
+                ax.set_ylim(float(limits[0]), float(limits[1]))
 
     def _low_count_mask_for_dataset(
         self,
