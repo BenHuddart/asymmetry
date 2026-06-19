@@ -30,7 +30,7 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import QEvent, QEventLoop, QObject, QSettings, Qt, QThread, QTimer, QUrl, Signal
-from PySide6.QtGui import QActionGroup, QGuiApplication, QIcon, QPixmap
+from PySide6.QtGui import QAction, QActionGroup, QGuiApplication, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
     QDialog,
@@ -156,7 +156,12 @@ from asymmetry.gui.fit_settings import fit_quality_confidence, set_fit_quality_c
 from asymmetry.gui.gle_settings import GleSetupDialog
 from asymmetry.gui.panels.alc_panel import ALCFitPanel, ALCScanView
 from asymmetry.gui.panels.data_browser import DataBrowserPanel
-from asymmetry.gui.panels.fit_panel import FitPanel
+from asymmetry.gui.panels.fit_panel import (
+    BATCH_SEEDING_LABELS,
+    BATCH_SEEDING_MODES,
+    BATCH_SEEDING_TOOLTIP,
+    FitPanel,
+)
 from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
 from asymmetry.gui.panels.fourier_panel import FourierPanel
 from asymmetry.gui.panels.log_panel import LogPanel
@@ -782,18 +787,19 @@ class MainWindow(QMainWindow):
 
         # Batch-series seeding mode (chain-from-previous for scans). "Auto" picks
         # per the order key; the others force a mode. All reach fit_grouped_series.
+        # The same control is mirrored on the Batch tab (kept in sync via
+        # _sync_batch_seeding_menu / set_batch_seeding_mode).
         seeding_menu = analysis_menu.addMenu("Batch seeding")
+        seeding_menu.setToolTip(BATCH_SEEDING_TOOLTIP)
         self._batch_seeding_group = QActionGroup(self)
-        for label, mode in (
-            ("Auto", "auto"),
-            ("Independent seeds", "as_provided"),
-            ("Chain from previous run", "chain"),
-        ):
+        self._batch_seeding_actions: dict[str, QAction] = {}
+        for label, mode in BATCH_SEEDING_MODES:
             action = seeding_menu.addAction(label)
             action.setCheckable(True)
             action.setChecked(mode == "auto")
             action.triggered.connect(lambda _checked, m=mode: self._on_set_batch_seeding(m))
             self._batch_seeding_group.addAction(action)
+            self._batch_seeding_actions[mode] = action
         analysis_menu.addAction("Export fit report…", self._on_export_fit_report)
 
         # View
@@ -1559,6 +1565,8 @@ class MainWindow(QMainWindow):
         if hasattr(self._fit_panel, "global_fit_started"):
             self._fit_panel.global_fit_started.connect(self._on_global_fit_started)
         self._fit_panel.global_fit_completed.connect(self._on_global_fit_completed)
+        if hasattr(self._fit_panel, "batch_seeding_mode_changed"):
+            self._fit_panel.batch_seeding_mode_changed.connect(self._sync_batch_seeding_menu)
         self._alc_fit_panel.build_requested.connect(self._on_scan_requested)
         self._alc_fit_panel.fit_range_edit_committed.connect(self._on_fit_range_edit_committed)
         self._alc_scan_view.options_changed.connect(self._render_alc_scan)
@@ -4742,14 +4750,26 @@ class MainWindow(QMainWindow):
         self._log_panel.log("Opened Fit panel")
 
     def _on_set_batch_seeding(self, mode: str) -> None:
-        """Apply the chosen batch-series seeding mode to the fit panel."""
+        """Apply a batch-series seeding mode chosen from the menu to the fit panel.
+
+        Forwarding to the panel also updates the mirrored on-tab selector (with its
+        signals blocked, so this does not bounce back here).
+        """
         self._fit_panel.set_batch_seeding_mode(mode)
-        labels = {
-            "auto": "Auto",
-            "as_provided": "Independent seeds",
-            "chain": "Chain from previous run",
-        }
-        self._log_panel.log(f"Batch seeding: {labels.get(mode, mode)}", tag="fit")
+        self._log_panel.log(f"Batch seeding: {BATCH_SEEDING_LABELS.get(mode, mode)}", tag="fit")
+
+    def _sync_batch_seeding_menu(self, mode: str) -> None:
+        """Mirror an on-tab seeding-mode change into the menu's action group.
+
+        Checking the action programmatically does not fire ``triggered``, so this
+        does not loop back through :meth:`_on_set_batch_seeding`; the panel already
+        holds the new mode. Only an actual change is logged (an echo of the current
+        mode leaves the checkmark as-is and stays silent).
+        """
+        action = self._batch_seeding_actions.get(mode)
+        if action is not None and not action.isChecked():
+            action.setChecked(True)
+            self._log_panel.log(f"Batch seeding: {BATCH_SEEDING_LABELS.get(mode, mode)}", tag="fit")
 
     def _collect_latest_fit_records(self) -> list[tuple[str, dict]]:
         """Gather (title, record) for every persisted latest fit in the project.

@@ -452,6 +452,14 @@ def fit_quality_tooltip(quality: dict | None) -> str:
         band = f"{float(low):.3f}–{float(high):.3f}"
         nu = f" (ν = {int(dof)})" if dof is not None else ""
         lines.append(f"A good fit's χ²ᵣ falls in [{band}] at {pct}%{nu}.")
+        # Defuse the "poor at χ²ᵣ≈1.08" alarm for high-statistics muon data: the
+        # band is a confidence interval that tightens with ν, so a near-unity χ²ᵣ
+        # can read "poor" yet be a good fit. Clarity only — the band math is unchanged.
+        lines.append(
+            "The band is a confidence interval (WiMDA Rgoodfit), not a fixed cut-off, "
+            "and tightens as ν grows — so at high statistics a χ²ᵣ near 1 can read "
+            "“poor” yet still be a good fit. Tune it in Options ▸ Fit quality confidence."
+        )
     lines.append(
         "“overdone” reproduces the data better than the errors allow — usually "
         "overestimated errors or an over-flexible model; “poor” is worse than the "

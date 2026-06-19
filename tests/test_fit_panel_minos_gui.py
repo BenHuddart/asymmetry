@@ -87,6 +87,57 @@ def test_batch_seeding_mode_setter(qapp: QApplication) -> None:
     assert tab._batch_seeding_mode == "chain"
 
 
+def test_batch_seeding_on_tab_combo_syncs_with_mode(qapp: QApplication) -> None:
+    """The on-tab seeding combo and the mode stay in lock-step both ways (Bug #7)."""
+    tab = GlobalFitTab(member_kind="runs")
+    # Default reflects the mode.
+    assert tab._seeding_combo.currentData() == "auto"
+
+    # mode -> combo: set_batch_seeding_mode drives the combo without re-emitting.
+    emitted: list[str] = []
+    tab.batch_seeding_mode_changed.connect(emitted.append)
+    tab.set_batch_seeding_mode("chain")
+    assert tab._seeding_combo.currentData() == "chain"
+    assert emitted == []  # programmatic sync must not bounce back
+
+    # combo -> mode: a user selection updates the mode and notifies listeners once.
+    idx = tab._seeding_combo.findData("as_provided")
+    tab._seeding_combo.setCurrentIndex(idx)
+    assert tab._batch_seeding_mode == "as_provided"
+    assert emitted == ["as_provided"]
+
+
+def test_seeding_combo_absent_on_single_grouped_surface(qapp: QApplication) -> None:
+    """Batch-series seeding has no meaning on the single grouped surface (one
+    dataset's groups, no run series), so the on-tab combo is omitted there but
+    present on a real batch-series tab."""
+    single_grouped = GlobalFitTab(member_kind="groups", grouped_single=True)
+    assert single_grouped._seeding_combo is None
+    # set_batch_seeding_mode stays safe with no combo present.
+    single_grouped.set_batch_seeding_mode("chain")
+    assert single_grouped._batch_seeding_mode == "chain"
+
+    batch_series = GlobalFitTab(member_kind="groups")
+    assert batch_series._seeding_combo is not None
+
+
+def test_fit_quality_tooltip_explains_high_ndof_band(qapp: QApplication) -> None:
+    """The verdict tooltip explains the confidence band tightens with ν (Bug #3)."""
+    from asymmetry.gui.styles.widgets import fit_quality_tooltip
+
+    quality = {
+        "verdict": "poor",
+        "band_low": 0.960,
+        "band_high": 1.041,
+        "confidence": 0.95,
+        "dof": 4756,
+    }
+    tip = fit_quality_tooltip(quality)
+    assert "Rgoodfit" in tip
+    assert "ν" in tip  # explains the dependence on degrees of freedom
+    assert "Fit quality confidence" in tip  # points to the configurable setting
+
+
 def test_stop_button_hidden_until_busy(qapp: QApplication) -> None:
     # isHidden() reflects the explicit hide flag regardless of ancestor visibility
     # (the tab is never shown on screen in the offscreen test).

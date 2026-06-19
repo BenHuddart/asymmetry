@@ -20,7 +20,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox
 
 from asymmetry.core.fitting.composite import CompositeModel
-from asymmetry.gui.panels.fit_panel import FitParameterTable
+from asymmetry.gui.panels.fit_panel import FitParameterTable, _format_param_label
 
 
 @pytest.fixture(scope="module")
@@ -48,6 +48,25 @@ def test_populate_creates_one_row_per_param_with_fixed_defaults(qapp):
     fixed = {n: _fix_checkbox(table, r).isChecked() for r, n in enumerate(names)}
     assert fixed["A_bg"] is True
     assert fixed["Lambda"] is False
+
+
+def test_name_cells_carry_full_label_tooltip(qapp):
+    """The Name column is kept narrow and clips "name (unit)" labels, so each name
+    cell must expose the full formatted label as a tooltip (Bug #6)."""
+    model = CompositeModel(["Oscillatory", "Exponential", "Constant"], operators=["*", "+"])
+    table = FitParameterTable()
+    table.populate(model)
+
+    for row, pname in enumerate(model.param_names):
+        item = table.item(row, table.COL_NAME)
+        full = _format_param_label(pname)
+        # The full label is the displayed text AND the tooltip, so even when the
+        # narrow column elides it (e.g. "f (MHz)" → "f (MH…") it is readable on hover.
+        assert item.text() == full
+        assert item.toolTip() == full
+    # The labels really do carry units that overflow a narrow column.
+    labels = [_format_param_label(p) for p in model.param_names]
+    assert any("(" in label for label in labels)
 
 
 def test_read_parameter_set_reflects_value_fix_and_bounds(qapp):
