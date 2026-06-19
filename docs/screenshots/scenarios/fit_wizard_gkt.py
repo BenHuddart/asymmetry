@@ -49,6 +49,11 @@ class FitWizardGktScenario(Scenario):
         )
         _process_events_for(milliseconds=80)
         single_tab._run_fit()
+        # The fit runs on a worker thread; block (with a live event loop) until
+        # it lands so the screenshot captures the converged parameter table
+        # rather than the transient "Fitting…" state. The wait is bounded, so a
+        # stalled fit cannot wedge the capture indefinitely.
+        single_tab.wait_for_fit()
         return window
 
 
