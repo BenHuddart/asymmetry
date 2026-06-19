@@ -13,33 +13,40 @@ required. Run it from the project root.
 from __future__ import annotations
 
 import argparse
+import faulthandler
 import os
 import sys
-import threading
 import time
 from pathlib import Path
 
 # Hard cap on the entire capture process — if any scenario deadlocks or a fit
-# stall, this daemon thread exits the process rather than blocking the CI job
-# indefinitely.  ``continue-on-error: true`` on the workflow step means the
-# Sphinx build proceeds even when we exit with a non-zero code.
-_CAPTURE_TIMEOUT_S = 20 * 60  # 20 minutes
+# stalls, the watchdog dumps every thread's stack and exits rather than blocking
+# the CI job indefinitely.  ``continue-on-error: true`` on the workflow step
+# means the Sphinx build proceeds even when we exit with a non-zero code.
+_CAPTURE_TIMEOUT_S = 8 * 60  # 8 minutes
 
 
 def _start_watchdog(timeout_s: int = _CAPTURE_TIMEOUT_S) -> None:
-    """Start a daemon thread that hard-exits the process after *timeout_s* seconds."""
+    """Hard-exit the process if capture wedges for *timeout_s* seconds.
 
-    def _watchdog() -> None:
-        time.sleep(timeout_s)
-        print(
-            f"[screenshots] WATCHDOG: hard exit after {timeout_s}s — "
-            "a scenario may have hung; increase _CAPTURE_TIMEOUT_S if needed.",
-            flush=True,
-        )
-        os._exit(1)
+    Uses :func:`faulthandler.dump_traceback_later` rather than a pure-Python
+    daemon thread calling ``os._exit``. A fit runs on a Qt worker thread, and a
+    long ``iminuit``/``migrad`` minimisation holds the GIL inside its native
+    (C++/pybind11) call. That starves *every* Python thread — including a
+    pure-Python watchdog daemon, which can then never wake to call ``os._exit``.
+    This is why a previous 20-minute daemon watchdog let a CI run hang for hours
+    instead of self-terminating.
 
-    t = threading.Thread(target=_watchdog, name="screenshot-watchdog", daemon=True)
-    t.start()
+    ``faulthandler``'s timer fires from C without needing the GIL, dumps the
+    stacks of all threads (so the CI log shows exactly where it wedged), and
+    exits the process. ``os`` import is retained for the env defaults below.
+    """
+    faulthandler.enable()
+    print(
+        f"[screenshots] watchdog armed: hard exit + thread dump after {timeout_s}s.",
+        flush=True,
+    )
+    faulthandler.dump_traceback_later(timeout_s, exit=True)
 
 
 def _ensure_offscreen_default() -> None:

@@ -178,12 +178,17 @@ def test_rf_fit_requires_rf_scan(mainwindow: MainWindow, monkeypatch) -> None:
     # message rather than fitting the RF model to the wrong observable.
     mw = mainwindow
     _enter_alc(mw)
-    notes: list[str] = []
+    # Headless (offscreen) routes guidance to the log instead of a modal
+    # QMessageBox (which would block the event loop); a modal here is a bug.
     monkeypatch.setattr(
-        mw_module.QMessageBox, "information", staticmethod(lambda *a, **k: notes.append(a))
+        mw_module.QMessageBox,
+        "information",
+        staticmethod(lambda *a, **k: pytest.fail("modal QMessageBox fired headless")),
     )
     monkeypatch.setattr(
-        mw_module.QMessageBox, "warning", staticmethod(lambda *a, **k: notes.append(a))
+        mw_module.QMessageBox,
+        "warning",
+        staticmethod(lambda *a, **k: pytest.fail("modal QMessageBox fired headless")),
     )
     mw._alc_fit_panel._rf_difference_check.setChecked(False)
     mw._fit_panel.set_datasets(_rf_datasets())
@@ -192,7 +197,7 @@ def test_rf_fit_requires_rf_scan(mainwindow: MainWindow, monkeypatch) -> None:
 
     mw._on_fit_rf()
     assert mw._alc_scan_view._rf_results.text() == ""  # nothing fitted
-    assert notes  # the user was told why
+    assert "RF resonance" in mw._log_panel.to_plain_text()  # the user was told why
 
 
 def test_rf_scan_persists_and_restores(mainwindow: MainWindow) -> None:

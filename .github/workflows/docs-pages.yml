@@ -25,6 +25,10 @@ jobs:
   build-docs:
     name: Build Sphinx docs
     runs-on: ubuntu-latest
+    # Outer guard: the in-process screenshot watchdog (faulthandler, ~8 min) and
+    # the step timeout below should both fire first; this bounds the whole job in
+    # case anything upstream/downstream of screenshots wedges too.
+    timeout-minutes: 30
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -49,6 +53,10 @@ jobs:
 
       - name: Generate GUI screenshots
         continue-on-error: true
+        # Backstop for the in-process faulthandler watchdog: if a fit holds the
+        # GIL so hard that even faulthandler cannot fire, GitHub kills the step.
+        # continue-on-error keeps the docs build going with whatever was captured.
+        timeout-minutes: 12
         env:
           QT_QPA_PLATFORM: offscreen
         run: python -m docs.screenshots.capture --out docs/_generated/screenshots
