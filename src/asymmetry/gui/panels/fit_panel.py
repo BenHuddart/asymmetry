@@ -101,7 +101,7 @@ from asymmetry.core.fitting.parameters import (
     get_param_info,
     split_parameter_name,
 )
-from asymmetry.core.fitting.result_summary import fit_result_summary
+from asymmetry.core.fitting.result_summary import fit_result_summary, parameters_at_bound
 from asymmetry.core.fitting.rrf_offset import (
     UnsupportedRRFComponentError,
     rrf_frequency_offsets,
@@ -585,6 +585,18 @@ def _fit_quality_dict(result) -> dict | None:
         return None
 
 
+def _fit_bound_params(result) -> list[str]:
+    """Free parameters of *result* pinned on a finite bound (advisory badge).
+
+    Detection lives in core (:func:`parameters_at_bound`) so it is reusable and
+    headless-testable; the GUI only renders the badge it returns.
+    """
+    try:
+        return parameters_at_bound(getattr(result, "parameters", None))
+    except Exception:
+        return []
+
+
 def _fit_range_provenance_text(min_spin, max_spin, unit_label) -> str | None:
     """Format the fit range as a provenance string, or ``None`` if degenerate.
 
@@ -683,7 +695,7 @@ def _fit_success_html(result) -> str:
     stats = f"χ²/ν = {result.reduced_chi_squared:.4f} · npar = {npar} · ndof = {ndof}"
     if result.edm is not None:
         stats += f" · Δ‖p‖ = {result.edm:.2e}"
-    stats += fit_quality_chip_html(_fit_quality_dict(result))
+    stats += fit_quality_chip_html(_fit_quality_dict(result), _fit_bound_params(result))
     return success_html("Fit converged", detail=stats)
 
 
@@ -2683,7 +2695,9 @@ class SingleFitTab(QWidget):
         warnings_note = _fit_warnings_html(result)
         self._results_group.setStyleSheet(RESULT_BOX_SUCCESS_STYLE)
         self._result_label.setText(_fit_success_html(result) + rrf_note + warnings_note)
-        self._result_label.setToolTip(fit_quality_tooltip(_fit_quality_dict(result)))
+        self._result_label.setToolTip(
+            fit_quality_tooltip(_fit_quality_dict(result), _fit_bound_params(result))
+        )
 
         if not (model_unchanged and dataset_unchanged):
             if not model_unchanged:
@@ -4948,7 +4962,7 @@ class GlobalFitTab(QWidget):
         alpha = fwd.parameters["alpha"].value
         alpha_err = fwd.uncertainties.get("alpha")
         rows = [self._count_param_row(fwd, name) for name in fwd.parameters.names]
-        chip = fit_quality_chip_html(_fit_quality_dict(fwd))
+        chip = fit_quality_chip_html(_fit_quality_dict(fwd), _fit_bound_params(fwd))
         detail = (
             f"α = {self._fmt_value(alpha, alpha_err)} · χ²/ν = {fwd.reduced_chi_squared:.4f}{chip} "
             f"(cost: {cost})<br>" + "<br>".join(rows)

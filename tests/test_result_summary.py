@@ -6,7 +6,10 @@ import pytest
 from scipy import stats
 
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
-from asymmetry.core.fitting.result_summary import fit_result_summary
+from asymmetry.core.fitting.result_summary import (
+    fit_result_summary,
+    parameters_at_bound,
+)
 
 
 class _FakeResult:
@@ -70,3 +73,112 @@ def test_quality_band_tracks_configurable_confidence():
     assert q60["verdict"] == "poor"
     # Default confidence is unchanged at WiMDA's Rgoodfit = 0.95.
     assert fit_result_summary(result)["quality"]["confidence"] == pytest.approx(0.95)
+
+
+# --- (a) near-unity "marginal" softening at high ν ---------------------------
+
+
+def test_high_ndof_near_unity_chi2_is_poor_but_marginal():
+    """The cuprate case: χ²ᵣ≈1.10 at ν≈1927 is statistically "poor" (the band is
+    tight) yet numerically near-ideal, so it is flagged ``marginal`` for a softer
+    chip. The verdict itself is unchanged — WiMDA band math is preserved."""
+    params = ParameterSet([Parameter("A", 0.2)])
+    dof = 1927
+    chi2 = 1.10 * dof
+    result = _FakeResult(True, chi2, chi2 / dof, params, {"A": 0.01}, dof=dof)
+
+    quality = fit_result_summary(result)["quality"]
+    assert quality["verdict"] == "poor"  # band math unchanged (parity preserved)
+    assert quality["marginal"] is True
+
+
+def test_genuinely_high_chi2_after_rebin_is_poor_not_marginal():
+    """A bunched fit with χ²ᵣ≈8 (LiFeAs) is an honest "poor": rebin propagates
+    errors correctly, so we never soften it to marginal or rescale the errors."""
+    params = ParameterSet([Parameter("sigma", 0.3)])
+    dof = 200
+    chi2 = 8.0 * dof
+    result = _FakeResult(True, chi2, chi2 / dof, params, {"sigma": 0.01}, dof=dof)
+
+    quality = fit_result_summary(result)["quality"]
+    assert quality["verdict"] == "poor"
+    assert quality["marginal"] is False
+
+
+def test_good_fit_is_not_marginal():
+    params = ParameterSet([Parameter("A", 0.2)])
+    dof = 100
+    result = _FakeResult(True, 1.0 * dof, 1.0, params, {"A": 0.01}, dof=dof)
+    quality = fit_result_summary(result)["quality"]
+    assert quality["verdict"] == "good"
+    assert quality["marginal"] is False
+
+
+# --- (b) parameters-at-bound detection ---------------------------------------
+
+
+def test_params_at_bound_flags_free_param_on_its_max():
+    params = ParameterSet(
+        [
+            Parameter("A", 0.2, min=0.0, max=1.0),  # interior
+            Parameter("r", 2.5, min=1.0, max=2.5),  # railed to max (FµF case)
+        ]
+    )
+    assert parameters_at_bound(params) == ["r"]
+    # And it rides along on the full summary.
+    result = _FakeResult(True, 50.0, 1.2, params, {}, dof=41)
+    assert fit_result_summary(result)["params_at_bound"] == ["r"]
+
+
+def test_params_at_bound_flags_param_on_its_min():
+    # Maleic A_Mu → 0 lower bound; near-rail within tolerance also fires.
+    params = ParameterSet(
+        [
+            Parameter("A_Mu", 0.0, min=0.0, max=0.3),
+            Parameter("Delta", 0.9999, min=0.0, max=1.0),  # ZF-KT Δ→1.0 near-rail
+        ]
+    )
+    flagged = parameters_at_bound(params)
+    assert set(flagged) == {"A_Mu", "Delta"}
+
+
+def test_clean_interior_fit_has_no_bound_flag():
+    params = ParameterSet(
+        [Parameter("A", 0.2, min=0.0, max=1.0), Parameter("lambda", 0.5, min=0.0, max=5.0)]
+    )
+    assert parameters_at_bound(params) == []
+    result = _FakeResult(True, 50.0, 1.2, params, {}, dof=41)
+    assert fit_result_summary(result)["params_at_bound"] == []
+
+
+def test_user_fixed_param_at_value_is_not_flagged():
+    # A parameter the user FIXED is meant to hold its value — never flag it,
+    # even though its value sits on what would be a bound.
+    params = ParameterSet(
+        [
+            Parameter("A", 0.2, min=0.0, max=1.0),
+            Parameter("field_1", 2.5, min=1.0, max=2.5, fixed=True),
+        ]
+    )
+    assert parameters_at_bound(params) == []
+
+
+def test_param_with_infinite_bounds_is_not_flagged():
+    # Default ±inf bounds (unbounded free param) can never be "at bound".
+    params = ParameterSet([Parameter("c", 0.0)])  # min=-inf, max=+inf
+    assert parameters_at_bound(params) == []
+
+
+def test_tied_and_linked_followers_are_not_flagged():
+    # Equality-link followers drop out of the free set, so a follower sitting on
+    # a bound is not an unconstrained-rail signal.
+    params = ParameterSet(
+        [
+            Parameter("A1", 1.0, min=0.0, max=1.0, link_group=1),
+            Parameter("A2", 1.0, min=0.0, max=1.0, link_group=1),
+        ]
+    )
+    # Only the link main (A1) is free; A2 follows. Detection ranges over the
+    # free set, so at most the main is considered.
+    flagged = parameters_at_bound(params)
+    assert "A2" not in flagged
