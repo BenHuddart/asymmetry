@@ -855,6 +855,19 @@ class ALCScanView(QWidget):
         self._canvas.draw_idle()
         self._fill_data_table()
 
+    def reset(self) -> None:
+        """Reset to the pristine initial state for a new project.
+
+        Beyond :meth:`clear` (scan, regions, peaks, overlays, results), this also
+        restores the default baseline model so a new project does not inherit the
+        previous scan's baseline choice. ``clear`` deliberately leaves the model
+        alone because the empty-axis re-render paths reuse it; only New Project
+        should wipe it.
+        """
+        self.clear()
+        with QSignalBlocker(self._baseline_model_combo):
+            self._baseline_model_combo.setCurrentIndex(0)
+
     def show_scan(
         self,
         x: NDArray[np.float64],
