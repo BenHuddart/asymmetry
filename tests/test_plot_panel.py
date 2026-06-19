@@ -460,6 +460,171 @@ class TestPlotPanel:
         assert panel._y_max.value() < 1.0
         assert panel._y_min.value() > -1.0
 
+    def test_auto_y_limits_from_arrays_clips_saturation_sentinels(self, panel: PlotPanel) -> None:
+        """±100 % saturation sentinels must not dominate the percent-axis range."""
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        # ~25 % signal alongside the ±100 % saturation sentinels bad bins carry.
+        asym = np.array([25.0, 26.0, 24.0, 25.5, 100.0, -100.0])
+        err = np.full_like(asym, 0.5)
+        mask = np.ones_like(asym, dtype=bool)
+
+        limits = panel._auto_y_limits_from_arrays(asym, err, mask)
+        assert limits is not None
+        y_min, y_max = limits
+        # Framed on the ~25 % signal, nowhere near ±100 (+ margin → ±220).
+        assert 20.0 < y_max < 40.0
+        assert 10.0 < y_min < 25.0
+
+    def test_default_view_frames_signal_not_saturation_sentinels(self, panel: PlotPanel) -> None:
+        """First paint (no Auto Y click) frames the signal, not the ±220 blowout.
+
+        Regression for the Round-4 finding: raw ``asymmetry_percent`` carries
+        ±100 % sentinels in early/late bad bins and an error-divergent late-time
+        tail; the old default init took raw min/max(a±e) → ±220, squashing the
+        few-tens-of-% signal into an invisible band.
+        """
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        n = 120
+        counts = np.full(n, 1000.0)
+        hist = Histogram(counts=counts, bin_width=0.1, t0_bin=0)
+        run = Run(
+            run_number=999,
+            histograms=[hist],
+            grouping={"first_good_bin": 10, "last_good_bin": 80},
+        )
+        time = hist.time_axis.copy()
+        asym = np.full(n, 25.0, dtype=float)
+        err = np.full(n, 0.5, dtype=float)
+        # Early/late bad bins (outside the good-bin window): ±100 % sentinels with
+        # an exploding error tail as counts deplete.
+        asym[:10] = 100.0
+        asym[85:] = -100.0
+        err[85:] = np.linspace(20.0, 300.0, n - 85)
+
+        ds = MuonDataset(
+            time=time, asymmetry=asym, error=err, metadata={"run_number": 999}, run=run
+        )
+        panel.plot_dataset(ds)
+
+        # No Auto Y interaction — this is the freshly-loaded default view.
+        assert panel._y_max.value() < 60.0
+        assert panel._y_min.value() > -10.0
+        # The ~25 % signal is actually framed, not collapsed to a sliver.
+        assert panel._y_max.value() > 24.0
+
+    def test_frequency_default_x_range_frames_high_frequency_peak(self, qapp: QApplication) -> None:
+        """High-TF Larmor peaks must be on-screen by default, not off past 32 MHz."""
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            freqs = np.linspace(0.0, 2000.0, 2048)  # 0..2000 MHz span
+            values = np.full_like(freqs, 1.0)
+            values[:3] = 3.0e5  # dominant DC peak
+            peak_idx = int(np.argmin(np.abs(freqs - 813.0)))
+            values[peak_idx] = 5.0e3  # high-TF Larmor peak at ~813 MHz
+            ds = MuonDataset(
+                time=freqs,
+                asymmetry=values,
+                error=np.zeros_like(freqs),
+                metadata={
+                    "run_number": 730,
+                    "plot_domain": "frequency",
+                    "x_label": "Frequency (MHz)",
+                },
+            )
+            panel.plot_dataset(ds)
+
+            x_max = panel._x_max.value()
+            # The peak is visible …
+            assert x_max >= 813.0
+            # … and the view is framed to it, not the full 2000 MHz Nyquist span.
+            assert x_max < 1600.0
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_frequency_default_x_range_kept_full_for_dc_only_spectrum(
+        self, qapp: QApplication
+    ) -> None:
+        """A featureless (DC-only) spectrum keeps the full span — no noise zoom."""
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            rng = np.random.default_rng(3)
+            freqs = np.linspace(0.0, 1000.0, 2048)
+            values = np.abs(rng.normal(0.0, 1.0, freqs.size)) + 1.0
+            values[:3] = 3.0e5  # only the DC peak stands out
+            ds = MuonDataset(
+                time=freqs,
+                asymmetry=values,
+                error=np.zeros_like(freqs),
+                metadata={
+                    "run_number": 731,
+                    "plot_domain": "frequency",
+                    "x_label": "Frequency (MHz)",
+                },
+            )
+            panel.plot_dataset(ds)
+
+            # No prominent non-DC peak → keep the full Nyquist view (with margin).
+            assert panel._x_max.value() >= 1000.0
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_frequency_correlation_axis_keeps_full_span(self, qapp: QApplication) -> None:
+        """Correlation-axis frequency mode is not a Larmor spectrum: no peak zoom."""
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            panel._frequency_axis_is_correlation = True
+            freqs = np.linspace(0.0, 2000.0, 2048)
+            values = np.full_like(freqs, 1.0)
+            peak_idx = int(np.argmin(np.abs(freqs - 813.0)))
+            values[peak_idx] = 5.0e3
+
+            limits = panel._default_x_limits(freqs, values)
+            assert limits is not None
+            # Full span framed, not pulled in to the 813-unit feature.
+            assert limits[1] >= 2000.0
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_raw_counts_view_autoscale_keeps_high_count_signal(self, panel: PlotPanel) -> None:
+        """Raw-counts view holds counts, not percent — never clip |y|≥100.
+
+        Regression guard for the review finding: the ±100 % saturation-sentinel
+        clip must key on the y-quantity (percent), not the panel domain. A muon
+        decay histogram (thousands of counts down to a sub-100 tail) must frame
+        the high-count signal, not collapse onto the tail.
+        """
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel._current_time_view_mode = "raw_counts"
+        assert not panel._y_axis_is_asymmetry_percent()
+
+        counts = np.array([3000.0, 2500.0, 2000.0, 800.0, 150.0, 40.0])
+        err = np.sqrt(counts)
+        mask = np.ones_like(counts, dtype=bool)
+
+        limits = panel._auto_y_limits_from_arrays(counts, err, mask)
+        assert limits is not None
+        _y_min, y_max = limits
+        # The thousands-of-counts peak is framed, not dropped as a sentinel.
+        assert y_max > 2900.0
+
     def test_plot_dataset_draws_low_count_points_gray_without_histograms(
         self,
         panel: PlotPanel,
