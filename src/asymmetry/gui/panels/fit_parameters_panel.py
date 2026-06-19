@@ -723,6 +723,44 @@ class FitParametersPanel(QWidget):
             "cross_group_fit_configs": self._serialize_cross_group_fit_configs(),
         }
 
+    @classmethod
+    def _migrate_legacy_state(cls, state: dict) -> dict:
+        """Strip obsolete ``K⟨n⟩`` joint-fit track artefacts from a saved state.
+
+        Projects saved before the joint K(θ) fit reordered traces in place carry
+        standalone ``K⟨1⟩…`` columns, Y-selections and overlays that the current
+        code can neither regenerate nor remove via the UI. Drop them on load so
+        they don't linger as un-removable stale traces.
+        """
+        if not isinstance(state, dict):
+            return state
+        is_track = cls._is_legacy_joint_track_name
+        cleaned = dict(state)
+
+        rows = state.get("rows")
+        if isinstance(rows, list):
+            new_rows = []
+            for entry in rows:
+                if isinstance(entry, dict):
+                    entry = dict(entry)
+                    for key in ("values", "errors"):
+                        mapping = entry.get(key)
+                        if isinstance(mapping, dict):
+                            entry[key] = {k: v for k, v in mapping.items() if not is_track(k)}
+                new_rows.append(entry)
+            cleaned["rows"] = new_rows
+
+        for list_key in ("varying_params", "selected_y_params", "log_y_params"):
+            values = state.get(list_key)
+            if isinstance(values, list):
+                cleaned[list_key] = [v for v in values if not is_track(v)]
+
+        model_fits = state.get("model_fits")
+        if isinstance(model_fits, dict):
+            cleaned["model_fits"] = {k: v for k, v in model_fits.items() if not is_track(k)}
+
+        return cleaned
+
     def restore_state(self, state: dict) -> None:
         # Suppress the heavy synchronous plot draws each intermediate restore step
         # would otherwise trigger (checkbox setChecked signals, group-selection
@@ -742,6 +780,7 @@ class FitParametersPanel(QWidget):
         self._refresh_plot()
 
     def _restore_state_locked(self, state: dict) -> None:
+        state = self._migrate_legacy_state(state)
         rows_data = state.get("rows", [])
         self._composite_parameters = self._deserialize_composite_parameters(
             state.get("composite_parameters", [])
@@ -2071,6 +2110,35 @@ class FitParametersPanel(QWidget):
         """True for a generated Knight-shift column name (``K[...]``)."""
         return name.startswith("K[") and name.endswith("]")
 
+    @staticmethod
+    def _is_legacy_joint_track_name(name: str) -> bool:
+        """True for an obsolete joint K(θ) fit track column (``K⟨1⟩``, ``K⟨2⟩``, …).
+
+        Earlier joint fits added these as standalone traces; the joint fit now
+        reorders the ``K[...]`` traces in place, so any such column found in a
+        saved project is stale and is migrated away on load / re-conversion.
+        """
+        return name.startswith("K⟨") and name.endswith("⟩")
+
+    def _strip_legacy_joint_tracks(self, rows: list[_FitRow]) -> None:
+        """Remove obsolete ``K⟨n⟩`` track columns left by older joint fits."""
+        for row in rows:
+            for name in [n for n in row.values if self._is_legacy_joint_track_name(n)]:
+                row.values.pop(name, None)
+                row.errors.pop(name, None)
+        if rows is self._rows:
+            stale = [n for n in self._model_fits if self._is_legacy_joint_track_name(n)]
+            for name in stale:
+                self._model_fits.pop(name, None)
+                unregister_derived_param_info(name)
+                self._registered_knight_labels.discard(name)
+            self._varying_params = [
+                v for v in self._varying_params if not self._is_legacy_joint_track_name(v)
+            ]
+            self._selected_y_param_names = [
+                v for v in self._selected_y_param_names if not self._is_legacy_joint_track_name(v)
+            ]
+
     def _apply_knight_shift_to_rows(self, rows: list[_FitRow]) -> None:
         """Compute Knight-shift Y-quantities for the rows from the active config.
 
@@ -2085,6 +2153,8 @@ class FitParametersPanel(QWidget):
             for name in [n for n in row.values if self._is_knight_shift_name(n)]:
                 row.values.pop(name, None)
                 row.errors.pop(name, None)
+        # Migrate away obsolete K⟨n⟩ track columns from older joint fits.
+        self._strip_legacy_joint_tracks(rows)
         self._knight_shift_names = {}
         self._knight_shift_crossings = []
         self._unregister_knight_labels()

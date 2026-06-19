@@ -122,16 +122,63 @@ def test_joint_fit_state_round_trip(qapp):
     panel = _setup_panel(qapp, swap_past_crossing=True)
     traces = sorted(panel._knight_shift_names)
     panel._run_joint_knight_fit(traces, "KnightAnisotropy", 25)
+    before = {t: [r.values.get(t) for r in panel._rows] for t in traces}
 
     state = panel.get_state()
     assert state["joint_fit"] is not None
 
-    panel2 = _setup_panel(qapp, swap_past_crossing=True)
+    # A fresh panel restoring the saved project (no series re-pushed) must
+    # reproduce the joint fit: reordered traces, per-curve overlays and markers.
+    panel2 = FitParametersPanel()
+    panel2.set_angle_x_field(("Angle (°)", "angle"))
     panel2.restore_state(state)
     assert panel2._joint_fit is not None
     assert panel2._joint_fit["model_name"] == "KnightAnisotropy"
     assert panel2._joint_fit["traces"] == list(traces)
     assert panel2._DRAW_CROSSING_MARKERS is True
+    assert all(t in panel2._model_fits for t in traces)
+    assert panel2.knight_shift_crossings()
+    after = {t: [r.values.get(t) for r in panel2._rows] for t in traces}
+    assert after == before
+
+
+def test_legacy_track_columns_migrated_away_on_load(qapp):
+    # A project saved by the old joint fit carries standalone K⟨n⟩ track columns,
+    # Y-selections and overlays that the current code can neither regenerate nor
+    # remove via the UI. They must be stripped on load.
+    panel = _setup_panel(qapp, swap_past_crossing=True)
+    state = panel.get_state()
+    for row in state["rows"]:
+        row["values"]["K⟨1⟩"] = 1.0
+        row["values"]["K⟨2⟩"] = 2.0
+        row["errors"]["K⟨1⟩"] = 0.1
+        row["errors"]["K⟨2⟩"] = 0.1
+    state["varying_params"] = list(state.get("varying_params", [])) + ["K⟨1⟩", "K⟨2⟩"]
+    state["selected_y_params"] = list(state.get("selected_y_params", [])) + ["K⟨1⟩"]
+    state["model_fits"] = dict(state.get("model_fits", {}))
+    state["model_fits"]["K⟨1⟩"] = {"parameter_name": "K⟨1⟩", "x_key": "angle", "ranges": []}
+
+    panel2 = _setup_panel(qapp, swap_past_crossing=True)
+    panel2.restore_state(state)
+
+    assert not any(name.startswith("K⟨") for row in panel2._rows for name in row.values)
+    assert not any(name.startswith("K⟨") for name in panel2._model_fits)
+    assert not any(name.startswith("K⟨") for name in panel2._varying_params)
+    assert not any(name.startswith("K⟨") for name in panel2._display_y_parameters())
+
+
+def test_reconverting_strips_legacy_tracks_in_session(qapp):
+    # In-session remedy: re-running the conversion clears stale K⟨n⟩ columns.
+    panel = _setup_panel(qapp, swap_past_crossing=True)
+    for row in panel._rows:
+        row.values["K⟨1⟩"] = 1.0
+        row.errors["K⟨1⟩"] = 0.1
+    panel._model_fits["K⟨1⟩"] = next(iter(panel._model_fits.values()), None)
+
+    panel.set_knight_shift_config(KnightShiftConfig(enabled=True, unit=KnightShiftUnit.PPM))
+
+    assert not any("K⟨1⟩" in row.values for row in panel._rows)
+    assert "K⟨1⟩" not in panel._model_fits
 
 
 def test_crossing_bands_merge_adjacent():
