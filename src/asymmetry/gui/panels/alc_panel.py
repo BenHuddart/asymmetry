@@ -273,7 +273,12 @@ class ALCScanView(QWidget):
         self._baseline_model_combo = QComboBox()
         # Cubic is the WiMDA/Mantid-prescribed ALC background (a curved/sloping
         # baseline Linear cannot match); fitted over the non-resonant regions.
-        self._baseline_model_combo.addItems(["Linear", "Constant", "Cubic"])
+        # Quartic→Sextic add the higher orders a steep 0–3 T muonium-
+        # repolarisation envelope needs to flatten cleanly (Cubic tops out too
+        # low and leaves the radical dips on a curved residual).
+        self._baseline_model_combo.addItems(
+            ["Linear", "Constant", "Cubic", "Quartic", "Quintic", "Sextic"]
+        )
         row.addWidget(self._baseline_model_combo)
         row.addStretch()
         outer.addLayout(row)

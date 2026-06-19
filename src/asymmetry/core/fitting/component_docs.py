@@ -38,6 +38,25 @@ PARAMETER_MODEL_APPLICABILITY: dict[str, str] = {
         "subtracted before the resonance peak is fitted. It is a well-conditioned third-order restriction of "
         "the general Polynomial; like any polynomial background it extrapolates poorly outside the fitted window."
     ),
+    "Quartic": (
+        "Use as a fourth-order ALC/µLCR background when a cubic cannot follow the off-resonance baseline — "
+        "one order above Cubic for mildly steeper repolarisation envelopes. Fitted over the non-resonant "
+        "regions and subtracted before the resonance peaks are fitted. Keep the order as low as the residuals "
+        "allow; like any polynomial background it extrapolates poorly outside the fitted window."
+    ),
+    "Quintic": (
+        "Use as a fifth-order ALC/µLCR background for steep off-resonance baselines that a cubic or quartic "
+        "leaves curved. Fitted over the non-resonant regions and subtracted before the resonance peaks are "
+        "fitted. It is the general Polynomial restricted to a baseline role; keep the order as low as the "
+        "residuals allow, and interpret the coefficients only within the fitted window."
+    ),
+    "Sextic": (
+        "Use as a sixth-order ALC/µLCR background for the steep muonium-repolarisation envelope of a "
+        "radical µLCR scan (e.g. a 0–3 T repolarisation curve), where lower orders leave the resonance dips "
+        "riding on a curved residual. Fitted over the non-resonant regions and subtracted before the peaks "
+        "are fitted. It is the highest baseline order offered; keep the order as low as the residuals allow, "
+        "as a polynomial background extrapolates poorly outside the fitted window."
+    ),
     "PowerLaw": (
         "Use near scale-invariant regimes or crossover windows where the observable follows a power law. "
         "It is especially useful for phenomenological critical-like behavior without a full microscopic model. "

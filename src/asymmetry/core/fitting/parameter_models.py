@@ -81,6 +81,21 @@ def _power_law(x: NDArray, a: float, n: float, c: float = 0.0) -> NDArray[np.flo
     return a * np.power(safe_x, n) + c
 
 
+def _poly_eval(x: NDArray, coeffs: tuple[float, ...]) -> NDArray[np.float64]:
+    """Horner evaluation of ``sum_k coeffs[k] * x**k`` (coeffs low-order first).
+
+    Single implementation shared by every polynomial component below so the
+    Cubic/Quartic/Quintic/Sextic baselines and the general quintic `Polynomial`
+    can never diverge. Unused high orders are fixed at 0 to fit lower degrees
+    (WiMDA "Polynomial fit up to fifth order term").
+    """
+    xx = np.asarray(x, dtype=float)
+    result = np.full_like(xx, float(coeffs[-1]))
+    for coeff in reversed(coeffs[:-1]):
+        result = result * xx + float(coeff)
+    return result
+
+
 def _polynomial(
     x: NDArray,
     c0: float = 0.0,
@@ -90,13 +105,7 @@ def _polynomial(
     c4: float = 0.0,
     c5: float = 0.0,
 ) -> NDArray[np.float64]:
-    xx = np.asarray(x, dtype=float)
-    # Horner evaluation of the quintic; fix unused coefficients at 0 to fit
-    # lower orders (WiMDA "Polynomial fit up to fifth order term").
-    result = np.full_like(xx, float(c5))
-    for coeff in (c4, c3, c2, c1, c0):
-        result = result * xx + float(coeff)
-    return result
+    return _poly_eval(x, (c0, c1, c2, c3, c4, c5))
 
 
 def _cubic(
@@ -106,14 +115,38 @@ def _cubic(
     c2: float = 0.0,
     c3: float = 0.0,
 ) -> NDArray[np.float64]:
-    xx = np.asarray(x, dtype=float)
-    # Horner evaluation of the cubic. This is the WiMDA/Mantid-prescribed ALC
-    # background (a curved/sloping baseline a Linear fit cannot match); it is a
-    # well-conditioned 4-parameter restriction of the quintic `Polynomial`.
-    result = np.full_like(xx, float(c3))
-    for coeff in (c2, c1, c0):
-        result = result * xx + float(coeff)
-    return result
+    # The WiMDA/Mantid-prescribed ALC background (a curved/sloping baseline a
+    # Linear fit cannot match); a well-conditioned restriction of `Polynomial`.
+    return _poly_eval(x, (c0, c1, c2, c3))
+
+
+def _quartic(
+    x: NDArray,
+    c0: float = 0.0,
+    c1: float = 0.0,
+    c2: float = 0.0,
+    c3: float = 0.0,
+    c4: float = 0.0,
+) -> NDArray[np.float64]:
+    # Quartic (degree-4) restriction of the quintic `Polynomial`; one more order
+    # than `Cubic` for ALC repolarisation backgrounds with mild curvature.
+    return _poly_eval(x, (c0, c1, c2, c3, c4))
+
+
+def _sextic(
+    x: NDArray,
+    c0: float = 0.0,
+    c1: float = 0.0,
+    c2: float = 0.0,
+    c3: float = 0.0,
+    c4: float = 0.0,
+    c5: float = 0.0,
+    c6: float = 0.0,
+) -> NDArray[np.float64]:
+    # Sextic (degree-6) extension above the quintic `Polynomial`. The steep
+    # 0–3 T muonium-repolarisation envelope of a µLCR scan needs degree ≥6 to
+    # flatten cleanly, which Cubic/quintic backgrounds leave distorted.
+    return _poly_eval(x, (c0, c1, c2, c3, c4, c5, c6))
 
 
 def _power_law_quad_bg(x: NDArray, a: float, n: float, BG: float = 0.0) -> NDArray[np.float64]:
@@ -399,6 +432,53 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         formula_template="{c0} + {c1}*x + {c2}*x^2 + {c3}*x^3",
         latex_equation=r"y(x) = c_0 + c_1 x + c_2 x^2 + c_3 x^3",
         scopes=("common", "field", "temperature"),
+    ),
+    "Quartic": ParameterModelComponentDefinition(
+        name="Quartic",
+        description="c0 + c1*x + c2*x^2 + c3*x^3 + c4*x^4",
+        function=_quartic,
+        param_names=["c0", "c1", "c2", "c3", "c4"],
+        param_defaults={"c0": 0.0, "c1": 1.0, "c2": 0.0, "c3": 0.0, "c4": 0.0},
+        param_info={f"c{k}": get_param_info(f"c{k}") for k in range(5)},
+        formula_template="{c0} + {c1}*x + {c2}*x^2 + {c3}*x^3 + {c4}*x^4",
+        latex_equation=r"y(x) = c_0 + c_1 x + c_2 x^2 + c_3 x^3 + c_4 x^4",
+        # Field-scan-scoped (like MuRepolarisation): these higher orders exist for
+        # the ALC/µLCR baseline (which resolves by name, scope-independent); keep
+        # them out of the temperature/run trend pickers where they only add
+        # ill-conditioned, rarely-wanted clutter.
+        scopes=("field",),
+    ),
+    "Quintic": ParameterModelComponentDefinition(
+        name="Quintic",
+        description="c0 + c1*x + c2*x^2 + c3*x^3 + c4*x^4 + c5*x^5",
+        # The quintic is exactly the general `Polynomial` kernel; reuse it so the
+        # two stay bit-identical and there is one Horner implementation to test.
+        function=_polynomial,
+        param_names=["c0", "c1", "c2", "c3", "c4", "c5"],
+        param_defaults={"c0": 0.0, "c1": 1.0, "c2": 0.0, "c3": 0.0, "c4": 0.0, "c5": 0.0},
+        param_info={f"c{k}": get_param_info(f"c{k}") for k in range(6)},
+        formula_template="{c0} + {c1}*x + {c2}*x^2 + {c3}*x^3 + {c4}*x^4 + {c5}*x^5",
+        latex_equation=r"y(x) = c_0 + c_1 x + c_2 x^2 + c_3 x^3 + c_4 x^4 + c_5 x^5",
+        scopes=("field",),
+    ),
+    "Sextic": ParameterModelComponentDefinition(
+        name="Sextic",
+        description="c0 + c1*x + c2*x^2 + c3*x^3 + c4*x^4 + c5*x^5 + c6*x^6",
+        function=_sextic,
+        param_names=["c0", "c1", "c2", "c3", "c4", "c5", "c6"],
+        param_defaults={
+            "c0": 0.0,
+            "c1": 1.0,
+            "c2": 0.0,
+            "c3": 0.0,
+            "c4": 0.0,
+            "c5": 0.0,
+            "c6": 0.0,
+        },
+        param_info={f"c{k}": get_param_info(f"c{k}") for k in range(7)},
+        formula_template="{c0} + {c1}*x + {c2}*x^2 + {c3}*x^3 + {c4}*x^4 + {c5}*x^5 + {c6}*x^6",
+        latex_equation=r"y(x) = c_0 + c_1 x + c_2 x^2 + c_3 x^3 + c_4 x^4 + c_5 x^5 + c_6 x^6",
+        scopes=("field",),
     ),
     "PowerLaw": ParameterModelComponentDefinition(
         name="PowerLaw",
