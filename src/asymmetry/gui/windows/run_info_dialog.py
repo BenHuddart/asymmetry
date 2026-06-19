@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.gui.styles.widgets import apply_param_table_style
+from asymmetry.gui.utils.series_scoring import score_series_path
 from asymmetry.gui.windows.log_plot_dialog import LogPlotDialog
 
 
@@ -266,46 +267,14 @@ class RunInfoDialog(QDialog):
         return scored[0][1]
 
     def _series_path_score(self, field_key: str, series_path: str) -> int:
-        """Score how well a time-series path represents a summary field."""
-        info = self._series_cache.get(series_path, {})
-        role = str(info.get("role", "")).strip().lower() if isinstance(info, Mapping) else ""
-        primary = bool(info.get("primary", False)) if isinstance(info, Mapping) else False
-        if field_key == "temperature" and role == "sample_temperature":
-            return 100 if primary else 70
-        if field_key == "field" and role == "sample_field":
-            return 80 if primary else 60
+        """Score how well a time-series path represents a summary field.
 
-        normalized = self._normalize_series_text(series_path)
-        compact = normalized.replace(" ", "")
-        if field_key == "temperature":
-            if not (
-                "temp" in compact
-                or "samtsvalue" in compact
-                or "dilt" in compact
-                or "variox" in compact
-                or "(k)" in series_path.lower()
-            ):
-                return 0
-            score = 10
-            if "sample" in normalized:
-                score += 20
-            if "sam ts value" in normalized:
-                score += 30
-            if "sample temperature" in normalized or "sampletemp" in compact:
-                score += 20
-            if "moderator" in normalized:
-                score -= 5
-            return score
-        if field_key == "field":
-            if "field" not in normalized and "magnet" not in normalized:
-                return 0
-            score = 10
-            if "sample" in normalized:
-                score += 10
-            return score
-        if field_key == "field_direction":
-            return 10 if "direction" in normalized else 0
-        return 0
+        Delegates to the shared :func:`score_series_path` so this dialog and the
+        Data Browser rank sensors identically (preferring cryostat/sample
+        thermometers, excluding detector electronics, and honouring the NXlog
+        ``name`` label).
+        """
+        return score_series_path(field_key, series_path, self._series_cache.get(series_path))
 
     def _normalize_series_text(self, text: str) -> str:
         """Normalize series labels for matching summary rows to log traces."""

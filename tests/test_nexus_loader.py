@@ -38,6 +38,7 @@ def _write_v2_file(
     temp_log_style: str = "flat",
     temp_log_units: str | None = None,
     temp_log_block: str = "Temp_Sample",
+    temp_log_name: str | None = None,
 ) -> None:
     """Create a synthetic V2 NeXus file used by loader unit tests.
 
@@ -126,11 +127,15 @@ def _write_v2_file(
             value_log = selog.create_group(temp_log_block).create_group("value_log")
             value_log.create_dataset("time", data=log_times)
             value_ds = value_log.create_dataset("value", data=log_values)
+            if temp_log_name is not None:
+                value_log.create_dataset("name", data=np.bytes_(temp_log_name))
         else:
             # Flat convention: the NXlog is the block group itself.
             temp_log = sample.create_group(temp_log_block)
             temp_log.create_dataset("time", data=log_times)
             value_ds = temp_log.create_dataset("value", data=log_values)
+            if temp_log_name is not None:
+                temp_log.create_dataset("name", data=np.bytes_(temp_log_name))
         if temp_log_units is not None:
             value_ds.attrs["units"] = np.bytes_(temp_log_units)
 
@@ -252,6 +257,33 @@ def test_logged_sample_temperature_from_isis_selog_value_log(tmp_path, loader: N
     assert ds.sample_temperature_logged == pytest.approx(5.0)
     assert ds.run is not None
     assert ds.run.sample_temperature_logged == pytest.approx(5.0)
+
+
+def test_logged_sample_temperature_matched_via_nxlog_name_child(
+    tmp_path, loader: NexusLoader
+) -> None:
+    # Native HDF4 v1 logs name the Vgroup generically and carry the real sensor
+    # name only in a ``name`` child (the converted HDF5 twin bakes it into the
+    # selog path). The sample thermometer must be matched off that ``name`` so
+    # both containers expose the same ``sample_temperature_logged``.
+    path = tmp_path / "run_named_log.nxs"
+    _write_v2_file(
+        path,
+        temp_setpoint=1.0,
+        temp_log_values=(4.8, 5.0, 5.2),
+        temp_log_style="selog",
+        temp_log_block="log_1",  # generic, sensor-agnostic path segment
+        temp_log_name="Temp_Sample",
+    )
+
+    ds = loader.load(str(path))
+    assert not isinstance(ds, list)
+
+    # The path is generic, so only the captured ``name`` identifies the sensor.
+    assert "selog/log_1/value_log" in ds.metadata["nexus_time_series"]
+    assert ds.metadata["nexus_time_series"]["selog/log_1/value_log"]["name"] == "Temp_Sample"
+    assert ds.metadata["sample_temperature_logged"] == pytest.approx(5.0)
+    assert ds.sample_temperature_logged == pytest.approx(5.0)
 
 
 def test_no_logged_series_leaves_temperature_unset(tmp_path, loader: NexusLoader) -> None:

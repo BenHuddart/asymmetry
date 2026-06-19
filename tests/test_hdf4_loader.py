@@ -67,9 +67,16 @@ def _write_hdf4_v1(
     switching_states: int | None = None,
     number: int = 4242,
     title: str = "Synthetic v1",
+    temp_log_name: str | None = None,
+    temp_log_values: tuple[float, ...] = (5.0, 5.0, 5.0),
 ) -> None:
     """Write a minimal HDF4 ``/run`` muonTD file the same way the NeXus C API
-    does (Vgroups + SDS), so ``read_tree`` parses it like a real legacy file."""
+    does (Vgroups + SDS), so ``read_tree`` parses it like a real legacy file.
+
+    When ``temp_log_name`` is given, also write a generically-named NXlog Vgroup
+    (``log_1``) carrying that sensor label in a ``name`` SDS plus ``time`` /
+    ``values`` arrays — the native shape in which v1 files store thermometer
+    logs (the converted HDF5 twin bakes the name into the selog path)."""
     import pyhdf.V  # noqa: F401  registers the V interface used by vgstart
     from pyhdf.HDF import HC, HDF
     from pyhdf.SD import SD, SDC
@@ -129,6 +136,17 @@ def _write_hdf4_v1(
         hist.add(HC.DFTAG_NDG, _num("grouping", grouping, SDC.INT32))
         run.insert(hist)
         hist.detach()
+
+        if temp_log_name is not None:
+            log_values = np.asarray(temp_log_values, dtype=np.float64)
+            log_times = np.arange(log_values.size, dtype=np.float64) * 10.0
+            nxlog = _vgroup("log_1", "NXlog")  # generic Vgroup name
+            nxlog.add(HC.DFTAG_NDG, _char("name", temp_log_name))
+            nxlog.add(HC.DFTAG_NDG, _num("time", log_times, SDC.FLOAT64))
+            nxlog.add(HC.DFTAG_NDG, _num("values", log_values, SDC.FLOAT64))
+            run.insert(nxlog)
+            nxlog.detach()
+
         run.detach()
     finally:
         v.end()
@@ -176,6 +194,25 @@ def test_synthetic_hdf4_multiperiod_roundtrip(loader: NexusLoader, tmp_path) -> 
     )
 
 
+def test_synthetic_hdf4_surfaces_logged_temperature_via_nxlog_name(
+    loader: NexusLoader, tmp_path
+) -> None:
+    """Through the real pyhdf Vgroup/SDS walk, a generically-named NXlog whose
+    sensor label is in a ``name`` SDS must populate ``sample_temperature_logged``
+    and appear in ``nexus_time_series`` — closing the native-HDF4 logged-T gap."""
+    path = tmp_path / "synth_log.nxs"
+    counts = np.arange(16, dtype=np.int32).reshape(2, 8)
+    _write_hdf4_v1(
+        path, counts=counts, temp_log_name="Temp_Sample", temp_log_values=(4.8, 5.0, 5.2)
+    )
+
+    ds = _as_single(loader.load(str(path)))
+    series = ds.metadata["nexus_time_series"]
+    assert "log_1" in series
+    assert series["log_1"]["name"] == "Temp_Sample"
+    assert ds.sample_temperature_logged == pytest.approx(5.0)
+
+
 def test_hdf4_load_does_not_lock_file(loader: NexusLoader, tmp_path) -> None:
     """After loading, the file is unlocked (pyhdf V/SD/HDF handles closed) —
     matters on Windows: a left-open handle would block the unlink below."""
@@ -204,6 +241,16 @@ def _assert_reduced_parity(ds4, ds5) -> None:
         ds4.metadata["temperature"]
     )
     assert pytest.approx(float(ds5.metadata["field"]), abs=1e-6) == float(ds4.metadata["field"])
+
+    # Logged sample temperature must agree across containers — the native-HDF4
+    # logged-T gap (a Temp_Sample NXlog whose Vgroup is generically named and
+    # whose sensor label lives in a ``name`` child). Same value, or both absent.
+    t4 = ds4.metadata.get("sample_temperature_logged")
+    t5 = ds5.metadata.get("sample_temperature_logged")
+    if t4 is None or t5 is None:
+        assert t4 is None and t5 is None, (t4, t5)
+    else:
+        assert pytest.approx(float(t5), rel=1e-5) == float(t4)
 
     g4, g5 = ds4.run.grouping, ds5.run.grouping
     assert int(g4["first_good_bin"]) == int(g5["first_good_bin"])

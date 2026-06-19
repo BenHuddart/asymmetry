@@ -1110,12 +1110,23 @@ class NexusLoader(BaseLoader):
                 t_num = self._to_numeric_array(t)
                 v_num = self._to_numeric_array(v)
                 units = self._safe_str(getattr(node[value_name], "attrs", {}).get("units", ""))
+                # The NXlog's human sensor label lives in a sibling ``name``
+                # dataset. Native HDF4 v1 files name the Vgroup generically and
+                # carry the real sensor name (e.g. ``Temp_Cryostat``) only here,
+                # so the path alone does not identify the sensor; the converted
+                # HDF5 twin bakes that name into the selog path instead. Capture
+                # it so path-based matching works identically across containers.
+                name_label = ""
+                if "name" in keys:
+                    name_node = node["name"]
+                    if hasattr(name_node, "dtype"):  # a name dataset, not a subgroup
+                        name_label = self._safe_str(name_node[()])
                 if v_num.size > 0:
                     # Guard the all-NaN case: np.nanmean/nanmin/nanmax emit
                     # "Mean of empty slice"/"All-NaN slice" RuntimeWarnings when
                     # no finite values are present (seen on some ARGUS files).
                     has_finite = bool(np.isfinite(v_num).any())
-                    series[prefix] = {
+                    entry: dict[str, Any] = {
                         "path": prefix,
                         "units": units,
                         "time": t_num.tolist(),
@@ -1124,6 +1135,9 @@ class NexusLoader(BaseLoader):
                         "min": float(np.nanmin(v_num)) if has_finite else None,
                         "max": float(np.nanmax(v_num)) if has_finite else None,
                     }
+                    if name_label:
+                        entry["name"] = name_label
+                    series[prefix] = entry
 
             for child in node.keys():
                 child_name = str(child)
@@ -1162,7 +1176,7 @@ class NexusLoader(BaseLoader):
           runs) is skipped rather than reported as a misleading ``0.0``.
         """
         for path, entry in time_series.items():
-            if not self._is_sample_temperature_path(path):
+            if not self._is_sample_temperature_path(path, entry):
                 continue
             mean = entry.get("mean")
             if mean is None or not np.isfinite(mean):
@@ -1174,15 +1188,24 @@ class NexusLoader(BaseLoader):
         return None
 
     @staticmethod
-    def _is_sample_temperature_path(path: str) -> bool:
-        """True when a time-series path names a sample thermometer block.
+    def _is_sample_temperature_path(path: str, entry: Any = None) -> bool:
+        """True when a log series names a sample thermometer block.
 
-        Requires a single path segment to contain both "sample" and "temp"
-        (case-insensitive), so ``Temp_Sample`` / ``sample_temperature`` match
-        while controller readbacks like ``Temp_RBV`` or ``Temp_Cryostat`` do
-        not (they lack "sample").
+        Requires a single path segment *or the NXlog ``name`` label* to contain
+        both "sample" and "temp" (case-insensitive), so ``Temp_Sample`` /
+        ``sample_temperature`` match while controller readbacks like
+        ``Temp_RBV`` or ``Temp_Cryostat`` do not (they lack "sample"). The
+        ``name`` label is checked as an extra segment so a native HDF4 v1 log,
+        whose Vgroup is generically named but whose ``name`` child is
+        ``Temp_Sample``, matches just as its converted HDF5 twin (which carries
+        the sensor name in the path) already does.
         """
-        for segment in str(path).split("/"):
+        segments = list(str(path).split("/"))
+        if isinstance(entry, dict):
+            name = str(entry.get("name", "") or "")
+            if name:
+                segments.append(name)
+        for segment in segments:
             seg = segment.lower()
             if "sample" in seg and "temp" in seg:
                 return True
