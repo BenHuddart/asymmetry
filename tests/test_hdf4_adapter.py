@@ -230,6 +230,37 @@ def test_v1_without_counts_attrs_falls_back_to_full_range() -> None:
     assert ds.n_points == 8
 
 
+def test_v1_logged_sample_temperature_from_nxlog_name_child() -> None:
+    """Native HDF4 v1: the sample thermometer must be surfaced via the NXlog
+    ``name`` child even when the Vgroup itself is generically named.
+
+    The HDF4 reader names the NXlog Vgroup after the container vgroup (often a
+    generic ``log_N``); the real sensor label lives in a ``name`` SDS, exactly
+    as the converted HDF5 twin's ``selog`` path encodes it. Both containers must
+    therefore expose the same ``sample_temperature_logged`` and the same series.
+    """
+    handle = _v1_handle(with_bin_attrs=True)
+    # Attach a generically-named NXlog Vgroup with the sensor name in a child.
+    run = handle._group.children["run"]
+    nxlog = Group("log_1", "NXlog")
+    nxlog.children["name"] = _char("name", "Temp_Sample")
+    nxlog.children["time"] = Dataset("time", np.array([-30.0, 0.0, 30.0, 60.0], dtype=np.float64))
+    nxlog.children["values"] = Dataset("values", np.array([300.0, 5.0, 5.0, 5.0], np.float64))
+    run.children["log_1"] = nxlog
+
+    loader = NexusLoader()
+    result = loader._reduce_handle(handle, "synthetic")
+    ds = result[0] if isinstance(result, list) else result
+
+    series = ds.metadata["nexus_time_series"]
+    assert "log_1" in series
+    assert series["log_1"]["name"] == "Temp_Sample"
+    # Matched off the ``name`` child (the path segment ``log_1`` is sensor-blind),
+    # and gated to the run-active (t >= 0) samples: the t=-30 pre-run reading of
+    # 300 K is excluded, leaving the 5 K plateau.
+    assert ds.sample_temperature_logged == pytest.approx(5.0)
+
+
 # --- detection + dependency guard ------------------------------------------
 
 

@@ -50,10 +50,12 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.io.nexus import active_series_mean
 from asymmetry.core.transform.grouping import good_event_count, good_frames
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.typography import header_font
+from asymmetry.gui.utils.series_scoring import score_series_path
 
 _GROUP_TEMP_ABS_TOL_K = 5e-3
 _GROUP_TEMP_REL_TOL = 2e-3
@@ -2021,51 +2023,22 @@ class DataBrowserPanel(QWidget):
         scored.sort(key=lambda item: (-item[0], str(item[1])))
         for _, series_path in scored:
             info = series.get(series_path, {})
-            if not isinstance(info, dict) or "mean" not in info:
+            if not isinstance(info, dict):
                 continue
-            try:
-                return float(info.get("mean"))
-            except (TypeError, ValueError):
-                continue
+            # Run-active (t >= 0) mean, shared with the loader so the browser and
+            # the scriptable ``sample_temperature_logged`` never disagree.
+            value = active_series_mean(info)
+            if value is not None:
+                return value
         return None
 
     def _series_path_score(self, field_key: str, series_path: str, info) -> int:
-        """Score how well a log series matches a browser summary field."""
-        if not isinstance(info, dict):
-            info = {}
-        role = str(info.get("role", "")).strip().lower()
-        if field_key == "temperature" and role == "sample_temperature":
-            return 100 if bool(info.get("primary", False)) else 70
-        if field_key == "field" and role == "sample_field":
-            return 80 if bool(info.get("primary", False)) else 60
+        """Score how well a log series matches a browser summary field.
 
-        normalized = " ".join(str(series_path).replace("_", " ").replace("/", " ").lower().split())
-        compact = normalized.replace(" ", "")
-        if field_key == "field":
-            # Mirror RunInfoDialog._series_path_score: a magnetic-field log.
-            if "field" not in normalized and "magnet" not in normalized:
-                return 0
-            score = 10
-            if "sample" in normalized:
-                score += 10
-            return score
-        if field_key == "temperature":
-            if not (
-                "temp" in compact
-                or "sampletemp" in compact
-                or "samtsvalue" in compact
-                or "dilt" in compact
-                or "variox" in compact
-                or "(k)" in str(series_path).lower()
-            ):
-                return 0
-            score = 10
-            if "sample" in normalized:
-                score += 20
-            if "sam ts value" in normalized:
-                score += 30
-            return score
-        return 0
+        Delegates to the shared :func:`score_series_path` so this panel and the
+        Run Info dialog rank sensors identically.
+        """
+        return score_series_path(field_key, series_path, info)
 
     def _resolve_run_info_value(self, dataset: MuonDataset, field_key: str):
         """Resolve synthetic ``run_info.*`` keys used by Run Info summary rows."""
