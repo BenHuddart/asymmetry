@@ -105,6 +105,19 @@ def test_genuinely_high_chi2_after_rebin_is_poor_not_marginal():
     assert quality["marginal"] is False
 
 
+def test_overdone_verdict_is_never_marginal():
+    """A near-unity χ²ᵣ in the lower tail reads "overdone" at high ν; it is left
+    as-is (non-alarming accent), never softened to "marginal"."""
+    params = ParameterSet([Parameter("A", 0.2)])
+    dof = 1927
+    chi2 = 0.90 * dof  # below the tight band -> overdone, |χ²ᵣ-1| = 0.10
+    result = _FakeResult(True, chi2, chi2 / dof, params, {"A": 0.01}, dof=dof)
+
+    quality = fit_result_summary(result)["quality"]
+    assert quality["verdict"] == "overdone"
+    assert quality["marginal"] is False
+
+
 def test_good_fit_is_not_marginal():
     params = ParameterSet([Parameter("A", 0.2)])
     dof = 100

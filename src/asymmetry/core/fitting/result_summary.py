@@ -105,9 +105,10 @@ def _quality_summary(fit_result: Any, confidence: float = FIT_QUALITY_CONFIDENCE
     ):
         return None
     chi2_reduced = float(quality.chi2_reduced)
-    marginal = quality.verdict in ("poor", "overdone") and (
-        abs(chi2_reduced - 1.0) <= _CHI2_MARGINAL_ABS_TOL
-    )
+    # Only soften "poor": a near-unity χ²ᵣ that reads poor purely because the band
+    # tightens at high ν is the alarming case to defuse. "overdone" already renders
+    # in a non-alarming accent ("suspicious, not bad"), so it is left as-is.
+    marginal = quality.verdict == "poor" and abs(chi2_reduced - 1.0) <= _CHI2_MARGINAL_ABS_TOL
     return {
         "verdict": quality.verdict,
         "chi2_reduced": chi2_reduced,
@@ -116,7 +117,7 @@ def _quality_summary(fit_result: Any, confidence: float = FIT_QUALITY_CONFIDENCE
         "confidence": float(quality.confidence),
         "dof": int(quality.dof),
         # Additive presentation hint: χ²ᵣ is numerically near 1 and only reads
-        # poor/overdone because the band is tight at this ν. Verdict unchanged.
+        # "poor" because the band is tight at this ν. Verdict itself unchanged.
         "marginal": bool(marginal),
     }
 
