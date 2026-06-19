@@ -227,6 +227,20 @@ def test_alc_rebuild_replaces_scan_series(mainwindow: MainWindow, monkeypatch):
     assert scans[0].order_key == "run"
 
 
+def test_alc_baseline_combo_offers_higher_order_models(qapp: QApplication):
+    # Cubic alone tops out too low for a steep 0–3 T muonium-repolarisation
+    # envelope (corpus MED #6); the combo must expose degree 4/5/6 baselines.
+    view = ALCScanView()
+    combo = view._baseline_model_combo
+    items = [combo.itemText(i) for i in range(combo.count())]
+    for name in ("Linear", "Constant", "Cubic", "Quartic", "Quintic", "Sextic"):
+        assert name in items, name
+    # The selected text round-trips through baseline_model() (the value passed
+    # straight to fit_scan_baseline + persisted in the ALC series state).
+    combo.setCurrentIndex(combo.findText("Sextic"))
+    assert view.baseline_model() == "Sextic"
+
+
 def test_alc_derivative_label_follows_x_axis(qapp: QApplication):
     view = ALCScanView()
     assert view._derivative_check.text() == "dA/dB"
