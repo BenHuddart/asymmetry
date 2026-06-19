@@ -138,6 +138,42 @@ def test_fit_quality_tooltip_explains_high_ndof_band(qapp: QApplication) -> None
     assert "Fit quality confidence" in tip  # points to the configurable setting
 
 
+def test_fit_quality_chip_softens_marginal_high_ndof(qapp: QApplication) -> None:
+    """A near-unity χ²ᵣ that only reads "poor" at high ν is shown amber as
+    "poor (marginal)" rather than alarming red (the cuprate case)."""
+    from asymmetry.gui.styles import tokens
+    from asymmetry.gui.styles.widgets import fit_quality_chip_html
+
+    marginal = {"verdict": "poor", "chi2_reduced": 1.10, "marginal": True}
+    plain = {"verdict": "poor", "chi2_reduced": 8.0, "marginal": False}
+
+    chip_marginal = fit_quality_chip_html(marginal)
+    assert "marginal" in chip_marginal
+    assert tokens.WARN in chip_marginal  # amber, not the alarming error red
+    assert tokens.ERROR not in chip_marginal
+
+    chip_plain = fit_quality_chip_html(plain)
+    assert "marginal" not in chip_plain
+    assert tokens.ERROR in chip_plain  # genuine poor stays red
+
+
+def test_fit_quality_chip_and_tooltip_flag_params_at_bound(qapp: QApplication) -> None:
+    """A free param pinned on its bound adds an "at bound" chip + tooltip note,
+    even when no χ² verdict is available."""
+    from asymmetry.gui.styles.widgets import fit_quality_chip_html, fit_quality_tooltip
+
+    chip = fit_quality_chip_html(None, ["r"])
+    assert "at bound" in chip
+
+    tip = fit_quality_tooltip(None, ["r"])
+    assert "at a bound" in tip
+    assert "r" in tip
+    assert "poorly constrained" in tip
+
+    # No bound params -> no badge.
+    assert "at bound" not in fit_quality_chip_html({"verdict": "good"}, [])
+
+
 def test_stop_button_hidden_until_busy(qapp: QApplication) -> None:
     # isHidden() reflects the explicit hide flag regardless of ancestor visibility
     # (the tab is never shown on screen in the offscreen test).

@@ -423,48 +423,78 @@ def success_html(label: str, *, detail: str | None = None) -> str:
 _FIT_VERDICT_COLOURS = {"good": tokens.OK, "poor": tokens.ERROR, "overdone": tokens.ACCENT}
 
 
-def fit_quality_chip_html(quality: dict | None) -> str:
-    """Return an inline coloured verdict chip for a ``quality`` summary dict.
+def fit_quality_chip_html(quality: dict | None, params_at_bound: list[str] | None = None) -> str:
+    """Return inline coloured verdict chip(s) for a fit summary.
 
     ``quality`` is the additive ``"quality"`` key from
     :func:`~asymmetry.core.fitting.result_summary.fit_result_summary` (verdict +
-    target band). Returns an empty string when no verdict is available.
+    target band + ``marginal`` hint); ``params_at_bound`` is its
+    ``"params_at_bound"`` list. Renders, as available, a χ² verdict chip and an
+    "at bound" chip. A χ²ᵣ that is numerically near 1 but reads poor/overdone only
+    because the band tightens at high ν (``marginal``) is shown amber as
+    "<verdict> (marginal)" rather than alarming red/accent. Returns "" when there
+    is nothing to show.
     """
-    if not quality or not quality.get("verdict"):
-        return ""
-    verdict = str(quality["verdict"])
-    colour = _FIT_VERDICT_COLOURS.get(verdict, tokens.TEXT_MUTED)
-    return f' · <span style="color:{colour};font-weight:600;">{verdict}</span>'
+    chips = ""
+    if quality and quality.get("verdict"):
+        verdict = str(quality["verdict"])
+        if quality.get("marginal"):
+            colour = tokens.WARN
+            label = f"{verdict} (marginal)"
+        else:
+            colour = _FIT_VERDICT_COLOURS.get(verdict, tokens.TEXT_MUTED)
+            label = verdict
+        chips += f' · <span style="color:{colour};font-weight:600;">{label}</span>'
+    if params_at_bound:
+        chips += f' · <span style="color:{tokens.WARN};font-weight:600;">at bound</span>'
+    return chips
 
 
-def fit_quality_tooltip(quality: dict | None) -> str:
-    """Return a teaching tooltip explaining the χ² verdict and target band."""
-    if not quality or not quality.get("verdict"):
-        return ""
-    verdict = str(quality["verdict"])
-    low = quality.get("band_low")
-    high = quality.get("band_high")
-    confidence = quality.get("confidence")
-    dof = quality.get("dof")
-    lines = [f"Fit quality: {verdict}."]
-    if low is not None and high is not None and confidence is not None:
-        pct = int(round(float(confidence) * 100))
-        band = f"{float(low):.3f}–{float(high):.3f}"
-        nu = f" (ν = {int(dof)})" if dof is not None else ""
-        lines.append(f"A good fit's χ²ᵣ falls in [{band}] at {pct}%{nu}.")
-        # Defuse the "poor at χ²ᵣ≈1.08" alarm for high-statistics muon data: the
-        # band is a confidence interval that tightens with ν, so a near-unity χ²ᵣ
-        # can read "poor" yet be a good fit. Clarity only — the band math is unchanged.
+def fit_quality_tooltip(quality: dict | None, params_at_bound: list[str] | None = None) -> str:
+    """Return a teaching tooltip explaining the χ² verdict and any at-bound params."""
+    lines: list[str] = []
+    if quality and quality.get("verdict"):
+        verdict = str(quality["verdict"])
+        low = quality.get("band_low")
+        high = quality.get("band_high")
+        confidence = quality.get("confidence")
+        dof = quality.get("dof")
+        lines.append(f"Fit quality: {verdict}.")
+        if quality.get("marginal"):
+            # The cuprate χ²ᵣ=1.10/ν=1927 case: numerically near-ideal, flagged only
+            # by the tight high-ν band. Reassure rather than alarm.
+            lines.append(
+                f"χ²ᵣ is within ~0.2 of 1, so this is numerically a good fit — it reads "
+                f"“{verdict}” only because the band is tight at this ν."
+            )
+        if low is not None and high is not None and confidence is not None:
+            pct = int(round(float(confidence) * 100))
+            band = f"{float(low):.3f}–{float(high):.3f}"
+            nu = f" (ν = {int(dof)})" if dof is not None else ""
+            lines.append(f"A good fit's χ²ᵣ falls in [{band}] at {pct}%{nu}.")
+            # Defuse the "poor at χ²ᵣ≈1.08" alarm for high-statistics muon data: the
+            # band is a confidence interval that tightens with ν, so a near-unity χ²ᵣ
+            # can read "poor" yet be a good fit. Clarity only — the band math is unchanged.
+            lines.append(
+                "The band is a confidence interval (WiMDA Rgoodfit), not a fixed cut-off, "
+                "and tightens as ν grows — so at high statistics a χ²ᵣ near 1 can read "
+                "“poor” yet still be a good fit. Rebinning shrinks the errors, so a bunched "
+                "fit can read a high χ²ᵣ from small systematics — inspect the residuals. "
+                "Tune the band in Options ▸ Fit quality confidence."
+            )
         lines.append(
-            "The band is a confidence interval (WiMDA Rgoodfit), not a fixed cut-off, "
-            "and tightens as ν grows — so at high statistics a χ²ᵣ near 1 can read "
-            "“poor” yet still be a good fit. Tune it in Options ▸ Fit quality confidence."
+            "“overdone” reproduces the data better than the errors allow — usually "
+            "overestimated errors or an over-flexible model; “poor” is worse than the "
+            "errors allow."
         )
-    lines.append(
-        "“overdone” reproduces the data better than the errors allow — usually "
-        "overestimated errors or an over-flexible model; “poor” is worse than the "
-        "errors allow."
-    )
+    if params_at_bound:
+        names = ", ".join(str(n) for n in params_at_bound)
+        lines.append(
+            f"Parameter(s) at a bound: {names}. A free parameter pinned on its min/max is "
+            "usually poorly constrained — the data did not determine it, so the optimiser "
+            "parked it on the boundary (the fit can still report “converged”). Widen the "
+            "bound, fix it from independent knowledge, or simplify the model."
+        )
     return " ".join(lines)
 
 

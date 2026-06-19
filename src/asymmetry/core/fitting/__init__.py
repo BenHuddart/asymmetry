@@ -102,7 +102,7 @@ from asymmetry.core.fitting.parameters import (
     ParamInfo,
     get_param_info,
 )
-from asymmetry.core.fitting.result_summary import fit_result_summary
+from asymmetry.core.fitting.result_summary import fit_result_summary, parameters_at_bound
 from asymmetry.core.fitting.rrf_offset import (
     RRF_ROTATION_COMPONENTS,
     UnsupportedRRFComponentError,
@@ -173,6 +173,7 @@ __all__ = [
     "rerank_global_fit_wizard_recommendation",
     "fit_grouped_time_domain",
     "fit_result_summary",
+    "parameters_at_bound",
     "grouped_time_domain_available",
     "sc",
     "muon_fluorine",
