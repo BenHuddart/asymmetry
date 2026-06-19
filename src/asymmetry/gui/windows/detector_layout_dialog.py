@@ -43,6 +43,7 @@ from asymmetry.core.instrument import (
     InstrumentLayout,
     get_instrument_layout,
     instrument_choices_for,
+    recommend_grouping_preset,
 )
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.widgets.detector_schematic import _GROUP_COLOURS, DetectorSchematicWidget
@@ -77,6 +78,12 @@ class DetectorLayoutDialog(QDialog):
         Group ID currently designated as the *forward* group.
     backward_group:
         Group ID currently designated as the *backward* group.
+    field_direction:
+        Applied-field geometry of the run (``"Transverse"`` / ``"Longitudinal"``
+        / ``"Zero field"`` / ``None``).  When the run is transverse-field but the
+        current preset is not the recommended transverse one, the dialog shows a
+        non-blocking hint and pre-selects the recommended preset in the combo
+        (the user still clicks *Apply Grouping*).
     parent:
         Parent Qt widget.
     """
@@ -91,6 +98,7 @@ class DetectorLayoutDialog(QDialog):
         backward_group: int = 2,
         excluded_detectors: list[int] | None = None,
         projections: list[dict] | None = None,
+        field_direction: str | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -98,6 +106,9 @@ class DetectorLayoutDialog(QDialog):
         self.resize(1020, 560)
 
         self._instrument = instrument
+        # Applied-field geometry of the loaded run (metadata["field_direction"]):
+        # used to nudge transverse-field data off a longitudinal preset.
+        self._field_direction = field_direction
         self._forward_group = forward_group
         self._backward_group = backward_group
         # Declared projections (multi-projection presets). Seeded from the
@@ -247,6 +258,14 @@ class DetectorLayoutDialog(QDialog):
         apply_btn.clicked.connect(self._on_apply_preset)
         preset_layout.addWidget(apply_btn)
 
+        # Non-blocking transverse-field nudge: shown when a TF run is on a
+        # longitudinal (or otherwise non-recommended) preset. Hidden otherwise.
+        self._tf_hint_label = QLabel()
+        self._tf_hint_label.setWordWrap(True)
+        self._tf_hint_label.setStyleSheet(f"color: {tokens.WARN};")
+        self._tf_hint_label.setVisible(False)
+        preset_layout.addWidget(self._tf_hint_label)
+
         sep2 = QFrame()
         sep2.setFrameShape(QFrame.Shape.HLine)
         sep2.setFrameShadow(QFrame.Shadow.Sunken)
@@ -280,6 +299,9 @@ class DetectorLayoutDialog(QDialog):
         self._apply_group_button_styles()
         self._sync_schematic()
         self._update_preset_status_label()
+        # Seed the TF nudge once: pre-select the recommended preset in the combo
+        # so applying it is one click (no auto-apply).
+        self._update_grouping_recommendation(preselect=True)
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
@@ -396,6 +418,31 @@ class DetectorLayoutDialog(QDialog):
             self._applied_preset_name = None
             self._preset_status_label.setText("(Current: Custom)")
 
+    def _update_grouping_recommendation(self, *, preselect: bool = False) -> None:
+        """Show or hide the transverse-field nudge for the current layout.
+
+        The nudge appears when the run is transverse-field and the applied preset
+        is not the recommended transverse one (see
+        :func:`asymmetry.core.instrument.recommend_grouping_preset`).  When
+        *preselect* is set, the recommended preset is also pre-selected in the
+        combo so applying it is a single click — never auto-applied.
+        """
+        recommended = recommend_grouping_preset(self._instrument, self._field_direction)
+        if recommended is None or recommended == self._applied_preset_name:
+            self._tf_hint_label.setVisible(False)
+            return
+
+        if preselect:
+            idx = self._preset_combo.findText(recommended)
+            if idx >= 0:
+                self._preset_combo.setCurrentIndex(idx)
+        self._tf_hint_label.setText(
+            f"Transverse-field run: the current grouping washes out the "
+            f"precession. ‘{recommended}’ is recommended — click "
+            f"Apply Grouping."
+        )
+        self._tf_hint_label.setVisible(True)
+
     def _on_group_definition_changed(self, *_args) -> None:
         """Refresh preset status when detector or name assignments are edited."""
         self._update_preset_status_label()
@@ -449,6 +496,7 @@ class DetectorLayoutDialog(QDialog):
         self._schematic.set_instrument(new_layout)
         self._sync_schematic()
         self._update_preset_status_label()
+        self._update_grouping_recommendation(preselect=True)
 
     # ------------------------------------------------------------------
     # Slot: apply preset
@@ -489,6 +537,7 @@ class DetectorLayoutDialog(QDialog):
 
         self._sync_schematic()
         self._update_preset_status_label()
+        self._update_grouping_recommendation()
 
     # ------------------------------------------------------------------
     # Slot: clear all

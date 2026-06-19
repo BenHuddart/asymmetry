@@ -40,6 +40,7 @@ __all__ = [
     "TRANSVERSE_PROJECTION_TINTS",
     "derive_projection_pairs",
     "get_instrument_layout",
+    "recommend_grouping_preset",
     "instrument_display_name",
     "instrument_choices_for",
     "variant_for_histograms",
@@ -1388,6 +1389,72 @@ def get_instrument_layout(name: str) -> InstrumentLayout:
     if resolved is not None:
         return _LAYOUTS[resolved]
     return _LAYOUTS[name]
+
+
+def recommend_grouping_preset(layout: InstrumentLayout, field_direction: str | None) -> str | None:
+    """Recommend a grouping preset for *layout* given the run's field geometry.
+
+    A pure helper the Grouping / Detector-Layout dialog uses to nudge the user
+    away from a grouping that washes out the signal — never to auto-apply one.
+
+    Motivating case (B8a, live testing): PSI GPS transverse-field (TF) runs
+    default to the ``Longitudinal`` (Forward/Backward) preset, but the spin
+    rotator on πM3.2 tips the muon spin ~50° up (see :func:`_build_gps`), so a
+    plain Forward/Backward asymmetry only sees the cosine projection and the
+    time-domain fit collapses.  The remedy is the ``Spin-rotated (F+U/B+D)``
+    preset, which realigns one asymmetry axis with the rotated spin.  Nothing in
+    the GUI hinted at this, which caused a long dead-end in live testing.
+
+    Parameters
+    ----------
+    layout:
+        The instrument layout whose presets are the recommendation candidates.
+    field_direction:
+        The applied-field geometry from run metadata
+        (``metadata["field_direction"]``): ``"Transverse"``, ``"Longitudinal"``,
+        ``"Zero field"``, or an empty/unknown string.  These values are produced
+        by
+        :meth:`asymmetry.core.io.nexus.NeXusMuonLoader._field_direction_from_state`
+        and the PSI free-text classifier
+        :func:`asymmetry.core.io.base.field_direction_from_text`.
+
+    Returns
+    -------
+    str or None
+        The name of a preset in ``layout.presets`` to recommend, or ``None``
+        when no nudge applies: non-transverse geometry (longitudinal / zero
+        field), an unknown/absent field direction, or no suitable transverse
+        preset on this instrument.  For transverse data a single forward/backward
+        pair (a preset with no declared projections, e.g. GPS
+        ``Spin-rotated (F+U/B+D)``) is preferred over a multi-projection
+        vector/WEP preset, so the recommendation is directly usable for the basic
+        time-domain fit the longitudinal default would collapse.
+
+    Notes
+    -----
+    This is a *recommendation* only.  Whether to surface the nudge — i.e. whether
+    the current preset already matches the recommendation — is the caller's
+    decision; this helper does not know the current preset.
+    """
+    if (field_direction or "").strip().lower() != "transverse":
+        # No nudge for longitudinal / zero-field / unknown geometries.
+        return None
+
+    # Candidate transverse presets: name carries a spin-rotated or transverse
+    # marker. The longitudinal default never matches these tokens, so it is
+    # excluded automatically.
+    transverse = [
+        name for name in layout.presets if "rotat" in name.lower() or "transverse" in name.lower()
+    ]
+    if not transverse:
+        return None
+
+    # Prefer a single forward/backward pair (no declared projections): it drops
+    # straight into the ordinary time-domain asymmetry fit that the longitudinal
+    # default washes out. Multi-projection presets (vector / WEP) are a second
+    # choice. Declaration order breaks ties within each tier.
+    single_pair = [name for name in transverse if not layout.presets[name].projections]
+    return (single_pair or transverse)[0]
 
 
 def instrument_display_name(name: str) -> str:

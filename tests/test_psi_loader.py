@@ -204,6 +204,9 @@ def test_load_psi_bin_uses_labels_and_per_detector_t0(tmp_path) -> None:
     assert ds.metadata["psi_format"] == "psi-bin"
     assert ds.metadata["temperature"] == pytest.approx(50.0)
     assert ds.metadata["field"] == pytest.approx(1000.0)
+    # The "TF" orientation tag in the header is classified as Transverse so the
+    # transverse-field grouping nudge can fire on PSI data (B8a).
+    assert ds.metadata["field_direction"] == "Transverse"
     assert ds.run.grouping["groups"] == {1: [1], 2: [2]}
     assert ds.run.grouping["group_names"] == {1: "Back", 2: "Forw"}
     assert ds.run.grouping["forward_group"] == 1
@@ -404,6 +407,7 @@ def test_load_psi_mdu_t5(tmp_path) -> None:
     assert ds.run_number == 2468
     assert ds.metadata["psi_format"] == "psi-mdu"
     assert ds.metadata["instrument"] == "HIFI"
+    assert ds.metadata["field_direction"] == "Transverse"
     assert len(ds.run.histograms) == 2
     assert ds.run.grouping["groups"] == {1: [1], 2: [2]}
     assert ds.run.grouping["group_names"] == {1: "F1", 2: "B1"}
@@ -469,6 +473,7 @@ def test_musrfit_bin_fixture_matches_musrfit_psi_reader_dump() -> None:
     assert ds.metadata["temperature"] == pytest.approx(5.0)
     assert ds.metadata["field"] == pytest.approx(100.0)
     assert ds.metadata["comment"] == "FeSe 9p4 TF100 p107apr09_sample*1p02"
+    assert ds.metadata["field_direction"] == "Transverse"  # from the "TF100" tag
     assert len(ds.run.histograms) == 2
     assert [h.n_bins for h in ds.run.histograms] == [8192, 8192]
     assert ds.run.histograms[0].bin_width == pytest.approx(0.00125)
@@ -495,6 +500,7 @@ def test_musrfit_bin_multihistogram_fixture_matches_musrfit_psi_reader_dump() ->
     assert ds.metadata["temperature"] == pytest.approx(4.5)
     assert ds.metadata["field"] == pytest.approx(150.0)
     assert ds.metadata["comment"] == "Y124 TF150G 4.5K (ab)"
+    assert ds.metadata["field_direction"] == "Transverse"  # from the "TF150G" tag
     assert len(ds.run.histograms) == 5
     assert ds.run.histograms[0].bin_width == pytest.approx(0.000625)
     assert ds.run.grouping["histogram_labels"] == ["Forw", "Back", "Up", "Down", "Righ"]
