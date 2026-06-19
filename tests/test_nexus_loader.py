@@ -39,6 +39,7 @@ def _write_v2_file(
     temp_log_units: str | None = None,
     temp_log_block: str = "Temp_Sample",
     temp_log_name: str | None = None,
+    temp_log_times: tuple[float, ...] | None = None,
 ) -> None:
     """Create a synthetic V2 NeXus file used by loader unit tests.
 
@@ -119,7 +120,10 @@ def _write_v2_file(
             sample.create_dataset("magnetic_field_state", data=np.bytes_(field_state))
 
         log_values = np.asarray(temp_log_values, dtype=np.float64)
-        log_times = np.arange(log_values.size, dtype=np.float64) * 10.0
+        if temp_log_times is not None:
+            log_times = np.asarray(temp_log_times, dtype=np.float64)
+        else:
+            log_times = np.arange(log_values.size, dtype=np.float64) * 10.0
         if temp_log_style == "selog":
             # ISIS selog convention: the NXlog lives in a ``value_log`` subgroup
             # of the block, e.g. ``selog/Temp_Sample/value_log``.
@@ -284,6 +288,26 @@ def test_logged_sample_temperature_matched_via_nxlog_name_child(
     assert ds.metadata["nexus_time_series"]["selog/log_1/value_log"]["name"] == "Temp_Sample"
     assert ds.metadata["sample_temperature_logged"] == pytest.approx(5.0)
     assert ds.sample_temperature_logged == pytest.approx(5.0)
+
+
+def test_logged_sample_temperature_gates_out_pre_run_samples(tmp_path, loader: NexusLoader) -> None:
+    # The full-record NXlog mean includes the pre-run (t < 0) plateau parked at
+    # the previous setpoint; sample_temperature_logged must average only the
+    # run-active (t >= 0) samples so the first run of a block is not
+    # mis-temperatured (the Sn 91516 case).
+    path = tmp_path / "run_pre_run_plateau.nxs"
+    _write_v2_file(
+        path,
+        temp_setpoint=1.6,
+        temp_log_values=(4.62, 4.62, 1.60, 1.60),
+        temp_log_times=(-20.0, -10.0, 0.0, 30.0),
+        temp_log_style="selog",
+    )
+
+    ds = loader.load(str(path))
+    assert not isinstance(ds, list)
+    # Run-active mean = mean(1.60, 1.60) = 1.60, not the contaminated 3.11.
+    assert ds.sample_temperature_logged == pytest.approx(1.60)
 
 
 def test_no_logged_series_leaves_temperature_unset(tmp_path, loader: NexusLoader) -> None:

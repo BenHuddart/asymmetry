@@ -50,6 +50,7 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.io.nexus import active_series_mean
 from asymmetry.core.transform.grouping import good_event_count, good_frames
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
@@ -2024,42 +2025,12 @@ class DataBrowserPanel(QWidget):
             info = series.get(series_path, {})
             if not isinstance(info, dict):
                 continue
-            value = self._series_active_mean(info)
+            # Run-active (t >= 0) mean, shared with the loader so the browser and
+            # the scriptable ``sample_temperature_logged`` never disagree.
+            value = active_series_mean(info)
             if value is not None:
                 return value
         return None
-
-    @staticmethod
-    def _series_active_mean(info: dict) -> float | None:
-        """Mean of a log series over its run-active (t >= 0) samples.
-
-        The stored ``mean`` is the full-record average, which includes the
-        pre-run (t < 0) plateau — so the first run of a setpoint block reads the
-        old setpoint instead of the new one (Sn 91516 -> 4.62 K vs 1.599 K).
-        When the series carries a time axis, gate to t >= 0; otherwise fall back
-        to the precomputed full-record ``mean``.
-        """
-        times = info.get("time")
-        values = info.get("values")
-        if (
-            isinstance(times, (list, tuple))
-            and isinstance(values, (list, tuple))
-            and times
-            and values
-        ):
-            t = np.asarray(times, dtype=float)
-            v = np.asarray(values, dtype=float)
-            n = min(t.size, v.size)
-            if n:
-                t, v = t[:n], v[:n]
-                active = v[(t >= 0.0) & np.isfinite(v)]
-                if active.size:
-                    return float(np.mean(active))
-        try:
-            mean = float(info.get("mean"))
-        except (TypeError, ValueError):
-            return None
-        return mean if np.isfinite(mean) else None
 
     def _series_path_score(self, field_key: str, series_path: str, info) -> int:
         """Score how well a log series matches a browser summary field.

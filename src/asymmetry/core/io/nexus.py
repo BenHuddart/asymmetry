@@ -100,6 +100,38 @@ def _normalize_temperature_to_kelvin(value: float | None, units: str | None) -> 
     return float(value)
 
 
+def active_series_mean(entry: Any) -> float | None:
+    """Mean of a logged NXlog series over its run-active (t >= 0) samples.
+
+    The stored ``mean`` / ``min`` / ``max`` summarise the *whole* record,
+    including the pre-run (t < 0) plateau — so the first run of a setpoint block
+    reads the previous setpoint (Sn 91516 -> 4.62 K vs the correct 1.599 K).
+    When the series carries a time axis, average only the t >= 0 samples;
+    otherwise fall back to the precomputed full-record ``mean``.
+
+    Pure (no Qt) so the loader (``sample_temperature_logged``) and the GUI Data
+    Browser share one definition of the run-active mean and never disagree.
+    """
+    if not isinstance(entry, dict):
+        return None
+    times = entry.get("time")
+    values = entry.get("values")
+    if isinstance(times, (list, tuple)) and isinstance(values, (list, tuple)) and times and values:
+        t = np.asarray(times, dtype=float)
+        v = np.asarray(values, dtype=float)
+        n = min(t.size, v.size)
+        if n:
+            t, v = t[:n], v[:n]
+            active = v[(t >= 0.0) & np.isfinite(v)]
+            if active.size:
+                return float(np.mean(active))
+    try:
+        mean = float(entry.get("mean"))
+    except (TypeError, ValueError):
+        return None
+    return mean if np.isfinite(mean) else None
+
+
 @dataclass
 class _GroupingSelection:
     """Resolved detector-group selection used for asymmetry reduction."""
@@ -1178,7 +1210,9 @@ class NexusLoader(BaseLoader):
         for path, entry in time_series.items():
             if not self._is_sample_temperature_path(path, entry):
                 continue
-            mean = entry.get("mean")
+            # Gate to run-active (t >= 0) samples so a parked pre-run plateau
+            # does not contaminate the representative value (shared with the GUI).
+            mean = active_series_mean(entry)
             if mean is None or not np.isfinite(mean):
                 continue
             kelvin = _normalize_temperature_to_kelvin(float(mean), entry.get("units", ""))

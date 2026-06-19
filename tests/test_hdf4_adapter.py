@@ -255,9 +255,10 @@ def test_v1_logged_sample_temperature_from_nxlog_name_child() -> None:
     series = ds.metadata["nexus_time_series"]
     assert "log_1" in series
     assert series["log_1"]["name"] == "Temp_Sample"
-    # Matched off the ``name`` child (the path segment ``log_1`` is sensor-blind).
-    assert ds.metadata.get("sample_temperature_logged") is not None
-    assert ds.sample_temperature_logged is not None
+    # Matched off the ``name`` child (the path segment ``log_1`` is sensor-blind),
+    # and gated to the run-active (t >= 0) samples: the t=-30 pre-run reading of
+    # 300 K is excluded, leaving the 5 K plateau.
+    assert ds.sample_temperature_logged == pytest.approx(5.0)
 
 
 # --- detection + dependency guard ------------------------------------------
