@@ -9048,6 +9048,11 @@ class MainWindow(QMainWindow):
         self._project_model.add_batch(series)
         self._alc_scan_series_id = series.batch_id
 
+        # A freshly-built scan is a new field span; its old regions/peaks (in the
+        # previous scan's x units) no longer apply and would distort the new
+        # scatter's auto-range, so drop them before rendering. The baseline model
+        # choice is axis-independent and deliberately kept.
+        self._alc_scan_view.clear_analysis()
         self._render_alc_scan()
         self._log_panel.log(f"Built integral scan '{series.label}' ({scan.n_points} points).")
 
@@ -11947,6 +11952,11 @@ class MainWindow(QMainWindow):
         if hasattr(self._multi_group_fit_window, "clear_grouped_single_state"):
             self._multi_group_fit_window.clear_grouped_single_state()
         self._fit_parameters_panel.clear()
+        # The ALC integral-scan view is not a fit panel; reset its scan data and
+        # analysis (baseline model, regions, peaks) so they do not leak into the
+        # next project and distort the new scatter's auto-range.
+        self._alc_scan_points = []
+        self._alc_scan_view.reset()
         if self._global_parameter_fit_window is not None:
             self._global_parameter_fit_window.close()
             self._global_parameter_fit_window = None
