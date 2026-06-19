@@ -8974,8 +8974,7 @@ class MainWindow(QMainWindow):
         """
         rep_type = self._active_representation_type()
         if rep_type != RepresentationType.TIME_FB_ASYMMETRY:
-            QMessageBox.information(
-                self,
+            self._guidance_message(
                 "Integral scan",
                 "Integral-scan (ALC) mode applies to the Forward-Backward asymmetry only.",
             )
@@ -8986,8 +8985,8 @@ class MainWindow(QMainWindow):
         )
         runs = [d.run for d in datasets if getattr(d, "run", None) is not None]
         if len(runs) < 2:
-            QMessageBox.information(
-                self, "Integral scan", "Select at least two runs to build a field scan."
+            self._guidance_message(
+                "Integral scan", "Select at least two runs to build a field scan."
             )
             return
 
@@ -9009,14 +9008,16 @@ class MainWindow(QMainWindow):
                     runs, t_min=t_min, t_max=t_max, method="integral", order_key="run"
                 )
         except (ValueError, TypeError) as exc:
-            QMessageBox.warning(self, "Integral scan", f"Could not build the scan: {exc}")
+            self._guidance_message(
+                "Integral scan", f"Could not build the scan: {exc}", warning=True
+            )
             return
         if scan.n_points < 2:
             # A failed rebuild leaves the previous scan on screen; do NOT update
             # _alc_rf_mode here, or it would desync from the still-displayed scan
             # and let an RF fit run against a stale plain-integral observable.
-            QMessageBox.warning(
-                self, "Integral scan", "The scan has too few usable points to plot."
+            self._guidance_message(
+                "Integral scan", "The scan has too few usable points to plot.", warning=True
             )
             return
         self._alc_rf_mode = rf_mode
@@ -9167,14 +9168,43 @@ class MainWindow(QMainWindow):
             x_label=self._ALC_X_LABELS[x_key],
         )
 
-    def _alc_notify(self, title: str, text: str, *, warning: bool = False) -> None:
-        """Show an ALC info/warning dialog, suppressed while restoring a project."""
-        if self._alc_loading:
+    @staticmethod
+    def _is_headless() -> bool:
+        """True when no display is attached (offscreen/minimal QPA platform).
+
+        Under ``QT_QPA_PLATFORM=offscreen`` (CI, automated/offscreen driving)
+        there is no user to dismiss a modal dialog, so ``QMessageBox.exec()``
+        would block the event loop forever. Callers route guidance to a
+        non-blocking sink (the log) instead. On a real display the platform
+        name is ``windows``/``cocoa``/``xcb``/etc. and this returns False.
+        """
+        app = QGuiApplication.instance()
+        if app is None:
+            return True
+        return app.platformName() in {"offscreen", "minimal", ""}
+
+    def _guidance_message(self, title: str, text: str, *, warning: bool = False) -> None:
+        """Surface a non-error guidance message to the user.
+
+        On a real display this is a modal ``QMessageBox`` (unchanged
+        behaviour). When headless (see :meth:`_is_headless`), a modal
+        ``.exec()`` would block the offscreen event loop forever, so the
+        message is routed to the log instead — a non-blocking sink that still
+        records the guidance rather than swallowing it.
+        """
+        if self._is_headless():
+            self._log_panel.log(f"{title}: {text}")
             return
         if warning:
             QMessageBox.warning(self, title, text)
         else:
             QMessageBox.information(self, title, text)
+
+    def _alc_notify(self, title: str, text: str, *, warning: bool = False) -> None:
+        """Show an ALC info/warning dialog, suppressed while restoring a project."""
+        if self._alc_loading:
+            return
+        self._guidance_message(title, text, warning=warning)
 
     def _on_fit_baseline(self) -> None:
         """Fit + overlay a baseline over the user-marked non-resonant regions."""
