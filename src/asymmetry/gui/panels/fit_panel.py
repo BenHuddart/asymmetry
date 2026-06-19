@@ -1028,6 +1028,48 @@ def _set_formula_label_text(label: QLabel, formula: str, **_kwargs) -> None:
     label.setToolTip(raw_text)
 
 
+def _dataset_representation_domain(dataset: MuonDataset | None) -> str:
+    """Return the analysis domain a dataset's samples live in.
+
+    Frequency spectra produced by the Fourier panel carry
+    ``metadata["plot_domain"] == "frequency"``; every other dataset is a
+    time-domain asymmetry/counts representation. Used to refuse a fit whose
+    declared domain does not match the data actually loaded — fitting a
+    time-domain model against an FFT spectrum (or vice versa) silently produces
+    a meaningless result.
+    """
+    if dataset is None:
+        return "time"
+    metadata = getattr(dataset, "metadata", None)
+    if isinstance(metadata, dict):
+        if str(metadata.get("plot_domain", "")).strip().lower() == "frequency":
+            return "frequency"
+    return "time"
+
+
+def _fit_domain_mismatch_message(fit_domain: str, dataset: MuonDataset | None) -> str | None:
+    """Return a user-facing refusal when the fit domain and data disagree.
+
+    ``None`` means the data matches the fit domain and the fit may proceed.
+    """
+    data_domain = _dataset_representation_domain(dataset)
+    if data_domain == fit_domain:
+        return None
+    if data_domain == "frequency":
+        return (
+            "the workspace is showing the frequency-domain spectrum, but this is a "
+            "time-domain fit. Switch the central plot to a time-domain view "
+            "(Time domain ▸ F-B asymmetry) before fitting — otherwise the "
+            "time-domain model is fitted against the FFT spectrum and the result "
+            "is meaningless."
+        )
+    return (
+        "this is a frequency-domain fit, but the selected data is a time-domain "
+        "representation. Switch the central plot to the Frequency-domain (FFT) "
+        "view before fitting."
+    )
+
+
 def _apply_domain_mismatch_warning(label: QLabel, model: CompositeModel, domain: str) -> None:
     """Flag a model containing components from the wrong analysis domain.
 
@@ -1054,6 +1096,32 @@ def _apply_domain_mismatch_warning(label: QLabel, model: CompositeModel, domain:
     box = getattr(label, "_formula_box", None)
     if box is not None:
         box.refresh_height()
+
+
+def _model_without_trailing_background(model: CompositeModel | None) -> CompositeModel | None:
+    """Return *model* with a trailing additive ``Constant`` removed, or ``None``.
+
+    Only the unambiguous case is handled — a final ``+ Constant`` term outside
+    any parentheses (e.g. ``Exponential + Constant`` or
+    ``Oscillatory*Exponential + Constant``). A free constant background absorbs
+    part of the signal during amplitude calibration, splitting the fitted
+    amplitude; dropping it lets the relaxation term capture the full initial
+    asymmetry (A₀). Returns ``None`` when there is no such removable background.
+    """
+    if model is None:
+        return None
+    names = list(model.component_names)
+    operators = list(model.operators)
+    if len(names) < 2 or names[-1] != "Constant":
+        return None
+    if not operators or operators[-1] != "+":
+        return None
+    if any(model.open_parentheses) or any(model.close_parentheses):
+        return None
+    try:
+        return CompositeModel(names[:-1], operators=operators[:-1])
+    except ValueError:
+        return None
 
 
 def _format_bounds_pair(min_val: float, max_val: float) -> str:
@@ -1877,6 +1945,15 @@ class SingleFitTab(QWidget):
         self._share_group_btn.setToolTip("Share this fit function with the selected data group.")
         self._share_group_btn.clicked.connect(self._on_share_function_with_group)
         self._share_group_btn.setEnabled(False)
+        self._drop_background_btn = QPushButton("Drop background")
+        self._drop_background_btn.setToolTip(
+            "Remove the constant background term from the model.\n"
+            "For amplitude calibration (e.g. a light-OFF A₀ run) a free background "
+            "absorbs part of the initial asymmetry, splitting the fitted amplitude; "
+            "drop it to fit the full A₀ with a single relaxation term."
+        )
+        self._drop_background_btn.clicked.connect(self._on_drop_background)
+        self._drop_background_btn.setEnabled(False)
         self._send_to_batch_btn = QPushButton("Send to Batch")
         self._send_to_batch_btn.setToolTip(
             "Copy this fit function into the Batch tab to seed a batch fit over the selected runs."
@@ -1899,6 +1976,7 @@ class SingleFitTab(QWidget):
         for _model_btn in (
             self._edit_model_btn,
             self._fit_wizard_btn,
+            self._drop_background_btn,
             self._share_group_btn,
             self._send_to_batch_btn,
             self._add_to_series_btn,
@@ -2207,6 +2285,18 @@ class SingleFitTab(QWidget):
             return
         self.share_function_with_group_requested.emit(run_number)
 
+    def _update_drop_background_enabled(self) -> None:
+        """Enable the Drop-background affordance only when there is one to drop."""
+        reduced = _model_without_trailing_background(self._composite_model)
+        self._drop_background_btn.setEnabled(self._domain == "time" and reduced is not None)
+
+    def _on_drop_background(self) -> None:
+        """Drop the constant background term for amplitude calibration."""
+        reduced = _model_without_trailing_background(self._composite_model)
+        if reduced is None:
+            return
+        self._set_composite_model(reduced)
+
     def _set_composite_model(self, model: CompositeModel) -> None:
         """Set the active composite model and rebuild the parameter table."""
         self._composite_model = model
@@ -2231,6 +2321,7 @@ class SingleFitTab(QWidget):
         # the model's declared fixed-by-default parameters.
         fixed_names = set(model.fixed_by_default_params()) | {"shape_factor_a"}
         self._param_table.populate(model, value_overrides=value_overrides, fixed_names=fixed_names)
+        self._update_drop_background_enabled()
 
     def _synchronize_fraction_value_rows(self, edited_param_name: str | None = None) -> None:
         self._param_table.synchronize_fractions(edited_param_name)
@@ -2509,6 +2600,11 @@ class SingleFitTab(QWidget):
 
         if self._current_dataset is None:
             self._result_label.setText("ERROR: No dataset selected")
+            return
+
+        mismatch = _fit_domain_mismatch_message(self._domain, self._current_dataset)
+        if mismatch is not None:
+            self._result_label.setText(f"ERROR: {mismatch}")
             return
 
         if self._composite_model is None:
@@ -4482,6 +4578,11 @@ class GlobalFitTab(QWidget):
 
         if len(self._datasets) < 2:
             self._result_text.setText("Error: Need at least 2 datasets for global fitting")
+            return
+
+        mismatch = _fit_domain_mismatch_message(self._domain, self._datasets[0])
+        if mismatch is not None:
+            self._result_text.setText(f"Error: {mismatch}")
             return
 
         if self._composite_model is None:

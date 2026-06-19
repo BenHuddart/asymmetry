@@ -51,6 +51,7 @@ from PySide6.QtWidgets import (
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.io.nexus import active_series_mean
+from asymmetry.core.io.periods import period_count, period_labels
 from asymmetry.core.transform.grouping import good_event_count, good_frames
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
@@ -69,6 +70,9 @@ _COMMENT_ROLE = Qt.ItemDataRole.UserRole + 1
 #: Item-data role carrying a custom column's id on its editable cells, so an edit
 #: routes back to the right per-run value regardless of column position.
 _CUSTOM_COLUMN_ROLE = Qt.ItemDataRole.UserRole + 2
+#: Item-data role carrying a multi-period cue (e.g. "2 periods · Red active")
+#: shown as the Title cell's second line, so a buried 2nd period is visible.
+_PERIOD_ROLE = Qt.ItemDataRole.UserRole + 3
 #: Column index of the two-line Title cell.
 _TITLE_COLUMN = 1
 # Soft red tint used to mark runs that belong to the active fit series in
@@ -354,6 +358,20 @@ class _RowHighlightDelegate(QStyledItemDelegate):
         return str(comment).strip() if isinstance(comment, str) else ""
 
     @staticmethod
+    def _cell_period_note(index) -> str:
+        """Return the multi-period cue carried by a Title cell ('' elsewhere)."""
+        if index.column() != _TITLE_COLUMN:
+            return ""
+        note = index.data(_PERIOD_ROLE)
+        return str(note).strip() if isinstance(note, str) else ""
+
+    @classmethod
+    def _cell_second_line(cls, index) -> str:
+        """Return the Title cell's muted second line: comment plus period cue."""
+        parts = [part for part in (cls._cell_comment(index), cls._cell_period_note(index)) if part]
+        return " · ".join(parts)
+
+    @staticmethod
     def _comment_font(base: QFont) -> QFont:
         """Return the smaller font used for the comment line."""
         font = QFont(base)
@@ -386,7 +404,7 @@ class _RowHighlightDelegate(QStyledItemDelegate):
         ``opt`` must already be initStyleOption()-initialised; the background
         is the caller's responsibility.
         """
-        comment = self._cell_comment(index)
+        comment = self._cell_second_line(index)
         title = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
         rect = opt.rect.adjusted(4, self._TWO_LINE_PAD, -4, -self._TWO_LINE_PAD)
 
@@ -423,7 +441,7 @@ class _RowHighlightDelegate(QStyledItemDelegate):
 
     def sizeHint(self, option, index):  # noqa: N802 — Qt override
         hint = super().sizeHint(option, index)
-        if self._cell_comment(index):
+        if self._cell_second_line(index):
             opt = QStyleOptionViewItem(option)
             self.initStyleOption(opt, index)
             _, title_fm, comment_fm = self._line_metrics(opt.font)
@@ -439,7 +457,7 @@ class _RowHighlightDelegate(QStyledItemDelegate):
             and col0.data(Qt.ItemDataRole.UserRole).startswith(self._SENTINEL)
         )
         is_selected = bool(option.state & QStyle.StateFlag.State_Selected)
-        has_comment = bool(self._cell_comment(index))
+        has_comment = bool(self._cell_second_line(index))
 
         if is_selected:
             is_focused = index.row() == table.currentRow()
@@ -1166,6 +1184,46 @@ class DataBrowserPanel(QWidget):
                 )
         return ""
 
+    @staticmethod
+    def _period_state(dataset: MuonDataset) -> tuple[int, str] | None:
+        """Return ``(count, active_label)`` for a multi-period run, else ``None``.
+
+        The active label is the period the default reduction uses — the
+        Grouping dialog's RG-mode selection when one is recorded, otherwise the
+        first period (Red for the two-period red/green case), which is the
+        default a defaults-following user silently fits.
+        """
+        try:
+            count = period_count(dataset)
+        except (TypeError, ValueError, AttributeError):
+            return None
+        if count <= 1:
+            return None
+        labels = period_labels(dataset)
+        active = labels[0] if labels else "1"
+        grouping = getattr(dataset.run, "grouping", None) if dataset.run is not None else None
+        if isinstance(grouping, dict):
+            mode = grouping.get("period_mode")
+            if mode:
+                active = str(mode)
+        return count, active.capitalize()
+
+    def _period_note(self, dataset: MuonDataset) -> str | None:
+        """Return the compact multi-period cue for the Title cell, else ``None``."""
+        state = self._period_state(dataset)
+        if state is None:
+            return None
+        count, active = state
+        return f"{count} periods · {active} active"
+
+    def multi_period_run_numbers(self) -> set[int]:
+        """Return run numbers of loaded datasets that carry more than one period."""
+        return {
+            int(rn)
+            for rn, dataset in self._datasets.items()
+            if self._period_state(dataset) is not None
+        }
+
     def _add_dataset_row(self, dataset: MuonDataset, *, indent: bool) -> None:
         rn = int(dataset.run_number)
         meta = dataset.metadata
@@ -1190,19 +1248,34 @@ class DataBrowserPanel(QWidget):
         comment = str(meta.get("comment", ""))
         title_item = QTableWidgetItem(title)
         title_item.setFlags(title_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        # The comment renders as the cell's second line (see _RowHighlightDelegate).
+        # The comment and a multi-period cue render as the cell's second line
+        # (see _RowHighlightDelegate); a buried 2nd period is otherwise invisible.
         title_item.setData(_COMMENT_ROLE, comment)
-        if title or comment:
-            title_item.setToolTip("\n".join(part for part in (title, comment) if part))
+        period_note = self._period_note(dataset)
+        period_tip = (
+            f"{period_note}. Switch periods in Grouping ▸ RG Mode "
+            "(Red/Green); the other period is not shown by default."
+            if period_note is not None
+            else ""
+        )
+        tooltip_parts = [part for part in (title, comment, period_tip) if part]
+        if period_note is not None:
+            title_item.setData(_PERIOD_ROLE, period_note)
+        if tooltip_parts:
+            title_item.setToolTip("\n".join(tooltip_parts))
         self._table.setItem(row, 1, title_item)
-        if comment.strip():
+        if comment.strip() or period_note is not None:
             self._table.setRowHeight(row, self._two_line_row_height())
 
         provenance_tip = self._derived_run_tooltip(meta)
         if provenance_tip:
             run_item.setForeground(QColor(tokens.ACCENT))
             run_item.setToolTip(provenance_tip)
-            title_item.setToolTip(provenance_tip)
+            # The provenance tip replaces the title/comment tooltip, but keep the
+            # multi-period guidance visible on a derived run rather than losing it.
+            title_item.setToolTip(
+                f"{provenance_tip}\n{period_tip}" if period_tip else provenance_tip
+            )
 
         temp = self._temperature_for_display(dataset)
         temp_item = NumericTableWidgetItem(f"{temp:.2f}")
@@ -1496,7 +1569,11 @@ class DataBrowserPanel(QWidget):
             if item is None:
                 continue
             comment = item.data(_COMMENT_ROLE)
-            if isinstance(comment, str) and comment.strip():
+            period_note = item.data(_PERIOD_ROLE)
+            has_second_line = (isinstance(comment, str) and comment.strip()) or (
+                isinstance(period_note, str) and period_note.strip()
+            )
+            if has_second_line:
                 if height is None:
                     height = self._two_line_row_height()
                 self._table.setRowHeight(row, height)
