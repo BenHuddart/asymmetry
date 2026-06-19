@@ -74,20 +74,64 @@ def test_joint_fit_button_gating(qapp):
     assert not panel._joint_knight_btn.isEnabled()
 
 
-def test_joint_fit_creates_track_traces_and_overlays(qapp):
+def test_joint_fit_reorders_traces_in_place(qapp):
     panel = _setup_panel(qapp, swap_past_crossing=True)
     traces = sorted(panel._knight_shift_names)
     assert len(traces) == 2
 
     panel._run_joint_knight_fit(traces, "KnightAnisotropy", 25)
 
-    # Two realigned track traces with stored per-curve overlays.
-    assert "K⟨1⟩" in panel._rows[0].values and "K⟨2⟩" in panel._rows[0].values
-    assert "K⟨1⟩" in panel._model_fits and "K⟨2⟩" in panel._model_fits
-    assert "K⟨1⟩" in panel._display_y_parameters()
-    # The realignment found the crossing → markers are enabled and populated.
+    # No duplicate K⟨…⟩ track columns are created — the existing K traces are reused.
+    assert not any(name.startswith("K⟨") for name in panel._rows[0].values)
+    # Per-curve overlays are stored on the existing K trace names.
+    assert all(t in panel._model_fits for t in traces)
+    assert all(t in panel._display_y_parameters() for t in traces)
+    # The joint-fit state is recorded; the realignment found the crossing so the
+    # assignment-derived markers are enabled and populated.
+    assert panel._joint_fit is not None
     assert panel._DRAW_CROSSING_MARKERS is True
     assert panel.knight_shift_crossings()
+
+
+def test_joint_reorder_survives_refresh(qapp):
+    panel = _setup_panel(qapp, swap_past_crossing=True)
+    traces = sorted(panel._knight_shift_names)
+    panel._run_joint_knight_fit(traces, "KnightAnisotropy", 25)
+    before = {t: [r.values.get(t) for r in panel._rows] for t in traces}
+
+    # A pull refresh re-derives K from the raw field values via this chokepoint;
+    # the joint reorder must be re-applied so the realignment persists.
+    panel._apply_knight_shift_to_rows(panel._rows)
+
+    after = {t: [r.values.get(t) for r in panel._rows] for t in traces}
+    assert after == before
+
+
+def test_reconfiguring_conversion_clears_joint_fit(qapp):
+    panel = _setup_panel(qapp, swap_past_crossing=True)
+    panel._run_joint_knight_fit(sorted(panel._knight_shift_names), "KnightAnisotropy", 25)
+    assert panel._joint_fit is not None
+
+    # Re-running the conversion regenerates the raw K traces and drops the joint fit.
+    panel.set_knight_shift_config(KnightShiftConfig(enabled=True, unit=KnightShiftUnit.PPM))
+    assert panel._joint_fit is None
+    assert panel._DRAW_CROSSING_MARKERS is False
+
+
+def test_joint_fit_state_round_trip(qapp):
+    panel = _setup_panel(qapp, swap_past_crossing=True)
+    traces = sorted(panel._knight_shift_names)
+    panel._run_joint_knight_fit(traces, "KnightAnisotropy", 25)
+
+    state = panel.get_state()
+    assert state["joint_fit"] is not None
+
+    panel2 = _setup_panel(qapp, swap_past_crossing=True)
+    panel2.restore_state(state)
+    assert panel2._joint_fit is not None
+    assert panel2._joint_fit["model_name"] == "KnightAnisotropy"
+    assert panel2._joint_fit["traces"] == list(traces)
+    assert panel2._DRAW_CROSSING_MARKERS is True
 
 
 def test_crossing_bands_merge_adjacent():
@@ -115,52 +159,15 @@ def test_joint_fit_draws_crossing_bands(qapp):
     assert 0 < len(bands) <= len(panel.knight_shift_crossings())
 
 
-def test_remove_track_traces_cleans_up_everything(qapp):
-    panel = _setup_panel(qapp, swap_past_crossing=True)
-    panel._run_joint_knight_fit(sorted(panel._knight_shift_names), "KnightAnisotropy", 25)
-    assert "K⟨1⟩" in panel._rows[0].values
-
-    panel._remove_track_traces(["K⟨1⟩", "K⟨2⟩"])
-
-    for row in panel._rows:
-        assert "K⟨1⟩" not in row.values and "K⟨2⟩" not in row.values
-    assert "K⟨1⟩" not in panel._model_fits and "K⟨2⟩" not in panel._model_fits
-    assert "K⟨1⟩" not in panel._varying_params
-    assert "K⟨1⟩" not in panel._display_y_parameters()
-    # All tracks gone → the assignment-derived markers are turned off.
-    assert panel._DRAW_CROSSING_MARKERS is False
-    assert panel.knight_shift_crossings() == []
-
-
-def test_remove_button_enabled_for_selected_track(qapp):
-    panel = _setup_panel(qapp, swap_past_crossing=True)
-    panel._run_joint_knight_fit(sorted(panel._knight_shift_names), "KnightAnisotropy", 25)
-    # The fit auto-selects the new track traces, so the Remove action is enabled.
-    assert panel._selected_joint_track_names()
-    assert panel._remove_composite_btn.isEnabled()
-
-
-def test_remove_handler_deletes_selected_tracks(qapp, monkeypatch):
-    from PySide6.QtWidgets import QMessageBox
-
-    panel = _setup_panel(qapp, swap_past_crossing=True)
-    panel._run_joint_knight_fit(sorted(panel._knight_shift_names), "KnightAnisotropy", 25)
-    monkeypatch.setattr(
-        QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes)
-    )
-    panel._remove_selected_composite_parameters()  # tracks are the current selection
-    assert "K⟨1⟩" not in panel._rows[0].values
-    assert "K⟨1⟩" not in panel._model_fits
-
-
 def test_joint_fit_recovers_continuous_curves(qapp):
     panel = _setup_panel(qapp, swap_past_crossing=True)
-    panel._run_joint_knight_fit(sorted(panel._knight_shift_names), "KnightAnisotropy", 25)
-    # Each track's fitted axial K_ax recovers one of the two physical anisotropies
+    traces = sorted(panel._knight_shift_names)
+    panel._run_joint_knight_fit(traces, "KnightAnisotropy", 25)
+    # Each curve's fitted axial K_ax recovers one of the two physical anisotropies
     # (in ppm: 0.03 and -0.01 → 30000 and -10000).
     k_ax = sorted(
         round(p.value, -2)
-        for name in ("K⟨1⟩", "K⟨2⟩")
+        for name in traces
         for r in panel._model_fits[name].ranges
         if r.result
         for p in r.result.parameters
