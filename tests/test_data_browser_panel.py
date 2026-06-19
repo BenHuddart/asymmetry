@@ -501,6 +501,73 @@ def test_temperature_include_replaces_browser_value_with_log_mean(qapp: QApplica
     assert panel._table.item(0, 2).text() == "50.00"
 
 
+def test_logged_temperature_prefers_cryostat_over_detector_electronics(
+    qapp: QApplication,
+) -> None:
+    # HiFi logs both a detector-electronics thermometer (~298 K) and the
+    # cryostat. They used to tie on score, and the alphabetical tie-break picked
+    # DetectorTemp1 -> room temperature for every run. The cryostat must win.
+    panel = DataBrowserPanel()
+    ds = _dataset(91516)
+    ds.metadata["temperature"] = 1.6
+    ds.metadata["nexus_time_series"] = {
+        "DetectorTemp1": {
+            "units": "K",
+            "time": [0.0, 30.0, 60.0],
+            "values": [297.8, 298.1, 298.0],
+            "mean": 297.97,
+        },
+        "Temp_Cryostat": {
+            "units": "K",
+            "time": [0.0, 30.0, 60.0],
+            "values": [2.88, 2.90, 2.92],
+            "mean": 2.90,
+        },
+    }
+    panel.add_dataset(ds)
+
+    selected = panel._series_mean_for_field(ds, "temperature")
+    assert selected == pytest.approx(2.90, abs=1e-6)
+    assert selected != pytest.approx(297.97, abs=1.0)
+
+
+def test_logged_temperature_mean_gates_to_run_active_samples(qapp: QApplication) -> None:
+    # The full-record mean includes the pre-run (t < 0) plateau, so the first run
+    # of a setpoint block reads the previous setpoint (Sn 91516 -> 4.62 K). Gate
+    # the mean to t >= 0 so only the run-active samples count.
+    panel = DataBrowserPanel()
+    ds = _dataset(91516)
+    pre_run = [4.62, 4.62, 4.62]  # parked at the previous block's setpoint
+    active = [1.599, 1.600, 1.598]
+    times = [-30.0, -20.0, -10.0, 0.0, 30.0, 60.0]
+    values = pre_run + active
+    ds.metadata["nexus_time_series"] = {
+        "Temp_Cryostat": {
+            "units": "K",
+            "time": times,
+            "values": values,
+            "mean": float(np.mean(values)),  # contaminated full-record mean
+        }
+    }
+    panel.add_dataset(ds)
+
+    gated = panel._series_mean_for_field(ds, "temperature")
+    assert gated == pytest.approx(np.mean(active), abs=1e-6)
+    assert gated < 2.0  # not the ~3.1 K full-record mean
+
+
+def test_logged_temperature_mean_uses_full_record_when_no_time_axis(
+    qapp: QApplication,
+) -> None:
+    # A series without a usable time axis falls back to the precomputed mean.
+    panel = DataBrowserPanel()
+    ds = _dataset(91517)
+    ds.metadata["nexus_time_series"] = {"Temp_Cryostat": {"units": "K", "mean": 2.5}}
+    panel.add_dataset(ds)
+
+    assert panel._series_mean_for_field(ds, "temperature") == pytest.approx(2.5)
+
+
 def _field_log_dataset(run_number: int) -> MuonDataset:
     ds = _dataset(run_number)
     ds.metadata["field"] = 100.0
@@ -508,7 +575,7 @@ def _field_log_dataset(run_number: int) -> MuonDataset:
         "entry/sample/magnetic_field": {
             "units": "G",
             "time": [0.0, 10.0],
-            "values": [99.0, 101.0],
+            "values": [100.0, 101.0],  # run-active mean = 100.5
             "mean": 100.5,
             "role": "sample_field",
             "primary": True,
@@ -626,7 +693,9 @@ def test_nexus_temperature_include_replaces_browser_value_with_log_mean(
     assert panel.get_extra_columns() == ["temperature"]
     assert panel._table.item(0, 2).text() == "12.50"
 
-    ds.metadata["nexus_time_series"]["entry/sample/Temp_Sample"]["mean"] = 12.75
+    # Updating the logged samples updates the displayed (run-active) mean.
+    ds.metadata["nexus_time_series"]["entry/sample/Temp_Sample"]["values"] = [12.75, 12.75]
+    ds.metadata["nexus_time_series"]["entry/sample/Temp_Sample"]["time"] = [0.0, 10.0]
     panel._rebuild_table()
     assert panel._table.item(0, 2).text() == "12.75"
 

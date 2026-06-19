@@ -100,6 +100,38 @@ def _normalize_temperature_to_kelvin(value: float | None, units: str | None) -> 
     return float(value)
 
 
+def active_series_mean(entry: Any) -> float | None:
+    """Mean of a logged NXlog series over its run-active (t >= 0) samples.
+
+    The stored ``mean`` / ``min`` / ``max`` summarise the *whole* record,
+    including the pre-run (t < 0) plateau — so the first run of a setpoint block
+    reads the previous setpoint (Sn 91516 -> 4.62 K vs the correct 1.599 K).
+    When the series carries a time axis, average only the t >= 0 samples;
+    otherwise fall back to the precomputed full-record ``mean``.
+
+    Pure (no Qt) so the loader (``sample_temperature_logged``) and the GUI Data
+    Browser share one definition of the run-active mean and never disagree.
+    """
+    if not isinstance(entry, dict):
+        return None
+    times = entry.get("time")
+    values = entry.get("values")
+    if isinstance(times, (list, tuple)) and isinstance(values, (list, tuple)) and times and values:
+        t = np.asarray(times, dtype=float)
+        v = np.asarray(values, dtype=float)
+        n = min(t.size, v.size)
+        if n:
+            t, v = t[:n], v[:n]
+            active = v[(t >= 0.0) & np.isfinite(v)]
+            if active.size:
+                return float(np.mean(active))
+    try:
+        mean = float(entry.get("mean"))
+    except (TypeError, ValueError):
+        return None
+    return mean if np.isfinite(mean) else None
+
+
 @dataclass
 class _GroupingSelection:
     """Resolved detector-group selection used for asymmetry reduction."""
@@ -1110,12 +1142,23 @@ class NexusLoader(BaseLoader):
                 t_num = self._to_numeric_array(t)
                 v_num = self._to_numeric_array(v)
                 units = self._safe_str(getattr(node[value_name], "attrs", {}).get("units", ""))
+                # The NXlog's human sensor label lives in a sibling ``name``
+                # dataset. Native HDF4 v1 files name the Vgroup generically and
+                # carry the real sensor name (e.g. ``Temp_Cryostat``) only here,
+                # so the path alone does not identify the sensor; the converted
+                # HDF5 twin bakes that name into the selog path instead. Capture
+                # it so path-based matching works identically across containers.
+                name_label = ""
+                if "name" in keys:
+                    name_node = node["name"]
+                    if hasattr(name_node, "dtype"):  # a name dataset, not a subgroup
+                        name_label = self._safe_str(name_node[()])
                 if v_num.size > 0:
                     # Guard the all-NaN case: np.nanmean/nanmin/nanmax emit
                     # "Mean of empty slice"/"All-NaN slice" RuntimeWarnings when
                     # no finite values are present (seen on some ARGUS files).
                     has_finite = bool(np.isfinite(v_num).any())
-                    series[prefix] = {
+                    entry: dict[str, Any] = {
                         "path": prefix,
                         "units": units,
                         "time": t_num.tolist(),
@@ -1124,6 +1167,9 @@ class NexusLoader(BaseLoader):
                         "min": float(np.nanmin(v_num)) if has_finite else None,
                         "max": float(np.nanmax(v_num)) if has_finite else None,
                     }
+                    if name_label:
+                        entry["name"] = name_label
+                    series[prefix] = entry
 
             for child in node.keys():
                 child_name = str(child)
@@ -1162,9 +1208,11 @@ class NexusLoader(BaseLoader):
           runs) is skipped rather than reported as a misleading ``0.0``.
         """
         for path, entry in time_series.items():
-            if not self._is_sample_temperature_path(path):
+            if not self._is_sample_temperature_path(path, entry):
                 continue
-            mean = entry.get("mean")
+            # Gate to run-active (t >= 0) samples so a parked pre-run plateau
+            # does not contaminate the representative value (shared with the GUI).
+            mean = active_series_mean(entry)
             if mean is None or not np.isfinite(mean):
                 continue
             kelvin = _normalize_temperature_to_kelvin(float(mean), entry.get("units", ""))
@@ -1174,15 +1222,24 @@ class NexusLoader(BaseLoader):
         return None
 
     @staticmethod
-    def _is_sample_temperature_path(path: str) -> bool:
-        """True when a time-series path names a sample thermometer block.
+    def _is_sample_temperature_path(path: str, entry: Any = None) -> bool:
+        """True when a log series names a sample thermometer block.
 
-        Requires a single path segment to contain both "sample" and "temp"
-        (case-insensitive), so ``Temp_Sample`` / ``sample_temperature`` match
-        while controller readbacks like ``Temp_RBV`` or ``Temp_Cryostat`` do
-        not (they lack "sample").
+        Requires a single path segment *or the NXlog ``name`` label* to contain
+        both "sample" and "temp" (case-insensitive), so ``Temp_Sample`` /
+        ``sample_temperature`` match while controller readbacks like
+        ``Temp_RBV`` or ``Temp_Cryostat`` do not (they lack "sample"). The
+        ``name`` label is checked as an extra segment so a native HDF4 v1 log,
+        whose Vgroup is generically named but whose ``name`` child is
+        ``Temp_Sample``, matches just as its converted HDF5 twin (which carries
+        the sensor name in the path) already does.
         """
-        for segment in str(path).split("/"):
+        segments = list(str(path).split("/"))
+        if isinstance(entry, dict):
+            name = str(entry.get("name", "") or "")
+            if name:
+                segments.append(name)
+        for segment in segments:
             seg = segment.lower()
             if "sample" in seg and "temp" in seg:
                 return True
