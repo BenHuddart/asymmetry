@@ -729,6 +729,12 @@ _SINGLE_PARAM_TIE_COLUMN = 7
 
 _PARAM_ROLE_LABELS = {"global": "Global", "local": "Local", "fixed": "Fixed", "file": "File"}
 
+#: Width (px) of the "Name"/"Parameter" column shared by every parameter table.
+#: Kept narrow so the Batch tab does not outgrow the Single tab; "name (unit)"
+#: labels that overflow it are still readable via the per-cell tooltip
+#: (:func:`_make_param_name_item`). One constant so the tables stay aligned.
+PARAM_NAME_COL_WIDTH = 92
+
 
 def _format_tie_formula(name: str, tie: AffineTie | None) -> str:
     """Render an affine tie as a compact human-readable equation."""
@@ -964,9 +970,16 @@ def _set_link_group_combo_value(combo: QComboBox | None, group: int | None) -> N
 
 
 def _make_param_name_item(label: str, raw_name: str) -> QTableWidgetItem:
-    """Return a read-only, bold-mono name item for a parameter table."""
+    """Return a read-only, bold-mono name item for a parameter table.
+
+    The full formatted label is also set as the tooltip: the Name column is kept
+    narrow so the Batch tab does not outgrow the Single tab, so names+units can
+    clip (``f (MHz)`` → ``f (MH…``); the tooltip guarantees the full name/unit is
+    always readable on hover, regardless of column width.
+    """
     item = QTableWidgetItem(label)
     item.setData(Qt.ItemDataRole.UserRole, raw_name)
+    item.setToolTip(label)
     item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
     nf = mono_font(11.0)
     nf.setBold(True)
@@ -1353,7 +1366,19 @@ class FitParameterTable(QTableWidget):
             ["Name", "Value", "Fix", "Min", "Max", "Batch", "Link", "Tie"]
         )
         self.horizontalHeader().setStretchLastSection(False)
-        for col, width in ((0, 72), (1, 88), (2, 30), (3, 52), (4, 52), (5, 50), (6, 40), (7, 40)):
+        # Name (col 0) holds formatted "name (unit)" labels; the old 72 px clipped
+        # common cases like "f (MHz)" / "A_bg (%)" (tooltip backs the rest).
+        name_w = PARAM_NAME_COL_WIDTH
+        for col, width in (
+            (0, name_w),
+            (1, 88),
+            (2, 30),
+            (3, 52),
+            (4, 52),
+            (5, 50),
+            (6, 40),
+            (7, 40),
+        ):
             self.setColumnWidth(col, width)
         _apply_param_table_style(self)
         # Tab commits the open editor on every editable column; the Value column
@@ -2808,6 +2833,29 @@ class SingleFitTab(QWidget):
                 self._cached_wizard_log_text = str(wizard_state.get("log_text", ""))
 
 
+#: (label, mode) for the batch-series seeding selector, shared by the Batch-tab
+#: combobox and the ``Analysis ▸ Batch seeding`` menu so the two cannot drift.
+#: "auto" picks per the order key; "as_provided" seeds every run independently;
+#: "chain" carries each run's fit into the next (natural for an ordered T/B scan).
+BATCH_SEEDING_MODES: tuple[tuple[str, str], ...] = (
+    ("Auto", "auto"),
+    ("Independent seeds", "as_provided"),
+    ("Chain from previous run", "chain"),
+)
+
+#: mode token -> display label, for logging/lookups (reverse of the pairs above).
+BATCH_SEEDING_LABELS: dict[str, str] = {mode: label for label, mode in BATCH_SEEDING_MODES}
+
+#: Tooltip shared by the on-tab selector and the menu submenu.
+BATCH_SEEDING_TOOLTIP = (
+    "How each run in the batch is seeded:\n"
+    "• Auto — choose per the series order key.\n"
+    "• Independent seeds — every run starts from the shared seed values.\n"
+    "• Chain from previous run — each run starts from the previous run's fit "
+    "(best for an ordered temperature/field scan)."
+)
+
+
 class GlobalFitTab(QWidget):
     """Global fitting interface for simultaneous multi-dataset fitting.
 
@@ -2838,6 +2886,9 @@ class GlobalFitTab(QWidget):
     count_grouping_promoted = Signal(object)  # (dataset) — a count calibration hit the grouping
     share_function_with_group_requested = Signal(int)  # (source run) — single grouped surface
     send_grouped_model_to_batch_requested = Signal()  # single grouped surface → batch surface
+    # Emitted with the new mode when the on-tab seeding selector changes, so the
+    # Analysis ▸ Batch seeding menu can mirror it (two-way sync).
+    batch_seeding_mode_changed = Signal(str)
 
     def __init__(
         self,
@@ -3025,7 +3076,7 @@ class GlobalFitTab(QWidget):
                 "change it. Per-run fitted values appear in the Parameters tab "
                 "after the batch fit completes."
             )
-        self._param_table.setColumnWidth(0, 64)  # Parameter name
+        self._param_table.setColumnWidth(0, PARAM_NAME_COL_WIDTH)  # Parameter name
         self._param_table.setColumnWidth(1, 76)  # Shared seed value
         self._param_table.setColumnWidth(2, 86)  # Type (dropdown)
         self._param_table.setColumnWidth(3, 104)  # Bounds
@@ -3053,7 +3104,7 @@ class GlobalFitTab(QWidget):
         self._group_param_table = QTableWidget(0, 4)
         self._group_param_table.setHorizontalHeaderLabels(["Parameter", "Value", "Type", "Bounds"])
         self._group_param_table.horizontalHeader().setStretchLastSection(False)
-        self._group_param_table.setColumnWidth(0, 92)
+        self._group_param_table.setColumnWidth(0, PARAM_NAME_COL_WIDTH)
         self._group_param_table.setColumnWidth(1, 78)
         self._group_param_table.setColumnWidth(2, 86)
         self._group_param_table.setColumnWidth(3, 104)
@@ -3094,7 +3145,7 @@ class GlobalFitTab(QWidget):
                 ["Parameter", "Value", "Type", "Bounds"]
             )
             self._group_model_table.horizontalHeader().setStretchLastSection(False)
-            self._group_model_table.setColumnWidth(0, 92)
+            self._group_model_table.setColumnWidth(0, PARAM_NAME_COL_WIDTH)
             self._group_model_table.setColumnWidth(1, 78)
             self._group_model_table.setColumnWidth(2, 86)
             self._group_model_table.setColumnWidth(3, 104)
@@ -3144,6 +3195,32 @@ class GlobalFitTab(QWidget):
         self._coadd_window_label.setEnabled(False)
         self._coadd_group.hide()
         layout.addWidget(self._coadd_group)
+
+        # Batch-series seeding selector, on the tab it governs (the same control
+        # also lives in Analysis ▸ Batch seeding; the two stay in sync). Surfacing
+        # it here makes "Chain from previous run" discoverable for ordered scans.
+        # Omitted on the single grouped surface, which fits one dataset's groups —
+        # there is no run series to seed across, so the control would be meaningless
+        # (the same reason _grouped_single hides the Batch/Link/Tie columns).
+        self._seeding_combo: QComboBox | None = None
+        if not self._grouped_single:
+            seeding_layout = QHBoxLayout()
+            seeding_layout.setContentsMargins(0, 0, 0, 0)
+            seeding_layout.setSpacing(6)
+            self._seeding_label = QLabel("Seeding:")
+            self._seeding_label.setToolTip(BATCH_SEEDING_TOOLTIP)
+            self._seeding_combo = QComboBox()
+            self._seeding_combo.setToolTip(BATCH_SEEDING_TOOLTIP)
+            for label, mode in BATCH_SEEDING_MODES:
+                self._seeding_combo.addItem(label, mode)
+            self._seeding_combo.setCurrentIndex(
+                self._seeding_combo.findData(self._batch_seeding_mode)
+            )
+            self._seeding_combo.currentIndexChanged.connect(self._on_seeding_combo_changed)
+            seeding_layout.addWidget(self._seeding_label)
+            seeding_layout.addWidget(self._seeding_combo)
+            seeding_layout.addStretch()
+            layout.addLayout(seeding_layout)
 
         # Fit buttons. A single-row HBox of these long-labelled actions
         # ("Run Batch Fit" + "Preview" + "Initial Values..." + the checkbox) set
@@ -5188,8 +5265,26 @@ class GlobalFitTab(QWidget):
         return ("global" if physics_global else "batch"), None
 
     def set_batch_seeding_mode(self, mode: str) -> None:
-        """Set the batch-series seeding mode from the menu ("auto"/"as_provided"/etc.)."""
+        """Set the batch-series seeding mode ("auto"/"as_provided"/"chain").
+
+        Drives the on-tab combobox in lock-step (signals blocked so this does not
+        re-emit and bounce back to the menu). Callers: the menu action handler and
+        state restore.
+        """
         self._batch_seeding_mode = mode
+        combo = getattr(self, "_seeding_combo", None)
+        if combo is not None:
+            index = combo.findData(mode)
+            if index >= 0 and index != combo.currentIndex():
+                blocked = combo.blockSignals(True)
+                combo.setCurrentIndex(index)
+                combo.blockSignals(blocked)
+
+    def _on_seeding_combo_changed(self, _index: int) -> None:
+        """On-tab seeding selector changed: apply it and notify the menu to mirror."""
+        mode = str(self._seeding_combo.currentData() or "auto")
+        self._batch_seeding_mode = mode
+        self.batch_seeding_mode_changed.emit(mode)
 
     def _on_coadd_mode_changed(self, _index: int) -> None:
         """In-batch co-add mode changed: refresh the grouped-series context."""
@@ -6662,7 +6757,7 @@ class GlobalFitTab(QWidget):
         self._group_param_table.setHorizontalHeaderLabels(
             ["Parameter", *value_headers, "Type", "Bounds"]
         )
-        self._group_param_table.setColumnWidth(0, 92)
+        self._group_param_table.setColumnWidth(0, PARAM_NAME_COL_WIDTH)
         for offset in range(len(value_headers)):
             self._group_param_table.setColumnWidth(1 + offset, 78)
         self._group_param_table.setColumnWidth(self._group_param_type_column(), 86)
@@ -7345,6 +7440,9 @@ class FitPanel(QWidget):
     share_function_with_group_requested = Signal(int)
     add_single_fit_to_series_requested = Signal()
     fit_range_edit_committed = Signal(float, float)  # forwarded from SingleFitTab
+    # Forwarded from the Batch tab's on-tab seeding selector so the main window's
+    # Analysis ▸ Batch seeding menu can mirror it (two-way sync).
+    batch_seeding_mode_changed = Signal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -7400,6 +7498,7 @@ class FitPanel(QWidget):
         self._global_tab.global_fit_completed.connect(self.global_fit_completed.emit)
         self._global_tab.grouped_fit_completed.connect(self.grouped_fit_completed.emit)
         self._global_tab.fit_range_edit_committed.connect(self.fit_range_edit_committed.emit)
+        self._global_tab.batch_seeding_mode_changed.connect(self.batch_seeding_mode_changed.emit)
         self._tabs.addTab(self._global_tab, "Batch")
 
         # Preserve the single-fit form across a Single↔Batch view switch (see #3
