@@ -573,16 +573,19 @@ def _get_file_value_for_parameter(
     return None
 
 
-def _fit_quality_dict(result) -> dict | None:
-    """The χ² verdict dict for *result* via the shared summary (single source).
+def _fit_summary(result) -> dict:
+    """Shared fit summary (χ² verdict + params-at-bound) for *result*, once.
 
     Uses the user-configured quality-band confidence so the live fit-panel chip
-    matches the verdict persisted onto the fit record.
+    matches the verdict persisted onto the fit record. Computing the whole summary
+    once (rather than re-deriving the verdict and the bound list separately) keeps
+    the chip and its tooltip from each re-running the scipy band math and the
+    parameter scan. Returns ``{}`` on any failure so callers degrade gracefully.
     """
     try:
-        return fit_result_summary(result, confidence=fit_quality_confidence()).get("quality")
+        return fit_result_summary(result, confidence=fit_quality_confidence())
     except Exception:
-        return None
+        return {}
 
 
 def _fit_range_provenance_text(min_spin, max_spin, unit_label) -> str | None:
@@ -683,7 +686,8 @@ def _fit_success_html(result) -> str:
     stats = f"χ²/ν = {result.reduced_chi_squared:.4f} · npar = {npar} · ndof = {ndof}"
     if result.edm is not None:
         stats += f" · Δ‖p‖ = {result.edm:.2e}"
-    stats += fit_quality_chip_html(_fit_quality_dict(result))
+    summary = _fit_summary(result)
+    stats += fit_quality_chip_html(summary.get("quality"), summary.get("params_at_bound"))
     return success_html("Fit converged", detail=stats)
 
 
@@ -2683,7 +2687,10 @@ class SingleFitTab(QWidget):
         warnings_note = _fit_warnings_html(result)
         self._results_group.setStyleSheet(RESULT_BOX_SUCCESS_STYLE)
         self._result_label.setText(_fit_success_html(result) + rrf_note + warnings_note)
-        self._result_label.setToolTip(fit_quality_tooltip(_fit_quality_dict(result)))
+        summary = _fit_summary(result)
+        self._result_label.setToolTip(
+            fit_quality_tooltip(summary.get("quality"), summary.get("params_at_bound"))
+        )
 
         if not (model_unchanged and dataset_unchanged):
             if not model_unchanged:
@@ -4948,7 +4955,8 @@ class GlobalFitTab(QWidget):
         alpha = fwd.parameters["alpha"].value
         alpha_err = fwd.uncertainties.get("alpha")
         rows = [self._count_param_row(fwd, name) for name in fwd.parameters.names]
-        chip = fit_quality_chip_html(_fit_quality_dict(fwd))
+        fwd_summary = _fit_summary(fwd)
+        chip = fit_quality_chip_html(fwd_summary.get("quality"), fwd_summary.get("params_at_bound"))
         detail = (
             f"α = {self._fmt_value(alpha, alpha_err)} · χ²/ν = {fwd.reduced_chi_squared:.4f}{chip} "
             f"(cost: {cost})<br>" + "<br>".join(rows)

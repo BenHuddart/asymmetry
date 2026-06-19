@@ -18,6 +18,57 @@ from asymmetry.core.fitting.fit_quality import assess_fit_quality
 #: making this user-configurable later is a one-line change.
 FIT_QUALITY_CONFIDENCE = 0.95
 
+#: A "poor"/"overdone" verdict whose χ²ᵣ is within this absolute margin of 1.0 is
+#: numerically near-ideal and only flips out of the band because the confidence
+#: interval tightens as ν grows (the cuprate χ²ᵣ=1.10/ν=1927 case). The verdict
+#: itself is unchanged — this flag only lets the GUI soften an alarming chip into
+#: a "marginal" reading. (Errors after ``rebin`` are propagated correctly, so a
+#: genuinely high χ²ᵣ — e.g. 6–22 after bunching — is NOT within this margin and
+#: stays a true "poor": we surface that honestly rather than rescale errors.)
+_CHI2_MARGINAL_ABS_TOL = 0.2
+
+#: Relative tolerance for "a free parameter sits on a finite bound". Scale-aware
+#: (see :func:`parameters_at_bound`) so it fires on both an exact rail and a
+#: near-rail without flagging interior fits.
+_BOUND_REL_TOL = 1.0e-3
+
+
+def parameters_at_bound(parameters: Any, *, rel_tol: float = _BOUND_REL_TOL) -> list[str]:
+    """Names of *free* parameters whose fitted value sits on a finite bound.
+
+    A free (non-fixed, non-tied, non-linked-follower) parameter pinned at its
+    ``min`` or ``max`` is a sign the fit is poorly constrained: the data did not
+    determine it and the optimiser parked it on the boundary (maleic A_Mu→0,
+    FµF 17319 r→2.5 Å, ZF-KT Δ→1.0, weak-signal rails). Such a fit can still
+    report "converged" with finite errors, so this drives an advisory badge
+    alongside the χ² verdict.
+
+    Parameters the user *fixed* or tied are excluded by ranging over
+    :attr:`ParameterSet.free_parameters` only — they are *meant* to hold a value.
+    Only *finite* bounds are considered. The tolerance is scale-relative (a value
+    within ``rel_tol`` of the bound, floored at ``rel_tol`` in absolute terms via
+    the ``max(…, 1.0)`` scale) so an exact rail and a near-rail both fire while
+    interior fits do not. Qt-free and headless-testable.
+    """
+    free = getattr(parameters, "free_parameters", None)
+    if free is None:
+        return []
+    names: list[str] = []
+    for p in free:
+        try:
+            value = float(p.value)
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if not math.isfinite(value):
+            continue
+        for bound in (getattr(p, "min", -math.inf), getattr(p, "max", math.inf)):
+            if not math.isfinite(bound):
+                continue
+            if abs(value - bound) <= rel_tol * max(abs(bound), abs(value), 1.0):
+                names.append(str(p.name))
+                break
+    return names
+
 
 def _infer_dof(fit_result: Any) -> int:
     """Best-effort degrees of freedom ν for the χ² verdict.
@@ -53,13 +104,21 @@ def _quality_summary(fit_result: Any, confidence: float = FIT_QUALITY_CONFIDENCE
         math.isfinite(v) for v in (quality.chi2_reduced, quality.band_low, quality.band_high)
     ):
         return None
+    chi2_reduced = float(quality.chi2_reduced)
+    # Only soften "poor": a near-unity χ²ᵣ that reads poor purely because the band
+    # tightens at high ν is the alarming case to defuse. "overdone" already renders
+    # in a non-alarming accent ("suspicious, not bad"), so it is left as-is.
+    marginal = quality.verdict == "poor" and abs(chi2_reduced - 1.0) <= _CHI2_MARGINAL_ABS_TOL
     return {
         "verdict": quality.verdict,
-        "chi2_reduced": float(quality.chi2_reduced),
+        "chi2_reduced": chi2_reduced,
         "band_low": float(quality.band_low),
         "band_high": float(quality.band_high),
         "confidence": float(quality.confidence),
         "dof": int(quality.dof),
+        # Additive presentation hint: χ²ᵣ is numerically near 1 and only reads
+        # "poor" because the band is tight at this ν. Verdict itself unchanged.
+        "marginal": bool(marginal),
     }
 
 
@@ -71,6 +130,8 @@ def fit_result_summary(fit_result: Any, *, confidence: float = FIT_QUALITY_CONFI
     ride alongside without changing the meaning of the existing fields:
 
     - ``"quality"`` — the χ² good/poor/overdone verdict + target band (or ``None``).
+    - ``"params_at_bound"`` — names of free parameters pinned on a finite bound
+      (a poorly-constrained / rail-to-bound signal), for an advisory badge.
     - ``"uncertainties_asymmetric"`` — opt-in MINOS intervals ``{name: [lo, hi]}``
       (``lo < 0 < hi``), a display-only overlay. ``"uncertainties"`` stays the
       symmetric HESSE σ that every downstream surface consumes.
@@ -101,4 +162,5 @@ def fit_result_summary(fit_result: Any, *, confidence: float = FIT_QUALITY_CONFI
         "uncertainties": uncertainties,
         "uncertainties_asymmetric": asymmetric,
         "quality": _quality_summary(fit_result, confidence),
+        "params_at_bound": parameters_at_bound(parameter_set),
     }
