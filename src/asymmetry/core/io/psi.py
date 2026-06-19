@@ -982,21 +982,11 @@ class PsiLoader(BaseLoader):
         if len(label_groups) >= 2:
             groups: dict[int, list[int]] = {}
             names: dict[int, str] = {}
-            forward_gid: int | None = None
-            backward_gid: int | None = None
             for gid, (name, detectors) in enumerate(label_groups, start=1):
                 groups[gid] = detectors
                 names[gid] = name
-                direction = self._label_direction(name)
-                if direction == "forward" and forward_gid is None:
-                    forward_gid = gid
-                elif direction == "backward" and backward_gid is None:
-                    backward_gid = gid
 
-            if forward_gid is None:
-                forward_gid = 1
-            if backward_gid is None:
-                backward_gid = 2 if forward_gid != 2 and 2 in groups else 1
+            forward_gid, backward_gid = self._default_directional_pair(names)
             return groups, names, *self._analysis_pair_for_psi(names, forward_gid, backward_gid)
 
         back: list[int] = []
@@ -1046,6 +1036,54 @@ class PsiLoader(BaseLoader):
         ):
             return int(backward_gid), int(forward_gid)
         return int(forward_gid), int(backward_gid)
+
+    def _default_directional_pair(self, names: dict[int, str]) -> tuple[int, int]:
+        """Pick the default forward/backward group pair from per-detector labels.
+
+        The asymmetry pair must be two *positron* detectors. A muon-veto or
+        incoming-muon counter (``MV``/``FV``/``BV``/``M1``…; see
+        :meth:`_is_non_positron_label`) records ~no counts in the good-data
+        region, so pairing a real detector against it pins the F-B asymmetry at
+        ±100 % with no usable signal. That is exactly what HAL-9500 ``.mdu`` runs
+        shipping only the forward ring (``MV, F1..F8`` with no backward ring)
+        used to do — the lone ``MV`` was selected as the backward half.
+
+        Selection rules, applied in order:
+
+        * Both beam directions labelled (``F``/``Forw`` and ``B``/``Back`` — the
+          full HAL ``F1..F8 + B1..B8`` layout, or PSI-BIN ``Forw``/``Back``):
+          pair the first forward with the first backward (unchanged behaviour).
+        * Only one direction labelled (a forward- or backward-only ring such as
+          HAL's ``F1..F8``): pair two diametrically-opposed detectors half a
+          ring apart (``F1`` vs ``F5`` for the eight-detector ring) — musrfit's
+          high-field "opposed pairs" scheme. This matches the F1-vs-F5 default
+          of the ``"Transverse (opposed pairs)"`` preset in
+          :func:`asymmetry.core.instrument._build_hal`; keep the two in step if
+          the documented opposed pairing ever changes.
+        * Otherwise: pair the first positron group with an opposed-position
+          positron group.
+
+        A non-positron group is never selected as either half.
+        """
+        positron = [gid for gid in sorted(names) if not self._is_non_positron_label(names[gid])]
+        if not positron:
+            # Degenerate file with only veto/muon counters: fall back to the raw
+            # group order rather than returning nothing.
+            positron = sorted(names)
+
+        forwards = [gid for gid in positron if self._label_direction(names[gid]) == "forward"]
+        backwards = [gid for gid in positron if self._label_direction(names[gid]) == "backward"]
+
+        if forwards and backwards:
+            return forwards[0], backwards[0]
+
+        ring = forwards or backwards
+        if len(ring) >= 2:
+            return ring[0], ring[len(ring) // 2]
+
+        if len(positron) >= 2:
+            return positron[0], positron[len(positron) // 2]
+        return positron[0], positron[0]
 
     def _label_groups(self, labels: list[str], n_hist: int) -> list[tuple[str, list[int]]]:
         groups: list[tuple[str, list[int]]] = []

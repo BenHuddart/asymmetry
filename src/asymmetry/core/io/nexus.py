@@ -52,6 +52,32 @@ _CELSIUS_UNIT_TOKENS = frozenset(
 )
 _ABSOLUTE_ZERO_CELSIUS = 273.15
 
+#: EMU's sample cryostat tops out near room temperature; a reading above this
+#: ceiling implies a furnace/oven, whose NeXus header is the known unit-mislabel
+#: risk (Celsius values stored under a ``Kelvin`` label). 320 K leaves a ~20 K
+#: margin above room temperature so ordinary cold runs are never flagged. See
+#: :meth:`NexusLoader._temperature_unit_suspect`.
+_EMU_FURNACE_SUSPECT_CEILING_K = 320.0
+
+
+def _is_celsius_unit(units: str | None) -> bool:
+    """True when a NeXus ``units`` token names the Celsius scale.
+
+    Normalisation strips degree signs, spaces, dots and underscores so
+    ``°C`` / ``deg C`` / ``Celsius`` all match the tokens in
+    :data:`_CELSIUS_UNIT_TOKENS`.
+    """
+    token = (
+        str(units or "")
+        .strip()
+        .lower()
+        .replace("°", "")
+        .replace(" ", "")
+        .replace(".", "")
+        .replace("_", "")
+    )
+    return token in _CELSIUS_UNIT_TOKENS
+
 
 def _normalize_temperature_to_kelvin(value: float | None, units: str | None) -> float | None:
     """Convert a temperature to kelvin, honoring the NeXus ``units`` attribute.
@@ -64,19 +90,12 @@ def _normalize_temperature_to_kelvin(value: float | None, units: str | None) -> 
     Note this honors the *declared* unit only. A file that stores Celsius values
     but mislabels the field ``Kelvin`` (seen on some EMU furnace runs) is left
     as-is; silently "correcting" it would corrupt genuinely-cold Kelvin runs.
+    The suspected-mislabel case is *surfaced* (not converted) via
+    :meth:`NexusLoader._temperature_unit_suspect`.
     """
     if value is None:
         return None
-    token = (
-        str(units or "")
-        .strip()
-        .lower()
-        .replace("°", "")
-        .replace(" ", "")
-        .replace(".", "")
-        .replace("_", "")
-    )
-    if token in _CELSIUS_UNIT_TOKENS:
+    if _is_celsius_unit(units):
         return float(value) + _ABSOLUTE_ZERO_CELSIUS
     return float(value)
 
@@ -253,6 +272,7 @@ class NexusLoader(BaseLoader):
 
         sample = self._read_optional(entry, "sample")
         temperature = self._read_temperature_kelvin(sample)
+        temperature_units = self._sample_temperature_units(sample)
         magnetic_field = self._safe_float(
             self._read_optional(sample, "magnetic_field"), default=0.0
         )
@@ -289,6 +309,13 @@ class NexusLoader(BaseLoader):
         logged_temperature = self._logged_sample_temperature(time_series)
         if logged_temperature is not None:
             metadata_base["sample_temperature_logged"] = logged_temperature
+
+        suspect, reason = self._temperature_unit_suspect(
+            instrument_name, temperature, logged_temperature, temperature_units
+        )
+        if suspect:
+            metadata_base["temperature_unit_suspect"] = True
+            metadata_base["temperature_unit_suspect_reason"] = reason
 
         # Real ISIS v1 files carry the good-data window and t0 as attributes on
         # the ``counts`` SDS (1-based ``t0_bin`` / ``first_good_bin`` /
@@ -423,6 +450,7 @@ class NexusLoader(BaseLoader):
 
         sample = self._read_optional(entry, "sample")
         temperature = self._read_temperature_kelvin(sample)
+        temperature_units = self._sample_temperature_units(sample)
         magnetic_field = self._safe_float(
             self._read_optional(sample, "magnetic_field"), default=0.0
         )
@@ -515,6 +543,13 @@ class NexusLoader(BaseLoader):
         logged_temperature = self._logged_sample_temperature(time_series)
         if logged_temperature is not None:
             metadata_base["sample_temperature_logged"] = logged_temperature
+
+        suspect, reason = self._temperature_unit_suspect(
+            instrument_name, temperature, logged_temperature, temperature_units
+        )
+        if suspect:
+            metadata_base["temperature_unit_suspect"] = True
+            metadata_base["temperature_unit_suspect_reason"] = reason
 
         return self._build_period_datasets(
             counts_periods=counts_periods,
@@ -1293,6 +1328,65 @@ class NexusLoader(BaseLoader):
             units = self._safe_str(node.attrs.get("units", ""))
         normalized = _normalize_temperature_to_kelvin(value, units)
         return float(default) if normalized is None else float(normalized)
+
+    def _sample_temperature_units(self, sample: Any, name: str = "temperature") -> str:
+        """Return the declared ``units`` attribute of ``sample/<name>`` (``""`` if none)."""
+        if sample is None or not hasattr(sample, "get"):
+            return ""
+        node = sample.get(name)
+        if node is None or not hasattr(node, "attrs"):
+            return ""
+        return self._safe_str(node.attrs.get("units", ""))
+
+    def _temperature_unit_suspect(
+        self,
+        instrument: str | None,
+        temperature: float | None,
+        logged_temperature: float | None,
+        units: str | None,
+    ) -> tuple[bool, str]:
+        """Heuristically flag an EMU furnace run whose temperature unit looks mislabelled.
+
+        Returns ``(suspect, reason)``. A true result is only a *hint* for the GUI
+        to surface — the temperature value itself is **never** changed here. We
+        deliberately do not convert: see :func:`_normalize_temperature_to_kelvin`
+        — silently adding 273 would corrupt a genuinely-cold Kelvin run.
+
+        The detection is intentionally conservative; every condition must hold:
+
+        * the instrument is **EMU** — the furnace whose NeXus header is known to
+          store Celsius values under a ``Kelvin`` label;
+        * the file did **not** declare a Celsius unit — a declared ``°C`` is
+          already converted and trustworthy, so only a Kelvin / blank / unknown
+          declaration is at risk of being a disguised Celsius reading;
+        * there is **no logged sample thermometer** to corroborate the setpoint
+          (``sample_temperature_logged`` is ``None``);
+        * the value exceeds EMU's plausible-cryostat ceiling
+          (:data:`_EMU_FURNACE_SUSPECT_CEILING_K`), i.e. it sits in furnace
+          territory where the mislabel occurs.
+
+        False positives cost nothing (a furnace run is flagged for the user to
+        sanity-check its unit); false negatives just leave the existing silent
+        pass-through. Below the ceiling the value is genuinely ambiguous (300 K
+        room temperature vs 300 °C furnace), so we refuse to guess.
+        """
+        if temperature is None or not np.isfinite(temperature):
+            return False, ""
+        if str(instrument or "").strip().upper() != "EMU":
+            return False, ""
+        if _is_celsius_unit(units):
+            return False, ""
+        if logged_temperature is not None:
+            return False, ""
+        if float(temperature) <= _EMU_FURNACE_SUSPECT_CEILING_K:
+            return False, ""
+        reason = (
+            f"EMU temperature {float(temperature):.1f} exceeds the "
+            f"{_EMU_FURNACE_SUSPECT_CEILING_K:.0f} K cryostat ceiling with no logged "
+            "sample thermometer; EMU furnace NeXus files are known to store °C under a "
+            "'Kelvin' label, so this may be a Celsius value. Value left unchanged — verify the unit."
+        )
+        return True, reason
 
     def _read_optional(self, node: Any, name: str, default: Any = None) -> Any:
         """Read a dataset or nested path from a group-like object if present."""

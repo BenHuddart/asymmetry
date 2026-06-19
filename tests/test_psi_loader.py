@@ -429,6 +429,42 @@ def test_non_positron_label_classifier() -> None:
         assert not loader._is_non_positron_label(label), label
 
 
+def test_default_groups_hal_forward_only_ring_excludes_mv_veto() -> None:
+    """HAL ``.mdu`` shipping only the forward ring (``MV, F1..F8``) must not pair against MV.
+
+    Regression for the high-TF AFM default-grouping bug: forward=F1 was paired
+    against backward=MV (the muon veto, ~0 counts in the good region), pinning
+    the F-B asymmetry at +100% with no usable signal. The default must select
+    two opposed *positron* detectors instead — F1 vs F5 (180° apart) for the
+    eight-detector ring.
+    """
+    loader = PsiLoader()
+    labels = ["MV", "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8"]
+    groups, names, forward_gid, backward_gid = loader._default_groups(labels, len(labels))
+
+    mv_gid = next(gid for gid, name in names.items() if name == "MV")
+    assert forward_gid != backward_gid
+    assert mv_gid not in (forward_gid, backward_gid)
+    assert not loader._is_non_positron_label(names[forward_gid])
+    assert not loader._is_non_positron_label(names[backward_gid])
+    assert {names[forward_gid], names[backward_gid]} == {"F1", "F5"}
+    # The MV histogram is still present as its own (excluded) group.
+    assert groups[mv_gid] == [1]
+
+
+def test_default_groups_hal_full_layout_pairs_forward_and_backward_rings() -> None:
+    """The full HAL layout (``MV, F1..F8, B1..B8``) pairs a forward vs a backward ring detector."""
+    loader = PsiLoader()
+    labels = ["MV"] + [f"F{i}" for i in range(1, 9)] + [f"B{i}" for i in range(1, 9)]
+    _groups, names, forward_gid, backward_gid = loader._default_groups(labels, len(labels))
+
+    mv_gid = next(gid for gid, name in names.items() if name == "MV")
+    assert mv_gid not in (forward_gid, backward_gid)
+    assert forward_gid != backward_gid
+    # One half from the forward ring (F#), the other from the backward ring (B#).
+    assert {names[forward_gid][0], names[backward_gid][0]} == {"F", "B"}
+
+
 def test_load_psi_bin_preserves_individual_labeled_groups(tmp_path) -> None:
     path = tmp_path / "deltat_pta_gpd_4321.bin"
     counts = np.vstack([np.arange(12, dtype=np.int32) + i for i in range(6)])
