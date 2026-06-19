@@ -947,7 +947,14 @@ matching), iterating fit ↔ reassignment to convergence. The selected ``K[...]`
 traces are then reordered **in place** so each one follows a single physical site
 continuously through the crossings, with the per-curve fits overlaid and the
 resolved crossings marked. No extra traces are created — re-running the
-Knight-shift conversion regenerates the original per-component ordering.
+Knight-shift conversion regenerates the original per-component ordering. The joint
+fit (reorder, per-curve overlays and markers) is saved with the project and
+restored on reload.
+
+Select one or more ``K[...]`` traces and use **Remove** to delete them: the
+backing component is dropped from the conversion (so the trace does not
+regenerate), and any joint fit spanning it is cleared. Removing every component
+turns the conversion off.
 
 **Fitting the anisotropy** :math:`K(\theta)`. With **Angle (°)** as the trend
 x-axis, the model-fit builder offers two angle-only basis models alongside the

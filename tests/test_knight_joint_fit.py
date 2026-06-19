@@ -11,6 +11,7 @@ pytestmark = [pytest.mark.gui]
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.fitting.component_tracking import CrossingEvent
@@ -61,6 +62,87 @@ def _setup_panel(qapp, *, swap_past_crossing: bool) -> FitParametersPanel:
     panel._x_combo.setCurrentIndex(panel._x_combo.findData("angle"))
     panel.set_knight_shift_config(KnightShiftConfig(enabled=True, unit=KnightShiftUnit.PPM))
     return panel
+
+
+def _select_y(panel, names):
+    """Select the given Y-trace names in the Y-selector table."""
+    wanted = set(names)
+    table = panel._y_selector_table
+    for i in range(table.rowCount()):
+        item = table.item(i, 0)
+        if item is None:
+            continue
+        pname = item.data(Qt.ItemDataRole.UserRole)
+        item.setSelected(isinstance(pname, str) and pname in wanted)
+    panel._selected_y_param_names = panel._selected_y_parameters()
+
+
+def test_remove_button_deletes_selected_knight_trace(qapp, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    panel = _setup_panel(qapp, swap_past_crossing=False)
+    traces = sorted(panel._knight_shift_names)
+    assert len(traces) == 2
+
+    _select_y(panel, [traces[0]])
+    panel._update_composite_action_buttons()
+    assert panel._remove_composite_btn.isEnabled()  # K traces are removable
+
+    monkeypatch.setattr(
+        QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes)
+    )
+    panel._remove_selected_composite_parameters()
+
+    # The deleted trace is gone and excluded from the conversion so it won't regenerate.
+    assert traces[0] not in panel._knight_shift_names
+    assert not any(traces[0] in row.values for row in panel._rows)
+    field = panel._knight_shift_names[traces[1]]
+    assert panel._knight_shift_config.components == (field,)
+    assert traces[1] in panel._knight_shift_names  # the unselected trace survives
+
+
+def test_removing_joint_fit_trace_clears_joint_fit(qapp, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    panel = _setup_panel(qapp, swap_past_crossing=True)
+    traces = sorted(panel._knight_shift_names)
+    panel._run_joint_knight_fit(traces, "KnightAnisotropy", 25)
+    assert panel._joint_fit is not None
+
+    _select_y(panel, [traces[0]])
+    monkeypatch.setattr(
+        QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes)
+    )
+    panel._remove_selected_composite_parameters()
+
+    # Removing a component the joint fit spanned drops the joint fit and its markers.
+    assert panel._joint_fit is None
+    assert panel._DRAW_CROSSING_MARKERS is False
+
+
+def test_joint_fit_overlays_recover_when_group_snapshot_dropped(qapp):
+    # The joint-fit overlays live inside _joint_fit, so they are rebuilt on load
+    # even if the per-group model_fits snapshot loses them (the real reload leak).
+    panel = _setup_panel(qapp, swap_past_crossing=True)
+    traces = sorted(panel._knight_shift_names)
+    panel._run_joint_knight_fit(traces, "KnightAnisotropy", 25)
+    before = {t: [r.values.get(t) for r in panel._rows] for t in traces}
+    state = panel.get_state()
+
+    # Simulate the lossy group/top-level model_fits round-trip.
+    state["model_fits"] = {}
+    for group in state.get("group_fit_results", {}).values():
+        if isinstance(group, dict):
+            group["model_fits"] = {}
+
+    panel2 = FitParametersPanel()
+    panel2.set_angle_x_field(("Angle (°)", "angle"))
+    panel2.restore_state(state)
+
+    assert panel2._joint_fit is not None
+    assert all(t in panel2._model_fits for t in traces)  # overlays recovered
+    assert panel2._DRAW_CROSSING_MARKERS is True
+    assert {t: [r.values.get(t) for r in panel2._rows] for t in traces} == before
 
 
 def test_joint_fit_button_gating(qapp):

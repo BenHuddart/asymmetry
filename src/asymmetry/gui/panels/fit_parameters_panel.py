@@ -7,7 +7,7 @@ import importlib
 import os
 import shutil
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -479,8 +479,10 @@ class FitParametersPanel(QWidget):
         self._edit_composite_btn.setEnabled(False)
         self._edit_composite_btn.clicked.connect(self._edit_selected_composite_parameter)
 
-        self._remove_composite_btn = QPushButton("Remove composite")
-        self._remove_composite_btn.setToolTip("Remove the selected composite parameter.")
+        self._remove_composite_btn = QPushButton("Remove")
+        self._remove_composite_btn.setToolTip(
+            "Remove the selected composite parameter(s) or Knight-shift K trace(s)."
+        )
         self._remove_composite_btn.setEnabled(False)
         self._remove_composite_btn.clicked.connect(self._remove_selected_composite_parameters)
 
@@ -1991,11 +1993,25 @@ class FitParametersPanel(QWidget):
             if name in selected and name in composite_names
         ]
 
+    def _selected_knight_trace_names(self) -> list[str]:
+        """Currently-selected Knight-shift K traces (removable derived quantities)."""
+        selected = set(self._selected_y_parameters())
+        return [
+            name
+            for name in self._display_y_parameters()
+            if name in selected and name in self._knight_shift_names
+        ]
+
     def _update_composite_action_buttons(self) -> None:
         has_rows = bool(self._rows)
         selected_composites = self._selected_composite_parameter_names()
+        selected_knight = self._selected_knight_trace_names()
+        # Edit only applies to composite (expression) parameters.
         self._edit_composite_btn.setEnabled(has_rows and len(selected_composites) == 1)
-        self._remove_composite_btn.setEnabled(has_rows and len(selected_composites) >= 1)
+        # Remove deletes composites and/or Knight-shift K traces.
+        self._remove_composite_btn.setEnabled(
+            has_rows and bool(selected_composites or selected_knight)
+        )
 
     def _available_composite_source_parameters(self) -> list[str]:
         composite_names = {definition.name for definition in self._composite_parameters}
@@ -3085,20 +3101,18 @@ class FitParametersPanel(QWidget):
             int(row.run_number): tuple(int(c) for c in result.assignment[i])
             for i, row in enumerate(rows)
         }
-        self._joint_fit = {
-            "traces": list(traces),
-            "assignment": assignment,
-            "model_name": model_name,
-        }
-
-        # Per-curve overlays, keyed on the trace each curve now occupies.
+        # Per-curve overlays, keyed on the trace each curve now occupies. They are
+        # held inside ``_joint_fit`` (and serialised with it) so the joint fit is
+        # reconstructed deterministically on every reload / group switch, rather
+        # than relying on the per-group ``model_fits`` round-trip surviving.
         angles = [self._x_value(r, self._effective_x_key()) for r in rows]
         finite = [a for a in angles if np.isfinite(a)]
         x_min = min(finite) if finite else None
         x_max = max(finite) if finite else None
+        curves: dict[str, ParameterModelFit] = {}
         for curve, name in enumerate(traces):
             fit_result = result.curves[curve]
-            self._model_fits[name] = ParameterModelFit(
+            curves[name] = ParameterModelFit(
                 parameter_name=name,
                 x_key=self._effective_x_key(),
                 ranges=[
@@ -3112,6 +3126,13 @@ class FitParametersPanel(QWidget):
                 ],
                 active=True,
             )
+
+        self._joint_fit = {
+            "traces": list(traces),
+            "assignment": assignment,
+            "model_name": model_name,
+            "curves": curves,
+        }
 
         self._apply_joint_reorder(self._rows)
         # The suppressed markers are exactly what the joint fit now justifies: show
@@ -3149,6 +3170,13 @@ class FitParametersPanel(QWidget):
             for component, curve in enumerate(perm):
                 row.values[traces[curve]] = old_v[traces[component]]
                 row.errors[traces[curve]] = old_e[traces[component]]
+        if rows is self._rows:
+            # Re-inject the per-curve overlays and markers from the joint-fit state
+            # so they survive a group switch / reload that rebuilt _model_fits from
+            # the (possibly lossy) per-group snapshot.
+            for name, model_fit in self._joint_fit.get("curves", {}).items():
+                self._model_fits[name] = model_fit
+            self._DRAW_CROSSING_MARKERS = True
         self._refresh_joint_fit_markers(rows)
 
     def _refresh_joint_fit_markers(self, rows: list[_FitRow]) -> None:
@@ -3179,7 +3207,7 @@ class FitParametersPanel(QWidget):
         self._knight_shift_crossing_x_key = x_key
 
     def _serialize_joint_fit(self) -> dict | None:
-        """Serialise the active joint-fit reorder (per-run permutation + traces)."""
+        """Serialise the active joint-fit reorder (permutation, traces, overlays)."""
         if not self._joint_fit:
             return None
         return {
@@ -3188,10 +3216,10 @@ class FitParametersPanel(QWidget):
             "assignment": {
                 str(run): list(perm) for run, perm in self._joint_fit["assignment"].items()
             },
+            "curves": self._serialize_model_fits_mapping(self._joint_fit.get("curves", {})),
         }
 
-    @staticmethod
-    def _deserialize_joint_fit(data: object) -> dict | None:
+    def _deserialize_joint_fit(self, data: object) -> dict | None:
         if not isinstance(data, dict):
             return None
         try:
@@ -3208,6 +3236,7 @@ class FitParametersPanel(QWidget):
             "traces": traces,
             "assignment": assignment,
             "model_name": str(data.get("model_name", "")),
+            "curves": self._deserialize_model_fits(data.get("curves", {})),
         }
 
     def _edit_selected_composite_parameter(self) -> None:
@@ -3266,37 +3295,87 @@ class FitParametersPanel(QWidget):
         self._refresh_after_composite_change(preferred_selected=preferred_selected)
 
     def _remove_selected_composite_parameters(self) -> None:
-        selected = self._selected_composite_parameter_names()
+        composites = self._selected_composite_parameter_names()
+        knight = self._selected_knight_trace_names()
+        selected = composites + knight
         if not selected:
             return
 
         if len(selected) == 1:
-            message = f"Remove composite parameter '{selected[0]}'?"
+            message = f"Remove '{selected[0]}'?"
         else:
-            message = f"Remove selected composite parameters ({', '.join(selected)})?"
-        confirm = QMessageBox.question(self, "Remove Composite Parameter", message)
+            message = f"Remove selected quantities ({', '.join(selected)})?"
+        confirm = QMessageBox.question(self, "Remove", message)
         if confirm != QMessageBox.StandardButton.Yes:
             return
 
-        names_to_remove = set(selected)
-        self._composite_parameters = [
-            definition
-            for definition in self._composite_parameters
-            if definition.name not in names_to_remove
-        ]
-        for name in names_to_remove:
-            self._model_fits.pop(name, None)
-        self._apply_composite_parameters_to_rows(
-            self._rows,
-            self._composite_parameters,
-            self._global_param_uncertainties,
-            drop_names=names_to_remove,
-        )
-
         preferred_selected = [
-            name for name in self._selected_y_param_names if name not in names_to_remove
+            name for name in self._selected_y_param_names if name not in set(selected)
         ]
+
+        if composites:
+            names_to_remove = set(composites)
+            self._composite_parameters = [
+                definition
+                for definition in self._composite_parameters
+                if definition.name not in names_to_remove
+            ]
+            for name in names_to_remove:
+                self._model_fits.pop(name, None)
+            self._apply_composite_parameters_to_rows(
+                self._rows,
+                self._composite_parameters,
+                self._global_param_uncertainties,
+                drop_names=names_to_remove,
+            )
+
+        if knight:
+            # Drop the components backing the selected K traces from the conversion
+            # (and any joint fit that used them); set_knight_shift_config re-applies
+            # and refreshes, so it is the last step.
+            self._remove_knight_traces(knight, preferred_selected=preferred_selected)
+            return
+
         self._refresh_after_composite_change(preferred_selected=preferred_selected)
+
+    def _remove_knight_traces(self, knames: list[str], *, preferred_selected: list[str]) -> None:
+        """Delete the selected Knight-shift K traces by excluding their components.
+
+        The K traces are derived by the Knight-shift conversion, so removing one
+        means dropping its component from the conversion's component list (an
+        explicit allow-list). When the last component goes the conversion is
+        disabled. ``set_knight_shift_config`` re-applies and refreshes (and clears
+        any joint fit, which spans all components).
+        """
+        comps_to_remove = {
+            self._knight_shift_names[name] for name in knames if name in self._knight_shift_names
+        }
+        if not comps_to_remove:
+            self._refresh_after_composite_change(preferred_selected=preferred_selected)
+            return
+
+        config = self._knight_shift_config
+        if config.components:
+            current = list(config.components)
+        else:
+            current = [name for name, _ in self._oscillation_components(self._rows)]
+        remaining = [c for c in current if c not in comps_to_remove]
+
+        if not remaining:
+            new_config = replace(config, enabled=False, components=())
+        else:
+            reference_component = config.reference_component
+            reference_mode = config.reference_mode
+            if reference_component in comps_to_remove:
+                reference_component = None
+                reference_mode = REFERENCE_APPLIED_FIELD
+            new_config = replace(
+                config,
+                components=tuple(remaining),
+                reference_component=reference_component,
+                reference_mode=reference_mode,
+            )
+        self.set_knight_shift_config(new_config)
 
     def _open_model_fit_dialog(self, param_name: str) -> None:
         selected_group_ids = self._selected_group_ids_from_buttons()
@@ -4475,8 +4554,11 @@ class FitParametersPanel(QWidget):
                 writer.writerow(values)
 
     def _serialize_model_fits(self) -> dict:
+        return self._serialize_model_fits_mapping(self._model_fits)
+
+    def _serialize_model_fits_mapping(self, mapping: dict[str, ParameterModelFit]) -> dict:
         payload: dict[str, dict] = {}
-        for param_name, model_fit in self._model_fits.items():
+        for param_name, model_fit in mapping.items():
             ranges_data = []
             for fit_range in model_fit.ranges:
                 range_item = {
