@@ -219,6 +219,11 @@ def test_joint_fit_state_round_trip(qapp):
     assert panel2._joint_fit["traces"] == list(traces)
     assert panel2._DRAW_CROSSING_MARKERS is True
     assert all(t in panel2._model_fits for t in traces)
+    # The overlays must actually be drawable: a restored model fit on the Angle
+    # axis keeps its x_key (regression — it used to collapse to "run" and the
+    # curves silently dropped out of the overlay draw).
+    assert all(panel2._model_fits[t].x_key == "angle" for t in traces)
+    assert sorted(panel2._active_overlay_params()) == sorted(traces)
     assert panel2.knight_shift_crossings()
     after = {t: [r.values.get(t) for r in panel2._rows] for t in traces}
     assert after == before

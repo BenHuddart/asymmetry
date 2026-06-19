@@ -182,13 +182,13 @@ def _safe_data_name(value: object) -> str:
 def _normalize_x_key(value: object) -> str:
     """Normalize persisted x-axis key to an internal identifier.
 
-    Recognises the three reserved run-level axes (``field``/``temperature``/
-    ``run``), the ``param:<name>`` namespace used for parameter-vs-parameter
-    trending (item 1), and the ``custom:<id>`` namespace for data-browser custom
-    columns. Anything else collapses to ``run``.
+    Recognises the reserved run-level axes (``field``/``temperature``/``run``),
+    the first-class ``angle`` axis, the ``param:<name>`` namespace used for
+    parameter-vs-parameter trending (item 1), and the ``custom:<id>`` namespace
+    for data-browser custom columns. Anything else collapses to ``run``.
     """
     text = str(value or "").strip()
-    if text in ("field", "temperature", "run"):
+    if text in ("field", "temperature", "run", "angle"):
         return text
     if text.startswith("param:") and len(text) > len("param:"):
         return text
@@ -2810,6 +2810,10 @@ class FitParametersPanel(QWidget):
             fit_button.setMinimumWidth(
                 fit_button.fontMetrics().horizontalAdvance("Model Fit*") + 36
             )
+            # Keep keyboard focus on the table's selection model: a focusable cell
+            # widget steals focus on interaction and can collapse a multi-row
+            # selection built with Shift+Arrow.
+            fit_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             fit_button.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Fixed)
             fit_button.clicked.connect(
                 lambda _checked=False, p=name: self._open_model_fit_dialog(p)
@@ -2817,6 +2821,7 @@ class FitParametersPanel(QWidget):
             self._y_selector_table.setCellWidget(idx, 1, fit_button)
 
             log_check = QCheckBox("log")
+            log_check.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             log_check.stateChanged.connect(self._refresh_plot)
             log_check.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
             log_control_width = log_check.fontMetrics().horizontalAdvance("log") + 28
