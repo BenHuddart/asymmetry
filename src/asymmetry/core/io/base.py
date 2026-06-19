@@ -2,12 +2,58 @@
 
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 from pathlib import Path
 
 from asymmetry.core.data.dataset import MuonDataset
 
 LoadResult = MuonDataset | list[MuonDataset]
+
+# Explicit applied-field geometry tags as they appear in PSI free-text fields
+# (run comment / setup / title). PSI files carry no structured field-state code
+# like ISIS NeXus ``sample/magnetic_field_state``; the experimenter records the
+# geometry implicitly, conventionally as a ``TF``/``LF``/``ZF`` tag in the run
+# comment — e.g. ``"FeSe 9p4 TF100"`` or ``"Y124 TF150G"`` — which musrfit treats
+# as the setup (``SetSetup(GetComment())``). The bare tag may be followed by the
+# field magnitude and unit (``TF150G``), so it is accepted when followed by a
+# digit or a word boundary; an optional leading ``w`` admits "weak TF" (``wTF``).
+# The leading ``\b`` keeps it from firing on substrings of sample names
+# ("half" → no ``LF``, "tffactor" → no ``TF``).
+_FIELD_DIRECTION_TAGS: dict[str, re.Pattern[str]] = {
+    "Transverse": re.compile(r"\b(?:transverse|w?tf(?=\d|\b))", re.IGNORECASE),
+    "Longitudinal": re.compile(r"\b(?:longitudinal|w?lf(?=\d|\b))", re.IGNORECASE),
+    "Zero field": re.compile(r"\b(?:zero[\s-]?field|zf(?=\d|\b))", re.IGNORECASE),
+}
+
+
+def field_direction_from_text(*texts: object) -> str:
+    """Classify the applied-field geometry from PSI free-text fields.
+
+    PSI ``.bin``/``.mdu``/``.root`` files carry no structured field-state code,
+    so the geometry is read from free text (run comment, setup, title) and
+    **only** from an explicit, unambiguous ``TF``/``LF``/``ZF`` /
+    transverse/longitudinal/zero-field token.  This mirrors the policy the NeXus
+    loader and the field-geometry study settled on (see
+    ``docs/porting/field-geometry/``): never infer geometry from the field
+    *magnitude* (a TF run can sit at 0 G) nor from detector/sample *orientation*
+    (a build-axis that reads "L" regardless of the applied field).
+
+    Parameters
+    ----------
+    *texts:
+        Free-text fields to scan, in any order (``None``/empty are ignored).
+
+    Returns
+    -------
+    str
+        ``"Transverse"``, ``"Longitudinal"``, ``"Zero field"``, or ``""`` when no
+        token is present or two conflicting tokens appear (ambiguous → unknown,
+        rather than a misleading guess).
+    """
+    blob = " ".join(str(t) for t in texts if t)
+    matched = {label for label, pattern in _FIELD_DIRECTION_TAGS.items() if pattern.search(blob)}
+    return next(iter(matched)) if len(matched) == 1 else ""
 
 
 class BaseLoader(ABC):

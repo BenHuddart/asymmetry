@@ -19,7 +19,7 @@ from typing import Any
 import numpy as np
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
-from asymmetry.core.io.base import BaseLoader
+from asymmetry.core.io.base import BaseLoader, field_direction_from_text
 from asymmetry.core.transform import (
     apply_grouping_aligned,
     common_t0_for_groups,
@@ -906,6 +906,12 @@ class PsiLoader(BaseLoader):
             "orientation": raw.orientation,
             "setup": raw.setup,
             "comment": raw.comment,
+            # PSI files carry no structured field-state code; the geometry is an
+            # explicit TF/LF/ZF tag in the free-text comment/setup/title (e.g.
+            # "FeSe 9p4 TF100"). "" when absent or ambiguous — never guessed.
+            "field_direction": field_direction_from_text(
+                raw.comment, raw.setup, raw.title, raw.orientation
+            ),
             "started": raw.started,
             "stopped": raw.stopped,
             "instrument": raw.instrument,
