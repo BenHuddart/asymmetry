@@ -7,7 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Angle-dependent muon Knight shift** in the parameter-trend panel. Fitted
+  oscillation components (local field `field_n` or frequency) convert to the
+  muon Knight shift `K = (ν − ν_ref)/ν_ref` against either reference: the
+  applied field `ν_ref = γ_µ·B` (no reference line needed, the default) or a
+  designated fitted component (covariance-aware). Per-component `K[...]` traces
+  carry a chosen display unit (ppm / per-cent / auto). Configured from the
+  **Knight shift…** button; see
+  `asymmetry.core.fitting.knight_shift` for the scriptable API.
+- **First-class Angle (°) trend axis** with a **Fold** control that wraps a
+  periodic single-crystal rotation into one period (180° or 360°) for display
+  and `K(θ)` fitting; the stored angles are unchanged.
+- **`K(θ)` anisotropy basis models** for the Angle axis: `KnightAnisotropy`
+  (`K_iso + K_ax·(3cos²θ − 1)/2`, axial dipolar) and `AngularCos2`
+  (`K_avg + K_amp·cos2(θ − θ₀)`, two-fold), in degrees.
+- **Joint `K(θ)` fit** (**Joint K(θ) fit…**): fits one `K(θ)` curve per
+  component simultaneously and, at each angle, assigns that angle's component
+  points one-to-one to the curves they best fit (Hungarian matching, iterated
+  fit ↔ reassignment). The selected `K[...]` traces are reordered **in place**
+  so each follows one physical site continuously through crossings, with the
+  per-curve fits overlaid and the resolved crossings banded. Core engine in
+  `asymmetry.core.fitting.angular_assignment`.
+- **Clogston–Jaccarino `K`–`χ` helper** (`clogston_jaccarino_fit`, API-only):
+  fits `K = K_0 + (A_hf/N_A μ_B)·χ` to extract the hyperfine coupling and the
+  `χ`-independent offset.
+
 ### Fixed
+
+- **Knight-shift / `K(θ)` fits survive save and reload**: model-fit overlays on
+  the first-class **Angle** axis previously lost their axis key on load
+  (`angle` collapsed to `run`), so the curves silently dropped out of the trend
+  plot. The joint fit now also stores its per-curve overlays, reorder
+  permutation and crossing markers with the project, so the whole fit is
+  reconstructed deterministically on reload regardless of the per-group
+  snapshot.
+- **Knight-shift K traces are removable**: the **Remove** action now deletes
+  selected `K[...]` traces by dropping their component from the conversion (so
+  they do not regenerate) and clears any joint fit spanning them; obsolete
+  `K⟨n⟩` track columns from earlier builds are migrated away on load.
+- **Y-parameter multi-selection no longer collapses**: interactive cell widgets
+  in the Y-parameter table no longer steal keyboard focus from the selection
+  model, so a Shift+Arrow multi-selection survives mouse interaction.
 
 - **Send to Batch carries the current single-fit seeds**: the **Send Model to
   Batch** action now seeds each batch parameter from the Single tab's current
