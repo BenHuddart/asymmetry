@@ -18,11 +18,22 @@ from asymmetry.core.fitting.component_tracking import CrossingEvent
 from asymmetry.core.fitting.knight_shift import KnightShiftConfig, KnightShiftUnit
 from asymmetry.core.fitting.parameter_models import PARAMETER_MODEL_COMPONENTS
 from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
+from tests._qt_helpers import wait_for
 
 
 @pytest.fixture(scope="module")
 def qapp() -> QApplication:
     return QApplication.instance() or QApplication([])
+
+
+def _run_joint(panel, traces, model_name="KnightAnisotropy", max_iter=25):
+    """Run the off-thread joint K(θ) fit and block until it has landed."""
+    panel._run_joint_knight_fit(traces, model_name, max_iter)
+    wait_for(
+        lambda: not panel._joint_fit_compute_active,
+        QApplication.instance(),
+        timeout_s=30.0,
+    )
 
 
 def _axial_field(angle, k_iso, k_ax, b_ext=7000.0):
@@ -106,7 +117,7 @@ def test_removing_joint_fit_trace_clears_joint_fit(qapp, monkeypatch):
 
     panel = _setup_panel(qapp, swap_past_crossing=True)
     traces = sorted(panel._knight_shift_names)
-    panel._run_joint_knight_fit(traces, "KnightAnisotropy", 25)
+    _run_joint(panel, traces)
     assert panel._joint_fit is not None
 
     _select_y(panel, [traces[0]])
@@ -125,7 +136,7 @@ def test_joint_fit_overlays_recover_when_group_snapshot_dropped(qapp):
     # even if the per-group model_fits snapshot loses them (the real reload leak).
     panel = _setup_panel(qapp, swap_past_crossing=True)
     traces = sorted(panel._knight_shift_names)
-    panel._run_joint_knight_fit(traces, "KnightAnisotropy", 25)
+    _run_joint(panel, traces)
     before = {t: [r.values.get(t) for r in panel._rows] for t in traces}
     state = panel.get_state()
 
@@ -161,7 +172,7 @@ def test_joint_fit_reorders_traces_in_place(qapp):
     traces = sorted(panel._knight_shift_names)
     assert len(traces) == 2
 
-    panel._run_joint_knight_fit(traces, "KnightAnisotropy", 25)
+    _run_joint(panel, traces)
 
     # No duplicate K⟨…⟩ track columns are created — the existing K traces are reused.
     assert not any(name.startswith("K⟨") for name in panel._rows[0].values)
@@ -178,7 +189,7 @@ def test_joint_fit_reorders_traces_in_place(qapp):
 def test_joint_reorder_survives_refresh(qapp):
     panel = _setup_panel(qapp, swap_past_crossing=True)
     traces = sorted(panel._knight_shift_names)
-    panel._run_joint_knight_fit(traces, "KnightAnisotropy", 25)
+    _run_joint(panel, traces)
     before = {t: [r.values.get(t) for r in panel._rows] for t in traces}
 
     # A pull refresh re-derives K from the raw field values via this chokepoint;
@@ -191,7 +202,7 @@ def test_joint_reorder_survives_refresh(qapp):
 
 def test_reconfiguring_conversion_clears_joint_fit(qapp):
     panel = _setup_panel(qapp, swap_past_crossing=True)
-    panel._run_joint_knight_fit(sorted(panel._knight_shift_names), "KnightAnisotropy", 25)
+    _run_joint(panel, sorted(panel._knight_shift_names))
     assert panel._joint_fit is not None
 
     # Re-running the conversion regenerates the raw K traces and drops the joint fit.
@@ -203,7 +214,7 @@ def test_reconfiguring_conversion_clears_joint_fit(qapp):
 def test_joint_fit_state_round_trip(qapp):
     panel = _setup_panel(qapp, swap_past_crossing=True)
     traces = sorted(panel._knight_shift_names)
-    panel._run_joint_knight_fit(traces, "KnightAnisotropy", 25)
+    _run_joint(panel, traces)
     before = {t: [r.values.get(t) for r in panel._rows] for t in traces}
 
     state = panel.get_state()
@@ -284,7 +295,7 @@ def test_crossing_bands_merge_adjacent():
 
 def test_joint_fit_draws_crossing_bands(qapp):
     panel = _setup_panel(qapp, swap_past_crossing=True)
-    panel._run_joint_knight_fit(sorted(panel._knight_shift_names), "KnightAnisotropy", 25)
+    _run_joint(panel, sorted(panel._knight_shift_names))
     panel._draw_plot()
     spans = [patch for ax in panel._figure.axes for patch in ax.patches]
     assert spans  # crossing bands are drawn as shaded spans
@@ -296,7 +307,7 @@ def test_joint_fit_draws_crossing_bands(qapp):
 def test_joint_fit_recovers_continuous_curves(qapp):
     panel = _setup_panel(qapp, swap_past_crossing=True)
     traces = sorted(panel._knight_shift_names)
-    panel._run_joint_knight_fit(traces, "KnightAnisotropy", 25)
+    _run_joint(panel, traces)
     # Each curve's fitted axial K_ax recovers one of the two physical anisotropies
     # (in ppm: 0.03 and -0.01 → 30000 and -10000).
     k_ax = sorted(
