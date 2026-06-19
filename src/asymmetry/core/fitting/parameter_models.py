@@ -63,7 +63,7 @@ class ParameterModelComponentDefinition:
 
 #: Recognised scope tokens for :attr:`ParameterModelComponentDefinition.scopes`
 #: (see :func:`component_names_for_x`).
-SCOPES: tuple[str, ...] = ("common", "field", "temperature")
+SCOPES: tuple[str, ...] = ("common", "field", "temperature", "angle")
 
 
 def _constant(x: NDArray, c: float) -> NDArray[np.float64]:
@@ -180,6 +180,30 @@ def _order_parameter(
         float(y0) * np.power(base, beta_safe),
         0.0,
     )
+
+
+def _knight_anisotropy(x: NDArray, K_iso: float, K_ax: float) -> NDArray[np.float64]:
+    """Axial Knight-shift anisotropy vs orientation angle θ (degrees).
+
+    ``K(θ) = K_iso + K_ax * (3 cos²θ − 1) / 2``. The contact term is isotropic
+    (``K_iso``); the dipolar coupling tensor gives the axial angular dependence
+    (``K_ax``) for a rotation about an axis perpendicular to the principal axis.
+    """
+    theta = np.radians(np.asarray(x, dtype=float))
+    return float(K_iso) + float(K_ax) * (3.0 * np.cos(theta) ** 2 - 1.0) / 2.0
+
+
+def _angular_cos2(x: NDArray, K_avg: float, K_amp: float, theta0: float) -> NDArray[np.float64]:
+    """Two-fold (cos 2θ) Knight-shift modulation vs orientation angle θ (degrees).
+
+    ``K(θ) = K_avg + K_amp * cos(2 (θ − θ0))``. The general two-fold form for a
+    single-crystal rotation in a plane, with ``θ0`` (degrees) the angular offset
+    of the principal axis; equivalent to the axial form up to a constant when the
+    rotation plane contains the symmetry axis.
+    """
+    theta = np.radians(np.asarray(x, dtype=float))
+    theta0_rad = np.radians(float(theta0))
+    return float(K_avg) + float(K_amp) * np.cos(2.0 * (theta - theta0_rad))
 
 
 def _redfield(
@@ -692,6 +716,32 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         ),
         scopes=("field",),
     ),
+    "KnightAnisotropy": ParameterModelComponentDefinition(
+        name="KnightAnisotropy",
+        description="K_iso + K_ax*(3 cos^2(theta) - 1)/2  (theta in degrees)",
+        function=_knight_anisotropy,
+        param_names=["K_iso", "K_ax"],
+        param_defaults={"K_iso": 0.0, "K_ax": 1.0},
+        param_info={"K_iso": get_param_info("K_iso"), "K_ax": get_param_info("K_ax")},
+        formula_template="{K_iso} + {K_ax}*(3*cos(theta)^2 - 1)/2",
+        latex_equation=r"K(\theta) = K_{\mathrm{iso}} + K_{\mathrm{ax}}\,\frac{3\cos^2\theta - 1}{2}",
+        scopes=("angle",),
+    ),
+    "AngularCos2": ParameterModelComponentDefinition(
+        name="AngularCos2",
+        description="K_avg + K_amp*cos(2*(theta - theta0))  (theta in degrees)",
+        function=_angular_cos2,
+        param_names=["K_avg", "K_amp", "theta0"],
+        param_defaults={"K_avg": 0.0, "K_amp": 1.0, "theta0": 0.0},
+        param_info={
+            "K_avg": get_param_info("K_avg"),
+            "K_amp": get_param_info("K_amp"),
+            "theta0": get_param_info("theta0"),
+        },
+        formula_template="{K_avg} + {K_amp}*cos(2*(theta - {theta0}))",
+        latex_equation=r"K(\theta) = K_{\mathrm{avg}} + K_{\mathrm{amp}}\cos 2(\theta - \theta_0)",
+        scopes=("angle",),
+    ),
 }
 
 
@@ -1062,6 +1112,8 @@ def component_names_for_x(x_key: str) -> list[str]:
         scopes = {"common", "field"}
     elif x_key == "temperature":
         scopes = {"common", "temperature"}
+    elif x_key == "angle":
+        scopes = {"common", "angle"}
     else:
         scopes = {"common"}
 

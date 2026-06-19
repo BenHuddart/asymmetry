@@ -452,6 +452,51 @@ class TestRefreshTrendPanel:
         # per source run, keyed by the run (42, 43), not the synthetic group key.
         assert {r.run_number for r in gdata.rows} == {42, 43}
 
+    def test_grouped_batch_renders_only_current_run_subplots(self, mw, monkeypatch):
+        """A batch grouped fit must not render every (run, group) member.
+
+        Rendering all members produced one dense subplot per member (e.g. 84 for
+        21 runs × 4 groups), freezing the GUI for seconds when the values came
+        back. Only the current run's detector groups should be drawn.
+        """
+        for rn in (42, 43):
+            mw._data_browser.add_dataset(_dataset(rn))
+        mw._on_dataset_selected(42)
+        mw._plot_workspace.set_available_views(["fb_asymmetry", "groups"])
+        mw._plot_workspace.set_active_view("groups")
+        monkeypatch.setattr(
+            mw._multi_group_fit_window, "get_grouped_state", self._grouped_state_stub
+        )
+
+        rendered: list[list] = []
+        monkeypatch.setattr(
+            mw._plot_panel,
+            "plot_grouped_time_domain_subplots",
+            lambda datasets: rendered.append(list(datasets)),
+        )
+
+        # 2-run batch, 2 groups each (4 members total).
+        grouped_datasets = [
+            self._group_member(42, 1),
+            self._group_member(42, 2),
+            self._group_member(43, 1),
+            self._group_member(43, 2),
+        ]
+        results = {
+            -42001: (_result(), _CURVE, []),
+            -42002: (_result(), _CURVE, []),
+            -43001: (_result(), _CURVE, []),
+            -43002: (_result(), _CURVE, []),
+        }
+        mw._on_grouped_fit_completed(grouped_datasets, results)
+
+        assert rendered, "grouped subplots were never rendered"
+        drawn = rendered[-1]
+        # Only one run's groups (2), not all four members.
+        assert len(drawn) == 2
+        source_runs = {mw._grouped_member_source_run(ds) for ds in drawn}
+        assert source_runs == {42}
+
     def _grouped_state_stub(self):
         return {
             "composite_model": {"component_names": ["Exponential"], "operators": []},

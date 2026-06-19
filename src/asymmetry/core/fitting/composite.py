@@ -161,6 +161,12 @@ class ComponentDefinition:
     #: a user component referenced by a project but not currently registered.
     #: Placeholders evaluate to zero and are never inserted into ``COMPONENTS``.
     missing: bool = False
+    #: For a precession component whose fitted value is the *local* field/frequency
+    #: at the muon (so it can be converted to a Knight shift), the name of that
+    #: parameter (``"frequency"`` or ``"field"``). ``None`` for everything else —
+    #: crucially including muonium components, whose ``field`` parameter is the
+    #: *applied* field fed into the Breit–Rabi levels, not a local field.
+    knight_observable: str | None = None
 
 
 def _exp_component(t: NDArray, A: float, Lambda: float) -> NDArray[np.float64]:
@@ -462,6 +468,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         formula_template="{A}*cos(2*pi*{frequency}*t + {phase})",
         latex_equation=r"A(t) = A \cos(2\pi f t + \phi)",
         category="Oscillation",
+        knight_observable="frequency",
     ),
     "OscillatoryField": ComponentDefinition(
         name="OscillatoryField",
@@ -477,6 +484,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         formula_template="{A}*cos(2*pi*gamma_mu*{field}*t + {phase})",
         latex_equation=r"A(t) = A \cos(2\pi \gamma_\mu B t + \phi)",
         category="Oscillation",
+        knight_observable="field",
     ),
     "VortexLattice": ComponentDefinition(
         name="VortexLattice",
@@ -534,6 +542,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         formula_template="{A}*J0(2*pi*{frequency}*t + {phase})",
         latex_equation=r"A(t) = A\,J_0(2\pi f t + \phi)",
         category="Oscillation",
+        knight_observable="frequency",
     ),
     "MuoniumTF": ComponentDefinition(
         name="MuoniumTF",
@@ -1465,6 +1474,23 @@ class CompositeModel:
         """
         return [dict(mapping) for mapping in self._param_mappings]
 
+    def knight_observable_params(self) -> dict[str, str]:
+        """Map fitted parameter name → kind for Knight-convertible components.
+
+        For each component whose value is a *local* precession field/frequency
+        (``ComponentDefinition.knight_observable`` set — Oscillatory/Bessel give
+        ``"frequency"``, OscillatoryField gives ``"field"``), return its unique
+        fitted parameter name pointing at that kind. Components whose ``field``
+        is the *applied* field (muonium TF) are excluded, so a Knight-shift
+        conversion never mistakes the applied field for a local one.
+        """
+        observables: dict[str, str] = {}
+        for component, mapping in zip(self.components, self._param_mappings, strict=True):
+            local = component.knight_observable
+            if local and local in mapping:
+                observables[mapping[local]] = local
+        return observables
+
     def component_expression_string(self) -> str:
         """Return the builder-facing expression using component names."""
         return build_component_expression(
@@ -1620,6 +1646,27 @@ class CompositeModel:
         else:
             normalized = [value / total for value in raw_weights]
         return dict(zip(component_indices, normalized, strict=True))
+
+    def fraction_weights(self, values: dict[str, float]) -> dict[str, float]:
+        """Return ``{fraction_param: normalized_weight}`` for each fraction group.
+
+        The weight is ``fraction_i / Σ fraction`` over the group — the physical
+        amplitude partition (sums to 1 per group), as applied at evaluation. A
+        group is **skipped entirely** when any of its fraction parameters is
+        missing from ``values``, so callers never receive raw, un-normalized
+        values mislabeled as weights.
+        """
+        out: dict[str, float] = {}
+        for group in self.fraction_groups:
+            names = [
+                self._fraction_param_name(idx) for idx in self._fraction_group_term_starts(group)
+            ]
+            if not all(name in values for name in names):
+                continue
+            weights = self._fraction_group_weights(group, values)
+            for idx, weight in weights.items():
+                out[self._fraction_param_name(idx)] = weight
+        return out
 
     def normalized_parameter_values(self, values: dict[str, float]) -> dict[str, float]:
         """Return a copy with fraction-group parameters normalized for display."""

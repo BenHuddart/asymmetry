@@ -7,12 +7,12 @@ import importlib
 import os
 import shutil
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 import numpy as np
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QSignalBlocker, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -39,12 +39,31 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.angular_assignment import (
+    AngularAssignmentResult,
+    fit_assigned_angular_curves,
+)
+from asymmetry.core.fitting.component_tracking import (
+    Component,
+    CrossingEvent,
+    ScanPoint,
+    detect_crossings,
+)
 from asymmetry.core.fitting.composite_parameters import (
     CompositeExpression,
     CompositeExpressionError,
     CompositeParameterDefinition,
 )
 from asymmetry.core.fitting.engine import FitResult
+from asymmetry.core.fitting.knight_shift import (
+    REFERENCE_APPLIED_FIELD,
+    KnightShiftConfig,
+    concrete_unit,
+    knight_shift,
+    label_for_unit,
+    larmor_frequency_mhz,
+    scale_for_unit,
+)
 from asymmetry.core.fitting.parameter_models import (
     CrossGroupFitResult,
     ModelFitRange,
@@ -55,7 +74,15 @@ from asymmetry.core.fitting.parameter_models import (
     effective_range_bounds,
     parse_fit_windows,
 )
-from asymmetry.core.fitting.parameters import Parameter, ParameterSet, get_param_info
+from asymmetry.core.fitting.parameters import (
+    Parameter,
+    ParameterSet,
+    get_param_info,
+    register_derived_param_info,
+    split_parameter_name,
+    unregister_derived_param_info,
+)
+from asymmetry.core.utils.angles import wrap_angle_deg
 from asymmetry.gui.export_paths import (
     default_export_path,
     remember_export_path,
@@ -64,7 +91,10 @@ from asymmetry.gui.export_paths import (
 from asymmetry.gui.gle_settings import get_gle_executable
 from asymmetry.gui.panels.composite_parameter_dialog import CompositeParameterDialog
 from asymmetry.gui.panels.cross_group_fit_dialog import CrossGroupFitDialog
+from asymmetry.gui.panels.knight_joint_fit_dialog import KnightJointFitDialog
+from asymmetry.gui.panels.knight_shift_dialog import KnightShiftDialog
 from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
+from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import (
     apply_param_table_style,
     clear_layout,
@@ -152,13 +182,13 @@ def _safe_data_name(value: object) -> str:
 def _normalize_x_key(value: object) -> str:
     """Normalize persisted x-axis key to an internal identifier.
 
-    Recognises the three reserved run-level axes (``field``/``temperature``/
-    ``run``), the ``param:<name>`` namespace used for parameter-vs-parameter
-    trending (item 1), and the ``custom:<id>`` namespace for data-browser custom
-    columns. Anything else collapses to ``run``.
+    Recognises the reserved run-level axes (``field``/``temperature``/``run``),
+    the first-class ``angle`` axis, the ``param:<name>`` namespace used for
+    parameter-vs-parameter trending (item 1), and the ``custom:<id>`` namespace
+    for data-browser custom columns. Anything else collapses to ``run``.
     """
     text = str(value or "").strip()
-    if text in ("field", "temperature", "run"):
+    if text in ("field", "temperature", "run", "angle"):
         return text
     if text.startswith("param:") and len(text) > len("param:"):
         return text
@@ -247,6 +277,9 @@ class _GroupFitData:
     plot_annotations: list[dict[str, object]]
     global_param_uncertainties: dict[str, float] = field(default_factory=dict)
     composite_parameters: list[CompositeParameterDefinition] = field(default_factory=list)
+    #: Fitted-param → Knight-shift kind for this series' convertible components,
+    #: derived from its model (empty for computed/model-less series).
+    knight_observables: dict[str, str] = field(default_factory=dict)
 
 
 class FitParametersPanel(QWidget):
@@ -288,10 +321,40 @@ class FitParametersPanel(QWidget):
         #: ``(display_label, key)`` pair (or None). Its key is the column id, and
         #: each row's per-run value rides on ``custom_values`` under that same key.
         self._angle_x_field: tuple[str, str] | None = None
+        #: Period (degrees) to fold the Angle abscissa into, or None for no folding.
+        self._angle_wrap_period: float | None = None
         self._y_controls: dict[str, _YParamControls] = {}
         self._selected_y_param_names: list[str] = []
         self._model_fits: dict[str, ParameterModelFit] = {}
         self._composite_parameters: list[CompositeParameterDefinition] = []
+        #: Knight-shift conversion (panel-global; applies to the active series).
+        self._knight_shift_config = KnightShiftConfig()
+        #: Generated Knight-shift Y-quantity name → source frequency parameter,
+        #: for the active series (rebuilt whenever derived quantities are applied).
+        self._knight_shift_names: dict[str, str] = {}
+        #: Active series' fitted-param → Knight-shift kind, from its model (empty
+        #: → fall back to the name-based heuristic in _oscillation_components).
+        self._knight_observables: dict[str, str] = {}
+        #: Derived-param labels this panel registered globally, so they can be
+        #: unregistered when the conversion changes / the panel is cleared.
+        self._registered_knight_labels: set[str] = set()
+        #: Per-series normalised fraction weights (batch_id → {fraction: weight}),
+        #: supplied by the host so the table dialog can show the physical amplitude
+        #: partition alongside the raw (un-normalised) fitted fractions.
+        self._fraction_weights_by_id: dict[str, dict[str, float]] = {}
+        #: Active joint K(θ) fit: reorders the existing K traces in place (no extra
+        #: traces) so each follows one physical curve through crossings. Holds the
+        #: source trace names and the per-run component→curve permutation; the raw
+        #: (un-reordered) traces are regenerated by re-running the conversion, which
+        #: clears this. None when no joint fit is active.
+        self._joint_fit: dict | None = None
+        #: True while the off-thread joint K(θ) fit is running (gates its button).
+        self._joint_fit_compute_active = False
+        #: Crossing/degeneracy events flagged on the active series (for annotation).
+        self._knight_shift_crossings: list[object] = []
+        #: The x-axis key the crossings were computed against (so stale markers are
+        #: not drawn after the x-axis changes).
+        self._knight_shift_crossing_x_key: str | None = None
         self._plot_annotations: list[dict[str, object]] = []
         self._axes_tag_map: dict[int, str] = {}
         self._active_annotation_idx: int | None = None
@@ -356,6 +419,13 @@ class FitParametersPanel(QWidget):
         self._x_combo.addItems(["Auto", "𝐵 (G)", "𝑇 (K)", "Run"])
         self._x_combo.currentTextChanged.connect(self._on_x_axis_changed)
         self._x_auto_hint = QLabel("")
+        # Fold a periodic Angle abscissa into one period so equivalent crystal
+        # orientations overlay (visible only when Angle is the x-axis).
+        self._angle_fold_label = QLabel("Fold:")
+        self._angle_fold_combo = QComboBox()
+        for text, period in (("Off", None), ("180°", 180.0), ("360°", 360.0)):
+            self._angle_fold_combo.addItem(text, userData=period)
+        self._angle_fold_combo.currentIndexChanged.connect(self._on_angle_fold_changed)
         self._log_x_check = QCheckBox("log")
         log_x_width = self._log_x_check.fontMetrics().horizontalAdvance("log") + 28
         self._log_x_check.setMinimumWidth(log_x_width)
@@ -367,10 +437,13 @@ class FitParametersPanel(QWidget):
         x_row.addWidget(self._x_combo)
         x_row.addWidget(self._x_auto_hint)
         x_row.addStretch()
+        x_row.addWidget(self._angle_fold_label)
+        x_row.addWidget(self._angle_fold_combo)
         x_row.addWidget(self._log_x_check)
         x_container = QWidget()
         x_container.setLayout(x_row)
         controls_form.addRow("X axis:", x_container)
+        self._update_angle_fold_visibility()
 
         self._y_selector_table = QTableWidget(0, 3)
         self._y_selector_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -408,10 +481,28 @@ class FitParametersPanel(QWidget):
         self._edit_composite_btn.setEnabled(False)
         self._edit_composite_btn.clicked.connect(self._edit_selected_composite_parameter)
 
-        self._remove_composite_btn = QPushButton("Remove composite")
-        self._remove_composite_btn.setToolTip("Remove the selected composite parameter.")
+        self._remove_composite_btn = QPushButton("Remove")
+        self._remove_composite_btn.setToolTip(
+            "Remove the selected composite parameter(s) or Knight-shift K trace(s)."
+        )
         self._remove_composite_btn.setEnabled(False)
         self._remove_composite_btn.clicked.connect(self._remove_selected_composite_parameters)
+
+        self._knight_shift_btn = QPushButton("Knight shift…")
+        self._knight_shift_btn.setToolTip(
+            "Convert fitted precession frequencies to the Knight shift K = (ν − ν_ref)/ν_ref."
+        )
+        self._knight_shift_btn.setEnabled(False)
+        self._knight_shift_btn.clicked.connect(self._open_knight_shift_dialog)
+
+        self._joint_knight_btn = QPushButton("Joint K(θ) fit…")
+        self._joint_knight_btn.setToolTip(
+            "Fit several K(θ) curves at once, assigning each angle's components to the "
+            "curve they fit best (resolves crossings). Select ≥2 Knight-shift traces "
+            "with Angle as the x-axis."
+        )
+        self._joint_knight_btn.setEnabled(False)
+        self._joint_knight_btn.clicked.connect(self._open_joint_knight_fit_dialog)
 
         self._derived_section = CollapsibleSection("Derived parameters", expanded=False)
         self._derived_section.setObjectName("fit-parameters-derived-section")
@@ -422,6 +513,8 @@ class FitParametersPanel(QWidget):
         composite_row.addWidget(self._create_composite_btn, 0, 0)
         composite_row.addWidget(self._edit_composite_btn, 0, 1)
         composite_row.addWidget(self._remove_composite_btn, 1, 0, 1, 2)
+        composite_row.addWidget(self._knight_shift_btn, 2, 0, 1, 2)
+        composite_row.addWidget(self._joint_knight_btn, 3, 0, 1, 2)
         composite_row.setColumnStretch(2, 1)
         self._derived_section.addLayout(composite_row)
         controls_layout.addWidget(self._derived_section)
@@ -554,6 +647,15 @@ class FitParametersPanel(QWidget):
         self._global_param_uncertainties = {}
         self._model_fits = {}
         self._composite_parameters = []
+        self._knight_shift_config = KnightShiftConfig()
+        self._knight_shift_names = {}
+        self._knight_observables = {}
+        self._unregister_knight_labels()
+        self._reset_angle_fold()
+        self._knight_shift_crossings = []
+        self._knight_shift_crossing_x_key = None
+        self._fraction_weights_by_id = {}
+        self._joint_fit = None
         self._group_fit_results = {}
         self._group_button_map = {}
         self._active_group_id = None
@@ -566,6 +668,8 @@ class FitParametersPanel(QWidget):
         self._create_composite_btn.setEnabled(False)
         self._edit_composite_btn.setEnabled(False)
         self._remove_composite_btn.setEnabled(False)
+        self._knight_shift_btn.setEnabled(False)
+        self._joint_knight_btn.setEnabled(False)
         self._rebuild_y_controls()
         self._refresh_plot()
 
@@ -595,9 +699,12 @@ class FitParametersPanel(QWidget):
             "composite_parameters": self._serialize_composite_parameters(
                 self._composite_parameters
             ),
+            "knight_shift": self._knight_shift_config.to_dict(),
+            "joint_fit": self._serialize_joint_fit(),
             "inferred_x_key": self._inferred_x_key,
             "x_axis": self._x_combo.currentText(),
             "x_axis_key": self._effective_x_key(),
+            "angle_wrap_period": self._angle_wrap_period,
             "selected_y_params": selected_y,
             "log_x": bool(self._log_x_check.isChecked()),
             "log_y_params": log_y,
@@ -620,6 +727,44 @@ class FitParametersPanel(QWidget):
             "cross_group_fit_configs": self._serialize_cross_group_fit_configs(),
         }
 
+    @classmethod
+    def _migrate_legacy_state(cls, state: dict) -> dict:
+        """Strip obsolete ``K⟨n⟩`` joint-fit track artefacts from a saved state.
+
+        Projects saved before the joint K(θ) fit reordered traces in place carry
+        standalone ``K⟨1⟩…`` columns, Y-selections and overlays that the current
+        code can neither regenerate nor remove via the UI. Drop them on load so
+        they don't linger as un-removable stale traces.
+        """
+        if not isinstance(state, dict):
+            return state
+        is_track = cls._is_legacy_joint_track_name
+        cleaned = dict(state)
+
+        rows = state.get("rows")
+        if isinstance(rows, list):
+            new_rows = []
+            for entry in rows:
+                if isinstance(entry, dict):
+                    entry = dict(entry)
+                    for key in ("values", "errors"):
+                        mapping = entry.get(key)
+                        if isinstance(mapping, dict):
+                            entry[key] = {k: v for k, v in mapping.items() if not is_track(k)}
+                new_rows.append(entry)
+            cleaned["rows"] = new_rows
+
+        for list_key in ("varying_params", "selected_y_params", "log_y_params"):
+            values = state.get(list_key)
+            if isinstance(values, list):
+                cleaned[list_key] = [v for v in values if not is_track(v)]
+
+        model_fits = state.get("model_fits")
+        if isinstance(model_fits, dict):
+            cleaned["model_fits"] = {k: v for k, v in model_fits.items() if not is_track(k)}
+
+        return cleaned
+
     def restore_state(self, state: dict) -> None:
         # Suppress the heavy synchronous plot draws each intermediate restore step
         # would otherwise trigger (checkbox setChecked signals, group-selection
@@ -639,10 +784,16 @@ class FitParametersPanel(QWidget):
         self._refresh_plot()
 
     def _restore_state_locked(self, state: dict) -> None:
+        state = self._migrate_legacy_state(state)
         rows_data = state.get("rows", [])
         self._composite_parameters = self._deserialize_composite_parameters(
             state.get("composite_parameters", [])
         )
+        self._knight_shift_config = KnightShiftConfig.from_dict(state.get("knight_shift"))
+        self._joint_fit = self._deserialize_joint_fit(state.get("joint_fit"))
+        # A restored joint fit re-enables its assignment-swap markers; the reorder
+        # itself is re-applied when the K traces are regenerated below.
+        self._DRAW_CROSSING_MARKERS = self._joint_fit is not None
         restored_rows: list[_FitRow] = []
         if isinstance(rows_data, list):
             for entry in rows_data:
@@ -679,10 +830,14 @@ class FitParametersPanel(QWidget):
         self._create_composite_btn.setEnabled(bool(self._rows))
         self._edit_composite_btn.setEnabled(False)
         self._remove_composite_btn.setEnabled(False)
+        self._knight_shift_btn.setEnabled(bool(self._rows))
 
         varying = state.get("varying_params", [])
         if isinstance(varying, list) and all(isinstance(v, str) for v in varying):
-            self._varying_params = list(varying)
+            # Drop any persisted K[...] names: live Knight-shift columns are
+            # re-added via _knight_shift_names, and stale ones must not survive as
+            # frozen Y parameters.
+            self._varying_params = [v for v in varying if not self._is_knight_shift_name(v)]
         else:
             self._varying_params = self._detect_varying_parameters(self._rows)
 
@@ -789,6 +944,7 @@ class FitParametersPanel(QWidget):
                     self._x_combo.setCurrentIndex(idx)
 
         self._log_x_check.setChecked(bool(state.get("log_x", False)))
+        self._restore_angle_fold(state.get("angle_wrap_period"))
 
         plot_mode = state.get("plot_mode")
         if isinstance(plot_mode, str):
@@ -904,6 +1060,8 @@ class FitParametersPanel(QWidget):
         highlight_runs_by_id: dict[str, list[int]] | None = None,
         select_id: str | None = None,
         global_params_by_id: dict[str, dict[str, dict[str, float]]] | None = None,
+        knight_observables_by_id: dict[str, dict[str, str]] | None = None,
+        fraction_weights_by_id: dict[str, dict[str, float]] | None = None,
     ) -> None:
         """Reload the panel to show all series for one representation.
 
@@ -975,6 +1133,11 @@ class FitParametersPanel(QWidget):
             )
             varying = self._detect_varying_parameters(rows)
             inferred_x = self._infer_x_key(rows)
+            observables = dict((knight_observables_by_id or {}).get(batch_id, {}))
+            # Apply the derived quantities with *this* series' observable map so its
+            # K columns are computed from its own model (activation re-applies for
+            # the active series).
+            self._knight_observables = observables
             self._apply_composite_parameters_to_rows(rows, composite_params, global_uncert)
 
             self._group_fit_results[batch_id] = _GroupFitData(
@@ -988,11 +1151,18 @@ class FitParametersPanel(QWidget):
                 plot_annotations=list(prev.get("plot_annotations", [])),
                 global_param_uncertainties=global_uncert,
                 composite_parameters=composite_params,
+                knight_observables=observables,
             )
 
         # Update per-series run-number map for browser highlighting.
         if highlight_runs_by_id is not None:
             self._series_run_numbers = dict(highlight_runs_by_id)
+        # Normalised fraction weights for the table dialog (keyed by series id, so
+        # they survive group switches without per-group plumbing).
+        self._fraction_weights_by_id = {
+            str(k): {str(n): float(w) for n, w in v.items()}
+            for k, v in (fraction_weights_by_id or {}).items()
+        }
 
         # Caller-requested selection (e.g. a just-computed batch) wins when it
         # survived the reload; otherwise activate the most-recently-added series
@@ -1061,6 +1231,7 @@ class FitParametersPanel(QWidget):
             plot_annotations=list(self._plot_annotations),
             global_param_uncertainties=dict(self._global_param_uncertainties),
             composite_parameters=list(self._composite_parameters),
+            knight_observables=dict(self._knight_observables),
         )
 
     def _selected_group_ids_from_buttons(self) -> list[str]:
@@ -1296,6 +1467,7 @@ class FitParametersPanel(QWidget):
             self._create_composite_btn.setEnabled(False)
             self._edit_composite_btn.setEnabled(False)
             self._remove_composite_btn.setEnabled(False)
+            self._knight_shift_btn.setEnabled(False)
             self._rebuild_y_controls(preferred_selected=previous_selected_y)
             self._refresh_model_fit_button_labels()
             self._update_x_axis_auto_hint()
@@ -1316,6 +1488,7 @@ class FitParametersPanel(QWidget):
             self._inferred_x_key = group.inferred_x_key
             self._model_fits = dict(group.model_fits)
             self._composite_parameters = list(group.composite_parameters)
+            self._knight_observables = dict(group.knight_observables)
             self._plot_annotations = list(group.plot_annotations)
         else:
             active_gid = (
@@ -1342,6 +1515,7 @@ class FitParametersPanel(QWidget):
             self._inferred_x_key = active_group.inferred_x_key
             self._model_fits = dict(active_group.model_fits)
             self._composite_parameters = list(active_group.composite_parameters)
+            self._knight_observables = dict(active_group.knight_observables)
             self._plot_annotations = list(active_group.plot_annotations)
 
         has_rows = bool(self._rows)
@@ -1357,6 +1531,7 @@ class FitParametersPanel(QWidget):
         self._export_gle_btn.setEnabled(has_rows)
         self._gle_format_combo.setEnabled(has_rows)
         self._create_composite_btn.setEnabled(has_rows)
+        self._knight_shift_btn.setEnabled(has_rows)
 
         display_params = set(self._display_y_parameters())
         self._model_fits = {k: v for k, v in self._model_fits.items() if k in display_params}
@@ -1370,7 +1545,21 @@ class FitParametersPanel(QWidget):
     def _on_y_selection_changed(self) -> None:
         self._selected_y_param_names = self._selected_y_parameters()
         self._update_composite_action_buttons()
+        self._update_joint_fit_button()
         self._plot_refresh_timer.start()
+
+    def _selected_knight_traces(self) -> list[str]:
+        """Currently-selected Knight-shift Y traces (eligible for the joint fit)."""
+        return [name for name in self._selected_y_parameters() if name in self._knight_shift_names]
+
+    def _update_joint_fit_button(self) -> None:
+        """Enable the joint K(θ) fit only for Angle x-axis + ≥2 selected K traces."""
+        ready = (
+            not self._joint_fit_compute_active
+            and self._angle_axis_active()
+            and len(self._selected_knight_traces()) >= 2
+        )
+        self._joint_knight_btn.setEnabled(ready)
 
     def _copy_parameter_set(self, source: ParameterSet) -> ParameterSet:
         copied = ParameterSet()
@@ -1796,6 +1985,9 @@ class FitParametersPanel(QWidget):
         for definition in self._composite_parameters:
             if definition.name and definition.name not in params:
                 params.append(definition.name)
+        for kname in self._knight_shift_names:
+            if kname not in params:
+                params.append(kname)
         return params
 
     def _selected_composite_parameter_names(self) -> list[str]:
@@ -1807,11 +1999,25 @@ class FitParametersPanel(QWidget):
             if name in selected and name in composite_names
         ]
 
+    def _selected_knight_trace_names(self) -> list[str]:
+        """Currently-selected Knight-shift K traces (removable derived quantities)."""
+        selected = set(self._selected_y_parameters())
+        return [
+            name
+            for name in self._display_y_parameters()
+            if name in selected and name in self._knight_shift_names
+        ]
+
     def _update_composite_action_buttons(self) -> None:
         has_rows = bool(self._rows)
         selected_composites = self._selected_composite_parameter_names()
+        selected_knight = self._selected_knight_trace_names()
+        # Edit only applies to composite (expression) parameters.
         self._edit_composite_btn.setEnabled(has_rows and len(selected_composites) == 1)
-        self._remove_composite_btn.setEnabled(has_rows and len(selected_composites) >= 1)
+        # Remove deletes composites and/or Knight-shift K traces.
+        self._remove_composite_btn.setEnabled(
+            has_rows and bool(selected_composites or selected_knight)
+        )
 
     def _available_composite_source_parameters(self) -> list[str]:
         composite_names = {definition.name for definition in self._composite_parameters}
@@ -1843,38 +2049,290 @@ class FitParametersPanel(QWidget):
                     row.values.pop(name, None)
                     row.errors.pop(name, None)
 
-        if not definitions:
+        if definitions:
+            for row in rows:
+                symbol_values = dict(row.values)
+                symbol_uncertainties = dict(row.errors)
+                if global_uncertainties:
+                    for name, value in global_uncertainties.items():
+                        symbol_uncertainties.setdefault(name, value)
+
+                for definition in definitions:
+                    try:
+                        parsed = CompositeExpression(definition.expression)
+                        evaluation = parsed.evaluate_with_uncertainty(
+                            symbol_values,
+                            symbol_uncertainties,
+                            covariance=row.covariance,
+                        )
+                        row.values[definition.name] = float(evaluation.value)
+                        row.errors[definition.name] = float(evaluation.uncertainty)
+                        symbol_values[definition.name] = float(evaluation.value)
+                        symbol_uncertainties[definition.name] = float(evaluation.uncertainty)
+                    except (CompositeExpressionError, ValueError):
+                        row.values[definition.name] = float("nan")
+                        row.errors[definition.name] = float("nan")
+
+        # Knight-shift quantities are derived from the (just-applied) frequencies
+        # the same way composites are, so apply them through the same chokepoint.
+        self._apply_knight_shift_to_rows(rows)
+
+    # ── Knight-shift conversion (Phase 3) ──────────────────────────────────
+    #: Oscillation components can be parameterised by precession *frequency*
+    #: (MHz; reference ν_ref = γ_µ·B) or directly by the local *field* (Gauss;
+    #: reference is the applied field B itself). Both are converted to a Knight
+    #: shift; the base parameter name distinguishes them.
+    _KNIGHT_COMPONENT_KINDS = ("frequency", "field")
+
+    def _oscillation_components(self, rows: list[_FitRow]) -> list[tuple[str, str]]:
+        """``(parameter_name, kind)`` Knight-convertible components in the rows.
+
+        ``kind`` is ``"frequency"`` or ``"field"``. When the active series carries
+        a model-derived observable map (``self._knight_observables``) it is used —
+        this excludes components whose ``field`` is the *applied* field (muonium),
+        which a bare name match cannot tell apart. For computed / model-less series
+        the map is empty and we fall back to matching the base parameter name.
+        Ordered by kind then component index so the order matches the model's
+        component order — the basis for stable per-component identity.
+        """
+        present: set[str] = set()
+        for row in rows:
+            present.update(row.values)
+
+        found: dict[str, str] = {}
+        if self._knight_observables:
+            for name, kind in self._knight_observables.items():
+                if name in present and kind in self._KNIGHT_COMPONENT_KINDS:
+                    found[name] = kind
+        else:
+            for name in present:
+                base, _index = split_parameter_name(name)
+                if base in self._KNIGHT_COMPONENT_KINDS:
+                    found[name] = base
+
+        def _order(item: tuple[str, str]) -> tuple[int, int, str]:
+            name, kind = item
+            _b, index = split_parameter_name(name)
+            kind_rank = self._KNIGHT_COMPONENT_KINDS.index(kind)
+            return (kind_rank, int(index) if index is not None else 1, name)
+
+        return sorted(found.items(), key=_order)
+
+    def _oscillation_component_names(self, rows: list[_FitRow]) -> list[str]:
+        """Just the component parameter names (see :meth:`_oscillation_components`)."""
+        return [name for name, _kind in self._oscillation_components(rows)]
+
+    def _knight_shift_subscript(self, component_name: str) -> str:
+        """1-based component ordinal for a component name (for the K symbol)."""
+        _, index = split_parameter_name(component_name)
+        return index if index is not None else "1"
+
+    @staticmethod
+    def _is_knight_shift_name(name: str) -> bool:
+        """True for a generated Knight-shift column name (``K[...]``)."""
+        return name.startswith("K[") and name.endswith("]")
+
+    @staticmethod
+    def _is_legacy_joint_track_name(name: str) -> bool:
+        """True for an obsolete joint K(θ) fit track column (``K⟨1⟩``, ``K⟨2⟩``, …).
+
+        Earlier joint fits added these as standalone traces; the joint fit now
+        reorders the ``K[...]`` traces in place, so any such column found in a
+        saved project is stale and is migrated away on load / re-conversion.
+        """
+        return name.startswith("K⟨") and name.endswith("⟩")
+
+    def _strip_legacy_joint_tracks(self, rows: list[_FitRow]) -> None:
+        """Remove obsolete ``K⟨n⟩`` track columns left by older joint fits."""
+        for row in rows:
+            for name in [n for n in row.values if self._is_legacy_joint_track_name(n)]:
+                row.values.pop(name, None)
+                row.errors.pop(name, None)
+        if rows is self._rows:
+            stale = [n for n in self._model_fits if self._is_legacy_joint_track_name(n)]
+            for name in stale:
+                self._model_fits.pop(name, None)
+                unregister_derived_param_info(name)
+                self._registered_knight_labels.discard(name)
+            self._varying_params = [
+                v for v in self._varying_params if not self._is_legacy_joint_track_name(v)
+            ]
+            self._selected_y_param_names = [
+                v for v in self._selected_y_param_names if not self._is_legacy_joint_track_name(v)
+            ]
+
+    def _apply_knight_shift_to_rows(self, rows: list[_FitRow]) -> None:
+        """Compute Knight-shift Y-quantities for the rows from the active config.
+
+        Stores ``K[<component>]`` columns (scaled to the resolved display unit) on
+        each row, registers display metadata so labels render as ``K_n (ppm)``,
+        and (for the active series) records detected component crossings.
+        Idempotent: *all* prior ``K[...]`` columns are stripped first, so columns
+        persisted in a saved project (or left by a previous config) never linger
+        as stale trend parameters.
+        """
+        for row in rows:
+            for name in [n for n in row.values if self._is_knight_shift_name(n)]:
+                row.values.pop(name, None)
+                row.errors.pop(name, None)
+        # Migrate away obsolete K⟨n⟩ track columns from older joint fits.
+        self._strip_legacy_joint_tracks(rows)
+        self._knight_shift_names = {}
+        self._knight_shift_crossings = []
+        self._unregister_knight_labels()
+
+        config = self._knight_shift_config
+        if not rows or config is None or not config.enabled:
+            return
+        components = self._oscillation_components(rows)
+        if not components:
+            return
+        kind_by_name = dict(components)
+
+        selected = [
+            (name, kind)
+            for name, kind in components
+            if (not config.components or name in config.components)
+        ]
+        ref_name = config.reference_component
+        if config.reference_mode != REFERENCE_APPLIED_FIELD:
+            ref_kind = kind_by_name.get(ref_name)
+            if ref_kind is None:
+                return  # designated reference is gone; emit nothing rather than guess
+            # Only convert components of the *same kind* as the reference: dividing
+            # a frequency (MHz) by a field (Gauss), or vice versa, is meaningless.
+            selected = [
+                (name, kind) for name, kind in selected if name != ref_name and kind == ref_kind
+            ]
+        if not selected:
             return
 
-        for row in rows:
-            symbol_values = dict(row.values)
-            symbol_uncertainties = dict(row.errors)
-            if global_uncertainties:
-                for name, value in global_uncertainties.items():
-                    symbol_uncertainties.setdefault(name, value)
+        # First pass: compute the dimensionless shifts so AUTO can pick a unit.
+        shifts: dict[str, list[tuple[_FitRow, float, float]]] = {}
+        for comp, kind in selected:
+            per_row: list[tuple[_FitRow, float, float]] = []
+            for row in rows:
+                k, sigma_k = self._row_knight_shift(row, comp, kind, ref_name)
+                per_row.append((row, k, sigma_k))
+            shifts[comp] = per_row
 
-            for definition in definitions:
-                try:
-                    parsed = CompositeExpression(definition.expression)
-                    evaluation = parsed.evaluate_with_uncertainty(
-                        symbol_values,
-                        symbol_uncertainties,
-                        covariance=row.covariance,
-                    )
-                    row.values[definition.name] = float(evaluation.value)
-                    row.errors[definition.name] = float(evaluation.uncertainty)
-                    symbol_values[definition.name] = float(evaluation.value)
-                    symbol_uncertainties[definition.name] = float(evaluation.uncertainty)
-                except (CompositeExpressionError, ValueError):
-                    row.values[definition.name] = float("nan")
-                    row.errors[definition.name] = float("nan")
+        all_fractions = [k for per_row in shifts.values() for _, k, _ in per_row]
+        unit = concrete_unit(config.unit, all_fractions)
+        scale = scale_for_unit(unit)
+        unit_label = label_for_unit(unit)
+
+        for comp, _kind in selected:
+            kname = f"K[{comp}]"
+            self._knight_shift_names[kname] = comp
+            self._register_knight_label(kname, self._knight_shift_subscript(comp), unit_label)
+            for row, k, sigma_k in shifts[comp]:
+                row.values[kname] = k * scale
+                row.errors[kname] = sigma_k * scale
+
+        # Flag component crossings/degeneracies across the scan (detection only;
+        # the K traces still follow the raw component labels). Only the active
+        # series feeds the panel-global crossing state — running it for every
+        # series in the load loop would be wasted work (only the last survives).
+        if rows is self._rows:
+            self._knight_shift_crossings = self._detect_component_crossings(components)
+
+        # The raw K traces were just (re)generated in component order; if a joint
+        # fit is active, reorder them in place so each follows its physical curve
+        # (durable across refreshes) and refresh the assignment-swap markers.
+        self._apply_joint_reorder(rows)
+
+    def _detect_component_crossings(self, components: list[tuple[str, str]]) -> list[object]:
+        """Detect oscillation-component crossings along the active x-axis.
+
+        Components are grouped by kind so the frequency-continuity matcher never
+        compares a frequency (MHz) against a field (Gauss); a mixed-unit gap would
+        otherwise dominate the tolerance and mask real crossings.
+        """
+        self._knight_shift_crossing_x_key = None
+        x_key = self._effective_x_key()
+        events: list[object] = []
+        for kind in self._KNIGHT_COMPONENT_KINDS:
+            names = [name for name, k in components if k == kind]
+            if len(names) < 2:
+                continue
+            points: list[ScanPoint] = []
+            for row in self._rows:
+                comps = tuple(
+                    Component(frequency=float(row.values[c])) for c in names if c in row.values
+                )
+                if len(comps) == len(names):
+                    # Use the raw scan coordinate (fold=False): crossings follow the
+                    # true rotation order; a folded axis would collapse distinct
+                    # orientations onto one x and manufacture zero-width crossings.
+                    x = self._x_value(row, x_key, fold=False)
+                    points.append(ScanPoint(x=float(x), components=comps))
+            events.extend(detect_crossings(points))
+        self._knight_shift_crossing_x_key = x_key
+        return events
+
+    def _row_knight_shift(
+        self, row: _FitRow, component_name: str, kind: str, reference_name: str | None
+    ) -> tuple[float, float]:
+        """Dimensionless Knight shift (and σ) for one component on one row.
+
+        ``kind`` selects the applied-field reference: a *frequency* component
+        (MHz) is referenced to the Larmor frequency γ_µ·B, a *field* component
+        (Gauss; the fitted local field B_µ) directly to the applied field B —
+        i.e. K = (B_µ − B)/B, the most direct form of the shift.
+        """
+        nu = row.values.get(component_name)
+        if nu is None:
+            return float("nan"), float("nan")
+        sigma_nu = float(row.errors.get(component_name, 0.0) or 0.0)
+        if self._knight_shift_config.reference_mode == REFERENCE_APPLIED_FIELD:
+            nu_ref = row.field if kind == "field" else larmor_frequency_mhz(row.field)
+            return knight_shift(nu, nu_ref, sigma_nu=sigma_nu)
+        nu_ref = row.values.get(reference_name)
+        if nu_ref is None:
+            return float("nan"), float("nan")
+        sigma_ref = float(row.errors.get(reference_name, 0.0) or 0.0)
+        cov = 0.0
+        if row.covariance is not None:
+            cov = float(row.covariance.get(component_name, {}).get(reference_name, 0.0))
+        return knight_shift(nu, nu_ref, sigma_nu=sigma_nu, sigma_ref=sigma_ref, cov=cov)
+
+    def _register_knight_label(self, kname: str, subscript: str, unit_label: str) -> None:
+        """Register display metadata so a Knight-shift quantity renders as K_n (unit).
+
+        The registered name is tracked so it can be removed again
+        (:meth:`_unregister_knight_labels`), bounding the global registry's growth
+        and clearing stale metadata when the conversion changes or the panel closes.
+        """
+        sub_unicode = subscript.translate(str.maketrans("0123456789", "₀₁₂₃₄₅₆₇₈₉"))
+        register_derived_param_info(
+            kname,
+            plain=f"K{subscript}",
+            unicode=f"K{sub_unicode}",
+            latex=f"$K_{{{subscript}}}$",
+            gle=f"K_{{{subscript}}}",
+            unit=unit_label or None,
+        )
+        self._registered_knight_labels.add(kname)
+
+    def _unregister_knight_labels(self) -> None:
+        """Drop every derived-label this panel registered for Knight-shift columns."""
+        for kname in self._registered_knight_labels:
+            unregister_derived_param_info(kname)
+        self._registered_knight_labels = set()
 
     def _detect_varying_parameters(self, rows: list[_FitRow]) -> list[str]:
         if not rows:
             return []
 
         composite_names = {definition.name for definition in self._composite_parameters}
-        all_names = sorted(name for name in rows[0].values.keys() if name not in composite_names)
+        # Knight-shift columns surface only via _knight_shift_names; never let a
+        # K[...] column (incl. one persisted in a saved project) be picked up as a
+        # generic varying parameter.
+        all_names = sorted(
+            name
+            for name in rows[0].values.keys()
+            if name not in composite_names and not self._is_knight_shift_name(name)
+        )
         varying: list[str] = []
         for name in all_names:
             vals = [r.values.get(name, np.nan) for r in rows]
@@ -1917,10 +2375,15 @@ class FitParametersPanel(QWidget):
 
     def _effective_x_key(self) -> str:
         data = self._x_combo.currentData()
-        # Both the parameter-vs-parameter (param:<name>) and the data-browser
-        # custom-column (custom:<id>) axes carry their key as item data; the fixed
-        # run-level axes carry none and are matched by display text below.
-        if isinstance(data, str) and (data.startswith("param:") or data.startswith("custom:")):
+        # The parameter-vs-parameter (param:<name>), data-browser custom-column
+        # (custom:<id>), and first-class Angle axes all carry their key as item
+        # data; the fixed run-level axes carry none and are matched by display
+        # text below. The Angle key has no "param:"/"custom:" prefix, so match it
+        # explicitly — otherwise selecting Angle silently falls through to the
+        # inferred field/temperature/run axis (the whole axis becomes a no-op).
+        if isinstance(data, str) and (
+            data.startswith("param:") or data.startswith("custom:") or data == self._angle_x_key()
+        ):
             return data
         selected = self._x_combo.currentText()
         if selected in {"B (G)", "𝐵 (G)"}:
@@ -2065,6 +2528,71 @@ class FitParametersPanel(QWidget):
         self._add_label_btn.setChecked(False)
         self._refresh_plot()
 
+    #: On-plot crossing markers are suppressed for now: when components run close
+    #: together throughout a scan the near-degeneracy flag fires at almost every
+    #: angle and the markers swamp the plot. Crossings are still *detected* (the
+    #: dialog reports the count and the events feed the future realignment step);
+    #: re-enable the markers once that lands and presents them more robustly.
+    _DRAW_CROSSING_MARKERS = False
+
+    @staticmethod
+    def _cluster_crossing_bands(events: list[object]) -> list[tuple[float, float]]:
+        """Merge neighbouring crossing transitions into ``(lo, hi)`` bands.
+
+        Each crossing spans one scan step ``[x_left, x_right]``; runs of adjacent
+        crossings (e.g. repeated near-degeneracies around one physical crossing)
+        are merged into a single band so each crossing shows once instead of as
+        several near-identical lines. An isolated crossing is padded to a thin,
+        visible band.
+        """
+        intervals = sorted(
+            (float(min(e.x_left, e.x_right)), float(max(e.x_left, e.x_right))) for e in events
+        )
+        if not intervals:
+            return []
+        widths = [hi - lo for lo, hi in intervals if hi > lo]
+        step = float(np.median(widths)) if widths else 0.0
+        tol = 1.5 * step  # merge crossings within ~1.5 scan steps of each other
+        pad = 0.25 * step  # so a lone crossing is a visible band, not a hairline
+        bands: list[tuple[float, float]] = []
+        lo, hi = intervals[0]
+        for next_lo, next_hi in intervals[1:]:
+            if next_lo - hi <= tol:
+                hi = max(hi, next_hi)
+            else:
+                bands.append((lo, hi))
+                lo, hi = next_lo, next_hi
+        bands.append((lo, hi))
+        return [(low - pad, high + pad) for low, high in bands]
+
+    def _draw_knight_shift_crossings(self, axes_by_tag: dict[str, object], x_key: str) -> None:
+        """Shade angle bands where oscillation components cross.
+
+        Drawn only while a Knight-shift conversion is active and the plotted
+        x-axis matches the one the crossings were computed against (so changing
+        the x-axis doesn't leave stale markers). Adjacent crossings are merged
+        into one band (see :meth:`_cluster_crossing_bands`).
+        """
+        if not self._DRAW_CROSSING_MARKERS:
+            return
+        if not self._knight_shift_crossings or not self._knight_shift_names:
+            return
+        if x_key != self._knight_shift_crossing_x_key:
+            return
+        bands = self._cluster_crossing_bands(self._knight_shift_crossings)
+        if not bands:
+            return
+        for ax in axes_by_tag.values():
+            for first, (lo, hi) in enumerate(bands):
+                ax.axvspan(
+                    lo,
+                    hi,
+                    color="#b5651d",
+                    alpha=0.12,
+                    zorder=1,
+                    label="component crossing" if first == 0 else None,
+                )
+
     def _draw_plot_annotations(self, axes_by_tag: dict[str, object]) -> None:
         """Draw stored annotations on currently visible parameter axes."""
         for ann in self._plot_annotations:
@@ -2085,7 +2613,40 @@ class FitParametersPanel(QWidget):
 
     def _on_x_axis_changed(self, *_args: object) -> None:
         self._update_x_axis_auto_hint()
+        self._update_angle_fold_visibility()
+        self._update_joint_fit_button()
         self._refresh_views()
+
+    def _angle_axis_active(self) -> bool:
+        """Whether the Angle field is the current trend x-axis."""
+        angle_key = self._angle_x_key()
+        return angle_key is not None and self._effective_x_key() == angle_key
+
+    def _update_angle_fold_visibility(self) -> None:
+        """Show the fold control only while the Angle axis is selected."""
+        visible = self._angle_axis_active()
+        self._angle_fold_label.setVisible(visible)
+        self._angle_fold_combo.setVisible(visible)
+
+    def _on_angle_fold_changed(self, *_args: object) -> None:
+        period = self._angle_fold_combo.currentData()
+        self._angle_wrap_period = float(period) if period is not None else None
+        if self._angle_axis_active():
+            self._refresh_views()
+
+    def _reset_angle_fold(self) -> None:
+        """Clear angle folding (combo + attribute) — used on New Project."""
+        self._restore_angle_fold(None)
+
+    def _restore_angle_fold(self, period: object) -> None:
+        """Restore the angle-fold period from saved state (combo + attribute)."""
+        value = float(period) if isinstance(period, (int, float)) else None
+        self._angle_wrap_period = value
+        idx = self._angle_fold_combo.findData(value)
+        if idx >= 0:
+            with QSignalBlocker(self._angle_fold_combo):
+                self._angle_fold_combo.setCurrentIndex(idx)
+        self._update_angle_fold_visibility()
 
     def _update_x_axis_auto_hint(self) -> None:
         if self._x_combo.currentText() != "Auto":
@@ -2178,6 +2739,7 @@ class FitParametersPanel(QWidget):
         active_is_angle = self._effective_x_key() == self._angle_x_key()
         self._angle_x_field = normalized
         self._rebuild_x_axis_combo()
+        self._update_angle_fold_visibility()
         if active_is_angle:
             self._refresh_plot()
 
@@ -2185,12 +2747,45 @@ class FitParametersPanel(QWidget):
         """Return the key identifying the first-class Angle x-axis, or None."""
         return self._angle_x_field[1] if self._angle_x_field is not None else None
 
+    def _angle_fold_suffix(self) -> str:
+        """Axis-label suffix noting the active angle fold (empty when off)."""
+        if self._angle_wrap_period is None:
+            return ""
+        return f" (folded {self._angle_wrap_period:g}°)"
+
     def _custom_x_labels(self) -> dict[str, str]:
-        """Map each free-text x-axis key to its display label (custom + Angle)."""
+        """Map each free-text x-axis key to its display label (custom + Angle).
+
+        The Angle label carries the fold note so every consumer (GLE export,
+        export column headers) stays consistent with the on-screen plot.
+        """
         labels = {key: label for label, key in self._custom_x_fields}
         if self._angle_x_field is not None:
-            labels[self._angle_x_field[1]] = self._angle_x_field[0]
+            labels[self._angle_x_field[1]] = self._angle_x_field[0] + self._angle_fold_suffix()
         return labels
+
+    def _export_abscissa_key(self) -> str | None:
+        """Active x-axis key when it is a free-text column (Angle or custom).
+
+        These are the only x-axes not already emitted as a fixed Run/B/T/param
+        column, so an export must add them explicitly. Returns None otherwise.
+        """
+        x_key = self._effective_x_key()
+        if x_key == self._angle_x_key() or _x_custom_id(x_key) is not None:
+            return x_key
+        return None
+
+    def _export_abscissa_column(self) -> tuple[str, str] | None:
+        """``(x_key, header_label)`` for the Angle/custom abscissa export column.
+
+        The single source of the trailing free-text x-axis column added to the
+        table, CSV, and GLE data file (label folded as displayed). ``None`` when
+        the x-axis is already a fixed Run/B/T/param column.
+        """
+        key = self._export_abscissa_key()
+        if key is None:
+            return None
+        return key, self._custom_x_labels().get(key, key)
 
     def _rebuild_y_controls(self, *, preferred_selected: list[str] | None = None) -> None:
         self._y_selector_table.blockSignals(True)
@@ -2221,6 +2816,10 @@ class FitParametersPanel(QWidget):
             fit_button.setMinimumWidth(
                 fit_button.fontMetrics().horizontalAdvance("Model Fit*") + 36
             )
+            # Keep keyboard focus on the table's selection model: a focusable cell
+            # widget steals focus on interaction and can collapse a multi-row
+            # selection built with Shift+Arrow.
+            fit_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             fit_button.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Fixed)
             fit_button.clicked.connect(
                 lambda _checked=False, p=name: self._open_model_fit_dialog(p)
@@ -2228,6 +2827,7 @@ class FitParametersPanel(QWidget):
             self._y_selector_table.setCellWidget(idx, 1, fit_button)
 
             log_check = QCheckBox("log")
+            log_check.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             log_check.stateChanged.connect(self._refresh_plot)
             log_check.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
             log_control_width = log_check.fontMetrics().horizontalAdvance("log") + 28
@@ -2402,6 +3002,298 @@ class FitParametersPanel(QWidget):
             preferred_selected.append(definition.name)
         self._refresh_after_composite_change(preferred_selected=preferred_selected)
 
+    # ── Knight-shift public API (driven by the dedicated dialog, Phase 3d) ──
+    def knight_shift_config(self) -> KnightShiftConfig:
+        """Return a copy of the active Knight-shift configuration."""
+        return KnightShiftConfig.from_dict(self._knight_shift_config.to_dict())
+
+    def available_oscillation_components(self) -> list[str]:
+        """Frequency parameter names available to convert, in component order."""
+        return self._oscillation_component_names(self._rows)
+
+    def knight_shift_crossings(self) -> list[object]:
+        """Crossing events flagged on the active series (for annotation/reporting)."""
+        return list(self._knight_shift_crossings)
+
+    def set_knight_shift_config(self, config: KnightShiftConfig) -> None:
+        """Apply a new Knight-shift configuration and refresh the trend.
+
+        Newly-generated K quantities are auto-selected (and the previous ones
+        de-selected) so enabling the conversion immediately shows the result.
+        """
+        previous_k = set(self._knight_shift_names)
+        # Re-running the conversion regenerates the raw, per-component K traces, so
+        # any prior joint-fit reorder is dropped (and its markers turned off). Drop
+        # the joint fit's per-curve overlays too: they are keyed by the K[...] trace
+        # names, which survive the conversion, so otherwise a stale K(θ) curve would
+        # be drawn over the regenerated raw data.
+        if self._joint_fit:
+            for name in self._joint_fit.get("curves", {}):
+                self._model_fits.pop(name, None)
+        self._joint_fit = None
+        self._DRAW_CROSSING_MARKERS = False
+        self._knight_shift_config = config
+        self._apply_composite_parameters_to_rows(
+            self._rows,
+            self._composite_parameters,
+            self._global_param_uncertainties,
+        )
+        preferred = [n for n in self._selected_y_param_names if n not in previous_k]
+        preferred.extend(n for n in self._knight_shift_names if n not in preferred)
+        self._refresh_after_composite_change(preferred_selected=preferred)
+
+    def _open_knight_shift_dialog(self) -> None:
+        components = self.available_oscillation_components()
+        if not components:
+            QMessageBox.information(
+                self,
+                "Knight Shift",
+                "No oscillation-frequency components were found in this series.",
+            )
+            return
+        dialog = KnightShiftDialog(
+            available_components=components,
+            config=self._knight_shift_config,
+            crossing_count=len(self._knight_shift_crossings),
+            parent=self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        config = dialog.knight_shift_config()
+        if config is not None:
+            self.set_knight_shift_config(config)
+
+    # ── Joint K(θ) fit with per-angle assignment (Phase 6) ─────────────────
+    def _open_joint_knight_fit_dialog(self) -> None:
+        traces = self._selected_knight_traces()
+        if len(traces) < 2 or not self._angle_axis_active():
+            QMessageBox.information(
+                self,
+                "Joint K(θ) Fit",
+                "Select at least two Knight-shift traces with Angle as the x-axis.",
+            )
+            return
+        dialog = KnightJointFitDialog(n_curves=len(traces), parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        config = dialog.joint_fit_config()
+        if config is not None:
+            model_name, max_iter = config
+            self._run_joint_knight_fit(traces, model_name, max_iter)
+
+    def _run_joint_knight_fit(self, traces: list[str], model_name: str, max_iter: int) -> None:
+        """Fit the selected Knight-shift traces jointly, off the GUI thread.
+
+        The per-angle assignment must follow the *true rotation order*, so the
+        abscissa is taken with ``fold=False`` (the raw scan coordinate), exactly
+        as crossing detection does: folding would collapse distinct orientations
+        onto one angle and scramble the continuity / crossing-swap seeds. The
+        classification-EM fit runs many least-squares fits across several seeds,
+        so it is dispatched to a worker rather than blocking the GUI thread.
+        """
+        x_key = self._effective_x_key()
+        rows = sorted(self._rows, key=lambda r: self._x_value(r, x_key, fold=False))
+        angles = [self._x_value(r, x_key, fold=False) for r in rows]
+        values = [[r.values.get(name, float("nan")) for name in traces] for r in rows]
+        errors = [[r.errors.get(name, float("nan")) for name in traces] for r in rows]
+
+        self._joint_fit_compute_active = True
+        self._joint_knight_btn.setEnabled(False)
+        if self._trend_overlay is not None:
+            self._trend_overlay.show_message("Fitting K(θ)…")
+        self._tasks.start(
+            lambda _worker: fit_assigned_angular_curves(
+                angles, values, errors, model_name=model_name, max_iter=max_iter
+            ),
+            on_finished=lambda result: self._on_joint_knight_fit_ready(
+                result, rows, traces, model_name
+            ),
+            on_error=self._on_joint_knight_fit_error,
+        )
+
+    def _on_joint_knight_fit_ready(
+        self,
+        result: AngularAssignmentResult,
+        rows: list[_FitRow],
+        traces: list[str],
+        model_name: str,
+    ) -> None:
+        self._joint_fit_compute_active = False
+        if self._trend_overlay is not None:
+            self._trend_overlay.hide()
+        self._update_joint_fit_button()
+        if not result.curves:
+            QMessageBox.information(
+                self, "Joint K(θ) Fit", result.message or "The joint fit produced no curves."
+            )
+            return
+        self._apply_joint_knight_fit(result, rows, traces, model_name)
+
+    def _on_joint_knight_fit_error(self, message: str) -> None:
+        self._joint_fit_compute_active = False
+        if self._trend_overlay is not None:
+            self._trend_overlay.hide()
+        self._update_joint_fit_button()
+        QMessageBox.warning(self, "Joint K(θ) Fit", f"The joint fit failed: {message}")
+
+    def _apply_joint_knight_fit(
+        self,
+        result: AngularAssignmentResult,
+        rows: list[_FitRow],
+        traces: list[str],
+        model_name: str,
+    ) -> None:
+        """Reorder the existing K traces in place and overlay the per-curve fits.
+
+        No new traces are created: each selected ``K[...]`` trace is replaced by
+        the continuous physical curve assigned to it (the raw, per-component
+        ordering is regenerated by re-running the conversion). The component→curve
+        permutation is stored per run so the reorder survives trend refreshes.
+        """
+        # Permutation per run (stable across refreshes / reload), built from the
+        # angle-sorted assignment the core returned.
+        assignment = {
+            int(row.run_number): tuple(int(c) for c in result.assignment[i])
+            for i, row in enumerate(rows)
+        }
+        # Per-curve overlays, keyed on the trace each curve now occupies. They are
+        # held inside ``_joint_fit`` (and serialised with it) so the joint fit is
+        # reconstructed deterministically on every reload / group switch, rather
+        # than relying on the per-group ``model_fits`` round-trip surviving.
+        angles = [self._x_value(r, self._effective_x_key()) for r in rows]
+        finite = [a for a in angles if np.isfinite(a)]
+        x_min = min(finite) if finite else None
+        x_max = max(finite) if finite else None
+        curves: dict[str, ParameterModelFit] = {}
+        for curve, name in enumerate(traces):
+            fit_result = result.curves[curve]
+            curves[name] = ParameterModelFit(
+                parameter_name=name,
+                x_key=self._effective_x_key(),
+                ranges=[
+                    ModelFitRange(
+                        x_min=x_min,
+                        x_max=x_max,
+                        model=ParameterCompositeModel([model_name]),
+                        parameters=fit_result.parameters,
+                        result=fit_result,
+                    )
+                ],
+                active=True,
+            )
+
+        self._joint_fit = {
+            "traces": list(traces),
+            "assignment": assignment,
+            "model_name": model_name,
+            "curves": curves,
+        }
+
+        self._apply_joint_reorder(self._rows)
+        # The suppressed markers are exactly what the joint fit now justifies: show
+        # them at the angles where the assignment swaps.
+        self._DRAW_CROSSING_MARKERS = True
+
+        self._sync_active_group_state()
+        # Keep the user's existing K-trace selection (no new traces were added).
+        self._rebuild_y_controls(preferred_selected=traces)
+        self._refresh_model_fit_button_labels()
+        self._refresh_views()
+
+    def _apply_joint_reorder(self, rows: list[_FitRow]) -> None:
+        """Reorder the joint-fit K traces in place per the stored per-run permutation.
+
+        Re-applied after every Knight-shift (re)generation so the reorder is durable
+        across refreshes. Also refreshes the assignment-swap crossing markers. A
+        no-op when no joint fit is active or its traces are absent from the rows.
+        """
+        if not self._joint_fit:
+            return
+        traces = list(self._joint_fit["traces"])
+        assignment: dict[int, tuple[int, ...]] = self._joint_fit["assignment"]
+        present = {name for row in rows for name in row.values}
+        if not all(name in present for name in traces):
+            return
+        n = len(traces)
+        for row in rows:
+            perm = assignment.get(int(row.run_number))
+            if perm is None or len(perm) != n:
+                continue
+            # perm[component] = curve; place each component's raw value on its curve's trace.
+            old_v = {name: row.values.get(name, float("nan")) for name in traces}
+            old_e = {name: row.errors.get(name, float("nan")) for name in traces}
+            for component, curve in enumerate(perm):
+                row.values[traces[curve]] = old_v[traces[component]]
+                row.errors[traces[curve]] = old_e[traces[component]]
+        if rows is self._rows:
+            # Re-inject the per-curve overlays and markers from the joint-fit state
+            # so they survive a group switch / reload that rebuilt _model_fits from
+            # the (possibly lossy) per-group snapshot.
+            for name, model_fit in self._joint_fit.get("curves", {}).items():
+                self._model_fits[name] = model_fit
+            self._DRAW_CROSSING_MARKERS = True
+        self._refresh_joint_fit_markers(rows)
+
+    def _refresh_joint_fit_markers(self, rows: list[_FitRow]) -> None:
+        """Mark angles where the joint-fit assignment swaps between adjacent points."""
+        if not self._joint_fit:
+            return
+        x_key = self._effective_x_key()
+        assignment: dict[int, tuple[int, ...]] = self._joint_fit["assignment"]
+        ordered = sorted(rows, key=lambda r: self._x_value(r, x_key))
+        events: list[object] = []
+        for k in range(len(ordered) - 1):
+            a = assignment.get(int(ordered[k].run_number))
+            b = assignment.get(int(ordered[k + 1].run_number))
+            if a is None or b is None or a == b:
+                continue
+            changed = [c for c in range(len(a)) if a[c] != b[c]]
+            pair = (changed[0], changed[1]) if len(changed) >= 2 else (changed[0], changed[0])
+            events.append(
+                CrossingEvent(
+                    k,
+                    float(self._x_value(ordered[k], x_key)),
+                    float(self._x_value(ordered[k + 1], x_key)),
+                    pair,
+                    "order_swap",
+                )
+            )
+        self._knight_shift_crossings = events
+        self._knight_shift_crossing_x_key = x_key
+
+    def _serialize_joint_fit(self) -> dict | None:
+        """Serialise the active joint-fit reorder (permutation, traces, overlays)."""
+        if not self._joint_fit:
+            return None
+        return {
+            "traces": list(self._joint_fit["traces"]),
+            "model_name": self._joint_fit["model_name"],
+            "assignment": {
+                str(run): list(perm) for run, perm in self._joint_fit["assignment"].items()
+            },
+            "curves": self._serialize_model_fits_mapping(self._joint_fit.get("curves", {})),
+        }
+
+    def _deserialize_joint_fit(self, data: object) -> dict | None:
+        if not isinstance(data, dict):
+            return None
+        try:
+            traces = [str(t) for t in data.get("traces", [])]
+            assignment = {
+                int(run): tuple(int(c) for c in perm)
+                for run, perm in (data.get("assignment") or {}).items()
+            }
+        except (TypeError, ValueError):
+            return None
+        if not traces or not assignment:
+            return None
+        return {
+            "traces": traces,
+            "assignment": assignment,
+            "model_name": str(data.get("model_name", "")),
+            "curves": self._deserialize_model_fits(data.get("curves", {})),
+        }
+
     def _edit_selected_composite_parameter(self) -> None:
         selected = self._selected_composite_parameter_names()
         if len(selected) != 1:
@@ -2458,44 +3350,87 @@ class FitParametersPanel(QWidget):
         self._refresh_after_composite_change(preferred_selected=preferred_selected)
 
     def _remove_selected_composite_parameters(self) -> None:
-        selected = self._selected_composite_parameter_names()
+        composites = self._selected_composite_parameter_names()
+        knight = self._selected_knight_trace_names()
+        selected = composites + knight
         if not selected:
             return
 
         if len(selected) == 1:
-            message = f"Remove composite parameter '{selected[0]}'?"
+            message = f"Remove '{selected[0]}'?"
         else:
-            names = ", ".join(selected)
-            message = f"Remove selected composite parameters ({names})?"
-
-        confirm = QMessageBox.question(
-            self,
-            "Remove Composite Parameter",
-            message,
-        )
+            message = f"Remove selected quantities ({', '.join(selected)})?"
+        confirm = QMessageBox.question(self, "Remove", message)
         if confirm != QMessageBox.StandardButton.Yes:
             return
 
-        names_to_remove = set(selected)
-        self._composite_parameters = [
-            definition
-            for definition in self._composite_parameters
-            if definition.name not in names_to_remove
-        ]
-        for name in names_to_remove:
-            self._model_fits.pop(name, None)
-
-        self._apply_composite_parameters_to_rows(
-            self._rows,
-            self._composite_parameters,
-            self._global_param_uncertainties,
-            drop_names=names_to_remove,
-        )
-
         preferred_selected = [
-            name for name in self._selected_y_param_names if name not in names_to_remove
+            name for name in self._selected_y_param_names if name not in set(selected)
         ]
+
+        if composites:
+            names_to_remove = set(composites)
+            self._composite_parameters = [
+                definition
+                for definition in self._composite_parameters
+                if definition.name not in names_to_remove
+            ]
+            for name in names_to_remove:
+                self._model_fits.pop(name, None)
+            self._apply_composite_parameters_to_rows(
+                self._rows,
+                self._composite_parameters,
+                self._global_param_uncertainties,
+                drop_names=names_to_remove,
+            )
+
+        if knight:
+            # Drop the components backing the selected K traces from the conversion
+            # (and any joint fit that used them); set_knight_shift_config re-applies
+            # and refreshes, so it is the last step.
+            self._remove_knight_traces(knight, preferred_selected=preferred_selected)
+            return
+
         self._refresh_after_composite_change(preferred_selected=preferred_selected)
+
+    def _remove_knight_traces(self, knames: list[str], *, preferred_selected: list[str]) -> None:
+        """Delete the selected Knight-shift K traces by excluding their components.
+
+        The K traces are derived by the Knight-shift conversion, so removing one
+        means dropping its component from the conversion's component list (an
+        explicit allow-list). When the last component goes the conversion is
+        disabled. ``set_knight_shift_config`` re-applies and refreshes (and clears
+        any joint fit, which spans all components).
+        """
+        comps_to_remove = {
+            self._knight_shift_names[name] for name in knames if name in self._knight_shift_names
+        }
+        if not comps_to_remove:
+            self._refresh_after_composite_change(preferred_selected=preferred_selected)
+            return
+
+        config = self._knight_shift_config
+        if config.components:
+            current = list(config.components)
+        else:
+            current = [name for name, _ in self._oscillation_components(self._rows)]
+        remaining = [c for c in current if c not in comps_to_remove]
+
+        if not remaining:
+            new_config = replace(config, enabled=False, components=())
+        else:
+            reference_component = config.reference_component
+            reference_mode = config.reference_mode
+            if reference_component in comps_to_remove:
+                reference_component = None
+                reference_mode = REFERENCE_APPLIED_FIELD
+            new_config = replace(
+                config,
+                components=tuple(remaining),
+                reference_component=reference_component,
+                reference_mode=reference_mode,
+            )
+        self.set_knight_shift_config(new_config)
 
     def _open_model_fit_dialog(self, param_name: str) -> None:
         selected_group_ids = self._selected_group_ids_from_buttons()
@@ -3086,6 +4021,13 @@ class FitParametersPanel(QWidget):
         for name in display_params:
             label = _format_param_label(name)
             columns.extend([label, f"err {label}"])
+        # A free-text x-axis (Angle / custom column) is not one of the fixed
+        # columns, so add it explicitly (folded as displayed) — otherwise the
+        # table/CSV would not show the abscissa the plot is drawn against.
+        abscissa = self._export_abscissa_column()
+        abscissa_key = abscissa[0] if abscissa is not None else None
+        if abscissa is not None:
+            columns.append(abscissa[1])
 
         self._table.setColumnCount(len(columns))
         self._table.setHorizontalHeaderLabels(columns)
@@ -3102,6 +4044,10 @@ class FitParametersPanel(QWidget):
                 self._table.setItem(i, col, QTableWidgetItem(f"{val:.6g}"))
                 self._table.setItem(i, col + 1, QTableWidgetItem(f"{err:.3g}"))
                 col += 2
+            if abscissa_key is not None:
+                self._table.setItem(
+                    i, col, QTableWidgetItem(f"{self._x_value(row, abscissa_key):.6g}")
+                )
 
         self._table.resizeColumnsToContents()
 
@@ -3466,6 +4412,7 @@ class FitParametersPanel(QWidget):
                 ax.set_xscale("log" if self._log_x_check.isChecked() else "linear")
                 ax.grid(True, alpha=0.3)
 
+        self._draw_knight_shift_crossings(axes_by_tag, x_key)
         self._draw_plot_annotations(axes_by_tag)
 
         if getattr(self._figure, "get_constrained_layout", lambda: False)():
@@ -3481,7 +4428,7 @@ class FitParametersPanel(QWidget):
         if name is not None:
             return _format_plot_label(name)
         if self._angle_x_field is not None and x_key == self._angle_x_field[1]:
-            return self._angle_x_field[0]
+            return self._angle_x_field[0] + self._angle_fold_suffix()
         custom_id = _x_custom_id(x_key)
         if custom_id is not None:
             return self._custom_x_labels().get(custom_id, custom_id)
@@ -3489,7 +4436,7 @@ class FitParametersPanel(QWidget):
             x_key, "Run Number"
         )
 
-    def _x_value(self, row: _FitRow, x_key: str) -> float:
+    def _x_value(self, row: _FitRow, x_key: str, *, fold: bool = True) -> float:
         name = _x_param_name(x_key)
         if name is not None:
             return float(row.values.get(name, float("nan")))
@@ -3499,7 +4446,15 @@ class FitParametersPanel(QWidget):
         # rather than plotted at 0 or corrupting the axis/fit).
         value_key = x_key if x_key == self._angle_x_key() else _x_custom_id(x_key)
         if value_key is not None:
-            return _coerce_abscissa(row.custom_values.get(value_key, ""))
+            value = _coerce_abscissa(row.custom_values.get(value_key, ""))
+            # Fold the Angle axis into its chosen period so equivalent orientations
+            # overlay (no-op for non-angle custom columns or when folding is off).
+            # ``fold=False`` recovers the raw scan coordinate — used by crossing
+            # detection, which must follow the true rotation order, not the folded
+            # display (folding would collapse distinct orientations onto one x).
+            if fold and x_key == self._angle_x_key() and self._angle_wrap_period is not None:
+                return wrap_angle_deg(value, self._angle_wrap_period)
+            return value
         if x_key == "field":
             return row.field
         if x_key == "temperature":
@@ -3525,6 +4480,25 @@ class FitParametersPanel(QWidget):
         if np.any(np.isfinite(errs) & (errs > 0)):
             return errs
         return None
+
+    def _fraction_weights_note(self) -> str:
+        """Footnote giving the normalised fraction weights for the active series.
+
+        The raw fitted fractions shown in the header are un-normalised relative
+        weights (the model divides each by its group sum), so they need not add to
+        1; this line reports the physical partition fraction_i / Σ — including the
+        usually-hidden fixed last fraction — which does sum to 1 per group.
+        """
+        weights = self._fraction_weights_by_id.get(self._active_group_id or "")
+        if not weights:
+            return ""
+
+        def _order(name: str) -> tuple[int, str]:
+            _, index = split_parameter_name(name)
+            return (int(index) if index is not None else 0, name)
+
+        parts = [f"{name} = {weights[name]:.3g}" for name in sorted(weights, key=_order)]
+        return "Normalised fraction weights (relative; each group sums to 1): " + ", ".join(parts)
 
     def _show_table_dialog(self) -> None:
         if self._table.rowCount() == 0 or self._table.columnCount() == 0:
@@ -3561,6 +4535,14 @@ class FitParametersPanel(QWidget):
         header_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         header_label.setWordWrap(True)
         layout.addWidget(header_label)
+
+        fraction_note = self._fraction_weights_note()
+        if fraction_note:
+            note_label = QLabel(fraction_note)
+            note_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            note_label.setWordWrap(True)
+            note_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+            layout.addWidget(note_label)
 
         table_view = QTableWidget(self._table.rowCount(), self._table.columnCount(), dialog)
         table_view.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -3609,6 +4591,12 @@ class FitParametersPanel(QWidget):
                 headers.extend([f"{name} ({unit})", f"err_{name} ({unit})"])
             else:
                 headers.extend([name, f"err_{name}"])
+        # The Angle/custom abscissa is appended by _refresh_table as a trailing
+        # column; mirror it here so the header row matches the data cells read
+        # from the table below.
+        abscissa = self._export_abscissa_column()
+        if abscissa is not None:
+            headers.append(abscissa[1])
 
         with open(path, "w", newline="", encoding="utf-8") as csvfile:
             writer = csv.writer(csvfile)
@@ -3621,8 +4609,11 @@ class FitParametersPanel(QWidget):
                 writer.writerow(values)
 
     def _serialize_model_fits(self) -> dict:
+        return self._serialize_model_fits_mapping(self._model_fits)
+
+    def _serialize_model_fits_mapping(self, mapping: dict[str, ParameterModelFit]) -> dict:
         payload: dict[str, dict] = {}
-        for param_name, model_fit in self._model_fits.items():
+        for param_name, model_fit in mapping.items():
             ranges_data = []
             for fit_range in model_fit.ranges:
                 range_item = {
@@ -4046,6 +5037,7 @@ class FitParametersPanel(QWidget):
 
     def closeEvent(self, event) -> None:
         self.shutdown_workers()
+        self._unregister_knight_labels()
         super().closeEvent(event)
 
     def _write_fit_files(
@@ -4154,6 +5146,12 @@ class FitParametersPanel(QWidget):
                     headers.extend([f"{name} ({unit})", f"err_{name} ({unit})"])
                 else:
                     headers.extend([name, f"err_{name}"])
+            # A free-text x-axis (Angle/custom) is appended as a trailing column so
+            # GLE can plot against it; param columns keep their fixed indices.
+            abscissa = self._export_abscissa_column()
+            abscissa_key = abscissa[0] if abscissa is not None else None
+            if abscissa is not None:
+                headers.append(abscissa[1])
 
             f.write("! Column map:\n")
             for col_idx, name in enumerate(headers, start=1):
@@ -4177,6 +5175,8 @@ class FitParametersPanel(QWidget):
                 for name in self._display_y_parameters():
                     values.append(row.values.get(name, np.nan))
                     values.append(row.errors.get(name, np.nan))
+                if abscissa_key is not None:
+                    values.append(self._x_value(row, abscissa_key))
                 f.write(" ".join(f"{v:>16.8g}" for v in values) + "\n")
 
     def _gle_x_column(self, x_key: str) -> int:
@@ -4190,7 +5190,11 @@ class FitParametersPanel(QWidget):
             return 1
         if x_key == "field":
             return 2
-        return 3
+        if x_key == "temperature":
+            return 3
+        # Angle / custom column: the trailing column appended by _write_gle_data_file
+        # (after Run/B/T and the 2-per-parameter columns).
+        return 4 + 2 * len(self._display_y_parameters())
 
     def _gle_columns_for_param(self, name: str) -> tuple[int, int] | None:
         display_params = self._display_y_parameters()

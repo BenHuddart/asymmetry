@@ -196,6 +196,8 @@ def test_normalize_and_decode_x_keys() -> None:
     assert _normalize_x_key("field") == "field"
     assert _normalize_x_key("temperature") == "temperature"
     assert _normalize_x_key("run") == "run"
+    assert _normalize_x_key("angle") == "angle"  # first-class Angle axis is preserved
+    assert _normalize_x_key("custom:rotation") == "custom:rotation"
     assert _normalize_x_key("param:") == "run"  # empty name collapses
     assert _normalize_x_key("garbage") == "run"
     assert _x_param_name("param:nu") == "nu"

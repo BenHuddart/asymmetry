@@ -141,6 +141,49 @@ PARAM_INFO_REGISTRY: dict[str, ParamInfo] = {
         default_min=0.0,
         description="Saturated (T=0) value of an order-parameter trend.",
     ),
+    # Knight-shift K(θ) anisotropy parameters (Phase 5). The K-amplitudes carry
+    # the displayed Knight-shift unit (ppm/%/fraction), so no fixed unit here.
+    "K_iso": ParamInfo(
+        "K_iso",
+        "K_iso",
+        "K_iso",
+        r"$K_{\mathrm{iso}}$",
+        r"{\it K}_{iso}",
+        description="Isotropic (orientation-independent) Knight shift.",
+    ),
+    "K_ax": ParamInfo(
+        "K_ax",
+        "K_ax",
+        "K_ax",
+        r"$K_{\mathrm{ax}}$",
+        r"{\it K}_{ax}",
+        description="Axial Knight-shift anisotropy amplitude.",
+    ),
+    "K_avg": ParamInfo(
+        "K_avg",
+        "K_avg",
+        "K_avg",
+        r"$K_{\mathrm{avg}}$",
+        r"{\it K}_{avg}",
+        description="Orientation-averaged Knight shift (cos2θ offset).",
+    ),
+    "K_amp": ParamInfo(
+        "K_amp",
+        "K_amp",
+        "K_amp",
+        r"$K_{\mathrm{amp}}$",
+        r"{\it K}_{amp}",
+        description="Two-fold (cos2θ) Knight-shift modulation amplitude.",
+    ),
+    "theta0": ParamInfo(
+        "theta0",
+        "theta0",
+        "θ₀",
+        r"$\theta_0$",
+        r"\theta_{0}",
+        "°",
+        description="Angular offset of the cos2θ Knight-shift modulation.",
+    ),
     "phase": ParamInfo("phase", "phase", "φ", r"$\phi$", r"\phi", "rad"),
     # The grouped fit's per-group phase nuisance. It carries the full (absolute)
     # phase of each detector group's oscillation — the shared model phase is held
@@ -507,6 +550,10 @@ PARAM_INFO_REGISTRY = {
     name: _attach_description(info) for name, info in PARAM_INFO_REGISTRY.items()
 }
 
+#: Built-in parameter names, captured before any derived-quantity registration,
+#: so :func:`unregister_derived_param_info` can never evict a real parameter.
+_BUILTIN_PARAM_NAMES = frozenset(PARAM_INFO_REGISTRY)
+
 
 def get_param_info(name: str) -> ParamInfo:
     """Return metadata for a parameter name, including indexed variants."""
@@ -539,6 +586,39 @@ def get_param_info(name: str) -> ParamInfo:
 def param_info_map(param_names: list[str]) -> dict[str, ParamInfo]:
     """Build a parameter metadata mapping for a parameter-name sequence."""
     return {name: get_param_info(name) for name in param_names}
+
+
+def register_derived_param_info(
+    name: str,
+    *,
+    plain: str,
+    unicode: str,
+    latex: str,
+    gle: str,
+    unit: str | None = None,
+) -> None:
+    """Register display metadata for a derived/computed quantity (e.g. a Knight shift).
+
+    Lets a computed trend quantity carry a proper symbol + unit so every label
+    path (table, matplotlib, GLE, legend) renders it correctly via
+    :func:`get_param_info`, without special-casing the name at each call site.
+    Idempotent: re-registering the same name overwrites its metadata (so a unit
+    change is picked up). The name should not end in ``_<digits>`` (that triggers
+    the indexed-variant split).
+    """
+    PARAM_INFO_REGISTRY[name] = ParamInfo(name, plain, unicode, latex, gle, unit)
+
+
+def unregister_derived_param_info(name: str) -> None:
+    """Remove a previously registered derived-quantity entry (idempotent).
+
+    Lets a transient producer (e.g. a GUI panel's Knight-shift conversion) bound
+    the lifetime of its registered labels so the global registry does not grow
+    without limit or retain stale metadata after the producer goes away. Built-in
+    parameters are never removed by this call.
+    """
+    if name not in _BUILTIN_PARAM_NAMES:
+        PARAM_INFO_REGISTRY.pop(name, None)
 
 
 @dataclass(frozen=True)

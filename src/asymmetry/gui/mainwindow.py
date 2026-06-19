@@ -67,6 +67,7 @@ from asymmetry.core.fitting import (
     fit_scan_model,
     grouped_time_domain_available,
 )
+from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.parameter_models import (
     CrossGroupFitResult,
     effective_range_bounds,
@@ -2059,6 +2060,62 @@ class MainWindow(QMainWindow):
         ):
             return None
         return self._select_non_overlay_target(selected)
+
+    @staticmethod
+    def _grouped_member_source_run(dataset: MuonDataset) -> int | None:
+        """Source run a synthetic grouped-fit member belongs to (None if unknown)."""
+        meta = getattr(dataset, "metadata", {}) or {}
+        source = meta.get("source_run_number")
+        if source is None:
+            try:
+                # Synthetic member keys are -(source_run * 1000 + group); recover
+                # the source run when the explicit metadata is absent.
+                source = abs(int(dataset.run_number)) // 1000
+            except (TypeError, ValueError):
+                return None
+        try:
+            return int(source)
+        except (TypeError, ValueError):
+            return None
+
+    def _grouped_members_for_display(
+        self, grouped_datasets: list[MuonDataset]
+    ) -> list[MuonDataset]:
+        """Restrict batch grouped-fit members to the current run's detector groups.
+
+        A batch fit returns every ``(run, group)`` member, but the groups view
+        shows a single run's detector groups. Rendering all members produced one
+        dense subplot per member (e.g. 84 for 21 runs × 4 groups), freezing the
+        GUI for seconds when the fit returned. A single-run fit (one source run)
+        is returned unchanged.
+        """
+        members_by_run: dict[int, list[MuonDataset]] = {}
+        for dataset in grouped_datasets:
+            run = self._grouped_member_source_run(dataset)
+            if run is None:
+                continue
+            members_by_run.setdefault(run, []).append(dataset)
+        if len(members_by_run) <= 1:
+            return grouped_datasets
+
+        # Prefer the run whose groups are currently shown (the representative
+        # member of the selection); fall back to the lowest-numbered run so the
+        # plot still reflects part of the batch.
+        selected = self._selected_or_current_datasets()
+        target = self._single_group_view_target(selected)
+        if target is None and len(selected) == 1:
+            target = selected[0]
+        if target is None:
+            target = self._current_dataset
+        current_run = None
+        if target is not None:
+            try:
+                current_run = int(target.run_number)
+            except (TypeError, ValueError):
+                current_run = None
+        if current_run in members_by_run:
+            return members_by_run[current_run]
+        return members_by_run[min(members_by_run)]
 
     def _overlay_enabled(self) -> bool:
         """Return whether multi-selection overlays should be shown."""
@@ -8249,6 +8306,68 @@ class MainWindow(QMainWindow):
             "temperature": _safe_float(meta.get("temperature")),
         }
 
+    @staticmethod
+    def _composite_model_for_series(series: FitSeries) -> CompositeModel | None:
+        """Reconstruct a series' time-domain model, or None if unavailable.
+
+        Shared by the Knight-shift-observable and fraction-weight derivations so
+        the canonical model is parsed once per series.
+        """
+        model = getattr(series, "canonical_model", None)
+        if not model:
+            return None
+        try:
+            return CompositeModel.from_dict(model, allow_missing=True)
+        except (ValueError, KeyError, TypeError):
+            return None
+
+    @staticmethod
+    def _knight_observables_for_model(composite: CompositeModel | None) -> dict[str, str]:
+        """Fitted-param → Knight-shift kind for a model's convertible components.
+
+        Only genuine local field/frequency components (see
+        ``CompositeModel.knight_observable_params``); ``{}`` for a missing model,
+        where the panel falls back to a name-based heuristic.
+        """
+        return composite.knight_observable_params() if composite is not None else {}
+
+    @staticmethod
+    def _fraction_weights_for_series(
+        series: FitSeries, composite: CompositeModel | None
+    ) -> dict[str, float]:
+        """Normalised fraction weights (fraction_i / Σ per group) for a series.
+
+        Raw fitted fractions are un-normalised relative weights — the model divides
+        each by its group sum at evaluation, so they need not sum to 1 (and the
+        fixed last fraction is usually hidden from the variable table). This returns
+        the physical partition (via ``CompositeModel.fraction_weights``), but ONLY
+        when it is a single series-wide partition: if a group's raw fractions differ
+        across the successful members (a per-run/local fraction), it is omitted
+        rather than presenting one member's split as the whole series'. Returns
+        ``{}`` for a model-less series or one without fraction groups.
+        """
+        if composite is None:
+            return {}
+        members = [
+            {str(k): float(v) for k, v in summary["parameters"].items()}
+            for summary in series.results_by_run.values()
+            if summary and summary.get("success") and isinstance(summary.get("parameters"), dict)
+        ]
+        if not members:
+            return {}
+        weights = composite.fraction_weights(members[0])
+        # Keep only fractions that are identical across every member (global/fixed),
+        # so a per-run-varying fraction is not shown as a series-wide partition.
+        return {
+            name: weight
+            for name, weight in weights.items()
+            if all(
+                name in member
+                and bool(np.isclose(member[name], members[0][name], rtol=1e-9, atol=1e-12))
+                for member in members
+            )
+        }
+
     def _build_series_rows(self, series: FitSeries) -> list[dict]:
         """Build the row-dict list for one ``FitSeries`` to pass to the trend panel.
 
@@ -8429,6 +8548,15 @@ class MainWindow(QMainWindow):
         # this (FitSeries.shared_parameters reads its own recorded results); without it
         # a reloaded global/grouped series shows "None".
         global_params_by_id: dict[str, dict[str, dict[str, float]]] = {}
+        # Per-series map of fitted parameter → Knight-shift kind, derived from the
+        # series' model so the conversion only offers genuine local-field/frequency
+        # components (excludes e.g. muonium's applied field). Absent for computed /
+        # model-less series; the panel then falls back to a name-based heuristic.
+        knight_observables_by_id: dict[str, dict[str, str]] = {}
+        # Per-series normalised fraction weights (fraction_i / Σ over each group),
+        # so the panel can show the physical amplitude partition — the raw fitted
+        # fractions are un-normalised relative weights and can sum to > 1.
+        fraction_weights_by_id: dict[str, dict[str, float]] = {}
         for idx, series in enumerate(series_for_rep, start=1):
             row_dicts = self._build_series_rows(series)
             if not row_dicts:
@@ -8439,6 +8567,13 @@ class MainWindow(QMainWindow):
             shared = series.shared_parameters()
             if shared:
                 global_params_by_id[batch_id] = shared
+            composite = self._composite_model_for_series(series)
+            observables = self._knight_observables_for_model(composite)
+            if observables:
+                knight_observables_by_id[batch_id] = observables
+            weights = self._fraction_weights_for_series(series, composite)
+            if weights:
+                fraction_weights_by_id[batch_id] = weights
             # Runs to highlight: source runs for group series, member keys for run series.
             if series.member_kind == "groups":
                 highlight_map[batch_id] = sorted(set(series.member_source_run.values()))
@@ -8451,6 +8586,8 @@ class MainWindow(QMainWindow):
                 highlight_runs_by_id=highlight_map,
                 select_id=select_batch_id,
                 global_params_by_id=global_params_by_id,
+                knight_observables_by_id=knight_observables_by_id,
+                fraction_weights_by_id=fraction_weights_by_id,
             )
 
         if surface and entries and hasattr(self, "_dock_fit_parameters"):
@@ -9763,7 +9900,12 @@ class MainWindow(QMainWindow):
             # display raw — the overlay shows in the Individual groups view.
             self._render_current_selection_plot()
         elif hasattr(self._plot_panel, "plot_grouped_time_domain_subplots"):
-            self._plot_panel.plot_grouped_time_domain_subplots(grouped_datasets)
+            # A batch fit returns every (run, group) member; the groups view shows
+            # one run's detector groups, so render only the current run's members.
+            # Rendering all members (e.g. 21 runs × 4 groups = 84 dense subplots)
+            # froze the GUI for several seconds when the values came back.
+            display_members = self._grouped_members_for_display(grouped_datasets)
+            self._plot_panel.plot_grouped_time_domain_subplots(display_members)
         self._log_panel.log(f"Grouped time-domain fit completed: {len(grouped_datasets)} groups")
         self.statusBar().showMessage(
             f"Grouped time-domain fit completed: {len(grouped_datasets)} groups"

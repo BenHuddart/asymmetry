@@ -132,6 +132,26 @@ Parameter Trend Models
    The available parameter-trend component registry is exposed as
    ``asymmetry.core.fitting.parameter_models.PARAMETER_MODEL_COMPONENTS``.
 
+   The angle-only :math:`K(\theta)` basis models ``KnightAnisotropy`` and
+   ``AngularCos2`` are registered alongside the others (``scope="angle"``).
+
+Knight Shift
+------------
+
+Convert fitted oscillation components to the muon Knight shift and fit its
+angular dependence. See :ref:`knight-shift` for the physics and the GUI
+workflow.
+
+.. automodule:: asymmetry.core.fitting.knight_shift
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: asymmetry.core.fitting.angular_assignment
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 Frequency-Domain Helpers
 ------------------------
 
