@@ -118,11 +118,19 @@ _EMPTY_PROJECTION_YLIM = (-0.3, 0.3)
 # raw-count axes, where large magnitudes are legitimate).
 _ASYMMETRY_SATURATION_PERCENT = 100.0
 
-# How far above the non-DC baseline (median) the dominant non-DC spectral peak
-# must rise before the frequency plot auto-frames to it on first paint. Below
-# this the spectrum is treated as DC-only / featureless and the full Nyquist span
-# is kept rather than zooming to a noise spike.
+# How far above the non-DC baseline (median) a non-DC spectral peak must rise
+# before the frequency plot counts it as a real line when auto-framing on first
+# paint. Below this the spectrum is treated as DC-only / featureless and the full
+# Nyquist span is kept rather than zooming to a noise spike.
 _FREQUENCY_PEAK_PROMINENCE = 4.0
+
+# Robust ceiling factor for the time-domain signal-frame error clip. On
+# low-statistics (transverse-field) data the late-time error bars diverge well
+# past the signal envelope; each bin's error contribution to the y-autoscale is
+# capped at this multiple of the signal scale so those bars cannot bury the
+# precession. The ceiling sits above every bar on uniform-error data, so framing
+# there is unchanged.
+_SIGNAL_FRAME_ERROR_CEILING_FACTOR = 1.5
 
 
 class _FloatLimitField(QLineEdit):
@@ -462,11 +470,14 @@ class PlotPanel(QWidget):
         row0.addStretch()
         self._limit_toolbar.addLayout(row0)
 
-        # Apply limit changes immediately from text field edits.
-        self._x_min.editingFinished.connect(self._on_limit_fields_edited)
-        self._x_max.editingFinished.connect(self._on_limit_fields_edited)
-        self._y_min.editingFinished.connect(self._on_limit_fields_edited)
-        self._y_max.editingFinished.connect(self._on_limit_fields_edited)
+        # Apply limit changes immediately from text field edits. A manual edit is
+        # an explicit override, so it disables that axis's Auto toggle — otherwise
+        # the next autoscale refresh would clobber the typed value back to the
+        # data extent (e.g. an FFT X-max set past the dominant peak).
+        self._x_min.editingFinished.connect(self._on_x_limit_field_edited)
+        self._x_max.editingFinished.connect(self._on_x_limit_field_edited)
+        self._y_min.editingFinished.connect(self._on_y_limit_field_edited)
+        self._y_max.editingFinished.connect(self._on_y_limit_field_edited)
 
         # Keep bunching control internal (hidden) for backward compatibility
         # with project state and tests; it is intentionally not shown in UI.
@@ -1418,6 +1429,22 @@ class PlotPanel(QWidget):
     def _on_limit_fields_edited(self) -> None:
         """Apply edited limits and refresh display density for the new viewport."""
         self._apply_limits(schedule_viewport_refresh=True)
+
+    def _on_x_limit_field_edited(self) -> None:
+        """Apply a manual X-limit edit, disabling Auto X so it is not overwritten.
+
+        ``setChecked(False)`` does not emit ``clicked``, so this does not re-enter
+        the auto path; it only clears the persistent toggle.
+        """
+        if self._auto_x_btn.isChecked():
+            self._auto_x_btn.setChecked(False)
+        self._on_limit_fields_edited()
+
+    def _on_y_limit_field_edited(self) -> None:
+        """Apply a manual Y-limit edit, disabling Auto Y so it is not overwritten."""
+        if self._auto_y_btn.isChecked():
+            self._auto_y_btn.setChecked(False)
+        self._on_limit_fields_edited()
 
     def _active_label_field_key(self) -> str:
         """Return the label field that should currently be shown/used.
@@ -3998,11 +4025,14 @@ class PlotPanel(QWidget):
         )
 
     def _frequency_peak_upper_bound(self, freqs: np.ndarray, values: np.ndarray) -> float | None:
-        """Upper frequency-axis bound that frames the dominant non-DC peak.
+        """Upper frequency-axis bound that frames the highest-frequency line.
 
         Returns ``None`` (keep the full span) for DC-only or featureless spectra,
-        where the largest non-DC bin barely clears the baseline and zooming would
-        merely chase a noise spike.
+        where no non-DC bin clears the baseline and zooming would merely chase a
+        noise spike. Otherwise frames to the *highest-frequency* line that rises
+        above the baseline — not just the single tallest peak — so weaker
+        high-frequency lines (high-TF Larmor lines, muoniated-radical pairs) are
+        not cut off by a stronger low-frequency line such as the diamagnetic peak.
         """
         f = np.asarray(freqs, dtype=float)
         v = np.abs(np.asarray(values, dtype=float))
@@ -4017,22 +4047,25 @@ class PlotPanel(QWidget):
 
         # Exclude the DC region (zero-frequency peak + filter rolloff): the lowest
         # 2 % of the span. The DC peak typically dwarfs the signal, so it must not
-        # count as "the dominant peak".
+        # count as a line.
         dc_cut = f_max * 0.02
         nondc = f > dc_cut
         if np.count_nonzero(nondc) < 2:
             return None
         f_nondc = f[nondc]
         v_nondc = v[nondc]
-        peak_idx = int(np.argmax(v_nondc))
-        peak_f = float(f_nondc[peak_idx])
-        peak_v = float(v_nondc[peak_idx])
         baseline = float(np.median(v_nondc))
-        if peak_v <= 0.0 or peak_v <= baseline * _FREQUENCY_PEAK_PROMINENCE:
+        if baseline <= 0.0:
+            baseline = float(np.mean(v_nondc))
+        threshold = baseline * _FREQUENCY_PEAK_PROMINENCE
+        significant = v_nondc > threshold
+        if not np.any(significant):
             return None
 
-        # Frame the peak with head-room, never past the available data.
-        return float(min(f_max, peak_f * 1.5))
+        # Frame to the highest-frequency significant line with head-room, never
+        # past the available data.
+        highest_f = float(np.max(f_nondc[significant]))
+        return float(min(f_max, highest_f * 1.5))
 
     def _auto_x_limits(self) -> None:
         """Auto-scale x-axis and update x-limit controls."""
@@ -4212,8 +4245,23 @@ class PlotPanel(QWidget):
         if not np.any(mask):
             return None
 
-        y_min = float(np.min(asymmetry[mask] - error[mask]))
-        y_max = float(np.max(asymmetry[mask] + error[mask]))
+        asym = asymmetry[mask]
+        err = error[mask]
+        # On low-statistics (transverse-field) data the counts decay so the
+        # late-time error bars diverge (±100 %+) even inside the good-bin window,
+        # and framing to the raw asymmetry ± error envelope buries the ~±20 %
+        # precession in a thin band. Bound each bin's error contribution to a
+        # robust ceiling anchored to the signal envelope so those divergent bars
+        # can no longer blow the range out. The ceiling sits above every bar on
+        # uniform-error (ZF/LF) data, so nothing is clipped and framing there is
+        # unchanged. The frequency view keeps its own framing.
+        if not self._is_frequency_plot_panel():
+            ceiling = self._signal_frame_error_ceiling(asym, err)
+            if ceiling is not None:
+                err = np.minimum(err, ceiling)
+
+        y_min = float(np.min(asym - err))
+        y_max = float(np.max(asym + err))
         if y_max <= y_min:
             delta = max(abs(y_min) * 0.05, 1e-6)
             y_min -= delta
@@ -4223,6 +4271,31 @@ class PlotPanel(QWidget):
             y_min -= padding
             y_max += padding
         return y_min, y_max
+
+    def _signal_frame_error_ceiling(self, asymmetry: np.ndarray, error: np.ndarray) -> float | None:
+        """Robust per-bin error ceiling for framing the signal envelope.
+
+        Returns :data:`_SIGNAL_FRAME_ERROR_CEILING_FACTOR` times the larger of
+        the signal half-span (from robust 2.5/97.5 percentiles of the in-window
+        asymmetry) and the lower-quartile error, or ``None`` when that scale is
+        degenerate. Anchoring to the signal keeps the frame ~±(signal) even when
+        the late-time error bars diverge; the lower-quartile-error floor (the
+        well-measured bins' scale) keeps the ceiling above genuine error bars on
+        uniform-error or noise-dominated data, so those are never clipped.
+        """
+        asym = np.asarray(asymmetry, dtype=float)
+        err = np.asarray(error, dtype=float)
+        finite_err = err[np.isfinite(err) & (err >= 0.0)]
+        finite_asym = asym[np.isfinite(asym)]
+        if finite_err.size == 0 or finite_asym.size == 0:
+            return None
+        a_lo, a_hi = np.percentile(finite_asym, (2.5, 97.5))
+        signal_half = max((float(a_hi) - float(a_lo)) / 2.0, 0.0)
+        typical_err = float(np.percentile(finite_err, 25))
+        scale = max(signal_half, typical_err)
+        if not np.isfinite(scale) or scale <= 0.0:
+            return None
+        return scale * _SIGNAL_FRAME_ERROR_CEILING_FACTOR
 
     def _auto_y_limits_for_datasets(
         self,

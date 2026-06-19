@@ -601,6 +601,156 @@ class TestPlotPanel:
             panel.close()
             panel.deleteLater()
 
+    def test_frequency_default_x_range_includes_high_freq_line_below_dominant(
+        self, qapp: QApplication
+    ) -> None:
+        """A weaker high-freq line must be framed, not cut off by a louder low one.
+
+        Benzene-style high-TF FFT: a strong diamagnetic line at ~40 MHz plus
+        weaker muoniated-radical lines at 208/305 MHz. Framing to the single
+        tallest non-DC peak would zoom to ~40 MHz and hide the radical lines;
+        the fix frames to the highest-frequency line that clears the baseline.
+        """
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            freqs = np.linspace(0.0, 1000.0, 2048)
+            values = np.full_like(freqs, 1.0)
+            values[:3] = 3.0e5  # dominant DC peak
+            values[int(np.argmin(np.abs(freqs - 40.0)))] = 1000.0  # diamagnetic (tallest)
+            values[int(np.argmin(np.abs(freqs - 208.0)))] = 100.0  # radical line
+            values[int(np.argmin(np.abs(freqs - 305.0)))] = 100.0  # radical line
+            ds = MuonDataset(
+                time=freqs,
+                asymmetry=values,
+                error=np.zeros_like(freqs),
+                metadata={
+                    "run_number": 3680,
+                    "plot_domain": "frequency",
+                    "x_label": "Frequency (MHz)",
+                },
+            )
+            panel.plot_dataset(ds)
+
+            # The highest radical line is on-screen — not cut off at the ~40 MHz
+            # diamagnetic peak (which would frame to ~60 MHz).
+            assert panel._x_max.value() >= 305.0
+            # … and still framed to the line, not blown out to the full 1000 MHz span.
+            assert panel._x_max.value() < 600.0
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_manual_x_max_field_overrides_auto_x_on_frequency_panel(
+        self, qapp: QApplication
+    ) -> None:
+        """Typing an X-max with Auto X on must stick, not snap back to the data.
+
+        Regression for the corpus finding: with Auto X enabled the deferred
+        viewport refresh re-ran the auto-scale and clobbered the typed value back
+        to the data extent (~33 MHz). A manual edit now disables Auto X so the
+        rendered axis keeps the typed limit across the refresh.
+        """
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            freqs = np.linspace(0.0, 32.76, 2048)  # ~31 MHz Nyquist span
+            values = np.full_like(freqs, 1.0)
+            values[:3] = 3.0e5
+            values[int(np.argmin(np.abs(freqs - 1.36)))] = 5.0e3
+            ds = MuonDataset(
+                time=freqs,
+                asymmetry=values,
+                error=np.zeros_like(freqs),
+                metadata={
+                    "run_number": 20711,
+                    "plot_domain": "frequency",
+                    "x_label": "Frequency (MHz)",
+                },
+            )
+            panel.plot_dataset(ds)
+
+            panel._auto_x_btn.setChecked(True)
+            panel._x_max.setValue(350.0)
+            panel._on_x_limit_field_edited()
+
+            # Editing the field disabled Auto X …
+            assert not panel._auto_x_btn.isChecked()
+            # … so the rendered axis holds the typed value immediately …
+            assert panel._ax.get_xlim()[1] == pytest.approx(350.0)
+            # … and survives the deferred viewport refresh (no snap back to ~33).
+            qapp.processEvents()
+            assert panel._ax.get_xlim()[1] == pytest.approx(350.0)
+            assert panel._x_max.value() == pytest.approx(350.0)
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_tf_autoscale_frames_signal_despite_diverging_error_tail(
+        self, panel: PlotPanel
+    ) -> None:
+        """TF data: in-window late-time error blowup must not bury the signal.
+
+        Cuprate-style transverse field: a ~±20 % precession whose per-bin error
+        diverges to >100 % at late time *inside* the good-bin window (counts
+        decay). #133's good-bin masking does not help here — every bin is "good"
+        — so without the robust error ceiling the frame opens to ~±150 % and the
+        signal is a thin band. The fix frames to ~±(signal).
+        """
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        n = 400
+        counts = np.full(n, 1000.0)
+        hist = Histogram(counts=counts, bin_width=0.08, t0_bin=0)  # ~0..32 µs
+        run = Run(
+            run_number=1277,
+            histograms=[hist],
+            grouping={"first_good_bin": 5, "last_good_bin": 395},
+        )
+        t = hist.time_axis.copy()
+        asym = 20.0 * np.cos(2 * np.pi * 5.4 * t) * np.exp(-t / 8.0)
+        # Error grows exponentially as the counts decay, peaking at ~150 % — far
+        # past the ~±20 % signal, and entirely within the good-bin window.
+        err = np.clip(1.0 * np.exp(t / 4.0), 1.0, 150.0)
+
+        ds = MuonDataset(time=t, asymmetry=asym, error=err, metadata={"run_number": 1277}, run=run)
+        panel.plot_dataset(ds)
+
+        # The frame tracks the signal envelope, nowhere near the ±150 % tail.
+        assert panel._y_max.value() < 40.0
+        assert panel._y_min.value() > -40.0
+        # … and the ~±20 % precession is actually framed, not collapsed.
+        assert panel._y_max.value() > 18.0
+        assert panel._y_min.value() < -18.0
+
+    def test_uniform_error_framing_unchanged_by_signal_ceiling(self, panel: PlotPanel) -> None:
+        """ZF/LF control: uniform error bars are never clipped by the ceiling.
+
+        The robust error ceiling must be a no-op when the error scale is uniform
+        (no diverging tail), so non-TF data still frames to its full
+        asymmetry ± error envelope.
+        """
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        asym = np.array([17.0, -8.0, 12.0, -3.0, 9.0, 0.0])
+        err = np.full_like(asym, 2.0)
+        mask = np.ones_like(asym, dtype=bool)
+
+        limits = panel._auto_y_limits_from_arrays(asym, err, mask)
+        assert limits is not None
+        y_min, y_max = limits
+        # Full envelope (−8−2 .. 17+2) framed with padding — nothing clipped.
+        raw_lo = float((asym - err).min())
+        raw_hi = float((asym + err).max())
+        assert y_max == pytest.approx(raw_hi + (raw_hi - raw_lo) * 0.05)
+        assert y_min == pytest.approx(raw_lo - (raw_hi - raw_lo) * 0.05)
+
     def test_raw_counts_view_autoscale_keeps_high_count_signal(self, panel: PlotPanel) -> None:
         """Raw-counts view holds counts, not percent — never clip |y|≥100.
 
