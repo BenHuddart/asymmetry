@@ -363,6 +363,69 @@ def test_logged_furnace_controller_block_not_matched(tmp_path, loader: NexusLoad
     assert "selog/Temp_RBV/value_log" in ds.metadata["nexus_time_series"]
 
 
+def test_emu_furnace_temperature_unit_flagged_value_unchanged(
+    tmp_path, loader: NexusLoader
+) -> None:
+    # EMU furnace run: a Celsius value stored under a "Kelvin" label with no
+    # sample thermometer. SURFACE the suspicion (flag) but never convert — the
+    # returned temperature must stay exactly as read.
+    path = tmp_path / "run_furnace_hot.nxs"
+    _write_v2_file(
+        path,
+        temp_setpoint=380.0,
+        temp_setpoint_units="Kelvin",
+        temp_log_style="selog",
+        temp_log_block="Temp_RBV",
+    )
+
+    ds = loader.load(str(path))
+    assert not isinstance(ds, list)
+    assert ds.metadata["temperature"] == pytest.approx(380.0)  # unchanged
+    assert ds.sample_temperature_logged is None
+    assert ds.metadata.get("temperature_unit_suspect") is True
+    assert "°C" in ds.metadata["temperature_unit_suspect_reason"]
+
+
+def test_emu_cold_kelvin_run_not_flagged(tmp_path, loader: NexusLoader) -> None:
+    # A genuinely-cold Kelvin run (no furnace) must NOT be flagged, even with no
+    # logged sample thermometer: below the cryostat ceiling the value is trusted.
+    path = tmp_path / "run_cold.nxs"
+    _write_v2_file(
+        path,
+        temp_setpoint=5.0,
+        temp_setpoint_units="Kelvin",
+        temp_log_style="selog",
+        temp_log_block="Temp_RBV",
+    )
+
+    ds = loader.load(str(path))
+    assert not isinstance(ds, list)
+    assert ds.metadata["temperature"] == pytest.approx(5.0)
+    assert "temperature_unit_suspect" not in ds.metadata
+
+
+def test_temperature_unit_suspect_heuristic_matrix(loader: NexusLoader) -> None:
+    suspect = loader._temperature_unit_suspect
+    # Canonical mislabel: EMU, hot, Kelvin-labelled, no logged thermometer.
+    flagged, reason = suspect("EMU", 380.0, None, "Kelvin")
+    assert flagged is True
+    assert reason
+    # A blank / unknown unit is equally at risk of being a disguised Celsius value.
+    assert suspect("EMU", 380.0, None, "")[0] is True
+    assert suspect("emu", 380.0, None, None)[0] is True
+    # Below the ceiling the value is ambiguous (300 K vs 300 °C) — never flagged.
+    assert suspect("EMU", 300.0, None, "Kelvin")[0] is False
+    # A logged sample thermometer corroborates the setpoint — not flagged.
+    assert suspect("EMU", 380.0, 379.0, "Kelvin")[0] is False
+    # A declared Celsius unit is already converted and trustworthy — not flagged.
+    assert suspect("EMU", 380.0 + 273.15, None, "degC")[0] is False
+    # Out-of-scope instruments are never flagged by this EMU-specific heuristic.
+    assert suspect("MuSR", 380.0, None, "Kelvin")[0] is False
+    assert suspect("HIFI", 380.0, None, "Kelvin")[0] is False
+    # Missing temperature: not flagged.
+    assert suspect("EMU", None, None, "Kelvin")[0] is False
+
+
 def test_load_v2_multiperiod(tmp_path, loader: NexusLoader) -> None:
     path = tmp_path / "run_v2_multi.nxs"
     _write_v2_file(path, multiperiod=True)
