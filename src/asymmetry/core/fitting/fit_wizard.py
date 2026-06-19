@@ -36,6 +36,7 @@ _FIT_WIZARD_TITLES = {
     "triple_gaussian_constant": "Gaussian + Gaussian + Gaussian + Constant",
     "stretched_constant": "Stretched Exponential + Constant",
     "static_gkt_constant": "Static GKT + Constant",
+    "dynamic_gkt_constant": "Dynamic GKT + Constant",
     "static_gkt_exp_constant": "Static GKT * Exponential + Constant",
     "oscillatory_exp_constant": "Oscillatory * Exponential + Constant",
     "oscillatory_gaussian_constant": "Oscillatory * Gaussian + Constant",
@@ -410,6 +411,18 @@ def build_candidate_templates(
             CompositeModel(["StaticGKT_ZF", "Constant"], operators=["+"]),
             category="KT-like",
             rationale="Late-time dip and recovery are consistent with static Gaussian Kubo-Toyabe relaxation.",
+        )
+        # Dynamic Gaussian KT: the strong-collision generalisation where the
+        # static dip-recovery is washed out by fluctuations at rate nu. Offered
+        # alongside the static candidate so the wizard can distinguish a frozen
+        # from a fluctuating local field. Delta is seeded from the early-time
+        # curvature (see _initial_parameters_for_template); nu seeding is a
+        # documented follow-up.
+        _add(
+            "dynamic_gkt_constant",
+            CompositeModel(["DynamicGaussianKT", "Constant"], operators=["+"]),
+            category="KT-like",
+            rationale="A partially-washed-out KT dip suggests dynamic (fluctuating) Gaussian Kubo-Toyabe relaxation.",
         )
         _add(
             "static_gkt_exp_constant",
@@ -1205,6 +1218,13 @@ def _initial_parameters_for_template(
         )
     )
     gaussian_width = max(0.05, min(20.0, gaussian_width if np.isfinite(gaussian_width) else 0.5))
+    # Frequency seed from the dominant FFT line. FOLLOW-UP (high-TF envelope
+    # seeding, GUI Round-4 AFM finding): for high transverse fields the precession
+    # (e.g. ~800-1100 MHz) sits near/above the bin Nyquist, so the FFT peak and
+    # this seed under-resolve it and the Oscillatory*Gaussian envelope fit stays
+    # seed-fragile. A robust fix needs a field-derived frequency seed
+    # (gamma_mu * B via spectral.field_gauss_to_frequency_mhz) plus finer
+    # rebinning, which spans the GUI populate path; tracked as a separate change.
     frequency_guess = max(fingerprint.dominant_fft_frequency_mhz, 0.25 / duration)
     phase_guess = 0.0 if (y[0] - fingerprint.tail_estimate) >= 0.0 else math.pi
 
@@ -1232,7 +1252,16 @@ def _initial_parameters_for_template(
             "beta": 1.5,
             "A_bg": fingerprint.tail_estimate,
         }
-    elif template.key == "static_gkt_constant":
+    elif template.key in {"static_gkt_constant", "dynamic_gkt_constant"}:
+        # Static and dynamic GKT share the same A/Delta/A_bg seed: the 1/3-tail
+        # KT baseline and Delta from the early-time curvature. For the dynamic
+        # variant, nu is left at the component default (FOLLOW-UP, KT hop-rate
+        # seeding): a single static seed cannot span the static -> fast-
+        # fluctuation range (~0.1 to >10 us^-1) and any fixed guess measurably
+        # regresses one end (verified by an A/B sweep across regimes), so robust
+        # multi-decade nu seeding (e.g. regime detection + a coarse nu variant
+        # ladder) is deferred to a focused follow-up. The wizard still offers the
+        # dynamic model and recovers weak/moderate dynamics from the Delta seed.
         amplitude = max(1.5 * abs(fingerprint.initial_amplitude_estimate), 0.25 * data_span, _EPS)
         overrides = {
             "A": amplitude,

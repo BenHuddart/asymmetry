@@ -130,7 +130,18 @@ PARAM_INFO_REGISTRY: dict[str, ParamInfo] = {
     "sigma": ParamInfo("sigma", "sigma", "σ", r"$\sigma$", r"\sigma", "μs⁻¹", default_min=0.0),
     "Delta": ParamInfo("Delta", "Delta", "Δ", r"$\Delta$", r"\Delta", "μs⁻¹", default_min=0.0),
     "a_L": ParamInfo("a_L", "a_L", "a", r"$a$", r"{\it a}", "μs⁻¹", default_min=0.0),
-    "beta": ParamInfo("beta", "beta", "β", r"$\beta$", r"\beta", default_min=0.0),
+    # A small POSITIVE floor, not 0. As beta -> 0 the stretched exponential
+    # A*exp(-(|Lambda| t)^beta) -> A (flat), a degenerate limit that — together
+    # with the |Lambda| sign-fold — gives the documented spin-glass sign/exponent
+    # degeneracy and lets one-shot fits wander. 0.05 keeps the fit well
+    # conditioned and is comfortably below every physical stretch exponent
+    # (typically (0, 2]). beta is shared with the OrderParameter trend's critical
+    # exponent, but those are ~0.1-0.5 (>= 0.125 even for 2D Ising), so the floor
+    # never clamps a legitimate value there either. The GUI parameter-table
+    # populate resolves the min bound through this global ParamInfo
+    # (get_param_info("beta").default_min), so the floor must live here rather
+    # than as a per-component override to take effect.
+    "beta": ParamInfo("beta", "beta", "β", r"$\beta$", r"\beta", default_min=0.05),
     "alpha": ParamInfo("alpha", "alpha", "α", r"$\alpha$", r"\alpha", default_min=0.0),
     "y0": ParamInfo(
         "y0",

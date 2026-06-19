@@ -215,6 +215,7 @@ _ALLOWED_WIZARD_COMPONENTS = {
     "Gaussian",
     "StretchedExponential",
     "StaticGKT_ZF",
+    "DynamicGaussianKT",
     "Oscillatory",
     # Selectively adopted parity components (Item 5):
     "RischKehr",
