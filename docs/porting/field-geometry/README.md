@@ -134,6 +134,20 @@ The loader change landed in `src/asymmetry/core/io/nexus.py` (both `_load_v1` an
   state shows **blank** (not "Unknown"), the geometry reads as **words**, and the
   detector orientation is surfaced separately.
 
+### PSI follow-on (2026-06-16, B8a) — free-text field geometry
+
+PSI `.bin`/`.mdu`/`.root` files carry **no structured field-state code** (the
+study confirmed musrfit stores only free-text `Setup`/`Orientation` + a numeric
+field). The B8a grouping nudge needs the geometry on PSI GPS data, so the PSI and
+MusrRoot loaders now set `field_direction` via
+`field_direction_from_text` (`src/asymmetry/core/io/base.py`), which trusts
+**only an explicit `TF`/`LF`/`ZF` (or transverse/longitudinal/zero-field) token**
+in the run comment/setup/title — e.g. the `TF100` in `"FeSe 9p4 TF100 ..."`, which
+musrfit treats as the setup (`SetSetup(GetComment())`). This keeps the policy
+intact: geometry never comes from the field *magnitude* (a TF run can sit at 0 G)
+and the result is **blank when absent or ambiguous** (two conflicting tokens →
+unknown), rather than a misleading guess.
+
 Tests: `tests/test_nexus_loader.py` covers TF-overrides-L-orientation (V1+V2), LF,
 ZF, absent-state→blank (no fallback), and blank/`n/a`→unknown. Verified end-to-end
 against real corpus files: `EMU00018850.nxs` (TF/L → Transverse),

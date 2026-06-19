@@ -1589,3 +1589,44 @@ def test_format_value_with_uncertainty_large_errors() -> None:
     assert fmt(1.2345, 150.0) == "1(150)"
     assert fmt(1.2, 99.6) == "1(100)"
     assert fmt(2.4, 1234.0) == "2(1234)"
+
+
+def _gps_dataset(field_direction: str | None) -> MuonDataset:
+    """A six-histogram PSI GPS run defaulting to the Longitudinal grouping."""
+    histograms = [Histogram(counts=np.full(4, 100.0), bin_width=0.01) for _ in range(6)]
+    metadata = {"run_number": 5001, "facility": "PSI", "instrument": "GPS"}
+    if field_direction is not None:
+        metadata["field_direction"] = field_direction
+    run = Run(
+        run_number=5001,
+        histograms=histograms,
+        metadata=dict(metadata),
+        grouping={
+            "groups": {1: [1], 2: [2]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 3,
+        },
+    )
+    t = np.array([0.0, 0.01, 0.02, 0.03])
+    return MuonDataset(
+        time=t,
+        asymmetry=np.zeros_like(t),
+        error=np.full_like(t, 0.01),
+        metadata=dict(metadata),
+        run=run,
+    )
+
+
+def test_transverse_field_gps_run_shows_grouping_nudge(qapp) -> None:
+    """B8a: a TF GPS run on the longitudinal default nudges toward spin-rotated."""
+    dialog = GroupingDialog([_gps_dataset("Transverse")])
+    assert dialog._tf_hint_label.isVisibleTo(dialog)
+    assert "Spin-rotated (F+U/B+D)" in dialog._tf_hint_label.text()
+
+
+def test_gps_run_without_field_direction_does_not_nudge(qapp) -> None:
+    dialog = GroupingDialog([_gps_dataset(None)])
+    assert not dialog._tf_hint_label.isVisibleTo(dialog)

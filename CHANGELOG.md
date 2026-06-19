@@ -33,6 +33,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Clogston–Jaccarino `K`–`χ` helper** (`clogston_jaccarino_fit`, API-only):
   fits `K = K_0 + (A_hf/N_A μ_B)·χ` to extract the hyperfine coupling and the
   `χ`-independent offset.
+- **Transverse-field grouping nudge** (B8a): a transverse-field run loaded on a
+  longitudinal-default instrument (e.g. PSI GPS) now surfaces a non-blocking hint
+  to switch off the `Longitudinal` (Forward/Backward) grouping — which washes out
+  the precession and collapses the time-domain fit — toward the recommended
+  spin-rotated/transverse preset. The Grouping dialog points at the Detector
+  Layout editor; the editor pre-selects the recommended preset (e.g. GPS
+  `Spin-rotated (F+U/B+D)`) so applying it is one click. The recommendation is a
+  pure helper, `asymmetry.core.instrument.recommend_grouping_preset(layout,
+  field_direction)`; nothing is auto-applied.
+- **PSI field geometry from free text**: the PSI `.bin`/`.mdu`/`.root` loaders
+  now derive `metadata["field_direction"]` from an explicit `TF`/`LF`/`ZF`
+  (or transverse/longitudinal/zero-field) tag in the run comment/setup/title
+  (`asymmetry.core.io.base.field_direction_from_text`). Consistent with the
+  field-geometry policy, geometry is taken only from an unambiguous string —
+  never inferred from the field magnitude or the sample/detector orientation —
+  and is left blank when absent or ambiguous. This lets the grouping nudge fire
+  on PSI GPS data, which carries no structured field-state code.
 
 ### Fixed
 

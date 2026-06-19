@@ -138,6 +138,61 @@ class TestConstruction:
 
 
 # ---------------------------------------------------------------------------
+# Transverse-field grouping nudge (B8a)
+# ---------------------------------------------------------------------------
+
+
+class TestTransverseFieldNudge:
+    """A TF run on a longitudinal preset should nudge toward the spin-rotated one."""
+
+    _RECOMMENDED = "Spin-rotated (F+U/B+D)"
+
+    def test_tf_on_longitudinal_shows_hint_and_preselects(self, qapp):
+        layout = get_instrument_layout("GPS")
+        dlg = DetectorLayoutDialog(
+            layout,
+            groups={1: [1], 2: [2]},
+            initial_preset_name="Longitudinal",
+            field_direction="Transverse",
+        )
+        assert dlg._tf_hint_label.isVisibleTo(dlg)
+        assert self._RECOMMENDED in dlg._tf_hint_label.text()
+        # Recommended preset pre-selected so applying it is one click.
+        assert dlg._preset_combo.currentText() == self._RECOMMENDED
+
+    def test_no_field_direction_does_not_nudge(self, qapp):
+        layout = get_instrument_layout("GPS")
+        dlg = DetectorLayoutDialog(
+            layout, groups={1: [1], 2: [2]}, initial_preset_name="Longitudinal"
+        )
+        assert not dlg._tf_hint_label.isVisibleTo(dlg)
+
+    def test_longitudinal_run_does_not_nudge(self, qapp):
+        layout = get_instrument_layout("GPS")
+        dlg = DetectorLayoutDialog(
+            layout,
+            groups={1: [1], 2: [2]},
+            initial_preset_name="Longitudinal",
+            field_direction="Longitudinal",
+        )
+        assert not dlg._tf_hint_label.isVisibleTo(dlg)
+
+    def test_hint_clears_after_applying_recommended_preset(self, qapp):
+        layout = get_instrument_layout("GPS")
+        dlg = DetectorLayoutDialog(
+            layout,
+            groups={1: [1], 2: [2]},
+            initial_preset_name="Longitudinal",
+            field_direction="Transverse",
+        )
+        assert dlg._tf_hint_label.isVisibleTo(dlg)
+        # The recommended preset is pre-selected; applying it dismisses the nudge.
+        dlg._on_apply_preset()
+        assert dlg._applied_preset_name == self._RECOMMENDED
+        assert not dlg._tf_hint_label.isVisibleTo(dlg)
+
+
+# ---------------------------------------------------------------------------
 # Group name edits prefilled from constructor
 # ---------------------------------------------------------------------------
 

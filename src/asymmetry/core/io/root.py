@@ -17,7 +17,7 @@ from typing import Any
 import numpy as np
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
-from asymmetry.core.io.base import BaseLoader
+from asymmetry.core.io.base import BaseLoader, field_direction_from_text
 from asymmetry.core.transform import (
     apply_grouping_aligned,
     common_t0_for_groups,
@@ -651,6 +651,15 @@ class RootLoader(BaseLoader):
             "orientation": header.get("RunInfo/Sample Orientation", ""),
             "setup": header.get("RunInfo/Setup", ""),
             "comment": comment,
+            # MusrRoot has no structured field-state; trust an explicit TF/LF/ZF
+            # token in the free-text setup/comment/title (see
+            # field_direction_from_text). "" when absent or ambiguous.
+            "field_direction": field_direction_from_text(
+                comment,
+                header.get("RunInfo/Setup", ""),
+                title,
+                header.get("RunInfo/Sample Orientation", ""),
+            ),
             "started": header.get("RunInfo/Run Start Time", ""),
             "stopped": header.get("RunInfo/Run Stop Time", ""),
             "instrument": instrument,

@@ -44,6 +44,7 @@ from asymmetry.core.instrument import (
     derive_projection_pairs,
     detect_instrument,
     get_instrument_layout,
+    recommend_grouping_preset,
     variant_for_histograms,
 )
 from asymmetry.core.transform import (
@@ -62,6 +63,7 @@ from asymmetry.core.transform import (
 )
 from asymmetry.core.transform.asymmetry import AlphaEstimate, estimate_alpha_detailed
 from asymmetry.core.utils.constants import PeriodMode
+from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import apply_param_table_style, clear_layout
 
 #: Alpha estimation methods offered by the Estimate control: combo label,
@@ -183,6 +185,16 @@ class GroupingDialog(QDialog):
         top_row.addWidget(self._reference_combo)
         top_row.addStretch()
         root.addLayout(top_row)
+
+        # Non-blocking transverse-field nudge: shown when the reference run is
+        # transverse-field but the grouping is still on a longitudinal preset
+        # (which washes out the precession). Points the user at the Detector
+        # Layout editor, where the recommended preset can be applied.
+        self._tf_hint_label = QLabel()
+        self._tf_hint_label.setWordWrap(True)
+        self._tf_hint_label.setStyleSheet(f"color: {tokens.WARN};")
+        self._tf_hint_label.setVisible(False)
+        root.addWidget(self._tf_hint_label)
 
         # \u2500\u2500 Main split: left pane (datasets + groups) | right pane (form) \u2500
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -602,6 +614,7 @@ class GroupingDialog(QDialog):
         root.addLayout(bottom_bar)
 
         self._update_period_mode_visibility()
+        self._update_grouping_recommendation()
 
     def _choose_reference_dataset(self) -> MuonDataset:
         """Return preferred reference dataset for initial grouping values."""
@@ -649,6 +662,39 @@ class GroupingDialog(QDialog):
         for gid in self._groups:
             result.setdefault(int(gid), True)
         return result
+
+    def _reference_field_direction(self) -> str | None:
+        """Applied-field geometry of the reference run, or None when unknown."""
+        metadata = getattr(self._run, "metadata", None)
+        if isinstance(metadata, dict):
+            value = str(metadata.get("field_direction", "")).strip()
+            return value or None
+        return None
+
+    def _update_grouping_recommendation(self) -> None:
+        """Show or hide the transverse-field grouping nudge for the reference run.
+
+        Fires when the run is transverse-field but the grouping is still on a
+        non-recommended (typically longitudinal) preset, per
+        :func:`asymmetry.core.instrument.recommend_grouping_preset`.  The hint is
+        purely advisory — it points at the Detector Layout editor where the user
+        applies the preset; nothing is changed automatically.
+        """
+        direction = self._reference_field_direction()
+        n_histo = len(self._run.histograms) if self._run and self._run.histograms else 0
+        metadata = (
+            dict(self._run.metadata) if self._run and isinstance(self._run.metadata, dict) else {}
+        )
+        layout = self._resolve_detector_layout(n_histo, metadata)
+        recommended = recommend_grouping_preset(layout, direction)
+        if recommended is None or recommended == self._grouping_preset_name:
+            self._tf_hint_label.setVisible(False)
+            return
+        self._tf_hint_label.setText(
+            f"Transverse-field run: the current grouping washes out the precession. "
+            f"Open Detector Layout… and apply ‘{recommended}’."
+        )
+        self._tf_hint_label.setVisible(True)
 
     def _reference_is_psi(self) -> bool:
         """Return True when the current reference run uses PSI detector conventions."""
@@ -860,6 +906,7 @@ class GroupingDialog(QDialog):
         self._update_vector_mode_controls(grouping)
         self._update_period_mode_visibility()
         self._update_map_periods_visibility()
+        self._update_grouping_recommendation()
 
     def _reference_has_file_deadtime(self, grouping: dict[str, Any]) -> bool:
         """Return whether the reference run provides file deadtime values."""
@@ -1836,6 +1883,7 @@ class GroupingDialog(QDialog):
             backward_group=backward_gid,
             excluded_detectors=current_exclusion,
             projections=self._projection_specs,
+            field_direction=self._reference_field_direction(),
             parent=self,
         )
         if dlg.exec() != DetectorLayoutDialog.DialogCode.Accepted:
@@ -1890,6 +1938,7 @@ class GroupingDialog(QDialog):
 
         self._populate_group_table()
         self._update_vector_mode_controls()
+        self._update_grouping_recommendation()
 
     def _set_combo_to_group(self, combo: QComboBox, group_id: int) -> None:
         """Set combo box to a group ID if present, preserving defaults otherwise."""
