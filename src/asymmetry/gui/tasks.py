@@ -294,3 +294,13 @@ class TaskRunner(QObject):
                 thread.setParent(None)
                 retire_thread(thread, worker)
         self._live.clear()
+        # Flush pending queued MetaCall events that target this runner (e.g.
+        # the cross-thread _on_thread_finished delivery posted by thread.finished).
+        # Without this drain, if the caller drops the last reference immediately
+        # after shutdown() the GC destroys the C++ receiver while those events
+        # are still queued; the next QEventLoop turn tries to invoke a deleted
+        # slot and segfaults.  Calling sendPostedEvents(self, 0) while the
+        # runner is still alive processes them safely before it can be collected.
+        app = QCoreApplication.instance()
+        if app is not None:
+            app.sendPostedEvents(self, 0)
