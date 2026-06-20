@@ -28,8 +28,11 @@ def settings():
     s.clear()
 
 
-def test_default_is_wimda_rgoodfit(settings):
-    assert fit_quality_confidence(settings) == pytest.approx(0.95)
+def test_default_is_muon_tuned(settings):
+    # Default is the muon-tuned 0.999 (not WiMDA's 0.95 algorithm default): at the
+    # large ν of high-statistics muon fits the 0.95 band is too tight and alarmed
+    # routine χ²ᵣ ≈ 1.2 as "poor" in red (corpus finding #6).
+    assert fit_quality_confidence(settings) == pytest.approx(0.999)
 
 
 def test_round_trip(settings):
@@ -44,7 +47,7 @@ def test_clamps_to_valid_range(settings):
 
 def test_unparseable_value_falls_back_to_default(settings):
     settings.setValue(FIT_QUALITY_CONFIDENCE_SETTINGS_KEY, "not-a-number")
-    assert fit_quality_confidence(settings) == pytest.approx(0.95)
+    assert fit_quality_confidence(settings) == pytest.approx(0.999)
 
 
 def test_non_finite_value_falls_back_to_default(settings):
@@ -52,7 +55,7 @@ def test_non_finite_value_falls_back_to_default(settings):
     # (min/max pass NaN straight through, which would void the χ² verdict).
     for bad in ("nan", "inf", "-inf"):
         settings.setValue(FIT_QUALITY_CONFIDENCE_SETTINGS_KEY, bad)
-        assert fit_quality_confidence(settings) == pytest.approx(0.95)
+        assert fit_quality_confidence(settings) == pytest.approx(0.999)
     # And a non-finite value passed to the setter is rejected, not stored.
-    assert set_fit_quality_confidence(float("nan"), settings) == pytest.approx(0.95)
-    assert fit_quality_confidence(settings) == pytest.approx(0.95)
+    assert set_fit_quality_confidence(float("nan"), settings) == pytest.approx(0.999)
+    assert fit_quality_confidence(settings) == pytest.approx(0.999)

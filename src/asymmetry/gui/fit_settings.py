@@ -25,9 +25,11 @@ _CONFIDENCE_MAX = 0.999
 def fit_quality_confidence(settings: QSettings | None = None) -> float:
     """Return the configured χ² quality-band confidence R, clamped to [0.5, 0.999].
 
-    Falls back to WiMDA's ``Rgoodfit`` default (0.95) when the setting is unset or
-    unparseable. The band widens toward χ²ᵣ = 1 as R → 1, so a higher confidence
-    means a more forgiving good/poor/overdone verdict.
+    Falls back to the muon-tuned default :data:`FIT_QUALITY_CONFIDENCE` (0.999)
+    when the setting is unset or unparseable — high-statistics muon fits live at
+    large ν where WiMDA's 0.95 band is too tight (a routine χ²ᵣ ≈ 1.2 read "poor").
+    The band widens toward χ²ᵣ = 1 as R → 1, so a higher confidence means a more
+    forgiving good/poor/overdone verdict.
     """
     settings = settings or QSettings()
     raw = settings.value(FIT_QUALITY_CONFIDENCE_SETTINGS_KEY, FIT_QUALITY_CONFIDENCE)

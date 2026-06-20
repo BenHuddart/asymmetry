@@ -151,8 +151,9 @@ def test_result_summary_carries_quality_and_asymmetric_keys():
     assert summary["quality"]["verdict"] in {"good", "poor", "overdone"}
 
 
-def test_quality_verdict_regions_at_r095():
-    # ν = 100; the 95% two-sided good band sits around χ²ᵣ ∈ [~0.74, ~1.30].
+def test_quality_verdict_regions_at_default():
+    # ν = 100; at the muon-tuned 0.999 default the two-sided good band is the
+    # wider χ²ᵣ ∈ [~0.54, ~1.47], so these values land clear of either edge.
     good = fit_result_summary(_fake_result(100.0, 100))["quality"]
     assert good["verdict"] == "good"
     poor = fit_result_summary(_fake_result(170.0, 100))["quality"]

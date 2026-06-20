@@ -71,20 +71,53 @@ def test_quality_band_tracks_configurable_confidence():
     assert q60["band_high"] < q95["band_high"]
     assert q95["verdict"] == "good"
     assert q60["verdict"] == "poor"
-    # Default confidence is unchanged at WiMDA's Rgoodfit = 0.95.
-    assert fit_result_summary(result)["quality"]["confidence"] == pytest.approx(0.95)
+    # Default confidence is the muon-tuned 0.999 (corpus finding #6), not 0.95.
+    assert fit_result_summary(result)["quality"]["confidence"] == pytest.approx(0.999)
 
 
-# --- (a) near-unity "marginal" softening at high ν ---------------------------
+# --- muon-tuned default: routine high-ν fits read "good", not red "poor" ------
 
 
-def test_high_ndof_near_unity_chi2_is_poor_but_marginal():
-    """The cuprate case: χ²ᵣ≈1.10 at ν≈1927 is statistically "poor" (the band is
-    tight) yet numerically near-ideal, so it is flagged ``marginal`` for a softer
-    chip. The verdict itself is unchanged — WiMDA band math is preserved."""
+def test_routine_high_ndof_muon_fit_is_good_at_default():
+    """Live regression (corpus finding #6): a routine time-domain fit with
+    χ²ᵣ≈1.21 at ν≈488 was labelled "poor" in red at WiMDA's 0.95 band. At the
+    muon-tuned 0.999 default it reads "good" (band ≈ [0.80, 1.22]) — excellent
+    high-statistics muon fits are no longer alarmed."""
+    params = ParameterSet([Parameter("A", 0.2)])
+    dof = 488
+    chi2 = 1.21 * dof
+    result = _FakeResult(True, chi2, chi2 / dof, params, {"A": 0.01}, dof=dof)
+
+    quality = fit_result_summary(result)["quality"]
+    assert quality["verdict"] == "good"
+    assert quality["marginal"] is False
+
+
+def test_cuprate_high_ndof_near_unity_chi2_is_good_at_default():
+    """The cuprate case: χ²ᵣ≈1.10 at ν≈1927 is also "good" at the 0.999 default
+    (band ≈ [0.90, 1.11]) — at the old 0.95 band it read "poor" and #139 could
+    only soften it to "poor (marginal)" amber; now it is genuinely good."""
     params = ParameterSet([Parameter("A", 0.2)])
     dof = 1927
     chi2 = 1.10 * dof
+    result = _FakeResult(True, chi2, chi2 / dof, params, {"A": 0.01}, dof=dof)
+
+    quality = fit_result_summary(result)["quality"]
+    assert quality["verdict"] == "good"
+    assert quality["marginal"] is False
+
+
+# --- (a) near-unity "marginal" softening: safety net at extreme ν ------------
+
+
+def test_extreme_ndof_near_unity_chi2_is_poor_but_marginal():
+    """The #139 ``marginal`` softening still guards the residual edge: at very
+    large ν even the 0.999 band is tighter than ±0.2, so a near-unity χ²ᵣ≈1.15 at
+    ν≈2000 reads "poor" yet is flagged ``marginal`` for a softer amber chip. The
+    verdict itself is unchanged — WiMDA band math is preserved."""
+    params = ParameterSet([Parameter("A", 0.2)])
+    dof = 2000
+    chi2 = 1.15 * dof
     result = _FakeResult(True, chi2, chi2 / dof, params, {"A": 0.01}, dof=dof)
 
     quality = fit_result_summary(result)["quality"]
@@ -110,7 +143,7 @@ def test_overdone_verdict_is_never_marginal():
     as-is (non-alarming accent), never softened to "marginal"."""
     params = ParameterSet([Parameter("A", 0.2)])
     dof = 1927
-    chi2 = 0.90 * dof  # below the tight band -> overdone, |χ²ᵣ-1| = 0.10
+    chi2 = 0.88 * dof  # below the tight 0.999 band (≈0.90) -> overdone, |χ²ᵣ-1|=0.12
     result = _FakeResult(True, chi2, chi2 / dof, params, {"A": 0.01}, dof=dof)
 
     quality = fit_result_summary(result)["quality"]
