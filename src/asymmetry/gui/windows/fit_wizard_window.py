@@ -37,6 +37,7 @@ from asymmetry.core.fitting.fit_wizard import (
 from asymmetry.core.fitting.parameters import get_param_info
 from asymmetry.core.fourier.fft import fft_asymmetry
 from asymmetry.gui.styles import tokens
+from asymmetry.gui.widgets.screen_sizing import resize_to_available
 
 
 class FitWizardWorker(QObject):
@@ -82,7 +83,11 @@ class FitWizardWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Fit Wizard")
-        self.resize(1280, 920)
+        # Cap the default to the available screen so the title bar never opens
+        # clipped above the menu bar on a 13-inch laptop (~800 px high). The tab
+        # bodies already scroll, so the spacious preferred size is used only when
+        # the display can hold it (P1-5).
+        resize_to_available(self, 1180, 740)
 
         self._dataset: MuonDataset | None = None
         self._current_model: CompositeModel | None = None

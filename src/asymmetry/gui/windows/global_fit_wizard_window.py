@@ -48,6 +48,7 @@ from asymmetry.core.fitting.global_search.heuristics import (
 )
 from asymmetry.core.fitting.parameters import get_param_info
 from asymmetry.gui.panels.log_panel import LogPanel
+from asymmetry.gui.widgets.screen_sizing import resize_to_available
 
 _DEFAULT_PHASE_ONE_SINGLE_FIT_HELPER = (
     build_or_complete_single_fit_wizard_recommendations_for_global_portfolio
@@ -318,7 +319,11 @@ class GlobalFitWizardWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Global Fit Wizard")
-        self.resize(1260, 900)
+        # Cap the default to the available screen so the title bar never opens
+        # clipped above the menu bar on a 13-inch laptop; the tab bodies scroll
+        # so the spacious preferred size applies only when the display fits it
+        # (P1-5).
+        resize_to_available(self, 1180, 740)
 
         self._datasets: list[MuonDataset] = []
         self._current_model: CompositeModel | None = None
