@@ -3339,7 +3339,7 @@ class GlobalFitTab(QWidget):
             layout.addLayout(seeding_layout)
 
         # Fit buttons. A single-row HBox of these long-labelled actions
-        # ("Run Batch Fit" + "Preview" + "Initial Values..." + the checkbox) set
+        # ("Run Batch Fit" + "Preview" + "Per-run seeds…" + the checkbox) set
         # the Batch tab's minimum width far past the Single tab; a compact grid
         # (mirroring SingleFitTab) keeps the widest row to two buttons.
         btn_layout = QGridLayout()
@@ -3362,12 +3362,13 @@ class GlobalFitTab(QWidget):
         # group) nuisances are edited only through this dialog — name it for that.
         batch_grouped = self._member_kind == "groups" and not self._grouped_single
         self._initial_values_btn = QPushButton(
-            "Edit per-group initial values…" if batch_grouped else "Initial Values..."
+            "Edit per-group initial values…" if batch_grouped else "Per-run seeds…"
         )
         self._initial_values_btn.setToolTip(
             "Edit each (run, group)'s initial nuisance values (auto-seeded per dataset)."
             if batch_grouped
-            else "Edit per-member initial parameter values (per run, or per run/group for grouped fits)."
+            else "Edit each run's starting (seed) parameter values for the batch fit "
+            "(the warm-start the outlier signpost points at)."
         )
         self._initial_values_btn.clicked.connect(self._open_initial_values_dialog)
         self._minos_checkbox = QCheckBox("Asymmetric errors")
@@ -3398,7 +3399,7 @@ class GlobalFitTab(QWidget):
 
         # Seeding signpost — hidden until a batch's ν(T)/A(T) trend shows the
         # near-transition collapse/outlier signature. It points a struggling user
-        # at the per-run "Initial Values…" warm-start and offers to apply the
+        # at the per-run "Per-run seeds…" warm-start and offers to apply the
         # descending-frequency seeds the diagnostics computed.
         self._seeding_signpost = QFrame()
         self._seeding_signpost.setObjectName("seedingSignpost")
@@ -3415,11 +3416,11 @@ class GlobalFitTab(QWidget):
         signpost_btn_row.setSpacing(6)
         self._apply_suggested_seeds_btn = QPushButton("Use suggested per-run seeds")
         self._apply_suggested_seeds_btn.setToolTip(
-            "Fill the per-run Initial Values table with descending frequency seeds "
+            "Fill the per-run seed table with descending frequency seeds "
             "interpolated from the runs that fit cleanly, then re-run the batch."
         )
         self._apply_suggested_seeds_btn.clicked.connect(self._apply_suggested_series_seeds)
-        self._open_initial_values_from_signpost_btn = QPushButton("Open Initial Values…")
+        self._open_initial_values_from_signpost_btn = QPushButton("Open per-run seeds…")
         self._open_initial_values_from_signpost_btn.setToolTip(
             "Open the per-run seed table to edit warm-start values by hand."
         )
@@ -4603,7 +4604,7 @@ class GlobalFitTab(QWidget):
         ]
         values = self._effective_initial_values_by_run(parsed)
         dialog = InitialValuesDialog(
-            members, params, values, parent=self, title="Batch initial values"
+            members, params, values, parent=self, title="Per-run seeds"
         )
         if dialog.exec():
             self._user_initial_values_by_run = dialog.edited_values()
