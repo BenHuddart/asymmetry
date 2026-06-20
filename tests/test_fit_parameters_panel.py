@@ -38,6 +38,7 @@ from asymmetry.gui.panels.fit_parameters_panel import (
     _FitRow,
     _format_gle_label,
     _format_gle_legend_label,
+    _format_param_label,
     _format_plot_label,
     _format_plot_legend_label,
     _GroupFitData,
@@ -1247,6 +1248,49 @@ def test_model_fit_buttons_get_explicit_width(panel: FitParametersPanel) -> None
     controls = panel._y_controls["A0"]
     assert controls.fit_button.minimumWidth() > 0
     assert panel._y_selector_table.columnWidth(1) >= controls.fit_button.minimumWidth()
+
+
+def test_y_selector_keeps_action_columns_reachable_without_h_scroll(
+    panel: FitParametersPanel,
+) -> None:
+    """A long parameter name must not hide the Model Fit / log action columns.
+
+    Round-10 finding #5: at wider inspector widths the per-parameter Model Fit
+    buttons vanished behind a horizontal scrollbar that would not scroll to
+    them. The name column now stretches and elides; horizontal scrolling is
+    OFF; and — the actual regression — an overlong parameter name no longer
+    inflates the table's minimum width, so it never forces the panel wider than
+    the dock (which is what used to spawn the offending scrollbar).
+    """
+    table = panel._y_selector_table
+
+    panel._varying_params = ["A0"]
+    panel._rebuild_y_controls()
+    short_name_min_width = table.minimumWidth()
+
+    long_name = "A_extremely_long_parameter_name_that_would_overflow_the_dock"
+    panel._rows = [
+        _FitRow(
+            run_number=1,
+            run_label="1",
+            field=100.0,
+            temperature=10.0,
+            values={long_name: 0.2},
+            errors={long_name: 0.01},
+        ),
+    ]
+    panel._varying_params = [long_name]
+    panel._rebuild_y_controls()
+
+    assert table.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    assert table.textElideMode() == Qt.TextElideMode.ElideRight
+    # The long name elides into the stretching column rather than widening the
+    # table: the minimum width is unchanged from the short-name case.
+    assert table.minimumWidth() == short_name_min_width
+    # The name item carries the full label so eliding loses nothing on hover.
+    name_item = table.item(0, 0)
+    assert name_item is not None
+    assert name_item.toolTip() == _format_param_label(long_name)
 
 
 def test_shift_click_highlights_group_without_changing_active_selection(
