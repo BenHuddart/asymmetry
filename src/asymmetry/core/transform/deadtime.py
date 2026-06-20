@@ -243,7 +243,7 @@ def promote_deadtime_to_grouping(
     extra_terms: dict[str, float] | None = None,
     method: str = "value",
 ) -> dict[str, dict[int, float]]:
-    """Write a fitted deadtime (μs) into the grouping correction (WiMDA Send-to-Group).
+    """Write a fitted deadtime (µs) into the grouping correction (WiMDA Send-to-Group).
 
     Mirrors WiMDA's ``SendToGroupClick``: a deadtime obtained from a count fit is
     promoted into the grouping's per-detector ``dead_time_us`` so the next

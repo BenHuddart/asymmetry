@@ -432,7 +432,7 @@ def test_skip_window_label_is_relabelled(qapp):
     window = MultiGroupFitWindow()
     # "Skip" (not the bare "Exclude") still encodes the hard-skip semantics that
     # distinguish this from the MaxEnt de-weight window; the tooltip has the rest.
-    assert window._exclude_label.text() == "Skip (μs)"
+    assert window._exclude_label.text() == "Skip (µs)"
     assert "exclude" in window._exclude_label.toolTip().lower()
 
 

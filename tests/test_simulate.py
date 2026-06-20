@@ -924,7 +924,7 @@ class TestBuiltinTemplates:
         assert len(run.histograms) == 2
         assert run.histograms[0].n_bins == 10000
         assert np.isclose(run.histograms[0].bin_width, 0.001)
-        # 10 μs window at 1 ns binning.
+        # 10 µs window at 1 ns binning.
         assert np.isclose(run.histograms[0].n_bins * run.histograms[0].bin_width, 10.0)
 
     def test_unknown_key_raises(self) -> None:

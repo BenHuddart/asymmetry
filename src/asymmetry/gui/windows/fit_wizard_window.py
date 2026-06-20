@@ -605,7 +605,7 @@ class FitWizardWindow(QMainWindow):
             markersize=3,
             color="#1d3557",
         )
-        ax_time.set_xlabel("Time (μs)")
+        ax_time.set_xlabel("Time (µs)")
         ax_time.set_ylabel("Asymmetry")
         ax_time.set_title("Time Domain")
 
@@ -764,7 +764,7 @@ class FitWizardWindow(QMainWindow):
             label="Data",
         )
         ax_fit.plot(assessment.fitted_time, assessment.fitted_curve, color="#e63946", label="Fit")
-        ax_fit.set_xlabel("Time (μs)")
+        ax_fit.set_xlabel("Time (µs)")
         ax_fit.set_ylabel("Asymmetry")
         ax_fit.set_title(assessment.template.title)
         ax_fit.legend(loc="best")
@@ -783,7 +783,7 @@ class FitWizardWindow(QMainWindow):
             )
             freq, _real, mag = fft_asymmetry(residual_dataset, window="hann", padding_factor=4)
             ax_fft.plot(freq, mag, color="#264653")
-        ax_res.set_xlabel("Time (μs)")
+        ax_res.set_xlabel("Time (µs)")
         ax_res.set_ylabel("Residual")
         ax_res.set_title("Residuals")
         ax_fft.set_xlabel("Frequency (MHz)")

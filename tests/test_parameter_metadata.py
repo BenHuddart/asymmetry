@@ -17,7 +17,7 @@ def test_get_param_info_known_parameter_has_rich_formats() -> None:
     assert info.unicode == "λ"
     assert info.latex == r"$\lambda$"
     assert info.gle == r"\lambda"
-    assert info.unit == "μs⁻¹"
+    assert info.unit == "µs⁻¹"
 
 
 def test_get_param_info_shape_factor_a_has_expected_defaults() -> None:

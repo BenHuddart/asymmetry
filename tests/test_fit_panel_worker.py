@@ -21,7 +21,7 @@ from asymmetry.gui.tasks import TaskRunner  # noqa: E402
 
 def test_format_param_label_known_and_unknown() -> None:
     assert _format_param_label("A0") == "A₀ (%)"
-    assert _format_param_label("Lambda") == "λ (μs⁻¹)"
+    assert _format_param_label("Lambda") == "λ (µs⁻¹)"
     assert _format_param_label("custom") == "custom"
 
 

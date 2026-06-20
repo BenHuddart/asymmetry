@@ -185,7 +185,7 @@ def _split_time_offset(kw: dict) -> float:
 
 
 def _split_lifetime(kw: dict, default: float) -> float:
-    """Pop the optional free muon lifetime ``tau`` (μs); default = physical value.
+    """Pop the optional free muon lifetime ``tau`` (µs); default = physical value.
 
     Popping it keeps ``tau`` from reaching the model builders (which would pass it
     to the physics model). When absent this returns ``default`` and leaves ``kw``
@@ -321,7 +321,7 @@ def _double_pulse_factor(
 ) -> NDArray[np.float64]:
     """The two-pulse ``(1 + sign·P)`` envelope shared by the single and F+B models.
 
-    Two muon pulses separated by ``dpsep`` (μs) each carry the polarization,
+    Two muon pulses separated by ``dpsep`` (µs) each carry the polarization,
     evaluated at ``t ± dpsep/2`` and weighted by ``exp(∓dpsep/2τ_μ)`` (WiMDA
     ``ArrayMusrFunc``); the 0.5 normalization recovers the single-pulse limit as
     ``dpsep → 0`` and the second pulse is gated to ``t > dpsep/2``. The gated-out

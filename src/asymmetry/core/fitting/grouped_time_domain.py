@@ -173,7 +173,7 @@ def build_grouped_time_domain_datasets(
             "group_name": group.group_name,
             "source_run_number": group.source_run_number,
             "grouped_time_domain": True,
-            "x_label": "Time (μs)",
+            "x_label": "Time (µs)",
             "y_label": y_label,
         }
         grouped_datasets.append(

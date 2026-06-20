@@ -455,7 +455,7 @@ class PlotPanel(QWidget):
         row0.addWidget(QLabel("–"))
         self._x_max = _FloatLimitField(10.0, minimum_width=76)
         row0.addWidget(self._x_max)
-        self._x_unit_label = QLabel("MHz" if self._is_frequency_plot_panel() else "μs")
+        self._x_unit_label = QLabel("MHz" if self._is_frequency_plot_panel() else "µs")
         row0.addWidget(self._x_unit_label)
 
         # Y-axis limits
@@ -767,7 +767,7 @@ class PlotPanel(QWidget):
         """Return fallback axis labels for this panel domain."""
         if self._is_frequency_plot_panel():
             return self._display_x_label(), r"$|F|$ (arb.)"
-        return "Time (μs)", "Asymmetry (%)"
+        return "Time (µs)", "Asymmetry (%)"
 
     def _mhz_per_gauss(self) -> float:
         """Return the frequency equivalent of one Gauss in MHz.
@@ -816,7 +816,7 @@ class PlotPanel(QWidget):
     def _display_x_label(self) -> str:
         """Return the x-axis label for the current display unit."""
         if not self._is_frequency_plot_panel():
-            return "Time (μs)"
+            return "Time (µs)"
         if self._frequency_axis_is_correlation:
             return self._frequency_correlation_x_label
         return {
@@ -827,7 +827,7 @@ class PlotPanel(QWidget):
     def _display_x_unit_suffix(self) -> str:
         """Return the compact unit suffix for the x-limit controls."""
         if not self._is_frequency_plot_panel():
-            return "μs"
+            return "µs"
         return {
             "field_gauss": "G",
             "field_tesla": "T",
@@ -1884,7 +1884,7 @@ class PlotPanel(QWidget):
                 and y_label.strip()
             ):
                 return x_label, y_label
-        return "Time (μs)", self._polarization_ylabel(axis_key)
+        return "Time (µs)", self._polarization_ylabel(axis_key)
 
     def _has_plottable_samples(self, dataset: MuonDataset | None) -> bool:
         """Return True when *dataset* contains at least one aligned sample."""
@@ -2333,7 +2333,7 @@ class PlotPanel(QWidget):
 
         Stored grouped/count fit overlays are on the lifetime-corrected scale,
         so they must not be drawn against raw-count curves (they diverge by
-        e^(t/τ), ~38× at 8 μs).
+        e^(t/τ), ~38× at 8 µs).
         """
         return (
             dataset is not None
@@ -3270,7 +3270,7 @@ class PlotPanel(QWidget):
             ax_res.plot(time, residual, "-", linewidth=0.9, color=tokens.PLOT_DATA)
             ax_res.set_ylabel("(d−m)/σ")
             if idx == n - 1:
-                ax_res.set_xlabel("Time (μs)")
+                ax_res.set_xlabel("Time (µs)")
             else:
                 ax_res.tick_params(labelbottom=False)
             last_time = time
@@ -3344,7 +3344,7 @@ class PlotPanel(QWidget):
         style_legend(ax_main.legend(loc="upper right", title="Group"))
         ax_res.axhline(0.0, color=tokens.PLOT_ZERO_LINE, linewidth=0.8)
         ax_res.set_ylabel("(d−m)/σ")
-        ax_res.set_xlabel("Time (μs)")
+        ax_res.set_xlabel("Time (µs)")
 
         if total_obs:
             chi2_per_n = total_chi2 / float(total_obs)
@@ -5324,7 +5324,7 @@ class PlotPanel(QWidget):
         value, ok = QInputDialog.getDouble(
             self,
             "Set Fit Range",
-            "Fit x-value (μs):",
+            "Fit x-value (µs):",
             float(current),
             -1e6,
             1e6,

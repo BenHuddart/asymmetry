@@ -203,7 +203,7 @@ class TestRoundTrip:
 def _fit_exp(dataset, a0_start: float, rate_start: float, t_max: float = 8.0):
     """Fit the exponential, restricted to the healthy-count window.
 
-    The late tail of a 24 μs histogram holds ≲ 1 count/bin where the
+    The late tail of a 24 µs histogram holds ≲ 1 count/bin where the
     Gaussian error approximation (and √n errors from observed counts)
     breaks down — textbook §15.3. Real analyses window the fit the same way.
     """

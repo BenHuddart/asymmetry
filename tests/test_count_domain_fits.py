@@ -468,7 +468,7 @@ def test_free_lifetime_recovers_injected_tau():
         template, _tf, {"A": 20.0, "f": 1.0, "phi": 0.0},
         total_events=40e6, alpha=1.0, background_per_bin=0.0, seed=2,
     )  # fmt: skip
-    tau_inject = 2.5  # μs, well away from the physical 2.197 μs
+    tau_inject = 2.5  # µs, well away from the physical 2.197 µs
     _retau_forward_histogram(run, tau_inject)
     ds = MuonDataset(
         time=np.array([]), asymmetry=np.array([]), error=np.array([]), metadata={}, run=run
