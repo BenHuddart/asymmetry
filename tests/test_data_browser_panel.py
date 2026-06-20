@@ -20,7 +20,11 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QInputDialog, QMessageBox
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
-from asymmetry.gui.panels.data_browser import DataBrowserPanel
+from asymmetry.gui.panels.data_browser import (
+    _SUSPECT_TEMPERATURE_FOREGROUND,
+    _SUSPECT_TEMPERATURE_MARKER,
+    DataBrowserPanel,
+)
 
 
 @pytest.fixture(scope="module")
@@ -1888,4 +1892,71 @@ def test_overflowing_extra_columns_fall_back_to_honest_scrolling(
     assert header.sectionSize(1) >= panel._TITLE_FIT_FLOOR
     total = sum(header.sectionSize(i) for i in range(panel._table.columnCount()))
     assert total > panel._table.viewport().width()
+    panel.close()
+
+
+def _suspect_furnace_dataset(run_number: int, celsius_value: float) -> MuonDataset:
+    """A furnace run the loader flagged as a suspected °C-stored-as-Kelvin point."""
+    ds = _dataset(run_number)
+    ds.metadata["temperature"] = celsius_value
+    ds.metadata["temperature_unit_suspect"] = True
+    ds.metadata["temperature_unit_suspect_reason"] = (
+        f"EMU temperature {celsius_value:.1f} exceeds the 320 K cryostat ceiling "
+        "with no logged sample thermometer; may be a Celsius value."
+    )
+    return ds
+
+
+def test_furnace_temperature_suspect_is_flagged_in_browser(qapp: QApplication) -> None:
+    """A suspected °C/K furnace run gets the amber ⚠ marker, tint, and a tooltip
+    that spells out the conversion and points away from the from-log toggle."""
+    panel = DataBrowserPanel()
+    panel.add_dataset(_suspect_furnace_dataset(1, 350.0))
+    panel.add_dataset(_dataset(2))  # ordinary run: no flag
+
+    suspect_item = panel._table.item(0, 2)
+    assert suspect_item is not None
+    # Marker is present and the displayed value still reads the unconverted number.
+    assert suspect_item.text() == f"350.00{_SUSPECT_TEMPERATURE_MARKER}"
+    assert QColor(suspect_item.foreground().color()) == _SUSPECT_TEMPERATURE_FOREGROUND
+    tip = suspect_item.toolTip()
+    assert "mislabelled" in tip
+    # Conversion is spelled out (350 °C → 623.15 K) and the toggle is addressed.
+    assert "623.15 K" in tip
+    assert "Use temperature from log" in tip
+
+    # Ordinary run is untouched: no marker, no warning tooltip.
+    plain_item = panel._table.item(1, 2)
+    assert plain_item is not None
+    assert _SUSPECT_TEMPERATURE_MARKER not in plain_item.text()
+    assert plain_item.toolTip() == ""
+    panel.close()
+
+
+def test_furnace_suspect_marker_keeps_numeric_sort(qapp: QApplication) -> None:
+    """The ⚠ text suffix must not break numeric ordering of the T column."""
+    panel = DataBrowserPanel()
+    # 90 °C suspect would sort after 100 K alphabetically ("9" > "1") but must
+    # sort before it numerically.
+    panel.add_dataset(_suspect_furnace_dataset(1, 90.0))
+    plain = _dataset(2)
+    plain.metadata["temperature"] = 100.0
+    panel.add_dataset(plain)
+
+    low = panel._table.item(0, 2)
+    high = panel._table.item(1, 2)
+    assert low is not None and high is not None
+    assert low < high  # NumericTableWidgetItem.__lt__ keys off the parsed value
+    panel.close()
+
+
+def test_temperature_header_tooltip_mentions_furnace_unit(qapp: QApplication) -> None:
+    """The T (K) header explains the unit and the furnace-mislabel flag."""
+    panel = DataBrowserPanel()
+    panel.add_dataset(_dataset(1))
+    header_item = panel._table.horizontalHeaderItem(2)
+    assert header_item is not None
+    tip = header_item.toolTip()
+    assert "kelvin" in tip.lower()
+    assert "⚠" in tip
     panel.close()
