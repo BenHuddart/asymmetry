@@ -62,15 +62,31 @@ jobs:
       - name: Lint
         run: python tools/harness.py lint
 
-  # Full test suite on a single runner. The harness runs it with
-  # `-n auto --dist load`, which (since the GUI-teardown fix) completes in a
-  # few minutes — so the previous 4-way pytest-split sharding and the committed
-  # .test_durations timings are no longer needed.
+  # Standard-tier suite, sharded across parallel runners. The GUI tests each pay
+  # a per-test MainWindow construction cost and on a 2-core runner dominate
+  # wall-clock (~10 min vs ~2 min for everything else), so they are split into
+  # three node-id-hashed shards via the harness `--shard` flag while the fast
+  # non-GUI tests stay a single shard. Each shard still runs `-n auto --dist load`
+  # within its runner. The four shards together cover exactly the standard tier
+  # (non-gui ∪ gui[1/3 ∪ 2/3 ∪ 3/3]); the hash split is stable per node id so the
+  # GUI shards are disjoint and complete regardless of per-process test ordering.
   test:
-    name: Tests
+    name: Tests (${{ matrix.label }})
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: non-gui
+            args: --subset non-gui
+          - label: gui 1/3
+            args: --subset gui --shard 1/3
+          - label: gui 2/3
+            args: --subset gui --shard 2/3
+          - label: gui 3/3
+            args: --subset gui --shard 3/3
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -88,7 +104,7 @@ jobs:
       - name: Run test suite
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python tools/harness.py test
+        run: python tools/harness.py test --tier standard ${{ matrix.args }}
 
   # Single required status check that aggregates the checks + test jobs, so the
   # branch ruleset only needs to require this one status. Passes when checks

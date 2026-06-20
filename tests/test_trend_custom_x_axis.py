@@ -229,7 +229,7 @@ def test_gle_export_plots_against_angle_column(qapp, tmp_path):
     )
     data_path = tmp_path / "trend.dat"
     panel._write_gle_data_file(data_path)
-    text = data_path.read_text()
+    text = data_path.read_text(encoding="utf-8")
     assert "Angle (°)" in text  # the abscissa is now an emitted column
     # x-column is the trailing column (after Run/B/T + 2 per displayed parameter),
     # not Temperature (3).

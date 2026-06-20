@@ -1,9 +1,28 @@
 from __future__ import annotations
 
+import zlib
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """Register ``--shard K/N`` for splitting a selection across CI runners.
+
+    CI shards the (heavy) GUI tests across several runners. The split is by a
+    stable hash of each test's node id rather than collection order, so the N
+    independent shard processes — which ``pytest-randomly`` orders differently —
+    still cover every selected test exactly once, with no overlap or gap.
+    """
+    parser.addoption(
+        "--shard",
+        action="store",
+        default=None,
+        metavar="K/N",
+        help="Run only shard K of N (e.g. 1/3) of the selected tests, partitioned "
+        "by a hash of each test's node id.",
+    )
 
 
 @pytest.fixture(scope="session")
@@ -198,11 +217,34 @@ def _reset_ui_font_scale() -> Iterator[None]:
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    """Auto-mark tests that carry no explicit type marker as 'unit'."""
+    """Auto-mark unmarked tests as 'unit', then apply ``--shard`` if given."""
     type_markers = {"unit", "gui", "io"}
     for item in items:
         if not (set(m.name for m in item.iter_markers()) & type_markers):
             item.add_marker(pytest.mark.unit)
+
+    shard = config.getoption("--shard")
+    if not shard:
+        return
+
+    try:
+        index_str, count_str = str(shard).split("/")
+        index, count = int(index_str), int(count_str)
+    except ValueError as exc:
+        raise pytest.UsageError(f"--shard must be K/N (e.g. 1/3), got {shard!r}") from exc
+    if count < 1 or not (1 <= index <= count):
+        raise pytest.UsageError(f"--shard K/N requires N >= 1 and 1 <= K <= N, got {shard!r}")
+
+    # Partition by a stable hash of the node id (NOT collection order, which
+    # pytest-randomly varies per process): every shard process then keeps a
+    # disjoint slice and the union is the whole selection.
+    kept, deselected = [], []
+    for item in items:
+        bucket = zlib.crc32(item.nodeid.encode("utf-8")) % count
+        (kept if bucket == index - 1 else deselected).append(item)
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+    items[:] = kept
 
 
 @pytest.fixture

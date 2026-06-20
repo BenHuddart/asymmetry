@@ -31,13 +31,20 @@ push it, and open a PR — don't commit directly to `main`.
 
 - Use the project virtualenv: `.venv/bin/python`. It pins numpy 2.2.x and a working
   iminuit; the system Python has numpy ≥ 2.3, which breaks fitting.
-- CI runs `python tools/harness.py validate` (lint + structural checks + the full
-  pytest suite). The harness parallelizes the suite with `-n auto --dist load`, so
-  a full local `validate` completes in **~2 min**. (Historically it took 30–60 min:
-  GUI tests created a `MainWindow` per test without destroying it, and because
-  `deleteLater` is not dispatched without forcing `DeferredDelete`, leaked widgets
-  accumulated and `MainWindow` setup degraded to O(n²). The autouse
-  `_cleanup_qt_widgets` fixture in `tests/conftest.py` fixes this.)
+- CI runs lint + structural checks, then the standard-tier pytest suite **sharded
+  across four runners**: one non-GUI shard plus three GUI shards
+  (`--subset gui --shard {1,2,3}/3`). The GUI tests carry the per-test
+  `MainWindow` cost and on a 2-core runner take ~10 min unsplit vs ~2 min for
+  everything else, so splitting them three ways brings the critical path to
+  ~4–5 min. Locally, `python tools/harness.py validate` runs the same standard
+  tier single-box with `-n auto --dist load` in **~2.5 min**; `--tier fast`
+  (non-GUI only) is the ~40s inner loop. (Historically the suite took 30–60 min: GUI tests created a
+  `MainWindow` per test without destroying it, and because `deleteLater` is not
+  dispatched without forcing `DeferredDelete`, leaked widgets accumulated and
+  `MainWindow` setup degraded to O(n²). The autouse `_cleanup_qt_widgets` fixture
+  in `tests/conftest.py` fixes this.)
 - A per-test timeout (`--timeout=120`) is set, so a genuinely hung test fails fast
   rather than stalling the whole run.
 - GUI tests need `QT_QPA_PLATFORM=offscreen` in headless environments.
+- Docs are built + deployed to GitHub Pages **only on release tags** (`v*`); PRs
+  that touch `docs/**` get a cheap build-only smoke (no screenshots, no deploy).
