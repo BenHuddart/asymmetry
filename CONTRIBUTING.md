@@ -30,14 +30,28 @@ Thank you for your interest in contributing to Asymmetry!
 
 - Follow PEP 8 guidelines
 - Use type hints for function signatures
-- Run `ruff` for linting:
+- Run the full lint the way CI does — this checks **both** formatting and lint
+  rules over `src/`, `tests/`, and `tools/`:
   ```bash
-  ruff check src/ tests/
+  python tools/harness.py lint   # == ruff format --check + ruff check
   ```
-- The agent/CI harness runs the same lint with:
+  A plain `ruff check` is **not** enough: CI also runs `ruff format --check`, so
+  a file that lints clean can still fail CI on formatting. To auto-apply fixes:
   ```bash
-  python tools/harness.py lint
+  ruff format src tests tools && ruff check --fix src tests tools
   ```
+
+### Git hooks
+
+A pre-commit hook in `.githooks/` runs `python tools/harness.py lint` before each
+commit, so a formatting slip never reaches CI. Enable it once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+It skips automatically where Ruff isn't installed (e.g. a worktree without a
+`.venv`), and you can bypass it for a single commit with `git commit --no-verify`.
 
 ## Testing
 
