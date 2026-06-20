@@ -90,6 +90,40 @@ def test_add_custom_column_is_empty_and_editable(qapp):
     assert panel._table.horizontalHeaderItem(col_idx).text() == "Anneal"
 
 
+def test_scroll_to_last_column_reveals_new_column(qapp):
+    """Round-10 #9: a freshly added custom column must be scrolled into view."""
+    panel = DataBrowserPanel()
+    for rn in range(1, 4):
+        panel.add_dataset(_dataset(rn))
+    panel.add_custom_column("Current (A)")
+    panel.resize(240, 200)
+    panel.show()
+    qapp.processEvents()
+
+    # Force a horizontal overflow regardless of platform metrics, then scroll
+    # away from the end so the helper has somewhere to move to.
+    header = panel._table.horizontalHeader()
+    for col in range(panel._table.columnCount()):
+        header.resizeSection(col, 200)
+    qapp.processEvents()
+    bar = panel._table.horizontalScrollBar()
+    assert bar.maximum() > 0, "table did not overflow; test setup is wrong"
+    bar.setValue(0)
+
+    panel._scroll_to_last_column()
+    assert bar.value() == bar.maximum()  # the new (rightmost) column is revealed
+    panel.close()
+
+
+def test_scroll_to_last_column_noop_without_extra_columns(qapp):
+    """The scroll helper does nothing when only the fixed columns are present."""
+    panel = DataBrowserPanel()
+    panel.add_dataset(_dataset(1))
+    # No extra column: must not raise and must leave the scrollbar untouched.
+    panel._scroll_to_last_column()
+    assert panel._table.horizontalScrollBar().value() == 0
+
+
 def test_custom_value_edit_stored_in_dataset_metadata(qapp):
     panel = DataBrowserPanel()
     ds = _dataset(2)

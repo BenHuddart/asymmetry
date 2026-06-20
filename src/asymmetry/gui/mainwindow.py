@@ -8836,6 +8836,10 @@ class MainWindow(QMainWindow):
                 if dataset is not None and dataset.run is not None:
                     runs_by_number[run] = dataset.run
         series.sort_members(runs_by_number)
+        # Re-running the same batch (same model, members, classification and fit
+        # window) used to leave a duplicate trend "pill" each time; drop any
+        # identical prior series so the fresh one replaces it.
+        self._project_model.remove_superseded_batches(series)
         self._project_model.add_batch(series)
         for run in sorted(set(slot_runs)):
             representation = self._project_model.ensure_dataset(int(run)).ensure(series.rep_type)

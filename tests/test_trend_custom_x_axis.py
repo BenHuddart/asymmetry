@@ -261,6 +261,53 @@ def test_gle_angle_label_reflects_fold(qapp):
     assert panel._custom_x_labels()["angle"] == "Angle (°) (folded 180°)"
 
 
+def _plain_series_dict(run: int, a0: float, custom: dict | None = None) -> dict:
+    return {
+        "run_number": run,
+        "run_label": str(run),
+        "field": 100.0,
+        "temperature": 10.0,
+        "values": {"A0": a0},
+        "errors": {"A0": 0.01},
+        "custom_values": dict(custom or {}),
+    }
+
+
+def test_stale_custom_x_axis_resets_to_auto_on_load(qapp):
+    """Round-10 #9: a custom axis with no values for new rows falls back to Auto."""
+    panel = FitParametersPanel()
+    panel.set_custom_x_fields([("Current (A)", "custom:abc")])
+    panel._x_combo.setCurrentIndex(panel._x_combo.findData("custom:abc"))
+    assert panel._effective_x_key() == "custom:abc"
+
+    # A fresh, unrelated dataset whose runs carry no value for that column.
+    panel.load_representation_series(
+        [("b", "S", [_plain_series_dict(1, 0.2), _plain_series_dict(2, 0.3)])]
+    )
+    assert panel._x_combo.currentText() == "Auto"
+
+
+def test_valid_custom_x_axis_is_kept_on_load(qapp):
+    """A custom axis that DOES have values for the new rows must not be reset."""
+    panel = FitParametersPanel()
+    panel.set_custom_x_fields([("Current (A)", "custom:abc")])
+    panel._x_combo.setCurrentIndex(panel._x_combo.findData("custom:abc"))
+
+    panel.load_representation_series(
+        [
+            (
+                "b",
+                "S",
+                [
+                    _plain_series_dict(1, 0.2, {"custom:abc": "0.5"}),
+                    _plain_series_dict(2, 0.3, {"custom:abc": "1.0"}),
+                ],
+            )
+        ]
+    )
+    assert panel._effective_x_key() == "custom:abc"
+
+
 def test_angle_fold_round_trips_through_state(qapp):
     panel = FitParametersPanel()
     panel.set_angle_x_field(("Angle (°)", "angle"))

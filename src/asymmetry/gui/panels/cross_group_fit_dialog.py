@@ -62,6 +62,7 @@ class CrossGroupFitDialog(ModelFitDialog):
         groups: list[ParameterGroupData],
         existing_config: dict[str, object] | None = None,
         parent=None,
+        x_label: str | None = None,
     ) -> None:
         self._parameter_name = parameter_name
         self._x_key = x_key
@@ -104,10 +105,11 @@ class CrossGroupFitDialog(ModelFitDialog):
             existing_fit=None,
             parent=parent,
             x_errors=all_xe,
+            x_label=x_label,
         )
         self.setWindowTitle(f"Cross-group fit: {parameter_name}")
 
-        banner_text = f"Cross-group mode | Parameter: <b>{parameter_name}</b> | X: <b>{x_key}</b> | Groups: <b>{len(groups)}</b>"
+        banner_text = f"Cross-group mode | Parameter: <b>{parameter_name}</b> | X: <b>{self._x_display}</b> | Groups: <b>{len(groups)}</b>"
         source_name = (
             existing_config.get("source_group_name") if isinstance(existing_config, dict) else None
         )
