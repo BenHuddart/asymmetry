@@ -177,6 +177,27 @@ def _build_fourier_mode_info_html(render_latex_images: bool) -> str:
     return "".join(section_html)
 
 
+def _collapsible_group(title: str) -> tuple[QGroupBox, QVBoxLayout]:
+    """A checkable group box that hides its content when unchecked.
+
+    Mirrors the ALC panel's ``_collapsible_group`` disclosure so niche /
+    experimental controls can be tucked away without leaving the ~236px
+    inspector deck. Returns the group and the layout to fill with content.
+    """
+    group = QGroupBox(title)
+    group.setCheckable(True)
+    group.setChecked(True)
+    content = QWidget()
+    shell = QVBoxLayout(group)
+    shell.setContentsMargins(6, 2, 6, 6)
+    shell.addWidget(content)
+    group.toggled.connect(content.setVisible)
+    inner = QVBoxLayout(content)
+    inner.setContentsMargins(0, 0, 0, 0)
+    inner.setSpacing(6)
+    return group, inner
+
+
 def show_fourier_mode_info_dialog(parent: QWidget) -> QDialog:
     """Open a non-modal info dialog describing the WiMDA-style FFT modes."""
     dialog = QDialog(parent)
@@ -236,6 +257,12 @@ class FourierPanel(QWidget):
         self._sin_radio = QRadioButton("Sin")
         self._phase_mode_radio = QRadioButton("Phase")
         self._real_imag_radio = QRadioButton("Real+Imag")
+
+        # Advanced / experimental modes (collapsed by default). Labels stay
+        # short — the "— diagnostic"/"— specialist" qualifiers live in the
+        # tooltips — so nothing clips at the ~236px inspector deck. The blue
+        # (featured) / amber (diagnostic/specialist) colouring is deliberate
+        # semantic signalling and is preserved.
         self._phase_opt_real_radio = QRadioButton("phaseOptReal")
         self._phase_opt_real_radio.setStyleSheet(
             f"QRadioButton {{ color: {tokens.ACCENT}; font-weight: 600; padding-bottom: 2px; }}"
@@ -243,7 +270,12 @@ class FourierPanel(QWidget):
         self._phase_opt_real_radio.setMinimumHeight(
             self._phase_opt_real_radio.sizeHint().height() + 4
         )
-        self._burg_radio = QRadioButton("Resolution (Burg) — diagnostic")
+        self._phase_opt_real_radio.setToolTip(
+            "Entropy-based automatic phase optimiser (musrfit phaseOptReal). "
+            "Finds the linear phase that makes the real spectrum most compact "
+            "and non-negative; manual phase controls are ignored. Requires iminuit."
+        )
+        self._burg_radio = QRadioButton("Resolution (Burg)")
         self._burg_radio.setStyleSheet(
             f"QRadioButton {{ color: {tokens.WARN}; font-weight: 600; padding-bottom: 2px; }}"
         )
@@ -253,15 +285,15 @@ class FourierPanel(QWidget):
             "strong peaks and carries no uncertainties. Use fitting or MaxEnt "
             "for quantitative results."
         )
-        self._correlation_radio = QRadioButton("Correlation (radical) — specialist")
+        self._correlation_radio = QRadioButton("Correlation (radical)")
         self._correlation_radio.setStyleSheet(
             f"QRadioButton {{ color: {tokens.WARN}; font-weight: 600; padding-bottom: 2px; }}"
         )
         self._correlation_radio.setToolTip(
-            "Muoniated-radical correlation spectrum. Maps a transverse-field "
-            "radical's Breit–Rabi line pair onto the muon hyperfine-coupling "
-            "(Aμ) axis: a peak appears at Aμ. Specialist tool for identifying "
-            "muoniated radicals; high transverse field only."
+            "Muoniated-radical correlation spectrum. Specialist tool: maps a "
+            "transverse-field radical's Breit–Rabi line pair onto the muon "
+            "hyperfine-coupling (Aμ) axis, so a peak appears at Aμ. High "
+            "transverse field only."
         )
         self._power_sqrt_radio.setChecked(True)
 
@@ -276,13 +308,28 @@ class FourierPanel(QWidget):
             self._sin_radio,
             self._phase_mode_radio,
             self._real_imag_radio,
+        ):
+            self._phase_mode_button_group.addButton(button)
+            mode_column_layout.addWidget(button)
+        mode_column_layout.addStretch()
+
+        self._advanced_modes_group, advanced_modes_layout = _collapsible_group(
+            "Advanced / experimental"
+        )
+        self._advanced_modes_group.setToolTip(
+            "Niche FFT projections: an entropy-based auto-phase optimiser and "
+            "two diagnostic super-resolution spectra. Expand only when needed."
+        )
+        for button in (
             self._phase_opt_real_radio,
             self._burg_radio,
             self._correlation_radio,
         ):
             self._phase_mode_button_group.addButton(button)
-            mode_column_layout.addWidget(button)
-        mode_column_layout.addStretch()
+            advanced_modes_layout.addWidget(button)
+        # Collapsed by default — only (Power)^1/2 and the routine projections
+        # are the everyday path.
+        self._advanced_modes_group.setChecked(False)
 
         self._phase_mode_info_btn = QPushButton("Info")
         phase_mode_layout.addWidget(mode_column, 0, 0)
@@ -292,17 +339,26 @@ class FourierPanel(QWidget):
             1,
             alignment=Qt.AlignmentFlag.AlignTop,
         )
+        phase_mode_layout.addWidget(self._advanced_modes_group, 1, 0, 1, 2)
         content_layout.addWidget(phase_mode_group)
 
         apodisation_group = QGroupBox("Apodisation")
         apodisation_form = QFormLayout(apodisation_group)
 
+        # Kept always editable with sensible defaults rather than greyed out
+        # when the mode is "None": a disabled field reads as broken. The tooltip
+        # makes clear the values apply only once a filter mode is chosen.
+        _apodisation_hint = (
+            "Applies only when an apodisation filter (Lorentzian or Gaussian) is selected."
+        )
         self._filter_start_edit = QLineEdit("0.0")
         self._filter_start_edit.setFont(mono_font(11.0))
+        self._filter_start_edit.setToolTip(_apodisation_hint)
         apodisation_form.addRow("Filter start time (µs):", self._filter_start_edit)
 
         self._filter_time_constant_edit = QLineEdit("1.5")
         self._filter_time_constant_edit.setFont(mono_font(11.0))
+        self._filter_time_constant_edit.setToolTip(_apodisation_hint)
         apodisation_form.addRow("Filter time constant (µs):", self._filter_time_constant_edit)
 
         self._filter_button_group = QButtonGroup(self)
@@ -418,9 +474,6 @@ class FourierPanel(QWidget):
 
         self._use_phase_table_check.toggled.connect(self._update_phase_table_enabled)
         self._phase_table.itemChanged.connect(self._on_phase_table_item_changed)
-        self._filter_lorentzian_radio.toggled.connect(self._update_filter_controls_enabled)
-        self._filter_gaussian_radio.toggled.connect(self._update_filter_controls_enabled)
-        self._filter_none_radio.toggled.connect(self._update_filter_controls_enabled)
         self._power_sqrt_radio.toggled.connect(self._update_phase_controls_enabled)
         self._phase_spectrum_radio.toggled.connect(self._update_phase_controls_enabled)
         self._cos_radio.toggled.connect(self._update_phase_controls_enabled)
@@ -436,7 +489,6 @@ class FourierPanel(QWidget):
         self._phase_spin.editingFinished.connect(self._normalize_phase_line_edits)
         self._t0_offset_spin.editingFinished.connect(self._normalize_phase_line_edits)
         self._update_phase_table_enabled(self._use_phase_table_check.isChecked())
-        self._update_filter_controls_enabled()
         self._update_phase_controls_enabled()
 
     def _build_action_footer(self) -> QWidget:
@@ -802,11 +854,10 @@ class FourierPanel(QWidget):
         self._phase_opt_real_radio.setChecked(mode == "phaseOptReal")
         self._burg_radio.setChecked(mode == "Resolution (Burg)")
         self._correlation_radio.setChecked(mode == "Correlation (radical)")
-
-    def _update_filter_controls_enabled(self) -> None:
-        enabled = self._current_filter_mode() != "none"
-        self._filter_start_edit.setEnabled(enabled)
-        self._filter_time_constant_edit.setEnabled(enabled)
+        # Reveal the disclosure when an advanced mode is active so the checked
+        # radio is visible (e.g. restoring a project saved in phaseOptReal/Burg).
+        if mode in ("phaseOptReal", "Resolution (Burg)", "Correlation (radical)"):
+            self._advanced_modes_group.setChecked(True)
 
     def _update_phase_controls_enabled(self) -> None:
         mode = self._current_display_mode()
@@ -1224,5 +1275,4 @@ class FourierPanel(QWidget):
         self._update_exclusion_enabled()
         self._update_diamag_controls_enabled()
         self._normalize_phase_line_edits()
-        self._update_filter_controls_enabled()
         self._update_phase_controls_enabled()

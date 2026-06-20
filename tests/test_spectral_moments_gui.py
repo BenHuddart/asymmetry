@@ -222,6 +222,27 @@ def test_non_overlapping_spectrum_resets_window_to_full():
     assert (lo, hi) == (100.0, 200.0)  # fell back to the new full extent
 
 
+def test_spectral_moments_info_affordance():
+    """The dense readout carries a single Info affordance (mirrors the FFT panel)."""
+    from asymmetry.gui.panels.spectral_moments_widget import (
+        SpectralMomentsWidget,
+        _build_moments_info_html,
+    )
+
+    w = SpectralMomentsWidget()
+    assert w._info_btn.text() == "Info"
+
+    html_text = _build_moments_info_html()
+    # Every readout row is explained, and the unit-invariance note is present.
+    for name in ("B_pk", "B_ave", "B_rms (vs mean)", "Skewness α", "Asymmetry β"):
+        assert name in html_text
+    assert "dimensionless" in html_text
+
+    dialog = w._show_info() or w._info_dialog
+    assert dialog is not None
+    dialog.deleteLater()
+
+
 def test_no_schema_version_bump():
     # Baseline guard: bumped to 10 for data-browser custom/renamable columns
     # (browser_state.extra_columns generalised from a key list to column-def

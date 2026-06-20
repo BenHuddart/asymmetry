@@ -52,8 +52,12 @@ def test_fourier_panel_defaults(qapp: QApplication) -> None:
     assert panel._filter_none_radio.isChecked() is True
     assert panel._filter_start_edit.text() == "0.0"
     assert panel._filter_time_constant_edit.text() == "1.5"
-    assert panel._filter_start_edit.isEnabled() is False
-    assert panel._filter_time_constant_edit.isEnabled() is False
+    # P3-2: apodisation value fields stay editable (with a clarifying tooltip)
+    # even when the mode is "None"; a greyed field reads as broken.
+    assert panel._filter_start_edit.isEnabled() is True
+    assert panel._filter_time_constant_edit.isEnabled() is True
+    assert "Lorentzian" in panel._filter_start_edit.toolTip()
+    assert "Lorentzian" in panel._filter_time_constant_edit.toolTip()
     assert panel._padding_spin.value() == 1
     assert float(panel._phase_spin.text()) == pytest.approx(0.0)
     assert float(panel._t0_offset_spin.text()) == pytest.approx(0.0)
@@ -142,13 +146,57 @@ def test_maxent_cycle_controls_pinned_outside_scroll(qapp: QApplication) -> None
 def test_fourier_panel_group_order_matches_workflow(qapp: QApplication) -> None:
     panel = FourierPanel()
 
-    titles = [group.title() for group in panel.findChildren(QGroupBox) if group.title()]
+    # Only the top-level workflow sections — the "Advanced / experimental"
+    # disclosure is nested inside "FFT Phase Mode" and is excluded here.
+    titles = [
+        group.title()
+        for group in panel.findChildren(QGroupBox)
+        if group.title() and group.title() != "Advanced / experimental"
+    ]
 
     assert titles[:4] == ["FFT Phase Mode", "Apodisation", "Groups", "Phase"]
 
 
-def test_fourier_panel_apodisation_radios_enable_text_fields(qapp: QApplication) -> None:
+def test_fourier_panel_advanced_modes_collapsed_by_default(qapp: QApplication) -> None:
+    """P2-1: the three niche phase modes live behind a collapsed disclosure."""
     panel = FourierPanel()
+
+    group = panel._advanced_modes_group
+    assert group.title() == "Advanced / experimental"
+    assert group.isCheckable() is True
+    # Collapsed (unchecked) by default — only the routine modes show up front.
+    assert group.isChecked() is False
+    # The three niche radios are parented into the disclosure, not the main column.
+    for radio in (panel._phase_opt_real_radio, panel._burg_radio, panel._correlation_radio):
+        assert radio in group.findChildren(type(radio))
+    # Labels are short (qualifiers moved to tooltips) so nothing clips at 236px.
+    assert panel._burg_radio.text() == "Resolution (Burg)"
+    assert panel._correlation_radio.text() == "Correlation (radical)"
+    assert "diagnostic" in panel._burg_radio.toolTip().lower()
+    assert "specialist" in panel._correlation_radio.toolTip().lower()
+    # Radio exclusivity still spans both the main column and the disclosure.
+    panel._burg_radio.setChecked(True)
+    assert panel._power_sqrt_radio.isChecked() is False
+    assert panel._current_display_mode() == "Resolution (Burg)"
+
+
+def test_fourier_panel_restoring_advanced_mode_expands_disclosure(qapp: QApplication) -> None:
+    """Restoring a project saved in an advanced mode reveals the disclosure."""
+    panel = FourierPanel()
+    assert panel._advanced_modes_group.isChecked() is False
+
+    panel._set_display_mode("phaseOptReal")
+
+    assert panel._phase_opt_real_radio.isChecked() is True
+    assert panel._advanced_modes_group.isChecked() is True
+
+
+def test_fourier_panel_apodisation_fields_stay_enabled(qapp: QApplication) -> None:
+    """P3-2: the apodisation value fields are editable regardless of mode."""
+    panel = FourierPanel()
+
+    assert panel._filter_start_edit.isEnabled() is True
+    assert panel._filter_time_constant_edit.isEnabled() is True
 
     panel._filter_gaussian_radio.setChecked(True)
 
@@ -157,8 +205,8 @@ def test_fourier_panel_apodisation_radios_enable_text_fields(qapp: QApplication)
 
     panel._filter_none_radio.setChecked(True)
 
-    assert panel._filter_start_edit.isEnabled() is False
-    assert panel._filter_time_constant_edit.isEnabled() is False
+    assert panel._filter_start_edit.isEnabled() is True
+    assert panel._filter_time_constant_edit.isEnabled() is True
 
 
 def test_fourier_panel_group_table_defaults_to_all_groups_enabled(qapp: QApplication) -> None:

@@ -598,6 +598,10 @@ class MultiGroupSimulateDialog(_SimulateDialogBase):
         self._group_table = QTableWidget(0, 4)
         self._group_table.setHorizontalHeaderLabels(["Group", "Amplitude", "Phase (rad)", "N₀"])
         self._group_table.verticalHeader().setVisible(False)
+        # Cap the per-group table so a many-group ring scrolls instead of
+        # growing the dialog past an 800px screen; the table is the only
+        # row-count-dependent element here.
+        self._group_table.setMaximumHeight(260)
         layout.addWidget(self._group_table)
         self._seed_group_table(seed)
 

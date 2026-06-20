@@ -13,6 +13,7 @@ BG = "#fafaf9"
 SURFACE = "#ffffff"
 SURFACE_ALT = "#f4f3f0"
 SURFACE_HI = "#ececea"
+SURFACE_PRESS = "#e2e1dd"  # pressed/checked button background
 WHITE = "#ffffff"  # pure white for bevels/bright-text roles
 
 # ── Borders ───────────────────────────────────────────────────────────────────
@@ -23,6 +24,7 @@ BORDER_STRONG = "#c2c0b9"
 TEXT = "#1c1d20"
 TEXT_MUTED = "#67676b"
 TEXT_DIM = "#9a9a9e"
+TEXT_DISABLED = "#adadb0"  # disabled control text/icon tint
 
 # ── Accent — blue (primary UI chrome) ─────────────────────────────────────────
 ACCENT = "#1f4d8a"

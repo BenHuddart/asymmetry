@@ -205,6 +205,19 @@ def _row_containing_field(table, field_fragment: str) -> int:
     return -1
 
 
+def test_run_info_dialog_uses_standard_button_box(qapp: QApplication) -> None:
+    """P2-9: the action bar is a QDialogButtonBox (Close standard + Advanced action)."""
+    from PySide6.QtWidgets import QDialogButtonBox
+
+    dialog = RunInfoDialog(_dataset())
+    box = dialog.findChild(QDialogButtonBox)
+    assert box is not None
+    assert box.button(QDialogButtonBox.StandardButton.Close) is not None
+    # Advanced remains, now as an ActionRole button on the same bar.
+    assert box.buttonRole(dialog._advanced_button) == QDialogButtonBox.ButtonRole.ActionRole
+    dialog.close()
+
+
 def test_summary_checkbox_emits_include_signal(qapp: QApplication) -> None:
     dialog = RunInfoDialog(_dataset())
 

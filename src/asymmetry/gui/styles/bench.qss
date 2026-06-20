@@ -36,23 +36,23 @@ QToolBar {
    QPushButtons added via addWidget, so they are unaffected by these rules. */
 QToolBar QToolButton {
     background-color: transparent;
-    color: #1c1d20;
+    color: @TEXT@;
     border: none;
     border-radius: 4px;
     padding: 4px 8px;
 }
 
 QToolBar QToolButton:hover {
-    background-color: #ececea;
+    background-color: @SURFACE_HI@;
 }
 
 QToolBar QToolButton:pressed,
 QToolBar QToolButton:checked {
-    background-color: #e2e1dd;
+    background-color: @SURFACE_PRESS@;
 }
 
 QToolBar QToolButton:disabled {
-    color: #adadb0;
+    color: @TEXT_DISABLED@;
 }
 
 /* Toolbar overflow extension (P2-8): the ">>" button Qt inserts when the
@@ -69,12 +69,12 @@ QToolBarExtension {
 
 QToolButton#qt_toolbar_ext_button:hover,
 QToolBarExtension:hover {
-    background-color: #ececea;
+    background-color: @SURFACE_HI@;
 }
 
 QToolButton#qt_toolbar_ext_button:pressed,
 QToolBarExtension:pressed {
-    background-color: #e2e1dd;
+    background-color: @SURFACE_PRESS@;
 }
 
 QMenuBar {
