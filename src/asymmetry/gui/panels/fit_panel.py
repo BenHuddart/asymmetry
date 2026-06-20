@@ -659,6 +659,44 @@ class _FloatLimitField(QLineEdit):
     def _normalise_text(self) -> None:
         self.setText(self._format(self.value()))
 
+    def _commit(self) -> None:
+        """Normalise the text and fire ``editingFinished`` unconditionally.
+
+        ``QLineEdit`` only emits ``editingFinished`` when ``hasAcceptableInput()``
+        is true, so a value the ``QDoubleValidator`` rates *Intermediate* (e.g.
+        a digit just over the soft range, or a half-typed entry committed with
+        Return) never reaches the fit-range plumbing and the field silently
+        reverts on the next external refresh. Driving the signal ourselves makes
+        a commit land reliably regardless of how the text was entered.
+        """
+        self._normalise_text()
+        self.editingFinished.emit()
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 — Qt override
+        """Commit on Return/Enter, consuming the key.
+
+        Returning early (rather than calling super) both guarantees the commit
+        and stops the key bubbling to any default button that would push the
+        pre-edit range back into the field.
+        """
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self._commit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def focusOutEvent(self, event) -> None:  # noqa: N802 — Qt override
+        """Guarantee a commit on focus-out even for Intermediate input.
+
+        For Acceptable input the base class already emits ``editingFinished``;
+        only force our own commit when it would otherwise be suppressed, so the
+        commit fires exactly once either way.
+        """
+        forced = not self.hasAcceptableInput()
+        super().focusOutEvent(event)
+        if forced:
+            self._commit()
+
     def value(self) -> float:
         """Current value (clamped to range), or the last set value if blank."""
         try:
@@ -1738,6 +1776,29 @@ class FitParameterTable(QTableWidget):
             seeds[name] = text
         return seeds
 
+    def current_bounds(self) -> dict[str, str]:
+        """Return the live ``"min, max"`` bounds text per parameter name.
+
+        Used to carry parameter bounds (not just seed values) when sending a
+        single-fit model to the Batch tab, whose classification table stores
+        bounds as one combined ``"min, max"`` string per row. Blank/absent cells
+        fall back to the open ``-inf``/``inf`` bound.
+        """
+        bounds: dict[str, str] = {}
+        for row in range(self.rowCount()):
+            name_item = self.item(row, self.COL_NAME)
+            if name_item is None:
+                continue
+            name = name_item.data(Qt.ItemDataRole.UserRole)
+            if not isinstance(name, str):
+                continue
+            min_item = self.item(row, self.COL_MIN)
+            max_item = self.item(row, self.COL_MAX)
+            min_text = (min_item.text().strip() if min_item else "") or "-inf"
+            max_text = (max_item.text().strip() if max_item else "") or "inf"
+            bounds[name] = f"{min_text}, {max_text}"
+        return bounds
+
     def parameters_state(self) -> list[dict]:
         """Serialise the table rows (+ auxiliaries) as parameter-state dicts."""
         params: list[dict] = []
@@ -2601,6 +2662,14 @@ class SingleFitTab(QWidget):
         model defaults / stale state; non-finite cells are skipped.
         """
         return self._param_table.current_seed_values()
+
+    def current_bounds(self) -> dict[str, str]:
+        """Return the live ``"min, max"`` bounds text keyed by parameter name.
+
+        Carries parameter bounds (not just seed values) when sending a model to
+        the Batch tab, so a min/max set in the Single tab is not silently lost.
+        """
+        return self._param_table.current_bounds()
 
     def _run_fit(self) -> None:
         """Execute the fit."""
@@ -4016,7 +4085,10 @@ class GlobalFitTab(QWidget):
         return state
 
     def _set_composite_model(
-        self, model: CompositeModel, seed_values: dict[str, str] | None = None
+        self,
+        model: CompositeModel,
+        seed_values: dict[str, str] | None = None,
+        seed_bounds: dict[str, str] | None = None,
     ) -> None:
         """Set the active composite model and rebuild classification rows.
 
@@ -4024,9 +4096,12 @@ class GlobalFitTab(QWidget):
         that take priority over preserved state and model defaults. It is used
         when seeding a batch from the single-fit tab so the batch starts from
         the current single-fit seeds rather than defaults or stale preserved
-        state (BUG B8c).
+        state (BUG B8c). ``seed_bounds`` (parameter name → ``"min, max"`` text)
+        likewise carries the single-fit min/max so a bound set there survives
+        the hand-off rather than reverting to the model default.
         """
         seed_values = seed_values or {}
+        seed_bounds = seed_bounds or {}
         preserved_state = self._current_parameter_row_state()
         grouped_model_state = self._current_grouped_model_row_state()
         # A new model invalidates any per-run initial values keyed by old names.
@@ -4101,10 +4176,17 @@ class GlobalFitTab(QWidget):
                     type_combo.setCurrentIndex(previous_index)
             self._param_table.setCellWidget(i, 2, type_combo)
 
-            # Bounds (min, max) — default lower bound to 0 for positive-definite parameters
-            default_min = get_param_info(pname).default_min
-            min_text = str(default_min) if default_min is not None else "-inf"
-            bounds_item = QTableWidgetItem(previous.get("bounds") or f"{min_text}, inf")
+            # Bounds (min, max) — a bound carried from the single-fit tab wins
+            # over preserved state and the model default; otherwise default the
+            # lower bound to 0 for positive-definite parameters.
+            seed_bound = seed_bounds.get(pname)
+            if seed_bound is not None:
+                bounds_text = seed_bound
+            else:
+                default_min = get_param_info(pname).default_min
+                min_text = str(default_min) if default_min is not None else "-inf"
+                bounds_text = previous.get("bounds") or f"{min_text}, inf"
+            bounds_item = QTableWidgetItem(bounds_text)
             self._param_table.setItem(i, 3, bounds_item)
 
         _configure_fraction_rows_in_table(
@@ -8536,7 +8618,10 @@ class FitPanel(QWidget):
         if model is None:
             return False
         seed_values = self._single_tab.current_seed_values()
-        self._global_tab._set_composite_model(model, seed_values=seed_values)
+        seed_bounds = self._single_tab.current_bounds()
+        self._global_tab._set_composite_model(
+            model, seed_values=seed_values, seed_bounds=seed_bounds
+        )
         return True
 
     def _on_send_model_to_batch(self) -> None:

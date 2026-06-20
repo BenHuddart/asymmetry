@@ -53,6 +53,64 @@ def test_add_and_get_batch():
     assert model.batch("missing") is None
 
 
+def _model_dict() -> dict:
+    return CompositeModel(["Exponential", "Constant"], operators=["+"]).to_dict()
+
+
+def _batch(batch_id: str, *, model=None, runs=(1, 2), roles=None, fit_range="0.1-8 µs"):
+    return FitSeries(
+        batch_id,
+        _FB,
+        member_run_numbers=list(runs),
+        canonical_model=model if model is not None else _model_dict(),
+        param_roles=roles or {"A": "local"},
+        results_by_run={r: {"fit_range": fit_range} for r in runs},
+    )
+
+
+def test_remove_superseded_batches_dedupes_identical_rerun():
+    """Re-running the same batch supersedes the earlier identical series."""
+    model = ProjectModel()
+    first = _batch("b1")
+    model.add_batch(first)
+    second = _batch("b2")  # same model / runs / roles / range as b1
+    removed = model.remove_superseded_batches(second)
+    assert removed == ["b1"]
+    model.add_batch(second)
+    assert model.batch("b1") is None
+    assert model.batch("b2") is second
+
+
+def test_remove_superseded_keeps_distinct_fit_range():
+    """A different fit window is a genuinely distinct series, not a duplicate."""
+    model = ProjectModel()
+    model.add_batch(_batch("b1", fit_range="0.1-8 µs"))
+    other = _batch("b2", fit_range="0.2-6 µs")
+    assert model.remove_superseded_batches(other) == []
+    model.add_batch(other)
+    assert model.batch("b1") is not None and model.batch("b2") is not None
+
+
+def test_remove_superseded_keeps_distinct_model():
+    """A different model is not a duplicate even over the same runs."""
+    model = ProjectModel()
+    model.add_batch(_batch("b1"))
+    other = _batch(
+        "b2",
+        model=CompositeModel(["Gaussian", "Constant"], operators=["+"]).to_dict(),
+    )
+    assert model.remove_superseded_batches(other) == []
+
+
+def test_remove_superseded_ignores_computed_series():
+    """Computed (model-less) scans over the same runs are not de-duplicated."""
+    model = ProjectModel()
+    scan = FitSeries("s1", _FB, member_run_numbers=[1, 2], canonical_model=None)
+    model.add_batch(scan)
+    other = FitSeries("s2", _FB, member_run_numbers=[1, 2], canonical_model=None)
+    assert model.remove_superseded_batches(other) == []
+
+
 def test_standalone_round_trip():
     model = ProjectModel()
     container = model.ensure_dataset(7)
