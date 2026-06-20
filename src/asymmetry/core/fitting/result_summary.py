@@ -13,10 +13,17 @@ from typing import Any
 
 from asymmetry.core.fitting.fit_quality import assess_fit_quality
 
-#: Two-sided confidence level R for the χ² good/poor/overdone verdict. Fixed at
-#: WiMDA's ``Rgoodfit`` default; the helper accepts a ``confidence`` argument so
-#: making this user-configurable later is a one-line change.
-FIT_QUALITY_CONFIDENCE = 0.95
+#: Default two-sided confidence level R for the χ² good/poor/overdone verdict.
+#: Muon-tuned to 0.999 (WiMDA's own clamp ceiling): high-statistics muon fits
+#: routinely sit at ν of several hundred to a few thousand, where the band is
+#: narrow, and in muon practice χ²ᵣ ≈ 1.05–1.2 at large ν is excellent. At the
+#: WiMDA algorithm default R = 0.95 the band at ν ≈ 500 is only ~[0.88, 1.13], so
+#: a routine χ²ᵣ ≈ 1.2 was alarmed as "poor" in red (corpus finding #6). The band
+#: *math* (``assess_fit_quality``) is unchanged and WiMDA-faithful — this is the
+#: product default for the verdict shown, and it stays user-tunable in
+#: Options ▸ "Fit quality confidence". The ``confidence`` argument below threads
+#: the configured value through; the core helper keeps the 0.95 algorithm default.
+FIT_QUALITY_CONFIDENCE = 0.999
 
 #: A "poor"/"overdone" verdict whose χ²ᵣ is within this absolute margin of 1.0 is
 #: numerically near-ideal and only flips out of the band because the confidence
