@@ -150,3 +150,14 @@ def test_fast_tier_rejects_subset() -> None:
     for subset in ("gui", "non-gui"):
         with pytest.raises(ValueError, match="fast"):
             harness.build_pytest_command([], tier="fast", subset=subset)
+
+
+def test_shard_is_forwarded_after_marker() -> None:
+    harness = _load_harness()
+
+    command = harness.build_pytest_command([], subset="gui", shard="1/3")
+
+    # The gui marker is still injected and `--shard 1/3` is appended for the
+    # conftest hook. The "1/3" value must not be mistaken for a test target.
+    assert _marker(command) == "(not slow and not integration) and (gui)"
+    assert command[command.index("--shard") + 1] == "1/3"

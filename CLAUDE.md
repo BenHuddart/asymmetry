@@ -32,11 +32,13 @@ push it, and open a PR — don't commit directly to `main`.
 - Use the project virtualenv: `.venv/bin/python`. It pins numpy 2.2.x and a working
   iminuit; the system Python has numpy ≥ 2.3, which breaks fitting.
 - CI runs lint + structural checks, then the standard-tier pytest suite **sharded
-  across two runners** by `--subset {gui,non-gui}` (the GUI shard carries the
-  per-test `MainWindow` cost; splitting it ~halves time-to-green). Locally,
-  `python tools/harness.py validate` runs the same standard tier single-box with
-  `-n auto --dist load` in **~2.5 min**; `--tier fast` (non-GUI only) is the ~40s
-  inner loop. (Historically the suite took 30–60 min: GUI tests created a
+  across four runners**: one non-GUI shard plus three GUI shards
+  (`--subset gui --shard {1,2,3}/3`). The GUI tests carry the per-test
+  `MainWindow` cost and on a 2-core runner take ~10 min unsplit vs ~2 min for
+  everything else, so splitting them three ways brings the critical path to
+  ~4–5 min. Locally, `python tools/harness.py validate` runs the same standard
+  tier single-box with `-n auto --dist load` in **~2.5 min**; `--tier fast`
+  (non-GUI only) is the ~40s inner loop. (Historically the suite took 30–60 min: GUI tests created a
   `MainWindow` per test without destroying it, and because `deleteLater` is not
   dispatched without forcing `DeferredDelete`, leaked widgets accumulated and
   `MainWindow` setup degraded to O(n²). The autouse `_cleanup_qt_widgets` fixture

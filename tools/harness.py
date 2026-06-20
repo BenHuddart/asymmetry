@@ -566,6 +566,7 @@ def build_pytest_command(
     tier: str = "standard",
     subset: str = "all",
     parallel: bool = True,
+    shard: str | None = None,
 ) -> list[str]:
     """Build the pytest argv for a tier/subset run (pure, so it is unit-tested).
 
@@ -577,6 +578,11 @@ def build_pytest_command(
     ``fast`` tier is non-GUI by definition, so combining it with a subset is
     rejected rather than silently composing a contradictory marker (``fast`` +
     ``gui`` would select zero tests and still exit 0 — a false green).
+
+    ``shard`` (``"K/N"``) is forwarded to pytest's ``--shard`` (a conftest option)
+    to run a stable 1-of-N slice of the selection — used to split the GUI subset
+    across several CI runners. It is appended after marker composition so its
+    ``"K/N"`` value is never mistaken for a test target.
     """
     if tier == "fast" and subset != "all":
         raise ValueError(
@@ -594,6 +600,9 @@ def build_pytest_command(
         if marker_parts:
             pytest_args = ["-m", " and ".join(marker_parts)] + pytest_args
 
+    if shard:
+        pytest_args = pytest_args + ["--shard", shard]
+
     parallel_args: list[str] = []
     if parallel and tier in ("standard", "full"):
         parallel_args = ["-n", "auto", "--dist", "load"]
@@ -607,6 +616,7 @@ def cmd_test(args: argparse.Namespace) -> int:
         tier=getattr(args, "tier", "standard"),
         subset=getattr(args, "subset", "all"),
         parallel=not getattr(args, "no_parallel", False),
+        shard=getattr(args, "shard", None),
     )
     return _run_command(command)
 
@@ -670,6 +680,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["all", "gui", "non-gui"],
         default="all",
         help="Restrict to GUI or non-GUI tests (composes with --tier; used to shard CI)",
+    )
+    test_parser.add_argument(
+        "--shard",
+        default=None,
+        metavar="K/N",
+        help="Run a stable 1-of-N slice of the selection (e.g. 1/3); splits the GUI subset across runners",
     )
     test_parser.add_argument(
         "--no-parallel",

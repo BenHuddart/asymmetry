@@ -52,8 +52,16 @@ boundary, touches shared behavior, or changes user-visible workflows.
 Tests inherit a type marker automatically: anything not explicitly marked `gui`
 or `io` is treated as `unit` (see `tests/conftest.py`). Naming explicit targets
 (`-- tests/test_x.py` or a `::node-id`) runs exactly those, bypassing the tier
-filter. CI shards the standard tier across two runners with
-`--subset {gui,non-gui}`; the two shards together cover the whole tier.
+filter.
+
+CI shards the standard tier across four runners: the fast non-GUI tests run as a
+single shard (`--subset non-gui`), and the much heavier GUI tests — which carry
+the per-test `MainWindow` cost and dominate wall-clock on a 2-core runner — are
+split three ways with `--subset gui --shard {1,2,3}/3`. `--shard K/N` (a
+`conftest.py` option) keeps a stable 1-of-N slice partitioned by a hash of each
+test's node id, so the independent shard processes cover every test exactly once
+with no overlap, regardless of `pytest-randomly` ordering. The four shards
+together cover exactly the standard tier.
 
 The harness sets `QT_QPA_PLATFORM=offscreen` by default for command runs so GUI
 tests and smoke checks can execute in CI and local agent sessions. The current
