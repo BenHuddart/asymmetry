@@ -19,11 +19,19 @@ from asymmetry.gui.tasks import TaskCancelledError, TaskRunner, TaskWorker
 pytestmark = pytest.mark.usefixtures("qapp")
 
 
-def _wait_until(predicate, timeout_ms: int = 10_000) -> None:
+def _wait_until(predicate, timeout_ms: int = 30_000) -> None:
     """Run a real nested event loop until *predicate* is true.
 
     Inter-thread queued signals need the loop to be entered, not just poked
     with processEvents().
+
+    The timeout is a backstop, not part of any timing contract: the loop exits
+    the instant *predicate* holds, so a generous ceiling never slows the passing
+    path. It only bounds how long a genuinely stuck task waits before failing.
+    Under heavy `-n auto` CPU contention on Windows a worker thread can take
+    several seconds just to get scheduled and deliver its first queued signal, so
+    the default is set well above that worst case (with pytest's --timeout=120 as
+    the ultimate guard) to keep these tests from flaking.
     """
     if predicate():
         return
@@ -178,11 +186,23 @@ def test_shutdown_cancels_running_task():
 def test_two_tasks_run_concurrently_and_both_finish():
     runner = TaskRunner()
     results: list[str] = []
-    barrier = threading.Barrier(2, timeout=10.0)
+    # A 2-party barrier is the deterministic overlap proof: neither fn can return
+    # until *both* workers have reached barrier.wait(), so the assertion below can
+    # only pass if the two tasks were inside their threads at the same instant —
+    # no wall-clock timing or sleeps involved. (TaskRunner.start spawns a fresh,
+    # uncapped QThread per call, so the barrier can never deadlock on internal
+    # serialization.)
+    #
+    # The barrier timeout is only a teardown safety net, NOT part of the timing
+    # contract: it must outlast the worst-case delay for a starved worker thread
+    # to get scheduled under heavy `-n auto` CPU contention on Windows. The old
+    # 10s value occasionally lost that race and flaked; 60s gives a wide margin
+    # while staying bounded (so a genuine regression unwedges the threads instead
+    # of hanging), with pytest's --timeout=120 as the ultimate backstop.
+    barrier = threading.Barrier(2, timeout=60.0)
 
     def make(tag: str):
         def fn(worker: TaskWorker):
-            # Both tasks must be inside their threads at once to pass.
             barrier.wait()
             return tag
 
@@ -190,7 +210,7 @@ def test_two_tasks_run_concurrently_and_both_finish():
 
     runner.start(make("a"), on_finished=results.append)
     runner.start(make("b"), on_finished=results.append)
-    _wait_until(lambda: len(results) == 2 and runner.active_count == 0)
+    _wait_until(lambda: len(results) == 2 and runner.active_count == 0, timeout_ms=60_000)
 
     assert sorted(results) == ["a", "b"]
     runner.shutdown()
