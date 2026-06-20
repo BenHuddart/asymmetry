@@ -1178,6 +1178,9 @@ class FitParametersPanel(QWidget):
         if self._active_group_id:
             self._set_selected_group_ids([self._active_group_id], emit=False)
         self._apply_group_selection_to_view(sync_active=False)
+        # A custom/Angle x-axis left selected from a previous dataset has no values
+        # for these rows; fall back to Auto so the new data gets a sensible axis.
+        self._reset_stale_custom_x_axis()
         # Notify listeners of the initial active series so data-browser highlights
         # fire immediately rather than waiting for the user to click a button.
         if self._active_group_id is not None:
@@ -2672,6 +2675,30 @@ class FitParametersPanel(QWidget):
         else:
             self._x_auto_hint.setText("")
 
+    def _reset_stale_custom_x_axis(self) -> None:
+        """Fall back to Auto when the selected custom/Angle axis has no values here.
+
+        A custom column (e.g. "Current (A)") created for one project/batch
+        persists in the x-axis combo and stays selected when an unrelated dataset
+        is trended; every new run is then "skipped (empty/non-numeric)" and the
+        plot is empty. When the active axis is such a free-text column and *none*
+        of the freshly loaded rows carry a finite value for it, revert to Auto
+        (which infers Run/T/B) so a new dataset gets a sensible default instead
+        of a stale, empty abscissa.
+        """
+        x_key = self._effective_x_key()
+        is_free_text = _x_custom_id(x_key) is not None or x_key == self._angle_x_key()
+        if not is_free_text or not self._rows:
+            return
+        values = np.array(
+            [self._x_value(row, x_key, fold=False) for row in self._rows], dtype=float
+        )
+        if values.size and np.any(np.isfinite(values)):
+            return
+        idx = self._x_combo.findText("Auto")
+        if idx >= 0 and self._x_combo.currentIndex() != idx:
+            self._x_combo.setCurrentIndex(idx)
+
     def _rebuild_x_axis_combo(self) -> None:
         """Re-populate the X-axis combo: the fixed run-level axes plus every
         currently-trendable fitted parameter (param-vs-param trending, item 1).
@@ -3476,6 +3503,7 @@ class FitParametersPanel(QWidget):
             existing_fit=self._model_fits.get(param_name),
             parent=self,
             x_errors=x_err,
+            x_label=self._x_axis_display_label(x_key),
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
@@ -3563,6 +3591,7 @@ class FitParametersPanel(QWidget):
             groups=group_payload,
             existing_config=existing_config,
             parent=self,
+            x_label=self._x_axis_display_label(x_key),
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return None
@@ -4422,6 +4451,21 @@ class FitParametersPanel(QWidget):
         else:
             self._figure.tight_layout(pad=1.2)
         self._canvas.draw()
+
+    def _x_axis_display_label(self, x_key: str) -> str:
+        """Friendly, plain-text label for an x-axis key (for dialog titles).
+
+        Unlike :meth:`_x_axis_label_mpl` this returns no mathtext, so a
+        ``custom:<id>`` key reads as its column name ("Current (A)") rather than
+        the raw internal id in the Model-Fit / cross-group dialogs.
+        """
+        name = _x_param_name(x_key)
+        if name is not None:
+            return _format_param_label(name)
+        labels = self._custom_x_labels()
+        if x_key in labels:
+            return labels[x_key]
+        return {"field": "B (G)", "temperature": "T (K)", "run": "Run"}.get(x_key, "Run")
 
     def _x_axis_label_mpl(self, x_key: str) -> str:
         name = _x_param_name(x_key)

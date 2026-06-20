@@ -1517,6 +1517,26 @@ class DataBrowserPanel(QWidget):
         finally:
             self._auto_sizing_columns = False
 
+    def _scroll_new_extra_column_into_view(self) -> None:
+        """Reveal the just-added rightmost extra column.
+
+        Custom / metadata columns append past a viewport-filling Title column,
+        so a freshly added one can land off-screen to the right where the user
+        adding it never sees it. Scroll horizontally to the last column once the
+        scrollbar range has settled (one event-loop turn after the rebuild +
+        resize). The ``self`` context cancels the pending callback if the panel
+        is destroyed first.
+        """
+        QTimer.singleShot(0, self, self._scroll_to_last_column)
+
+    def _scroll_to_last_column(self) -> None:
+        """Scroll the table fully right so the last extra column is visible."""
+        if self._table.columnCount() <= len(self._COLUMNS):
+            return  # no extra column to reveal
+        bar = self._table.horizontalScrollBar()
+        if bar is not None:
+            bar.setValue(bar.maximum())
+
     def _fit_title_column(self) -> None:
         """Stretch Title so the columns exactly fill the viewport.
 
@@ -1756,6 +1776,7 @@ class DataBrowserPanel(QWidget):
         self._refresh_column_headers()
         self._rebuild_table()
         self._resize_columns_to_content()
+        self._scroll_new_extra_column_into_view()
         self._notify_extra_columns_changed()
 
     def add_custom_column(self, label: str) -> ExtraColumn | None:
@@ -1773,6 +1794,7 @@ class DataBrowserPanel(QWidget):
         self._refresh_column_headers()
         self._rebuild_table()
         self._resize_columns_to_content()
+        self._scroll_new_extra_column_into_view()
         self._notify_extra_columns_changed()
         return column
 
@@ -1806,6 +1828,7 @@ class DataBrowserPanel(QWidget):
         self._refresh_column_headers()
         self._rebuild_table()
         self._resize_columns_to_content()
+        self._scroll_new_extra_column_into_view()
         self._notify_extra_columns_changed()
         return column
 

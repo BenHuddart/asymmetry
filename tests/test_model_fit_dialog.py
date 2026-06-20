@@ -75,6 +75,40 @@ def test_range_parameter_name_displays_units(qapp: QApplication) -> None:
     assert "m" in labels
 
 
+def test_x_label_overrides_internal_key_in_title(qapp: QApplication) -> None:
+    """Round-10 #9: the dialog shows the friendly column name, not custom:<id>."""
+    x = np.linspace(0.0, 1.0, 6)
+    y = np.linspace(0.1, 0.2, 6)
+    yerr = np.full_like(x, 0.01)
+
+    dlg = ModelFitDialog(
+        parameter_name="A_1",
+        x_key="custom:84576a7e",
+        x_values=x,
+        y_values=y,
+        y_errors=yerr,
+        x_label="Current (A)",
+    )
+
+    assert "Current (A)" in dlg.windowTitle()
+    assert "custom:84576a7e" not in dlg.windowTitle()
+    # The backend key is still the internal id (persistence / fit unchanged).
+    assert dlg._x_key == "custom:84576a7e"
+
+
+def test_x_label_falls_back_to_key(qapp: QApplication) -> None:
+    """Without an explicit label the dialog keeps the old key-based title."""
+    x = np.linspace(0.0, 1.0, 6)
+    dlg = ModelFitDialog(
+        parameter_name="A_1",
+        x_key="field",
+        x_values=x,
+        y_values=np.linspace(0.1, 0.2, 6),
+        y_errors=np.full_like(x, 0.01),
+    )
+    assert "field" in dlg.windowTitle()
+
+
 def test_component_pool_filters_constant_vs_lambda_bg() -> None:
     lambda_pool = _component_pool_for_context("field", "Lambda")
     sigma_pool = _component_pool_for_context("field", "sigma")

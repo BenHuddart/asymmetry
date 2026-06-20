@@ -13,10 +13,58 @@ replaces storing computed spectra/asymmetry in the project file.
 
 from __future__ import annotations
 
+import json
+
 from asymmetry.core.data.dataset import Run
+from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.representation.base import RepresentationType
 from asymmetry.core.representation.container import DatasetRepresentations
 from asymmetry.core.representation.series import FitSeries, canonical_model_matches
+
+
+def _series_fit_range(series: FitSeries) -> str | None:
+    """Return the fit range recorded with a series, or ``None``.
+
+    All members of a batch share one fit window, so the first recorded
+    ``fit_range`` is representative. Used to keep batches over the same runs but
+    *different* windows distinct when de-duplicating identical re-runs.
+    """
+    for result in series.results_by_run.values():
+        if isinstance(result, dict):
+            fit_range = result.get("fit_range")
+            if fit_range:
+                return str(fit_range)
+    return None
+
+
+def _series_signature(series: FitSeries) -> tuple:
+    """A comparable identity for a fit series: same → a duplicate re-run.
+
+    Captures the representation, member kind + source runs, normalised canonical
+    model, parameter classification, and fit window. Two batches with the same
+    signature differ only in their (newer) results, so the later one supersedes
+    the earlier rather than accumulating a duplicate trend pill.
+    """
+    if series.member_kind == "groups":
+        members = tuple(sorted(set(series.member_source_run.values())))
+    else:
+        members = tuple(sorted(set(series.member_run_numbers)))
+    model_key: str | None = None
+    if series.canonical_model is not None:
+        try:
+            normalised = CompositeModel.from_dict(series.canonical_model).to_dict()
+        except (ValueError, KeyError, TypeError):
+            normalised = series.canonical_model
+        model_key = json.dumps(normalised, sort_keys=True, default=str)
+    roles = tuple(sorted(series.param_roles.items()))
+    return (
+        str(series.rep_type),
+        series.member_kind,
+        members,
+        model_key,
+        roles,
+        _series_fit_range(series),
+    )
 
 
 class ProjectModel:
@@ -53,6 +101,37 @@ class ProjectModel:
     def add_batch(self, batch: FitSeries) -> None:
         """Register *batch* by its id."""
         self.batches[batch.batch_id] = batch
+
+    def superseded_batch_ids(self, series: FitSeries) -> list[str]:
+        """Return ids of existing batches that *series* makes redundant.
+
+        A batch is superseded when it has the same identity signature as
+        *series* (same representation, members, model, classification and fit
+        window) — i.e. it is an earlier run of the very same batch. Computed
+        (model-less) series are never matched, since two scans over the same
+        runs are legitimately distinct results.
+        """
+        if series.is_computed:
+            return []
+        target = _series_signature(series)
+        return [
+            batch_id
+            for batch_id, existing in self.batches.items()
+            if batch_id != series.batch_id
+            and not existing.is_computed
+            and _series_signature(existing) == target
+        ]
+
+    def remove_superseded_batches(self, series: FitSeries) -> list[str]:
+        """Remove and return prior batches identical to *series* (de-dup re-runs).
+
+        Stops re-running the same batch from accumulating duplicate trend
+        "pills": the freshly recorded series replaces its older twins.
+        """
+        removed = self.superseded_batch_ids(series)
+        for batch_id in removed:
+            self.remove_batch(batch_id)
+        return removed
 
     def remove_batch(self, batch_id: str) -> FitSeries | None:
         """Remove and return the batch with *batch_id*, clearing member FitSlot pointers.

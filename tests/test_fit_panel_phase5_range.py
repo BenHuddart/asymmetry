@@ -12,7 +12,8 @@ pytestmark = [pytest.mark.gui]
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QSettings, Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 import asymmetry.gui.mainwindow as mw_module
@@ -126,6 +127,51 @@ def test_spinbox_commit_emits_both_bounds(tab: SingleFitTab, qapp: QApplication)
     assert len(emitted) == 1
     assert abs(emitted[0][0] - 0.10) < 1e-6
     assert abs(emitted[0][1] - 6.00) < 1e-6
+
+
+# ── Reliable-commit tests (Round-10 #9: finicky right spinbox) ────────────────
+
+
+def test_return_key_commits_typed_value(tab: SingleFitTab, qapp: QApplication) -> None:
+    """Typing a value and pressing Return must commit it (not silently revert)."""
+    field = tab._fit_range_max_spin
+    field.setValue(5.0)
+    emitted: list[float] = []
+    field.editingFinished.connect(lambda: emitted.append(field.value()))
+
+    field.setFocus()
+    field.selectAll()
+    QTest.keyClicks(field, "7.25")
+    QTest.keyClick(field, Qt.Key.Key_Return)
+    qapp.processEvents()
+
+    assert emitted, "Return did not fire a commit"
+    assert emitted[-1] == pytest.approx(7.25)
+    assert field.value() == pytest.approx(7.25)
+
+
+def test_return_key_is_consumed(tab: SingleFitTab) -> None:
+    """Return must be consumed so it can't bubble to a default action.
+
+    The 'edits often revert' finding: when Return propagates past the field it
+    can trigger an action that pushes the pre-edit range back in. The field
+    accepts the key (and commits) instead of letting it escape.
+    """
+    from PySide6.QtCore import QEvent
+    from PySide6.QtGui import QKeyEvent
+
+    field = tab._fit_range_max_spin
+    field.setValue(5.0)
+    emitted: list[float] = []
+    field.editingFinished.connect(lambda: emitted.append(field.value()))
+
+    event = QKeyEvent(
+        QEvent.Type.KeyPress, Qt.Key.Key_Return, Qt.KeyboardModifier.NoModifier
+    )
+    field.keyPressEvent(event)
+
+    assert event.isAccepted(), "Return must be consumed, not propagated"
+    assert emitted == [pytest.approx(5.0)], "Return must commit the field"
 
 
 # ── Integration tests via MainWindow ─────────────────────────────────────────

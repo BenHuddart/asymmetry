@@ -51,3 +51,31 @@ def test_send_to_batch_carries_single_fit_seed(qapp: QApplication) -> None:
         f"batch frequency seed is {seed}, not the single-fit value 5.397 — "
         "Send-to-Batch did not carry the current seed"
     )
+
+
+def test_send_to_batch_carries_single_fit_bounds(qapp: QApplication) -> None:
+    """Round-10 #9: Send to Batch must carry parameter min/max, not just seeds."""
+    panel = FitPanel()
+    panel._single_tab._set_composite_model(
+        CompositeModel(["Oscillatory", "Gaussian", "Constant"], operators=["*", "+"])
+    )
+
+    # User sets an amplitude floor (A_1 >= 1) in the single-fit table: Min=col 3,
+    # Max=col 4 on the single tab's parameter table.
+    single_tbl = panel._single_tab._param_table
+    amp_row = _row_for(single_tbl, "A_1")
+    single_tbl.item(amp_row, single_tbl.COL_MIN).setText("1")
+    single_tbl.item(amp_row, single_tbl.COL_MAX).setText("50")
+
+    assert panel.send_single_model_to_batch() is True
+
+    # The batch table stores bounds as one "min, max" string in column 3.
+    batch_tbl = panel._global_tab._param_table
+    batch_amp_row = _row_for(batch_tbl, "A_1")
+    bounds_text = batch_tbl.item(batch_amp_row, 3).text()
+    lo, hi = (part.strip() for part in bounds_text.split(","))
+    assert float(lo) == pytest.approx(1.0), (
+        f"batch A_1 lower bound is {lo!r}, not the single-fit floor 1 — "
+        "Send-to-Batch dropped the parameter bounds"
+    )
+    assert float(hi) == pytest.approx(50.0)

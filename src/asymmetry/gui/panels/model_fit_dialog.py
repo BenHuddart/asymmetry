@@ -351,14 +351,21 @@ class ModelFitDialog(QDialog):
         existing_fit: ParameterModelFit | None = None,
         parent: QWidget | None = None,
         x_errors: np.ndarray | None = None,
+        x_label: str | None = None,
     ) -> None:
         super().__init__(parent)
 
-        self.setWindowTitle(f"Model Fit: {parameter_name} vs {x_key}")
+        # ``x_key`` is the internal abscissa id (e.g. ``custom:84576a7e``) used
+        # by the fit backend / persistence; ``x_label`` is the friendly column
+        # name shown to the user ("Current (A)"). Fall back to the key when no
+        # label is supplied so older callers keep working.
+        x_display = x_label or x_key
+        self.setWindowTitle(f"Model Fit: {parameter_name} vs {x_display}")
         self.resize(950, 650)
 
         self._parameter_name = parameter_name
         self._x_key = x_key
+        self._x_display = x_display
         self._component_pool = _component_pool_for_context(x_key, parameter_name)
         self._x = np.asarray(x_values, dtype=float)
         self._y = np.asarray(y_values, dtype=float)
@@ -381,7 +388,7 @@ class ModelFitDialog(QDialog):
 
         layout = QVBoxLayout(self)
 
-        summary = QLabel(f"Y parameter: <b>{parameter_name}</b> | X variable: <b>{x_key}</b>")
+        summary = QLabel(f"Y parameter: <b>{parameter_name}</b> | X variable: <b>{x_display}</b>")
         layout.addWidget(summary)
 
         x_min_data = float(np.nanmin(self._x)) if np.any(np.isfinite(self._x)) else 0.0
