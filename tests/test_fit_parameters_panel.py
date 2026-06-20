@@ -166,21 +166,24 @@ def test_write_gle_data_file_includes_combined_run_mapping_comments(
     assert float(data_lines[0].split()[2]) == pytest.approx(10.0)
 
 
-def test_export_csv_headers_include_units(
+def test_export_tsv_headers_include_units(
     panel: FitParametersPanel, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     panel._refresh_table()
-    out = tmp_path / "fit_parameters.csv"
+    out = tmp_path / "fit_parameters.tsv"
 
     monkeypatch.setattr(
         "asymmetry.gui.panels.fit_parameters_panel.QFileDialog.getSaveFileName",
-        lambda *_a, **_k: (str(out), "CSV files (*.csv)"),
+        lambda *_a, **_k: (str(out), "TSV files (*.tsv)"),
     )
 
-    panel._export_csv()
+    panel._export_tsv()
 
     first_line = out.read_text(encoding="utf-8").splitlines()[0]
-    assert first_line == "Run,B (G),T (K),A0 (%),err_A0 (%),Lambda (µs⁻¹),err_Lambda (µs⁻¹)"
+    assert first_line == (
+        "Run\tB (G)\tT (K)\tA0 (%)\terr_A0 (%)\tLambda (µs⁻¹)\terr_Lambda (µs⁻¹)\t"
+        "reduced_chi2\tchi2"
+    )
 
 
 def test_refresh_table_uses_run_label_for_combined_rows(qapp: QApplication) -> None:
@@ -204,6 +207,107 @@ def test_refresh_table_uses_run_label_for_combined_rows(qapp: QApplication) -> N
     assert run_item.text() == "3039 + 3040"
 
 
+def test_tsv_export_chi2_tracks_row_not_label(
+    qapp: QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Two runs that share a run_label must each export their OWN chi-squared:
+    # a label-keyed join would collapse them and misattribute the values.
+    panel = FitParametersPanel()
+    panel._rows = [
+        _FitRow(
+            run_number=1,
+            run_label="dup",
+            field=100.0,
+            temperature=5.0,
+            values={"A0": 0.21},
+            errors={"A0": 0.01},
+            chi_squared=11.0,
+            reduced_chi_squared=1.1,
+        ),
+        _FitRow(
+            run_number=2,
+            run_label="dup",
+            field=100.0,
+            temperature=5.0,
+            values={"A0": 0.22},
+            errors={"A0": 0.01},
+            chi_squared=22.0,
+            reduced_chi_squared=2.2,
+        ),
+    ]
+    panel._varying_params = ["A0"]
+    panel._x_combo.setCurrentText("Run")
+    panel._refresh_table()
+
+    out = tmp_path / "dup.tsv"
+    monkeypatch.setattr(
+        "asymmetry.gui.panels.fit_parameters_panel.QFileDialog.getSaveFileName",
+        lambda *_a, **_k: (str(out), "TSV files (*.tsv)"),
+    )
+    panel._export_tsv()
+    data_lines = [
+        ln
+        for ln in out.read_text(encoding="utf-8").splitlines()
+        if not ln.startswith(("#", "Run\t"))
+    ]
+    assert len(data_lines) == 2
+    # Sorted by run number: row 0 is run 1 (1.1 / 11), row 1 is run 2 (2.2 / 22).
+    assert data_lines[0].split("\t")[-2:] == ["1.1", "11"]
+    assert data_lines[1].split("\t")[-2:] == ["2.2", "22"]
+
+
+def test_exports_embed_model_global_params_and_chi2(
+    qapp: QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    panel = FitParametersPanel()
+    panel._rows = [
+        _FitRow(
+            run_number=3001,
+            run_label="3001",
+            field=100.0,
+            temperature=5.0,
+            values={"A0": 0.21, "Lambda": 0.5},
+            errors={"A0": 0.01, "Lambda": 0.02},
+            model_name="A0 exp(-Lambda t)",
+            chi_squared=42.0,
+            reduced_chi_squared=1.05,
+        )
+    ]
+    panel._varying_params = ["Lambda"]
+    panel._global_params = ParameterSet([Parameter("A0", value=0.21)])
+    panel._global_param_uncertainties = {"A0": 0.004}
+    panel._refresh_table()
+
+    # TSV: provenance comment header + per-run chi-squared columns.
+    tsv_out = tmp_path / "fit_parameters.tsv"
+    monkeypatch.setattr(
+        "asymmetry.gui.panels.fit_parameters_panel.QFileDialog.getSaveFileName",
+        lambda *_a, **_k: (str(tsv_out), "TSV files (*.tsv)"),
+    )
+    panel._export_tsv()
+    tsv_text = tsv_out.read_text(encoding="utf-8")
+    assert "# Model: A0 exp(-Lambda t)" in tsv_text
+    assert "# Global fitting parameters:" in tsv_text
+    assert "A0" in tsv_text and "0.21" in tsv_text
+    header_line = next(ln for ln in tsv_text.splitlines() if ln.startswith("Run\t"))
+    assert header_line.endswith("reduced_chi2\tchi2")
+    data_line = tsv_text.splitlines()[-1]
+    assert "1.05" in data_line and "42" in data_line
+
+    # GLE .dat: model line + global params + trailing chi-squared columns.
+    dat_out = tmp_path / "fit_parameters.dat"
+    panel._write_gle_data_file(dat_out)
+    dat_text = dat_out.read_text(encoding="utf-8")
+    assert "! Model: A0 exp(-Lambda t)" in dat_text
+    assert "! Global fitting parameters:" in dat_text
+    assert "reduced_chi2" in dat_text and "chi2" in dat_text
+    data_rows = [ln for ln in dat_text.splitlines() if ln and not ln.startswith("!")]
+    assert len(data_rows) == 1
+    cols = data_rows[0].split()
+    assert float(cols[-2]) == pytest.approx(1.05)
+    assert float(cols[-1]) == pytest.approx(42.0)
+
+
 def test_fit_parameters_panel_uses_vertical_splitter(panel: FitParametersPanel) -> None:
     assert isinstance(panel._content_splitter, QSplitter)
     assert panel._content_splitter.orientation() == Qt.Orientation.Vertical
@@ -218,14 +322,14 @@ def test_secondary_sections_start_collapsed(panel: FitParametersPanel) -> None:
 def test_parameter_plot_hosts_label_and_export_controls(panel: FitParametersPanel) -> None:
     assert panel._plot_group.isAncestorOf(panel._add_label_btn)
     assert panel._plot_group.isAncestorOf(panel._clear_labels_btn)
-    assert panel._plot_group.isAncestorOf(panel._export_csv_btn)
+    assert panel._plot_group.isAncestorOf(panel._export_tsv_btn)
     assert panel._plot_group.isAncestorOf(panel._export_gle_btn)
     assert panel._plot_group.isAncestorOf(panel._gle_format_combo)
 
     controls_root = panel._controls_scroll.widget()
     assert controls_root is not None
     assert not controls_root.isAncestorOf(panel._add_label_btn)
-    assert not controls_root.isAncestorOf(panel._export_csv_btn)
+    assert not controls_root.isAncestorOf(panel._export_tsv_btn)
 
 
 def test_x_axis_log_checkbox_reserves_label_width(panel: FitParametersPanel) -> None:

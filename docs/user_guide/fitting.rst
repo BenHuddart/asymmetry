@@ -370,7 +370,7 @@ datasets, mark parameters as **Global** (shared across runs) or **Local**
 at least one parameter is **Global** is a global fit; otherwise each run is
 fitted independently but the results are collected into one trendable series.
 Results land in the **Fitted Parameters** panel where they can be browsed,
-exported to CSV, or passed into the parameter-trending fit framework documented
+exported to TSV, or passed into the parameter-trending fit framework documented
 in :doc:`parameter_trending`.
 
 The same engine is also used in the Frequency workspace for displayed Fourier

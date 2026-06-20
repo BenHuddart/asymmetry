@@ -5741,6 +5741,23 @@ class PlotPanel(QWidget):
         return token or "dataset"
 
     @staticmethod
+    def _dedup_export_token(base: str, used: set[str] | None) -> str:
+        """Return a token unique within *used*, suffixing ``_2``, ``_3`` on clash.
+
+        Guards against two exported series whose labels sanitize to the same
+        token silently overwriting each other's ``.dat``/``.fit`` files.
+        """
+        if used is None:
+            return base
+        token = base
+        n = 2
+        while token in used:
+            token = f"{base}_{n}"
+            n += 1
+        used.add(token)
+        return token
+
+    @staticmethod
     def _sanitize_gle_text(value: object, *, fallback: str = "") -> str:
         """Return text that is safe for GLE string rendering."""
         text = str(value)
@@ -5875,10 +5892,11 @@ class PlotPanel(QWidget):
         *,
         axis_key: str | None,
         written_files: list[Path],
-        dat_writes: list[tuple[Path, dict, object]],
+        dat_writes: list[tuple[Path, dict, object, str | None]],
         gle_path: Path,
         colors: list[str],
         show_legend: bool,
+        used_tokens: set[str] | None = None,
     ) -> None:
         """Draw export payloads on a provided axis with axis-specific naming."""
         is_multi = len(payloads) > 1
@@ -5890,7 +5908,9 @@ class PlotPanel(QWidget):
                 label_text,
                 fallback=f"Run {payload.get('run_number', i)}",
             )
-            token = self._safe_file_token(f"{label_text}_{axis_suffix}")
+            token = self._dedup_export_token(
+                self._safe_file_token(f"{label_text}_{axis_suffix}"), used_tokens
+            )
             data_color = colors[i % len(colors)] if is_multi else "black"
             fit_color = data_color if is_multi else "red"
             suppress_subplot_labels = axis_key in {"P_x", "P_y", "P_z"} and not show_legend
@@ -5906,7 +5926,7 @@ class PlotPanel(QWidget):
 
             dat_path = gle_path.parent / f"{token}.dat"
             if t_data is not None and y_data is not None:
-                dat_writes.append((dat_path, payload, label_text))
+                dat_writes.append((dat_path, payload, label_text, axis_key))
                 written_files.append(dat_path)
                 ax.errorbar(
                     t_data,
@@ -6016,12 +6036,15 @@ class PlotPanel(QWidget):
         *,
         label_text: object | None = None,
         x_range: tuple[float, float] | None = None,
+        axis_key: str | None = None,
     ) -> None:
         """Write a .dat file with spectra data and metadata header.
 
         ``x_range`` optionally restricts the written rows to ``[lo, hi]``
         (inclusive); ``None`` (the default, used by the GLE export) writes every
-        point.
+        point. ``axis_key`` identifies the projection (``P_x``/``P_y``/``P_z``)
+        for vector exports so the file records which polarization component it
+        holds rather than a generic asymmetry label.
         """
         data = payload.get("data") or {}
         t_data = data.get("t")
@@ -6201,11 +6224,21 @@ class PlotPanel(QWidget):
             f.write("! END OF GROUPING INFORMATION\n")
             f.write("!\n")
 
+            if axis_key in {"P_x", "P_y", "P_z"}:
+                suffix = axis_key.split("_", 1)[1]
+                datarow_label = f"a_0 P_{suffix}(t)"
+                ylabel = f"a_0 P_{suffix}(t) (%)"
+            else:
+                datarow_label = "FB asymmetry"
+                ylabel = "% Asymmetry"
+
             f.write("! START OF DATA SET INFORMATION\n")
-            f.write("!  Datarow: (Time) (FB asymmetry) (Error)\n")
+            f.write(f"!  Datarow: (Time) ({datarow_label}) (Error)\n")
+            if axis_key in {"P_x", "P_y", "P_z"}:
+                f.write(f"!  Projection: {axis_key}\n")
             f.write(f"!  Title: {display_label}\n")
             f.write("!  Xlabel: Time in microseconds\n")
-            f.write("!  Ylabel: % Asymmetry\n")
+            f.write(f"!  Ylabel: {ylabel}\n")
             f.write("! END OF DATA SET INFORMATION\n")
             f.write("! time  asymmetry  error\n")
             err_arr = y_err if y_err is not None else np.zeros_like(y_data)
@@ -6350,6 +6383,28 @@ class PlotPanel(QWidget):
             )
         return payloads
 
+    def _export_axis_groups(self) -> list[tuple[str | None, list[dict]]]:
+        """Return ``(axis_key, payloads)`` groups covering every series in view.
+
+        In vector "ALL" mode this yields one entry per projection so multi-series
+        views export *all* components — not just the first, which is all that
+        ``_current_datasets`` (and hence ``_collect_export_payloads``) holds.
+        Every other view yields a single ``(None, payloads)`` entry.
+        """
+        if self._current_polarization_axis == "ALL" and self._vector_subplot_datasets:
+            order = self._projection_subplot_order(self._vector_subplot_datasets)
+            groups: list[tuple[str | None, list[dict]]] = []
+            for axis_key in order:
+                payloads = self.get_current_plot_export_data(
+                    self._vector_subplot_datasets.get(axis_key, [])
+                )
+                if payloads:
+                    groups.append((axis_key, payloads))
+            if groups:
+                return groups
+        payloads = self._collect_export_payloads()
+        return [(None, payloads)] if payloads else []
+
     def _prompt_text_export_options(self) -> tuple[str, bool] | None:
         """Ask for the data-only export content and x-range option.
 
@@ -6388,8 +6443,8 @@ class PlotPanel(QWidget):
         folder, GLE script, or compile. The content switch (data only / data +
         fit / fit only) mirrors WiMDA's stData/stBoth/stFit.
         """
-        payloads = self._collect_export_payloads()
-        if not payloads:
+        axis_groups = self._export_axis_groups()
+        if not axis_groups:
             QMessageBox.warning(
                 self,
                 "Export unavailable",
@@ -6410,8 +6465,12 @@ class PlotPanel(QWidget):
                 x1 = self._convert_frequency_control_value_to_axis_limit(x1)
             x_range = (x0, x1)
 
-        if len(payloads) == 1:
-            token = self._safe_file_token(str(payloads[0].get("label", "dataset")))
+        total_series = sum(len(payloads) for _, payloads in axis_groups)
+
+        if total_series == 1:
+            axis_key, payloads = axis_groups[0]
+            payload = payloads[0]
+            token = self._safe_file_token(str(payload.get("label", "dataset")))
             path, _ = QFileDialog.getSaveFileName(
                 self,
                 "Export plotted data (text)",
@@ -6422,7 +6481,9 @@ class PlotPanel(QWidget):
                 return
             remember_export_path(path)
             base = Path(path).with_suffix("")
-            written = self._write_payload_text_files(base, payloads[0], content, x_range)
+            written = self._write_payload_text_files(
+                base, payload, content, x_range, axis_key=axis_key
+            )
         else:
             directory = QFileDialog.getExistingDirectory(
                 self,
@@ -6434,11 +6495,22 @@ class PlotPanel(QWidget):
             remember_export_path(directory)
             export_dir = Path(directory)
             written = []
-            for i, payload in enumerate(payloads):
-                token = self._safe_file_token(str(payload.get("label", f"dataset_{i}")))
-                written.extend(
-                    self._write_payload_text_files(export_dir / token, payload, content, x_range)
-                )
+            used_tokens: set[str] = set()
+            for axis_key, payloads in axis_groups:
+                axis_suffix = self._export_axis_suffix(axis_key)
+                for i, payload in enumerate(payloads):
+                    label = str(payload.get("label", f"dataset_{i}"))
+                    name = f"{label}_{axis_suffix}" if axis_key in {"P_x", "P_y", "P_z"} else label
+                    token = self._dedup_export_token(self._safe_file_token(name), used_tokens)
+                    written.extend(
+                        self._write_payload_text_files(
+                            export_dir / token,
+                            payload,
+                            content,
+                            x_range,
+                            axis_key=axis_key,
+                        )
+                    )
 
         if not written:
             QMessageBox.warning(
@@ -6461,13 +6533,18 @@ class PlotPanel(QWidget):
         payload: dict,
         content: str,
         x_range: tuple[float, float] | None,
+        axis_key: str | None = None,
     ) -> list[Path]:
         """Write the .dat and/or .fit text files for one payload."""
         written: list[Path] = []
         if content in ("data", "data_fit"):
             dat_path = base.with_suffix(".dat")
             self._write_data_file(
-                dat_path, payload, label_text=payload.get("label"), x_range=x_range
+                dat_path,
+                payload,
+                label_text=payload.get("label"),
+                x_range=x_range,
+                axis_key=axis_key,
             )
             if dat_path.exists():
                 written.append(dat_path)
@@ -6479,6 +6556,35 @@ class PlotPanel(QWidget):
                 if fit_path.exists():
                     written.append(fit_path)
         return written
+
+    def _make_stacked_gle_axes(self, glp, n_axes: int):
+        """Create *n_axes* vertically stacked, x-shared GLE axes.
+
+        Returns ``(figure, axes_list)``. Prefers ``glp.subplots`` and falls back
+        to manual ``add_subplot`` wiring. Shared by the vector-projection and
+        grouped-time-domain export branches so both render as stacked subplots.
+        """
+        if hasattr(glp, "subplots"):
+            fig, axes_candidate = glp.subplots(
+                nrows=n_axes,
+                ncols=1,
+                figsize=(6.4, 2.8 * n_axes),
+                sharex=True,
+            )
+            axes_objs = (
+                list(axes_candidate) if isinstance(axes_candidate, list) else [axes_candidate]
+            )
+            return fig, axes_objs
+
+        fig = glp.figure(figsize=(6.4, 2.8 * n_axes))
+        axes_objs = []
+        shared_ax = None
+        for idx in range(n_axes):
+            ax = fig.add_subplot(n_axes, 1, idx + 1, sharex=shared_ax)
+            if shared_ax is None:
+                shared_ax = ax
+            axes_objs.append(ax)
+        return fig, axes_objs
 
     def export_plots_to_gle(self) -> None:
         """Export current main-plot view as GLE using gleplot.
@@ -6533,75 +6639,89 @@ class PlotPanel(QWidget):
             "gray",
         ]
 
-        fig = glp.figure(figsize=self._export_figure_size(len(payloads)))
         written_files: list[Path] = []
-        dat_writes: list[tuple[Path, dict, object]] = []
+        dat_writes: list[tuple[Path, dict, object, str | None]] = []
+        # Track every data-file token used this export so two series sharing a
+        # label cannot silently overwrite each other's .dat/.fit files.
+        used_tokens: set[str] = set()
 
+        grouped_datasets = list(getattr(self, "_grouped_time_subplot_datasets", []) or [])
+
+        axis_order: list[str] = []
         if self._current_polarization_axis == "ALL" and self._vector_subplot_datasets:
             axis_order = self._projection_subplot_order(self._vector_subplot_datasets)
-            if axis_order:
-                axes_objs = None
-                if hasattr(glp, "subplots"):
-                    _fig_candidate, axes_candidate = glp.subplots(
-                        nrows=len(axis_order),
-                        ncols=1,
-                        figsize=(6.4, 2.8 * len(axis_order)),
-                        sharex=True,
-                    )
-                    fig = _fig_candidate
-                    if isinstance(axes_candidate, list):
-                        axes_objs = list(axes_candidate)
-                    else:
-                        axes_objs = [axes_candidate]
 
-                if axes_objs is None:
-                    fig = glp.figure(figsize=(6.4, 2.8 * len(axis_order)))
-                    axes_objs = []
-                    shared_ax = None
-                    for idx in range(len(axis_order)):
-                        ax = fig.add_subplot(len(axis_order), 1, idx + 1, sharex=shared_ax)
-                        if shared_ax is None:
-                            shared_ax = ax
-                        axes_objs.append(ax)
-
-                for idx, axis_key in enumerate(axis_order):
-                    ax = axes_objs[idx]
-                    axis_payloads = self.get_current_plot_export_data(
-                        self._vector_subplot_datasets.get(axis_key, [])
-                    )
-                    if not axis_payloads:
-                        continue
-                    show_legend = idx == 0 and len(axis_payloads) > 1
-                    self._plot_export_payloads_on_axis(
-                        ax,
-                        axis_payloads,
-                        axis_key=axis_key,
-                        written_files=written_files,
-                        dat_writes=dat_writes,
-                        gle_path=gle_path,
-                        colors=colors,
-                        show_legend=show_legend,
-                    )
-                    if idx == len(axis_order) - 1:
-                        ax.set_xlabel("Time (µs)")
-
-                if hasattr(fig, "subplots_adjust"):
-                    # Keep y-axis labels and bottom x-label clear of clipping.
-                    fig.subplots_adjust(left=0.20, right=0.98, top=0.98, bottom=0.12, hspace=0.08)
-            else:
-                ax = fig.add_subplot(111)
+        if axis_order:
+            fig, axes_objs = self._make_stacked_gle_axes(glp, len(axis_order))
+            last_ax = None
+            for idx, axis_key in enumerate(axis_order):
+                ax = axes_objs[idx]
+                axis_payloads = self.get_current_plot_export_data(
+                    self._vector_subplot_datasets.get(axis_key, [])
+                )
+                if not axis_payloads:
+                    continue
+                show_legend = idx == 0 and len(axis_payloads) > 1
                 self._plot_export_payloads_on_axis(
                     ax,
-                    payloads,
+                    axis_payloads,
+                    axis_key=axis_key,
+                    written_files=written_files,
+                    dat_writes=dat_writes,
+                    gle_path=gle_path,
+                    colors=colors,
+                    show_legend=show_legend,
+                    used_tokens=used_tokens,
+                )
+                last_ax = ax
+            # Label the time axis on the last subplot that actually drew data, so
+            # an empty trailing projection cannot leave the figure unlabeled.
+            if last_ax is not None:
+                last_ax.set_xlabel("Time (µs)")
+
+            if hasattr(fig, "subplots_adjust"):
+                # Keep y-axis labels and bottom x-label clear of clipping.
+                fig.subplots_adjust(left=0.20, right=0.98, top=0.98, bottom=0.12, hspace=0.08)
+        elif len(grouped_datasets) > 1:
+            # Individual groups: render one stacked subplot per group, mirroring
+            # the on-screen grouped-time-domain view rather than overlaying every
+            # group on a single axis.
+            fig, axes_objs = self._make_stacked_gle_axes(glp, len(grouped_datasets))
+            last_ax = None
+            for idx, dataset in enumerate(grouped_datasets):
+                ax = axes_objs[idx]
+                group_payloads = self.get_current_plot_export_data([dataset])
+                if not group_payloads:
+                    continue
+                # Use the group's run label as its identity so per-group data
+                # files get distinct names and the subplot title matches screen.
+                group_label = str(
+                    getattr(dataset, "run_label", group_payloads[0].get("label", f"group_{idx}"))
+                )
+                group_payloads[0]["label"] = group_label
+                self._plot_export_payloads_on_axis(
+                    ax,
+                    group_payloads,
                     axis_key=None,
                     written_files=written_files,
                     dat_writes=dat_writes,
                     gle_path=gle_path,
                     colors=colors,
-                    show_legend=len(payloads) > 1,
+                    show_legend=False,
+                    used_tokens=used_tokens,
                 )
-                ax.set_xlabel("Time (µs)")
+                if hasattr(ax, "set_title"):
+                    ax.set_title(self._sanitize_gle_text(group_label), loc="left")
+                last_ax = ax
+            if last_ax is not None:
+                last_ax.set_xlabel("Time (µs)")
+
+            if hasattr(fig, "subplots_adjust"):
+                fig.subplots_adjust(left=0.20, right=0.98, top=0.98, bottom=0.12, hspace=0.08)
         else:
+            # Create the figure only in the branch that uses it (the stacked
+            # branches build their own via _make_stacked_gle_axes).
+            fig = glp.figure(figsize=self._export_figure_size(len(payloads)))
             ax = fig.add_subplot(111)
             self._plot_export_payloads_on_axis(
                 ax,
@@ -6612,6 +6732,7 @@ class PlotPanel(QWidget):
                 gle_path=gle_path,
                 colors=colors,
                 show_legend=len(payloads) > 1,
+                used_tokens=used_tokens,
             )
             ax.set_xlabel("Time (µs)")
 
@@ -6629,8 +6750,8 @@ class PlotPanel(QWidget):
 
         # Ensure our sidecar .dat files retain metadata headers even when
         # gleplot generates/overwrites data_name-matched data files on save.
-        for dat_path, payload, label_text in dat_writes:
-            self._write_data_file(dat_path, payload, label_text=label_text)
+        for dat_path, payload, label_text, axis_key in dat_writes:
+            self._write_data_file(dat_path, payload, label_text=label_text, axis_key=axis_key)
 
         # Compile using gleplot / GLE
         _gle = get_gle_executable()

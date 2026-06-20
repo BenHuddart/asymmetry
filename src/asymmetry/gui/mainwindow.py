@@ -8626,6 +8626,11 @@ class MainWindow(QMainWindow):
                     "values": values,
                     "errors": errors,
                     "custom_values": custom_values,
+                    # Originating fit provenance so the trend panel's exports can
+                    # record the model and per-run goodness of fit.
+                    "model_name": summary.get("model_name"),
+                    "chi_squared": summary.get("chi_squared"),
+                    "reduced_chi_squared": summary.get("reduced_chi_squared"),
                 }
             )
         return rows

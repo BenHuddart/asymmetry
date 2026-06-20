@@ -688,6 +688,60 @@ def test_fit_subplot_gle_builder_uses_gle_labels(tmp_path: Path, qapp: QApplicat
     assert "\\lambda" in ax.ylabel
 
 
+def test_fit_subplot_export_embeds_model_and_global_params(
+    tmp_path: Path, qapp: QApplication
+) -> None:
+    window = GlobalParameterFitWindow()
+    window._parameter_name = "Lambda"
+    window._x_key = "field"
+    window._groups = [
+        ParameterGroupData(
+            group_id="g0",
+            group_name="G0",
+            x=np.array([100.0, 200.0], dtype=float),
+            y=np.array([0.15, 0.12], dtype=float),
+            yerr=np.array([0.01, 0.01], dtype=float),
+            group_variable_value=100.0,
+        )
+    ]
+    window._model = ParameterCompositeModel(["Constant"])
+    window._result = CrossGroupFitResult(
+        success=True,
+        chi_squared=4.2,
+        reduced_chi_squared=1.05,
+        global_parameters=ParameterSet([Parameter("c", value=0.137)]),
+        global_uncertainties={"c": 0.004},
+        n_points=8,
+    )
+
+    ax = _LabelAxis()
+    fig = _LabelFigure([ax])
+
+    class _FakeGlp:
+        @staticmethod
+        def subplots(**_kwargs):
+            return fig, [ax]
+
+    window._build_fit_subplot_gle_figure(_FakeGlp(), tmp_path / "out.gle")
+
+    data_path = tmp_path / "out_G0_data.dat"
+    fit_path = tmp_path / "out_G0_fit.fit"
+    assert data_path.exists()
+    data_text = data_path.read_text(encoding="utf-8")
+    # Comprehensive metadata: model formula, global parameter table + value,
+    # and fit quality must all be embedded in the exported data file.
+    assert "! model:" in data_text
+    assert "! Global parameter table:" in data_text
+    assert "0.137" in data_text
+    assert "! chi_squared: 4.2" in data_text
+    assert "! reduced_chi_squared: 1.05" in data_text
+    # The model curve file carries the same provenance header.
+    if fit_path.exists():
+        fit_text = fit_path.read_text(encoding="utf-8")
+        assert "! model:" in fit_text
+        assert "! Global parameter table:" in fit_text
+
+
 def test_fit_subplot_gle_builder_respects_aspect_ratio_control(
     tmp_path: Path, qapp: QApplication
 ) -> None:

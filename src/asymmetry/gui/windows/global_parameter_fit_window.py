@@ -1015,13 +1015,72 @@ class GlobalParameterFitWindow(QMainWindow):
             return None
         return xs[mask], ys[mask]
 
+    @staticmethod
+    def _global_parameter_table_lines(result) -> list[str]:
+        """Return the ``! Global parameter table`` provenance lines for a result.
+
+        Shared by the fit-subplot and local-parameter exports so the global /
+        fixed parameter formatting (units, precision, ``nan`` sentinel, ``[fixed]``
+        flag) stays identical across both. Lines have no trailing newline.
+        """
+        lines: list[str] = []
+        if not (len(result.global_parameters) or len(result.fixed_parameters)):
+            return lines
+        lines.append("! Global parameter table:")
+        lines.append("!   Parameter                     Value                Uncertainty")
+        for p in result.global_parameters:
+            info = get_param_info(p.name)
+            unit = f" ({info.unit})" if info.unit else ""
+            err = result.global_uncertainties.get(p.name)
+            err_text = "nan"
+            if err is not None and np.isfinite(err):
+                err_text = f"{float(err):.10g}"
+            lines.append(f"!   {p.name}{unit:<24} {float(p.value):>16.10g} {err_text:>24}")
+        for p in result.fixed_parameters:
+            info = get_param_info(p.name)
+            unit = f" ({info.unit})" if info.unit else ""
+            lines.append(f"!   {p.name}{unit} [fixed] = {float(p.value):.10g}")
+        return lines
+
+    def _fit_metadata_header_lines(self) -> list[str]:
+        """Return shared provenance lines for GLE fit-subplot exports.
+
+        Mirrors the comprehensive local-parameter export header so the fit-data
+        and model-curve files record *which* model was fitted, the values (and
+        uncertainties) of the shared global parameters, and the fit quality —
+        not just bare ``x y yerr`` columns.
+        """
+        lines: list[str] = []
+        if self._model is not None:
+            try:
+                formula = self._model.formula_string()
+            except Exception:
+                formula = ""
+            if formula:
+                lines.append(f"! model: {formula}")
+
+        result = self._result
+        if result is not None:
+            lines.extend(self._global_parameter_table_lines(result))
+            if np.isfinite(result.chi_squared):
+                lines.append(f"! chi_squared: {float(result.chi_squared):.8g}")
+            if np.isfinite(result.reduced_chi_squared):
+                lines.append(f"! reduced_chi_squared: {float(result.reduced_chi_squared):.8g}")
+            lines.append(f"! error_mode: {result.error_mode}")
+            if result.n_points:
+                lines.append(f"! n_points: {int(result.n_points)}")
+        return lines
+
     def _write_fit_subplot_files(self, gle_path: Path) -> dict[str, dict[str, object]]:
         """Write explicit per-group data and fit files for GLE export."""
         written: dict[str, dict[str, object]] = {}
+        header_lines = self._fit_metadata_header_lines()
+        x_axis_label = self._local_group_axis_label_plain()
         for group in self._groups:
             token = self._safe_file_token(group.group_name or group.group_id)
             data_path = gle_path.with_name(f"{gle_path.stem}_{token}_data.dat")
             fit_path = gle_path.with_name(f"{gle_path.stem}_{token}_fit.fit")
+            group_label = str(group.group_name or group.group_id)
 
             x = np.asarray(group.x, dtype=float)
             y = np.asarray(group.y, dtype=float)
@@ -1042,6 +1101,10 @@ class GlobalParameterFitWindow(QMainWindow):
 
             with open(data_path, "w", encoding="utf-8") as f:
                 f.write("! Cross-group fit data\n")
+                f.write(f"! group: {group_label}\n")
+                for line in header_lines:
+                    f.write(line + "\n")
+                f.write(f"! x-axis: {x_axis_label}\n")
                 f.write("! columns: x y yerr\n")
                 for xv, yv, ev in zip(x, y, yerr, strict=True):
                     ev_out = ev if np.isfinite(ev) and ev > 0 else np.nan
@@ -1053,6 +1116,10 @@ class GlobalParameterFitWindow(QMainWindow):
                 xs, ys = sampled
                 with open(fit_path, "w", encoding="utf-8") as f:
                     f.write("! Cross-group fit model curve\n")
+                    f.write(f"! group: {group_label}\n")
+                    for line in header_lines:
+                        f.write(line + "\n")
+                    f.write(f"! x-axis: {x_axis_label}\n")
                     f.write("! columns: x y\n")
                     for xv, yv in zip(xs, ys, strict=True):
                         f.write(f"{xv:.10g} {yv:.10g}\n")
@@ -1535,20 +1602,8 @@ class GlobalParameterFitWindow(QMainWindow):
             f.write("! Local parameter trends\n")
 
             if self._result is not None:
-                f.write("! Global parameter table:\n")
-                f.write("!   Parameter                     Value                Uncertainty\n")
-                for p in self._result.global_parameters:
-                    info = get_param_info(p.name)
-                    unit = f" ({info.unit})" if info.unit else ""
-                    err = self._result.global_uncertainties.get(p.name)
-                    err_text = "nan"
-                    if err is not None and np.isfinite(err):
-                        err_text = f"{float(err):.10g}"
-                    f.write(f"!   {p.name}{unit:<24} {float(p.value):>16.10g} {err_text:>24}\n")
-                for p in self._result.fixed_parameters:
-                    info = get_param_info(p.name)
-                    unit = f" ({info.unit})" if info.unit else ""
-                    f.write(f"!   {p.name}{unit} [fixed] = {float(p.value):.10g}\n")
+                for line in self._global_parameter_table_lines(self._result):
+                    f.write(line + "\n")
                 f.write("!\n")
 
             f.write(f"! columns: {self._local_group_axis_label_plain()}")

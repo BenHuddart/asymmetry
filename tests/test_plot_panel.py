@@ -74,6 +74,7 @@ class _FakeAxis:
         self.ylim_calls: list[tuple[float, float]] = []
         self.xlabel_calls: list[str] = []
         self.ylabel_calls: list[str] = []
+        self.title_calls: list[str] = []
         self.tick_params_calls: list[dict[str, object]] = []
         self.legend_call_count = 0
         self.xaxis = SimpleNamespace(
@@ -98,6 +99,9 @@ class _FakeAxis:
 
     def set_ylabel(self, label: str, *_args, **_kwargs) -> None:
         self.ylabel_calls.append(label)
+
+    def set_title(self, label: str, *_args, **_kwargs) -> None:
+        self.title_calls.append(label)
 
     def tick_params(self, *args, **kwargs) -> None:
         self.tick_params_calls.append({"args": args, "kwargs": kwargs})
@@ -3813,6 +3817,154 @@ class TestPlotPanel:
         x_labels = [axis.xlabel_calls[-1] for axis in fig.axes if axis.xlabel_calls]
         assert x_labels
         assert x_labels[-1] == "Time (µs)"
+
+    def test_export_gle_individual_groups_stacks_subplots(
+        self,
+        panel: PlotPanel,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.linspace(0.0, 8.0, 50)
+        e = np.full_like(t, 0.01)
+        groups = [
+            MuonDataset(
+                time=t,
+                asymmetry=0.20 * np.exp(-0.30 * t),
+                error=e,
+                metadata={"run_number": 3001, "run_label": "3001 F"},
+            ),
+            MuonDataset(
+                time=t,
+                asymmetry=0.18 * np.exp(-0.25 * t),
+                error=e,
+                metadata={"run_number": 3001, "run_label": "3001 B"},
+            ),
+        ]
+        # Mirror plot_grouped_time_domain_subplots' state: all groups in
+        # _current_datasets, a per-group axis key (not "ALL"), no vector subplots.
+        panel._grouped_time_subplot_datasets = list(groups)
+        panel._current_datasets = list(groups)
+        panel._current_polarization_axis = "grp:1"
+        panel._vector_subplot_datasets = {}
+
+        target_gle = tmp_path / "groups_export.gle"
+
+        class _MultiAxisFigure:
+            def __init__(self):
+                self.axes: list[_FakeAxis] = []
+
+            def add_subplot(self, *_args, **_kwargs):
+                axis = _FakeAxis()
+                self.axes.append(axis)
+                return axis
+
+            def subplots_adjust(self, *_a, **_k):
+                pass
+
+            def savefig(self, path: str, **kwargs) -> None:
+                output_path = Path(path)
+                if kwargs.get("folder"):
+                    output_path, export_dir = resolve_gle_export_paths(output_path, folder=True)
+                    export_dir.mkdir(parents=True, exist_ok=True)
+                else:
+                    output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_text("! fake gle", encoding="utf-8")
+
+        fig = _MultiAxisFigure()
+        # No `subplots` attr -> exercises the add_subplot fallback in
+        # _make_stacked_gle_axes, one _FakeAxis per group.
+        fake_glp = SimpleNamespace(figure=lambda **_kwargs: fig)
+
+        monkeypatch.setattr(
+            "asymmetry.gui.panels.plot_panel.QFileDialog.getSaveFileName",
+            lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
+        )
+        monkeypatch.setattr("shutil.which", lambda _name: "gle")
+        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
+        monkeypatch.setattr(
+            "importlib.import_module", lambda name: fake_glp if name == "gleplot" else None
+        )
+        monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *a, **k: None)
+        monkeypatch.setattr(panel, "_show_gle_preview", lambda *a, **k: None)
+
+        panel.export_plots_to_gle()
+
+        # One stacked subplot per group, each titled with its run label — not a
+        # single overlaid axis.
+        assert len(fig.axes) == 2
+        titles = [ax.title_calls[-1] for ax in fig.axes if ax.title_calls]
+        assert "3001 F" in titles
+        assert "3001 B" in titles
+        # A distinct per-group data file is written for each group.
+        export_dir = target_gle.parent / "groups_export.gleplot"
+        assert len(list(export_dir.glob("*.dat"))) == 2
+
+    def test_export_text_vector_all_writes_every_projection(
+        self,
+        panel: PlotPanel,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.linspace(0.0, 8.0, 50)
+        e = np.full_like(t, 0.01)
+        panel._current_polarization_axis = "ALL"
+        panel._vector_subplot_datasets = {
+            "P_x": [
+                MuonDataset(
+                    time=t,
+                    asymmetry=0.20 * np.exp(-0.30 * t),
+                    error=e,
+                    metadata={"run_number": 3001},
+                )
+            ],
+            "P_y": [
+                MuonDataset(
+                    time=t,
+                    asymmetry=0.16 * np.exp(-0.25 * t),
+                    error=e,
+                    metadata={"run_number": 3001},
+                )
+            ],
+            "P_z": [
+                MuonDataset(
+                    time=t,
+                    asymmetry=0.12 * np.exp(-0.20 * t),
+                    error=e,
+                    metadata={"run_number": 3001},
+                )
+            ],
+        }
+        # Mirror what plot_vector_subplots leaves behind: _current_datasets holds
+        # only the first projection. The old text export exported just that one.
+        panel._current_datasets = list(panel._vector_subplot_datasets["P_x"])
+
+        monkeypatch.setattr(panel, "_prompt_text_export_options", lambda: ("data", False))
+        monkeypatch.setattr(
+            "asymmetry.gui.panels.plot_panel.QFileDialog.getExistingDirectory",
+            lambda *_a, **_k: str(tmp_path),
+        )
+        monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *a, **k: None)
+
+        panel.export_plotted_data_as_text()
+
+        dat_files = sorted(tmp_path.glob("*.dat"))
+        # All three projections must be written, not just the first.
+        assert len(dat_files) == 3
+        headers = {p.name: p.read_text(encoding="utf-8") for p in dat_files}
+        projections_seen = set()
+        for name, text in headers.items():
+            for proj in ("P_x", "P_y", "P_z"):
+                if f"Projection: {proj}" in text:
+                    projections_seen.add(proj)
+                    # Filename carries the projection suffix for disambiguation.
+                    assert proj.lower().replace("_", "") in name
+        assert projections_seen == {"P_x", "P_y", "P_z"}
 
     def test_apply_limits_in_all_mode_preserves_per_axis_limits(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:

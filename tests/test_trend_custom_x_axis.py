@@ -237,21 +237,22 @@ def test_gle_export_plots_against_angle_column(qapp, tmp_path):
     assert panel._gle_x_column("angle") == 4 + 2 * n_params
 
 
-def test_csv_export_includes_angle_column(qapp, tmp_path, monkeypatch):
+def test_tsv_export_includes_angle_column(qapp, tmp_path, monkeypatch):
     panel = FitParametersPanel()
     _select_angle_axis(panel)
     panel.load_representation_series(
         [("b", "S", [_angle_series_dict(1, "30", 0.2), _angle_series_dict(2, "60", 0.3)])]
     )
-    out = tmp_path / "trend.csv"
+    out = tmp_path / "trend.tsv"
     monkeypatch.setattr(
         "asymmetry.gui.panels.fit_parameters_panel.QFileDialog.getSaveFileName",
-        lambda *_a, **_k: (str(out), "CSV files (*.csv)"),
+        lambda *_a, **_k: (str(out), "TSV files (*.tsv)"),
     )
-    panel._export_csv()
+    panel._export_tsv()
     lines = out.read_text(encoding="utf-8").splitlines()
-    assert lines[0].endswith("Angle (°)")  # abscissa is the trailing column
-    assert lines[1].endswith("30")  # first (sorted) row's angle value
+    # Abscissa is the last parameter column, before the trailing chi-squared cols.
+    assert lines[0].split("\t")[-3:] == ["Angle (°)", "reduced_chi2", "chi2"]
+    assert lines[1].split("\t")[-3] == "30"  # first (sorted) row's angle value
 
 
 def test_gle_angle_label_reflects_fold(qapp):
