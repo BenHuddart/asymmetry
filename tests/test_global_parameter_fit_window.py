@@ -326,7 +326,7 @@ def test_local_parameter_subplots_do_not_show_titles(qapp: QApplication) -> None
 
 def test_parameter_label_uses_mathtext_symbols_and_units(qapp: QApplication) -> None:
     window = GlobalParameterFitWindow()
-    assert window._parameter_label("Lambda") == r"$\lambda$ (μs⁻¹)"
+    assert window._parameter_label("Lambda") == r"$\lambda$ (µs⁻¹)"
     assert window._parameter_label("nu") == r"$\nu$ (MHz)"
     assert window._parameter_label("A0") == r"$A_0$ (%)"
 
@@ -1070,8 +1070,8 @@ def test_local_export_data_file_includes_all_local_and_global_with_units(
     text = data_path.read_text(encoding="utf-8")
     assert "! Global parameter table:" in text
     assert "!   Parameter" in text
-    assert "Lambda (μs⁻¹)" in text
-    assert "err_Lambda (μs⁻¹)" in text
+    assert "Lambda (µs⁻¹)" in text
+    assert "err_Lambda (µs⁻¹)" in text
     assert "nu (MHz)" in text
     assert "err_nu (MHz)" in text
     assert "! Column map:" in text

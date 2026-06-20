@@ -1,81 +1,135 @@
-/* bench.qss — Asymmetry BENCH palette foundation.
+/* bench.qss — Asymmetry BENCH palette foundation (TEMPLATE).
    Static colour and chrome rules only.
-   Scale-dependent padding, border-radius, and spin-button sizing are
-   managed by UIManager.build_stylesheet, which is concatenated after
-   this sheet at runtime. */
+
+   Colours are written as placeholders (an upper-snake-case token name wrapped
+   in at-signs) naming constants in styles/tokens.py; styles/stylesheet.py
+   substitutes them at load time so the tokens are the single source of truth
+   (do NOT inline raw hex here). */
+/* Example: a BG placeholder resolves to tokens.BG.
+
+   Scale-dependent padding, border-radius, spin-button sizing AND the chrome
+   font-sizes (dock titles, table headers, group-box titles) are managed by
+   UIManager.build_stylesheet, which is concatenated after this sheet at runtime
+   so they track the UI-scale setting. */
 
 /* ── App shell ──────────────────────────────────────────────────── */
 QMainWindow {
-    background-color: #fafaf9;
+    background-color: @BG@;
 }
 
 QDialog {
-    background-color: #fafaf9;
+    background-color: @BG@;
 }
 
 /* ── Toolbar and menu bar ───────────────────────────────────────── */
 QToolBar {
-    background-color: #f4f3f0;
+    background-color: @SURFACE_ALT@;
     border: none;
-    border-bottom: 1px solid #dedcd6;
+    border-bottom: 1px solid @BORDER@;
     spacing: 4px;
     padding-top: 3px;
     padding-bottom: 4px;
 }
 
-QMenuBar {
-    background-color: #f4f3f0;
+/* Toolbar action buttons (Open, Save Project, Grouping, …). The custom
+   segmented domain/view controls carry their own per-widget stylesheet and are
+   QPushButtons added via addWidget, so they are unaffected by these rules. */
+QToolBar QToolButton {
+    background-color: transparent;
     color: #1c1d20;
-    border-bottom: 1px solid #dedcd6;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 8px;
+}
+
+QToolBar QToolButton:hover {
+    background-color: #ececea;
+}
+
+QToolBar QToolButton:pressed,
+QToolBar QToolButton:checked {
+    background-color: #e2e1dd;
+}
+
+QToolBar QToolButton:disabled {
+    color: #adadb0;
+}
+
+/* Toolbar overflow extension (P2-8): the ">>" button Qt inserts when the
+   toolbar is too narrow. Unstyled it reverts to bare Fusion; match it to the
+   toolbar buttons so the chrome stays consistent at small widths. Its popup is
+   a QMenu and inherits the QMenu rules below. */
+QToolButton#qt_toolbar_ext_button,
+QToolBarExtension {
+    background-color: transparent;
+    border: none;
+    border-radius: 4px;
+    padding: 2px 4px;
+}
+
+QToolButton#qt_toolbar_ext_button:hover,
+QToolBarExtension:hover {
+    background-color: #ececea;
+}
+
+QToolButton#qt_toolbar_ext_button:pressed,
+QToolBarExtension:pressed {
+    background-color: #e2e1dd;
+}
+
+QMenuBar {
+    background-color: @SURFACE_ALT@;
+    color: @TEXT@;
+    border-bottom: 1px solid @BORDER@;
 }
 
 QMenuBar::item {
     background-color: transparent;
-    color: #1c1d20;
+    color: @TEXT@;
     padding: 4px 8px;
 }
 
 QMenuBar::item:selected {
-    background-color: #ececea;
+    background-color: @SURFACE_HI@;
 }
 
 /* ── Status bar ─────────────────────────────────────────────────── */
 QStatusBar {
-    background-color: #f4f3f0;
-    border-top: 1px solid #dedcd6;
-    color: #67676b;
+    background-color: @SURFACE_ALT@;
+    border-top: 1px solid @BORDER@;
+    color: @TEXT_MUTED@;
 }
 
 /* ── Dock widgets ───────────────────────────────────────────────── */
+/* font-size set by UIManager.build_stylesheet (scaled SIZE_HEADER). */
 QDockWidget::title {
-    background-color: #f4f3f0;
-    border-bottom: 1px solid #dedcd6;
+    background-color: @SURFACE_ALT@;
+    border-bottom: 1px solid @BORDER@;
     padding: 4px 8px;
-    color: #67676b;
+    color: @TEXT_MUTED@;
     text-align: left;
-    font-size: 9pt;
     font-weight: 600;
     letter-spacing: 0.3px;
 }
 
 QDockWidget > QWidget {
-    background-color: #ffffff;
+    background-color: @SURFACE@;
 }
 
 /* ── Table headers ──────────────────────────────────────────────── */
+/* font-size set by UIManager.build_stylesheet (scaled SIZE_HEADER). */
 QHeaderView {
-    background-color: #f4f3f0;
+    background-color: @SURFACE_ALT@;
     border: none;
 }
 
 QHeaderView::section {
-    background-color: #f4f3f0;
-    color: #67676b;
+    background-color: @SURFACE_ALT@;
+    color: @TEXT_MUTED@;
     border: none;
-    border-right: 1px solid #dedcd6;
-    border-bottom: 1px solid #dedcd6;
+    border-right: 1px solid @BORDER@;
+    border-bottom: 1px solid @BORDER@;
     padding: 3px 6px;
-    font-size: 10px;
     font-weight: 600;
 }
 
@@ -84,34 +138,35 @@ QHeaderView::section:last {
 }
 
 QHeaderView::section:hover {
-    background-color: #ececea;
+    background-color: @SURFACE_HI@;
 }
 
 /* ── Tables ─────────────────────────────────────────────────────── */
 QTableView {
-    background-color: #ffffff;
-    gridline-color: #dedcd6;
-    selection-background-color: #e8eef7;
-    selection-color: #1c1d20;
-    border: 1px solid #dedcd6;
+    background-color: @SURFACE@;
+    gridline-color: @BORDER@;
+    selection-background-color: @ACCENT_SOFT@;
+    selection-color: @TEXT@;
+    border: 1px solid @BORDER@;
 }
 
 QTableView::item:focus {
-    background-color: #dfe8f4;
-    color: #1f4d8a;
+    background-color: @ACCENT_SOFT2@;
+    color: @ACCENT@;
 }
 
 QListView,
 QTreeView {
-    background-color: #ffffff;
-    selection-background-color: #e8eef7;
-    selection-color: #1c1d20;
-    border: 1px solid #dedcd6;
+    background-color: @SURFACE@;
+    selection-background-color: @ACCENT_SOFT@;
+    selection-color: @TEXT@;
+    border: 1px solid @BORDER@;
 }
 
 /* ── Group boxes ────────────────────────────────────────────────── */
+/* title font-size set by UIManager.build_stylesheet (scaled SIZE_HEADER). */
 QGroupBox {
-    border: 1px solid #dedcd6;
+    border: 1px solid @BORDER@;
     border-radius: 4px;
     margin-top: 10px;
 }
@@ -121,8 +176,7 @@ QGroupBox::title {
     subcontrol-position: top left;
     left: 8px;
     padding: 0 4px;
-    color: #67676b;
-    font-size: 9pt;
+    color: @TEXT_MUTED@;
     font-weight: 700;
     letter-spacing: 0.4px;
     text-transform: uppercase;
@@ -134,17 +188,17 @@ QGroupBox::title {
    Applies to QTabWidget tab bars and the QMainWindow dock-area tab bars
    (the inspector deck) alike. */
 QTabWidget::pane {
-    border: 1px solid #dedcd6;
-    background-color: #ffffff;
+    border: 1px solid @BORDER@;
+    background-color: @SURFACE@;
 }
 
 QTabBar {
-    background-color: #f4f3f0;
+    background-color: @SURFACE_ALT@;
 }
 
 QTabBar::tab {
     background-color: transparent;
-    color: #67676b;
+    color: @TEXT_MUTED@;
     border: none;
     border-bottom: 2px solid transparent;
     padding: 5px 12px;
@@ -156,50 +210,50 @@ QTabBar::tab {
 }
 
 QTabBar::tab:selected {
-    color: #1c1d20;
-    border-bottom: 2px solid #1f4d8a;
+    color: @TEXT@;
+    border-bottom: 2px solid @ACCENT@;
 }
 
 QTabBar::tab:hover:!selected {
-    color: #1c1d20;
+    color: @TEXT@;
 }
 
 /* ── Text inputs (backgrounds/colours; borders managed by UIManager) */
 QLineEdit {
-    background-color: #ffffff;
-    color: #1c1d20;
-    selection-background-color: #e8eef7;
-    selection-color: #1c1d20;
+    background-color: @SURFACE@;
+    color: @TEXT@;
+    selection-background-color: @ACCENT_SOFT@;
+    selection-color: @TEXT@;
 }
 
 QLineEdit:disabled {
-    background-color: #f4f3f0;
-    color: #9a9a9e;
+    background-color: @SURFACE_ALT@;
+    color: @TEXT_DIM@;
 }
 
 QTextEdit,
 QPlainTextEdit {
-    background-color: #ffffff;
-    color: #1c1d20;
-    selection-background-color: #e8eef7;
-    selection-color: #1c1d20;
+    background-color: @SURFACE@;
+    color: @TEXT@;
+    selection-background-color: @ACCENT_SOFT@;
+    selection-color: @TEXT@;
 }
 
 QComboBox {
-    background-color: #ffffff;
-    color: #1c1d20;
+    background-color: @SURFACE@;
+    color: @TEXT@;
 }
 
 QComboBox QAbstractItemView {
-    background-color: #ffffff;
-    border: 1px solid #dedcd6;
-    selection-background-color: #e8eef7;
-    selection-color: #1c1d20;
+    background-color: @SURFACE@;
+    border: 1px solid @BORDER@;
+    selection-background-color: @ACCENT_SOFT@;
+    selection-color: @TEXT@;
 }
 
 QAbstractSpinBox {
-    background-color: #ffffff;
-    color: #1c1d20;
+    background-color: @SURFACE@;
+    color: @TEXT@;
 }
 
 /* ── Scroll area ────────────────────────────────────────────────── */
@@ -211,7 +265,7 @@ QScrollArea {
 /* Inspector-deck scroll wrappers keep the dock-panel white background the
    panels showed when they were direct dock children. */
 QScrollArea#inspectorScroll {
-    background-color: #ffffff;
+    background-color: @SURFACE@;
 }
 
 /* ── Toolbar segmented-control and nav buttons ───────────────────────
@@ -224,9 +278,9 @@ QScrollArea#inspectorScroll {
 
 /* ── Menus ──────────────────────────────────────────────────────── */
 QMenu {
-    background-color: #ffffff;
-    color: #1c1d20;
-    border: 1px solid #dedcd6;
+    background-color: @SURFACE@;
+    color: @TEXT@;
+    border: 1px solid @BORDER@;
     padding: 4px 0;
 }
 
@@ -236,50 +290,50 @@ QMenu::item {
 }
 
 QMenu::item:selected {
-    background-color: #e8eef7;
-    color: #1c1d20;
+    background-color: @ACCENT_SOFT@;
+    color: @TEXT@;
 }
 
 QMenu::item:disabled {
-    color: #9a9a9e;
+    color: @TEXT_DIM@;
 }
 
 QMenu::separator {
     height: 1px;
-    background-color: #dedcd6;
+    background-color: @BORDER@;
     margin: 4px 8px;
 }
 
 /* ── Tooltips ───────────────────────────────────────────────────── */
 QToolTip {
-    background-color: #ffffff;
-    color: #1c1d20;
-    border: 1px solid #c2c0b9;
+    background-color: @SURFACE@;
+    color: @TEXT@;
+    border: 1px solid @BORDER_STRONG@;
     padding: 3px 6px;
 }
 
 /* ── Scroll bars ────────────────────────────────────────────────── */
 QScrollBar:vertical {
-    background: #fafaf9;
+    background: @BG@;
     width: 12px;
     margin: 0;
 }
 
 QScrollBar:horizontal {
-    background: #fafaf9;
+    background: @BG@;
     height: 12px;
     margin: 0;
 }
 
 QScrollBar::handle:vertical {
-    background: #c2c0b9;
+    background: @BORDER_STRONG@;
     min-height: 28px;
     border-radius: 4px;
     margin: 2px 3px;
 }
 
 QScrollBar::handle:horizontal {
-    background: #c2c0b9;
+    background: @BORDER_STRONG@;
     min-width: 28px;
     border-radius: 4px;
     margin: 3px 2px;
@@ -287,7 +341,7 @@ QScrollBar::handle:horizontal {
 
 QScrollBar::handle:vertical:hover,
 QScrollBar::handle:horizontal:hover {
-    background: #9a9a9e;
+    background: @TEXT_DIM@;
 }
 
 QScrollBar::add-line, QScrollBar::sub-line {
@@ -304,7 +358,7 @@ QScrollBar::add-page, QScrollBar::sub-page {
    the thin dock separators and splitter handles were hard to grab and a resize
    often "took" only after several attempts. */
 QSplitter::handle {
-    background-color: #f4f3f0;
+    background-color: @SURFACE_ALT@;
 }
 
 QSplitter::handle:horizontal {
@@ -316,40 +370,40 @@ QSplitter::handle:vertical {
 }
 
 QSplitter::handle:hover {
-    background-color: #dfe8f4;
+    background-color: @ACCENT_SOFT2@;
 }
 
 QMainWindow::separator {
-    background-color: #f4f3f0;
+    background-color: @SURFACE_ALT@;
     width: 7px;
     height: 7px;
 }
 
 QMainWindow::separator:hover {
-    background-color: #dfe8f4;
+    background-color: @ACCENT_SOFT2@;
 }
 
 /* ── Progress bars ──────────────────────────────────────────────── */
 QProgressBar {
-    background-color: #f4f3f0;
-    border: 1px solid #dedcd6;
+    background-color: @SURFACE_ALT@;
+    border: 1px solid @BORDER@;
     border-radius: 3px;
-    color: #1c1d20;
+    color: @TEXT@;
     text-align: center;
 }
 
 QProgressBar::chunk {
-    background-color: #1f4d8a;
+    background-color: @ACCENT@;
 }
 
 /* ── Plot-canvas scroll bar ─────────────────────────────────────── */
 QScrollBar#plotScroll:vertical {
-    background: #f4f3f0;
+    background: @SURFACE_ALT@;
     width: 12px;
     margin: 0;
 }
 QScrollBar#plotScroll::handle:vertical {
-    background: #c2c0b9;
+    background: @BORDER_STRONG@;
     min-height: 28px;
     border-radius: 5px;
 }
@@ -359,5 +413,5 @@ QScrollBar#plotScroll::sub-line:vertical {
 }
 QScrollBar#plotScroll::add-page:vertical,
 QScrollBar#plotScroll::sub-page:vertical {
-    background: #f4f3f0;
+    background: @SURFACE_ALT@;
 }

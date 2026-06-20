@@ -157,8 +157,8 @@ class InstrumentTemplate:
 
 #: Built-in idealised instruments, keyed for the dialog template combo. The
 #: pulsed F/B template mirrors an ISIS-style spectrometer (32 + 32 detectors,
-#: 16 ns bins, a 32 μs window); the continuous template a PSI-style F/B pair
-#: with fine 1 ns binning, a short 10 μs window and a flat background. The two
+#: 16 ns bins, a 32 µs window); the continuous template a PSI-style F/B pair
+#: with fine 1 ns binning, a short 10 µs window and a flat background. The two
 #: are the source archetypes the textbook contrasts (Ch. 14).
 BUILTIN_TEMPLATES: dict[str, InstrumentTemplate] = {
     "ideal_pulsed_fb": InstrumentTemplate(
@@ -166,7 +166,7 @@ BUILTIN_TEMPLATES: dict[str, InstrumentTemplate] = {
         label="Ideal pulsed F/B (ISIS-style)",
         description=(
             "Pulsed-source spectrometer: 32 forward + 32 backward detectors, "
-            "16 ns bins over a 32 μs window, no uncorrelated background."
+            "16 ns bins over a 32 µs window, no uncorrelated background."
         ),
         n_detectors=64,
         n_bins=2000,
@@ -184,7 +184,7 @@ BUILTIN_TEMPLATES: dict[str, InstrumentTemplate] = {
         key="ideal_continuous_fb",
         label="Ideal continuous F/B (PSI-style)",
         description=(
-            "Continuous-source F/B pair: 1 ns bins over a 10 μs window with a "
+            "Continuous-source F/B pair: 1 ns bins over a 10 µs window with a "
             "flat uncorrelated background (10 counts/bin/detector)."
         ),
         n_detectors=2,

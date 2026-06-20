@@ -101,7 +101,7 @@ class Run:
         ]
         if self.histograms:
             h = self.histograms[0]
-            lines.append(f"  Bins        : {h.n_bins}  (Δt = {h.bin_width:.6f} μs)")
+            lines.append(f"  Bins        : {h.n_bins}  (Δt = {h.bin_width:.6f} µs)")
         for key in ("comment", "started", "stopped"):
             if key in self.metadata:
                 lines.append(f"  {key.title():12s}: {self.metadata[key]}")
@@ -271,7 +271,7 @@ class MuonDataset:
         if self.run:
             lines.append(self.run.summary())
         if self.n_points:
-            lines.append(f"  Time range  : {self.time[0]:.4f} – {self.time[-1]:.4f} μs")
+            lines.append(f"  Time range  : {self.time[0]:.4f} – {self.time[-1]:.4f} µs")
             lines.append(f"  Asymmetry   : {self.asymmetry.min():.4f} – {self.asymmetry.max():.4f}")
         return "\n".join(lines)
 

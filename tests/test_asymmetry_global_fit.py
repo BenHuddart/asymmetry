@@ -21,7 +21,7 @@ from asymmetry.core.fitting import (
 )
 
 # Injected ground truth shared across the tests.
-TRUE_LAMBDA = 0.75  # shared global relaxation rate (μs⁻¹)
+TRUE_LAMBDA = 0.75  # shared global relaxation rate (µs⁻¹)
 TRUE_AMPS = [0.24, 0.18, 0.30]  # per-dataset local amplitudes
 SIGMA = 0.01  # per-point asymmetry error
 N_POINTS = 200

@@ -37,6 +37,7 @@ from asymmetry.core.fitting.fit_wizard import (
 from asymmetry.core.fitting.parameters import get_param_info
 from asymmetry.core.fourier.fft import fft_asymmetry
 from asymmetry.gui.styles import tokens
+from asymmetry.gui.widgets.screen_sizing import resize_to_available
 
 
 class FitWizardWorker(QObject):
@@ -82,7 +83,11 @@ class FitWizardWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Fit Wizard")
-        self.resize(1280, 920)
+        # Cap the default to the available screen so the title bar never opens
+        # clipped above the menu bar on a 13-inch laptop (~800 px high). The tab
+        # bodies already scroll, so the spacious preferred size is used only when
+        # the display can hold it (P1-5).
+        resize_to_available(self, 1180, 740)
 
         self._dataset: MuonDataset | None = None
         self._current_model: CompositeModel | None = None
@@ -605,7 +610,7 @@ class FitWizardWindow(QMainWindow):
             markersize=3,
             color="#1d3557",
         )
-        ax_time.set_xlabel("Time (μs)")
+        ax_time.set_xlabel("Time (µs)")
         ax_time.set_ylabel("Asymmetry")
         ax_time.set_title("Time Domain")
 
@@ -764,7 +769,7 @@ class FitWizardWindow(QMainWindow):
             label="Data",
         )
         ax_fit.plot(assessment.fitted_time, assessment.fitted_curve, color="#e63946", label="Fit")
-        ax_fit.set_xlabel("Time (μs)")
+        ax_fit.set_xlabel("Time (µs)")
         ax_fit.set_ylabel("Asymmetry")
         ax_fit.set_title(assessment.template.title)
         ax_fit.legend(loc="best")
@@ -783,7 +788,7 @@ class FitWizardWindow(QMainWindow):
             )
             freq, _real, mag = fft_asymmetry(residual_dataset, window="hann", padding_factor=4)
             ax_fft.plot(freq, mag, color="#264653")
-        ax_res.set_xlabel("Time (μs)")
+        ax_res.set_xlabel("Time (µs)")
         ax_res.set_ylabel("Residual")
         ax_res.set_title("Residuals")
         ax_fft.set_xlabel("Frequency (MHz)")

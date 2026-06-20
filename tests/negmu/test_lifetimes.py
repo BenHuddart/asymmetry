@@ -57,7 +57,7 @@ def test_tl_symbol_guard():
 
 
 def test_ne_value_guard():
-    """Guards WiMDA Ne 1.520 μs vs Suzuki 1.461 μs divergence."""
+    """Guards WiMDA Ne 1.520 µs vs Suzuki 1.461 µs divergence."""
     assert tau_us("Ne") == 1.461
 
 
@@ -80,7 +80,7 @@ def test_sigma_none_for_provisional():
 
 
 def test_tau_range():
-    """Every entry's tau_us is strictly within [0.05, 2.30] μs."""
+    """Every entry's tau_us is strictly within [0.05, 2.30] µs."""
     for sym, entry in ELEMENT_LIFETIMES.items():
         assert entry.tau_us > 0, sym
         assert 0.05 <= entry.tau_us <= 2.30, f"{sym}: {entry.tau_us}"

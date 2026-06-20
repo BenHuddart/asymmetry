@@ -9,7 +9,6 @@ from __future__ import annotations
 from typing import Literal
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QFrame,
     QLabel,
@@ -23,7 +22,7 @@ from PySide6.QtWidgets import (
 
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
-from asymmetry.gui.styles.typography import header_font, section_label_font
+from asymmetry.gui.styles.typography import SIZE_NUMERIC, header_font, section_label_font
 
 # ── Flat section header ───────────────────────────────────────────────────────
 
@@ -117,13 +116,9 @@ def apply_param_table_style(table: QTableWidget) -> None:
     Sets a DemiBold section header, 11pt mono cell font, hides the row-number
     column, and tints alternating rows with surfaceAlt.
     """
-    hdr_font = QFont()
-    hdr_font.setPointSizeF(9.5)
-    hdr_font.setWeight(QFont.Weight.DemiBold)
-    hdr_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.3)
-    table.horizontalHeader().setFont(hdr_font)
+    table.horizontalHeader().setFont(header_font())
     table.verticalHeader().setVisible(False)
-    table.setFont(mono_font(11.0))
+    table.setFont(mono_font(SIZE_NUMERIC))
     table.setAlternatingRowColors(True)
     table.setStyleSheet(f"QTableWidget {{ alternate-background-color: {tokens.SURFACE_ALT}; }}")
 
@@ -199,7 +194,7 @@ def configure_formula_label(label: QLabel) -> None:
     wrap is on, but :func:`insert_formula_break_points` restricts where it may
     actually break.
     """
-    label.setFont(mono_font(11.0))
+    label.setFont(mono_font(SIZE_NUMERIC))
     label.setWordWrap(True)
     label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
     label.setTextFormat(Qt.TextFormat.PlainText)
@@ -439,8 +434,13 @@ def fit_quality_chip_html(quality: dict | None, params_at_bound: list[str] | Non
     if quality and quality.get("verdict"):
         verdict = str(quality["verdict"])
         if quality.get("marginal"):
+            # χ²ᵣ is numerically within ~0.2 of 1 (a good fit) and reads
+            # poor/overdone only because the confidence band tightens at high ν.
+            # Lead with a neutral phrase so the at-a-glance chip isn't alarming;
+            # the verdict and the full explanation remain in the hover tooltip
+            # (P3-1, presentation only — the band math is unchanged).
             colour = tokens.WARN
-            label = f"{verdict} (marginal)"
+            label = "near-ideal (band-tight)"
         else:
             colour = _FIT_VERDICT_COLOURS.get(verdict, tokens.TEXT_MUTED)
             label = verdict

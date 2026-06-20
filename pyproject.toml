@@ -86,6 +86,7 @@ markers = [
     "io: exercises a file-format loader",
     "slow: individual runtime > ~1s (full tier only)",
     "integration: multi-component end-to-end flow (full tier only)",
+    "real_save_guard: exercise MainWindow's real unsaved-changes close prompt (opt out of the autouse bypass in conftest)",
 ]
 
 [tool.ruff]
@@ -126,6 +127,7 @@ ignore = ["E501"]  # Ruff format handles normal wrapping; long prose/UI strings 
 "tests/test_grouped_batch_seeds_gui.py" = ["E402"]  # pytest.importorskip before optional Qt imports
 "tests/test_fit_parameters_panel.py" = ["E402"]  # pytest.importorskip before optional Qt imports
 "tests/test_batch_trend_default_traps.py" = ["E402"]  # pytest.importorskip before optional Qt imports
+"tests/test_fit_panel_density.py" = ["E402"]  # pytest.importorskip before optional Qt imports
 "tests/test_field_scan_fitting.py" = ["N803"]  # Physics parameter names (B0, Bwid)
 "tests/test_sc_vl_lineshape.py" = ["N803", "N806"]  # Physics parameter names (B0, Bc2)
 "tests/test_rf_musr_resonance.py" = ["N802", "N803"]  # Physics names (A_p in test ids; A_mu/BG args)

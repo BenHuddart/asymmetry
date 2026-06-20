@@ -32,7 +32,7 @@ Parameterisation conventions confirmed against WiMDA ``Analyse.pas``
 
     LorGau forward: ``(1 + a0·exp(−λ·t)·cos(2π·freq·t + phase))``
 
-where ``freq`` is in MHz, ``t`` in μs, ``λ`` in μs⁻¹, and ``phase`` in
+where ``freq`` is in MHz, ``t`` in µs, ``λ`` in µs⁻¹, and ``phase`` in
 radians.  Diamagnetic is the undamped (λ = 0) limit.  WiMDA's Diamagnetic
 RadioGroup mode (itemindex = 3) has no implementation in ``Polfunc`` (falls
 through with undefined result — a WiMDA bug), so the Asymmetry formula is
@@ -67,12 +67,12 @@ def lorentzian_gaussian_polarisation(
     Parameters
     ----------
     t:
-        Time array in μs.
+        Time array in µs.
     a0:
         Precession amplitude (dimensionless, typically ≤ 1/3 from muonic
         cascade geometry).
     lam:
-        Lorentzian damping rate λ in μs⁻¹.
+        Lorentzian damping rate λ in µs⁻¹.
     freq:
         Precession frequency in MHz.
     phase:
@@ -97,7 +97,7 @@ def diamagnetic_polarisation(
     Parameters
     ----------
     t:
-        Time array in μs.
+        Time array in µs.
     a0:
         Precession amplitude (dimensionless).
     freq:

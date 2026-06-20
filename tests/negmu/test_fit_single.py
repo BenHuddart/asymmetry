@@ -28,7 +28,7 @@ from asymmetry.core.simulate import simulate_capture_run
 # ---------------------------------------------------------------------------
 
 N_BINS = 1024
-BIN_WIDTH = 0.016  # μs
+BIN_WIDTH = 0.016  # µs
 
 
 def _make_template(n_dets=2, n_bins=N_BINS, bin_width=BIN_WIDTH, t0_bin=0):
@@ -276,7 +276,7 @@ def test_2c_success(result_2c):
 
 
 def test_2c_free_tau_recovered(result_2c):
-    """Freed tau_C within 5% of true value 2.030 μs.
+    """Freed tau_C within 5% of true value 2.030 µs.
 
     Tolerance is 5% (not 2%): C (2.030) and decayBG (2.197) are only 8% apart,
     causing high correlation that degrades the individual τ precision even at 2e7

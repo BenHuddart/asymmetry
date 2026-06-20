@@ -28,6 +28,35 @@ def qapp() -> object:
 
 
 @pytest.fixture(autouse=True)
+def _bypass_unsaved_changes_prompt(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Suppress ``MainWindow``'s unsaved-changes close prompt by default.
+
+    ``closeEvent`` now pops a modal Save/Discard/Cancel dialog when the session
+    has unsaved work (F4 / P0-2). Many GUI tests force-close a dirty window
+    in-body (``window.close()`` in a ``finally:``), where that modal would block
+    the offscreen run forever. We therefore stub ``_maybe_save`` to "proceed"
+    for every test except those explicitly marked ``real_save_guard``, which
+    exercise the guard itself (with their own ``QMessageBox`` stubs).
+
+    Imported lazily so non-GUI test sessions (no PySide6) pay nothing.
+    """
+    if "real_save_guard" in request.keywords:
+        yield
+        return
+    try:
+        from asymmetry.gui.mainwindow import MainWindow
+    except Exception:
+        yield
+        return
+    original = MainWindow._maybe_save
+    MainWindow._maybe_save = lambda self, *a, **k: True  # type: ignore[assignment]
+    try:
+        yield
+    finally:
+        MainWindow._maybe_save = original  # type: ignore[assignment]
+
+
+@pytest.fixture(autouse=True)
 def _cleanup_qt_widgets() -> Iterator[None]:
     """Tear down all Qt state after every test to prevent cross-test bleed.
 
@@ -94,7 +123,17 @@ def _cleanup_qt_widgets() -> Iterator[None]:
 
     # Close every top-level widget (runs closeEvent handlers), then schedule
     # and flush deletion so the C++ objects are gone before the next test.
+    # MainWindow's closeEvent now guards unsaved work with a modal Save/Discard/
+    # Cancel prompt (F4/P0-2). In an offscreen teardown that dialog would block
+    # forever, so force-clear the dirty flag first — this is a non-interactive
+    # force-close, the production guard is exercised by its own tests.
     for widget in list(app.topLevelWidgets()):
+        clear_dirty = getattr(widget, "_clear_dirty", None)
+        if callable(clear_dirty):
+            try:
+                clear_dirty()
+            except Exception:
+                pass
         try:
             widget.close()
         except Exception:
@@ -134,6 +173,28 @@ def _isolate_qsettings(tmp_path: Path) -> Iterator[None]:
     QSettings.setDefaultFormat(QSettings.Format.IniFormat)
     QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
     yield
+
+
+@pytest.fixture(autouse=True)
+def _reset_ui_font_scale() -> Iterator[None]:
+    """Reset the process-wide UI font scale to 1.0 around every test.
+
+    ``ui_manager.UIManager`` publishes the active scale to the font builders via
+    ``fonts.set_ui_font_scale`` (so chrome/value fonts built after a scale change
+    are born scaled). That module global persists across tests in a worker
+    process; without a reset, a test that constructs ``MainWindow`` (applying the
+    0.9 default scale) would leak a non-unity scale into a later test that asserts
+    design-size fonts. No-op when PySide6 is unavailable.
+    """
+    try:
+        from asymmetry.gui.styles import fonts
+    except Exception:
+        yield
+        return
+
+    fonts.set_ui_font_scale(1.0)
+    yield
+    fonts.set_ui_font_scale(1.0)
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
