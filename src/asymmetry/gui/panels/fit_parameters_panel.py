@@ -220,6 +220,13 @@ class _FitRow:
     #: empty or non-numeric for some runs; coercion to a float abscissa (and the
     #: dropping of invalid points) happens lazily in :meth:`_x_value`.
     custom_values: dict[str, str] = field(default_factory=dict)
+    #: Originating time-domain fit provenance, surfaced so parameter-plot exports
+    #: record which model produced the values and each run's goodness of fit.
+    #: ``model_name`` is the model formula/label; the χ² fields are ``None`` when
+    #: the source path did not supply them (e.g. legacy projects).
+    model_name: str = ""
+    chi_squared: float | None = None
+    reduced_chi_squared: float | None = None
 
 
 def _x_custom_id(x_key: str) -> str | None:
@@ -242,6 +249,21 @@ def _coerce_abscissa(raw: object) -> float:
     except ValueError:
         return float("nan")
     return value if np.isfinite(value) else float("nan")
+
+
+def _optional_float(value: object) -> float | None:
+    """Coerce to a finite float, or ``None`` when missing/non-numeric.
+
+    Used for the optional χ² provenance fields, which legacy projects and
+    computed (model-less) series may not carry.
+    """
+    if value is None:
+        return None
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    return out if np.isfinite(out) else None
 
 
 def _custom_values_from_metadata(meta: object) -> dict[str, str]:
@@ -564,9 +586,9 @@ class FitParametersPanel(QWidget):
         self._log_y_check.setVisible(False)
         self._log_y_check.stateChanged.connect(self._on_global_log_y_changed)
 
-        self._export_csv_btn = QPushButton("Export CSV")
-        self._export_csv_btn.setEnabled(False)
-        self._export_csv_btn.clicked.connect(self._export_csv)
+        self._export_tsv_btn = QPushButton("Export TSV")
+        self._export_tsv_btn.setEnabled(False)
+        self._export_tsv_btn.clicked.connect(self._export_tsv)
 
         self._export_gle_btn = QPushButton("Export to GLE")
         self._export_gle_btn.setEnabled(False)
@@ -620,7 +642,7 @@ class FitParametersPanel(QWidget):
         export_row.setContentsMargins(0, 0, 0, 0)
         export_row.setHorizontalSpacing(6)
         export_row.setVerticalSpacing(4)
-        export_row.addWidget(self._export_csv_btn, 0, 0)
+        export_row.addWidget(self._export_tsv_btn, 0, 0)
         export_row.addWidget(self._export_gle_btn, 0, 1)
         export_row.addWidget(QLabel("Format:"), 1, 0)
         export_row.addWidget(self._gle_format_combo, 1, 1)
@@ -727,6 +749,9 @@ class FitParametersPanel(QWidget):
                 "combined_from": [int(v) for v in row.combined_from] if row.combined_from else None,
                 "covariance": self._serialize_row_covariance(row.covariance),
                 "custom_values": {k: str(v) for k, v in row.custom_values.items()},
+                "model_name": row.model_name,
+                "chi_squared": row.chi_squared,
+                "reduced_chi_squared": row.reduced_chi_squared,
             }
             for row in self._rows
         ]
@@ -858,6 +883,9 @@ class FitParametersPanel(QWidget):
                             else None,
                             covariance=self._deserialize_row_covariance(entry.get("covariance")),
                             custom_values=_custom_values_from_row_dict(entry),
+                            model_name=str(entry.get("model_name") or ""),
+                            chi_squared=_optional_float(entry.get("chi_squared")),
+                            reduced_chi_squared=_optional_float(entry.get("reduced_chi_squared")),
                         )
                     )
                 except Exception:
@@ -865,7 +893,7 @@ class FitParametersPanel(QWidget):
 
         self._rows = restored_rows
         self._show_table_btn.setEnabled(bool(self._rows))
-        self._export_csv_btn.setEnabled(bool(self._rows))
+        self._export_tsv_btn.setEnabled(bool(self._rows))
         self._export_gle_btn.setEnabled(bool(self._rows))
         self._gle_format_combo.setEnabled(bool(self._rows))
         self._create_composite_btn.setEnabled(bool(self._rows))
@@ -1035,6 +1063,10 @@ class FitParametersPanel(QWidget):
                     else None,
                     covariance=self._fit_result_covariance_map(fit_result),
                     custom_values=_custom_values_from_metadata(meta),
+                    chi_squared=_optional_float(getattr(fit_result, "chi_squared", None)),
+                    reduced_chi_squared=_optional_float(
+                        getattr(fit_result, "reduced_chi_squared", None)
+                    ),
                 )
             )
 
@@ -1157,6 +1189,9 @@ class FitParametersPanel(QWidget):
                             errors=dict(rd.get("errors") or {}),
                             combined_from=rd.get("combined_from"),
                             custom_values=_custom_values_from_row_dict(rd),
+                            model_name=str(rd.get("model_name") or ""),
+                            chi_squared=_optional_float(rd.get("chi_squared")),
+                            reduced_chi_squared=_optional_float(rd.get("reduced_chi_squared")),
                         )
                     )
                 except Exception:
@@ -1505,7 +1540,7 @@ class FitParametersPanel(QWidget):
             self._model_fits = {}
             self._plot_annotations = []
             self._show_table_btn.setEnabled(False)
-            self._export_csv_btn.setEnabled(False)
+            self._export_tsv_btn.setEnabled(False)
             self._export_gle_btn.setEnabled(False)
             self._gle_format_combo.setEnabled(False)
             self._create_composite_btn.setEnabled(False)
@@ -1571,7 +1606,7 @@ class FitParametersPanel(QWidget):
         )
 
         self._show_table_btn.setEnabled(has_rows)
-        self._export_csv_btn.setEnabled(has_rows)
+        self._export_tsv_btn.setEnabled(has_rows)
         self._export_gle_btn.setEnabled(has_rows)
         self._gle_format_combo.setEnabled(has_rows)
         self._create_composite_btn.setEnabled(has_rows)
@@ -2900,7 +2935,7 @@ class FitParametersPanel(QWidget):
         """``(x_key, header_label)`` for the Angle/custom abscissa export column.
 
         The single source of the trailing free-text x-axis column added to the
-        table, CSV, and GLE data file (label folded as displayed). ``None`` when
+        table, TSV, and GLE data file (label folded as displayed). ``None`` when
         the x-axis is already a fixed Run/B/T/param column.
         """
         key = self._export_abscissa_key()
@@ -4189,7 +4224,7 @@ class FitParametersPanel(QWidget):
             columns.extend([label, f"err {label}"])
         # A free-text x-axis (Angle / custom column) is not one of the fixed
         # columns, so add it explicitly (folded as displayed) — otherwise the
-        # table/CSV would not show the abscissa the plot is drawn against.
+        # table/TSV would not show the abscissa the plot is drawn against.
         abscissa = self._export_abscissa_column()
         abscissa_key = abscissa[0] if abscissa is not None else None
         if abscissa is not None:
@@ -4758,15 +4793,27 @@ class FitParametersPanel(QWidget):
         dialog.raise_()
         dialog.activateWindow()
 
-    def _export_csv(self) -> None:
+    def _export_model_label(self) -> str:
+        """Return the originating fit model common to the displayed rows.
+
+        The trend panel plots one series fit with a single time-domain model, so
+        the first non-empty per-row model label is representative. Empty when no
+        row recorded a model (computed/model-less series, or legacy projects).
+        """
+        for row in self._rows:
+            if row.model_name:
+                return row.model_name
+        return ""
+
+    def _export_tsv(self) -> None:
         if self._table.columnCount() == 0 or self._table.rowCount() == 0:
             return
 
         path, _ = QFileDialog.getSaveFileName(
             self,
             "Export Fit Parameter Table",
-            default_export_path("fit_parameters.csv"),
-            "CSV files (*.csv);;All files (*)",
+            default_export_path("fit_parameters.tsv"),
+            "TSV files (*.tsv);;All files (*)",
         )
         if not path:
             return
@@ -4785,15 +4832,47 @@ class FitParametersPanel(QWidget):
         abscissa = self._export_abscissa_column()
         if abscissa is not None:
             headers.append(abscissa[1])
+        # Per-run goodness of fit, appended after the parameter columns so the
+        # TSV records each run's fit quality alongside its values.
+        headers.extend(["reduced_chi2", "chi2"])
 
-        with open(path, "w", newline="", encoding="utf-8") as csvfile:
-            writer = csv.writer(csvfile)
+        model_label = self._export_model_label()
+
+        # Map each displayed table row back to its source _FitRow positionally,
+        # replaying _refresh_table's sort, so the χ² columns track the right run
+        # even when two rows share a run_label (keying on the label would
+        # silently misattribute a shadowed row's goodness of fit).
+        sorted_rows = sorted(self._rows, key=lambda r: self._x_value(r, self._effective_x_key()))
+
+        with open(path, "w", newline="", encoding="utf-8") as tsvfile:
+            # Provenance header (comment lines) so the TSV is self-describing and
+            # at parity with the GLE .dat export: the originating fit model and
+            # the shared global-parameter values with uncertainties.
+            if model_label:
+                tsvfile.write(f"# Model: {model_label}\n")
+            if self._global_params is not None:
+                tsvfile.write("# Global fitting parameters:\n")
+                for param in self._global_params:
+                    unit = get_param_info(param.name).unit
+                    label = f"{param.name} ({unit})" if unit else param.name
+                    err = self._global_param_uncertainties.get(param.name)
+                    if err is not None:
+                        tsvfile.write(f"#   {label} = {param.value:.6g} +/- {err:.6g}\n")
+                    else:
+                        tsvfile.write(f"#   {label} = {param.value:.6g}\n")
+
+            writer = csv.writer(tsvfile, delimiter="\t")
             writer.writerow(headers)
             for row in range(self._table.rowCount()):
                 values: list[str] = []
                 for col in range(self._table.columnCount()):
                     item = self._table.item(row, col)
                     values.append(item.text() if item is not None else "")
+                src = sorted_rows[row] if row < len(sorted_rows) else None
+                rchi = None if src is None else src.reduced_chi_squared
+                chi = None if src is None else src.chi_squared
+                values.append("" if rchi is None else f"{rchi:.6g}")
+                values.append("" if chi is None else f"{chi:.6g}")
                 writer.writerow(values)
 
     def _serialize_model_fits(self) -> dict:
@@ -5314,6 +5393,10 @@ class FitParametersPanel(QWidget):
         with open(data_path, "w", encoding="utf-8") as f:
             f.write("! Fit parameter data for GLE export\n")
 
+            model_label = self._export_model_label()
+            if model_label:
+                f.write(f"! Model: {model_label}\n")
+
             if self._global_params is not None:
                 f.write("! Global fitting parameters:\n")
                 for param in self._global_params:
@@ -5340,6 +5423,10 @@ class FitParametersPanel(QWidget):
             abscissa_key = abscissa[0] if abscissa is not None else None
             if abscissa is not None:
                 headers.append(abscissa[1])
+            # Per-run goodness of fit as trailing columns. Appended *after* the
+            # abscissa so the fixed parameter/abscissa column indices that
+            # _gle_columns_for_param / _gle_x_column compute are unaffected.
+            headers.extend(["reduced_chi2", "chi2"])
 
             f.write("! Column map:\n")
             for col_idx, name in enumerate(headers, start=1):
@@ -5365,6 +5452,10 @@ class FitParametersPanel(QWidget):
                     values.append(row.errors.get(name, np.nan))
                 if abscissa_key is not None:
                     values.append(self._x_value(row, abscissa_key))
+                values.append(
+                    row.reduced_chi_squared if row.reduced_chi_squared is not None else np.nan
+                )
+                values.append(row.chi_squared if row.chi_squared is not None else np.nan)
                 f.write(" ".join(f"{v:>16.8g}" for v in values) + "\n")
 
     def _gle_x_column(self, x_key: str) -> int:
@@ -5521,8 +5612,6 @@ class FitParametersPanel(QWidget):
         data_path = gle_path.with_suffix(".dat")
         self._write_gle_data_file(data_path)
         x_key = self._effective_x_key()
-        display_params = self._display_y_parameters()
-        self._selected_y_parameters() or ([display_params[0]] if display_params else [])
 
         # Export fit sidecars for all active fits on this x-axis, regardless of
         # current y-selection, so restored projects always emit .fit files.
