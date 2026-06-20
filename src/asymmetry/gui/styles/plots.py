@@ -9,6 +9,77 @@ from __future__ import annotations
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import register_matplotlib_fonts
 
+# ── Data-trace overlay palettes ───────────────────────────────────────────────
+# Okabe-Ito colour-blind-safe qualitative cycle (the named colours live in
+# ``styles/tokens.py``). Used to give each overlaid run a distinct, high-contrast
+# trace colour, and the fallback ordering when a plot's base colour is not a
+# known period-mode hue. Order preserves the pre-centralisation default palette
+# exactly (blue, orange, sky, yellow, green, magenta, black, vermillion) so the
+# overlay colour assignment is unchanged. The per-period-mode orderings below
+# drop the mode's own base hue so an overlay never collides with the selected
+# period trace.
+_OKABE_ITO = (
+    tokens.TRACE_BLUE,
+    tokens.TRACE_ORANGE,
+    tokens.TRACE_SKY,
+    tokens.TRACE_YELLOW,
+    tokens.TRACE_GREEN,
+    tokens.TRACE_MAGENTA,
+    tokens.TRACE_BLACK,
+    tokens.TRACE_VERMILLION,
+)
+
+#: Overlay orderings keyed by the two-period mode base colour. Each list omits
+#: the hue closest to its base so overlays stay visually separable from the
+#: selected period trace.
+_PERIOD_OVERLAY_PALETTES: dict[str, tuple[str, ...]] = {
+    tokens.PERIOD_RED: (
+        tokens.TRACE_BLUE,
+        tokens.TRACE_SKY,
+        tokens.TRACE_GREEN,
+        tokens.TRACE_YELLOW,
+        tokens.TRACE_MAGENTA,
+        tokens.TRACE_BLACK,
+        tokens.TRACE_ORANGE,
+    ),
+    tokens.PERIOD_GREEN: (
+        tokens.TRACE_BLUE,
+        tokens.TRACE_SKY,
+        tokens.TRACE_YELLOW,
+        tokens.TRACE_MAGENTA,
+        tokens.TRACE_BLACK,
+        tokens.TRACE_ORANGE,
+        tokens.TRACE_VERMILLION,
+    ),
+    tokens.PERIOD_DIFF: (
+        tokens.TRACE_ORANGE,
+        tokens.TRACE_YELLOW,
+        tokens.TRACE_GREEN,
+        tokens.TRACE_MAGENTA,
+        tokens.TRACE_BLACK,
+        tokens.TRACE_VERMILLION,
+    ),
+    tokens.PERIOD_SUM: (
+        tokens.TRACE_BLUE,
+        tokens.TRACE_SKY,
+        tokens.TRACE_GREEN,
+        tokens.TRACE_YELLOW,
+        tokens.TRACE_ORANGE,
+        tokens.TRACE_BLACK,
+    ),
+}
+
+
+def period_overlay_palette(base_color: str) -> tuple[str, ...]:
+    """Return the high-contrast overlay ordering for a period-mode base colour.
+
+    The first trace of a two-period (RG) plot uses *base_color* itself; any
+    additional overlaid runs cycle through the returned palette so they stay
+    distinct from the base hue. Falls back to the full Okabe-Ito cycle when the
+    base colour is not one of the known period-mode colours.
+    """
+    return _PERIOD_OVERLAY_PALETTES.get(base_color.lower(), _OKABE_ITO)
+
 
 def style_axes(ax: object) -> None:
     """Apply BENCH spine, tick, grid, and background styling to one Axes.

@@ -72,6 +72,7 @@ from asymmetry.gui.styles.plots import (
     draw_empty_state_message,
     draw_fit_range_span,
     draw_zero_line,
+    period_overlay_palette,
     style_axes,
     style_figure,
     style_legend,
@@ -3412,10 +3413,10 @@ class PlotPanel(QWidget):
 
         mode = str(grouping.get("period_mode", PeriodMode.RED))
         color_map = {
-            str(PeriodMode.RED): "#c00000",
-            str(PeriodMode.GREEN): "#008000",
-            str(PeriodMode.GREEN_MINUS_RED): "#0000c0",
-            str(PeriodMode.GREEN_PLUS_RED): "#800080",
+            str(PeriodMode.RED): tokens.PERIOD_RED,
+            str(PeriodMode.GREEN): tokens.PERIOD_GREEN,
+            str(PeriodMode.GREEN_MINUS_RED): tokens.PERIOD_DIFF,
+            str(PeriodMode.GREEN_PLUS_RED): tokens.PERIOD_SUM,
         }
         return color_map.get(mode)
 
@@ -3428,57 +3429,10 @@ class PlotPanel(QWidget):
         if index <= 0:
             return base_color
 
-        # Okabe-Ito style high-contrast palette with mode-specific exclusions
-        # so overlays remain visually distinct from the selected RG base color.
-        palette_by_base = {
-            "#c00000": [  # red mode
-                "#0072b2",  # blue
-                "#56b4e9",  # sky blue
-                "#009e73",  # bluish green
-                "#f0e442",  # yellow
-                "#cc79a7",  # magenta
-                "#000000",  # black
-                "#e69f00",  # orange
-            ],
-            "#008000": [  # green mode
-                "#0072b2",  # blue
-                "#56b4e9",  # sky blue
-                "#f0e442",  # yellow
-                "#cc79a7",  # magenta
-                "#000000",  # black
-                "#e69f00",  # orange
-                "#d55e00",  # vermillion
-            ],
-            "#0000c0": [  # G-R mode (blue)
-                "#e69f00",  # orange
-                "#f0e442",  # yellow
-                "#009e73",  # bluish green
-                "#cc79a7",  # magenta
-                "#000000",  # black
-                "#d55e00",  # vermillion
-            ],
-            "#800080": [  # G+R mode (purple)
-                "#0072b2",  # blue
-                "#56b4e9",  # sky blue
-                "#009e73",  # bluish green
-                "#f0e442",  # yellow
-                "#e69f00",  # orange
-                "#000000",  # black
-            ],
-        }
-        distinct_palette = palette_by_base.get(
-            base_color.lower(),
-            [
-                "#0072b2",  # blue
-                "#e69f00",  # orange
-                "#56b4e9",  # sky blue
-                "#f0e442",  # yellow
-                "#009e73",  # bluish green
-                "#cc79a7",  # magenta
-                "#000000",  # black
-                "#d55e00",  # vermillion
-            ],
-        )
+        # Okabe-Ito high-contrast overlay ordering (mode-specific exclusions so
+        # overlays stay distinct from the selected RG base) — centralised in
+        # styles/plots.py so the palette has a single source of truth.
+        distinct_palette = period_overlay_palette(base_color)
         return distinct_palette[(index - 1) % len(distinct_palette)]
 
     def _fit_line_color_for_dataset(
@@ -3499,7 +3453,7 @@ class PlotPanel(QWidget):
         visually belongs to its dataset.
         """
         if isinstance(fit_label, str) and "preview" in fit_label.lower():
-            return "#d73a49"
+            return tokens.PLOT_FIT_PREVIEW
         if self._grouped_time_subplot_datasets:
             return tokens.PLOT_FIT
         return default_color
