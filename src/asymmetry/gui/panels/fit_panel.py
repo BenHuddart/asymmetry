@@ -3367,8 +3367,10 @@ class GlobalFitTab(QWidget):
         self._initial_values_btn.setToolTip(
             "Edit each (run, group)'s initial nuisance values (auto-seeded per dataset)."
             if batch_grouped
-            else "Edit each run's starting (seed) parameter values for the batch fit "
-            "(the warm-start the outlier signpost points at)."
+            else (
+                "Edit each run's starting (seed) parameter values for the batch fit "
+                "(the warm-start the outlier signpost points at)."
+            )
         )
         self._initial_values_btn.clicked.connect(self._open_initial_values_dialog)
         self._minos_checkbox = QCheckBox("Asymmetric errors")
