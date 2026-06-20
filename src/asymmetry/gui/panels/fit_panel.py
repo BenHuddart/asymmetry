@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSizePolicy,
@@ -44,6 +45,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QTabWidget,
     QTextEdit,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -2013,29 +2015,46 @@ class SingleFitTab(QWidget):
         self._fit_wizard_btn = QPushButton("Fit Wizard...")
         self._fit_wizard_btn.clicked.connect(self._open_fit_wizard)
         self._fit_wizard_btn.setEnabled(False)
-        self._share_group_btn = QPushButton("Share with Group")
-        self._share_group_btn.setToolTip("Share this fit function with the selected data group.")
-        self._share_group_btn.clicked.connect(self._on_share_function_with_group)
-        self._share_group_btn.setEnabled(False)
-        self._drop_background_btn = QPushButton("Drop background")
-        self._drop_background_btn.setToolTip(
+
+        # The four advanced model actions (Drop background / Share with Group /
+        # Send to Batch / Add to Series) are collapsed into a single "⋯ More…"
+        # overflow menu instead of four full-width button rows. On a 13-inch
+        # screen those rows pushed the PARAMETERS table and the Fit button below
+        # the fold; folding them lifts PARAMETERS into view (P1-2). They remain
+        # QActions so enable-state and tooltips behave as before.
+        self._more_menu = QMenu(self)
+        self._more_menu.setToolTipsVisible(True)
+        self._drop_background_action = self._more_menu.addAction("Drop background")
+        self._drop_background_action.setToolTip(
             "Remove the constant background term from the model.\n"
             "For amplitude calibration (e.g. a light-OFF A₀ run) a free background "
             "absorbs part of the initial asymmetry, splitting the fitted amplitude; "
             "drop it to fit the full A₀ with a single relaxation term."
         )
-        self._drop_background_btn.clicked.connect(self._on_drop_background)
-        self._drop_background_btn.setEnabled(False)
-        self._send_to_batch_btn = QPushButton("Send to Batch")
-        self._send_to_batch_btn.setToolTip(
+        self._drop_background_action.triggered.connect(self._on_drop_background)
+        self._drop_background_action.setEnabled(False)
+        self._share_group_action = self._more_menu.addAction("Share with Group")
+        self._share_group_action.setToolTip(
+            "Share this fit function with the selected data group."
+        )
+        self._share_group_action.triggered.connect(self._on_share_function_with_group)
+        self._share_group_action.setEnabled(False)
+        self._send_to_batch_action = self._more_menu.addAction("Send to Batch")
+        self._send_to_batch_action.setToolTip(
             "Copy this fit function into the Batch tab to seed a batch fit over the selected runs."
         )
-        self._send_to_batch_btn.clicked.connect(self.send_model_to_batch_requested.emit)
-        self._add_to_series_btn = QPushButton("Add to Series...")
-        self._add_to_series_btn.setToolTip(
+        self._send_to_batch_action.triggered.connect(self.send_model_to_batch_requested.emit)
+        self._add_to_series_action = self._more_menu.addAction("Add to Series...")
+        self._add_to_series_action.setToolTip(
             "Add this run's single fit to an existing batch series with a matching model."
         )
-        self._add_to_series_btn.clicked.connect(self.add_to_series_requested.emit)
+        self._add_to_series_action.triggered.connect(self.add_to_series_requested.emit)
+
+        self._more_btn = QToolButton()
+        self._more_btn.setText("More…")
+        self._more_btn.setToolTip("Advanced model actions")
+        self._more_btn.setMenu(self._more_menu)
+        self._more_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
 
         # Single column of natural-width buttons. A side-by-side grid forced the
         # two button columns (~110px each) to set the whole Fit tab's minimum
@@ -2048,10 +2067,7 @@ class SingleFitTab(QWidget):
         for _model_btn in (
             self._edit_model_btn,
             self._fit_wizard_btn,
-            self._drop_background_btn,
-            self._share_group_btn,
-            self._send_to_batch_btn,
-            self._add_to_series_btn,
+            self._more_btn,
         ):
             model_button_layout.addWidget(_model_btn, 0, Qt.AlignmentFlag.AlignLeft)
 
@@ -2167,7 +2183,7 @@ class SingleFitTab(QWidget):
             self._fit_wizard_btn.setToolTip(
                 "Fit Wizard is currently available for time-domain fits."
             )
-            self._share_group_btn.setEnabled(False)
+            self._share_group_action.setEnabled(False)
             self._formula_row_label.setText("S(ν):")
             self._fit_range_mid_label.setText("≤ <i>ν</i> ≤")
             self._fit_range_unit_label.setText("MHz")
@@ -2200,7 +2216,7 @@ class SingleFitTab(QWidget):
         self._fit_btn.setEnabled(enabled)
         self._preview_btn.setEnabled(enabled)
         self._fit_wizard_btn.setEnabled(enabled and self._domain == "time")
-        self._share_group_btn.setEnabled(dataset is not None and self._domain == "time")
+        self._share_group_action.setEnabled(dataset is not None and self._domain == "time")
 
     def _can_run_pull_diagnostic(self) -> bool:
         """A successful time-domain fit on a run with histograms is required."""
@@ -2360,7 +2376,7 @@ class SingleFitTab(QWidget):
     def _update_drop_background_enabled(self) -> None:
         """Enable the Drop-background affordance only when there is one to drop."""
         reduced = _model_without_trailing_background(self._composite_model)
-        self._drop_background_btn.setEnabled(self._domain == "time" and reduced is not None)
+        self._drop_background_action.setEnabled(self._domain == "time" and reduced is not None)
 
     def _on_drop_background(self) -> None:
         """Drop the constant background term for amplitude calibration."""

@@ -636,6 +636,20 @@ class FitParametersPanel(QWidget):
         self._controls_scroll.setMinimumHeight(0)
         self._controls_scroll.setWidget(controls_group)
 
+        # Empty-state hint: until a batch series is loaded the whole panel is a
+        # wall of greyed controls with no cue as to where the data comes from.
+        # This one-liner sits above the controls and hides itself the moment any
+        # fitted rows arrive (P3-3).
+        self._empty_state_hint = QLabel(
+            "No fitted parameters yet — run a batch fit from the Batch tab "
+            "(or open a project with batch results) to populate this trend view."
+        )
+        self._empty_state_hint.setObjectName("trendEmptyStateHint")
+        self._empty_state_hint.setWordWrap(True)
+        self._empty_state_hint.setContentsMargins(2, 2, 2, 6)
+        self._empty_state_hint.setStyleSheet("color: palette(mid); font-style: italic;")
+        layout.addWidget(self._empty_state_hint)
+
         self._content_splitter = QSplitter(Qt.Orientation.Vertical)
         self._content_splitter.setObjectName("fit-parameters-splitter")
         self._content_splitter.addWidget(self._controls_scroll)
@@ -647,6 +661,7 @@ class FitParametersPanel(QWidget):
 
         self._update_x_axis_auto_hint()
         self._refresh_group_button_styles()
+        self._update_empty_state_hint()
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
@@ -4357,6 +4372,12 @@ class FitParametersPanel(QWidget):
             tuple((name, id(self._model_fits.get(name))) for name in active),
         )
 
+    def _update_empty_state_hint(self) -> None:
+        """Show the 'load a batch series' hint only while no rows are loaded."""
+        hint = getattr(self, "_empty_state_hint", None)
+        if hint is not None:
+            hint.setVisible(not self._rows)
+
     def _refresh_plot(self) -> None:
         """Redraw the trend plot, recomputing overlay curves off-thread if stale.
 
@@ -4366,6 +4387,7 @@ class FitParametersPanel(QWidget):
         worker behind the overlay; otherwise (pure-render toggles, or no active
         overlays) draw synchronously now.
         """
+        self._update_empty_state_hint()
         if not self._has_mpl:
             return
         if self._suspend_plot_refresh:
