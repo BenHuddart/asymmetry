@@ -59,6 +59,16 @@ _GROUP_TEMP_ABS_TOL_K = 5e-3
 _GROUP_TEMP_REL_TOL = 2e-3
 _GROUP_FIELD_ABS_TOL_G = 1e-3
 _LOG_TEMPERATURE_FOREGROUND = QColor(176, 36, 36)
+#: Amber tint + glyph flagging a temperature whose Kelvin label is suspected to
+#: be a Celsius value (EMU furnace mislabel; see the loader's
+#: ``temperature_unit_suspect`` metadata flag). Distinct from the red log-source
+#: tint above; the two cases are mutually exclusive (the suspicion only fires
+#: when there is no logged sample thermometer to switch to).
+_SUSPECT_TEMPERATURE_FOREGROUND = QColor(tokens.WARN)
+_SUSPECT_TEMPERATURE_MARKER = " ⚠"
+#: Celsius→Kelvin offset, used only to spell out the conversion in the warning
+#: tooltip. The displayed value itself is never converted (see the loader).
+_ABSOLUTE_ZERO_CELSIUS = 273.15
 _GROUP_FIELD_REL_TOL = 1e-4
 _GROUP_HEADER_BACKGROUND = QColor(tokens.GROUP_HEADER_BG)
 _GROUP_MEMBER_BACKGROUND = QColor(tokens.GROUP_MEMBER_BG)
@@ -1208,6 +1218,18 @@ class DataBrowserPanel(QWidget):
         temp_item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
         if self._temperature_uses_log_for_display(dataset):
             temp_item.setForeground(_LOG_TEMPERATURE_FOREGROUND)
+        else:
+            # The Kelvin header is suspect for EMU furnace runs that store °C
+            # under a "Kelvin" label (the loader flags these without converting,
+            # since +273 would corrupt a genuinely-cold run). Mark the cell so a
+            # user does not silently read a 350 °C furnace point as 350 K. The
+            # marker rides as a text suffix; sorting stays numeric because
+            # NumericTableWidgetItem keys off the parsed value, not the text.
+            suspect_tip = self._temperature_suspect_tooltip(dataset)
+            if suspect_tip is not None:
+                temp_item.setForeground(_SUSPECT_TEMPERATURE_FOREGROUND)
+                temp_item.setText(f"{temp:.2f}{_SUSPECT_TEMPERATURE_MARKER}")
+                temp_item.setToolTip(suspect_tip)
         self._table.setItem(row, 2, temp_item)
 
         field = self._field_for_display(dataset)
@@ -1518,6 +1540,18 @@ class DataBrowserPanel(QWidget):
             item = self._table.horizontalHeaderItem(col)
             if item is not None:
                 item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+        # Spell out the units the headers abbreviate, and warn that the Kelvin
+        # column can carry a mislabelled furnace °C value (flagged per-row with
+        # an amber ⚠; hover the cell for the conversion).
+        temp_header = self._table.horizontalHeaderItem(2)
+        if temp_header is not None:
+            temp_header.setToolTip(
+                "Sample temperature in kelvin. A ⚠ marks a run whose unit looks "
+                "mislabelled (EMU furnace °C stored as 'Kelvin') — hover the cell."
+            )
+        field_header = self._table.horizontalHeaderItem(3)
+        if field_header is not None:
+            field_header.setToolTip("Applied magnetic field in gauss.")
         # Tooltip each extra-column header so a renamed metadata column still
         # reveals the NeXus/metadata field it came from, and custom columns read
         # as editable.
@@ -1873,6 +1907,50 @@ class DataBrowserPanel(QWidget):
             self.dataset_uses_temperature_from_log(int(dataset.run_number))
             and self._temperature_from_log_for_display(dataset) is not None
         )
+
+    def _temperature_suspect_tooltip(self, dataset: MuonDataset) -> str | None:
+        """Warning tooltip when the run's Kelvin temperature is a suspected °C value.
+
+        The loader sets ``temperature_unit_suspect`` for EMU furnace runs that
+        store Celsius under a ``Kelvin`` label (see
+        ``NexusLoader._temperature_unit_suspect``); the value is surfaced, never
+        converted. Returns ``None`` for ordinary runs.
+
+        The suspicion only fires when the file carries no logged sample
+        thermometer, so the **Options ▸ Use temperature from log** toggle has
+        nothing to fall back to here — the tooltip says so and spells out the
+        °C→K conversion the user must apply by hand if the run really is a
+        furnace point.
+        """
+        metadata = getattr(dataset, "metadata", None)
+        if not isinstance(metadata, dict) or not metadata.get("temperature_unit_suspect"):
+            return None
+        try:
+            value = float(metadata.get("temperature", 0.0))
+        except (TypeError, ValueError):
+            return None
+        reason = str(metadata.get("temperature_unit_suspect_reason", "")).strip()
+        lines = [
+            "Temperature unit looks mislabelled.",
+            (
+                f"Shown as {value:.2f} K, but this run has no logged sample "
+                "thermometer and its value sits in EMU furnace territory, where "
+                "the NeXus header is known to store °C under a 'Kelvin' label."
+            ),
+            (
+                f"If this is °C, the temperature in K is "
+                f"{value:.2f} + {_ABSOLUTE_ZERO_CELSIUS:g} = "
+                f"{value + _ABSOLUTE_ZERO_CELSIUS:.2f} K."
+            ),
+            (
+                "The value is left unchanged (auto-adding 273 would corrupt a "
+                "genuinely-cold run). 'Use temperature from log' cannot fix this "
+                "— there is no logged thermometer to switch to. Verify the unit."
+            ),
+        ]
+        if reason:
+            lines.append(f"Loader note: {reason}")
+        return "\n".join(lines)
 
     def _temperature_from_log_for_display(self, dataset: MuonDataset) -> float | None:
         """Return the log-derived temperature used by the browser column."""
