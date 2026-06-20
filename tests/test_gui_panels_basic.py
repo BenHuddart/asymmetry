@@ -13,7 +13,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QGroupBox, QHeaderView
+from PySide6.QtWidgets import (
+    QApplication,
+    QGroupBox,
+    QHeaderView,
+    QPushButton,
+    QScrollArea,
+    QWidget,
+)
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.gui.panels.fourier_panel import FourierPanel
@@ -73,6 +80,23 @@ def test_fourier_panel_defaults(qapp: QApplication) -> None:
     assert panel._fft_btn.text() == "Compute FFT"
 
 
+def test_fourier_compute_button_pinned_outside_scroll(qapp: QApplication) -> None:
+    """Compute FFT must live in the pinned footer, not the scrolling content.
+
+    Regression guard for the "bury-the-button" fix: the primary action sat at
+    the bottom of the ~9-section scroll content and was unreachable at the
+    default window size. It now lives in a footer added to the panel's top-level
+    layout, so it stays visible at any scroll position.
+    """
+    panel = FourierPanel()
+    scroll = panel.findChild(QScrollArea)
+    footer = panel.findChild(QWidget, "fourierActionFooter")
+    assert scroll is not None
+    assert footer is not None
+    assert panel._fft_btn in footer.findChildren(QPushButton)
+    assert panel._fft_btn not in scroll.widget().findChildren(QPushButton)
+
+
 def test_maxent_panel_defaults_and_group_state(qapp: QApplication) -> None:
     panel = MaxEntPanel()
     panel.set_group_definitions({2: "Right", 1: "Left"}, {1: 12.0}, {2: False})
@@ -97,6 +121,22 @@ def test_maxent_panel_defaults_and_group_state(qapp: QApplication) -> None:
     assert config.outer_cycles == 5
     assert config.selected_group_ids == [1]
     assert config.time_binning_factor == 1
+
+
+def test_maxent_cycle_controls_pinned_outside_scroll(qapp: QApplication) -> None:
+    """The cycle/Converge grid must live in the pinned footer, not mid-scroll.
+
+    Regression guard for the "bury-the-button" fix: the cycle controls sat
+    mid-scroll with six more sections below them, buried whichever way the user
+    scrolled. They now live in a footer added to the panel's top-level layout.
+    """
+    panel = MaxEntPanel()
+    scroll = panel.findChild(QScrollArea)
+    footer = panel.findChild(QWidget, "maxentActionFooter")
+    assert scroll is not None
+    assert footer is not None
+    assert panel._converge_btn in footer.findChildren(QPushButton)
+    assert panel._converge_btn not in scroll.widget().findChildren(QPushButton)
 
 
 def test_fourier_panel_group_order_matches_workflow(qapp: QApplication) -> None:

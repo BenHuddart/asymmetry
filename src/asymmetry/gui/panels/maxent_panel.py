@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFormLayout,
+    QFrame,
     QGridLayout,
     QGroupBox,
     QHeaderView,
@@ -219,23 +220,6 @@ class MaxEntPanel(QWidget):
             fit_layout.addWidget(check)
         content_layout.addWidget(fit_group)
 
-        buttons = QGridLayout()
-        self._cycle_one_btn = QPushButton("+1")
-        self._cycle_five_btn = QPushButton("+5")
-        self._cycle_twentyfive_btn = QPushButton("+25")
-        self._converge_btn = QPushButton("Converge")
-        self._converge_btn.setStyleSheet(build_primary_button_qss())
-        self._restart_btn = QPushButton("Restart")
-        self._cancel_btn = QPushButton("Cancel")
-        self._cancel_btn.setEnabled(False)
-        buttons.addWidget(self._cycle_one_btn, 0, 0)
-        buttons.addWidget(self._cycle_five_btn, 0, 1)
-        buttons.addWidget(self._cycle_twentyfive_btn, 0, 2)
-        buttons.addWidget(self._converge_btn, 1, 0, 1, 2)
-        buttons.addWidget(self._restart_btn, 1, 2)
-        buttons.addWidget(self._cancel_btn, 2, 0, 1, 3)
-        content_layout.addLayout(buttons)
-
         self._show_reconstruction_check = QCheckBox("Show time-domain reconstruction")
         self._show_reconstruction_check.setChecked(False)
         self._show_reconstruction_check.setToolTip(
@@ -330,18 +314,6 @@ class MaxEntPanel(QWidget):
         export_buttons.addWidget(self._export_log_btn, 0, 1)
         content_layout.addLayout(export_buttons)
 
-        progress_group = QGroupBox("Progress")
-        progress_layout = QVBoxLayout(progress_group)
-        self._progress_label = QLabel("")
-        self._progress_label.setWordWrap(True)
-        progress_layout.addWidget(self._progress_label)
-        self._progress_bar = QProgressBar()
-        self._progress_bar.setRange(0, 1)
-        self._progress_bar.setValue(0)
-        self._progress_bar.setVisible(False)
-        progress_layout.addWidget(self._progress_bar)
-        content_layout.addWidget(progress_group)
-
         diagnostics_group = QGroupBox("Diagnostics")
         diagnostics_layout = QVBoxLayout(diagnostics_group)
         self._diagnostics_label = QLabel("")
@@ -354,15 +326,64 @@ class MaxEntPanel(QWidget):
         self._moments_widget = SpectralMomentsWidget()
         content_layout.addWidget(self._moments_widget)
 
-        self._status_label = QLabel("")
-        self._status_label.setFont(status_font())
-        self._status_label.setWordWrap(True)
-        content_layout.addWidget(self._status_label)
         content_layout.addStretch()
+
+        # Pinned action footer — the primary action (the cycle/Converge grid)
+        # previously sat mid-scroll with six more sections below it, so it was
+        # buried whichever way the user scrolled. Keep the cycle controls plus
+        # their progress/status feedback outside the scroll area, always visible.
+        layout.addWidget(self._build_action_footer())
 
         self._auto_window_check.toggled.connect(self._update_window_controls)
         self._update_window_controls()
         self._update_mode_dependent_controls()
+
+    def _build_action_footer(self) -> QWidget:
+        """Build the always-visible footer holding the MaxEnt cycle controls."""
+        footer = QWidget()
+        footer.setObjectName("maxentActionFooter")
+        footer_layout = QVBoxLayout(footer)
+        footer_layout.setContentsMargins(0, 6, 0, 0)
+        footer_layout.setSpacing(4)
+
+        divider = QFrame()
+        divider.setFrameShape(QFrame.Shape.HLine)
+        divider.setFrameShadow(QFrame.Shadow.Plain)
+        divider.setStyleSheet(f"color: {tokens.BORDER};")
+        footer_layout.addWidget(divider)
+
+        buttons = QGridLayout()
+        self._cycle_one_btn = QPushButton("+1")
+        self._cycle_five_btn = QPushButton("+5")
+        self._cycle_twentyfive_btn = QPushButton("+25")
+        self._converge_btn = QPushButton("Converge")
+        self._converge_btn.setStyleSheet(build_primary_button_qss())
+        self._restart_btn = QPushButton("Restart")
+        self._cancel_btn = QPushButton("Cancel")
+        self._cancel_btn.setEnabled(False)
+        buttons.addWidget(self._cycle_one_btn, 0, 0)
+        buttons.addWidget(self._cycle_five_btn, 0, 1)
+        buttons.addWidget(self._cycle_twentyfive_btn, 0, 2)
+        buttons.addWidget(self._converge_btn, 1, 0, 1, 2)
+        buttons.addWidget(self._restart_btn, 1, 2)
+        buttons.addWidget(self._cancel_btn, 2, 0, 1, 3)
+        footer_layout.addLayout(buttons)
+
+        self._progress_label = QLabel("")
+        self._progress_label.setWordWrap(True)
+        footer_layout.addWidget(self._progress_label)
+        self._progress_bar = QProgressBar()
+        self._progress_bar.setRange(0, 1)
+        self._progress_bar.setValue(0)
+        self._progress_bar.setVisible(False)
+        footer_layout.addWidget(self._progress_bar)
+
+        self._status_label = QLabel("")
+        self._status_label.setFont(status_font())
+        self._status_label.setWordWrap(True)
+        footer_layout.addWidget(self._status_label)
+
+        return footer
 
     def _make_numeric_edit(
         self,

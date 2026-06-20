@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QFormLayout,
+    QFrame,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -406,32 +407,14 @@ class FourierPanel(QWidget):
         self._moments_widget = SpectralMomentsWidget()
         content_layout.addWidget(self._moments_widget)
 
-        # Read-only hint: the grouping's pre-FFT background correction is
-        # inherited by the Fourier input (F3) and is otherwise invisible here.
-        self._background_hint_label = QLabel("")
-        self._background_hint_label.setWordWrap(True)
-        self._background_hint_label.setStyleSheet(f"QLabel {{ color: {tokens.TEXT_MUTED}; }}")
-        self.set_background_hint(None)
-        content_layout.addWidget(self._background_hint_label)
-
-        # Action buttons
-        self._fft_btn = QPushButton("Compute FFT")
-        self._fft_btn.setStyleSheet(build_primary_button_qss())
-        content_layout.addWidget(self._fft_btn)
-
-        self._apply_to_selection_btn = QPushButton("Apply to selection")
-        self._apply_to_selection_btn.setToolTip(
-            "Copy this run's Fourier settings to the other selected runs and "
-            "generate their spectra."
-        )
-        content_layout.addWidget(self._apply_to_selection_btn)
-
-        self._status_label = QLabel("")
-        self._status_label.setFont(status_font())
-        self._status_label.setWordWrap(True)
-        content_layout.addWidget(self._status_label)
-
         content_layout.addStretch()
+
+        # Pinned action footer — the primary action of this ~9-section panel is
+        # "Compute FFT", which previously sat at the very bottom of the scroll
+        # content and was unreachable at the default window size. Keep the action
+        # cluster (background hint + Compute + Apply + status) outside the scroll
+        # area so it stays visible at any scroll position.
+        layout.addWidget(self._build_action_footer())
 
         self._use_phase_table_check.toggled.connect(self._update_phase_table_enabled)
         self._phase_table.itemChanged.connect(self._on_phase_table_item_changed)
@@ -455,6 +438,46 @@ class FourierPanel(QWidget):
         self._update_phase_table_enabled(self._use_phase_table_check.isChecked())
         self._update_filter_controls_enabled()
         self._update_phase_controls_enabled()
+
+    def _build_action_footer(self) -> QWidget:
+        """Build the always-visible footer holding the Compute FFT action."""
+        footer = QWidget()
+        footer.setObjectName("fourierActionFooter")
+        footer_layout = QVBoxLayout(footer)
+        footer_layout.setContentsMargins(0, 6, 0, 0)
+        footer_layout.setSpacing(4)
+
+        divider = QFrame()
+        divider.setFrameShape(QFrame.Shape.HLine)
+        divider.setFrameShadow(QFrame.Shadow.Plain)
+        divider.setStyleSheet(f"color: {tokens.BORDER};")
+        footer_layout.addWidget(divider)
+
+        # Read-only hint: the grouping's pre-FFT background correction is
+        # inherited by the Fourier input (F3) and is otherwise invisible here.
+        self._background_hint_label = QLabel("")
+        self._background_hint_label.setWordWrap(True)
+        self._background_hint_label.setStyleSheet(f"QLabel {{ color: {tokens.TEXT_MUTED}; }}")
+        self.set_background_hint(None)
+        footer_layout.addWidget(self._background_hint_label)
+
+        self._fft_btn = QPushButton("Compute FFT")
+        self._fft_btn.setStyleSheet(build_primary_button_qss())
+        footer_layout.addWidget(self._fft_btn)
+
+        self._apply_to_selection_btn = QPushButton("Apply to selection")
+        self._apply_to_selection_btn.setToolTip(
+            "Copy this run's Fourier settings to the other selected runs and "
+            "generate their spectra."
+        )
+        footer_layout.addWidget(self._apply_to_selection_btn)
+
+        self._status_label = QLabel("")
+        self._status_label.setFont(status_font())
+        self._status_label.setWordWrap(True)
+        footer_layout.addWidget(self._status_label)
+
+        return footer
 
     # ── conditioning + exclusions sections ─────────────────────────────
 

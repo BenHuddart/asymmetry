@@ -1,7 +1,7 @@
 """Batch-fit seeding signpost (GUI).
 
 When a batch's ν(T)/A(T) trend shows the near-transition collapse/outlier signature,
-the batch tab must signpost the per-run warm-start ("Initial Values…") and offer to
+the batch tab must signpost the per-run warm-start ("Per-run seeds…") and offer to
 apply the descending-frequency seeds the diagnostics computed — automating the proven
 manual cure for the EuO bistability instead of leaving the user with a corrupted trend
 and no guidance.
@@ -54,6 +54,19 @@ def _attach_trend(tab: GlobalFitTab) -> dict[int, FitResult]:
     return {run: _result(amp, freq) for run, (_t, amp, freq) in _TREND.items()}
 
 
+def test_per_run_seeds_button_and_signpost_share_wording(qapp: QApplication) -> None:
+    """The per-run batch button reads "Per-run seeds…", matching the signpost.
+
+    The signpost tells a struggling user to open the per-run warm-start; the
+    button it points at must use the same words rather than the old generic
+    "Initial Values…" label.
+    """
+    tab = GlobalFitTab(member_kind="runs")
+
+    assert tab._initial_values_btn.text() == "Per-run seeds…"
+    assert tab._open_initial_values_from_signpost_btn.text() == "Open per-run seeds…"
+
+
 def test_signpost_shows_and_suggests_seeds_on_collapse(qapp: QApplication) -> None:
     tab = GlobalFitTab(member_kind="runs")
     results = _attach_trend(tab)
@@ -103,7 +116,7 @@ def test_apply_suggested_seeds_fills_initial_values_and_switches_mode(
 
     tab._apply_suggested_series_seeds()
 
-    # Seeds merged into the per-run Initial Values table.
+    # Seeds merged into the per-run seed table.
     assert 2944 in tab._user_initial_values_by_run
     assert "frequency" in tab._user_initial_values_by_run[2944]
     # Switched to Independent seeds (honours per-run seeds) and synced the menu.
