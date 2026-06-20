@@ -28,6 +28,35 @@ def qapp() -> object:
 
 
 @pytest.fixture(autouse=True)
+def _bypass_unsaved_changes_prompt(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Suppress ``MainWindow``'s unsaved-changes close prompt by default.
+
+    ``closeEvent`` now pops a modal Save/Discard/Cancel dialog when the session
+    has unsaved work (F4 / P0-2). Many GUI tests force-close a dirty window
+    in-body (``window.close()`` in a ``finally:``), where that modal would block
+    the offscreen run forever. We therefore stub ``_maybe_save`` to "proceed"
+    for every test except those explicitly marked ``real_save_guard``, which
+    exercise the guard itself (with their own ``QMessageBox`` stubs).
+
+    Imported lazily so non-GUI test sessions (no PySide6) pay nothing.
+    """
+    if "real_save_guard" in request.keywords:
+        yield
+        return
+    try:
+        from asymmetry.gui.mainwindow import MainWindow
+    except Exception:
+        yield
+        return
+    original = MainWindow._maybe_save
+    MainWindow._maybe_save = lambda self, *a, **k: True  # type: ignore[assignment]
+    try:
+        yield
+    finally:
+        MainWindow._maybe_save = original  # type: ignore[assignment]
+
+
+@pytest.fixture(autouse=True)
 def _cleanup_qt_widgets() -> Iterator[None]:
     """Tear down all Qt state after every test to prevent cross-test bleed.
 
@@ -94,7 +123,17 @@ def _cleanup_qt_widgets() -> Iterator[None]:
 
     # Close every top-level widget (runs closeEvent handlers), then schedule
     # and flush deletion so the C++ objects are gone before the next test.
+    # MainWindow's closeEvent now guards unsaved work with a modal Save/Discard/
+    # Cancel prompt (F4/P0-2). In an offscreen teardown that dialog would block
+    # forever, so force-clear the dirty flag first — this is a non-interactive
+    # force-close, the production guard is exercised by its own tests.
     for widget in list(app.topLevelWidgets()):
+        clear_dirty = getattr(widget, "_clear_dirty", None)
+        if callable(clear_dirty):
+            try:
+                clear_dirty()
+            except Exception:
+                pass
         try:
             widget.close()
         except Exception:
