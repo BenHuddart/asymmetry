@@ -4605,9 +4605,7 @@ class GlobalFitTab(QWidget):
             for ds in self._datasets
         ]
         values = self._effective_initial_values_by_run(parsed)
-        dialog = InitialValuesDialog(
-            members, params, values, parent=self, title="Per-run seeds"
-        )
+        dialog = InitialValuesDialog(members, params, values, parent=self, title="Per-run seeds")
         if dialog.exec():
             self._user_initial_values_by_run = dialog.edited_values()
 
