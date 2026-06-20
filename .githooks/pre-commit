@@ -1,0 +1,45 @@
+#!/bin/sh
+#
+# Pre-commit hook: run the exact Ruff lint + format check that CI enforces, so a
+# formatting slip never reaches CI. This is the same command CI runs —
+# `python tools/harness.py lint`, i.e. `ruff format --check` followed by
+# `ruff check` over src/ tests/ tools/ — so the two cannot drift.
+#
+# Enable in a fresh clone (one-time):
+#     git config core.hooksPath .githooks
+#
+# Bypass for a single commit (e.g. a WIP checkpoint):
+#     git commit --no-verify
+#
+# Note: this checks the working tree (as CI does), not just staged files, so a
+# stray format issue in an unstaged file will also stop the commit.
+
+ROOT="$(git rev-parse --show-toplevel)"
+
+# Mirror tools/harness.py: prefer the project venv interpreter, else fall back
+# to a system Python. Pick the first interpreter that can actually run Ruff —
+# on Windows the venv exposes `python` (not `python3`), so a bare name-order
+# fallback could otherwise grab a ruff-less system `python3`.
+PY=""
+for cand in "$ROOT/.venv/Scripts/python.exe" "$ROOT/.venv/bin/python" python python3 py; do
+    case "$cand" in
+        /*|*.exe) [ -x "$cand" ] || continue ;;
+        *) command -v "$cand" >/dev/null 2>&1 || continue ;;
+    esac
+    if "$cand" -m ruff --version >/dev/null 2>&1; then PY="$cand"; break; fi
+done
+
+# If Ruff cannot run in this checkout (e.g. a worktree with no .venv), skip
+# rather than block the commit — CI remains the backstop.
+if [ -z "$PY" ]; then
+    echo "pre-commit: ruff unavailable in this checkout; skipping lint (CI will still check)." >&2
+    exit 0
+fi
+
+if ! "$PY" "$ROOT/tools/harness.py" lint; then
+    echo "" >&2
+    echo "pre-commit: ruff format/lint failed (see above)." >&2
+    echo "  auto-fix: $PY -m ruff format src tests tools && $PY -m ruff check --fix src tests tools" >&2
+    echo "  bypass:   git commit --no-verify" >&2
+    exit 1
+fi
