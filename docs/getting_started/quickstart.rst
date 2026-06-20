@@ -12,7 +12,7 @@ a few minutes. The steps are:
 
 #. install Asymmetry and launch the graphical interface (:doc:`installation`);
 #. load an example dataset;
-#. group the detectors and calibrate the balance parameter :math:`\alpha`;
+#. group the detectors and calibrate :math:`\alpha`;
 #. plot the asymmetry and run a first fit.
 
 Each step links to its full reference page, so you can stop and read more

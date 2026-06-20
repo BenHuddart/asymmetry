@@ -9,7 +9,7 @@ The measured forward/backward asymmetry
 
    A(t) = \frac{N_F(t) - \alpha N_B(t)}{N_F(t) + \alpha N_B(t)}
 
-depends on the balance parameter :math:`\alpha = N_F^0/N_B^0`, the ratio of
+depends on the calibration constant :math:`\alpha = N_F^0/N_B^0`, the ratio of
 the two detector groups' efficiency × solid-angle products. With the correct
 :math:`\alpha` the asymmetry equals :math:`a_0 P_z(t)`; with the wrong one,
 a spurious baseline and a distortion proportional to the muon decay envelope

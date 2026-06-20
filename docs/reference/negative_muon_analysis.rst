@@ -209,7 +209,7 @@ Forward/backward fitting and α
 For a μ⁻ run where forward and backward detector banks are read out separately,
 :func:`~asymmetry.core.negmu.fit.fit_capture_fb_alpha` fits both banks
 simultaneously with a shared set of elemental amplitudes and a free
-detector-balance parameter α:
+calibration constant α:
 
 .. math::
 

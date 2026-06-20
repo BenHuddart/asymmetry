@@ -3,7 +3,7 @@ Grouping and Calibration Walkthrough
 
 Before you fit anything, a raw run has to be *calibrated*: the time-zero and
 good-bin range set, the detectors combined into forward and backward groups, the
-balance factor :math:`\alpha` fixed, and — for raw histogram formats — deadtime
+calibration constant :math:`\alpha` fixed, and — for raw histogram formats — deadtime
 correction applied. In Asymmetry this is all done in one place, the **Grouping**
 window, with the detector arrangement edited visually in the **Detector Layout**
 editor.
@@ -28,7 +28,7 @@ result to many runs at once:
 
 * **Forward Group** / **Backward Group** — the two groups that enter the
   asymmetry. Pick them from the detector groups defined in the layout editor.
-* **Alpha** and **Estimate α** — the forward/backward balance factor. Type a
+* **Alpha** and **Estimate α** — the forward/backward calibration constant. Type a
   value, or click **Estimate α** to fit it from the reference run so the
   forward and backward precession signals balance about zero (see the worked
   example below).

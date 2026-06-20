@@ -28,7 +28,7 @@ asymmetry value:
 
 where the sums run over the good bins inside the window, :math:`F` and :math:`B`
 are the forward and backward grouped counts, and :math:`\alpha` is the current
-balance factor from your detector grouping. Summing the counts *before* forming
+calibration constant from your detector grouping. Summing the counts *before* forming
 the ratio (the WiMDA "count integral") gives Poisson-weighted statistics across
 the whole window rather than averaging per-bin asymmetries.
 

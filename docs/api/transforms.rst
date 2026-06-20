@@ -10,7 +10,7 @@ correction
 (:func:`~asymmetry.core.transform.background`), grouping into forward
 and backward detector sums
 (:func:`~asymmetry.core.transform.grouping.apply_grouping`),
-asymmetry calculation with the chosen :math:`\alpha` balance factor
+asymmetry calculation with the chosen :math:`\alpha` calibration constant
 (:func:`~asymmetry.core.transform.asymmetry.compute_asymmetry`,
 :func:`~asymmetry.core.transform.asymmetry.estimate_alpha`), and
 optional rebinning of the resulting asymmetry trace

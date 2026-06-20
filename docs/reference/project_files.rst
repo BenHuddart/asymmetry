@@ -103,7 +103,7 @@ exact detector grouping is preserved without re-running the Grouping dialog.
     Group-slot index used as the backward detector sum.
 
 ``alpha``
-    Detector balance factor.
+    Calibration constant α.
 
 ``first_good_bin``
     Integer index of the first bin included in asymmetry computation.

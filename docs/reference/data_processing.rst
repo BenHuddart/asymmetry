@@ -4,7 +4,7 @@ Data Processing
 The processing tools in this chapter act on a loaded dataset before it
 reaches the fit engine: rebinning to trade time resolution for statistics,
 restricting the time range, applying the grouping defined in the Grouping
-dialog, estimating the asymmetry-balance parameter :math:`\alpha`, and the
+dialog, estimating the calibration constant :math:`\alpha`, and the
 specific deadtime / background corrections that PSI BIN-style raw
 histograms typically require. The order is always deadtime first, then
 background, then grouping, then asymmetry — skipping deadtime when it is
@@ -137,7 +137,7 @@ Asymmetry uses the standard pair formula:
 where :math:`F` and :math:`B` are grouped forward/backward counts. Asymmetry's
 alpha convention applies :math:`\alpha` to the backward group. This convention
 is retained consistently in the GUI, loaders, grouping tools, and fitting
-inputs, even when comparing against packages that place the balance factor on
+inputs, even when comparing against packages that place :math:`\alpha` on
 the forward group.
 
 In the asymmetry expression, **Forward** and **Backward** are defined relative

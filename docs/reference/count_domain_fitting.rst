@@ -7,7 +7,7 @@ of the **Multi-Group Fit** window, alongside the existing *All groups* grouped
 fit:
 
 * **Forward + Backward (free α)** — fit a forward and a backward count
-  histogram simultaneously with the detector-balance parameter α as a free
+  histogram simultaneously with α as a free
   fit parameter. This is the statistically proper way to obtain α from a
   transverse-field calibration run, superseding the grid estimators in the
   Grouping dialog.

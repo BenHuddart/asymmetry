@@ -17,7 +17,7 @@ depolarisation function. It is typically the product of a relaxation
 envelope with an oscillatory signal, or the sum of contributions from
 distinct muon populations (e.g. magnetic and paramagnetic fractions near a
 transition, multiple stopping sites in a molecular magnet), with a small
-detector-imbalance constant added in. Composite models are how Asymmetry
+constant offset added in. Composite models are how Asymmetry
 expresses these combinations: a free-form arithmetic expression over
 registered baseline-free components, parsed into a compiled callable that
 the fit engine drives like any other model. The two patterns the builder

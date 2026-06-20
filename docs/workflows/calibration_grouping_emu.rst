@@ -3,8 +3,8 @@ EMU detector grouping and α calibration
 
 This is the recommended first walkthrough for new users. It covers the
 everyday setup every time-domain analysis depends on: loading a run,
-defining the forward/backward detector grouping, calibrating the
-detector-balance parameter :math:`\alpha` from a transverse-field (TF)
+defining the forward/backward detector grouping, calibrating
+:math:`\alpha` from a transverse-field (TF)
 run, and turning on dead-time correction — all from the one **Grouping**
 window.
 
@@ -67,7 +67,7 @@ calibration surface for a run:
      - Which detector groups form the :math:`F` and :math:`B` sums of the
        asymmetry.
    * - **Alpha** / **Estimate α**
-     - The detector-balance factor (see Step 3). **Estimate All α** does
+     - The :math:`\alpha` calibration constant (see Step 3). **Estimate All α** does
        every checked run at once.
    * - **t0 Bin**
      - The time-zero bin (the muon-implantation prompt).
