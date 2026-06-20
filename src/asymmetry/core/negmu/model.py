@@ -40,7 +40,7 @@ def build_capture_count_model(
 
     Recognised params: ``amp_<label>`` (per component), optional ``tau_<label>``
     (overrides the component seed when the lifetime is freed), and ``background``
-    (flat). Unknown params are ignored. Vectorised over t (μs).
+    (flat). Unknown params are ignored. Vectorised over t (µs).
     """
     comp_list = list(components)
 

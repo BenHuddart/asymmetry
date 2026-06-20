@@ -10816,7 +10816,7 @@ class MainWindow(QMainWindow):
         else:
             # χ²/ν lives in its own permanent label (_status_chi2_label);
             # appending it here would show it twice.
-            text = f"t = {x:.3f} μs  A = {y:.2f} %"
+            text = f"t = {x:.3f} µs  A = {y:.2f} %"
         snr = payload.get("snr")
         if snr is not None:
             text += f"  S/N = {float(snr):.3g}"

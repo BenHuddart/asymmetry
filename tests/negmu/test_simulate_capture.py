@@ -60,7 +60,7 @@ def _make_template(n_dets=2, n_bins=1024, bin_width=0.016, t0_bin=0):
 # ---------------------------------------------------------------------------
 
 N_BINS = 1024
-BIN_WIDTH = 0.016  # μs
+BIN_WIDTH = 0.016  # µs
 TOTAL_EVENTS = 2.0e7
 BACKGROUND = 5.0
 

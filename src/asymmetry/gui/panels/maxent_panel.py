@@ -134,12 +134,12 @@ class MaxEntPanel(QWidget):
         self._t_min_edit = self._make_numeric_edit(
             "", minimum=-1_000_000.0, maximum=1_000_000.0, decimals=6
         )
-        time_form.addRow("Start (μs):", self._t_min_edit)
+        time_form.addRow("Start (µs):", self._t_min_edit)
 
         self._t_max_edit = self._make_numeric_edit(
             "", minimum=-1_000_000.0, maximum=1_000_000.0, decimals=6
         )
-        time_form.addRow("End (μs):", self._t_max_edit)
+        time_form.addRow("End (µs):", self._t_max_edit)
 
         self._time_binning_spin = QSpinBox()
         self._time_binning_spin.setRange(1, 4096)
@@ -156,12 +156,12 @@ class MaxEntPanel(QWidget):
                 "inside are de-weighted, not dropped — leave blank to disable."
             ),
         )
-        time_form.addRow("De-weight from (μs):", self._exclude_t_min_edit)
+        time_form.addRow("De-weight from (µs):", self._exclude_t_min_edit)
 
         self._exclude_t_max_edit = self._make_numeric_edit(
             "", minimum=-1_000_000.0, maximum=1_000_000.0, decimals=6
         )
-        time_form.addRow("De-weight to (μs):", self._exclude_t_max_edit)
+        time_form.addRow("De-weight to (µs):", self._exclude_t_max_edit)
         content_layout.addWidget(time_group)
 
         pulse_group = QGroupBox("Pulse shape (pulsed sources)")
@@ -179,12 +179,12 @@ class MaxEntPanel(QWidget):
         self._pulse_half_width_edit = self._make_numeric_edit(
             "0.05", minimum=0.0, maximum=1_000.0, decimals=6
         )
-        pulse_form.addRow("Half-width (μs):", self._pulse_half_width_edit)
+        pulse_form.addRow("Half-width (µs):", self._pulse_half_width_edit)
 
         self._pulse_separation_edit = self._make_numeric_edit(
             "0.324", minimum=0.0, maximum=1_000.0, decimals=6
         )
-        pulse_form.addRow("Separation (μs):", self._pulse_separation_edit)
+        pulse_form.addRow("Separation (µs):", self._pulse_separation_edit)
         content_layout.addWidget(pulse_group)
 
         fit_group = QGroupBox("Cycle Refinement")

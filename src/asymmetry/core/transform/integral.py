@@ -108,10 +108,10 @@ def integrate_asymmetry(
     alpha
         Detector balance parameter (must be > 0).
     time
-        Optional time axis (μs) aligned with the count arrays.  Required when
+        Optional time axis (µs) aligned with the count arrays.  Required when
         ``t_min``/``t_max`` are supplied; otherwise the whole array is used.
     t_min, t_max
-        Inclusive integration window in μs.
+        Inclusive integration window in µs.
     method
         ``"integral"`` (sum counts, then form asymmetry — WiMDA / Mantid
         Integral) or ``"differential"`` (per-bin asymmetry, then mean over the
@@ -210,7 +210,7 @@ def integrate_run(
         multi-period runs, select the period first with
         :func:`asymmetry.core.io.periods.select_period`.
     t_min, t_max
-        Inclusive window in μs.  Default: the run's good-bin range.
+        Inclusive window in µs.  Default: the run's good-bin range.
     method
         See :func:`integrate_asymmetry`.
     alpha

@@ -100,8 +100,10 @@ def _append_latex_index(symbol: str, index: str) -> str:
 
 
 def _unit_to_gle(unit: str) -> str:
-    # Keep GLE labels in native markup (no $...$ math mode).
-    unit_gle = unit.replace("μ", r"{\rm \mu}{}")
+    # Keep GLE labels in native markup (no $...$ math mode). The micro prefix is
+    # normalized to MICRO SIGN (U+00B5) in unit strings, but accept GREEK MU
+    # (U+03BC) too so legacy/serialized units still render.
+    unit_gle = unit.replace("µ", r"{\rm \mu}{}").replace("μ", r"{\rm \mu}{}")
     # Normalize common unicode superscripts to ASCII exponent markup.
     unit_gle = unit_gle.replace("⁻¹", "^{-1}")
     unit_gle = unit_gle.replace("⁻²", "^{-2}")
@@ -126,10 +128,10 @@ PARAM_INFO_REGISTRY: dict[str, ParamInfo] = {
     # go negative; genuinely positive-definite quantities (amplitudes, rates,
     # widths) keep their 0 floor.
     "A_bg": ParamInfo("A_bg", "A_bg", "A_bg", r"$A_{bg}$", r"{\it A}_{bg}", "%"),
-    "Lambda": ParamInfo("Lambda", "Lambda", "λ", r"$\lambda$", r"\lambda", "μs⁻¹", default_min=0.0),
-    "sigma": ParamInfo("sigma", "sigma", "σ", r"$\sigma$", r"\sigma", "μs⁻¹", default_min=0.0),
-    "Delta": ParamInfo("Delta", "Delta", "Δ", r"$\Delta$", r"\Delta", "μs⁻¹", default_min=0.0),
-    "a_L": ParamInfo("a_L", "a_L", "a", r"$a$", r"{\it a}", "μs⁻¹", default_min=0.0),
+    "Lambda": ParamInfo("Lambda", "Lambda", "λ", r"$\lambda$", r"\lambda", "µs⁻¹", default_min=0.0),
+    "sigma": ParamInfo("sigma", "sigma", "σ", r"$\sigma$", r"\sigma", "µs⁻¹", default_min=0.0),
+    "Delta": ParamInfo("Delta", "Delta", "Δ", r"$\Delta$", r"\Delta", "µs⁻¹", default_min=0.0),
+    "a_L": ParamInfo("a_L", "a_L", "a", r"$a$", r"{\it a}", "µs⁻¹", default_min=0.0),
     # A small POSITIVE floor, not 0. As beta -> 0 the stretched exponential
     # A*exp(-(|Lambda| t)^beta) -> A (flat), a degenerate limit that — together
     # with the |Lambda| sign-fold — gives the documented spin-glass sign/exponent
@@ -282,11 +284,11 @@ PARAM_INFO_REGISTRY: dict[str, ParamInfo] = {
     "r3": ParamInfo("r3", "r3", "r₃", r"$r_3$", r"{\it r}_{3}", "Å", default_min=0.0),
     "theta": ParamInfo("theta", "theta", "θ", r"$\theta$", r"\theta", "°", default_min=0.0),
     "phi3": ParamInfo("phi3", "phi3", "φ₃", r"$\phi_3$", r"\phi_{3}", "°", default_min=0.0),
-    "Gamma": ParamInfo("Gamma", "Gamma", "Γ", r"$\Gamma$", r"\Gamma", "μs⁻¹", default_min=0.0),
+    "Gamma": ParamInfo("Gamma", "Gamma", "Γ", r"$\Gamma$", r"\Gamma", "µs⁻¹", default_min=0.0),
     "delta_ex": ParamInfo(
         "delta_ex", "delta_ex", "δ_ex", r"$\delta_{ex}$", r"\delta_{ex}", "MHz", default_min=0.0
     ),
-    "tau_c": ParamInfo("tau_c", "tau_c", "τ_c", r"$\tau_c$", r"\tau_{c}", "μs", default_min=0.0),
+    "tau_c": ParamInfo("tau_c", "tau_c", "τ_c", r"$\tau_c$", r"\tau_{c}", "µs", default_min=0.0),
     "w_rel": ParamInfo(
         "w_rel", "w_rel", "w_Δ", r"$w_\Delta$", r"{\it w}_{\Delta}", default_min=0.0
     ),
@@ -294,7 +296,7 @@ PARAM_INFO_REGISTRY: dict[str, ParamInfo] = {
         "B_dip", "B_dip", "B_dip", r"$B_{dip}$", r"{\it B}_{dip}", "G", default_min=0.0
     ),
     "lambda_T": ParamInfo(
-        "lambda_T", "lambda_T", "λ_T", r"$\lambda_T$", r"\lambda_{T}", "μs⁻¹", default_min=0.0
+        "lambda_T", "lambda_T", "λ_T", r"$\lambda_T$", r"\lambda_{T}", "µs⁻¹", default_min=0.0
     ),
     "r_muH": ParamInfo(
         "r_muH", "r_muH", "r_μH", r"$r_{\mu H}$", r"{\it r}_{\mu H}", "Å", default_min=0.0
@@ -342,9 +344,9 @@ PARAM_INFO_REGISTRY: dict[str, ParamInfo] = {
     "D": ParamInfo("D", "D", "D", r"$D$", r"{\it D}", "MHz", default_min=0.0),
     "nu": ParamInfo("nu", "nu", "ν", r"$\nu$", r"\nu", "MHz", default_min=0.0),
     "m": ParamInfo("m", "m", "m", r"$m$", r"{\it m}"),
-    "f": ParamInfo("f", "f", "f", r"$f$", r"{\it f}", "μs⁻¹", default_min=0.0),
+    "f": ParamInfo("f", "f", "f", r"$f$", r"{\it f}", "µs⁻¹", default_min=0.0),
     "D_2D": ParamInfo(
-        "D_2D", "D_2D", "D_2D", r"$D_{2D}$", r"{\it D}_{2D}", "μs⁻¹", default_min=0.0
+        "D_2D", "D_2D", "D_2D", r"$D_{2D}$", r"{\it D}_{2D}", "µs⁻¹", default_min=0.0
     ),
     "D_hop": ParamInfo(
         "D_hop",
@@ -352,14 +354,14 @@ PARAM_INFO_REGISTRY: dict[str, ParamInfo] = {
         "D_hop",
         r"$D_{\mathrm{hop}}$",
         r"{\it D}_{hop}",
-        "μs⁻¹",
+        "µs⁻¹",
         default_min=0.0,
     ),
     "D_nD": ParamInfo(
-        "D_nD", "D_nD", "D_nD", r"$D_{nD}$", r"{\it D}_{nD}", "μs⁻¹", default_min=0.0
+        "D_nD", "D_nD", "D_nD", r"$D_{nD}$", r"{\it D}_{nD}", "µs⁻¹", default_min=0.0
     ),
     "D_perp": ParamInfo(
-        "D_perp", "D_perp", "D_⊥", r"$D_{\perp}$", r"{\it D}_{\perp}", "μs⁻¹", default_min=0.0
+        "D_perp", "D_perp", "D_⊥", r"$D_{\perp}$", r"{\it D}_{\perp}", "µs⁻¹", default_min=0.0
     ),
     "lambda_BG": ParamInfo(
         "lambda_BG",
@@ -367,7 +369,7 @@ PARAM_INFO_REGISTRY: dict[str, ParamInfo] = {
         "λ_BG",
         r"$\lambda_{BG}$",
         r"\lambda_{BG}",
-        "μs⁻¹",
+        "µs⁻¹",
         default_min=0.0,
     ),
     "lambda_0D": ParamInfo(
@@ -376,21 +378,21 @@ PARAM_INFO_REGISTRY: dict[str, ParamInfo] = {
         "λ_0D",
         r"$\lambda_{0D}$",
         r"\lambda_{0D}",
-        "μs⁻¹",
+        "µs⁻¹",
         default_min=0.0,
     ),
     "C": ParamInfo("C", "C", "C", r"$C$", r"{\it C}", "MHz", default_min=0.0),
     "sigma_0": ParamInfo(
-        "sigma_0", "sigma_0", "σ_0", r"$\sigma_0$", r"\sigma_{0}", "μs⁻¹", default_min=0.0
+        "sigma_0", "sigma_0", "σ_0", r"$\sigma_0$", r"\sigma_{0}", "µs⁻¹", default_min=0.0
     ),
     "sigma_bg": ParamInfo(
-        "sigma_bg", "sigma_bg", "σ_bg", r"$\sigma_{bg}$", r"\sigma_{bg}", "μs⁻¹", default_min=0.0
+        "sigma_bg", "sigma_bg", "σ_bg", r"$\sigma_{bg}$", r"\sigma_{bg}", "µs⁻¹", default_min=0.0
     ),
     "sigma_sc": ParamInfo(
-        "sigma_sc", "sigma_sc", "σ_sc", r"$\sigma_{sc}$", r"\sigma_{sc}", "μs⁻¹", default_min=0.0
+        "sigma_sc", "sigma_sc", "σ_sc", r"$\sigma_{sc}$", r"\sigma_{sc}", "µs⁻¹", default_min=0.0
     ),
     "sigma_nm": ParamInfo(
-        "sigma_nm", "sigma_nm", "σ_nm", r"$\sigma_{nm}$", r"\sigma_{nm}", "μs⁻¹", default_min=0.0
+        "sigma_nm", "sigma_nm", "σ_nm", r"$\sigma_{nm}$", r"\sigma_{nm}", "µs⁻¹", default_min=0.0
     ),
     "gap_ratio": ParamInfo(
         "gap_ratio",

@@ -203,7 +203,7 @@ def fft_complex_asymmetry(
     n_padded = n * max(padding_factor, 1)
 
     spectrum = np.fft.rfft(signal, n=n_padded)
-    freqs = np.fft.rfftfreq(n_padded, d=dt)  # MHz (since dt is in μs)
+    freqs = np.fft.rfftfreq(n_padded, d=dt)  # MHz (since dt is in µs)
 
     if phase_degrees or t0_offset_us:
         phase = np.deg2rad(float(phase_degrees)) + 2.0 * np.pi * freqs * float(t0_offset_us)

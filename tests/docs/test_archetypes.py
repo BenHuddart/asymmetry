@@ -120,7 +120,7 @@ def test_make_ybco_vortex_lattice_full_run() -> None:
 def test_make_pbf2_fmuf_long_time_window() -> None:
     ds = archetypes.make_pbf2_fmuf()
     assert ds.metadata["title"].startswith("PbF₂")
-    # The F-μ-F beat envelope requires t_max ≥ 15 μs to be visible.
+    # The F-μ-F beat envelope requires t_max ≥ 15 µs to be visible.
     assert ds.time[-1] >= 15.0
 
 

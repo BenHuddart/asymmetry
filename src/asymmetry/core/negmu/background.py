@@ -62,7 +62,7 @@ def subtract_capture_background(
     Parameters
     ----------
     time
-        Time axis (μs) — the same array used for the fit.
+        Time axis (µs) — the same array used for the fit.
     counts
         Raw count histogram on that time axis.
     fit
