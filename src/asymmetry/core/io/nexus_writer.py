@@ -190,7 +190,7 @@ def write_nexus_v1(run: Run, path: str | Path) -> None:
         h_data.create_dataset("grouping", data=_detector_group_ids(grouping, n_det))
         h_data.create_dataset("dead_time", data=dead_time)
         # V1 time_zero is a bin index; one value per detector preserves
-        # staggered t0 (WiMDA quantised a single value to whole μs here).
+        # staggered t0 (WiMDA quantised a single value to whole µs here).
         h_data.create_dataset("time_zero", data=t0_bins)
         h_data.create_dataset("first_good_bin", data=np.int32(first_good))
         h_data.create_dataset("last_good_bin", data=np.int32(last_good))

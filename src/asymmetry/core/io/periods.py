@@ -663,7 +663,7 @@ def build_rf_difference_scan(
         be a two-period (red/green) run; single-period runs are skipped and listed
         in :attr:`FieldScan.excluded`.
     t_min, t_max
-        Inclusive integration window in μs. ``None`` integrates the whole curve.
+        Inclusive integration window in µs. ``None`` integrates the whole curve.
     mode
         ``GREEN_MINUS_RED`` (default, the RF-µSR observable) or ``GREEN_PLUS_RED``.
     order_key

@@ -24,7 +24,7 @@ from tests.negmu.helpers import make_fb_template
 # ---------------------------------------------------------------------------
 
 N_BINS = 1024
-BIN_WIDTH = 0.016  # μs
+BIN_WIDTH = 0.016  # µs
 
 
 def _make_fb_template() -> Run:

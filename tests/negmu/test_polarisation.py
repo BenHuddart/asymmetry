@@ -36,8 +36,8 @@ from asymmetry.core.negmu.polarisation import (
 # ---------------------------------------------------------------------------
 
 N_BINS = 1024
-BIN_WIDTH = 0.016  # μs
-TIME = np.arange(N_BINS) * BIN_WIDTH  # 0 .. 16.368 μs
+BIN_WIDTH = 0.016  # µs
+TIME = np.arange(N_BINS) * BIN_WIDTH  # 0 .. 16.368 µs
 
 # Single-component spec (Carbon) for polarisation tests.
 SPEC_C = CaptureModelSpec(elements=("C",), include_decay_background=False)
@@ -285,8 +285,8 @@ class TestPolarisedFitRecovery:
     AMP_C = 2.0e6
     BG = 5.0
     A0 = 0.25
-    LAM = 0.15  # μs⁻¹
-    FREQ = 0.5  # MHz  (period 2 μs, ~8 full periods in 16 μs window)
+    LAM = 0.15  # µs⁻¹
+    FREQ = 0.5  # MHz  (period 2 µs, ~8 full periods in 16 µs window)
     PHASE = 0.0
 
     @pytest.fixture(scope="class")
@@ -337,7 +337,7 @@ class TestDiamagneticFitRecovery:
     AMP_C = 2.0e6
     BG = 5.0
     A0 = 0.20
-    FREQ = 0.4  # MHz — period 2.5 μs, ~6 full periods in 16 μs
+    FREQ = 0.4  # MHz — period 2.5 µs, ~6 full periods in 16 µs
     PHASE = 0.0
 
     @pytest.fixture(scope="class")

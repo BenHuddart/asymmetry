@@ -2074,7 +2074,7 @@ class SingleFitTab(QWidget):
 
         self._fit_range_max_spin = _FloatLimitField()
 
-        self._fit_range_unit_label = QLabel("μs")
+        self._fit_range_unit_label = QLabel("µs")
 
         fit_range_layout.addWidget(self._fit_range_min_spin)
         fit_range_layout.addWidget(self._fit_range_mid_label)
@@ -2180,7 +2180,7 @@ class SingleFitTab(QWidget):
             self._fit_wizard_btn.setToolTip("")
             self._formula_row_label.setText("A(t):")
             self._fit_range_mid_label.setText("≤ <i>t</i> ≤")
-            self._fit_range_unit_label.setText("μs")
+            self._fit_range_unit_label.setText("µs")
             self._fit_range_min_spin.setDecimals(3)
             self._fit_range_max_spin.setDecimals(3)
             self._fit_range_min_spin.setRange(-1000.0, 1000.0)
@@ -3129,7 +3129,7 @@ class GlobalFitTab(QWidget):
         self._count_baseline = False
         # Phase 3 count-loss + double pulse.
         self._count_deadtime = False
-        self._count_dpsep = 0.0  # μs; > 0 switches on the double-pulse model
+        self._count_dpsep = 0.0  # µs; > 0 switches on the double-pulse model
         self._count_dpsep_fit = False  # locate dpsep by a coarse->fine scan
         self._last_count_dt0: float | None = None
         self._last_count_group: int | None = None
@@ -3226,7 +3226,7 @@ class GlobalFitTab(QWidget):
         _fr_layout.addWidget(self._fit_range_min_spin)
         _fr_layout.addWidget(self._fit_range_mid_label)
         _fr_layout.addWidget(self._fit_range_max_spin)
-        self._fit_range_unit_label = QLabel("μs")
+        self._fit_range_unit_label = QLabel("µs")
         _fr_layout.addWidget(self._fit_range_unit_label)
         _fr_layout.addStretch()
         layout.addWidget(_fr_group)
@@ -3553,7 +3553,7 @@ class GlobalFitTab(QWidget):
         else:
             self._formula_row_label.setText("A(t):")
             self._fit_range_mid_label.setText("≤ <i>t</i> ≤")
-            self._fit_range_unit_label.setText("μs")
+            self._fit_range_unit_label.setText("µs")
             self._fit_range_min_spin.setDecimals(3)
             self._fit_range_max_spin.setDecimals(3)
             self._fit_range_min_spin.setRange(-1000.0, 1000.0)
@@ -4972,7 +4972,7 @@ class GlobalFitTab(QWidget):
         self._count_single_side = "backward" if str(side).lower() == "backward" else "forward"
 
     def set_count_exclude(self, exclude: tuple[float, float] | None) -> None:
-        """Set the optional interior exclude window (μs) for count fits."""
+        """Set the optional interior exclude window (µs) for count fits."""
         if exclude is None or float(exclude[1]) <= float(exclude[0]):
             self._count_exclude = None
         else:
@@ -4991,7 +4991,7 @@ class GlobalFitTab(QWidget):
         self._count_deadtime = bool(enabled)
 
     def set_count_dpsep(self, dpsep_us: float) -> None:
-        """Set the ISIS double-pulse separation (μs); 0 disables the double-pulse model."""
+        """Set the ISIS double-pulse separation (µs); 0 disables the double-pulse model."""
         try:
             value = float(dpsep_us)
         except (TypeError, ValueError):
@@ -5031,7 +5031,7 @@ class GlobalFitTab(QWidget):
                 "Deadtime promoted to grouping",
                 detail=(
                     f"Group {self._last_count_group} detectors: "
-                    f"{before:.5g} → {after:.5g} μs ({'added' if additive else 'replaced'}). "
+                    f"{before:.5g} → {after:.5g} µs ({'added' if additive else 'replaced'}). "
                     "Re-reduce the run to apply."
                 ),
             )

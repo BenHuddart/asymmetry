@@ -114,14 +114,14 @@ def test_write_gle_data_file_contains_column_map_and_sorted_rows(
     text = out.read_text(encoding="utf-8")
 
     assert "! Column map:" in text
-    assert "!   Lambda (μs⁻¹) = 0.5" in text
+    assert "!   Lambda (µs⁻¹) = 0.5" in text
     assert "!   c 1 = Run" in text
     assert "!   c 2 = B_field(G)" in text
     assert "!   c 3 = Temperature(K)" in text
     assert "!   c 4 = A0 (%)" in text
     assert "!   c 5 = err_A0 (%)" in text
-    assert "!   c 6 = Lambda (μs⁻¹)" in text
-    assert "!   c 7 = err_Lambda (μs⁻¹)" in text
+    assert "!   c 6 = Lambda (µs⁻¹)" in text
+    assert "!   c 7 = err_Lambda (µs⁻¹)" in text
 
     data_lines = [ln for ln in text.splitlines() if ln and not ln.startswith("!")]
     assert len(data_lines) == 2
@@ -180,7 +180,7 @@ def test_export_csv_headers_include_units(
     panel._export_csv()
 
     first_line = out.read_text(encoding="utf-8").splitlines()[0]
-    assert first_line == "Run,B (G),T (K),A0 (%),err_A0 (%),Lambda (μs⁻¹),err_Lambda (μs⁻¹)"
+    assert first_line == "Run,B (G),T (K),A0 (%),err_A0 (%),Lambda (µs⁻¹),err_Lambda (µs⁻¹)"
 
 
 def test_refresh_table_uses_run_label_for_combined_rows(qapp: QApplication) -> None:

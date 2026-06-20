@@ -54,9 +54,9 @@ def promote_t0_to_grouping(
     reference_run: int | None = None,
     group_id: int | None = None,
 ) -> dict:
-    """Write a fitted count-fit time-zero offset (μs) into the grouping ``t0_bin``.
+    """Write a fitted count-fit time-zero offset (µs) into the grouping ``t0_bin``.
 
-    The count-fit ``t0`` nuisance is a continuous μs offset relative to the
+    The count-fit ``t0`` nuisance is a continuous µs offset relative to the
     grouping's current time-zero, fitted per group. The persisted authority
     (``grouping["t0_bin"]``) is an integer bin index applied run-wide, so the
     promotion:

@@ -128,7 +128,7 @@ def _euo_specs() -> tuple[PresetRunSpec, ...]:
 
 
 def _ag_lf_specs() -> tuple[PresetRunSpec, ...]:
-    """Ag LF Kubo–Toyabe decoupling series, shared Δ = 0.39 μs⁻¹ (Ch. 5)."""
+    """Ag LF Kubo–Toyabe decoupling series, shared Δ = 0.39 µs⁻¹ (Ch. 5)."""
     lfkt = MODELS["LFKuboToyabe"].function
     return tuple(
         PresetRunSpec(
@@ -154,7 +154,7 @@ def _build_registry() -> dict[str, SimulatePreset]:
             description=(
                 "Zero-field silver polycrystal: the canonical static "
                 "nuclear-dipolar reference, a Gaussian Kubo–Toyabe with "
-                "Δ = 0.39 μs⁻¹."
+                "Δ = 0.39 µs⁻¹."
             ),
             template_key="ideal_pulsed_fb",
             seed=2301,

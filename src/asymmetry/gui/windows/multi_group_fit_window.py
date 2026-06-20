@@ -157,7 +157,7 @@ class MultiGroupFitWindow(QWidget):
         self._cost_combo.currentIndexChanged.connect(self._sync_count_fit_target)
         options_form.addRow(QLabel("Cost"), self._cost_combo)
 
-        # Interior exclude window (μs): inactive while max ≤ min.
+        # Interior exclude window (µs): inactive while max ≤ min.
         self._exclude_min = QDoubleSpinBox()
         self._exclude_max = QDoubleSpinBox()
         for spin in (self._exclude_min, self._exclude_max):
@@ -176,11 +176,11 @@ class MultiGroupFitWindow(QWidget):
         exclude_layout.addWidget(self._exclude_min)
         exclude_layout.addWidget(QLabel("–"))
         exclude_layout.addWidget(self._exclude_max)
-        # Relabelled from the bare "Exclude (μs)": the count fit *drops* these
+        # Relabelled from the bare "Exclude (µs)": the count fit *drops* these
         # bins from the fit (a hard skip), unlike the MaxEnt de-weight window
         # that keeps the FFT grid. The semantics differ; the labels now say so.
-        self._exclude_label = QLabel("Skip (μs)")
-        self._exclude_label.setToolTip("Interior bins to skip (exclude window, μs)")
+        self._exclude_label = QLabel("Skip (µs)")
+        self._exclude_label.setToolTip("Interior bins to skip (exclude window, µs)")
         options_form.addRow(self._exclude_label, exclude_row)
 
         self._t0_check = QCheckBox("Fit t₀ offset")
@@ -201,7 +201,7 @@ class MultiGroupFitWindow(QWidget):
         nuisance_layout.addWidget(self._deadtime_check)
         options_form.addRow(QLabel("Nuisances"), nuisance_row)
 
-        # Double-pulse separation (μs); 0 = single pulse. Fixed from the
+        # Double-pulse separation (µs); 0 = single pulse. Fixed from the
         # instrument, or located by a coarse->fine scan when "fit" is ticked.
         self._dpsep_spin = QDoubleSpinBox()
         self._dpsep_spin.setDecimals(3)
@@ -220,7 +220,7 @@ class MultiGroupFitWindow(QWidget):
         dpsep_layout.setContentsMargins(0, 0, 0, 0)
         dpsep_layout.addWidget(self._dpsep_spin)
         dpsep_layout.addWidget(self._dpsep_fit_check)
-        self._dpsep_label = QLabel("Double pulse (μs)")
+        self._dpsep_label = QLabel("Double pulse (µs)")
         options_form.addRow(self._dpsep_label, dpsep_row)
 
         # ── Collapsed: calibration (promote fitted count terms → the grouping). ──

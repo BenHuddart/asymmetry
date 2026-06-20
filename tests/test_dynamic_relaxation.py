@@ -218,7 +218,7 @@ def test_composites_build_and_evaluate() -> None:
 
 
 def test_metadata_units_citation_latex_infohelp() -> None:
-    expected_units = {"Delta": "μs⁻¹", "a_L": "μs⁻¹", "sigma": "μs⁻¹", "nu": "MHz", "B_L": "G"}
+    expected_units = {"Delta": "µs⁻¹", "a_L": "µs⁻¹", "sigma": "µs⁻¹", "nu": "MHz", "B_L": "G"}
     for name in NEW:
         comp = COMPONENTS[name]
         # paper citation present in the description

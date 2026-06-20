@@ -26,7 +26,7 @@ from tests.negmu.helpers import make_dataset
 # ---------------------------------------------------------------------------
 
 N_BINS = 1024
-BIN_WIDTH = 0.016  # μs
+BIN_WIDTH = 0.016  # µs
 GROUP_ID = 1
 
 
@@ -78,7 +78,7 @@ def _make_template():
 def cf_fit():
     """C + Fe only (no decayBG), background_per_bin=0 — well-separated τ values.
 
-    C has τ=2.030 μs, Fe has τ=0.206 μs (~10× apart).  No flat background so
+    C has τ=2.030 µs, Fe has τ=0.206 µs (~10× apart).  No flat background so
     the residual after subtracting Fe is a clean C signal.  Used for the
     Poisson-tolerance plausibility check.
     """
@@ -333,7 +333,7 @@ class TestCaptureBackgroundRun:
         err = abs(float(derived_group.time[0]) - float(src_group.time[0]))
         assert err <= 0.5 * bin_width_orig + 1e-9, (
             f"Time axis off by more than half a pre-rebin bin with bunching: "
-            f"err={err:.6f} μs (src={src_group.time[0]:.4f}, "
+            f"err={err:.6f} µs (src={src_group.time[0]:.4f}, "
             f"derived={derived_group.time[0]:.4f})"
         )
 
@@ -395,12 +395,12 @@ class TestCaptureBackgroundRun:
         derived_group = build_count_group(derived_dataset, GROUP_ID, lifetime_corrected=False)
 
         # Tolerance is the inherent ≤ ½ pre-rebin-bin midpoint shift, NOT the
-        # factor-of-bunch error the old code produced (~0.15 μs here).
+        # factor-of-bunch error the old code produced (~0.15 µs here).
         bin_width_fine = float(source_run.histograms[0].bin_width)
         err = abs(float(derived_group.time[0]) - float(src_group.time[0]))
         assert err <= 0.5 * bin_width_fine + 1e-9, (
             f"Time axis off by more than half a pre-rebin bin with bunching+offset: "
-            f"err={err:.6f} μs (src={src_group.time[0]:.4f}, derived={derived_group.time[0]:.4f})"
+            f"err={err:.6f} µs (src={src_group.time[0]:.4f}, derived={derived_group.time[0]:.4f})"
         )
 
     def test_time_axis_preserved_with_nonzero_offset(self, cfe_bg_fit):
@@ -456,8 +456,8 @@ class TestCaptureBackgroundRun:
         derived_group = build_count_group(derived_dataset, GROUP_ID, lifetime_corrected=False)
 
         assert abs(float(derived_group.time[0]) - expected_t0) < 1e-9, (
-            f"Time axis shifted: expected t[0]={expected_t0:.4f} μs, "
-            f"got {derived_group.time[0]:.4f} μs"
+            f"Time axis shifted: expected t[0]={expected_t0:.4f} µs, "
+            f"got {derived_group.time[0]:.4f} µs"
         )
 
     def test_derived_run_refittable(self, cf_fit):

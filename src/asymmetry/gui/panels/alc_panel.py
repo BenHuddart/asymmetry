@@ -87,7 +87,7 @@ class ALCFitPanel(QWidget):
         range_row.addWidget(self._min_spin)
         range_row.addWidget(mid_label)
         range_row.addWidget(self._max_spin)
-        range_row.addWidget(QLabel("μs"))
+        range_row.addWidget(QLabel("µs"))
         range_row.addStretch()
         window_layout.addLayout(range_row)
         hint = QLabel("Drag the shaded range on the time plot, or set it here.")
@@ -120,7 +120,7 @@ class ALCFitPanel(QWidget):
 
     @staticmethod
     def _make_time_spin() -> QDoubleSpinBox:
-        """A μs fit-range spinbox configured like the regular fit panel's."""
+        """A µs fit-range spinbox configured like the regular fit panel's."""
         spin = QDoubleSpinBox()
         spin.setDecimals(3)
         spin.setRange(-1000.0, 1000.0)

@@ -155,7 +155,7 @@ def lifetime(symbol: str) -> ElementLifetime:
 
 
 def tau_us(symbol: str) -> float:
-    """Return the capture lifetime (μs) for ``symbol``."""
+    """Return the capture lifetime (µs) for ``symbol``."""
     return lifetime(symbol).tau_us
 
 
