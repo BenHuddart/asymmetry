@@ -354,12 +354,12 @@ class FourierPanel(QWidget):
         self._filter_start_edit = QLineEdit("0.0")
         self._filter_start_edit.setFont(mono_font(11.0))
         self._filter_start_edit.setToolTip(_apodisation_hint)
-        apodisation_form.addRow("Filter start time (μs):", self._filter_start_edit)
+        apodisation_form.addRow("Filter start time (µs):", self._filter_start_edit)
 
         self._filter_time_constant_edit = QLineEdit("1.5")
         self._filter_time_constant_edit.setFont(mono_font(11.0))
         self._filter_time_constant_edit.setToolTip(_apodisation_hint)
-        apodisation_form.addRow("Filter time constant (μs):", self._filter_time_constant_edit)
+        apodisation_form.addRow("Filter time constant (µs):", self._filter_time_constant_edit)
 
         self._filter_button_group = QButtonGroup(self)
         self._filter_lorentzian_radio = QRadioButton("Lorentzian")
@@ -549,7 +549,7 @@ class FourierPanel(QWidget):
         self._pulse_width_edit.setPlaceholderText("auto (from metadata)")
         self._pulse_width_edit.setFont(mono_font(11.0))
         self._pulse_width_edit.setValidator(QDoubleValidator(0.0, 10.0, 6, self))
-        form.addRow("Pulse half-width (μs):", self._pulse_width_edit)
+        form.addRow("Pulse half-width (µs):", self._pulse_width_edit)
 
         self._pulse_max_gain_edit = QLineEdit("25")
         self._pulse_max_gain_edit.setFont(mono_font(11.0))
