@@ -33,6 +33,9 @@ CLEAN_FILES: list[str] = [
     "panels/fit_panel.py",
     "panels/fourier_panel.py",
     "panels/data_browser.py",
+    # plot_panel.py's period-mode base colours and the Okabe-Ito overlay palette
+    # were routed through tokens.py / styles/plots.py (F6, P2-6).
+    "panels/plot_panel.py",
     "panels/cross_group_fit_dialog.py",
     "panels/model_fit_dialog.py",
     "panels/composite_parameter_dialog.py",
@@ -102,6 +105,23 @@ def test_tokens_module_exports_expected_constants() -> None:
         "LOG_TAG_ACCENT",
         "LOG_TAG_OK",
         "LOG_TAG_WARN",
+        # F6 (P2-6) additions: data-trace palette, period-mode bases, preview
+        # fit colour, and the logged-value foreground.
+        "TRACE_BLUE",
+        "TRACE_SKY",
+        "TRACE_GREEN",
+        "TRACE_YELLOW",
+        "TRACE_MAGENTA",
+        "TRACE_BLACK",
+        "TRACE_ORANGE",
+        "TRACE_VERMILLION",
+        "PERIOD_RED",
+        "PERIOD_GREEN",
+        "PERIOD_DIFF",
+        "PERIOD_SUM",
+        "PLOT_FIT_PREVIEW",
+        "LOGGED_VALUE_FG",
+        "WHITE",
     ]
     missing = [name for name in required if not hasattr(tokens, name)]
     assert not missing, f"Missing token constants: {missing}"

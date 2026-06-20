@@ -41,7 +41,7 @@ def build_bench_palette() -> QPalette:
     palette.setColor(role.PlaceholderText, text_dim)
     palette.setColor(role.Button, surface)
     palette.setColor(role.ButtonText, text)
-    palette.setColor(role.BrightText, QColor("#ffffff"))
+    palette.setColor(role.BrightText, QColor(tokens.WHITE))
     palette.setColor(role.ToolTipBase, surface)
     palette.setColor(role.ToolTipText, text)
     palette.setColor(role.Highlight, accent_soft)
@@ -49,7 +49,7 @@ def build_bench_palette() -> QPalette:
     palette.setColor(role.Link, accent)
 
     # Bevel/frame shades Fusion derives 3D chrome from.
-    palette.setColor(role.Light, QColor("#ffffff"))
+    palette.setColor(role.Light, QColor(tokens.WHITE))
     palette.setColor(role.Midlight, surface_hi)
     palette.setColor(role.Mid, border)
     palette.setColor(role.Dark, border_strong)

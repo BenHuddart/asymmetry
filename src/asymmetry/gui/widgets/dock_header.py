@@ -17,12 +17,14 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QDockWidget, QHBoxLayout, QLabel, QPushButton, QWidget
 
 from asymmetry.gui.styles import tokens
-from asymmetry.gui.styles.fonts import mono_font
-from asymmetry.gui.styles.typography import header_font
+from asymmetry.gui.styles.typography import footer_font, header_font
 
+# Font-size is intentionally omitted: the glyph buttons inherit the (UI-scaled)
+# footer font set in __init__, so they track the UI-scale setting rather than
+# pinning a fixed 11px.
 _BUTTON_QSS = (
     "QPushButton { border: none; background: transparent; padding: 0 4px;"
-    f" color: {tokens.TEXT_MUTED}; font-size: 11px; }}"
+    f" color: {tokens.TEXT_MUTED}; }}"
     f"QPushButton:hover {{ background-color: {tokens.SURFACE_HI};"
     " border-radius: 3px; }"
 )
@@ -77,13 +79,14 @@ class DockHeader(QWidget):
             )
 
         self._meta_label = QLabel("")
-        self._meta_label.setFont(mono_font(10.0))
+        self._meta_label.setFont(footer_font())
         self._meta_label.setStyleSheet(f"color: {tokens.TEXT_MUTED}; background: transparent;")
         layout.addWidget(self._meta_label)
 
         if floatable:
             float_btn = QPushButton("↗")
             float_btn.setToolTip("Float / dock this panel")
+            float_btn.setFont(footer_font())
             float_btn.setStyleSheet(_BUTTON_QSS)
             float_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             float_btn.clicked.connect(self._toggle_floating)
@@ -91,6 +94,7 @@ class DockHeader(QWidget):
         if closable:
             close_btn = QPushButton("✕")
             close_btn.setToolTip("Close this panel (reopen from the View menu)")
+            close_btn.setFont(footer_font())
             close_btn.setStyleSheet(_BUTTON_QSS)
             close_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             close_btn.clicked.connect(self._dock.close)
