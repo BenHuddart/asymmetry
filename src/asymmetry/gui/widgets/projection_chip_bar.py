@@ -22,7 +22,16 @@ state — it emits :attr:`selection_changed` and the plot panel renders the rest
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QToolButton, QWidget
+from PySide6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QToolButton,
+    QWidget,
+)
 
 from asymmetry.gui.styles import tokens
 
@@ -48,9 +57,35 @@ class ProjectionChipBar(QWidget):
         self._label = QLabel("Projection:")
         layout.addWidget(self._label)
 
-        self._chip_row = QHBoxLayout()
+        # The chips live inside a horizontally-scrollable strip so a wide
+        # projection set (vector ALL mode with many groups) scrolls in place
+        # rather than pushing the plot's Pan/Zoom controls off-screen at narrow
+        # widths (the 1280px 13-inch case with the left dock open). The strip
+        # shrinks under layout pressure (small minimum) and only shows a
+        # scrollbar when the chips exceed the available width.
+        self._chip_host = QWidget()
+        self._chip_row = QHBoxLayout(self._chip_host)
+        self._chip_row.setContentsMargins(0, 0, 0, 0)
         self._chip_row.setSpacing(6)
-        layout.addLayout(self._chip_row)
+
+        self._chip_scroll = QScrollArea()
+        self._chip_scroll.setWidget(self._chip_host)
+        self._chip_scroll.setWidgetResizable(True)
+        self._chip_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._chip_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._chip_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # Preferred-but-shrinkable: claim the chips' natural width when there is
+        # room, yield (and scroll) when there is not, so neighbouring controls
+        # keep priority.
+        self._chip_scroll.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        # Keep the strip transparent so the toolbar surface shows through. Set
+        # the scroll area, its viewport, and the chip host directly rather than
+        # via a depth-specific descendant selector (the viewport is an anonymous
+        # widget, so a `QScrollArea > QWidget > QWidget` rule is fragile).
+        self._chip_scroll.setStyleSheet("background: transparent; border: none;")
+        self._chip_scroll.viewport().setStyleSheet("background: transparent;")
+        self._chip_host.setStyleSheet("background: transparent;")
+        layout.addWidget(self._chip_scroll)
 
         self._all_btn = QToolButton()
         self._all_btn.setText("all")

@@ -121,3 +121,31 @@ class TestProjectionChipBar:
         bar.set_projections(_VECTOR[:2])
         assert "P_z" not in bar._chips
         assert bar._chips["P_x"] is not chip_before
+
+    def test_wide_chip_set_scrolls_instead_of_overflowing(self, qapp):
+        """A chip set wider than the available width scrolls in place (P2-2).
+
+        At narrow widths the chips must not push the plot's neighbouring Pan/
+        Zoom controls off-screen; the strip keeps a small minimum and exposes a
+        horizontal scrollbar, while the label, the chips, and the "all" action
+        all remain present.
+        """
+        bar = ProjectionChipBar()
+        many = [{"label": f"P_{n}"} for n in ("x", "y", "z", "tot", "lng", "trv")]
+        bar.set_projections(many)
+        bar.show()
+
+        # The strip can shrink well below the chips' natural width (so the
+        # layout can keep neighbouring controls visible) ...
+        content_width = bar._chip_host.sizeHint().width()
+        assert bar._chip_scroll.minimumSizeHint().width() < content_width
+
+        # ... and when constrained, it scrolls rather than clipping silently.
+        bar._chip_scroll.setFixedWidth(80)
+        qapp.processEvents()
+        assert bar._chip_scroll.horizontalScrollBar().maximum() > 0
+
+        # Nothing is dropped: every chip plus the label and "all" survive.
+        assert set(bar._chips) == {p["label"] for p in many}
+        assert bar._label.isVisible()
+        assert bar._all_btn.isVisible()

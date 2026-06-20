@@ -1197,11 +1197,15 @@ class TestPlotPanel:
         )
 
         panel.plot_dataset(ds1)
+        # A deliberate manual limit edit takes control of the frame: it must
+        # survive switching runs (the "compare the same window across a run
+        # series" workflow). Drive the real edit path so the user-lock is set;
+        # an untouched auto-frame instead reframes to each switched-in dataset.
         panel._x_min.setValue(0.5)
         panel._x_max.setValue(2.5)
         panel._y_min.setValue(-0.1)
         panel._y_max.setValue(0.4)
-        panel._apply_limits()
+        panel._on_limit_fields_edited()
 
         panel.plot_dataset(ds2)
         panel.plot_dataset(ds1)
@@ -1232,6 +1236,142 @@ class TestPlotPanel:
         assert panel._x_max.value() == pytest.approx(2.75)
         assert panel._y_min.value() == pytest.approx(-0.2)
         assert panel._y_max.value() == pytest.approx(0.35)
+
+    def test_first_paint_reframes_on_dataset_switch(self, panel: PlotPanel) -> None:
+        """An untouched (auto-framed) view reframes to each switched-in dataset.
+
+        P1-1: the one-shot first-paint latch must re-arm when the displayed
+        content changes, so a run with a different natural scale is framed to
+        itself instead of inheriting the previous run's limits.
+        """
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.linspace(0.0, 10.0, 100)
+        e = np.full_like(t, 0.01)
+        small = MuonDataset(
+            time=t, asymmetry=0.2 * np.exp(-0.4 * t), error=e, metadata={"run_number": 5001}
+        )
+        large = MuonDataset(
+            time=t, asymmetry=4.0 * np.exp(-0.4 * t), error=e, metadata={"run_number": 5002}
+        )
+
+        panel.plot_dataset(small)
+        small_y_max = panel._y_max.value()
+
+        panel.plot_dataset(large)
+        large_y_max = panel._y_max.value()
+
+        # The larger-amplitude run reframes to its own (≈20×) scale rather than
+        # keeping the small run's frame.
+        assert large_y_max > small_y_max * 5
+
+    def test_first_paint_preserves_user_locked_limits_across_switch(self, panel: PlotPanel) -> None:
+        """A manual limit edit holds the window across a dataset switch (P1-1)."""
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.linspace(0.0, 10.0, 100)
+        e = np.full_like(t, 0.01)
+        ds_a = MuonDataset(
+            time=t, asymmetry=0.2 * np.exp(-0.4 * t), error=e, metadata={"run_number": 5101}
+        )
+        ds_b = MuonDataset(
+            time=t, asymmetry=4.0 * np.exp(-0.4 * t), error=e, metadata={"run_number": 5102}
+        )
+
+        panel.plot_dataset(ds_a)
+        panel._x_min.setValue(1.0)
+        panel._x_max.setValue(3.0)
+        panel._y_min.setValue(-0.5)
+        panel._y_max.setValue(0.5)
+        panel._on_limit_fields_edited()
+
+        panel.plot_dataset(ds_b)
+
+        assert panel._x_min.value() == pytest.approx(1.0)
+        assert panel._x_max.value() == pytest.approx(3.0)
+        assert panel._y_min.value() == pytest.approx(-0.5)
+        assert panel._y_max.value() == pytest.approx(0.5)
+
+    def test_stale_cross_session_latch_reframes_first_dataset(
+        self, panel: PlotPanel, sample_dataset: MuonDataset
+    ) -> None:
+        """Persisted cross-session limits must not suppress first-paint framing.
+
+        P1-1 root cause: ``_restore_plot_ranges_from_settings`` restores the
+        previous session's axis ranges and sets ``_limits_initialized`` without
+        framing any real data (``_framed_identity`` stays ``None``). The next
+        loaded dataset must reframe to itself rather than inherit the unrelated
+        stale ±220 % / pre-t0 window.
+        """
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        # Reproduce the post-startup state: stale limits, latch set, never framed.
+        panel._x_min.setValue(-1.47)
+        panel._x_max.setValue(2.0)
+        panel._y_min.setValue(-220.0)
+        panel._y_max.setValue(220.0)
+        panel._limits_initialized = True
+        panel._framed_identity = None
+        panel._limits_user_locked = False
+
+        panel.plot_dataset(sample_dataset)
+
+        # Reframed to the data: not the stale ±220 % envelope, and the lower x
+        # edge is clamped to t0 (=0) rather than the stale −1.47 µs.
+        assert panel._y_max.value() < 100.0
+        assert panel._y_min.value() > -100.0
+        assert panel._x_min.value() == pytest.approx(0.0)
+
+    def test_fit_overlay_redraw_preserves_frame(
+        self, panel: PlotPanel, sample_dataset: MuonDataset
+    ) -> None:
+        """Re-plotting the same dataset (a fit overlay) keeps the first-paint frame."""
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.plot_dataset(sample_dataset)
+        framed = panel.get_view_limits()
+
+        # plot_fit redraws via plot_dataset(current_dataset): same identity, so
+        # the auto-frame must not be recomputed/blown out.
+        panel.plot_dataset(sample_dataset)
+
+        assert panel.get_view_limits() == pytest.approx(framed)
+
+    def test_default_x_limits_clamps_pre_t0_band_in_time_domain(self, panel: PlotPanel) -> None:
+        """Time-domain first-paint x never frames into the empty pre-t0 band (P1-1)."""
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        # Time axis that dips below t0 (=0): the empty pre-t0 bins must be excluded.
+        t = np.linspace(-1.5, 8.0, 96)
+        a = 0.2 * np.exp(-0.3 * np.clip(t, 0.0, None))
+        limits = panel._default_x_limits(t, a)
+
+        assert limits is not None
+        assert limits[0] == pytest.approx(0.0)
+        assert limits[1] > 0.0
+
+    def test_vector_subplots_first_paint_clamps_pre_t0_band(self, panel: PlotPanel) -> None:
+        """Stacked vector subplots clamp first-paint x to t0 like the single view."""
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.linspace(-1.5, 8.0, 96)
+        e = np.full_like(t, 0.01)
+        a = 0.2 * np.exp(-0.3 * np.clip(t, 0.0, None))
+        datasets_by_axis = {
+            "P_x": [MuonDataset(time=t, asymmetry=a, error=e, metadata={"run_number": 4201})],
+            "P_y": [MuonDataset(time=t, asymmetry=a * 0.8, error=e, metadata={"run_number": 4201})],
+        }
+        panel._current_polarization_axis = "ALL"
+        panel.plot_vector_subplots(datasets_by_axis)
+
+        # First-paint x lower edge is clamped to t0 (=0), not the pre-t0 −1.5 µs.
+        assert panel._x_min.value() == pytest.approx(0.0)
 
     def test_plot_dataset(self, panel: PlotPanel, sample_dataset: MuonDataset) -> None:
         """Test plotting a single dataset."""
@@ -3887,9 +4027,12 @@ class TestPlotPanel:
         panel.plot_vector_subplots(datasets_by_axis)
         _set_pol(panel, ["ALL", "P_x", "P_y", "P_z"], "ALL")
 
+        # A deliberate zoom (manual edit) must survive switching the ALL-mode
+        # view down to a single projection; drive the real edit path so the
+        # user-lock holds the window across the content change.
         panel._x_min.setValue(1.5)
         panel._x_max.setValue(5.5)
-        panel._apply_limits()
+        panel._on_limit_fields_edited()
 
         _set_pol(panel, ["ALL", "P_x", "P_y", "P_z"], "P_x")
         panel.plot_dataset(datasets_by_axis["P_x"][0])
