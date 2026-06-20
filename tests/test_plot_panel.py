@@ -751,6 +751,60 @@ class TestPlotPanel:
         assert y_max == pytest.approx(raw_hi + (raw_hi - raw_lo) * 0.05)
         assert y_min == pytest.approx(raw_lo - (raw_hi - raw_lo) * 0.05)
 
+    def test_auto_y_frames_signal_despite_value_scatter_tail(self, panel: PlotPanel) -> None:
+        """Counts-depleted tail scatters the asymmetry *value*, not just the bar.
+
+        Round-10 finding #1: on the real TF-Ag run the late-time, counts-depleted
+        bins scatter to ±80 % asymmetry carrying their *own* moderate error
+        (~20 %). They are neither ±100 % sentinels (so the sentinel clip misses
+        them) nor error-divergent enough for the ceiling to bound them (the
+        outlier is the value, not the bar), so raw min/max reopens the ±220 %
+        blowout. Inverse-variance weighting must down-weight these high-error
+        bins so the frame still tracks the ~±20 % signal.
+        """
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        rng = np.random.default_rng(0)
+        # Well-measured signal: ±20 % precession, tiny error.
+        n_signal = 400
+        signal = 20.0 * np.cos(np.linspace(0.0, 30.0, n_signal))
+        signal_err = np.full(n_signal, 0.5)
+        # Counts-depleted tail: large |asymmetry| scatter, moderate (NOT
+        # divergent, NOT ±100 sentinel) error.
+        n_tail = 300
+        tail = rng.uniform(-80.0, 80.0, n_tail)
+        tail_err = np.full(n_tail, 20.0)
+
+        asym = np.concatenate([signal, tail])
+        err = np.concatenate([signal_err, tail_err])
+        mask = np.ones_like(asym, dtype=bool)
+
+        limits = panel._auto_y_limits_from_arrays(asym, err, mask)
+        assert limits is not None
+        y_min, y_max = limits
+        # Framed on the ±20 % signal, nowhere near the ±80 % scatter (+ margin).
+        assert y_max < 40.0
+        assert y_min > -40.0
+        # … and the signal is actually framed, not collapsed to a sliver.
+        assert y_max > 18.0
+        assert y_min < -18.0
+
+    def test_inverse_variance_weighted_bound_reduces_to_extremes(self, panel: PlotPanel) -> None:
+        """Uniform weights + tail quantile must reproduce the plain min/max.
+
+        Guards the no-regression contract: on uniform-error data the weighted
+        bound is the unweighted extreme, so clean ZF/LF framing is unchanged.
+        """
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        values = np.array([-10.0, -5.0, -2.0, 7.0, 10.0, 15.0])
+        err = np.full_like(values, 2.0)
+        q = 0.0025
+        assert panel._inverse_variance_weighted_bound(values, err, q) == pytest.approx(-10.0)
+        assert panel._inverse_variance_weighted_bound(values, err, 1.0 - q) == pytest.approx(15.0)
+
     def test_raw_counts_view_autoscale_keeps_high_count_signal(self, panel: PlotPanel) -> None:
         """Raw-counts view holds counts, not percent — never clip |y|≥100.
 
