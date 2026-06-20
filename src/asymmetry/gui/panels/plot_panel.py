@@ -374,6 +374,22 @@ class PlotPanel(QWidget):
             self._current_dataset = None
             self._current_datasets: list[MuonDataset] = []
             self._limits_initialized = False
+            # Signature of the content the current first-paint frame was computed
+            # for. First-paint auto-framing is one-shot per identity: it re-fires
+            # when the displayed content changes (a different run, axis, or
+            # view-mode) so a freshly loaded or switched dataset frames to itself
+            # instead of inheriting the previous view's — or a persisted
+            # cross-session — limits, but not on incidental redraws (bunching, fit
+            # overlays, annotations) that must preserve a user's manual zoom.
+            self._framed_identity: tuple | None = None
+            # Set once the user takes explicit control of the limits (edits a
+            # limit field, or opens a project whose saved view is restored).
+            # While set, a content switch keeps the current limits instead of
+            # reframing — so the "compare the same window across a run series"
+            # workflow survives switching runs. Auto-framing never sets it, so an
+            # untouched view reframes to each newly shown dataset. Cleared by
+            # clear() (a blank/new view starts fresh).
+            self._limits_user_locked = False
             self._current_polarization_axis: str | None = None
             # Ordered projection specs ({"label", "tint"}) and the per-label tint
             # lookup used for frame-tinting subplots; driven by the chip bar.
@@ -497,8 +513,13 @@ class PlotPanel(QWidget):
         self._y_min.editingFinished.connect(self._on_y_limit_field_edited)
         self._y_max.editingFinished.connect(self._on_y_limit_field_edited)
 
-        # Keep bunching control internal (hidden) for backward compatibility
-        # with project state and tests; it is intentionally not shown in UI.
+        # Bunching has a single user-facing control — the toolbar "Bunch:"
+        # spinbox (mainwindow), which drives this panel via set_bunch_factor().
+        # This hidden spinbox is NOT a second UI path: it is the canonical
+        # backing store for the panel's bunch value, read by get/set_bunch_factor
+        # and persisted in project state (the "bunch_factor" key). It is kept as
+        # a (hidden) QSpinBox rather than a plain int so the existing value/
+        # signal API and saved-project schema stay stable. Never show it.
         self._bunch_factor = QSpinBox()
         self._bunch_factor.setRange(1, 1000)
         self._bunch_factor.setValue(1)
@@ -1446,6 +1467,9 @@ class PlotPanel(QWidget):
 
     def _on_limit_fields_edited(self) -> None:
         """Apply edited limits and refresh display density for the new viewport."""
+        # An explicit limit edit is the user taking control: hold these limits
+        # across later content switches rather than reframing over them.
+        self._limits_user_locked = True
         self._apply_limits(schedule_viewport_refresh=True)
 
     def _on_x_limit_field_edited(self) -> None:
@@ -3053,16 +3077,18 @@ class PlotPanel(QWidget):
         self._last_plot_error = last_arrays[2]
         self._last_low_count_mask = last_arrays[3]
 
+        self._reframe_if_content_changed()
         if (not self._limits_initialized) and self._last_plot_time is not None:
-            x_min = float(np.min(self._last_plot_time))
-            x_max = float(np.max(self._last_plot_time))
-            xpad = (x_max - x_min) * 0.05
-            self._x_min.setValue(self._convert_frequency_axis_limit_to_control_value(x_min - xpad))
-            self._x_max.setValue(self._convert_frequency_axis_limit_to_control_value(x_max + xpad))
+            # Route x through _default_x_limits so the shared pad + t0 lower-clamp
+            # apply here exactly as in the single/overlay views (no pre-t0 band).
+            x_limits = self._default_x_limits(self._last_plot_time, self._last_plot_asymmetry)
+            if x_limits is not None:
+                self._x_min.setValue(x_limits[0])
+                self._x_max.setValue(x_limits[1])
             # Frame each subplot to its own signal so first paint isn't squashed by
             # matplotlib autoscaling over sentinel/late-tail points.
             self._frame_subplot_axes_to_signal()
-            self._limits_initialized = True
+            self._mark_frame_initialized()
 
         if vector_x_ranges and (self._fit_x_min is None or self._fit_x_max is None):
             seed = self._raw_fit_seed_range(
@@ -3159,16 +3185,18 @@ class PlotPanel(QWidget):
         self._last_plot_error = last_arrays[2]
         self._last_low_count_mask = last_arrays[3]
 
+        self._reframe_if_content_changed()
         if (not self._limits_initialized) and self._last_plot_time is not None:
-            x_min = float(np.min(self._last_plot_time))
-            x_max = float(np.max(self._last_plot_time))
-            xpad = (x_max - x_min) * 0.05
-            self._x_min.setValue(self._convert_frequency_axis_limit_to_control_value(x_min - xpad))
-            self._x_max.setValue(self._convert_frequency_axis_limit_to_control_value(x_max + xpad))
+            # Route x through _default_x_limits so the shared pad + t0 lower-clamp
+            # apply here exactly as in the single/overlay views (no pre-t0 band).
+            x_limits = self._default_x_limits(self._last_plot_time, self._last_plot_asymmetry)
+            if x_limits is not None:
+                self._x_min.setValue(x_limits[0])
+                self._x_max.setValue(x_limits[1])
             # Frame each group's subplot to its own signal so first paint isn't
             # squashed by matplotlib autoscaling over sentinel/late-tail points.
             self._frame_subplot_axes_to_signal()
-            self._limits_initialized = True
+            self._mark_frame_initialized()
 
         if grouped_x_ranges and (self._fit_x_min is None or self._fit_x_max is None):
             seed = self._raw_fit_seed_range(list(datasets))
@@ -3585,6 +3613,7 @@ class PlotPanel(QWidget):
             self._last_low_count_mask = np.concatenate(all_low)
             style_legend(self._ax.legend())
 
+            self._reframe_if_content_changed()
             if not self._limits_initialized:
                 t_all = self._last_plot_time
                 a_all = self._last_plot_asymmetry
@@ -3607,7 +3636,7 @@ class PlotPanel(QWidget):
                     y_limits = (y_min - ypad, y_max + ypad)
                 self._y_min.setValue(y_limits[0])
                 self._y_max.setValue(y_limits[1])
-                self._limits_initialized = True
+                self._mark_frame_initialized()
 
             # Set fit range to span all datasets (raw axes — see _raw_fit_seed_range).
             if self._fit_x_min is None or self._fit_x_max is None:
@@ -3831,7 +3860,11 @@ class PlotPanel(QWidget):
 
         style_legend(self._ax.legend())
 
-        # Initialize limits once; preserve user-set limits on redraw.
+        # Initialize limits once per content; preserve user-set limits on redraw.
+        # Re-arm when the displayed run/axis/view-mode changed so a switched or
+        # freshly loaded dataset frames to itself instead of inheriting stale
+        # (incl. persisted cross-session) limits.
+        self._reframe_if_content_changed()
         if not self._limits_initialized:
             # X first: time panels span the full data; frequency panels frame the
             # dominant non-DC peak so high-TF Larmor lines aren't squashed off the
@@ -3851,7 +3884,7 @@ class PlotPanel(QWidget):
                 y_limits = (y_min - y_padding, y_max + y_padding)
             self._y_min.setValue(y_limits[0])
             self._y_max.setValue(y_limits[1])
-            self._limits_initialized = True
+            self._mark_frame_initialized()
 
         if self._fit_x_min is None or self._fit_x_max is None:
             seed = self._raw_fit_seed_range([dataset])
@@ -3919,6 +3952,56 @@ class PlotPanel(QWidget):
         self._emit_view_limits_changed()
         if schedule_viewport_refresh and not self._viewport_refresh_in_progress:
             self._schedule_viewport_refresh()
+
+    def _current_frame_identity(self) -> tuple:
+        """Signature of what is currently plotted, for first-paint reframing.
+
+        Captures the dimensions that change the natural axis scale — which runs
+        are shown, the polarization axis, the time-view mode (asymmetry vs raw
+        counts vs groups), and the stacked subplot set. Incidental redraws
+        (bunching, fit overlays, annotation edits) leave every component
+        unchanged, so the frame — and any manual zoom layered on top of it — is
+        preserved; a genuine content switch changes at least one component and
+        re-arms first-paint framing. The frequency x-unit is deliberately *not*
+        included: switching MHz↔field is a coordinate transform that converts
+        the existing limits in place, not a content change that should reframe.
+
+        Must be called after the plot path has set the current dataset/axis/
+        view-mode state so the signature reflects what is about to be drawn.
+        """
+        runs: list[int] = []
+        for dataset in self._current_datasets or ():
+            try:
+                runs.append(int(dataset.run_number))
+            except (TypeError, ValueError, AttributeError):
+                runs.append(id(dataset))
+        return (
+            tuple(sorted(runs)),
+            self._current_polarization_axis,
+            getattr(self, "_current_time_view_mode", None),
+            self._is_frequency_plot_panel(),
+            tuple(sorted(self._subplot_axes_by_polarization)),
+        )
+
+    def _reframe_if_content_changed(self) -> None:
+        """Re-arm first-paint auto-framing when the plotted content identity changed.
+
+        Resets the one-shot ``_limits_initialized`` latch so the per-path
+        first-paint block recomputes data-derived limits for the new content.
+        A no-op when the identity is unchanged, so manual zoom and persisted
+        same-content limits survive incidental redraws, and a no-op once the
+        user has taken explicit control of the limits (see
+        ``_limits_user_locked``), so a deliberate window survives run switches.
+        """
+        if self._limits_user_locked:
+            return
+        if self._current_frame_identity() != self._framed_identity:
+            self._limits_initialized = False
+
+    def _mark_frame_initialized(self) -> None:
+        """Record that the current content has been first-paint framed."""
+        self._limits_initialized = True
+        self._framed_identity = self._current_frame_identity()
 
     def _apply_auto_limits_if_enabled(self) -> None:
         """Re-apply persistent auto-limit toggles after a dataset redraw."""
@@ -3990,9 +4073,19 @@ class PlotPanel(QWidget):
             pad = max(abs(x_min) * 0.05, 1e-6)
         else:
             pad = (x_max - x_min) * 0.05
+        lower = x_min - pad
+        upper = x_max + pad
+        # Time panels: the displayed time axis is t0-referenced (muon arrival at
+        # t=0), so never frame into the empty pre-t0 band — clamp the lower edge
+        # to t0 whether the data merely pads below zero or actually carries
+        # pre-t0 bins. Skipped on frequency axes (0 is not a meaningful edge
+        # there; the DC-bin lower edge is handled above) and in the degenerate
+        # all-negative case (keep the data visible rather than invert the range).
+        if not self._is_frequency_plot_panel() and upper > 0.0:
+            lower = max(lower, 0.0)
         return (
-            self._convert_frequency_axis_limit_to_control_value(x_min - pad),
-            self._convert_frequency_axis_limit_to_control_value(x_max + pad),
+            self._convert_frequency_axis_limit_to_control_value(lower),
+            self._convert_frequency_axis_limit_to_control_value(upper),
         )
 
     def _frequency_peak_upper_bound(self, freqs: np.ndarray, values: np.ndarray) -> float | None:
@@ -5488,6 +5581,8 @@ class PlotPanel(QWidget):
             self._fit_metadata = {}
             self._fit_metadata_by_key = {}
             self._limits_initialized = False
+            self._limits_user_locked = False
+            self._framed_identity = None
             self._last_plot_time = None
             self._last_plot_asymmetry = None
             self._last_plot_error = None
@@ -6886,8 +6981,11 @@ class PlotPanel(QWidget):
             spin.blockSignals(False)
 
         # Treat restored limits as user-defined so later dataset additions do
-        # not overwrite them with auto-derived bounds.
+        # not overwrite them with auto-derived bounds — a restored project view
+        # is explicit user intent, held across content switches like a manual
+        # edit (see _limits_user_locked).
         self._limits_initialized = True
+        self._limits_user_locked = True
 
         fit_x_min = state.get("fit_x_min")
         fit_x_max = state.get("fit_x_max")
@@ -7018,8 +7116,21 @@ class PlotPanel(QWidget):
             self._current_dataset = dataset
             self.plot_dataset(dataset)
 
-        # Re-apply saved axis limits after dataset redraw, which may reset
-        # field values to data-derived defaults.
+        # Draw the fit-range span first: on an axis that was not (re)plotted
+        # with data, drawing artists triggers a Matplotlib autoscale whose
+        # margins would otherwise feed back through the axis-limit callback and
+        # overwrite the restored view limits. Doing it before the limit re-apply
+        # keeps the restored window authoritative.
+        if fit_x_min is not None and fit_x_max is not None:
+            self._set_fit_range(
+                float(fit_x_min),
+                float(fit_x_max),
+                emit_signal=False,
+                redraw=True,
+            )
+
+        # Re-apply saved axis limits last, after any redraw/autoscale, so the
+        # restored view wins over data-derived or autoscale-margin defaults.
         for spin, key, default in (
             (self._x_min, "x_min", 0.0),
             (self._x_max, "x_max", 10.0),
@@ -7029,14 +7140,6 @@ class PlotPanel(QWidget):
             spin.blockSignals(True)
             spin.setValue(state.get(key, default))
             spin.blockSignals(False)
-
-        if fit_x_min is not None and fit_x_max is not None:
-            self._set_fit_range(
-                float(fit_x_min),
-                float(fit_x_max),
-                emit_signal=False,
-                redraw=True,
-            )
 
         # Always apply the restored limits.
         self._apply_limits()
