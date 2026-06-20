@@ -126,7 +126,7 @@ _AUTO_PPM_MAX = 1.0e-3
 def resolve_auto_unit(values: Iterable[float]) -> KnightShiftUnit:
     """Pick ppm vs percent for a set of Knight shifts (fractions).
 
-    Returns :attr:`KnightShiftUnit.PPM` when the largest finite |K| is below
+    Returns :attr:`KnightShiftUnit.PPM` when the largest finite :math:`|K|` is below
     :data:`_AUTO_PPM_MAX`, else :attr:`KnightShiftUnit.PERCENT`. An empty or
     all-non-finite set defaults to ppm.
     """

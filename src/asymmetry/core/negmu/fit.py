@@ -122,7 +122,7 @@ def default_capture_parameters(
     ``tau_<label>`` (fixed unless label in spec.free_tau; freed τ bounded to
     ``[0.5×, 2×]`` the table value, widened to include any explicit seed
     override). ``background`` (free, ≥0) — seeded from the late-time floor.
-    ``seeds`` overrides any amp_/tau_/background value before Parameter creation.
+    ``seeds`` overrides any ``amp_``/``tau_``/``background`` value before Parameter creation.
     """
     comps = spec.components()
     n_comp = len(comps)

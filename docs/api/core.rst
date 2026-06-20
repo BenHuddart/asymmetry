@@ -10,11 +10,11 @@ uncertainty, plus a metadata dictionary and a reference back to the
 :class:`~asymmetry.core.data.dataset.Run` it was computed from. The
 :class:`~asymmetry.core.data.dataset.Run` carries the raw per-detector
 :class:`~asymmetry.core.data.dataset.Histogram` records and the
-grouping payload (see :doc:`/user_guide/detector_grouping`) and is
+grouping payload (see :doc:`/reference/detector_grouping`) and is
 what :func:`asymmetry.core.io.load` returns for raw-histogram files.
 The :class:`~asymmetry.core.data.logbook.Logbook` collects multiple
 runs into a searchable, tag-filterable run table (see
-:doc:`/user_guide/logbook`), and the instrument-geometry classes below
+:doc:`/reference/logbook`), and the instrument-geometry classes below
 define the detector banks and preset groupings for the supported
 spectrometers.
 
@@ -90,7 +90,7 @@ Simulation
 ----------
 
 Synthetic-run generation and statistics degradation (see
-:doc:`/user_guide/simulation`): Poisson draws of expected per-detector
+:doc:`/reference/simulation`): Poisson draws of expected per-detector
 counts from an instrument template — a loaded run or a built-in idealised
 instrument — exact binomial thinning of measured runs, per-group amplitude
 and phase simulation, and the promoted screenshot-archetype builders.

@@ -1,7 +1,7 @@
 """Penetration depth λ_L(T) for MgB₂ derived from σ(T).
 
 Companion screenshot to
-:doc:`/user_guide/workflows/superconductor_penetration_depth`. The σ(T)
+:doc:`/workflows/superconductor_penetration_depth`. The σ(T)
 trend from ``make_mgb2_sigma_t`` is converted to a London penetration
 depth using Asymmetry's canonical
 :func:`asymmetry.core.fitting.sc.constants.sigma_to_lambda_nm`, with the

@@ -1,7 +1,7 @@
 """Converged single fit on the EuO T=30 K run.
 
 Companion screenshot to
-:doc:`/user_guide/workflows/temperature_scan_magnetism`. Selects the lowest-
+:doc:`/workflows/temperature_scan_magnetism`. Selects the lowest-
 temperature EuO run (T=30 K, well inside the ordered phase) and fits the
 ``Oscillatory * Exponential + Constant`` composite that the workflow text
 recommends for the below-Tc regime. The screenshot captures the fit panel

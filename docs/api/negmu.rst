@@ -5,7 +5,7 @@ Negative-Muon Analysis API (Experimental)
 
    **Experimental — work in progress.** The :mod:`asymmetry.core.negmu`
    package is unvalidated against real μ⁻ data; see
-   :doc:`/user_guide/negative_muon_analysis` for the full disclaimer,
+   :doc:`/reference/negative_muon_analysis` for the full disclaimer,
    physics background, and worked example.
 
 .. currentmodule:: asymmetry.core.negmu

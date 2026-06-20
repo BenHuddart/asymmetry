@@ -6,7 +6,7 @@ Fourier Analysis
 The Fourier subsystem exposes :mod:`asymmetry.core.fourier.fft` for
 direct FFT-based spectra of any time-domain dataset, with the
 WiMDA-compatible filter / apodisation model documented in
-:doc:`/user_guide/fourier_analysis`, and
+:doc:`/reference/fourier_analysis`, and
 :mod:`asymmetry.core.fourier.window` for the windowing primitives the
 FFT path uses. :mod:`asymmetry.core.fourier.maxent` is a placeholder
 for the maximum-entropy reconstruction currently on the roadmap;

@@ -19,7 +19,7 @@ and matches musrfit's ``PRunAsymmetry`` pipeline:
 deadtime → background → grouping → asymmetry. The user-facing
 documentation of these steps and of Asymmetry's conventions (alpha
 applied to the backward group; Mantid-style uncertainty handling at
-zero denominator) is in :doc:`/user_guide/data_processing`.
+zero denominator) is in :doc:`/reference/data_processing`.
 
 Asymmetry Calculation
 ----------------------

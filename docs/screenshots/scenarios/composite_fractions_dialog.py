@@ -5,7 +5,7 @@ Drives the composite-model expression editor with
 "two-component shared-amplitude budget" pattern useful for
 muonium-pair populations, magnetic-volume-fraction analyses, and
 critical-region composites. Companion to
-:doc:`/user_guide/composite_models`.
+:doc:`/reference/composite_models`.
 """
 
 from __future__ import annotations
