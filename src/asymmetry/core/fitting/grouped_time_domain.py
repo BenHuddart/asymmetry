@@ -34,6 +34,7 @@ from asymmetry.core.fitting.global_search.heuristics import (
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet, split_parameter_name
 from asymmetry.core.fitting.process_pool import open_spawn_pool
+from asymmetry.core.fitting.series_seeding import recommend_series_seeding
 from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
 from asymmetry.core.transform.grouping import (
     apply_grouping_aligned,
@@ -880,34 +881,13 @@ def recommend_grouped_series_seeding(
     numeric ``order_key`` (run → temperature/field) spans a real range over at least
     ``min_members`` members; otherwise it leaves the caller's seeds in place. The
     returned ``reason`` is meant to be surfaced to the user — Auto is never silent.
+
+    Delegates to the shared :func:`recommend_series_seeding` policy so the grouped and
+    F-B asymmetry batch paths agree on when to chain; the result is wrapped in the
+    grouped :class:`SeedingRecommendation` for backward compatibility.
     """
-    runs = [int(r) for r in member_runs]
-    n = len(runs)
-    if n < min_members:
-        return SeedingRecommendation(
-            "as_provided",
-            f"{n} member(s): too few to chain (need ≥ {min_members}) — using independent seeds",
-        )
-    if not order_key:
-        return SeedingRecommendation(
-            "as_provided",
-            "no temperature/field order key — members are unordered, using independent seeds",
-        )
-    values = [
-        float(order_key[r])
-        for r in runs
-        if r in order_key and order_key[r] is not None and math.isfinite(float(order_key[r]))
-    ]
-    if len(values) < n or len(set(values)) < 2:
-        return SeedingRecommendation(
-            "as_provided",
-            "order key missing or constant across members — using independent seeds",
-        )
-    lo, hi = min(values), max(values)
-    return SeedingRecommendation(
-        "chain",
-        f"ordered scan over {n} members spanning {lo:g}–{hi:g} — chaining from previous run",
-    )
+    shared = recommend_series_seeding(member_runs, order_key, min_members=min_members)
+    return SeedingRecommendation(shared.mode, shared.reason)
 
 
 def _chained_initial_from_member(

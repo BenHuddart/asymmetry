@@ -106,6 +106,12 @@ from asymmetry.core.fitting.rrf_offset import (
     UnsupportedRRFComponentError,
     rrf_frequency_offsets,
 )
+from asymmetry.core.fitting.series import fit_asymmetry_series
+from asymmetry.core.fitting.series_seeding import (
+    SeriesPoint,
+    diagnose_series,
+    resolve_series_params,
+)
 from asymmetry.core.fitting.spectral import (
     append_frequency_field_derived_parameters,
     default_frequency_model,
@@ -132,6 +138,7 @@ from asymmetry.gui.styles.widgets import (
     error_html,
     fit_quality_chip_html,
     fit_quality_tooltip,
+    info_html,
     make_formula_box,
     make_section,
     make_section_header,
@@ -3031,6 +3038,12 @@ class GlobalFitTab(QWidget):
         # Batch-series seeding mode (menu-bar "Batch seeding"); "auto" picks
         # chain-from-previous for ordered scans, else independent seeds.
         self._batch_seeding_mode = "auto"
+        # Seeding metadata from the last block-separable F-B series fit (resolved
+        # mode + reason + reseeded runs), surfaced in the results box.
+        self._series_seeding_meta: dict[str, object] | None = None
+        # Suggested per-run descending-frequency seeds from the last batch's
+        # diagnostics, applied by the "Use suggested per-run seeds" signpost button.
+        self._suggested_series_seeds: dict[int, dict[str, float]] = {}
         # In-batch co-add of successive grouped-series members before fitting
         # (WiMDA BatchFit Smooth/Bin). "off" disables; "bin"/"smooth" co-add
         # ``_coadd_window`` successive members per fit via combine_runs.
@@ -3382,6 +3395,43 @@ class GlobalFitTab(QWidget):
         self._result_text.setText("No fit performed yet")
         results_layout.addWidget(self._result_text)
         layout.addWidget(self._results_group)
+
+        # Seeding signpost — hidden until a batch's ν(T)/A(T) trend shows the
+        # near-transition collapse/outlier signature. It points a struggling user
+        # at the per-run "Initial Values…" warm-start and offers to apply the
+        # descending-frequency seeds the diagnostics computed.
+        self._seeding_signpost = QFrame()
+        self._seeding_signpost.setObjectName("seedingSignpost")
+        self._seeding_signpost.setStyleSheet(
+            f"#seedingSignpost {{ border: 1px solid {tokens.WARN}; border-radius: 4px; }}"
+        )
+        signpost_layout = QVBoxLayout(self._seeding_signpost)
+        signpost_layout.setContentsMargins(8, 6, 8, 6)
+        signpost_layout.setSpacing(4)
+        self._seeding_signpost_label = QLabel("")
+        self._seeding_signpost_label.setWordWrap(True)
+        signpost_layout.addWidget(self._seeding_signpost_label)
+        signpost_btn_row = QHBoxLayout()
+        signpost_btn_row.setSpacing(6)
+        self._apply_suggested_seeds_btn = QPushButton("Use suggested per-run seeds")
+        self._apply_suggested_seeds_btn.setToolTip(
+            "Fill the per-run Initial Values table with descending frequency seeds "
+            "interpolated from the runs that fit cleanly, then re-run the batch."
+        )
+        self._apply_suggested_seeds_btn.clicked.connect(self._apply_suggested_series_seeds)
+        self._open_initial_values_from_signpost_btn = QPushButton("Open Initial Values…")
+        self._open_initial_values_from_signpost_btn.setToolTip(
+            "Open the per-run seed table to edit warm-start values by hand."
+        )
+        self._open_initial_values_from_signpost_btn.clicked.connect(
+            self._open_initial_values_dialog
+        )
+        signpost_btn_row.addWidget(self._apply_suggested_seeds_btn)
+        signpost_btn_row.addWidget(self._open_initial_values_from_signpost_btn)
+        signpost_btn_row.addStretch(1)
+        signpost_layout.addLayout(signpost_btn_row)
+        self._seeding_signpost.hide()
+        layout.addWidget(self._seeding_signpost)
 
         layout.addStretch()
 
@@ -4655,24 +4705,95 @@ class GlobalFitTab(QWidget):
         # The started signal lets listeners snapshot launch-time context (e.g.
         # which frequency representation the datasets came from) before any UI
         # refresh can change it; emit before the worker can produce a result.
+        # The F-B asymmetry batch is *block-separable* when no Global parameter is
+        # free (every free parameter is Local): each run is an independent
+        # minimisation, so the batch can chain from the previous good run and
+        # detect-and-reseed a run that lands on the spurious near-transition branch.
+        # A real simultaneous fit (a free Global ties the runs together) cannot chain
+        # and keeps the proven global_fit path.
+        free_global_params = [
+            name for name in global_params if name not in fixed_params and name not in file_params
+        ]
+        self._series_seeding_meta = None
         self.global_fit_started.emit()
-        # global_fit returns (results_dict, fitted_global) — unpack into the
-        # two-argument finished handler on the GUI thread.
-        self._fit_worker = _start_fit_call(
-            self,
-            functools.partial(
-                self._fit_engine.global_fit,
-                self._datasets,
-                self._composite_model.function,
-                global_params,
-                local_params,
-                initial_params,
-                minos=self._minos_checkbox.isChecked(),
-            ),
-            on_finished=lambda result: self._on_fit_finished(*result),
-            on_error=self._on_fit_error,
-            on_cancelled=self._on_series_fit_cancelled,
-        )
+        if not free_global_params:
+            amplitude_param, frequency_param = resolve_series_params(model.param_names)
+            self._fit_worker = _start_fit_call(
+                self,
+                functools.partial(
+                    fit_asymmetry_series,
+                    self._datasets,
+                    self._composite_model.function,
+                    global_params,
+                    local_params,
+                    initial_params,
+                    fit_engine=self._fit_engine,
+                    minos=self._minos_checkbox.isChecked(),
+                    seeding=self._batch_seeding_mode,
+                    order_key=self._asymmetry_series_order_key(),
+                    amplitude_param=amplitude_param,
+                    frequency_param=frequency_param,
+                ),
+                on_finished=self._on_asymmetry_series_finished,
+                on_error=self._on_fit_error,
+                on_cancelled=self._on_series_fit_cancelled,
+            )
+        else:
+            # global_fit returns (results_dict, fitted_global) — unpack into the
+            # two-argument finished handler on the GUI thread.
+            self._fit_worker = _start_fit_call(
+                self,
+                functools.partial(
+                    self._fit_engine.global_fit,
+                    self._datasets,
+                    self._composite_model.function,
+                    global_params,
+                    local_params,
+                    initial_params,
+                    minos=self._minos_checkbox.isChecked(),
+                ),
+                on_finished=lambda result: self._on_fit_finished(*result),
+                on_error=self._on_fit_error,
+                on_cancelled=self._on_series_fit_cancelled,
+            )
+
+    def _asymmetry_series_order_key(self) -> dict[int, float] | None:
+        """Best-effort run → temperature/field order key for the F-B batch.
+
+        Chaining follows the physical scan order; Auto only chains when a usable
+        ordered key exists. Returns ``None`` when any selected run lacks scan
+        metadata, so Auto safely falls back to independent seeds.
+        """
+        order: dict[int, float] = {}
+        for dataset in self._datasets:
+            meta = getattr(dataset, "metadata", None) or {}
+            value: float | None = None
+            for key in ("temperature", "temperature_k", "field", "field_g"):
+                raw = meta.get(key)
+                if raw is not None:
+                    try:
+                        value = float(raw)
+                    except (TypeError, ValueError):
+                        value = None
+                    break
+            if value is None:
+                return None
+            order[int(dataset.run_number)] = value
+        return order or None
+
+    def _on_asymmetry_series_finished(self, series: object) -> None:
+        """Adapt a chained F-B series result into the shared finished handler.
+
+        Stashes the resolved seeding mode/reason and any reseeded runs so the
+        results box can report them, then routes the per-run results through the
+        common :meth:`_on_fit_finished` path (which also runs the outlier signpost).
+        """
+        self._series_seeding_meta = {
+            "seeding_used": getattr(series, "seeding_used", ""),
+            "seeding_reason": getattr(series, "seeding_reason", ""),
+            "reseeded_runs": tuple(getattr(series, "reseeded_runs", ())),
+        }
+        self._on_fit_finished(series.results, series.fitted_global)
 
     def _run_grouped_time_domain_fit(self) -> None:
         """Execute grouped time-domain fitting for the active dataset."""
@@ -5419,6 +5540,11 @@ class GlobalFitTab(QWidget):
         self._fit_btn.setVisible(not busy)
         if busy:
             self._fit_btn.setEnabled(False)
+            # A new fit is starting: clear any stale seeding signpost until the
+            # fresh results are diagnosed.
+            signpost = getattr(self, "_seeding_signpost", None)
+            if signpost is not None:
+                signpost.hide()
         else:
             # Re-derive Fit/Preview enabled state from the real gating contract
             # (member count, grouped readiness, _fit_blocked) rather than
@@ -6020,11 +6146,118 @@ class GlobalFitTab(QWidget):
                 self._result_text.append(
                     warning_html(f"{len(failed)} run(s) failed to converge: {failed_labels}")
                 )
+            self._append_series_seeding_note()
         else:
             self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
             self._result_text.setText(
                 f"<b>Batch fit failed</b><br>Failed datasets: {failed_labels}"
             )
+
+        # Inspect the per-run trend for the near-transition collapse/outlier
+        # signature and signpost the per-run warm-start when it is present.
+        self._update_seeding_signpost(model, results_dict)
+
+    def _append_series_seeding_note(self) -> None:
+        """Append the resolved seeding mode/reason and any reseeded runs."""
+        meta = self._series_seeding_meta
+        if not meta:
+            return
+        reason = str(meta.get("seeding_reason") or "")
+        if reason:
+            self._result_text.append(info_html(f"Seeding: {reason}"))
+        reseeded = meta.get("reseeded_runs") or ()
+        if reseeded:
+            runs = ", ".join(str(r) for r in reseeded)
+            self._result_text.append(
+                info_html(f"Reseeded {len(reseeded)} run(s) off the spurious branch: {runs}")
+            )
+
+    def _update_seeding_signpost(self, model: object, results_dict: dict) -> None:
+        """Diagnose the batch trend and show/hide the per-run-seed signpost.
+
+        Builds per-run summaries (scan order + fitted amplitude/frequency) and runs
+        the shared :func:`diagnose_series`. When a run collapsed to ~0 amplitude, sits
+        off the frequency trend, or failed, the signpost is shown with the
+        descending-frequency seeds the diagnostics computed; otherwise it is hidden.
+        """
+        self._suggested_series_seeds = {}
+        signpost = getattr(self, "_seeding_signpost", None)
+        if signpost is None:
+            return
+        param_names = list(getattr(model, "param_names", []) or [])
+        if not param_names or len(results_dict) < 3:
+            signpost.hide()
+            return
+        amplitude_param, frequency_param = resolve_series_params(param_names)
+        if amplitude_param is None and frequency_param is None:
+            signpost.hide()
+            return
+        order_key = self._asymmetry_series_order_key() or {}
+        points: list[SeriesPoint] = []
+        for run, result in results_dict.items():
+            run = int(run)
+            values = {p.name: p.value for p in getattr(result, "parameters", [])}
+            points.append(
+                SeriesPoint(
+                    run=run,
+                    order=float(order_key.get(run, run)),
+                    amplitude=values.get(amplitude_param) if amplitude_param else None,
+                    frequency=values.get(frequency_param) if frequency_param else None,
+                    success=bool(getattr(result, "success", False)),
+                )
+            )
+        diagnostics = diagnose_series(
+            points, amplitude_param=amplitude_param, frequency_param=frequency_param
+        )
+        if not diagnostics.has_issues:
+            signpost.hide()
+            return
+        self._suggested_series_seeds = dict(diagnostics.suggested_seeds)
+        message = (
+            f"<b>The {self._trend_axis_label()} trend has outliers.</b> "
+            f"{diagnostics.reason[:1].upper() + diagnostics.reason[1:]}. "
+            "Near-transition oscillatory fits are bistable — a per-run warm-start "
+            "fixes it."
+        )
+        self._seeding_signpost_label.setText(info_html(message))
+        self._apply_suggested_seeds_btn.setEnabled(bool(self._suggested_series_seeds))
+        signpost.show()
+
+    def _trend_axis_label(self) -> str:
+        """Friendly name for the leading oscillatory parameter, for the signpost."""
+        amplitude_param, frequency_param = resolve_series_params(
+            list(getattr(self._current_model, "param_names", []) or [])
+        )
+        if frequency_param:
+            return "frequency"
+        if amplitude_param:
+            return "amplitude"
+        return "parameter"
+
+    def _apply_suggested_series_seeds(self) -> None:
+        """Apply the diagnostics' descending per-run seeds and re-run the batch.
+
+        Merges the suggested frequency/amplitude seeds into the per-run Initial
+        Values, switches to Independent seeds (so the warm-start is honoured as-is
+        rather than overwritten by chaining — the proven manual recipe), then re-runs.
+        """
+        if not self._suggested_series_seeds:
+            return
+        for run, seed in self._suggested_series_seeds.items():
+            merged = dict(self._user_initial_values_by_run.get(int(run), {}))
+            merged.update({k: float(v) for k, v in seed.items()})
+            self._user_initial_values_by_run[int(run)] = merged
+        # Independent seeds honours per-run Initial Values verbatim; mirror it into
+        # the menu via the existing sync signal.
+        self.set_batch_seeding_mode("as_provided")
+        self.batch_seeding_mode_changed.emit("as_provided")
+        self._seeding_signpost.hide()
+        self._result_text.append(
+            info_html(
+                "Applied descending per-run frequency seeds (Independent seeds). Re-running batch…"
+            )
+        )
+        self._run_global_fit()
 
     def _on_fit_error(self, error_msg: str) -> None:
         """Handle fit error."""
