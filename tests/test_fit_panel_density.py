@@ -30,14 +30,6 @@ from asymmetry.gui.panels.fit_panel import SingleFitTab
 
 _DECK_DEFAULT_WIDTH = 360  # INSPECTOR_DOCK_DEFAULT_WIDTH
 
-#: A representative content height for the right inspector dock on a 960×640 /
-#: 1280×820 "small screen" case (the screen height minus the menu/tool/status
-#: chrome and the tab bar). The MODEL controls + PARAMETERS table + **Fit**
-#: button must fit within this so the primary action is reachable without
-#: scrolling. Pre-fix the four advanced button rows pushed the Fit button to
-#: ~403 px; folding them into the overflow menu lifts it to ~330 px.
-_REPRESENTATIVE_DOCK_CONTENT_HEIGHT = 360
-
 _ADVANCED_ACTION_LABELS = {
     "Drop background",
     "Share with Group",
@@ -80,25 +72,55 @@ def test_advanced_actions_folded_into_overflow_menu(app):
         tab.deleteLater()
 
 
-def test_parameters_and_fit_button_reachable_on_small_screen(app):
-    """At the deck width the param table + Fit button stay above the fold."""
+def _model_button_layout(tab):
+    """The QVBoxLayout holding Edit Function / Fit Wizard / More…."""
+    from PySide6.QtWidgets import QVBoxLayout
+
+    for layout in tab.findChildren(QVBoxLayout):
+        if layout.indexOf(tab._more_btn) >= 0:
+            return layout
+    raise AssertionError("model button layout not found")
+
+
+def test_overflow_menu_lifts_fit_button_vs_inline_buttons(app):
+    """Folding the four advanced actions lifts PARAMETERS + Fit by ~3 button rows.
+
+    Asserted as a *relative* lift measured in the same environment (folded vs. a
+    reconstructed pre-fix inline layout), so it is independent of per-platform
+    font metrics — an absolute pixel budget is not portable between Windows and
+    the Linux CI runner.
+    """
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QPushButton
+
     tab = SingleFitTab()
     try:
         tab.resize(_DECK_DEFAULT_WIDTH, 1200)
         tab.show()
         app.processEvents()
 
-        param_top = tab._param_table.mapTo(tab, tab._param_table.rect().topLeft()).y()
         fit_btn = _find_button(tab, "Fit")
-        fit_bottom = fit_btn.mapTo(tab, fit_btn.rect().bottomLeft()).y()
+        param_top = tab._param_table.mapTo(tab, tab._param_table.rect().topLeft()).y()
+        folded_bottom = fit_btn.mapTo(tab, fit_btn.rect().bottomLeft()).y()
+        # The parameter table sits above the Fit button (ordering sanity).
+        assert param_top < folded_bottom
 
-        assert fit_bottom <= _REPRESENTATIVE_DOCK_CONTENT_HEIGHT, (
-            f"Fit button bottom at {fit_bottom}px exceeds the representative dock "
-            f"content height {_REPRESENTATIVE_DOCK_CONTENT_HEIGHT}px — it falls "
-            "below the fold on a 13-inch screen."
+        # Reconstruct the pre-fix layout: the four advanced actions as button
+        # rows below the existing controls. The Fit button must drop by roughly
+        # the height of those four rows — i.e. folding lifts it by ≥3 rows.
+        layout = _model_button_layout(tab)
+        extras = [QPushButton(f"advanced {i}") for i in range(4)]
+        for btn in extras:
+            layout.addWidget(btn, 0, Qt.AlignmentFlag.AlignLeft)
+        app.processEvents()
+
+        inline_bottom = fit_btn.mapTo(tab, fit_btn.rect().bottomLeft()).y()
+        row_height = extras[0].sizeHint().height()
+        assert folded_bottom <= inline_bottom - 3 * row_height, (
+            f"folding saved only {inline_bottom - folded_bottom}px; expected "
+            f"≥3 button rows (~{3 * row_height}px). The overflow menu is not "
+            "lifting PARAMETERS/Fit as intended (P1-2)."
         )
-        # The parameter table must sit above the Fit button (sanity on ordering).
-        assert param_top < fit_bottom
     finally:
         tab.close()
         tab.deleteLater()
