@@ -136,6 +136,28 @@ def _isolate_qsettings(tmp_path: Path) -> Iterator[None]:
     yield
 
 
+@pytest.fixture(autouse=True)
+def _reset_ui_font_scale() -> Iterator[None]:
+    """Reset the process-wide UI font scale to 1.0 around every test.
+
+    ``ui_manager.UIManager`` publishes the active scale to the font builders via
+    ``fonts.set_ui_font_scale`` (so chrome/value fonts built after a scale change
+    are born scaled). That module global persists across tests in a worker
+    process; without a reset, a test that constructs ``MainWindow`` (applying the
+    0.9 default scale) would leak a non-unity scale into a later test that asserts
+    design-size fonts. No-op when PySide6 is unavailable.
+    """
+    try:
+        from asymmetry.gui.styles import fonts
+    except Exception:
+        yield
+        return
+
+    fonts.set_ui_font_scale(1.0)
+    yield
+    fonts.set_ui_font_scale(1.0)
+
+
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Auto-mark tests that carry no explicit type marker as 'unit'."""
     type_markers = {"unit", "gui", "io"}

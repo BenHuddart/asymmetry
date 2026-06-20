@@ -11,6 +11,38 @@ _FONTS_DIR = Path(__file__).parent.parent.parent / "resources" / "fonts"
 _FAMILY = "IBM Plex Mono"
 _FALLBACKS = ["Menlo", "Consolas", "Liberation Mono"]
 
+# ── UI-scale knob ─────────────────────────────────────────────────────────────
+# The active UI scale, owned by ui_manager.UIManager (which calls
+# set_ui_font_scale on every apply_ui_scale). Font builders consult it so chrome
+# and value fonts built *after* a scale change (dialogs, wizards, rebuilt
+# sections) are born at the active scale. Existing widgets are re-scaled by the
+# UIManager font-metric scan. Defaults to 1.0 so non-GUI/unit contexts and tests
+# get the unscaled design sizes.
+_ui_scale = 1.0
+_MIN_POINT_SIZE = 6.0
+
+
+def set_ui_font_scale(scale: float) -> None:
+    """Set the process-wide UI font scale consulted by the font builders."""
+    global _ui_scale
+    try:
+        _ui_scale = max(0.1, float(scale))
+    except (TypeError, ValueError):
+        _ui_scale = 1.0
+
+
+def ui_font_scale() -> float:
+    """Return the active UI font scale (1.0 = design size)."""
+    return _ui_scale
+
+
+def scaled_point_size(base: float) -> float:
+    """Return *base* point size multiplied by the active UI font scale.
+
+    Clamped to a small floor so an aggressive down-scale never collapses text.
+    """
+    return max(_MIN_POINT_SIZE, float(base) * _ui_scale)
+
 
 def register_bundled_fonts() -> None:
     """Register IBM Plex Mono TTFs from the bundled resources directory.
@@ -25,9 +57,13 @@ def register_bundled_fonts() -> None:
 
 
 def mono_font(point_size: float = 11.0, weight: QFont.Weight = QFont.Weight.Normal) -> QFont:
-    """Return a QFont for tabular numeric display using IBM Plex Mono with system fallbacks."""
+    """Return a QFont for tabular numeric display using IBM Plex Mono with system fallbacks.
+
+    The point size is multiplied by the active UI font scale (see
+    :func:`set_ui_font_scale`) so value text tracks the UI-scale setting.
+    """
     font = QFont([_FAMILY, *_FALLBACKS])
-    font.setPointSizeF(point_size)
+    font.setPointSizeF(scaled_point_size(point_size))
     font.setWeight(weight)
     return font
 
