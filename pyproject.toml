@@ -86,6 +86,7 @@ markers = [
     "io: exercises a file-format loader",
     "slow: individual runtime > ~1s (full tier only)",
     "integration: multi-component end-to-end flow (full tier only)",
+    "real_save_guard: exercise MainWindow's real unsaved-changes close prompt (opt out of the autouse bypass in conftest)",
 ]
 
 [tool.ruff]

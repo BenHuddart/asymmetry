@@ -537,6 +537,12 @@ class DataBrowserPanel(QWidget):
     # Re-fit a co-added selection: the host combines the runs, fits with the
     # active single-fit model, and records a computed trend row (combined_from).
     refit_coadded_requested = Signal(object)  # list[int] source run numbers
+    # Emitted whenever the dataset set or grouping structure is mutated by a
+    # user action (add/remove a run, build/rebuild a combined run, create or
+    # dissolve a group, move runs between groups). The host uses this to mark
+    # the project modified for the unsaved-changes guard. Deliberately NOT
+    # emitted from clear()/restore — those reset to a known-clean baseline.
+    datasets_changed = Signal()
 
     # The comment rides as the Title cell's second line (see
     # _RowHighlightDelegate) instead of its own column, so long comments never
@@ -880,6 +886,7 @@ class DataBrowserPanel(QWidget):
             self._sort_table(rebuild=False)
         self._rebuild_table()
         self._resize_columns_to_content()
+        self.datasets_changed.emit()
 
     def create_data_group(
         self,
@@ -922,6 +929,7 @@ class DataBrowserPanel(QWidget):
         self._move_groups_to_top()
 
         self._rebuild_table()
+        self.datasets_changed.emit()
         return gid
 
     def ungroup(self, group_id: str) -> None:
@@ -945,6 +953,7 @@ class DataBrowserPanel(QWidget):
         self._groups.pop(group_id, None)
         self._move_groups_to_top()
         self._rebuild_table()
+        self.datasets_changed.emit()
 
     def _move_groups_to_top(self) -> None:
         """Keep all group headers above non-grouped rows in display order."""
@@ -1004,6 +1013,7 @@ class DataBrowserPanel(QWidget):
         if moved_any:
             self._move_groups_to_top()
             self._rebuild_table()
+            self.datasets_changed.emit()
         return moved_any
 
     def remove_runs_from_group(self, run_numbers: list[int]) -> bool:
@@ -1029,6 +1039,7 @@ class DataBrowserPanel(QWidget):
         if moved_any:
             self._move_groups_to_top()
             self._rebuild_table()
+            self.datasets_changed.emit()
         return moved_any
 
     def _default_group_name(self, run_numbers: list[int]) -> str:
@@ -3027,6 +3038,7 @@ class DataBrowserPanel(QWidget):
 
         self._rebuild_table()
         self._on_selection_changed()
+        self.datasets_changed.emit()
 
     # ------------------------------------------------------------------
     # Context menu
@@ -4134,6 +4146,7 @@ class DataBrowserPanel(QWidget):
         self._display_order.insert(insert_index, combined_rn)
 
         self._rebuild_table()
+        self.datasets_changed.emit()
         return combined_rn
 
     def get_state(self) -> dict:
