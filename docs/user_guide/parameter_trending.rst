@@ -84,7 +84,7 @@ setpoint left at a single value (e.g. every run logged as 1 K) while the true
 sample temperature drifted, the header temperature is identical for every run
 and a temperature trend would collapse onto one abscissa point. Enabling
 **Options → Use temperature from log** switches the T column to the logged
-sample temperature, and the trend X-axis and CSV export now follow: each point
+sample temperature, and the trend X-axis and TSV export now follow: each point
 is placed at its logged temperature, so a :math:`T`-trend (or Arrhenius fit)
 becomes possible. The field axis behaves the same way under the analogous
 *use field from log* option, and per-dataset overrides (set from a single run's

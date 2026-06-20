@@ -69,7 +69,7 @@ cells whose value comes from a log are shown with red text. Untick the option
 to return the column to the scalar/header value.
 
 The value shown here is also the one a batch parameter trend plots against and
-exports to CSV: with the option on, a temperature trend uses each run's logged
+exports to TSV: with the option on, a temperature trend uses each run's logged
 temperature rather than its parked setpoint — see
 :ref:`trend-abscissa-coordinate`.
 
@@ -839,8 +839,10 @@ zero baseline so stacked component areas remain physically interpretable.
 Exporting Data
 ~~~~~~~~~~~~~~
 
-**Export CSV**: Save the parameter table to a CSV file for use in spreadsheets
-or other analysis software.
+**Export TSV**: Save the parameter table to a tab-separated (``.tsv``) file for
+use in spreadsheets or other analysis software. A comment header records the
+fitted model and the shared global-parameter values, and per-run reduced χ² and
+χ² columns are appended after the parameter columns.
 
 **Export to GLE**: Generate a publication-quality figure using the
 `GLE Graphics Layout Engine <http://glx.sourceforge.io/>`_ via the
