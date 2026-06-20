@@ -300,8 +300,19 @@ QScrollBar::add-page, QScrollBar::sub-page {
 }
 
 /* ── Splitters and dock separators ──────────────────────────────── */
+/* Grab targets are deliberately wide (~7 px): the round-10 finding was that
+   the thin dock separators and splitter handles were hard to grab and a resize
+   often "took" only after several attempts. */
 QSplitter::handle {
     background-color: #f4f3f0;
+}
+
+QSplitter::handle:horizontal {
+    width: 7px;
+}
+
+QSplitter::handle:vertical {
+    height: 7px;
 }
 
 QSplitter::handle:hover {
@@ -310,8 +321,8 @@ QSplitter::handle:hover {
 
 QMainWindow::separator {
     background-color: #f4f3f0;
-    width: 4px;
-    height: 4px;
+    width: 7px;
+    height: 7px;
 }
 
 QMainWindow::separator:hover {
