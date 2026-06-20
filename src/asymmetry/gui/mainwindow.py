@@ -30,7 +30,14 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import QEvent, QEventLoop, QObject, QSettings, Qt, QThread, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QActionGroup, QGuiApplication, QIcon, QPixmap
+from PySide6.QtGui import (
+    QAction,
+    QActionGroup,
+    QGuiApplication,
+    QIcon,
+    QKeySequence,
+    QPixmap,
+)
 from PySide6.QtWidgets import (
     QButtonGroup,
     QDialog,
@@ -468,7 +475,9 @@ class MainWindow(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Asymmetry — μSR Data Analysis")
+        # Includes Qt's [*] window-modified placeholder so the unsaved-changes
+        # guard's setWindowModified() shows/hides a "*" without retitling.
+        self.setWindowTitle("Asymmetry — μSR Data Analysis[*]")
 
         #: All background work goes through this runner (see gui/tasks.py);
         #: closeEvent shuts it down so no live thread outlasts the window.
@@ -507,6 +516,12 @@ class MainWindow(QMainWindow):
         self._last_open_dir = self._settings.value("io/last_open_dir", "", str)
         self._current_dataset = None  # Track currently selected dataset
         self._current_project_path: str | None = None  # Path of currently open project
+        # Unsaved-changes guard: _dirty tracks whether the session holds work
+        # not yet written to a project file. Mutating user actions set it via
+        # _mark_dirty(); save/open/new clear it. _restoring_project suppresses
+        # marking while a project load replays its own mutations.
+        self._dirty = False
+        self._restoring_project = False
         self._project_save_active = False  # True while a background save is writing
         self._fourier_compute_active = False  # True while a background FFT runs
         self._fourier_phase_estimate_active = False  # True while auto-phase runs
@@ -756,24 +771,44 @@ class MainWindow(QMainWindow):
 
         # File
         file_menu = mb.addMenu("&File")
-        file_menu.addAction("Open Data File(s)\u2026", self._on_open)
+        # Loading data is the most frequent task, so it gets the conventional
+        # "open" feel via Ctrl+Shift+O (project open keeps the bare Ctrl+O,
+        # matching the StandardKey.Open convention for document open).
+        open_data_action = file_menu.addAction("Open Data File(s)\u2026", self._on_open)
+        open_data_action.setShortcut(QKeySequence("Ctrl+Shift+O"))
         file_menu.addAction("Load Run Range\u2026", self._on_load_run_range)
         file_menu.addAction("Generate Synthetic Run\u2026", self._on_generate_synthetic)
         file_menu.addAction("Generate Multi-Group Run\u2026", self._on_generate_multi_group)
         self._add_simulate_preset_menu(file_menu)
         file_menu.addSeparator()
-        file_menu.addAction("&New Project", self._on_new_project)
-        file_menu.addAction("Open Project\u2026", self._on_open_project)
-        file_menu.addAction("&Save Project", self._on_save_project)
-        file_menu.addAction("Save Project &As\u2026", self._on_save_project_as)
+        new_action = file_menu.addAction("&New Project", self._on_new_project)
+        new_action.setShortcut(QKeySequence.StandardKey.New)
+        open_project_action = file_menu.addAction("Open Project\u2026", self._on_open_project)
+        open_project_action.setShortcut(QKeySequence.StandardKey.Open)
+        save_action = file_menu.addAction("&Save Project", self._on_save_project)
+        save_action.setShortcut(QKeySequence.StandardKey.Save)
+        save_as_action = file_menu.addAction("Save Project &As\u2026", self._on_save_project_as)
+        save_as_action.setShortcut(QKeySequence.StandardKey.SaveAs)
         self._recent_menu = file_menu.addMenu("Recent Projects")
         self._update_recent_projects_menu()
         file_menu.addSeparator()
-        file_menu.addAction("E&xit", self.close)
+        exit_action = file_menu.addAction("E&xit", self.close)
+        # Quit (Ctrl+Q) is the cross-platform expectation; StandardKey.Quit is
+        # empty on Windows, so pair it with StandardKey.Close (Ctrl+W) which the
+        # single-window app treats as the same close.
+        exit_action.setShortcuts(
+            [QKeySequence("Ctrl+Q"), QKeySequence(QKeySequence.StandardKey.Close)]
+        )
 
         # Analysis
         analysis_menu = mb.addMenu("&Analysis")
-        analysis_menu.addAction("&Fit", self._on_fit)
+        # So the disabled Global Parameter Fit action's prerequisite tooltip
+        # (P2-4) actually shows; QMenu hides action tooltips by default.
+        analysis_menu.setToolTipsVisible(True)
+        fit_action = analysis_menu.addAction("&Fit", self._on_fit)
+        # Ctrl+Return is the conventional "run/commit" accelerator; routine in a
+        # fitting workflow, so it earns a top-level shortcut.
+        fit_action.setShortcut(QKeySequence("Ctrl+Return"))
         # Gated alongside View → Show Fourier: disabled while the active
         # representation's deck has no spectrum tab (time-domain views).
         self._fourier_analysis_action = analysis_menu.addAction("F&ourier", self._on_fourier)
@@ -900,6 +935,14 @@ class MainWindow(QMainWindow):
         self._main_toolbar.addAction("Open", self._on_open)
         self._main_toolbar.addAction("Export logbook", self._on_export_logbook)
         self._main_toolbar.addSeparator()
+        # Project save/open surfaced on the toolbar (P0-3 companion): the most
+        # data-protective actions should be one click away, not menu-only. The
+        # menu entries carry the keyboard shortcuts; mirror their tooltips here.
+        _open_project_tb = self._main_toolbar.addAction("Open Project", self._on_open_project)
+        _open_project_tb.setToolTip("Open a saved project (Ctrl+O)")
+        _save_project_tb = self._main_toolbar.addAction("Save Project", self._on_save_project)
+        _save_project_tb.setToolTip("Save the current project (Ctrl+S)")
+        self._main_toolbar.addSeparator()
         self._main_toolbar.addAction("Grouping", self._on_grouping_current)
         # Fit / Fourier / Parameters live in the right-hand inspector deck
         # (visible by default, per-representation; see
@@ -991,7 +1034,15 @@ class MainWindow(QMainWindow):
         _stretch.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self._main_toolbar.addWidget(_stretch)
 
-        self._main_toolbar.addWidget(QLabel("View:"))
+        # "Saved views" (P2-5): each numbered button stores/recalls a zoom +
+        # bunch-factor preset for the current plot. The label and per-button
+        # tooltips say so, since clicking otherwise silently mutates the view.
+        _view_label = QLabel("Saved views:")
+        _view_label.setToolTip(
+            "Numbered presets, each remembering this plot's zoom and bunch "
+            "factor. Click a number to recall that saved view."
+        )
+        self._main_toolbar.addWidget(_view_label)
         self._view_mode_button_group = QButtonGroup(self)
         self._view_mode_button_group.setExclusive(True)
         self._view_mode_buttons: list[QPushButton] = []
@@ -1000,6 +1051,10 @@ class MainWindow(QMainWindow):
             button = QPushButton(str(index + 1))
             button.setCheckable(True)
             button.setStyleSheet(_view_qss)
+            button.setToolTip(
+                f"Saved view {index + 1} — recall this plot's stored zoom and "
+                "bunch factor (overwrites it when you save the current view)."
+            )
             button.clicked.connect(
                 lambda _checked=False, idx=index: self._on_view_mode_button_clicked(idx)
             )
@@ -1494,6 +1549,10 @@ class MainWindow(QMainWindow):
             self._data_browser.refit_coadded_requested.connect(self._on_refit_coadded_requested)
         if hasattr(self._data_browser, "extra_columns_changed"):
             self._data_browser.extra_columns_changed.connect(self._sync_custom_columns_to_consumers)
+            self._data_browser.extra_columns_changed.connect(self._mark_dirty)
+        # Unsaved-changes guard (P0-2): dataset add/remove and grouping edits.
+        if hasattr(self._data_browser, "datasets_changed"):
+            self._data_browser.datasets_changed.connect(self._mark_dirty)
         self._data_browser.selection_changed.connect(self._update_selected_datasets)
         self._plot_panel.fit_range_changed.connect(self._on_fit_range_changed)
         if hasattr(self._frequency_plot_panel, "fit_range_changed"):
@@ -1614,6 +1673,26 @@ class MainWindow(QMainWindow):
             self._fit_parameters_panel.series_delete_requested.connect(
                 self._on_series_delete_requested
             )
+
+        # Unsaved-changes guard (P0-2): every fit result and trend-series edit
+        # is work worth saving, so flag the session modified when one lands.
+        # These signals are emitted on the GUI thread (their existing slots
+        # touch widgets), and _mark_dirty is a bound MainWindow method, so the
+        # connection respects the "no bare worker-thread slot" invariant.
+        self._fit_panel.fit_completed.connect(self._mark_dirty)
+        self._fit_panel.global_fit_completed.connect(self._mark_dirty)
+        for _signal_name in (
+            "grouped_fit_completed",
+            "cross_group_fit_completed",
+            "model_fit_completed",
+            "delete_group_fits_requested",
+            "series_rename_requested",
+            "series_delete_requested",
+        ):
+            for _panel in (self._fit_panel, self._fit_parameters_panel):
+                _signal = getattr(_panel, _signal_name, None)
+                if _signal is not None:
+                    _signal.connect(self._mark_dirty)
 
         if hasattr(self._fourier_panel, "_fft_btn"):
             self._fourier_panel._fft_btn.clicked.connect(self._on_compute_fourier)
@@ -3452,6 +3531,7 @@ class MainWindow(QMainWindow):
                     self._fit_panel.set_dataset(self._get_fit_dataset(rebuilt_combined_dataset))
 
         if updated > 0:
+            self._mark_dirty()
             bunch_factor = max(1, int(grouping_result.get("bunching_factor", 1)))
             self._view_modes[self._active_view_mode_index]["bunch_factor"] = bunch_factor
             self._set_view_bunch_spin_value(bunch_factor)
@@ -7833,8 +7913,17 @@ class MainWindow(QMainWindow):
             return
         if has_result:
             self._global_parameter_fit_action.setText("Global Parameter Fit [available]")
+            # P2-4: explain why this is normally disabled. Tooltip visibility is
+            # enabled on the Analysis menu (setToolTipsVisible).
+            self._global_parameter_fit_action.setToolTip(
+                "Reopen the global parameter-fit results window."
+            )
         else:
             self._global_parameter_fit_action.setText("Global Parameter Fit")
+            self._global_parameter_fit_action.setToolTip(
+                "Available after a global (cross-group) parameter fit is run from "
+                "the Fit Parameters panel — it then opens that fit's results."
+            )
         self._global_parameter_fit_action.setEnabled(bool(has_result))
 
     def _on_gle_setup(self) -> None:
@@ -9074,6 +9163,8 @@ class MainWindow(QMainWindow):
             self._project_model.remove_batch(self._alc_scan_series_id)
         self._project_model.add_batch(series)
         self._alc_scan_series_id = series.batch_id
+        # A built scan is persistent work (P0-2): flag the session modified.
+        self._mark_dirty()
 
         # A freshly-built scan is a new field span; its old regions/peaks (in the
         # previous scan's x units) no longer apply and would distort the new
@@ -10443,6 +10534,7 @@ class MainWindow(QMainWindow):
             {member_key: summary},
             extra={"combined_from": list(runs)},
         )
+        self._mark_dirty()  # recorded a new fit result (P0-2)
         self._refresh_trend_panel()
         chi = float(result.reduced_chi_squared)
         self.statusBar().showMessage(f"Recorded co-added re-fit of {label} (χ²ᵣ = {chi:.3f}).")
@@ -11018,22 +11110,19 @@ class MainWindow(QMainWindow):
 
     def _on_new_project(self) -> None:
         """Clear all state to start a fresh project."""
-        reply = QMessageBox.question(
-            self,
-            "New Project",
-            "Clear the current session and start a new project?\nUnsaved changes will be lost.",
-            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
-        )
-        if reply != QMessageBox.StandardButton.Ok:
+        if not self._maybe_save("starting a new project"):
             return
         self._clear_all_state()
         self._current_project_path = None
+        self._clear_dirty()
         self._update_window_title()
         self._log_panel.log("Started new project")
         self.statusBar().showMessage("New project")
 
     def _on_open_project(self) -> None:
         """Open a project file chosen via file dialog."""
+        if not self._maybe_save("opening another project"):
+            return
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Open Project",
@@ -11158,6 +11247,7 @@ class MainWindow(QMainWindow):
         self._clear_status_state_if_idle()
         self._current_project_path = path
         self._add_recent_project(path)
+        self._clear_dirty()
         self._update_window_title()
         self._log_panel.log(f"Project saved: {path}")
         self.statusBar().showMessage(f"Saved: {Path(path).name}")
@@ -11168,6 +11258,17 @@ class MainWindow(QMainWindow):
         self._clear_status_state_if_idle()
         QMessageBox.critical(self, "Save Failed", f"Could not save project:\n{message}")
         self._log_panel.log(f"ERROR saving project: {message}")
+
+    def _open_recent_project(self, path: str) -> None:
+        """Open a recent project, guarding unsaved work first (P0-2).
+
+        The recent-projects menu loads files directly, so it needs the same
+        Save/Discard/Cancel prompt that :meth:`_on_open_project` runs before its
+        file dialog.
+        """
+        if not self._maybe_save("opening another project"):
+            return
+        self._open_project_file(path)
 
     def _open_project_file(self, path: str) -> None:
         """Load and restore a project from *path*."""
@@ -11195,9 +11296,19 @@ class MainWindow(QMainWindow):
             return
 
         self._clear_all_state()
-        self.restore_project_state(state, path)
+        # Restore replays the same dataset/grouping/fit mutations the dirty
+        # guard listens for; suppress marking so a freshly-opened project is
+        # clean. A cancelled (incomplete) load is also "clean" — the user made
+        # no edits — and the existing incomplete-save hard-confirm still guards
+        # an accidental overwrite.
+        self._restoring_project = True
+        try:
+            self.restore_project_state(state, path)
+        finally:
+            self._restoring_project = False
         self._current_project_path = path
         self._add_recent_project(path)
+        self._clear_dirty()
         self._update_window_title()
 
     def collect_project_state(self) -> dict:
@@ -12052,7 +12163,7 @@ class MainWindow(QMainWindow):
         for path in recent:
             action = self._recent_menu.addAction(Path(path).name)
             action.setToolTip(path)
-            action.triggered.connect(lambda checked=False, p=path: self._open_project_file(p))
+            action.triggered.connect(lambda checked=False, p=path: self._open_recent_project(p))
         self._recent_menu.addSeparator()
         self._recent_menu.addAction("Clear Recent Projects", self._clear_recent_projects)
 
@@ -12062,12 +12173,69 @@ class MainWindow(QMainWindow):
         self._update_recent_projects_menu()
 
     def _update_window_title(self) -> None:
-        """Update window title to reflect the current project file name."""
+        """Update window title to reflect the current project file name.
+
+        The trailing ``[*]`` is Qt's window-modified placeholder: it renders as
+        ``*`` when :meth:`setWindowModified` is True and vanishes otherwise, so
+        the title stays in sync with the unsaved-changes guard automatically.
+        """
         if self._current_project_path:
             name = Path(self._current_project_path).stem
-            self.setWindowTitle(f"Asymmetry — {name}")
+            self.setWindowTitle(f"Asymmetry — {name}[*]")
         else:
-            self.setWindowTitle("Asymmetry \u2014 \u03bcSR Data Analysis")
+            self.setWindowTitle("Asymmetry \u2014 \u03bcSR Data Analysis[*]")
+
+    def _mark_dirty(self, *_args) -> None:
+        """Flag the session as holding unsaved work (no-op while restoring).
+
+        Connected to dataset/grouping/fit signals, so it accepts and ignores
+        any signal payload. The ``_restoring_project`` guard keeps a project
+        load \u2014 which replays the very mutations we listen for \u2014 from
+        marking the freshly-opened project dirty.
+        """
+        if self._restoring_project or self._dirty:
+            return
+        self._dirty = True
+        self.setWindowModified(True)
+
+    def _clear_dirty(self) -> None:
+        """Mark the session as saved/clean (after save, open, or new)."""
+        self._dirty = False
+        self.setWindowModified(False)
+
+    def _maybe_save(self, action_label: str) -> bool:
+        """Prompt to save when work is unsaved; return True to proceed.
+
+        Returns True when the caller may continue (saved, discarded, or nothing
+        to save) and False when the user cancelled the action. *action_label*
+        names the action in the prompt (e.g. "closing", "starting a new
+        project").
+        """
+        if not self._dirty:
+            return True
+        reply = QMessageBox.warning(
+            self,
+            "Unsaved Changes",
+            f"This session has unsaved changes that will be lost on {action_label}.\n\n"
+            "Save the project first?",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Save,
+        )
+        if reply == QMessageBox.StandardButton.Cancel:
+            return False
+        if reply == QMessageBox.StandardButton.Discard:
+            return True
+        # Save: a background write means we cannot synchronously confirm the
+        # bytes hit disk, so route through the same save path and treat a
+        # started save as success. If the user cancels the Save-As dialog,
+        # _current_project_path stays None and _dirty stays set \u2014 abort so
+        # the work is not silently dropped.
+        self._on_save_project()
+        if self._dirty and not self._project_save_active:
+            return False
+        return True
 
     def closeEvent(self, event) -> None:
         """Stop background work and save plot axis ranges before closing."""
@@ -12082,6 +12250,19 @@ class MainWindow(QMainWindow):
             if callable(cancel):
                 cancel()
             self.statusBar().showMessage("Stopping file load — try closing again in a moment.")
+            event.ignore()
+            return
+        # Unsaved-changes guard (P0-2): prompt before the irreversible worker
+        # shutdown below drops the session.
+        if not self._maybe_save("closing"):
+            event.ignore()
+            return
+        # If the prompt kicked off a background save, the _tasks.shutdown()
+        # below would cancel it mid-write. Defer the close until the save
+        # finishes (it clears _dirty), so the next close attempt proceeds —
+        # the same try-again pattern the bulk-load guard above uses.
+        if self._project_save_active:
+            self.statusBar().showMessage("Saving project — try closing again in a moment.")
             event.ignore()
             return
         # All TaskRunner work (file loads, MaxEnt, FFT, save, …): cancel, quit

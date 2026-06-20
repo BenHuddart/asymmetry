@@ -31,6 +31,52 @@ QToolBar {
     padding-bottom: 4px;
 }
 
+/* Toolbar action buttons (Open, Save Project, Grouping, …). The custom
+   segmented domain/view controls carry their own per-widget stylesheet and are
+   QPushButtons added via addWidget, so they are unaffected by these rules. */
+QToolBar QToolButton {
+    background-color: transparent;
+    color: #1c1d20;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 8px;
+}
+
+QToolBar QToolButton:hover {
+    background-color: #ececea;
+}
+
+QToolBar QToolButton:pressed,
+QToolBar QToolButton:checked {
+    background-color: #e2e1dd;
+}
+
+QToolBar QToolButton:disabled {
+    color: #adadb0;
+}
+
+/* Toolbar overflow extension (P2-8): the ">>" button Qt inserts when the
+   toolbar is too narrow. Unstyled it reverts to bare Fusion; match it to the
+   toolbar buttons so the chrome stays consistent at small widths. Its popup is
+   a QMenu and inherits the QMenu rules below. */
+QToolButton#qt_toolbar_ext_button,
+QToolBarExtension {
+    background-color: transparent;
+    border: none;
+    border-radius: 4px;
+    padding: 2px 4px;
+}
+
+QToolButton#qt_toolbar_ext_button:hover,
+QToolBarExtension:hover {
+    background-color: #ececea;
+}
+
+QToolButton#qt_toolbar_ext_button:pressed,
+QToolBarExtension:pressed {
+    background-color: #e2e1dd;
+}
+
 QMenuBar {
     background-color: @SURFACE_ALT@;
     color: @TEXT@;
