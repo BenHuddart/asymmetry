@@ -449,8 +449,16 @@ class FitParametersPanel(QWidget):
         self._y_selector_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._y_selector_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._y_selector_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self._y_selector_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        # The name column (0) stretches and elides; the Model Fit (1) and log (2)
+        # columns are fixed and pinned to the right. Horizontal scrolling is OFF
+        # so a long parameter name can never push the action columns into an
+        # off-screen scroll region (the round-10 finding: at wider inspector
+        # widths the Model Fit buttons hid behind a horizontal scrollbar that
+        # would not scroll to them). The name elides with "…" instead, with the
+        # full label on the row tooltip.
+        self._y_selector_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._y_selector_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._y_selector_table.setTextElideMode(Qt.TextElideMode.ElideRight)
         self._y_selector_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._y_selector_table.horizontalHeader().setVisible(False)
         apply_param_table_style(self._y_selector_table)
@@ -469,7 +477,12 @@ class FitParametersPanel(QWidget):
         y_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
         self._y_selector_table.setMinimumWidth(0)
 
-        controls_form.addRow("Y parameters:", self._y_selector_table)
+        # Give the selector its own full-width rows rather than the form's
+        # narrower field column: the label sits above and the table spans both
+        # columns, so the Model Fit / log action columns keep room to stay
+        # visible even at the inspector's minimum width.
+        controls_form.addRow(QLabel("Y parameters:"))
+        controls_form.addRow(self._y_selector_table)
 
         self._create_composite_btn = QPushButton("New composite")
         self._create_composite_btn.setToolTip("Create a composite (derived) parameter.")
@@ -2810,6 +2823,9 @@ class FitParametersPanel(QWidget):
         for idx, name in enumerate(display_params):
             name_item = QTableWidgetItem(_format_param_label(name))
             name_item.setData(Qt.ItemDataRole.UserRole, name)
+            # The name column elides; back the truncated text with the full label
+            # on hover so nothing is lost when the inspector is narrow.
+            name_item.setToolTip(_format_param_label(name))
             self._y_selector_table.setItem(idx, 0, name_item)
 
             fit_button = QPushButton("Model Fit")
@@ -2871,19 +2887,18 @@ class FitParametersPanel(QWidget):
         )
         self._y_selector_table.setColumnWidth(1, fit_column_width)
         self._y_selector_table.setColumnWidth(2, log_column_width)
-        name_column_width = max(
-            (
-                self._y_selector_table.fontMetrics().horizontalAdvance(_format_param_label(name))
-                for name in display_params
-            ),
-            default=120,
-        )
+        # Floor the table just wide enough for the two fixed action columns, a
+        # short name stub, and the vertical scrollbar — NOT the full longest
+        # name. The name column stretches and elides, so a long parameter name
+        # must not force the table (and panel) wider than the dock; that is what
+        # used to spawn the horizontal scrollbar that hid the action columns.
         frame = 2 * self._y_selector_table.frameWidth()
-        scroll_width = self._y_selector_table.style().pixelMetric(
+        vscroll_width = self._y_selector_table.style().pixelMetric(
             self._y_selector_table.style().PixelMetric.PM_ScrollBarExtent,
         )
+        name_stub_width = 48
         minimum_width = (
-            name_column_width + fit_column_width + log_column_width + frame + scroll_width + 28
+            name_stub_width + fit_column_width + log_column_width + frame + vscroll_width + 8
         )
         self._y_selector_table.setMinimumWidth(minimum_width)
         self._set_y_table_visible_rows(3)
