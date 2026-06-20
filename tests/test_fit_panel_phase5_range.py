@@ -165,9 +165,7 @@ def test_return_key_is_consumed(tab: SingleFitTab) -> None:
     emitted: list[float] = []
     field.editingFinished.connect(lambda: emitted.append(field.value()))
 
-    event = QKeyEvent(
-        QEvent.Type.KeyPress, Qt.Key.Key_Return, Qt.KeyboardModifier.NoModifier
-    )
+    event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Return, Qt.KeyboardModifier.NoModifier)
     field.keyPressEvent(event)
 
     assert event.isAccepted(), "Return must be consumed, not propagated"
