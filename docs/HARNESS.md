@@ -31,10 +31,29 @@ boundary, touches shared behavior, or changes user-visible workflows.
 | `python tools/harness.py lint` | Ruff format check and lint check across `src`, `tests`, and `tools`. |
 | `python tools/harness.py lint-all` | Alias for the full Ruff baseline. |
 | `python tools/harness.py test -- tests/test_name.py` | Focused pytest run while iterating on a specific behavior. |
-| `python tools/harness.py test` | Full pytest suite. |
+| `python tools/harness.py test --tier fast` | Inner-loop suite: non-GUI tests only (~40s). |
+| `python tools/harness.py test` | Standard tier (default): everything except `slow`/`integration`. |
 | `python tools/harness.py gui-smoke` | Headless GUI startup check using the app's `--smoke-test` path. |
 | `python tools/harness.py docs` | Sphinx documentation build. |
-| `python tools/harness.py validate` | Structural checks, lint, and the full test suite. |
+| `python tools/harness.py validate` | Structural checks, lint, and the standard-tier test suite. |
+
+### Test tiers
+
+`test` and `validate` accept `--tier {fast,standard,full}`:
+
+- **`fast`** — pure-Python tests only (no Qt, no file I/O, nothing `slow`). The
+  bulk of the suite; runs in ~40s. Use this for the **inner dev loop**.
+- **`standard`** (default) — everything except `slow` and `integration`. This is
+  the pre-push gate and what CI runs. The GUI tests it adds each construct a
+  `MainWindow`, so it is several times slower than `fast`.
+- **`full`** — every test, including `slow`/`integration`. Runs on release tags
+  via the `Full test suite` workflow.
+
+Tests inherit a type marker automatically: anything not explicitly marked `gui`
+or `io` is treated as `unit` (see `tests/conftest.py`). Naming explicit targets
+(`-- tests/test_x.py` or a `::node-id`) runs exactly those, bypassing the tier
+filter. CI shards the standard tier across two runners with
+`--subset {gui,non-gui}`; the two shards together cover the whole tier.
 
 The harness sets `QT_QPA_PLATFORM=offscreen` by default for command runs so GUI
 tests and smoke checks can execute in CI and local agent sessions. The current

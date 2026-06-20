@@ -528,22 +528,73 @@ _TIER_MARKER: dict[str, str | None] = {
     "full": None,
 }
 
+# CI shards the standard/full tier across two runners by Qt involvement: the GUI
+# tests carry the per-test MainWindow construction cost, so splitting them onto
+# their own runner roughly halves wall-clock. `all` is the default (no split).
+_SUBSET_MARKER: dict[str, str | None] = {
+    "all": None,
+    "gui": "gui",
+    "non-gui": "not gui",
+}
 
-def cmd_test(args: argparse.Namespace) -> int:
-    pytest_args = _strip_passthrough(list(args.pytest_args))
 
-    tier = getattr(args, "tier", "standard")
-    parallel = not getattr(args, "no_parallel", False)
+def _has_explicit_targets(pytest_args: Sequence[str]) -> bool:
+    """Return True if the caller named specific test files or node ids.
 
-    marker_expr = _TIER_MARKER[tier]
-    if marker_expr and not any(a.startswith("-m") or a == "-m" for a in pytest_args):
-        pytest_args = ["-m", marker_expr] + pytest_args
+    When you point the harness at exact targets (``-- tests/test_x.py`` or a
+    ``...::test_case`` node id) you want *those* tests to run, not a tier-marker
+    subset silently deselecting half of them. We detect a positional that looks
+    like a path or node id; option *values* (e.g. a ``-k`` expression) are not
+    paths and so do not trip this.
+    """
+    for arg in pytest_args:
+        if arg.startswith("-"):
+            continue
+        if arg.endswith(".py") or "::" in arg or "/" in arg or os.sep in arg:
+            return True
+        if (ROOT / arg).exists():
+            return True
+    return False
+
+
+def build_pytest_command(
+    pytest_args: Sequence[str],
+    *,
+    tier: str = "standard",
+    subset: str = "all",
+    parallel: bool = True,
+) -> list[str]:
+    """Build the pytest argv for a tier/subset run (pure, so it is unit-tested).
+
+    Composes the tier and subset markers into a single ``-m`` expression, unless
+    the caller already passed ``-m`` or named explicit targets (in which case
+    those run verbatim). xdist parallelism is added for the standard/full tiers.
+    """
+    pytest_args = list(pytest_args)
+
+    user_marker = any(a == "-m" or a.startswith("-m") for a in pytest_args)
+    if not user_marker and not _has_explicit_targets(pytest_args):
+        marker_parts = [
+            f"({expr})" for expr in (_TIER_MARKER[tier], _SUBSET_MARKER[subset]) if expr is not None
+        ]
+        if marker_parts:
+            pytest_args = ["-m", " and ".join(marker_parts)] + pytest_args
 
     parallel_args: list[str] = []
     if parallel and tier in ("standard", "full"):
         parallel_args = ["-n", "auto", "--dist", "load"]
 
-    return _run_command([sys.executable, "-m", "pytest", *parallel_args, *pytest_args])
+    return [sys.executable, "-m", "pytest", *parallel_args, *pytest_args]
+
+
+def cmd_test(args: argparse.Namespace) -> int:
+    command = build_pytest_command(
+        _strip_passthrough(list(args.pytest_args)),
+        tier=getattr(args, "tier", "standard"),
+        subset=getattr(args, "subset", "all"),
+        parallel=not getattr(args, "no_parallel", False),
+    )
+    return _run_command(command)
 
 
 def cmd_docs(_args: argparse.Namespace) -> int:
@@ -599,6 +650,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["fast", "standard", "full"],
         default="standard",
         help="Test tier: fast (<30s unit-only), standard (default, excludes slow/integration), full (everything)",
+    )
+    test_parser.add_argument(
+        "--subset",
+        choices=["all", "gui", "non-gui"],
+        default="all",
+        help="Restrict to GUI or non-GUI tests (composes with --tier; used to shard CI)",
     )
     test_parser.add_argument(
         "--no-parallel",

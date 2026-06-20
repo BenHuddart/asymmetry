@@ -278,7 +278,27 @@ def _write_text_file(path: str, content: str) -> None:
         handle.write(content)
 
 
+_WINDOW_ICON_UNSET: object = object()
+_window_icon_cache: QIcon | None | object = _WINDOW_ICON_UNSET
+
+
 def _load_window_icon() -> QIcon | None:
+    """Load the window icon, decoding the PNG only once per process.
+
+    Decoding ``logo_256x256.png`` into a ``QPixmap`` costs ~0.15s, which a
+    fresh ``MainWindow`` otherwise paid on every construction — a meaningful
+    tax across the ~1.5k GUI tests that each build a window. The decoded
+    ``QIcon`` is immutable and shareable across windows, so we cache it (the
+    sentinel distinguishes "not computed yet" from a genuine ``None`` result).
+    """
+    global _window_icon_cache
+    if _window_icon_cache is not _WINDOW_ICON_UNSET:
+        return _window_icon_cache  # type: ignore[return-value]
+    _window_icon_cache = _load_window_icon_uncached()
+    return _window_icon_cache  # type: ignore[return-value]
+
+
+def _load_window_icon_uncached() -> QIcon | None:
     """Load window icon from package resources.
 
     Returns None if icon cannot be loaded.

@@ -3294,7 +3294,11 @@ class TestPlotPanel:
         assert "No plotted data" in warnings[0]
 
     def _parse_dat_columns(self, path: Path) -> np.ndarray:
-        rows = [line for line in path.read_text().splitlines() if line and not line.startswith("!")]
+        rows = [
+            line
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("!")
+        ]
         return np.array([[float(v) for v in r.split()] for r in rows])
 
     def test_export_plotted_data_as_text_data_only_round_trips(
@@ -3321,7 +3325,7 @@ class TestPlotPanel:
         assert target.exists()
         # No fit was plotted, so data-only must not emit a .fit sidecar.
         assert not target.with_suffix(".fit").exists()
-        text = target.read_text()
+        text = target.read_text(encoding="utf-8")
         assert "START OF RUN INFORMATION" in text  # provenance header present
         parsed = self._parse_dat_columns(target)
         np.testing.assert_allclose(parsed[:, 0], sample_dataset.time, rtol=1e-5)
