@@ -3291,7 +3291,9 @@ class MainWindow(QMainWindow):
             self,
             "Fit quality confidence",
             "Two-sided χ² confidence level R (%):\n"
-            "the good/poor/overdone band; higher = more forgiving.",
+            "the good/poor/overdone band; higher = more forgiving.\n"
+            "Default 99.9% is muon-tuned for high-statistics fits; lower it to\n"
+            "tighten the band (e.g. WiMDA's 95%).",
             value=current * 100.0,
             minValue=50.0,
             maxValue=99.9,
