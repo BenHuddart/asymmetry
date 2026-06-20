@@ -132,6 +132,23 @@ _FREQUENCY_PEAK_PROMINENCE = 4.0
 # there is unchanged.
 _SIGNAL_FRAME_ERROR_CEILING_FACTOR = 1.5
 
+# Tail quantile for the inverse-variance-weighted asymmetry-percent y-frame. The
+# counts-depleted late-time tail of low-statistics data scatters to large
+# asymmetry (e.g. ±80 %) with *its own* moderate error — so it is neither a
+# ±100 % sentinel nor clamped by the error ceiling (the outlier is the value, not
+# the bar), and raw min/max reopens the ±220 % blowout. Framing to an
+# inverse-variance-weighted quantile of the asymmetry ± error envelope instead
+# down-weights those high-error bins by 1/σ², so the frame tracks the
+# well-measured signal. This excludes the lightest QUANTILE / (1 − QUANTILE) of
+# the cumulative inverse-variance weight at each end; on uniform-error (ZF/LF)
+# data and small samples it reduces to the plain min/max envelope, so framing
+# there is unchanged.
+_SIGNAL_FRAME_WEIGHTED_QUANTILE = 0.0025
+# Floor (in the y-quantity's units) under which a bin's error is treated as this
+# value when forming the 1/σ² weight, so an exactly-zero error cannot produce an
+# infinite weight. Tiny relative to any real asymmetry-percent error.
+_SIGNAL_FRAME_WEIGHT_ERROR_FLOOR = 1e-6
+
 
 class _FloatLimitField(QLineEdit):
     """Plain text field that stores a floating-point axis limit."""
@@ -4255,13 +4272,27 @@ class PlotPanel(QWidget):
         # can no longer blow the range out. The ceiling sits above every bar on
         # uniform-error (ZF/LF) data, so nothing is clipped and framing there is
         # unchanged. The frequency view keeps its own framing.
+        # The reliability weight keys on the original (pre-clamp) error: clamping
+        # only bounds the envelope *value*, so a divergent bar must still be
+        # down-weighted, never boosted by having been clamped.
+        weight_err = err
         if not self._is_frequency_plot_panel():
             ceiling = self._signal_frame_error_ceiling(asym, err)
             if ceiling is not None:
                 err = np.minimum(err, ceiling)
 
-        y_min = float(np.min(asym - err))
-        y_max = float(np.max(asym + err))
+        lower = asym - err
+        upper = asym + err
+        if self._y_axis_is_asymmetry_percent():
+            # Down-weight the counts-depleted late-time tail (large |asymmetry|
+            # with large error) so it cannot reopen the ±220 % blowout; reduces
+            # to plain min/max for uniform errors and small samples.
+            q = _SIGNAL_FRAME_WEIGHTED_QUANTILE
+            y_min = self._inverse_variance_weighted_bound(lower, weight_err, q)
+            y_max = self._inverse_variance_weighted_bound(upper, weight_err, 1.0 - q)
+        else:
+            y_min = float(np.min(lower))
+            y_max = float(np.max(upper))
         if y_max <= y_min:
             delta = max(abs(y_min) * 0.05, 1e-6)
             y_min -= delta
@@ -4271,6 +4302,50 @@ class PlotPanel(QWidget):
             y_min -= padding
             y_max += padding
         return y_min, y_max
+
+    def _inverse_variance_weighted_bound(
+        self,
+        values: np.ndarray,
+        error: np.ndarray,
+        quantile: float,
+    ) -> float:
+        """Return the inverse-variance-weighted *quantile* of *values*.
+
+        Each value is weighted by ``1 / σ²`` so high-error (counts-depleted)
+        bins contribute little and a sparse late-time scatter tail cannot pull
+        the frame out. The bound is the smallest value whose cumulative
+        normalised weight (over values sorted ascending) reaches *quantile*. For
+        uniform weights and small samples this collapses to the plain min/max
+        (``quantile ≈ 0`` → minimum, ``≈ 1`` → maximum), so framing on
+        uniform-error data is unchanged.
+        """
+        vals = np.asarray(values, dtype=float)
+        errs = np.asarray(error, dtype=float)
+        if vals.size == 0:
+            return 0.0
+        if vals.size == 1:
+            return float(vals[0])
+
+        weights = 1.0 / np.maximum(errs, _SIGNAL_FRAME_WEIGHT_ERROR_FLOOR) ** 2
+        finite = np.isfinite(vals) & np.isfinite(weights) & (weights > 0.0)
+        if not np.any(finite):
+            # No usable weights — fall back to the unweighted extreme.
+            return float(np.max(vals) if quantile >= 0.5 else np.min(vals))
+        vals = vals[finite]
+        weights = weights[finite]
+
+        order = np.argsort(vals)
+        vals = vals[order]
+        weights = weights[order]
+        cumulative = np.cumsum(weights)
+        total = float(cumulative[-1])
+        if not np.isfinite(total) or total <= 0.0:
+            return float(vals[-1] if quantile >= 0.5 else vals[0])
+        cumulative = cumulative / total
+
+        idx = int(np.searchsorted(cumulative, quantile, side="left"))
+        idx = min(max(idx, 0), vals.size - 1)
+        return float(vals[idx])
 
     def _signal_frame_error_ceiling(self, asymmetry: np.ndarray, error: np.ndarray) -> float | None:
         """Robust per-bin error ceiling for framing the signal envelope.
