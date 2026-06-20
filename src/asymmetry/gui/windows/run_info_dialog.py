@@ -15,7 +15,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
-    QHBoxLayout,
+    QDialogButtonBox,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -76,18 +76,16 @@ class RunInfoDialog(QDialog):
         apply_param_table_style(self._summary_table)
         root.addWidget(self._summary_table)
 
-        controls = QHBoxLayout()
-        controls.addStretch()
-
-        self._advanced_button = QPushButton("Advanced")
+        # Close is a standard button; Advanced is a genuinely custom action, so
+        # it sits in the ActionRole slot of the same QDialogButtonBox.
+        button_box = QDialogButtonBox()
+        self._advanced_button = button_box.addButton(
+            "Advanced", QDialogButtonBox.ButtonRole.ActionRole
+        )
         self._advanced_button.clicked.connect(self._open_advanced_dialog)
-        controls.addWidget(self._advanced_button)
-
-        close_button = QPushButton("Close")
+        close_button = button_box.addButton(QDialogButtonBox.StandardButton.Close)
         close_button.clicked.connect(self.accept)
-        controls.addWidget(close_button)
-
-        root.addLayout(controls)
+        root.addWidget(button_box)
 
         self._populate_summary_table()
 
@@ -442,12 +440,9 @@ class AdvancedRunInfoDialog(QDialog):
         self._table.resizeColumnsToContents()
         self._search_bar.setFocus()
 
-        controls = QHBoxLayout()
-        controls.addStretch()
-        close_button = QPushButton("Close")
-        close_button.clicked.connect(self.accept)
-        controls.addWidget(close_button)
-        root.addLayout(controls)
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        button_box.rejected.connect(self.accept)
+        root.addWidget(button_box)
 
     def _filter_rows(self, text: str) -> None:
         """Show only rows whose Field or Value contains the search text."""

@@ -13,8 +13,8 @@ import html
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog,
+    QDialogButtonBox,
     QLabel,
-    QPushButton,
     QTextBrowser,
     QVBoxLayout,
     QWidget,
@@ -99,6 +99,6 @@ class UserFunctionsDialog(QDialog):
         hint.setWordWrap(True)
         layout.addWidget(hint)
 
-        close_btn = QPushButton("Close", self)
-        close_btn.clicked.connect(self.close)
-        layout.addWidget(close_btn)
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)

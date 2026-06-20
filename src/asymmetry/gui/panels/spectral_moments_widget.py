@@ -18,9 +18,10 @@ from __future__ import annotations
 
 import math
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
+    QDialog,
     QDoubleSpinBox,
     QFormLayout,
     QGridLayout,
@@ -28,6 +29,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QTextBrowser,
     QVBoxLayout,
     QWidget,
 )
@@ -58,6 +60,78 @@ _READOUT_ROWS: tuple[tuple[str, str, str], ...] = (
 _DIMENSIONLESS = {"skewness", "skewness_g1", "beta"}
 
 
+# One-line meaning for each readout row, shown in the Info dialog. Mirrors the
+# physics in ``core/fourier/moments.py`` so the dense readout is self-describing.
+_READOUT_HELP: tuple[tuple[str, str], ...] = (
+    (
+        "B_pk",
+        "Peak field — the line maximum, refined by a five-point parabola. "
+        "The fragile member: it hops between bins on a noisy/flat spectrum.",
+    ),
+    (
+        "B_ave",
+        "Mean field — the amplitude-weighted average ⟨B⟩ of the distribution p(B). "
+        "Robust; the diamagnetic shift is B_ave relative to the applied field.",
+    ),
+    (
+        "⟨B_ave−B_pk⟩",
+        "Mean-minus-peak shift — nonzero for a skewed line "
+        "(a vortex lattice's high-field tail pulls the mean off the peak).",
+    ),
+    (
+        "B_rms (vs mean)",
+        "RMS width about the mean — the second central moment of p(B). "
+        "In a type-II mixed state B_rms ∝ 1/λ², the superfluid density.",
+    ),
+    ("B_rms (vs peak)", "RMS width referenced to the peak field rather than the mean."),
+    ("Skewness α", "Line asymmetry, WiMDA's cube-root α convention (dimensionless)."),
+    ("Skewness γ₁", "Line asymmetry, the textbook standardised third moment γ₁ (dimensionless)."),
+    ("Asymmetry β", "Dimensionless asymmetry referenced to B_pk; inherits B_pk's fragility."),
+)
+
+
+def _build_moments_info_html() -> str:
+    rows = "".join(
+        f"<tr><td style='padding:2px 10px 2px 0; vertical-align:top'><b>{name}</b></td>"
+        f"<td style='padding:2px 0'>{text}</td></tr>"
+        for name, text in _READOUT_HELP
+    )
+    return (
+        "<html><body>"
+        "<h2>Spectral moments</h2>"
+        "<p>Statistical moments of the active lineshape-faithful spectrum (MaxEnt or "
+        "phase-corrected FFT), reduced over the chosen <i>range</i> and <i>cutoff</i>. "
+        "<b>B</b> moments carry the displayed unit; skewness and asymmetry are dimensionless "
+        "and invariant under the field↔frequency rescaling. Each value shows a 1σ bootstrap "
+        "uncertainty when the spectrum carries errors.</p>"
+        f"<table>{rows}</table>"
+        "<p><b>Cutoff</b> ignores spectrum below the given fraction of the in-window peak; "
+        "<b>Send to trend</b> pushes the current moment set into the trend table.</p>"
+        "</body></html>"
+    )
+
+
+def show_spectral_moments_info_dialog(parent: QWidget) -> QDialog:
+    """Open a non-modal dialog explaining each spectral-moment row."""
+    dialog = QDialog(parent)
+    dialog.setWindowTitle("Spectral moments")
+    # Free the dialog on close so repeated Info clicks don't accumulate.
+    dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+    dialog.resize(560, 460)
+    layout = QVBoxLayout(dialog)
+    browser = QTextBrowser(dialog)
+    browser.setOpenExternalLinks(False)
+    browser.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+    browser.setHtml(_build_moments_info_html())
+    layout.addWidget(browser)
+    close_btn = QPushButton("Close", dialog)
+    close_btn.clicked.connect(dialog.close)
+    layout.addWidget(close_btn)
+    dialog.setModal(False)
+    dialog.show()
+    return dialog
+
+
 def _format_value_error(value: float, error: float, suffix: str) -> str:
     """Return a compact ``value ± error unit`` string (blank for NaN value)."""
     if value is None or not math.isfinite(value):
@@ -86,8 +160,19 @@ class SpectralMomentsWidget(QGroupBox):
         self._bounds_mhz: tuple[float, float] | None = None
         self._cutoff_fraction: float = 0.0
         self._eligible = False
+        self._info_dialog: QDialog | None = None
 
         outer = QVBoxLayout(self)
+
+        # ── header: a single Info affordance for the dense readout ─────────
+        header_row = QHBoxLayout()
+        header_row.setContentsMargins(0, 0, 0, 0)
+        header_row.addStretch()
+        self._info_btn = QPushButton("Info")
+        self._info_btn.setToolTip("What each spectral-moment row means")
+        self._info_btn.clicked.connect(self._show_info)
+        header_row.addWidget(self._info_btn)
+        outer.addLayout(header_row)
 
         # ── controls ──────────────────────────────────────────────────────
         controls = QFormLayout()
@@ -158,6 +243,9 @@ class SpectralMomentsWidget(QGroupBox):
         self.set_eligible(False, "No lineshape-faithful spectrum is active.")
 
     # ── small builders ────────────────────────────────────────────────────
+
+    def _show_info(self) -> None:
+        self._info_dialog = show_spectral_moments_info_dialog(self)
 
     @staticmethod
     def _make_range_spin() -> QDoubleSpinBox:
