@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Robust batch seeding for near-transition oscillatory scans.** A block-separable
+  F-B asymmetry batch (every free parameter Local — e.g. an EuO ZF temperature scan
+  approaching `T_C`) now honours the **Chain from previous run** / **Auto** seeding
+  mode it previously ignored: runs are fit in physical-scan order, each warm-started
+  from the previous good run, and a run that converges onto the spurious branch
+  (amplitude collapsed to ~0 or frequency discontinuous with the trend) is detected
+  and reseeded once from the good-run trend before being kept. New core engine
+  `asymmetry.core.fitting.fit_asymmetry_series` plus shared seeding/diagnostics in
+  `asymmetry.core.fitting.series_seeding` (`diagnose_series`,
+  `detect_amplitude_collapse`, `detect_frequency_outliers`, `suggest_series_seeds`,
+  `recommend_series_seeding`), reused by the grouped-series Auto policy so both batch
+  paths agree on when to chain.
+- **Batch outlier signpost.** When a finished batch's ν(T)/A(T) trend shows the
+  collapse/outlier signature, the Batch tab now surfaces a banner that points at the
+  per-run **Initial Values…** warm-start and offers a one-click **Use suggested
+  per-run seeds** — filling the per-run table with descending-frequency seeds
+  interpolated from the cleanly-fit runs and re-running in Independent-seeds mode
+  (automating the proven manual cure).
 - **Angle-dependent muon Knight shift** in the parameter-trend panel. Fitted
   oscillation components (local field `field_n` or frequency) convert to the
   muon Knight shift `K = (ν − ν_ref)/ν_ref` against either reference: the

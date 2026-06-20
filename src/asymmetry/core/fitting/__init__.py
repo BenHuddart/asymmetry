@@ -110,6 +110,18 @@ from asymmetry.core.fitting.rrf_offset import (
     rrf_frequency_offsets,
     rrf_offset_model,
 )
+from asymmetry.core.fitting.series import AsymmetrySeriesResult, fit_asymmetry_series
+from asymmetry.core.fitting.series_seeding import (
+    SeriesDiagnostics,
+    SeriesPoint,
+    detect_amplitude_collapse,
+    detect_frequency_outliers,
+    diagnose_series,
+    is_frequency_parameter,
+    recommend_series_seeding,
+    resolve_series_params,
+    suggest_series_seeds,
+)
 from asymmetry.core.fitting.spectral import (
     FREQUENCY_COMPONENT_NAMES,
     append_frequency_field_derived_parameters,
@@ -145,6 +157,17 @@ __all__ = [
     "GROUPED_SERIES_SEEDING",
     "SeedingRecommendation",
     "recommend_grouped_series_seeding",
+    "recommend_series_seeding",
+    "fit_asymmetry_series",
+    "AsymmetrySeriesResult",
+    "SeriesDiagnostics",
+    "SeriesPoint",
+    "diagnose_series",
+    "detect_amplitude_collapse",
+    "detect_frequency_outliers",
+    "suggest_series_seeds",
+    "resolve_series_params",
+    "is_frequency_parameter",
     "build_grouped_count_model",
     "build_grouped_time_domain_datasets",
     "build_grouped_time_domain_groups",
