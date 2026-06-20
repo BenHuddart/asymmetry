@@ -4,6 +4,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 HARNESS_PATH = ROOT / "tools" / "harness.py"
 
@@ -128,3 +130,23 @@ def test_k_expression_is_not_mistaken_for_a_target() -> None:
     command = harness.build_pytest_command(["-k", "fourier"])
 
     assert _marker(command) == "(not slow and not integration)"
+
+
+def test_path_like_option_value_does_not_bypass_marker() -> None:
+    harness = _load_harness()
+
+    # `-o cache_dir=/tmp/x` is an option value, not a test target — its slash must
+    # not be mistaken for a path and bypass the tier marker.
+    command = harness.build_pytest_command(["-o", "cache_dir=/tmp/x"])
+
+    assert _marker(command) == "(not slow and not integration)"
+
+
+def test_fast_tier_rejects_subset() -> None:
+    harness = _load_harness()
+
+    # fast is non-GUI by definition; fast+gui would compose to a contradictory
+    # marker selecting zero tests yet exiting 0, so it must be rejected loudly.
+    for subset in ("gui", "non-gui"):
+        with pytest.raises(ValueError, match="fast"):
+            harness.build_pytest_command([], tier="fast", subset=subset)

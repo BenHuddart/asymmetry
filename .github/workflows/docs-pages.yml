@@ -15,12 +15,11 @@ on:
       - ".github/workflows/docs-pages.yml"
   workflow_dispatch:
 
+# Least privilege at the top level: the cheap PR smoke and the release build only
+# read the repo. The Pages write / id-token / artifact-delete permissions are
+# granted narrowly to the deploy job below, so PR-triggered code never holds them.
 permissions:
   contents: read
-  pages: write
-  id-token: write
-  # Required to delete the github-pages artifact once it has been deployed.
-  actions: write
 
 concurrency:
   group: docs-pages-${{ github.ref }}
@@ -116,6 +115,13 @@ jobs:
     needs: build-docs
     # Deploy only for releases (version tag) or a deliberate manual dispatch.
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    # The Pages deploy is the only job that needs write scopes: pages/id-token to
+    # publish, and actions:write to delete the consumed artifact afterwards.
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+      actions: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

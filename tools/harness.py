@@ -548,7 +548,10 @@ def _has_explicit_targets(pytest_args: Sequence[str]) -> bool:
     paths and so do not trip this.
     """
     for arg in pytest_args:
-        if arg.startswith("-"):
+        # Skip option flags and `key=value` option values (e.g. `-o x=/tmp/c`):
+        # a real test path or node id never contains "=", so this keeps an
+        # option value that happens to look path-like from bypassing the marker.
+        if arg.startswith("-") or "=" in arg:
             continue
         if arg.endswith(".py") or "::" in arg or "/" in arg or os.sep in arg:
             return True
@@ -569,7 +572,18 @@ def build_pytest_command(
     Composes the tier and subset markers into a single ``-m`` expression, unless
     the caller already passed ``-m`` or named explicit targets (in which case
     those run verbatim). xdist parallelism is added for the standard/full tiers.
+
+    ``--subset`` only shards the gui/non-gui split of the standard/full tiers; the
+    ``fast`` tier is non-GUI by definition, so combining it with a subset is
+    rejected rather than silently composing a contradictory marker (``fast`` +
+    ``gui`` would select zero tests and still exit 0 — a false green).
     """
+    if tier == "fast" and subset != "all":
+        raise ValueError(
+            f"--subset {subset!r} is incompatible with --tier fast "
+            "(the fast tier is already non-GUI); use --tier standard/full to shard."
+        )
+
     pytest_args = list(pytest_args)
 
     user_marker = any(a == "-m" or a.startswith("-m") for a in pytest_args)

@@ -20,6 +20,7 @@ Layout overview (mirroring WiMDA):
 from __future__ import annotations
 
 import copy
+import functools
 import hashlib
 import os
 import time
@@ -278,30 +279,18 @@ def _write_text_file(path: str, content: str) -> None:
         handle.write(content)
 
 
-_WINDOW_ICON_UNSET: object = object()
-_window_icon_cache: QIcon | None | object = _WINDOW_ICON_UNSET
-
-
+@functools.cache
 def _load_window_icon() -> QIcon | None:
     """Load the window icon, decoding the PNG only once per process.
 
-    Decoding ``logo_256x256.png`` into a ``QPixmap`` costs ~0.15s, which a
-    fresh ``MainWindow`` otherwise paid on every construction — a meaningful
-    tax across the ~1.5k GUI tests that each build a window. The decoded
-    ``QIcon`` is immutable and shareable across windows, so we cache it (the
-    sentinel distinguishes "not computed yet" from a genuine ``None`` result).
-    """
-    global _window_icon_cache
-    if _window_icon_cache is not _WINDOW_ICON_UNSET:
-        return _window_icon_cache  # type: ignore[return-value]
-    _window_icon_cache = _load_window_icon_uncached()
-    return _window_icon_cache  # type: ignore[return-value]
+    Decoding ``logo_256x256.png`` into a ``QPixmap`` costs ~0.15s, which a fresh
+    ``MainWindow`` otherwise paid on every construction — a meaningful tax across
+    the ~1.5k GUI tests that each build a window. The decoded ``QIcon`` is
+    immutable and shareable across windows, so the result (including a ``None``
+    "could not load") is memoized for the process; ``cache_clear()`` is available
+    if a test ever needs to force a reload.
 
-
-def _load_window_icon_uncached() -> QIcon | None:
-    """Load window icon from package resources.
-
-    Returns None if icon cannot be loaded.
+    Returns None if the icon cannot be loaded.
     """
     from asymmetry.gui.app import _icon_from_pixmap, _load_resource_pixmap, _macos_icon_pixmap
 
