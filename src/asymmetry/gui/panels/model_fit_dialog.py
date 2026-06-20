@@ -51,6 +51,7 @@ from asymmetry.gui.widgets.function_expression_builder import (
 from asymmetry.gui.widgets.function_expression_builder import (
     FunctionExpressionBuilderDialog,
 )
+from asymmetry.gui.widgets.screen_sizing import resize_to_available
 
 _OPERATOR_OPTIONS = ["+", "-", "*", "/"]
 
@@ -361,7 +362,10 @@ class ModelFitDialog(QDialog):
         # label is supplied so older callers keep working.
         x_display = x_label or x_key
         self.setWindowTitle(f"Model Fit: {parameter_name} vs {x_display}")
-        self.resize(950, 650)
+        # Cap the default to the available screen — the preferred 950×650 nearly
+        # fills a 960×640 work area, so on a small display it would open with no
+        # margin; the smaller floor keeps it usable (P2-3).
+        resize_to_available(self, 950, 650, min_width=560, min_height=420)
 
         self._parameter_name = parameter_name
         self._x_key = x_key

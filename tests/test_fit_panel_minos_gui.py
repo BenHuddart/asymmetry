@@ -139,21 +139,25 @@ def test_fit_quality_tooltip_explains_high_ndof_band(qapp: QApplication) -> None
 
 
 def test_fit_quality_chip_softens_marginal_high_ndof(qapp: QApplication) -> None:
-    """A near-unity χ²ᵣ that only reads "poor" at high ν is shown amber as
-    "poor (marginal)" rather than alarming red (the cuprate case)."""
+    """A near-unity χ²ᵣ that only reads "poor" at high ν leads with a neutral
+    "near-ideal (band-tight)" amber chip rather than an alarming red "poor"
+    (the cuprate case); the verdict itself stays in the tooltip (P3-1)."""
     from asymmetry.gui.styles import tokens
-    from asymmetry.gui.styles.widgets import fit_quality_chip_html
+    from asymmetry.gui.styles.widgets import fit_quality_chip_html, fit_quality_tooltip
 
     marginal = {"verdict": "poor", "chi2_reduced": 1.10, "marginal": True}
     plain = {"verdict": "poor", "chi2_reduced": 8.0, "marginal": False}
 
     chip_marginal = fit_quality_chip_html(marginal)
-    assert "marginal" in chip_marginal
+    assert "near-ideal (band-tight)" in chip_marginal
+    assert "poor" not in chip_marginal  # the alarming word is not in the at-a-glance chip
     assert tokens.WARN in chip_marginal  # amber, not the alarming error red
     assert tokens.ERROR not in chip_marginal
+    # The verdict is still explained on hover.
+    assert "poor" in fit_quality_tooltip(marginal)
 
     chip_plain = fit_quality_chip_html(plain)
-    assert "marginal" not in chip_plain
+    assert "near-ideal" not in chip_plain
     assert tokens.ERROR in chip_plain  # genuine poor stays red
 
 

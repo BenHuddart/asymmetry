@@ -439,8 +439,13 @@ def fit_quality_chip_html(quality: dict | None, params_at_bound: list[str] | Non
     if quality and quality.get("verdict"):
         verdict = str(quality["verdict"])
         if quality.get("marginal"):
+            # χ²ᵣ is numerically within ~0.2 of 1 (a good fit) and reads
+            # poor/overdone only because the confidence band tightens at high ν.
+            # Lead with a neutral phrase so the at-a-glance chip isn't alarming;
+            # the verdict and the full explanation remain in the hover tooltip
+            # (P3-1, presentation only — the band math is unchanged).
             colour = tokens.WARN
-            label = f"{verdict} (marginal)"
+            label = "near-ideal (band-tight)"
         else:
             colour = _FIT_VERDICT_COLOURS.get(verdict, tokens.TEXT_MUTED)
             label = verdict

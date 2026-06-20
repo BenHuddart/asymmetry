@@ -2125,7 +2125,7 @@ def test_send_to_batch_button_copies_model_and_switches_tab(qapp: QApplication) 
     )
     panel._tabs.setCurrentWidget(panel._single_tab)
 
-    panel._single_tab._send_to_batch_btn.click()
+    panel._single_tab._send_to_batch_action.trigger()
 
     assert (
         panel._global_tab._composite_model.component_names

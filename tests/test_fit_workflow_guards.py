@@ -136,19 +136,19 @@ def test_drop_background_button_yields_single_exponential(qapp: QApplication) ->
     tab.set_dataset(_time_dataset())
     # The default model carries a free background, so the affordance is offered.
     assert tab._composite_model.component_names == ["Exponential", "Constant"]
-    assert tab._drop_background_btn.isEnabled()
+    assert tab._drop_background_action.isEnabled()
 
     tab._on_drop_background()
 
     assert tab._composite_model.component_names == ["Exponential"]
     # Nothing left to drop → the affordance disables itself.
-    assert not tab._drop_background_btn.isEnabled()
+    assert not tab._drop_background_action.isEnabled()
 
 
 def test_drop_background_disabled_in_frequency_domain(qapp: QApplication) -> None:
     tab = SingleFitTab()
     tab.set_domain("frequency")
-    assert not tab._drop_background_btn.isEnabled()
+    assert not tab._drop_background_action.isEnabled()
 
 
 # ── (c) multi-period browser cue ─────────────────────────────────────────────
