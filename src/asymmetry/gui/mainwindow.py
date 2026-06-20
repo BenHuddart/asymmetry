@@ -10603,6 +10603,15 @@ class MainWindow(QMainWindow):
             self._fit_parameters_panel.set_custom_x_fields([f for f in fields if f[1] != angle_key])
         if hasattr(self._fit_parameters_panel, "set_angle_x_field"):
             self._fit_parameters_panel.set_angle_x_field(angle_field)
+        # Re-link any custom column added/edited *after* a batch fit into the
+        # existing trend results, so a late-added "Current (A)" column trends
+        # live instead of showing "N/N skipped" until the batch is re-run.
+        if hasattr(self._fit_parameters_panel, "relink_custom_values") and hasattr(
+            self._data_browser, "custom_values_by_run"
+        ):
+            self._fit_parameters_panel.relink_custom_values(
+                self._data_browser.custom_values_by_run()
+            )
 
     def _update_selected_datasets(self, *_args) -> None:
         """Update the fit panel with currently selected datasets."""
