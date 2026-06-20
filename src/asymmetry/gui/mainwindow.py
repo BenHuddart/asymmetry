@@ -20,6 +20,7 @@ Layout overview (mirroring WiMDA):
 from __future__ import annotations
 
 import copy
+import functools
 import hashlib
 import os
 import time
@@ -278,10 +279,18 @@ def _write_text_file(path: str, content: str) -> None:
         handle.write(content)
 
 
+@functools.cache
 def _load_window_icon() -> QIcon | None:
-    """Load window icon from package resources.
+    """Load the window icon, decoding the PNG only once per process.
 
-    Returns None if icon cannot be loaded.
+    Decoding ``logo_256x256.png`` into a ``QPixmap`` costs ~0.15s, which a fresh
+    ``MainWindow`` otherwise paid on every construction — a meaningful tax across
+    the ~1.5k GUI tests that each build a window. The decoded ``QIcon`` is
+    immutable and shareable across windows, so the result (including a ``None``
+    "could not load") is memoized for the process; ``cache_clear()`` is available
+    if a test ever needs to force a reload.
+
+    Returns None if the icon cannot be loaded.
     """
     from asymmetry.gui.app import _icon_from_pixmap, _load_resource_pixmap, _macos_icon_pixmap
 

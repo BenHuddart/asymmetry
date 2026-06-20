@@ -65,12 +65,17 @@ re-execute itself with `.venv/bin/python` when that interpreter exists.
 ```bash
 python tools/harness.py structural
 python tools/harness.py lint
-python tools/harness.py test -- tests/test_transforms.py
-python tools/harness.py validate
+python tools/harness.py test -- tests/test_transforms.py   # focused, exact targets
+python tools/harness.py test --tier fast                   # inner loop, non-GUI (~40s)
+python tools/harness.py validate                           # standard tier, pre-push gate
 ```
 
 `lint` and `lint-all` both run the full Ruff baseline across `src`, `tests`, and
 `tools`.
+
+Test tiers (`--tier {fast,standard,full}`): use `fast` (non-GUI, ~40s) for the
+inner loop and `validate`/`standard` before pushing. See
+[docs/HARNESS.md](docs/HARNESS.md#test-tiers) for the full breakdown.
 
 For GUI startup or packaging work:
 
