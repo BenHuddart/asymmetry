@@ -7,6 +7,7 @@ import importlib
 import os
 import shutil
 import subprocess
+from collections.abc import Iterator
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -470,6 +471,18 @@ class FitParametersPanel(QWidget):
         self._y_selector_table.setMinimumWidth(0)
 
         controls_form.addRow("Y parameters:", self._y_selector_table)
+
+        # Hint surfaced when the batch classified a parameter as Global (shared):
+        # that parameter takes one value across every run, so it is held flat and
+        # excluded from the trendable Y list. A user trending an amplitude curve
+        # (where A_1 defaults to Global) would otherwise find their curve missing
+        # with no explanation — point them to set it Local and re-fit.
+        self._global_param_hint = QLabel("")
+        self._global_param_hint.setWordWrap(True)
+        self._global_param_hint.setObjectName("trendGlobalParamHint")
+        self._global_param_hint.setStyleSheet("color: palette(mid); font-style: italic;")
+        self._global_param_hint.setVisible(False)
+        controls_form.addRow("", self._global_param_hint)
 
         self._create_composite_btn = QPushButton("New composite")
         self._create_composite_btn.setToolTip("Create a composite (derived) parameter.")
@@ -2726,6 +2739,59 @@ class FitParametersPanel(QWidget):
         if active_is_custom:
             self._refresh_plot()
 
+    def relink_custom_values(self, values_by_run: dict[int, dict[str, str]]) -> None:
+        """Refresh every trend row's custom-column values from the live browser.
+
+        A completed batch fit snapshots each run's custom-column text when it
+        records the series. If the user adds or populates a custom column
+        *afterwards*, those snapshots are stale and the column trends as all-NaN
+        ("N/N skipped — empty/non-numeric") with no recovery short of re-running
+        the batch. Re-pushing the current per-run values here re-links existing
+        results to the new/edited column live, so the ordering trap dissolves.
+
+        ``values_by_run`` maps run number → the run's full ``custom_fields`` dict
+        (``custom:<id>``/``angle`` → text). Rows whose run has a live dataset are
+        re-synced wholesale (so cleared values propagate too); rows with no live
+        dataset keep their snapshot.
+        """
+        if not values_by_run:
+            return
+        changed = False
+        for row in self._iter_all_fit_rows():
+            live = values_by_run.get(row.run_number)
+            if live is None:
+                continue
+            if row.custom_values != live:
+                row.custom_values = dict(live)
+                changed = True
+        if not changed:
+            return
+        # Keep the active group's snapshot in step with the mutated rows so a
+        # later view rebuild (group switch / re-plot) doesn't resurrect stale
+        # values, then redraw if a custom/Angle column is the live abscissa.
+        self._sync_active_group_state()
+        x_key = self._effective_x_key()
+        if _x_custom_id(x_key) is not None or x_key == self._angle_x_key():
+            self._refresh_plot()
+
+    def _iter_all_fit_rows(self) -> Iterator[_FitRow]:
+        """Yield every distinct :class:`_FitRow` held by the panel.
+
+        Covers the active view (``_rows``) and every stored series group, so a
+        custom-column re-link reaches inactive series too. Rows are de-duplicated
+        by identity because the active ``_rows`` share objects with their group.
+        """
+        seen: set[int] = set()
+        for group in self._group_fit_results.values():
+            for row in group.rows:
+                if id(row) not in seen:
+                    seen.add(id(row))
+                    yield row
+        for row in self._rows:
+            if id(row) not in seen:
+                seen.add(id(row))
+                yield row
+
     def set_angle_x_field(self, field: tuple[str, str] | None) -> None:
         """Set (or clear) the special Angle field offered as a first-class x-axis.
 
@@ -2787,6 +2853,44 @@ class FitParametersPanel(QWidget):
             return None
         return key, self._custom_x_labels().get(key, key)
 
+    def _shared_held_constant_params(self) -> list[str]:
+        """Names of Global-classified (shared) params held constant, hence flat.
+
+        A batch fit shares one value across every run for each ``global``-role
+        parameter, so it never varies and is dropped from the trendable Y list.
+        These are exactly the names worth flagging: the user who classified an
+        amplitude as Global (the Batch-tab default for the leading amplitude) and
+        then tries to trend it would otherwise find it silently absent.
+        """
+        if self._global_params is None:
+            return []
+        varying = set(self._varying_params)
+        names: list[str] = []
+        for param in self._global_params:
+            if getattr(param, "fixed", False):
+                continue
+            name = str(param.name)
+            if name in varying or name in names:
+                continue
+            names.append(name)
+        return names
+
+    def _update_global_param_hint(self) -> None:
+        """Show/hide the hint pointing at Global params that won't trend."""
+        names = self._shared_held_constant_params()
+        if not names:
+            self._global_param_hint.setText("")
+            self._global_param_hint.setVisible(False)
+            return
+        labels = ", ".join(_format_param_label(name) for name in names)
+        subject = "it is" if len(names) == 1 else "they are"
+        self._global_param_hint.setText(
+            f"{labels} fitted as Global (one shared value), so {subject} held "
+            "constant and not shown as a trend. To trend across runs, set to "
+            "Local in the Batch tab and re-fit."
+        )
+        self._global_param_hint.setVisible(True)
+
     def _rebuild_y_controls(self, *, preferred_selected: list[str] | None = None) -> None:
         self._y_selector_table.blockSignals(True)
         self._y_selector_table.clearContents()
@@ -2799,6 +2903,9 @@ class FitParametersPanel(QWidget):
         # Keep the X-axis selector's parameter entries in sync with the
         # trendable parameters (param-vs-param trending, item 1).
         self._rebuild_x_axis_combo()
+        # Refresh the "shared param held constant" hint whenever the trendable
+        # set changes (group switch, new fit, restore) — both exit paths below.
+        self._update_global_param_hint()
 
         if not display_params:
             self._set_y_table_visible_rows(3)

@@ -1729,6 +1729,30 @@ class DataBrowserPanel(QWidget):
         """
         return [(column.label, column.id) for column in self._extra_columns if column.is_custom]
 
+    def custom_values_by_run(self) -> dict[int, dict[str, str]]:
+        """Map each known run number to its live custom-column values.
+
+        The source of truth for custom columns is
+        ``dataset.metadata["custom_fields"]`` (keyed by column id). Exposing it
+        per run lets trend consumers re-link existing batch results to a column
+        that was added or populated *after* the fit completed (the ordering
+        trap) without re-running the batch. A run with no custom values maps to
+        an empty dict so consumers can clear stale snapshots, not just add.
+        """
+        out: dict[int, dict[str, str]] = {}
+        for source in (self._datasets, self._combined_datasets):
+            for run_number, dataset in source.items():
+                try:
+                    run_key = int(run_number)
+                except (TypeError, ValueError):
+                    continue
+                fields = dataset.metadata.get(CUSTOM_FIELDS_METADATA_KEY)
+                if isinstance(fields, dict):
+                    out[run_key] = {str(k): str(v) for k, v in fields.items()}
+                else:
+                    out.setdefault(run_key, {})
+        return out
+
     def angle_x_field(self) -> tuple[str, str] | None:
         """Return ``(label, id)`` for the special Angle field, or None if absent.
 
@@ -2940,6 +2964,10 @@ class DataBrowserPanel(QWidget):
         # Free-text by design (numbers are inferred only where consumed, e.g. the
         # trend x-axis): store the trimmed text verbatim, clearing on empty.
         self._set_custom_column_value(dataset, column_id, text)
+        # Notify consumers (plot legend labels, trend x-axis) so an edit made
+        # *after* a batch fit re-links live into existing results rather than
+        # silently trending as all-NaN ("N/N skipped") until the batch is re-run.
+        self._notify_extra_columns_changed()
 
     def _remove_run_number(self, run_number: int) -> None:
         self._datasets.pop(run_number, None)
