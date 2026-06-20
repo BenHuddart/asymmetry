@@ -2034,9 +2034,7 @@ class SingleFitTab(QWidget):
         self._drop_background_action.triggered.connect(self._on_drop_background)
         self._drop_background_action.setEnabled(False)
         self._share_group_action = self._more_menu.addAction("Share with Group")
-        self._share_group_action.setToolTip(
-            "Share this fit function with the selected data group."
-        )
+        self._share_group_action.setToolTip("Share this fit function with the selected data group.")
         self._share_group_action.triggered.connect(self._on_share_function_with_group)
         self._share_group_action.setEnabled(False)
         self._send_to_batch_action = self._more_menu.addAction("Send to Batch")
