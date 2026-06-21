@@ -71,6 +71,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and is left blank when absent or ambiguous. This lets the grouping nudge fire
   on PSI GPS data, which carries no structured field-state code.
 
+### Changed
+
+- **macOS release binaries are Apple Silicon (arm64) only.** GitHub Releases
+  publish a Windows x64 installer and a single macOS arm64 DMG; the Intel macOS
+  build was dropped because PyPI ships no Intel macOS `pyhdf` wheel. Intel Mac
+  and Linux users install from source.
+
 ### Fixed
 
 - **Knight-shift / `K(θ)` fits survive save and reload**: model-fit overlays on
