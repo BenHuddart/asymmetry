@@ -133,6 +133,7 @@ def _import_scenarios() -> None:
         # global_fit_lfkt,
         # lf_kt_global_results,
         grouped_fit_ybco_knight,
+        knight_shift_angle,
         lf_kt_series_plot,
         logbook_view,
         main_window,

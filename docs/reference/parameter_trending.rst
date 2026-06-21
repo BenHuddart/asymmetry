@@ -977,7 +977,8 @@ two-fold modulation
 for a crystal rotated in a plane, with :math:`\theta_0` the principal-axis
 offset. Both take :math:`\theta` in degrees, so they fit directly against the
 Angle axis (folded or not). The diagonal dipolar-tensor components recovered for
-rotations about the crystal axes constrain the muon stopping site.
+rotations about the crystal axes constrain the muon stopping site. For a
+worked example end to end, see :doc:`/workflows/knight_shift_angle`.
 
 **Clogston–Jaccarino** (:math:`K` vs :math:`\chi`). Plotting the Knight shift
 against the bulk susceptibility with temperature as the implicit parameter gives

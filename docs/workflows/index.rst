@@ -24,6 +24,7 @@ New users should start with :doc:`calibration_grouping_emu`.
    photomusr_silicon_periods
    alc_scan_tcnq
    temperature_scan_magnetism
+   knight_shift_angle
    superconductor_penetration_depth
    lf_decoupling_dynamics
 
@@ -55,6 +56,10 @@ Quick chooser
      - Locate Tc and measure the order parameter of a ferromagnet
        or antiferromagnet
      - Logbook sort, Fit Wizard, parameter trending, power-law fit
+   * - :doc:`knight_shift_angle`
+     - Find the muon site from the angle dependence of the Knight
+       shift in a rotated single crystal
+     - Knight shift…, Angle axis + Fold, Joint K(θ) fit, KnightAnisotropy
    * - :doc:`superconductor_penetration_depth`
      - Extract λ(T) from TF μSR in the vortex state of a
        superconductor
@@ -70,11 +75,13 @@ Further workflows
 The internal porting workspace
 (``docs/porting/practical-workflows/workflow-catalogue.md``)
 catalogues additional workflows that Asymmetry partially or
-fully supports — F–μ–F identification, paramagnetic Knight shift,
-spin-glass freezing, muonium-radical hyperfine, and others.
+fully supports — F–μ–F identification, spin-glass freezing,
+muonium-radical hyperfine, and others.
 ALC resonance scans have a worked example above
 (:doc:`alc_scan_tcnq`) and a full feature reference in
-:doc:`/reference/alc_mode`. Workflows that Asymmetry does **not**
+:doc:`/reference/alc_mode`; the angle-dependent Knight shift has a
+worked example above (:doc:`knight_shift_angle`) and a feature
+reference at :ref:`knight-shift`. Workflows that Asymmetry does **not**
 yet support (e.g. multi-period arithmetic, LEM depth profiling) are
 catalogued there too and surface as candidates in
 ``docs/porting/ROADMAP.md``.
