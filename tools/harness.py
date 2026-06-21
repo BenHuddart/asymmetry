@@ -622,7 +622,19 @@ def cmd_test(args: argparse.Namespace) -> int:
 
 
 def cmd_docs(_args: argparse.Namespace) -> int:
-    return _run_command([sys.executable, "-m", "sphinx", "-b", "html", "docs", "docs/_build/html"])
+    return _run_command(
+        [
+            sys.executable,
+            "-m",
+            "sphinx",
+            "-d",
+            "docs/_build/doctrees",
+            "-b",
+            "html",
+            "docs",
+            "docs/_build/html",
+        ]
+    )
 
 
 def cmd_examples(_args: argparse.Namespace) -> int:
