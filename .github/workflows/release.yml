@@ -13,82 +13,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-macos-intel:
-    name: Build macOS DMG (x86_64)
-    runs-on: macos-15-intel
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-
-      - name: Extract version
-        id: meta
-        shell: bash
-        run: |
-          TAG="${GITHUB_REF_NAME}"
-          VERSION="${TAG#v}"
-          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
-      - name: Install build dependencies
-        shell: bash
-        run: |
-          brew install hdf4
-          HDF4_PREFIX="$(brew --prefix hdf4)"
-          python -m pip install --upgrade pip
-          INCLUDE_DIRS="${HDF4_PREFIX}/include" LIBRARY_DIRS="${HDF4_PREFIX}/lib" \
-            pip install -c constraints.txt -e ".[gui,gle,hdf5,hdf4,root]"
-          pip install -c constraints.txt pyinstaller Pillow dmgbuild
-
-      - name: Generate macOS icon (.icns)
-        shell: bash
-        run: python packaging/macos_icon.py --icns build/icons/Asymmetry.icns
-
-      - name: Build application with PyInstaller
-        env:
-          PYI_ICON_PATH: ${{ github.workspace }}/build/icons/Asymmetry.icns
-        shell: bash
-        run: pyinstaller --clean --noconfirm packaging/asymmetry.spec
-
-      - name: Smoke-test packaged app
-        shell: bash
-        run: |
-          test -x dist/Asymmetry.app/Contents/MacOS/Asymmetry
-          dist/Asymmetry.app/Contents/MacOS/Asymmetry --smoke-test --smoke-test-root
-
-      - name: Generate DMG background
-        shell: bash
-        run: python scripts/build_dmg_background.py --output build/dmg-bg.png
-
-      - name: Build DMG
-        env:
-          ASYMMETRY_APP_BUNDLE: ${{ github.workspace }}/dist/Asymmetry.app
-          ASYMMETRY_DMG_BACKGROUND: ${{ github.workspace }}/build/dmg-bg.png
-        shell: bash
-        run: |
-          VERSION="${{ steps.meta.outputs.version }}"
-          DMG_PATH="dist/Asymmetry-${VERSION}-macos-x86_64.dmg"
-
-          test -d dist/Asymmetry.app
-
-          rm -f "$DMG_PATH"
-          dmgbuild -s packaging/macos/dmg_settings.py "Asymmetry" "$DMG_PATH"
-
-      - name: Upload macOS x86_64 artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: asymmetry-macos-x86_64
-          path: dist/Asymmetry-${{ steps.meta.outputs.version }}-macos-x86_64.dmg
-          if-no-files-found: error
-          # Build artifacts are only needed long enough for the release job to
-          # download them; the "Delete workflow artifacts" step removes them on
-          # success, and this caps lingering ones (e.g. if a build succeeds but
-          # the release job never runs) instead of the 90-day default.
-          retention-days: 1
-
   build-macos-arm:
     name: Build macOS DMG (arm64)
     runs-on: macos-14
@@ -112,11 +36,8 @@ jobs:
       - name: Install build dependencies
         shell: bash
         run: |
-          brew install hdf4
-          HDF4_PREFIX="$(brew --prefix hdf4)"
           python -m pip install --upgrade pip
-          INCLUDE_DIRS="${HDF4_PREFIX}/include" LIBRARY_DIRS="${HDF4_PREFIX}/lib" \
-            pip install -c constraints.txt -e ".[gui,gle,hdf5,hdf4,root]"
+          pip install -c constraints.txt -e ".[gui,gle,hdf5,hdf4,root]"
           pip install -c constraints.txt pyinstaller Pillow dmgbuild
 
       - name: Generate macOS icon (.icns)
@@ -251,7 +172,6 @@ jobs:
     name: Create GitHub release
     runs-on: ubuntu-latest
     needs:
-      - build-macos-intel
       - build-macos-arm
       - build-windows
     permissions:

@@ -1,7 +1,11 @@
 Installation
 ============
 
-Asymmetry is not currently published on PyPI. Install from the Git repository.
+Asymmetry is not currently published on PyPI. Most users on **Windows** or
+**Apple Silicon Macs** should install the pre-built desktop application from
+the `GitHub Releases <https://github.com/BenHuddart/asymmetry/releases/latest>`__
+page (Windows ``.exe`` installer; macOS ``.dmg``). **Intel Mac** and **Linux**
+users should install from the Git repository as described below.
 
 Requirements
 ------------
@@ -30,12 +34,15 @@ For HDF4 support (reading legacy ISIS muon NeXus V1 ``.nxs`` files):
 
 * pyhdf >= 0.10
 
-  On Linux and macOS the ``pyhdf`` wheels bundle the HDF4 C library. On
-  **Windows** they do not: ``pyhdf`` also needs the HDF4 runtime
-  (``hdf.dll`` / ``mfhdf.dll``, e.g. from the conda-forge ``hdf4`` package or
-  ``packaging/windows/fetch_hdf4_dlls.py``), with ``ASYMMETRY_HDF4_DLL_DIR``
-  pointed at the directory holding them. See
-  :doc:`/reference/loading_data`.
+  On **Linux** the ``pyhdf`` wheel bundles the HDF4 C library. On **macOS
+  (Apple Silicon)** the PyPI wheel does too. On **Intel Macs** there is no
+  PyPI wheel — use conda-forge ``pyhdf`` or build from source. On
+  **Windows** the wheel does not bundle the HDF4 runtime: ``pyhdf`` also
+  needs ``hdf.dll`` / ``mfhdf.dll`` (e.g. from the conda-forge ``hdf4``
+  package or ``packaging/windows/fetch_hdf4_dlls.py``), with
+  ``ASYMMETRY_HDF4_DLL_DIR`` pointed at the directory holding them. The
+  pre-built **Windows and Apple Silicon macOS** desktop releases bundle HDF4;
+  no extra setup is needed there. See :doc:`/reference/loading_data`.
 
 For ROOT file support:
 

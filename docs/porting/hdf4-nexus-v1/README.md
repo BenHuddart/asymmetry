@@ -23,10 +23,10 @@ when it was made:
    exact files users already have is a direct parity/usability win, not a
    nice-to-have. The exclusion treated it as "coverage boundary," but every
    pre-~2015 ISIS muon run a WiMDA user owns is HDF4.
-2. **The reader is now cheap and pure-Python.** `pyhdf` ships binary wheels for
-   Windows/macOS/Linux (no system HDF4 C library), so HDF4 read support is a
-   small optional dependency — the same shape as the existing
-   `asymmetry[hdf5]`/h5py extra.
+2. **The reader is now cheap and pure-Python.** `pyhdf` ships binary wheels on
+   Linux and Apple Silicon macOS (bundled HDF4); Windows needs separate runtime
+   DLLs. HDF4 read support is a small optional dependency — the same shape as
+   the existing `asymmetry[hdf5]`/h5py extra.
 3. **A proven reader already exists, in-corpus.** The WiMDA-muon-school
    `nxs4to5/` tool (`hdf4tree.py` + `v1_to_v2.py`) reads **all 1,913 HDF4 files
    in the corpus** cleanly and its converted outputs parse identically to genuine
@@ -89,20 +89,22 @@ asymmetry, counts, t0/good-bins, grouping, and metadata. See
 - **Reversal confirmed** by the maintainer; the decision-record HDF4 row is
   flipped from "Out" to shipped, citing this study.
 - **pyhdf wheels are not uniform across platforms.** On Linux (manylinux,
-  ~771 KB) and macOS (~535 KB) the wheels bundle the HDF4 C library, so
-  `pip install asymmetry[hdf4]` works out of the box (CI is Linux → green with
-  no extra system package). The **Windows** wheel (~188 KB) is the
-  `_hdfext` extension only and links external `hdf.dll` / `mfhdf.dll`, which it
-  does **not** bundle — confirmed via `dumpbin /dependents`. Asymmetry sources
-  those DLLs from the conda-forge `hdf4` package (the same library Mantid
-  bundles in its Windows installer); `packaging/windows/fetch_hdf4_dlls.py`
-  fetches them and `ASYMMETRY_HDF4_DLL_DIR` / the frozen-app bundle dir makes
-  them discoverable (`os.add_dll_directory`). The graceful-`ImportError` path
-  keeps HDF4 optional on all platforms.
-- **Bundling the HDF4 runtime into the released Windows/macOS binaries** is a
-  scoped follow-on (PyInstaller spec + CI workflow): macOS via
-  `collect_dynamic_libs("pyhdf")`; Windows by staging the conda-forge DLLs into
-  the build. This PR ships the loader, parity tests, and docs.
+  ~771 KB) and **macOS arm64** (~535 KB) the PyPI wheels bundle the HDF4 C
+  library, so `pip install asymmetry[hdf4]` works out of the box on those
+  platforms (CI is Linux → green with no extra system package). There is **no
+  Intel macOS PyPI wheel**; Intel Mac users need conda-forge `pyhdf` or a local
+  build. The **Windows** wheel (~188 KB) is the `_hdfext` extension only and
+  links external `hdf.dll` / `mfhdf.dll`, which it does **not** bundle —
+  confirmed via `dumpbin /dependents`. Asymmetry sources those DLLs from the
+  conda-forge `hdf4` package (the same library Mantid bundles in its Windows
+  installer); `packaging/windows/fetch_hdf4_dlls.py` fetches them and
+  `ASYMMETRY_HDF4_DLL_DIR` / the frozen-app bundle dir makes them discoverable
+  (`os.add_dll_directory`). The graceful-`ImportError` path keeps HDF4 optional
+  on all platforms.
+- **Bundling the HDF4 runtime into released desktop binaries:** Windows via
+  staged conda-forge DLLs; **Apple Silicon macOS** via `collect_dynamic_libs("pyhdf")`.
+  Intel macOS is not shipped as a pre-built release. This PR ships the loader,
+  parity tests, and docs.
 - **A one-shot `convert`/export path** (write v2 HDF5) remains a possible
   follow-on, reusing the ported tree reader + the corpus `v1_to_v2.py` mapping.
   This study is **read-only**.
