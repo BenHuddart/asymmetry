@@ -35,8 +35,11 @@ jobs:
       - name: Install build dependencies
         shell: bash
         run: |
+          brew install hdf4
+          HDF4_PREFIX="$(brew --prefix hdf4)"
           python -m pip install --upgrade pip
-          pip install -c constraints.txt -e ".[gui,gle,hdf5,hdf4,root]"
+          INCLUDE_DIRS="${HDF4_PREFIX}/include" LIBRARY_DIRS="${HDF4_PREFIX}/lib" \
+            pip install -c constraints.txt -e ".[gui,gle,hdf5,hdf4,root]"
           pip install -c constraints.txt pyinstaller Pillow dmgbuild
 
       - name: Generate macOS icon (.icns)
