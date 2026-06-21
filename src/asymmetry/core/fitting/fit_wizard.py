@@ -124,6 +124,7 @@ class CandidateAssessment:
     fitted_time: NDArray[np.float64]
     fitted_curve: NDArray[np.float64]
     component_curves: tuple[tuple[str, NDArray[np.float64]], ...]
+    repair_attempted: bool = False
 
     @property
     def parameter_count(self) -> int:

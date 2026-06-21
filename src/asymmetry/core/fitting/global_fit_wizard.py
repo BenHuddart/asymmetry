@@ -3920,7 +3920,10 @@ def _repair_partial_single_fit_prescreen_assessments(
         run_number
         for run_number in run_order
         if repaired_assessments.get(run_number) is None
-        or not repaired_assessments[run_number].is_successful
+        or (
+            not repaired_assessments[run_number].is_successful
+            and not repaired_assessments[run_number].repair_attempted
+        )
     ]
     if not successful_runs or not failed_runs:
         return repaired_assessments
@@ -3945,7 +3948,10 @@ def _repair_partial_single_fit_prescreen_assessments(
             run_number
             for run_number in run_order
             if repaired_assessments.get(run_number) is None
-            or not repaired_assessments[run_number].is_successful
+            or (
+                not repaired_assessments[run_number].is_successful
+                and not repaired_assessments[run_number].repair_attempted
+            )
         ]
         if not successful_runs or not failed_runs:
             break
@@ -3989,6 +3995,14 @@ def _repair_partial_single_fit_prescreen_assessments(
             )
 
         if not repaired_any:
+            for run_number in failed_runs:
+                assessment = repaired_assessments.get(run_number)
+                if (
+                    assessment is not None
+                    and not assessment.is_successful
+                    and not assessment.repair_attempted
+                ):
+                    repaired_assessments[run_number] = replace(assessment, repair_attempted=True)
             break
 
     return repaired_assessments
