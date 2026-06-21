@@ -135,6 +135,7 @@ def _import_scenarios() -> None:
         lf_kt_series_plot,
         logbook_view,
         main_window,
+        maxent_ybco,
         mgb2_lambda_t,
         muon_fluorine_pbf2,
         parameter_trending_mgb2,

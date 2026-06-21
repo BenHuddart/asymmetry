@@ -508,6 +508,37 @@ The Burg method, its pole scan, and its pathologies are documented in
 :doc:`frequency_finishers`. Once you have a spectrum from any estimator, fit it
 quantitatively through :doc:`frequency_domain_fitting`.
 
+The same line, two ways
+-----------------------
+
+The two quantitative estimators are most easily compared on one dataset. The
+figures below show the transverse-field signal of a YBCO vortex lattice — whose
+internal-field distribution :math:`P(B)` is intrinsically asymmetric, with a
+sharp edge near the saddle-point field and a long tail towards the vortex cores
+— reconstructed both ways.
+
+.. image:: /_generated/screenshots/fourier_tf.png
+   :alt: FFT spectrum of a YBCO vortex-lattice transverse-field signal
+   :width: 100%
+
+*The FFT: a fast, linear transform of the apodised asymmetry, framed on the
+precession line.*
+
+.. image:: /_generated/screenshots/maxent_ybco.png
+   :alt: MaxEnt reconstruction of the same YBCO vortex-lattice signal
+   :width: 100%
+
+*The maximum-entropy reconstruction of the same run. Switch the frequency-domain
+workspace to* **MaxEnt** *and click* **Compute MaxEnt** *(or a cycle button); the
+spectrum appears once the iteration converges.*
+
+Read on the same precession-frequency axis, the two are complementary: the FFT is
+immediate and its areas map onto the apodisation settings, while the MaxEnt
+reconstruction resolves the asymmetric line at higher effective resolution and
+carries the per-group phases, the per-bin errors, and — at a pulsed source — the
+pulse response through its forward model. Choose between them with the guidance
+above.
+
 Practical Example
 -----------------
 

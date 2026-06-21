@@ -57,6 +57,11 @@ class Scenario:
 
     def teardown(self, widget: QWidget) -> None:
         """Best-effort cleanup; safe to leave default."""
+        # Screenshots are never saved, so suppress the unsaved-changes guard:
+        # a MainWindow with a loaded session is "dirty", and its closeEvent
+        # would otherwise block forever on a modal save prompt offscreen.
+        if hasattr(widget, "_dirty"):
+            widget._dirty = False
         widget.close()
         widget.deleteLater()
         _process_events_for(milliseconds=50)
