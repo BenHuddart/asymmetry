@@ -11,8 +11,8 @@ screenshots below are taken from the GUI driving the synthetic
 dataset shipped with the documentation; they are intended to show
 what each stage of the analysis looks like in practice. The
 synthetic data corresponds to the textbook example in Blundell
-*et al.* 2022 Fig 5.6 (after Hayano *et al.* PRB 20, 850, 1979);
-Amato & Morenzoni 2024 Ch 4 covers the same formalism with
+*et al.* 2022 Fig. 5.6 (after Hayano *et al.*, Phys. Rev. B **20**, 850
+(1979)); Amato & Morenzoni 2024 Ch 4 covers the same formalism with
 additional emphasis on dynamic-regime crossovers.
 
 Physical motivation
@@ -220,17 +220,19 @@ Common pitfalls
 Further reading
 ---------------
 
-- Blundell *et al.* 2022 Ch 5.2 — static Gaussian KT (eq 5.13),
-  LF-KT (eq 5.27), dynamic KT (Ch 5.3, the strong-collision
-  derivation).
-- Amato & Morenzoni 2024 Ch 4 — covers the same formalism plus the
-  relationship between :math:`\Delta` and the calculated dipolar
-  tensor.
-- Hayano *et al.* Phys. Rev. B 20, 850 (1979) — the original static
+- S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
+  Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022),
+  Ch. 5.2 — static Gaussian KT (eq. 5.13), LF-KT (eq. 5.27), dynamic KT
+  (Ch. 5.3, the strong-collision derivation).
+- A. Amato and E. Morenzoni, *Introduction to Muon Spin Spectroscopy:
+  Applications to Solid State and Material Sciences*, Lecture Notes in Physics
+  Vol. 961 (Springer, Cham, 2024), Ch. 4 — covers the same formalism plus the
+  relationship between :math:`\Delta` and the calculated dipolar tensor.
+- R. S. Hayano *et al.*, Phys. Rev. B **20**, 850 (1979) — the original static
   and dynamic KT formulas; still the canonical reference.
-- Yaouanc & Dalmas de Réotier, *Muon Spin Rotation, Relaxation, and
-  Resonance: Applications to Condensed Matter*, OUP 2011, Ch 6 — the
-  most detailed mathematical treatment.
+- A. Yaouanc and P. Dalmas de Réotier, *Muon Spin Rotation, Relaxation, and
+  Resonance: Applications to Condensed Matter* (Oxford University Press,
+  Oxford, 2011), Ch. 6 — the most detailed mathematical treatment.
 
 Cross-references
 ----------------

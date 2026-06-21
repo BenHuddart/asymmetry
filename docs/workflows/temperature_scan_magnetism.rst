@@ -264,13 +264,17 @@ Common pitfalls
 Further reading
 ---------------
 
-- Blundell *et al.* 2022 Ch 6.1–6.2 (magnetism, Landau theory,
-  critical exponents); the EuO data are summarised in Fig 6.6.
-- Amato & Morenzoni 2024 Ch 5 (μSR in ordered magnets, with
+- S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
+  Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022),
+  Ch. 6.1–6.2 (magnetism, Landau theory, critical exponents); the EuO data
+  are summarised in Fig. 6.6.
+- A. Amato and E. Morenzoni, *Introduction to Muon Spin Spectroscopy:
+  Applications to Solid State and Material Sciences*, Lecture Notes in Physics
+  Vol. 961 (Springer, Cham, 2024), Ch. 5 (μSR in ordered magnets, with
   expanded discussion of antiferromagnets, frustrated systems, and
   unconventional order parameters).
-- Lancaster *et al.* PRB 75, 094421 (2007) for a real-data example
-  on the molecular magnet Cu(pyz)₂(ClO₄)₂ (three precession
+- T. Lancaster *et al.*, Phys. Rev. B **75**, 094421 (2007) — a real-data
+  example on the molecular magnet Cu(pyz)₂(ClO₄)₂ (three precession
   frequencies near :math:`T_c`).
 
 Cross-references

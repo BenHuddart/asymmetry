@@ -100,5 +100,5 @@ References
    rotating-reference-frame section of the time-domain-analysis chapter;
    T. M. Riseman and J. H. Brewer, Hyperfine Interact. **65**, 1107 (1991).
 
-.. [2] B. D. Rainford, in *Muon Science*, eds. S. L. Lee, S. H. Kilcoyne,
-   and R. Cywinski (CRC Press, 1999), p. 463.
+.. [2] B. D. Rainford, in *Muon Science*, edited by S. L. Lee, S. H. Kilcoyne,
+   and R. Cywinski (Institute of Physics Publishing, Bristol, 1999), p. 463.

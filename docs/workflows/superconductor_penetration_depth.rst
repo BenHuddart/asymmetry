@@ -294,13 +294,17 @@ This workflow exercises four planned improvements:
 Further reading
 ---------------
 
-- Blundell *et al.* 2022 Ch 9 (superconductors), especially Ch 9.5
-  (penetration depth and gap structure), Fig 9.5 (MgB₂ σ(T)).
-- Amato & Morenzoni 2024 Ch 6 — particularly the sections on the
+- S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
+  Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022),
+  Ch. 9 (superconductors), especially Ch. 9.5 (penetration depth and gap
+  structure), Fig. 9.5 (MgB₂ σ(T)).
+- A. Amato and E. Morenzoni, *Introduction to Muon Spin Spectroscopy:
+  Applications to Solid State and Material Sciences*, Lecture Notes in Physics
+  Vol. 961 (Springer, Cham, 2024), Ch. 6 — particularly the sections on the
   vortex-state field distribution, multi-band superconductivity, and
   unconventional pairing symmetry.
-- Sonier, Brewer, and Kiefl, Rev. Mod. Phys. **72**, 769 (2000) — the
-  canonical review of TF μSR in superconductors.
+- J. E. Sonier, J. H. Brewer, and R. F. Kiefl, Rev. Mod. Phys. **72**, 769
+  (2000) — the canonical review of TF μSR in superconductors.
 - Niedermayer *et al.*, Phys. Rev. B **65**, 094512 (2002) for the
   MgB₂ penetration-depth μSR measurement.
 

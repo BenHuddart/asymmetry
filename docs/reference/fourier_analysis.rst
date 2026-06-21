@@ -11,8 +11,8 @@ Fourier Analysis
 *canonical asymmetric line shape — sharp low-field peak at the*
 *saddle-point van Hove singularity, long high-field tail toward the*
 *vortex cores — is the textbook signature of an isotropic triangular*
-*vortex lattice (Brandt PRB 37, 2349, 1988; Sonier RMP 72, 769, 2000;*
-*textbook Ch 8/9).*
+*vortex lattice (Brandt, Phys. Rev. B 37, 2349 (1988); Sonier et al.,*
+*Rev. Mod. Phys. 72, 769 (2000)).*
 
 Fourier analysis answers questions that the time domain answers slowly or
 not at all: whether a signal contains three precession frequencies or two
@@ -153,7 +153,8 @@ Which background option when:
 
 * **None** — the default, and the right choice at a pulsed source whenever the
   flat rate is consistent with zero (the ISIS duty factor suppresses it to
-  "virtually unmeasurable", *Muon Spectroscopy* §14.3). Start here.
+  "virtually unmeasurable"; see Blundell *et al.*, *Muon Spectroscopy: An
+  Introduction* (Oxford University Press, Oxford, 2022), §14.3). Start here.
 * **Tail fit** — fits a muon exponential plus a flat rate to the late-time
   counts and subtracts the flat part. This is the option for **pulsed data**,
   where there is no pre-t0 region: the spectrum starts at the muon pulse, so

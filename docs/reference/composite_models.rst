@@ -10,7 +10,7 @@ Composite Models
 *the* **Fractions** *button binds two or more additive components into a*
 *shared-amplitude fraction group. The preview line at the bottom shows the*
 *compiled formula with mangled parameter names (A_1, A_2, …) for each*
-*component (Blundell et al.* Muon Spectroscopy *Ch 6.4).*
+*component (Blundell et al.,* Muon Spectroscopy: An Introduction *(Oxford University Press, Oxford, 2022), Ch. 6.4).*
 
 A realistic μSR asymmetry almost never has the algebraic form of a single
 depolarisation function. It is typically the product of a relaxation

@@ -164,7 +164,8 @@ know how many lines are present and roughly where, measure them with a
 :doc:`frequency-domain fit <frequency_domain_fitting>` or with
 :doc:`maximum entropy <fourier_analysis>` — those are the quantitative methods.
 See :ref:`choosing-spectral-estimator` for where Burg sits among the three
-(Blundell, De Renzi, Lancaster & Pratt, *Muon Spectroscopy*, §15.5; Burg 1975).
+(Blundell, De Renzi, Lancaster & Pratt, *Muon Spectroscopy: An Introduction*
+(Oxford University Press, Oxford, 2022), §15.5; Burg 1975).
 
 .. _diamagnetic-line-removal:
 

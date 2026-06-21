@@ -9,7 +9,8 @@ Superconducting Penetration Depth Models
 *``SC_TwoGap_SS`` superconductor model. The σ(T) curve maps onto the*
 *London penetration depth via ρ_s(T) ∝ 1/λ²(T) and the relation*
 *σ ∝ 1/λ², making μSR one of the few bulk probes of the superfluid*
-*density in unconventional superconductors (Sonier RMP 72, 769, 2000).*
+*density in unconventional superconductors (Sonier et al., Rev. Mod. Phys.*
+*72, 769 (2000)).*
 
 For an end-to-end walk-through that exercises every model on this
 page, see :doc:`/workflows/superconductor_penetration_depth`.

@@ -323,6 +323,6 @@ Software references:
 * **Mantid:** O. Arnold *et al.*, Nucl. Instrum. Methods A **764**, 156
   (2014). Source: https://github.com/mantidproject/mantid
 
-For the underlying physics see Blundell, De Renzi, Lancaster, and
-Pratt (eds.), *Muon Spectroscopy: An Introduction* (Oxford
-University Press, 2022).
+For the underlying physics see S. J. Blundell, R. De Renzi, T. Lancaster,
+and F. L. Pratt, *Muon Spectroscopy: An Introduction* (Oxford University
+Press, Oxford, 2022).

@@ -32,10 +32,11 @@ Main Window Layout
    :width: 100%
 
 *Synthetic EuO ferromagnet temperature scan crossing the Curie point at*
-*Tc=69 K — six zero-field runs from 30 K up to 90 K (cf. Blundell et al.*
-*Muon Spectroscopy, OUP 2022, Fig 6.6). The selected run at 65 K is just*
-*inside the ordered phase where the spontaneous-field precession is at its*
-*slowest and the critical damping is largest.*
+*Tc=69 K — six zero-field runs from 30 K up to 90 K (cf. Blundell et al.,*
+*Muon Spectroscopy: An Introduction, Oxford University Press, Oxford, 2022,*
+*Fig. 6.6). The selected run at 65 K is just inside the ordered phase where*
+*the spontaneous-field precession is at its slowest and the critical damping*
+*is largest.*
 
 The main window has four main areas:
 
@@ -767,8 +768,8 @@ Global Parameter Fit Window
 
 *Global-fit setup on a synthetic Ag LF-KT decoupling series, B_L = 0, 15,*
 *50, and 100 G with shared Δ ≈ 0.39 μs⁻¹. The longitudinal field decouples*
-*the nuclear dipolar broadening as γ_μB_L/Δ grows past unity (Hayano et al.*
-*PRB 20, 850, 1979 — textbook Fig 5.6).*
+*the nuclear dipolar broadening as γ_μB_L/Δ grows past unity (Hayano et al.,*
+*Phys. Rev. B 20, 850 (1979); cf. Blundell et al. 2022, Fig. 5.6).*
 
 The global-fit result window is split into two synchronised views:
 

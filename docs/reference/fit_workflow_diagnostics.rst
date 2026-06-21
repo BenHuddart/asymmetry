@@ -150,9 +150,9 @@ See also
 References
 ----------
 
-* S. L. Meyer, *Data Analysis for Scientists and Engineers* (Wiley, 1975) — the
-  likelihood-profile basis of asymmetric errors.
-* F. James, *MINUIT* function-minimisation reference — the MINOS error
-  definition Asymmetry's backend implements.
+* S. L. Meyer, *Data Analysis for Scientists and Engineers* (Wiley, New York,
+  1975) — the likelihood-profile basis of asymmetric errors.
+* F. James and M. Roos, Comput. Phys. Commun. **10**, 343 (1975) — the MINOS
+  error definition Asymmetry's backend implements.
 * A. Suter and B. M. Wojek, Phys. Procedia **30**, 69 (2012) — musrfit, the
   muon-fitting program that exposes MINOS in this domain.
