@@ -506,7 +506,7 @@ def test_placeholder_model_goes_live_once_plugin_returns():
 _EXAMPLE_PLUGIN = (
     Path(__file__).resolve().parents[1]
     / "docs"
-    / "user_guide"
+    / "reference"
     / "examples"
     / "keren_user_function.py"
 )

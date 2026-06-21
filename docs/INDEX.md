@@ -8,8 +8,10 @@ This directory contains all project documentation.
 - **[Sphinx Docs](index.rst)**: Main documentation entry point
   - Build with: `make html`
   - Output: `_build/html/index.html`
-- **[Installation Guide](installation.rst)**: Setup and installation instructions
-- **[User Guide](user_guide/)**: Tutorials and how-to guides
+- **[Getting Started](getting_started/)**: Installation, quickstart, and key concepts
+- **[Workflows](workflows/)**: End-to-end worked analyses
+- **[Reference](reference/)**: Feature-by-feature reference and the physics behind it
+- **[Explanation](explanation/)**: Background, conventions, and program comparison
 - **[API Reference](api/)**: Auto-generated API documentation
 
 ### Developer Documentation
@@ -52,35 +54,24 @@ docs/
 ├── porting/               # Study-first porting workflow and feature studies
 ├── QUALITY.md             # Quality map and risk areas
 ├── PLANS.md               # Agent-facing execution plans
-├── index.rst              # Sphinx main index
-├── installation.rst       # Installation instructions
+├── index.rst              # Sphinx landing page (four doorways)
 ├── contributing.rst       # Contributing guide
+├── STYLE.md               # Writing-voice and citation style guide
 ├── conf.py                # Sphinx configuration
 ├── requirements.txt       # Doc build dependencies
-├── Makefile              # Build automation (Unix)
-├── make.bat              # Build automation (Windows)
-├── user_guide/           # User tutorials and guides
-│   ├── index.rst
-│   ├── loading_data.rst
-│   ├── logbook.rst
-│   ├── data_processing.rst
-│   ├── gui_usage.rst
-│   ├── fitting.rst
-│   ├── composite_models.rst
-│   ├── parameter_trending.rst
-│   ├── project_files.rst
-│   ├── fourier_analysis.rst
-│   └── frequency_domain_fitting.rst
-├── api/                  # API reference (auto-generated)
+├── Makefile               # Build automation (Unix)
+├── make.bat               # Build automation (Windows)
+├── getting_started/       # Installation, quickstart, key concepts
+├── workflows/             # End-to-end worked analyses
+├── reference/             # Feature reference (fit_functions/, data_reduction/, examples/)
+├── explanation/           # Background, conventions, program comparison
+├── screenshots/           # Offscreen GUI screenshot harness (capture.py)
+├── api/                   # API reference (auto-generated)
 │   ├── index.rst
 │   ├── core.rst
-│   ├── io.rst
-│   ├── fitting.rst
 │   └── ...
-├── ../examples/          # Runnable documentation examples
-│   ├── run_all.py
-│   └── *.py
-└── _build/               # Generated output (gitignored)
+├── _generated/            # Generated screenshots (gitignored)
+└── _build/                # Generated output (gitignored)
     └── html/
 ```
 
