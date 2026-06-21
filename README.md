@@ -83,9 +83,12 @@ for each tagged version:
 
 | Platform | Artifact |
 |----------|----------|
-| Windows | Inno Setup installer (`.exe`) with desktop/start-menu shortcuts |
-| macOS (Apple Silicon) | `.dmg`, drag-to-Applications |
-| macOS (Intel) | `.dmg`, drag-to-Applications |
+| Windows (x64) | Inno Setup installer (`.exe`) with desktop/start-menu shortcuts |
+| macOS (Apple Silicon, arm64) | `.dmg`, drag-to-Applications |
+
+Intel Macs are not covered by a pre-built release: install from source (below) or use
+Rosetta with a local Python environment. Linux users also install from source; the core
+library and GUI run on all three platforms when built locally.
 
 ### Install from source (Python users and contributors)
 
@@ -161,13 +164,15 @@ in an **HDF4** container. Reading them needs the optional `hdf4` extra:
 python -m pip install "asymmetry[hdf4]"
 ```
 
-On **Linux and macOS** the `pyhdf` wheels bundle the HDF4 C library, so that is
-all you need. On **Windows**, `pyhdf` additionally requires the HDF4 runtime
-(`hdf.dll` / `mfhdf.dll`): install the conda-forge `hdf4` package, or run
+On **Linux** the `pyhdf` wheel bundles the HDF4 C library. On **macOS (Apple
+Silicon)** the PyPI wheel does too (there is no Intel macOS wheel — use
+conda-forge `pyhdf` or build from source on Intel Macs). On **Windows**,
+`pyhdf` additionally requires the HDF4 runtime (`hdf.dll` / `mfhdf.dll`):
+install the conda-forge `hdf4` package, or run
 `python packaging/windows/fetch_hdf4_dlls.py <dir>` and point the
 `ASYMMETRY_HDF4_DLL_DIR` environment variable at `<dir>`. The **pre-built
-Windows and macOS binaries bundle the HDF4 runtime**, so no extra setup is
-needed there. See [docs/user_guide/loading_data](docs/user_guide/loading_data.rst)
+Windows and Apple Silicon macOS binaries bundle the HDF4 runtime**, so no extra
+setup is needed there. See [docs/reference/loading_data.rst](docs/reference/loading_data.rst)
 for details.
 
 ## Quick start
@@ -255,16 +260,17 @@ the project `.venv` automatically when it exists.
 ## Executable releases
 
 Executable GUI releases are built in GitHub Actions and attached to GitHub Releases.
+Only **Windows x64** and **macOS arm64 (Apple Silicon)** installers are published;
+Intel macOS and Linux are source-install only.
 
 - Workflow: [.github/workflows/release.yml](.github/workflows/release.yml)
 - Trigger: push a git tag matching `v*` (for example `v0.1.0`)
 - Runners:
-  - `macos-15-intel` for Intel macOS DMG
-  - `macos-14` for Apple Silicon macOS DMG
-  - `windows-2025` for the Inno Setup installer
+  - `macos-14` — Apple Silicon DMG (`Asymmetry-<version>-macos-arm64.dmg`)
+  - `windows-2025` — Inno Setup installer (`Asymmetry-<version>-windows-x64-setup.exe`)
 - Packaging:
   - PyInstaller `onedir` build for fast startup
-  - macOS DMG output per architecture (dmgbuild settings + generated drag-to-Applications background)
+  - macOS arm64 DMG (dmgbuild settings + generated drag-to-Applications background)
   - Windows Inno Setup installer with desktop/start-menu shortcuts and uninstaller
 
 Release artifacts are built on shared runners and uploaded to the GitHub Release page; executables are not committed to the repository.
