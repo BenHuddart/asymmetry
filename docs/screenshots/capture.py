@@ -111,6 +111,7 @@ def _apply_determinism_patches() -> None:
 def _import_scenarios() -> None:
     """Import all scenario modules so they register with the base registry."""
     from .scenarios import (  # noqa: F401
+        alc_field_scan,
         apodisation_comparison,
         bunching_comparison,
         composite_fractions_dialog,

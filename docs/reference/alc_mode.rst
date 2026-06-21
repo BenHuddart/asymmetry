@@ -356,6 +356,32 @@ regions, and the peaks, re-runs whichever fits were active so the overlays and
 read-out reappear, and re-enters ALC mode if it was active when you saved — so
 you resume exactly where you left off. See :doc:`project_files`.
 
+Worked example: a synthetic scan
+--------------------------------
+
+You can exercise the whole ALC workflow without a beamline, on a synthetic
+longitudinal-field scan whose integral asymmetry dips at an avoided level
+crossing. The figure below was produced from such a scan — 31 runs stepped from
+2000 to 5000 G, with a resonance built in near 3100 G.
+
+.. image:: /_generated/screenshots/alc_field_scan.png
+   :alt: ALC field scan with a fitted baseline and Gaussian resonance peak
+   :width: 100%
+
+The steps mirror a real analysis:
+
+#. Load the field-stepped runs and select them all.
+#. Switch the time-domain workspace to **Integral scan** and, in the **Fit**
+   dock, press **Build Scan** — each run is integrated over the time window to a
+   single point, and the scan of integral asymmetry against field appears.
+#. Mark two non-resonant field regions either side of the dip and press **Fit
+   baseline** (a straight line here).
+#. Add a **Gaussian** peak and press **Fit peaks**. The fit recovers the
+   resonance field — :math:`B_0 \approx 3104` G, against the 3100 G the scan was
+   built with — along with its width and amplitude.
+
+For the same workflow on real data, see :doc:`/workflows/alc_scan_tcnq`.
+
 Common pitfalls
 ---------------
 

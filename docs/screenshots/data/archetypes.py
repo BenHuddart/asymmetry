@@ -600,3 +600,187 @@ __all__ = [
     "make_ybco_knight_grouped",
     "make_ybco_vortex_lattice",
 ]
+
+
+def make_alc_field_scan(seed: int = 111) -> list[MuonDataset]:
+    """Synthetic longitudinal-field scan with an avoided-level-crossing resonance.
+
+    31 field-stepped runs from 2000 to 5000 G. Each run carries a
+    non-oscillating (longitudinal-field) asymmetry sitting at a baseline level
+    with a Gaussian dip near B0 = 3100 G, so that integrating each run over the
+    time window and plotting the result against field traces out the ALC
+    resonance: a flat baseline with a dip at the level crossing.
+    """
+    rng = np.random.default_rng(seed)
+    fields_g = np.linspace(2000.0, 5000.0, 31)
+    baseline = 0.22
+    b0_g, width_g, depth = 3100.0, 260.0, 0.10
+    lam = 0.03
+    bin_width_us = 0.016
+    n_bins = 2000
+    t0_bin = 100
+    time_post = np.arange(n_bins - t0_bin) * bin_width_us
+
+    datasets: list[MuonDataset] = []
+    for index, field_g in enumerate(fields_g):
+        level = baseline - depth * np.exp(-0.5 * ((field_g - b0_g) / width_g) ** 2)
+        env = level * np.exp(-lam * time_post)
+        detectors = [
+            {"label": "Forward", "asymmetry": +env, "n0": 1.0e6},
+            {"label": "Backward", "asymmetry": -env, "n0": 1.0e6},
+        ]
+        run, time_axis, raw_asym, raw_err = _build_run_with_detector_asymmetries(
+            run_number=6001 + index,
+            detector_asymmetries=detectors,
+            title=f"ALC LF scan {field_g:.0f} G",
+            temperature_k=300.0,
+            field_g=float(field_g),
+            bin_width_us=bin_width_us,
+            n_bins=n_bins,
+            t0_bin=t0_bin,
+            rng=rng,
+        )
+        datasets.append(
+            MuonDataset(
+                time=time_axis,
+                asymmetry=raw_asym,
+                error=raw_err,
+                metadata={
+                    "run_number": run.run_number,
+                    "title": run.metadata["title"],
+                    "temperature": 300.0,
+                    "field": float(field_g),
+                },
+                run=run,
+            )
+        )
+    return datasets
+
+
+def make_knight_angle_scan(seed: int = 147, n_angles: int = 12) -> list[MuonDataset]:
+    """Angle-dependent Knight shift K(θ) scan on YBCO with two muon sites.
+
+    Synthesises a series of ~12 transverse-field datasets at angles
+    θ ∈ {0°, 15°, ..., 165°} (spacing 15°). Each dataset has four detector
+    histograms encoding two muon sites with Larmor frequencies:
+
+        ν_site = γ_µ·B_ext·(1 + K_iso + K_ax·(3cos²θ − 1)/2)
+
+    Site A: K_iso,A = +0.0050 (5000 ppm), K_ax,A = +0.0040 (4000 ppm, more anisotropic)
+    Site B: K_iso,B = +0.0025 (2500 ppm), K_ax,B = +0.0010 (1000 ppm, less anisotropic)
+
+    Each angle produces a separate MuonDataset with metadata["custom_fields"]["angle"]
+    set to the angle in degrees (as a string), so the parameter-trending panel's
+    Angle axis can discover and use it.
+
+    Detector histograms are arranged as a 2×2 detector ring (0°, 90°, 180°, 270°),
+    with each pair of opposite detectors grouped together so that grouped fitting
+    extracts the per-site frequencies unambiguously. The TF is 200 G (same as
+    make_ybco_knight_grouped) and T = 100 K (above Tc) so the precession is purely
+    electronic (no vortex broadening).
+
+    Returns a list of ~12 MuonDataset instances, one per angle, suitable for
+    loading into the parameter-trending workflow. Run numbers are consecutive
+    starting from 7200.
+    """
+    rng = np.random.default_rng(seed)
+    bin_width_us = 0.005
+    n_bins = 2400
+    t0_bin = 100
+    time_post = (np.arange(n_bins - t0_bin)) * bin_width_us
+
+    # Two muon sites with different anisotropies.
+    sites = [
+        {"label": "Site A", "K_iso": 0.0050, "K_ax": 0.0040},
+        {"label": "Site B", "K_iso": 0.0025, "K_ax": 0.0010},
+    ]
+
+    # Detector ring geometry: pairs (Fwd0°/Bwd180°) and (Fwd90°/Bwd270°).
+    detector_angles_deg = [0.0, 90.0, 180.0, 270.0]
+    damping = 0.08
+    field_g = 200.0
+    base_frequency_mhz = GAMMA_MU_MHZ_PER_G * field_g
+
+    # Angles to scan: 0°, 15°, 30°, ..., 165° (n_angles steps).
+    scan_angles_deg = np.linspace(0.0, 180.0 - 180.0 / n_angles, n_angles)
+
+    datasets: list[MuonDataset] = []
+    for angle_idx, scan_angle_deg in enumerate(scan_angles_deg):
+        scan_angle_rad = np.deg2rad(scan_angle_deg)
+
+        # Per-site frequency shift due to anisotropy.
+        site_shifts = []
+        for site in sites:
+            # K(θ) = K_iso + K_ax·(3cos²θ − 1)/2
+            cos_theta = np.cos(scan_angle_rad)
+            k_theta = site["K_iso"] + site["K_ax"] * (3.0 * cos_theta**2 - 1.0) / 2.0
+            site_shifts.append(k_theta)
+
+        # Each detector pair is assigned to one site (pair 0 → Site A, pair 1 → Site B).
+        # Detector signals are built per-detector with the site-specific frequency shift.
+        detectors = []
+        for det_idx, det_angle_deg in enumerate(detector_angles_deg):
+            site_idx = det_idx // 2  # Det 0,1 → Site A; Det 2,3 → Site B
+            site = sites[site_idx]
+            k_shift = site_shifts[site_idx]
+
+            # Larmor frequency with Knight shift baked in.
+            frequency_mhz = base_frequency_mhz * (1.0 + k_shift)
+
+            # Detector amplitude and phase vary around the ring.
+            if det_idx % 2 == 0:
+                amplitude = 0.20
+                phase = np.deg2rad(det_angle_deg)
+            else:
+                amplitude = 0.20
+                phase = np.deg2rad(det_angle_deg) + np.pi  # Opposite phase for Bwd
+
+            asym = (
+                amplitude
+                * np.cos(2 * np.pi * frequency_mhz * time_post + phase)
+                * np.exp(-damping * time_post)
+            )
+            detectors.append(
+                {
+                    "label": f"Det {det_idx} ({det_angle_deg:.0f}°) [Site {site['label']}]",
+                    "asymmetry": asym,
+                    "n0": 1.0e6 + det_idx * 5e4,
+                }
+            )
+
+        # Build the Run with grouping: pair detectors by site.
+        # This makes the "Individual Groups" view show two groups (one per site).
+        run, time_axis, raw_asym, raw_err = _build_run_with_detector_asymmetries(
+            run_number=7200 + angle_idx,
+            detector_asymmetries=detectors,
+            title=f"YBCO TF 200G 100K (Knight shift, θ={scan_angle_deg:.0f}°)",
+            temperature_k=100.0,
+            field_g=field_g,
+            bin_width_us=bin_width_us,
+            n_bins=n_bins,
+            t0_bin=t0_bin,
+            rng=rng,
+        )
+
+        # Tag with the angle so the parameter-trending Angle axis can discover it.
+        metadata = {
+            "run_number": run.run_number,
+            "title": run.metadata["title"],
+            "temperature": 100.0,
+            "field": field_g,
+            "custom_fields": {
+                "angle": str(int(scan_angle_deg))  # Angle as a string in degrees
+            },
+        }
+
+        datasets.append(
+            MuonDataset(
+                time=time_axis,
+                asymmetry=raw_asym,
+                error=raw_err,
+                metadata=metadata,
+                run=run,
+            )
+        )
+
+    return datasets
