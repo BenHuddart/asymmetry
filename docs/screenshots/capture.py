@@ -111,6 +111,7 @@ def _apply_determinism_patches() -> None:
 def _import_scenarios() -> None:
     """Import all scenario modules so they register with the base registry."""
     from .scenarios import (  # noqa: F401
+        alc_field_scan,
         apodisation_comparison,
         bunching_comparison,
         composite_fractions_dialog,
@@ -132,9 +133,11 @@ def _import_scenarios() -> None:
         # global_fit_lfkt,
         # lf_kt_global_results,
         grouped_fit_ybco_knight,
+        knight_shift_angle,
         lf_kt_series_plot,
         logbook_view,
         main_window,
+        maxent_ybco,
         mgb2_lambda_t,
         muon_fluorine_pbf2,
         parameter_trending_mgb2,

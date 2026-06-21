@@ -600,3 +600,58 @@ __all__ = [
     "make_ybco_knight_grouped",
     "make_ybco_vortex_lattice",
 ]
+
+
+def make_alc_field_scan(seed: int = 111) -> list[MuonDataset]:
+    """Synthetic longitudinal-field scan with an avoided-level-crossing resonance.
+
+    31 field-stepped runs from 2000 to 5000 G. Each run carries a
+    non-oscillating (longitudinal-field) asymmetry sitting at a baseline level
+    with a Gaussian dip near B0 = 3100 G, so that integrating each run over the
+    time window and plotting the result against field traces out the ALC
+    resonance: a flat baseline with a dip at the level crossing.
+    """
+    rng = np.random.default_rng(seed)
+    fields_g = np.linspace(2000.0, 5000.0, 31)
+    baseline = 0.22
+    b0_g, width_g, depth = 3100.0, 260.0, 0.10
+    lam = 0.03
+    bin_width_us = 0.016
+    n_bins = 2000
+    t0_bin = 100
+    time_post = np.arange(n_bins - t0_bin) * bin_width_us
+
+    datasets: list[MuonDataset] = []
+    for index, field_g in enumerate(fields_g):
+        level = baseline - depth * np.exp(-0.5 * ((field_g - b0_g) / width_g) ** 2)
+        env = level * np.exp(-lam * time_post)
+        detectors = [
+            {"label": "Forward", "asymmetry": +env, "n0": 1.0e6},
+            {"label": "Backward", "asymmetry": -env, "n0": 1.0e6},
+        ]
+        run, time_axis, raw_asym, raw_err = _build_run_with_detector_asymmetries(
+            run_number=6001 + index,
+            detector_asymmetries=detectors,
+            title=f"ALC LF scan {field_g:.0f} G",
+            temperature_k=300.0,
+            field_g=float(field_g),
+            bin_width_us=bin_width_us,
+            n_bins=n_bins,
+            t0_bin=t0_bin,
+            rng=rng,
+        )
+        datasets.append(
+            MuonDataset(
+                time=time_axis,
+                asymmetry=raw_asym,
+                error=raw_err,
+                metadata={
+                    "run_number": run.run_number,
+                    "title": run.metadata["title"],
+                    "temperature": 300.0,
+                    "field": float(field_g),
+                },
+                run=run,
+            )
+        )
+    return datasets

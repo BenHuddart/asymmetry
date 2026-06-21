@@ -2,9 +2,9 @@
 
 Every fit component must be documented in the user-guide page that
 corresponds to its category in the component picker
-(``docs/user_guide/fit_functions/``), so the docs mirror the builder's
+(``docs/reference/fit_functions/``), so the docs mirror the builder's
 submenus. See the "Documentation policy" section of
-``docs/user_guide/fit_functions/index.rst``.
+``docs/reference/fit_functions/index.rst``.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import pytest
 
 from asymmetry.core.fitting.composite import CATEGORY_REGISTRY, COMPONENTS
 
-DOCS_DIR = Path(__file__).resolve().parents[1] / "docs" / "user_guide" / "fit_functions"
+DOCS_DIR = Path(__file__).resolve().parents[1] / "docs" / "reference" / "fit_functions"
 
 #: Picker category -> documentation page, from the canonical registry in core.
 #: A new category must be added to CATEGORY_REGISTRY (with a docs page stem)
@@ -40,7 +40,7 @@ def test_every_component_category_has_a_documentation_page() -> None:
     unmapped = categories - set(CATEGORY_PAGES)
     assert not unmapped, (
         f"Component categories without a documentation page: {sorted(unmapped)}. "
-        "Add a page under docs/user_guide/fit_functions/ and register it in "
+        "Add a page under docs/reference/fit_functions/ and register it in "
         "tests/test_fit_function_docs.py::CATEGORY_PAGES."
     )
     for page in CATEGORY_PAGES.values():
@@ -54,7 +54,7 @@ def test_component_documented_in_its_category_page(name: str) -> None:
     text = page.read_text(encoding="utf-8")
     assert name in text, (
         f"Component '{name}' (category '{definition.category}') is not documented in "
-        f"docs/user_guide/fit_functions/{page.name}. Document new fit functions in the "
+        f"docs/reference/fit_functions/{page.name}. Document new fit functions in the "
         "page matching their picker submenu."
     )
 

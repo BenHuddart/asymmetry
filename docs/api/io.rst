@@ -16,7 +16,7 @@ histograms, with discovery of PSI ``.mon`` temperature sidecars), and
 files, including slow-control histograms). The format-specific quirks
 each loader handles — bin-index conventions, per-detector :math:`t_0`,
 deadtime and background metadata — are documented in
-:doc:`/user_guide/loading_data`. Custom formats can be added by
+:doc:`/reference/loading_data`. Custom formats can be added by
 subclassing :class:`~asymmetry.core.io.base.BaseLoader` and
 registering it with the
 :class:`~asymmetry.core.io.base.LoaderRegistry`.
@@ -98,7 +98,7 @@ logs such as ``hSampleTemperature``.
 NeXus Writer
 ------------
 
-Writes synthetic or derived runs (see :doc:`/user_guide/simulation`) as
+Writes synthetic or derived runs (see :doc:`/reference/simulation`) as
 loadable ISIS muon NeXus V1 files. Built from the
 :class:`~asymmetry.core.data.dataset.Run` alone — any loaded run, PSI and
 ROOT formats included, can act as the instrument template — with the
