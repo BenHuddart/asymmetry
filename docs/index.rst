@@ -1,8 +1,10 @@
-Asymmetry Documentation
-========================
+Asymmetry
+=========
 
-**Asymmetry** is a Python library for muon-spin spectroscopy (μSR) data analysis,
-providing tools for loading, processing, analyzing, and visualizing μSR data.
+**Asymmetry** is a Python toolkit and desktop application for muon-spin
+spectroscopy (μSR): loading raw or reduced data, applying detector grouping and
+asymmetry transforms, fitting time- and frequency-domain signals, trending
+fitted parameters, and saving complete analysis sessions for later reuse.
 
 .. warning::
 
@@ -21,69 +23,34 @@ providing tools for loading, processing, analyzing, and visualizing μSR data.
    and an established µSR tool** (for example WiMDA, Musrfit, or Mantid).
    Please report anything you find to be inaccurate.
 
-.. toctree::
-   :maxdepth: 2
-   :caption: Contents:
+Where to start
+--------------
 
-   installation
-   user_guide/index
+- :doc:`getting_started/index` — install Asymmetry and make your first
+  asymmetry plot and fit.
+- :doc:`workflows/index` — complete, worked analyses that demonstrate the
+  graphical interface and the Python API in lock-step.
+- :doc:`reference/index` — feature-by-feature documentation and the
+  fit-function library.
+- :doc:`explanation/index` — a μSR primer, the conventions Asymmetry follows,
+  and how it compares to other μSR tools.
+- :doc:`api/index` — the Python API reference for scripting.
+- :doc:`contributing` — how to report issues and contribute.
+
+.. toctree::
+   :hidden:
+   :maxdepth: 2
+   :caption: Contents
+
+   getting_started/index
+   workflows/index
+   reference/index
+   explanation/index
    api/index
    contributing
 
-Features
---------
-
-* **Data Loading**: Support for NeXus, PSI, and ROOT formats with extensible I/O system
-* **Data Processing**: Rebinning, grouping, and asymmetry calculation
-* **Fourier Analysis**: FFT and Maximum Entropy for frequency-domain analysis
-* **Fitting**: Integration with lmfit for flexible model fitting
-* **Interactive GUI**: Qt-based interface with:
-  
-  - Multi-file loading and management
-  - Sortable and filterable data browser
-  - Co-adding of datasets with proper error propagation
-  - Interactive plotting with zoom and axis controls
-  - Data bunching/rebinning
-  
-Quick Start
------------
-
-Installation
-~~~~~~~~~~~~
-
-.. code-block:: bash
-
-   git clone https://github.com/BenHuddart/asymmetry.git
-   cd asymmetry
-   python -m pip install -c constraints.txt ".[gui,hdf5,root,gle]"
-
-Loading Data
-~~~~~~~~~~~~
-
-.. code-block:: python
-
-   from asymmetry.core.io import load
-   
-   # Load a NeXus file
-   dataset = load("mydata.nxs")
-   print(dataset.summary())
-
-Using the GUI
-~~~~~~~~~~~~~
-
-.. code-block:: bash
-
-   asymmetry-gui
-
-Or from Python:
-
-.. code-block:: python
-
-   from asymmetry.gui.app import main
-   main()
-
 Indices and tables
-==================
+------------------
 
 * :ref:`genindex`
 * :ref:`modindex`

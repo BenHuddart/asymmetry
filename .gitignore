@@ -57,9 +57,9 @@ Thumbs.db
 !src/asymmetry/resources/*.png
 !docs/logo.png
 
-# Keep user-guide detector diagrams versioned.
-!docs/user_guide/images/
-!docs/user_guide/images/*.png
+# Keep reference detector diagrams versioned.
+!docs/reference/images/
+!docs/reference/images/*.png
 
 # Except example data
 !example*.dat

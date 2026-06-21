@@ -1,7 +1,7 @@
 """Three-panel comparison of bunching (rebin) factors ×1, ×4, ×16.
 
 Drives the practical-guidance section in
-:doc:`/user_guide/data_processing` — illustrates the noise-reduction
+:doc:`/reference/data_processing` — illustrates the noise-reduction
 vs time-resolution trade-off across three rebin factors. The ×16
 panel is intentionally over-bunched relative to the 1.4 MHz Larmor
 signal so the visual cost of going too aggressive is obvious.

@@ -1,6 +1,6 @@
 """Three-up FFT spectrum comparison: no apodisation, Gaussian, Lorentzian.
 
-Companion to :doc:`/user_guide/fourier_analysis` — illustrates how
+Companion to :doc:`/reference/fourier_analysis` — illustrates how
 apodisation trades line-sharpness for sidelobe suppression on the
 same TF signal. Uses the existing YBCO vortex-lattice synthetic
 dataset so the asymmetric P(B) lineshape is recognisable in each

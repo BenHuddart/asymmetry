@@ -413,7 +413,7 @@ def _general_fmuf_component(
 
 
 #: Canonical component-picker categories in display order, mapped to the stem
-#: of their user-guide page under ``docs/user_guide/fit_functions/``.  This is
+#: of their reference page under ``docs/reference/fit_functions/``.  This is
 #: the single source of truth consumed by the GUI picker (submenu order) and
 #: by the documentation-placement test — a new category must be registered
 #: here (with a docs page) before components can use it.  "General" is the

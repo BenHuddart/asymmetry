@@ -85,7 +85,7 @@ Please include:
 
 * Description of the issue
 * Steps to reproduce
-* Expected vs actual behavior
+* Expected vs actual behaviour
 * System information (OS, Python version)
 
 Code of Conduct

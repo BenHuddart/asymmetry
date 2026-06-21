@@ -46,32 +46,25 @@ make html
 
 ```
 docs/
-├── conf.py              # Sphinx configuration
-├── index.rst            # Main documentation page
-├── installation.rst     # Installation instructions
-├── contributing.rst     # Contributor guide
-├── user_guide/          # User guides and tutorials
-│   ├── index.rst
-│   ├── loading_data.rst
-│   ├── data_processing.rst
-│   ├── gui_usage.rst
-│   ├── fourier_analysis.rst
-│   └── fitting.rst
-└── api/                 # API reference (auto-generated)
+├── conf.py               # Sphinx configuration
+├── index.rst             # Landing page (four doorways)
+├── contributing.rst      # Contributor guide
+├── getting_started/      # Installation, quickstart, key concepts
+├── workflows/            # End-to-end worked analyses
+├── reference/            # Feature-by-feature reference and the physics behind it
+├── explanation/          # Background, conventions, program comparison
+└── api/                  # API reference (auto-generated)
     ├── index.rst
     ├── core.rst
-    ├── gui.rst
-    ├── io.rst
-    ├── fitting.rst
-    ├── fourier.rst
-    └── transforms.rst
+    └── ...
 ```
 
 ## Writing Documentation
 
-### User Guide
+### Tutorials and reference
 
-User-facing tutorials and guides go in `user_guide/`. Use reStructuredText format:
+User-facing pages live under `getting_started/`, `workflows/`, `reference/`, and
+`explanation/`. Use reStructuredText format:
 
 ```rst
 Section Title

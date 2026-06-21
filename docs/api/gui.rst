@@ -10,7 +10,7 @@ and a workspace selector for the time / individual-groups / frequency
 views. Non-modal dialog windows (Grouping, Detector Layout, Fit Wizard,
 Global Fit Wizard, Run Info, GLE setup) are launched from the main
 window. The end-user reference for the GUI lives in
-:doc:`/user_guide/gui_usage`; this API page lists the classes for
+:doc:`/reference/gui_usage`; this API page lists the classes for
 developers who need to embed or extend the components, not for
 day-to-day use.
 

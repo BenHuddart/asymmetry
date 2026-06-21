@@ -18,7 +18,7 @@ mirroring the GUI **Edit Function...** dialog); and the
 number with the same machinery. Superconducting models live under
 :mod:`asymmetry.core.fitting.sc` and are surfaced through both the
 composite registry and the parameter-trending registry — the physics
-context is in :doc:`/user_guide/sc_penetration_depth`. Symbols, units,
+context is in :doc:`/reference/sc_penetration_depth`. Symbols, units,
 and physical descriptions for every fit parameter are sourced from the
 :data:`~asymmetry.core.fitting.parameters.PARAM_INFO_REGISTRY`, which
 is canonical: GUI labels, GLE export labels, and the autodoc parameter
@@ -162,7 +162,7 @@ Frequency-Domain Helpers
 Superconductivity Models
 ------------------------
 
-The superconductivity API is organized around normalized superfluid density
+The superconductivity API is organised around normalised superfluid density
 
 .. math::
 
@@ -269,7 +269,7 @@ Quadrature Sigma Models
 ^^^^^^^^^^^^^^^^^^^^^^^
 
 These variants are intended for workflows where superconducting and
-non-superconducting linewidth channels are modeled as independent Gaussian
+non-superconducting linewidth channels are modelled as independent Gaussian
 contributions added in quadrature.
 
 .. autofunction:: asymmetry.core.fitting.sc.models.sc_s_wave_q

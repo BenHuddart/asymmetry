@@ -9,7 +9,7 @@
 
 
 Companion screenshot to
-:doc:`/user_guide/workflows/lf_decoupling_dynamics`. The setup is the same
+:doc:`/workflows/lf_decoupling_dynamics`. The setup is the same
 as ``global_fit_lfkt`` (four-field Ag LF series, ``LongitudinalFieldKT +
 Constant`` model, Δ shared globally, B_L fixed per run), but here the fit
 is actually run synchronously and the screenshot captures the converged

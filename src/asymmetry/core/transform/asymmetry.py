@@ -488,7 +488,7 @@ def estimate_alpha_detailed(
 ) -> AlphaEstimate:
     """Estimate alpha with an uncertainty, by one of three methods.
 
-    Methods (see ``docs/user_guide/data_reduction/alpha_calibration``):
+    Methods (see ``docs/reference/data_reduction/alpha_calibration``):
 
     - ``"diamagnetic"`` — minimise the weighted asymmetry power Σ(A/σ)² over
       a transverse-field calibration run (WiMDA's diamagnetic estimate, run

@@ -134,7 +134,7 @@ structure::
 * v6 — per-dataset ``representations`` map (recipe-only FFT, per-run ``FitSlot``,
   trend state); top-level ``batches`` list
 * v7 — ``FitSeries`` gains ``member_kind``, ``nuisance_params``,
-  ``member_source_run``; ``trend_state`` normalized to structured shape;
+  ``member_source_run``; ``trend_state`` normalised to structured shape;
   group series recorded in ``batches``
 
 Unknown top-level keys are silently preserved during migration, ensuring

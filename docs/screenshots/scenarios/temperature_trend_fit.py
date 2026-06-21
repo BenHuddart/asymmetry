@@ -1,6 +1,6 @@
 """Order-parameter ν(T) plot for the EuO temperature scan.
 
-Companion screenshot to :doc:`/user_guide/workflows/temperature_scan_magnetism`.
+Companion screenshot to :doc:`/workflows/temperature_scan_magnetism`.
 Synthesises the EuO ν(T) trend that a user would extract by fitting
 each run of the ZF temperature scan, then overlays the Landau power-
 law fit ν(T) = ν₀·(1 − T/Tc)^β. Produced via matplotlib (same approach

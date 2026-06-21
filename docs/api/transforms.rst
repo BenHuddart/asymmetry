@@ -10,7 +10,7 @@ correction
 (:func:`~asymmetry.core.transform.background`), grouping into forward
 and backward detector sums
 (:func:`~asymmetry.core.transform.grouping.apply_grouping`),
-asymmetry calculation with the chosen :math:`\alpha` balance factor
+asymmetry calculation with the chosen :math:`\alpha` calibration constant
 (:func:`~asymmetry.core.transform.asymmetry.compute_asymmetry`,
 :func:`~asymmetry.core.transform.asymmetry.estimate_alpha`), and
 optional rebinning of the resulting asymmetry trace
@@ -19,7 +19,7 @@ and matches musrfit's ``PRunAsymmetry`` pipeline:
 deadtime → background → grouping → asymmetry. The user-facing
 documentation of these steps and of Asymmetry's conventions (alpha
 applied to the backward group; Mantid-style uncertainty handling at
-zero denominator) is in :doc:`/user_guide/data_processing`.
+zero denominator) is in :doc:`/reference/data_processing`.
 
 Asymmetry Calculation
 ----------------------
