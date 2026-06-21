@@ -407,6 +407,7 @@ def test_global_fit_wizard_uses_single_fit_prescreen_when_available(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    _restrict_to_exp_constant_template(monkeypatch, model)
     lambdas = [0.18, 0.26, 0.44]
     datasets = [
         _dataset_for(
@@ -1213,8 +1214,11 @@ def test_global_fit_wizard_warns_for_mixed_field_temperature_grid() -> None:
     assert recommendation.recommended_key is None
 
 
-def test_global_fit_wizard_flags_abrupt_regime_changes() -> None:
+def test_global_fit_wizard_flags_abrupt_regime_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     exp_model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    _restrict_to_exp_constant_template(monkeypatch, exp_model)
     osc_model = CompositeModel(["Oscillatory", "Exponential", "Constant"], operators=["*", "+"])
     datasets = [
         _dataset_for(
