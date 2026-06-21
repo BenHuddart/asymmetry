@@ -12,7 +12,7 @@ SCREENSHOTCMD  = cd $(REPOROOT) && QT_QPA_PLATFORM=offscreen python -m docs.scre
 
 # Put it first so that "make" without argument is like "make help".
 help:
-	@$(SPHINXBUILD) -M help "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) $(O)
+	@$(SPHINXBUILD) -M help "$(SOURCEDIR)" "$(BUILDDIR)" -d "$(BUILDDIR)/doctrees" $(SPHINXOPTS) $(O)
 
 .PHONY: help Makefile screenshots html
 
@@ -23,9 +23,9 @@ screenshots:
 
 # Ensure screenshots exist before the html build so image references resolve.
 html: screenshots
-	@$(SPHINXBUILD) -M html "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) $(O)
+	@$(SPHINXBUILD) -M html "$(SOURCEDIR)" "$(BUILDDIR)" -d "$(BUILDDIR)/doctrees" $(SPHINXOPTS) $(O)
 
 # Catch-all target: route unknown targets to Sphinx using the new
 # "make mode" option.  $(O) is meant as a shortcut for $(SPHINXOPTS).
 %: Makefile
-	@$(SPHINXBUILD) -M $@ "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) $(O)
+	@$(SPHINXBUILD) -M $@ "$(SOURCEDIR)" "$(BUILDDIR)" -d "$(BUILDDIR)/doctrees" $(SPHINXOPTS) $(O)

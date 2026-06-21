@@ -54,7 +54,7 @@ jobs:
         # tolerate their absence. -W would turn missing-image warnings into
         # errors, so we keep the smoke as a plain build (broken rST/refs still
         # fail the build).
-        run: sphinx-build -b html docs docs/_build/html
+        run: sphinx-build -d docs/_build/doctrees -b html docs docs/_build/html
 
   # Full build for a release: regenerate GUI screenshots, build HTML, and (below)
   # deploy to Pages. Runs only on a version tag push or a manual dispatch.
@@ -99,7 +99,7 @@ jobs:
         run: python -m docs.screenshots.capture --out docs/_generated/screenshots
 
       - name: Build HTML docs
-        run: sphinx-build -b html docs docs/_build/html
+        run: sphinx-build -d docs/_build/doctrees -b html docs docs/_build/html
 
       - name: Disable Jekyll processing
         run: touch docs/_build/html/.nojekyll
