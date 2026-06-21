@@ -9,8 +9,7 @@ Vector Polarization Mode
 *central plot. The* P_z *trace carries the dominant slow exponential decay,*
 P_x *carries a weak transverse oscillation, and* P_y *is centred near*
 *zero with statistical noise — the standard signature of a sample whose*
-*local field is aligned along the* z *axis of the spectrometer (textbook*
-*Ch 6.3).*
+*local field is aligned along the* z *axis of the spectrometer.*
 
 Vector polarization mode treats the muon-spin polarisation as a
 three-component vector, exposing the :math:`P_x`, :math:`P_y`, and

@@ -293,7 +293,7 @@ histogram *N − 1*). Presets:
 * **Transverse (Vector)** — the Up–Down and Left–Right pairs exposed as two
   asymmetry projections (musrfit's ``WED(L)`` transverse setup).
 * **Spin-rotated (F+U/B+D)** — Forward+Up vs Backward+Down. When the spin
-  rotator (a Wien filter on πM3.2; GPS User Guide, Section 13) is used in
+  rotator (a Wien filter on πM3.2) is used in
   transverse geometry the muon spin is rotated up by about 50°, so the
   polarisation points along the Forward–Up diagonal; summing those detectors
   realigns one asymmetry axis with the rotated spin and recovers the full
