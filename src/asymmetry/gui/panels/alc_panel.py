@@ -390,18 +390,30 @@ class ALCScanView(QWidget):
     def _auto_data_bounds(self) -> tuple[float, float, float, float] | None:
         """Return ``(xmin, xmax, ymin, ymax)`` framing the scan data + overlays.
 
-        Computed from the plotted points (value ± error) and any fit overlays,
-        **not** from the axes' data limits: the shaded baseline regions and the
-        peak / region handle lines span the whole axes, so ``autoscale_view``
-        would frame to them and squash the data. Returns ``None`` when there is
-        nothing finite to frame.
+        Computed from the plotted data, **not** from the axes' data limits: the
+        shaded baseline regions and the peak / region handle lines span the whole
+        axes, so ``autoscale_view`` would frame to them and squash the data.
+        Two deliberate asymmetries:
+
+        * The **y** extent uses the *included* points only (value ± error) plus
+          the fit overlays — a run the user click-excluded should not stretch
+          the frame; that is the whole point of excluding an outlier.
+        * The **x** extent keeps *every* point (excluded ones stay horizontally
+          visible, so a mildly-excluded point can still be clicked to restore)
+          and also the region edges / peak centres, so a handle dragged past the
+          data stays on-screen and grabbable.
+
+        Returns ``None`` when there is nothing finite to frame.
         """
         plot = self._last_plot
         if plot is None or plot["x"].size == 0:
             return None
-        xs = [plot["x"]]
-        y_lo = [plot["value"] - plot["error"]]
-        y_hi = [plot["value"] + plot["error"]]
+        included = ~plot["excluded"]
+        if not included.any():  # everything excluded: fall back to all points
+            included = np.ones(plot["x"].size, dtype=bool)
+        xs = [plot["x"]]  # x-frame keeps every point (see docstring)
+        y_lo = [plot["value"][included] - plot["error"][included]]
+        y_hi = [plot["value"][included] + plot["error"][included]]
         for curve in (self._baseline_curve, self._fit_curve):
             if curve is not None:
                 cx, cy = curve
@@ -409,6 +421,13 @@ class ALCScanView(QWidget):
                     xs.append(cx)
                     y_lo.append(cy)
                     y_hi.append(cy)
+        # Region edges and peak centres are meaningful x-locations the user
+        # drags; keep them in the x-frame (x only — their full-height artists
+        # must never enter the y-frame, which was the squash bug).
+        handle_x = [edge for _row, lo, hi in self._raw_regions() for edge in (lo, hi)]
+        handle_x += [b0 for _row, b0 in self._peak_centres()]
+        if handle_x:
+            xs.append(np.asarray(handle_x, dtype=float))
         x = np.concatenate(xs)
         lo = np.concatenate(y_lo)
         hi = np.concatenate(y_hi)
@@ -421,35 +440,54 @@ class ALCScanView(QWidget):
 
     @staticmethod
     def _padded(lo: float, hi: float, frac: float = 0.05) -> tuple[float, float]:
-        """Return ``(lo, hi)`` widened by *frac* of the span (both sides)."""
+        """Return ``(lo, hi)`` widened by *frac* of the span (both sides).
+
+        A degenerate range (``hi <= lo``, e.g. a single point or a manual
+        min==max) is expanded to a small window around the value so the axis is
+        valid and the point/line is visible rather than collapsed to a hairline.
+        """
         if hi <= lo:
-            pad = abs(lo) * frac or 1.0  # degenerate range: expand around it
+            pad = max(abs(lo), 1.0) * frac  # unit-scale floor for lo≈0
             return lo - pad, hi + pad
         pad = (hi - lo) * frac
         return lo - pad, hi + pad
 
+    def _axis_target(
+        self, auto: bool, data_range: tuple[float, float] | None, lo_field, hi_field
+    ) -> tuple[float, float] | None:
+        """Target ``(lo, hi)`` for one axis, or ``None`` to leave it unchanged.
+
+        Auto frames the padded data range (``None`` when there is no data, so the
+        axis is left as-is). Manual uses the typed fields, sorted so an inverted
+        entry is read as a range, and expanded when degenerate so a min==max
+        entry still produces a valid axis instead of being silently dropped.
+        """
+        if auto:
+            return None if data_range is None else self._padded(*data_range)
+        lo, hi = sorted((lo_field.value(), hi_field.value()))
+        return self._padded(lo, hi) if lo == hi else (lo, hi)
+
     def _apply_axis_limits(self) -> None:
         """Pin manual axes to their fields, frame auto axes from the data, and
-        sync the fields.
+        sync the fields to the applied limits.
 
         Called at the end of :meth:`_render_plot` once every artist is drawn, so
         the limits it writes back are the ones the canvas will show.
         """
         bounds = self._auto_data_bounds()
-        if self._auto_x and bounds is not None:
-            self._ax.set_xlim(*self._padded(bounds[0], bounds[1]))
-        elif not self._auto_x:
-            lo, hi = sorted((self._x_min.value(), self._x_max.value()))
-            if lo < hi:
-                self._ax.set_xlim(lo, hi)
-        if self._auto_y and bounds is not None:
-            self._ax.set_ylim(*self._padded(bounds[2], bounds[3]))
-        elif not self._auto_y:
-            lo, hi = sorted((self._y_min.value(), self._y_max.value()))
-            if lo < hi:
-                self._ax.set_ylim(lo, hi)
-        x0, x1 = self._ax.get_xlim()
-        y0, y1 = self._ax.get_ylim()
+        x_range = None if bounds is None else (bounds[0], bounds[1])
+        y_range = None if bounds is None else (bounds[2], bounds[3])
+        xlim = self._axis_target(self._auto_x, x_range, self._x_min, self._x_max)
+        ylim = self._axis_target(self._auto_y, y_range, self._y_min, self._y_max)
+        if xlim is not None:
+            self._ax.set_xlim(*xlim)
+        if ylim is not None:
+            self._ax.set_ylim(*ylim)
+        # Reflect the applied limits (fall back to the current view only when we
+        # left an axis unchanged — auto with no data — never clobbering a typed
+        # value with a stale axis extent).
+        x0, x1 = xlim if xlim is not None else self._ax.get_xlim()
+        y0, y1 = ylim if ylim is not None else self._ax.get_ylim()
         for field, value in (
             (self._x_min, x0),
             (self._x_max, x1),

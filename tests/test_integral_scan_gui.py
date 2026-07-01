@@ -1024,6 +1024,65 @@ def test_alc_scan_axis_limit_controls(qapp: QApplication):
     assert view._auto_x_btn.isChecked() and view._auto_y_btn.isChecked()
 
 
+def test_alc_auto_y_ignores_excluded_outlier(qapp: QApplication):
+    # An excluded outlier must not stretch the auto-Y frame — that is the point
+    # of excluding it. The x-frame keeps every point (so it stays clickable).
+    view = ALCScanView()
+    view.resize(700, 500)
+    x = np.array([2000.0, 3000.0, 4000.0, 5000.0, 4500.0])
+    y = np.array([10.0, 4.0, 9.0, 11.0, 500.0])  # last point is a wild outlier
+    e = np.full(5, 0.2)
+    mask = np.array([False, False, False, False, True])
+    view.show_scan(x, y, e, [1, 2, 3, 4, 5], x_label="B (G)", y_label="A (%)", excluded_mask=mask)
+    view._canvas.draw()
+    # Y frames the retained 4–11 data, not up to 500.
+    assert view._y_max.value() < 20.0
+    assert view._y_min.value() < 4.0 and view._y_max.value() > 11.0
+    # X still spans the excluded point's location.
+    assert view._x_min.value() <= 2000.0 and view._x_max.value() >= 5000.0
+
+
+def test_alc_auto_x_keeps_out_of_range_handles_visible(qapp: QApplication):
+    # A baseline region dragged past the data end must stay within the x-frame,
+    # or its handle becomes invisible and un-grabbable.
+    view = ALCScanView()
+    view.resize(700, 500)
+    view.show_scan(
+        np.array([2000.0, 3000.0, 4000.0, 5000.0]),
+        np.array([10.0, 4.0, 9.0, 11.0]),
+        np.full(4, 0.2),
+        [1, 2, 3, 4],
+        x_label="B (G)",
+        y_label="A (%)",
+    )
+    _set_regions(view, [(5200.0, 5600.0)])  # both edges past the data end (5000)
+    view._render_plot()
+    assert view._x_max.value() >= 5600.0
+
+
+def test_alc_manual_degenerate_range_expands(qapp: QApplication):
+    # A manual min==max entry must produce a valid window (not be silently
+    # dropped and the field overwritten with a stale axis extent).
+    view = ALCScanView()
+    view.resize(700, 500)
+    view.show_scan(
+        np.array([2000.0, 3000.0, 4000.0, 5000.0]),
+        np.array([10.0, 4.0, 9.0, 11.0]),
+        np.full(4, 0.2),
+        [1, 2, 3, 4],
+        x_label="B (G)",
+        y_label="A (%)",
+    )
+    view._auto_x_btn.setChecked(False)
+    view._x_min.setValue(3000.0)
+    view._x_max.setValue(3000.0)
+    view._on_x_limit_edited()
+    lo, hi = view._ax.get_xlim()
+    assert lo < 3000.0 < hi  # a valid window brackets the typed value
+    assert view._x_min.value() == pytest.approx(lo)
+    assert view._x_max.value() == pytest.approx(hi)
+
+
 def test_alc_build_drops_surface_in_provenance(mainwindow: MainWindow, monkeypatch):
     # A run that cannot be integrated (no grouping) is dropped at build time
     # and surfaces in the provenance line, not just the log.
