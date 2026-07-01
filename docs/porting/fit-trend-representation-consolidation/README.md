@@ -315,7 +315,8 @@ representations, roughly in priority order:
    `member_kind="groups"`. Nothing is wrong mechanically, but the shared word
    makes the UI and code hard to reason about. Consolidation: rename / clearly
    badge these in UI and docstrings; make DataGroup → batch launch an explicit,
-   discoverable path.
+   discoverable path. **This is the subject of the dedicated design exploration
+   in §6 — the next agent should start there.**
 
 3. **One primary `FitSlot` per `(run, representation)` → last-write-wins between
    single and batch.** A single fit silently overwrites (and diverges) a batch
@@ -354,7 +355,108 @@ and confirm each with the user before changing behaviour.
 
 ---
 
-## 6. Navigation index (files, grouped by concern)
+## 6. Design exploration: how DataGroup and FitSeries should interact
+
+**This is the primary open design question for the follow-on session.** The user
+raised it directly: *"use the DataGroup header to indicate the datasets to
+include in a batched fit — then the FitSeries is identical to a DataGroup?"* The
+task for the next agent is **to explore the options and find the most intuitive
+relationship** — not to jump to an implementation. Confirm the chosen direction
+with the user before writing code.
+
+### 6.1 Why "identical" is not quite right (the trap to avoid)
+
+Launching a batch from a DataGroup header would make the **member run set**
+coincide *at creation time*, and the coupling is already softly present: if every
+run in a batch belongs to one group, the recorded `FitSeries` is **named after
+that group** (`MainWindow._data_group_name_for_runs`, `mainwindow.py:9687` ✓).
+But a `DataGroup` and a `FitSeries` are not the same kind of thing, and treating
+them as one object hits six structural mismatches:
+
+1. **1 : N, not 1 : 1.** A `FitSeries` is scoped to one `rep_type` + one
+   `canonical_model` + one `param_roles` + one fit window (`fit_range` is part of
+   the de-dup signature, `project_model._series_signature` ✓). The same group of
+   runs legitimately backs *many* series: a time batch **and** an FFT batch; two
+   different models; batch vs global; a re-fit over a different window. A
+   `DataGroup` has no representation, model, or window — so it cannot *be* any one
+   series without discarding the others.
+2. **Members aren't the same objects for grouped fits.** A
+   `FitSeries(member_kind="groups")` has synthetic `(run, detector-group)` keys
+   `-(run*1000+idx)`, a one-to-many expansion of the group's run list — so
+   "members == `DataGroup.member_run_numbers`" is simply false there.
+3. **Membership drifts after creation.** The series stores a *snapshot* of members
+   at fit time. Editing the DataGroup afterward does not (today) re-fit or
+   re-member the series. Keeping them identical implies live re-fit on every group
+   edit.
+4. **Trended members are a gated subset.** `diverged_runs` +
+   per-member `include_in_trend` mean the *plotted* set ⊆ membership. A DataGroup
+   has no inclusion/divergence notion.
+5. **Results + model live only on the series.** `results_by_run`, uncertainties,
+   χ², `canonical_model` — a `DataGroup` has nowhere to hold these.
+6. **Different owners/lifecycles.** DataGroup ∈ browser state; FitSeries ∈
+   `ProjectModel.batches`. Deleting one does not touch the other.
+
+**The accurate mental model:** *DataGroup = a durable, named **membership**;
+FitSeries = one **fit of that membership**, in one representation, with a model
+and results. One group, many series.*
+
+### 6.2 The design axis to explore
+
+The real question is **how tightly to couple membership (DataGroup) to fits
+(FitSeries)**. Sketch of the option space — the next agent should flesh these
+out, prototype the UX, and weigh them with the user:
+
+- **Option A — Loose (DataGroup as batch selector).** Keep the two objects
+  separate; make "Fit this group" an explicit action on the group header that
+  seeds the batch membership from `DataGroup.member_run_numbers` (instead of the
+  transient browser selection). The group *names and re-selects*; the series still
+  owns model/roles/results. Lowest risk, mostly wiring + UX; likely already 80%
+  present. Membership still snapshots at fit time (decide whether "re-fit group"
+  is offered when the group changes).
+- **Option B — Linked (DataGroup owns an ordering + its series).** The group gains
+  a first-class `order_key`/scan-axis (folds in §5.4 angle work) and a *list* of
+  the FitSeries derived from it (back-references by `batch_id`), so the UI can
+  show "this group, fit 3 ways." Group edits can offer to re-fit its series.
+  Membership stays snapshotted per series but the group is the hub. Medium effort;
+  needs a group↔series index in `ProjectModel`.
+- **Option C — Unified (DataGroup *is* the trend unit).** Collapse the concepts: a
+  group directly owns one fit per (representation) and its results, and the trend
+  panel plots "the group." This is the literal reading of the user's question. It
+  is the biggest change and forces answers to: one-fit-per-group-per-rep only?
+  where do results live (browser state vs ProjectModel)? how are the (run,group)
+  synthetic members reconciled with run membership? how do multiple models over
+  one group coexist (they can't, without re-introducing a series list)? Highest
+  risk; most "intuitive" only if users never want two fits of one group.
+
+**Cross-cutting questions for any option:**
+- Should adding/removing a run from a DataGroup after a fit re-fit, invalidate, or
+  leave the series untouched? (Today: untouched.)
+- Should a DataGroup carry the scan axis (`order_key`) so every series over it
+  trends consistently, unifying §5.4 (angle) and §5.5 (coordinate provenance)?
+- What is the behaviour for a run that is in the DataGroup but *diverged* /
+  excluded from trend — greyed in the group header?
+- How does this interact with group series (detector-group members) where the
+  member cardinality differs from the run cardinality?
+- Does an ad-hoc multi-select batch (no DataGroup) still work, and does it
+  *auto-create* a DataGroup, or remain group-less? (Consistency vs clutter.)
+
+### 6.3 Recommended approach for the exploration
+
+1. **Start read-only + live.** Reproduce, in the running GUI, the current flow:
+   select runs → batch fit → trend, and separately create a DataGroup → fit it.
+   Capture where the group does and does not influence the series today.
+2. **Prototype Option A first** (lowest risk) to establish the "Fit this group"
+   affordance, then evaluate whether B/C add enough intuitiveness to justify the
+   cost. Bias toward the least coupling that removes the confusion.
+3. **Keep the core/GUI split**: membership→series resolution belongs in
+   `core`/`ProjectModel`; the group header affordance is GUI.
+4. **Write it up study-first** in this folder (`comparison.md`,
+   `implementation-options.md`, `verification-plan.md`) before implementing, and
+   get the user's pick of A/B/C.
+
+---
+
+## 7. Navigation index (files, grouped by concern)
 
 ### Core — representation spine (read these first) ✓
 - `src/asymmetry/core/representation/base.py` — `Representation`, `FitSlot`,
@@ -426,8 +528,14 @@ and confirm each with the user before changing behaviour.
 
 ---
 
-## 7. Suggested next steps for the implementing agent
+## 8. Suggested next steps for the implementing agent
 
+0. **Lead with §6 — the DataGroup ↔ FitSeries relationship.** This is the primary
+   open design question the user wants explored: how should a DataGroup and a
+   batch FitSeries interact intuitively? Explore Options A/B/C, prototype the UX,
+   and agree a direction with the user *before* implementing. The rest of the
+   backlog (§5) is secondary and several items fold into whichever coupling is
+   chosen (notably §5.2 group overload and §5.4 angle order-key).
 1. **Confirm the consolidation scope with the user** — §5 is a menu of design
    decisions, not a to-do list. Do not change behaviour before agreeing which
    inconsistencies to unify and which are intentional.
