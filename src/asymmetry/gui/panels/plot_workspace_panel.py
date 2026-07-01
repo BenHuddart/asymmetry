@@ -1,8 +1,9 @@
-"""Central workspace for FB asymmetry, grouped, and frequency plots.
+"""Central workspace for FB asymmetry, grouped, integral-scan and frequency plots.
 
 The toolbar's Domain segmented control is the sole source of truth for which
 view is active.  This panel owns the QStackedWidget that shows the appropriate
-PlotPanel; it holds no tab bar of its own.
+panel (the time/frequency PlotPanels, or the integral-scan panel); it holds no
+tab bar of its own.
 """
 
 from __future__ import annotations
@@ -41,11 +42,16 @@ class PlotWorkspacePanel(QWidget):
         *,
         time_panel: QWidget,
         frequency_panel: QWidget,
+        scan_panel: QWidget | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._time_panel = time_panel
         self._frequency_panel = frequency_panel
+        # The integral-scan representation has its own central panel (the scan
+        # plot + integration-window strip); without one, integral_scan falls
+        # back to the time panel (standalone/test construction).
+        self._scan_panel = scan_panel
         self._last_time_view = "fb_asymmetry"
         self._enabled_views: set[str] = set(self._ALWAYS_ENABLED_VIEWS)
         self._active_view = "fb_asymmetry"
@@ -57,6 +63,8 @@ class PlotWorkspacePanel(QWidget):
         self._panel_stack = QStackedWidget()
         self._panel_stack.addWidget(self._time_panel)
         self._panel_stack.addWidget(self._frequency_panel)
+        if self._scan_panel is not None:
+            self._panel_stack.addWidget(self._scan_panel)
         layout.addWidget(self._panel_stack)
 
         self.set_available_views(["fb_asymmetry"])
@@ -71,6 +79,18 @@ class PlotWorkspacePanel(QWidget):
     def frequency_panel(self) -> QWidget:
         """Return the frequency-domain plot panel."""
         return self._frequency_panel
+
+    def scan_panel(self) -> QWidget | None:
+        """Return the integral-scan panel (None when not provided)."""
+        return self._scan_panel
+
+    def _panel_for_view(self, token: str) -> QWidget:
+        """Return the stack panel that shows *token*."""
+        if token in self._FREQUENCY_VIEWS:
+            return self._frequency_panel
+        if token == "integral_scan" and self._scan_panel is not None:
+            return self._scan_panel
+        return self._time_panel
 
     def active_view(self) -> str:
         """Return the currently selected top-level plot view token."""
@@ -90,11 +110,7 @@ class PlotWorkspacePanel(QWidget):
 
     def current_panel(self) -> QWidget:
         """Return the currently visible plot panel."""
-        return (
-            self._frequency_panel
-            if self._active_view in self._FREQUENCY_VIEWS
-            else self._time_panel
-        )
+        return self._panel_for_view(self._active_view)
 
     # ── mutators ─────────────────────────────────────────────────────────────
 
@@ -148,9 +164,7 @@ class PlotWorkspacePanel(QWidget):
 
         if token == self._active_view:
             # Ensure the stack is in sync even if no signal is needed.
-            self._panel_stack.setCurrentWidget(
-                self._frequency_panel if token in self._FREQUENCY_VIEWS else self._time_panel
-            )
+            self._panel_stack.setCurrentWidget(self._panel_for_view(token))
             return
 
         prev_domain = self.active_domain()
@@ -160,9 +174,7 @@ class PlotWorkspacePanel(QWidget):
         # data view, so a later switch-to-time lands on real data, not it.
         if token in self._PRIMARY_TIME_VIEWS:
             self._last_time_view = token
-        self._panel_stack.setCurrentWidget(
-            self._frequency_panel if token in self._FREQUENCY_VIEWS else self._time_panel
-        )
+        self._panel_stack.setCurrentWidget(self._panel_for_view(token))
         self.active_view_changed.emit(token)
         if self.active_domain() != prev_domain:
             self.active_domain_changed.emit(self.active_domain())
@@ -192,9 +204,9 @@ class PlotWorkspacePanel(QWidget):
     # ── actions ───────────────────────────────────────────────────────────────
 
     def clear(self) -> None:
-        """Clear both panels and return to the default time-domain view."""
-        for panel in (self._time_panel, self._frequency_panel):
-            if hasattr(panel, "clear"):
+        """Clear all panels and return to the default time-domain view."""
+        for panel in (self._time_panel, self._frequency_panel, self._scan_panel):
+            if panel is not None and hasattr(panel, "clear"):
                 panel.clear()
         self._last_time_view = "fb_asymmetry"
         self.set_available_views(["fb_asymmetry"])

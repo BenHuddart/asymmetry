@@ -38,31 +38,33 @@ feature in :math:`A` versus field. The **dA/dB** view (see below) plots the
 field-derivative of the scan — WiMDA's *differential ALC* — which sharpens a
 resonance into a peak–trough signature.
 
-Entering ALC mode
------------------
+Entering the Integral scan representation
+-----------------------------------------
 
-ALC mode is a toggle on the **main toolbar**, labelled **ALC mode**. It is
-**only available in the Forward–Backward asymmetry view** — the toggle is
-disabled in the frequency, groups, and MaxEnt views, and auto-exits if you
-leave the F–B asymmetry view.
+ALC mode is the **Integral scan** representation, a button in the **Time
+domain** cluster of the **main toolbar** (alongside *F-B asymmetry* and
+*Individual groups*). Click it to enter — no separate toggle. It is always
+available; the two-or-more-runs requirement is checked when you build the scan,
+not when you select the representation.
 
-When you enable it:
+When it is active:
 
-* the toggle highlights **red** while ALC mode is active, so the bespoke mode is
-  always obvious;
-* the **Fit** dock is replaced by the **Integral scan (ALC)** build panel —
-  this is where the **Integration window** and **Build Scan** controls live;
-* the **Parameters** dock is replaced by the **ALC scan view** (the scan plot
-  plus its baseline and peak controls).
+* the **central plot area** shows the field scan itself (the ALC curve), with a
+  slim **integration-window strip** beneath it (see :ref:`the integration
+  window <alc-integration-window>` below);
+* the **Fit** dock shows the **Integral scan (ALC)** build panel — the
+  **Integration window** spinboxes, the **RF resonance** option, and the
+  **Build Scan** button;
+* the **Parameters** dock shows the scan's analysis controls — the
+  **Baseline**, **Peaks**, and **RF resonance** sections.
 
-Both docks are raised on entry, but the **Parameters** dock lands *on top*,
-showing the placeholder *"Build a scan to see the ALC curve."* The **Build
-Scan** button is in the **Fit** dock *behind* it — so until you raise the Fit
-dock and build a scan, it looks like nothing happened. Click the **Fit**
-toolbar button to bring the build panel forward (Step 1 below).
+This is the key change from earlier versions: the scan is the *main window*, not
+a panel tucked into a dock. In scan mode you no longer interact with the per-run
+time spectra — they are only integrated — so the scan occupies the centre and
+the analysis controls stay to the side.
 
-Toggling ALC mode off restores the normal **Fit** and **Parameters** docks; your
-scan and its analysis are kept and reappear when you re-enter ALC mode.
+Switching to another representation keeps your scan and its analysis; they
+reappear when you return to **Integral scan**.
 
 The ALC workflow
 ----------------
@@ -70,33 +72,41 @@ The ALC workflow
 Step 1 — Build the scan
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The **Build Scan** control is in the **Fit** dock, which ALC mode leaves
-*behind* the **Parameters** dock and its *"Build a scan to see the ALC curve"*
-placeholder. So the build is a four-step sequence — and raising the Fit dock is
-the step most people miss:
-
 #. **Load and multi-select the runs.** Load the field-scan runs, then select
    them all in the **Data Browser**: click the first row and **Shift-click** the
    last (the scan is built from the current selection, exactly like a batch
    fit). The Data Browser resolves the **B (G)** column from each run's field;
    that column becomes the scan's field axis.
-#. **Raise the Fit dock.** Click the **Fit** toolbar button to bring the
-   **Integral scan (ALC)** build panel to the front, in front of the Parameters
-   dock. This is the step that is easy to miss — the placeholder in the
-   Parameters dock makes it look like nothing happened, when the **Build Scan**
-   button was simply hidden behind it.
-#. **Set the integration window.** The window *is* the time-spectrum fit range:
-   drag the shaded range directly on the time plot, or type precise
-   :math:`t_\mathrm{min}` and :math:`t_\mathrm{max}` values (in μs) into the
-   spinboxes in the **Integration window** group of the build panel. The two
-   stay in sync.
+#. **Select the Integral scan representation.** Click **Integral scan** in the
+   toolbar's Time-domain cluster. The central area switches to the scan view
+   (empty until you build), and the **Fit** dock shows the build panel.
+#. **Set the integration window.** The window *is* the time-spectrum fit range.
+   Drag the shaded window on the **integration-window strip** below the scan, or
+   type precise :math:`t_\mathrm{min}` and :math:`t_\mathrm{max}` values (in μs)
+   into the spinboxes in the **Integration window** group of the build panel.
+   The strip, the spinboxes, and the F-B time plot all stay in sync.
 #. **Press Build Scan.**
 
-Each selected run is integrated over the window to one point, and the scan is
-plotted in the **Parameters** dock, which is raised automatically. Runs that are
-missing the chosen x-axis log (for example, a run with no recorded field on a
-field scan) are dropped and listed in the log. Re-pressing **Build Scan** after
-changing the window rebuilds the scan in place — it does not accumulate copies.
+Each selected run is integrated over the window to one point, and the scan
+appears in the central plot area. A **provenance line** beneath the scan
+reports how many runs contribute and, when relevant, how many were dropped and
+why (see :ref:`which runs are in the scan <alc-scan-membership>`). Runs missing
+the chosen x-axis log (for example, a run with no recorded field on a field
+scan) are dropped and named there. Re-pressing **Build Scan** after changing the
+window rebuilds the scan in place — it does not accumulate copies.
+
+.. _alc-integration-window:
+
+The integration window (time strip)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Because the scan now occupies the centre, the draggable integration window has
+its own home: a slim, collapsible **time-spectrum strip** directly beneath the
+scan. It previews the current run's time spectrum with the integration window
+shaded, and you drag the window edges on it exactly as you would on the full
+time plot. The strip, the build panel's spinboxes, and the F-B asymmetry time
+plot are three views of the *same* window and always agree. Collapse the strip
+with the arrow in its header when you want the scan to fill the space.
 
 As a worked example, the TCNQ ALC scan (31 runs at 350 K, stepped over
 2000–5000 G) with an integration window of roughly 0.2–8 μs resolves a clean D1
@@ -114,10 +124,39 @@ Above the scan plot:
   *differential ALC* view and has one fewer point than the raw scan (each point
   is the midpoint slope between adjacent runs);
 * the **Data table…** button opens the per-point values (run, x, asymmetry,
-  error) in a separate window, keeping the plot itself uncluttered.
+  error) in a separate window, keeping the plot itself uncluttered;
+* the **X** / **Y** range fields with **Auto X** / **Auto Y** toggles set the
+  axis limits, exactly as on the other representations. With Auto on, the axis
+  frames the data and the fields track it; typing a limit pins that axis (and
+  turns its Auto off). Building a scan or changing the x-axis / derivative view
+  reframes both axes.
 
 Changing the x-axis clears any baseline and peaks, because regions and peak
 positions are expressed in the units of the current axis.
+
+.. _alc-scan-membership:
+
+Which runs are in the scan — excluding an outlier
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Every selected run that can be integrated contributes one point. A run is
+dropped only if it cannot be reduced (no grouping), or — in RF mode — is not a
+two-period run. The **provenance line** beneath the scan makes this visible
+rather than log-only: it reads, for example, *"29 runs in scan · 1 without
+B (G) · 1 dropped at build"*, and its tooltip lists the dropped runs with the
+reason for each.
+
+To drop a single bad point — a spurious run, an outlier that distorts the
+baseline — **click it on the scan**. The point turns grey and hollow, the
+provenance line gains a *"… excluded by click"* entry, and the run is skipped by
+the baseline, peak, and RF fits (which run only on the remaining points).
+**Click the greyed point again to restore it.** Exclusions are kept per run, so
+they survive a rebuild over the same selection and are saved with the project.
+
+This click-to-exclude is available on the scan itself (the **B/T/Run** view). In
+the **dA/dB** differential view the points are pair-midpoints with no greyed
+marker to restore, so clicking there does not exclude — switch the derivative
+off, exclude the point, and switch back.
 
 Step 3 — Fit a baseline
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -302,7 +341,7 @@ It has first-class support on the integral-scan path:
   **Build Scan**. Each two-period run is reduced to its Green − Red period
   difference and integrated over the window — no hand-assembly of separate
   red/green scans.
-* In the scan view, open the **RF resonance (A_µ, A_p)** section, set
+* In the **Parameters** dock, open the **RF resonance (A_µ, A_p)** section, set
   **ν_RF** (the RF frequency, held fixed) and the **A_µ₀ / A_p₀** starting
   guesses, and press **Fit RF resonance**. The fit uses the exact muon + electron
   + proton spin Hamiltonian (``RFResonanceMuP``) and reports :math:`A_\mu`
@@ -352,9 +391,10 @@ Saving and reopening
 
 The scan and its full analysis are saved inside the project (``.asymp``) file.
 Reopening the project rebuilds the scan, restores the x-axis choice, the baseline
-regions, and the peaks, re-runs whichever fits were active so the overlays and
-read-out reappear, and re-enters ALC mode if it was active when you saved — so
-you resume exactly where you left off. See :doc:`project_files`.
+regions, the peaks, and any per-point exclusions, re-runs whichever fits were
+active so the overlays and read-out reappear, and returns to the **Integral
+scan** representation if it was active when you saved — so you resume exactly
+where you left off. See :doc:`project_files`.
 
 Worked example: a synthetic scan
 --------------------------------
@@ -371,9 +411,10 @@ crossing. The figure below was produced from such a scan — 31 runs stepped fro
 The steps mirror a real analysis:
 
 #. Load the field-stepped runs and select them all.
-#. Switch the time-domain workspace to **Integral scan** and, in the **Fit**
-   dock, press **Build Scan** — each run is integrated over the time window to a
-   single point, and the scan of integral asymmetry against field appears.
+#. Switch the toolbar to the **Integral scan** representation and, in the
+   **Fit** dock, press **Build Scan** — each run is integrated over the time
+   window to a single point, and the scan of integral asymmetry against field
+   appears in the central plot area.
 #. Mark two non-resonant field regions either side of the dip and press **Fit
    baseline** (a straight line here).
 #. Add a **Gaussian** peak and press **Fit peaks**. The fit recovers the
@@ -385,16 +426,16 @@ For the same workflow on real data, see :doc:`/workflows/alc_scan_tcnq`.
 Common pitfalls
 ---------------
 
-* **"Build a scan to see the ALC curve" — nothing seems to happen.** That
-  placeholder is in the **Parameters** dock, which sits *on top* when you enter
-  ALC mode. The **Build Scan** button (and the **Integration window**) are in
-  the **Fit** dock *behind* it — click the **Fit** toolbar button to raise it,
-  set the window, and press **Build Scan**.
-* **ALC mode is greyed out.** It is only available in the Forward–Backward
-  asymmetry view. Switch the central plot to that view first.
+* **The scan area is empty after entering the representation.** The scan is
+  built, not automatic: multi-select the runs, set the integration window, and
+  press **Build Scan** in the **Fit** dock. Until then the central area shows
+  the *"Build a scan to see the ALC curve"* placeholder.
 * **A run is missing from the scan.** Field-axis scans drop runs with no recorded
-  field (and likewise for temperature); check the log for the list of excluded
-  runs, or switch the x-axis to **Run**.
+  field (and likewise for temperature); the **provenance line** beneath the scan
+  names them (and its tooltip gives the reason), or switch the x-axis to **Run**.
+* **A point is greyed and hollow.** You (or a saved project) excluded that run by
+  clicking it — click it again to restore it. The provenance line tells you how
+  many points are excluded this way.
 * **"Add at least one non-resonant region".** The baseline needs at least one
   region, and a **Linear** baseline needs at least two usable points across the
   marked regions. Widen the regions or use a **Constant** baseline.

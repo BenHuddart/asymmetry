@@ -1,14 +1,18 @@
 """Bespoke ALC-mode panels: build an integral-asymmetry field scan and view it.
 
-ALC mode is toggled from the main toolbar when the Forward-Backward asymmetry
-representation is active. Enabling it swaps the Fit and Parameters docks for
-these focused widgets:
+The "Integral scan" representation *integrates* the asymmetry over the
+fit-range window for each selected run (one value per run) rather than fitting
+a model. Its surfaces:
 
-* :class:`ALCFitPanel` — the build controls (integration window + Build Scan).
-  ALC mode *integrates* the asymmetry over the fit-range window for each
-  selected run (one value per run) rather than fitting a model.
-* :class:`ALCScanView` — the resulting field scan (integral asymmetry vs the
-  run variable) as a plot plus a table.
+* :class:`ALCFitPanel` — the build controls (integration window + Build Scan),
+  swapped into the Fit dock.
+* :class:`ALCScanView` — the field scan (integral asymmetry vs the run
+  variable) plus its Baseline/Peaks/RF analysis controls. Its two sections are
+  relocatable: the plot section goes to the central
+  :class:`IntegralScanPanel`, the analysis section to the Parameters dock.
+* :class:`IntegralScanPanel` — the central workspace page: the scan plot above
+  an :class:`IntegralTimeStrip`, the slim time-domain preview carrying the
+  draggable integration window.
 
 The scan is recorded as a model-less ``FitSeries`` internally (see
 ``MainWindow._on_scan_requested``); these widgets are pure presentation and hold
@@ -27,23 +31,28 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDoubleSpinBox,
+    QFileDialog,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
+from asymmetry.gui.export_paths import default_export_path, remember_export_path
 from asymmetry.gui.panels.draggable_handles import nearest_handle
+from asymmetry.gui.panels.plot_panel import _FloatLimitField
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
-from asymmetry.gui.styles.plots import draw_empty_state_message
-from asymmetry.gui.styles.widgets import build_primary_button_qss
+from asymmetry.gui.styles.plots import draw_empty_state_message, draw_fit_range_span, style_axes
+from asymmetry.gui.styles.widgets import build_nav_button_qss, build_primary_button_qss
 
 
 class ALCFitPanel(QWidget):
@@ -157,6 +166,13 @@ class ALCScanView(QWidget):
     and a dA/dB derivative toggle — and emits :attr:`options_changed` when they
     change. The main window owns the scan data and re-feeds arrays via
     :meth:`show_scan`; this widget holds no analysis logic.
+
+    The view is the single owner of the scan canvas, the drag machinery, and
+    the Baseline/Peaks/RF tables, but its two sections are physically
+    relocatable (see :meth:`plot_widget` / :meth:`analysis_widget`): in the
+    application the plot section lives in the central integral-scan panel and
+    the analysis section in the Parameters dock, while a standalone
+    ``ALCScanView`` still lays out both (tests build it directly).
     """
 
     #: Emitted when the x-axis or derivative toggle changes.
@@ -169,6 +185,8 @@ class ALCScanView(QWidget):
     rf_fit_requested = Signal()
     #: Emitted when a region edit/drag invalidates the baseline-corrected scan.
     baseline_invalidated = Signal()
+    #: Emitted when the user clicks a scan point: exclude/restore that run.
+    point_toggled = Signal(int)
 
     #: x-combo index → ordering key.
     _X_KEYS = ("field", "temperature", "run")
@@ -178,8 +196,10 @@ class ALCScanView(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._last_plot: dict | None = None
-        self._baseline_curve: NDArray[np.float64] | None = None
-        self._fit_curve: NDArray[np.float64] | None = None
+        #: Fitted overlays as (x, y) pairs — fits run on included points only,
+        #: so an overlay's x can be a subset of the rendered scan's.
+        self._baseline_curve: tuple[NDArray[np.float64], NDArray[np.float64]] | None = None
+        self._fit_curve: tuple[NDArray[np.float64], NDArray[np.float64]] | None = None
         self._data_dialog: QDialog | None = None
         self._data_table: QTableWidget | None = None
         #: Active plot drag, as ("region", row, col) or ("peak", row, 1).
@@ -188,7 +208,24 @@ class ALCScanView(QWidget):
         self._drag_artist = None
         #: Handle key → drawn edge/centre Line2D, rebuilt by each _render_plot.
         self._handle_artists: dict[tuple[str, int, int], object] = {}
+        #: Pending click-to-toggle candidate: (run_number, press x/y in px).
+        self._toggle_candidate: tuple[int, float, float] | None = None
+        #: Auto-scale state per axis (matches the PlotPanel limit toolbar): when
+        #: on, the axis frames the data and its fields mirror the result; when
+        #: off, the axis is pinned to the typed field values.
+        self._auto_x = True
+        self._auto_y = True
         layout = QVBoxLayout(self)
+
+        # The view is two relocatable sections: the plot section (view
+        # controls + canvas + provenance line) and the analysis section
+        # (Baseline/Peaks/RF groups). Both are laid out here so a standalone
+        # ALCScanView still shows everything; the main window reparents the
+        # plot section into the central integral-scan panel and the analysis
+        # section into the Parameters dock (see plot_widget/analysis_widget).
+        self._plot_section = QWidget()
+        plot_layout = QVBoxLayout(self._plot_section)
+        plot_layout.setContentsMargins(0, 0, 0, 0)
 
         controls = QHBoxLayout()
         controls.addWidget(QLabel("x:"))
@@ -207,8 +244,10 @@ class ALCScanView(QWidget):
         data_btn.setToolTip("Show the scan's per-point values in a separate window.")
         data_btn.clicked.connect(self._on_show_data_table)
         controls.addWidget(data_btn)
-        layout.addLayout(controls)
+        plot_layout.addLayout(controls)
         self._update_derivative_label()
+
+        plot_layout.addLayout(self._build_limit_controls())
 
         self._figure = Figure(constrained_layout=True)
         self._canvas = FigureCanvasQTAgg(self._figure)
@@ -218,13 +257,23 @@ class ALCScanView(QWidget):
         self._canvas.mpl_connect("button_press_event", self._on_canvas_press)
         self._canvas.mpl_connect("motion_notify_event", self._on_canvas_motion)
         self._canvas.mpl_connect("button_release_event", self._on_canvas_release)
+        plot_layout.addWidget(self._canvas, 1)
+
+        # Scan provenance: which runs contribute, which were dropped and why
+        # (previously only in the log). The full drop list rides the tooltip.
+        self._provenance_label = QLabel("")
+        self._provenance_label.setWordWrap(True)
+        self._provenance_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+        self._provenance_label.hide()
+        plot_layout.addWidget(self._provenance_label)
+        layout.addWidget(self._plot_section, 3)
+
         # The plot is the dominant pane, but the fitted-parameter tables below
         # must stay reachable: rather than let the canvas grab every spare pixel
         # (pushing the Baseline/Peaks sections below the fold), the analysis
         # sections live in their own scroll area with a guaranteed minimum
         # height. On a tall dock everything is visible; on a short one the
         # analysis area scrolls internally instead of vanishing.
-        layout.addWidget(self._canvas, 3)
 
         analysis = QWidget()
         analysis_layout = QVBoxLayout(analysis)
@@ -242,6 +291,211 @@ class ALCScanView(QWidget):
         layout.addWidget(self._analysis_scroll, 2)
 
         self.clear()
+
+    # --- relocatable sections -------------------------------------------------
+
+    def plot_widget(self) -> QWidget:
+        """The plot section (view controls + canvas + provenance line).
+
+        The main window reparents this into the central integral-scan panel;
+        all logic (drag handles, tables) stays on this view.
+        """
+        return self._plot_section
+
+    def analysis_widget(self) -> QWidget:
+        """The analysis section (Baseline/Peaks/RF groups in a scroll area).
+
+        The main window reparents this into the Parameters dock.
+        """
+        return self._analysis_scroll
+
+    def figure(self) -> Figure:
+        """The scan plot's matplotlib figure (for export)."""
+        return self._figure
+
+    def set_provenance(self, text: str, tooltip: str = "") -> None:
+        """Show which runs contribute to the scan (empty *text* hides the line)."""
+        self._provenance_label.setText(text)
+        self._provenance_label.setToolTip(tooltip)
+        self._provenance_label.setVisible(bool(text))
+
+    # --- axis-limit controls --------------------------------------------------
+
+    def _build_limit_controls(self) -> QHBoxLayout:
+        """Build the X/Y range fields + Auto toggles (as on the main plot panels)."""
+        row = QHBoxLayout()
+        row.setSpacing(4)
+
+        row.addWidget(QLabel("X:"))
+        self._x_min = _FloatLimitField(0.0, minimum_width=64)
+        self._x_max = _FloatLimitField(1.0, minimum_width=64)
+        row.addWidget(self._x_min)
+        row.addWidget(QLabel("–"))
+        row.addWidget(self._x_max)
+
+        row.addWidget(QLabel("Y:"))
+        self._y_min = _FloatLimitField(0.0, minimum_width=64)
+        self._y_max = _FloatLimitField(1.0, minimum_width=64)
+        row.addWidget(self._y_min)
+        row.addWidget(QLabel("–"))
+        row.addWidget(self._y_max)
+
+        nav_qss = build_nav_button_qss()
+        self._auto_x_btn = QPushButton("Auto X")
+        self._auto_x_btn.setCheckable(True)
+        self._auto_x_btn.setChecked(True)
+        self._auto_x_btn.setStyleSheet(nav_qss)
+        self._auto_x_btn.setMaximumWidth(65)
+        self._auto_x_btn.toggled.connect(self._on_auto_x_toggled)
+        row.addWidget(self._auto_x_btn)
+
+        self._auto_y_btn = QPushButton("Auto Y")
+        self._auto_y_btn.setCheckable(True)
+        self._auto_y_btn.setChecked(True)
+        self._auto_y_btn.setStyleSheet(nav_qss)
+        self._auto_y_btn.setMaximumWidth(65)
+        self._auto_y_btn.toggled.connect(self._on_auto_y_toggled)
+        row.addWidget(self._auto_y_btn)
+
+        row.addStretch()
+
+        # A manual edit is an explicit override: it turns that axis's Auto off so
+        # the next render does not reframe the typed value back to the extent.
+        self._x_min.editingFinished.connect(self._on_x_limit_edited)
+        self._x_max.editingFinished.connect(self._on_x_limit_edited)
+        self._y_min.editingFinished.connect(self._on_y_limit_edited)
+        self._y_max.editingFinished.connect(self._on_y_limit_edited)
+        return row
+
+    def _on_auto_x_toggled(self, checked: bool) -> None:
+        self._auto_x = checked
+        self._render_plot()
+
+    def _on_auto_y_toggled(self, checked: bool) -> None:
+        self._auto_y = checked
+        self._render_plot()
+
+    def _on_x_limit_edited(self) -> None:
+        self._auto_x = False
+        with QSignalBlocker(self._auto_x_btn):
+            self._auto_x_btn.setChecked(False)
+        self._render_plot()
+
+    def _on_y_limit_edited(self) -> None:
+        self._auto_y = False
+        with QSignalBlocker(self._auto_y_btn):
+            self._auto_y_btn.setChecked(False)
+        self._render_plot()
+
+    def _auto_data_bounds(self) -> tuple[float, float, float, float] | None:
+        """Return ``(xmin, xmax, ymin, ymax)`` framing the scan data + overlays.
+
+        Computed from the plotted data, **not** from the axes' data limits: the
+        shaded baseline regions and the peak / region handle lines span the whole
+        axes, so ``autoscale_view`` would frame to them and squash the data.
+        Two deliberate asymmetries:
+
+        * The **y** extent uses the *included* points only (value ± error) plus
+          the fit overlays — a run the user click-excluded should not stretch
+          the frame; that is the whole point of excluding an outlier.
+        * The **x** extent keeps *every* point (excluded ones stay horizontally
+          visible, so a mildly-excluded point can still be clicked to restore)
+          and also the region edges / peak centres, so a handle dragged past the
+          data stays on-screen and grabbable.
+
+        Returns ``None`` when there is nothing finite to frame.
+        """
+        plot = self._last_plot
+        if plot is None or plot["x"].size == 0:
+            return None
+        included = ~plot["excluded"]
+        if not included.any():  # everything excluded: fall back to all points
+            included = np.ones(plot["x"].size, dtype=bool)
+        xs = [plot["x"]]  # x-frame keeps every point (see docstring)
+        y_lo = [plot["value"][included] - plot["error"][included]]
+        y_hi = [plot["value"][included] + plot["error"][included]]
+        for curve in (self._baseline_curve, self._fit_curve):
+            if curve is not None:
+                cx, cy = curve
+                if cx.size and cx.shape == cy.shape:
+                    xs.append(cx)
+                    y_lo.append(cy)
+                    y_hi.append(cy)
+        # Region edges and peak centres are meaningful x-locations the user
+        # drags; keep them in the x-frame (x only — their full-height artists
+        # must never enter the y-frame, which was the squash bug).
+        handle_x = [edge for _row, lo, hi in self._raw_regions() for edge in (lo, hi)]
+        handle_x += [b0 for _row, b0 in self._peak_centres()]
+        if handle_x:
+            xs.append(np.asarray(handle_x, dtype=float))
+        x = np.concatenate(xs)
+        lo = np.concatenate(y_lo)
+        hi = np.concatenate(y_hi)
+        x = x[np.isfinite(x)]
+        lo = lo[np.isfinite(lo)]
+        hi = hi[np.isfinite(hi)]
+        if x.size == 0 or lo.size == 0 or hi.size == 0:
+            return None
+        return float(x.min()), float(x.max()), float(lo.min()), float(hi.max())
+
+    @staticmethod
+    def _padded(lo: float, hi: float, frac: float = 0.05) -> tuple[float, float]:
+        """Return ``(lo, hi)`` widened by *frac* of the span (both sides).
+
+        A degenerate range (``hi <= lo``, e.g. a single point or a manual
+        min==max) is expanded to a small window around the value so the axis is
+        valid and the point/line is visible rather than collapsed to a hairline.
+        """
+        if hi <= lo:
+            pad = max(abs(lo), 1.0) * frac  # unit-scale floor for lo≈0
+            return lo - pad, hi + pad
+        pad = (hi - lo) * frac
+        return lo - pad, hi + pad
+
+    def _axis_target(
+        self, auto: bool, data_range: tuple[float, float] | None, lo_field, hi_field
+    ) -> tuple[float, float] | None:
+        """Target ``(lo, hi)`` for one axis, or ``None`` to leave it unchanged.
+
+        Auto frames the padded data range (``None`` when there is no data, so the
+        axis is left as-is). Manual uses the typed fields, sorted so an inverted
+        entry is read as a range, and expanded when degenerate so a min==max
+        entry still produces a valid axis instead of being silently dropped.
+        """
+        if auto:
+            return None if data_range is None else self._padded(*data_range)
+        lo, hi = sorted((lo_field.value(), hi_field.value()))
+        return self._padded(lo, hi) if lo == hi else (lo, hi)
+
+    def _apply_axis_limits(self) -> None:
+        """Pin manual axes to their fields, frame auto axes from the data, and
+        sync the fields to the applied limits.
+
+        Called at the end of :meth:`_render_plot` once every artist is drawn, so
+        the limits it writes back are the ones the canvas will show.
+        """
+        bounds = self._auto_data_bounds()
+        x_range = None if bounds is None else (bounds[0], bounds[1])
+        y_range = None if bounds is None else (bounds[2], bounds[3])
+        xlim = self._axis_target(self._auto_x, x_range, self._x_min, self._x_max)
+        ylim = self._axis_target(self._auto_y, y_range, self._y_min, self._y_max)
+        if xlim is not None:
+            self._ax.set_xlim(*xlim)
+        if ylim is not None:
+            self._ax.set_ylim(*ylim)
+        # Reflect the applied limits (fall back to the current view only when we
+        # left an axis unchanged — auto with no data — never clobbering a typed
+        # value with a stale axis extent).
+        x0, x1 = xlim if xlim is not None else self._ax.get_xlim()
+        y0, y1 = ylim if ylim is not None else self._ax.get_ylim()
+        for field, value in (
+            (self._x_min, x0),
+            (self._x_max, x1),
+            (self._y_min, y0),
+            (self._y_max, y1),
+        ):
+            with QSignalBlocker(field):
+                field.setValue(float(value))
 
     @staticmethod
     def _collapsible_group(title: str) -> tuple[QGroupBox, QVBoxLayout]:
@@ -617,12 +871,40 @@ class ALCScanView(QWidget):
             handles.append((b0, ("peak", row, 1)))
         return handles
 
+    def _point_run_at(self, event: object) -> int | None:
+        """Run number of the scan point within click tolerance of *event*, else None."""
+        plot = self._last_plot
+        if plot is None or not plot["x"].size:
+            return None
+        pts = self._ax.transData.transform(np.column_stack([plot["x"], plot["value"]]))
+        d2 = (pts[:, 0] - event.x) ** 2 + (pts[:, 1] - event.y) ** 2
+        # A non-finite point transforms to NaN; NaN would win argmin and pass
+        # the tolerance test (NaN > tol is False), making every click toggle
+        # that run — treat it as infinitely far instead.
+        d2 = np.where(np.isfinite(d2), d2, np.inf)
+        idx = int(np.argmin(d2))
+        # 12 device px ≈ 6 logical px on a 2× display (same as the handle grab).
+        if d2[idx] > 12.0**2:
+            return None
+        run_numbers = plot["run_numbers"]
+        return int(run_numbers[idx]) if idx < len(run_numbers) else None
+
     def _on_canvas_press(self, event: object) -> None:
         if event.inaxes is not self._ax or event.button != 1 or self._last_plot is None:
             return
         # 12 device px ≈ 6 logical px on a 2× display.
         self._drag = nearest_handle(self._ax, self._drag_handles(), event.x, tolerance_px=12.0)
         if self._drag is None:
+            # Not on a drag handle: a stationary click on a data point toggles
+            # that run's exclusion (resolved on release, so a drag that starts
+            # near a point does not mis-fire). Renders that mark themselves
+            # non-toggleable (the derivative view, where excluded points have
+            # no greyed marker to click back) never arm the candidate.
+            if not self._last_plot.get("toggleable", True):
+                return
+            run = self._point_run_at(event)
+            if run is not None:
+                self._toggle_candidate = (run, float(event.x), float(event.y))
             return
         # Grabbing a handle starts an edit: the existing fit is now stale.
         if self._drag[0] == "region":
@@ -634,6 +916,10 @@ class ALCScanView(QWidget):
         self._drag_artist = self._handle_artists.get(self._drag)
 
     def _on_canvas_motion(self, event: object) -> None:
+        if self._toggle_candidate is not None:
+            _run, x0, y0 = self._toggle_candidate
+            if abs(event.x - x0) > 3.0 or abs(event.y - y0) > 3.0:
+                self._toggle_candidate = None  # moved: it's a pan/drag, not a click
         if self._drag is None or event.inaxes is not self._ax or event.xdata is None:
             return
         kind, row, col = self._drag
@@ -649,12 +935,20 @@ class ALCScanView(QWidget):
         else:
             self._render_plot()
 
-    def _on_canvas_release(self, _event: object) -> None:
+    def _on_canvas_release(self, event: object) -> None:
         was_dragging = self._drag is not None
         self._drag = None
         self._drag_artist = None
+        # Consume the pending click candidate on *any* release so it cannot
+        # linger and fire on a later, unrelated left-release.
+        candidate = self._toggle_candidate
+        self._toggle_candidate = None
         if was_dragging:
             self._render_plot()  # restore the shaded span at the final edges
+        elif candidate is not None and getattr(event, "button", None) == 1:
+            # Only a released *left* button completes the click — a right/middle
+            # release mid-gesture must not mutate scan membership.
+            self.point_toggled.emit(candidate[0])
 
     # --- baseline controls ---------------------------------------------------
 
@@ -714,9 +1008,14 @@ class ALCScanView(QWidget):
             self._regions_table.removeRow(row)
             self._invalidate_baseline()
 
-    def show_baseline_overlay(self, baseline: NDArray[np.float64]) -> None:
-        """Overlay a fitted baseline curve; invalidate any prior peak fit."""
-        self._baseline_curve = np.asarray(baseline, dtype=float)
+    def show_baseline_overlay(self, x: NDArray[np.float64], baseline: NDArray[np.float64]) -> None:
+        """Overlay a fitted baseline curve; invalidate any prior peak fit.
+
+        The overlay carries its own *x*: fits run on the included points only,
+        so their curves can be shorter than the rendered scan (which also shows
+        excluded points, greyed).
+        """
+        self._baseline_curve = (np.asarray(x, dtype=float), np.asarray(baseline, dtype=float))
         self._fit_curve = None
         self._peaks_results.setText("")
         self._render_plot()
@@ -786,9 +1085,12 @@ class ALCScanView(QWidget):
                         item.setText(f"{res[key]:.4g}")
         self._peaks_results.setText(summary)
 
-    def show_fit_overlay(self, fit_curve: NDArray[np.float64]) -> None:
-        """Overlay the total (baseline + peaks) fit curve on the scan plot."""
-        self._fit_curve = np.asarray(fit_curve, dtype=float)
+    def show_fit_overlay(self, x: NDArray[np.float64], fit_curve: NDArray[np.float64]) -> None:
+        """Overlay the total (baseline + peaks) fit curve on the scan plot.
+
+        Like :meth:`show_baseline_overlay`, the overlay carries its own *x*.
+        """
+        self._fit_curve = (np.asarray(x, dtype=float), np.asarray(fit_curve, dtype=float))
         self._render_plot()
 
     # --- data-table dialog ---------------------------------------------------
@@ -827,6 +1129,7 @@ class ALCScanView(QWidget):
         table.setRowCount(n)
         for row in range(n):
             run = run_numbers[row] if row < len(run_numbers) else ""
+            excluded = bool(plot["excluded"][row]) if row < plot["excluded"].size else False
             cells = [
                 str(run),
                 f"{plot['x'][row]:.4g}",
@@ -836,6 +1139,10 @@ class ALCScanView(QWidget):
             for col, text in enumerate(cells):
                 item = QTableWidgetItem(text)
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                if excluded:
+                    item.setForeground(Qt.GlobalColor.gray)
+                    if col == 0:
+                        item.setToolTip("Excluded from the scan (click the point to restore).")
                 table.setItem(row, col, item)
 
     # --- plotting ------------------------------------------------------------
@@ -855,6 +1162,7 @@ class ALCScanView(QWidget):
             self._peaks_table.setRowCount(0)
         self._peaks_results.setText("")
         self._rf_results.setText("")
+        self.set_provenance("")
         self._ax.clear()
         draw_empty_state_message(self._ax, message)
         self._canvas.draw_idle()
@@ -883,8 +1191,26 @@ class ALCScanView(QWidget):
         x_label: str,
         y_label: str,
         value_header: str = "value",
+        excluded_mask: NDArray[np.bool_] | None = None,
+        toggleable: bool = True,
+        reset_view: bool = True,
     ) -> None:
-        """Render a scan from parallel arrays (already in display units)."""
+        """Render a scan from parallel arrays (already in display units).
+
+        *excluded_mask* marks user-excluded points: they are drawn greyed
+        (click a point to toggle its exclusion) and skipped by the fits.
+        *toggleable* arms click-to-exclude; the derivative view passes False
+        because its points are pair-midpoints with no greyed marker to click
+        back, so a stray click would exclude a run with no visible undo.
+        *reset_view* re-enables auto-scaling on both axes; pass False for a
+        same-scan re-render (e.g. click-exclude) so a manual zoom is kept.
+        """
+        n = np.asarray(x, dtype=float).size
+        mask = (
+            np.zeros(n, dtype=bool)
+            if excluded_mask is None
+            else np.asarray(excluded_mask, dtype=bool)
+        )
         self._last_plot = {
             "x": np.asarray(x, dtype=float),
             "value": np.asarray(value, dtype=float),
@@ -893,16 +1219,33 @@ class ALCScanView(QWidget):
             "x_label": x_label,
             "value_header": value_header,
             "y_label": y_label,
+            "excluded": mask,
+            "toggleable": bool(toggleable),
         }
         # A fresh scan (rebuild / x-axis change) invalidates any fit overlays.
         self._baseline_curve = None
         self._fit_curve = None
         self._peaks_results.setText("")
         self._rf_results.setText("")
+        # New data (build, x-axis or derivative change) reframes both axes: a
+        # stale manual range in the old units/scale would hide the new scan.
+        # A same-scan re-render (click-exclude) passes reset_view=False to keep
+        # a manual zoom; annotation edits (region/peak drags) call _render_plot
+        # directly and likewise keep the user's manual view.
+        if reset_view:
+            self._reset_auto_scale()
         self._render_plot()
         # Keep the data-table dialog in sync if it is open.
         if self._data_dialog is not None and self._data_dialog.isVisible():
             self._fill_data_table()
+
+    def _reset_auto_scale(self) -> None:
+        """Re-enable auto-scaling on both axes (and the Auto toggles)."""
+        self._auto_x = True
+        self._auto_y = True
+        for btn in (self._auto_x_btn, self._auto_y_btn):
+            with QSignalBlocker(btn):
+                btn.setChecked(True)
 
     def _render_plot(self, *_: object) -> None:
         """Draw the stored scan plus shaded regions, the baseline, and the fit."""
@@ -928,28 +1271,297 @@ class ALCScanView(QWidget):
         for row, b0 in self._peak_centres():
             line = self._ax.axvline(b0, color=tokens.OK, linestyle="--", linewidth=0.9, zorder=1)
             self._handle_artists[("peak", row, 1)] = line
-        # Data as markers only (no joining line).
-        self._ax.errorbar(
-            plot["x"], plot["value"], yerr=plot["error"], fmt="o", markersize=4, capsize=2
-        )
-        has_overlay = False
-        if self._baseline_curve is not None and self._baseline_curve.shape == plot["x"].shape:
-            self._ax.plot(
-                plot["x"],
-                self._baseline_curve,
-                color=tokens.ACCENT_RED,
-                linewidth=1.2,
-                label="baseline",
+        # Data as markers only (no joining line); user-excluded points greyed
+        # and hollow so they stay visible (and clickable to restore).
+        excluded = plot["excluded"]
+        included = ~excluded
+        if np.any(included):
+            self._ax.errorbar(
+                plot["x"][included],
+                plot["value"][included],
+                yerr=plot["error"][included],
+                fmt="o",
+                markersize=4,
+                capsize=2,
             )
-            has_overlay = True
-        if self._fit_curve is not None and self._fit_curve.shape == plot["x"].shape:
-            self._ax.plot(
-                plot["x"], self._fit_curve, color=tokens.ACCENT, linewidth=1.4, label="fit"
+        if np.any(excluded):
+            self._ax.errorbar(
+                plot["x"][excluded],
+                plot["value"][excluded],
+                yerr=plot["error"][excluded],
+                fmt="o",
+                markersize=4,
+                capsize=2,
+                color=tokens.PLOT_LOW_COUNT,
+                markerfacecolor="none",
+                alpha=0.8,
+                label="excluded",
             )
-            has_overlay = True
+        has_overlay = bool(np.any(excluded))
+        if self._baseline_curve is not None:
+            bx, by = self._baseline_curve
+            if bx.size and bx.shape == by.shape:
+                self._ax.plot(bx, by, color=tokens.ACCENT_RED, linewidth=1.2, label="baseline")
+                has_overlay = True
+        if self._fit_curve is not None:
+            fx, fy = self._fit_curve
+            if fx.size and fx.shape == fy.shape:
+                self._ax.plot(fx, fy, color=tokens.ACCENT, linewidth=1.4, label="fit")
+                has_overlay = True
         if has_overlay:
             self._ax.legend(loc="best", fontsize=8)
         self._ax.set_xlabel(plot["x_label"])
         self._ax.set_ylabel(plot["y_label"])
         self._ax.grid(True, alpha=0.3)
+        self._apply_axis_limits()
         self._canvas.draw_idle()
+
+
+class IntegralTimeStrip(QWidget):
+    """Slim, collapsible time-domain strip carrying the integration window.
+
+    In the integral-scan view the per-run time spectra leave the centre; this
+    strip keeps the one interaction they hosted — dragging the shaded
+    integration window — next to the scan plot. A committed drag emits
+    :attr:`window_edited` (µs); the main window pushes it into the time plot
+    panel (which stays the canonical fit-range owner) and echoes changes back
+    via :meth:`set_window`, so the strip, the time plot, and the build panel's
+    spinboxes can never disagree.
+    """
+
+    #: (t_min, t_max) committed by dragging a window edge, already normalised.
+    window_edited = Signal(float, float)
+
+    #: Cap on preview points — the strip is a context view, not the analysis
+    #: surface, so heavy spectra are strided down before plotting.
+    _MAX_PREVIEW_POINTS = 4000
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._time: NDArray[np.float64] | None = None
+        self._asym: NDArray[np.float64] | None = None
+        self._run_label = ""
+        self._window: tuple[float | None, float | None] = (None, None)
+        #: Active drag: 0 = min edge, 1 = max edge.
+        self._drag_edge: int | None = None
+        #: Edge index → drawn Line2D, rebuilt by each _render.
+        self._edge_artists: dict[int, object] = {}
+        #: A render was requested while the canvas was hidden (collapsed strip
+        #: or inactive view); flushed when the canvas shows again.
+        self._render_pending = False
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+
+        header = QHBoxLayout()
+        self._toggle_btn = QToolButton()
+        self._toggle_btn.setArrowType(Qt.ArrowType.DownArrow)
+        self._toggle_btn.setCheckable(True)
+        self._toggle_btn.setChecked(True)
+        self._toggle_btn.setAutoRaise(True)
+        self._toggle_btn.setToolTip("Collapse/expand the time-spectrum preview.")
+        self._toggle_btn.toggled.connect(self._on_toggled)
+        header.addWidget(self._toggle_btn)
+        title = QLabel("Integration window")
+        title.setStyleSheet("font-weight: 600;")
+        header.addWidget(title)
+        self._window_label = QLabel("")
+        self._window_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+        header.addWidget(self._window_label)
+        header.addStretch()
+        layout.addLayout(header)
+
+        self._figure = Figure(constrained_layout=True)
+        self._canvas = FigureCanvasQTAgg(self._figure)
+        self._canvas.setMinimumHeight(110)
+        self._canvas.setMaximumHeight(160)
+        self._ax = self._figure.add_subplot(111)
+        self._canvas.mpl_connect("button_press_event", self._on_press)
+        self._canvas.mpl_connect("motion_notify_event", self._on_motion)
+        self._canvas.mpl_connect("button_release_event", self._on_release)
+        layout.addWidget(self._canvas)
+        self._render()
+
+    def _on_toggled(self, checked: bool) -> None:
+        """Collapse to just the header row (the window read-out stays visible)."""
+        self._canvas.setVisible(checked)
+        self._toggle_btn.setArrowType(
+            Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow
+        )
+        if checked and self._render_pending:
+            self._render()
+
+    def showEvent(self, event) -> None:  # noqa: N802 — Qt override
+        """Flush a render skipped while the strip's canvas was hidden."""
+        super().showEvent(event)
+        if self._render_pending and self._canvas.isVisible():
+            self._render()
+
+    # --- data / window state --------------------------------------------------
+
+    def show_dataset(self, time, asymmetry, label: str = "") -> None:
+        """Show *time* vs *asymmetry* as the preview spectrum (strided if heavy)."""
+        t = np.asarray(time, dtype=float)
+        a = np.asarray(asymmetry, dtype=float)
+        if t.size > self._MAX_PREVIEW_POINTS:
+            step = t.size // self._MAX_PREVIEW_POINTS
+            idx = np.arange(0, t.size, step)
+            if idx[-1] != t.size - 1:
+                idx = np.append(idx, t.size - 1)  # keep the spectrum's true end
+            t, a = t[idx], a[idx]
+        self._time, self._asym = t, a
+        self._run_label = str(label)
+        self._update_window_label()
+        self._render()
+
+    def clear(self) -> None:
+        """Drop the preview spectrum (the window itself mirrors the plot panel)."""
+        self._time = None
+        self._asym = None
+        self._run_label = ""
+        self._update_window_label()
+        self._render()
+
+    def set_window(self, t_min: float | None, t_max: float | None) -> None:
+        """Echo the canonical integration window into the strip (no re-emit).
+
+        A no-op when unchanged: the time plot emits ``fit_range_changed`` on
+        every motion event of its own fit-range drag, and this echo must not
+        pay a full strip re-render per event.
+        """
+        window = (None, None) if t_min is None or t_max is None else (float(t_min), float(t_max))
+        if window == self._window:
+            return
+        self._window = window
+        self._update_window_label()
+        if self._drag_edge is None:  # don't fight an in-flight drag
+            self._render()
+
+    def window(self) -> tuple[float | None, float | None]:
+        """Return the currently displayed (t_min, t_max) window."""
+        return self._window
+
+    def _update_window_label(self) -> None:
+        lo, hi = self._window
+        if lo is not None and hi is not None:
+            mn, mx = (lo, hi) if lo <= hi else (hi, lo)  # readable mid-drag too
+            window_text = f"{mn:.4g} ≤ t ≤ {mx:.4g} µs"
+        else:
+            window_text = ""
+        parts = [p for p in (self._run_label, window_text) if p]
+        self._window_label.setText("   ·   ".join(parts))
+
+    # --- window-edge drag -------------------------------------------------------
+
+    def _on_press(self, event: object) -> None:
+        lo, hi = self._window
+        if event.inaxes is not self._ax or event.button != 1 or lo is None or hi is None:
+            return
+        handles = [(float(lo), 0), (float(hi), 1)]
+        # 12 device px ≈ 6 logical px on a 2× display.
+        self._drag_edge = nearest_handle(self._ax, handles, event.x, tolerance_px=12.0)
+
+    def _on_motion(self, event: object) -> None:
+        if self._drag_edge is None or event.inaxes is not self._ax or event.xdata is None:
+            return
+        x = float(event.xdata)
+        lo, hi = self._window
+        self._window = (x, hi) if self._drag_edge == 0 else (lo, x)
+        self._update_window_label()
+        line = self._edge_artists.get(self._drag_edge)
+        if line is not None:
+            line.set_xdata([x, x])
+            self._canvas.draw_idle()
+        else:
+            self._render()
+
+    def _on_release(self, event: object) -> None:
+        # Only a left-button release ends the drag and commits the window; a
+        # right/middle release mid-gesture (left still held) is ignored so it
+        # cannot push a stray window into the canonical time plot.
+        if self._drag_edge is None or getattr(event, "button", None) != 1:
+            return
+        self._drag_edge = None
+        lo, hi = self._window
+        if lo is None or hi is None:
+            return
+        mn, mx = (float(lo), float(hi)) if lo <= hi else (float(hi), float(lo))
+        self._window = (mn, mx)
+        self._update_window_label()
+        self._render()  # restore the shaded span at the final edges
+        self.window_edited.emit(mn, mx)
+
+    # --- rendering ---------------------------------------------------------------
+
+    def _render(self) -> None:
+        if not self._canvas.isVisible():
+            # Collapsed strip / inactive view: defer to the next show. State
+            # (data, window, label) is already up to date, so nothing is lost.
+            self._render_pending = True
+            return
+        self._render_pending = False
+        self._ax.clear()
+        self._edge_artists = {}
+        if self._time is None or self._time.size == 0:
+            draw_empty_state_message(self._ax, "Select a run to preview the integration window")
+            self._canvas.draw_idle()
+            return
+        self._ax.plot(self._time, self._asym, ".", markersize=2, color=tokens.PLOT_LOW_COUNT)
+        lo, hi = self._window
+        if lo is not None and hi is not None:
+            # Same styled span as the time plot's fit range — it IS that range.
+            _span, left_line, right_line = draw_fit_range_span(self._ax, lo, hi)
+            self._edge_artists = {0: left_line, 1: right_line}
+        style_axes(self._ax)
+        self._ax.set_xlabel("t (µs)", fontsize=8)
+        self._ax.tick_params(labelsize=7)
+        self._canvas.draw_idle()
+
+
+class IntegralScanPanel(QWidget):
+    """Central workspace page for the integral-scan (ALC) representation.
+
+    Hosts the scan view's plot section (the ALC curve with its view controls
+    and draggable baseline/peak handles) above a slim, collapsible time strip
+    carrying the draggable integration window. The scan view's analysis
+    section (Baseline/Peaks/RF) stays in the Parameters dock; ALCScanView
+    remains the single owner of all scan state and logic.
+    """
+
+    def __init__(self, scan_view: ALCScanView, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._scan_view = scan_view
+        self._time_strip = IntegralTimeStrip()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 4, 8, 4)
+        layout.addWidget(scan_view.plot_widget(), 1)
+        layout.addWidget(self._time_strip)
+
+    def time_strip(self) -> IntegralTimeStrip:
+        """The integration-window strip (the main window wires and feeds it)."""
+        return self._time_strip
+
+    def clear(self) -> None:
+        """Clear the scan and the strip (PlotWorkspacePanel.clear calls this)."""
+        self._scan_view.clear()
+        self._time_strip.clear()
+
+    def export_current_plot(self) -> None:
+        """Save the scan figure to an image file."""
+        path, _selected = QFileDialog.getSaveFileName(
+            self,
+            "Export scan plot",
+            default_export_path("alc_scan.png"),
+            "PNG image (*.png);;PDF document (*.pdf);;SVG image (*.svg)",
+        )
+        if not path:
+            return
+        try:
+            # savefig raises ValueError (not OSError) for an unsupported
+            # extension typed into the free-text dialog field.
+            self._scan_view.figure().savefig(path, dpi=200)
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Export scan plot", f"Could not save the plot: {exc}")
+            return
+        remember_export_path(path)

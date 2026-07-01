@@ -1,19 +1,19 @@
 .. _exclusions-glossary:
 
-Exclusions: A Glossary of Five Mechanisms
-=========================================
+Exclusions: A Glossary of Six Mechanisms
+========================================
 
-Five different controls in Asymmetry are described as "excluding" or "skipping"
+Six different controls in Asymmetry are described as "excluding" or "skipping"
 part of the data, and the word hides real differences. They operate on
-different domains (time bins, time points, frequency bins, detectors), with
-deliberately different **semantics** — one *drops* data, another *de-weights*
-it, others *hard-zero* it — and they persist under different schema keys. They
-are *not* interchangeable, and the most dangerous pair (the two time-window
-controls) share a label while meaning opposite things. This page is the
-reference; for the mechanics of each, follow the cross-link.
+different domains (time bins, time points, frequency bins, detectors, whole
+runs), with deliberately different **semantics** — one *drops* data, another
+*de-weights* it, others *hard-zero* it — and they persist under different schema
+keys. They are *not* interchangeable, and the most dangerous pair (the two
+time-window controls) share a label while meaning opposite things. This page is
+the reference; for the mechanics of each, follow the cross-link.
 
-The five at a glance
---------------------
+The six at a glance
+-------------------
 
 .. list-table::
    :header-rows: 1
@@ -62,16 +62,26 @@ The five at a glance
      - 1-based id list (e.g. ``1,5,10-15``)
      - ``excluded_detectors``
        (grouping)
+   * - **Scan-point exclusion**
+       (:doc:`alc_mode` — click a point on an integral scan)
+     - whole runs
+     - **drop** the run's point from the field scan's baseline/peak/RF fits;
+       still drawn (greyed) so it can be clicked back
+     - clicked run numbers
+     - ``excluded_runs``
+       (``FitSeries.extra``)
 
 Three semantics, not one
 ------------------------
 
-The five controls realise only three underlying operations, and confusing them
+The six controls realise only three underlying operations, and confusing them
 changes the result:
 
-- **Drop** (count-fit window, detector exclusion) removes data from the
-  calculation entirely. A dropped time bin does not enter the fit cost; a
-  dropped detector does not enter any group sum.
+- **Drop** (count-fit window, detector exclusion, scan-point exclusion) removes
+  data from the calculation entirely. A dropped time bin does not enter the fit
+  cost; a dropped detector does not enter any group sum; an excluded scan point
+  does not enter the baseline, peak, or RF fit (though it stays drawn, greyed,
+  so you can restore it).
 - **De-weight** (MaxEnt window) keeps the data on the grid but inflates its
   error by a factor of :math:`10^8` so it carries essentially no weight. The
   grid spacing — and therefore the FFT/MaxEnt frequency resolution derived from
@@ -109,6 +119,10 @@ When to reach for each
 - **Detector exclusion** — to remove a dead or hot *detector* from the whole
   analysis at reduction time; re-estimate α afterwards, because the group
   balance changes with group membership.
+- **Scan-point exclusion** — to drop a single outlier *run* from an integral
+  (ALC) field scan so it does not distort the baseline or resonance fit, without
+  rebuilding the scan or de-selecting the run. Click the point to exclude it,
+  click again to restore; it stays visible (greyed) throughout.
 
 .. note::
 
@@ -127,3 +141,4 @@ See also
   band.
 * :doc:`data_reduction/detector_exclusion` — excluding a detector at reduction
   time.
+* :doc:`alc_mode` — excluding a run's point from an integral (ALC) field scan.
