@@ -124,7 +124,12 @@ Above the scan plot:
   *differential ALC* view and has one fewer point than the raw scan (each point
   is the midpoint slope between adjacent runs);
 * the **Data table…** button opens the per-point values (run, x, asymmetry,
-  error) in a separate window, keeping the plot itself uncluttered.
+  error) in a separate window, keeping the plot itself uncluttered;
+* the **X** / **Y** range fields with **Auto X** / **Auto Y** toggles set the
+  axis limits, exactly as on the other representations. With Auto on, the axis
+  frames the data and the fields track it; typing a limit pins that axis (and
+  turns its Auto off). Building a scan or changing the x-axis / derivative view
+  reframes both axes.
 
 Changing the x-axis clears any baseline and peaks, because regions and peak
 positions are expressed in the units of the current axis.

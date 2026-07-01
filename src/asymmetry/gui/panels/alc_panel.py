@@ -48,10 +48,11 @@ from PySide6.QtWidgets import (
 
 from asymmetry.gui.export_paths import default_export_path, remember_export_path
 from asymmetry.gui.panels.draggable_handles import nearest_handle
+from asymmetry.gui.panels.plot_panel import _FloatLimitField
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.plots import draw_empty_state_message, draw_fit_range_span, style_axes
-from asymmetry.gui.styles.widgets import build_primary_button_qss
+from asymmetry.gui.styles.widgets import build_nav_button_qss, build_primary_button_qss
 
 
 class ALCFitPanel(QWidget):
@@ -209,6 +210,11 @@ class ALCScanView(QWidget):
         self._handle_artists: dict[tuple[str, int, int], object] = {}
         #: Pending click-to-toggle candidate: (run_number, press x/y in px).
         self._toggle_candidate: tuple[int, float, float] | None = None
+        #: Auto-scale state per axis (matches the PlotPanel limit toolbar): when
+        #: on, the axis frames the data and its fields mirror the result; when
+        #: off, the axis is pinned to the typed field values.
+        self._auto_x = True
+        self._auto_y = True
         layout = QVBoxLayout(self)
 
         # The view is two relocatable sections: the plot section (view
@@ -240,6 +246,8 @@ class ALCScanView(QWidget):
         controls.addWidget(data_btn)
         plot_layout.addLayout(controls)
         self._update_derivative_label()
+
+        plot_layout.addLayout(self._build_limit_controls())
 
         self._figure = Figure(constrained_layout=True)
         self._canvas = FigureCanvasQTAgg(self._figure)
@@ -310,6 +318,102 @@ class ALCScanView(QWidget):
         self._provenance_label.setText(text)
         self._provenance_label.setToolTip(tooltip)
         self._provenance_label.setVisible(bool(text))
+
+    # --- axis-limit controls --------------------------------------------------
+
+    def _build_limit_controls(self) -> QHBoxLayout:
+        """Build the X/Y range fields + Auto toggles (as on the main plot panels)."""
+        row = QHBoxLayout()
+        row.setSpacing(4)
+
+        row.addWidget(QLabel("X:"))
+        self._x_min = _FloatLimitField(0.0, minimum_width=64)
+        self._x_max = _FloatLimitField(1.0, minimum_width=64)
+        row.addWidget(self._x_min)
+        row.addWidget(QLabel("–"))
+        row.addWidget(self._x_max)
+
+        row.addWidget(QLabel("Y:"))
+        self._y_min = _FloatLimitField(0.0, minimum_width=64)
+        self._y_max = _FloatLimitField(1.0, minimum_width=64)
+        row.addWidget(self._y_min)
+        row.addWidget(QLabel("–"))
+        row.addWidget(self._y_max)
+
+        nav_qss = build_nav_button_qss()
+        self._auto_x_btn = QPushButton("Auto X")
+        self._auto_x_btn.setCheckable(True)
+        self._auto_x_btn.setChecked(True)
+        self._auto_x_btn.setStyleSheet(nav_qss)
+        self._auto_x_btn.setMaximumWidth(65)
+        self._auto_x_btn.toggled.connect(self._on_auto_x_toggled)
+        row.addWidget(self._auto_x_btn)
+
+        self._auto_y_btn = QPushButton("Auto Y")
+        self._auto_y_btn.setCheckable(True)
+        self._auto_y_btn.setChecked(True)
+        self._auto_y_btn.setStyleSheet(nav_qss)
+        self._auto_y_btn.setMaximumWidth(65)
+        self._auto_y_btn.toggled.connect(self._on_auto_y_toggled)
+        row.addWidget(self._auto_y_btn)
+
+        row.addStretch()
+
+        # A manual edit is an explicit override: it turns that axis's Auto off so
+        # the next render does not reframe the typed value back to the extent.
+        self._x_min.editingFinished.connect(self._on_x_limit_edited)
+        self._x_max.editingFinished.connect(self._on_x_limit_edited)
+        self._y_min.editingFinished.connect(self._on_y_limit_edited)
+        self._y_max.editingFinished.connect(self._on_y_limit_edited)
+        return row
+
+    def _on_auto_x_toggled(self, checked: bool) -> None:
+        self._auto_x = checked
+        self._render_plot()
+
+    def _on_auto_y_toggled(self, checked: bool) -> None:
+        self._auto_y = checked
+        self._render_plot()
+
+    def _on_x_limit_edited(self) -> None:
+        self._auto_x = False
+        with QSignalBlocker(self._auto_x_btn):
+            self._auto_x_btn.setChecked(False)
+        self._render_plot()
+
+    def _on_y_limit_edited(self) -> None:
+        self._auto_y = False
+        with QSignalBlocker(self._auto_y_btn):
+            self._auto_y_btn.setChecked(False)
+        self._render_plot()
+
+    def _apply_axis_limits(self) -> None:
+        """Pin manual axes to their fields, frame auto axes, and sync the fields.
+
+        Called at the end of :meth:`_render_plot` once every artist is drawn, so
+        the auto extent it reads back is the one the canvas will show.
+        """
+        if not self._auto_x:
+            lo, hi = sorted((self._x_min.value(), self._x_max.value()))
+            if lo < hi:
+                self._ax.set_xlim(lo, hi)
+        if not self._auto_y:
+            lo, hi = sorted((self._y_min.value(), self._y_max.value()))
+            if lo < hi:
+                self._ax.set_ylim(lo, hi)
+        # Frame any axis still in autoscale mode from the data limits (set_xlim/
+        # set_ylim above already turned autoscale off for the manual axes).
+        self._ax.autoscale_view()
+        x0, x1 = self._ax.get_xlim()
+        y0, y1 = self._ax.get_ylim()
+        for field, value in (
+            (self._x_min, x0),
+            (self._x_max, x1),
+            (self._y_min, y0),
+            (self._y_max, y1),
+        ):
+            with QSignalBlocker(field):
+                field.setValue(float(value))
 
     @staticmethod
     def _collapsible_group(title: str) -> tuple[QGroupBox, QVBoxLayout]:
@@ -1038,10 +1142,23 @@ class ALCScanView(QWidget):
         self._fit_curve = None
         self._peaks_results.setText("")
         self._rf_results.setText("")
+        # New data (build, x-axis or derivative change) reframes both axes: a
+        # stale manual range in the old units/scale would hide the new scan.
+        # Annotation edits (region/peak drags) call _render_plot directly and
+        # keep the user's manual view.
+        self._reset_auto_scale()
         self._render_plot()
         # Keep the data-table dialog in sync if it is open.
         if self._data_dialog is not None and self._data_dialog.isVisible():
             self._fill_data_table()
+
+    def _reset_auto_scale(self) -> None:
+        """Re-enable auto-scaling on both axes (and the Auto toggles)."""
+        self._auto_x = True
+        self._auto_y = True
+        for btn in (self._auto_x_btn, self._auto_y_btn):
+            with QSignalBlocker(btn):
+                btn.setChecked(True)
 
     def _render_plot(self, *_: object) -> None:
         """Draw the stored scan plus shaded regions, the baseline, and the fit."""
@@ -1109,6 +1226,7 @@ class ALCScanView(QWidget):
         self._ax.set_xlabel(plot["x_label"])
         self._ax.set_ylabel(plot["y_label"])
         self._ax.grid(True, alpha=0.3)
+        self._apply_axis_limits()
         self._canvas.draw_idle()
 
 

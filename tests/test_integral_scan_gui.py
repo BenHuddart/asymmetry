@@ -964,6 +964,58 @@ def test_alc_canvas_click_ignores_nonfinite_points(qapp: QApplication):
     assert toggled == []
 
 
+def test_alc_scan_axis_limit_controls(qapp: QApplication):
+    # X/Y limit fields + Auto toggles behave like the main plot panels: auto
+    # frames the data into the fields, a manual edit pins the axis and clears
+    # its Auto, and re-enabling Auto reframes.
+    view = ALCScanView()
+    view.resize(700, 500)
+    view.show_scan(
+        np.array([2000.0, 3000.0, 4000.0, 5000.0]),
+        np.array([10.0, 4.0, 9.0, 11.0]),
+        np.array([0.5, 0.5, 0.5, 0.5]),
+        [1, 2, 3, 4],
+        x_label="B (G)",
+        y_label="A (%)",
+    )
+    view._canvas.draw()
+
+    # Auto (default): the fields frame the data, and bracket its extent.
+    assert view._auto_x_btn.isChecked() and view._auto_y_btn.isChecked()
+    assert view._x_min.value() <= 2000.0 and view._x_max.value() >= 5000.0
+    assert view._y_min.value() <= 4.0 and view._y_max.value() >= 11.0
+
+    # Manual X edit pins the axis and turns Auto X off (Auto Y untouched).
+    view._x_min.setValue(2500.0)
+    view._x_max.setValue(4500.0)
+    view._on_x_limit_edited()
+    assert view._auto_x is False and not view._auto_x_btn.isChecked()
+    assert view._auto_y_btn.isChecked()
+    assert view._ax.get_xlim() == pytest.approx((2500.0, 4500.0))
+
+    # Re-enabling Auto X reframes to the data extent.
+    view._auto_x_btn.setChecked(True)
+    assert view._auto_x is True
+    assert view._ax.get_xlim()[0] <= 2000.0 and view._ax.get_xlim()[1] >= 5000.0
+
+    # A new scan (show_scan) resets both axes to auto — a stale manual range in
+    # the old units would hide the new data.
+    view._y_min.setValue(0.0)
+    view._y_max.setValue(1.0)
+    view._on_y_limit_edited()
+    assert view._auto_y is False
+    view.show_scan(
+        np.array([100.0, 200.0]),
+        np.array([50.0, 60.0]),
+        np.array([1.0, 1.0]),
+        [5, 6],
+        x_label="B (G)",
+        y_label="A (%)",
+    )
+    assert view._auto_x is True and view._auto_y is True
+    assert view._auto_x_btn.isChecked() and view._auto_y_btn.isChecked()
+
+
 def test_alc_build_drops_surface_in_provenance(mainwindow: MainWindow, monkeypatch):
     # A run that cannot be integrated (no grouping) is dropped at build time
     # and surfaces in the provenance line, not just the log.
