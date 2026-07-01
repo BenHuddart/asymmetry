@@ -16,14 +16,15 @@ how established muon tools present ALC scans.
 | Which spectra are included | *Implicit* — exactly the data-browser multi-selection (`_update_selected_datasets` → fit panel → `batch_datasets()`); every selected run is integrated. Runs are dropped only if unintegrable (or non-two-period in RF mode); exclusions go to the log. No per-point exclude, no range gate. `build_field_scan` has an unused `filter=` hook. |
 | View plumbing | `PlotWorkspacePanel` stack has only `_time_panel` + `_frequency_panel`; `integral_scan` is a *time* view |
 
-## Target behaviour
+## Target behaviour (as implemented)
 
 | Concern | Target |
 |---|---|
-| Central plot in `integral_scan` view | The scan itself (A vs B/T/run), with draggable baseline regions / peak centres |
-| Baseline / Peaks / RF controls | Remain in the right dock |
-| Time spectra | Not the focus; **open question** whether fully removed, kept as a small preview, or shown in a split (see implementation-options.md) |
-| Integration window | **Open question** — currently set by dragging on the central time plot; needs a new home if the time plot leaves the centre |
+| Central plot in `integral_scan` view | The scan itself (A vs B/T/run), with draggable baseline regions / peak centres, in a dedicated third workspace panel (`IntegralScanPanel`) |
+| Baseline / Peaks / RF controls | Remain in the right dock (the scan view's analysis section) |
+| Time spectra | A slim, collapsible time strip (`IntegralTimeStrip`) under the scan carries the preview |
+| Integration window | Draggable edges on the time strip, mirrored with the build panel's spinboxes; the time plot panel stays the canonical fit-range owner |
+| Which spectra are included | Browser selection as before, plus click-a-point exclude/restore (greyed points; persisted as `excluded_runs`) and a provenance line showing contributors/drops |
 
 ## Reference notes (studied, not vendored)
 

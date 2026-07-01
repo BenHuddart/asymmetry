@@ -1,6 +1,8 @@
 # Integral (ALC) scan → main window
 
-**Status:** study (design pass; not yet implemented)
+**Status:** implemented (2026-07-01; design decisions in
+[implementation-options.md](implementation-options.md)); awaiting live-GUI
+confirmation per [verification-plan.md](verification-plan.md)
 **Branch:** `feat/integral-scan-main-window`
 **Scope:** GUI restructuring only — no core or persistence changes expected.
 

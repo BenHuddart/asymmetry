@@ -1,8 +1,8 @@
 # Implementation options
 
-The meat of this study. These are **to be resolved with the user** (via
-`AskUserQuestion`) before implementation. Each question lists candidate approaches
-and trade-offs.
+The meat of this study. Resolved with the user on 2026-07-01 — see
+[Decisions](#decisions-2026-07-01) at the end. Each question lists the candidate
+approaches and trade-offs that were considered.
 
 ## Q1 — Fate of the time spectra in scan mode
 
@@ -101,3 +101,34 @@ Lean toward **Q1-A / Q4-A**: a dedicated third workspace panel showing the scan,
 with the analysis controls staying docked (Q5). Resolve **Q2** first, since it
 gates Q1 — the leading candidate is a slim retained time strip *or* spinbox-only
 window entry, depending on how much the user values drag-to-set.
+
+## Decisions (2026-07-01)
+
+Confirmed with the user via `AskUserQuestion`:
+
+- **Q1/Q2 → scan-dominant centre + slim time strip.** The scan plot dominates the
+  centre; a short, collapsible time-domain strip below it keeps the draggable
+  integration-window handles (mirrored to the `ALCFitPanel` spinboxes as today).
+  Drag-to-set is preserved without giving the time plot real estate it doesn't
+  earn in scan mode.
+- **Q4 → A, dedicated third workspace panel.** A new ALC scan panel joins
+  `PlotWorkspacePanel`'s `QStackedWidget`, routed when
+  `active_view() == "integral_scan"`. The scan canvas (with its draggable
+  baseline-region edges and peak centres) is extracted from `ALCScanView` and
+  reused; the `integral_scan → fb_asymmetry` normalization in `plot_panel.py` is
+  removed.
+- **Q3 → axis/derivative selectors travel with the plot.** A compact toolbar row
+  on the central scan panel, matching how the frequency panel carries its own
+  mode controls. Baseline/Peaks/RF groups stay in the dock (Q5).
+- **Q7 → A + D.** Per-point exclude/restore by clicking a scan point (excluded
+  points drawn greyed, membership persisted in `FitSeries.extra` as
+  `excluded_runs`), plus surfacing contributing runs and the
+  dropped-with-reason list in the UI (a provenance line under the scan) instead
+  of only the log. Exclusions are keyed by run number so they survive a rebuild
+  over the same selection. No checkbox run-list, no x-range gate.
+
+  *Implementation note:* exclusions are applied at the display/fit layer
+  (`_alc_display_scan(include_excluded=...)`), **not** via the core
+  `build_field_scan(filter=)` hook — filtering at build time would remove the
+  point from the arrays entirely, so it could not be drawn greyed or clicked to
+  restore. The core hook stays available for period/run-type subsetting.

@@ -162,7 +162,7 @@ from asymmetry.core.utils.constants import (
 from asymmetry.gui.export_paths import default_export_path, remember_export_path
 from asymmetry.gui.fit_settings import fit_quality_confidence, set_fit_quality_confidence
 from asymmetry.gui.gle_settings import GleSetupDialog
-from asymmetry.gui.panels.alc_panel import ALCFitPanel, ALCScanView
+from asymmetry.gui.panels.alc_panel import ALCFitPanel, ALCScanView, IntegralScanPanel
 from asymmetry.gui.panels.data_browser import DataBrowserPanel
 from asymmetry.gui.panels.fit_panel import (
     BATCH_SEEDING_LABELS,
@@ -560,6 +560,12 @@ class MainWindow(QMainWindow):
         #: Per-run data for the current ALC scan (fractional value + metadata),
         #: re-rendered when the scan-view x-axis / derivative options change.
         self._alc_scan_points: list[dict] = []
+        #: Run numbers the user excluded from the scan by clicking their points
+        #: (drawn greyed; skipped by fits; persisted in the series' extra).
+        self._alc_excluded_runs: set[int] = set()
+        #: Build-time drops from the last Build Scan, as (run, reason) pairs —
+        #: surfaced in the scan provenance line (and still logged).
+        self._alc_build_excluded: list[tuple[int, str]] = []
         #: Project-model id of the current ALC scan series (replaced on rebuild).
         self._alc_scan_series_id: str | None = None
         #: True when the current scan is an RF (Green − Red) difference scan.
@@ -1369,9 +1375,17 @@ class MainWindow(QMainWindow):
                 self._plot_decimation_is_enabled(),
                 redraw=False,
             )
+        # The integral-scan (ALC) representation gets its own central panel:
+        # the scan view's plot section relocates into it (the analysis section
+        # goes to the Parameters dock below), with the integration-window strip
+        # underneath. ALCScanView stays the single owner of all scan logic.
+        self._alc_scan_view = ALCScanView()
+        self._integral_scan_panel = IntegralScanPanel(self._alc_scan_view)
+        self._integral_time_strip = self._integral_scan_panel.time_strip()
         self._plot_workspace = PlotWorkspacePanel(
             time_panel=self._plot_panel,
             frequency_panel=self._frequency_plot_panel,
+            scan_panel=self._integral_scan_panel,
         )
         self._plot_workspace.active_domain_changed.connect(self._on_plot_workspace_domain_changed)
         if hasattr(self._plot_workspace, "active_view_changed"):
@@ -1451,12 +1465,14 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_fourier)
 
         # Right dock — fitted parameter trends (tabbed with fit/fourier). In ALC
-        # mode the dock swaps to the bespoke scan view via _parameters_stack.
+        # mode the dock swaps to the scan view's analysis section (Baseline /
+        # Peaks / RF) via _parameters_stack; the scan plot itself lives in the
+        # central integral-scan panel (created before the workspace above).
         self._fit_parameters_panel = FitParametersPanel()
-        self._alc_scan_view = ALCScanView()
+        self._alc_analysis_widget = self._alc_scan_view.analysis_widget()
         self._parameters_stack = _InspectorStack(self)
         self._parameters_stack.addWidget(self._fit_parameters_panel)
-        self._parameters_stack.addWidget(self._alc_scan_view)
+        self._parameters_stack.addWidget(self._alc_analysis_widget)
         self._dock_fit_parameters = QDockWidget("Parameters", self)
         self._dock_fit_parameters.setWidget(_inspector_scroll_area(self._parameters_stack))
         self._dock_fit_parameters.setMinimumWidth(236)
@@ -1642,6 +1658,11 @@ class MainWindow(QMainWindow):
         self._alc_scan_view.peaks_fit_requested.connect(self._on_fit_peaks)
         self._alc_scan_view.rf_fit_requested.connect(self._on_fit_rf)
         self._alc_scan_view.baseline_invalidated.connect(self._on_alc_baseline_invalidated)
+        self._alc_scan_view.point_toggled.connect(self._on_alc_point_toggled)
+        # Dragging the strip's window edges routes through the time plot panel,
+        # which stays the canonical fit-range owner; fit_range_changed then
+        # echoes back into the strip and the build panel's spinboxes.
+        self._integral_time_strip.window_edited.connect(self._plot_panel.set_fit_range)
         if hasattr(self._fit_panel, "grouped_fit_completed"):
             self._fit_panel.grouped_fit_completed.connect(self._on_grouped_fit_completed)
         if hasattr(self._fit_panel, "preview_requested"):
@@ -2374,6 +2395,11 @@ class MainWindow(QMainWindow):
     def _render_current_selection_plot(self) -> None:
         """Render current single/multi selection using active polarization settings."""
         started_at = time.perf_counter()
+        # In the integral-scan view the centre shows the scan; keep its
+        # time-strip preview tracking the selection (the time panel below
+        # still renders so it is current when the user switches back).
+        if self._alc_mode:
+            self._refresh_integral_time_strip()
         targets: list[MuonDataset] = []
         rendered_targets: list[MuonDataset] = []
         render_mode = "empty"
@@ -4923,10 +4949,11 @@ class MainWindow(QMainWindow):
             return
 
         # ALC mode takes precedence: the Fit dock shows the bespoke scan-build
-        # panel and the Parameters dock shows the scan view.
+        # panel and the Parameters dock shows the scan's analysis section
+        # (Baseline/Peaks/RF); the scan plot itself is the central panel.
         if self._alc_mode:
             self._fit_stack.setCurrentWidget(self._alc_fit_panel)
-            self._parameters_stack.setCurrentWidget(self._alc_scan_view)
+            self._parameters_stack.setCurrentWidget(self._alc_analysis_widget)
             self._dock_fit.setWindowTitle("ALC scan")
             return
         self._parameters_stack.setCurrentWidget(self._fit_parameters_panel)
@@ -4962,7 +4989,8 @@ class MainWindow(QMainWindow):
     _INSPECTOR_DOMAIN_CONFIG: dict[str, tuple[list[str], str]] = {
         "fb_asymmetry": (["fit", "fit_parameters"], "fit"),
         # Integral scan: Fit dock shows the scan-build panel, Parameters the
-        # scan view (page swaps in _sync_fit_dock_mode).
+        # Baseline/Peaks/RF analysis section (page swaps in
+        # _sync_fit_dock_mode); the scan plot is the central panel.
         "integral_scan": (["fit", "fit_parameters"], "fit"),
         "groups": (["fit", "fit_parameters"], "fit"),
         "raw_counts": (["fit", "fit_parameters"], "fit"),
@@ -8175,6 +8203,12 @@ class MainWindow(QMainWindow):
             # A MaxEnt output rendered on the time panel; bypass the time-view
             # combo machinery (fb/groups) and draw the cached reconstruction.
             self._render_maxent_reconstruction_plot()
+        elif view == "integral_scan":
+            # The scan occupies the centre (its own workspace panel) and its
+            # canvas already holds the last render — a re-render here would
+            # wipe fitted overlays (rendering happens on build/restore/option
+            # changes). Only the integration-window strip tracks the selection.
+            self._refresh_integral_time_strip()
         elif view not in {"frequency", "maxent"}:
             if hasattr(self._plot_panel, "set_current_time_view_mode"):
                 self._plot_panel.set_current_time_view_mode(view, emit_signal=False)
@@ -8203,8 +8237,10 @@ class MainWindow(QMainWindow):
         """Refresh fit inputs when the selected fit x-range changes."""
         if hasattr(self._fit_panel, "set_fit_range_display"):
             self._fit_panel.set_fit_range_display(x_min, x_max)
-        # Keep the ALC fit panel's integration-window spinboxes in sync.
+        # Keep the ALC fit panel's integration-window spinboxes and the
+        # integral-scan strip in sync (the strip does not re-emit).
         self._alc_fit_panel.set_fit_range_display(x_min, x_max)
+        self._integral_time_strip.set_window(x_min, x_max)
         if self._multi_group_fit_window is not None and hasattr(
             self._multi_group_fit_window, "set_fit_range_display"
         ):
@@ -9131,9 +9167,14 @@ class MainWindow(QMainWindow):
             return
         self._alc_rf_mode = rf_mode
 
+        # Build-time drops surface in the scan's provenance line (and the log).
+        self._alc_build_excluded = list(scan.excluded)
         if scan.excluded:
             dropped = ", ".join(f"{run} ({reason})" for run, reason in scan.excluded)
             self._log_panel.log(f"Integral scan: excluded {len(scan.excluded)} run(s): {dropped}")
+        # Click-exclusions are keyed by run so they survive a rebuild over the
+        # same selection; prune ones no longer in the scan.
+        self._alc_excluded_runs &= {int(run) for run in scan.run_numbers}
 
         # Per-run scan data (fractional value + the run's field/temperature) for
         # re-rendering when the x-axis / derivative options change.
@@ -9188,8 +9229,9 @@ class MainWindow(QMainWindow):
         self._render_alc_scan()
         self._log_panel.log(f"Built integral scan '{series.label}' ({scan.n_points} points).")
 
-        # Bring the freshly-built scan into view: raise the Parameters dock
-        # (the ALC scan view) over the Fit dock, clearing any closed-tab memory.
+        # The scan renders in the central panel; raise the Parameters dock
+        # (the Baseline/Peaks/RF analysis controls) as the natural next step,
+        # clearing any closed-tab memory.
         self._show_panel("fit_parameters")
 
     # x-axis key → (display label, derivative unit label).
@@ -9215,7 +9257,9 @@ class MainWindow(QMainWindow):
 
         x_key = self._alc_scan_view.x_key()
         x_label = self._ALC_X_LABELS[x_key]
-        scan = self._alc_display_scan(x_key)
+        # Render user-excluded points too (greyed, clickable to restore); the
+        # fits run on the included-only scan (the default _alc_display_scan).
+        scan = self._alc_display_scan(x_key, include_excluded=True)
         if scan is None:
             # The scan built, but the chosen axis has too few points (e.g. runs
             # lack a field/temperature log) — say so rather than show the
@@ -9224,8 +9268,9 @@ class MainWindow(QMainWindow):
             return
 
         if self._alc_scan_view.derivative_enabled():
-            deriv = differentiate_scan(scan)
-            if deriv.n_points < 1:
+            base = self._alc_display_scan(x_key)
+            deriv = differentiate_scan(base) if base is not None else None
+            if deriv is None or deriv.n_points < 1:
                 self._alc_scan_view.clear(
                     f"No derivative points on {x_label} (need distinct, increasing x)."
                 )
@@ -9241,6 +9286,9 @@ class MainWindow(QMainWindow):
                 value_header=f"dA/dx ({unit})",
             )
         else:
+            excluded_mask = np.array(
+                [run in self._alc_excluded_runs for run in scan.run_numbers], dtype=bool
+            )
             self._alc_scan_view.show_scan(
                 scan.x,
                 scan.value,
@@ -9249,17 +9297,82 @@ class MainWindow(QMainWindow):
                 x_label=x_label,
                 y_label=self._SCAN_QUANTITY,
                 value_header="A (%)",
+                excluded_mask=excluded_mask,
             )
+        self._update_alc_provenance(shown_runs=scan.run_numbers, x_label=x_label)
 
-    def _alc_display_scan(self, x_key: str) -> FieldScan | None:
+    def _update_alc_provenance(self, *, shown_runs: list[int], x_label: str) -> None:
+        """Refresh the scan's contributors/exclusions read-out under the plot.
+
+        Surfaces what previously went only to the log: how many runs
+        contribute, which the user excluded by clicking, which were dropped at
+        build time (with reasons), and which lack the displayed x-axis log.
+        """
+        member_runs = {p["run"] for p in self._alc_scan_points}
+        user_excluded = sorted(self._alc_excluded_runs & member_runs)
+        included = len(shown_runs) - len(user_excluded)
+        no_axis = len(member_runs) - len(shown_runs)
+        parts = [f"{included} runs in scan"]
+        tooltip_lines: list[str] = []
+        if user_excluded:
+            parts.append(f"{len(user_excluded)} excluded by click")
+            tooltip_lines.append(
+                "Excluded (click the greyed point to restore): "
+                + ", ".join(str(r) for r in user_excluded)
+            )
+        if no_axis:
+            parts.append(f"{no_axis} without {x_label}")
+        if self._alc_build_excluded:
+            parts.append(f"{len(self._alc_build_excluded)} dropped at build")
+            tooltip_lines.extend(f"Run {run}: {reason}" for run, reason in self._alc_build_excluded)
+        self._alc_scan_view.set_provenance(" · ".join(parts), "\n".join(tooltip_lines))
+
+    def _on_alc_point_toggled(self, run_number: int) -> None:
+        """Exclude/restore one scan point (a click on the scan plot).
+
+        Membership feeds the fits, so the re-render drops any fitted
+        baseline/peaks/RF overlay; the exclusion set persists in the scan
+        series' ``extra`` and survives a rebuild over the same runs.
+        """
+        run = int(run_number)
+        if not any(p["run"] == run for p in self._alc_scan_points):
+            return
+        if run in self._alc_excluded_runs:
+            self._alc_excluded_runs.discard(run)
+            self._log_panel.log(f"Integral scan: restored run {run}.")
+        else:
+            self._alc_excluded_runs.add(run)
+            self._log_panel.log(f"Integral scan: excluded run {run} (click again to restore).")
+        self._render_alc_scan()
+        self._sync_alc_series_extra()
+        self._mark_dirty()
+
+    def _refresh_integral_time_strip(self) -> None:
+        """Feed the integral-scan strip the current run's spectrum + window."""
+        strip = self._integral_time_strip
+        targets = self._selected_or_current_datasets()
+        dataset = self._current_dataset or (targets[0] if targets else None)
+        if dataset is None:
+            strip.clear()
+        else:
+            strip.show_dataset(dataset.time, dataset.asymmetry, label=f"run {dataset.run_label}")
+        t_min, t_max = (None, None)
+        if hasattr(self._plot_panel, "get_fit_range"):
+            t_min, t_max = self._plot_panel.get_fit_range()
+        strip.set_window(t_min, t_max)
+
+    def _alc_display_scan(self, x_key: str, *, include_excluded: bool = False) -> FieldScan | None:
         """Build the current scan as a FieldScan vs *x_key* (percent units).
 
         Maps each stored run to the chosen x (dropping runs missing that log),
         sorts, and returns a :class:`FieldScan`; ``None`` when fewer than two
-        points remain. Shared by the renderer and the baseline fit.
+        points remain. User-excluded runs are dropped unless *include_excluded*
+        (the renderer shows them greyed; the fits never see them).
         """
         selected = []
         for point in self._alc_scan_points:
+            if not include_excluded and point["run"] in self._alc_excluded_runs:
+                continue
             x = point["run"] if x_key == "run" else point[x_key]
             if x is None:
                 continue
@@ -9344,7 +9457,7 @@ class MainWindow(QMainWindow):
         # Baseline/peaks and the RF fit share one overlay slot; a baseline fit
         # supersedes any RF fit so the persisted "rf_fitted" flag stays accurate.
         self._alc_rf_fitted = False
-        self._alc_scan_view.show_baseline_overlay(result.baseline)
+        self._alc_scan_view.show_baseline_overlay(scan.x, result.baseline)
         self._log_panel.log(f"Fitted {model} baseline over {len(regions)} region(s).")
 
     def _on_alc_baseline_invalidated(self) -> None:
@@ -9416,7 +9529,7 @@ class MainWindow(QMainWindow):
                 total = baseline + peak_curve
         self._alc_rf_fitted = False  # a peaks fit supersedes any RF fit overlay
         self._alc_scan_view.set_peak_results(results, "\n".join(summary_lines))
-        self._alc_scan_view.show_fit_overlay(total)
+        self._alc_scan_view.show_fit_overlay(corrected.x, total)
         self._log_panel.log(f"Fitted {len(specs)} peak(s): " + "; ".join(summary_lines))
 
     def _on_fit_rf(self) -> None:
@@ -9476,7 +9589,7 @@ class MainWindow(QMainWindow):
         model = as_composite_model("RFResonanceMuP")
         fitted_values = {name: fit.parameters[name].value for name in model.param_names}
         curve = np.asarray(model.function(scan.x, **fitted_values), dtype=float)
-        self._alc_scan_view.show_fit_overlay(curve)
+        self._alc_scan_view.show_fit_overlay(scan.x, curve)
         self._log_panel.log(f"Fitted RF resonance: {summary}")
 
     def _active_grouped_state(self) -> dict:
@@ -11582,6 +11695,8 @@ class MainWindow(QMainWindow):
         extra["mode_active"] = self._alc_mode
         extra["rf_mode"] = self._alc_rf_mode
         extra["rf_fitted"] = self._alc_rf_fitted
+        member_runs = {p["run"] for p in self._alc_scan_points}
+        extra["excluded_runs"] = sorted(self._alc_excluded_runs & member_runs)
         batch.extra = extra
 
     def _restore_alc_scan(self) -> None:
@@ -11603,6 +11718,15 @@ class MainWindow(QMainWindow):
         self._alc_scan_points = self._alc_points_from_series(series)
         if not self._alc_scan_points:
             return
+        self._alc_build_excluded = []  # build-time drops are not persisted
+        member_runs = {p["run"] for p in self._alc_scan_points}
+        excluded: set[int] = set()
+        for item in series.extra.get("excluded_runs", []) or []:
+            try:
+                excluded.add(int(item))
+            except (TypeError, ValueError):
+                continue
+        self._alc_excluded_runs = excluded & member_runs
         self._alc_scan_view.restore_analysis_state(series.extra)
         self._render_alc_scan()
         # Re-run whichever fits were active so the overlays/read-out reappear
@@ -11632,9 +11756,8 @@ class MainWindow(QMainWindow):
             and self._active_representation_type() == RepresentationType.TIME_FB_ASYMMETRY
         ):
             self._plot_workspace.set_active_view("integral_scan")
-            # Surface the restored scan: the deck raises the build tab by
-            # default, but the object of interest is the scan view in the
-            # Parameters dock (the old toggle path raised it last too).
+            # The restored scan renders in the central panel; raise the
+            # Parameters dock so its Baseline/Peaks/RF controls are in reach.
             self._show_panel("fit_parameters")
 
     def _alc_points_from_series(self, series) -> list[dict]:
@@ -12146,7 +12269,10 @@ class MainWindow(QMainWindow):
         # analysis (baseline model, regions, peaks) so they do not leak into the
         # next project and distort the new scatter's auto-range.
         self._alc_scan_points = []
+        self._alc_excluded_runs = set()
+        self._alc_build_excluded = []
         self._alc_scan_view.reset()
+        self._integral_time_strip.clear()
         if self._global_parameter_fit_window is not None:
             self._global_parameter_fit_window.close()
             self._global_parameter_fit_window = None

@@ -1,10 +1,11 @@
-"""GUI tests for ALC mode (integral-asymmetry field scan).
+"""GUI tests for the integral-scan representation (ALC field scan).
 
-ALC mode is a main-window toolbar toggle (enabled only for the F-B asymmetry
-representation) that swaps the Fit and Parameters docks for bespoke ALC widgets:
-the build panel and the scan view. Building integrates each selected run's
-asymmetry over the fit-range window (percent units) and records a model-less
-``FitSeries`` rendered in the scan view.
+Selecting "Integral scan" routes the central workspace to the dedicated scan
+panel (scan plot + integration-window time strip) and swaps the Fit and
+Parameters docks to the build panel and the Baseline/Peaks/RF analysis
+section. Building integrates each selected run's asymmetry over the fit-range
+window (percent units) and records a model-less ``FitSeries`` rendered on the
+central scan canvas; clicking a scan point excludes/restores that run.
 """
 
 from __future__ import annotations
@@ -90,12 +91,16 @@ def test_alc_view_swaps_docks(mainwindow: MainWindow, monkeypatch):
     _enter_alc(mw, monkeypatch)
     assert mw._alc_mode is True
     assert mw._fit_stack.currentWidget() is mw._alc_fit_panel
-    assert mw._parameters_stack.currentWidget() is mw._alc_scan_view
+    # The Parameters dock shows the scan's analysis section (Baseline/Peaks/RF);
+    # the scan plot itself occupies the central workspace panel.
+    assert mw._parameters_stack.currentWidget() is mw._alc_scan_view.analysis_widget()
+    assert mw._plot_workspace.current_panel() is mw._integral_scan_panel
 
     mw._plot_workspace.set_active_view("fb_asymmetry")
     assert mw._alc_mode is False
     assert mw._parameters_stack.currentWidget() is mw._fit_parameters_panel
     assert mw._fit_stack.currentWidget() is mw._fit_panel
+    assert mw._plot_workspace.current_panel() is mw._plot_panel
 
 
 def test_alc_view_reachable_from_frequency(mainwindow: MainWindow):
@@ -759,3 +764,227 @@ def test_trend_panel_scan_quantity_ylabel_is_drawable(qapp: QApplication):
     ax = figure.add_subplot(111)
     ax.set_ylabel(label)
     canvas.draw()  # raised ValueError (mathtext ParseException) before the fix
+
+
+# --- central panel, exclusions, provenance, and the time strip ----------------
+
+
+def test_alc_point_toggle_excludes_and_restores(mainwindow: MainWindow, monkeypatch):
+    # Clicking a scan point (the point_toggled signal) excludes that run: it is
+    # rendered greyed, skipped by the fit-facing scan, and shown in the
+    # provenance line; a second toggle restores it.
+    mw = mainwindow
+    _enter_alc(mw, monkeypatch)
+    mw._fit_panel.set_datasets(
+        [
+            _ds(11, 110.0, 90.0, 100.0),
+            _ds(12, 120.0, 80.0, 200.0),
+            _ds(13, 130.0, 70.0, 300.0),
+        ]
+    )
+    mw._on_scan_requested()
+
+    mw._alc_scan_view.point_toggled.emit(12)
+    assert mw._alc_excluded_runs == {12}
+    # Fits never see the excluded run; the renderer still shows it (greyed).
+    assert mw._alc_display_scan("field").run_numbers == [11, 13]
+    full = mw._alc_display_scan("field", include_excluded=True)
+    assert full.run_numbers == [11, 12, 13]
+    assert mw._alc_scan_view._last_plot["excluded"].tolist() == [False, True, False]
+    assert "1 excluded" in mw._alc_scan_view._provenance_label.text()
+
+    mw._alc_scan_view.point_toggled.emit(12)
+    assert mw._alc_excluded_runs == set()
+    assert mw._alc_scan_view._last_plot["excluded"].tolist() == [False, False, False]
+
+
+def test_alc_exclusions_persist_and_survive_rebuild(mainwindow: MainWindow, monkeypatch):
+    mw = mainwindow
+    _enter_alc(mw, monkeypatch)
+    datasets = [
+        _ds(11, 110.0, 90.0, 100.0),
+        _ds(12, 120.0, 80.0, 200.0),
+        _ds(13, 130.0, 70.0, 300.0),
+    ]
+    mw._fit_panel.set_datasets(datasets)
+    mw._on_scan_requested()
+    mw._on_alc_point_toggled(12)
+
+    # Rebuild over the same selection: the exclusion is keyed by run and stays.
+    mw._on_scan_requested()
+    assert mw._alc_excluded_runs == {12}
+    assert mw._alc_scan_view._last_plot["excluded"].tolist() == [False, True, False]
+
+    # Persist onto the series and restore into a fresh window.
+    mw._sync_alc_series_extra()
+    saved = mw._project_model.batch(mw._alc_scan_series_id).to_dict()
+    assert saved["extra"]["excluded_runs"] == [12]
+    settings = QSettings()
+    settings.setValue(mw_module._UI_SCALE_SETTINGS_KEY, 1.0)
+    mw2 = MainWindow()
+    for ds in datasets:
+        mw2._data_browser.add_dataset(ds)
+    mw2._project_model.add_batch(FitSeries.from_dict(saved))
+    mw2._restore_alc_scan()
+    assert mw2._alc_excluded_runs == {12}
+    assert mw2._alc_scan_view._last_plot["excluded"].tolist() == [False, True, False]
+
+    # Rebuild over a selection that no longer contains the run: pruned.
+    mw._fit_panel.set_datasets([datasets[0], datasets[2]])
+    mw._on_scan_requested()
+    assert mw._alc_excluded_runs == set()
+
+
+def test_alc_baseline_fit_skips_excluded_points(mainwindow: MainWindow, monkeypatch):
+    # The dip run is excluded, so a flat baseline over the remaining points
+    # leaves an (essentially) zero-corrected scan of 4 points.
+    mw = mainwindow
+    _enter_alc(mw, monkeypatch)
+    mw._fit_panel.set_datasets(
+        [
+            _ds(11, 110.0, 90.0, 100.0),
+            _ds(12, 110.0, 90.0, 150.0),
+            _ds(13, 105.0, 95.0, 200.0),  # dip (A = 0.05)
+            _ds(14, 110.0, 90.0, 250.0),
+            _ds(15, 110.0, 90.0, 300.0),
+        ]
+    )
+    mw._on_scan_requested()
+    mw._on_alc_point_toggled(13)
+    _set_regions(mw._alc_scan_view, [(50.0, 350.0)])
+    mw._on_fit_baseline()
+    corrected = mw._alc_corrected_scan
+    assert corrected is not None
+    assert corrected.run_numbers == [11, 12, 14, 15]
+    assert np.allclose(corrected.value, 0.0, atol=1e-9)
+    # The overlay carries its own x (the included points), shorter than the
+    # rendered scan (which still shows the greyed excluded point).
+    bx, _by = mw._alc_scan_view._baseline_curve
+    assert bx.size == 4
+    assert mw._alc_scan_view._last_plot["x"].size == 5
+
+
+def test_alc_canvas_click_on_point_emits_toggle(qapp: QApplication):
+    # A stationary click on a data point emits point_toggled for its run; a
+    # click on empty axes space does not.
+    from types import SimpleNamespace
+
+    view = ALCScanView()
+    view.resize(600, 500)
+    view.show_scan(
+        np.array([100.0, 200.0, 300.0]),
+        np.array([10.0, 20.0, 30.0]),
+        np.array([1.0, 1.0, 1.0]),
+        [11, 12, 13],
+        x_label="B (G)",
+        y_label="A (%)",
+    )
+    view._canvas.draw()
+    toggled: list[int] = []
+    view.point_toggled.connect(toggled.append)
+
+    px, py = view._ax.transData.transform((200.0, 20.0))
+    event = SimpleNamespace(inaxes=view._ax, button=1, x=px, y=py, xdata=200.0, ydata=20.0)
+    view._on_canvas_press(event)
+    view._on_canvas_release(event)
+    assert toggled == [12]
+
+    # Far from any point: no toggle.
+    px2, py2 = view._ax.transData.transform((150.0, 28.0))
+    event2 = SimpleNamespace(inaxes=view._ax, button=1, x=px2, y=py2, xdata=150.0, ydata=28.0)
+    view._on_canvas_press(event2)
+    view._on_canvas_release(event2)
+    assert toggled == [12]
+
+    # A drag that starts on a point is not a click: no toggle.
+    view._on_canvas_press(event)
+    moved = SimpleNamespace(inaxes=view._ax, button=1, x=px + 20.0, y=py, xdata=210.0, ydata=20.0)
+    view._on_canvas_motion(moved)
+    view._on_canvas_release(moved)
+    assert toggled == [12]
+
+
+def test_alc_build_drops_surface_in_provenance(mainwindow: MainWindow, monkeypatch):
+    # A run that cannot be integrated (no grouping) is dropped at build time
+    # and surfaces in the provenance line, not just the log.
+    mw = mainwindow
+    _enter_alc(mw, monkeypatch)
+    good1 = _ds(11, 110.0, 90.0, 100.0)
+    good2 = _ds(12, 120.0, 80.0, 200.0)
+    bad = _ds(13, 130.0, 70.0, 300.0)
+    bad.run.grouping = None
+    mw._fit_panel.set_datasets([good1, good2, bad])
+    mw._on_scan_requested()
+    text = mw._alc_scan_view._provenance_label.text()
+    assert "2 runs in scan" in text
+    assert "1 dropped at build" in text
+    assert "13" in mw._alc_scan_view._provenance_label.toolTip()
+
+
+def test_integral_strip_syncs_with_fit_range(mainwindow: MainWindow, monkeypatch):
+    # The strip mirrors the canonical fit-range (the time plot panel) in both
+    # directions: panel -> strip echo, and strip drag -> panel + spinboxes.
+    mw = mainwindow
+    _enter_alc(mw, monkeypatch)
+    mw._plot_panel.set_fit_range(0.5, 7.0)
+    strip = mw._integral_time_strip
+    assert strip.window() == (0.5, 7.0)
+
+    strip.window_edited.emit(1.0, 5.0)
+    assert mw._plot_panel.get_fit_range() == (1.0, 5.0)
+    assert mw._alc_fit_panel._min_spin.value() == pytest.approx(1.0)
+    assert mw._alc_fit_panel._max_spin.value() == pytest.approx(5.0)
+    assert strip.window() == (1.0, 5.0)
+
+
+def test_integral_strip_tracks_selection_dataset(mainwindow: MainWindow, monkeypatch):
+    # Entering the scan view (and selection changes while in it) feed the strip
+    # the current run's spectrum for the window preview.
+    mw = mainwindow
+    ds = _ds(11, 110.0, 90.0, 100.0)
+    mw._data_browser.add_dataset(ds)
+    mw._current_dataset = ds
+    _enter_alc(mw, monkeypatch)
+    strip = mw._integral_time_strip
+    assert strip._time is not None
+    assert strip._time.size == ds.time.size
+    assert "11" in strip._window_label.text() or strip._run_label != ""
+
+
+def test_integral_strip_drag_normalises_and_emits(qapp: QApplication):
+    from types import SimpleNamespace
+
+    from asymmetry.gui.panels.alc_panel import IntegralTimeStrip
+
+    strip = IntegralTimeStrip()
+    strip.resize(600, 200)
+    t = np.linspace(0.0, 10.0, 200)
+    strip.show_dataset(t, np.zeros_like(t))
+    strip.set_window(2.0, 8.0)
+    strip._canvas.draw()
+    committed: list[tuple[float, float]] = []
+    strip.window_edited.connect(lambda a, b: committed.append((a, b)))
+
+    # Grab the max edge and drag it past the min edge: the committed window is
+    # normalised (min <= max).
+    px, _py = strip._ax.transData.transform((8.0, 0.0))
+    press = SimpleNamespace(inaxes=strip._ax, button=1, x=px, xdata=8.0)
+    strip._on_press(press)
+    assert strip._drag_edge == 1
+    move_px, _ = strip._ax.transData.transform((1.0, 0.0))
+    move = SimpleNamespace(inaxes=strip._ax, button=1, x=move_px, xdata=1.0)
+    strip._on_motion(move)
+    strip._on_release(move)
+    assert committed == [(1.0, 2.0)]
+    assert strip.window() == (1.0, 2.0)
+
+
+def test_workspace_routes_integral_scan_to_scan_panel(mainwindow: MainWindow):
+    mw = mainwindow
+    ws = mw._plot_workspace
+    assert ws.scan_panel() is mw._integral_scan_panel
+    ws.set_active_view("integral_scan")
+    assert ws.current_panel() is mw._integral_scan_panel
+    assert ws.active_domain() == "time"  # the scan is a time-domain view
+    ws.set_active_view("fb_asymmetry")
+    assert ws.current_panel() is mw._plot_panel
