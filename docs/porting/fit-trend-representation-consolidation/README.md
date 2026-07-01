@@ -349,6 +349,12 @@ representations, roughly in priority order:
    batch form the way a single fit restores. Consolidation: decide the restore
    contract for batch members.
 
+8. **Which model is presented on dataset selection is a silent policy.** Today:
+   dataset's own fit → previous dataset's model (carry-forward) → default, scoped
+   per representation. Fine for series work, wrong when jumping to a different
+   sample. **See the dedicated design exploration in §7** — it is entangled with
+   §6 (a group/series could own the presented model).
+
 None of these are bugs to fix blindly — each is a *design decision* to make
 consistent. The next agent should treat this list as the consolidation backlog
 and confirm each with the user before changing behaviour.
@@ -456,7 +462,85 @@ out, prototype the UX, and weigh them with the user:
 
 ---
 
-## 7. Navigation index (files, grouped by concern)
+## 7. Design exploration: which fit function is presented on dataset selection
+
+A second open design question the user raised: **when the user selects a new
+dataset, which fit function (model) should the fit panel present?** Like §6 this
+is a *decision to explore with the user*, not a settled rule.
+
+### 7.1 Current behaviour (verified)
+
+Presentation is resolved **per `(run, representation, projection)`** in
+`FitPanel.set_dataset` (`fit_panel.py:8078` ✓) as a three-level precedence:
+
+1. **The dataset's own stored fit wins.** The main window's restore mediator
+   `_single_fit_restore_payload` (`mainwindow.py:8842` ✓) returns the slot's
+   `ui_state`, so the exact model + fitted parameters + result HTML are restored.
+   A genuine projection with no fit returns `{}` → the form is *blanked* (a
+   projection must never inherit another projection's fit).
+2. **Else, the in-session run-keyed form** (`_single_state_by_run`) is restored if
+   the run was touched earlier this session.
+3. **Else (unseen run) — carry-forward** (`_carry_forward_single_fit_form`,
+   `fit_panel.py:8115` ✓): inherit the *currently displayed* model + seeds +
+   bounds + fixed flags + link groups, but **clear uncertainties/result** so an
+   unfit run never shows a borrowed result. The domain default
+   (`Exponential + Constant`, or `default_frequency_model()`; `_reset_single_fit_form`,
+   `fit_panel.py:8131` ✓) appears only on an explicit reset.
+
+So the effective rule today is: *"show this dataset's own fit if it has one,
+otherwise keep using the model you were just using,"* scoped to the active
+representation (the FFT-view model is independent of the time-view model for the
+same run).
+
+### 7.2 Why it is a design question
+
+Carry-forward is ideal for a **homogeneous series** (fit the same model down a
+temperature scan) but wrong when the user **jumps to a physically different
+dataset** — an inappropriate model is inherited silently. The candidate sources
+for "the model to present" are:
+
+- **The dataset's own last fit** (current level 1) — best for revisiting.
+- **The previous dataset's model** (current carry-forward) — best for series work.
+- **A domain default** — predictable, but resets constantly during series work.
+- **The fit wizard's per-dataset fingerprint suggestion**
+  (`core/fitting/fit_wizard.py`, `gui/windows/fit_wizard_window.py`) — smart, but
+  potentially slow/surprising to trigger on every selection.
+- **The canonical model of the DataGroup / FitSeries the dataset belongs to** —
+  *this is the direct tie to §6.* If a group/series owns "the model for these
+  runs," selection precedence becomes obvious and consistent.
+
+### 7.3 Options to explore
+
+- **Keep current precedence, make carry-forward visible.** Badge the form as
+  "carried forward from run N — not yet fit" so the inheritance is not silent.
+  Lowest risk.
+- **Group/series-aware precedence.** Insert "the group's/series' canonical model"
+  above carry-forward when the selected dataset is a member. Ties directly to §6
+  Option B/C — a DataGroup that owns a model makes this natural.
+- **Wizard-assisted.** Offer (not force) a one-click "suggest model for this
+  dataset" when the run is unseen and unmatched to a group, instead of blind
+  carry-forward.
+- **Per-representation policy.** Decide whether carry-forward should ever cross
+  representations (today it never does — each representation resolves
+  independently), and whether that is the intuitive behaviour.
+
+### 7.4 Cross-cutting questions
+
+- Should carry-forward be **opt-in per workflow** (series vs one-off), or always on?
+- When a dataset is a **member of a batch/DataGroup**, should selecting it present
+  the *series canonical model* even if the dataset has an older, divergent single
+  fit? (Interacts with the last-write-wins slot, §5.3.)
+- Should the **fit wizard** ever be auto-consulted, or only on explicit request?
+- How does this behave for **per-projection** vector groupings (each projection
+  already blanks independently — is that the intended UX)?
+
+**Recommendation:** treat §6 and §7 together — the most intuitive answer to "which
+model on selection?" likely falls out of whichever DataGroup↔FitSeries coupling is
+chosen. Explore both with the user before implementing.
+
+---
+
+## 8. Navigation index (files, grouped by concern)
 
 ### Core — representation spine (read these first) ✓
 - `src/asymmetry/core/representation/base.py` — `Representation`, `FitSlot`,
@@ -528,14 +612,15 @@ out, prototype the UX, and weigh them with the user:
 
 ---
 
-## 8. Suggested next steps for the implementing agent
+## 9. Suggested next steps for the implementing agent
 
-0. **Lead with §6 — the DataGroup ↔ FitSeries relationship.** This is the primary
-   open design question the user wants explored: how should a DataGroup and a
-   batch FitSeries interact intuitively? Explore Options A/B/C, prototype the UX,
-   and agree a direction with the user *before* implementing. The rest of the
-   backlog (§5) is secondary and several items fold into whichever coupling is
-   chosen (notably §5.2 group overload and §5.4 angle order-key).
+0. **Lead with the two design explorations, §6 and §7.** §6 = how should a
+   DataGroup and a batch FitSeries interact (Options A/B/C)? §7 = which fit
+   function should be presented when a dataset is selected? Explore both together
+   — §7's answer likely falls out of the §6 coupling — prototype the UX, and agree
+   a direction with the user *before* implementing. The rest of the backlog (§5)
+   is secondary and several items fold into whichever coupling is chosen (notably
+   §5.2 group overload, §5.4 angle order-key, §5.8 selection model policy).
 1. **Confirm the consolidation scope with the user** — §5 is a menu of design
    decisions, not a to-do list. Do not change behaviour before agreeing which
    inconsistencies to unify and which are intentional.
