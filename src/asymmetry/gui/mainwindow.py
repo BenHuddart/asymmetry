@@ -2395,11 +2395,13 @@ class MainWindow(QMainWindow):
     def _render_current_selection_plot(self) -> None:
         """Render current single/multi selection using active polarization settings."""
         started_at = time.perf_counter()
-        # In the integral-scan view the centre shows the scan; keep its
-        # time-strip preview tracking the selection (the time panel below
-        # still renders so it is current when the user switches back).
+        # In the integral-scan view the centre shows the scan: refresh its
+        # time-strip preview and skip the (hidden) time panel's render — the
+        # switch back to a time view re-renders it (_on_plot_time_view_changed),
+        # so browsing runs in scan mode doesn't pay a full offscreen plot.
         if self._alc_mode:
             self._refresh_integral_time_strip()
+            return
         targets: list[MuonDataset] = []
         rendered_targets: list[MuonDataset] = []
         render_mode = "empty"
@@ -8238,9 +8240,16 @@ class MainWindow(QMainWindow):
         if hasattr(self._fit_panel, "set_fit_range_display"):
             self._fit_panel.set_fit_range_display(x_min, x_max)
         # Keep the ALC fit panel's integration-window spinboxes and the
-        # integral-scan strip in sync (the strip does not re-emit).
-        self._alc_fit_panel.set_fit_range_display(x_min, x_max)
-        self._integral_time_strip.set_window(x_min, x_max)
+        # integral-scan strip in sync (the strip does not re-emit). Both
+        # panels' fit_range_changed signals land here, so read the window from
+        # the TIME plot panel — Build Scan integrates over exactly that range,
+        # and echoing the frequency panel's MHz range as µs would desync the
+        # displayed window from the one the build actually uses.
+        t_min, t_max = (None, None)
+        if hasattr(self._plot_panel, "get_fit_range"):
+            t_min, t_max = self._plot_panel.get_fit_range()
+        self._alc_fit_panel.set_fit_range_display(t_min, t_max)
+        self._integral_time_strip.set_window(t_min, t_max)
         if self._multi_group_fit_window is not None and hasattr(
             self._multi_group_fit_window, "set_fit_range_display"
         ):
@@ -9267,15 +9276,36 @@ class MainWindow(QMainWindow):
             self._alc_scan_view.clear(f"No {x_label} values to plot — try a different x-axis.")
             return
 
+        excluded_mask = np.array(
+            [run in self._alc_excluded_runs for run in scan.run_numbers], dtype=bool
+        )
         if self._alc_scan_view.derivative_enabled():
-            base = self._alc_display_scan(x_key)
-            deriv = differentiate_scan(base) if base is not None else None
+            # Derivative of the included points only, sliced from the one scan
+            # build so the drop/sort rules cannot diverge from the render.
+            base = (
+                FieldScan(
+                    x=scan.x[~excluded_mask],
+                    value=scan.value[~excluded_mask],
+                    error=scan.error[~excluded_mask],
+                    run_numbers=[
+                        run for run, dropped in zip(scan.run_numbers, excluded_mask) if not dropped
+                    ],
+                    order_key=scan.order_key,
+                    method=scan.method,
+                    x_label=scan.x_label,
+                )
+                if excluded_mask.any()
+                else scan
+            )
+            deriv = differentiate_scan(base) if base.n_points >= 2 else None
             if deriv is None or deriv.n_points < 1:
                 self._alc_scan_view.clear(
                     f"No derivative points on {x_label} (need distinct, increasing x)."
                 )
                 return
             unit = self._ALC_DERIV_UNITS[x_key]
+            # Derivative points are pair-midpoints with no greyed marker to
+            # click back, so click-to-exclude is disarmed in this view.
             self._alc_scan_view.show_scan(
                 deriv.x,
                 deriv.value,
@@ -9284,11 +9314,9 @@ class MainWindow(QMainWindow):
                 x_label=x_label,
                 y_label=f"dA/dx ({unit})",
                 value_header=f"dA/dx ({unit})",
+                toggleable=False,
             )
         else:
-            excluded_mask = np.array(
-                [run in self._alc_excluded_runs for run in scan.run_numbers], dtype=bool
-            )
             self._alc_scan_view.show_scan(
                 scan.x,
                 scan.value,
@@ -9309,16 +9337,19 @@ class MainWindow(QMainWindow):
         build time (with reasons), and which lack the displayed x-axis log.
         """
         member_runs = {p["run"] for p in self._alc_scan_points}
-        user_excluded = sorted(self._alc_excluded_runs & member_runs)
-        included = len(shown_runs) - len(user_excluded)
+        # Count each run in exactly one bucket: a click-excluded run missing
+        # the displayed axis has no greyed point to restore, so it reports
+        # under "without <axis>" (it feeds neither the plot nor the fits).
+        excluded_shown = sorted(self._alc_excluded_runs & set(shown_runs))
+        included = len(shown_runs) - len(excluded_shown)
         no_axis = len(member_runs) - len(shown_runs)
         parts = [f"{included} runs in scan"]
         tooltip_lines: list[str] = []
-        if user_excluded:
-            parts.append(f"{len(user_excluded)} excluded by click")
+        if excluded_shown:
+            parts.append(f"{len(excluded_shown)} excluded by click")
             tooltip_lines.append(
                 "Excluded (click the greyed point to restore): "
-                + ", ".join(str(r) for r in user_excluded)
+                + ", ".join(str(r) for r in excluded_shown)
             )
         if no_axis:
             parts.append(f"{no_axis} without {x_label}")
@@ -9351,15 +9382,24 @@ class MainWindow(QMainWindow):
         """Feed the integral-scan strip the current run's spectrum + window."""
         strip = self._integral_time_strip
         targets = self._selected_or_current_datasets()
-        dataset = self._current_dataset or (targets[0] if targets else None)
-        if dataset is None:
-            strip.clear()
-        else:
-            strip.show_dataset(dataset.time, dataset.asymmetry, label=f"run {dataset.run_label}")
+        # Prefer the current dataset only while it is part of the selection
+        # being scanned — a stale current run (e.g. clicked before a group
+        # multi-select) must not preview a spectrum the scan won't integrate.
+        # Identity comparison: MuonDataset is a dataclass over numpy arrays,
+        # so == would build ambiguous array comparisons.
+        current = self._current_dataset
+        dataset = current if any(d is current for d in targets) else None
+        dataset = dataset or (targets[0] if targets else current)
+        # Window first: set_window is a no-op when unchanged, so the usual
+        # refresh pays one render (in show_dataset), not two.
         t_min, t_max = (None, None)
         if hasattr(self._plot_panel, "get_fit_range"):
             t_min, t_max = self._plot_panel.get_fit_range()
         strip.set_window(t_min, t_max)
+        if dataset is None:
+            strip.clear()
+        else:
+            strip.show_dataset(dataset.time, dataset.asymmetry, label=f"run {dataset.run_label}")
 
     def _alc_display_scan(self, x_key: str, *, include_excluded: bool = False) -> FieldScan | None:
         """Build the current scan as a FieldScan vs *x_key* (percent units).
@@ -9430,6 +9470,19 @@ class MainWindow(QMainWindow):
             return
         self._guidance_message(title, text, warning=warning)
 
+    def _alc_too_few_points_message(self) -> str:
+        """Guidance when the fit-facing scan has fewer than two points.
+
+        Click-exclusions can starve an already-built scan, in which case
+        "build a scan first" would name the wrong remedy.
+        """
+        if self._alc_excluded_runs and self._alc_scan_points:
+            return (
+                "Fewer than two points remain after exclusions — click the "
+                "greyed points to restore them, or rebuild the scan."
+            )
+        return "Build a scan with at least two points first."
+
     def _on_fit_baseline(self) -> None:
         """Fit + overlay a baseline over the user-marked non-resonant regions."""
         if self._alc_scan_view.derivative_enabled():
@@ -9437,7 +9490,7 @@ class MainWindow(QMainWindow):
             return
         scan = self._alc_display_scan(self._alc_scan_view.x_key())
         if scan is None:
-            self._alc_notify("Baseline", "Build a scan with at least two points first.")
+            self._alc_notify("Baseline", self._alc_too_few_points_message())
             return
         regions = self._alc_scan_view.baseline_regions()
         if not regions:
@@ -9556,7 +9609,7 @@ class MainWindow(QMainWindow):
             return
         scan = self._alc_display_scan("field")
         if scan is None:
-            self._alc_notify("RF resonance", "Build a scan with at least two points first.")
+            self._alc_notify("RF resonance", self._alc_too_few_points_message())
             return
         try:
             fit = fit_rf_resonance(
@@ -11695,8 +11748,9 @@ class MainWindow(QMainWindow):
         extra["mode_active"] = self._alc_mode
         extra["rf_mode"] = self._alc_rf_mode
         extra["rf_fitted"] = self._alc_rf_fitted
-        member_runs = {p["run"] for p in self._alc_scan_points}
-        extra["excluded_runs"] = sorted(self._alc_excluded_runs & member_runs)
+        # Already pruned to scan members at every mutation site (build,
+        # restore, and the toggle's membership guard).
+        extra["excluded_runs"] = sorted(self._alc_excluded_runs)
         batch.extra = extra
 
     def _restore_alc_scan(self) -> None:
@@ -12271,8 +12325,10 @@ class MainWindow(QMainWindow):
         self._alc_scan_points = []
         self._alc_excluded_runs = set()
         self._alc_build_excluded = []
+        # The strip was already cleared by _plot_workspace.clear() above (it
+        # routes to IntegralScanPanel.clear()); reset() additionally restores
+        # the scan view's default baseline model.
         self._alc_scan_view.reset()
-        self._integral_time_strip.clear()
         if self._global_parameter_fit_window is not None:
             self._global_parameter_fit_window.close()
             self._global_parameter_fit_window = None

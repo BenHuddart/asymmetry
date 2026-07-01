@@ -46,10 +46,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from asymmetry.gui.export_paths import default_export_path, remember_export_path
 from asymmetry.gui.panels.draggable_handles import nearest_handle
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
-from asymmetry.gui.styles.plots import draw_empty_state_message
+from asymmetry.gui.styles.plots import draw_empty_state_message, draw_fit_range_span, style_axes
 from asymmetry.gui.styles.widgets import build_primary_button_qss
 
 
@@ -254,7 +255,7 @@ class ALCScanView(QWidget):
         # (previously only in the log). The full drop list rides the tooltip.
         self._provenance_label = QLabel("")
         self._provenance_label.setWordWrap(True)
-        self._provenance_label.setStyleSheet("color: gray;")
+        self._provenance_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
         self._provenance_label.hide()
         plot_layout.addWidget(self._provenance_label)
         layout.addWidget(self._plot_section, 3)
@@ -691,6 +692,10 @@ class ALCScanView(QWidget):
             return None
         pts = self._ax.transData.transform(np.column_stack([plot["x"], plot["value"]]))
         d2 = (pts[:, 0] - event.x) ** 2 + (pts[:, 1] - event.y) ** 2
+        # A non-finite point transforms to NaN; NaN would win argmin and pass
+        # the tolerance test (NaN > tol is False), making every click toggle
+        # that run — treat it as infinitely far instead.
+        d2 = np.where(np.isfinite(d2), d2, np.inf)
         idx = int(np.argmin(d2))
         # 12 device px ≈ 6 logical px on a 2× display (same as the handle grab).
         if d2[idx] > 12.0**2:
@@ -706,7 +711,11 @@ class ALCScanView(QWidget):
         if self._drag is None:
             # Not on a drag handle: a stationary click on a data point toggles
             # that run's exclusion (resolved on release, so a drag that starts
-            # near a point does not mis-fire).
+            # near a point does not mis-fire). Renders that mark themselves
+            # non-toggleable (the derivative view, where excluded points have
+            # no greyed marker to click back) never arm the candidate.
+            if not self._last_plot.get("toggleable", True):
+                return
             run = self._point_run_at(event)
             if run is not None:
                 self._toggle_candidate = (run, float(event.x), float(event.y))
@@ -740,7 +749,7 @@ class ALCScanView(QWidget):
         else:
             self._render_plot()
 
-    def _on_canvas_release(self, _event: object) -> None:
+    def _on_canvas_release(self, event: object) -> None:
         was_dragging = self._drag is not None
         self._drag = None
         self._drag_artist = None
@@ -748,6 +757,10 @@ class ALCScanView(QWidget):
             self._render_plot()  # restore the shaded span at the final edges
         elif self._toggle_candidate is not None:
             run, _x0, _y0 = self._toggle_candidate
+            # Only a released *left* button completes the click — a right/middle
+            # release mid-gesture must not mutate scan membership.
+            if getattr(event, "button", None) != 1:
+                return
             self._toggle_candidate = None
             self.point_toggled.emit(run)
 
@@ -993,11 +1006,15 @@ class ALCScanView(QWidget):
         y_label: str,
         value_header: str = "value",
         excluded_mask: NDArray[np.bool_] | None = None,
+        toggleable: bool = True,
     ) -> None:
         """Render a scan from parallel arrays (already in display units).
 
         *excluded_mask* marks user-excluded points: they are drawn greyed
         (click a point to toggle its exclusion) and skipped by the fits.
+        *toggleable* arms click-to-exclude; the derivative view passes False
+        because its points are pair-midpoints with no greyed marker to click
+        back, so a stray click would exclude a run with no visible undo.
         """
         n = np.asarray(x, dtype=float).size
         mask = (
@@ -1014,6 +1031,7 @@ class ALCScanView(QWidget):
             "value_header": value_header,
             "y_label": y_label,
             "excluded": mask,
+            "toggleable": bool(toggleable),
         }
         # A fresh scan (rebuild / x-axis change) invalidates any fit overlays.
         self._baseline_curve = None
@@ -1070,7 +1088,7 @@ class ALCScanView(QWidget):
                 fmt="o",
                 markersize=4,
                 capsize=2,
-                color="0.65",
+                color=tokens.PLOT_LOW_COUNT,
                 markerfacecolor="none",
                 alpha=0.8,
                 label="excluded",
@@ -1123,6 +1141,9 @@ class IntegralTimeStrip(QWidget):
         self._drag_edge: int | None = None
         #: Edge index → drawn Line2D, rebuilt by each _render.
         self._edge_artists: dict[int, object] = {}
+        #: A render was requested while the canvas was hidden (collapsed strip
+        #: or inactive view); flushed when the canvas shows again.
+        self._render_pending = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -1141,7 +1162,7 @@ class IntegralTimeStrip(QWidget):
         title.setStyleSheet("font-weight: 600;")
         header.addWidget(title)
         self._window_label = QLabel("")
-        self._window_label.setStyleSheet("color: gray;")
+        self._window_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
         header.addWidget(self._window_label)
         header.addStretch()
         layout.addLayout(header)
@@ -1163,6 +1184,14 @@ class IntegralTimeStrip(QWidget):
         self._toggle_btn.setArrowType(
             Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow
         )
+        if checked and self._render_pending:
+            self._render()
+
+    def showEvent(self, event) -> None:  # noqa: N802 — Qt override
+        """Flush a render skipped while the strip's canvas was hidden."""
+        super().showEvent(event)
+        if self._render_pending and self._canvas.isVisible():
+            self._render()
 
     # --- data / window state --------------------------------------------------
 
@@ -1172,9 +1201,13 @@ class IntegralTimeStrip(QWidget):
         a = np.asarray(asymmetry, dtype=float)
         if t.size > self._MAX_PREVIEW_POINTS:
             step = t.size // self._MAX_PREVIEW_POINTS
-            t, a = t[::step], a[::step]
+            idx = np.arange(0, t.size, step)
+            if idx[-1] != t.size - 1:
+                idx = np.append(idx, t.size - 1)  # keep the spectrum's true end
+            t, a = t[idx], a[idx]
         self._time, self._asym = t, a
         self._run_label = str(label)
+        self._update_window_label()
         self._render()
 
     def clear(self) -> None:
@@ -1182,14 +1215,20 @@ class IntegralTimeStrip(QWidget):
         self._time = None
         self._asym = None
         self._run_label = ""
+        self._update_window_label()
         self._render()
 
     def set_window(self, t_min: float | None, t_max: float | None) -> None:
-        """Echo the canonical integration window into the strip (no re-emit)."""
-        if t_min is None or t_max is None:
-            self._window = (None, None)
-        else:
-            self._window = (float(t_min), float(t_max))
+        """Echo the canonical integration window into the strip (no re-emit).
+
+        A no-op when unchanged: the time plot emits ``fit_range_changed`` on
+        every motion event of its own fit-range drag, and this echo must not
+        pay a full strip re-render per event.
+        """
+        window = (None, None) if t_min is None or t_max is None else (float(t_min), float(t_max))
+        if window == self._window:
+            return
+        self._window = window
         self._update_window_label()
         if self._drag_edge is None:  # don't fight an in-flight drag
             self._render()
@@ -1200,7 +1239,11 @@ class IntegralTimeStrip(QWidget):
 
     def _update_window_label(self) -> None:
         lo, hi = self._window
-        window_text = f"{lo:.4g} ≤ t ≤ {hi:.4g} µs" if lo is not None and hi is not None else ""
+        if lo is not None and hi is not None:
+            mn, mx = (lo, hi) if lo <= hi else (hi, lo)  # readable mid-drag too
+            window_text = f"{mn:.4g} ≤ t ≤ {mx:.4g} µs"
+        else:
+            window_text = ""
         parts = [p for p in (self._run_label, window_text) if p]
         self._window_label.setText("   ·   ".join(parts))
 
@@ -1244,24 +1287,27 @@ class IntegralTimeStrip(QWidget):
     # --- rendering ---------------------------------------------------------------
 
     def _render(self) -> None:
+        if not self._canvas.isVisible():
+            # Collapsed strip / inactive view: defer to the next show. State
+            # (data, window, label) is already up to date, so nothing is lost.
+            self._render_pending = True
+            return
+        self._render_pending = False
         self._ax.clear()
         self._edge_artists = {}
         if self._time is None or self._time.size == 0:
             draw_empty_state_message(self._ax, "Select a run to preview the integration window")
             self._canvas.draw_idle()
             return
-        self._ax.plot(self._time, self._asym, ".", markersize=2, color="0.45")
+        self._ax.plot(self._time, self._asym, ".", markersize=2, color=tokens.PLOT_LOW_COUNT)
         lo, hi = self._window
         if lo is not None and hi is not None:
-            a, b = (lo, hi) if lo <= hi else (hi, lo)
-            if a < b:
-                self._ax.axvspan(a, b, color=tokens.ACCENT, alpha=0.12, zorder=0)
-            for edge_idx, edge in ((0, lo), (1, hi)):
-                line = self._ax.axvline(edge, color=tokens.ACCENT, linewidth=1.0)
-                self._edge_artists[edge_idx] = line
+            # Same styled span as the time plot's fit range — it IS that range.
+            _span, left_line, right_line = draw_fit_range_span(self._ax, lo, hi)
+            self._edge_artists = {0: left_line, 1: right_line}
+        style_axes(self._ax)
         self._ax.set_xlabel("t (µs)", fontsize=8)
         self._ax.tick_params(labelsize=7)
-        self._ax.grid(True, alpha=0.2)
         self._canvas.draw_idle()
 
 
@@ -1298,12 +1344,16 @@ class IntegralScanPanel(QWidget):
         path, _selected = QFileDialog.getSaveFileName(
             self,
             "Export scan plot",
-            "alc_scan.png",
+            default_export_path("alc_scan.png"),
             "PNG image (*.png);;PDF document (*.pdf);;SVG image (*.svg)",
         )
         if not path:
             return
         try:
+            # savefig raises ValueError (not OSError) for an unsupported
+            # extension typed into the free-text dialog field.
             self._scan_view.figure().savefig(path, dpi=200)
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
             QMessageBox.warning(self, "Export scan plot", f"Could not save the plot: {exc}")
+            return
+        remember_export_path(path)

@@ -903,6 +903,66 @@ def test_alc_canvas_click_on_point_emits_toggle(qapp: QApplication):
     view._on_canvas_release(moved)
     assert toggled == [12]
 
+    # A right/middle-button release mid-gesture must not complete the toggle.
+    view._on_canvas_press(event)
+    right_release = SimpleNamespace(inaxes=view._ax, button=3, x=px, y=py, xdata=200.0, ydata=20.0)
+    view._on_canvas_release(right_release)
+    assert toggled == [12]
+    view._on_canvas_release(event)  # the left release still completes it
+    assert toggled == [12, 12]
+
+
+def test_alc_canvas_click_disarmed_for_derivative_view(qapp: QApplication):
+    # The derivative view marks its points non-toggleable (no greyed marker
+    # exists there to restore an exclusion), so a click must not exclude.
+    from types import SimpleNamespace
+
+    view = ALCScanView()
+    view.resize(600, 500)
+    view.show_scan(
+        np.array([150.0, 250.0]),
+        np.array([0.1, 0.1]),
+        np.array([0.01, 0.01]),
+        [12, 13],
+        x_label="B (G)",
+        y_label="dA/dx (%/G)",
+        toggleable=False,
+    )
+    view._canvas.draw()
+    toggled: list[int] = []
+    view.point_toggled.connect(toggled.append)
+    px, py = view._ax.transData.transform((150.0, 0.1))
+    event = SimpleNamespace(inaxes=view._ax, button=1, x=px, y=py, xdata=150.0, ydata=0.1)
+    view._on_canvas_press(event)
+    view._on_canvas_release(event)
+    assert toggled == []
+
+
+def test_alc_canvas_click_ignores_nonfinite_points(qapp: QApplication):
+    # A NaN point must not win the nearest-point test for every click.
+    from types import SimpleNamespace
+
+    view = ALCScanView()
+    view.resize(600, 500)
+    view.show_scan(
+        np.array([100.0, 200.0, 300.0]),
+        np.array([10.0, np.nan, 30.0]),
+        np.array([1.0, 1.0, 1.0]),
+        [11, 12, 13],
+        x_label="B (G)",
+        y_label="A (%)",
+    )
+    view._canvas.draw()
+    toggled: list[int] = []
+    view.point_toggled.connect(toggled.append)
+    # Click far from every finite point: nothing toggles (previously the NaN
+    # point's NaN distance passed the tolerance test for any click).
+    px, py = view._ax.transData.transform((150.0, 25.0))
+    event = SimpleNamespace(inaxes=view._ax, button=1, x=px, y=py, xdata=150.0, ydata=25.0)
+    view._on_canvas_press(event)
+    view._on_canvas_release(event)
+    assert toggled == []
+
 
 def test_alc_build_drops_surface_in_provenance(mainwindow: MainWindow, monkeypatch):
     # A run that cannot be integrated (no grouping) is dropped at build time
