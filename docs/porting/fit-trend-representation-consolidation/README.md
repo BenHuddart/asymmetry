@@ -552,7 +552,9 @@ the point is to converge with the user on what *intuitive* means here.
 
 ### 8.1 Method
 
-- Drive the real GUI end-to-end on the WiMDA corpus (`docs/testing/`) for each
+- Drive the real GUI end-to-end on the WiMDA corpus
+  (`~/Documents/WiMDA muon school-indexed/`, entry points `INDEX.md` +
+  `GROUND_TRUTH_INDEX.md`) for each
   representation: load → single fit → batch fit → trend → trend model-fit →
   save/reload. Note every moment of "wait, why did it do that?"
 - Batch the findings into a short questionnaire (use the `AskUserQuestion`
@@ -689,7 +691,7 @@ Treat this list as a seed, not a bound — the audit's value is finding the ones
    decisions, not a to-do list. Do not change behaviour before agreeing which
    inconsistencies to unify and which are intentional.
 2. Reproduce each cross-representation behaviour live in the GUI (use the WiMDA
-   Muon School corpus, `docs/testing/`) and capture the *current* UX for each of
+   Muon School corpus, `~/Documents/WiMDA muon school-indexed/`) and capture the *current* UX for each of
    the five representations: single fit → batch fit → trend, then switch views.
    **Run the §8 intuitiveness audit as part of this pass** — actively hunt for
    *other* rough edges beyond §6/§7, then quiz the user on each with a
