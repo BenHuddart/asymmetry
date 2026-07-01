@@ -984,6 +984,14 @@ def test_alc_scan_axis_limit_controls(qapp: QApplication):
     assert view._auto_x_btn.isChecked() and view._auto_y_btn.isChecked()
     assert view._x_min.value() <= 2000.0 and view._x_max.value() >= 5000.0
     assert view._y_min.value() <= 4.0 and view._y_max.value() >= 11.0
+    # Auto Y must frame the DATA, not the shaded baseline regions or peak/region
+    # handle lines (which span the whole axes): the frame stays snug around the
+    # 4–11 data even with regions and a peak present.
+    _set_regions(view, [(2100.0, 2600.0), (4200.0, 4800.0)])
+    view._add_peak("Gaussian")
+    view._peaks_table.setItem(0, 1, QTableWidgetItem("3500"))
+    view._render_plot()
+    assert view._y_min.value() > 2.0 and view._y_max.value() < 13.0
 
     # Manual X edit pins the axis and turns Auto X off (Auto Y untouched).
     view._x_min.setValue(2500.0)

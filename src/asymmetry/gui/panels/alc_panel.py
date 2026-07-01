@@ -387,23 +387,67 @@ class ALCScanView(QWidget):
             self._auto_y_btn.setChecked(False)
         self._render_plot()
 
+    def _auto_data_bounds(self) -> tuple[float, float, float, float] | None:
+        """Return ``(xmin, xmax, ymin, ymax)`` framing the scan data + overlays.
+
+        Computed from the plotted points (value ± error) and any fit overlays,
+        **not** from the axes' data limits: the shaded baseline regions and the
+        peak / region handle lines span the whole axes, so ``autoscale_view``
+        would frame to them and squash the data. Returns ``None`` when there is
+        nothing finite to frame.
+        """
+        plot = self._last_plot
+        if plot is None or plot["x"].size == 0:
+            return None
+        xs = [plot["x"]]
+        y_lo = [plot["value"] - plot["error"]]
+        y_hi = [plot["value"] + plot["error"]]
+        for curve in (self._baseline_curve, self._fit_curve):
+            if curve is not None:
+                cx, cy = curve
+                if cx.size and cx.shape == cy.shape:
+                    xs.append(cx)
+                    y_lo.append(cy)
+                    y_hi.append(cy)
+        x = np.concatenate(xs)
+        lo = np.concatenate(y_lo)
+        hi = np.concatenate(y_hi)
+        x = x[np.isfinite(x)]
+        lo = lo[np.isfinite(lo)]
+        hi = hi[np.isfinite(hi)]
+        if x.size == 0 or lo.size == 0 or hi.size == 0:
+            return None
+        return float(x.min()), float(x.max()), float(lo.min()), float(hi.max())
+
+    @staticmethod
+    def _padded(lo: float, hi: float, frac: float = 0.05) -> tuple[float, float]:
+        """Return ``(lo, hi)`` widened by *frac* of the span (both sides)."""
+        if hi <= lo:
+            pad = abs(lo) * frac or 1.0  # degenerate range: expand around it
+            return lo - pad, hi + pad
+        pad = (hi - lo) * frac
+        return lo - pad, hi + pad
+
     def _apply_axis_limits(self) -> None:
-        """Pin manual axes to their fields, frame auto axes, and sync the fields.
+        """Pin manual axes to their fields, frame auto axes from the data, and
+        sync the fields.
 
         Called at the end of :meth:`_render_plot` once every artist is drawn, so
-        the auto extent it reads back is the one the canvas will show.
+        the limits it writes back are the ones the canvas will show.
         """
-        if not self._auto_x:
+        bounds = self._auto_data_bounds()
+        if self._auto_x and bounds is not None:
+            self._ax.set_xlim(*self._padded(bounds[0], bounds[1]))
+        elif not self._auto_x:
             lo, hi = sorted((self._x_min.value(), self._x_max.value()))
             if lo < hi:
                 self._ax.set_xlim(lo, hi)
-        if not self._auto_y:
+        if self._auto_y and bounds is not None:
+            self._ax.set_ylim(*self._padded(bounds[2], bounds[3]))
+        elif not self._auto_y:
             lo, hi = sorted((self._y_min.value(), self._y_max.value()))
             if lo < hi:
                 self._ax.set_ylim(lo, hi)
-        # Frame any axis still in autoscale mode from the data limits (set_xlim/
-        # set_ylim above already turned autoscale off for the manual axes).
-        self._ax.autoscale_view()
         x0, x1 = self._ax.get_xlim()
         y0, y1 = self._ax.get_ylim()
         for field, value in (
