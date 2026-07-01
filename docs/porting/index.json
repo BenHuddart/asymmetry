@@ -1085,6 +1085,25 @@
       "src_path": "src/asymmetry/core/fitting/sc/lineshape.py",
       "updated": "2026-06-16",
       "notes": "Adds time-domain vortex-lattice lineshape fit components VortexLattice and VortexLatticePowder: P(t)=A*Re[exp(i(2*pi*gamma_mu*B0*t+phase))*R(t)], R(t)=<exp(i 2pi gamma (B(r)-B0) t)>_r the characteristic function of the modified-London triangular-FLL field distribution p(B) (skewed: sharp low-field cutoff, high-field core tail). Fixes the single-Gaussian underestimate of sigma_VL (window/binning-dependent, 0.7-3.1 on LiFeAs run 3366) by fitting the lineshape directly. Width calibrated to brandt_field_width_sigma[_powder] so lambda/Bc2 match the SC_Brandt_VortexLattice trend models; modified-London supplies only the shape. Params [A, field, phase, lambda_ab, Bc2], field pre-fixed; powder uses 3^(1/4) lambda_ab. Core sc/lineshape.py (cached FLL build); 12 tests (anchor, skew, R(0), degenerate, lambda^-2, round-trip lambda=195.1+/-0.1 nm). LiFeAs powder headline remains data-degeneracy-limited (fast VL + slow nuclear + Ag background overlap); documented in the wimda-eval cookbook."
+    },
+    {
+      "slug": "integral-scan-main-window",
+      "feature_name": "Integral (ALC) field-scan representation in the main window plot area",
+      "status": "study",
+      "path": "docs/porting/integral-scan-main-window",
+      "references": [
+        "Mantid MuonALC / ALCInterface (integrated-asymmetry field scan as primary plot)",
+        "WiMDA integral/ALC mode"
+      ],
+      "docs": {
+        "readme": "docs/porting/integral-scan-main-window/README.md",
+        "comparison": "docs/porting/integral-scan-main-window/comparison.md",
+        "implementation_options": "docs/porting/integral-scan-main-window/implementation-options.md",
+        "test_data": "docs/porting/integral-scan-main-window/test-data.md",
+        "verification_plan": "docs/porting/integral-scan-main-window/verification-plan.md"
+      },
+      "updated": "2026-07-01",
+      "notes": "GUI-only design pass (no code written). Goal: move the integral (ALC) field scan from the right-hand ALCScanView (Parameters dock) into the central plot area, since the per-run time spectra are only integrated in scan mode. Core (FieldScan/build_field_scan/fit_scan_baseline/fit_scan_model) and FitSeries.extra persistence (schema v10) stay untouched. Central plumbing: PlotWorkspacePanel stack holds only _time_panel/_frequency_panel and integral_scan normalizes to fb_asymmetry (plot_panel.py ~1606); dock swap via _alc_mode/_sync_fit_dock_mode (mainwindow.py ~4920-4972). Crux design tension: the integration window IS the draggable time-plot fit-range, so removing the time spectra collides with window selection. See implementation-options.md and handoff.md; six design questions to resolve with the user before implementing."
     }
   ]
 }
