@@ -23,29 +23,29 @@ The GUI workflow
 1. **Load the scan and select it.** Open the 31 runs and multi-select
    them in the Data Browser (click the first, then ``Shift``-click the
    last). The scan is built from the *selected* runs.
-2. **Enter ALC mode.** With the **F-B asymmetry** view active (the
-   default), the **ALC mode** toggle on the main toolbar is enabled —
-   click it (it turns red/active). The Fit and Parameters docks are
-   swapped for the bespoke ALC build panel and scan view.
+2. **Select the Integral scan representation.** Click **Integral scan**
+   in the **Time domain** cluster of the main toolbar. The central plot
+   area switches to the scan view; the **Fit** dock shows the build panel
+   and the **Parameters** dock shows the Baseline / Peaks / RF controls.
 
    .. note::
 
-      The toggle is available whenever the active representation is F-B
-      asymmetry, regardless of how many runs are selected. If it is
-      greyed out, you are in a frequency or groups view — its tooltip
-      ("Switch to the F-B asymmetry view to use ALC mode") points the way.
-      The two-or-more-runs requirement is checked when you build, not on
-      the toggle.
+      **Integral scan** is always available — the two-or-more-runs
+      requirement is checked when you build, not on the toolbar button.
 
-3. **Build the scan.** Raise the **Fit** dock to reach the ALC build
-   panel, set the **Integration window** — the time window each run's
-   asymmetry is integrated over — to ``0.2``–``8`` µs, and click
-   **Build Scan**. Each selected run collapses to one point.
-4. **Read and fit the resonance.** The Parameters dock (scan view) plots
-   integral asymmetry vs **B**. Use the x-axis selector (B / T / run), the
-   **dA/dB** derivative toggle, the **Baseline** section (subtract the
-   non-resonant background over chosen regions) and the **Peaks** section
-   (add a Gaussian or Lorentzian and **Fit peaks**) to fit the dip.
+3. **Build the scan.** In the **Fit** dock, set the **Integration
+   window** — the time window each run's asymmetry is integrated over —
+   to ``0.2``–``8`` µs (type it into the spinboxes, or drag the shaded
+   window on the strip beneath the scan), and click **Build Scan**. Each
+   selected run collapses to one point, and the scan appears in the
+   central plot area.
+4. **Read and fit the resonance.** The central scan plots integral
+   asymmetry vs **B**. Use the x-axis selector (B / T / run) and the
+   **dA/dB** derivative toggle above the plot; in the **Parameters** dock,
+   use the **Baseline** section (subtract the non-resonant background over
+   chosen regions) and the **Peaks** section (add a Gaussian or Lorentzian
+   and **Fit peaks**) to fit the dip. To drop a stray point, click it on
+   the scan (click again to restore).
 
 Expected result
 ---------------
