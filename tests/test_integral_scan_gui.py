@@ -903,13 +903,16 @@ def test_alc_canvas_click_on_point_emits_toggle(qapp: QApplication):
     view._on_canvas_release(moved)
     assert toggled == [12]
 
-    # A right/middle-button release mid-gesture must not complete the toggle.
+    # A right/middle-button release mid-gesture must not complete the toggle,
+    # and it must consume the pending candidate so a later stray left-release
+    # cannot fire it.
     view._on_canvas_press(event)
     right_release = SimpleNamespace(inaxes=view._ax, button=3, x=px, y=py, xdata=200.0, ydata=20.0)
     view._on_canvas_release(right_release)
     assert toggled == [12]
-    view._on_canvas_release(event)  # the left release still completes it
-    assert toggled == [12, 12]
+    assert view._toggle_candidate is None  # candidate cleared, not left armed
+    view._on_canvas_release(event)  # a stray left-release now toggles nothing
+    assert toggled == [12]
 
 
 def test_alc_canvas_click_disarmed_for_derivative_view(qapp: QApplication):
@@ -1081,6 +1084,59 @@ def test_alc_manual_degenerate_range_expands(qapp: QApplication):
     assert lo < 3000.0 < hi  # a valid window brackets the typed value
     assert view._x_min.value() == pytest.approx(lo)
     assert view._x_max.value() == pytest.approx(hi)
+
+
+def test_alc_show_scan_reset_view_false_keeps_manual_zoom(qapp: QApplication):
+    # A same-scan re-render (reset_view=False, as click-exclude uses) must keep
+    # a manual zoom instead of snapping both axes back to auto.
+    view = ALCScanView()
+    view.resize(700, 500)
+    args = (
+        np.array([2000.0, 3000.0, 4000.0, 5000.0]),
+        np.array([10.0, 4.0, 9.0, 11.0]),
+        np.full(4, 0.2),
+        [1, 2, 3, 4],
+    )
+    kw = {"x_label": "B (G)", "y_label": "A (%)"}
+    view.show_scan(*args, **kw)
+    view._auto_y_btn.setChecked(False)
+    view._y_min.setValue(0.0)
+    view._y_max.setValue(50.0)
+    view._on_y_limit_edited()
+
+    view.show_scan(*args, **kw, reset_view=False)
+    assert view._auto_y is False
+    assert view._ax.get_ylim() == pytest.approx((0.0, 50.0))
+    # A normal (reset_view=True) render still reframes.
+    view.show_scan(*args, **kw)
+    assert view._auto_y is True
+
+
+def test_integral_strip_release_ignores_nonleft_button(qapp: QApplication):
+    # A right/middle release mid-drag must not commit a window; the left drag
+    # stays live until the left button releases.
+    from types import SimpleNamespace
+
+    from asymmetry.gui.panels.alc_panel import IntegralTimeStrip
+
+    strip = IntegralTimeStrip()
+    strip.resize(600, 200)
+    t = np.linspace(0.0, 10.0, 100)
+    strip.show_dataset(t, np.zeros_like(t))
+    strip.set_window(2.0, 8.0)
+    strip._canvas.draw()
+    committed: list[tuple[float, float]] = []
+    strip.window_edited.connect(lambda a, b: committed.append((a, b)))
+
+    px, _ = strip._ax.transData.transform((8.0, 0.0))
+    strip._on_press(SimpleNamespace(inaxes=strip._ax, button=1, x=px, xdata=8.0))
+    mvx, _ = strip._ax.transData.transform((5.0, 0.0))
+    strip._on_motion(SimpleNamespace(inaxes=strip._ax, button=1, x=mvx, xdata=5.0))
+    strip._on_release(SimpleNamespace(inaxes=strip._ax, button=3, x=mvx, xdata=5.0))
+    assert committed == []  # non-left release does not commit
+    assert strip._drag_edge is not None  # drag still live
+    strip._on_release(SimpleNamespace(inaxes=strip._ax, button=1, x=mvx, xdata=5.0))
+    assert committed == [(2.0, 5.0)]  # left release commits
 
 
 def test_alc_build_drops_surface_in_provenance(mainwindow: MainWindow, monkeypatch):

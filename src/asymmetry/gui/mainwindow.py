@@ -9247,13 +9247,15 @@ class MainWindow(QMainWindow):
     _ALC_X_LABELS = {"field": "B (G)", "temperature": "T (K)", "run": "Run"}
     _ALC_DERIV_UNITS = {"field": "%/G", "temperature": "%/K", "run": "%/run"}
 
-    def _render_alc_scan(self) -> None:
+    def _render_alc_scan(self, *, reset_view: bool = True) -> None:
         """Render the current ALC scan in the chosen x-axis / derivative view.
 
         Reads the per-run scan data (``_alc_scan_points``) and the scan view's
         options, maps each run to the selected x (field / temperature / run),
         scales to percent, optionally takes the dA/dB derivative, and feeds the
         view. Re-invoked whenever the scan or its view options change.
+        *reset_view* is forwarded to :meth:`ALCScanView.show_scan`; pass False
+        for a same-scan re-render (click-exclude) so a manual zoom is kept.
         """
         # Any re-render (rebuild or x-axis/derivative change) invalidates a
         # previously-fitted baseline (it was tied to the old axis) and the RF fit.
@@ -9315,6 +9317,7 @@ class MainWindow(QMainWindow):
                 y_label=f"dA/dx ({unit})",
                 value_header=f"dA/dx ({unit})",
                 toggleable=False,
+                reset_view=reset_view,
             )
         else:
             self._alc_scan_view.show_scan(
@@ -9326,6 +9329,7 @@ class MainWindow(QMainWindow):
                 y_label=self._SCAN_QUANTITY,
                 value_header="A (%)",
                 excluded_mask=excluded_mask,
+                reset_view=reset_view,
             )
         self._update_alc_provenance(shown_runs=scan.run_numbers, x_label=x_label)
 
@@ -9374,7 +9378,8 @@ class MainWindow(QMainWindow):
         else:
             self._alc_excluded_runs.add(run)
             self._log_panel.log(f"Integral scan: excluded run {run} (click again to restore).")
-        self._render_alc_scan()
+        # Same scan, one point toggled — keep the user's current zoom.
+        self._render_alc_scan(reset_view=False)
         self._sync_alc_series_extra()
         self._mark_dirty()
 
@@ -10932,6 +10937,13 @@ class MainWindow(QMainWindow):
         # Availability must track every selection update — including "nothing
         # is current" (after removals) — or the data-gated buttons go stale.
         self._refresh_time_view_selector()
+
+        # In integral-scan mode the time strip previews the current run's
+        # spectrum and must track the selection at any count. The multi-select
+        # branch below refreshes it via _render_current_selection_plot, so cover
+        # the single/empty cases here (set_window is a no-op when unchanged).
+        if self._alc_mode and len(selected) <= 1:
+            self._refresh_integral_time_strip()
 
         # Multi-selection render mode depends on the plot-panel Overlay toggle.
         if len(selected) > 1:

@@ -939,16 +939,16 @@ class ALCScanView(QWidget):
         was_dragging = self._drag is not None
         self._drag = None
         self._drag_artist = None
+        # Consume the pending click candidate on *any* release so it cannot
+        # linger and fire on a later, unrelated left-release.
+        candidate = self._toggle_candidate
+        self._toggle_candidate = None
         if was_dragging:
             self._render_plot()  # restore the shaded span at the final edges
-        elif self._toggle_candidate is not None:
-            run, _x0, _y0 = self._toggle_candidate
+        elif candidate is not None and getattr(event, "button", None) == 1:
             # Only a released *left* button completes the click — a right/middle
             # release mid-gesture must not mutate scan membership.
-            if getattr(event, "button", None) != 1:
-                return
-            self._toggle_candidate = None
-            self.point_toggled.emit(run)
+            self.point_toggled.emit(candidate[0])
 
     # --- baseline controls ---------------------------------------------------
 
@@ -1193,6 +1193,7 @@ class ALCScanView(QWidget):
         value_header: str = "value",
         excluded_mask: NDArray[np.bool_] | None = None,
         toggleable: bool = True,
+        reset_view: bool = True,
     ) -> None:
         """Render a scan from parallel arrays (already in display units).
 
@@ -1201,6 +1202,8 @@ class ALCScanView(QWidget):
         *toggleable* arms click-to-exclude; the derivative view passes False
         because its points are pair-midpoints with no greyed marker to click
         back, so a stray click would exclude a run with no visible undo.
+        *reset_view* re-enables auto-scaling on both axes; pass False for a
+        same-scan re-render (e.g. click-exclude) so a manual zoom is kept.
         """
         n = np.asarray(x, dtype=float).size
         mask = (
@@ -1226,9 +1229,11 @@ class ALCScanView(QWidget):
         self._rf_results.setText("")
         # New data (build, x-axis or derivative change) reframes both axes: a
         # stale manual range in the old units/scale would hide the new scan.
-        # Annotation edits (region/peak drags) call _render_plot directly and
-        # keep the user's manual view.
-        self._reset_auto_scale()
+        # A same-scan re-render (click-exclude) passes reset_view=False to keep
+        # a manual zoom; annotation edits (region/peak drags) call _render_plot
+        # directly and likewise keep the user's manual view.
+        if reset_view:
+            self._reset_auto_scale()
         self._render_plot()
         # Keep the data-table dialog in sync if it is open.
         if self._data_dialog is not None and self._data_dialog.isVisible():
@@ -1471,8 +1476,11 @@ class IntegralTimeStrip(QWidget):
         else:
             self._render()
 
-    def _on_release(self, _event: object) -> None:
-        if self._drag_edge is None:
+    def _on_release(self, event: object) -> None:
+        # Only a left-button release ends the drag and commits the window; a
+        # right/middle release mid-gesture (left still held) is ignored so it
+        # cannot push a stray window into the canonical time plot.
+        if self._drag_edge is None or getattr(event, "button", None) != 1:
             return
         self._drag_edge = None
         lo, hi = self._window
