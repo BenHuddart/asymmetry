@@ -540,7 +540,71 @@ chosen. Explore both with the user before implementing.
 
 ---
 
-## 8. Navigation index (files, grouped by concern)
+## 8. Broader intuitiveness audit — actively hunt other rough edges
+
+§6 and §7 are the two questions surfaced so far, but they are almost certainly
+not the only non-intuitive parts of the fitting workflow. **A standing task for
+the next agent:** systematically walk the whole fit → trend workflow, identify
+*other* places where the behaviour is likely to surprise or confuse a user, and
+for each one **quiz the user** (present the current behaviour, ask whether it is
+intended, and offer a concrete recommendation). Do not silently "fix" things —
+the point is to converge with the user on what *intuitive* means here.
+
+### 8.1 Method
+
+- Drive the real GUI end-to-end on the WiMDA corpus (`docs/testing/`) for each
+  representation: load → single fit → batch fit → trend → trend model-fit →
+  save/reload. Note every moment of "wait, why did it do that?"
+- Batch the findings into a short questionnaire (use the `AskUserQuestion`
+  affordance): for each rough edge give **(a)** the current behaviour, **(b)**
+  why it may be unintuitive, **(c)** a recommended change, **(d)** the cost/risk.
+  Lead with a recommendation, don't just enumerate.
+- Fold confirmed items into the §5 backlog with the user's decision recorded.
+
+### 8.2 Candidate rough edges to probe (starting hypotheses, not findings)
+
+These came up during the review and are worth putting to the user — confirm each
+against live behaviour first, as line-level details may have shifted:
+
+- **Silent divergence / trend exclusion.** A single fit on a batch member changes
+  its model, marks it `diverged`, and drops it from the trend *by default*
+  (§5.3, `refresh_divergence` ✓). Is that visible enough? Should it warn?
+- **Silent supersede on re-run.** Re-running a batch with the same model/members/
+  window *replaces* the prior series (`remove_superseded_batches` ✓) — but a
+  changed window creates a second series. Is the de-dup rule discoverable?
+- **Automatic chain-seed + spurious-run reseed** happen invisibly, and only for
+  F-B batches (`fitting/series.py` ✓; not grouped, not frequency). Should the
+  reseed be surfaced ("run N reseeded from trend"), and should it exist for the
+  other representations?
+- **Batch vs global is implicit** in the global/local/fixed classifier — users may
+  not realise setting one parameter `global` silently changes the fit *kind*
+  (§3, `FitSeries.is_global` ✓). Is the classifier UI clear about this?
+- **One-point series suppression.** A single-run grouped fit is silently *not* a
+  series and won't appear in the trend selector (`_record_grouped_fit_series` ✓).
+  Intuitive, or surprising when a user expects a trend "point"?
+- **Which parameters are trendable.** Nuisance params (`N0`, background, amplitude,
+  `relative_phase`) are always per-group-local and never trended; fractions are
+  un-normalised relative weights (§4). Is it clear in the panel which quantities
+  are trendable and which are nuisances?
+- **Shared fit window across a batch.** All members share one fit range; there is
+  no per-run window. Is that the expected model?
+- **Cost function / statistics choice.** Gaussian √-weighted LSQ vs Poisson/Cash
+  count-domain (`CostFactory` ✓) — is it obvious which is active, and why?
+- **MINOS vs HESSE uncertainties** — when does the user get asymmetric errors, and
+  is that legible?
+- **Carry-forward never crosses representations** (§7) and the "Seed" vs "Value"
+  column semantics — confirm these read intuitively.
+- **Link groups / affine ties** (WiMDA equality + equal-spacing) — is the
+  constraint UI discoverable and its effect visible in results?
+- **Wizard vs manual model building** — two entry points to a model; is the
+  relationship between them clear?
+
+Treat this list as a seed, not a bound — the audit's value is finding the ones
+*not* listed here.
+
+---
+
+## 9. Navigation index (files, grouped by concern)
 
 ### Core — representation spine (read these first) ✓
 - `src/asymmetry/core/representation/base.py` — `Representation`, `FitSlot`,
@@ -612,7 +676,7 @@ chosen. Explore both with the user before implementing.
 
 ---
 
-## 9. Suggested next steps for the implementing agent
+## 10. Suggested next steps for the implementing agent
 
 0. **Lead with the two design explorations, §6 and §7.** §6 = how should a
    DataGroup and a batch FitSeries interact (Options A/B/C)? §7 = which fit
@@ -627,6 +691,9 @@ chosen. Explore both with the user before implementing.
 2. Reproduce each cross-representation behaviour live in the GUI (use the WiMDA
    Muon School corpus, `docs/testing/`) and capture the *current* UX for each of
    the five representations: single fit → batch fit → trend, then switch views.
+   **Run the §8 intuitiveness audit as part of this pass** — actively hunt for
+   *other* rough edges beyond §6/§7, then quiz the user on each with a
+   recommendation (don't just fix them).
 3. Prefer a **core-first** unification (a single series-fit orchestration + one
    coordinate resolver + one "when is it a series?" rule), with GUI recorders
    collapsing onto it — matching the existing core/GUI split invariant.
