@@ -35,6 +35,22 @@ def _fit_result() -> FitResult:
     return FitResult(success=True, reduced_chi_squared=1.0, parameters=ps)
 
 
+def test_first_ever_selection_shows_no_badge(qapp: QApplication) -> None:
+    """The very first run shown in a fresh panel holds the untouched default,
+
+    not content inherited from a real prior selection -- badging it "carried"
+    would be exactly the kind of false provenance claim this feature exists
+    to prevent.
+    """
+    panel = FitPanel()
+    panel.set_single_fit_restore_provider(lambda ds: None)
+
+    panel.set_dataset(_dataset(2960))
+
+    assert panel._single_fit_provenance == "representation_default"
+    assert panel._single_tab._carry_forward_badge.isHidden()
+
+
 def test_own_slot_and_unseen_run_carries_with_named_source(qapp: QApplication) -> None:
     """Fit run A, select unseen run B: badge names A as the carry source."""
     panel = FitPanel()
@@ -42,11 +58,6 @@ def test_own_slot_and_unseen_run_carries_with_named_source(qapp: QApplication) -
     panel.set_single_fit_restore_provider(lambda ds: stored.get(int(ds.run_number)) if ds else None)
 
     panel.set_dataset(_dataset(2960))
-    # No prior run exists yet, so nothing is a *named* carry source, but the
-    # form is still unfit.
-    assert panel._single_fit_provenance == "carried_from_run"
-    assert not panel._single_tab._carry_forward_badge.isHidden()
-
     panel._single_tab.fit_completed.emit(_fit_result(), None, None)
     stored[2960] = panel.get_single_form_state()
 
@@ -82,7 +93,7 @@ def test_session_cached_unfit_form_shows_generic_badge(qapp: QApplication) -> No
     panel = FitPanel()
     panel.set_single_fit_restore_provider(lambda ds: None)
 
-    panel.set_dataset(_dataset(2960))  # first-ever run: carried, no named source
+    panel.set_dataset(_dataset(2960))  # first-ever run: untouched default, no badge
     panel.set_dataset(_dataset(2963))  # unseen, carries from 2960
     panel.set_dataset(_dataset(2960))  # revisits 2960 -- session-cached, never fit
 

@@ -2169,6 +2169,13 @@ class SingleFitTab(QWidget):
         self._carry_forward_badge_dismiss_btn = QPushButton("✕")
         self._carry_forward_badge_dismiss_btn.setToolTip("Dismiss")
         self._carry_forward_badge_dismiss_btn.setFixedWidth(20)
+        # Match the flat, muted "✕" chrome used elsewhere (see dock_header.py's
+        # close button) instead of the default Qt bezel.
+        self._carry_forward_badge_dismiss_btn.setStyleSheet(
+            "QPushButton { border: none; background: transparent; padding: 0 4px;"
+            f" color: {tokens.TEXT_MUTED}; }}"
+            f"QPushButton:hover {{ background-color: {tokens.SURFACE_HI}; border-radius: 3px; }}"
+        )
         self._carry_forward_badge_dismiss_btn.clicked.connect(self._carry_forward_badge.hide)
         badge_layout.addWidget(self._carry_forward_badge_dismiss_btn)
         self._carry_forward_badge.hide()
@@ -8245,12 +8252,20 @@ class FitPanel(QWidget):
             if self._single_fit_restore_provider is not None
             else None
         )
+        is_real_fit = isinstance(payload, dict) and bool(payload)
         if payload is not None:
             self.restore_single_fit_ui(payload)
-            self._set_single_fit_provenance("own_slot" if payload else "representation_default")
+            self._set_single_fit_provenance("own_slot" if is_real_fit else "representation_default")
         elif run_number in self._single_state_by_run:
             self._single_tab.restore_state(self._single_state_by_run[run_number])
             self._set_single_fit_provenance("carried_session")
+        elif previous_run_number is None:
+            # Nothing has ever been shown in this panel before: the form still
+            # holds its untouched construction-time default, not content
+            # inherited from a real prior selection. Badging that as "carried"
+            # would be as misleading as this fix is meant to prevent.
+            self._carry_forward_single_fit_form()
+            self._set_single_fit_provenance("representation_default")
         else:
             # An unseen dataset the user has not customised inherits the model
             # and parameter setup currently shown (carry-forward) instead of
@@ -8273,21 +8288,16 @@ class FitPanel(QWidget):
 
     def _update_single_fit_badge(self) -> None:
         kind = self._single_fit_provenance
+        if kind not in ("carried_from_run", "carried_session"):
+            self._single_tab.clear_carry_forward_badge()
+            return
         projection = self._active_single_projection
         suffix = f" ({projection})" if projection else ""
-        if kind == "carried_from_run":
-            source_run = self._single_fit_carry_source_run
-            if source_run is not None:
-                text = f"Model carried from run {source_run}{suffix} — not fitted for this run"
-            else:
-                text = f"Model carried{suffix} — not fitted for this run"
-            self._single_tab.show_carry_forward_badge(text)
-        elif kind == "carried_session":
-            self._single_tab.show_carry_forward_badge(
-                f"Model carried{suffix} — not fitted for this run"
-            )
-        else:
-            self._single_tab.clear_carry_forward_badge()
+        source_run = self._single_fit_carry_source_run
+        origin = f" from run {source_run}" if source_run is not None else ""
+        self._single_tab.show_carry_forward_badge(
+            f"Model carried{origin}{suffix} — not fitted for this run"
+        )
 
     def _carry_forward_single_fit_form(self) -> None:
         """Inherit the previous selection's model + parameter setup, sans result.
