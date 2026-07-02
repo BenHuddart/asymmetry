@@ -10,18 +10,15 @@ scrolling the MaxEnt panel changed "Spectrum points" 1024 → 512 with no intent
 ``Qt.StrongFocus`` so a wheel event never focuses them, and (b) ignoring a wheel
 event when they are not focused, so it propagates to the enclosing scroll area
 instead of changing the value. A focused spin box still wheels normally — the
-user has deliberately clicked/tabbed into it.
-
-Prefer these classes at the construction site. :func:`install_wheel_guard`
-retrofits an already-built spin box for the rare case where the class cannot be
-swapped (e.g. one created by shared code).
+user has deliberately clicked/tabbed into it. Use them at the construction site
+in place of the plain Qt classes.
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QObject, Qt
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QWheelEvent
-from PySide6.QtWidgets import QAbstractSpinBox, QDoubleSpinBox, QSpinBox
+from PySide6.QtWidgets import QDoubleSpinBox, QSpinBox
 
 
 class _WheelGuardMixin:
@@ -47,28 +44,3 @@ class NoScrollSpinBox(_WheelGuardMixin, QSpinBox):
 
 class NoScrollDoubleSpinBox(_WheelGuardMixin, QDoubleSpinBox):
     """A ``QDoubleSpinBox`` that only wheels when focused."""
-
-
-class _WheelGuardFilter(QObject):
-    """Event filter that swallows wheel events on an unfocused spin box."""
-
-    def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # noqa: N802 - Qt override
-        if event.type() == QEvent.Type.Wheel and isinstance(obj, QAbstractSpinBox):
-            if not obj.hasFocus():
-                # Consume it here: unlike a widget's own wheelEvent().ignore(),
-                # an event filter cannot re-dispatch to the parent, but swallowing
-                # still prevents the unintended value change (the scroll simply
-                # does not advance while the pointer is over the spin box).
-                return True
-        return super().eventFilter(obj, event)
-
-
-def install_wheel_guard(spinbox: QAbstractSpinBox) -> None:
-    """Retrofit *spinbox* so an unfocused wheel event does not change its value.
-
-    Prefer :class:`NoScrollSpinBox`/:class:`NoScrollDoubleSpinBox` at the
-    construction site; use this only when the class cannot be swapped. The guard
-    filter is parented to *spinbox*, so it lives exactly as long as the widget.
-    """
-    spinbox.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-    spinbox.installEventFilter(_WheelGuardFilter(spinbox))

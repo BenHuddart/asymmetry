@@ -3461,7 +3461,15 @@ class DataBrowserPanel(QWidget):
         """
         if self._current_sort_column >= 0:
             return False  # respect an explicit user sort
-        run_order = [entry for entry in self._display_order if isinstance(entry, int)]
+        # Judge "ordered" by the real loaded runs only. Combined-dataset rows
+        # carry negative sentinel ids that would always sort before positive
+        # runs, so including them would spuriously report "unordered" (and then
+        # yank the combined row to the top) even when every real run is in order.
+        run_order = [
+            entry
+            for entry in self._display_order
+            if isinstance(entry, int) and entry not in self._combined_datasets
+        ]
         if run_order == sorted(run_order):
             return False  # already ascending by run number
         self._current_sort_column = 0

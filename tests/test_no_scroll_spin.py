@@ -18,12 +18,11 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QWheelEvent
-from PySide6.QtWidgets import QApplication, QDoubleSpinBox, QSpinBox
+from PySide6.QtWidgets import QApplication, QSpinBox
 
 from asymmetry.gui.widgets.no_scroll_spin import (
     NoScrollDoubleSpinBox,
     NoScrollSpinBox,
-    install_wheel_guard,
 )
 
 
@@ -100,20 +99,6 @@ def test_focus_policy_is_strong(qapp):
     # the box, which is what lets an unfocused wheel change the value.
     assert NoScrollSpinBox().focusPolicy() == Qt.FocusPolicy.StrongFocus
     assert NoScrollDoubleSpinBox().focusPolicy() == Qt.FocusPolicy.StrongFocus
-
-
-def test_install_wheel_guard_retrofits_plain_spinbox(qapp):
-    spin = QDoubleSpinBox()
-    spin.setRange(0, 100)
-    spin.setValue(10.0)
-    install_wheel_guard(spin)
-    assert spin.focusPolicy() == Qt.FocusPolicy.StrongFocus
-    assert not spin.hasFocus()
-
-    _send_wheel(qapp, spin)
-
-    assert spin.value() == 10.0
-    spin.deleteLater()
 
 
 def test_plain_spinbox_is_the_thing_being_guarded_against(qapp):

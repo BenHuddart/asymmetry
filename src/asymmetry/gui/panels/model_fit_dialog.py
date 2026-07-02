@@ -37,6 +37,7 @@ from asymmetry.core.fitting.parameter_models import (
     ParameterModelFit,
     component_names_for_x,
     fit_parameter_model,
+    is_order_parameter_observable,
     suggest_trend_seeds,
     validate_fit_windows,
 )
@@ -226,41 +227,6 @@ def _component_pool_for_context(x_key: str, parameter_name: str) -> list[str]:
     return [name for name in available if name != "Lambda_bg"]
 
 
-#: Fitted observables that track a magnetic order parameter — a muon precession
-#: frequency or an internal/local field. Both grow below ``T_c`` and vanish at
-#: it (``∝ M(T)``), so an ``OrderParameter`` trend is the physical default for
-#: them versus temperature (F4). Applied/longitudinal fields (``B_L``, ``B_ext``)
-#: and RF drives (``nu_RF``) are deliberately excluded — they do not follow the
-#: order parameter.
-_ORDER_PARAMETER_Y_BASENAMES: frozenset[str] = frozenset(
-    {
-        "frequency",
-        "freq",
-        "nu",
-        "nu0",
-        "omega",
-        "b_loc",
-        "bloc",
-        "b_local",
-        "blocal",
-        "b_int",
-        "bint",
-        "b_internal",
-    }
-)
-
-
-def _is_order_parameter_observable(parameter_name: str) -> bool:
-    """True when *parameter_name* is a precession frequency / internal field.
-
-    Keyed off the fitted parameter's base name (component suffix stripped), so
-    ``frequency_2`` matches while the applied longitudinal field ``B_L`` and the
-    RF drive ``nu_RF`` do not.
-    """
-    base = _base_param_name(parameter_name).strip().lower()
-    return base in _ORDER_PARAMETER_Y_BASENAMES
-
-
 def _default_component_for_context(x_key: str, parameter_name: str, available: list[str]) -> str:
     """Choose the default trend component for a fresh range (F4).
 
@@ -269,10 +235,12 @@ def _default_component_for_context(x_key: str, parameter_name: str, available: l
     versus temperature, default to ``OrderParameter`` instead — its data-aware
     ``T_c``/amplitude seeds (see :func:`suggest_trend_seeds`) then make the fit
     converge out of the box, so the user need not type the component by name.
+    The "is this an order-parameter observable" judgement lives in core
+    (:func:`is_order_parameter_observable`), beside the seed logic.
     """
     if (
         x_key == "temperature"
-        and _is_order_parameter_observable(parameter_name)
+        and is_order_parameter_observable(parameter_name)
         and "OrderParameter" in available
     ):
         return "OrderParameter"

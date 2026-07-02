@@ -20,6 +20,7 @@ from asymmetry.core.fitting.parameter_models import (
     ModelFitRange,
     ParameterCompositeModel,
     ParameterModelFit,
+    is_order_parameter_observable,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.model_fit_dialog import (
@@ -30,7 +31,6 @@ from asymmetry.gui.panels.model_fit_dialog import (
     _ComponentSelectorButton,
     _default_component_for_context,
     _format_model_param_label,
-    _is_order_parameter_observable,
 )
 from asymmetry.gui.widgets.component_info_dialog import build_component_info_html
 
@@ -810,10 +810,10 @@ def test_quality_verdict_silent_for_unknown_point_count(qapp: QApplication) -> N
 
 def test_is_order_parameter_observable_matches_frequency_and_internal_field():
     for name in ("frequency", "freq", "nu", "nu0", "frequency_2", "B_loc", "Bint"):
-        assert _is_order_parameter_observable(name), name
+        assert is_order_parameter_observable(name), name
     # Applied/longitudinal fields and RF drives are NOT order-parameter observables.
     for name in ("B_L", "B_ext", "nu_RF", "Lambda", "sigma", "A0", "b", "m"):
-        assert not _is_order_parameter_observable(name), name
+        assert not is_order_parameter_observable(name), name
 
 
 def test_default_component_prefers_order_parameter_for_temperature_frequency():

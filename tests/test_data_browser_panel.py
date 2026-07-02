@@ -2096,3 +2096,20 @@ def test_sort_by_run_number_respects_explicit_user_sort(qapp: QApplication) -> N
     assert panel.sort_by_run_number_if_unordered() is False
     assert _run_display_order(panel) == order_before
     assert panel._current_sort_column == 3
+
+
+def test_sort_by_run_number_ignores_combined_dataset_sentinel(qapp: QApplication) -> None:
+    """A combined-dataset row (negative sentinel id) must not spuriously trip the
+    ordered-check: real runs 100, 101 are in order, so no sort should fire even
+    though -1 sorts before them."""
+    panel = DataBrowserPanel()
+    for rn in (100, 101):
+        panel.add_dataset(_dataset(rn))
+    # Simulate a co-added row sitting after the ordered real runs.
+    panel._combined_datasets[-1] = [100, 101]
+    panel._display_order = [100, 101, -1]
+    assert panel._current_sort_column == -1  # no user sort
+
+    assert panel.sort_by_run_number_if_unordered() is False
+    assert panel._display_order == [100, 101, -1]  # combined row not yanked to top
+    assert panel._current_sort_column == -1  # no sticky sort state imposed
