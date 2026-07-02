@@ -122,6 +122,37 @@ def test_source_runs_accessor_decodes_group_keys():
     assert series.source_runs() == [2961]
 
 
+def test_signature_distinguishes_group_subsets_over_same_source_runs():
+    """Two grouped fits over the same source run(s) but different detector-group
+    subsets are DISTINCT series and must not supersede/merge each other.
+
+    Regression: keying identity on the deduplicated physical runs (source_runs())
+    collapsed both to the same signature; keying on the synthetic (run, group)
+    member keys keeps them apart.
+    """
+    model = ProjectModel()
+    two_groups = FitSeries(
+        "g-2",
+        RepresentationType.TIME_GROUPS,
+        member_kind="groups",
+        member_run_numbers=[-2961001, -2961002],  # run 2961, groups 1 & 2
+        canonical_model=_model(),
+    )
+    three_groups = FitSeries(
+        "g-3",
+        RepresentationType.TIME_GROUPS,
+        member_kind="groups",
+        member_run_numbers=[-2961001, -2961002, -2961003],  # run 2961, groups 1-3
+        canonical_model=_model(),
+    )
+    model.add_batch(two_groups)
+    model.add_batch(three_groups)
+    # Same source run + same model, but different group subsets → NOT duplicates.
+    assert model.superseded_batch_ids(three_groups) == []
+    assert model.dedupe_batches() == []
+    assert set(model.batches) == {"g-2", "g-3"}
+
+
 def test_signature_distinguishes_representation():
     model = ProjectModel()
     model.add_batch(_series("b1"))

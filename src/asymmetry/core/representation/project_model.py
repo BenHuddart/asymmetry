@@ -34,11 +34,16 @@ def _series_signature(series: FitSeries) -> tuple:
     a different Global/Local split (or a different fit window) supersedes the
     earlier series in place (D4) rather than accumulating a duplicate trend pill.
     """
-    # source_runs() resolves group members through the synthetic-key fallback, so
-    # a group series with a partial member_source_run map keys off the same runs
-    # its label renders from — the two never disagree and dedupe cannot collapse
-    # distinct group fits down to an empty () member set.
-    members = tuple(series.source_runs())
+    # Key on the actual member keys, not the deduplicated physical runs: for a
+    # group series ``member_run_numbers`` are the synthetic ``(run, detector-group)``
+    # keys, so two grouped fits over the *same* source runs but *different*
+    # detector-group subsets stay distinct (keying on ``source_runs()`` would
+    # collapse them and let one wrongly supersede/merge the other). The keys are
+    # always populated — even for a legacy group series with an empty
+    # ``member_source_run`` map — so this never degrades to an empty ``()`` set
+    # the way ``member_source_run.values()`` would. For a run series the keys are
+    # the physical run numbers, so this is unchanged from ``source_runs()``.
+    members = tuple(sorted(series.member_run_numbers))
     model_key: str | None = None
     if series.canonical_model is not None:
         try:
@@ -218,6 +223,13 @@ class ProjectModel:
             _inherit_label(keeper, [self.batches.get(other_id) for other_id in dropped])
             for other_id in dropped:
                 self.remove_batch(other_id, refresh=False)
+            # ``remove_batch`` clears a member FitSlot only when it referenced the
+            # dropped id. Normally every slot already points at the keeper (the
+            # most recent twin) so nothing is cleared — but a legacy project whose
+            # slot pointed at a dropped twin would just have lost its series link.
+            # Re-point any now-unlinked keeper member back to the keeper so no run
+            # is silently orphaned from the surviving series.
+            self._relink_unlinked_members(keeper)
             records.append(
                 {
                     "kept": keeper_id,
@@ -257,6 +269,24 @@ class ProjectModel:
         if refresh:
             self.refresh_divergence()
         return series
+
+    def _relink_unlinked_members(self, batch: FitSeries) -> None:
+        """Point *batch*'s currently-unlinked member FitSlots back at *batch*.
+
+        Only touches slots whose ``batch_id`` is ``None`` (either never linked or
+        cleared while dropping a duplicate twin) — a slot already owned by another
+        batch is left alone. Restores the batch's provenance so the run rejoins the
+        series' trend.
+        """
+        provenance = "global" if batch.is_global() else "batch"
+        for run_number in batch.source_runs():
+            representation = self.representation(run_number, batch.rep_type)
+            if representation is None:
+                continue
+            slot = representation.fit
+            if slot.batch_id is None:
+                slot.batch_id = batch.batch_id
+                slot.provenance = provenance
 
     def rename_batch(self, batch_id: str, label: str | None) -> bool:
         """Set the display label of the batch with *batch_id*.

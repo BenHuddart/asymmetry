@@ -468,3 +468,34 @@ def test_remove_data_group_leaves_its_series_untouched():
     assert model.data_group("grp-1") is None
     assert model.batch("b1") is linked
     assert linked.source_group_id == "grp-1"
+
+
+def test_dedupe_relinks_member_slot_that_pointed_at_dropped_twin():
+    """A legacy project whose member FitSlot referenced an EARLIER duplicate twin
+    must not lose its series link when dedupe drops that twin.
+
+    remove_batch clears a slot only when it references the dropped id; without a
+    relink step the run would be orphaned from the surviving keeper (batch_id
+    cleared, provenance 'single') even though the keeper still lists it.
+    """
+    model = ProjectModel()
+    canonical = _model_dict()
+    # Two identically-keyed twins over the same members+model (duplicate era).
+    old = _batch("old", model=canonical, runs=(10, 11))
+    new = _batch("new", model=canonical, runs=(10, 11))
+    model.add_batch(old)
+    model.add_batch(new)
+    # Legacy inconsistency: run 10's slot points at the OLD (to-be-dropped) twin,
+    # run 11's at the keeper.
+    rep10 = model.ensure_dataset(10).ensure(_FB)
+    rep10.fit = FitSlot(model=canonical, provenance="batch", batch_id="old")
+    rep11 = model.ensure_dataset(11).ensure(_FB)
+    rep11.fit = FitSlot(model=canonical, provenance="batch", batch_id="new")
+
+    records = model.dedupe_batches()
+    assert len(records) == 1 and records[0]["kept"] == "new"
+    assert set(model.batches) == {"new"}
+    # Run 10's slot was repointed at the keeper rather than orphaned.
+    assert rep10.fit.batch_id == "new"
+    assert rep10.fit.provenance == "batch"
+    assert rep11.fit.batch_id == "new"
