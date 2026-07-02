@@ -44,22 +44,13 @@ def composite_model_label(composite: object) -> str | None:
     return " ".join(parts)
 
 
-def _source_runs(series: FitSeries) -> list[int]:
-    """Ordered, de-duplicated physical source runs backing *series*' members."""
-    if series.member_kind == "groups":
-        runs = {series.source_run_for(key) for key in series.member_run_numbers}
-    else:
-        runs = {int(r) for r in series.member_run_numbers}
-    return sorted(runs)
-
-
 def member_range(series: FitSeries) -> str:
     """Return the compact member-range string for *series*.
 
     ``""`` when it has no members, ``"2960"`` for a single run, ``"2923–2960"``
     for a span; detector-group series gain a ``"groups "`` prefix.
     """
-    runs = _source_runs(series)
+    runs = series.source_runs()
     if not runs:
         return ""
     span = f"{runs[0]}" if len(runs) == 1 else f"{runs[0]}–{runs[-1]}"

@@ -5760,6 +5760,10 @@ class MainWindow(QMainWindow):
                 f"'{record['label']}' (dropped {dropped}).",
                 tag="fit",
             )
+        # Seed the batch-id counter past any loaded "batch-N" so the next fit
+        # recorded this session cannot allocate an id that collides with — and
+        # silently overwrites — a batch restored from the project.
+        self._reseed_batch_index()
         self._lazy_recompute_failures = set()
         self._pending_recipe_recompute = set()
         for run_number, container in self._project_model.datasets.items():
@@ -8737,7 +8741,10 @@ class MainWindow(QMainWindow):
             if not row_dicts:
                 continue
             batch_id = series.batch_id
-            name = series.display_name(self._series_fallback_name(series))
+            # `label or fallback` (not display_name(fallback)) so the fallback —
+            # a source-run walk + browser group lookup — is skipped for the common
+            # renamed-chip case on this per-refresh loop.
+            name = series.label or self._series_fallback_name(series)
             entries.append((batch_id, name, row_dicts))
             shared = series.shared_parameters()
             if shared:
@@ -8968,6 +8975,21 @@ class MainWindow(QMainWindow):
         batch_id = f"batch-{self._next_batch_index}"
         self._next_batch_index += 1
         return batch_id
+
+    def _reseed_batch_index(self) -> None:
+        """Advance the batch-id counter past every loaded ``batch-N`` id.
+
+        The counter resets to 1 per window; without this a freshly recorded
+        batch after opening a saved project would reallocate ``batch-1`` and
+        overwrite the restored series of the same id (its results, label and
+        member pointers). Called after the project model is (re)loaded.
+        """
+        highest = 0
+        for batch_id in self._project_model.batches:
+            prefix, sep, suffix = str(batch_id).partition("-")
+            if prefix == "batch" and sep and suffix.isdigit():
+                highest = max(highest, int(suffix))
+        self._next_batch_index = max(self._next_batch_index, highest + 1)
 
     def _record_fit_series(
         self,
@@ -9893,11 +9915,10 @@ class MainWindow(QMainWindow):
         label, so they only reach the positional "Series N" fallback defensively.
         """
         if not series.is_computed:
-            if series.member_kind == "groups":
-                source_runs = sorted(set(series.member_source_run.values()))
-            else:
-                source_runs = list(series.member_run_numbers)
-            group_name = self._data_group_name_for_runs(source_runs)
+            # series.source_runs() so the group-name lookup keys off the same runs
+            # member_range renders from (a partial member_source_run map otherwise
+            # leaves the two disagreeing — the suffix silently dropped).
+            group_name = self._data_group_name_for_runs(series.source_runs())
             return default_series_label(series, group_name=group_name)
         # Positional fallback, consistent with the trend panel's series ordering.
         rep_type = series.rep_type
@@ -9945,7 +9966,7 @@ class MainWindow(QMainWindow):
             series = compatible[0]
         else:
             labels = [
-                f"{s.display_name(self._series_fallback_name(s))} ({len(s.member_run_numbers)} runs)"
+                f"{s.label or self._series_fallback_name(s)} ({len(s.member_run_numbers)} runs)"
                 for s in compatible
             ]
             choice, ok = QInputDialog.getItem(
@@ -9955,7 +9976,7 @@ class MainWindow(QMainWindow):
                 return
             series = compatible[labels.index(choice)]
 
-        series_label = series.display_name(self._series_fallback_name(series))
+        series_label = series.label or self._series_fallback_name(series)
         if self._add_single_fit_to_series(run, series.batch_id):
             self._log_panel.log(f"Added run {run} to {series_label}.", tag="fit")
             self.statusBar().showMessage(f"Added run {run} to {series_label}.")

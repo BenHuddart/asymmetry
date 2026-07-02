@@ -19,24 +19,25 @@ from asymmetry.core.data.dataset import Run
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.representation.base import RepresentationType
 from asymmetry.core.representation.container import DatasetRepresentations
+from asymmetry.core.representation.naming import default_series_label
 from asymmetry.core.representation.series import FitSeries, canonical_model_matches
 
 
 def _series_signature(series: FitSeries) -> tuple:
     """A comparable identity for a fit series: same → a duplicate re-run.
 
-    Captures the representation (and projection, when a series is scoped to one),
-    member kind + source runs, and the normalised canonical model. Parameter
-    classification (``param_roles``) and the fit window (``fit_range``) are
-    deliberately **excluded**: they are attributes of a run, not identity, so
-    re-running the same members+model with a different Global/Local split (or a
-    different fit window) supersedes the earlier series in place (D4) rather than
-    accumulating a duplicate trend pill.
+    Captures the representation, member kind + physical source runs, and the
+    normalised canonical model. Parameter classification (``param_roles``) and
+    the fit window (``fit_range``) are deliberately **excluded**: they are
+    attributes of a run, not identity, so re-running the same members+model with
+    a different Global/Local split (or a different fit window) supersedes the
+    earlier series in place (D4) rather than accumulating a duplicate trend pill.
     """
-    if series.member_kind == "groups":
-        members = tuple(sorted(set(series.member_source_run.values())))
-    else:
-        members = tuple(sorted(set(series.member_run_numbers)))
+    # source_runs() resolves group members through the synthetic-key fallback, so
+    # a group series with a partial member_source_run map keys off the same runs
+    # its label renders from — the two never disagree and dedupe cannot collapse
+    # distinct group fits down to an empty () member set.
+    members = tuple(series.source_runs())
     model_key: str | None = None
     if series.canonical_model is not None:
         try:
@@ -44,17 +45,28 @@ def _series_signature(series: FitSeries) -> tuple:
         except (ValueError, KeyError, TypeError):
             normalised = series.canonical_model
         model_key = json.dumps(normalised, sort_keys=True, default=str)
-    # A series is not projection-scoped today (batches span a whole rep_type),
-    # but the key reserves the slot so a future per-projection batch does not
-    # collide with the whole-representation one over the same members.
-    projection = series.extra.get("projection") if isinstance(series.extra, dict) else None
     return (
         str(series.rep_type),
-        projection,
         series.member_kind,
         members,
         model_key,
     )
+
+
+def _inherit_label(survivor: FitSeries, donors: list[FitSeries | None]) -> None:
+    """Give *survivor* a user label from the first *donor* that has one.
+
+    Only fills a *missing* label — a label already on the survivor (e.g. a rename
+    of the incoming series) is never clobbered. Shared by the two twin-collapsing
+    paths (live re-run supersession and load-time dedupe) so they name a
+    collapsed series identically.
+    """
+    if survivor.label:
+        return
+    for donor in donors:
+        if donor is not None and donor.label:
+            survivor.label = donor.label
+            return
 
 
 class ProjectModel:
@@ -128,13 +140,13 @@ class ProjectModel:
             return removed
         # The signatures are identical, so there is normally exactly one twin;
         # if a legacy project carried several, inherit the first (oldest) one's
-        # identity and drop the rest.
+        # identity and drop the rest. Defer divergence to a single sweep.
         predecessor = self.batches.get(removed[0])
         for batch_id in removed:
-            self.remove_batch(batch_id)
+            self.remove_batch(batch_id, refresh=False)
+        self.refresh_divergence()
         if predecessor is not None:
-            if not series.label and predecessor.label:
-                series.label = predecessor.label
+            _inherit_label(series, [predecessor])
             series.batch_id = predecessor.batch_id
         return removed
 
@@ -162,44 +174,42 @@ class ProjectModel:
             if len(ids) < 2:
                 continue
             # ``self.batches`` preserves the saved (recording) order, so the last
-            # id is the most recent — keep it and drop its earlier twins.
+            # id is the most recent — keep it and drop its earlier twins. Its
+            # member FitSlots already reference it, so dropping earlier twins
+            # never clears the keeper's slots.
             keeper_id = ids[-1]
             dropped = ids[:-1]
             keeper = self.batches[keeper_id]
-            if not keeper.label:
-                for other_id in dropped:
-                    other = self.batches.get(other_id)
-                    if other is not None and other.label:
-                        keeper.label = other.label
-                        break
+            _inherit_label(keeper, [self.batches.get(other_id) for other_id in dropped])
             for other_id in dropped:
-                self.remove_batch(other_id)
+                self.remove_batch(other_id, refresh=False)
             records.append(
                 {
                     "kept": keeper_id,
                     "dropped": list(dropped),
-                    "label": keeper.display_name(keeper_id),
+                    # Friendly default (model · run-range) for the log, not the
+                    # opaque batch id, when the survivor carries no user label.
+                    "label": keeper.label or default_series_label(keeper),
                 }
             )
+        if records:
+            self.refresh_divergence()
         return records
 
-    def remove_batch(self, batch_id: str) -> FitSeries | None:
+    def remove_batch(self, batch_id: str, *, refresh: bool = True) -> FitSeries | None:
         """Remove and return the batch with *batch_id*, clearing member FitSlot pointers.
 
         For each member the corresponding FitSlot's ``batch_id`` is cleared and
         ``provenance`` is reset to ``"single"`` (the fit result is preserved;
         only the series association is dropped).  Divergence state for the
         removed batch is no longer relevant; ``refresh_divergence`` is called so
-        other batches remain consistent.
+        other batches remain consistent — pass ``refresh=False`` when removing a
+        run of batches to defer to a single sweep by the caller.
         """
         series = self.batches.pop(str(batch_id), None)
         if series is None:
             return None
-        if series.member_kind == "groups":
-            source_runs = sorted(set(series.member_source_run.values()))
-        else:
-            source_runs = list(series.member_run_numbers)
-        for run_number in source_runs:
+        for run_number in series.source_runs():
             representation = self.representation(run_number, series.rep_type)
             if representation is None:
                 continue
@@ -209,7 +219,8 @@ class ProjectModel:
                 slot.provenance = "single"
                 slot.diverged = False
                 slot.include_in_trend = True
-        self.refresh_divergence()
+        if refresh:
+            self.refresh_divergence()
         return series
 
     def rename_batch(self, batch_id: str, label: str | None) -> bool:

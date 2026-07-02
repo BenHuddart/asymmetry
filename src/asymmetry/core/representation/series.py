@@ -198,6 +198,18 @@ class FitSeries:
             return mapped
         return abs(member_key) // 1000
 
+    def source_runs(self) -> list[int]:
+        """Return the ordered, de-duplicated physical runs backing the members.
+
+        For run series this is the member run numbers; for group series each
+        synthetic member key is resolved through :meth:`source_run_for` (so the
+        map's synthetic-key fallback applies uniformly). This is the single
+        source of truth for "which runs does this series cover" — identity
+        signatures, default labels and browser highlights all read it, so they
+        cannot disagree on a series whose ``member_source_run`` map is partial.
+        """
+        return sorted({self.source_run_for(key) for key in self.member_run_numbers})
+
     def add_member(self, run_number: int, *, source_run: int | None = None) -> None:
         """Add *run_number* (member key) to the series (idempotent).
 

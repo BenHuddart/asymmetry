@@ -79,6 +79,49 @@ def test_signature_distinguishes_members():
     assert model.superseded_batch_ids(other) == []
 
 
+def test_signature_uses_decoded_source_runs_for_partial_group_map():
+    """Group series with an empty member_source_run map still key off real runs.
+
+    Regression: computing signature members from raw member_source_run.values()
+    yields () for a legacy group series with no map, collapsing DISTINCT group
+    fits in dedupe_batches. Routing through source_runs() (synthetic-key decode)
+    keeps them distinct.
+    """
+    model = ProjectModel()
+    # Two grouped series over different runs, both WITHOUT a member_source_run map
+    # (synthetic keys run*1000+group; source_run_for decodes abs(key)//1000).
+    a = FitSeries(
+        "g1",
+        RepresentationType.TIME_GROUPS,
+        member_kind="groups",
+        member_run_numbers=[-2961001, -2961002],
+        canonical_model=_model(),
+    )
+    b = FitSeries(
+        "g2",
+        RepresentationType.TIME_GROUPS,
+        member_kind="groups",
+        member_run_numbers=[-2967001, -2967002],
+        canonical_model=_model(),
+    )
+    model.add_batch(a)
+    model.add_batch(b)
+    # Distinct source runs (2961 vs 2967) → not duplicates → not collapsed.
+    assert model.dedupe_batches() == []
+    assert set(model.batches) == {"g1", "g2"}
+
+
+def test_source_runs_accessor_decodes_group_keys():
+    series = FitSeries(
+        "g",
+        RepresentationType.TIME_GROUPS,
+        member_kind="groups",
+        member_run_numbers=[-2961002, -2961001],
+        canonical_model=_model(),
+    )
+    assert series.source_runs() == [2961]
+
+
 def test_signature_distinguishes_representation():
     model = ProjectModel()
     model.add_batch(_series("b1"))
@@ -290,3 +333,17 @@ def test_rerun_with_changed_classification_updates_single_chip(mw, monkeypatch):
     assert len(batches) == 1
     assert batches[0].batch_id == original_id  # chip stayed in place
     assert batches[0].is_global()  # reflects the new classification
+
+
+@pytest.mark.gui
+def test_reseed_batch_index_avoids_collision_with_loaded_batches(mw):
+    """A fresh batch id after load must not collide with a restored batch-N."""
+    from asymmetry.core.representation import FitSeries as _FitSeries
+    from asymmetry.core.representation import RepresentationType as _Rep
+
+    mw._next_batch_index = 1  # fresh window
+    mw._project_model.add_batch(
+        _FitSeries("batch-3", _Rep.TIME_FB_ASYMMETRY, member_run_numbers=[1, 2])
+    )
+    mw._reseed_batch_index()
+    assert mw._next_batch_id() == "batch-4"  # past the loaded batch-3
