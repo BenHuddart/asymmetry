@@ -1797,6 +1797,66 @@ class TestMainWindowFourier:
         assert restored_nu0_type_combo is not None
         assert restored_nu0_type_combo.currentText() == "Local"
 
+    def test_project_round_trip_renders_fft_data_not_orphan_legend(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """F21d: reopening a project with a computed FFT must render the spectrum
+        data — never a legend entry over an empty plot.
+
+        FFT spectra persist recipe-only and recompute lazily off-thread on the
+        first frequency view. While pending, the panel shows the loading overlay
+        with no stale legend; once the recompute lands, the real curve is drawn.
+        """
+        dataset = _make_fourier_ready_dataset(8819, with_grouping=True)
+        assert dataset.run is not None
+        source_file = tmp_path / "run_8819.mdu"
+        source_file.write_text("placeholder", encoding="utf-8")
+        dataset.run.source_file = str(source_file)
+        dataset.metadata["source_file"] = str(source_file)
+
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8819)
+        _compute_fourier_sync(mainwindow)
+
+        state = mainwindow.collect_project_state()
+        project_path = tmp_path / "fft_render_roundtrip.asymp"
+        save_project(state, project_path)
+        loaded_state = load_project(project_path)
+
+        def _fake_load_file(_path: str) -> MuonDataset:
+            loaded = _make_fourier_ready_dataset(8819, with_grouping=True)
+            assert loaded.run is not None
+            loaded.run.source_file = str(source_file)
+            loaded.metadata["source_file"] = str(source_file)
+            return loaded
+
+        restored = MainWindow()
+        monkeypatch.setattr(restored, "_load_file", _fake_load_file)
+        restored.restore_project_state(loaded_state, str(project_path))
+
+        panel = restored._frequency_plot_panel
+
+        # Pending state: the recompute is in flight; nothing has been drawn yet,
+        # so there is no orphan legend sitting over an empty plot.
+        if restored._frequency_recompute_active:
+            assert panel._ax.get_legend() is None
+            assert panel._current_dataset is None
+
+        _wait_frequency_idle(restored)
+
+        # After the recompute lands the real spectrum is drawn: a data curve
+        # exists and any legend corresponds to actual plotted data.
+        assert restored._plot_workspace.active_domain() == "frequency"
+        assert panel._current_dataset is not None
+        data_lines = [line for line in panel._ax.get_lines() if len(line.get_xdata()) > 2]
+        assert data_lines, "frequency spectrum curve was not drawn after restore"
+        legend = panel._ax.get_legend()
+        if legend is not None:
+            assert legend.get_texts(), "legend present without entries"
+
 
 class TestMainWindowBasic:
     def test_initialization(self, mainwindow: MainWindow) -> None:
