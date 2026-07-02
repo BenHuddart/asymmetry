@@ -8563,10 +8563,20 @@ class FitPanel(QWidget):
         }
 
     def restore_domain_state(self, domain: str, state: dict | None) -> None:
-        """Restore serialisable fit state for one fitting domain."""
+        """Restore serialisable fit state for one fitting domain.
+
+        The blob's ``domain`` tag (written by :meth:`get_domain_state`) must
+        match the requested domain — a mismatch means a stale/mis-routed payload
+        and is refused rather than silently applied to the wrong form (F21c).
+        """
         normalized = coerce_domain(domain)
         if not isinstance(state, dict):
             state = {}
+        tag = state.get("domain")
+        if tag is not None and coerce_domain(tag) != normalized:
+            raise ValueError(
+                f"restore_domain_state({normalized!r}) received fit state tagged for domain {tag!r}"
+            )
         self._single_state_by_domain[normalized] = copy.deepcopy(state.get("single_fit_state", {}))
         self._global_state_by_domain[normalized] = copy.deepcopy(state.get("global_fit_state", {}))
         self._ui_state_by_domain[normalized] = copy.deepcopy(state.get("fit_ui_state", {}))

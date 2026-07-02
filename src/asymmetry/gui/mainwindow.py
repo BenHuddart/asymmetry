@@ -11648,24 +11648,38 @@ class MainWindow(QMainWindow):
             "browser_state": self._data_browser.get_state(),
             "plot_state": plot_state,
             "view_modes_state": self._collect_view_modes_state(),
-            "single_fit_state": _prune_single_fit_state(time_fit_state.get("single_fit_state")),
-            "global_fit_state": _prune_global_fit_state(time_fit_state.get("global_fit_state")),
             "multi_group_fit_state": _prune_global_fit_state(
                 self._multi_group_fit_window.get_state()
                 if self._multi_group_fit_window is not None
                 and hasattr(self._multi_group_fit_window, "get_state")
                 else None
             ),
-            "fit_ui_state": time_fit_state.get("fit_ui_state", {}),
-            "frequency_fit_state": {
-                "domain": "frequency",
-                "single_fit_state": _prune_single_fit_state(
-                    frequency_fit_state.get("single_fit_state")
-                ),
-                "global_fit_state": _prune_global_fit_state(
-                    frequency_fit_state.get("global_fit_state")
-                ),
-                "fit_ui_state": frequency_fit_state.get("fit_ui_state", {}),
+            # v11: both fitting domains persist symmetrically under
+            # ``fit_states`` (F21c). The legacy un-keyed top-level
+            # ``single_fit_state``/``global_fit_state``/``fit_ui_state`` and the
+            # nested ``frequency_fit_state`` are still *read* on load (schema
+            # migration folds them here) but are never written again.
+            "fit_states": {
+                "time": {
+                    "domain": "time",
+                    "single_fit_state": _prune_single_fit_state(
+                        time_fit_state.get("single_fit_state")
+                    ),
+                    "global_fit_state": _prune_global_fit_state(
+                        time_fit_state.get("global_fit_state")
+                    ),
+                    "fit_ui_state": time_fit_state.get("fit_ui_state", {}),
+                },
+                "frequency": {
+                    "domain": "frequency",
+                    "single_fit_state": _prune_single_fit_state(
+                        frequency_fit_state.get("single_fit_state")
+                    ),
+                    "global_fit_state": _prune_global_fit_state(
+                        frequency_fit_state.get("global_fit_state")
+                    ),
+                    "fit_ui_state": frequency_fit_state.get("fit_ui_state", {}),
+                },
             },
             "fit_parameters_state": self._fit_parameters_panel.get_state(),
             # View preferences only (log axes, plot mode, …). The window's
@@ -12147,13 +12161,49 @@ class MainWindow(QMainWindow):
             self._refresh_vector_axis_selector()
 
         # ── restore fit panel states (after dataset propagation) ──────
-        single_fit_state = state.get("single_fit_state")
-        if single_fit_state:
-            self._fit_panel.restore_single_state(single_fit_state)
+        # v11+ persists both fitting domains symmetrically under ``fit_states``
+        # and routes each through ``restore_domain_state`` so a blob is only
+        # ever applied to its own domain (F21c). Older payloads (or callers that
+        # bypass schema migration) used un-keyed top-level
+        # ``single_fit_state``/``global_fit_state``/``fit_ui_state`` for the time
+        # domain and a nested ``frequency_fit_state`` for frequency; read those
+        # as a fallback but never write them.
+        fit_states = state.get("fit_states")
+        if isinstance(fit_states, dict):
+            time_fit_state = fit_states.get("time")
+            frequency_fit_state = fit_states.get("frequency")
+        else:
+            time_fit_state = {
+                "domain": "time",
+                "single_fit_state": state.get("single_fit_state") or {},
+                "global_fit_state": state.get("global_fit_state") or {},
+                "fit_ui_state": state.get("fit_ui_state") or {},
+            }
+            frequency_fit_state = state.get("frequency_fit_state")
 
-        global_fit_state = state.get("global_fit_state")
-        if global_fit_state:
-            self._fit_panel.restore_global_state(global_fit_state)
+        # Time-domain single/global blobs drive the "open fit dock on load"
+        # heuristic below (``_has_saved_fit_results``).
+        single_fit_state = (
+            time_fit_state.get("single_fit_state") if isinstance(time_fit_state, dict) else None
+        )
+        global_fit_state = (
+            time_fit_state.get("global_fit_state") if isinstance(time_fit_state, dict) else None
+        )
+
+        if isinstance(time_fit_state, dict):
+            if hasattr(self._fit_panel, "restore_domain_state"):
+                self._fit_panel.restore_domain_state("time", time_fit_state)
+            else:
+                # Panels without domain routing: apply the time blob directly.
+                single = time_fit_state.get("single_fit_state")
+                if single:
+                    self._fit_panel.restore_single_state(single)
+                global_state = time_fit_state.get("global_fit_state")
+                if global_state:
+                    self._fit_panel.restore_global_state(global_state)
+                ui_state = time_fit_state.get("fit_ui_state")
+                if ui_state:
+                    self._fit_panel.restore_ui_state(ui_state)
 
         multi_group_fit_state = state.get("multi_group_fit_state")
         if (
@@ -12163,11 +12213,6 @@ class MainWindow(QMainWindow):
         ):
             self._multi_group_fit_window.restore_state(multi_group_fit_state)
 
-        fit_ui_state = state.get("fit_ui_state")
-        if fit_ui_state:
-            self._fit_panel.restore_ui_state(fit_ui_state)
-
-        frequency_fit_state = state.get("frequency_fit_state")
         if isinstance(frequency_fit_state, dict) and hasattr(
             self._fit_panel, "restore_domain_state"
         ):
