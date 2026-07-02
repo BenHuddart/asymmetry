@@ -501,6 +501,77 @@ def test_add_to_series_action_finds_and_adds_compatible_series(mw, monkeypatch):
     assert rep.fit.batch_id == series.batch_id
 
 
+def test_add_to_series_action_disabled_without_a_completed_fit(mw):
+    """F18: the menu action must not silently do nothing — disable it instead."""
+    mw._data_browser.add_dataset(_dataset(20, 100.0))
+    mw._on_dataset_selected(20)
+    single_tab = mw._fit_panel._single_tab
+
+    assert single_tab._add_to_series_action.isEnabled() is False
+    assert single_tab._add_to_series_action.toolTip() != ""
+
+
+def test_add_to_series_offers_create_new_series_when_none_compatible(mw, monkeypatch):
+    """F18: no compatible series → offer to create one instead of doing nothing."""
+    mw._data_browser.add_dataset(_dataset(21, 100.0))
+    mw._on_dataset_selected(21)
+    mw._plot_workspace.set_active_view("fb_asymmetry")
+    model = {"component_names": ["Exponential", "Constant"], "operators": ["+"]}
+    monkeypatch.setattr(
+        mw._fit_panel,
+        "get_single_form_state",
+        lambda: {"composite_model": model, "parameters": [], "result_html": ""},
+    )
+    mw._on_fit_completed(_result(), _CURVE, [])
+
+    from PySide6.QtWidgets import QMessageBox
+
+    import asymmetry.gui.mainwindow as mw_module
+
+    monkeypatch.setattr(
+        mw_module.QMessageBox,
+        "question",
+        staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes),
+    )
+
+    assert not mw._project_model.batches
+
+    mw._on_add_single_fit_to_series_requested()
+
+    assert len(mw._project_model.batches) == 1
+    series = next(iter(mw._project_model.batches.values()))
+    assert series.member_run_numbers == [21]
+    rep = mw._project_model.representation(21, RepresentationType.TIME_FB_ASYMMETRY)
+    assert rep.fit.batch_id == series.batch_id
+
+
+def test_add_to_series_create_new_series_cancelled(mw, monkeypatch):
+    mw._data_browser.add_dataset(_dataset(22, 100.0))
+    mw._on_dataset_selected(22)
+    mw._plot_workspace.set_active_view("fb_asymmetry")
+    model = {"component_names": ["Exponential", "Constant"], "operators": ["+"]}
+    monkeypatch.setattr(
+        mw._fit_panel,
+        "get_single_form_state",
+        lambda: {"composite_model": model, "parameters": [], "result_html": ""},
+    )
+    mw._on_fit_completed(_result(), _CURVE, [])
+
+    from PySide6.QtWidgets import QMessageBox
+
+    import asymmetry.gui.mainwindow as mw_module
+
+    monkeypatch.setattr(
+        mw_module.QMessageBox,
+        "question",
+        staticmethod(lambda *a, **k: QMessageBox.StandardButton.Cancel),
+    )
+
+    mw._on_add_single_fit_to_series_requested()
+
+    assert not mw._project_model.batches
+
+
 def test_editing_member_model_diverges_and_excludes_from_trend(mw, monkeypatch):
     for run_number, field in [(10, 100.0), (11, 50.0)]:
         mw._data_browser.add_dataset(_dataset(run_number, field))

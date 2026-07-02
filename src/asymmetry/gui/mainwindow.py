@@ -10008,8 +10008,10 @@ class MainWindow(QMainWindow):
         """Handle the Single tab's 'Add to Series…' action.
 
         Finds run-membered series whose canonical model matches the active run's
-        single fit and adds the run to one (prompting if several match). The
-        trend panel is refreshed after a successful addition.
+        single fit and adds the run to one (prompting if several match). When no
+        compatible series exists, offers to create a new one-member series from
+        this fit instead of silently doing nothing (F18). The trend panel is
+        refreshed after a successful addition.
         """
         if self._current_dataset is None:
             self.statusBar().showMessage("Select a run with a single fit to add to a series.")
@@ -10032,7 +10034,25 @@ class MainWindow(QMainWindow):
             and canonical_model_matches(representation.fit.model, series.canonical_model)
         ]
         if not compatible:
-            self.statusBar().showMessage(f"No compatible batch series for run {run}'s fit.")
+            choice = QMessageBox.question(
+                self,
+                "Add to Series",
+                f"No existing batch series matches run {run}'s fit.\n\n"
+                "Create a new one-member series from this fit?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Yes,
+            )
+            if choice != QMessageBox.StandardButton.Yes:
+                return
+            batch_id = self._create_series_from_single_fit(run, rep_type)
+            if batch_id is None:
+                self.statusBar().showMessage(f"Could not create a series from run {run}'s fit.")
+                return
+            series = self._project_model.batch(batch_id)
+            series_label = series.label or self._series_fallback_name(series)
+            self._log_panel.log(f"Created {series_label} from run {run}'s fit.", tag="fit")
+            self.statusBar().showMessage(f"Created {series_label} from run {run}'s fit.")
+            self._refresh_trend_panel()
             return
 
         if len(compatible) == 1:
@@ -10054,6 +10074,48 @@ class MainWindow(QMainWindow):
             self._log_panel.log(f"Added run {run} to {series_label}.", tag="fit")
             self.statusBar().showMessage(f"Added run {run} to {series_label}.")
             self._refresh_trend_panel()
+
+    def _create_series_from_single_fit(
+        self, run_number: int, rep_type: RepresentationType
+    ) -> str | None:
+        """Record a new one-member batch series from *run_number*'s single fit.
+
+        Used by "Add to Series…" (F18) when no existing series shares the run's
+        model — rather than doing nothing, the run's completed single fit becomes
+        the first member of a fresh series, named via the Phase-1 unified
+        ``default_series_label`` scheme. Returns the new series' ``batch_id``, or
+        ``None`` if the run has no completed single fit to record.
+        """
+        run_number = int(run_number)
+        representation = self._project_model.representation(run_number, rep_type)
+        if representation is None or representation.fit.is_empty():
+            return None
+        fit_slot = representation.fit
+        canonical_model = fit_slot.model
+        result = dict(fit_slot.result) if isinstance(fit_slot.result, dict) else {}
+        result.pop("result_html", None)
+        template_parameters = [dict(p) for p in (fit_slot.parameters or []) if isinstance(p, dict)]
+        batch = FitSeries(
+            self._next_batch_id(),
+            rep_type,
+            label=None,
+            member_run_numbers=[run_number],
+            order_key="field",
+            canonical_model=canonical_model,
+            param_roles={},
+            results_by_run={run_number: result},
+        )
+        return self._record_fit_series(
+            batch,
+            slot_runs=[run_number],
+            slot_factory=lambda run: FitSlot(
+                model=canonical_model,
+                parameters=template_parameters,
+                result=dict(result),
+                provenance="batch",
+                batch_id=batch.batch_id,
+            ),
+        )
 
     def _on_preview_requested(self, fit_result, fitted_curve, component_curves) -> None:
         """Handle preview request from fit panel."""

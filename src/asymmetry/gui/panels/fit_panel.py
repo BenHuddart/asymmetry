@@ -2084,10 +2084,8 @@ class SingleFitTab(QWidget):
         )
         self._send_to_batch_action.triggered.connect(self.send_model_to_batch_requested.emit)
         self._add_to_series_action = self._more_menu.addAction("Add to Series...")
-        self._add_to_series_action.setToolTip(
-            "Add this run's single fit to an existing batch series with a matching model."
-        )
         self._add_to_series_action.triggered.connect(self.add_to_series_requested.emit)
+        self._update_add_to_series_enabled()
 
         self._more_btn = QToolButton()
         self._more_btn.setText("More…")
@@ -2296,6 +2294,17 @@ class SingleFitTab(QWidget):
         self._preview_btn.setEnabled(enabled)
         self._fit_wizard_btn.setEnabled(enabled and self._domain == "time")
         self._share_group_action.setEnabled(dataset is not None and self._domain == "time")
+        self._update_add_to_series_enabled()
+
+    def _update_add_to_series_enabled(self) -> None:
+        """Enable "Add to Series..." only once this run has a completed fit (F18)."""
+        have_fit = self._last_fit_result is not None and self._last_fit_result.success
+        self._add_to_series_action.setEnabled(have_fit)
+        self._add_to_series_action.setToolTip(
+            "Add this run's single fit to an existing batch series with a matching model."
+            if have_fit
+            else "Fit this run first — there is no completed single fit to add to a series."
+        )
 
     def _can_run_pull_diagnostic(self) -> bool:
         """A successful time-domain fit on a run with histograms is required."""
@@ -2973,6 +2982,7 @@ class SingleFitTab(QWidget):
         self._last_fit_parameters = parameters
         if self._pull_diagnostic_btn is not None:
             self._pull_diagnostic_btn.setEnabled(self._can_run_pull_diagnostic())
+        self._update_add_to_series_enabled()
 
         display_values = _normalized_model_param_values(
             model,
