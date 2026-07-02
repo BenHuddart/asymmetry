@@ -24,7 +24,7 @@ import functools
 import hashlib
 import os
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
@@ -124,11 +124,14 @@ from asymmetry.core.project import (
     save_project,
 )
 from asymmetry.core.representation import (
+    DataGroup,
     FitSeries,
     FitSlot,
     RepresentationType,
     build_maxent_reconstruction_datasets,
     canonical_model_matches,
+    composite_model_label,
+    default_series_label,
 )
 from asymmetry.core.representation.project_model import ProjectModel
 from asymmetry.core.transform import (
@@ -1572,6 +1575,12 @@ class MainWindow(QMainWindow):
             self._data_browser.group_selected.connect(self._on_group_selected)
         if hasattr(self._data_browser, "refit_coadded_requested"):
             self._data_browser.refit_coadded_requested.connect(self._on_refit_coadded_requested)
+        if hasattr(self._data_browser, "fit_group_requested"):
+            self._data_browser.fit_group_requested.connect(self._on_fit_group_requested)
+        if hasattr(self._data_browser, "show_group_series_requested"):
+            self._data_browser.show_group_series_requested.connect(
+                self._on_show_group_series_requested
+            )
         if hasattr(self._data_browser, "extra_columns_changed"):
             self._data_browser.extra_columns_changed.connect(self._sync_custom_columns_to_consumers)
             self._data_browser.extra_columns_changed.connect(self._mark_dirty)
@@ -1607,6 +1616,8 @@ class MainWindow(QMainWindow):
             self._plot_panel.cursor_coords_changed.connect(self._on_cursor_coords_changed)
         if hasattr(self._fit_panel, "fit_range_edit_committed"):
             self._fit_panel.fit_range_edit_committed.connect(self._on_fit_range_edit_committed)
+        if hasattr(self._fit_panel, "tab_changed"):
+            self._fit_panel.tab_changed.connect(lambda _index: self._update_fit_block_state())
         if self._multi_group_fit_window is not None and hasattr(
             self._multi_group_fit_window, "fit_range_edit_committed"
         ):
@@ -1702,6 +1713,9 @@ class MainWindow(QMainWindow):
         if hasattr(self._fit_parameters_panel, "series_delete_requested"):
             self._fit_parameters_panel.series_delete_requested.connect(
                 self._on_series_delete_requested
+            )
+            self._fit_parameters_panel.member_trend_inclusion_changed.connect(
+                self._on_member_trend_inclusion_changed
             )
 
         # Unsaved-changes guard (P0-2): every fit result and trend-series edit
@@ -3110,6 +3124,15 @@ class MainWindow(QMainWindow):
                     continue
 
                 break
+
+        # F8: an OS file picker can return a multi-file selection out of run
+        # order, leaving the browser's insertion order scrambled so a later
+        # shift-range selection is silently non-contiguous. Pick a sane initial
+        # indicator — sort by run number — unless the user already chose a sort
+        # or the rows are already in order. Runs before the selection below so
+        # the just-loaded run is selected in the ordered view.
+        if hasattr(self._data_browser, "sort_by_run_number_if_unordered"):
+            self._data_browser.sort_by_run_number_if_unordered()
 
         # Select the last successfully loaded run in the browser: this drives
         # the standard selection pipeline (_on_dataset_selected), which stores
@@ -5748,6 +5771,20 @@ class MainWindow(QMainWindow):
         recomputed keep whatever the legacy array fallback restored.
         """
         self._project_model = ProjectModel.from_project_state(state)
+        # Load-time migration (D4): projects saved before replace-in-place can
+        # carry duplicate identically-keyed batch series over the same
+        # members+model. Collapse them to the most recent, keeping any user label.
+        for record in self._project_model.dedupe_batches():
+            dropped = ", ".join(record["dropped"])
+            self._log_panel.log(
+                f"Merged {len(record['dropped'])} duplicate batch series into "
+                f"'{record['label']}' (dropped {dropped}).",
+                tag="fit",
+            )
+        # Seed the batch-id counter past any loaded "batch-N" so the next fit
+        # recorded this session cannot allocate an id that collides with — and
+        # silently overwrites — a batch restored from the project.
+        self._reseed_batch_index()
         self._lazy_recompute_failures = set()
         self._pending_recipe_recompute = set()
         for run_number, container in self._project_model.datasets.items():
@@ -6121,6 +6158,13 @@ class MainWindow(QMainWindow):
                 self._fit_panel.set_domain("frequency")
             self._fit_panel.set_dataset(self._active_frequency_fit_dataset())
             self._set_frequency_fit_datasets_for_selection()
+            # The just-rendered spectrum is the first thing to supply a frequency
+            # fit range (plot_dataset/plot_datasets seed it to the full spectrum
+            # extent the moment it is unset); mirror it into the Fit panel's
+            # range spins now, or they keep showing whatever was last displayed
+            # for a different run/domain (D6/F15).
+            if hasattr(self._fit_panel, "set_fit_range_display"):
+                self._fit_panel.set_fit_range_display(*self._frequency_plot_panel.get_fit_range())
             # A just-rendered spectrum changes fittability: the block flag set on
             # frequency-view entry ("compute a spectrum first") must clear now that
             # one exists. Compute completions and re-renders on the already-active
@@ -7170,6 +7214,12 @@ class MainWindow(QMainWindow):
             return
         self._set_fourier_status(f"Applied Fourier settings to {applied} run(s).", success=True)
         self._log_panel.log(f"Applied Fourier settings to {applied} run(s).")
+        # Newly-cached spectra change both single- and batch-fit availability
+        # (F17): nothing else refreshes the Fit dock after this, so an applied
+        # selection used to leave "Run Batch Fit" stale-disabled until an
+        # unrelated browser-selection change happened to poke it.
+        self._set_frequency_fit_datasets_for_selection()
+        self._update_fit_block_state()
 
     def _record_frequency_maxent_recipe(
         self,
@@ -7644,10 +7694,18 @@ class MainWindow(QMainWindow):
         # warning; a plain early stop reports the cycle it settled on.
         ran = int(result.state.cycle)
         if getattr(result, "diverged", False):
+            maxent_input = getattr(result, "maxent_input", None)
+            window_hint = ""
+            if maxent_input is not None:
+                window_hint = (
+                    f" The current frequency window is "
+                    f"{maxent_input.f_min_mhz:.3g}–{maxent_input.f_max_mhz:.3g} MHz "
+                    f"(Window section); signals outside it cannot be reconstructed."
+                )
             message = (
                 f"MaxEnt diverged for run {run_number}: stopped early at cycle {ran} "
-                f"as χ² began rising past the optimum. Try fewer cycles or adjust "
-                f"the time/frequency window."
+                f"as χ² began rising past the optimum. Try fewer cycles or adjust the "
+                f"time/frequency window.{window_hint}"
             )
             self._maxent_panel.set_status(message, warning=True)
             self.statusBar().showMessage(message)
@@ -8386,21 +8444,10 @@ class MainWindow(QMainWindow):
     def _composite_model_label(composite: object) -> str | None:
         """Human-readable model expression from a serialised composite model.
 
-        e.g. ``{"component_names": ["Exponential", "Constant"], "operators":
-        ["+"]}`` -> ``"Exponential + Constant"``. Returns ``None`` when the
-        structure is missing or empty.
+        Delegates to the shared core helper (:func:`composite_model_label`) so
+        the GUI and the series-naming scheme render model expressions identically.
         """
-        if not isinstance(composite, dict):
-            return None
-        names = composite.get("component_names") or []
-        operators = composite.get("operators") or []
-        if not names:
-            return None
-        parts = [str(names[0])]
-        for op, name in zip(operators, names[1:]):
-            parts.append(str(op))
-            parts.append(str(name))
-        return " ".join(parts)
+        return composite_model_label(composite)
 
     def _fit_result_summary(
         self,
@@ -8410,6 +8457,7 @@ class MainWindow(QMainWindow):
         model_name: str | None = None,
         fit_range: str | None = None,
         timestamp: str | None = None,
+        extra_flags: Sequence[str] = (),
     ) -> dict:
         """Return a JSON-serialisable summary of a fit result.
 
@@ -8420,8 +8468,16 @@ class MainWindow(QMainWindow):
         cannot source. ``npar`` is the free-parameter count (those carrying a
         HESSE σ) and ``ndof`` is read back from the χ² quality block; both are
         omitted when unavailable.
+
+        ``extra_flags`` threads engine-only member-quality flags (notably
+        ``spurious_reseeded``, which needs the scan trend) into the stored
+        ``quality_flags`` so trend tables/plots read them back after save/load.
         """
-        summary = fit_result_summary(fit_result, confidence=fit_quality_confidence(self._settings))
+        summary = fit_result_summary(
+            fit_result,
+            confidence=fit_quality_confidence(self._settings),
+            extra_flags=extra_flags,
+        )
         uncertainties = summary.get("uncertainties") or {}
         quality = summary.get("quality") or {}
         ndof = quality.get("dof") if isinstance(quality, dict) else None
@@ -8662,6 +8718,22 @@ class MainWindow(QMainWindow):
                     values.pop(nuisance, None)
                     errors.pop(nuisance, None)
 
+            # Per-member trend gate + advisory quality flags (Phase 2). The
+            # inclusion flag lives on the member's FitSlot (the source run's slot
+            # for a group series); ``trend_member_key`` is the key
+            # set_member_trend_inclusion expects (a synthetic member key for
+            # groups, the run number otherwise) so click-to-exclude routes to the
+            # right slot even for a collapsed group row.
+            trend_member_key = member_key
+            if series.member_kind == "groups":
+                gate_rep = self._project_model.representation(
+                    series.source_run_for(member_key), series.rep_type
+                )
+            else:
+                gate_rep = self._project_model.representation(member_key, series.rep_type)
+            include_in_trend = bool(gate_rep.fit.include_in_trend) if gate_rep is not None else True
+            quality_flags = [str(f) for f in (summary.get("quality_flags") or [])]
+
             rows.append(
                 {
                     "run_number": row_run_number,
@@ -8676,13 +8748,23 @@ class MainWindow(QMainWindow):
                     "model_name": summary.get("model_name"),
                     "chi_squared": summary.get("chi_squared"),
                     "reduced_chi_squared": summary.get("reduced_chi_squared"),
+                    # Phase 2 trend-gating: which series/member this row toggles,
+                    # its current inclusion, and its advisory quality flags.
+                    "batch_id": series.batch_id,
+                    "trend_member_key": trend_member_key,
+                    "include_in_trend": include_in_trend,
+                    "quality_flags": quality_flags,
                 }
             )
         return rows
 
     def _refresh_trend_panel(
-        self, *, select_batch_id: str | None = None, surface: bool = True
-    ) -> None:
+        self,
+        *,
+        select_batch_id: str | None = None,
+        surface: bool = True,
+        group_id: str | None = None,
+    ) -> bool:
         """Reload the trend panel from the project model for the active representation.
 
         This is the *pull*-based entry point called after every fit that records
@@ -8697,17 +8779,30 @@ class MainWindow(QMainWindow):
         series. A *single* grouped fit passes ``surface=False`` so it stays on
         the plot/fit view like an ordinary single fit (the series is still loaded
         into the panel, just not brought to the front).
+
+        ``group_id`` narrows the reload to series recorded from that data group
+        ("Show series from this group", Phase 7/D1) — series whose
+        ``FitSeries.source_group_id`` doesn't match are left out entirely, rather
+        than shown and merely highlighted differently.
+
+        Returns ``True`` when it re-derived and refreshed the panel (i.e. reached
+        ``load_representation_series``), ``False`` on an early no-op — the latter
+        lets project restore know it must draw a deferred panel refresh itself.
         """
         if not hasattr(self, "_fit_parameters_panel"):
-            return
+            return False
         rep_type = self._active_representation_type()
         if rep_type is None:
-            return
+            return False
 
         # Gather all series for the active representation, in creation order
         # (batch-N sorts before batch-(N+1) because IDs are "batch-<index>").
         series_for_rep = sorted(
-            (s for s in self._project_model.batches.values() if s.rep_type == rep_type),
+            (
+                s
+                for s in self._project_model.batches.values()
+                if s.rep_type == rep_type and (group_id is None or s.source_group_id == group_id)
+            ),
             key=lambda s: s.batch_id,
         )
 
@@ -8732,7 +8827,10 @@ class MainWindow(QMainWindow):
             if not row_dicts:
                 continue
             batch_id = series.batch_id
-            name = series.display_name(f"Series {idx}")
+            # `label or fallback` (not display_name(fallback)) so the fallback —
+            # a source-run walk + browser group lookup — is skipped for the common
+            # renamed-chip case on this per-refresh loop.
+            name = series.label or self._series_fallback_name(series)
             entries.append((batch_id, name, row_dicts))
             shared = series.shared_parameters()
             if shared:
@@ -8750,6 +8848,7 @@ class MainWindow(QMainWindow):
             else:
                 highlight_map[batch_id] = list(series.member_run_numbers)
 
+        refreshed = False
         if hasattr(self._fit_parameters_panel, "load_representation_series"):
             self._fit_parameters_panel.load_representation_series(
                 entries,
@@ -8759,6 +8858,7 @@ class MainWindow(QMainWindow):
                 knight_observables_by_id=knight_observables_by_id,
                 fraction_weights_by_id=fraction_weights_by_id,
             )
+            refreshed = True
 
         if surface and entries and hasattr(self, "_dock_fit_parameters"):
             # Route through _show_panel so the per-representation closed-tab
@@ -8767,6 +8867,7 @@ class MainWindow(QMainWindow):
         elif not entries and hasattr(self._data_browser, "set_highlighted_runs"):
             # No series remain — ensure the browser highlight is cleared.
             self._data_browser.set_highlighted_runs(set())
+        return refreshed
 
     def _on_trend_series_selected(self, batch_id: str) -> None:
         """Highlight the member runs of the active fit series in the data browser."""
@@ -8849,6 +8950,29 @@ class MainWindow(QMainWindow):
         # Clear fit panel and plot panel state for the affected runs.
         self._on_fit_parameters_group_fits_deleted(batch_id, runs)
         self._refresh_trend_panel()
+
+    def _on_member_trend_inclusion_changed(
+        self, batch_id: str, member_key: int, include: bool
+    ) -> None:
+        """Toggle a member's trend inclusion and re-fit any attached trend model.
+
+        Writes the per-member gate through the project model (D3: the user
+        decides — never automatic), then re-runs the trend so an attached model
+        fit (e.g. OrderParameter) re-solves over the new included set and the
+        excluded point re-renders as a hollow marker while staying on the plot.
+        """
+        series = self._project_model.batch(str(batch_id))
+        if series is None:
+            return
+        self._project_model.set_member_trend_inclusion(
+            str(batch_id), int(member_key), bool(include)
+        )
+        self._mark_dirty()
+        self._refresh_trend_panel(select_batch_id=str(batch_id), surface=False)
+        # Re-solve any attached trend model fit over the new included set so the
+        # OrderParameter / Linear overlay drops the excluded point immediately.
+        if hasattr(self._fit_parameters_panel, "refit_active_model_fits"):
+            self._fit_parameters_panel.refit_active_model_fits()
 
     def _current_single_fit_projection(self) -> str | None:
         """Return the projection a single fit should be keyed under, or ``None``.
@@ -8961,6 +9085,21 @@ class MainWindow(QMainWindow):
         self._next_batch_index += 1
         return batch_id
 
+    def _reseed_batch_index(self) -> None:
+        """Advance the batch-id counter past every loaded ``batch-N`` id.
+
+        The counter resets to 1 per window; without this a freshly recorded
+        batch after opening a saved project would reallocate ``batch-1`` and
+        overwrite the restored series of the same id (its results, label and
+        member pointers). Called after the project model is (re)loaded.
+        """
+        highest = 0
+        for batch_id in self._project_model.batches:
+            prefix, sep, suffix = str(batch_id).partition("-")
+            if prefix == "batch" and sep and suffix.isdigit():
+                highest = max(highest, int(suffix))
+        self._next_batch_index = max(self._next_batch_index, highest + 1)
+
     def _record_fit_series(
         self,
         series: FitSeries,
@@ -9071,6 +9210,14 @@ class MainWindow(QMainWindow):
         model_label = self._composite_model_label(canonical_model)
         fit_range = self._fit_panel.batch_fit_range_text()
         timestamp = self._fit_record_timestamp()
+        # Engine-derived per-run flags (carries ``spurious_reseeded``, which the
+        # core summary cannot recompute without the scan trend). Empty for the
+        # tied global_fit path.
+        member_flags = (
+            self._fit_panel.last_batch_member_flags()
+            if hasattr(self._fit_panel, "last_batch_member_flags")
+            else {}
+        )
         results_by_run = {}
         for run, payload in normalized_payloads.items():
             summary = self._fit_result_summary(
@@ -9079,6 +9226,7 @@ class MainWindow(QMainWindow):
                 model_name=model_label,
                 fit_range=fit_range,
                 timestamp=timestamp,
+                extra_flags=member_flags.get(int(run), ()),
             )
             # Persist each run's T/B with the series so the trend reads its real
             # coordinate even after the dataset leaves the browser or the project
@@ -9086,32 +9234,36 @@ class MainWindow(QMainWindow):
             summary.update(self._dataset_trend_coords(int(run)))
             results_by_run[int(run)] = summary
         batch_id = self._next_batch_id()
-        # When launched from a data-group header, name the series after that group
-        # (e.g. "T = 150 K") rather than the model formula + run span — matching the
-        # grouped path so the same "fit from group header" action labels consistently.
-        batch_label = self._data_group_name_for_runs(
-            member_runs
-        ) or self._default_batch_series_label(model_label, member_runs)
+        # No baked-in label: the unified default (<model> · <members> [· <group>])
+        # is rendered on demand by _series_fallback_name so ``label`` holds only a
+        # user rename — which then survives a re-run via remove_superseded_batches.
         batch = FitSeries(
             batch_id,
             rep_type,
-            label=batch_label,
+            label=None,
             member_run_numbers=member_runs,
             order_key="field",
             canonical_model=canonical_model,
             param_roles=param_roles,
             results_by_run=results_by_run,
+            # Provenance only (Phase 7/D1): set when every member run belongs to
+            # exactly one data group (typically because the batch was launched via
+            # "Fit this group…"), so the series carries where it came from without
+            # forcing every batch through a group.
+            source_group_id=self._data_group_id_for_runs(member_runs),
         )
         template_parameters = [dict(p) for p in state.get("parameters", []) if isinstance(p, dict)]
         return self._record_fit_series(
             batch,
             slot_runs=member_runs,
+            # batch.batch_id (not the local batch_id) so a re-run that supersedes
+            # an earlier twin re-points member slots at the inherited id.
             slot_factory=lambda run: FitSlot(
                 model=canonical_model,
                 parameters=template_parameters,
                 result=dict(results_by_run[int(run)]),
                 provenance=provenance,
-                batch_id=batch_id,
+                batch_id=batch.batch_id,
             ),
         )
 
@@ -9789,17 +9941,13 @@ class MainWindow(QMainWindow):
             return None
 
         batch_id = self._next_batch_id()
-        # When the batch was launched from a data-group header, name the series after
-        # that group (e.g. "T = 150 K") rather than the model formula + run span.
-        series_label = self._data_group_name_for_runs(
-            unique_source_runs
-        ) or self._default_batch_series_label(
-            model_label, list(member_source_run.values()), groups=True
-        )
+        # No baked-in label: the unified default (<model> · groups <members>
+        # [· <group>]) is rendered on demand by _series_fallback_name so ``label``
+        # holds only a user rename, which survives a re-run.
         series = FitSeries(
             batch_id,
             rep_type,
-            label=series_label,
+            label=None,
             member_kind="groups",
             member_run_numbers=member_keys,
             member_source_run=member_source_run,
@@ -9808,16 +9956,21 @@ class MainWindow(QMainWindow):
             param_roles=physics_roles,
             nuisance_params=nuisance_params,
             results_by_run=results_by_run,
+            # Provenance only (Phase 7/D1): keyed off the *source* runs, not the
+            # synthetic per-group member keys — a data group is a group of runs.
+            source_group_id=self._data_group_id_for_runs(unique_source_runs),
         )
         # One pointer slot per source run; the series carries the per-group results.
+        # series.batch_id (not the local batch_id) so a re-run that supersedes an
+        # earlier twin re-points member slots at the inherited id.
         return self._record_fit_series(
             series,
             slot_runs=unique_source_runs,
             slot_factory=lambda run: FitSlot(
                 model=canonical_model,
-                result={"series_id": batch_id},
+                result={"series_id": series.batch_id},
                 provenance=provenance,
-                batch_id=batch_id,
+                batch_id=series.batch_id,
             ),
         )
 
@@ -9855,50 +10008,138 @@ class MainWindow(QMainWindow):
         self._project_model.refresh_divergence()
         return True
 
-    def _data_group_name_for_runs(self, runs) -> str | None:
-        """Data-group name shared by every run, or ``None``.
+    def _data_group_id_for_runs(self, runs) -> str | None:
+        """Data-group id shared by every run, or ``None``.
 
-        Returns the name when all ``runs`` belong to one data group (i.e. the batch
-        was launched from that group's header), so the series can be named after the
-        group (e.g. "T = 150 K") rather than the model formula + run span.
+        Returns the id when all ``runs`` belong to one data group (i.e. the batch
+        was launched from that group's header) — the choke point both the series
+        display-name fallback (:meth:`_data_group_name_for_runs`) and the
+        provenance stamp (``FitSeries.source_group_id``, Phase 7/D1) key off, so
+        the two can never disagree on "which group was this launched from".
         """
         run_list = [int(r) for r in (runs or [])]
         if not run_list:
             return None
         browser = self._data_browser
-        if not (hasattr(browser, "get_group_id_for_run") and hasattr(browser, "get_group_name")):
+        if not hasattr(browser, "get_group_id_for_run"):
             return None
         group_ids = {browser.get_group_id_for_run(r) for r in run_list}
         if len(group_ids) != 1:
             return None
         group_id = next(iter(group_ids))
-        if not group_id:
+        return group_id or None
+
+    def _data_group_name_for_runs(self, runs) -> str | None:
+        """Data-group name shared by every run, or ``None``.
+
+        Returns the name when all ``runs`` belong to one data group, so the
+        series can be named after the group (e.g. "T = 150 K") rather than the
+        model formula + run span.
+        """
+        group_id = self._data_group_id_for_runs(runs)
+        if group_id is None:
+            return None
+        return self._data_group_name(group_id)
+
+    def _data_group_name(self, group_id: str) -> str | None:
+        """Return the display name of *group_id*, or ``None`` if unresolvable."""
+        browser = self._data_browser
+        if not hasattr(browser, "get_group_name"):
             return None
         name = browser.get_group_name(group_id)
         return name.strip() if isinstance(name, str) and name.strip() else None
 
-    @staticmethod
-    def _default_batch_series_label(
-        model_label: str, runs: list[int], *, groups: bool = False
-    ) -> str:
-        """Informative default name for a freshly-recorded batch FitSeries.
+    def _on_fit_group_requested(self, group_id: str) -> None:
+        """Handle "Fit this group…": prefill the batch member set from the group.
 
-        Combines the model and the run range (e.g. ``"StretchedExp+Const ·
-        1276–1289"``) so the just-computed series is identifiable in the trend
-        panel's selector among any older series, rather than a bare "Series N".
-        The user can still rename it.
+        Bypasses the live/visible browser selection — the F9 trap, where a group
+        hidden by a column filter or sort order silently fit exactly the wrong
+        (invisible) runs — by building the batch dataset list directly from
+        :meth:`DataBrowserPanel.get_group_member_run_numbers` rather than the
+        current table selection. Provenance is then stamped automatically when
+        the batch is recorded, via the same ``_data_group_id_for_runs`` choke
+        point the display-name fallback uses.
         """
-        numbers = sorted({int(r) for r in runs}) if runs else []
-        if numbers:
-            span = f"{numbers[0]}" if len(numbers) == 1 else f"{numbers[0]}–{numbers[-1]}"
-            run_part = f"groups {span}" if groups else span
+        browser = self._data_browser
+        if not hasattr(browser, "get_group_member_run_numbers"):
+            return
+        run_numbers = browser.get_group_member_run_numbers(group_id)
+        if len(run_numbers) < 2:
+            self.statusBar().showMessage("This group has too few runs to batch fit.")
+            return
+        datasets = [browser.get_dataset(rn) for rn in run_numbers]
+        analysis_datasets = [
+            fit_dataset
+            for fit_dataset in (self._get_fit_dataset(ds) for ds in datasets if ds is not None)
+            if fit_dataset is not None
+        ]
+        if not analysis_datasets:
+            self.statusBar().showMessage("This group has no fittable datasets.")
+            return
+        self._fit_panel.set_datasets(analysis_datasets)
+        if self._multi_group_fit_window is not None and hasattr(
+            self._multi_group_fit_window, "set_member_datasets"
+        ):
+            self._multi_group_fit_window.set_member_datasets(analysis_datasets)
+        self._show_panel("fit")
+        group_name = self._data_group_name(group_id) or group_id
+        self.statusBar().showMessage(
+            f"Loaded {len(analysis_datasets)} run(s) from group '{group_name}' into batch "
+            "fit — configure parameters and click Run Batch Fit."
+        )
+
+    def _on_show_group_series_requested(self, group_id: str) -> None:
+        """Handle "Show series from this group": filter the trend panel to it.
+
+        Reuses :meth:`_refresh_trend_panel`'s series-gathering exactly, just
+        narrowed to the batches whose recorded provenance
+        (``FitSeries.source_group_id``) is *group_id* — no separate filtering
+        mechanism, no new chip/tint rendering.
+        """
+        if not self._refresh_trend_panel(surface=True, group_id=group_id):
+            return
+        group_name = self._data_group_name(group_id) or group_id
+        # Count only series for the *active* representation — series_for_group
+        # is rep-agnostic, but _refresh_trend_panel(group_id=...) only loaded
+        # the active representation's subset; counting the unfiltered set here
+        # would disagree with what the panel actually shows.
+        rep_type = self._active_representation_type()
+        series_count = sum(
+            1
+            for series in self._project_model.series_for_group(group_id)
+            if series.rep_type == rep_type
+        )
+        if series_count == 0:
+            self.statusBar().showMessage(f"No series recorded from group '{group_name}' yet.")
         else:
-            run_part = "groups" if groups else "batch"
-        model = (model_label or "").strip()
-        return f"{model} · {run_part}" if model else run_part
+            self.statusBar().showMessage(
+                f"Showing {series_count} series from group '{group_name}'."
+            )
 
     def _series_fallback_name(self, series) -> str:
-        """Return the positional "Series N" fallback label consistent with the trend panel."""
+        """Default display label for a series the user hasn't renamed.
+
+        Model-bearing batch/global series get the unified
+        ``<model> · <member-range>[ · <group>]`` scheme (D4/D8) via the core
+        :func:`default_series_label` helper; the DataGroup name (when the members
+        coincide with one browser group) is appended as a *suffix* rather than
+        replacing the label. Computed (model-less) series always carry an explicit
+        label, so they only reach the positional "Series N" fallback defensively.
+        """
+        if not series.is_computed:
+            # A series recorded with provenance (Phase 7/D1, "Fit this group…")
+            # names off that persisted group id directly; older/ad-hoc series
+            # fall back to the live run-intersection guess, keyed off
+            # source_runs() so it agrees with the member_range default_series_label
+            # renders from (a partial member_source_run map otherwise leaves the
+            # two disagreeing — the suffix silently dropped).
+            group_name = (
+                self._data_group_name(series.source_group_id) if series.source_group_id else None
+            )
+            if group_name is None:
+                group_name = self._data_group_name_for_runs(series.source_runs())
+            return default_series_label(series, group_name=group_name)
+        # Positional fallback, consistent with the trend panel's series ordering.
         rep_type = series.rep_type
         series_for_rep = sorted(
             (s for s in self._project_model.batches.values() if s.rep_type == rep_type),
@@ -9913,8 +10154,10 @@ class MainWindow(QMainWindow):
         """Handle the Single tab's 'Add to Series…' action.
 
         Finds run-membered series whose canonical model matches the active run's
-        single fit and adds the run to one (prompting if several match). The
-        trend panel is refreshed after a successful addition.
+        single fit and adds the run to one (prompting if several match). When no
+        compatible series exists, offers to create a new one-member series from
+        this fit instead of silently doing nothing (F18). The trend panel is
+        refreshed after a successful addition.
         """
         if self._current_dataset is None:
             self.statusBar().showMessage("Select a run with a single fit to add to a series.")
@@ -9937,14 +10180,32 @@ class MainWindow(QMainWindow):
             and canonical_model_matches(representation.fit.model, series.canonical_model)
         ]
         if not compatible:
-            self.statusBar().showMessage(f"No compatible batch series for run {run}'s fit.")
+            choice = QMessageBox.question(
+                self,
+                "Add to Series",
+                f"No existing batch series matches run {run}'s fit.\n\n"
+                "Create a new one-member series from this fit?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Yes,
+            )
+            if choice != QMessageBox.StandardButton.Yes:
+                return
+            batch_id = self._create_series_from_single_fit(run, rep_type)
+            if batch_id is None:
+                self.statusBar().showMessage(f"Could not create a series from run {run}'s fit.")
+                return
+            series = self._project_model.batch(batch_id)
+            series_label = series.label or self._series_fallback_name(series)
+            self._log_panel.log(f"Created {series_label} from run {run}'s fit.", tag="fit")
+            self.statusBar().showMessage(f"Created {series_label} from run {run}'s fit.")
+            self._refresh_trend_panel()
             return
 
         if len(compatible) == 1:
             series = compatible[0]
         else:
             labels = [
-                f"{s.display_name(self._series_fallback_name(s))} ({len(s.member_run_numbers)} runs)"
+                f"{s.label or self._series_fallback_name(s)} ({len(s.member_run_numbers)} runs)"
                 for s in compatible
             ]
             choice, ok = QInputDialog.getItem(
@@ -9954,11 +10215,60 @@ class MainWindow(QMainWindow):
                 return
             series = compatible[labels.index(choice)]
 
-        series_label = series.display_name(self._series_fallback_name(series))
+        series_label = series.label or self._series_fallback_name(series)
         if self._add_single_fit_to_series(run, series.batch_id):
             self._log_panel.log(f"Added run {run} to {series_label}.", tag="fit")
             self.statusBar().showMessage(f"Added run {run} to {series_label}.")
             self._refresh_trend_panel()
+
+    def _create_series_from_single_fit(
+        self, run_number: int, rep_type: RepresentationType
+    ) -> str | None:
+        """Record a new one-member batch series from *run_number*'s single fit.
+
+        Used by "Add to Series…" (F18) when no existing series shares the run's
+        model — rather than doing nothing, the run's completed single fit becomes
+        the first member of a fresh series, named via the Phase-1 unified
+        ``default_series_label`` scheme. Returns the new series' ``batch_id``, or
+        ``None`` if the run has no completed single fit to record.
+        """
+        run_number = int(run_number)
+        representation = self._project_model.representation(run_number, rep_type)
+        if representation is None or representation.fit.is_empty():
+            return None
+        fit_slot = representation.fit
+        canonical_model = fit_slot.model
+        result = dict(fit_slot.result) if isinstance(fit_slot.result, dict) else {}
+        result.pop("result_html", None)
+        # A single fit's stored result carries no T/B (single fits aren't series
+        # members); stamp the browser's current displayed coordinate the same way
+        # every other series-recording path does (_record_global_fit_batch,
+        # the grouped-fit path), or the new series plots at trend X=0/NaN and
+        # cannot self-correct once the run leaves the browser or the project
+        # reloads (see _dataset_trend_coords).
+        result.update(self._dataset_trend_coords(run_number))
+        template_parameters = [dict(p) for p in (fit_slot.parameters or []) if isinstance(p, dict)]
+        batch = FitSeries(
+            self._next_batch_id(),
+            rep_type,
+            label=None,
+            member_run_numbers=[run_number],
+            order_key="field",
+            canonical_model=canonical_model,
+            param_roles={},
+            results_by_run={run_number: result},
+        )
+        return self._record_fit_series(
+            batch,
+            slot_runs=[run_number],
+            slot_factory=lambda run: FitSlot(
+                model=canonical_model,
+                parameters=template_parameters,
+                result=dict(result),
+                provenance="batch",
+                batch_id=batch.batch_id,
+            ),
+        )
 
     def _on_preview_requested(self, fit_result, fitted_curve, component_curves) -> None:
         """Handle preview request from fit panel."""
@@ -10192,6 +10502,42 @@ class MainWindow(QMainWindow):
         )
         self.statusBar().showMessage(f"Batch fit completed for {n_datasets} datasets")
 
+    def _grouped_fit_completion_summary(self, grouped_datasets, results_dict) -> str:
+        """Human-readable grouped-fit accounting for the completion log (F12).
+
+        A grouped batch produces one ``(run, group)`` *trace* per member, not one
+        "group": report "35 traces (7 runs × 5 groups)" — and the average χ²ᵣ —
+        rather than the ambiguous "35 groups" the old log printed.
+        """
+        n_traces = len(grouped_datasets)
+        source_runs: set[int] = set()
+        for dataset in grouped_datasets:
+            meta = getattr(dataset, "metadata", {}) or {}
+            raw = meta.get("source_run_number", meta.get("run_number"))
+            try:
+                source_runs.add(int(raw))
+            except (TypeError, ValueError):
+                continue
+        n_runs = len(source_runs)
+        chi2_values = [
+            float(payload[0].reduced_chi_squared)
+            for payload in results_dict.values()
+            if isinstance(payload, tuple)
+            and payload
+            and np.isfinite(getattr(payload[0], "reduced_chi_squared", float("nan")))
+        ]
+        parts: list[str] = []
+        if n_runs > 1 and n_traces % n_runs == 0:
+            parts.append(f"{n_traces} traces ({n_runs} runs × {n_traces // n_runs} groups)")
+        elif n_runs == 1:
+            run = next(iter(source_runs))
+            parts.append(f"{n_traces} groups (run {run})")
+        else:
+            parts.append(f"{n_traces} traces")
+        if chi2_values:
+            parts.append(f"average χ²ᵣ = {sum(chi2_values) / len(chi2_values):.3f}")
+        return " · ".join(parts)
+
     def _on_grouped_fit_completed(
         self,
         grouped_datasets,
@@ -10243,10 +10589,9 @@ class MainWindow(QMainWindow):
             # froze the GUI for several seconds when the values came back.
             display_members = self._grouped_members_for_display(grouped_datasets)
             self._plot_panel.plot_grouped_time_domain_subplots(display_members)
-        self._log_panel.log(f"Grouped time-domain fit completed: {len(grouped_datasets)} groups")
-        self.statusBar().showMessage(
-            f"Grouped time-domain fit completed: {len(grouped_datasets)} groups"
-        )
+        completion = self._grouped_fit_completion_summary(grouped_datasets, results_dict)
+        self._log_panel.log(f"Grouped time-domain fit completed: {completion}")
+        self.statusBar().showMessage(f"Grouped time-domain fit completed: {completion}")
 
     def _on_grouped_preview_requested(
         self,
@@ -10485,7 +10830,7 @@ class MainWindow(QMainWindow):
         self._add_results_series(
             batch_id,
             rep_type,
-            f"Model fit: {parameter_name} vs {x_key}",
+            f"Model fit · {parameter_name} vs {x_key}",
             member_run_numbers,
             results_by_run,
             extra=preserved_extra,
@@ -10826,7 +11171,7 @@ class MainWindow(QMainWindow):
         self._add_results_series(
             batch_id,
             rep_type,
-            f"Model fit (single): {parameter_name} vs {x_key}",
+            f"Model fit (single) · {parameter_name} vs {x_key}",
             member_run_numbers,
             results_by_run,
         )
@@ -11620,6 +11965,15 @@ class MainWindow(QMainWindow):
             pruned.pop("wizard_state_by_run_set", None)
             return pruned
 
+        def _domain_block(domain: str, source: dict) -> dict:
+            """Prune the regenerable payloads out of one domain's fit state."""
+            return {
+                "domain": domain,
+                "single_fit_state": _prune_single_fit_state(source.get("single_fit_state")),
+                "global_fit_state": _prune_global_fit_state(source.get("global_fit_state")),
+                "fit_ui_state": source.get("fit_ui_state", {}),
+            }
+
         time_fit_state = (
             self._fit_panel.get_domain_state("time")
             if hasattr(self._fit_panel, "get_domain_state")
@@ -11648,24 +12002,20 @@ class MainWindow(QMainWindow):
             "browser_state": self._data_browser.get_state(),
             "plot_state": plot_state,
             "view_modes_state": self._collect_view_modes_state(),
-            "single_fit_state": _prune_single_fit_state(time_fit_state.get("single_fit_state")),
-            "global_fit_state": _prune_global_fit_state(time_fit_state.get("global_fit_state")),
             "multi_group_fit_state": _prune_global_fit_state(
                 self._multi_group_fit_window.get_state()
                 if self._multi_group_fit_window is not None
                 and hasattr(self._multi_group_fit_window, "get_state")
                 else None
             ),
-            "fit_ui_state": time_fit_state.get("fit_ui_state", {}),
-            "frequency_fit_state": {
-                "domain": "frequency",
-                "single_fit_state": _prune_single_fit_state(
-                    frequency_fit_state.get("single_fit_state")
-                ),
-                "global_fit_state": _prune_global_fit_state(
-                    frequency_fit_state.get("global_fit_state")
-                ),
-                "fit_ui_state": frequency_fit_state.get("fit_ui_state", {}),
+            # v11: both fitting domains persist symmetrically under
+            # ``fit_states`` (F21c). The legacy un-keyed top-level
+            # ``single_fit_state``/``global_fit_state``/``fit_ui_state`` and the
+            # nested ``frequency_fit_state`` are still *read* on load (schema
+            # migration folds them here) but are never written again.
+            "fit_states": {
+                "time": _domain_block("time", time_fit_state),
+                "frequency": _domain_block("frequency", frequency_fit_state),
             },
             "fit_parameters_state": self._fit_parameters_panel.get_state(),
             # View preferences only (log axes, plot mode, …). The window's
@@ -11700,8 +12050,69 @@ class MainWindow(QMainWindow):
         # Recipe-only representation/batch state (v6).  Frequency spectra are
         # recomputed from these recipes on load; the array snapshot above is a
         # transitional fallback removed in cleanup.
+        self._sync_data_groups_to_project_model()
         self._project_model.write_to_project_state(project_state)
         return project_state
+
+    def _seed_browser_groups_from_project_model(self) -> None:
+        """Create browser groups for any core-only entries in ``ProjectModel.data_groups``.
+
+        Called on project restore, right after ``_restore_frequency_representations``
+        has parsed the top-level ``data_groups`` block (Phase 7/D1) into
+        ``self._project_model``. The browser's own ``restore_state`` (called
+        earlier, on the legacy ``browser_state.data_groups`` block) already
+        populated its live groups for a project saved by this app — the two
+        blocks describe the same groups there. But a project authored against
+        the core API alone (e.g. by a script, with no ``browser_state`` entry)
+        would carry groups only in the top-level block; without this seeding
+        step, the unconditional mirror in :meth:`_sync_data_groups_to_project_model`
+        that runs right after this would silently overwrite them away.
+        """
+        browser_group_ids = (
+            set(self._data_browser.get_all_group_ids())
+            if hasattr(self._data_browser, "get_all_group_ids")
+            else set()
+        )
+        for group in self._project_model.data_groups.values():
+            if group.group_id not in browser_group_ids:
+                self._data_browser.create_data_group(
+                    list(group.member_run_numbers),
+                    name=group.name,
+                    group_id=group.group_id,
+                )
+
+    def _sync_data_groups_to_project_model(self) -> None:
+        """Mirror the browser's live groups into ``ProjectModel.data_groups``.
+
+        The browser's ``_groups`` dict remains the live editing surface (Phase 7
+        did not rewrite its ~30 read/write call sites); this keeps the additive
+        ``data_groups`` schema block — and therefore ``FitSeries.source_group_id``
+        provenance lookups against ``ProjectModel`` — in sync with it at the
+        load/save boundary, without threading a ``ProjectModel`` reference
+        through the browser panel. ``collapsed`` is GUI display state and is
+        deliberately not carried into the core registry.
+        """
+        browser = self._data_browser
+        if not (
+            hasattr(browser, "get_all_group_ids")
+            and hasattr(browser, "get_group_name")
+            and hasattr(browser, "get_group_member_run_numbers")
+        ):
+            return
+        previous = self._project_model.data_groups
+        self._project_model.data_groups = {
+            gid: DataGroup(
+                group_id=gid,
+                name=browser.get_group_name(gid) or gid,
+                member_run_numbers=browser.get_group_member_run_numbers(gid),
+                # The browser's own DataGroup has no order_key field to mirror;
+                # carry forward whatever the core registry already had for this
+                # id (e.g. set by a script against the core API) rather than
+                # silently resetting it to the "run" default on every sync.
+                order_key=previous[gid].order_key if gid in previous else "run",
+            )
+            for gid in browser.get_all_group_ids()
+        }
 
     def _sync_global_fit_decorations_to_series(self) -> None:
         """Stamp the Global Parameter Fit window's decorations into its series.
@@ -12099,6 +12510,8 @@ class MainWindow(QMainWindow):
         self._plot_workspace.restore_state(plot_state.get("workspace_state"))
         self._restore_frequency_spectra_state(state.get("fourier_spectra_state"))
         self._restore_frequency_representations(state)
+        self._seed_browser_groups_from_project_model()
+        self._sync_data_groups_to_project_model()
         if self._plot_workspace.active_domain() == "frequency":
             self._sync_frequency_plot_for_current_dataset()
         if (
@@ -12147,13 +12560,55 @@ class MainWindow(QMainWindow):
             self._refresh_vector_axis_selector()
 
         # ── restore fit panel states (after dataset propagation) ──────
-        single_fit_state = state.get("single_fit_state")
-        if single_fit_state:
-            self._fit_panel.restore_single_state(single_fit_state)
+        # v11+ persists both fitting domains symmetrically under ``fit_states``
+        # and routes each through ``restore_domain_state`` so a blob is only
+        # ever applied to its own domain (F21c). Older payloads (or callers that
+        # bypass schema migration) used un-keyed top-level
+        # ``single_fit_state``/``global_fit_state``/``fit_ui_state`` for the time
+        # domain and a nested ``frequency_fit_state`` for frequency; read those
+        # as a fallback but never write them.
+        # Prefer the keyed block per domain, falling back to the legacy key for
+        # *that domain only* — a `fit_states` dict that carries just one domain
+        # must not suppress the legacy fallback for the other (F21c hardening).
+        fit_states = state.get("fit_states")
+        fit_states = fit_states if isinstance(fit_states, dict) else {}
 
-        global_fit_state = state.get("global_fit_state")
-        if global_fit_state:
-            self._fit_panel.restore_global_state(global_fit_state)
+        time_fit_state = fit_states.get("time")
+        if not isinstance(time_fit_state, dict):
+            time_fit_state = {
+                "domain": "time",
+                "single_fit_state": state.get("single_fit_state") or {},
+                "global_fit_state": state.get("global_fit_state") or {},
+                "fit_ui_state": state.get("fit_ui_state") or {},
+            }
+        frequency_fit_state = fit_states.get("frequency")
+        if not isinstance(frequency_fit_state, dict):
+            frequency_fit_state = state.get("frequency_fit_state")
+
+        # Time-domain single/global blobs drive the "open fit dock on load"
+        # heuristic below (``_has_saved_fit_results``).
+        single_fit_state = time_fit_state.get("single_fit_state")
+        global_fit_state = time_fit_state.get("global_fit_state")
+
+        # A corrupt/mis-tagged fit blob makes restore_domain_state raise; on the
+        # project-load path that must never abort the whole open (the rest of
+        # this method is best-effort), so log and skip the offending domain form.
+        if hasattr(self._fit_panel, "restore_domain_state"):
+            try:
+                self._fit_panel.restore_domain_state("time", time_fit_state)
+            except ValueError as exc:  # noqa: BLE001 - one bad form must not abort load
+                self._log_panel.log(f"Skipped restoring the time-domain fit form: {exc}")
+        else:
+            # Panels without domain routing: apply the time blob directly.
+            single = time_fit_state.get("single_fit_state")
+            if single:
+                self._fit_panel.restore_single_state(single)
+            global_state = time_fit_state.get("global_fit_state")
+            if global_state:
+                self._fit_panel.restore_global_state(global_state)
+            ui_state = time_fit_state.get("fit_ui_state")
+            if ui_state:
+                self._fit_panel.restore_ui_state(ui_state)
 
         multi_group_fit_state = state.get("multi_group_fit_state")
         if (
@@ -12163,24 +12618,48 @@ class MainWindow(QMainWindow):
         ):
             self._multi_group_fit_window.restore_state(multi_group_fit_state)
 
-        fit_ui_state = state.get("fit_ui_state")
-        if fit_ui_state:
-            self._fit_panel.restore_ui_state(fit_ui_state)
-
-        frequency_fit_state = state.get("frequency_fit_state")
         if isinstance(frequency_fit_state, dict) and hasattr(
             self._fit_panel, "restore_domain_state"
         ):
-            self._fit_panel.restore_domain_state("frequency", frequency_fit_state)
-            if self._plot_workspace.active_domain() == "frequency":
+            try:
+                self._fit_panel.restore_domain_state("frequency", frequency_fit_state)
+            except ValueError as exc:  # noqa: BLE001 - one bad form must not abort load
+                self._log_panel.log(f"Skipped restoring the frequency-domain fit form: {exc}")
+                frequency_fit_state = None
+            if (
+                isinstance(frequency_fit_state, dict)
+                and self._plot_workspace.active_domain() == "frequency"
+            ):
                 if hasattr(self._fit_panel, "set_domain"):
                     self._fit_panel.set_domain("frequency")
                 self._fit_panel.set_dataset(self._active_frequency_fit_dataset())
                 self._set_frequency_fit_datasets_for_selection()
 
         fit_parameters_state = state.get("fit_parameters_state")
+        panel_supports_deferred_refresh = hasattr(self._fit_parameters_panel, "refresh_display")
         if fit_parameters_state:
-            self._fit_parameters_panel.restore_state(fit_parameters_state)
+            # Defer the panel's own table/plot draw: _refresh_trend_panel below
+            # re-derives and refreshes it once. Drawing here too would build the
+            # panel — and re-run the heavy trend-curve compute — twice per open.
+            if panel_supports_deferred_refresh:
+                self._fit_parameters_panel.restore_state(fit_parameters_state, defer_refresh=True)
+            else:
+                self._fit_parameters_panel.restore_state(fit_parameters_state)
+
+        # F21a/b: the serialized trend-panel cache holds only whichever
+        # representation was active at save, so restoring it blindly can leave
+        # the active representation showing another representation's chips (and
+        # missing its own). Re-derive the chip set from the project model — the
+        # authoritative, representation-typed source — for the active
+        # representation, exactly as a view switch does. ``_project_model`` is
+        # already populated (``_restore_frequency_representations`` above); the
+        # pull preserves per-series trend model-fits for surviving series.
+        refreshed = self._refresh_trend_panel(surface=False)
+        if fit_parameters_state and not refreshed and panel_supports_deferred_refresh:
+            # No active representation to re-derive from (e.g. a non-fit view was
+            # active at save): draw the deferred restore now so the panel isn't
+            # left blank.
+            self._fit_parameters_panel.refresh_display()
 
         restored_cross_group = getattr(self._fit_parameters_panel, "last_cross_group_fit", None)
         global_parameter_fit_window_state = state.get("global_parameter_fit_window_state")

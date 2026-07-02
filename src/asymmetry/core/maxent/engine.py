@@ -12,15 +12,20 @@ projected-gradient V1 implementation for Asymmetry's GUI and tests.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from functools import cached_property
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.fitting.spectral import (
+    default_frequency_model,
+    seed_peak_parameters_from_dataset,
+)
 from asymmetry.core.fourier.grouped import build_group_signal_dataset
 from asymmetry.core.fourier.units import gauss_to_mhz
 from asymmetry.core.maxent.pulse import pulse_amplitude_phase
@@ -563,7 +568,55 @@ def estimate_maxent_workload(
     )
 
 
-def _resolve_frequency_window(run: Run, config: MaxEntConfig) -> tuple[float, float]:
+_ZF_WINDOW_SEED_MODEL = default_frequency_model()
+
+
+def _data_aware_zf_window(
+    groups: Sequence[MaxEntGroupInput], *, padding_mhz: float = 2.0
+) -> tuple[float, float] | None:
+    """Estimate a frequency window from the grouped time-domain signal.
+
+    Used when ``auto_window`` is on but the run field is absent/≈0, so
+    centring the window on the field would collapse it to the near-DC
+    fallback and miss any real precession signal (D7/F19). Runs a cheap
+    periodogram on each group's asymmetry in turn and reuses the Phase 5.2
+    guarded peak finder to skip the DC/apodisation spike, then pads around
+    the dominant peak. Returns ``None`` when no group yields a usable peak,
+    so the caller can fall back to the field-based default.
+    """
+    for group in groups:
+        time = np.asarray(group.time_us, dtype=np.float64)
+        signal = np.asarray(group.signal, dtype=np.float64)
+        mask = group.mask if group.mask is not None else np.ones(time.shape, dtype=bool)
+        finite = mask & np.isfinite(time) & np.isfinite(signal)
+        time = time[finite]
+        signal = signal[finite]
+        if time.size < 8:
+            continue
+        dt = float(np.median(np.diff(time)))
+        if not np.isfinite(dt) or dt <= 0.0:
+            continue
+        spectrum = np.abs(np.fft.rfft(signal - np.mean(signal)))
+        freqs = np.fft.rfftfreq(time.size, d=dt)  # MHz, since dt is in microseconds
+        nyquist = float(freqs[-1]) if freqs.size else 0.0
+        if nyquist <= 0.0:
+            continue
+        pseudo_spectrum = SimpleNamespace(time=freqs, asymmetry=spectrum)
+        seeds = seed_peak_parameters_from_dataset(pseudo_spectrum, _ZF_WINDOW_SEED_MODEL)
+        nu0 = seeds.get("nu0")
+        if nu0 is None or nu0 <= 0.0:
+            continue
+        half_width = max(padding_mhz, 2.0 * float(seeds.get("fwhm") or 0.0))
+        f_min = max(0.0, nu0 - half_width)
+        f_max = min(nyquist, nu0 + half_width)
+        if f_max > f_min:
+            return f_min, f_max
+    return None
+
+
+def _resolve_frequency_window(
+    run: Run, config: MaxEntConfig, groups: Sequence[MaxEntGroupInput] | None = None
+) -> tuple[float, float]:
     field_value = run.metadata.get("field") if isinstance(run.metadata, dict) else None
     try:
         center = _field_to_frequency_mhz(float(field_value))
@@ -571,11 +624,23 @@ def _resolve_frequency_window(run: Run, config: MaxEntConfig) -> tuple[float, fl
         center = 0.0
     half_width = _field_to_frequency_mhz(float(config.window_half_width_gauss))
 
-    # ``auto_window`` is an explicit request to derive the window from the run
-    # field, so it must win over (possibly stale) explicit bounds.  Explicit
-    # bounds are honoured when auto mode is off or the field is unusable.
+    # ``auto_window`` is an explicit request to derive the window without user
+    # input, so it must win over (possibly stale) explicit bounds — the Window
+    # min/max fields are disabled but not cleared while auto is checked, and a
+    # loaded project can carry stale values too.  Explicit bounds are honoured
+    # only when auto mode is off.
     if config.auto_window and center > 0.0 and half_width > 0.0:
         return max(0.0, center - half_width), center + half_width
+
+    # ZF/near-ZF: the field-based window above collapsed to the near-DC
+    # fallback below, guaranteeing a diverging reconstruction whenever the
+    # physical precession frequency sits outside it (D7/F19).  Derive the
+    # window from the data instead, before stale explicit bounds get a
+    # chance to win.
+    if config.auto_window and groups:
+        data_window = _data_aware_zf_window(groups)
+        if data_window is not None:
+            return data_window
 
     explicit_min = config.f_min_mhz
     explicit_max = config.f_max_mhz
@@ -583,6 +648,7 @@ def _resolve_frequency_window(run: Run, config: MaxEntConfig) -> tuple[float, fl
         return float(explicit_min), float(explicit_max)
     if explicit_max is not None and explicit_max > 0.0:
         return max(0.0, float(explicit_min or 0.0)), float(explicit_max)
+
     return 0.0, max(10.0, center + half_width)
 
 
@@ -745,7 +811,7 @@ def build_maxent_input(
         )
 
     n_points = resolved_config.n_spectrum_points or default_n_spectrum_points(max_points)
-    f_min, f_max = _resolve_frequency_window(run, resolved_config)
+    f_min, f_max = _resolve_frequency_window(run, resolved_config, groups)
     if f_max <= f_min:
         f_max = f_min + 1.0
     n_points = int(n_points)

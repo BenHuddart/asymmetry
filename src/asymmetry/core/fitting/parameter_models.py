@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -1556,6 +1557,44 @@ class ParameterCompositeModel:
 #: critical temperature must instead be inferred from the fitted x-range,
 #: otherwise the trend fit fails to converge until the user reseeds Tc by hand.
 _TREND_TC_COMPONENTS = frozenset({"CriticalDivergence", "OrderParameter"})
+
+
+#: Fitted observables that track a magnetic order parameter — a muon precession
+#: frequency or an internal/local field. Both grow below ``T_c`` and vanish at it
+#: (``∝ M(T)``), so an ``OrderParameter`` trend versus temperature is their
+#: physical default (F4). Applied/longitudinal fields (``B_L``, ``B_ext``) and RF
+#: drives (``nu_RF``) are deliberately excluded — they do not follow the order
+#: parameter.
+_ORDER_PARAMETER_OBSERVABLE_BASENAMES: frozenset[str] = frozenset(
+    {
+        "frequency",
+        "freq",
+        "nu",
+        "nu0",
+        "omega",
+        "b_loc",
+        "bloc",
+        "b_local",
+        "blocal",
+        "b_int",
+        "bint",
+        "b_internal",
+    }
+)
+
+
+def is_order_parameter_observable(parameter_name: str) -> bool:
+    """True when *parameter_name* is a precession frequency / internal field.
+
+    Keyed off the fitted parameter's base name (a trailing ``_<n>`` component
+    suffix is stripped), so ``frequency_2`` matches while the applied
+    longitudinal field ``B_L`` and the RF drive ``nu_RF`` do not. Pure and
+    Qt-free: the GUI's trend-model default (F4) reads this so the domain fact
+    "a precession frequency / internal field follows the order parameter" lives
+    beside the seed logic (:func:`suggest_trend_seeds`), not in a panel.
+    """
+    base = re.sub(r"_\d+$", "", str(parameter_name).strip().lower())
+    return base in _ORDER_PARAMETER_OBSERVABLE_BASENAMES
 
 
 def suggest_trend_seeds(

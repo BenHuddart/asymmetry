@@ -410,6 +410,10 @@ class TestMainWindowFourier:
         status = mainwindow._maxent_panel._status_label.text()
         assert "diverged" in status.lower()
         assert tokens.WARN in status  # rendered in the warning colour
+        # D7/F19: the message must name the control and the bounds a user
+        # would need to widen, not just vaguely gesture at "the window".
+        assert "Window" in status
+        assert "0.2" in status and "3" in status
 
     def test_compute_fourier_plots_frequency_domain_dataset(self, mainwindow: MainWindow) -> None:
         dataset = _make_fourier_ready_dataset(8802, with_grouping=True)
@@ -458,6 +462,32 @@ class TestMainWindowFourier:
         assert single_tab._fit_blocked is False
         assert single_tab._fit_btn.isEnabled() is True
         assert single_tab._fit_btn.toolTip() == ""
+
+    def test_compute_fourier_enables_and_seeds_frequency_fit_range(
+        self, mainwindow: MainWindow
+    ) -> None:
+        """A freshly computed spectrum must leave the fit-range fields editable.
+
+        Regression (D6/F15): the frequency Fit tab's FIT RANGE spins stayed
+        disabled and showed stale time-domain numbers because nothing pushed
+        the plot's newly-seeded (full-spectrum) fit range into the Fit panel
+        after an async/lazy recompute finished (mainwindow.py:_render_frequency_spectra).
+        """
+        dataset = _make_fourier_ready_dataset(8807, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8807)
+        mainwindow._on_domain_button_clicked("frequency")
+
+        _compute_fourier_sync(mainwindow)
+
+        single_tab = mainwindow._fit_panel._single_tab
+        assert single_tab._fit_range_min_spin.isEnabled() is True
+        assert single_tab._fit_range_max_spin.isEnabled() is True
+
+        plot_x_min, plot_x_max = mainwindow._frequency_plot_panel.get_fit_range()
+        assert plot_x_min is not None and plot_x_max is not None
+        assert single_tab._fit_range_min_spin.value() == pytest.approx(plot_x_min)
+        assert single_tab._fit_range_max_spin.value() == pytest.approx(plot_x_max)
 
     def test_group_phase_estimation_uses_field_centered_window(
         self,
@@ -878,6 +908,54 @@ class TestMainWindowFourier:
         target_rep = mainwindow._project_model.representation(8831, RepresentationType.FREQ_FFT)
         assert target_rep is not None
         assert target_rep.recipe["fourier_config"] == source_rep.recipe["fourier_config"]
+
+    def test_apply_fourier_to_selection_enables_batch_fit_without_selection_poke(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """F17: applying Fourier settings to a selection must refresh fit enable-state.
+
+        Regression: computing spectra for a selection (via "Apply to selection")
+        left "Run Batch Fit" stale-disabled until an unrelated browser-selection
+        change happened to trigger `_update_fit_block_state` (same class as the
+        PR #89 fix, mainwindow.py:_on_apply_fourier_to_selection).
+        """
+        ds1 = _make_fourier_ready_dataset(8834, with_grouping=True)
+        ds2 = _make_fourier_ready_dataset(8835, with_grouping=True)
+        mainwindow._data_browser.add_dataset(ds1)
+        mainwindow._data_browser.add_dataset(ds2)
+        mainwindow._on_dataset_selected(8834)
+        mainwindow._on_domain_button_clicked("frequency")
+        _compute_fourier_sync(mainwindow)
+
+        global_tab = mainwindow._fit_panel._global_tab
+        assert global_tab._fit_btn.isEnabled() is False
+
+        monkeypatch.setattr(mainwindow._data_browser, "get_selected_datasets", lambda: [ds1, ds2])
+        mainwindow._on_apply_fourier_to_selection()
+
+        assert global_tab._fit_btn.isEnabled() is True
+
+    def test_switching_to_batch_subtab_refreshes_fit_block_state(
+        self, mainwindow: MainWindow
+    ) -> None:
+        """F17: a Single<->Batch tab switch must re-evaluate fit enable-state.
+
+        Nothing else re-runs `_update_fit_block_state` on a bare tab switch, so
+        stale block/enable state (e.g. left over from a different run or view)
+        could survive until an unrelated event refreshed it.
+        """
+        calls = []
+        original = mainwindow._update_fit_block_state
+        mainwindow._update_fit_block_state = lambda: (calls.append(1), original())[-1]
+
+        batch_index = mainwindow._fit_panel._tabs.indexOf(mainwindow._fit_panel._global_tab)
+        mainwindow._fit_panel._tabs.setCurrentIndex(batch_index)
+        assert calls
+
+        calls.clear()
+        single_index = mainwindow._fit_panel._tabs.indexOf(mainwindow._fit_panel._single_tab)
+        mainwindow._fit_panel._tabs.setCurrentIndex(single_index)
+        assert calls
 
     def test_apply_fourier_to_selection_requires_prior_compute(
         self, mainwindow: MainWindow
@@ -1796,6 +1874,133 @@ class TestMainWindowFourier:
         )
         assert restored_nu0_type_combo is not None
         assert restored_nu0_type_combo.currentText() == "Local"
+
+    def test_project_round_trip_renders_fft_data_not_orphan_legend(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """F21d: reopening a project with a computed FFT must render the spectrum
+        data — never a legend entry over an empty plot.
+
+        FFT spectra persist recipe-only and recompute lazily off-thread on the
+        first frequency view. While pending, the panel shows the loading overlay
+        with no stale legend; once the recompute lands, the real curve is drawn.
+        """
+        dataset = _make_fourier_ready_dataset(8819, with_grouping=True)
+        assert dataset.run is not None
+        source_file = tmp_path / "run_8819.mdu"
+        source_file.write_text("placeholder", encoding="utf-8")
+        dataset.run.source_file = str(source_file)
+        dataset.metadata["source_file"] = str(source_file)
+
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8819)
+        _compute_fourier_sync(mainwindow)
+
+        state = mainwindow.collect_project_state()
+        project_path = tmp_path / "fft_render_roundtrip.asymp"
+        save_project(state, project_path)
+        loaded_state = load_project(project_path)
+
+        def _fake_load_file(_path: str) -> MuonDataset:
+            loaded = _make_fourier_ready_dataset(8819, with_grouping=True)
+            assert loaded.run is not None
+            loaded.run.source_file = str(source_file)
+            loaded.metadata["source_file"] = str(source_file)
+            return loaded
+
+        restored = MainWindow()
+        monkeypatch.setattr(restored, "_load_file", _fake_load_file)
+        restored.restore_project_state(loaded_state, str(project_path))
+
+        panel = restored._frequency_plot_panel
+
+        # Pending state: the recompute is in flight; nothing has been drawn yet,
+        # so there is no orphan legend sitting over an empty plot.
+        if restored._frequency_recompute_active:
+            assert panel._ax.get_legend() is None
+            assert panel._current_dataset is None
+
+        _wait_frequency_idle(restored)
+
+        # After the recompute lands the real spectrum is drawn: a data curve
+        # exists and any legend corresponds to actual plotted data.
+        assert restored._plot_workspace.active_domain() == "frequency"
+        assert panel._current_dataset is not None
+        data_lines = [line for line in panel._ax.get_lines() if len(line.get_xdata()) > 2]
+        assert data_lines, "frequency spectrum curve was not drawn after restore"
+        legend = panel._ax.get_legend()
+        if legend is not None:
+            assert legend.get_texts(), "legend present without entries"
+
+    def test_restore_tolerates_mistagged_fit_state_blob(
+        self, mainwindow: MainWindow, qapp: QApplication, tmp_path: Path
+    ) -> None:
+        """A corrupt/mis-tagged fit blob must not abort the whole project open;
+        it is logged and skipped (the rest of restore is best-effort)."""
+        state = mainwindow.collect_project_state()
+        # Mislabel the time-domain block so restore_domain_state('time', ...) raises.
+        state["fit_states"]["time"]["domain"] = "frequency"
+
+        restored = MainWindow()
+        # Must not raise.
+        restored.restore_project_state(state, str(tmp_path / "mistagged.asymp"))
+        assert "Skipped restoring the time-domain fit form" in (restored._log_panel.to_plain_text())
+
+    def test_restore_partial_fit_states_falls_back_per_domain(
+        self, mainwindow: MainWindow, qapp: QApplication, tmp_path: Path
+    ) -> None:
+        """A fit_states dict carrying only one domain must still read the legacy
+        top-level key for the missing domain, not silently drop it (F21c)."""
+        state = mainwindow.collect_project_state()
+        frequency_block = state["fit_states"]["frequency"]
+        # Simulate a file whose fit_states has ONLY frequency, with the time fit
+        # living in a legacy top-level single_fit_state.
+        state["fit_states"] = {"frequency": frequency_block}
+        state["single_fit_state"] = {"result_html": "<b>legacy time fit</b>", "parameters": []}
+
+        restored = MainWindow()
+        restored.restore_project_state(state, str(tmp_path / "partial.asymp"))
+
+        cached_time = restored._fit_panel._single_state_by_domain.get("time")
+        assert isinstance(cached_time, dict)
+        assert cached_time.get("result_html") == "<b>legacy time fit</b>"
+
+    def test_project_restore_builds_trend_panel_once(
+        self,
+        mainwindow: MainWindow,
+        qapp: QApplication,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The trend panel (and its heavy off-thread trend-curve compute) must be
+        built once on project open: restore_state defers its draw and the
+        re-derivation from the project model does the single refresh."""
+        state = mainwindow.collect_project_state()
+
+        restored = MainWindow()
+        panel = restored._fit_parameters_panel
+        seen = {"defer": None, "plots": 0}
+        original_restore = panel.restore_state
+        original_plot = panel._refresh_plot
+
+        def _spy_restore(s, *, defer_refresh=False):
+            seen["defer"] = defer_refresh
+            return original_restore(s, defer_refresh=defer_refresh)
+
+        def _spy_plot():
+            seen["plots"] += 1
+            return original_plot()
+
+        monkeypatch.setattr(panel, "restore_state", _spy_restore)
+        monkeypatch.setattr(panel, "_refresh_plot", _spy_plot)
+
+        restored.restore_project_state(state, str(tmp_path / "once.asymp"))
+
+        assert seen["defer"] is True  # restore_state was asked to defer its draw
+        assert seen["plots"] == 1  # exactly one panel plot refresh, not two
 
 
 class TestMainWindowBasic:

@@ -215,10 +215,14 @@ def test_table_includes_angle_abscissa_column(qapp):
     panel.load_representation_series(
         [("b", "S", [_angle_series_dict(1, "30", 0.2), _angle_series_dict(2, "60", 0.3)])]
     )
-    last = panel._table.columnCount() - 1
-    assert panel._table.horizontalHeaderItem(last).text() == "Angle (°)"
+    # The abscissa column sits after the parameter columns but before the
+    # trailing χ²ᵣ / Trend trend-gate columns (Phase 2), so find it by header.
+    headers = [
+        panel._table.horizontalHeaderItem(c).text() for c in range(panel._table.columnCount())
+    ]
+    angle_col = headers.index("Angle (°)")
     # Rows are sorted by angle; first row is 30°.
-    assert panel._table.item(0, last).text() == "30"
+    assert panel._table.item(0, angle_col).text() == "30"
 
 
 def test_gle_export_plots_against_angle_column(qapp, tmp_path):

@@ -17,7 +17,6 @@ from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QCheckBox,
     QComboBox,
-    QDoubleSpinBox,
     QFormLayout,
     QGridLayout,
     QHBoxLayout,
@@ -37,6 +36,7 @@ from asymmetry.gui.panels.fit_panel import (
 )
 from asymmetry.gui.styles.widgets import make_section
 from asymmetry.gui.widgets.collapsible_section import CollapsibleSection
+from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox
 
 #: Fit-target choices (label, mode key) shown in the count-domain selector.
 #: Labels stay short so the selector does not set the Fit dock's minimum width;
@@ -158,15 +158,15 @@ class MultiGroupFitWindow(QWidget):
         options_form.addRow(QLabel("Cost"), self._cost_combo)
 
         # Interior exclude window (µs): inactive while max ≤ min.
-        self._exclude_min = QDoubleSpinBox()
-        self._exclude_max = QDoubleSpinBox()
+        self._exclude_min = NoScrollDoubleSpinBox()
+        self._exclude_max = NoScrollDoubleSpinBox()
         for spin in (self._exclude_min, self._exclude_max):
             spin.setDecimals(3)
             spin.setRange(0.0, 1000.0)
             spin.setSingleStep(0.1)
             # Keep these count-config fields narrow so the grouped page does not
             # set the Fit dock's minimum width past the other tabs: drop the spin
-            # arrows (edit by typing/keys/wheel) and cap the width.
+            # arrows (edit by typing/keys, or wheel once focused) and cap the width.
             spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
             spin.setMaximumWidth(76)
             spin.valueChanged.connect(self._sync_count_fit_target)
@@ -203,7 +203,7 @@ class MultiGroupFitWindow(QWidget):
 
         # Double-pulse separation (µs); 0 = single pulse. Fixed from the
         # instrument, or located by a coarse->fine scan when "fit" is ticked.
-        self._dpsep_spin = QDoubleSpinBox()
+        self._dpsep_spin = NoScrollDoubleSpinBox()
         self._dpsep_spin.setDecimals(3)
         self._dpsep_spin.setRange(0.0, 5.0)
         self._dpsep_spin.setSingleStep(0.01)

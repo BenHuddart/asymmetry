@@ -37,7 +37,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizePolicy,
-    QSpinBox,
     QStyle,
     QStyledItemDelegate,
     QStyleOptionViewItem,
@@ -96,6 +95,7 @@ from asymmetry.core.fitting.grouped_time_domain import (
     fit_grouped_time_domain,
     validate_grouped_model_contract,
 )
+from asymmetry.core.fitting.member_quality import member_quality_flags
 from asymmetry.core.fitting.parameters import (
     AffineTie,
     Parameter,
@@ -149,6 +149,7 @@ from asymmetry.gui.styles.widgets import (
 )
 from asymmetry.gui.tasks import TaskRunner, TaskWorker
 from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
+from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox, NoScrollSpinBox
 from asymmetry.gui.windows.fit_wizard_window import FitWizardWindow
 from asymmetry.gui.windows.global_fit_wizard_window import GlobalFitWizardWindow
 
@@ -710,6 +711,11 @@ class _FloatLimitField(QLineEdit):
         self._value = self._clamp(value)
         self.setText(self._format(self._value))
 
+    def set_unset(self, placeholder: str) -> None:
+        """Blank the field and show *placeholder* text (no value has been set)."""
+        self.clear()
+        self.setPlaceholderText(placeholder)
+
     def decimals(self) -> int:
         return self._decimals
 
@@ -720,6 +726,41 @@ class _FloatLimitField(QLineEdit):
 
     def setRange(self, minimum: float, maximum: float) -> None:  # noqa: N802 — spinbox-API shim
         self._validator.setRange(minimum, maximum, self._decimals)
+
+
+def _apply_fit_range_display(
+    domain: str,
+    min_spin: _FloatLimitField,
+    max_spin: _FloatLimitField,
+    x_min: float | None,
+    x_max: float | None,
+) -> None:
+    """Shared fit-range spinbox update for :class:`SingleFitTab`/:class:`GlobalFitTab`.
+
+    In the time domain a plot always supplies a range (seeded to the full
+    dataset extent), so the spins simply mirror it, disabled when the plot
+    genuinely has none (no dataset). In the frequency domain there is no
+    draggable range selector, so the spins stay editable regardless — an
+    unset range shows a "full spectrum" placeholder instead of a leftover
+    value from a previous domain/run (D6/F15).
+    """
+    have_range = x_min is not None and x_max is not None
+    if domain == "frequency":
+        min_spin.setEnabled(True)
+        max_spin.setEnabled(True)
+        if not have_range:
+            min_spin.set_unset("full spectrum")
+            max_spin.set_unset("full spectrum")
+            return
+    else:
+        min_spin.setEnabled(have_range)
+        max_spin.setEnabled(have_range)
+        if not have_range:
+            return
+    with QSignalBlocker(min_spin):
+        min_spin.setValue(float(x_min))
+    with QSignalBlocker(max_spin):
+        max_spin.setValue(float(x_max))
 
 
 def _fit_success_html(result) -> str:
@@ -885,7 +926,7 @@ class AffineTieDialog(QDialog):
 
     @staticmethod
     def _make_coeff_spin(default: float) -> QDoubleSpinBox:
-        spin = QDoubleSpinBox()
+        spin = NoScrollDoubleSpinBox()
         spin.setRange(-1e6, 1e6)
         spin.setDecimals(4)
         spin.setValue(default)
@@ -1992,6 +2033,10 @@ class SingleFitTab(QWidget):
         self._rrf_frequency_provider: Callable[[], float | None] = lambda: None
         self._last_fit_result: FitResult | None = None
         self._last_fit_parameters: ParameterSet | None = None
+        # See set_has_recorded_fit: whether the active run has a *persisted*
+        # single fit, independent of _last_fit_result (this session's transient
+        # in-memory result).
+        self._has_recorded_fit = False
         self._pull_diagnostic_btn: QPushButton | None = None
         self._pull_diagnostic_window: QWidget | None = None
         #: Background fits run via the shared TaskRunner machinery; the
@@ -2043,10 +2088,8 @@ class SingleFitTab(QWidget):
         )
         self._send_to_batch_action.triggered.connect(self.send_model_to_batch_requested.emit)
         self._add_to_series_action = self._more_menu.addAction("Add to Series...")
-        self._add_to_series_action.setToolTip(
-            "Add this run's single fit to an existing batch series with a matching model."
-        )
         self._add_to_series_action.triggered.connect(self.add_to_series_requested.emit)
+        self._update_add_to_series_enabled()
 
         self._more_btn = QToolButton()
         self._more_btn.setText("More…")
@@ -2149,6 +2192,37 @@ class SingleFitTab(QWidget):
         btn_layout.setColumnStretch(3, 1)
         layout.addLayout(btn_layout)
 
+        # Carry-forward provenance badge (D2/F6): dismissable notice that the
+        # form currently shown was NOT fitted for the selected run — it was
+        # either carried forward from another run or restored from an
+        # in-session cache of an equally-unfit form. Cleared automatically the
+        # moment a fit is recorded for this run (see FitPanel._on_single_fit_completed).
+        self._carry_forward_badge = QFrame()
+        self._carry_forward_badge.setObjectName("carryForwardBadge")
+        self._carry_forward_badge.setStyleSheet(
+            f"#carryForwardBadge {{ border: 1px solid {tokens.WARN}; border-radius: 4px; }}"
+        )
+        badge_layout = QHBoxLayout(self._carry_forward_badge)
+        badge_layout.setContentsMargins(8, 4, 4, 4)
+        badge_layout.setSpacing(4)
+        self._carry_forward_badge_label = QLabel("")
+        self._carry_forward_badge_label.setWordWrap(True)
+        badge_layout.addWidget(self._carry_forward_badge_label, 1)
+        self._carry_forward_badge_dismiss_btn = QPushButton("✕")
+        self._carry_forward_badge_dismiss_btn.setToolTip("Dismiss")
+        self._carry_forward_badge_dismiss_btn.setFixedWidth(20)
+        # Match the flat, muted "✕" chrome used elsewhere (see dock_header.py's
+        # close button) instead of the default Qt bezel.
+        self._carry_forward_badge_dismiss_btn.setStyleSheet(
+            "QPushButton { border: none; background: transparent; padding: 0 4px;"
+            f" color: {tokens.TEXT_MUTED}; }}"
+            f"QPushButton:hover {{ background-color: {tokens.SURFACE_HI}; border-radius: 3px; }}"
+        )
+        self._carry_forward_badge_dismiss_btn.clicked.connect(self._carry_forward_badge.hide)
+        badge_layout.addWidget(self._carry_forward_badge_dismiss_btn)
+        self._carry_forward_badge.hide()
+        layout.addWidget(self._carry_forward_badge)
+
         # Results
         layout.addWidget(make_section_header("Fit Results"))
         self._results_group = QFrame()
@@ -2202,12 +2276,25 @@ class SingleFitTab(QWidget):
             self._set_composite_model(CompositeModel(["Exponential", "Constant"], operators=["+"]))
         self.set_dataset(self._current_dataset)
 
+    def show_carry_forward_badge(self, text: str) -> None:
+        """Show the dismissable "not fitted for this run" provenance notice."""
+        self._carry_forward_badge_label.setText(text)
+        self._carry_forward_badge.show()
+
+    def clear_carry_forward_badge(self) -> None:
+        """Hide the carry-forward provenance notice (e.g. a real fit now exists)."""
+        self._carry_forward_badge.hide()
+
     def set_dataset(self, dataset: MuonDataset | None) -> None:
         """Set the current dataset to fit."""
         self._current_dataset = dataset
         # A fit result belongs to the dataset it was fit on; drop it on change.
         self._last_fit_result = None
         self._last_fit_parameters = None
+        # Reset to the safe default; FitPanel.set_dataset calls
+        # set_has_recorded_fit(True) right after this when the run's own
+        # persisted FitSlot (not just this session's in-memory result) is real.
+        self._has_recorded_fit = False
         if self._pull_diagnostic_btn is not None:
             self._pull_diagnostic_btn.setEnabled(False)
         enabled = dataset is not None and (not self._fit_blocked)
@@ -2215,6 +2302,32 @@ class SingleFitTab(QWidget):
         self._preview_btn.setEnabled(enabled)
         self._fit_wizard_btn.setEnabled(enabled and self._domain == "time")
         self._share_group_action.setEnabled(dataset is not None and self._domain == "time")
+        self._update_add_to_series_enabled()
+
+    def set_has_recorded_fit(self, has_fit: bool) -> None:
+        """Track whether the active run has a persisted single fit (F18).
+
+        Distinct from ``_last_fit_result`` (this *session's* in-memory
+        ``FitResult``, cleared on every ``set_dataset``): reselecting a run
+        that was fitted earlier — this session or a prior one, restored from
+        the project model — must not wrongly disable "Add to Series...".
+        Driven by ``FitPanel.set_dataset``, which already resolves this via
+        its restore-mediator's ``own_slot`` provenance check.
+        """
+        self._has_recorded_fit = bool(has_fit)
+        self._update_add_to_series_enabled()
+
+    def _update_add_to_series_enabled(self) -> None:
+        """Enable "Add to Series..." only once this run has a completed fit (F18)."""
+        have_fit = (
+            self._last_fit_result is not None and self._last_fit_result.success
+        ) or self._has_recorded_fit
+        self._add_to_series_action.setEnabled(have_fit)
+        self._add_to_series_action.setToolTip(
+            "Add this run's single fit to an existing batch series with a matching model."
+            if have_fit
+            else "Fit this run first — there is no completed single fit to add to a series."
+        )
 
     def _can_run_pull_diagnostic(self) -> bool:
         """A successful time-domain fit on a run with histograms is required."""
@@ -2292,15 +2405,9 @@ class SingleFitTab(QWidget):
 
     def set_fit_range_display(self, x_min: float | None, x_max: float | None) -> None:
         """Update fit-range spinboxes from the plot without re-emitting."""
-        have_range = x_min is not None and x_max is not None
-        self._fit_range_min_spin.setEnabled(have_range)
-        self._fit_range_max_spin.setEnabled(have_range)
-        if not have_range:
-            return
-        with QSignalBlocker(self._fit_range_min_spin):
-            self._fit_range_min_spin.setValue(float(x_min))
-        with QSignalBlocker(self._fit_range_max_spin):
-            self._fit_range_max_spin.setValue(float(x_max))
+        _apply_fit_range_display(
+            self._domain, self._fit_range_min_spin, self._fit_range_max_spin, x_min, x_max
+        )
 
     def _on_fit_range_spinbox_committed(self) -> None:
         """Emit fit_range_edit_committed when the user finishes editing a spinbox."""
@@ -2898,6 +3005,7 @@ class SingleFitTab(QWidget):
         self._last_fit_parameters = parameters
         if self._pull_diagnostic_btn is not None:
             self._pull_diagnostic_btn.setEnabled(self._can_run_pull_diagnostic())
+        self._update_add_to_series_enabled()
 
         display_values = _normalized_model_param_values(
             model,
@@ -3380,7 +3488,7 @@ class GlobalFitTab(QWidget):
             "Counts are summed at the raw-histogram level, then fitted."
         )
         self._coadd_mode_combo.currentIndexChanged.connect(self._on_coadd_mode_changed)
-        self._coadd_window_spin = QSpinBox()
+        self._coadd_window_spin = NoScrollSpinBox()
         self._coadd_window_spin.setRange(2, 99)
         self._coadd_window_spin.setValue(self._coadd_window)
         self._coadd_window_spin.setToolTip("Number of successive runs co-added per fit.")
@@ -3950,15 +4058,9 @@ class GlobalFitTab(QWidget):
 
     def set_fit_range_display(self, x_min: float | None, x_max: float | None) -> None:
         """Update fit-range spinboxes from the plot without re-emitting."""
-        have_range = x_min is not None and x_max is not None
-        self._fit_range_min_spin.setEnabled(have_range)
-        self._fit_range_max_spin.setEnabled(have_range)
-        if not have_range:
-            return
-        with QSignalBlocker(self._fit_range_min_spin):
-            self._fit_range_min_spin.setValue(float(x_min))
-        with QSignalBlocker(self._fit_range_max_spin):
-            self._fit_range_max_spin.setValue(float(x_max))
+        _apply_fit_range_display(
+            self._domain, self._fit_range_min_spin, self._fit_range_max_spin, x_min, x_max
+        )
 
     def _on_fit_range_spinbox_committed(self) -> None:
         """Emit fit_range_edit_committed when the user finishes editing a spinbox."""
@@ -4177,12 +4279,13 @@ class GlobalFitTab(QWidget):
             base_name, _index = split_parameter_name(pname)
             if base_name in {"field", "B_L"}:
                 type_combo.addItem("File")
-            # Set default: first parameter (usually amplitude) as Global, others
-            # as Local; component-declared fixed-by-default parameters as Fixed.
+            # Set default: all free parameters default to Local (Global is an
+            # explicit opt-in, see D5); component-declared fixed-by-default
+            # parameters default to Fixed.
             if pname in fixed_default_params:
                 type_combo.setCurrentText("Fixed")
             else:
-                type_combo.setCurrentText("Global" if i == 0 else "Local")
+                type_combo.setCurrentText("Local")
             previous_type = previous.get("type")
             if previous_type:
                 previous_index = type_combo.findText(previous_type)
@@ -4885,10 +4988,17 @@ class GlobalFitTab(QWidget):
         results box can report them, then routes the per-run results through the
         common :meth:`_on_fit_finished` path (which also runs the outlier signpost).
         """
+        member_quality = getattr(series, "member_quality", {}) or {}
         self._series_seeding_meta = {
             "seeding_used": getattr(series, "seeding_used", ""),
             "seeding_reason": getattr(series, "seeding_reason", ""),
             "reseeded_runs": tuple(getattr(series, "reseeded_runs", ())),
+            # Per-run advisory flags (incl. spurious_reseeded, which only the
+            # engine knows) so the results banner and the recorder can surface
+            # them without recomputing the trend context.
+            "member_flags": {
+                int(run): sorted(quality.quality_flags) for run, quality in member_quality.items()
+            },
         }
         self._on_fit_finished(series.results, series.fitted_global)
 
@@ -6236,6 +6346,12 @@ class GlobalFitTab(QWidget):
                 fitted_global=fitted_global,
                 global_param_names=global_params,
             )
+            # F2: a one-line accounting of the batch — fitted / failed / flagged —
+            # so a silently dropped or garbage member is visible in the results
+            # block, not just the log.
+            summary_line = self._batch_outcome_summary_line(results_dict, run_label_by_number)
+            if summary_line:
+                self._result_text.append(info_html(summary_line))
             if failed:
                 # _emit_global_fit_success rendered the success box; append the
                 # failure warning as a new paragraph beneath it rather than
@@ -6253,6 +6369,59 @@ class GlobalFitTab(QWidget):
         # Inspect the per-run trend for the near-transition collapse/outlier
         # signature and signpost the per-run warm-start when it is present.
         self._update_seeding_signpost(model, results_dict)
+
+    def last_batch_member_flags(self) -> dict[int, list[str]]:
+        """Per-run advisory quality flags from the most recent F-B series fit.
+
+        Empty when the batch went through the tied-``global_fit`` path (which
+        knows no scan trend) or before any batch — callers then derive the
+        generic flags from each member's stored fit result instead. Includes
+        ``spurious_reseeded``, which only the series engine can source.
+        """
+        meta = self._series_seeding_meta
+        if not isinstance(meta, dict):
+            return {}
+        flags = meta.get("member_flags")
+        if not isinstance(flags, dict):
+            return {}
+        return {int(run): list(values) for run, values in flags.items()}
+
+    def _batch_outcome_summary_line(self, results_dict: dict, run_label_by_number: dict) -> str:
+        """Build the F2 one-line batch accounting: fitted / failed / flagged.
+
+        ``flagged`` counts *converged* members carrying an advisory quality flag
+        (large relative error, bound-pinned, or the spurious branch); a failed
+        member is reported under ``failed``, not double-counted as flagged.
+        """
+        total = len(results_dict)
+        if not total:
+            return ""
+        member_flags = self.last_batch_member_flags()
+        fitted: list[int] = []
+        failed: list[int] = []
+        flagged: list[int] = []
+        for run, result in results_dict.items():
+            run = int(run)
+            if not getattr(result, "success", False):
+                failed.append(run)
+                continue
+            fitted.append(run)
+            flags = set(member_flags.get(run) or member_quality_flags(result))
+            if flags - {"failed"}:
+                flagged.append(run)
+
+        def _labels(runs: list[int], limit: int = 6) -> str:
+            names = [str(run_label_by_number.get(r, r)) for r in sorted(runs)]
+            if len(names) > limit:
+                names = [*names[:limit], "…"]
+            return ", ".join(names)
+
+        parts = [f"{len(fitted)}/{total} fitted"]
+        if failed:
+            parts.append(f"{len(failed)} failed ({_labels(failed)})")
+        if flagged:
+            parts.append(f"{len(flagged)} flagged ({_labels(flagged)})")
+        return " · ".join(parts)
 
     def _append_series_seeding_note(self) -> None:
         """Append the resolved seeding mode/reason and any reseeded runs."""
@@ -7380,7 +7549,7 @@ class GlobalFitTab(QWidget):
             self._group_model_table.setItem(row, 0, name_item)
 
             default_val = grouped_model.param_defaults.get(pname, 0.0)
-            default_type = "Global"
+            default_type = "Local"
             if is_background_parameter(pname):
                 default_val = 0.0
                 default_type = "Fixed"
@@ -7882,6 +8051,11 @@ class FitPanel(QWidget):
     # Forwarded from the Batch tab's on-tab seeding selector so the main window's
     # Analysis ▸ Batch seeding menu can mirror it (two-way sync).
     batch_seeding_mode_changed = Signal(str)
+    # Emitted whenever the Single/Batch tab selection changes, so the main
+    # window can re-evaluate fit-block/enable state (F17) — switching tabs
+    # does not itself change what is fittable, but nothing else re-runs that
+    # check on a tab switch.
+    tab_changed = Signal(int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -7890,6 +8064,16 @@ class FitPanel(QWidget):
 
         self._single_state_by_run: dict[int, dict] = {}
         self._active_single_run_number: int | None = None
+        # Provenance of the single-fit form's current contents (D2/F6):
+        # "own_slot" (a real fit recorded for this run/projection),
+        # "carried_from_run" (inherited from a specific prior run, tracked in
+        # ``_single_fit_carry_source_run``), "carried_session" (inherited from
+        # an in-session cache with no specific source run known), or
+        # "representation_default" (blanked to the domain default — no badge).
+        # Driven entirely by ``set_dataset``'s three restore branches; see its
+        # docstring for the precedence these branches implement.
+        self._single_fit_provenance: str | None = None
+        self._single_fit_carry_source_run: int | None = None
         # Optional mediator that supplies a per-(run, representation, projection)
         # single-fit restore payload, installed by the main window.  It keeps the
         # panel decoupled from the project model: ``set_dataset`` asks it for the
@@ -7964,6 +8148,8 @@ class FitPanel(QWidget):
         if projection != self._active_single_projection:
             self._single_form_snapshot = None
         self._active_single_projection = projection
+        if hasattr(self, "_single_fit_provenance"):
+            self._update_single_fit_badge()
         if not hasattr(self, "_projection_echo"):
             return
         if projection:
@@ -7994,6 +8180,7 @@ class FitPanel(QWidget):
                 "run": self._active_single_run_number,
                 "state": self.get_single_form_state(),
             }
+        self.tab_changed.emit(index)
 
     def set_batch_seeding_mode(self, mode: str) -> None:
         """Forward the batch-series seeding mode to the Batch tab."""
@@ -8023,6 +8210,7 @@ class FitPanel(QWidget):
         self._domain = normalized
         self._single_state_by_run = {}
         self._active_single_run_number = None
+        self._set_single_fit_provenance(None)
         self._single_tab.set_domain(normalized)
         self._global_tab.set_domain(normalized)
 
@@ -8051,6 +8239,7 @@ class FitPanel(QWidget):
         self._single_tab.set_dataset(None)
         self._global_tab.set_datasets([])
         self._global_tab.set_current_dataset(None)
+        self._set_single_fit_provenance(None)
         self._tabs.setCurrentIndex(0)
 
     def _on_single_fit_completed(self, fit_result, fitted_curve, component_curves) -> None:
@@ -8065,6 +8254,10 @@ class FitPanel(QWidget):
             )
             # Keep most recent tab state per run (parameters, function, and result text).
             self._single_state_by_run[run_number] = self._single_tab.get_state()
+            # A fit was just recorded for the run currently shown — the form is
+            # no longer carried content, regardless of the projection it landed
+            # on (D2/F6: clear the badge the moment a fit exists).
+            self._set_single_fit_provenance("own_slot")
         self.fit_completed.emit(fit_result, fitted_curve, component_curves)
 
     def _run_number_from_dataset(self, dataset: MuonDataset | None) -> int | None:
@@ -8076,7 +8269,33 @@ class FitPanel(QWidget):
             return None
 
     def set_dataset(self, dataset: MuonDataset | None) -> None:
-        """Set the current dataset for single fitting tab."""
+        """Set the current dataset for single fitting tab.
+
+        Three branches decide what the form shows, in this precedence order:
+
+        (A) The restore mediator (``_single_fit_restore_provider``) has an
+            opinion: a non-empty payload is a genuine fit recorded for this
+            (run, representation, projection) slot, restored verbatim
+            (provenance ``own_slot``, no badge). An *empty* payload means
+            "this projection was never fit" and blanks the form to the domain
+            default (provenance ``representation_default``, no badge — a
+            blanked default is not carried content).
+        (B) The mediator has no opinion (``None``) but this exact run has been
+            shown before in this session (``_single_state_by_run``): the
+            cached form is restored. Since the mediator already returned
+            ``None`` for this run, that cached form cannot be a genuine fit —
+            it is itself carried-forward content from an earlier visit, so no
+            specific source run is tracked (provenance ``carried_session``).
+        (C) Neither of the above: the dataset is entirely unseen. The form
+            inherits whatever the *previous* active run was showing
+            (carry-forward), tagged with that run's number (provenance
+            ``carried_from_run``) so the badge can name it explicitly.
+
+        A dismissable badge (D2/F6) surfaces branches (B) and (C) — carry-forward
+        itself is kept (useful for run series), but the panel must say so
+        instead of silently presenting another run's values as this run's own.
+        """
+        previous_run_number = self._active_single_run_number
         if self._active_single_run_number is not None:
             self._single_state_by_run[self._active_single_run_number] = self._single_tab.get_state()
 
@@ -8087,6 +8306,7 @@ class FitPanel(QWidget):
         self._active_single_run_number = run_number
 
         if run_number is None:
+            self._set_single_fit_provenance(None)
             return
 
         # The main window's restore mediator is authoritative when it has an
@@ -8100,10 +8320,21 @@ class FitPanel(QWidget):
             if self._single_fit_restore_provider is not None
             else None
         )
+        is_real_fit = isinstance(payload, dict) and bool(payload)
+        self._single_tab.set_has_recorded_fit(is_real_fit)
         if payload is not None:
             self.restore_single_fit_ui(payload)
+            self._set_single_fit_provenance("own_slot" if is_real_fit else "representation_default")
         elif run_number in self._single_state_by_run:
             self._single_tab.restore_state(self._single_state_by_run[run_number])
+            self._set_single_fit_provenance("carried_session")
+        elif previous_run_number is None:
+            # Nothing has ever been shown in this panel before: the form still
+            # holds its untouched construction-time default, not content
+            # inherited from a real prior selection. Badging that as "carried"
+            # would be as misleading as this fix is meant to prevent.
+            self._carry_forward_single_fit_form()
+            self._set_single_fit_provenance("representation_default")
         else:
             # An unseen dataset the user has not customised inherits the model
             # and parameter setup currently shown (carry-forward) instead of
@@ -8111,6 +8342,31 @@ class FitPanel(QWidget):
             # still saved and restored on return; only the previous run's fit
             # *result* is dropped (it belongs to the run it was computed on).
             self._carry_forward_single_fit_form()
+            self._set_single_fit_provenance("carried_from_run", previous_run_number)
+
+    def _set_single_fit_provenance(self, kind: str | None, source_run: int | None = None) -> None:
+        """Record why the single-fit form holds its current contents and update the badge.
+
+        ``kind`` is one of ``own_slot`` / ``representation_default`` (no
+        badge), ``carried_session`` (generic badge, no known source run), or
+        ``carried_from_run`` (badge names ``source_run`` when known).
+        """
+        self._single_fit_provenance = kind
+        self._single_fit_carry_source_run = source_run if kind == "carried_from_run" else None
+        self._update_single_fit_badge()
+
+    def _update_single_fit_badge(self) -> None:
+        kind = self._single_fit_provenance
+        if kind not in ("carried_from_run", "carried_session"):
+            self._single_tab.clear_carry_forward_badge()
+            return
+        projection = self._active_single_projection
+        suffix = f" ({projection})" if projection else ""
+        source_run = self._single_fit_carry_source_run
+        origin = f" from run {source_run}" if source_run is not None else ""
+        self._single_tab.show_carry_forward_badge(
+            f"Model carried{origin}{suffix} — not fitted for this run"
+        )
 
     def _carry_forward_single_fit_form(self) -> None:
         """Inherit the previous selection's model + parameter setup, sans result.
@@ -8563,10 +8819,25 @@ class FitPanel(QWidget):
         }
 
     def restore_domain_state(self, domain: str, state: dict | None) -> None:
-        """Restore serialisable fit state for one fitting domain."""
+        """Restore serialisable fit state for one fitting domain.
+
+        The blob's ``domain`` tag (written by :meth:`get_domain_state`) must
+        match the requested domain — a mismatch means a stale/mis-routed payload
+        and is refused rather than silently applied to the wrong form (F21c).
+        """
         normalized = coerce_domain(domain)
         if not isinstance(state, dict):
             state = {}
+        tag = state.get("domain")
+        # Compare the raw tag against the canonical domain rather than routing it
+        # through coerce_domain: coerce_domain maps *any* unrecognised token to
+        # "time", which would let a garbage/typo tag (e.g. "freq") silently pass
+        # when restoring the time domain. get_domain_state always writes the
+        # canonical token, so a correct blob matches exactly.
+        if tag is not None and str(tag).strip().lower() != normalized:
+            raise ValueError(
+                f"restore_domain_state({normalized!r}) received fit state tagged for domain {tag!r}"
+            )
         self._single_state_by_domain[normalized] = copy.deepcopy(state.get("single_fit_state", {}))
         self._global_state_by_domain[normalized] = copy.deepcopy(state.get("global_fit_state", {}))
         self._ui_state_by_domain[normalized] = copy.deepcopy(state.get("fit_ui_state", {}))

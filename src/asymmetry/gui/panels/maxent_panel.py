@@ -19,7 +19,6 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QScrollArea,
-    QSpinBox,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -32,6 +31,7 @@ from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.typography import status_font
 from asymmetry.gui.styles.widgets import apply_param_table_style, build_primary_button_qss
+from asymmetry.gui.widgets.no_scroll_spin import NoScrollSpinBox
 
 
 class MaxEntPanel(QWidget):
@@ -97,7 +97,7 @@ class MaxEntPanel(QWidget):
 
         spectrum_group = QGroupBox("Spectrum")
         spectrum_form = QFormLayout(spectrum_group)
-        self._points_spin = QSpinBox()
+        self._points_spin = NoScrollSpinBox()
         self._points_spin.setRange(8, 1 << 20)
         self._points_spin.setSingleStep(512)
         # 1024 resolves the line cleanly; the old 4096 default added a spurious
@@ -141,7 +141,7 @@ class MaxEntPanel(QWidget):
         )
         time_form.addRow("End (µs):", self._t_max_edit)
 
-        self._time_binning_spin = QSpinBox()
+        self._time_binning_spin = NoScrollSpinBox()
         self._time_binning_spin.setRange(1, 4096)
         self._time_binning_spin.setValue(1)
         time_form.addRow("Binning:", self._time_binning_spin)
@@ -190,7 +190,7 @@ class MaxEntPanel(QWidget):
         fit_group = QGroupBox("Cycle Refinement")
         fit_layout = QVBoxLayout(fit_group)
         fit_form = QFormLayout()
-        self._inner_spin = QSpinBox()
+        self._inner_spin = NoScrollSpinBox()
         self._inner_spin.setRange(1, 200)
         self._inner_spin.setValue(12)
         fit_form.addRow("Inner iterations:", self._inner_spin)

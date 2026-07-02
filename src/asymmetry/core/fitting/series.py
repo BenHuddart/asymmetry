@@ -33,9 +33,11 @@ from dataclasses import dataclass, field
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.engine import CostFactory, FitEngine, FitResult
+from asymmetry.core.fitting.member_quality import MemberQuality, assess_member_quality
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.series_seeding import (
     SeriesPoint,
+    diagnose_series,
     recommend_series_seeding,
 )
 
@@ -59,6 +61,9 @@ class AsymmetrySeriesResult:
     #: Runs that were reseeded mid-scan (converged-but-bad → refit from the trend).
     reseeded_runs: tuple[int, ...] = ()
     order: tuple[int, ...] = field(default_factory=tuple)
+    #: Per-run advisory fit-quality (χ²ᵣ, σ, flags) — the shared trend-gating
+    #: contract. Diagnostic only: it never mutates a member's trend inclusion.
+    member_quality: dict[int, MemberQuality] = field(default_factory=dict)
 
 
 def _local_value(result: FitResult, name: str) -> float | None:
@@ -316,6 +321,9 @@ def fit_asymmetry_series(
     results: dict[int, FitResult] = {}
     reseeded: list[int] = []
     history: list[SeriesPoint] = []
+    # Final chosen per-run summary points, for the batch-wide off-trend diagnosis
+    # that feeds the ``spurious_reseeded`` quality flag.
+    final_points: dict[int, SeriesPoint] = {}
     last_good: FitResult | None = None
 
     for run in run_order:
@@ -351,6 +359,7 @@ def fit_asymmetry_series(
                 result = chosen
 
         results[run] = result
+        final_points[run] = point
 
         spurious = _is_spurious(point, history, amplitude_param, frequency_param)
         if result.success and not spurious:
@@ -360,6 +369,24 @@ def fit_asymmetry_series(
             # Failed outright → do not chain a diverged fit into the next run.
             last_good = None
 
+    # Batch-wide off-trend diagnosis over the final chosen points (independent of
+    # seeding mode, so a plain block-separable batch is diagnosed too). Runs whose
+    # amplitude collapsed or whose frequency jumped off the trend — plus any run
+    # reseeded mid-scan — carry the ``spurious_reseeded`` advisory flag.
+    diagnostics = diagnose_series(
+        list(final_points.values()),
+        amplitude_param=amplitude_param,
+        frequency_param=frequency_param,
+    )
+    spurious_runs = {*diagnostics.collapsed_runs, *diagnostics.outlier_runs, *reseeded}
+    member_quality = {
+        run: assess_member_quality(
+            result,
+            extra_flags=("spurious_reseeded",) if run in spurious_runs else (),
+        )
+        for run, result in results.items()
+    }
+
     return AsymmetrySeriesResult(
         results=results,
         fitted_global=fitted_global,
@@ -367,4 +394,5 @@ def fit_asymmetry_series(
         seeding_reason=reason,
         reseeded_runs=tuple(reseeded),
         order=tuple(run_order),
+        member_quality=member_quality,
     )

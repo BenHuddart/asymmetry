@@ -543,6 +543,12 @@ class DataBrowserPanel(QWidget):
     # the project modified for the unsaved-changes guard. Deliberately NOT
     # emitted from clear()/restore — those reset to a known-clean baseline.
     datasets_changed = Signal()
+    # "Fit this group…" (Phase 7/D1, F9 fix): prefills the batch member set from
+    # the group's stored members, bypassing the live/visible table selection.
+    fit_group_requested = Signal(str)  # group_id
+    # "Show series from this group": filters the trend/parameters panel to only
+    # the series whose provenance (FitSeries.source_group_id) is this group.
+    show_group_series_requested = Signal(str)  # group_id
 
     # The comment rides as the Title cell's second line (see
     # _RowHighlightDelegate) instead of its own column, so long comments never
@@ -1360,12 +1366,14 @@ class DataBrowserPanel(QWidget):
                 if item is not None:
                     item.setBackground(bg)
 
-    def _selected_keys(self) -> list[int | str]:
+    def _selected_keys(self, *, visible_only: bool = False) -> list[int | str]:
         selected: list[int | str] = []
         selection_model = self._table.selectionModel()
         if selection_model is None:
             return selected
         for idx in selection_model.selectedRows():
+            if visible_only and not self._is_row_visible_for_selection(idx.row()):
+                continue
             item = self._table.item(idx.row(), 0)
             if item is None:
                 continue
@@ -2404,7 +2412,11 @@ class DataBrowserPanel(QWidget):
         return out
 
     def _get_selected_run_numbers(self) -> list[int]:
-        return self._dataset_run_numbers_from_keys(self._selected_keys())
+        # Only visible rows count: a run hidden by a column filter (or any
+        # row-visibility rule) must never be silently fed to a batch fit or a
+        # group action — the user cannot see it (F9). Callers that need the raw
+        # selection use ``_selected_keys()`` directly.
+        return self._dataset_run_numbers_from_keys(self._selected_keys(visible_only=True))
 
     def _get_selected_group_ids(self) -> list[str]:
         ids: list[str] = []
@@ -2457,6 +2469,16 @@ class DataBrowserPanel(QWidget):
         if group is None:
             return []
         return [int(rn) for rn in group.member_run_numbers]
+
+    def get_all_group_ids(self) -> list[str]:
+        """Return every current group id (public surface for external syncing).
+
+        Lets a host (e.g. mirroring groups into ``ProjectModel.data_groups``,
+        Phase 7/D1) enumerate groups through the same accessors as
+        :meth:`get_group_name`/:meth:`get_group_member_run_numbers`, instead of
+        reaching into the private ``_groups`` dict directly.
+        """
+        return list(self._groups)
 
     def get_dataset(self, run_number: int) -> MuonDataset | None:
         return self._datasets.get(run_number)
@@ -3045,7 +3067,11 @@ class DataBrowserPanel(QWidget):
     # ------------------------------------------------------------------
 
     def _create_table_context_menu(self) -> QMenu | None:
-        keys = self._selected_keys()
+        # Gate menu items on the *visible* selection, matching the run set the
+        # action handlers act on (they read _get_selected_run_numbers, which is
+        # visibility-filtered). Otherwise a filter-hidden selection could enable
+        # an action that then operates on fewer/zero runs (F9).
+        keys = self._selected_keys(visible_only=True)
         if not keys:
             return None
 
@@ -3107,6 +3133,17 @@ class DataBrowserPanel(QWidget):
                 menu.addAction(collapse_text, lambda gid=gid: self._toggle_group_collapsed(gid))
                 menu.addAction("Rename Group", lambda gid=gid: self._rename_group(gid))
                 menu.addAction("Ungroup", lambda gid=gid: self.ungroup(gid))
+                menu.addSeparator()
+                # F9 fix (Phase 7/D1): "Fit this group…" prefills the batch member
+                # set from the group's stored members rather than the live/visible
+                # table selection, so a filtered-away group can still be fit correctly.
+                menu.addAction(
+                    "Fit this group…", lambda gid=gid: self.fit_group_requested.emit(gid)
+                )
+                menu.addAction(
+                    "Show series from this group",
+                    lambda gid=gid: self.show_group_series_requested.emit(gid),
+                )
                 menu.addSeparator()
 
         label = "Remove Entry" if len(keys) == 1 else "Remove Selected Entries"
@@ -3410,6 +3447,35 @@ class DataBrowserPanel(QWidget):
             for key in self._RUN_INFO_FIELD_LABELS
             if key.startswith("run_info.") and key not in shown_source_keys
         ]
+
+    def sort_by_run_number_if_unordered(self) -> bool:
+        """Apply an ascending run-number sort when rows aren't already in run order.
+
+        Called after a multi-file load (F8): an OS file picker can hand files
+        back in a scrambled order, so the browser's insertion order need not be
+        ascending by run — which makes a shift-range selection silently
+        non-contiguous. This only nudges the *default* case: if the user has
+        already chosen a sort column, or the rows are already ascending by run,
+        it does nothing (and never reorders a run inside a data group). Returns
+        ``True`` when it applied the sort.
+        """
+        if self._current_sort_column >= 0:
+            return False  # respect an explicit user sort
+        # Judge "ordered" by the real loaded runs only. Combined-dataset rows
+        # carry negative sentinel ids that would always sort before positive
+        # runs, so including them would spuriously report "unordered" (and then
+        # yank the combined row to the top) even when every real run is in order.
+        run_order = [
+            entry
+            for entry in self._display_order
+            if isinstance(entry, int) and entry not in self._combined_datasets
+        ]
+        if run_order == sorted(run_order):
+            return False  # already ascending by run number
+        self._current_sort_column = 0
+        self._current_sort_order = Qt.SortOrder.AscendingOrder
+        self._sort_table()
+        return True
 
     def _on_header_clicked(self, logical_index: int) -> None:
         if logical_index == self._current_sort_column:
@@ -4171,7 +4237,11 @@ class DataBrowserPanel(QWidget):
             if self._current_sort_order == Qt.SortOrder.AscendingOrder
             else "descending",
             "filters": filters,
-            "selected_run_numbers": self._get_selected_run_numbers(),
+            # Persist the FULL selection (including rows a column filter hides):
+            # get_state must round-trip the whole selection so clearing the
+            # filter after reload reveals it. Only *action* paths
+            # (_get_selected_run_numbers) exclude hidden rows.
+            "selected_run_numbers": self._dataset_run_numbers_from_keys(self._selected_keys()),
             "selected_group_ids": selected_group_ids,
             "data_groups": data_groups,
             "extra_columns": [column.to_dict() for column in self._extra_columns],

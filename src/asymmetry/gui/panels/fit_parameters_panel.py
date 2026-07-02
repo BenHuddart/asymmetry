@@ -14,6 +14,7 @@ from typing import Any
 
 import numpy as np
 from PySide6.QtCore import QSignalBlocker, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QCursor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -67,12 +68,14 @@ from asymmetry.core.fitting.knight_shift import (
 )
 from asymmetry.core.fitting.parameter_models import (
     CrossGroupFitResult,
+    ErrorMode,
     ModelFitRange,
     ParameterCompositeModel,
     ParameterGroupData,
     ParameterModelFit,
     ParameterModelFitResult,
     effective_range_bounds,
+    fit_parameter_model,
     parse_fit_windows,
 )
 from asymmetry.core.fitting.parameters import (
@@ -99,6 +102,7 @@ from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import (
     apply_param_table_style,
     clear_layout,
+    make_provenance_label,
     make_section,
     style_group_state_button,
 )
@@ -112,6 +116,22 @@ _PARAMETER_FIT_CURVE_SAMPLE_COUNT = 800
 #: from the rows) from an explicitly-passed snapshot that may itself be ``None``
 #: (the off-thread worker — must never read ``self`` for it).
 _UNSET = object()
+
+
+#: Human-readable labels for the advisory member-quality flags (Phase 2).
+_QUALITY_FLAG_LABELS = {
+    "failed": "fit did not converge",
+    "large_rel_err": "large relative error on a free parameter",
+    "bound_pinned": "a free parameter is pinned on its bound",
+    "spurious_reseeded": "landed on the spurious branch (amplitude collapse / off-trend)",
+}
+
+
+def _quality_flags_tooltip(flags: list[str]) -> str:
+    """Bullet the advisory quality flags for a trend point's tooltip."""
+    return "Quality flags:\n" + "\n".join(
+        f"• {_QUALITY_FLAG_LABELS.get(flag, flag)}" for flag in flags
+    )
 
 
 def _format_param_label(name: str) -> str:
@@ -227,6 +247,14 @@ class _FitRow:
     model_name: str = ""
     chi_squared: float | None = None
     reduced_chi_squared: float | None = None
+    #: Phase 2 trend-gating. ``batch_id``/``trend_member_key`` identify the
+    #: FitSlot this row's include-toggle writes; ``include_in_trend`` is the
+    #: current gate; ``quality_flags`` are the advisory member-quality flags
+    #: (``failed``/``large_rel_err``/``bound_pinned``/``spurious_reseeded``).
+    batch_id: str | None = None
+    trend_member_key: int | None = None
+    include_in_trend: bool = True
+    quality_flags: list[str] = field(default_factory=list)
 
 
 def _x_custom_id(x_key: str) -> str | None:
@@ -321,6 +349,9 @@ class FitParametersPanel(QWidget):
     series_select_members_requested = Signal(str)
     #: Emitted when the user confirms "Delete series…" (batch_id).
     series_delete_requested = Signal(str)
+    #: Emitted when the user toggles a member's trend inclusion via the table
+    #: checkbox or a trend-point context menu (batch_id, member_key, include).
+    member_trend_inclusion_changed = Signal(str, int, bool)
 
     @property
     def last_cross_group_fit(self) -> dict[str, object] | None:
@@ -373,6 +404,9 @@ class FitParametersPanel(QWidget):
         self._joint_fit: dict | None = None
         #: True while the off-thread joint K(θ) fit is running (gates its button).
         self._joint_fit_compute_active = False
+        #: True while refit_active_model_fits' off-thread re-solve is running
+        #: (a trend-inclusion toggle triggers at most one at a time).
+        self._refit_in_progress = False
         #: Crossing/degeneracy events flagged on the active series (for annotation).
         self._knight_shift_crossings: list[object] = []
         #: The x-axis key the crossings were computed against (so stale markers are
@@ -601,6 +635,13 @@ class FitParametersPanel(QWidget):
         self._table = QTableWidget(0, 0)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         apply_param_table_style(self._table)
+        # Guard so programmatic table population (which sets the Include check
+        # states) does not re-emit the inclusion-changed signal.
+        self._populating_table = False
+        # Number of leading "data" columns (Run/B/T/params/abscissa) before the
+        # appended χ²ᵣ + Trend trend-gate columns; exports dump only these.
+        self._table_data_columns = 0
+        self._table.itemChanged.connect(self._on_table_item_changed)
 
         self._plot_group, plot_layout = make_section("Parameter plot")
         plot_layout.setSpacing(8)
@@ -636,6 +677,11 @@ class FitParametersPanel(QWidget):
         except ImportError:
             plot_layout.addWidget(QLabel("matplotlib not installed - plotting disabled"), 1)
             self._trend_overlay = None
+
+        # Trend provenance line (Phase 2, mirrors the integral-scan panel): how
+        # many members feed the trend vs. how many the user excluded by click.
+        self._trend_provenance_label = make_provenance_label()
+        plot_layout.addWidget(self._trend_provenance_label)
 
         self._plot_export_bar = QWidget(self._plot_group)
         export_row = QGridLayout(self._plot_export_bar)
@@ -831,7 +877,7 @@ class FitParametersPanel(QWidget):
 
         return cleaned
 
-    def restore_state(self, state: dict) -> None:
+    def restore_state(self, state: dict, *, defer_refresh: bool = False) -> None:
         # Suppress the heavy synchronous plot draws each intermediate restore step
         # would otherwise trigger (checkbox setChecked signals, group-selection
         # sync); a single off-thread recompute runs at the end. try/finally
@@ -842,10 +888,27 @@ class FitParametersPanel(QWidget):
             self._restore_state_locked(state)
         finally:
             self._suspend_plot_refresh = False
+        # Project restore immediately re-derives the panel from the project model
+        # (MainWindow._refresh_trend_panel), which rebuilds _group_fit_results and
+        # runs its own table+plot refresh. Drawing here too would build the panel
+        # — and re-run the heavy trend-curve compute — a second time. The
+        # deserialisation above already populated the state that re-derivation
+        # reads (its ``preserved`` model-fit/annotation carry-forward), so the
+        # caller passes defer_refresh=True and triggers the single draw itself.
+        if defer_refresh:
+            return
         # The table is cheap; _refresh_plot routes the heavy overlay curves
         # (model eval per fit range over an 800-pt axis — e.g. DiffusionLF_2D runs
         # scipy quadrature per sample) onto a worker behind the overlay, so a
         # saved project's trend fits don't block the GUI thread on open.
+        self.refresh_display()
+
+    def refresh_display(self) -> None:
+        """Redraw the parameter table and trend plot from the current state.
+
+        Public entry for callers that deferred :meth:`restore_state`'s refresh
+        and then need to draw (e.g. project restore where no representation-level
+        re-derivation ran)."""
         self._refresh_table()
         self._refresh_plot()
 
@@ -1192,6 +1255,14 @@ class FitParametersPanel(QWidget):
                             model_name=str(rd.get("model_name") or ""),
                             chi_squared=_optional_float(rd.get("chi_squared")),
                             reduced_chi_squared=_optional_float(rd.get("reduced_chi_squared")),
+                            batch_id=(str(rd["batch_id"]) if rd.get("batch_id") else batch_id),
+                            trend_member_key=(
+                                int(rd["trend_member_key"])
+                                if rd.get("trend_member_key") is not None
+                                else None
+                            ),
+                            include_in_trend=bool(rd.get("include_in_trend", True)),
+                            quality_flags=[str(f) for f in (rd.get("quality_flags") or [])],
                         )
                     )
                 except Exception:
@@ -2518,6 +2589,9 @@ class FitParametersPanel(QWidget):
             if idx is not None:
                 self._plot_annotations.pop(idx)
                 self._refresh_plot()
+                return
+            # No annotation under the cursor → offer the trend-point exclude menu.
+            self._show_member_context_menu(event)
             return
 
         if event.button != 1:
@@ -2531,6 +2605,63 @@ class FitParametersPanel(QWidget):
         if idx is not None:
             self._active_annotation_idx = idx
             self._annotation_drag_started = False
+
+    def _detect_member_hit(self, event, *, tol_px: float = 15.0) -> _FitRow | None:
+        """Return the trend-point :class:`_FitRow` nearest the cursor, if within tol.
+
+        The axis under the cursor picks the parameter (a twin-axis plot tags each
+        axis with its parameter); the "main" single/multi axis falls back to the
+        first selected Y parameter.
+        """
+        if event.inaxes is None or event.x is None or event.y is None:
+            return None
+        params = self._selected_y_parameters()
+        if not params:
+            return None
+        tag = self._axes_tag_map.get(id(event.inaxes), "main")
+        param = tag if tag in params else params[0]
+        x_key = self._effective_x_key()
+        best_row: _FitRow | None = None
+        best_d2: float | None = None
+        for row in self._rows:
+            x = self._x_value(row, x_key)
+            y = row.values.get(param, np.nan)
+            if not (np.isfinite(x) and np.isfinite(y)):
+                continue
+            try:
+                px, py = event.inaxes.transData.transform((x, y))
+            except (ValueError, TypeError):
+                continue
+            d2 = (px - event.x) ** 2 + (py - event.y) ** 2
+            if best_d2 is None or d2 < best_d2:
+                best_d2, best_row = d2, row
+        if best_row is not None and best_d2 is not None and best_d2 <= tol_px * tol_px:
+            return best_row
+        return None
+
+    def _show_member_context_menu(self, event) -> None:
+        """Right-click a trend point → Exclude from / Include in the trend fit."""
+        row = self._detect_member_hit(event)
+        if row is None or row.batch_id is None or row.trend_member_key is None:
+            return
+        menu = QMenu(self)
+        if row.include_in_trend:
+            toggle = menu.addAction("Exclude from trend")
+            target = False
+        else:
+            toggle = menu.addAction("Include in trend")
+            target = True
+        if row.quality_flags:
+            menu.addSeparator()
+            info = menu.addAction(
+                "Flags: " + ", ".join(_QUALITY_FLAG_LABELS.get(f, f) for f in row.quality_flags)
+            )
+            info.setEnabled(False)
+        chosen = menu.exec(QCursor.pos())
+        if chosen is toggle:
+            self.member_trend_inclusion_changed.emit(
+                str(row.batch_id), int(row.trend_member_key), bool(target)
+            )
 
     def _on_plot_motion(self, event) -> None:
         """Drag labels on the parameter plot."""
@@ -2948,9 +3079,10 @@ class FitParametersPanel(QWidget):
 
         A batch fit shares one value across every run for each ``global``-role
         parameter, so it never varies and is dropped from the trendable Y list.
-        These are exactly the names worth flagging: the user who classified an
-        amplitude as Global (the Batch-tab default for the leading amplitude) and
-        then tries to trend it would otherwise find it silently absent.
+        These are exactly the names worth flagging: the user who explicitly
+        classified a parameter as Global (an opt-in choice — Local is the
+        Batch-tab default) and then tries to trend it would otherwise find it
+        silently absent.
         """
         if self._global_params is None:
             return []
@@ -3649,7 +3781,12 @@ class FitParametersPanel(QWidget):
             return
 
         x_key = self._effective_x_key()
-        rows = sorted(self._rows, key=lambda r: self._x_value(r, x_key))
+        # Only members the user kept in the trend feed the model fit (Phase 2 /
+        # D3): an excluded (or garbage) point stays visible on the plot but does
+        # not pull the OrderParameter / Linear fit.
+        rows = self._included_trend_rows(x_key)
+        if not rows:
+            return
 
         x_vals = np.array([self._x_value(r, x_key) for r in rows], dtype=float)
         y_vals = np.array([r.values.get(param_name, np.nan) for r in rows], dtype=float)
@@ -4218,10 +4355,14 @@ class FitParametersPanel(QWidget):
         rows = sorted(self._rows, key=lambda r: self._x_value(r, x_key))
 
         display_params = self._display_y_parameters()
+        # Fitted-parameter columns carry a "(fit)" suffix so a fitted parameter
+        # named like a metadata field (e.g. a field parameter "B") is never
+        # confused with the "𝐵 (G)" metadata column (F14 — previously the two
+        # were distinguishable only by a mathematical-italic glyph).
         columns = ["Run", "𝐵 (G)", "𝑇 (K)"]
         for name in display_params:
             label = _format_param_label(name)
-            columns.extend([label, f"err {label}"])
+            columns.extend([f"{label} (fit)", f"err {label}"])
         # A free-text x-axis (Angle / custom column) is not one of the fixed
         # columns, so add it explicitly (folded as displayed) — otherwise the
         # table/TSV would not show the abscissa the plot is drawn against.
@@ -4229,28 +4370,163 @@ class FitParametersPanel(QWidget):
         abscissa_key = abscissa[0] if abscissa is not None else None
         if abscissa is not None:
             columns.append(abscissa[1])
+        # Per-member fit quality + the trend-inclusion toggle (Phase 2). "Trend"
+        # is a user-checkable box: unchecking excludes the point from the trend
+        # model fit while keeping it visible/clickable on the plot.
+        chi2_col = len(columns)
+        self._table_data_columns = chi2_col
+        columns.append("χ²ᵣ")
+        include_col = len(columns)
+        columns.append("Trend")
 
-        self._table.setColumnCount(len(columns))
-        self._table.setHorizontalHeaderLabels(columns)
-        self._table.setRowCount(len(rows))
+        self._populating_table = True
+        try:
+            self._table.setColumnCount(len(columns))
+            self._table.setHorizontalHeaderLabels(columns)
+            self._table.setRowCount(len(rows))
 
-        for i, row in enumerate(rows):
-            self._table.setItem(i, 0, QTableWidgetItem(str(row.run_label)))
-            self._table.setItem(i, 1, QTableWidgetItem(f"{row.field:.6g}"))
-            self._table.setItem(i, 2, QTableWidgetItem(f"{row.temperature:.6g}"))
-            col = 3
-            for name in display_params:
-                val = row.values.get(name, np.nan)
-                err = row.errors.get(name, np.nan)
-                self._table.setItem(i, col, QTableWidgetItem(f"{val:.6g}"))
-                self._table.setItem(i, col + 1, QTableWidgetItem(f"{err:.3g}"))
-                col += 2
-            if abscissa_key is not None:
-                self._table.setItem(
-                    i, col, QTableWidgetItem(f"{self._x_value(row, abscissa_key):.6g}")
+            for i, row in enumerate(rows):
+                self._table.setItem(i, 0, QTableWidgetItem(str(row.run_label)))
+                self._table.setItem(i, 1, QTableWidgetItem(f"{row.field:.6g}"))
+                self._table.setItem(i, 2, QTableWidgetItem(f"{row.temperature:.6g}"))
+                col = 3
+                for name in display_params:
+                    val = row.values.get(name, np.nan)
+                    err = row.errors.get(name, np.nan)
+                    self._table.setItem(i, col, QTableWidgetItem(f"{val:.6g}"))
+                    self._table.setItem(i, col + 1, QTableWidgetItem(f"{err:.3g}"))
+                    col += 2
+                if abscissa_key is not None:
+                    self._table.setItem(
+                        i, col, QTableWidgetItem(f"{self._x_value(row, abscissa_key):.6g}")
+                    )
+
+                chi2_item = QTableWidgetItem(
+                    "—" if row.reduced_chi_squared is None else f"{row.reduced_chi_squared:.3g}"
                 )
+                if row.quality_flags:
+                    chi2_item.setForeground(QColor(tokens.WARN))
+                    chi2_item.setToolTip(_quality_flags_tooltip(row.quality_flags))
+                self._table.setItem(i, chi2_col, chi2_item)
+
+                include_item = QTableWidgetItem()
+                include_item.setFlags(
+                    (include_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                    & ~Qt.ItemFlag.ItemIsEditable
+                )
+                include_item.setCheckState(
+                    Qt.CheckState.Checked if row.include_in_trend else Qt.CheckState.Unchecked
+                )
+                # Stash the routing keys so the itemChanged handler can toggle the
+                # right member without re-deriving the sorted row order.
+                include_item.setData(Qt.ItemDataRole.UserRole, (row.batch_id, row.trend_member_key))
+                self._table.setItem(i, include_col, include_item)
+        finally:
+            self._populating_table = False
 
         self._table.resizeColumnsToContents()
+
+    def _included_trend_rows(self, x_key: str) -> list[_FitRow]:
+        """Rows currently included in the trend, in ascending-x order.
+
+        The per-member ``include_in_trend`` gate (written by the Trend checkbox /
+        context menu) is the single source of truth for what a trend model fit
+        consumes; excluded rows stay in ``self._rows`` so they still plot.
+        """
+        return sorted(
+            (r for r in self._rows if r.include_in_trend),
+            key=lambda r: self._x_value(r, x_key),
+        )
+
+    def refit_active_model_fits(self) -> None:
+        """Re-solve every attached trend model fit over the included members.
+
+        Called after a member is excluded/included so an attached OrderParameter
+        / Linear fit re-fits without the dropped point. Each range is re-run with
+        its stored model/seed/window and error mode; a range that fails to re-fit
+        keeps its previous result rather than vanishing. The minimisation itself
+        (iminuit, one call per range) runs on the shared TaskRunner — never on
+        the GUI thread, matching the Fit-button path in ModelFitDialog.
+        """
+        if not self._model_fits or self._refit_in_progress:
+            return
+        # Snapshot the per-parameter x/y/err arrays on the GUI thread (cheap: no
+        # minimisation, just reading already-materialised _FitRow attributes) so
+        # the worker touches no widget state.
+        jobs: dict[
+            str, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray | None, ParameterModelFit]
+        ] = {}
+        for name, fit in self._model_fits.items():
+            rows = self._included_trend_rows(fit.x_key)
+            if not rows or not fit.ranges:
+                continue
+            x_vals = np.array([self._x_value(r, fit.x_key) for r in rows], dtype=float)
+            y_vals = np.array([r.values.get(name, np.nan) for r in rows], dtype=float)
+            y_err = np.array([r.errors.get(name, np.nan) for r in rows], dtype=float)
+            x_err = self._x_error_array(rows, fit.x_key) if fit.use_x_errors else None
+            jobs[name] = (x_vals, y_vals, y_err, x_err, fit)
+        if not jobs:
+            return
+
+        self._refit_in_progress = True
+
+        def _run(_worker) -> dict[str, ParameterModelFit]:
+            updated: dict[str, ParameterModelFit] = dict(self._model_fits)
+            for name, (x_vals, y_vals, y_err, x_err, fit) in jobs.items():
+                new_ranges: list[ModelFitRange] = []
+                for rng in fit.ranges:
+                    error_mode = (
+                        rng.result.error_mode if rng.result is not None else ErrorMode.COLUMN.value
+                    )
+                    try:
+                        result = fit_parameter_model(
+                            x=x_vals,
+                            y=y_vals,
+                            yerr=y_err,
+                            model=rng.model,
+                            parameters=rng.parameters,
+                            x_min=rng.x_min,
+                            x_max=rng.x_max,
+                            error_mode=error_mode,
+                            windows=rng.windows,
+                            xerr=x_err,
+                        )
+                    except Exception:
+                        new_ranges.append(rng)
+                        continue
+                    new_ranges.append(replace(rng, parameters=result.parameters, result=result))
+                updated[name] = replace(fit, ranges=new_ranges)
+            return updated
+
+        def _on_done(updated: dict[str, ParameterModelFit]) -> None:
+            self._refit_in_progress = False
+            self._model_fits = updated
+            self._sync_active_group_state()
+            self._refresh_model_fit_button_labels()
+            self._refresh_plot()
+
+        def _on_error(_trace: str) -> None:
+            # Per-range failures are already caught inside _run (a range keeps
+            # its previous result rather than vanishing); this only fires for a
+            # genuine bug in this method, in which case leaving _model_fits
+            # untouched is the safe fallback — there is no dialog to attach a
+            # message to on a background exclude-toggle refresh.
+            self._refit_in_progress = False
+
+        self._tasks.start(_run, on_finished=_on_done, on_error=_on_error)
+
+    def _on_table_item_changed(self, item: QTableWidgetItem) -> None:
+        """Emit an inclusion change when the user toggles a Trend checkbox."""
+        if self._populating_table or item is None:
+            return
+        routing = item.data(Qt.ItemDataRole.UserRole)
+        if not (isinstance(routing, tuple) and len(routing) == 2):
+            return
+        batch_id, member_key = routing
+        if batch_id is None or member_key is None:
+            return
+        include = item.checkState() == Qt.CheckState.Checked
+        self.member_trend_inclusion_changed.emit(str(batch_id), int(member_key), bool(include))
 
     def _selected_y_parameters(self) -> list[str]:
         params: list[str] = []
@@ -4436,6 +4712,72 @@ class FitParametersPanel(QWidget):
             return
         self._draw_plot()
 
+    def _update_trend_provenance(self, rows: list[_FitRow]) -> None:
+        """Summarise trend membership: contributors vs excluded / flagged (F5)."""
+        label = getattr(self, "_trend_provenance_label", None)
+        if label is None:
+            return
+        total = len(rows)
+        excluded = [r for r in rows if not r.include_in_trend]
+        flagged = [r for r in rows if r.include_in_trend and r.quality_flags]
+        if not excluded and not flagged:
+            label.hide()
+            return
+        parts = [f"{total - len(excluded)}/{total} members in trend"]
+        if excluded:
+            names = ", ".join(str(r.run_label) for r in excluded)
+            parts.append(f"{len(excluded)} excluded ({names})")
+        if flagged:
+            parts.append(f"{len(flagged)} flagged")
+        label.setText(" · ".join(parts))
+        label.setToolTip(
+            "Excluded points are ringed in grey and drop out of the trend model "
+            "fit; flagged points (warning diamonds) still contribute. Right-click "
+            "a point or use the table's Trend column to change this."
+        )
+        label.show()
+
+    def _overlay_member_markers(self, ax, x_vals, y_vals, rows) -> None:
+        """Ring the excluded / quality-flagged trend points (Phase 2, F3).
+
+        Excluded members get a hollow grey ring; still-included but flagged
+        members get a hollow warning-coloured diamond. Both stay drawn over the
+        base scatter so the points remain visible and clickable — the ring only
+        signals "this point is out of / suspect in the trend".
+        """
+        excl_x, excl_y, flag_x, flag_y = [], [], [], []
+        for xi, yi, row in zip(x_vals, y_vals, rows):
+            if not (np.isfinite(xi) and np.isfinite(yi)):
+                continue
+            if not row.include_in_trend:
+                excl_x.append(xi)
+                excl_y.append(yi)
+            elif row.quality_flags:
+                flag_x.append(xi)
+                flag_y.append(yi)
+        if excl_x:
+            ax.scatter(
+                excl_x,
+                excl_y,
+                s=54,
+                zorder=7,
+                marker="o",
+                facecolors="none",
+                edgecolors=tokens.TEXT_MUTED,
+                linewidths=1.4,
+            )
+        if flag_x:
+            ax.scatter(
+                flag_x,
+                flag_y,
+                s=64,
+                zorder=7,
+                marker="D",
+                facecolors="none",
+                edgecolors=tokens.WARN,
+                linewidths=1.6,
+            )
+
     def _draw_plot(self) -> None:
         if not self._has_mpl:
             return
@@ -4445,6 +4787,7 @@ class FitParametersPanel(QWidget):
 
         y_params = self._selected_y_parameters()
         if not self._rows or not y_params:
+            self._update_trend_provenance([])
             self._figure.clear()
             ax = self._figure.add_subplot(111)
             ax.set_title("No varying fit parameters")
@@ -4460,6 +4803,7 @@ class FitParametersPanel(QWidget):
         x_err = self._x_error_array(rows, x_key)
         x_label = self._x_axis_label_mpl(x_key)
         self._update_custom_x_skip_note(x_key, x_vals)
+        self._update_trend_provenance(rows)
 
         self._figure.clear()
         plot_mode = self._plot_mode_combo.currentText()
@@ -4479,6 +4823,7 @@ class FitParametersPanel(QWidget):
                 self._draw_model_overlay_mpl(ax, y_name)
 
                 ax.scatter(x_vals, y_vals, s=16, zorder=6, color="C0")
+                self._overlay_member_markers(ax, x_vals, y_vals, rows)
                 ye = y_err if np.any(np.isfinite(y_err) & (y_err > 0)) else None
                 if ye is not None or x_err is not None:
                     ax.errorbar(
@@ -4528,6 +4873,7 @@ class FitParametersPanel(QWidget):
                 self._draw_model_overlay_mpl(ax2, right_name, color=right_color)
 
                 ax.scatter(x_vals, left_vals, s=16, zorder=6, color=left_color)
+                self._overlay_member_markers(ax, x_vals, left_vals, rows)
                 ye_left = left_err if np.any(np.isfinite(left_err) & (left_err > 0)) else None
                 if ye_left is not None or x_err is not None:
                     ax.errorbar(
@@ -4543,6 +4889,7 @@ class FitParametersPanel(QWidget):
                     )
 
                 ax2.scatter(x_vals, right_vals, s=16, zorder=6, color=right_color)
+                self._overlay_member_markers(ax2, x_vals, right_vals, rows)
                 ye_right = right_err if np.any(np.isfinite(right_err) & (right_err > 0)) else None
                 if ye_right is not None or x_err is not None:
                     ax2.errorbar(
@@ -4582,6 +4929,7 @@ class FitParametersPanel(QWidget):
                     self._draw_model_overlay_mpl(ax, y_name, color=color)
 
                     ax.scatter(x_vals, y_vals, s=16, zorder=6, label=label, color=color)
+                    self._overlay_member_markers(ax, x_vals, y_vals, rows)
                     ye = y_err if np.any(np.isfinite(y_err) & (y_err > 0)) else None
                     if ye is not None or x_err is not None:
                         ax.errorbar(
@@ -4865,7 +5213,9 @@ class FitParametersPanel(QWidget):
             writer.writerow(headers)
             for row in range(self._table.rowCount()):
                 values: list[str] = []
-                for col in range(self._table.columnCount()):
+                # Only the data columns — the trailing χ²ᵣ / Trend trend-gate
+                # columns are re-derived (χ²) or non-data (the checkbox) below.
+                for col in range(self._table_data_columns or self._table.columnCount()):
                     item = self._table.item(row, col)
                     values.append(item.text() if item is not None else "")
                 src = sorted_rows[row] if row < len(sorted_rows) else None

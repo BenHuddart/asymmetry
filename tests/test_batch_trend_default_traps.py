@@ -7,10 +7,14 @@ These come from a live new-user UX pass (Round-10 findings #7/#8):
     custom-column text at completion. The fix re-links the live per-run values
     into existing results (no batch re-run needed).
 
-(B) A_1 = GLOBAL DEFAULT — the Batch tab classifies the leading amplitude as
-    Global, which pins one shared value and flattens an amplitude trend. The
-    trend panel now hints which Global (shared) params are held constant and how
-    to trend them.
+(B) A_1 = GLOBAL DEFAULT — the Batch tab used to classify the leading amplitude
+    as Global by default, which pinned one shared value and flattened an
+    amplitude trend (D5 changed the default to Local — see
+    test_fit_panel_tabs.py::test_global_fit_parses_type_combo_defaults and
+    test_global_fit_batch_default_classification_is_local). Global is still a
+    valid explicit opt-in, so the trend panel still hints which Global
+    (shared) params are held constant and how to trend them when a user
+    chooses it.
 """
 
 from __future__ import annotations
@@ -250,6 +254,18 @@ def test_no_global_param_hint_for_pure_batch(qapp):
 
     assert panel._global_param_hint.isHidden()
     assert panel._global_param_hint.text() == ""
+
+
+def test_default_batch_yields_varying_trend_not_no_varying_parameters(qapp):
+    # D5/F10 acceptance criterion: a default (all-Local) batch never lands on
+    # the "No varying fit parameters" empty-trend outcome — the varying
+    # parameter (f) is always available to plot, even though it happens to
+    # share a name pattern with the amplitude that used to default Global.
+    panel = FitParametersPanel()
+    _load_batch_with_global(panel, global_amplitude=False)
+
+    assert panel._display_y_parameters() == ["f"]
+    assert panel._selected_y_parameters()
 
 
 def test_shared_held_constant_excludes_varying_and_fixed(qapp):

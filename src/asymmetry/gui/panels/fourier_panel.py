@@ -26,7 +26,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QScrollArea,
-    QSpinBox,
     QTableWidget,
     QTableWidgetItem,
     QTextBrowser,
@@ -41,6 +40,7 @@ from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.typography import status_font
 from asymmetry.gui.styles.widgets import apply_param_table_style, build_primary_button_qss
 from asymmetry.gui.utils.latex_renderer import render_latex_to_html_image
+from asymmetry.gui.widgets.no_scroll_spin import NoScrollSpinBox
 
 _PHASE_MODE_LABELS = (
     "(Power)^1/2",
@@ -435,7 +435,7 @@ class FourierPanel(QWidget):
         fft_settings_layout = QVBoxLayout(fft_settings_group)
         fft_settings_form = QFormLayout()
 
-        self._padding_spin = QSpinBox()
+        self._padding_spin = NoScrollSpinBox()
         self._padding_spin.setRange(1, 16)
         self._padding_spin.setValue(1)
         fft_settings_form.addRow("Zero-pad factor:", self._padding_spin)
@@ -567,10 +567,10 @@ class FourierPanel(QWidget):
         self._baseline_kappa_edit.setValidator(QDoubleValidator(0.5, 10.0, 3, self))
         form.addRow("Clip κ (σ):", self._baseline_kappa_edit)
 
-        self._burg_order_min_spin = QSpinBox()
+        self._burg_order_min_spin = NoScrollSpinBox()
         self._burg_order_min_spin.setRange(1, 200)
         self._burg_order_min_spin.setValue(2)
-        self._burg_order_max_spin = QSpinBox()
+        self._burg_order_max_spin = NoScrollSpinBox()
         self._burg_order_max_spin.setRange(1, 200)
         self._burg_order_max_spin.setValue(40)
         burg_row = QWidget()
@@ -594,7 +594,7 @@ class FourierPanel(QWidget):
         )
         form.addRow("Correlation field (G):", self._correlation_field_edit)
 
-        self._correlation_order_spin = QSpinBox()
+        self._correlation_order_spin = NoScrollSpinBox()
         self._correlation_order_spin.setRange(0, 10)
         self._correlation_order_spin.setValue(DEFAULT_CORR_ORDER)
         self._correlation_order_spin.setToolTip(

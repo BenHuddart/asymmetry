@@ -1326,13 +1326,36 @@ def test_grouped_fit_finished_updates_grouped_tables(
 
 def test_global_fit_parses_type_combo_defaults(qapp: QApplication) -> None:
     tab = GlobalFitTab()
-    # First row defaults to Global, subsequent rows Local.
+    # All free parameters default to Local; Global is an explicit opt-in (D5).
     c0 = tab._param_table.cellWidget(0, 2)
     c1 = tab._param_table.cellWidget(1, 2) if tab._param_table.rowCount() > 1 else None
     assert isinstance(c0, QComboBox)
-    assert c0.currentText() == "Global"
+    assert c0.currentText() == "Local"
     if isinstance(c1, QComboBox):
         assert c1.currentText() == "Local"
+
+
+def test_global_fit_batch_default_classification_is_local(qapp: QApplication) -> None:
+    # D5/F10: every free parameter defaults to Local; only a component-declared
+    # fixed_by_default_params entry (e.g. VortexLattice's "field") stays Fixed.
+    tab = GlobalFitTab()
+    model = CompositeModel(["VortexLattice", "Constant"], operators=["+"])
+    tab._set_composite_model(model)
+
+    def _combo_text(name: str) -> str:
+        for row in range(tab._param_table.rowCount()):
+            item = tab._param_table.item(row, 0)
+            if item is not None and item.data(Qt.ItemDataRole.UserRole) == name:
+                combo = tab._param_table.cellWidget(row, 2)
+                assert isinstance(combo, QComboBox)
+                return combo.currentText()
+        raise AssertionError(f"parameter {name!r} not found")
+
+    assert "field" in model.fixed_by_default_params()
+    assert _combo_text("field") == "Fixed"
+    assert _combo_text("A_1") == "Local"
+    assert _combo_text("phase") == "Local"
+    assert _combo_text("A_bg") == "Local"
 
 
 def test_global_fit_type_combo_includes_file_for_bl_parameters(
@@ -2410,6 +2433,26 @@ def test_global_edit_function_updates_parameter_rows(qapp: QApplication) -> None
     assert tab._param_table.rowCount() == 3
 
 
+def _assert_inherits_averaged_seeds(tab: GlobalFitTab, model: CompositeModel) -> None:
+    """Shared body for the two single→batch seed-inheritance tests below:
+    both register the same pair of single-fit results (via direct call or via
+    FitPanel's real fit_completed wiring) and expect the same averaged seeds."""
+    assert tab._composite_model.to_dict() == model.to_dict()
+
+    value_by_name = {}
+    for row in range(tab._param_table.rowCount()):
+        name_item = tab._param_table.item(row, 0)
+        value_item = tab._param_table.item(row, 1)
+        assert name_item is not None
+        assert value_item is not None
+        pname = name_item.data(Qt.ItemDataRole.UserRole)
+        value_by_name[pname] = float(value_item.text())
+
+    assert value_by_name["A_1"] == pytest.approx(0.25)
+    assert value_by_name["sigma"] == pytest.approx(1.3)
+    assert value_by_name["A_bg"] == pytest.approx(0.02)
+
+
 def test_global_tab_inherits_model_and_average_values_from_single_fits(
     qapp: QApplication,
     dataset: MuonDataset,
@@ -2427,20 +2470,7 @@ def test_global_tab_inherits_model_and_average_values_from_single_fits(
     tab.register_single_fit_seed(101, model, r1)
     tab.register_single_fit_seed(102, model, r2)
 
-    assert tab._composite_model.to_dict() == model.to_dict()
-
-    value_by_name = {}
-    for row in range(tab._param_table.rowCount()):
-        name_item = tab._param_table.item(row, 0)
-        value_item = tab._param_table.item(row, 1)
-        assert name_item is not None
-        assert value_item is not None
-        pname = name_item.data(Qt.ItemDataRole.UserRole)
-        value_by_name[pname] = float(value_item.text())
-
-    assert value_by_name["A_1"] == pytest.approx(0.25)
-    assert value_by_name["sigma"] == pytest.approx(1.3)
-    assert value_by_name["A_bg"] == pytest.approx(0.02)
+    _assert_inherits_averaged_seeds(tab, model)
 
 
 def test_global_fit_uses_inherited_local_values_per_run(
@@ -2727,6 +2757,33 @@ def test_global_fit_results_preserve_parameter_type_selection(
     assert isinstance(second_type_after, QComboBox)
     assert first_type_after.currentText() == "Local"
     assert second_type_after.currentText() == "Global"
+
+
+def test_fit_panel_batch_tab_auto_inherits_completed_single_fits(
+    qapp: QApplication,
+    dataset: MuonDataset,
+) -> None:
+    """F11: the Batch tab picks up seeds from just-completed single fits with no
+    manual "Send to Batch" click, once every batch member has a matching one
+    (mirrors the automatic per-run inheritance already exercised at the
+    GlobalFitTab level in test_global_tab_inherits_model_and_average_values_from_single_fits,
+    but through FitPanel's real fit_completed wiring)."""
+    panel = FitPanel()
+    d2 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
+    panel._global_tab.set_datasets([dataset, d2])
+
+    model = CompositeModel(["Gaussian", "Constant"], operators=["+"])
+    panel._single_tab._set_composite_model(model)
+
+    p1 = ParameterSet([Parameter("A_1", 0.20), Parameter("sigma", 1.1), Parameter("A_bg", 0.01)])
+    p2 = ParameterSet([Parameter("A_1", 0.30), Parameter("sigma", 1.5), Parameter("A_bg", 0.03)])
+
+    panel._single_tab.set_dataset(dataset)
+    panel._single_tab.fit_completed.emit(FitResult(success=True, parameters=p1), None, [])
+    panel._single_tab.set_dataset(d2)
+    panel._single_tab.fit_completed.emit(FitResult(success=True, parameters=p2), None, [])
+
+    _assert_inherits_averaged_seeds(panel._global_tab, model)
 
 
 def test_fit_panel_share_single_function_state_to_other_runs(

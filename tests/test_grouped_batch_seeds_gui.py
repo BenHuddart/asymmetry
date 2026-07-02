@@ -19,7 +19,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QComboBox
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
@@ -87,6 +87,33 @@ def test_batch_nuisance_seeds_differ_per_dataset(qapp) -> None:
     assert seeds[401][1] != pytest.approx(seeds[402][1])
 
 
+def test_grouped_batch_default_classification_is_local(qapp) -> None:
+    # D5/F10: a freshly built grouped-model table defaults every non-fixed
+    # physics parameter to Local; only background/phase nuisances stay Fixed.
+    # (Amplitude is normalised out of the grouped physics table entirely —
+    # only group fractions and non-amplitude physics params appear here.)
+    win = MultiGroupFitWindow()
+    tab = win._batch_fit_tab
+    tab.set_member_datasets(
+        [_member(411, field=100.0, phi=0.3, seed=11), _member(412, field=150.0, phi=0.6, seed=12)]
+    )
+    # Amplitude ("A_1"/"A_bg") is normalised out of the grouped physics table
+    # entirely, so use a model whose remaining physics params exercise both
+    # the ordinary-Local default (Lambda) and the phase-nuisance-Fixed
+    # default ("phase").
+    model = CompositeModel(["Oscillatory", "Exponential", "Constant"], operators=["*", "+"])
+    tab._set_composite_model(model)
+
+    def _combo_text(name: str) -> str:
+        combo = tab._group_model_table.cellWidget(_physics_row(tab, name), 2)
+        assert isinstance(combo, QComboBox)
+        return combo.currentText()
+
+    assert _combo_text("Lambda") == "Local"
+    assert _combo_text("frequency") == "Local"
+    assert _combo_text("phase") == "Fixed"
+
+
 def test_batch_seed_helper_is_cached(qapp) -> None:
     win = MultiGroupFitWindow()
     tab = win._batch_fit_tab
@@ -115,12 +142,17 @@ def test_batch_physics_chain_seeds_local_per_run_global_averaged(qapp) -> None:
         params = tab._build_grouped_initial_params(tab._grouped_members[run], cfg, run_number=run)
         return next(iter(params.values()))["Lambda"].value
 
-    # Default role is Global → both runs seed from the average (1.0).
+    # Default role is Local (D5) → each run seeds from its own single fit.
+    assert lambda_seed(405) == pytest.approx(0.5)
+    assert lambda_seed(406) == pytest.approx(1.5)
+
+    # Explicit Global opt-in → both runs seed from the cross-run average (1.0).
+    combo = tab._group_model_table.cellWidget(_physics_row(tab, "Lambda"), 2)
+    combo.setCurrentText("Global")
     assert lambda_seed(405) == pytest.approx(1.0)
     assert lambda_seed(406) == pytest.approx(1.0)
 
-    # Flip Lambda to Local → each run seeds from its own single fit.
-    combo = tab._group_model_table.cellWidget(_physics_row(tab, "Lambda"), 2)
+    # Flip back to Local → each run seeds from its own single fit again.
     combo.setCurrentText("Local")
     assert lambda_seed(405) == pytest.approx(0.5)
     assert lambda_seed(406) == pytest.approx(1.5)

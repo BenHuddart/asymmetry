@@ -19,36 +19,31 @@ from asymmetry.core.data.dataset import Run
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.representation.base import RepresentationType
 from asymmetry.core.representation.container import DatasetRepresentations
+from asymmetry.core.representation.group import DataGroup
+from asymmetry.core.representation.naming import default_series_label
 from asymmetry.core.representation.series import FitSeries, canonical_model_matches
-
-
-def _series_fit_range(series: FitSeries) -> str | None:
-    """Return the fit range recorded with a series, or ``None``.
-
-    All members of a batch share one fit window, so the first recorded
-    ``fit_range`` is representative. Used to keep batches over the same runs but
-    *different* windows distinct when de-duplicating identical re-runs.
-    """
-    for result in series.results_by_run.values():
-        if isinstance(result, dict):
-            fit_range = result.get("fit_range")
-            if fit_range:
-                return str(fit_range)
-    return None
 
 
 def _series_signature(series: FitSeries) -> tuple:
     """A comparable identity for a fit series: same → a duplicate re-run.
 
-    Captures the representation, member kind + source runs, normalised canonical
-    model, parameter classification, and fit window. Two batches with the same
-    signature differ only in their (newer) results, so the later one supersedes
-    the earlier rather than accumulating a duplicate trend pill.
+    Captures the representation, member kind + physical source runs, and the
+    normalised canonical model. Parameter classification (``param_roles``) and
+    the fit window (``fit_range``) are deliberately **excluded**: they are
+    attributes of a run, not identity, so re-running the same members+model with
+    a different Global/Local split (or a different fit window) supersedes the
+    earlier series in place (D4) rather than accumulating a duplicate trend pill.
     """
-    if series.member_kind == "groups":
-        members = tuple(sorted(set(series.member_source_run.values())))
-    else:
-        members = tuple(sorted(set(series.member_run_numbers)))
+    # Key on the actual member keys, not the deduplicated physical runs: for a
+    # group series ``member_run_numbers`` are the synthetic ``(run, detector-group)``
+    # keys, so two grouped fits over the *same* source runs but *different*
+    # detector-group subsets stay distinct (keying on ``source_runs()`` would
+    # collapse them and let one wrongly supersede/merge the other). The keys are
+    # always populated — even for a legacy group series with an empty
+    # ``member_source_run`` map — so this never degrades to an empty ``()`` set
+    # the way ``member_source_run.values()`` would. For a run series the keys are
+    # the physical run numbers, so this is unchanged from ``source_runs()``.
+    members = tuple(sorted(series.member_run_numbers))
     model_key: str | None = None
     if series.canonical_model is not None:
         try:
@@ -56,15 +51,28 @@ def _series_signature(series: FitSeries) -> tuple:
         except (ValueError, KeyError, TypeError):
             normalised = series.canonical_model
         model_key = json.dumps(normalised, sort_keys=True, default=str)
-    roles = tuple(sorted(series.param_roles.items()))
     return (
         str(series.rep_type),
         series.member_kind,
         members,
         model_key,
-        roles,
-        _series_fit_range(series),
     )
+
+
+def _inherit_label(survivor: FitSeries, donors: list[FitSeries | None]) -> None:
+    """Give *survivor* a user label from the first *donor* that has one.
+
+    Only fills a *missing* label — a label already on the survivor (e.g. a rename
+    of the incoming series) is never clobbered. Shared by the two twin-collapsing
+    paths (live re-run supersession and load-time dedupe) so they name a
+    collapsed series identically.
+    """
+    if survivor.label:
+        return
+    for donor in donors:
+        if donor is not None and donor.label:
+            survivor.label = donor.label
+            return
 
 
 class ProjectModel:
@@ -74,9 +82,16 @@ class ProjectModel:
         self,
         datasets: dict[int, DatasetRepresentations] | None = None,
         batches: dict[str, FitSeries] | None = None,
+        data_groups: dict[str, DataGroup] | None = None,
     ) -> None:
         self.datasets: dict[int, DatasetRepresentations] = dict(datasets or {})
         self.batches: dict[str, FitSeries] = dict(batches or {})
+        #: DataGroup registry (D1, Option B: "linked"). Additive/optional in the
+        #: schema — projects saved before Phase 7 have no ``data_groups`` block
+        #: and load with an empty dict. A group's back-references to the series
+        #: built from it are computed on demand (:meth:`series_for_group`), not
+        #: stored, so editing a group never invalidates or re-fits its series.
+        self.data_groups: dict[str, DataGroup] = dict(data_groups or {})
 
     # ── access ───────────────────────────────────────────────────────────────
 
@@ -102,14 +117,41 @@ class ProjectModel:
         """Register *batch* by its id."""
         self.batches[batch.batch_id] = batch
 
+    def data_group(self, group_id: str) -> DataGroup | None:
+        """Return the DataGroup with *group_id*, or ``None``."""
+        return self.data_groups.get(str(group_id))
+
+    def add_data_group(self, group: DataGroup) -> None:
+        """Register *group* by its id."""
+        self.data_groups[group.group_id] = group
+
+    def remove_data_group(self, group_id: str) -> DataGroup | None:
+        """Remove and return the DataGroup with *group_id*, or ``None``.
+
+        Series built from the group are left untouched (D1, Option B): their
+        ``source_group_id`` becomes a dangling provenance pointer, same as any
+        other reference to a deleted upstream object.
+        """
+        return self.data_groups.pop(str(group_id), None)
+
+    def series_for_group(self, group_id: str) -> list[FitSeries]:
+        """Return batches whose ``source_group_id`` is *group_id*.
+
+        A group's back-references to its series are always computed from the
+        batches, never stored on the group — editing a group's membership does
+        not retroactively touch any series already built from it.
+        """
+        group_id = str(group_id)
+        return [batch for batch in self.batches.values() if batch.source_group_id == group_id]
+
     def superseded_batch_ids(self, series: FitSeries) -> list[str]:
         """Return ids of existing batches that *series* makes redundant.
 
         A batch is superseded when it has the same identity signature as
-        *series* (same representation, members, model, classification and fit
-        window) — i.e. it is an earlier run of the very same batch. Computed
-        (model-less) series are never matched, since two scans over the same
-        runs are legitimately distinct results.
+        *series* (same representation, members and model) — i.e. it is an earlier
+        run of the very same batch, even if its Global/Local classification or
+        fit window differs. Computed (model-less) series are never matched, since
+        two scans over the same runs are legitimately distinct results.
         """
         if series.is_computed:
             return []
@@ -123,33 +165,98 @@ class ProjectModel:
         ]
 
     def remove_superseded_batches(self, series: FitSeries) -> list[str]:
-        """Remove and return prior batches identical to *series* (de-dup re-runs).
+        """Remove prior batches identical to *series* and inherit their identity.
 
         Stops re-running the same batch from accumulating duplicate trend
-        "pills": the freshly recorded series replaces its older twins.
+        "pills": the freshly recorded series replaces its older twins. So the
+        chip and any back-references stay stable across the re-run, *series*
+        inherits the superseded twin's ``batch_id`` and — unless it already
+        carries one — its user ``label``. Mutating ``series.batch_id`` here means
+        callers must write member ``FitSlot`` pointers from ``series.batch_id``
+        (not a pre-allocated id) *after* this returns.
         """
         removed = self.superseded_batch_ids(series)
+        if not removed:
+            return removed
+        # The signatures are identical, so there is normally exactly one twin;
+        # if a legacy project carried several, inherit the first (oldest) one's
+        # identity and drop the rest. Defer divergence to a single sweep.
+        predecessor = self.batches.get(removed[0])
         for batch_id in removed:
-            self.remove_batch(batch_id)
+            self.remove_batch(batch_id, refresh=False)
+        self.refresh_divergence()
+        if predecessor is not None:
+            _inherit_label(series, [predecessor])
+            series.batch_id = predecessor.batch_id
         return removed
 
-    def remove_batch(self, batch_id: str) -> FitSeries | None:
+    def dedupe_batches(self) -> list[dict]:
+        """Collapse batches sharing an identity signature (load-time migration).
+
+        Projects saved during the duplicate era (before replace-in-place, D4)
+        can carry several identically-keyed batch series over the same
+        members+model. For each such group keep the **most recently recorded**
+        one (its results are freshest and its id is the one member ``FitSlot``\\ s
+        already reference), drop the rest, and carry a user ``label`` forward onto
+        the survivor when it has none. Computed (model-less) series are never
+        merged. Returns one record ``{"kept", "dropped", "label"}`` per collapsed
+        group so the caller can log what changed; no schema bump — this is
+        tolerant reading of an already-valid project.
+        """
+        groups: dict[tuple, list[str]] = {}
+        for batch_id, series in self.batches.items():
+            if series.is_computed:
+                continue
+            groups.setdefault(_series_signature(series), []).append(batch_id)
+
+        records: list[dict] = []
+        for ids in groups.values():
+            if len(ids) < 2:
+                continue
+            # ``self.batches`` preserves the saved (recording) order, so the last
+            # id is the most recent — keep it and drop its earlier twins. Its
+            # member FitSlots already reference it, so dropping earlier twins
+            # never clears the keeper's slots.
+            keeper_id = ids[-1]
+            dropped = ids[:-1]
+            keeper = self.batches[keeper_id]
+            _inherit_label(keeper, [self.batches.get(other_id) for other_id in dropped])
+            for other_id in dropped:
+                self.remove_batch(other_id, refresh=False)
+            # ``remove_batch`` clears a member FitSlot only when it referenced the
+            # dropped id. Normally every slot already points at the keeper (the
+            # most recent twin) so nothing is cleared — but a legacy project whose
+            # slot pointed at a dropped twin would just have lost its series link.
+            # Re-point any now-unlinked keeper member back to the keeper so no run
+            # is silently orphaned from the surviving series.
+            self._relink_unlinked_members(keeper)
+            records.append(
+                {
+                    "kept": keeper_id,
+                    "dropped": list(dropped),
+                    # Friendly default (model · run-range) for the log, not the
+                    # opaque batch id, when the survivor carries no user label.
+                    "label": keeper.label or default_series_label(keeper),
+                }
+            )
+        if records:
+            self.refresh_divergence()
+        return records
+
+    def remove_batch(self, batch_id: str, *, refresh: bool = True) -> FitSeries | None:
         """Remove and return the batch with *batch_id*, clearing member FitSlot pointers.
 
         For each member the corresponding FitSlot's ``batch_id`` is cleared and
         ``provenance`` is reset to ``"single"`` (the fit result is preserved;
         only the series association is dropped).  Divergence state for the
         removed batch is no longer relevant; ``refresh_divergence`` is called so
-        other batches remain consistent.
+        other batches remain consistent — pass ``refresh=False`` when removing a
+        run of batches to defer to a single sweep by the caller.
         """
         series = self.batches.pop(str(batch_id), None)
         if series is None:
             return None
-        if series.member_kind == "groups":
-            source_runs = sorted(set(series.member_source_run.values()))
-        else:
-            source_runs = list(series.member_run_numbers)
-        for run_number in source_runs:
+        for run_number in series.source_runs():
             representation = self.representation(run_number, series.rep_type)
             if representation is None:
                 continue
@@ -159,8 +266,27 @@ class ProjectModel:
                 slot.provenance = "single"
                 slot.diverged = False
                 slot.include_in_trend = True
-        self.refresh_divergence()
+        if refresh:
+            self.refresh_divergence()
         return series
+
+    def _relink_unlinked_members(self, batch: FitSeries) -> None:
+        """Point *batch*'s currently-unlinked member FitSlots back at *batch*.
+
+        Only touches slots whose ``batch_id`` is ``None`` (either never linked or
+        cleared while dropping a duplicate twin) — a slot already owned by another
+        batch is left alone. Restores the batch's provenance so the run rejoins the
+        series' trend.
+        """
+        provenance = "global" if batch.is_global() else "batch"
+        for run_number in batch.source_runs():
+            representation = self.representation(run_number, batch.rep_type)
+            if representation is None:
+                continue
+            slot = representation.fit
+            if slot.batch_id is None:
+                slot.batch_id = batch.batch_id
+                slot.provenance = provenance
 
     def rename_batch(self, batch_id: str, label: str | None) -> bool:
         """Set the display label of the batch with *batch_id*.
@@ -340,6 +466,7 @@ class ProjectModel:
                 for run_number, container in self.datasets.items()
             },
             "batches": [batch.to_dict() for batch in self.batches.values()],
+            "data_groups": [group.to_dict() for group in self.data_groups.values()],
         }
 
     @classmethod
@@ -347,6 +474,7 @@ class ProjectModel:
         """Inverse of :meth:`to_dict`."""
         datasets: dict[int, DatasetRepresentations] = {}
         batches: dict[str, FitSeries] = {}
+        data_groups: dict[str, DataGroup] = {}
         if isinstance(data, dict):
             raw_reps = data.get("representations_by_run")
             if isinstance(raw_reps, dict):
@@ -361,7 +489,11 @@ class ProjectModel:
                 if isinstance(batch_data, dict):
                     batch = FitSeries.from_dict(batch_data)
                     batches[batch.batch_id] = batch
-        return cls(datasets, batches)
+            for group_data in data.get("data_groups", []) or []:
+                if isinstance(group_data, dict):
+                    group = DataGroup.from_dict(group_data)
+                    data_groups[group.group_id] = group
+        return cls(datasets, batches, data_groups)
 
     # ── project-dict integration ───────────────────────────────────────────────
 
@@ -369,10 +501,14 @@ class ProjectModel:
     def from_project_state(cls, project: dict) -> ProjectModel:
         """Build a model from a schema-v6 project dict.
 
-        Reads ``datasets[i].representations`` and the top-level ``batches``.
+        Reads ``datasets[i].representations``, the top-level ``batches``, and
+        the optional top-level ``data_groups`` block (Phase 7, additive —
+        absent on a project saved before this phase, which loads with an empty
+        registry rather than failing).
         """
         datasets: dict[int, DatasetRepresentations] = {}
         batches: dict[str, FitSeries] = {}
+        data_groups: dict[str, DataGroup] = {}
         if not isinstance(project, dict):
             return cls()
 
@@ -392,10 +528,15 @@ class ProjectModel:
                 batch = FitSeries.from_dict(batch_data)
                 batches[batch.batch_id] = batch
 
-        return cls(datasets, batches)
+        for group_data in project.get("data_groups", []) or []:
+            if isinstance(group_data, dict):
+                group = DataGroup.from_dict(group_data)
+                data_groups[group.group_id] = group
+
+        return cls(datasets, batches, data_groups)
 
     def write_to_project_state(self, project: dict) -> None:
-        """Write representations onto each dataset entry and batches at top level.
+        """Write representations onto each dataset entry and batches/groups at top level.
 
         ``project['datasets']`` entries are matched by ``run_number``; entries
         with no representations get an empty ``representations`` map.
@@ -408,3 +549,4 @@ class ProjectModel:
                 container.to_dict()["representations"] if container is not None else {}
             )
         project["batches"] = [batch.to_dict() for batch in self.batches.values()]
+        project["data_groups"] = [group.to_dict() for group in self.data_groups.values()]
