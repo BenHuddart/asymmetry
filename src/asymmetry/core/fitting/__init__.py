@@ -68,6 +68,12 @@ from asymmetry.core.fitting.grouped_time_domain import (
     grouped_time_domain_available,
     recommend_grouped_series_seeding,
 )
+from asymmetry.core.fitting.member_quality import (
+    MEMBER_QUALITY_FLAGS,
+    MemberQuality,
+    assess_member_quality,
+    member_quality_flags,
+)
 from asymmetry.core.fitting.models import MODELS
 from asymmetry.core.fitting.mu_kinetics import (
     ArrheniusResult,
@@ -101,12 +107,6 @@ from asymmetry.core.fitting.parameters import (
     ParameterSet,
     ParamInfo,
     get_param_info,
-)
-from asymmetry.core.fitting.member_quality import (
-    MEMBER_QUALITY_FLAGS,
-    MemberQuality,
-    assess_member_quality,
-    member_quality_flags,
 )
 from asymmetry.core.fitting.result_summary import fit_result_summary, parameters_at_bound
 from asymmetry.core.fitting.rrf_offset import (

@@ -24,7 +24,7 @@ import functools
 import hashlib
 import os
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
@@ -1704,6 +1704,9 @@ class MainWindow(QMainWindow):
         if hasattr(self._fit_parameters_panel, "series_delete_requested"):
             self._fit_parameters_panel.series_delete_requested.connect(
                 self._on_series_delete_requested
+            )
+            self._fit_parameters_panel.member_trend_inclusion_changed.connect(
+                self._on_member_trend_inclusion_changed
             )
 
         # Unsaved-changes guard (P0-2): every fit result and trend-series edit
@@ -8415,6 +8418,7 @@ class MainWindow(QMainWindow):
         model_name: str | None = None,
         fit_range: str | None = None,
         timestamp: str | None = None,
+        extra_flags: Sequence[str] = (),
     ) -> dict:
         """Return a JSON-serialisable summary of a fit result.
 
@@ -8425,8 +8429,16 @@ class MainWindow(QMainWindow):
         cannot source. ``npar`` is the free-parameter count (those carrying a
         HESSE σ) and ``ndof`` is read back from the χ² quality block; both are
         omitted when unavailable.
+
+        ``extra_flags`` threads engine-only member-quality flags (notably
+        ``spurious_reseeded``, which needs the scan trend) into the stored
+        ``quality_flags`` so trend tables/plots read them back after save/load.
         """
-        summary = fit_result_summary(fit_result, confidence=fit_quality_confidence(self._settings))
+        summary = fit_result_summary(
+            fit_result,
+            confidence=fit_quality_confidence(self._settings),
+            extra_flags=extra_flags,
+        )
         uncertainties = summary.get("uncertainties") or {}
         quality = summary.get("quality") or {}
         ndof = quality.get("dof") if isinstance(quality, dict) else None
@@ -8667,6 +8679,22 @@ class MainWindow(QMainWindow):
                     values.pop(nuisance, None)
                     errors.pop(nuisance, None)
 
+            # Per-member trend gate + advisory quality flags (Phase 2). The
+            # inclusion flag lives on the member's FitSlot (the source run's slot
+            # for a group series); ``trend_member_key`` is the key
+            # set_member_trend_inclusion expects (a synthetic member key for
+            # groups, the run number otherwise) so click-to-exclude routes to the
+            # right slot even for a collapsed group row.
+            trend_member_key = member_key
+            if series.member_kind == "groups":
+                gate_rep = self._project_model.representation(
+                    series.source_run_for(member_key), series.rep_type
+                )
+            else:
+                gate_rep = self._project_model.representation(member_key, series.rep_type)
+            include_in_trend = bool(gate_rep.fit.include_in_trend) if gate_rep is not None else True
+            quality_flags = [str(f) for f in (summary.get("quality_flags") or [])]
+
             rows.append(
                 {
                     "run_number": row_run_number,
@@ -8681,6 +8709,12 @@ class MainWindow(QMainWindow):
                     "model_name": summary.get("model_name"),
                     "chi_squared": summary.get("chi_squared"),
                     "reduced_chi_squared": summary.get("reduced_chi_squared"),
+                    # Phase 2 trend-gating: which series/member this row toggles,
+                    # its current inclusion, and its advisory quality flags.
+                    "batch_id": series.batch_id,
+                    "trend_member_key": trend_member_key,
+                    "include_in_trend": include_in_trend,
+                    "quality_flags": quality_flags,
                 }
             )
         return rows
@@ -8864,6 +8898,29 @@ class MainWindow(QMainWindow):
         # Clear fit panel and plot panel state for the affected runs.
         self._on_fit_parameters_group_fits_deleted(batch_id, runs)
         self._refresh_trend_panel()
+
+    def _on_member_trend_inclusion_changed(
+        self, batch_id: str, member_key: int, include: bool
+    ) -> None:
+        """Toggle a member's trend inclusion and re-fit any attached trend model.
+
+        Writes the per-member gate through the project model (D3: the user
+        decides — never automatic), then re-runs the trend so an attached model
+        fit (e.g. OrderParameter) re-solves over the new included set and the
+        excluded point re-renders as a hollow marker while staying on the plot.
+        """
+        series = self._project_model.batch(str(batch_id))
+        if series is None:
+            return
+        self._project_model.set_member_trend_inclusion(
+            str(batch_id), int(member_key), bool(include)
+        )
+        self._mark_dirty()
+        self._refresh_trend_panel(select_batch_id=str(batch_id), surface=False)
+        # Re-solve any attached trend model fit over the new included set so the
+        # OrderParameter / Linear overlay drops the excluded point immediately.
+        if hasattr(self._fit_parameters_panel, "refit_active_model_fits"):
+            self._fit_parameters_panel.refit_active_model_fits()
 
     def _current_single_fit_projection(self) -> str | None:
         """Return the projection a single fit should be keyed under, or ``None``.
@@ -9101,6 +9158,14 @@ class MainWindow(QMainWindow):
         model_label = self._composite_model_label(canonical_model)
         fit_range = self._fit_panel.batch_fit_range_text()
         timestamp = self._fit_record_timestamp()
+        # Engine-derived per-run flags (carries ``spurious_reseeded``, which the
+        # core summary cannot recompute without the scan trend). Empty for the
+        # tied global_fit path.
+        member_flags = (
+            self._fit_panel.last_batch_member_flags()
+            if hasattr(self._fit_panel, "last_batch_member_flags")
+            else {}
+        )
         results_by_run = {}
         for run, payload in normalized_payloads.items():
             summary = self._fit_result_summary(
@@ -9109,6 +9174,7 @@ class MainWindow(QMainWindow):
                 model_name=model_label,
                 fit_range=fit_range,
                 timestamp=timestamp,
+                extra_flags=member_flags.get(int(run), ()),
             )
             # Persist each run's T/B with the series so the trend reads its real
             # coordinate even after the dataset leaves the browser or the project
@@ -10214,6 +10280,42 @@ class MainWindow(QMainWindow):
         )
         self.statusBar().showMessage(f"Batch fit completed for {n_datasets} datasets")
 
+    def _grouped_fit_completion_summary(self, grouped_datasets, results_dict) -> str:
+        """Human-readable grouped-fit accounting for the completion log (F12).
+
+        A grouped batch produces one ``(run, group)`` *trace* per member, not one
+        "group": report "35 traces (7 runs × 5 groups)" — and the average χ²ᵣ —
+        rather than the ambiguous "35 groups" the old log printed.
+        """
+        n_traces = len(grouped_datasets)
+        source_runs: set[int] = set()
+        for dataset in grouped_datasets:
+            meta = getattr(dataset, "metadata", {}) or {}
+            raw = meta.get("source_run_number", meta.get("run_number"))
+            try:
+                source_runs.add(int(raw))
+            except (TypeError, ValueError):
+                continue
+        n_runs = len(source_runs)
+        chi2_values = [
+            float(payload[0].reduced_chi_squared)
+            for payload in results_dict.values()
+            if isinstance(payload, tuple)
+            and payload
+            and np.isfinite(getattr(payload[0], "reduced_chi_squared", float("nan")))
+        ]
+        parts: list[str] = []
+        if n_runs > 1 and n_traces % n_runs == 0:
+            parts.append(f"{n_traces} traces ({n_runs} runs × {n_traces // n_runs} groups)")
+        elif n_runs == 1:
+            run = next(iter(source_runs))
+            parts.append(f"{n_traces} groups (run {run})")
+        else:
+            parts.append(f"{n_traces} traces")
+        if chi2_values:
+            parts.append(f"average χ²ᵣ = {sum(chi2_values) / len(chi2_values):.3f}")
+        return " · ".join(parts)
+
     def _on_grouped_fit_completed(
         self,
         grouped_datasets,
@@ -10265,10 +10367,9 @@ class MainWindow(QMainWindow):
             # froze the GUI for several seconds when the values came back.
             display_members = self._grouped_members_for_display(grouped_datasets)
             self._plot_panel.plot_grouped_time_domain_subplots(display_members)
-        self._log_panel.log(f"Grouped time-domain fit completed: {len(grouped_datasets)} groups")
-        self.statusBar().showMessage(
-            f"Grouped time-domain fit completed: {len(grouped_datasets)} groups"
-        )
+        completion = self._grouped_fit_completion_summary(grouped_datasets, results_dict)
+        self._log_panel.log(f"Grouped time-domain fit completed: {completion}")
+        self.statusBar().showMessage(f"Grouped time-domain fit completed: {completion}")
 
     def _on_grouped_preview_requested(
         self,

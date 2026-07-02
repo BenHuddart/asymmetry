@@ -96,6 +96,7 @@ from asymmetry.core.fitting.grouped_time_domain import (
     fit_grouped_time_domain,
     validate_grouped_model_contract,
 )
+from asymmetry.core.fitting.member_quality import member_quality_flags
 from asymmetry.core.fitting.parameters import (
     AffineTie,
     Parameter,
@@ -4885,10 +4886,17 @@ class GlobalFitTab(QWidget):
         results box can report them, then routes the per-run results through the
         common :meth:`_on_fit_finished` path (which also runs the outlier signpost).
         """
+        member_quality = getattr(series, "member_quality", {}) or {}
         self._series_seeding_meta = {
             "seeding_used": getattr(series, "seeding_used", ""),
             "seeding_reason": getattr(series, "seeding_reason", ""),
             "reseeded_runs": tuple(getattr(series, "reseeded_runs", ())),
+            # Per-run advisory flags (incl. spurious_reseeded, which only the
+            # engine knows) so the results banner and the recorder can surface
+            # them without recomputing the trend context.
+            "member_flags": {
+                int(run): sorted(quality.quality_flags) for run, quality in member_quality.items()
+            },
         }
         self._on_fit_finished(series.results, series.fitted_global)
 
@@ -6236,6 +6244,12 @@ class GlobalFitTab(QWidget):
                 fitted_global=fitted_global,
                 global_param_names=global_params,
             )
+            # F2: a one-line accounting of the batch — fitted / failed / flagged —
+            # so a silently dropped or garbage member is visible in the results
+            # block, not just the log.
+            summary_line = self._batch_outcome_summary_line(results_dict, run_label_by_number)
+            if summary_line:
+                self._result_text.append(info_html(summary_line))
             if failed:
                 # _emit_global_fit_success rendered the success box; append the
                 # failure warning as a new paragraph beneath it rather than
@@ -6253,6 +6267,59 @@ class GlobalFitTab(QWidget):
         # Inspect the per-run trend for the near-transition collapse/outlier
         # signature and signpost the per-run warm-start when it is present.
         self._update_seeding_signpost(model, results_dict)
+
+    def last_batch_member_flags(self) -> dict[int, list[str]]:
+        """Per-run advisory quality flags from the most recent F-B series fit.
+
+        Empty when the batch went through the tied-``global_fit`` path (which
+        knows no scan trend) or before any batch — callers then derive the
+        generic flags from each member's stored fit result instead. Includes
+        ``spurious_reseeded``, which only the series engine can source.
+        """
+        meta = self._series_seeding_meta
+        if not isinstance(meta, dict):
+            return {}
+        flags = meta.get("member_flags")
+        if not isinstance(flags, dict):
+            return {}
+        return {int(run): list(values) for run, values in flags.items()}
+
+    def _batch_outcome_summary_line(self, results_dict: dict, run_label_by_number: dict) -> str:
+        """Build the F2 one-line batch accounting: fitted / failed / flagged.
+
+        ``flagged`` counts *converged* members carrying an advisory quality flag
+        (large relative error, bound-pinned, or the spurious branch); a failed
+        member is reported under ``failed``, not double-counted as flagged.
+        """
+        total = len(results_dict)
+        if not total:
+            return ""
+        member_flags = self.last_batch_member_flags()
+        fitted: list[int] = []
+        failed: list[int] = []
+        flagged: list[int] = []
+        for run, result in results_dict.items():
+            run = int(run)
+            if not getattr(result, "success", False):
+                failed.append(run)
+                continue
+            fitted.append(run)
+            flags = set(member_flags.get(run) or member_quality_flags(result))
+            if flags - {"failed"}:
+                flagged.append(run)
+
+        def _labels(runs: list[int], limit: int = 6) -> str:
+            names = [str(run_label_by_number.get(r, r)) for r in sorted(runs)]
+            if len(names) > limit:
+                names = [*names[:limit], "…"]
+            return ", ".join(names)
+
+        parts = [f"{len(fitted)}/{total} fitted"]
+        if failed:
+            parts.append(f"{len(failed)} failed ({_labels(failed)})")
+        if flagged:
+            parts.append(f"{len(flagged)} flagged ({_labels(flagged)})")
+        return " · ".join(parts)
 
     def _append_series_seeding_note(self) -> None:
         """Append the resolved seeding mode/reason and any reseeded runs."""
