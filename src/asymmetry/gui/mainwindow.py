@@ -10102,6 +10102,13 @@ class MainWindow(QMainWindow):
         canonical_model = fit_slot.model
         result = dict(fit_slot.result) if isinstance(fit_slot.result, dict) else {}
         result.pop("result_html", None)
+        # A single fit's stored result carries no T/B (single fits aren't series
+        # members); stamp the browser's current displayed coordinate the same way
+        # every other series-recording path does (_record_global_fit_batch,
+        # the grouped-fit path), or the new series plots at trend X=0/NaN and
+        # cannot self-correct once the run leaves the browser or the project
+        # reloads (see _dataset_trend_coords).
+        result.update(self._dataset_trend_coords(run_number))
         template_parameters = [dict(p) for p in (fit_slot.parameters or []) if isinstance(p, dict)]
         batch = FitSeries(
             self._next_batch_id(),

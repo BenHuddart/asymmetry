@@ -2033,6 +2033,10 @@ class SingleFitTab(QWidget):
         self._rrf_frequency_provider: Callable[[], float | None] = lambda: None
         self._last_fit_result: FitResult | None = None
         self._last_fit_parameters: ParameterSet | None = None
+        # See set_has_recorded_fit: whether the active run has a *persisted*
+        # single fit, independent of _last_fit_result (this session's transient
+        # in-memory result).
+        self._has_recorded_fit = False
         self._pull_diagnostic_btn: QPushButton | None = None
         self._pull_diagnostic_window: QWidget | None = None
         #: Background fits run via the shared TaskRunner machinery; the
@@ -2287,6 +2291,10 @@ class SingleFitTab(QWidget):
         # A fit result belongs to the dataset it was fit on; drop it on change.
         self._last_fit_result = None
         self._last_fit_parameters = None
+        # Reset to the safe default; FitPanel.set_dataset calls
+        # set_has_recorded_fit(True) right after this when the run's own
+        # persisted FitSlot (not just this session's in-memory result) is real.
+        self._has_recorded_fit = False
         if self._pull_diagnostic_btn is not None:
             self._pull_diagnostic_btn.setEnabled(False)
         enabled = dataset is not None and (not self._fit_blocked)
@@ -2296,9 +2304,24 @@ class SingleFitTab(QWidget):
         self._share_group_action.setEnabled(dataset is not None and self._domain == "time")
         self._update_add_to_series_enabled()
 
+    def set_has_recorded_fit(self, has_fit: bool) -> None:
+        """Track whether the active run has a persisted single fit (F18).
+
+        Distinct from ``_last_fit_result`` (this *session's* in-memory
+        ``FitResult``, cleared on every ``set_dataset``): reselecting a run
+        that was fitted earlier — this session or a prior one, restored from
+        the project model — must not wrongly disable "Add to Series...".
+        Driven by ``FitPanel.set_dataset``, which already resolves this via
+        its restore-mediator's ``own_slot`` provenance check.
+        """
+        self._has_recorded_fit = bool(has_fit)
+        self._update_add_to_series_enabled()
+
     def _update_add_to_series_enabled(self) -> None:
         """Enable "Add to Series..." only once this run has a completed fit (F18)."""
-        have_fit = self._last_fit_result is not None and self._last_fit_result.success
+        have_fit = (
+            self._last_fit_result is not None and self._last_fit_result.success
+        ) or self._has_recorded_fit
         self._add_to_series_action.setEnabled(have_fit)
         self._add_to_series_action.setToolTip(
             "Add this run's single fit to an existing batch series with a matching model."
@@ -8298,6 +8321,7 @@ class FitPanel(QWidget):
             else None
         )
         is_real_fit = isinstance(payload, dict) and bool(payload)
+        self._single_tab.set_has_recorded_fit(is_real_fit)
         if payload is not None:
             self.restore_single_fit_ui(payload)
             self._set_single_fit_provenance("own_slot" if is_real_fit else "representation_default")

@@ -67,3 +67,19 @@ def test_seed_peak_bg_uses_guarded_median_not_dc_spike() -> None:
     seeds = seed_peak_parameters_from_dataset(dataset, model)
 
     assert seeds["bg"] < 1.0
+
+
+def test_seed_peak_fwhm_excludes_dc_spike_from_half_max_crossing() -> None:
+    """The half-max crossing search must stay inside the same guarded region
+    as the peak search, or a DC spike that also exceeds half_height drags the
+    span out to the DC spike's edge and inflates fwhm by an order of
+    magnitude even though nu0 correctly skipped it.
+    """
+    dataset = _dc_dominated_spectrum(peak_freq=30.0)  # physical peak sigma=1.5 MHz
+    model = default_frequency_model()
+
+    seeds = seed_peak_parameters_from_dataset(dataset, model)
+
+    # True FWHM = 2.3548 * sigma ~= 3.53 MHz; a DC-contaminated crossing would
+    # instead span from near the DC spike's edge to the peak's far edge (~30 MHz).
+    assert seeds["fwhm"] < 10.0

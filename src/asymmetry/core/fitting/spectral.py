@@ -99,23 +99,25 @@ def seed_peak_parameters_from_dataset(
         guarded = np.flatnonzero(np.abs(x) >= guard)
         if guarded.size > 0:
             candidates = guarded
+    # ``candidates`` is never empty here: it starts as the full (non-empty,
+    # per the size check above) index range and is only narrowed when the
+    # narrowed set itself is non-empty.
+    candidate_mask = np.zeros(x.size, dtype=bool)
+    candidate_mask[candidates] = True
 
-    baseline = (
-        float(np.nanmedian(y[candidates]))
-        if candidates.size > 0
-        else float(np.nanpercentile(y, 10.0))
-    )
-    peak_index = (
-        int(candidates[np.nanargmax(y[candidates])])
-        if candidates.size > 0
-        else int(np.nanargmax(y))
-    )
+    baseline = float(np.nanmedian(y[candidates]))
+    peak_index = int(candidates[np.nanargmax(y[candidates])])
 
     peak_y = float(y[peak_index])
     height = max(peak_y - baseline, 1e-12)
     nu0 = float(x[peak_index])
     half_height = baseline + 0.5 * height
-    above = np.flatnonzero(y >= half_height)
+    # Restrict the half-max crossing search to the same guarded region as the
+    # peak search — otherwise a DC/apodisation spike that also exceeds
+    # half_height (common, since it dwarfs the physical peak) drags the FWHM
+    # span out to the DC spike's edge, producing a wildly inflated seed even
+    # though nu0 itself correctly skipped it.
+    above = np.flatnonzero((y >= half_height) & candidate_mask)
     if above.size >= 2:
         fwhm = max(float(x[above[-1]] - x[above[0]]), np.finfo(float).eps)
     elif x.size >= 2:
