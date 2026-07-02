@@ -243,6 +243,68 @@ def test_group_lookup_helpers_return_group_and_members(qapp: QApplication) -> No
     assert members == [61, 62]
 
 
+def test_forming_group_while_sorted_keeps_header_and_members_visible(
+    qapp: QApplication,
+) -> None:
+    """F9: forming a data group while the browser is column-sorted must render
+    the group header and every member row immediately (no project reload)."""
+    panel = DataBrowserPanel()
+    for rn in (61, 62, 63, 64, 65):
+        panel.add_dataset(_dataset(rn))
+
+    panel._on_header_clicked(2)  # sort by temperature (col 2)
+    gid = panel.create_data_group([61, 62, 63], name="grp")
+    assert gid is not None
+
+    header_rows = []
+    member_rows = {}
+    for row in range(panel._table.rowCount()):
+        item = panel._table.item(row, 0)
+        assert item is not None
+        key = item.data(panel._GROUP_ROLE)
+        hidden = panel._table.isRowHidden(row)
+        if panel._is_group_key(key):
+            header_rows.append((row, hidden))
+        elif isinstance(key, int):
+            member_rows[key] = hidden
+
+    # Exactly one group header, visible.
+    assert len(header_rows) == 1 and header_rows[0][1] is False
+    # Every grouped member row is present and visible right away.
+    for rn in (61, 62, 63):
+        assert rn in member_rows, rn
+        assert member_rows[rn] is False, rn
+    # Nothing in the table is hidden.
+    assert not any(hidden for hidden in member_rows.values())
+
+
+def test_batch_selection_excludes_filtered_hidden_runs(qapp: QApplication) -> None:
+    """F9: a run hidden by a column filter must not be silently fed to a batch —
+    ``_get_selected_run_numbers`` (and thus ``get_selected_datasets``) only
+    reports visible selected rows."""
+    panel = DataBrowserPanel()
+    for rn in (61, 62, 63, 64):
+        panel.add_dataset(_dataset(rn))
+
+    selection_model = panel._table.selectionModel()
+    selection_model.clearSelection()
+    for row in range(panel._table.rowCount()):
+        selection_model.select(
+            panel._table.model().index(row, 0),
+            QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+        )
+    assert set(panel._get_selected_run_numbers()) == {61, 62, 63, 64}
+
+    # Filter the run-number column so 63 and 64 are hidden while still selected.
+    panel._column_filters[0] = {"61", "62"}
+    panel._apply_row_visibility()
+    assert panel._table.isRowHidden(2) and panel._table.isRowHidden(3)
+
+    # The hidden-but-selected runs must not reach a batch.
+    assert set(panel._get_selected_run_numbers()) == {61, 62}
+    assert {d.run_number for d in panel.get_selected_datasets()} == {61, 62}
+
+
 def test_grouped_dataset_rows_get_faint_background_tint(qapp: QApplication) -> None:
     panel = DataBrowserPanel()
     panel.add_dataset(_dataset(64))

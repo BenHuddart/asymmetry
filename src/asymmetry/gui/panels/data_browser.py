@@ -1360,12 +1360,14 @@ class DataBrowserPanel(QWidget):
                 if item is not None:
                     item.setBackground(bg)
 
-    def _selected_keys(self) -> list[int | str]:
+    def _selected_keys(self, *, visible_only: bool = False) -> list[int | str]:
         selected: list[int | str] = []
         selection_model = self._table.selectionModel()
         if selection_model is None:
             return selected
         for idx in selection_model.selectedRows():
+            if visible_only and self._table.isRowHidden(idx.row()):
+                continue
             item = self._table.item(idx.row(), 0)
             if item is None:
                 continue
@@ -2404,7 +2406,11 @@ class DataBrowserPanel(QWidget):
         return out
 
     def _get_selected_run_numbers(self) -> list[int]:
-        return self._dataset_run_numbers_from_keys(self._selected_keys())
+        # Only visible rows count: a run hidden by a column filter (or any
+        # row-visibility rule) must never be silently fed to a batch fit or a
+        # group action — the user cannot see it (F9). Callers that need the raw
+        # selection use ``_selected_keys()`` directly.
+        return self._dataset_run_numbers_from_keys(self._selected_keys(visible_only=True))
 
     def _get_selected_group_ids(self) -> list[str]:
         ids: list[str] = []
