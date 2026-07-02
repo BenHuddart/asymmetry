@@ -7678,10 +7678,18 @@ class MainWindow(QMainWindow):
         # warning; a plain early stop reports the cycle it settled on.
         ran = int(result.state.cycle)
         if getattr(result, "diverged", False):
+            maxent_input = getattr(result, "maxent_input", None)
+            window_hint = ""
+            if maxent_input is not None:
+                window_hint = (
+                    f" The current frequency window is "
+                    f"{maxent_input.f_min_mhz:.3g}–{maxent_input.f_max_mhz:.3g} MHz "
+                    f"(Window section); signals outside it cannot be reconstructed."
+                )
             message = (
                 f"MaxEnt diverged for run {run_number}: stopped early at cycle {ran} "
-                f"as χ² began rising past the optimum. Try fewer cycles or adjust "
-                f"the time/frequency window."
+                f"as χ² began rising past the optimum. Try fewer cycles or adjust the "
+                f"time/frequency window.{window_hint}"
             )
             self._maxent_panel.set_status(message, warning=True)
             self.statusBar().showMessage(message)

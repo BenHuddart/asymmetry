@@ -410,6 +410,10 @@ class TestMainWindowFourier:
         status = mainwindow._maxent_panel._status_label.text()
         assert "diverged" in status.lower()
         assert tokens.WARN in status  # rendered in the warning colour
+        # D7/F19: the message must name the control and the bounds a user
+        # would need to widen, not just vaguely gesture at "the window".
+        assert "Window" in status
+        assert "0.2" in status and "3" in status
 
     def test_compute_fourier_plots_frequency_domain_dataset(self, mainwindow: MainWindow) -> None:
         dataset = _make_fourier_ready_dataset(8802, with_grouping=True)
