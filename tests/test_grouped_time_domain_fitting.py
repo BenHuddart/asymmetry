@@ -771,6 +771,11 @@ def test_fit_grouped_series_individual_runs_one_fit_per_member(monkeypatch) -> N
     assert result.member_group_id[-10001] == "forward"
     assert result.member_group_id[-10002] == "backward"
     assert len(result.shared_parameters) == 0  # no cross-run sharing
+    # F12: the grouped path no longer discards per-member χ²ᵣ — it is carried on
+    # member_quality keyed exactly like member_results.
+    assert set(result.member_quality) == set(result.member_results)
+    assert result.member_quality[-10001].chi2_reduced == pytest.approx(0.1)
+    assert result.member_quality[-10001].quality_flags == set()  # clean fit
 
 
 def test_fit_grouped_series_global_shares_physics_across_runs(monkeypatch) -> None:
@@ -827,6 +832,9 @@ def test_fit_grouped_series_global_shares_physics_across_runs(monkeypatch) -> No
     assert captured["source_runs"].count(11) == 2
     assert set(result.member_results) == {-10001, -10002, -11001, -11002}
     assert result.shared_parameters["frequency"].value == pytest.approx(1.0)
+    # F12: χ²ᵣ / errors survive the global grouped path too.
+    assert set(result.member_quality) == set(result.member_results)
+    assert result.member_quality[-10001].chi2_reduced == pytest.approx(0.1)
 
 
 def test_fit_grouped_series_rejects_unknown_relationship() -> None:

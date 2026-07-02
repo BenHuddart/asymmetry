@@ -32,6 +32,7 @@ from asymmetry.core.fitting.global_search.heuristics import (
     is_amplitude_parameter,
     is_background_parameter,
 )
+from asymmetry.core.fitting.member_quality import MemberQuality, assess_member_quality
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet, split_parameter_name
 from asymmetry.core.fitting.process_pool import open_spawn_pool
 from asymmetry.core.fitting.series_seeding import recommend_series_seeding
@@ -845,6 +846,10 @@ class GroupedSeriesFitResult:
     #: surfaces so Auto is never silent.
     seeding_used: str = "as_provided"
     seeding_reason: str = ""
+    #: Per-member advisory fit-quality (χ²ᵣ, σ, flags), keyed like
+    #: ``member_results``. This is where the grouped path stops discarding the χ²ᵣ /
+    #: errors the minimiser produced (F12). Diagnostic only — no auto-exclusion.
+    member_quality: dict[int, MemberQuality] = field(default_factory=dict)
 
 
 #: Concrete grouped-series seeding mechanisms. ``"as_provided"`` uses each member's
@@ -1218,6 +1223,7 @@ def _fit_grouped_series_independent(
         message="; ".join(ordered_messages),
         seeding_used=seeding,
         seeding_reason=seeding_reason,
+        member_quality={key: assess_member_quality(r) for key, r in member_results.items()},
     )
 
 
@@ -1547,6 +1553,7 @@ def _fit_grouped_series_global(
         member_group_id=member_group_id,
         shared_parameters=shared_parameters,
         message=message,
+        member_quality={key: assess_member_quality(r) for key, r in member_results.items()},
     )
 
 
@@ -2087,6 +2094,7 @@ def _fit_grouped_series_global_blockwise(
         member_group_id=member_group_id,
         shared_parameters=shared_parameters,
         message=message,
+        member_quality={key: assess_member_quality(r) for key, r in member_results.items()},
     )
 
 
