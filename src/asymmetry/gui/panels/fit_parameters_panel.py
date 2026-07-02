@@ -102,6 +102,7 @@ from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import (
     apply_param_table_style,
     clear_layout,
+    make_provenance_label,
     make_section,
     style_group_state_button,
 )
@@ -403,6 +404,9 @@ class FitParametersPanel(QWidget):
         self._joint_fit: dict | None = None
         #: True while the off-thread joint K(θ) fit is running (gates its button).
         self._joint_fit_compute_active = False
+        #: True while refit_active_model_fits' off-thread re-solve is running
+        #: (a trend-inclusion toggle triggers at most one at a time).
+        self._refit_in_progress = False
         #: Crossing/degeneracy events flagged on the active series (for annotation).
         self._knight_shift_crossings: list[object] = []
         #: The x-axis key the crossings were computed against (so stale markers are
@@ -676,10 +680,7 @@ class FitParametersPanel(QWidget):
 
         # Trend provenance line (Phase 2, mirrors the integral-scan panel): how
         # many members feed the trend vs. how many the user excluded by click.
-        self._trend_provenance_label = QLabel("")
-        self._trend_provenance_label.setWordWrap(True)
-        self._trend_provenance_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
-        self._trend_provenance_label.hide()
+        self._trend_provenance_label = make_provenance_label()
         plot_layout.addWidget(self._trend_provenance_label)
 
         self._plot_export_bar = QWidget(self._plot_group)
@@ -4442,47 +4443,76 @@ class FitParametersPanel(QWidget):
         Called after a member is excluded/included so an attached OrderParameter
         / Linear fit re-fits without the dropped point. Each range is re-run with
         its stored model/seed/window and error mode; a range that fails to re-fit
-        keeps its previous result rather than vanishing.
+        keeps its previous result rather than vanishing. The minimisation itself
+        (iminuit, one call per range) runs on the shared TaskRunner — never on
+        the GUI thread, matching the Fit-button path in ModelFitDialog.
         """
-        if not self._model_fits:
+        if not self._model_fits or self._refit_in_progress:
             return
-        updated: dict[str, ParameterModelFit] = {}
+        # Snapshot the per-parameter x/y/err arrays on the GUI thread (cheap: no
+        # minimisation, just reading already-materialised _FitRow attributes) so
+        # the worker touches no widget state.
+        jobs: dict[
+            str, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray | None, ParameterModelFit]
+        ] = {}
         for name, fit in self._model_fits.items():
             rows = self._included_trend_rows(fit.x_key)
             if not rows or not fit.ranges:
-                updated[name] = fit
                 continue
             x_vals = np.array([self._x_value(r, fit.x_key) for r in rows], dtype=float)
             y_vals = np.array([r.values.get(name, np.nan) for r in rows], dtype=float)
             y_err = np.array([r.errors.get(name, np.nan) for r in rows], dtype=float)
             x_err = self._x_error_array(rows, fit.x_key) if fit.use_x_errors else None
-            new_ranges: list[ModelFitRange] = []
-            for rng in fit.ranges:
-                error_mode = (
-                    rng.result.error_mode if rng.result is not None else ErrorMode.COLUMN.value
-                )
-                try:
-                    result = fit_parameter_model(
-                        x=x_vals,
-                        y=y_vals,
-                        yerr=y_err,
-                        model=rng.model,
-                        parameters=rng.parameters,
-                        x_min=rng.x_min,
-                        x_max=rng.x_max,
-                        error_mode=error_mode,
-                        windows=rng.windows,
-                        xerr=x_err,
+            jobs[name] = (x_vals, y_vals, y_err, x_err, fit)
+        if not jobs:
+            return
+
+        self._refit_in_progress = True
+
+        def _run(_worker) -> dict[str, ParameterModelFit]:
+            updated: dict[str, ParameterModelFit] = dict(self._model_fits)
+            for name, (x_vals, y_vals, y_err, x_err, fit) in jobs.items():
+                new_ranges: list[ModelFitRange] = []
+                for rng in fit.ranges:
+                    error_mode = (
+                        rng.result.error_mode if rng.result is not None else ErrorMode.COLUMN.value
                     )
-                except Exception:
-                    new_ranges.append(rng)
-                    continue
-                new_ranges.append(replace(rng, parameters=result.parameters, result=result))
-            updated[name] = replace(fit, ranges=new_ranges)
-        self._model_fits = updated
-        self._sync_active_group_state()
-        self._refresh_model_fit_button_labels()
-        self._refresh_plot()
+                    try:
+                        result = fit_parameter_model(
+                            x=x_vals,
+                            y=y_vals,
+                            yerr=y_err,
+                            model=rng.model,
+                            parameters=rng.parameters,
+                            x_min=rng.x_min,
+                            x_max=rng.x_max,
+                            error_mode=error_mode,
+                            windows=rng.windows,
+                            xerr=x_err,
+                        )
+                    except Exception:
+                        new_ranges.append(rng)
+                        continue
+                    new_ranges.append(replace(rng, parameters=result.parameters, result=result))
+                updated[name] = replace(fit, ranges=new_ranges)
+            return updated
+
+        def _on_done(updated: dict[str, ParameterModelFit]) -> None:
+            self._refit_in_progress = False
+            self._model_fits = updated
+            self._sync_active_group_state()
+            self._refresh_model_fit_button_labels()
+            self._refresh_plot()
+
+        def _on_error(_trace: str) -> None:
+            # Per-range failures are already caught inside _run (a range keeps
+            # its previous result rather than vanishing); this only fires for a
+            # genuine bug in this method, in which case leaving _model_fits
+            # untouched is the safe fallback — there is no dialog to attach a
+            # message to on a background exclude-toggle refresh.
+            self._refit_in_progress = False
+
+        self._tasks.start(_run, on_finished=_on_done, on_error=_on_error)
 
     def _on_table_item_changed(self, item: QTableWidgetItem) -> None:
         """Emit an inclusion change when the user toggles a Trend checkbox."""

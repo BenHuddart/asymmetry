@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEventLoop, Qt, QTimer
 
 from asymmetry.core.fitting.parameter_models import (
     ModelFitRange,
@@ -179,6 +179,22 @@ def _seed_order_parameter_fit(panel: FitParametersPanel) -> float:
     return float(result.parameters["Tc"].value)
 
 
+def _wait_for_refit(panel: FitParametersPanel) -> None:
+    """Pump a nested event loop until the off-thread re-fit worker finishes.
+
+    refit_active_model_fits dispatches through TaskRunner (never the GUI
+    thread — see its docstring); the worker→main-thread queued signal needs
+    the event loop actually entered, not just polled via processEvents().
+    """
+    loop = QEventLoop()
+    check = QTimer()
+    check.timeout.connect(lambda: loop.quit() if not panel._refit_in_progress else None)
+    check.start(20)
+    QTimer.singleShot(10000, loop.quit)
+    loop.exec()
+    check.stop()
+
+
 def test_excluding_garbage_members_moves_tc_toward_ground_truth(qapp):
     panel = FitParametersPanel()
     _load(panel, [*_good_rows(), *_garbage_rows()])
@@ -188,11 +204,12 @@ def test_excluding_garbage_members_moves_tc_toward_ground_truth(qapp):
     assert tc_with_garbage > 71.0
 
     # Exclude the garbage members (as the click-to-exclude / checkbox would),
-    # then re-solve the attached model fit.
+    # then re-solve the attached model fit (off the GUI thread).
     for row in panel._rows:
         if row.run_number in (2949, 2947):
             row.include_in_trend = False
     panel.refit_active_model_fits()
+    _wait_for_refit(panel)
 
     tc_excluded = float(panel._model_fits[_PARAM].ranges[0].result.parameters["Tc"].value)
     assert abs(tc_excluded - _TC_TRUE) < abs(tc_with_garbage - _TC_TRUE)

@@ -821,6 +821,11 @@ def build_fb_count_model(polarization_model_fn):
 GROUPED_SERIES_RELATIONSHIPS: tuple[str, ...] = ("individual", "batch", "global")
 
 
+def _member_quality_map(member_results: dict[int, FitResult]) -> dict[int, MemberQuality]:
+    """Advisory per-member quality, keyed like ``member_results``."""
+    return {key: assess_member_quality(result) for key, result in member_results.items()}
+
+
 @dataclass
 class GroupedSeriesFitResult:
     """Result bundle for a multi-member grouped time-domain *series* fit.
@@ -1223,7 +1228,7 @@ def _fit_grouped_series_independent(
         message="; ".join(ordered_messages),
         seeding_used=seeding,
         seeding_reason=seeding_reason,
-        member_quality={key: assess_member_quality(r) for key, r in member_results.items()},
+        member_quality=_member_quality_map(member_results),
     )
 
 
@@ -1553,7 +1558,7 @@ def _fit_grouped_series_global(
         member_group_id=member_group_id,
         shared_parameters=shared_parameters,
         message=message,
-        member_quality={key: assess_member_quality(r) for key, r in member_results.items()},
+        member_quality=_member_quality_map(member_results),
     )
 
 
@@ -2094,7 +2099,7 @@ def _fit_grouped_series_global_blockwise(
         member_group_id=member_group_id,
         shared_parameters=shared_parameters,
         message=message,
-        member_quality={key: assess_member_quality(r) for key, r in member_results.items()},
+        member_quality=_member_quality_map(member_results),
     )
 
 
