@@ -2150,6 +2150,30 @@ class SingleFitTab(QWidget):
         btn_layout.setColumnStretch(3, 1)
         layout.addLayout(btn_layout)
 
+        # Carry-forward provenance badge (D2/F6): dismissable notice that the
+        # form currently shown was NOT fitted for the selected run — it was
+        # either carried forward from another run or restored from an
+        # in-session cache of an equally-unfit form. Cleared automatically the
+        # moment a fit is recorded for this run (see FitPanel._on_single_fit_completed).
+        self._carry_forward_badge = QFrame()
+        self._carry_forward_badge.setObjectName("carryForwardBadge")
+        self._carry_forward_badge.setStyleSheet(
+            f"#carryForwardBadge {{ border: 1px solid {tokens.WARN}; border-radius: 4px; }}"
+        )
+        badge_layout = QHBoxLayout(self._carry_forward_badge)
+        badge_layout.setContentsMargins(8, 4, 4, 4)
+        badge_layout.setSpacing(4)
+        self._carry_forward_badge_label = QLabel("")
+        self._carry_forward_badge_label.setWordWrap(True)
+        badge_layout.addWidget(self._carry_forward_badge_label, 1)
+        self._carry_forward_badge_dismiss_btn = QPushButton("✕")
+        self._carry_forward_badge_dismiss_btn.setToolTip("Dismiss")
+        self._carry_forward_badge_dismiss_btn.setFixedWidth(20)
+        self._carry_forward_badge_dismiss_btn.clicked.connect(self._carry_forward_badge.hide)
+        badge_layout.addWidget(self._carry_forward_badge_dismiss_btn)
+        self._carry_forward_badge.hide()
+        layout.addWidget(self._carry_forward_badge)
+
         # Results
         layout.addWidget(make_section_header("Fit Results"))
         self._results_group = QFrame()
@@ -2202,6 +2226,15 @@ class SingleFitTab(QWidget):
             self._fit_range_max_spin.setRange(-1000.0, 1000.0)
             self._set_composite_model(CompositeModel(["Exponential", "Constant"], operators=["+"]))
         self.set_dataset(self._current_dataset)
+
+    def show_carry_forward_badge(self, text: str) -> None:
+        """Show the dismissable "not fitted for this run" provenance notice."""
+        self._carry_forward_badge_label.setText(text)
+        self._carry_forward_badge.show()
+
+    def clear_carry_forward_badge(self) -> None:
+        """Hide the carry-forward provenance notice (e.g. a real fit now exists)."""
+        self._carry_forward_badge.hide()
 
     def set_dataset(self, dataset: MuonDataset | None) -> None:
         """Set the current dataset to fit."""
@@ -7957,6 +7990,16 @@ class FitPanel(QWidget):
 
         self._single_state_by_run: dict[int, dict] = {}
         self._active_single_run_number: int | None = None
+        # Provenance of the single-fit form's current contents (D2/F6):
+        # "own_slot" (a real fit recorded for this run/projection),
+        # "carried_from_run" (inherited from a specific prior run, tracked in
+        # ``_single_fit_carry_source_run``), "carried_session" (inherited from
+        # an in-session cache with no specific source run known), or
+        # "representation_default" (blanked to the domain default — no badge).
+        # Driven entirely by ``set_dataset``'s three restore branches; see its
+        # docstring for the precedence these branches implement.
+        self._single_fit_provenance: str | None = None
+        self._single_fit_carry_source_run: int | None = None
         # Optional mediator that supplies a per-(run, representation, projection)
         # single-fit restore payload, installed by the main window.  It keeps the
         # panel decoupled from the project model: ``set_dataset`` asks it for the
@@ -8031,6 +8074,8 @@ class FitPanel(QWidget):
         if projection != self._active_single_projection:
             self._single_form_snapshot = None
         self._active_single_projection = projection
+        if hasattr(self, "_single_fit_provenance"):
+            self._update_single_fit_badge()
         if not hasattr(self, "_projection_echo"):
             return
         if projection:
@@ -8090,6 +8135,7 @@ class FitPanel(QWidget):
         self._domain = normalized
         self._single_state_by_run = {}
         self._active_single_run_number = None
+        self._set_single_fit_provenance(None)
         self._single_tab.set_domain(normalized)
         self._global_tab.set_domain(normalized)
 
@@ -8118,6 +8164,7 @@ class FitPanel(QWidget):
         self._single_tab.set_dataset(None)
         self._global_tab.set_datasets([])
         self._global_tab.set_current_dataset(None)
+        self._set_single_fit_provenance(None)
         self._tabs.setCurrentIndex(0)
 
     def _on_single_fit_completed(self, fit_result, fitted_curve, component_curves) -> None:
@@ -8132,6 +8179,10 @@ class FitPanel(QWidget):
             )
             # Keep most recent tab state per run (parameters, function, and result text).
             self._single_state_by_run[run_number] = self._single_tab.get_state()
+            # A fit was just recorded for the run currently shown — the form is
+            # no longer carried content, regardless of the projection it landed
+            # on (D2/F6: clear the badge the moment a fit exists).
+            self._set_single_fit_provenance("own_slot")
         self.fit_completed.emit(fit_result, fitted_curve, component_curves)
 
     def _run_number_from_dataset(self, dataset: MuonDataset | None) -> int | None:
@@ -8143,7 +8194,33 @@ class FitPanel(QWidget):
             return None
 
     def set_dataset(self, dataset: MuonDataset | None) -> None:
-        """Set the current dataset for single fitting tab."""
+        """Set the current dataset for single fitting tab.
+
+        Three branches decide what the form shows, in this precedence order:
+
+        (A) The restore mediator (``_single_fit_restore_provider``) has an
+            opinion: a non-empty payload is a genuine fit recorded for this
+            (run, representation, projection) slot, restored verbatim
+            (provenance ``own_slot``, no badge). An *empty* payload means
+            "this projection was never fit" and blanks the form to the domain
+            default (provenance ``representation_default``, no badge — a
+            blanked default is not carried content).
+        (B) The mediator has no opinion (``None``) but this exact run has been
+            shown before in this session (``_single_state_by_run``): the
+            cached form is restored. Since the mediator already returned
+            ``None`` for this run, that cached form cannot be a genuine fit —
+            it is itself carried-forward content from an earlier visit, so no
+            specific source run is tracked (provenance ``carried_session``).
+        (C) Neither of the above: the dataset is entirely unseen. The form
+            inherits whatever the *previous* active run was showing
+            (carry-forward), tagged with that run's number (provenance
+            ``carried_from_run``) so the badge can name it explicitly.
+
+        A dismissable badge (D2/F6) surfaces branches (B) and (C) — carry-forward
+        itself is kept (useful for run series), but the panel must say so
+        instead of silently presenting another run's values as this run's own.
+        """
+        previous_run_number = self._active_single_run_number
         if self._active_single_run_number is not None:
             self._single_state_by_run[self._active_single_run_number] = self._single_tab.get_state()
 
@@ -8154,6 +8231,7 @@ class FitPanel(QWidget):
         self._active_single_run_number = run_number
 
         if run_number is None:
+            self._set_single_fit_provenance(None)
             return
 
         # The main window's restore mediator is authoritative when it has an
@@ -8169,8 +8247,10 @@ class FitPanel(QWidget):
         )
         if payload is not None:
             self.restore_single_fit_ui(payload)
+            self._set_single_fit_provenance("own_slot" if payload else "representation_default")
         elif run_number in self._single_state_by_run:
             self._single_tab.restore_state(self._single_state_by_run[run_number])
+            self._set_single_fit_provenance("carried_session")
         else:
             # An unseen dataset the user has not customised inherits the model
             # and parameter setup currently shown (carry-forward) instead of
@@ -8178,6 +8258,36 @@ class FitPanel(QWidget):
             # still saved and restored on return; only the previous run's fit
             # *result* is dropped (it belongs to the run it was computed on).
             self._carry_forward_single_fit_form()
+            self._set_single_fit_provenance("carried_from_run", previous_run_number)
+
+    def _set_single_fit_provenance(self, kind: str | None, source_run: int | None = None) -> None:
+        """Record why the single-fit form holds its current contents and update the badge.
+
+        ``kind`` is one of ``own_slot`` / ``representation_default`` (no
+        badge), ``carried_session`` (generic badge, no known source run), or
+        ``carried_from_run`` (badge names ``source_run`` when known).
+        """
+        self._single_fit_provenance = kind
+        self._single_fit_carry_source_run = source_run if kind == "carried_from_run" else None
+        self._update_single_fit_badge()
+
+    def _update_single_fit_badge(self) -> None:
+        kind = self._single_fit_provenance
+        projection = self._active_single_projection
+        suffix = f" ({projection})" if projection else ""
+        if kind == "carried_from_run":
+            source_run = self._single_fit_carry_source_run
+            if source_run is not None:
+                text = f"Model carried from run {source_run}{suffix} — not fitted for this run"
+            else:
+                text = f"Model carried{suffix} — not fitted for this run"
+            self._single_tab.show_carry_forward_badge(text)
+        elif kind == "carried_session":
+            self._single_tab.show_carry_forward_badge(
+                f"Model carried{suffix} — not fitted for this run"
+            )
+        else:
+            self._single_tab.clear_carry_forward_badge()
 
     def _carry_forward_single_fit_form(self) -> None:
         """Inherit the previous selection's model + parameter setup, sans result.
