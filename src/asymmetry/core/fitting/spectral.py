@@ -72,8 +72,18 @@ def append_frequency_field_derived_parameters(
     return result, result_uncertainties
 
 
-def seed_peak_parameters_from_dataset(dataset, model: CompositeModel) -> dict[str, float]:
-    """Return simple peak/background seeds for one displayed Fourier spectrum."""
+def seed_peak_parameters_from_dataset(
+    dataset, model: CompositeModel, *, guard_bins: int = 3, guard_freq_mhz: float = 2.0
+) -> dict[str, float]:
+    """Return simple peak/background seeds for one displayed Fourier spectrum.
+
+    The dominant-magnitude bin of a (Power)^1/2 spectrum is usually the
+    DC/apodisation spike, not the physical precession peak, so the peak
+    search excludes a low-frequency guard band before taking the argmax.
+    The guard width is ``max(guard_bins * df, guard_freq_mhz)``, where ``df``
+    is the spectrum's bin spacing (a proxy for ``1/T_obs``); it falls back to
+    the unguarded global argmax if the guard would empty the search array.
+    """
     x = np.asarray(getattr(dataset, "time", []), dtype=float)
     y = np.asarray(getattr(dataset, "asymmetry", []), dtype=float)
     finite = np.isfinite(x) & np.isfinite(y)
@@ -82,8 +92,17 @@ def seed_peak_parameters_from_dataset(dataset, model: CompositeModel) -> dict[st
     if x.size == 0 or y.size == 0:
         return {}
 
-    baseline = float(np.nanpercentile(y, 10.0))
-    peak_index = int(np.nanargmax(y))
+    candidates = np.arange(x.size)
+    if x.size >= 2:
+        df = float(np.median(np.diff(np.sort(x))))
+        guard = max(guard_bins * df, guard_freq_mhz)
+        guarded = np.flatnonzero(np.abs(x) >= guard)
+        if guarded.size > 0:
+            candidates = guarded
+
+    baseline = float(np.nanmedian(y[candidates])) if candidates.size > 0 else float(np.nanpercentile(y, 10.0))
+    peak_index = int(candidates[np.nanargmax(y[candidates])]) if candidates.size > 0 else int(np.nanargmax(y))
+
     peak_y = float(y[peak_index])
     height = max(peak_y - baseline, 1e-12)
     nu0 = float(x[peak_index])
