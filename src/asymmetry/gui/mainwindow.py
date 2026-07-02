@@ -12227,6 +12227,16 @@ class MainWindow(QMainWindow):
         if fit_parameters_state:
             self._fit_parameters_panel.restore_state(fit_parameters_state)
 
+        # F21a/b: the serialized trend-panel cache holds only whichever
+        # representation was active at save, so restoring it blindly can leave
+        # the active representation showing another representation's chips (and
+        # missing its own). Re-derive the chip set from the project model — the
+        # authoritative, representation-typed source — for the active
+        # representation, exactly as a view switch does. ``_project_model`` is
+        # already populated (``_restore_frequency_representations`` above); the
+        # pull preserves per-series trend model-fits for surviving series.
+        self._refresh_trend_panel(surface=False)
+
         restored_cross_group = getattr(self._fit_parameters_panel, "last_cross_group_fit", None)
         global_parameter_fit_window_state = state.get("global_parameter_fit_window_state")
         if isinstance(restored_cross_group, dict):
