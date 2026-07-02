@@ -7,6 +7,7 @@ import numpy as np
 from asymmetry.core.data.dataset import Histogram, Run
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.representation import (
+    DataGroup,
     FitSeries,
     FitSlot,
     RepresentationType,
@@ -365,3 +366,105 @@ def test_fitseries_extra_round_trips():
     }
     assert FitSeries("b", _FB).extra == {}
     assert FitSeries.from_dict(FitSeries("b", _FB).to_dict()).extra == {}
+
+
+# ── Phase 7: DataGroup <-> FitSeries linking (D1, README §6 Option B) ──────
+
+
+def test_fitseries_source_group_id_round_trips():
+    series = FitSeries("b1", _FB, member_run_numbers=[1, 2], source_group_id="grp-1")
+    restored = FitSeries.from_dict(series.to_dict())
+    assert restored.source_group_id == "grp-1"
+    # Default / ad-hoc series carry no provenance.
+    assert FitSeries("b2", _FB).source_group_id is None
+    assert FitSeries.from_dict(FitSeries("b2", _FB).to_dict()).source_group_id is None
+
+
+def test_fitseries_source_group_id_excluded_from_identity_signature():
+    """Provenance is an attribute, not identity (same lesson as param_roles/fit_range).
+
+    Re-running the same members+model under a different group association still
+    supersedes the earlier series in place rather than spawning a duplicate.
+    """
+    model = ProjectModel()
+    first = _batch("b1")
+    first.source_group_id = "grp-1"
+    model.add_batch(first)
+    second = _batch("b2")
+    second.source_group_id = "grp-2"  # different provenance, same identity
+    assert model.remove_superseded_batches(second) == ["b1"]
+
+
+def test_data_group_round_trips_through_project_model():
+    model = ProjectModel()
+    model.add_data_group(DataGroup("grp-1", "T = 150 K", member_run_numbers=[7, 8]))
+    assert model.data_group("grp-1").name == "T = 150 K"
+    assert model.data_group("missing") is None
+
+    restored = ProjectModel.from_dict(model.to_dict())
+    restored_group = restored.data_group("grp-1")
+    assert restored_group is not None
+    assert restored_group.name == "T = 150 K"
+    assert restored_group.member_run_numbers == [7, 8]
+    assert restored_group.order_key == "run"
+
+
+def test_data_groups_round_trip_through_project_state():
+    project = {"datasets": []}
+    model = ProjectModel()
+    model.add_data_group(DataGroup("grp-1", "B = 60 G", member_run_numbers=[1, 2, 3]))
+    model.write_to_project_state(project)
+
+    assert project["data_groups"][0]["group_id"] == "grp-1"
+
+    rebuilt = ProjectModel.from_project_state(project)
+    assert rebuilt.data_group("grp-1").member_run_numbers == [1, 2, 3]
+
+
+def test_data_groups_absent_block_loads_empty_without_crashing():
+    """A project saved before Phase 7 has no top-level data_groups key at all."""
+    legacy_project = {
+        "datasets": [{"run_number": 7, "source_file": "/tmp/a.nxs"}],
+        "batches": [],
+    }
+    assert "data_groups" not in legacy_project
+    model = ProjectModel.from_project_state(legacy_project)
+    assert model.data_groups == {}
+
+    # And from_dict is equally tolerant of the standalone form.
+    assert ProjectModel.from_dict({"representations_by_run": {}}).data_groups == {}
+    assert ProjectModel.from_dict(None).data_groups == {}
+
+
+def test_series_for_group_computes_back_references():
+    """Back-references are computed from batches, not stored on the group (D1)."""
+    model = ProjectModel()
+    model.add_data_group(DataGroup("grp-1", "T = 150 K", member_run_numbers=[1, 2]))
+    linked = _batch("b1", runs=(1, 2))
+    linked.source_group_id = "grp-1"
+    unrelated = _batch("b2", runs=(3, 4))
+    model.add_batch(linked)
+    model.add_batch(unrelated)
+
+    assert model.series_for_group("grp-1") == [linked]
+    assert model.series_for_group("missing") == []
+
+    # Editing the group's membership does not retroactively touch the series
+    # already built from it — the back-reference is recomputed, not cached.
+    model.data_group("grp-1").member_run_numbers = [1]
+    assert model.series_for_group("grp-1") == [linked]
+    assert linked.member_run_numbers == [1, 2]
+
+
+def test_remove_data_group_leaves_its_series_untouched():
+    model = ProjectModel()
+    model.add_data_group(DataGroup("grp-1", "T = 150 K", member_run_numbers=[1, 2]))
+    linked = _batch("b1", runs=(1, 2))
+    linked.source_group_id = "grp-1"
+    model.add_batch(linked)
+
+    removed = model.remove_data_group("grp-1")
+    assert removed is not None and removed.group_id == "grp-1"
+    assert model.data_group("grp-1") is None
+    assert model.batch("b1") is linked
+    assert linked.source_group_id == "grp-1"

@@ -543,6 +543,12 @@ class DataBrowserPanel(QWidget):
     # the project modified for the unsaved-changes guard. Deliberately NOT
     # emitted from clear()/restore — those reset to a known-clean baseline.
     datasets_changed = Signal()
+    # "Fit this group…" (Phase 7/D1, F9 fix): prefills the batch member set from
+    # the group's stored members, bypassing the live/visible table selection.
+    fit_group_requested = Signal(str)  # group_id
+    # "Show series from this group": filters the trend/parameters panel to only
+    # the series whose provenance (FitSeries.source_group_id) is this group.
+    show_group_series_requested = Signal(str)  # group_id
 
     # The comment rides as the Title cell's second line (see
     # _RowHighlightDelegate) instead of its own column, so long comments never
@@ -2464,6 +2470,16 @@ class DataBrowserPanel(QWidget):
             return []
         return [int(rn) for rn in group.member_run_numbers]
 
+    def get_all_group_ids(self) -> list[str]:
+        """Return every current group id (public surface for external syncing).
+
+        Lets a host (e.g. mirroring groups into ``ProjectModel.data_groups``,
+        Phase 7/D1) enumerate groups through the same accessors as
+        :meth:`get_group_name`/:meth:`get_group_member_run_numbers`, instead of
+        reaching into the private ``_groups`` dict directly.
+        """
+        return list(self._groups)
+
     def get_dataset(self, run_number: int) -> MuonDataset | None:
         return self._datasets.get(run_number)
 
@@ -3117,6 +3133,17 @@ class DataBrowserPanel(QWidget):
                 menu.addAction(collapse_text, lambda gid=gid: self._toggle_group_collapsed(gid))
                 menu.addAction("Rename Group", lambda gid=gid: self._rename_group(gid))
                 menu.addAction("Ungroup", lambda gid=gid: self.ungroup(gid))
+                menu.addSeparator()
+                # F9 fix (Phase 7/D1): "Fit this group…" prefills the batch member
+                # set from the group's stored members rather than the live/visible
+                # table selection, so a filtered-away group can still be fit correctly.
+                menu.addAction(
+                    "Fit this group…", lambda gid=gid: self.fit_group_requested.emit(gid)
+                )
+                menu.addAction(
+                    "Show series from this group",
+                    lambda gid=gid: self.show_group_series_requested.emit(gid),
+                )
                 menu.addSeparator()
 
         label = "Remove Entry" if len(keys) == 1 else "Remove Selected Entries"

@@ -24,6 +24,7 @@ from asymmetry.core.representation.factory import (
     representation_from_dict,
 )
 from asymmetry.core.representation.frequency import FrequencyFFT, FrequencyMaxEnt
+from asymmetry.core.representation.group import DataGroup
 from asymmetry.core.representation.naming import (
     composite_model_label,
     default_series_label,
@@ -51,6 +52,7 @@ __all__ = [
     "ORDER_KEYS",
     "PARAM_ROLES",
     "REPRESENTATION_REGISTRY",
+    "DataGroup",
     "DatasetRepresentations",
     "FitSeries",
     "FitSlot",

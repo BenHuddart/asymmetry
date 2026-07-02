@@ -81,6 +81,7 @@ class FitSeries:
         results_by_run: dict[int, dict] | None = None,
         diverged_runs: set[int] | list[int] | None = None,
         extra: dict | None = None,
+        source_group_id: str | None = None,
     ) -> None:
         self.batch_id = str(batch_id)
         self.label: str | None = str(label).strip() or None if label else None
@@ -111,6 +112,13 @@ class FitSeries:
         #: Freeform JSON-able state attached to this series (e.g. the ALC scan's
         #: baseline regions / peaks / view options). Empty for ordinary fits.
         self.extra: dict = dict(extra) if isinstance(extra, dict) else {}
+        #: Provenance only (D1, Option B): the id of the DataGroup this series
+        #: was launched from, when every member shared exactly one group at
+        #: record time. Deliberately excluded from the series' identity
+        #: signature (see ``_series_signature`` in ``project_model.py``) — like
+        #: ``param_roles``/``fit_range``, it is an attribute of how the series
+        #: was created, not what makes two series the same fit.
+        self.source_group_id: str | None = str(source_group_id) if source_group_id else None
 
     # ── label ──────────────────────────────────────────────────────────────
 
@@ -284,6 +292,7 @@ class FitSeries:
             "results_by_run": {str(run): dict(res) for run, res in self.results_by_run.items()},
             "diverged_runs": sorted(self.diverged_runs),
             "extra": dict(self.extra),
+            "source_group_id": self.source_group_id,
         }
 
     @classmethod
@@ -314,4 +323,5 @@ class FitSeries:
             results_by_run=results,
             diverged_runs=data.get("diverged_runs"),
             extra=data.get("extra"),
+            source_group_id=data.get("source_group_id"),
         )

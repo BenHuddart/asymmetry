@@ -19,6 +19,7 @@ from asymmetry.core.data.dataset import Run
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.representation.base import RepresentationType
 from asymmetry.core.representation.container import DatasetRepresentations
+from asymmetry.core.representation.group import DataGroup
 from asymmetry.core.representation.naming import default_series_label
 from asymmetry.core.representation.series import FitSeries, canonical_model_matches
 
@@ -76,9 +77,16 @@ class ProjectModel:
         self,
         datasets: dict[int, DatasetRepresentations] | None = None,
         batches: dict[str, FitSeries] | None = None,
+        data_groups: dict[str, DataGroup] | None = None,
     ) -> None:
         self.datasets: dict[int, DatasetRepresentations] = dict(datasets or {})
         self.batches: dict[str, FitSeries] = dict(batches or {})
+        #: DataGroup registry (D1, Option B: "linked"). Additive/optional in the
+        #: schema — projects saved before Phase 7 have no ``data_groups`` block
+        #: and load with an empty dict. A group's back-references to the series
+        #: built from it are computed on demand (:meth:`series_for_group`), not
+        #: stored, so editing a group never invalidates or re-fits its series.
+        self.data_groups: dict[str, DataGroup] = dict(data_groups or {})
 
     # ── access ───────────────────────────────────────────────────────────────
 
@@ -103,6 +111,33 @@ class ProjectModel:
     def add_batch(self, batch: FitSeries) -> None:
         """Register *batch* by its id."""
         self.batches[batch.batch_id] = batch
+
+    def data_group(self, group_id: str) -> DataGroup | None:
+        """Return the DataGroup with *group_id*, or ``None``."""
+        return self.data_groups.get(str(group_id))
+
+    def add_data_group(self, group: DataGroup) -> None:
+        """Register *group* by its id."""
+        self.data_groups[group.group_id] = group
+
+    def remove_data_group(self, group_id: str) -> DataGroup | None:
+        """Remove and return the DataGroup with *group_id*, or ``None``.
+
+        Series built from the group are left untouched (D1, Option B): their
+        ``source_group_id`` becomes a dangling provenance pointer, same as any
+        other reference to a deleted upstream object.
+        """
+        return self.data_groups.pop(str(group_id), None)
+
+    def series_for_group(self, group_id: str) -> list[FitSeries]:
+        """Return batches whose ``source_group_id`` is *group_id*.
+
+        A group's back-references to its series are always computed from the
+        batches, never stored on the group — editing a group's membership does
+        not retroactively touch any series already built from it.
+        """
+        group_id = str(group_id)
+        return [batch for batch in self.batches.values() if batch.source_group_id == group_id]
 
     def superseded_batch_ids(self, series: FitSeries) -> list[str]:
         """Return ids of existing batches that *series* makes redundant.
@@ -401,6 +436,7 @@ class ProjectModel:
                 for run_number, container in self.datasets.items()
             },
             "batches": [batch.to_dict() for batch in self.batches.values()],
+            "data_groups": [group.to_dict() for group in self.data_groups.values()],
         }
 
     @classmethod
@@ -408,6 +444,7 @@ class ProjectModel:
         """Inverse of :meth:`to_dict`."""
         datasets: dict[int, DatasetRepresentations] = {}
         batches: dict[str, FitSeries] = {}
+        data_groups: dict[str, DataGroup] = {}
         if isinstance(data, dict):
             raw_reps = data.get("representations_by_run")
             if isinstance(raw_reps, dict):
@@ -422,7 +459,11 @@ class ProjectModel:
                 if isinstance(batch_data, dict):
                     batch = FitSeries.from_dict(batch_data)
                     batches[batch.batch_id] = batch
-        return cls(datasets, batches)
+            for group_data in data.get("data_groups", []) or []:
+                if isinstance(group_data, dict):
+                    group = DataGroup.from_dict(group_data)
+                    data_groups[group.group_id] = group
+        return cls(datasets, batches, data_groups)
 
     # ── project-dict integration ───────────────────────────────────────────────
 
@@ -430,10 +471,14 @@ class ProjectModel:
     def from_project_state(cls, project: dict) -> ProjectModel:
         """Build a model from a schema-v6 project dict.
 
-        Reads ``datasets[i].representations`` and the top-level ``batches``.
+        Reads ``datasets[i].representations``, the top-level ``batches``, and
+        the optional top-level ``data_groups`` block (Phase 7, additive —
+        absent on a project saved before this phase, which loads with an empty
+        registry rather than failing).
         """
         datasets: dict[int, DatasetRepresentations] = {}
         batches: dict[str, FitSeries] = {}
+        data_groups: dict[str, DataGroup] = {}
         if not isinstance(project, dict):
             return cls()
 
@@ -453,10 +498,15 @@ class ProjectModel:
                 batch = FitSeries.from_dict(batch_data)
                 batches[batch.batch_id] = batch
 
-        return cls(datasets, batches)
+        for group_data in project.get("data_groups", []) or []:
+            if isinstance(group_data, dict):
+                group = DataGroup.from_dict(group_data)
+                data_groups[group.group_id] = group
+
+        return cls(datasets, batches, data_groups)
 
     def write_to_project_state(self, project: dict) -> None:
-        """Write representations onto each dataset entry and batches at top level.
+        """Write representations onto each dataset entry and batches/groups at top level.
 
         ``project['datasets']`` entries are matched by ``run_number``; entries
         with no representations get an empty ``representations`` map.
@@ -469,3 +519,4 @@ class ProjectModel:
                 container.to_dict()["representations"] if container is not None else {}
             )
         project["batches"] = [batch.to_dict() for batch in self.batches.values()]
+        project["data_groups"] = [group.to_dict() for group in self.data_groups.values()]

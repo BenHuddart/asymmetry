@@ -262,3 +262,142 @@ def test_fit_series_shared_parameters_reads_global_roles_from_results() -> None:
         _group_series("batch-b", [1276], 2, {"freq": "local"}, {1276: 5.0}).shared_parameters()
         == {}
     )
+
+
+# ── Phase 7: DataGroup <-> FitSeries linking (D1, README §6 Option B) ──────
+
+
+def test_batch_launched_from_group_stamps_source_group_id(win: MainWindow) -> None:
+    """A batch whose members are exactly one data group's members gets provenance."""
+    coords = {1277: (10.0, 400.0), 1280: (70.0, 400.0)}
+    for run, (temp, field) in coords.items():
+        _add_dataset(win, run, temp, field)
+    gid = win._data_browser.create_data_group(list(coords), name="T scan")
+
+    batch_id = _run_batch(win, coords)
+    series = win._project_model.batch(batch_id)
+    assert series.source_group_id == gid
+
+
+def test_adhoc_batch_spanning_two_groups_leaves_source_group_id_none(win: MainWindow) -> None:
+    """A batch whose members straddle two different groups has no single provenance."""
+    coords = {1277: (10.0, 400.0), 1280: (70.0, 400.0), 1281: (90.0, 400.0), 1282: (95.0, 400.0)}
+    for run, (temp, field) in coords.items():
+        _add_dataset(win, run, temp, field)
+    win._data_browser.create_data_group([1277, 1281], name="grp-a")
+    win._data_browser.create_data_group([1280, 1282], name="grp-b")
+
+    # Batch over one member from each group — no single group covers this set.
+    batch_id = _run_batch(win, {1277: coords[1277], 1280: coords[1280]})
+    series = win._project_model.batch(batch_id)
+    assert series.source_group_id is None
+
+
+def test_fit_this_group_prefills_batch_regardless_of_visibility(win: MainWindow) -> None:
+    """F9 regression: a group hidden by a column filter/sort still fits its real members.
+
+    ``_on_fit_group_requested`` must build the batch dataset list from the
+    group's stored member run numbers, not the browser's live/visible table
+    selection — the trap that let a filter silently drop invisible group runs
+    from a batch.
+    """
+    coords = {2961: (10.0, 60.0), 2962: (10.0, 60.0), 2963: (10.0, 60.0)}
+    for run, (temp, field) in coords.items():
+        _add_dataset(win, run, temp, field)
+    gid = win._data_browser.create_data_group(list(coords), name="B = 60 G")
+
+    # Simulate F9: a column filter hides every row (including this group's),
+    # and nothing is selected in the live table.
+    win._data_browser._column_filters = {0: {"nonexistent-value"}}
+    win._data_browser._apply_row_visibility()
+    assert win._data_browser.get_selected_datasets() == []
+
+    win._on_fit_group_requested(gid)
+
+    fed_runs = sorted(int(ds.run_number) for ds in win._fit_panel._all_datasets)
+    assert fed_runs == sorted(coords)
+
+
+def test_show_series_from_group_filters_trend_panel(win: MainWindow) -> None:
+    coords_a = {1277: (10.0, 400.0), 1280: (70.0, 400.0)}
+    coords_b = {1281: (10.0, 500.0), 1282: (70.0, 500.0)}
+    for run, (temp, field) in {**coords_a, **coords_b}.items():
+        _add_dataset(win, run, temp, field)
+    gid_a = win._data_browser.create_data_group(list(coords_a), name="B = 400 G")
+    win._data_browser.create_data_group(list(coords_b), name="B = 500 G")
+
+    batch_a = _run_batch(win, coords_a)
+    batch_b = _run_batch(win, coords_b)
+    assert win._project_model.batch(batch_a).source_group_id == gid_a
+
+    assert win._project_model.series_for_group(gid_a) == [win._project_model.batch(batch_a)]
+    win._on_show_group_series_requested(gid_a)
+    shown_ids = set(win._fit_parameters_panel._group_fit_results)
+    assert batch_a in shown_ids
+    assert batch_b not in shown_ids
+
+
+def test_saved_project_carries_data_groups_and_reload_relinks_provenance(win: MainWindow) -> None:
+    """Full save→reload: the browser group and the series it produced both survive."""
+    coords = {1277: (10.0, 400.0), 1280: (70.0, 400.0)}
+    for run, (temp, field) in coords.items():
+        _add_dataset(win, run, temp, field)
+    gid = win._data_browser.create_data_group(list(coords), name="T scan")
+    batch_id = _run_batch(win, coords)
+    assert win._project_model.batch(batch_id).source_group_id == gid
+
+    state = win.collect_project_state()
+    saved_group_ids = {g["group_id"] for g in state["data_groups"]}
+    assert gid in saved_group_ids
+
+    win._data_browser.restore_state(state["browser_state"])
+    win._restore_frequency_representations(state)
+    win._sync_data_groups_to_project_model()
+
+    assert win._project_model.data_group(gid) is not None
+    reloaded_series = win._project_model.batch(batch_id)
+    assert reloaded_series is not None
+    assert reloaded_series.source_group_id == gid
+    assert win._project_model.series_for_group(gid) == [reloaded_series]
+
+
+def test_core_only_data_group_survives_reload_without_browser_state_twin(
+    win: MainWindow,
+) -> None:
+    """A group written only via the core API (no browser_state.data_groups twin) is not
+    silently dropped on load.
+
+    Regression: the sync used to run unconditionally right after
+    ProjectModel.from_project_state parsed the top-level ``data_groups`` block,
+    overwriting it with whatever the browser's legacy browser_state.data_groups
+    block restored — which is empty/absent for a project authored purely against
+    the core API (e.g. a script using ProjectModel.add_data_group directly).
+    """
+    coords = {1277: (10.0, 400.0), 1280: (70.0, 400.0)}
+    for run, (temp, field) in coords.items():
+        _add_dataset(win, run, temp, field)
+
+    state = {
+        "browser_state": {},  # no legacy data_groups entry
+        "data_groups": [
+            {
+                "group_id": "core-only-grp",
+                "name": "Core-only group",
+                "member_run_numbers": [1277, 1280],
+                "order_key": "run",
+            }
+        ],
+    }
+    win._data_browser.restore_state(state["browser_state"])
+    win._restore_frequency_representations(state)
+    win._seed_browser_groups_from_project_model()
+    win._sync_data_groups_to_project_model()
+
+    assert win._data_browser.get_group_name("core-only-grp") == "Core-only group"
+    assert sorted(win._data_browser.get_group_member_run_numbers("core-only-grp")) == [
+        1277,
+        1280,
+    ]
+    restored_group = win._project_model.data_group("core-only-grp")
+    assert restored_group is not None
+    assert sorted(restored_group.member_run_numbers) == [1277, 1280]

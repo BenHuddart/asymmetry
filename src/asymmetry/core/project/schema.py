@@ -40,6 +40,12 @@ Current schema (version 11)
             "filters": {"3": ["150.0"]},
             "selected_run_numbers": [3077],
             "selected_group_ids": [],
+            # GUI display state (name/members/collapsed) for the data browser's
+            # group headers. Distinct from the top-level "data_groups" block
+            # (Phase 7/D1, not shown in this pre-v6 illustrative example): that
+            # one is the core DataGroup registry (no "collapsed"), mirrored from
+            # this block at load/save so FitSeries.source_group_id provenance
+            # can resolve without a GUI dependency.
             "data_groups": [],
             "extra_columns": [
                 {"id": "nexus_fields.sample.shape", "label": "Orientation",
