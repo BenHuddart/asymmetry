@@ -33,6 +33,11 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 import numpy as np
 
 from asymmetry.core.fitting.component_docs import register_component_documentation
+from asymmetry.core.fitting.component_tags import (
+    coerce_cost,
+    coerce_geometries,
+    coerce_physics_classes,
+)
 from asymmetry.core.fitting.composite import COMPONENTS, ComponentDefinition
 from asymmetry.core.fitting.domain_library import DOMAINS
 from asymmetry.core.fitting.models import MODELS
@@ -229,6 +234,9 @@ def register_component(
     references: Iterable[str] = (),
     category: str = "User",
     fixed_params: Sequence[str] = (),
+    field_geometries: Sequence[str] = ("ZF", "TF", "LF"),
+    physics_classes: Sequence[str] = ("custom",),
+    cost: str = "moderate",
 ) -> ComponentDefinition:
     """Register a user fit component for the time- or frequency-domain pickers.
 
@@ -237,6 +245,13 @@ def register_component(
     keyword per entry of ``param_names``, returning an ndarray of the same
     shape. ``domain`` is required (``"time"`` or ``"frequency"``) — see the
     registry-naming note in ``docs/ARCHITECTURE.md`` §4.3.
+
+    ``field_geometries`` (subset of ``"ZF"``/``"TF"``/``"LF"``),
+    ``physics_classes`` (see :class:`~asymmetry.core.fitting.component_tags.PhysicsClass`
+    values), and ``cost`` (``"cheap"``/``"moderate"``/``"expensive"``) tag the
+    component for fit-wizard scoping; they default to all geometries, the
+    ``"custom"`` sentinel class, and ``"moderate"`` cost. Invalid tokens raise
+    :class:`UserFunctionError`.
 
     Returns the registered :class:`ComponentDefinition` (flagged ``user=True``).
     Raises :class:`UserFunctionError` on any validation failure, in which case
@@ -260,6 +275,12 @@ def register_component(
         raise UserFunctionError(
             f"{name}: fixed_params {unknown_fixed} are not declared parameters."
         )
+    try:
+        geometries = coerce_geometries(field_geometries)
+        classes = coerce_physics_classes(physics_classes)
+        cost_tag = coerce_cost(cost)
+    except ValueError as exc:
+        raise UserFunctionError(f"{name}: {exc}") from exc
     _probe_function(name, function, defaults, _PROBE_GRIDS[domain_token])
 
     definition = ComponentDefinition(
@@ -275,6 +296,9 @@ def register_component(
         domain=domain_token,
         fixed_params=fixed,
         user=True,
+        field_geometries=geometries,
+        physics_classes=classes,
+        cost=cost_tag,
     )
     insert_definition(COMPONENTS, definition, registry_label="COMPONENTS")
     register_component_documentation(

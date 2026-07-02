@@ -16,6 +16,12 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
+from asymmetry.core.fitting.component_tags import (
+    ALL_GEOMETRIES,
+    ComputationalCost,
+    FieldGeometry,
+    PhysicsClass,
+)
 from asymmetry.core.fitting.models import (
     MODELS,
     ModelDefinition,
@@ -167,6 +173,17 @@ class ComponentDefinition:
     #: crucially including muonium components, whose ``field`` parameter is the
     #: *applied* field fed into the Breit–Rabi levels, not a local field.
     knight_observable: str | None = None
+    #: Applied-field geometries the component is physically meaningful for. The
+    #: fit wizard uses this to drop components that cannot apply to a run's
+    #: geometry. Defaults to all three (no restriction).
+    field_geometries: frozenset[FieldGeometry] = ALL_GEOMETRIES
+    #: Physics-class tags for wizard scoping. ``CUSTOM`` is the untagged
+    #: sentinel default for user functions; every built-in must override it
+    #: with real class(es) — enforced by ``tests/test_component_tags.py``.
+    physics_classes: frozenset[PhysicsClass] = frozenset({PhysicsClass.CUSTOM})
+    #: Relative evaluation-cost hint for tiered wizard screening (the wizard
+    #: trials cheap components before expensive ones).
+    cost: ComputationalCost = ComputationalCost.MODERATE
 
 
 def _exp_component(t: NDArray, A: float, Lambda: float) -> NDArray[np.float64]:
@@ -442,6 +459,9 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         formula_template="{A}*exp(-{Lambda}*t)",
         latex_equation=r"A(t) = A e^{-\Lambda t}",
         category="Relaxation",
+        field_geometries=frozenset({FieldGeometry.ZF, FieldGeometry.TF, FieldGeometry.LF}),
+        physics_classes=frozenset({PhysicsClass.GENERIC_RELAXATION}),
+        cost=ComputationalCost.CHEAP,
     ),
     "Gaussian": ComponentDefinition(
         name="Gaussian",
@@ -453,6 +473,9 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         formula_template="{A}*exp(-({sigma}*t)^2)",
         latex_equation=r"A(t) = A e^{-(\sigma t)^2}",
         category="Relaxation",
+        field_geometries=frozenset({FieldGeometry.ZF, FieldGeometry.TF, FieldGeometry.LF}),
+        physics_classes=frozenset({PhysicsClass.GENERIC_RELAXATION}),
+        cost=ComputationalCost.CHEAP,
     ),
     "Oscillatory": ComponentDefinition(
         name="Oscillatory",
@@ -469,6 +492,9 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         latex_equation=r"A(t) = A \cos(2\pi f t + \phi)",
         category="Oscillation",
         knight_observable="frequency",
+        field_geometries=frozenset({FieldGeometry.ZF, FieldGeometry.TF}),
+        physics_classes=frozenset({PhysicsClass.MAGNETISM}),
+        cost=ComputationalCost.CHEAP,
     ),
     "OscillatoryField": ComponentDefinition(
         name="OscillatoryField",
@@ -485,6 +511,9 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         latex_equation=r"A(t) = A \cos(2\pi \gamma_\mu B t + \phi)",
         category="Oscillation",
         knight_observable="field",
+        field_geometries=frozenset({FieldGeometry.ZF, FieldGeometry.TF}),
+        physics_classes=frozenset({PhysicsClass.MAGNETISM}),
+        cost=ComputationalCost.CHEAP,
     ),
     "VortexLattice": ComponentDefinition(
         name="VortexLattice",
@@ -506,6 +535,9 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         latex_equation=r"A(t) = A\,\mathrm{Re}\!\left[e^{i(2\pi\gamma_\mu B t + \phi)} R_{VL}(t;\lambda,B_{c2})\right]",
         category="Oscillation",
         fixed_params=("field",),
+        field_geometries=frozenset({FieldGeometry.TF}),
+        physics_classes=frozenset({PhysicsClass.SUPERCONDUCTIVITY}),
+        cost=ComputationalCost.EXPENSIVE,
     ),
     "VortexLatticePowder": ComponentDefinition(
         name="VortexLatticePowder",
@@ -527,6 +559,9 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         latex_equation=r"A(t) = A\,\mathrm{Re}\!\left[e^{i(2\pi\gamma_\mu B t + \phi)} R_{VL}^{\mathrm{pow}}(t;\lambda_{ab},B_{c2})\right]",
         category="Oscillation",
         fixed_params=("field",),
+        field_geometries=frozenset({FieldGeometry.TF}),
+        physics_classes=frozenset({PhysicsClass.SUPERCONDUCTIVITY}),
+        cost=ComputationalCost.EXPENSIVE,
     ),
     "Bessel": ComponentDefinition(
         name="Bessel",
@@ -543,6 +578,9 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         latex_equation=r"A(t) = A\,J_0(2\pi f t + \phi)",
         category="Oscillation",
         knight_observable="frequency",
+        field_geometries=frozenset({FieldGeometry.ZF, FieldGeometry.TF}),
+        physics_classes=frozenset({PhysicsClass.MAGNETISM}),
+        cost=ComputationalCost.CHEAP,
     ),
     "MuoniumTF": ComponentDefinition(
         name="MuoniumTF",
@@ -563,6 +601,9 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             r"\ x=\frac{(\gamma_e+\gamma_\mu)B}{A_\mu}"
         ),
         category="Muonium",
+        field_geometries=frozenset({FieldGeometry.TF}),
+        physics_classes=frozenset({PhysicsClass.MUONIUM}),
+        cost=ComputationalCost.CHEAP,
     ),
     "MuoniumLowTF": ComponentDefinition(
         name="MuoniumLowTF",
@@ -582,6 +623,9 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             r"+(1-\delta)\cos(2\pi w_{23} t + \phi)\right]"
         ),
         category="Muonium",
+        field_geometries=frozenset({FieldGeometry.TF}),
+        physics_classes=frozenset({PhysicsClass.MUONIUM}),
+        cost=ComputationalCost.CHEAP,
     ),
     "MuoniumZF": ComponentDefinition(
         name="MuoniumZF",
@@ -602,6 +646,9 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             r"\ f_1=A_\mu-D,\ f_2=A_\mu+\frac{D}{2},\ f_3=\frac{3D}{2}"
         ),
         category="Muonium",
+        field_geometries=frozenset({FieldGeometry.ZF}),
+        physics_classes=frozenset({PhysicsClass.MUONIUM}),
+        cost=ComputationalCost.CHEAP,
     ),
     "MuoniumHighTF": ComponentDefinition(
         name="MuoniumHighTF",
@@ -626,6 +673,9 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             r"\ \nu_{12}+\nu_{34}=A_\mu"
         ),
         category="Muonium",
+        field_geometries=frozenset({FieldGeometry.TF}),
+        physics_classes=frozenset({PhysicsClass.MUONIUM}),
+        cost=ComputationalCost.CHEAP,
     ),
     "MuoniumHighTFAniso": ComponentDefinition(
         name="MuoniumHighTFAniso",
@@ -653,6 +703,9 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             r"\ d=\frac{D}{2}(3\cos^2\theta-1)"
         ),
         category="Muonium",
+        field_geometries=frozenset({FieldGeometry.TF}),
+        physics_classes=frozenset({PhysicsClass.MUONIUM}),
+        cost=ComputationalCost.EXPENSIVE,
     ),
     "MuoniumLFRelax": ComponentDefinition(
         name="MuoniumLFRelax",
@@ -681,6 +734,9 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             r"\ \delta=\frac{x}{\sqrt{1+x^2}}"
         ),
         category="Muonium",
+        field_geometries=frozenset({FieldGeometry.LF}),
+        physics_classes=frozenset({PhysicsClass.MUONIUM, PhysicsClass.DYNAMICS}),
+        cost=ComputationalCost.CHEAP,
     ),
     "StretchedExponential": ComponentDefinition(
         name="StretchedExponential",
@@ -696,6 +752,9 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         formula_template="{A}*exp(-(abs({Lambda})*t)^({beta}))",
         latex_equation=r"A(t) = A \exp\left(-(|\Lambda| t)^\beta\right)",
         category="Relaxation",
+        field_geometries=frozenset({FieldGeometry.ZF, FieldGeometry.TF, FieldGeometry.LF}),
+        physics_classes=frozenset({PhysicsClass.GENERIC_RELAXATION}),
+        cost=ComputationalCost.CHEAP,
     ),
     "RischKehr": ComponentDefinition(
         name="RischKehr",
@@ -707,6 +766,9 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         formula_template="{A}*exp({Gamma}*t)*erfc(sqrt({Gamma}*t))",
         latex_equation=r"A(t) = A\, e^{\Gamma t}\,\mathrm{erfc}\!\left(\sqrt{\Gamma t}\right)",
         category="Relaxation",
+        field_geometries=frozenset({FieldGeometry.ZF, FieldGeometry.LF}),
+        physics_classes=frozenset({PhysicsClass.DYNAMICS}),
+        cost=ComputationalCost.CHEAP,
     ),
     "StaticGKT_ZF": ComponentDefinition(
         name="StaticGKT_ZF",
@@ -720,6 +782,9 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             r"A(t) = A\left[\frac{1}{3} + \frac{2}{3}\left(1-(\Delta t)^2\right)e^{-(\Delta t)^2/2}\right]"
         ),
         category="Kubo-Toyabe",
+        field_geometries=frozenset({FieldGeometry.ZF}),
+        physics_classes=frozenset({PhysicsClass.MAGNETISM}),
+        cost=ComputationalCost.CHEAP,
     ),
     "LongitudinalFieldKT": ComponentDefinition(
         name="LongitudinalFieldKT",
@@ -739,6 +804,9 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             r"\quad\text{where}\quad \omega_0 = \gamma_\mu B_L"
         ),
         category="Kubo-Toyabe",
+        field_geometries=frozenset({FieldGeometry.ZF, FieldGeometry.LF}),
+        physics_classes=frozenset({PhysicsClass.MAGNETISM}),
+        cost=ComputationalCost.MODERATE,
     ),
     "DynamicGaussianKT": ComponentDefinition(
         name="DynamicGaussianKT",
@@ -762,6 +830,9 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             r"g(t)=e^{-\nu t}G^{\mathrm{stat}}_{\mathrm{GKT}}(t)"
         ),
         category="Kubo-Toyabe",
+        field_geometries=frozenset({FieldGeometry.ZF, FieldGeometry.LF}),
+        physics_classes=frozenset({PhysicsClass.MAGNETISM, PhysicsClass.DYNAMICS}),
+        cost=ComputationalCost.EXPENSIVE,
     ),
     "DynamicLorentzianKT": ComponentDefinition(
         name="DynamicLorentzianKT",
@@ -784,6 +855,9 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             r"G^{\mathrm{stat}}_{\mathrm{LKT}}(t)=\frac{1}{3}+\frac{2}{3}(1-a_L t)e^{-a_L t}"
         ),
         category="Kubo-Toyabe",
+        field_geometries=frozenset({FieldGeometry.ZF, FieldGeometry.LF}),
+        physics_classes=frozenset({PhysicsClass.MAGNETISM, PhysicsClass.DYNAMICS}),
+        cost=ComputationalCost.EXPENSIVE,
     ),
     "GaussianBroadenedKT": ComponentDefinition(
         name="GaussianBroadenedKT",
@@ -803,6 +877,9 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             r"p=\mathcal{N}(\Delta,(w_\Delta\Delta)^2)"
         ),
         category="Kubo-Toyabe",
+        field_geometries=frozenset({FieldGeometry.ZF, FieldGeometry.LF}),
+        physics_classes=frozenset({PhysicsClass.MAGNETISM}),
+        cost=ComputationalCost.EXPENSIVE,
     ),
     "Keren": ComponentDefinition(
         name="Keren",
@@ -826,6 +903,9 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             r"-2\nu\omega_0 e^{-\nu t}\sin\omega_0 t\right],\ \omega_0=\gamma_\mu B_L"
         ),
         category="Relaxation",
+        field_geometries=frozenset({FieldGeometry.ZF, FieldGeometry.LF}),
+        physics_classes=frozenset({PhysicsClass.DYNAMICS, PhysicsClass.MAGNETISM}),
+        cost=ComputationalCost.CHEAP,
     ),
     "Abragam": ComponentDefinition(
         name="Abragam",
@@ -846,6 +926,9 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             r"A(t)=A\exp\!\left[-\frac{\Delta^2}{\nu^2}\left(e^{-\nu t}-1+\nu t\right)\right]"
         ),
         category="Relaxation",
+        field_geometries=frozenset({FieldGeometry.ZF, FieldGeometry.LF}),
+        physics_classes=frozenset({PhysicsClass.DYNAMICS, PhysicsClass.GENERIC_RELAXATION}),
+        cost=ComputationalCost.CHEAP,
     ),
     "MuF": ComponentDefinition(
         name="MuF",
@@ -859,6 +942,9 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             r"A(t)=A\frac{1}{6}\left[1+2\cos\left(\frac{\omega_d t}{2}\right)+\cos(\omega_d t)+2\cos\left(\frac{3\omega_d t}{2}\right)\right]"
         ),
         category="Nuclear dipolar",
+        field_geometries=frozenset({FieldGeometry.ZF}),
+        physics_classes=frozenset({PhysicsClass.MOLECULAR}),
+        cost=ComputationalCost.CHEAP,
     ),
     "FmuF_Linear": ComponentDefinition(
         name="FmuF_Linear",
@@ -870,6 +956,9 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         formula_template="{A}*G_FmuF_linear(t,{r_muF})",
         latex_equation=(r"A(t)=A\,G_{F\mu F}(t)"),
         category="Nuclear dipolar",
+        field_geometries=frozenset({FieldGeometry.ZF}),
+        physics_classes=frozenset({PhysicsClass.MOLECULAR}),
+        cost=ComputationalCost.CHEAP,
     ),
     "DynamicFmuF": ComponentDefinition(
         name="DynamicFmuF",
@@ -888,6 +977,9 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             r"g(t)=e^{-\nu t}G_{F\mu F}(t)"
         ),
         category="Nuclear dipolar",
+        field_geometries=frozenset({FieldGeometry.ZF}),
+        physics_classes=frozenset({PhysicsClass.MOLECULAR, PhysicsClass.DYNAMICS}),
+        cost=ComputationalCost.EXPENSIVE,
     ),
     "FmuF_General": ComponentDefinition(
         name="FmuF_General",
@@ -904,6 +996,9 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         formula_template="{A}*Dz_FmuF_general(t,{r1},{r2},{theta})",
         latex_equation=(r"A(t)=A\,D_z^{\mathrm{powder}}\!(t;r_1,r_2,\theta)"),
         category="Nuclear dipolar",
+        field_geometries=frozenset({FieldGeometry.ZF}),
+        physics_classes=frozenset({PhysicsClass.MOLECULAR}),
+        cost=ComputationalCost.EXPENSIVE,
     ),
     "FmuF_Triangle": ComponentDefinition(
         name="FmuF_Triangle",
@@ -920,6 +1015,9 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         formula_template="{A}*Dz_FmuF_F(t; {r_muF}, {r3}, {phi3})",
         latex_equation=(r"A(t)=A\,D_z^{\mathrm{powder}}\!(t;r_{\mu F},r_3,\phi_3)"),
         category="Nuclear dipolar",
+        field_geometries=frozenset({FieldGeometry.ZF}),
+        physics_classes=frozenset({PhysicsClass.MOLECULAR}),
+        cost=ComputationalCost.EXPENSIVE,
     ),
     "DipolarPairField": ComponentDefinition(
         name="DipolarPairField",
@@ -942,6 +1040,9 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             r"\omega_d=\gamma_\mu B_{dip}"
         ),
         category="Nuclear dipolar",
+        field_geometries=frozenset({FieldGeometry.ZF}),
+        physics_classes=frozenset({PhysicsClass.MOLECULAR}),
+        cost=ComputationalCost.CHEAP,
     ),
     "ProtonDipole": ComponentDefinition(
         name="ProtonDipole",
@@ -961,6 +1062,9 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             r"\hbar\omega_d=\frac{\mu_0\hbar^2\gamma_\mu\gamma_p}{4\pi r^3}"
         ),
         category="Nuclear dipolar",
+        field_geometries=frozenset({FieldGeometry.ZF}),
+        physics_classes=frozenset({PhysicsClass.MOLECULAR}),
+        cost=ComputationalCost.CHEAP,
     ),
     "ElectronDipole": ComponentDefinition(
         name="ElectronDipole",
@@ -980,6 +1084,9 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             r"\hbar\omega_d=\frac{\mu_0\hbar^2\gamma_\mu\gamma_e}{4\pi r^3}"
         ),
         category="Nuclear dipolar",
+        field_geometries=frozenset({FieldGeometry.ZF}),
+        physics_classes=frozenset({PhysicsClass.MOLECULAR, PhysicsClass.MAGNETISM}),
+        cost=ComputationalCost.CHEAP,
     ),
     "DipolarSpinJ": ComponentDefinition(
         name="DipolarSpinJ",
@@ -1000,6 +1107,9 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             r"\text{ eigen-solution}"
         ),
         category="Nuclear dipolar",
+        field_geometries=frozenset({FieldGeometry.ZF}),
+        physics_classes=frozenset({PhysicsClass.MOLECULAR}),
+        cost=ComputationalCost.MODERATE,
     ),
     "Constant": ComponentDefinition(
         name="Constant",
@@ -1011,6 +1121,9 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         formula_template="{A_bg}",
         latex_equation=r"A(t) = A_{bg}",
         category="Background",
+        field_geometries=frozenset({FieldGeometry.ZF, FieldGeometry.TF, FieldGeometry.LF}),
+        physics_classes=frozenset({PhysicsClass.BACKGROUND}),
+        cost=ComputationalCost.CHEAP,
     ),
     "GaussianPeak": ComponentDefinition(
         name="GaussianPeak",
@@ -1030,6 +1143,9 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         ),
         category="Frequency Domain",
         domain="frequency",
+        field_geometries=frozenset({FieldGeometry.ZF, FieldGeometry.TF, FieldGeometry.LF}),
+        physics_classes=frozenset({PhysicsClass.SPECTRAL}),
+        cost=ComputationalCost.CHEAP,
     ),
     "LorentzianPeak": ComponentDefinition(
         name="LorentzianPeak",
@@ -1046,6 +1162,9 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         latex_equation=(r"S(\nu)=\frac{h}{1+4\,(\nu-\nu_0)^2/w^2},\quad w \equiv \mathrm{FWHM}"),
         category="Frequency Domain",
         domain="frequency",
+        field_geometries=frozenset({FieldGeometry.ZF, FieldGeometry.TF, FieldGeometry.LF}),
+        physics_classes=frozenset({PhysicsClass.SPECTRAL}),
+        cost=ComputationalCost.CHEAP,
     ),
     "ConstantBackground": ComponentDefinition(
         name="ConstantBackground",
@@ -1058,6 +1177,9 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         latex_equation=r"S(\nu)=b_g",
         category="Frequency Domain",
         domain="frequency",
+        field_geometries=frozenset({FieldGeometry.ZF, FieldGeometry.TF, FieldGeometry.LF}),
+        physics_classes=frozenset({PhysicsClass.SPECTRAL, PhysicsClass.BACKGROUND}),
+        cost=ComputationalCost.CHEAP,
     ),
     "LinearBackground": ComponentDefinition(
         name="LinearBackground",
@@ -1070,6 +1192,9 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         latex_equation=r"S(\nu)=b_g+m\nu",
         category="Frequency Domain",
         domain="frequency",
+        field_geometries=frozenset({FieldGeometry.ZF, FieldGeometry.TF, FieldGeometry.LF}),
+        physics_classes=frozenset({PhysicsClass.SPECTRAL, PhysicsClass.BACKGROUND}),
+        cost=ComputationalCost.CHEAP,
     ),
 }
 
