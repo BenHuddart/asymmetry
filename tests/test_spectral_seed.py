@@ -10,7 +10,9 @@ from asymmetry.core.fitting.spectral import (
 )
 
 
-def _dc_dominated_spectrum(*, peak_freq: float = 30.0, n: int = 2000, f_max: float = 100.0) -> MuonDataset:
+def _dc_dominated_spectrum(
+    *, peak_freq: float = 30.0, n: int = 2000, f_max: float = 100.0
+) -> MuonDataset:
     """Synthetic (Power)^1/2 spectrum shaped like the recorded EuO 2960 fixture.
 
     A tall apodisation/DC spike near 0 MHz dwarfs the genuine ~30 MHz

@@ -730,8 +730,8 @@ class _FloatLimitField(QLineEdit):
 
 def _apply_fit_range_display(
     domain: str,
-    min_spin: "_FloatLimitField",
-    max_spin: "_FloatLimitField",
+    min_spin: _FloatLimitField,
+    max_spin: _FloatLimitField,
     x_min: float | None,
     x_max: float | None,
 ) -> None:
@@ -8028,6 +8028,11 @@ class FitPanel(QWidget):
     # Forwarded from the Batch tab's on-tab seeding selector so the main window's
     # Analysis ▸ Batch seeding menu can mirror it (two-way sync).
     batch_seeding_mode_changed = Signal(str)
+    # Emitted whenever the Single/Batch tab selection changes, so the main
+    # window can re-evaluate fit-block/enable state (F17) — switching tabs
+    # does not itself change what is fittable, but nothing else re-runs that
+    # check on a tab switch.
+    tab_changed = Signal(int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -8152,6 +8157,7 @@ class FitPanel(QWidget):
                 "run": self._active_single_run_number,
                 "state": self.get_single_form_state(),
             }
+        self.tab_changed.emit(index)
 
     def set_batch_seeding_mode(self, mode: str) -> None:
         """Forward the batch-series seeding mode to the Batch tab."""

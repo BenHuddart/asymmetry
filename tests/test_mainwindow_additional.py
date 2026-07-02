@@ -905,6 +905,54 @@ class TestMainWindowFourier:
         assert target_rep is not None
         assert target_rep.recipe["fourier_config"] == source_rep.recipe["fourier_config"]
 
+    def test_apply_fourier_to_selection_enables_batch_fit_without_selection_poke(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """F17: applying Fourier settings to a selection must refresh fit enable-state.
+
+        Regression: computing spectra for a selection (via "Apply to selection")
+        left "Run Batch Fit" stale-disabled until an unrelated browser-selection
+        change happened to trigger `_update_fit_block_state` (same class as the
+        PR #89 fix, mainwindow.py:_on_apply_fourier_to_selection).
+        """
+        ds1 = _make_fourier_ready_dataset(8834, with_grouping=True)
+        ds2 = _make_fourier_ready_dataset(8835, with_grouping=True)
+        mainwindow._data_browser.add_dataset(ds1)
+        mainwindow._data_browser.add_dataset(ds2)
+        mainwindow._on_dataset_selected(8834)
+        mainwindow._on_domain_button_clicked("frequency")
+        _compute_fourier_sync(mainwindow)
+
+        global_tab = mainwindow._fit_panel._global_tab
+        assert global_tab._fit_btn.isEnabled() is False
+
+        monkeypatch.setattr(mainwindow._data_browser, "get_selected_datasets", lambda: [ds1, ds2])
+        mainwindow._on_apply_fourier_to_selection()
+
+        assert global_tab._fit_btn.isEnabled() is True
+
+    def test_switching_to_batch_subtab_refreshes_fit_block_state(
+        self, mainwindow: MainWindow
+    ) -> None:
+        """F17: a Single<->Batch tab switch must re-evaluate fit enable-state.
+
+        Nothing else re-runs `_update_fit_block_state` on a bare tab switch, so
+        stale block/enable state (e.g. left over from a different run or view)
+        could survive until an unrelated event refreshed it.
+        """
+        calls = []
+        original = mainwindow._update_fit_block_state
+        mainwindow._update_fit_block_state = lambda: (calls.append(1), original())[-1]
+
+        batch_index = mainwindow._fit_panel._tabs.indexOf(mainwindow._fit_panel._global_tab)
+        mainwindow._fit_panel._tabs.setCurrentIndex(batch_index)
+        assert calls
+
+        calls.clear()
+        single_index = mainwindow._fit_panel._tabs.indexOf(mainwindow._fit_panel._single_tab)
+        mainwindow._fit_panel._tabs.setCurrentIndex(single_index)
+        assert calls
+
     def test_apply_fourier_to_selection_requires_prior_compute(
         self, mainwindow: MainWindow
     ) -> None:

@@ -100,8 +100,16 @@ def seed_peak_parameters_from_dataset(
         if guarded.size > 0:
             candidates = guarded
 
-    baseline = float(np.nanmedian(y[candidates])) if candidates.size > 0 else float(np.nanpercentile(y, 10.0))
-    peak_index = int(candidates[np.nanargmax(y[candidates])]) if candidates.size > 0 else int(np.nanargmax(y))
+    baseline = (
+        float(np.nanmedian(y[candidates]))
+        if candidates.size > 0
+        else float(np.nanpercentile(y, 10.0))
+    )
+    peak_index = (
+        int(candidates[np.nanargmax(y[candidates])])
+        if candidates.size > 0
+        else int(np.nanargmax(y))
+    )
 
     peak_y = float(y[peak_index])
     height = max(peak_y - baseline, 1e-12)

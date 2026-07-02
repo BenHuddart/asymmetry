@@ -1609,6 +1609,8 @@ class MainWindow(QMainWindow):
             self._plot_panel.cursor_coords_changed.connect(self._on_cursor_coords_changed)
         if hasattr(self._fit_panel, "fit_range_edit_committed"):
             self._fit_panel.fit_range_edit_committed.connect(self._on_fit_range_edit_committed)
+        if hasattr(self._fit_panel, "tab_changed"):
+            self._fit_panel.tab_changed.connect(lambda _index: self._update_fit_block_state())
         if self._multi_group_fit_window is not None and hasattr(
             self._multi_group_fit_window, "fit_range_edit_committed"
         ):
@@ -7196,6 +7198,12 @@ class MainWindow(QMainWindow):
             return
         self._set_fourier_status(f"Applied Fourier settings to {applied} run(s).", success=True)
         self._log_panel.log(f"Applied Fourier settings to {applied} run(s).")
+        # Newly-cached spectra change both single- and batch-fit availability
+        # (F17): nothing else refreshes the Fit dock after this, so an applied
+        # selection used to leave "Run Batch Fit" stale-disabled until an
+        # unrelated browser-selection change happened to poke it.
+        self._set_frequency_fit_datasets_for_selection()
+        self._update_fit_block_state()
 
     def _record_frequency_maxent_recipe(
         self,
