@@ -66,16 +66,36 @@ re-execute itself with `.venv/bin/python` when that interpreter exists.
 python tools/harness.py structural
 python tools/harness.py lint
 python tools/harness.py test -- tests/test_transforms.py   # focused, exact targets
-python tools/harness.py test --tier fast                   # inner loop, non-GUI (~40s)
-python tools/harness.py validate                           # standard tier, pre-push gate
+python tools/harness.py test --tier fast                   # inner loop, non-GUI (~25s)
+python tools/harness.py validate                           # standard tier, pre-push gate (~2 min)
 ```
 
 `lint` and `lint-all` both run the full Ruff baseline across `src`, `tests`, and
 `tools`.
 
-Test tiers (`--tier {fast,standard,full}`): use `fast` (non-GUI, ~40s) for the
-inner loop and `validate`/`standard` before pushing. See
-[docs/HARNESS.md](docs/HARNESS.md#test-tiers) for the full breakdown.
+### Using the test suite efficiently
+
+The standard tier is ~4,000 tests and takes ~2 minutes locally; treat it as a
+once-per-task gate, never an iteration loop.
+
+1. **While iterating**, run exactly the tests beside the behavior you are
+   changing: `python tools/harness.py test -- tests/test_x.py` (or a
+   `::node-id`). Test files mirror feature names; find coverage with
+   `grep -l "<symbol>" tests/*.py`.
+2. **After a core/non-GUI change**: `python tools/harness.py test --tier fast`
+   (~25s, non-GUI).
+3. **After a GUI change**: additionally run the affected GUI test files
+   focused. Do not run the whole GUI subset locally while iterating — it is
+   most of the suite's wall-clock, and CI shards it across three runners.
+4. **Once, before committing / handing back**: `python tools/harness.py
+   validate`. Do not re-run it for doc- or comment-only follow-up edits, and
+   do not run `--tier full` locally unless you changed a `slow`/`integration`
+   test.
+5. Always go through `tools/harness.py` rather than bare pytest — it re-execs
+   into `.venv` and sets `QT_QPA_PLATFORM=offscreen`. Output is quiet by
+   default; pass `-v` only when you need per-test lines.
+
+See [docs/HARNESS.md](docs/HARNESS.md#test-tiers) for the full tier breakdown.
 
 For GUI startup or packaging work:
 

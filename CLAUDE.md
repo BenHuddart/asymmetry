@@ -37,12 +37,18 @@ push it, and open a PR — don't commit directly to `main`.
   `MainWindow` cost and on a 2-core runner take ~10 min unsplit vs ~2 min for
   everything else, so splitting them three ways brings the critical path to
   ~4–5 min. Locally, `python tools/harness.py validate` runs the same standard
-  tier single-box with `-n auto --dist load` in **~2.5 min**; `--tier fast`
-  (non-GUI only) is the ~40s inner loop. (Historically the suite took 30–60 min: GUI tests created a
+  tier single-box with `-n auto --dist load` in **~2 min**; `--tier fast`
+  (non-GUI only) is the ~25s inner loop. Follow the "Using the test suite
+  efficiently" rules in `AGENTS.md`: iterate on focused test files, gate with
+  `--tier fast`, and run `validate` once per task. (Historically the suite took 30–60 min: GUI tests created a
   `MainWindow` per test without destroying it, and because `deleteLater` is not
   dispatched without forcing `DeferredDelete`, leaked widgets accumulated and
   `MainWindow` setup degraded to O(n²). The autouse `_cleanup_qt_widgets` fixture
-  in `tests/conftest.py` fixes this.)
+  in `tests/conftest.py` fixes this. A second compounding leak had `UIManager`
+  re-capture the previous window's stylesheet/font output as its "base", growing
+  the app stylesheet with every constructed window; it is fixed by caching the
+  pre-scale baseline on the `QApplication` and pinned by
+  `test_repeated_mainwindow_construction_does_not_compound_app_styles`.)
 - A per-test timeout (`--timeout=120`) is set, so a genuinely hung test fails fast
   rather than stalling the whole run.
 - GUI tests need `QT_QPA_PLATFORM=offscreen` in headless environments.

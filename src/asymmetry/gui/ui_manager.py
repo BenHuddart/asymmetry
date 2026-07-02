@@ -30,6 +30,15 @@ COMPACT_MODE_SETTINGS_KEY = "ui/compact_mode"
 UI_SCALE_SETTINGS_KEY = "ui/scale"
 UI_SCALE_OPTIONS: tuple[float, ...] = (0.8, 0.9, 1.0, 1.1, 1.2)
 
+#: QApplication dynamic-property keys caching the pre-scale font/stylesheet
+#: baseline. A UIManager constructed after another one has applied its scale
+#: (every GUI test builds its own MainWindow against the shared QApplication)
+#: must not capture the previous manager's *output* as its base: doing so
+#: appended one rendered scale block to the app stylesheet per window and
+#: multiplied the app font by the scale factor again each time.
+_APP_BASE_STYLESHEET_PROP = "_asymmetry_base_stylesheet"
+_APP_BASE_FONT_PROP = "_asymmetry_base_font"
+
 _DEFAULT_UI_SCALE = 0.9
 _DEFAULT_TOOLBAR_ICON_SIZE = QSize(16, 16)
 _RESOURCE_DIR = Path(__file__).resolve().parents[1] / "resources"
@@ -69,9 +78,21 @@ class UIManager(QObject):
             getattr(main_window, "_ui_scale_actions", {})
         )
 
-        self._base_font = QFont(self._app.font()) if self._app is not None else QFont()
+        if self._app is not None:
+            base_font = self._app.property(_APP_BASE_FONT_PROP)
+            if base_font is None:
+                base_font = QFont(self._app.font())
+                self._app.setProperty(_APP_BASE_FONT_PROP, QFont(base_font))
+            base_stylesheet = self._app.property(_APP_BASE_STYLESHEET_PROP)
+            if base_stylesheet is None:
+                base_stylesheet = self._app.styleSheet()
+                self._app.setProperty(_APP_BASE_STYLESHEET_PROP, base_stylesheet)
+            self._base_font = QFont(base_font)
+            self._base_stylesheet = str(base_stylesheet)
+        else:
+            self._base_font = QFont()
+            self._base_stylesheet = ""
         self._base_font_size = self._resolve_font_point_size(self._base_font)
-        self._base_stylesheet = self._app.styleSheet() if self._app is not None else ""
 
         self._tracked_layouts = self._collect_layout_metrics()
         self._tracked_tables = self._collect_table_metrics()
@@ -122,11 +143,15 @@ class UIManager(QObject):
         if self._app is not None:
             font = QFont(self._base_font)
             font.setPointSizeF(max(8.0, self._base_font_size * self.effective_scale))
-            self._app.setFont(font)
+            if self._app.font() != font:
+                self._app.setFont(font)
             stylesheet = self.build_stylesheet(self.effective_scale)
             if self._base_stylesheet:
                 stylesheet = f"{self._base_stylesheet}\n{stylesheet}".strip()
-            self._app.setStyleSheet(stylesheet)
+            # setStyleSheet reparses the sheet and repolishes every live widget
+            # (~0.6s per call); skip it when the composed sheet is already active.
+            if self._app.styleSheet() != stylesheet:
+                self._app.setStyleSheet(stylesheet)
 
         self._apply_toolbar_metrics(self.effective_scale)
         self._apply_layout_metrics(self.effective_scale)

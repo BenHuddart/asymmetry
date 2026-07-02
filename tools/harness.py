@@ -572,7 +572,9 @@ def build_pytest_command(
 
     Composes the tier and subset markers into a single ``-m`` expression, unless
     the caller already passed ``-m`` or named explicit targets (in which case
-    those run verbatim). xdist parallelism is added for the standard/full tiers.
+    those run verbatim). xdist parallelism is added for every tier unless
+    ``--no-parallel`` is given (the fast tier measured 71s serial vs 25s with
+    ``-n auto``, so worker startup is worth it even there).
 
     ``--subset`` only shards the gui/non-gui split of the standard/full tiers; the
     ``fast`` tier is non-GUI by definition, so combining it with a subset is
@@ -604,7 +606,7 @@ def build_pytest_command(
         pytest_args = pytest_args + ["--shard", shard]
 
     parallel_args: list[str] = []
-    if parallel and tier in ("standard", "full"):
+    if parallel:
         parallel_args = ["-n", "auto", "--dist", "load"]
 
     return [sys.executable, "-m", "pytest", *parallel_args, *pytest_args]

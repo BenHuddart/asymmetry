@@ -194,6 +194,36 @@ def test_ui_manager_font_scan_rescales_existing_chrome(qapp) -> None:
         window.close()
 
 
+@pytest.mark.gui
+def test_repeated_mainwindow_construction_does_not_compound_app_styles(qapp) -> None:
+    """A second MainWindow must reuse the QApplication's pre-scale baseline.
+
+    UIManager used to capture ``app.styleSheet()`` / ``app.font()`` at
+    construction as its "base" — i.e. the *previous* manager's output — so every
+    window appended another rendered scale block to the app stylesheet and
+    multiplied the app font by the scale factor again. Each GUI test constructs
+    its own MainWindow against the shared QApplication, so the sheet grew (and
+    ``setStyleSheet`` slowed) linearly across a test session.
+    """
+    from asymmetry.gui.mainwindow import MainWindow
+
+    first = MainWindow()
+    try:
+        sheet_after_first = qapp.styleSheet()
+        font_after_first = qapp.font().pointSizeF()
+    finally:
+        first.close()
+        first.deleteLater()
+
+    second = MainWindow()
+    try:
+        assert qapp.styleSheet() == sheet_after_first
+        assert qapp.font().pointSizeF() == pytest.approx(font_after_first)
+    finally:
+        second.close()
+        second.deleteLater()
+
+
 # ── Plot-trace palette centralisation (P2-6) ─────────────────────────────────
 
 

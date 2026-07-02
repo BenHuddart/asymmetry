@@ -79,7 +79,9 @@ asymmetry = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-v --tb=short --strict-markers --timeout=120 --timeout-method=thread"
+# Quiet by default: -v prints one line per test (~4,000 lines for a standard-tier
+# run), which is noise for humans and context burn for agents. Pass -v on demand.
+addopts = "--tb=short --strict-markers --timeout=120 --timeout-method=thread"
 markers = [
     "unit: pure-python, no Qt, no file I/O",
     "gui: requires PySide6 / Qt widgets",
