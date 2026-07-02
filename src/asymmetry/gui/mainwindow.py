@@ -6140,6 +6140,13 @@ class MainWindow(QMainWindow):
                 self._fit_panel.set_domain("frequency")
             self._fit_panel.set_dataset(self._active_frequency_fit_dataset())
             self._set_frequency_fit_datasets_for_selection()
+            # The just-rendered spectrum is the first thing to supply a frequency
+            # fit range (plot_dataset/plot_datasets seed it to the full spectrum
+            # extent the moment it is unset); mirror it into the Fit panel's
+            # range spins now, or they keep showing whatever was last displayed
+            # for a different run/domain (D6/F15).
+            if hasattr(self._fit_panel, "set_fit_range_display"):
+                self._fit_panel.set_fit_range_display(*self._frequency_plot_panel.get_fit_range())
             # A just-rendered spectrum changes fittability: the block flag set on
             # frequency-view entry ("compute a spectrum first") must clear now that
             # one exists. Compute completions and re-renders on the already-active

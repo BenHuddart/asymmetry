@@ -132,6 +132,47 @@ def test_fit_panel_frequency_domain_defaults(qapp) -> None:
 
 
 @pytest.mark.gui
+def test_fit_panel_frequency_range_editable_with_placeholder_when_unset(qapp) -> None:
+    """D6/F15: the frequency fit-range spins stay editable, never a stale value.
+
+    In the time domain the plot always supplies a fit range (seeded to the
+    full dataset extent), so an absent range there still disables the spins.
+    In the frequency domain there is no draggable selector, so an absent
+    range must not disable the fields or leave a leftover time-domain number
+    behind — it shows a "full spectrum" placeholder instead.
+    """
+    from asymmetry.gui.panels.fit_panel import FitPanel
+
+    panel = FitPanel()
+    dataset = _frequency_dataset()
+    panel.set_domain("time")
+    panel.set_fit_range_display(0.006, 9.839)
+    assert panel._single_tab._fit_range_min_spin.value() == pytest.approx(0.006)
+
+    panel.set_domain("frequency")
+    panel.set_dataset(dataset)
+    panel.set_fit_range_display(None, None)
+
+    min_spin = panel._single_tab._fit_range_min_spin
+    max_spin = panel._single_tab._fit_range_max_spin
+    assert min_spin.isEnabled() is True
+    assert max_spin.isEnabled() is True
+    assert min_spin.text() == ""
+    assert max_spin.text() == ""
+    assert min_spin.placeholderText() == "full spectrum"
+    assert max_spin.placeholderText() == "full spectrum"
+
+    panel.set_fit_range_display(1.5, 42.0)
+    assert min_spin.isEnabled() is True
+    assert min_spin.value() == pytest.approx(1.5)
+    assert max_spin.value() == pytest.approx(42.0)
+
+    panel.set_domain("time")
+    panel.set_fit_range_display(None, None)
+    assert panel._single_tab._fit_range_min_spin.isEnabled() is False
+
+
+@pytest.mark.gui
 def test_fit_panel_frequency_global_missing_spectra_status(qapp) -> None:
     from asymmetry.gui.panels.fit_panel import FitPanel
 

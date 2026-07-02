@@ -459,6 +459,32 @@ class TestMainWindowFourier:
         assert single_tab._fit_btn.isEnabled() is True
         assert single_tab._fit_btn.toolTip() == ""
 
+    def test_compute_fourier_enables_and_seeds_frequency_fit_range(
+        self, mainwindow: MainWindow
+    ) -> None:
+        """A freshly computed spectrum must leave the fit-range fields editable.
+
+        Regression (D6/F15): the frequency Fit tab's FIT RANGE spins stayed
+        disabled and showed stale time-domain numbers because nothing pushed
+        the plot's newly-seeded (full-spectrum) fit range into the Fit panel
+        after an async/lazy recompute finished (mainwindow.py:_render_frequency_spectra).
+        """
+        dataset = _make_fourier_ready_dataset(8807, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8807)
+        mainwindow._on_domain_button_clicked("frequency")
+
+        _compute_fourier_sync(mainwindow)
+
+        single_tab = mainwindow._fit_panel._single_tab
+        assert single_tab._fit_range_min_spin.isEnabled() is True
+        assert single_tab._fit_range_max_spin.isEnabled() is True
+
+        plot_x_min, plot_x_max = mainwindow._frequency_plot_panel.get_fit_range()
+        assert plot_x_min is not None and plot_x_max is not None
+        assert single_tab._fit_range_min_spin.value() == pytest.approx(plot_x_min)
+        assert single_tab._fit_range_max_spin.value() == pytest.approx(plot_x_max)
+
     def test_group_phase_estimation_uses_field_centered_window(
         self,
         mainwindow: MainWindow,

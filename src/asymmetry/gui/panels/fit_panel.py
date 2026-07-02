@@ -711,6 +711,11 @@ class _FloatLimitField(QLineEdit):
         self._value = self._clamp(value)
         self.setText(self._format(self._value))
 
+    def set_unset(self, placeholder: str) -> None:
+        """Blank the field and show *placeholder* text (no value has been set)."""
+        self.clear()
+        self.setPlaceholderText(placeholder)
+
     def decimals(self) -> int:
         return self._decimals
 
@@ -721,6 +726,41 @@ class _FloatLimitField(QLineEdit):
 
     def setRange(self, minimum: float, maximum: float) -> None:  # noqa: N802 — spinbox-API shim
         self._validator.setRange(minimum, maximum, self._decimals)
+
+
+def _apply_fit_range_display(
+    domain: str,
+    min_spin: "_FloatLimitField",
+    max_spin: "_FloatLimitField",
+    x_min: float | None,
+    x_max: float | None,
+) -> None:
+    """Shared fit-range spinbox update for :class:`SingleFitTab`/:class:`GlobalFitTab`.
+
+    In the time domain a plot always supplies a range (seeded to the full
+    dataset extent), so the spins simply mirror it, disabled when the plot
+    genuinely has none (no dataset). In the frequency domain there is no
+    draggable range selector, so the spins stay editable regardless — an
+    unset range shows a "full spectrum" placeholder instead of a leftover
+    value from a previous domain/run (D6/F15).
+    """
+    have_range = x_min is not None and x_max is not None
+    if domain == "frequency":
+        min_spin.setEnabled(True)
+        max_spin.setEnabled(True)
+        if not have_range:
+            min_spin.set_unset("full spectrum")
+            max_spin.set_unset("full spectrum")
+            return
+    else:
+        min_spin.setEnabled(have_range)
+        max_spin.setEnabled(have_range)
+        if not have_range:
+            return
+    with QSignalBlocker(min_spin):
+        min_spin.setValue(float(x_min))
+    with QSignalBlocker(max_spin):
+        max_spin.setValue(float(x_max))
 
 
 def _fit_success_html(result) -> str:
@@ -2333,15 +2373,9 @@ class SingleFitTab(QWidget):
 
     def set_fit_range_display(self, x_min: float | None, x_max: float | None) -> None:
         """Update fit-range spinboxes from the plot without re-emitting."""
-        have_range = x_min is not None and x_max is not None
-        self._fit_range_min_spin.setEnabled(have_range)
-        self._fit_range_max_spin.setEnabled(have_range)
-        if not have_range:
-            return
-        with QSignalBlocker(self._fit_range_min_spin):
-            self._fit_range_min_spin.setValue(float(x_min))
-        with QSignalBlocker(self._fit_range_max_spin):
-            self._fit_range_max_spin.setValue(float(x_max))
+        _apply_fit_range_display(
+            self._domain, self._fit_range_min_spin, self._fit_range_max_spin, x_min, x_max
+        )
 
     def _on_fit_range_spinbox_committed(self) -> None:
         """Emit fit_range_edit_committed when the user finishes editing a spinbox."""
@@ -3991,15 +4025,9 @@ class GlobalFitTab(QWidget):
 
     def set_fit_range_display(self, x_min: float | None, x_max: float | None) -> None:
         """Update fit-range spinboxes from the plot without re-emitting."""
-        have_range = x_min is not None and x_max is not None
-        self._fit_range_min_spin.setEnabled(have_range)
-        self._fit_range_max_spin.setEnabled(have_range)
-        if not have_range:
-            return
-        with QSignalBlocker(self._fit_range_min_spin):
-            self._fit_range_min_spin.setValue(float(x_min))
-        with QSignalBlocker(self._fit_range_max_spin):
-            self._fit_range_max_spin.setValue(float(x_max))
+        _apply_fit_range_display(
+            self._domain, self._fit_range_min_spin, self._fit_range_max_spin, x_min, x_max
+        )
 
     def _on_fit_range_spinbox_committed(self) -> None:
         """Emit fit_range_edit_committed when the user finishes editing a spinbox."""
