@@ -3079,9 +3079,10 @@ class FitParametersPanel(QWidget):
 
         A batch fit shares one value across every run for each ``global``-role
         parameter, so it never varies and is dropped from the trendable Y list.
-        These are exactly the names worth flagging: the user who classified an
-        amplitude as Global (the Batch-tab default for the leading amplitude) and
-        then tries to trend it would otherwise find it silently absent.
+        These are exactly the names worth flagging: the user who explicitly
+        classified a parameter as Global (an opt-in choice — Local is the
+        Batch-tab default) and then tries to trend it would otherwise find it
+        silently absent.
         """
         if self._global_params is None:
             return []

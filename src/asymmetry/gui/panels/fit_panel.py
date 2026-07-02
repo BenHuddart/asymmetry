@@ -4218,12 +4218,13 @@ class GlobalFitTab(QWidget):
             base_name, _index = split_parameter_name(pname)
             if base_name in {"field", "B_L"}:
                 type_combo.addItem("File")
-            # Set default: first parameter (usually amplitude) as Global, others
-            # as Local; component-declared fixed-by-default parameters as Fixed.
+            # Set default: all free parameters default to Local (Global is an
+            # explicit opt-in, see D5); component-declared fixed-by-default
+            # parameters default to Fixed.
             if pname in fixed_default_params:
                 type_combo.setCurrentText("Fixed")
             else:
-                type_combo.setCurrentText("Global" if i == 0 else "Local")
+                type_combo.setCurrentText("Local")
             previous_type = previous.get("type")
             if previous_type:
                 previous_index = type_combo.findText(previous_type)
@@ -7487,7 +7488,7 @@ class GlobalFitTab(QWidget):
             self._group_model_table.setItem(row, 0, name_item)
 
             default_val = grouped_model.param_defaults.get(pname, 0.0)
-            default_type = "Global"
+            default_type = "Local"
             if is_background_parameter(pname):
                 default_val = 0.0
                 default_type = "Fixed"
