@@ -28,7 +28,9 @@ from asymmetry.gui.panels.model_fit_dialog import (
     ParameterModelBuilderDialog,
     _component_pool_for_context,
     _ComponentSelectorButton,
+    _default_component_for_context,
     _format_model_param_label,
+    _is_order_parameter_observable,
 )
 from asymmetry.gui.widgets.component_info_dialog import build_component_info_html
 
@@ -801,3 +803,75 @@ def test_quality_verdict_silent_for_unknown_point_count(qapp: QApplication) -> N
         parameters=fit_range.parameters,
     )
     assert dlg._quality_text_for_range(fit_range) == ""
+
+
+# ── F4: context-aware default trend model (discoverability) ────────────────
+
+
+def test_is_order_parameter_observable_matches_frequency_and_internal_field():
+    for name in ("frequency", "freq", "nu", "nu0", "frequency_2", "B_loc", "Bint"):
+        assert _is_order_parameter_observable(name), name
+    # Applied/longitudinal fields and RF drives are NOT order-parameter observables.
+    for name in ("B_L", "B_ext", "nu_RF", "Lambda", "sigma", "A0", "b", "m"):
+        assert not _is_order_parameter_observable(name), name
+
+
+def test_default_component_prefers_order_parameter_for_temperature_frequency():
+    pool = _component_pool_for_context("temperature", "frequency")
+    assert _default_component_for_context("temperature", "frequency", pool) == "OrderParameter"
+
+
+def test_default_component_stays_linear_off_context():
+    # Non-order-parameter Y vs temperature keeps Linear.
+    t_pool = _component_pool_for_context("temperature", "Lambda")
+    assert _default_component_for_context("temperature", "Lambda", t_pool) == "Linear"
+    # An order-parameter observable vs *field* is not a T_c phenomenon → Linear.
+    f_pool = _component_pool_for_context("field", "frequency")
+    assert _default_component_for_context("field", "frequency", f_pool) == "Linear"
+
+
+def test_default_component_falls_back_when_order_parameter_unavailable():
+    # If OrderParameter isn't in the pool, fall back to Linear rather than erroring.
+    assert _default_component_for_context("temperature", "frequency", ["Linear", "Constant"]) == (
+        "Linear"
+    )
+
+
+def test_fresh_temperature_frequency_dialog_defaults_to_seeded_order_parameter(
+    qapp: QApplication,
+) -> None:
+    # A magnetic order parameter grows below T_c and vanishes at it: y falls from
+    # ~30 MHz toward 0 as T rises to ~68 K.
+    x = np.linspace(5.0, 68.0, 20)
+    y = np.linspace(30.0, 2.0, 20)
+    yerr = np.full_like(x, 0.5)
+
+    dlg = ModelFitDialog(
+        parameter_name="frequency",
+        x_key="temperature",
+        x_values=x,
+        y_values=y,
+        y_errors=yerr,
+    )
+    fit_range = dlg._fit.ranges[0]
+    assert fit_range.model.component_names == ["OrderParameter"]
+    # Seeds are data-aware, not the unphysical Tc=10 default: T_c is placed just
+    # above the measured range and y0 from the largest observed value.
+    assert fit_range.parameters["Tc"].value > 68.0
+    assert fit_range.parameters["Tc"].value != pytest.approx(10.0)
+    assert fit_range.parameters["y0"].value == pytest.approx(30.0, abs=1.0)
+
+
+def test_fresh_temperature_lambda_dialog_stays_linear(qapp: QApplication) -> None:
+    x = np.linspace(5.0, 68.0, 20)
+    y = np.linspace(0.5, 0.1, 20)
+    yerr = np.full_like(x, 0.01)
+
+    dlg = ModelFitDialog(
+        parameter_name="Lambda",
+        x_key="temperature",
+        x_values=x,
+        y_values=y,
+        y_errors=yerr,
+    )
+    assert dlg._fit.ranges[0].model.component_names == ["Linear"]
