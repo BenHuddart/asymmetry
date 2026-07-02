@@ -8682,7 +8682,7 @@ class MainWindow(QMainWindow):
 
     def _refresh_trend_panel(
         self, *, select_batch_id: str | None = None, surface: bool = True
-    ) -> None:
+    ) -> bool:
         """Reload the trend panel from the project model for the active representation.
 
         This is the *pull*-based entry point called after every fit that records
@@ -8697,12 +8697,16 @@ class MainWindow(QMainWindow):
         series. A *single* grouped fit passes ``surface=False`` so it stays on
         the plot/fit view like an ordinary single fit (the series is still loaded
         into the panel, just not brought to the front).
+
+        Returns ``True`` when it re-derived and refreshed the panel (i.e. reached
+        ``load_representation_series``), ``False`` on an early no-op — the latter
+        lets project restore know it must draw a deferred panel refresh itself.
         """
         if not hasattr(self, "_fit_parameters_panel"):
-            return
+            return False
         rep_type = self._active_representation_type()
         if rep_type is None:
-            return
+            return False
 
         # Gather all series for the active representation, in creation order
         # (batch-N sorts before batch-(N+1) because IDs are "batch-<index>").
@@ -8750,6 +8754,7 @@ class MainWindow(QMainWindow):
             else:
                 highlight_map[batch_id] = list(series.member_run_numbers)
 
+        refreshed = False
         if hasattr(self._fit_parameters_panel, "load_representation_series"):
             self._fit_parameters_panel.load_representation_series(
                 entries,
@@ -8759,6 +8764,7 @@ class MainWindow(QMainWindow):
                 knight_observables_by_id=knight_observables_by_id,
                 fraction_weights_by_id=fraction_weights_by_id,
             )
+            refreshed = True
 
         if surface and entries and hasattr(self, "_dock_fit_parameters"):
             # Route through _show_panel so the per-representation closed-tab
@@ -8767,6 +8773,7 @@ class MainWindow(QMainWindow):
         elif not entries and hasattr(self._data_browser, "set_highlighted_runs"):
             # No series remain — ensure the browser highlight is cleared.
             self._data_browser.set_highlighted_runs(set())
+        return refreshed
 
     def _on_trend_series_selected(self, batch_id: str) -> None:
         """Highlight the member runs of the active fit series in the data browser."""
@@ -12228,8 +12235,15 @@ class MainWindow(QMainWindow):
                 self._set_frequency_fit_datasets_for_selection()
 
         fit_parameters_state = state.get("fit_parameters_state")
+        panel_supports_deferred_refresh = hasattr(self._fit_parameters_panel, "refresh_display")
         if fit_parameters_state:
-            self._fit_parameters_panel.restore_state(fit_parameters_state)
+            # Defer the panel's own table/plot draw: _refresh_trend_panel below
+            # re-derives and refreshes it once. Drawing here too would build the
+            # panel — and re-run the heavy trend-curve compute — twice per open.
+            if panel_supports_deferred_refresh:
+                self._fit_parameters_panel.restore_state(fit_parameters_state, defer_refresh=True)
+            else:
+                self._fit_parameters_panel.restore_state(fit_parameters_state)
 
         # F21a/b: the serialized trend-panel cache holds only whichever
         # representation was active at save, so restoring it blindly can leave
@@ -12239,7 +12253,12 @@ class MainWindow(QMainWindow):
         # representation, exactly as a view switch does. ``_project_model`` is
         # already populated (``_restore_frequency_representations`` above); the
         # pull preserves per-series trend model-fits for surviving series.
-        self._refresh_trend_panel(surface=False)
+        refreshed = self._refresh_trend_panel(surface=False)
+        if fit_parameters_state and not refreshed and panel_supports_deferred_refresh:
+            # No active representation to re-derive from (e.g. a non-fit view was
+            # active at save): draw the deferred restore now so the panel isn't
+            # left blank.
+            self._fit_parameters_panel.refresh_display()
 
         restored_cross_group = getattr(self._fit_parameters_panel, "last_cross_group_fit", None)
         global_parameter_fit_window_state = state.get("global_parameter_fit_window_state")

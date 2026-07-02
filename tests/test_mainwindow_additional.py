@@ -1890,6 +1890,40 @@ class TestMainWindowFourier:
         assert isinstance(cached_time, dict)
         assert cached_time.get("result_html") == "<b>legacy time fit</b>"
 
+    def test_project_restore_builds_trend_panel_once(
+        self,
+        mainwindow: MainWindow,
+        qapp: QApplication,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The trend panel (and its heavy off-thread trend-curve compute) must be
+        built once on project open: restore_state defers its draw and the
+        re-derivation from the project model does the single refresh."""
+        state = mainwindow.collect_project_state()
+
+        restored = MainWindow()
+        panel = restored._fit_parameters_panel
+        seen = {"defer": None, "plots": 0}
+        original_restore = panel.restore_state
+        original_plot = panel._refresh_plot
+
+        def _spy_restore(s, *, defer_refresh=False):
+            seen["defer"] = defer_refresh
+            return original_restore(s, defer_refresh=defer_refresh)
+
+        def _spy_plot():
+            seen["plots"] += 1
+            return original_plot()
+
+        monkeypatch.setattr(panel, "restore_state", _spy_restore)
+        monkeypatch.setattr(panel, "_refresh_plot", _spy_plot)
+
+        restored.restore_project_state(state, str(tmp_path / "once.asymp"))
+
+        assert seen["defer"] is True  # restore_state was asked to defer its draw
+        assert seen["plots"] == 1  # exactly one panel plot refresh, not two
+
 
 class TestMainWindowBasic:
     def test_initialization(self, mainwindow: MainWindow) -> None:

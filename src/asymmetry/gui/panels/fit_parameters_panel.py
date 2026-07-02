@@ -831,7 +831,7 @@ class FitParametersPanel(QWidget):
 
         return cleaned
 
-    def restore_state(self, state: dict) -> None:
+    def restore_state(self, state: dict, *, defer_refresh: bool = False) -> None:
         # Suppress the heavy synchronous plot draws each intermediate restore step
         # would otherwise trigger (checkbox setChecked signals, group-selection
         # sync); a single off-thread recompute runs at the end. try/finally
@@ -842,10 +842,27 @@ class FitParametersPanel(QWidget):
             self._restore_state_locked(state)
         finally:
             self._suspend_plot_refresh = False
+        # Project restore immediately re-derives the panel from the project model
+        # (MainWindow._refresh_trend_panel), which rebuilds _group_fit_results and
+        # runs its own table+plot refresh. Drawing here too would build the panel
+        # — and re-run the heavy trend-curve compute — a second time. The
+        # deserialisation above already populated the state that re-derivation
+        # reads (its ``preserved`` model-fit/annotation carry-forward), so the
+        # caller passes defer_refresh=True and triggers the single draw itself.
+        if defer_refresh:
+            return
         # The table is cheap; _refresh_plot routes the heavy overlay curves
         # (model eval per fit range over an 800-pt axis — e.g. DiffusionLF_2D runs
         # scipy quadrature per sample) onto a worker behind the overlay, so a
         # saved project's trend fits don't block the GUI thread on open.
+        self.refresh_display()
+
+    def refresh_display(self) -> None:
+        """Redraw the parameter table and trend plot from the current state.
+
+        Public entry for callers that deferred :meth:`restore_state`'s refresh
+        and then need to draw (e.g. project restore where no representation-level
+        re-derivation ran)."""
         self._refresh_table()
         self._refresh_plot()
 
