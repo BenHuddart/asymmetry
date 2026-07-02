@@ -107,6 +107,21 @@ Decision: when B ≈ 0, derive the window from the data (FFT peak scan /
 Nyquist fraction); divergence message names the Window control and the current
 window bounds.
 
+**Live real-data verification (2026-07-02, scripted against the actual
+`deltat_pta_gps_2960.bin`).** The Phase 6 data-aware branch fires as intended on
+the real run (B = 0 G, T = 1.5 K): it returns a data-derived window (≈0–5.9 MHz)
+rather than the trivial `(0, 10)` field fallback, and the reconstruction
+converges (χ² falls monotonically, no divergence). But the real 2960 signal has
+**no dominant ~30 MHz peak** — the "ν ≈ 30 MHz" figure above was a mis-estimate.
+After lifetime correction the only coherent content sits at ≈0.5–2 MHz (verified
+by direct FFT of both grouped signals; everything above ~10 MHz is noise), the
+peak finder correctly locks onto ≈2 MHz, and the reconstructed spectrum puts its
+weight near-DC. So the mechanism is correct; the acceptance target should read
+"the window tracks the data-derived dominant peak instead of collapsing to the
+near-DC field fallback," not literally "contains 30 MHz." Left the original
+figure above intact for provenance rather than rewriting the audit after the
+fact.
+
 ### D8 — Plan scope → **Everything in one plan, bugs first**
 
 Phase 0 = data-integrity bugs (F21 round-trip mix-up, F9 sorted-group vanish)

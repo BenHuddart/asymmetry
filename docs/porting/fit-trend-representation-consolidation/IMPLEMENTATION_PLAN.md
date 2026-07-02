@@ -438,7 +438,12 @@ Suggested order: 0.x → 1 → 2 → 4 → 5 → 3 → 6 → 7 → 8, validating
    (no silent Global) (F10 closed).
 6. Frequency: fit range editable, default seed finds the 30 MHz EuO peak, not
    DC; Run Batch Fit enables as soon as spectra exist (F15/F16/F17 closed).
-7. MaxEnt converges on ZF EuO 2960 with default settings (window contains
-   30 MHz) and its divergence message names the Window control (F19 closed).
+7. MaxEnt converges on ZF EuO 2960 with default settings, deriving the window
+   from the data (the dominant precession peak) instead of collapsing to the
+   near-DC field fallback, and its divergence message names the Window control
+   (F19 closed). Verified live on the real run (see comparison.md §D7): the
+   data-aware window fires (≈0–5.9 MHz around the ≈2 MHz dominant peak) and the
+   reconstruction converges. NB the earlier "≈30 MHz" figure was a mis-estimate
+   — the real signal's coherent content is ≈0.5–2 MHz, not 30 MHz.
 8. Unseen-run carry-forward is visibly badged (F6 closed).
 9. `python tools/harness.py validate` green; `gui-smoke` green.
