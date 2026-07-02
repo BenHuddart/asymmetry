@@ -26,7 +26,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QDoubleSpinBox,
     QFileDialog,
     QHBoxLayout,
     QInputDialog,
@@ -78,6 +77,7 @@ from asymmetry.gui.styles.plots import (
     style_legend,
 )
 from asymmetry.gui.styles.widgets import build_nav_button_qss
+from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox
 from asymmetry.gui.widgets.projection_chip_bar import ProjectionChipBar
 from asymmetry.gui.widgets.rrf_controls import (
     install_rrf_controls,
@@ -606,7 +606,7 @@ class PlotPanel(QWidget):
             row1.addWidget(self._frequency_axis_relative_check)
 
             row1.addWidget(QLabel("Reference:"))
-            self._frequency_reference_spin = QDoubleSpinBox()
+            self._frequency_reference_spin = NoScrollDoubleSpinBox()
             self._frequency_reference_spin.setRange(0.0, 1_000_000.0)
             self._frequency_reference_spin.setDecimals(2)
             self._frequency_reference_spin.setSuffix(" G")

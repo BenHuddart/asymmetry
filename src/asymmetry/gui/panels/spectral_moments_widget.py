@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
 
 from asymmetry.core.fourier.moments import SpectrumMoments
 from asymmetry.core.fourier.units import FieldUnit, convert
+from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox
 
 # Display unit options (label, FieldUnit). Gauss first — the penetration-depth
 # reading and the field-default decision.
@@ -194,7 +195,7 @@ class SpectralMomentsWidget(QGroupBox):
         range_row.addWidget(self._range_suffix_label)
         controls.addRow("Range:", self._wrap(range_row))
 
-        self._cutoff_spin = QDoubleSpinBox()
+        self._cutoff_spin = NoScrollDoubleSpinBox()
         self._cutoff_spin.setRange(0.0, 99.0)
         self._cutoff_spin.setDecimals(1)
         self._cutoff_spin.setSingleStep(1.0)
@@ -249,7 +250,7 @@ class SpectralMomentsWidget(QGroupBox):
 
     @staticmethod
     def _make_range_spin() -> QDoubleSpinBox:
-        spin = QDoubleSpinBox()
+        spin = NoScrollDoubleSpinBox()
         spin.setDecimals(3)
         spin.setRange(-1.0e12, 1.0e12)
         spin.setKeyboardTracking(False)

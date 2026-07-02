@@ -37,7 +37,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizePolicy,
-    QSpinBox,
     QStyle,
     QStyledItemDelegate,
     QStyleOptionViewItem,
@@ -150,6 +149,7 @@ from asymmetry.gui.styles.widgets import (
 )
 from asymmetry.gui.tasks import TaskRunner, TaskWorker
 from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
+from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox, NoScrollSpinBox
 from asymmetry.gui.windows.fit_wizard_window import FitWizardWindow
 from asymmetry.gui.windows.global_fit_wizard_window import GlobalFitWizardWindow
 
@@ -926,7 +926,7 @@ class AffineTieDialog(QDialog):
 
     @staticmethod
     def _make_coeff_spin(default: float) -> QDoubleSpinBox:
-        spin = QDoubleSpinBox()
+        spin = NoScrollDoubleSpinBox()
         spin.setRange(-1e6, 1e6)
         spin.setDecimals(4)
         spin.setValue(default)
@@ -3488,7 +3488,7 @@ class GlobalFitTab(QWidget):
             "Counts are summed at the raw-histogram level, then fitted."
         )
         self._coadd_mode_combo.currentIndexChanged.connect(self._on_coadd_mode_changed)
-        self._coadd_window_spin = QSpinBox()
+        self._coadd_window_spin = NoScrollSpinBox()
         self._coadd_window_spin.setRange(2, 99)
         self._coadd_window_spin.setValue(self._coadd_window)
         self._coadd_window_spin.setToolTip("Number of successive runs co-added per fit.")

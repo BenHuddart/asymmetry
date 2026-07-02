@@ -57,6 +57,7 @@ from asymmetry.gui.styles.widgets import (
     build_primary_button_qss,
     make_provenance_label,
 )
+from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox
 
 
 class ALCFitPanel(QWidget):
@@ -134,7 +135,7 @@ class ALCFitPanel(QWidget):
     @staticmethod
     def _make_time_spin() -> QDoubleSpinBox:
         """A µs fit-range spinbox configured like the regular fit panel's."""
-        spin = QDoubleSpinBox()
+        spin = NoScrollDoubleSpinBox()
         spin.setDecimals(3)
         spin.setRange(-1000.0, 1000.0)
         spin.setSingleStep(0.1)
@@ -663,7 +664,7 @@ class ALCScanView(QWidget):
     @staticmethod
     def _make_mhz_spin(default: float) -> QDoubleSpinBox:
         """A compact MHz spinbox for the RF seed inputs."""
-        spin = QDoubleSpinBox()
+        spin = NoScrollDoubleSpinBox()
         spin.setDecimals(2)
         spin.setRange(0.0, 100000.0)
         spin.setSingleStep(1.0)
