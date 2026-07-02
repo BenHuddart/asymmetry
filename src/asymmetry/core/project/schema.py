@@ -285,15 +285,7 @@ def _migrate_v4_to_v5(data: dict) -> dict:
     """
     migrated = dict(data)
     migrated["schema_version"] = 5
-    migrated.setdefault(
-        "frequency_fit_state",
-        {
-            "domain": "frequency",
-            "single_fit_state": {},
-            "global_fit_state": {},
-            "fit_ui_state": {},
-        },
-    )
+    migrated.setdefault("frequency_fit_state", _domain_fit_state("frequency", None))
     return migrated
 
 
@@ -517,6 +509,24 @@ def _migrate_v9_to_v10(data: dict) -> dict:
     return migrated
 
 
+def _domain_fit_state(domain: str, source: object) -> dict:
+    """Return a per-domain fit-state block, defaulting missing sub-keys to ``{}``.
+
+    ``source`` is the legacy blob the block is folded from: the whole project
+    dict for the time domain (whose fit keys sit at the top level) or the nested
+    ``frequency_fit_state`` for frequency. Pass ``None`` for a canonical empty
+    block. Single source of the ``{domain, single_fit_state, global_fit_state,
+    fit_ui_state}`` shape used across migrations.
+    """
+    src = source if isinstance(source, dict) else {}
+    return {
+        "domain": domain,
+        "single_fit_state": src.get("single_fit_state") or {},
+        "global_fit_state": src.get("global_fit_state") or {},
+        "fit_ui_state": src.get("fit_ui_state") or {},
+    }
+
+
 def _migrate_v10_to_v11(data: dict) -> dict:
     """Migrate schema v10 project state to v11.
 
@@ -537,30 +547,12 @@ def _migrate_v10_to_v11(data: dict) -> dict:
     migrated = dict(data)
     migrated["schema_version"] = 11
 
-    time_state = {
-        "domain": "time",
-        "single_fit_state": migrated.get("single_fit_state") or {},
-        "global_fit_state": migrated.get("global_fit_state") or {},
-        "fit_ui_state": migrated.get("fit_ui_state") or {},
+    # Time-domain fit keys sit at the top level; frequency nests under
+    # ``frequency_fit_state``.
+    migrated["fit_states"] = {
+        "time": _domain_fit_state("time", migrated),
+        "frequency": _domain_fit_state("frequency", migrated.get("frequency_fit_state")),
     }
-
-    legacy_frequency = migrated.get("frequency_fit_state")
-    if isinstance(legacy_frequency, dict):
-        frequency_state = {
-            "domain": "frequency",
-            "single_fit_state": legacy_frequency.get("single_fit_state") or {},
-            "global_fit_state": legacy_frequency.get("global_fit_state") or {},
-            "fit_ui_state": legacy_frequency.get("fit_ui_state") or {},
-        }
-    else:
-        frequency_state = {
-            "domain": "frequency",
-            "single_fit_state": {},
-            "global_fit_state": {},
-            "fit_ui_state": {},
-        }
-
-    migrated["fit_states"] = {"time": time_state, "frequency": frequency_state}
 
     for legacy_key in (
         "single_fit_state",

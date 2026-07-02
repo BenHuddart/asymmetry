@@ -1260,6 +1260,15 @@ class TestFitPanelState:
         with pytest.raises(ValueError, match="domain 'frequency'"):
             panel.restore_domain_state("time", {"domain": "frequency"})
 
+    def test_restore_domain_state_refuses_garbage_domain_tag(self, qapp):
+        """A non-canonical tag must not collapse to 'time' and slip past the
+        guard (coerce_domain maps unknown tokens to 'time')."""
+        from asymmetry.gui.panels.fit_panel import FitPanel
+
+        panel = FitPanel()
+        with pytest.raises(ValueError, match="domain 'freq'"):
+            panel.restore_domain_state("time", {"domain": "freq"})
+
 
 # ── MainWindow project orchestration (headless) ────────────────────────────────
 

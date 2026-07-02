@@ -1857,6 +1857,39 @@ class TestMainWindowFourier:
         if legend is not None:
             assert legend.get_texts(), "legend present without entries"
 
+    def test_restore_tolerates_mistagged_fit_state_blob(
+        self, mainwindow: MainWindow, qapp: QApplication, tmp_path: Path
+    ) -> None:
+        """A corrupt/mis-tagged fit blob must not abort the whole project open;
+        it is logged and skipped (the rest of restore is best-effort)."""
+        state = mainwindow.collect_project_state()
+        # Mislabel the time-domain block so restore_domain_state('time', ...) raises.
+        state["fit_states"]["time"]["domain"] = "frequency"
+
+        restored = MainWindow()
+        # Must not raise.
+        restored.restore_project_state(state, str(tmp_path / "mistagged.asymp"))
+        assert "Skipped restoring the time-domain fit form" in (restored._log_panel.to_plain_text())
+
+    def test_restore_partial_fit_states_falls_back_per_domain(
+        self, mainwindow: MainWindow, qapp: QApplication, tmp_path: Path
+    ) -> None:
+        """A fit_states dict carrying only one domain must still read the legacy
+        top-level key for the missing domain, not silently drop it (F21c)."""
+        state = mainwindow.collect_project_state()
+        frequency_block = state["fit_states"]["frequency"]
+        # Simulate a file whose fit_states has ONLY frequency, with the time fit
+        # living in a legacy top-level single_fit_state.
+        state["fit_states"] = {"frequency": frequency_block}
+        state["single_fit_state"] = {"result_html": "<b>legacy time fit</b>", "parameters": []}
+
+        restored = MainWindow()
+        restored.restore_project_state(state, str(tmp_path / "partial.asymp"))
+
+        cached_time = restored._fit_panel._single_state_by_domain.get("time")
+        assert isinstance(cached_time, dict)
+        assert cached_time.get("result_html") == "<b>legacy time fit</b>"
+
 
 class TestMainWindowBasic:
     def test_initialization(self, mainwindow: MainWindow) -> None:

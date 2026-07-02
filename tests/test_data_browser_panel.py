@@ -305,6 +305,33 @@ def test_batch_selection_excludes_filtered_hidden_runs(qapp: QApplication) -> No
     assert {d.run_number for d in panel.get_selected_datasets()} == {61, 62}
 
 
+def test_get_state_persists_full_selection_including_filter_hidden(
+    qapp: QApplication,
+) -> None:
+    """get_state() must round-trip the FULL selection: a run hidden by a column
+    filter is still persisted, so clearing the filter after reload reveals it.
+    Only action paths (_get_selected_run_numbers) exclude hidden rows."""
+    panel = DataBrowserPanel()
+    for rn in (61, 62, 63, 64):
+        panel.add_dataset(_dataset(rn))
+
+    selection_model = panel._table.selectionModel()
+    selection_model.clearSelection()
+    for row in range(panel._table.rowCount()):
+        selection_model.select(
+            panel._table.model().index(row, 0),
+            QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+        )
+
+    panel._column_filters[0] = {"61", "62"}
+    panel._apply_row_visibility()
+    assert panel._table.isRowHidden(2) and panel._table.isRowHidden(3)
+
+    # Action selection is visibility-filtered, but persistence keeps all four.
+    assert set(panel._get_selected_run_numbers()) == {61, 62}
+    assert set(panel.get_state()["selected_run_numbers"]) == {61, 62, 63, 64}
+
+
 def test_grouped_dataset_rows_get_faint_background_tint(qapp: QApplication) -> None:
     panel = DataBrowserPanel()
     panel.add_dataset(_dataset(64))

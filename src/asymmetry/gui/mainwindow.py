@@ -11620,6 +11620,15 @@ class MainWindow(QMainWindow):
             pruned.pop("wizard_state_by_run_set", None)
             return pruned
 
+        def _domain_block(domain: str, source: dict) -> dict:
+            """Prune the regenerable payloads out of one domain's fit state."""
+            return {
+                "domain": domain,
+                "single_fit_state": _prune_single_fit_state(source.get("single_fit_state")),
+                "global_fit_state": _prune_global_fit_state(source.get("global_fit_state")),
+                "fit_ui_state": source.get("fit_ui_state", {}),
+            }
+
         time_fit_state = (
             self._fit_panel.get_domain_state("time")
             if hasattr(self._fit_panel, "get_domain_state")
@@ -11660,26 +11669,8 @@ class MainWindow(QMainWindow):
             # nested ``frequency_fit_state`` are still *read* on load (schema
             # migration folds them here) but are never written again.
             "fit_states": {
-                "time": {
-                    "domain": "time",
-                    "single_fit_state": _prune_single_fit_state(
-                        time_fit_state.get("single_fit_state")
-                    ),
-                    "global_fit_state": _prune_global_fit_state(
-                        time_fit_state.get("global_fit_state")
-                    ),
-                    "fit_ui_state": time_fit_state.get("fit_ui_state", {}),
-                },
-                "frequency": {
-                    "domain": "frequency",
-                    "single_fit_state": _prune_single_fit_state(
-                        frequency_fit_state.get("single_fit_state")
-                    ),
-                    "global_fit_state": _prune_global_fit_state(
-                        frequency_fit_state.get("global_fit_state")
-                    ),
-                    "fit_ui_state": frequency_fit_state.get("fit_ui_state", {}),
-                },
+                "time": _domain_block("time", time_fit_state),
+                "frequency": _domain_block("frequency", frequency_fit_state),
             },
             "fit_parameters_state": self._fit_parameters_panel.get_state(),
             # View preferences only (log axes, plot mode, …). The window's
@@ -12168,42 +12159,48 @@ class MainWindow(QMainWindow):
         # ``single_fit_state``/``global_fit_state``/``fit_ui_state`` for the time
         # domain and a nested ``frequency_fit_state`` for frequency; read those
         # as a fallback but never write them.
+        # Prefer the keyed block per domain, falling back to the legacy key for
+        # *that domain only* — a `fit_states` dict that carries just one domain
+        # must not suppress the legacy fallback for the other (F21c hardening).
         fit_states = state.get("fit_states")
-        if isinstance(fit_states, dict):
-            time_fit_state = fit_states.get("time")
-            frequency_fit_state = fit_states.get("frequency")
-        else:
+        fit_states = fit_states if isinstance(fit_states, dict) else {}
+
+        time_fit_state = fit_states.get("time")
+        if not isinstance(time_fit_state, dict):
             time_fit_state = {
                 "domain": "time",
                 "single_fit_state": state.get("single_fit_state") or {},
                 "global_fit_state": state.get("global_fit_state") or {},
                 "fit_ui_state": state.get("fit_ui_state") or {},
             }
+        frequency_fit_state = fit_states.get("frequency")
+        if not isinstance(frequency_fit_state, dict):
             frequency_fit_state = state.get("frequency_fit_state")
 
         # Time-domain single/global blobs drive the "open fit dock on load"
         # heuristic below (``_has_saved_fit_results``).
-        single_fit_state = (
-            time_fit_state.get("single_fit_state") if isinstance(time_fit_state, dict) else None
-        )
-        global_fit_state = (
-            time_fit_state.get("global_fit_state") if isinstance(time_fit_state, dict) else None
-        )
+        single_fit_state = time_fit_state.get("single_fit_state")
+        global_fit_state = time_fit_state.get("global_fit_state")
 
-        if isinstance(time_fit_state, dict):
-            if hasattr(self._fit_panel, "restore_domain_state"):
+        # A corrupt/mis-tagged fit blob makes restore_domain_state raise; on the
+        # project-load path that must never abort the whole open (the rest of
+        # this method is best-effort), so log and skip the offending domain form.
+        if hasattr(self._fit_panel, "restore_domain_state"):
+            try:
                 self._fit_panel.restore_domain_state("time", time_fit_state)
-            else:
-                # Panels without domain routing: apply the time blob directly.
-                single = time_fit_state.get("single_fit_state")
-                if single:
-                    self._fit_panel.restore_single_state(single)
-                global_state = time_fit_state.get("global_fit_state")
-                if global_state:
-                    self._fit_panel.restore_global_state(global_state)
-                ui_state = time_fit_state.get("fit_ui_state")
-                if ui_state:
-                    self._fit_panel.restore_ui_state(ui_state)
+            except ValueError as exc:  # noqa: BLE001 - one bad form must not abort load
+                self._log_panel.log(f"Skipped restoring the time-domain fit form: {exc}")
+        else:
+            # Panels without domain routing: apply the time blob directly.
+            single = time_fit_state.get("single_fit_state")
+            if single:
+                self._fit_panel.restore_single_state(single)
+            global_state = time_fit_state.get("global_fit_state")
+            if global_state:
+                self._fit_panel.restore_global_state(global_state)
+            ui_state = time_fit_state.get("fit_ui_state")
+            if ui_state:
+                self._fit_panel.restore_ui_state(ui_state)
 
         multi_group_fit_state = state.get("multi_group_fit_state")
         if (
@@ -12216,8 +12213,15 @@ class MainWindow(QMainWindow):
         if isinstance(frequency_fit_state, dict) and hasattr(
             self._fit_panel, "restore_domain_state"
         ):
-            self._fit_panel.restore_domain_state("frequency", frequency_fit_state)
-            if self._plot_workspace.active_domain() == "frequency":
+            try:
+                self._fit_panel.restore_domain_state("frequency", frequency_fit_state)
+            except ValueError as exc:  # noqa: BLE001 - one bad form must not abort load
+                self._log_panel.log(f"Skipped restoring the frequency-domain fit form: {exc}")
+                frequency_fit_state = None
+            if (
+                isinstance(frequency_fit_state, dict)
+                and self._plot_workspace.active_domain() == "frequency"
+            ):
                 if hasattr(self._fit_panel, "set_domain"):
                     self._fit_panel.set_domain("frequency")
                 self._fit_panel.set_dataset(self._active_frequency_fit_dataset())

@@ -1366,7 +1366,7 @@ class DataBrowserPanel(QWidget):
         if selection_model is None:
             return selected
         for idx in selection_model.selectedRows():
-            if visible_only and self._table.isRowHidden(idx.row()):
+            if visible_only and not self._is_row_visible_for_selection(idx.row()):
                 continue
             item = self._table.item(idx.row(), 0)
             if item is None:
@@ -3051,7 +3051,11 @@ class DataBrowserPanel(QWidget):
     # ------------------------------------------------------------------
 
     def _create_table_context_menu(self) -> QMenu | None:
-        keys = self._selected_keys()
+        # Gate menu items on the *visible* selection, matching the run set the
+        # action handlers act on (they read _get_selected_run_numbers, which is
+        # visibility-filtered). Otherwise a filter-hidden selection could enable
+        # an action that then operates on fewer/zero runs (F9).
+        keys = self._selected_keys(visible_only=True)
         if not keys:
             return None
 
@@ -4177,7 +4181,11 @@ class DataBrowserPanel(QWidget):
             if self._current_sort_order == Qt.SortOrder.AscendingOrder
             else "descending",
             "filters": filters,
-            "selected_run_numbers": self._get_selected_run_numbers(),
+            # Persist the FULL selection (including rows a column filter hides):
+            # get_state must round-trip the whole selection so clearing the
+            # filter after reload reveals it. Only *action* paths
+            # (_get_selected_run_numbers) exclude hidden rows.
+            "selected_run_numbers": self._dataset_run_numbers_from_keys(self._selected_keys()),
             "selected_group_ids": selected_group_ids,
             "data_groups": data_groups,
             "extra_columns": [column.to_dict() for column in self._extra_columns],

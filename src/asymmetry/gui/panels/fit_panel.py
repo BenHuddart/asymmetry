@@ -8573,7 +8573,12 @@ class FitPanel(QWidget):
         if not isinstance(state, dict):
             state = {}
         tag = state.get("domain")
-        if tag is not None and coerce_domain(tag) != normalized:
+        # Compare the raw tag against the canonical domain rather than routing it
+        # through coerce_domain: coerce_domain maps *any* unrecognised token to
+        # "time", which would let a garbage/typo tag (e.g. "freq") silently pass
+        # when restoring the time domain. get_domain_state always writes the
+        # canonical token, so a correct blob matches exactly.
+        if tag is not None and str(tag).strip().lower() != normalized:
             raise ValueError(
                 f"restore_domain_state({normalized!r}) received fit state tagged for domain {tag!r}"
             )
