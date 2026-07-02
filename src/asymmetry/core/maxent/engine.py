@@ -624,11 +624,23 @@ def _resolve_frequency_window(
         center = 0.0
     half_width = _field_to_frequency_mhz(float(config.window_half_width_gauss))
 
-    # ``auto_window`` is an explicit request to derive the window from the run
-    # field, so it must win over (possibly stale) explicit bounds.  Explicit
-    # bounds are honoured when auto mode is off or the field is unusable.
+    # ``auto_window`` is an explicit request to derive the window without user
+    # input, so it must win over (possibly stale) explicit bounds — the Window
+    # min/max fields are disabled but not cleared while auto is checked, and a
+    # loaded project can carry stale values too.  Explicit bounds are honoured
+    # only when auto mode is off.
     if config.auto_window and center > 0.0 and half_width > 0.0:
         return max(0.0, center - half_width), center + half_width
+
+    # ZF/near-ZF: the field-based window above collapsed to the near-DC
+    # fallback below, guaranteeing a diverging reconstruction whenever the
+    # physical precession frequency sits outside it (D7/F19).  Derive the
+    # window from the data instead, before stale explicit bounds get a
+    # chance to win.
+    if config.auto_window and groups:
+        data_window = _data_aware_zf_window(groups)
+        if data_window is not None:
+            return data_window
 
     explicit_min = config.f_min_mhz
     explicit_max = config.f_max_mhz
@@ -636,15 +648,6 @@ def _resolve_frequency_window(
         return float(explicit_min), float(explicit_max)
     if explicit_max is not None and explicit_max > 0.0:
         return max(0.0, float(explicit_min or 0.0)), float(explicit_max)
-
-    # ZF/near-ZF: the field-based window collapsed to the near-DC fallback
-    # below, guaranteeing a diverging reconstruction whenever the physical
-    # precession frequency sits outside it (D7/F19).  Derive the window from
-    # the data instead before giving up.
-    if config.auto_window and groups:
-        data_window = _data_aware_zf_window(groups)
-        if data_window is not None:
-            return data_window
 
     return 0.0, max(10.0, center + half_width)
 

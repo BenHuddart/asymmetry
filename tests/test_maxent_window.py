@@ -45,6 +45,18 @@ def test_zf_window_is_data_aware_and_contains_internal_field() -> None:
     assert prepared.f_max_mhz < 100.0
 
 
+def test_relaxation_only_zf_run_keeps_a_dc_inclusive_window() -> None:
+    """A purely-relaxing ZF signal (no coherent precession) has no peak for the
+    guarded finder to lock onto above its DC guard band; the window must stay
+    usable (DC-inclusive, non-degenerate) rather than reconstructing junk."""
+    run = _synthetic_run(field_gauss=0.0, frequency_mhz=0.0)
+    config = MaxEntConfig(auto_window=True)
+    prepared = build_maxent_input(run, config)
+
+    assert prepared.f_min_mhz == 0.0
+    assert prepared.f_max_mhz > prepared.f_min_mhz
+
+
 def test_tf_window_stays_field_centred() -> None:
     """A field-scanning TF run keeps the existing field-centred auto window (regression)."""
     run = _synthetic_run(field_gauss=100.0, frequency_mhz=1.3554, n=256)
@@ -67,3 +79,15 @@ def test_explicit_window_bounds_still_win_when_auto_window_off() -> None:
 
     assert prepared.f_min_mhz == 0.1
     assert prepared.f_max_mhz == 4.0
+
+
+def test_stale_explicit_bounds_do_not_defeat_auto_window_on_zf_run() -> None:
+    """The GUI's Window min/max fields are disabled-but-not-cleared while Auto
+    is checked, and a loaded project can carry stale f_min/f_max too — auto
+    must still win over leftover bounds from an earlier TF exploration,
+    otherwise the D7/F19 fix never engages for the exact scenario it targets."""
+    run = _synthetic_run(field_gauss=0.0, frequency_mhz=30.0)
+    config = MaxEntConfig(auto_window=True, f_min_mhz=0.1, f_max_mhz=4.0)
+    prepared = build_maxent_input(run, config)
+
+    assert prepared.f_min_mhz <= 30.0 <= prepared.f_max_mhz
