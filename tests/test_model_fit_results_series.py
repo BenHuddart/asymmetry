@@ -83,7 +83,7 @@ def test_records_trendable_results_series(mainwindow: MainWindow) -> None:
     assert len(modelfit) == 1
     series = modelfit[0]
     assert series.is_computed  # no canonical model
-    assert series.display_name("x") == "Model fit: lambda vs field"
+    assert series.display_name("x") == "Model fit · lambda vs field"
 
     rows = mainwindow._build_series_rows(series)
     # Two group rows + one globals row.
@@ -408,7 +408,7 @@ def test_single_fit_ranges_become_trendable_rows(mainwindow: MainWindow) -> None
     series = _single_series(mainwindow)
     assert series is not None
     assert series.is_computed
-    assert series.display_name("x") == "Model fit (single): lambda vs temperature"
+    assert series.display_name("x") == "Model fit (single) · lambda vs temperature"
 
     rows = mainwindow._build_series_rows(series)
     assert len(rows) == 2

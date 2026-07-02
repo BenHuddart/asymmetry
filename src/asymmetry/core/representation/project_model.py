@@ -22,28 +22,16 @@ from asymmetry.core.representation.container import DatasetRepresentations
 from asymmetry.core.representation.series import FitSeries, canonical_model_matches
 
 
-def _series_fit_range(series: FitSeries) -> str | None:
-    """Return the fit range recorded with a series, or ``None``.
-
-    All members of a batch share one fit window, so the first recorded
-    ``fit_range`` is representative. Used to keep batches over the same runs but
-    *different* windows distinct when de-duplicating identical re-runs.
-    """
-    for result in series.results_by_run.values():
-        if isinstance(result, dict):
-            fit_range = result.get("fit_range")
-            if fit_range:
-                return str(fit_range)
-    return None
-
-
 def _series_signature(series: FitSeries) -> tuple:
     """A comparable identity for a fit series: same → a duplicate re-run.
 
-    Captures the representation, member kind + source runs, normalised canonical
-    model, parameter classification, and fit window. Two batches with the same
-    signature differ only in their (newer) results, so the later one supersedes
-    the earlier rather than accumulating a duplicate trend pill.
+    Captures the representation (and projection, when a series is scoped to one),
+    member kind + source runs, and the normalised canonical model. Parameter
+    classification (``param_roles``) and the fit window (``fit_range``) are
+    deliberately **excluded**: they are attributes of a run, not identity, so
+    re-running the same members+model with a different Global/Local split (or a
+    different fit window) supersedes the earlier series in place (D4) rather than
+    accumulating a duplicate trend pill.
     """
     if series.member_kind == "groups":
         members = tuple(sorted(set(series.member_source_run.values())))
@@ -56,14 +44,16 @@ def _series_signature(series: FitSeries) -> tuple:
         except (ValueError, KeyError, TypeError):
             normalised = series.canonical_model
         model_key = json.dumps(normalised, sort_keys=True, default=str)
-    roles = tuple(sorted(series.param_roles.items()))
+    # A series is not projection-scoped today (batches span a whole rep_type),
+    # but the key reserves the slot so a future per-projection batch does not
+    # collide with the whole-representation one over the same members.
+    projection = series.extra.get("projection") if isinstance(series.extra, dict) else None
     return (
         str(series.rep_type),
+        projection,
         series.member_kind,
         members,
         model_key,
-        roles,
-        _series_fit_range(series),
     )
 
 
@@ -106,10 +96,10 @@ class ProjectModel:
         """Return ids of existing batches that *series* makes redundant.
 
         A batch is superseded when it has the same identity signature as
-        *series* (same representation, members, model, classification and fit
-        window) — i.e. it is an earlier run of the very same batch. Computed
-        (model-less) series are never matched, since two scans over the same
-        runs are legitimately distinct results.
+        *series* (same representation, members and model) — i.e. it is an earlier
+        run of the very same batch, even if its Global/Local classification or
+        fit window differs. Computed (model-less) series are never matched, since
+        two scans over the same runs are legitimately distinct results.
         """
         if series.is_computed:
             return []
@@ -123,15 +113,75 @@ class ProjectModel:
         ]
 
     def remove_superseded_batches(self, series: FitSeries) -> list[str]:
-        """Remove and return prior batches identical to *series* (de-dup re-runs).
+        """Remove prior batches identical to *series* and inherit their identity.
 
         Stops re-running the same batch from accumulating duplicate trend
-        "pills": the freshly recorded series replaces its older twins.
+        "pills": the freshly recorded series replaces its older twins. So the
+        chip and any back-references stay stable across the re-run, *series*
+        inherits the superseded twin's ``batch_id`` and — unless it already
+        carries one — its user ``label``. Mutating ``series.batch_id`` here means
+        callers must write member ``FitSlot`` pointers from ``series.batch_id``
+        (not a pre-allocated id) *after* this returns.
         """
         removed = self.superseded_batch_ids(series)
+        if not removed:
+            return removed
+        # The signatures are identical, so there is normally exactly one twin;
+        # if a legacy project carried several, inherit the first (oldest) one's
+        # identity and drop the rest.
+        predecessor = self.batches.get(removed[0])
         for batch_id in removed:
             self.remove_batch(batch_id)
+        if predecessor is not None:
+            if not series.label and predecessor.label:
+                series.label = predecessor.label
+            series.batch_id = predecessor.batch_id
         return removed
+
+    def dedupe_batches(self) -> list[dict]:
+        """Collapse batches sharing an identity signature (load-time migration).
+
+        Projects saved during the duplicate era (before replace-in-place, D4)
+        can carry several identically-keyed batch series over the same
+        members+model. For each such group keep the **most recently recorded**
+        one (its results are freshest and its id is the one member ``FitSlot``\\ s
+        already reference), drop the rest, and carry a user ``label`` forward onto
+        the survivor when it has none. Computed (model-less) series are never
+        merged. Returns one record ``{"kept", "dropped", "label"}`` per collapsed
+        group so the caller can log what changed; no schema bump — this is
+        tolerant reading of an already-valid project.
+        """
+        groups: dict[tuple, list[str]] = {}
+        for batch_id, series in self.batches.items():
+            if series.is_computed:
+                continue
+            groups.setdefault(_series_signature(series), []).append(batch_id)
+
+        records: list[dict] = []
+        for ids in groups.values():
+            if len(ids) < 2:
+                continue
+            # ``self.batches`` preserves the saved (recording) order, so the last
+            # id is the most recent — keep it and drop its earlier twins.
+            keeper_id = ids[-1]
+            dropped = ids[:-1]
+            keeper = self.batches[keeper_id]
+            if not keeper.label:
+                for other_id in dropped:
+                    other = self.batches.get(other_id)
+                    if other is not None and other.label:
+                        keeper.label = other.label
+                        break
+            for other_id in dropped:
+                self.remove_batch(other_id)
+            records.append(
+                {
+                    "kept": keeper_id,
+                    "dropped": list(dropped),
+                    "label": keeper.display_name(keeper_id),
+                }
+            )
+        return records
 
     def remove_batch(self, batch_id: str) -> FitSeries | None:
         """Remove and return the batch with *batch_id*, clearing member FitSlot pointers.

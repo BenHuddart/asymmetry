@@ -129,6 +129,8 @@ from asymmetry.core.representation import (
     RepresentationType,
     build_maxent_reconstruction_datasets,
     canonical_model_matches,
+    composite_model_label,
+    default_series_label,
 )
 from asymmetry.core.representation.project_model import ProjectModel
 from asymmetry.core.transform import (
@@ -5748,6 +5750,16 @@ class MainWindow(QMainWindow):
         recomputed keep whatever the legacy array fallback restored.
         """
         self._project_model = ProjectModel.from_project_state(state)
+        # Load-time migration (D4): projects saved before replace-in-place can
+        # carry duplicate identically-keyed batch series over the same
+        # members+model. Collapse them to the most recent, keeping any user label.
+        for record in self._project_model.dedupe_batches():
+            dropped = ", ".join(record["dropped"])
+            self._log_panel.log(
+                f"Merged {len(record['dropped'])} duplicate batch series into "
+                f"'{record['label']}' (dropped {dropped}).",
+                tag="fit",
+            )
         self._lazy_recompute_failures = set()
         self._pending_recipe_recompute = set()
         for run_number, container in self._project_model.datasets.items():
@@ -8386,21 +8398,10 @@ class MainWindow(QMainWindow):
     def _composite_model_label(composite: object) -> str | None:
         """Human-readable model expression from a serialised composite model.
 
-        e.g. ``{"component_names": ["Exponential", "Constant"], "operators":
-        ["+"]}`` -> ``"Exponential + Constant"``. Returns ``None`` when the
-        structure is missing or empty.
+        Delegates to the shared core helper (:func:`composite_model_label`) so
+        the GUI and the series-naming scheme render model expressions identically.
         """
-        if not isinstance(composite, dict):
-            return None
-        names = composite.get("component_names") or []
-        operators = composite.get("operators") or []
-        if not names:
-            return None
-        parts = [str(names[0])]
-        for op, name in zip(operators, names[1:]):
-            parts.append(str(op))
-            parts.append(str(name))
-        return " ".join(parts)
+        return composite_model_label(composite)
 
     def _fit_result_summary(
         self,
@@ -8736,7 +8737,7 @@ class MainWindow(QMainWindow):
             if not row_dicts:
                 continue
             batch_id = series.batch_id
-            name = series.display_name(f"Series {idx}")
+            name = series.display_name(self._series_fallback_name(series))
             entries.append((batch_id, name, row_dicts))
             shared = series.shared_parameters()
             if shared:
@@ -9093,16 +9094,13 @@ class MainWindow(QMainWindow):
             summary.update(self._dataset_trend_coords(int(run)))
             results_by_run[int(run)] = summary
         batch_id = self._next_batch_id()
-        # When launched from a data-group header, name the series after that group
-        # (e.g. "T = 150 K") rather than the model formula + run span — matching the
-        # grouped path so the same "fit from group header" action labels consistently.
-        batch_label = self._data_group_name_for_runs(
-            member_runs
-        ) or self._default_batch_series_label(model_label, member_runs)
+        # No baked-in label: the unified default (<model> · <members> [· <group>])
+        # is rendered on demand by _series_fallback_name so ``label`` holds only a
+        # user rename — which then survives a re-run via remove_superseded_batches.
         batch = FitSeries(
             batch_id,
             rep_type,
-            label=batch_label,
+            label=None,
             member_run_numbers=member_runs,
             order_key="field",
             canonical_model=canonical_model,
@@ -9113,12 +9111,14 @@ class MainWindow(QMainWindow):
         return self._record_fit_series(
             batch,
             slot_runs=member_runs,
+            # batch.batch_id (not the local batch_id) so a re-run that supersedes
+            # an earlier twin re-points member slots at the inherited id.
             slot_factory=lambda run: FitSlot(
                 model=canonical_model,
                 parameters=template_parameters,
                 result=dict(results_by_run[int(run)]),
                 provenance=provenance,
-                batch_id=batch_id,
+                batch_id=batch.batch_id,
             ),
         )
 
@@ -9796,17 +9796,13 @@ class MainWindow(QMainWindow):
             return None
 
         batch_id = self._next_batch_id()
-        # When the batch was launched from a data-group header, name the series after
-        # that group (e.g. "T = 150 K") rather than the model formula + run span.
-        series_label = self._data_group_name_for_runs(
-            unique_source_runs
-        ) or self._default_batch_series_label(
-            model_label, list(member_source_run.values()), groups=True
-        )
+        # No baked-in label: the unified default (<model> · groups <members>
+        # [· <group>]) is rendered on demand by _series_fallback_name so ``label``
+        # holds only a user rename, which survives a re-run.
         series = FitSeries(
             batch_id,
             rep_type,
-            label=series_label,
+            label=None,
             member_kind="groups",
             member_run_numbers=member_keys,
             member_source_run=member_source_run,
@@ -9817,14 +9813,16 @@ class MainWindow(QMainWindow):
             results_by_run=results_by_run,
         )
         # One pointer slot per source run; the series carries the per-group results.
+        # series.batch_id (not the local batch_id) so a re-run that supersedes an
+        # earlier twin re-points member slots at the inherited id.
         return self._record_fit_series(
             series,
             slot_runs=unique_source_runs,
             slot_factory=lambda run: FitSlot(
                 model=canonical_model,
-                result={"series_id": batch_id},
+                result={"series_id": series.batch_id},
                 provenance=provenance,
-                batch_id=batch_id,
+                batch_id=series.batch_id,
             ),
         )
 
@@ -9884,28 +9882,24 @@ class MainWindow(QMainWindow):
         name = browser.get_group_name(group_id)
         return name.strip() if isinstance(name, str) and name.strip() else None
 
-    @staticmethod
-    def _default_batch_series_label(
-        model_label: str, runs: list[int], *, groups: bool = False
-    ) -> str:
-        """Informative default name for a freshly-recorded batch FitSeries.
-
-        Combines the model and the run range (e.g. ``"StretchedExp+Const ·
-        1276–1289"``) so the just-computed series is identifiable in the trend
-        panel's selector among any older series, rather than a bare "Series N".
-        The user can still rename it.
-        """
-        numbers = sorted({int(r) for r in runs}) if runs else []
-        if numbers:
-            span = f"{numbers[0]}" if len(numbers) == 1 else f"{numbers[0]}–{numbers[-1]}"
-            run_part = f"groups {span}" if groups else span
-        else:
-            run_part = "groups" if groups else "batch"
-        model = (model_label or "").strip()
-        return f"{model} · {run_part}" if model else run_part
-
     def _series_fallback_name(self, series) -> str:
-        """Return the positional "Series N" fallback label consistent with the trend panel."""
+        """Default display label for a series the user hasn't renamed.
+
+        Model-bearing batch/global series get the unified
+        ``<model> · <member-range>[ · <group>]`` scheme (D4/D8) via the core
+        :func:`default_series_label` helper; the DataGroup name (when the members
+        coincide with one browser group) is appended as a *suffix* rather than
+        replacing the label. Computed (model-less) series always carry an explicit
+        label, so they only reach the positional "Series N" fallback defensively.
+        """
+        if not series.is_computed:
+            if series.member_kind == "groups":
+                source_runs = sorted(set(series.member_source_run.values()))
+            else:
+                source_runs = list(series.member_run_numbers)
+            group_name = self._data_group_name_for_runs(source_runs)
+            return default_series_label(series, group_name=group_name)
+        # Positional fallback, consistent with the trend panel's series ordering.
         rep_type = series.rep_type
         series_for_rep = sorted(
             (s for s in self._project_model.batches.values() if s.rep_type == rep_type),
@@ -10492,7 +10486,7 @@ class MainWindow(QMainWindow):
         self._add_results_series(
             batch_id,
             rep_type,
-            f"Model fit: {parameter_name} vs {x_key}",
+            f"Model fit · {parameter_name} vs {x_key}",
             member_run_numbers,
             results_by_run,
             extra=preserved_extra,
@@ -10833,7 +10827,7 @@ class MainWindow(QMainWindow):
         self._add_results_series(
             batch_id,
             rep_type,
-            f"Model fit (single): {parameter_name} vs {x_key}",
+            f"Model fit (single) · {parameter_name} vs {x_key}",
             member_run_numbers,
             results_by_run,
         )

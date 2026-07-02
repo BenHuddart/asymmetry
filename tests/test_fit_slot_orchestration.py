@@ -292,8 +292,10 @@ def test_grouped_batch_creates_group_series_and_pointer_slot(mw, monkeypatch):
 
 
 def test_grouped_batch_series_named_after_data_group(mw, monkeypatch):
-    # A batch launched from a data-group header names the series after the group
-    # (e.g. "T = 150 K") rather than the model formula + run span.
+    # A batch launched from a data-group header appends the group name (e.g.
+    # "T = 150 K") as a *suffix* of the unified default label, not a replacement.
+    # ``label`` stays None (reserved for user renames); the group hint lives in
+    # the display fallback.
     for rn in (42, 43):
         mw._data_browser.add_dataset(_dataset(rn))
     mw._data_browser.create_data_group([42, 43], name="T = 150 K")
@@ -315,7 +317,11 @@ def test_grouped_batch_series_named_after_data_group(mw, monkeypatch):
     mw._record_grouped_fit_series(grouped_datasets, results)
 
     series = next(iter(mw._project_model.batches.values()))
-    assert series.label == "T = 150 K"
+    assert series.label is None
+    name = series.display_name(mw._series_fallback_name(series))
+    assert name.startswith("Exponential")
+    assert "groups 42–43" in name
+    assert name.endswith("· T = 150 K")
 
 
 def test_single_grouped_fit_writes_slot_not_series(mw, monkeypatch):

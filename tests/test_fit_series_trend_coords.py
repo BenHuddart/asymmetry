@@ -122,8 +122,11 @@ def test_batch_series_has_informative_default_label(win: MainWindow) -> None:
     coords = {1276: (125.0, 400.0), 1289: (10.0, 400.0)}
     batch_id = _run_batch(win, coords)
     series = win._project_model.batch(batch_id)
-    # Default label carries the model and the run range, not a bare "Series N".
-    assert "1276" in series.label and "1289" in series.label
+    # ``label`` is reserved for user renames; the informative default (model +
+    # run range) is rendered on demand as the display fallback.
+    assert series.label is None
+    default = win._series_fallback_name(series)
+    assert "1276" in default and "1289" in default
 
 
 def test_missing_metadata_point_is_off_axis_not_zero(win: MainWindow) -> None:

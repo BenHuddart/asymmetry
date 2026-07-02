@@ -69,26 +69,35 @@ def _batch(batch_id: str, *, model=None, runs=(1, 2), roles=None, fit_range="0.1
 
 
 def test_remove_superseded_batches_dedupes_identical_rerun():
-    """Re-running the same batch supersedes the earlier identical series."""
+    """Re-running the same batch supersedes the earlier identical series.
+
+    The replacement inherits the superseded twin's ``batch_id`` so the chip and
+    any back-references stay stable across the re-run.
+    """
     model = ProjectModel()
     first = _batch("b1")
     model.add_batch(first)
     second = _batch("b2")  # same model / runs / roles / range as b1
     removed = model.remove_superseded_batches(second)
     assert removed == ["b1"]
+    assert second.batch_id == "b1"  # inherited the stable id
     model.add_batch(second)
-    assert model.batch("b1") is None
-    assert model.batch("b2") is second
+    assert model.batch("b1") is second
+    assert model.batch("b2") is None
 
 
-def test_remove_superseded_keeps_distinct_fit_range():
-    """A different fit window is a genuinely distinct series, not a duplicate."""
+def test_remove_superseded_ignores_fit_range_and_roles():
+    """Fit window and Global/Local split are attributes, not identity (D4).
+
+    Re-running the same members+model with a different fit window or a different
+    parameter classification supersedes the earlier series in place rather than
+    spawning a duplicate trend pill.
+    """
     model = ProjectModel()
-    model.add_batch(_batch("b1", fit_range="0.1-8 µs"))
-    other = _batch("b2", fit_range="0.2-6 µs")
-    assert model.remove_superseded_batches(other) == []
-    model.add_batch(other)
-    assert model.batch("b1") is not None and model.batch("b2") is not None
+    model.add_batch(_batch("b1", fit_range="0.1-8 µs", roles={"A": "global"}))
+    # Same members + model, but a narrower window and an all-local split.
+    other = _batch("b2", fit_range="0.2-6 µs", roles={"A": "local"})
+    assert model.remove_superseded_batches(other) == ["b1"]
 
 
 def test_remove_superseded_keeps_distinct_model():

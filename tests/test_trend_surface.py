@@ -889,9 +889,10 @@ class TestSeriesRenameAndLabel:
         mw._on_series_rename_requested(series.batch_id, "Field sweep")
         mw._on_series_rename_requested(series.batch_id, "")
         assert mw._project_model.batch(series.batch_id).label is None
-        # The panel button should show the positional fallback "Series 1".
+        # Clearing the label reverts to the unified default (<model> · <members>),
+        # not a bare positional "Series N".
         button = mw._fit_parameters_panel._group_button_map.get(series.batch_id)
-        assert button is not None and button.text() == "Series 1"
+        assert button is not None and button.text() == "Exponential · 10–11"
 
     def test_add_to_series_chooser_shows_user_label(self, mw, monkeypatch):
         from PySide6.QtWidgets import QInputDialog
