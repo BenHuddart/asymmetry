@@ -11,7 +11,7 @@ Compatibility policy
 * Migration functions are one-per-step and retained for at least one major schema revision.
 * Unknown top-level fields in a valid schema are preserved on load/save cycles.
 
-Current schema (version 10)
+Current schema (version 11)
 ---------------------------
 ::
 
@@ -40,6 +40,12 @@ Current schema (version 10)
             "filters": {"3": ["150.0"]},
             "selected_run_numbers": [3077],
             "selected_group_ids": [],
+            # GUI display state (name/members/collapsed) for the data browser's
+            # group headers. Distinct from the top-level "data_groups" block
+            # (Phase 7/D1, not shown in this pre-v6 illustrative example): that
+            # one is the core DataGroup registry (no "collapsed"), mirrored from
+            # this block at load/save so FitSeries.source_group_id provenance
+            # can resolve without a GUI dependency.
             "data_groups": [],
             "extra_columns": [
                 {"id": "nexus_fields.sample.shape", "label": "Orientation",
@@ -69,17 +75,31 @@ Current schema (version 10)
             "fit_curve": null,
             "fit_curves": {}
         },
-        "single_fit_state": {
-            "model_name": "ExponentialRelaxation",
-            "parameters": [
-                {"name": "A0", "value": 0.2, "fixed": false, "min": "-inf", "max": "inf"}
-            ]
-        },
-        "global_fit_state": {
-            "model_name": "ExponentialRelaxation",
-            "parameters": [
-                {"name": "A0", "value": 0.2, "type": "Global", "bounds": "-inf, inf"}
-            ]
+        "fit_states": {
+            "time": {
+                "domain": "time",
+                "single_fit_state": {
+                    "model_name": "ExponentialRelaxation",
+                    "parameters": [
+                        {"name": "A0", "value": 0.2, "fixed": false,
+                         "min": "-inf", "max": "inf"}
+                    ]
+                },
+                "global_fit_state": {
+                    "model_name": "ExponentialRelaxation",
+                    "parameters": [
+                        {"name": "A0", "value": 0.2, "type": "Global",
+                         "bounds": "-inf, inf"}
+                    ]
+                },
+                "fit_ui_state": {}
+            },
+            "frequency": {
+                "domain": "frequency",
+                "single_fit_state": {},
+                "global_fit_state": {},
+                "fit_ui_state": {}
+            }
         },
         "fourier_state": {
             "window": "none",
@@ -95,12 +115,6 @@ Current schema (version 10)
             "estimate_average_error": false,
             "group_enabled_table": {},
             "group_phase_table": {}
-        },
-        "frequency_fit_state": {
-            "domain": "frequency",
-            "single_fit_state": {},
-            "global_fit_state": {},
-            "fit_ui_state": {}
         }
     }
 """
@@ -111,9 +125,9 @@ import json
 import math
 from pathlib import Path
 
-CURRENT_SCHEMA_VERSION: int = 10
+CURRENT_SCHEMA_VERSION: int = 11
 
-_SUPPORTED_VERSIONS: frozenset[int] = frozenset({1, 2, 3, 4, 5, 6, 7, 8, 9, 10})
+_SUPPORTED_VERSIONS: frozenset[int] = frozenset({1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11})
 
 #: Fourier-state keys that describe the FFT generation recipe (recipe-only
 #: persistence carries these into each dataset's ``freq_fft`` representation).
@@ -205,6 +219,9 @@ def migrate_to_current(data: dict) -> dict:
         version = 9
     if version == 9:
         migrated = _migrate_v9_to_v10(migrated)
+        version = 10
+    if version == 10:
+        migrated = _migrate_v10_to_v11(migrated)
     return migrated
 
 
@@ -274,15 +291,7 @@ def _migrate_v4_to_v5(data: dict) -> dict:
     """
     migrated = dict(data)
     migrated["schema_version"] = 5
-    migrated.setdefault(
-        "frequency_fit_state",
-        {
-            "domain": "frequency",
-            "single_fit_state": {},
-            "global_fit_state": {},
-            "fit_ui_state": {},
-        },
-    )
+    migrated.setdefault("frequency_fit_state", _domain_fit_state("frequency", None))
     return migrated
 
 
@@ -502,6 +511,62 @@ def _migrate_v9_to_v10(data: dict) -> dict:
                 upgraded.append(entry)
         browser_state["extra_columns"] = upgraded
         migrated["browser_state"] = browser_state
+
+    return migrated
+
+
+def _domain_fit_state(domain: str, source: object) -> dict:
+    """Return a per-domain fit-state block, defaulting missing sub-keys to ``{}``.
+
+    ``source`` is the legacy blob the block is folded from: the whole project
+    dict for the time domain (whose fit keys sit at the top level) or the nested
+    ``frequency_fit_state`` for frequency. Pass ``None`` for a canonical empty
+    block. Single source of the ``{domain, single_fit_state, global_fit_state,
+    fit_ui_state}`` shape used across migrations.
+    """
+    src = source if isinstance(source, dict) else {}
+    return {
+        "domain": domain,
+        "single_fit_state": src.get("single_fit_state") or {},
+        "global_fit_state": src.get("global_fit_state") or {},
+        "fit_ui_state": src.get("fit_ui_state") or {},
+    }
+
+
+def _migrate_v10_to_v11(data: dict) -> dict:
+    """Migrate schema v10 project state to v11.
+
+    v11 consolidates the fit-panel state into a single representation-keyed
+    ``fit_states`` block so the time- and frequency-domain fit forms round-trip
+    symmetrically.  Earlier schemas stored the time-domain single/global/UI fit
+    state as *un-keyed* top-level keys (``single_fit_state``,
+    ``global_fit_state``, ``fit_ui_state``) while the frequency domain nested
+    under ``frequency_fit_state`` -- an asymmetry that let a frequency fit form
+    bleed into the time-domain form on restore (F21c).
+
+    This migration folds the legacy keys into
+    ``fit_states = {"time": ..., "frequency": ...}`` and drops the legacy
+    top-level copies.  Each per-domain block carries a ``domain`` tag so a stale
+    blob can never be applied to the wrong domain.  ``multi_group_fit_state`` is
+    unrelated to the per-domain fit forms and is left at the top level.
+    """
+    migrated = dict(data)
+    migrated["schema_version"] = 11
+
+    # Time-domain fit keys sit at the top level; frequency nests under
+    # ``frequency_fit_state``.
+    migrated["fit_states"] = {
+        "time": _domain_fit_state("time", migrated),
+        "frequency": _domain_fit_state("frequency", migrated.get("frequency_fit_state")),
+    }
+
+    for legacy_key in (
+        "single_fit_state",
+        "global_fit_state",
+        "fit_ui_state",
+        "frequency_fit_state",
+    ):
+        migrated.pop(legacy_key, None)
 
     return migrated
 

@@ -68,6 +68,12 @@ from asymmetry.core.fitting.grouped_time_domain import (
     grouped_time_domain_available,
     recommend_grouped_series_seeding,
 )
+from asymmetry.core.fitting.member_quality import (
+    MEMBER_QUALITY_FLAGS,
+    MemberQuality,
+    assess_member_quality,
+    member_quality_flags,
+)
 from asymmetry.core.fitting.models import MODELS
 from asymmetry.core.fitting.mu_kinetics import (
     ArrheniusResult,
@@ -197,6 +203,10 @@ __all__ = [
     "fit_grouped_time_domain",
     "fit_result_summary",
     "parameters_at_bound",
+    "MEMBER_QUALITY_FLAGS",
+    "MemberQuality",
+    "assess_member_quality",
+    "member_quality_flags",
     "grouped_time_domain_available",
     "sc",
     "muon_fluorine",

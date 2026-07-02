@@ -292,8 +292,10 @@ def test_grouped_batch_creates_group_series_and_pointer_slot(mw, monkeypatch):
 
 
 def test_grouped_batch_series_named_after_data_group(mw, monkeypatch):
-    # A batch launched from a data-group header names the series after the group
-    # (e.g. "T = 150 K") rather than the model formula + run span.
+    # A batch launched from a data-group header appends the group name (e.g.
+    # "T = 150 K") as a *suffix* of the unified default label, not a replacement.
+    # ``label`` stays None (reserved for user renames); the group hint lives in
+    # the display fallback.
     for rn in (42, 43):
         mw._data_browser.add_dataset(_dataset(rn))
     mw._data_browser.create_data_group([42, 43], name="T = 150 K")
@@ -315,7 +317,11 @@ def test_grouped_batch_series_named_after_data_group(mw, monkeypatch):
     mw._record_grouped_fit_series(grouped_datasets, results)
 
     series = next(iter(mw._project_model.batches.values()))
-    assert series.label == "T = 150 K"
+    assert series.label is None
+    name = series.display_name(mw._series_fallback_name(series))
+    assert name.startswith("Exponential")
+    assert "groups 42–43" in name
+    assert name.endswith("· T = 150 K")
 
 
 def test_single_grouped_fit_writes_slot_not_series(mw, monkeypatch):
@@ -493,6 +499,144 @@ def test_add_to_series_action_finds_and_adds_compatible_series(mw, monkeypatch):
     assert 12 in series.member_run_numbers
     rep = mw._project_model.representation(12, RepresentationType.TIME_FB_ASYMMETRY)
     assert rep.fit.batch_id == series.batch_id
+
+
+def test_add_to_series_action_disabled_without_a_completed_fit(mw):
+    """F18: the menu action must not silently do nothing — disable it instead."""
+    mw._data_browser.add_dataset(_dataset(20, 100.0))
+    mw._on_dataset_selected(20)
+    single_tab = mw._fit_panel._single_tab
+
+    assert single_tab._add_to_series_action.isEnabled() is False
+    assert single_tab._add_to_series_action.toolTip() != ""
+
+
+def test_add_to_series_action_re_enables_on_reselecting_a_fitted_run(mw, monkeypatch):
+    """F18: the action must reflect the *persisted* fit, not just this session's.
+
+    Regression: gating purely on the transient in-memory FitResult (cleared by
+    every set_dataset call) meant switching away from a fitted run and back
+    left the action wrongly disabled, even though the run's fit is intact in
+    the project model and the handler would happily act on it.
+    """
+    mw._data_browser.add_dataset(_dataset(23, 100.0))
+    mw._data_browser.add_dataset(_dataset(24, 100.0))
+    mw._on_dataset_selected(23)
+    mw._plot_workspace.set_active_view("fb_asymmetry")
+    model = {"component_names": ["Exponential", "Constant"], "operators": ["+"]}
+    monkeypatch.setattr(
+        mw._fit_panel,
+        "get_single_form_state",
+        lambda: {"composite_model": model, "parameters": [], "result_html": ""},
+    )
+    mw._on_fit_completed(_result(), _CURVE, [])
+    # Re-select the just-fitted run: this is where FitPanel.set_dataset's
+    # restore mediator resolves the "own_slot" provenance that drives
+    # set_has_recorded_fit — the in-process test harness bypasses the real
+    # Fit-button click path, which would leave the panel already bound to run
+    # 23 and its in-memory FitResult still fresh.
+    mw._on_dataset_selected(23)
+
+    single_tab = mw._fit_panel._single_tab
+    assert single_tab._add_to_series_action.isEnabled() is True
+
+    mw._on_dataset_selected(24)
+    assert single_tab._add_to_series_action.isEnabled() is False
+
+    mw._on_dataset_selected(23)
+    assert single_tab._add_to_series_action.isEnabled() is True
+
+
+def test_add_to_series_offers_create_new_series_when_none_compatible(mw, monkeypatch):
+    """F18: no compatible series → offer to create one instead of doing nothing."""
+    mw._data_browser.add_dataset(_dataset(21, 100.0))
+    mw._on_dataset_selected(21)
+    mw._plot_workspace.set_active_view("fb_asymmetry")
+    model = {"component_names": ["Exponential", "Constant"], "operators": ["+"]}
+    monkeypatch.setattr(
+        mw._fit_panel,
+        "get_single_form_state",
+        lambda: {"composite_model": model, "parameters": [], "result_html": ""},
+    )
+    mw._on_fit_completed(_result(), _CURVE, [])
+
+    from PySide6.QtWidgets import QMessageBox
+
+    import asymmetry.gui.mainwindow as mw_module
+
+    monkeypatch.setattr(
+        mw_module.QMessageBox,
+        "question",
+        staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes),
+    )
+
+    assert not mw._project_model.batches
+
+    mw._on_add_single_fit_to_series_requested()
+
+    assert len(mw._project_model.batches) == 1
+    series = next(iter(mw._project_model.batches.values()))
+    assert series.member_run_numbers == [21]
+    rep = mw._project_model.representation(21, RepresentationType.TIME_FB_ASYMMETRY)
+    assert rep.fit.batch_id == series.batch_id
+
+
+def test_create_series_from_single_fit_stamps_trend_coords(mw, monkeypatch):
+    """The new series' results_by_run must carry the run's field/temperature.
+
+    Regression: unlike _record_global_fit_batch and the grouped-fit path,
+    _create_series_from_single_fit initially copied the single fit's stored
+    result verbatim (which has no T/B stamped, since single fits aren't
+    series members) -- the new series would plot at trend X=0/NaN.
+    """
+    dataset = _dataset(25, field=150.0)
+    # displayed_coordinate reads the *MuonDataset's own* metadata (the
+    # browser's displayed value, honouring log toggles/overrides), not
+    # run.metadata where _dataset stashes it — stamp it directly for this test.
+    dataset.metadata["field"] = 150.0
+    mw._data_browser.add_dataset(dataset)
+    mw._on_dataset_selected(25)
+    mw._plot_workspace.set_active_view("fb_asymmetry")
+    model = {"component_names": ["Exponential", "Constant"], "operators": ["+"]}
+    monkeypatch.setattr(
+        mw._fit_panel,
+        "get_single_form_state",
+        lambda: {"composite_model": model, "parameters": [], "result_html": ""},
+    )
+    mw._on_fit_completed(_result(), _CURVE, [])
+
+    batch_id = mw._create_series_from_single_fit(25, RepresentationType.TIME_FB_ASYMMETRY)
+
+    assert batch_id is not None
+    series = mw._project_model.batch(batch_id)
+    assert series.results_by_run[25]["field"] == pytest.approx(150.0)
+
+
+def test_add_to_series_create_new_series_cancelled(mw, monkeypatch):
+    mw._data_browser.add_dataset(_dataset(22, 100.0))
+    mw._on_dataset_selected(22)
+    mw._plot_workspace.set_active_view("fb_asymmetry")
+    model = {"component_names": ["Exponential", "Constant"], "operators": ["+"]}
+    monkeypatch.setattr(
+        mw._fit_panel,
+        "get_single_form_state",
+        lambda: {"composite_model": model, "parameters": [], "result_html": ""},
+    )
+    mw._on_fit_completed(_result(), _CURVE, [])
+
+    from PySide6.QtWidgets import QMessageBox
+
+    import asymmetry.gui.mainwindow as mw_module
+
+    monkeypatch.setattr(
+        mw_module.QMessageBox,
+        "question",
+        staticmethod(lambda *a, **k: QMessageBox.StandardButton.Cancel),
+    )
+
+    mw._on_add_single_fit_to_series_requested()
+
+    assert not mw._project_model.batches
 
 
 def test_editing_member_model_diverges_and_excludes_from_trend(mw, monkeypatch):

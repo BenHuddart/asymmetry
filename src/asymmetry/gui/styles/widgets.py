@@ -47,6 +47,21 @@ def make_section_header(text: str) -> QLabel:
     return label
 
 
+def make_provenance_label() -> QLabel:
+    """Return a hidden, word-wrapped, muted-text provenance line.
+
+    Shared by every plot that summarises "which members contributed / were
+    dropped" beneath its canvas (the ALC scan and the parameter trend plot) —
+    hidden until the caller has something to say via ``setText`` +
+    ``setVisible(True)`` (or the ALC panel's ``set_provenance`` convention).
+    """
+    label = QLabel("")
+    label.setWordWrap(True)
+    label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+    label.hide()
+    return label
+
+
 def make_section(title: str) -> tuple[QWidget, QVBoxLayout]:
     """Return a ``(section widget, content layout)`` pair for a flat dock section.
 

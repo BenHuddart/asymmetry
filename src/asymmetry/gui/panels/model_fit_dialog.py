@@ -37,6 +37,7 @@ from asymmetry.core.fitting.parameter_models import (
     ParameterModelFit,
     component_names_for_x,
     fit_parameter_model,
+    is_order_parameter_observable,
     suggest_trend_seeds,
     validate_fit_windows,
 )
@@ -224,6 +225,28 @@ def _component_pool_for_context(x_key: str, parameter_name: str) -> list[str]:
     if is_lambda_like:
         return [name for name in available if name != "Constant"]
     return [name for name in available if name != "Lambda_bg"]
+
+
+def _default_component_for_context(x_key: str, parameter_name: str, available: list[str]) -> str:
+    """Choose the default trend component for a fresh range (F4).
+
+    Linear is the safe default in every ordinary context. When the trend is a
+    magnetic order-parameter observable (precession frequency / internal field)
+    versus temperature, default to ``OrderParameter`` instead — its data-aware
+    ``T_c``/amplitude seeds (see :func:`suggest_trend_seeds`) then make the fit
+    converge out of the box, so the user need not type the component by name.
+    The "is this an order-parameter observable" judgement lives in core
+    (:func:`is_order_parameter_observable`), beside the seed logic.
+    """
+    if (
+        x_key == "temperature"
+        and is_order_parameter_observable(parameter_name)
+        and "OrderParameter" in available
+    ):
+        return "OrderParameter"
+    if "Linear" in available:
+        return "Linear"
+    return available[0] if available else "Constant"
 
 
 def _normalize_parameter_limits(
@@ -572,8 +595,8 @@ class ModelFitDialog(QDialog):
         x_max = float(np.nanmax(self._x)) if np.any(np.isfinite(self._x)) else 1.0
 
         available = self._component_pool
-        default_component = (
-            "Linear" if "Linear" in available else (available[0] if available else "Constant")
+        default_component = _default_component_for_context(
+            self._x_key, self._parameter_name, available
         )
         model = ParameterCompositeModel([default_component], [])
 
@@ -582,6 +605,12 @@ class ModelFitDialog(QDialog):
         y_span = (
             float(np.nanmax(self._y) - np.nanmin(self._y)) if np.any(np.isfinite(self._y)) else 1.0
         )
+        # Data-aware seeds for critical-temperature trend components
+        # (OrderParameter / CriticalDivergence): derive T_c and amplitude from the
+        # actual x/y so an order-parameter default converges without a manual
+        # reseed (F4). Empty for Linear and the other plain components, which keep
+        # the inline heuristic below unchanged.
+        trend_seeds = suggest_trend_seeds(model, self._x, self._y)
 
         for pname in model.param_names:
             default_val = model.param_defaults[pname]
@@ -596,7 +625,11 @@ class ModelFitDialog(QDialog):
             elif pname.startswith("D"):
                 default_val = max(1e-6, default_val)
             params.add(
-                Parameter(name=pname, value=float(default_val), fixed=(pname == "shape_factor_a"))
+                Parameter(
+                    name=pname,
+                    value=float(trend_seeds.get(pname, default_val)),
+                    fixed=(pname == "shape_factor_a"),
+                )
             )
 
         return ModelFitRange(x_min=x_min, x_max=x_max, model=model, parameters=params)

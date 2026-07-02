@@ -192,7 +192,11 @@ class TestSchemaMigration:
         state = {"schema_version": 4, "datasets": []}
         result = migrate_to_current(state)
         assert result["schema_version"] == CURRENT_SCHEMA_VERSION
-        assert result["frequency_fit_state"]["domain"] == "frequency"
+        # v11 folds the per-domain fit state under the keyed ``fit_states`` block
+        # and drops the legacy top-level ``frequency_fit_state`` copy.
+        assert "frequency_fit_state" not in result
+        assert result["fit_states"]["frequency"]["domain"] == "frequency"
+        assert result["fit_states"]["time"]["domain"] == "time"
 
     def test_unsupported_future_version_raises(self):
         state = {"schema_version": 999, "datasets": []}
@@ -221,7 +225,7 @@ class TestSchemaMigration:
         validate(state)  # must not raise
 
     def test_current_schema_version_constant(self):
-        assert CURRENT_SCHEMA_VERSION == 10
+        assert CURRENT_SCHEMA_VERSION == 11
 
 
 def _composite_model_dict(component: str = "Exponential") -> dict:
@@ -333,11 +337,12 @@ class TestSchemaMigrationV5toV6:
 
     def test_old_blobs_preserved(self):
         result = migrate_to_current(self._v5_state())
-        assert "single_fit_state" in result
         assert "fourier_state" in result
-        assert result["single_fit_state"]["states_by_run"]["100"]["result_html"] == (
-            "<b>chi2 = 2.0</b>"
-        )
+        # v11 folds the legacy top-level single fit blob into ``fit_states.time``
+        # (the top-level copy is dropped) but its content survives unchanged.
+        assert "single_fit_state" not in result
+        time_single = result["fit_states"]["time"]["single_fit_state"]
+        assert time_single["states_by_run"]["100"]["result_html"] == "<b>chi2 = 2.0</b>"
 
     def test_migration_without_fits_adds_only_batches(self):
         state = {"schema_version": 5, "datasets": [{"run_number": 1}]}
@@ -470,6 +475,70 @@ class TestSchemaMigrationV7toV8:
         result = migrate_to_current(state)
         ts = result["datasets"][0]["representations"]["freq_fft"]["trend_state"]
         assert ts == {}
+
+
+class TestSchemaMigrationV10toV11:
+    """v10 → v11 folds per-domain fit state into a keyed ``fit_states`` block."""
+
+    def test_folds_legacy_keys_into_fit_states(self):
+        state = {
+            "schema_version": 10,
+            "datasets": [],
+            "single_fit_state": {"model_name": "ExponentialRelaxation", "parameters": []},
+            "global_fit_state": {"model_name": "ExponentialRelaxation", "parameters": []},
+            "fit_ui_state": {"active_tab_index": 1},
+            "frequency_fit_state": {
+                "domain": "frequency",
+                "single_fit_state": {"model_name": "LorentzianPeak"},
+                "global_fit_state": {"model_name": "GaussianPeak"},
+                "fit_ui_state": {"active_tab_index": 0},
+            },
+        }
+        result = migrate_to_current(state)
+
+        assert result["schema_version"] == CURRENT_SCHEMA_VERSION
+        # Legacy top-level copies are dropped so a project only ever has one shape.
+        for legacy_key in (
+            "single_fit_state",
+            "global_fit_state",
+            "fit_ui_state",
+            "frequency_fit_state",
+        ):
+            assert legacy_key not in result
+
+        time_state = result["fit_states"]["time"]
+        assert time_state["domain"] == "time"
+        assert time_state["single_fit_state"]["model_name"] == "ExponentialRelaxation"
+        assert time_state["global_fit_state"]["model_name"] == "ExponentialRelaxation"
+        assert time_state["fit_ui_state"] == {"active_tab_index": 1}
+
+        freq_state = result["fit_states"]["frequency"]
+        assert freq_state["domain"] == "frequency"
+        assert freq_state["single_fit_state"]["model_name"] == "LorentzianPeak"
+        assert freq_state["global_fit_state"]["model_name"] == "GaussianPeak"
+
+    def test_missing_legacy_keys_yield_empty_domain_blocks(self):
+        result = migrate_to_current({"schema_version": 10, "datasets": []})
+        assert set(result["fit_states"]) == {"time", "frequency"}
+        assert result["fit_states"]["time"] == {
+            "domain": "time",
+            "single_fit_state": {},
+            "global_fit_state": {},
+            "fit_ui_state": {},
+        }
+        assert result["fit_states"]["frequency"]["domain"] == "frequency"
+
+    def test_current_version_untouched(self):
+        state = {
+            "schema_version": CURRENT_SCHEMA_VERSION,
+            "datasets": [],
+            "fit_states": {
+                "time": {"domain": "time", "single_fit_state": {"model_name": "Keep"}},
+                "frequency": {"domain": "frequency"},
+            },
+        }
+        result = migrate_to_current(state)
+        assert result["fit_states"]["time"]["single_fit_state"]["model_name"] == "Keep"
 
 
 class TestProjectIO:
@@ -1142,6 +1211,64 @@ class TestFitPanelState:
         assert "Saved Global Fit" in panel2._global_tab._result_text.toPlainText()
         assert panel2._tabs.currentIndex() == 1
 
+    def test_restore_domain_state_keeps_time_form_free_of_frequency_model(self, qapp):
+        """F21c: a frequency fit blob must never bleed into the time-domain form.
+
+        ``restore_domain_state`` routes each blob by its ``domain`` tag, so
+        restoring a frequency form into the (time-active) panel caches it without
+        touching the live time-domain single fit form.
+        """
+        from asymmetry.core.fitting.composite import CompositeModel
+        from asymmetry.gui.panels.fit_panel import FitPanel
+
+        panel = FitPanel()  # starts in the time domain
+        assert panel.domain() == "time"
+
+        time_model = CompositeModel(["Exponential"], operators=[])
+        panel._single_tab._set_composite_model(time_model)
+        time_formula = panel.single_fit_formula_string()
+
+        frequency_blob = {
+            "domain": "frequency",
+            "single_fit_state": {
+                "model_name": "Composite",
+                "composite_model": CompositeModel(
+                    ["GaussianPeak", "LinearBackground"], operators=["+"]
+                ).to_dict(),
+                "parameters": [],
+            },
+            "global_fit_state": {},
+            "fit_ui_state": {},
+        }
+        panel.restore_domain_state("frequency", frequency_blob)
+
+        # Live (time) form is untouched; the frequency blob is only cached.
+        assert panel.domain() == "time"
+        assert panel.single_fit_formula_string() == time_formula
+
+        # Switching to the frequency domain now surfaces the frequency model
+        # (Gaussian peak + linear background), not the time-domain exponential.
+        panel.set_domain("frequency")
+        frequency_formula = panel.single_fit_formula_string()
+        assert frequency_formula != time_formula
+        assert "nu0" in frequency_formula and "slope*nu" in frequency_formula
+
+    def test_restore_domain_state_refuses_mismatched_domain_tag(self, qapp):
+        from asymmetry.gui.panels.fit_panel import FitPanel
+
+        panel = FitPanel()
+        with pytest.raises(ValueError, match="domain 'frequency'"):
+            panel.restore_domain_state("time", {"domain": "frequency"})
+
+    def test_restore_domain_state_refuses_garbage_domain_tag(self, qapp):
+        """A non-canonical tag must not collapse to 'time' and slip past the
+        guard (coerce_domain maps unknown tokens to 'time')."""
+        from asymmetry.gui.panels.fit_panel import FitPanel
+
+        panel = FitPanel()
+        with pytest.raises(ValueError, match="domain 'freq'"):
+            panel.restore_domain_state("time", {"domain": "freq"})
+
 
 # ── MainWindow project orchestration (headless) ────────────────────────────────
 
@@ -1757,9 +1884,15 @@ class TestMainWindowProjectState:
         assert "combined_datasets" in state
         assert "browser_state" in state
         assert "plot_state" in state
-        assert "single_fit_state" in state
-        assert "global_fit_state" in state
-        assert "fit_ui_state" in state
+        # v11: per-domain fit state persists symmetrically under ``fit_states``;
+        # the legacy un-keyed top-level copies are no longer written.
+        assert "single_fit_state" not in state
+        assert "global_fit_state" not in state
+        assert "fit_ui_state" not in state
+        assert set(state["fit_states"]) == {"time", "frequency"}
+        assert state["fit_states"]["time"]["domain"] == "time"
+        assert state["fit_states"]["frequency"]["domain"] == "frequency"
+        assert "single_fit_state" in state["fit_states"]["time"]
         assert "fit_parameters_state" in state
         assert "global_parameter_fit_window_state" in state
         assert "fourier_state" in state
@@ -1976,10 +2109,12 @@ class TestMainWindowProjectState:
         assert state["plot_state"]["fit_components"] is None
         assert state["plot_state"]["fit_components_by_run"] == {}
         assert state["plot_state"]["fit_components_by_key"] == {}
-        assert "wizard_state" not in state["single_fit_state"]
-        assert "wizard_state" not in state["single_fit_state"]["states_by_run"]["1001"]
-        assert "wizard_state" not in state["global_fit_state"]
-        assert "wizard_state_by_run_set" not in state["global_fit_state"]
+        time_single = state["fit_states"]["time"]["single_fit_state"]
+        time_global = state["fit_states"]["time"]["global_fit_state"]
+        assert "wizard_state" not in time_single
+        assert "wizard_state" not in time_single["states_by_run"]["1001"]
+        assert "wizard_state" not in time_global
+        assert "wizard_state_by_run_set" not in time_global
 
     def test_collect_project_state_includes_sources_for_combined_datasets(
         self, monkeypatch: pytest.MonkeyPatch, qapp: QApplication

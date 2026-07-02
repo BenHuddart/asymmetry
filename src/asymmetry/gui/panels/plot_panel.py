@@ -26,7 +26,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QDoubleSpinBox,
     QFileDialog,
     QHBoxLayout,
     QInputDialog,
@@ -78,6 +77,7 @@ from asymmetry.gui.styles.plots import (
     style_legend,
 )
 from asymmetry.gui.styles.widgets import build_nav_button_qss
+from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox
 from asymmetry.gui.widgets.projection_chip_bar import ProjectionChipBar
 from asymmetry.gui.widgets.rrf_controls import (
     install_rrf_controls,
@@ -606,7 +606,7 @@ class PlotPanel(QWidget):
             row1.addWidget(self._frequency_axis_relative_check)
 
             row1.addWidget(QLabel("Reference:"))
-            self._frequency_reference_spin = QDoubleSpinBox()
+            self._frequency_reference_spin = NoScrollDoubleSpinBox()
             self._frequency_reference_spin.setRange(0.0, 1_000_000.0)
             self._frequency_reference_spin.setDecimals(2)
             self._frequency_reference_spin.setSuffix(" G")
@@ -704,13 +704,14 @@ class PlotPanel(QWidget):
 
     def _header_title_text(self) -> str:
         """Return the left-side text for the plot title strip."""
+        time_view = getattr(self, "_current_time_view_mode", "fb_asymmetry")
         if self._domain == "frequency":
             domain = "Fourier spectrum"
             multi_suffix = "runs overlaid"
-        elif getattr(self, "_current_time_view_mode", "fb_asymmetry") == "groups":
+        elif time_view == "groups":
             domain = "Grouped time-domain"
             multi_suffix = "runs"
-        elif getattr(self, "_current_time_view_mode", "fb_asymmetry") == "raw_counts":
+        elif time_view == "raw_counts":
             domain = "Raw counts"
             multi_suffix = "runs"
         else:
@@ -722,7 +723,33 @@ class PlotPanel(QWidget):
             return domain
         if len(datasets) == 1:
             return f"{domain} — {datasets[0].run_label}"
+        # The grouped view stacks one run's *detector groups*, not runs (F12):
+        # count them as groups and name the run when they all share one.
+        if time_view == "groups":
+            source_runs = {self._dataset_source_run(ds) for ds in datasets}
+            source_runs.discard(None)
+            suffix = f"{len(datasets)} groups"
+            if len(source_runs) == 1:
+                suffix += f" (run {next(iter(source_runs))})"
+            return f"{domain} — {suffix}"
         return f"{domain} — {len(datasets)} {multi_suffix}"
+
+    @staticmethod
+    def _dataset_source_run(dataset: object) -> int | None:
+        """Physical source run for a (possibly synthetic) grouped-member dataset."""
+        meta = getattr(dataset, "metadata", {}) or {}
+        for key in ("source_run_number", "run_number"):
+            raw = meta.get(key)
+            if raw is not None:
+                try:
+                    return int(raw)
+                except (TypeError, ValueError):
+                    continue
+        run = getattr(dataset, "run_number", None)
+        try:
+            return int(run) if run is not None else None
+        except (TypeError, ValueError):
+            return None
 
     def _set_canvas_minimum_height_for_axes(self, axis_count: int) -> None:
         """Scale the canvas height so stacked subplot views scroll vertically."""

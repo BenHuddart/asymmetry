@@ -243,6 +243,95 @@ def test_group_lookup_helpers_return_group_and_members(qapp: QApplication) -> No
     assert members == [61, 62]
 
 
+def test_forming_group_while_sorted_keeps_header_and_members_visible(
+    qapp: QApplication,
+) -> None:
+    """F9: forming a data group while the browser is column-sorted must render
+    the group header and every member row immediately (no project reload)."""
+    panel = DataBrowserPanel()
+    for rn in (61, 62, 63, 64, 65):
+        panel.add_dataset(_dataset(rn))
+
+    panel._on_header_clicked(2)  # sort by temperature (col 2)
+    gid = panel.create_data_group([61, 62, 63], name="grp")
+    assert gid is not None
+
+    header_rows = []
+    member_rows = {}
+    for row in range(panel._table.rowCount()):
+        item = panel._table.item(row, 0)
+        assert item is not None
+        key = item.data(panel._GROUP_ROLE)
+        hidden = panel._table.isRowHidden(row)
+        if panel._is_group_key(key):
+            header_rows.append((row, hidden))
+        elif isinstance(key, int):
+            member_rows[key] = hidden
+
+    # Exactly one group header, visible.
+    assert len(header_rows) == 1 and header_rows[0][1] is False
+    # Every grouped member row is present and visible right away.
+    for rn in (61, 62, 63):
+        assert rn in member_rows, rn
+        assert member_rows[rn] is False, rn
+    # Nothing in the table is hidden.
+    assert not any(hidden for hidden in member_rows.values())
+
+
+def test_batch_selection_excludes_filtered_hidden_runs(qapp: QApplication) -> None:
+    """F9: a run hidden by a column filter must not be silently fed to a batch —
+    ``_get_selected_run_numbers`` (and thus ``get_selected_datasets``) only
+    reports visible selected rows."""
+    panel = DataBrowserPanel()
+    for rn in (61, 62, 63, 64):
+        panel.add_dataset(_dataset(rn))
+
+    selection_model = panel._table.selectionModel()
+    selection_model.clearSelection()
+    for row in range(panel._table.rowCount()):
+        selection_model.select(
+            panel._table.model().index(row, 0),
+            QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+        )
+    assert set(panel._get_selected_run_numbers()) == {61, 62, 63, 64}
+
+    # Filter the run-number column so 63 and 64 are hidden while still selected.
+    panel._column_filters[0] = {"61", "62"}
+    panel._apply_row_visibility()
+    assert panel._table.isRowHidden(2) and panel._table.isRowHidden(3)
+
+    # The hidden-but-selected runs must not reach a batch.
+    assert set(panel._get_selected_run_numbers()) == {61, 62}
+    assert {d.run_number for d in panel.get_selected_datasets()} == {61, 62}
+
+
+def test_get_state_persists_full_selection_including_filter_hidden(
+    qapp: QApplication,
+) -> None:
+    """get_state() must round-trip the FULL selection: a run hidden by a column
+    filter is still persisted, so clearing the filter after reload reveals it.
+    Only action paths (_get_selected_run_numbers) exclude hidden rows."""
+    panel = DataBrowserPanel()
+    for rn in (61, 62, 63, 64):
+        panel.add_dataset(_dataset(rn))
+
+    selection_model = panel._table.selectionModel()
+    selection_model.clearSelection()
+    for row in range(panel._table.rowCount()):
+        selection_model.select(
+            panel._table.model().index(row, 0),
+            QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+        )
+
+    panel._column_filters[0] = {"61", "62"}
+    panel._apply_row_visibility()
+    assert panel._table.isRowHidden(2) and panel._table.isRowHidden(3)
+
+    # Action selection is visibility-filtered, but persistence keeps all four.
+    assert set(panel._get_selected_run_numbers()) == {61, 62}
+    assert set(panel.get_state()["selected_run_numbers"]) == {61, 62, 63, 64}
+
+
 def test_grouped_dataset_rows_get_faint_background_tint(qapp: QApplication) -> None:
     panel = DataBrowserPanel()
     panel.add_dataset(_dataset(64))
@@ -1960,3 +2049,67 @@ def test_temperature_header_tooltip_mentions_furnace_unit(qapp: QApplication) ->
     assert "kelvin" in tip.lower()
     assert "⚠" in tip
     panel.close()
+
+
+# ── F8: run-number ordering hint after a scrambled multi-file load ──────────
+
+
+def _run_display_order(panel: DataBrowserPanel) -> list[int]:
+    return [entry for entry in panel._display_order if isinstance(entry, int)]
+
+
+def test_sort_by_run_number_orders_scrambled_load(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    for rn in (3, 1, 2):  # OS file picker handed files back out of order
+        panel.add_dataset(_dataset(rn))
+    assert _run_display_order(panel) == [3, 1, 2]
+
+    assert panel.sort_by_run_number_if_unordered() is True
+    assert _run_display_order(panel) == [1, 2, 3]
+    # And it leaves a visible sort indicator on the Run column.
+    assert panel._current_sort_column == 0
+    assert panel._current_sort_order == Qt.SortOrder.AscendingOrder
+
+
+def test_sort_by_run_number_noop_when_already_ordered(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    for rn in (1, 2, 3):
+        panel.add_dataset(_dataset(rn))
+
+    assert panel.sort_by_run_number_if_unordered() is False
+    assert _run_display_order(panel) == [1, 2, 3]
+    # No sort was imposed, so no indicator is forced on.
+    assert panel._current_sort_column == -1
+
+
+def test_sort_by_run_number_respects_explicit_user_sort(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    for rn in (3, 1, 2):
+        panel.add_dataset(_dataset(rn))
+    # The user deliberately sorted by field descending; a later load must not
+    # yank the view back to run order.
+    panel._current_sort_column = 3
+    panel._current_sort_order = Qt.SortOrder.DescendingOrder
+    panel._sort_table()
+    order_before = _run_display_order(panel)
+
+    assert panel.sort_by_run_number_if_unordered() is False
+    assert _run_display_order(panel) == order_before
+    assert panel._current_sort_column == 3
+
+
+def test_sort_by_run_number_ignores_combined_dataset_sentinel(qapp: QApplication) -> None:
+    """A combined-dataset row (negative sentinel id) must not spuriously trip the
+    ordered-check: real runs 100, 101 are in order, so no sort should fire even
+    though -1 sorts before them."""
+    panel = DataBrowserPanel()
+    for rn in (100, 101):
+        panel.add_dataset(_dataset(rn))
+    # Simulate a co-added row sitting after the ordered real runs.
+    panel._combined_datasets[-1] = [100, 101]
+    panel._display_order = [100, 101, -1]
+    assert panel._current_sort_column == -1  # no user sort
+
+    assert panel.sort_by_run_number_if_unordered() is False
+    assert panel._display_order == [100, 101, -1]  # combined row not yanked to top
+    assert panel._current_sort_column == -1  # no sticky sort state imposed

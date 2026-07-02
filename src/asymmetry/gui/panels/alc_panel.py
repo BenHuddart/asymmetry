@@ -52,7 +52,12 @@ from asymmetry.gui.panels.plot_panel import _FloatLimitField
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.plots import draw_empty_state_message, draw_fit_range_span, style_axes
-from asymmetry.gui.styles.widgets import build_nav_button_qss, build_primary_button_qss
+from asymmetry.gui.styles.widgets import (
+    build_nav_button_qss,
+    build_primary_button_qss,
+    make_provenance_label,
+)
+from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox
 
 
 class ALCFitPanel(QWidget):
@@ -130,7 +135,7 @@ class ALCFitPanel(QWidget):
     @staticmethod
     def _make_time_spin() -> QDoubleSpinBox:
         """A µs fit-range spinbox configured like the regular fit panel's."""
-        spin = QDoubleSpinBox()
+        spin = NoScrollDoubleSpinBox()
         spin.setDecimals(3)
         spin.setRange(-1000.0, 1000.0)
         spin.setSingleStep(0.1)
@@ -261,10 +266,7 @@ class ALCScanView(QWidget):
 
         # Scan provenance: which runs contribute, which were dropped and why
         # (previously only in the log). The full drop list rides the tooltip.
-        self._provenance_label = QLabel("")
-        self._provenance_label.setWordWrap(True)
-        self._provenance_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
-        self._provenance_label.hide()
+        self._provenance_label = make_provenance_label()
         plot_layout.addWidget(self._provenance_label)
         layout.addWidget(self._plot_section, 3)
 
@@ -662,7 +664,7 @@ class ALCScanView(QWidget):
     @staticmethod
     def _make_mhz_spin(default: float) -> QDoubleSpinBox:
         """A compact MHz spinbox for the RF seed inputs."""
-        spin = QDoubleSpinBox()
+        spin = NoScrollDoubleSpinBox()
         spin.setDecimals(2)
         spin.setRange(0.0, 100000.0)
         spin.setSingleStep(1.0)

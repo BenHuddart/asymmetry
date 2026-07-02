@@ -83,7 +83,7 @@ def test_records_trendable_results_series(mainwindow: MainWindow) -> None:
     assert len(modelfit) == 1
     series = modelfit[0]
     assert series.is_computed  # no canonical model
-    assert series.display_name("x") == "Model fit: lambda vs field"
+    assert series.display_name("x") == "Model fit · lambda vs field"
 
     rows = mainwindow._build_series_rows(series)
     # Two group rows + one globals row.
@@ -176,6 +176,64 @@ def test_results_series_survives_trend_panel_refresh(mainwindow: MainWindow) -> 
     }
     assert modelfit_ids
     assert modelfit_ids <= panel_ids
+
+
+def test_restore_shows_only_active_representation_chips(
+    mainwindow: MainWindow, qapp: QApplication, tmp_path
+) -> None:
+    """F21a/b: on project load the trend panel must show the *active*
+    representation's chips, re-derived from the project model — not whichever
+    representation's chips happened to be serialized in the panel cache.
+
+    Reproduces the audit symptom: the F-B Parameters view showed foreign chips
+    (an integral scan / a frequency model fit) while its own series chip was
+    missing, because the serialized panel cache holds only one representation
+    and was restored blindly.
+    """
+    output = SimpleNamespace(fit_result=_cross_group_result(), x_key="field")
+    mainwindow._record_model_fit_results_series("lambda", _groups(), output)
+    mainwindow._refresh_trend_panel()
+    active_ids = {s.batch_id for s in mainwindow._project_model.batches.values()}
+    assert active_ids  # the active representation genuinely has series
+
+    state = mainwindow.collect_project_state()
+
+    # Inject a stale foreign-representation chip into the serialized trend-panel
+    # cache. It is NOT a batch of the project model, so a correct restore must
+    # drop it rather than surface it in the active representation's view.
+    foreign_id = "freq-foreign-chip"
+    state["fit_parameters_state"]["group_fit_results"][foreign_id] = {
+        "group_id": foreign_id,
+        "group_name": "GaussianPeak · 2960",
+        "global_params": None,
+        "rows": [
+            {
+                "run_number": 2960,
+                "run_label": "2960",
+                "field": 0.0,
+                "temperature": 5.0,
+                "values": {"nu0": 30.0},
+                "errors": {"nu0": 0.1},
+                "combined_from": None,
+                "covariance": None,
+                "custom_values": {},
+            }
+        ],
+        "varying_params": ["nu0"],
+        "composite_parameters": [],
+        "inferred_x_key": "temperature",
+        "model_fits": {},
+        "plot_annotations": [],
+        "global_param_uncertainties": {},
+    }
+
+    restored = MainWindow()
+    restored._active_representation_type = lambda: RepresentationType.TIME_FB_ASYMMETRY
+    restored.restore_project_state(state, str(tmp_path / "roundtrip.asymp"))
+
+    panel_ids = set(restored._fit_parameters_panel._group_fit_results.keys())
+    assert foreign_id not in panel_ids  # stale foreign chip dropped
+    assert active_ids <= panel_ids  # own series re-derived from the project model
 
 
 # ---------------------------------------------------------------------------
@@ -350,7 +408,7 @@ def test_single_fit_ranges_become_trendable_rows(mainwindow: MainWindow) -> None
     series = _single_series(mainwindow)
     assert series is not None
     assert series.is_computed
-    assert series.display_name("x") == "Model fit (single): lambda vs temperature"
+    assert series.display_name("x") == "Model fit (single) · lambda vs temperature"
 
     rows = mainwindow._build_series_rows(series)
     assert len(rows) == 2

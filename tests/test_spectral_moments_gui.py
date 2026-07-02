@@ -244,10 +244,12 @@ def test_spectral_moments_info_affordance():
 
 
 def test_no_schema_version_bump():
-    # Baseline guard: bumped to 10 for data-browser custom/renamable columns
-    # (browser_state.extra_columns generalised from a key list to column-def
-    # dicts). A future accidental bump must consciously update this literal.
-    assert CURRENT_SCHEMA_VERSION == 10
+    # Baseline guard: bumped to 11 for the representation-keyed ``fit_states``
+    # block (F21c) — per-domain single/global/UI fit state now persists
+    # symmetrically under ``fit_states.{time,frequency}`` instead of un-keyed
+    # top-level keys. A future accidental bump must consciously update this
+    # literal.
+    assert CURRENT_SCHEMA_VERSION == 11
 
 
 def test_restore_state_tolerates_absent_moments():
