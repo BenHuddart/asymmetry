@@ -3448,6 +3448,27 @@ class DataBrowserPanel(QWidget):
             if key.startswith("run_info.") and key not in shown_source_keys
         ]
 
+    def sort_by_run_number_if_unordered(self) -> bool:
+        """Apply an ascending run-number sort when rows aren't already in run order.
+
+        Called after a multi-file load (F8): an OS file picker can hand files
+        back in a scrambled order, so the browser's insertion order need not be
+        ascending by run — which makes a shift-range selection silently
+        non-contiguous. This only nudges the *default* case: if the user has
+        already chosen a sort column, or the rows are already ascending by run,
+        it does nothing (and never reorders a run inside a data group). Returns
+        ``True`` when it applied the sort.
+        """
+        if self._current_sort_column >= 0:
+            return False  # respect an explicit user sort
+        run_order = [entry for entry in self._display_order if isinstance(entry, int)]
+        if run_order == sorted(run_order):
+            return False  # already ascending by run number
+        self._current_sort_column = 0
+        self._current_sort_order = Qt.SortOrder.AscendingOrder
+        self._sort_table()
+        return True
+
     def _on_header_clicked(self, logical_index: int) -> None:
         if logical_index == self._current_sort_column:
             self._current_sort_order = (

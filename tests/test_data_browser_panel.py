@@ -2049,3 +2049,50 @@ def test_temperature_header_tooltip_mentions_furnace_unit(qapp: QApplication) ->
     assert "kelvin" in tip.lower()
     assert "⚠" in tip
     panel.close()
+
+
+# ── F8: run-number ordering hint after a scrambled multi-file load ──────────
+
+
+def _run_display_order(panel: DataBrowserPanel) -> list[int]:
+    return [entry for entry in panel._display_order if isinstance(entry, int)]
+
+
+def test_sort_by_run_number_orders_scrambled_load(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    for rn in (3, 1, 2):  # OS file picker handed files back out of order
+        panel.add_dataset(_dataset(rn))
+    assert _run_display_order(panel) == [3, 1, 2]
+
+    assert panel.sort_by_run_number_if_unordered() is True
+    assert _run_display_order(panel) == [1, 2, 3]
+    # And it leaves a visible sort indicator on the Run column.
+    assert panel._current_sort_column == 0
+    assert panel._current_sort_order == Qt.SortOrder.AscendingOrder
+
+
+def test_sort_by_run_number_noop_when_already_ordered(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    for rn in (1, 2, 3):
+        panel.add_dataset(_dataset(rn))
+
+    assert panel.sort_by_run_number_if_unordered() is False
+    assert _run_display_order(panel) == [1, 2, 3]
+    # No sort was imposed, so no indicator is forced on.
+    assert panel._current_sort_column == -1
+
+
+def test_sort_by_run_number_respects_explicit_user_sort(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    for rn in (3, 1, 2):
+        panel.add_dataset(_dataset(rn))
+    # The user deliberately sorted by field descending; a later load must not
+    # yank the view back to run order.
+    panel._current_sort_column = 3
+    panel._current_sort_order = Qt.SortOrder.DescendingOrder
+    panel._sort_table()
+    order_before = _run_display_order(panel)
+
+    assert panel.sort_by_run_number_if_unordered() is False
+    assert _run_display_order(panel) == order_before
+    assert panel._current_sort_column == 3

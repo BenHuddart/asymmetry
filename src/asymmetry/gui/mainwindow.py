@@ -3125,6 +3125,15 @@ class MainWindow(QMainWindow):
 
                 break
 
+        # F8: an OS file picker can return a multi-file selection out of run
+        # order, leaving the browser's insertion order scrambled so a later
+        # shift-range selection is silently non-contiguous. Pick a sane initial
+        # indicator — sort by run number — unless the user already chose a sort
+        # or the rows are already in order. Runs before the selection below so
+        # the just-loaded run is selected in the ordered view.
+        if hasattr(self._data_browser, "sort_by_run_number_if_unordered"):
+            self._data_browser.sort_by_run_number_if_unordered()
+
         # Select the last successfully loaded run in the browser: this drives
         # the standard selection pipeline (_on_dataset_selected), which stores
         # the OUTGOING dataset's Fourier/MaxEnt panel state before switching —
