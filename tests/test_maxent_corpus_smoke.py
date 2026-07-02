@@ -8,6 +8,11 @@ ZF/LF mode constrains the fit without crashing.
 The corpus lives outside the repository (``~/Documents/WiMDA muon school``), so
 every test here skips cleanly when the files are absent (always the case in CI).
 Run them locally to confirm the GUI surfaces survive real data.
+
+Marked ``slow``: the TF reconstruction takes ~24s per parametrization, which
+would dominate a standard-tier worker. Run explicitly (``test --
+tests/test_maxent_corpus_smoke.py``) or via ``--tier full`` after MaxEnt or
+reconstruction-overlay changes.
 """
 
 from __future__ import annotations
@@ -17,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = [pytest.mark.gui]
+pytestmark = [pytest.mark.gui, pytest.mark.slow]
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 

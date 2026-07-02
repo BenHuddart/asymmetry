@@ -75,14 +75,15 @@ def test_default_run_uses_standard_tier_marker_and_parallel() -> None:
     assert "-n" in command and "auto" in command
 
 
-def test_fast_tier_marker_is_unit_only_and_serial() -> None:
+def test_fast_tier_marker_is_unit_only_and_parallel() -> None:
     harness = _load_harness()
 
     command = harness.build_pytest_command([], tier="fast")
 
     assert _marker(command) == "(unit and not slow and not gui and not io and not integration)"
-    # The fast tier is small enough that xdist worker startup is not worth it.
-    assert "-n" not in command
+    # At ~2,400 tests the fast tier is no longer worker-startup bound: measured
+    # 71s serial vs 25s with `-n auto`, so it parallelizes like the other tiers.
+    assert "-n" in command and "auto" in command
 
 
 def test_subset_composes_with_tier_marker() -> None:

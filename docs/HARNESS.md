@@ -31,8 +31,8 @@ boundary, touches shared behavior, or changes user-visible workflows.
 | `python tools/harness.py lint` | Ruff format check and lint check across `src`, `tests`, and `tools`. |
 | `python tools/harness.py lint-all` | Alias for the full Ruff baseline. |
 | `python tools/harness.py test -- tests/test_name.py` | Focused pytest run while iterating on a specific behavior. |
-| `python tools/harness.py test --tier fast` | Inner-loop suite: non-GUI tests only (~40s). |
-| `python tools/harness.py test` | Standard tier (default): everything except `slow`/`integration`. |
+| `python tools/harness.py test --tier fast` | Inner-loop suite: non-GUI tests only (~25s). |
+| `python tools/harness.py test` | Standard tier (default): everything except `slow`/`integration` (~2 min locally). |
 | `python tools/harness.py gui-smoke` | Headless GUI startup check using the app's `--smoke-test` path. |
 | `python tools/harness.py docs` | Sphinx documentation build. |
 | `python tools/harness.py validate` | Structural checks, lint, and the standard-tier test suite. |
@@ -41,11 +41,13 @@ boundary, touches shared behavior, or changes user-visible workflows.
 
 `test` and `validate` accept `--tier {fast,standard,full}`:
 
-- **`fast`** — pure-Python tests only (no Qt, no file I/O, nothing `slow`). The
-  bulk of the suite; runs in ~40s. Use this for the **inner dev loop**.
+- **`fast`** — pure-Python tests only (no Qt, no file I/O, nothing `slow`).
+  Over half the suite; runs in ~25s with xdist. Use this for the **inner dev
+  loop**.
 - **`standard`** (default) — everything except `slow` and `integration`. This is
-  the pre-push gate and what CI runs. The GUI tests it adds each construct a
-  `MainWindow`, so it is several times slower than `fast`.
+  the pre-push gate and what CI runs. The GUI tests it adds each construct
+  widgets (often a full `MainWindow`), so it takes ~2 min locally — run it once
+  per task, not per iteration.
 - **`full`** — every test, including `slow`/`integration`. Runs on release tags
   via the `Full test suite` workflow.
 
