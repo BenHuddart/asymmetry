@@ -31,6 +31,13 @@ CLEAN_FILES: list[str] = [
     "mainwindow.py",
     "ui_manager.py",
     "panels/fit_panel.py",
+    # fit_panel.py was split into panels/fit/ (Phase 2 mechanical split); keep
+    # the no-raw-hex guard on the relocated code.
+    "panels/fit/seeding.py",
+    "panels/fit/tab_base.py",
+    "panels/fit/single_tab.py",
+    "panels/fit/global_tab.py",
+    "panels/fit/panel.py",
     "panels/fourier_panel.py",
     "panels/data_browser.py",
     # plot_panel.py's period-mode base colours and the Okabe-Ito overlay palette

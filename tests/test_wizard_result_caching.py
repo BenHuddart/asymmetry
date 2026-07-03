@@ -51,7 +51,8 @@ from asymmetry.core.fitting.global_fit_wizard import (
     RunResidualDiagnostic,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
-from asymmetry.gui.panels import fit_panel as fit_panel_module
+from asymmetry.gui.panels.fit import global_tab as global_tab_module
+from asymmetry.gui.panels.fit import single_tab as single_tab_module
 from asymmetry.gui.panels.fit_panel import GlobalFitTab, SingleFitTab
 
 
@@ -178,7 +179,7 @@ def test_single_fit_wizard_reopen_with_matching_signature_serves_cache(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Re-opening the wizard with an unchanged run/model signature reuses the cache."""
-    monkeypatch.setattr(fit_panel_module, "FitWizardWindow", _FakeSingleWizard)
+    monkeypatch.setattr(single_tab_module, "FitWizardWindow", _FakeSingleWizard)
     tab = SingleFitTab()
     tab.set_dataset(dataset)
     tab._set_composite_model(CompositeModel(["Exponential", "Constant"], operators=["+"]))
@@ -211,7 +212,7 @@ def test_single_fit_wizard_reopen_with_changed_model_does_not_serve_cache(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Changing the composite model invalidates the cached wizard recommendation."""
-    monkeypatch.setattr(fit_panel_module, "FitWizardWindow", _FakeSingleWizard)
+    monkeypatch.setattr(single_tab_module, "FitWizardWindow", _FakeSingleWizard)
     tab = SingleFitTab()
     tab.set_dataset(dataset)
     tab._set_composite_model(CompositeModel(["Exponential", "Constant"], operators=["+"]))
@@ -237,7 +238,7 @@ def test_single_fit_wizard_reopen_with_changed_run_does_not_serve_cache(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Switching to a different run invalidates the cached wizard recommendation."""
-    monkeypatch.setattr(fit_panel_module, "FitWizardWindow", _FakeSingleWizard)
+    monkeypatch.setattr(single_tab_module, "FitWizardWindow", _FakeSingleWizard)
     tab = SingleFitTab()
     tab.set_dataset(dataset)
     tab._set_composite_model(CompositeModel(["Exponential", "Constant"], operators=["+"]))
@@ -298,7 +299,7 @@ def test_global_fit_wizard_reopen_with_matching_signature_serves_cache(
     dataset: MuonDataset,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(fit_panel_module, "GlobalFitWizardWindow", _FakeGlobalWizard)
+    monkeypatch.setattr(global_tab_module, "GlobalFitWizardWindow", _FakeGlobalWizard)
     tab = GlobalFitTab()
     tab.set_datasets(_two_dataset_batch(dataset))
 
@@ -326,7 +327,7 @@ def test_global_fit_wizard_reopen_with_changed_run_set_does_not_serve_cache(
     dataset: MuonDataset,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(fit_panel_module, "GlobalFitWizardWindow", _FakeGlobalWizard)
+    monkeypatch.setattr(global_tab_module, "GlobalFitWizardWindow", _FakeGlobalWizard)
     tab = GlobalFitTab()
     tab.set_datasets(_two_dataset_batch(dataset))
 

@@ -106,7 +106,7 @@ def test_count_fit_uses_separate_worker_handle(qapp, fb_dataset, monkeypatch):
     global/grouped paths keep SEPARATE live handles (_count_fit_worker vs
     _fit_worker) so the shared Stop button cancels exactly the running fit.
     """
-    import asymmetry.gui.panels.fit_panel as fit_panel_mod
+    import asymmetry.gui.panels.fit.global_tab as fit_panel_mod
     from asymmetry.core.fitting.engine import FitCancelledError
 
     window = MultiGroupFitWindow()

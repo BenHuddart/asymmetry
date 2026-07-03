@@ -34,6 +34,17 @@ Format: `- [ ] <area> — <what/why> (surfaced in Phase N)`
   confirm which second call site (if any) is meant — as of 2026-07-03 there
   is only one. (surfaced in Phase 0)
 
+- [ ] Phase 2 note: the `fit_panel.py` → `panels/fit/` split re-exports 23
+  public + private symbols through the shim. Downstream `from
+  ...fit_panel import <private helper>` call sites (e.g.
+  `multi_group_fit_window.py` importing `_get_file_value_for_parameter`;
+  tests importing `_set_tie_button_value`, `_tie_button_value`,
+  `_dataset_representation_domain`, `_fit_domain_mismatch_message`,
+  `_model_without_trailing_background`, `_bounded_phase_seed_padding`,
+  `_MAX_PHASE_SEED_FFT_POINTS`) should migrate to importing from the owning
+  submodule (`panels.fit.tab_base` / `panels.fit.seeding`) when the shim is
+  retired. (surfaced in Phase 2)
+
 - [x] Phase 1c scoped down from PLAN.md's description (shared TSV writer + GLE
   wrapper + export-path/binary-discovery helper) to just a shared GLE
   subprocess-invocation wrapper. Export-path caching (`default_export_path`,

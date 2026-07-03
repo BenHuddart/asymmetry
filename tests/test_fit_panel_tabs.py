@@ -42,6 +42,8 @@ from asymmetry.core.utils.constants import (
     MUON_LIFETIME_US,
 )
 from asymmetry.gui.panels import fit_panel as fit_panel_module
+from asymmetry.gui.panels.fit import global_tab as global_tab_module
+from asymmetry.gui.panels.fit import single_tab as single_tab_module
 from asymmetry.gui.panels.fit_panel import (
     FitPanel,
     GlobalFitTab,
@@ -441,7 +443,7 @@ def test_single_fit_open_fit_wizard_uses_active_dataset_and_model(
         def activateWindow(self) -> None:
             received["activate"] = True
 
-    monkeypatch.setattr(fit_panel_module, "FitWizardWindow", _FakeWizard)
+    monkeypatch.setattr(single_tab_module, "FitWizardWindow", _FakeWizard)
     tab = SingleFitTab()
     tab.set_dataset(dataset)
     tab._set_composite_model(CompositeModel(["Gaussian", "Constant"], operators=["+"]))
@@ -1618,7 +1620,7 @@ def test_grouped_fit_uses_per_group_seed_values_from_group_columns(
         captured["initial_params"] = call.args[4]
         return SimpleNamespace(cancel=lambda: None)
 
-    monkeypatch.setattr(fit_panel_module, "_start_fit_call", _fake_start)
+    monkeypatch.setattr(global_tab_module, "_start_fit_call", _fake_start)
 
     tab._run_global_fit()
 
@@ -2015,8 +2017,8 @@ def test_grouped_mode_context_uses_current_fit_window(
             ),
         ]
 
-    monkeypatch.setattr(fit_panel_module, "build_grouped_time_domain_groups", _fake_groups)
-    monkeypatch.setattr(fit_panel_module, "build_grouped_time_domain_datasets", _fake_datasets)
+    monkeypatch.setattr(global_tab_module, "build_grouped_time_domain_groups", _fake_groups)
+    monkeypatch.setattr(global_tab_module, "build_grouped_time_domain_datasets", _fake_datasets)
 
     tab = GlobalFitTab(member_kind="groups")
     tab.set_current_dataset(dataset)
@@ -2060,8 +2062,8 @@ def test_grouped_context_builds_members_for_multiple_runs(
             for i in (1, 2)
         ]
 
-    monkeypatch.setattr(fit_panel_module, "build_grouped_time_domain_groups", _fake_groups)
-    monkeypatch.setattr(fit_panel_module, "build_grouped_time_domain_datasets", _fake_datasets)
+    monkeypatch.setattr(global_tab_module, "build_grouped_time_domain_groups", _fake_groups)
+    monkeypatch.setattr(global_tab_module, "build_grouped_time_domain_datasets", _fake_datasets)
 
     tab = GlobalFitTab(member_kind="groups")
     tab.set_member_datasets([_ds(50), _ds(51)])
@@ -2101,7 +2103,7 @@ def test_grouped_series_fit_dispatches_for_multiple_members(
             "bounds": {},
         },
     )
-    monkeypatch.setattr(fit_panel_module, "validate_grouped_model_contract", lambda *a, **k: None)
+    monkeypatch.setattr(global_tab_module, "validate_grouped_model_contract", lambda *a, **k: None)
 
     captured: dict[str, object] = {}
     monkeypatch.setattr(
@@ -2514,7 +2516,7 @@ def test_global_fit_uses_inherited_local_values_per_run(
         captured["initial_params"] = call.args[4]
         return SimpleNamespace(cancel=lambda: None)
 
-    monkeypatch.setattr(fit_panel_module, "_start_fit_call", _fake_start)
+    monkeypatch.setattr(global_tab_module, "_start_fit_call", _fake_start)
 
     tab._run_global_fit()
 
@@ -3193,7 +3195,7 @@ def test_global_tab_reopens_cached_results_for_prior_run_set_after_switching_gro
         def activateWindow(self) -> None:
             captured["activate"] = True
 
-    monkeypatch.setattr(fit_panel_module, "GlobalFitWizardWindow", _FakeGlobalWizard)
+    monkeypatch.setattr(global_tab_module, "GlobalFitWizardWindow", _FakeGlobalWizard)
 
     tab.set_datasets([dataset, dataset_102])
     tab._fit_wizard_window = None
@@ -3251,7 +3253,7 @@ def test_global_tab_reopens_historical_results_for_same_run_set_when_signature_c
         def activateWindow(self) -> None:
             return None
 
-    monkeypatch.setattr(fit_panel_module, "GlobalFitWizardWindow", _FakeGlobalWizard)
+    monkeypatch.setattr(global_tab_module, "GlobalFitWizardWindow", _FakeGlobalWizard)
 
     tab._fit_wizard_window = None
     tab._open_fit_wizard()
@@ -3356,7 +3358,7 @@ def test_global_tab_open_fit_wizard_passes_cached_single_fit_recommendations(
         def activateWindow(self) -> None:
             captured["activate"] = True
 
-    monkeypatch.setattr(fit_panel_module, "GlobalFitWizardWindow", _FakeGlobalWizard)
+    monkeypatch.setattr(global_tab_module, "GlobalFitWizardWindow", _FakeGlobalWizard)
 
     panel._global_tab._open_fit_wizard()
 
