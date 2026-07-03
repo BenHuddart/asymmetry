@@ -21,9 +21,9 @@ no analysis logic of their own.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
-from matplotlib.figure import Figure
 from numpy.typing import NDArray
 from PySide6.QtCore import QSignalBlocker, Qt, Signal
 from PySide6.QtWidgets import (
@@ -56,7 +56,11 @@ from asymmetry.gui.styles.widgets import (
     make_provenance_label,
 )
 from asymmetry.gui.widgets.axis_limits import AxisLimitControls
+from asymmetry.gui.widgets.mpl_canvas import create_canvas
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox
+
+if TYPE_CHECKING:
+    from matplotlib.figure import Figure
 
 
 class ALCFitPanel(QWidget):
@@ -253,8 +257,7 @@ class ALCScanView(QWidget):
 
         plot_layout.addWidget(self._build_limit_controls())
 
-        self._figure = Figure(constrained_layout=True)
-        self._canvas = FigureCanvasQTAgg(self._figure)
+        self._figure, self._canvas = create_canvas(layout="constrained")
         self._canvas.setMinimumHeight(200)
         self._ax = self._figure.add_subplot(111)
         # Drag baseline-region edges and peak centres directly on the plot.
@@ -1353,8 +1356,7 @@ class IntegralTimeStrip(QWidget):
         header.addStretch()
         layout.addLayout(header)
 
-        self._figure = Figure(constrained_layout=True)
-        self._canvas = FigureCanvasQTAgg(self._figure)
+        self._figure, self._canvas = create_canvas(layout="constrained")
         self._canvas.setMinimumHeight(110)
         self._canvas.setMaximumHeight(160)
         self._ax = self._figure.add_subplot(111)

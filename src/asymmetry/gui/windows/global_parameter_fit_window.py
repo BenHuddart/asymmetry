@@ -52,6 +52,7 @@ from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
 from asymmetry.gui.styles.widgets import apply_param_table_style
 from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
+from asymmetry.gui.widgets.mpl_canvas import create_canvas
 
 _PARAMETER_FIT_CURVE_SAMPLE_COUNT = 800
 
@@ -127,11 +128,7 @@ class GlobalParameterFitWindow(QMainWindow):
         self._left_canvas = None
         self._left_figure = None
         try:
-            from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
-            from matplotlib.figure import Figure
-
-            self._left_figure = Figure(tight_layout=True)
-            self._left_canvas = FigureCanvasQTAgg(self._left_figure)
+            self._left_figure, self._left_canvas = create_canvas(layout="tight")
             left_layout.addWidget(self._left_canvas)
 
             self._left_canvas.mpl_connect("button_press_event", self._on_canvas_button_press)
@@ -215,11 +212,7 @@ class GlobalParameterFitWindow(QMainWindow):
         self._local_canvas = None
         self._local_figure = None
         try:
-            from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
-            from matplotlib.figure import Figure
-
-            self._local_figure = Figure(tight_layout=True)
-            self._local_canvas = FigureCanvasQTAgg(self._local_figure)
+            self._local_figure, self._local_canvas = create_canvas(layout="tight")
             right_layout.addWidget(self._local_canvas)
 
             self._local_canvas.mpl_connect("button_press_event", self._on_local_canvas_button_press)

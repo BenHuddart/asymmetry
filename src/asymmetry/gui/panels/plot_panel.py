@@ -76,6 +76,7 @@ from asymmetry.gui.styles.plots import (
 )
 from asymmetry.gui.styles.widgets import build_nav_button_qss
 from asymmetry.gui.widgets.axis_limits import AxisLimitControls, FloatLimitField
+from asymmetry.gui.widgets.mpl_canvas import create_canvas
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox
 from asymmetry.gui.widgets.projection_chip_bar import ProjectionChipBar
 from asymmetry.gui.widgets.rrf_controls import (
@@ -206,11 +207,9 @@ class PlotPanel(QWidget):
         layout.setSpacing(2)
 
         try:
-            from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
-            from matplotlib.figure import Figure
-
-            self._figure = Figure(tight_layout=True)
-            self._canvas = FigureCanvasQTAgg(self._figure)
+            self._figure, self._canvas, self._nav_toolbar = create_canvas(
+                layout="tight", toolbar=True, parent=self
+            )
             self._canvas.setSizePolicy(
                 QSizePolicy.Policy.Expanding,
                 QSizePolicy.Policy.Preferred,
@@ -239,7 +238,6 @@ class PlotPanel(QWidget):
             self._ax = self._figure.add_subplot(111)
             style_figure(self._figure)
             style_axes(self._ax)
-            self._nav_toolbar = NavigationToolbar2QT(self._canvas, self)
             self._nav_toolbar.hide()
             self._axis_limit_callback_ids: list[tuple[object, int, int]] = []
             self._syncing_limits_from_axes = False

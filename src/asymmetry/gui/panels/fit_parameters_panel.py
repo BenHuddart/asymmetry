@@ -109,6 +109,7 @@ from asymmetry.gui.styles.widgets import (
 from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.widgets.collapsible_section import CollapsibleSection
 from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
+from asymmetry.gui.widgets.mpl_canvas import create_canvas
 
 _PARAMETER_FIT_CURVE_SAMPLE_COUNT = 800
 
@@ -662,11 +663,7 @@ class FitParametersPanel(QWidget):
 
         self._has_mpl = False
         try:
-            from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
-            from matplotlib.figure import Figure
-
-            self._figure = Figure(constrained_layout=True)
-            self._canvas = FigureCanvasQTAgg(self._figure)
+            self._figure, self._canvas = create_canvas(layout="constrained")
             plot_layout.addWidget(self._canvas, 1)
             self._has_mpl = True
             self._canvas.mpl_connect("button_press_event", self._on_plot_button_press)
