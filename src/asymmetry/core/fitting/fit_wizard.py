@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import math
+import re
+from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from enum import Enum
 
@@ -10,15 +13,48 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.fitting.composite import CompositeModel
+from asymmetry.core.fitting.component_tags import (
+    ComputationalCost,
+    geometry_from_field_direction,
+)
+from asymmetry.core.fitting.composite import COMPONENTS, CompositeModel
 from asymmetry.core.fitting.engine import FitEngine, FitResult
+from asymmetry.core.fitting.muonium import VACUUM_MUONIUM_A_HF_MHZ
 from asymmetry.core.fitting.parameters import (
     Parameter,
     ParameterSet,
     get_param_info,
     split_parameter_name,
 )
+from asymmetry.core.fitting.peak_detection import (
+    DetectedPeak,
+    MultipletMatch,
+    PeakAnalysis,
+    analyze_dataset_peaks,
+    deserialize_multiplet_match,
+    deserialize_peak_analysis,
+    match_multiplets,
+    merge_user_peaks,
+    serialize_multiplet_match,
+    serialize_peak_analysis,
+)
+from asymmetry.core.fitting.spectral import field_gauss_to_frequency_mhz
+from asymmetry.core.fitting.wizard_scope import (
+    ScopeResolution,
+    WizardScope,
+    resolve_scope_for_dataset,
+)
 from asymmetry.core.fourier.fft import fft_asymmetry
+
+# ``ComputationalCost`` is a ``str``-Enum, so ``max()``/``<`` compares members
+# alphabetically ("cheap" < "expensive" < "moderate") — wrong. Rank explicitly.
+# (Mirrors ``wizard_scope._COST_RANK``; kept local so we do not reach into that
+# module's private name.)
+_COST_RANK: dict[ComputationalCost, int] = {
+    ComputationalCost.CHEAP: 0,
+    ComputationalCost.MODERATE: 1,
+    ComputationalCost.EXPENSIVE: 2,
+}
 
 _EPS = 1e-12
 _DEFAULT_FFT_WINDOW = "hann"
@@ -44,6 +80,22 @@ _FIT_WIZARD_TITLES = {
     "gbkt_constant": "Gaussian-broadened KT + Constant",
     "risch_kehr_constant": "Risch-Kehr + Constant",
     "current_model": "Current Fit Function",
+    # Tiered-screening family templates (build_wizard_families).
+    "dynamic_lkt_constant": "Dynamic Lorentzian KT + Constant",
+    "lf_kt_constant": "Longitudinal-field KT + Constant",
+    "vortex_lattice_constant": "Vortex Lattice + Constant",
+    "vortex_lattice_powder_constant": "Vortex Lattice (powder) + Constant",
+    "muonium_low_tf_constant": "Muonium (low TF) + Constant",
+    "muonium_tf_constant": "Muonium (TF) + Constant",
+    "muonium_high_tf_constant": "Muonium (high TF) + Constant",
+    "muonium_zf_constant": "Muonium (ZF) + Constant",
+    "muonium_lf_relax_constant": "Muonium LF relaxation + Constant",
+    "fmuf_linear_exp_constant": "F-mu-F (collinear) * Exponential + Constant",
+    "muf_exp_constant": "mu-F * Exponential + Constant",
+    "dynamic_fmuf_constant": "Dynamic F-mu-F + Constant",
+    "fmuf_general_constant": "F-mu-F (general) + Constant",
+    "dipolar_pair_constant": "Dipolar pair field + Constant",
+    "baseline": "Current model",
 }
 
 
@@ -125,6 +177,9 @@ class CandidateAssessment:
     fitted_curve: NDArray[np.float64]
     component_curves: tuple[tuple[str, NDArray[np.float64]], ...]
     repair_attempted: bool = False
+    #: Screening stage that produced this assessment: 1 = Stage-1 family
+    #: representative (cheap first-pass fit), 2 = full assessment.
+    stage: int = 2
 
     @property
     def parameter_count(self) -> int:
@@ -149,6 +204,24 @@ class CandidateAssessment:
 
 
 @dataclass(frozen=True)
+class FamilyScreeningReport:
+    """Outcome of Stage-1 screening for one wizard family.
+
+    ``stage1_metric_value`` may be ``math.inf`` when the representative fit
+    failed; ``promoted`` records whether the family advanced to Stage-2.
+    """
+
+    family_key: str
+    title: str
+    stage1_template_key: str
+    stage1_metric_value: float
+    stage1_gate_passed: bool
+    promoted: bool
+    reason: str
+    stage2_template_keys: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class FitWizardRecommendation:
     """Full fit-wizard analysis payload plus the current recommendation."""
 
@@ -159,6 +232,9 @@ class FitWizardRecommendation:
     recommended_key: str | None
     comparable_keys: tuple[str, ...]
     summary: str
+    peak_analysis: PeakAnalysis | None = None
+    multiplet_matches: tuple[MultipletMatch, ...] = ()
+    family_reports: tuple[FamilyScreeningReport, ...] = ()
 
     @property
     def recommended_assessment(self) -> CandidateAssessment | None:
@@ -477,20 +553,951 @@ def build_candidate_templates(
     return tuple(templates)
 
 
+@dataclass(frozen=True)
+class WizardFamily:
+    """A tiered-screening family: one Stage-1 representative + Stage-2 members.
+
+    ``stage2_members`` never includes ``stage1_rep``. ``stage1_extras`` are
+    additional cheap Stage-1 shapes fitted alongside the representative when a
+    single rep cannot proxy the family's shape space (e.g. exponential vs
+    Gaussian relaxation); the family screens on the best of them. ``priority``
+    is a soft ordering hint (higher runs first); ``must_run_stage1`` marks
+    families whose representative is always fitted in Stage-1.
+    """
+
+    key: str
+    title: str
+    stage1_rep: CandidateTemplate
+    stage2_members: tuple[CandidateTemplate, ...]
+    priority: float = 0.0
+    must_run_stage1: bool = True
+    stage1_extras: tuple[CandidateTemplate, ...] = ()
+
+
+#: Canonical family order used as the stable tie-break after priority.
+_WIZARD_FAMILY_ORDER: tuple[str, ...] = (
+    "relaxation",
+    "multi_rate",
+    "kt",
+    "oscillatory",
+    "muonium",
+    "fmuf",
+    "baseline",
+)
+
+
+def _family_template(
+    key: str,
+    model: CompositeModel,
+    *,
+    category: str,
+    rationale: str,
+    baseline: bool = False,
+) -> CandidateTemplate:
+    """Build one :class:`CandidateTemplate`, titling it from ``_FIT_WIZARD_TITLES``."""
+    return CandidateTemplate(
+        key=key,
+        title=_FIT_WIZARD_TITLES.get(key, model.formula_string()),
+        category=category,
+        rationale=rationale,
+        model=model,
+        is_current_model_baseline=baseline,
+    )
+
+
+def _template_cost_rank(template: CandidateTemplate) -> int:
+    """Worst-component computational-cost rank of a template's model."""
+    ranks = [
+        _COST_RANK.get(definition.cost, 1)
+        for name in template.model.component_names
+        if (definition := COMPONENTS.get(name)) is not None
+    ]
+    return max(ranks, default=1)
+
+
+def _template_in_scope(template: CandidateTemplate, included: frozenset[str]) -> bool:
+    """True iff every component of ``template``'s model is in ``included``."""
+    return all(name in included for name in template.model.component_names)
+
+
+def _scope_filter_family(
+    family: WizardFamily,
+    included: frozenset[str],
+) -> WizardFamily | None:
+    """Filter one family to the in-scope templates, promoting a member if needed.
+
+    Returns ``None`` when nothing survives. The current-model baseline family is
+    never passed here (it is exempt from scope filtering).
+    """
+    rep_ok = _template_in_scope(family.stage1_rep, included)
+    surviving_extras = tuple(
+        extra for extra in family.stage1_extras if _template_in_scope(extra, included)
+    )
+    surviving_members = tuple(
+        member for member in family.stage2_members if _template_in_scope(member, included)
+    )
+    if rep_ok:
+        return replace(family, stage1_extras=surviving_extras, stage2_members=surviving_members)
+    pool = surviving_extras + surviving_members
+    if not pool:
+        return None
+    # Promote the cheapest surviving template to representative; ties broken by
+    # template key (alphabetical) for determinism.
+    promoted = min(pool, key=lambda t: (_template_cost_rank(t), t.key))
+    return replace(
+        family,
+        stage1_rep=promoted,
+        stage1_extras=tuple(e for e in surviving_extras if e.key != promoted.key),
+        stage2_members=tuple(m for m in surviving_members if m.key != promoted.key),
+    )
+
+
+def build_wizard_families(
+    fingerprint: SpectrumFingerprint,
+    current_model: CompositeModel | None = None,
+    *,
+    scope_resolution: ScopeResolution | None = None,
+) -> tuple[WizardFamily, ...]:
+    """Return the tiered-screening family table for the fit wizard.
+
+    Unlike :func:`build_candidate_templates`, every family and every member is
+    always present — the fingerprint hints only raise a family's ``priority``.
+    When ``scope_resolution`` is given, templates whose model uses an
+    out-of-scope component are dropped; a family whose representative is dropped
+    promotes its cheapest surviving member, and a family with nothing surviving
+    is omitted. The current-model baseline family is never scope-filtered.
+    """
+    families: list[WizardFamily] = []
+
+    # -- Relaxation -------------------------------------------------------
+    families.append(
+        WizardFamily(
+            key="relaxation",
+            title="Relaxation",
+            stage1_rep=_family_template(
+                "exp_constant",
+                CompositeModel(["Exponential", "Constant"], operators=["+"]),
+                category="General",
+                rationale="Baseline single-relaxation model with a constant background.",
+            ),
+            stage1_extras=(
+                # A single exponential rep cannot proxy Gaussian-shaped
+                # relaxation (very different early-time curvature), so both
+                # cheap shapes screen in Stage 1 and the family takes the best.
+                _family_template(
+                    "gaussian_constant",
+                    CompositeModel(["Gaussian", "Constant"], operators=["+"]),
+                    category="General",
+                    rationale="Useful when early-time curvature suggests Gaussian broadening.",
+                ),
+            ),
+            stage2_members=(
+                _family_template(
+                    "stretched_constant",
+                    CompositeModel(["StretchedExponential", "Constant"], operators=["+"]),
+                    category="General",
+                    rationale=(
+                        "Adds one shape parameter when relaxation looks broader than a "
+                        "simple exponential."
+                    ),
+                ),
+            ),
+        )
+    )
+
+    # -- Multi-rate relaxation --------------------------------------------
+    families.append(
+        WizardFamily(
+            key="multi_rate",
+            title="Multi-rate relaxation",
+            stage1_rep=_family_template(
+                "biexp_constant",
+                CompositeModel(["Exponential", "Exponential", "Constant"], operators=["+", "+"]),
+                category="Multi-rate",
+                rationale="Allows two exponential relaxation rates.",
+            ),
+            stage2_members=(
+                _family_template(
+                    "exp_gaussian_constant",
+                    CompositeModel(["Exponential", "Gaussian", "Constant"], operators=["+", "+"]),
+                    category="Multi-rate",
+                    rationale=(
+                        "Allows an additive mix of exponential and Gaussian relaxation channels."
+                    ),
+                ),
+                _family_template(
+                    "double_gaussian_constant",
+                    CompositeModel(["Gaussian", "Gaussian", "Constant"], operators=["+", "+"]),
+                    category="Multi-rate",
+                    rationale="Allows two Gaussian relaxation channels with different widths.",
+                ),
+                _family_template(
+                    "triple_exp_constant",
+                    CompositeModel(
+                        ["Exponential", "Exponential", "Exponential", "Constant"],
+                        operators=["+", "+", "+"],
+                    ),
+                    category="Multi-rate",
+                    rationale=(
+                        "Three additive exponential channels for strongly multi-rate "
+                        "monotonic relaxation."
+                    ),
+                ),
+                _family_template(
+                    "double_exp_gaussian_constant",
+                    CompositeModel(
+                        ["Exponential", "Exponential", "Gaussian", "Constant"],
+                        operators=["+", "+", "+"],
+                    ),
+                    category="Multi-rate",
+                    rationale=(
+                        "Three relaxing components with two exponential channels and one "
+                        "Gaussian channel."
+                    ),
+                ),
+                _family_template(
+                    "exp_double_gaussian_constant",
+                    CompositeModel(
+                        ["Exponential", "Gaussian", "Gaussian", "Constant"],
+                        operators=["+", "+", "+"],
+                    ),
+                    category="Multi-rate",
+                    rationale=(
+                        "Three relaxing components with one exponential channel and two "
+                        "Gaussian channels."
+                    ),
+                ),
+                _family_template(
+                    "triple_gaussian_constant",
+                    CompositeModel(
+                        ["Gaussian", "Gaussian", "Gaussian", "Constant"],
+                        operators=["+", "+", "+"],
+                    ),
+                    category="Multi-rate",
+                    rationale="Three additive Gaussian channels for broad distributed relaxation.",
+                ),
+                _family_template(
+                    "risch_kehr_constant",
+                    CompositeModel(["RischKehr", "Constant"], operators=["+"]),
+                    category="Multi-rate",
+                    rationale=(
+                        "Curved semilog envelope is consistent with Risch-Kehr "
+                        "1D-diffusion relaxation."
+                    ),
+                ),
+            ),
+            priority=1.0 if fingerprint.multi_rate_hint else 0.0,
+        )
+    )
+
+    # -- Kubo-Toyabe ------------------------------------------------------
+    families.append(
+        WizardFamily(
+            key="kt",
+            title="Kubo-Toyabe",
+            stage1_rep=_family_template(
+                "static_gkt_constant",
+                CompositeModel(["StaticGKT_ZF", "Constant"], operators=["+"]),
+                category="KT-like",
+                rationale=(
+                    "Late-time dip and recovery are consistent with static Gaussian "
+                    "Kubo-Toyabe relaxation."
+                ),
+            ),
+            stage2_members=(
+                _family_template(
+                    "dynamic_gkt_constant",
+                    CompositeModel(["DynamicGaussianKT", "Constant"], operators=["+"]),
+                    category="KT-like",
+                    rationale=(
+                        "A partially-washed-out KT dip suggests dynamic (fluctuating) "
+                        "Gaussian Kubo-Toyabe relaxation."
+                    ),
+                ),
+                _family_template(
+                    "static_gkt_exp_constant",
+                    CompositeModel(
+                        ["StaticGKT_ZF", "Exponential", "Constant"], operators=["*", "+"]
+                    ),
+                    category="KT-like",
+                    rationale="Adds a phenomenological exponential envelope to a static KT-like shape.",
+                ),
+                _family_template(
+                    "gbkt_constant",
+                    CompositeModel(["GaussianBroadenedKT", "Constant"], operators=["+"]),
+                    category="KT-like",
+                    rationale=(
+                        "Dip-and-recovery with a softened minimum suggests a distribution of "
+                        "KT widths (disordered moments)."
+                    ),
+                ),
+                _family_template(
+                    "dynamic_lkt_constant",
+                    CompositeModel(["DynamicLorentzianKT", "Constant"], operators=["+"]),
+                    category="KT-like",
+                    rationale=(
+                        "Dynamic Lorentzian KT for dilute-moment strong-collision relaxation."
+                    ),
+                ),
+                _family_template(
+                    "lf_kt_constant",
+                    CompositeModel(["LongitudinalFieldKT", "Constant"], operators=["+"]),
+                    category="KT-like",
+                    rationale="Static Gaussian KT under a longitudinal field.",
+                ),
+            ),
+            priority=1.0 if fingerprint.kt_like_hint else 0.0,
+        )
+    )
+
+    # -- Precession (oscillatory) -----------------------------------------
+    families.append(
+        WizardFamily(
+            key="oscillatory",
+            title="Precession",
+            stage1_rep=_family_template(
+                "oscillatory_exp_constant",
+                CompositeModel(["Oscillatory", "Exponential", "Constant"], operators=["*", "+"]),
+                category="Oscillatory",
+                rationale=(
+                    "Resolved turning points and an FFT peak spanning multiple cycles "
+                    "suggest a damped oscillatory component."
+                ),
+            ),
+            stage2_members=(
+                _family_template(
+                    "oscillatory_gaussian_constant",
+                    CompositeModel(["Oscillatory", "Gaussian", "Constant"], operators=["*", "+"]),
+                    category="Oscillatory",
+                    rationale=(
+                        "Oscillatory candidate with Gaussian envelope for broader field "
+                        "distributions."
+                    ),
+                ),
+                _family_template(
+                    "bessel_exp_constant",
+                    CompositeModel(["Bessel", "Exponential", "Constant"], operators=["*", "+"]),
+                    category="Oscillatory",
+                    rationale=(
+                        "A J0 (Bessel) line shape fits incommensurate/SDW internal-field "
+                        "distributions better than a cosine."
+                    ),
+                ),
+                _family_template(
+                    "vortex_lattice_constant",
+                    CompositeModel(["VortexLattice", "Constant"], operators=["+"]),
+                    category="Oscillatory",
+                    rationale=(
+                        "Vortex-lattice TF line shape for a superconducting field distribution."
+                    ),
+                ),
+                _family_template(
+                    "vortex_lattice_powder_constant",
+                    CompositeModel(["VortexLatticePowder", "Constant"], operators=["+"]),
+                    category="Oscillatory",
+                    rationale=(
+                        "Powder-averaged vortex-lattice TF line shape for a superconducting "
+                        "field distribution."
+                    ),
+                ),
+            ),
+            priority=1.0 if fingerprint.oscillatory_hint else 0.0,
+        )
+    )
+
+    # -- Muonium ----------------------------------------------------------
+    # The anisotropic high-TF form (MuoniumHighTFAniso) is deliberately omitted:
+    # it is too expensive for automatic screening.
+    families.append(
+        WizardFamily(
+            key="muonium",
+            title="Muonium",
+            stage1_rep=_family_template(
+                "muonium_low_tf_constant",
+                CompositeModel(["MuoniumLowTF", "Constant"], operators=["+"]),
+                category="Muonium",
+                rationale="Low-transverse-field muonium two-satellite precession.",
+            ),
+            stage2_members=(
+                _family_template(
+                    "muonium_tf_constant",
+                    CompositeModel(["MuoniumTF", "Constant"], operators=["+"]),
+                    category="Muonium",
+                    rationale="Exact four-frequency transverse-field muonium form.",
+                ),
+                _family_template(
+                    "muonium_high_tf_constant",
+                    CompositeModel(["MuoniumHighTF", "Constant"], operators=["+"]),
+                    category="Muonium",
+                    rationale="High-transverse-field intratriplet muonium precession.",
+                ),
+                _family_template(
+                    "muonium_zf_constant",
+                    CompositeModel(["MuoniumZF", "Constant"], operators=["+"]),
+                    category="Muonium",
+                    rationale="Zero-field muonium precession.",
+                ),
+                _family_template(
+                    "muonium_lf_relax_constant",
+                    CompositeModel(["MuoniumLFRelax", "Constant"], operators=["+"]),
+                    category="Muonium",
+                    rationale="Longitudinal-field muonium repolarisation/relaxation.",
+                ),
+            ),
+        )
+    )
+
+    # -- Fluorine dipolar (F-mu-F) ----------------------------------------
+    # FmuF_General / FmuF_Triangle are expensive powder averages — they belong in
+    # Stage-2 only and are never used as representatives.
+    families.append(
+        WizardFamily(
+            key="fmuf",
+            title="Fluorine dipolar",
+            stage1_rep=_family_template(
+                "fmuf_linear_exp_constant",
+                CompositeModel(["FmuF_Linear", "Exponential", "Constant"], operators=["*", "+"]),
+                category="Nuclear dipolar",
+                rationale=(
+                    "Collinear F-mu-F polarisation with a phenomenological relaxing envelope."
+                ),
+            ),
+            stage2_members=(
+                _family_template(
+                    "muf_exp_constant",
+                    CompositeModel(["MuF", "Exponential", "Constant"], operators=["*", "+"]),
+                    category="Nuclear dipolar",
+                    rationale=(
+                        "Single-fluorine mu-F polarisation with a phenomenological relaxing "
+                        "envelope."
+                    ),
+                ),
+                _family_template(
+                    "dynamic_fmuf_constant",
+                    CompositeModel(["DynamicFmuF", "Constant"], operators=["+"]),
+                    category="Nuclear dipolar",
+                    rationale="Dynamic F-mu-F polarisation with hopping/fluctuation.",
+                ),
+                _family_template(
+                    "fmuf_general_constant",
+                    CompositeModel(["FmuF_General", "Constant"], operators=["+"]),
+                    category="Nuclear dipolar",
+                    rationale="General (powder-averaged) F-mu-F polarisation.",
+                ),
+                _family_template(
+                    "dipolar_pair_constant",
+                    CompositeModel(["DipolarPairField", "Constant"], operators=["+"]),
+                    category="Nuclear dipolar",
+                    rationale="Dipolar-pair local-field polarisation.",
+                ),
+            ),
+        )
+    )
+
+    if scope_resolution is not None:
+        included = scope_resolution.included_set
+        families = [
+            filtered
+            for family in families
+            if (filtered := _scope_filter_family(family, included)) is not None
+        ]
+
+    # The current-model baseline family is appended after scope filtering and is
+    # never scope-filtered itself.
+    if current_model is not None:
+        families.append(
+            WizardFamily(
+                key="baseline",
+                title="Current model",
+                stage1_rep=_family_template(
+                    "baseline",
+                    current_model,
+                    category="Baseline",
+                    rationale=(
+                        "Compares the wizard recommendation against the function already "
+                        "active in the fit tab."
+                    ),
+                    baseline=True,
+                ),
+                stage2_members=(),
+                must_run_stage1=True,
+            )
+        )
+
+    order_index = {key: idx for idx, key in enumerate(_WIZARD_FAMILY_ORDER)}
+    families.sort(
+        key=lambda family: (
+            -family.priority,
+            order_index.get(family.key, len(_WIZARD_FAMILY_ORDER)),
+        )
+    )
+    return tuple(families)
+
+
+#: Stage-1 family representatives get a reduced parameter-variant ladder.
+_STAGE1_VARIANT_BUDGET = 3
+#: Families within this metric distance of the best Stage-1 representative are
+#: promoted to Stage 2 even when their residual gates fail (Burnham & Anderson:
+#: "essentially no support" only beyond ~10).
+_STAGE1_PROMOTE_DELTA = 10.0
+#: Cap on Stage-2 families promoted by score/gates; pattern-matched and
+#: baseline families never count against it.
+_STAGE2_MAX_FAMILIES = 4
+#: Detected peaks need this SNR to seed a component in a multiplet template
+#: (user-declared peaks always qualify).
+_MULTIPLET_MIN_SNR = 4.0
+
+
+@dataclass(frozen=True)
+class TemplateSeedContext:
+    """Peak/pattern context threaded into data-driven template seeding."""
+
+    peak_analysis: PeakAnalysis | None = None
+    multiplet_matches: tuple[MultipletMatch, ...] = ()
+    field_gauss: float | None = None
+
+    def best_match(self, kinds: tuple[str, ...]) -> MultipletMatch | None:
+        """Return the highest-quality match of one of ``kinds``, if any."""
+        candidates = [m for m in self.multiplet_matches if m.kind in kinds]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda m: m.quality)
+
+
+def _multiplet_seed_peaks(
+    analysis: PeakAnalysis | None, max_components: int
+) -> tuple[DetectedPeak, ...]:
+    """Peaks strong enough to seed one oscillatory component each."""
+    if analysis is None:
+        return ()
+    eligible = [
+        peak for peak in analysis.peaks if peak.source == "user" or peak.snr >= _MULTIPLET_MIN_SNR
+    ]
+    return tuple(eligible[:max_components])
+
+
+def build_oscillatory_multiplet_templates(
+    analysis: PeakAnalysis | None,
+    *,
+    max_components: int = 3,
+    envelopes: tuple[str, ...] = ("Exponential", "Gaussian"),
+) -> tuple[CandidateTemplate, ...]:
+    """Build ``(Osc×Env) + … + Const`` templates, one component per strong peak.
+
+    Returns an empty tuple below two qualifying peaks — a single line is already
+    covered by the plain oscillatory candidates.
+    """
+    peaks = _multiplet_seed_peaks(analysis, max_components)
+    n = len(peaks)
+    if n < 2:
+        return ()
+    freq_text = ", ".join(f"{peak.frequency_mhz:.3g}" for peak in peaks)
+    templates: list[CandidateTemplate] = []
+    for envelope in envelopes:
+        names: list[str] = []
+        operators: list[str] = []
+        opens: list[int] = []
+        closes: list[int] = []
+        for k in range(n):
+            names.extend(["Oscillatory", envelope])
+            opens.extend([1, 0])
+            closes.extend([0, 1])
+            operators.append("*")
+            if k < n - 1:
+                operators.append("+")
+        names.append("Constant")
+        operators.append("+")
+        opens.append(0)
+        closes.append(0)
+        env_tag = "exp" if envelope == "Exponential" else "gaussian"
+        templates.append(
+            CandidateTemplate(
+                key=f"oscillatory{n}_{env_tag}_constant",
+                title=f"{n}× damped cosine ({envelope} envelopes) + constant",
+                category="Oscillatory",
+                rationale=(
+                    f"{n} spectral lines detected at {freq_text} MHz; one damped cosine per line."
+                ),
+                model=CompositeModel(
+                    names,
+                    operators=operators,
+                    open_parentheses=opens,
+                    close_parentheses=closes,
+                ),
+            )
+        )
+    return tuple(templates)
+
+
+_MULTIPLET_TEMPLATE_KEY_RE = re.compile(r"^oscillatory(\d+)_(exp|gaussian)_constant$")
+
+#: Muonium TF templates whose ``field``/``A_hf`` seeding shares one rule.
+_MUONIUM_TF_TEMPLATE_KEYS = frozenset(
+    {"muonium_low_tf_constant", "muonium_tf_constant", "muonium_high_tf_constant"}
+)
+#: Fluorine-dipolar templates seeded from a matched r_muF.
+_FMUF_TEMPLATE_KEYS = frozenset(
+    {
+        "fmuf_linear_exp_constant",
+        "muf_exp_constant",
+        "dynamic_fmuf_constant",
+        "fmuf_general_constant",
+        "dipolar_pair_constant",
+    }
+)
+
+
+def _decide_family_promotions(
+    families: Sequence[WizardFamily],
+    rep_assessments: Sequence[CandidateAssessment],
+    pattern_family_keys: frozenset[str],
+    metric: SelectionMetric,
+    hint_family_keys: frozenset[str] = frozenset(),
+) -> list[tuple[WizardFamily, CandidateAssessment, bool, str]]:
+    """Decide which families expand to Stage 2, with a concrete reason each.
+
+    Promotion: residual gates passed, metric within ``_STAGE1_PROMOTE_DELTA``
+    of the best representative, a multiplet pattern names the family, a
+    fingerprint hint points at it (a family's Stage-2 member can differ enough
+    in shape from its representative — e.g. damped KT vs bare KT — that the
+    rep's score alone under-promotes), or the family is the best/baseline one.
+    Score/hint promotions are capped at ``_STAGE2_MAX_FAMILIES`` by metric
+    rank; pattern and baseline promotions are exempt from the cap.
+    """
+    reps = dict(zip((family.key for family in families), rep_assessments))
+    successful = [a for a in rep_assessments if a.is_successful]
+    best_value = min(a.metric_value(metric) for a in successful) if successful else math.inf
+
+    provisional: list[tuple[WizardFamily, CandidateAssessment, bool, str, bool]] = []
+    for family in families:
+        assessment = reps[family.key]
+        value = assessment.metric_value(metric) if assessment.is_successful else math.inf
+        delta = value - best_value
+        exempt = False
+        if family.key in pattern_family_keys:
+            promoted, reason, exempt = True, "pattern match promotes this family", True
+        elif family.key == "baseline":
+            promoted, reason, exempt = True, "current-model baseline", True
+        elif not assessment.is_successful:
+            promoted, reason = False, "not promoted: Stage-1 representative fit failed"
+        elif delta <= 0.0:
+            promoted, reason = True, "best Stage-1 score"
+        elif assessment.residual_gate_passed:
+            promoted, reason = True, "residual gates passed"
+        elif delta <= _STAGE1_PROMOTE_DELTA:
+            promoted, reason = (
+                True,
+                f"within {_STAGE1_PROMOTE_DELTA:.0f} of the best score "
+                f"(Δ{metric.value} = {delta:.1f})",
+            )
+        elif family.key in hint_family_keys:
+            promoted, reason = (
+                True,
+                "fingerprint hint suggests this family despite the representative score",
+            )
+        else:
+            gate_text = "; ".join(assessment.residual_gate_reasons[:2]) or "gates failed"
+            promoted, reason = (
+                False,
+                f"not promoted: Δ{metric.value} = {delta:.1f} above best and {gate_text}",
+            )
+        provisional.append((family, assessment, promoted, reason, exempt))
+
+    capped_keys = [
+        family.key
+        for family, assessment, promoted, _reason, exempt in sorted(
+            provisional, key=lambda entry: entry[1].metric_value(metric)
+        )
+        if promoted and not exempt
+    ]
+    overflow = set(capped_keys[_STAGE2_MAX_FAMILIES:])
+
+    decisions: list[tuple[WizardFamily, CandidateAssessment, bool, str]] = []
+    for family, assessment, promoted, reason, _exempt in provisional:
+        if family.key in overflow:
+            promoted = False
+            reason = "not promoted: within margin but beyond the Stage-2 family cap"
+        decisions.append((family, assessment, promoted, reason))
+    return decisions
+
+
+def _run_template_assessments(
+    tasks: Sequence[Callable[[], CandidateAssessment]],
+    *,
+    max_workers: int | None = None,
+) -> list[CandidateAssessment]:
+    """Run candidate-assessment callables, returning results in task order.
+
+    Each callable must be self-contained — it constructs its own
+    :class:`FitEngine` and captures its own dataset/template — so that the
+    callables can be fanned out across worker threads with no shared mutable
+    state. With ``max_workers is None`` the pool width is ``min(4, len(tasks))``;
+    when the resolved width is ``<= 1`` (or there is at most one task) a plain
+    serial loop runs instead, giving tests a deterministic path.
+    """
+    task_list = list(tasks)
+    if not task_list:
+        return []
+    workers = min(4, len(task_list)) if max_workers is None else int(max_workers)
+    if workers <= 1 or len(task_list) <= 1:
+        return [task() for task in task_list]
+
+    results: list[CandidateAssessment | None] = [None] * len(task_list)
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        future_to_index = {executor.submit(task): index for index, task in enumerate(task_list)}
+        for future in future_to_index:
+            results[future_to_index[future]] = future.result()
+    return [result for result in results if result is not None]
+
+
 def build_fit_wizard_recommendation(
     dataset: MuonDataset,
     current_model: CompositeModel | None = None,
     *,
     metric: SelectionMetric = SelectionMetric.AICC,
+    scope: WizardScope | None = None,
+    user_frequencies_mhz: Sequence[float] | None = None,
+    max_workers: int | None = None,
+    progress_callback: Callable[[str], None] | None = None,
 ) -> FitWizardRecommendation:
-    """Analyze one asymmetry spectrum and recommend a fit candidate."""
+    """Analyze one asymmetry spectrum and recommend a fit candidate.
+
+    Tiered screening: every in-scope candidate family gets its cheap Stage-1
+    representative fitted (fingerprint hints only prioritise — they no longer
+    exclude); families that pass the residual gates, score within
+    ``_STAGE1_PROMOTE_DELTA`` of the best, or are named by a multiplet pattern
+    match expand to their full Stage-2 portfolios. ``scope`` restricts the
+    families physically (``None`` screens the default superset);
+    ``user_frequencies_mhz`` adds trusted peak seeds; ``max_workers=1`` gives
+    a deterministic serial path.
+    """
     fingerprint = fingerprint_spectrum(dataset)
-    templates = tuple(build_candidate_templates(fingerprint, current_model=current_model))
-    return build_fit_wizard_recommendation_for_templates(
-        dataset,
-        templates,
-        fingerprint=fingerprint,
-        metric=metric,
+    resolution: ScopeResolution | None = None
+    if scope is not None:
+        resolution = resolve_scope_for_dataset(dataset, scope)
+    families = build_wizard_families(fingerprint, current_model, scope_resolution=resolution)
+
+    def _progress(message: str) -> None:
+        if progress_callback is not None:
+            progress_callback(message)
+
+    if not families:
+        return FitWizardRecommendation(
+            fingerprint=fingerprint,
+            templates=(),
+            assessments=(),
+            metric=metric,
+            recommended_key=None,
+            comparable_keys=(),
+            summary=(
+                "No candidate families are in scope — widen the scope selection "
+                "to run the analysis."
+            ),
+        )
+
+    field_gauss = dataset.field
+    direction_text = str(
+        dataset.metadata.get("field_direction") or dataset.metadata.get("field_state") or ""
+    )
+    geometry = geometry_from_field_direction(direction_text)
+    geometry_token = geometry.value if geometry is not None else None
+
+    # Peak pass A: tail-subtracted spectrum, plus any user-declared seeds.
+    peak_analysis = analyze_dataset_peaks(dataset)
+    if user_frequencies_mhz:
+        peak_analysis = merge_user_peaks(peak_analysis, tuple(user_frequencies_mhz))
+
+    stage1_context = TemplateSeedContext(peak_analysis=peak_analysis, field_gauss=field_gauss)
+
+    _progress(f"Stage 1: screening {len(families)} candidate families")
+
+    def _stage1_task(template: CandidateTemplate) -> Callable[[], CandidateAssessment]:
+        return lambda: _assess_candidate_template(
+            dataset,
+            fingerprint,
+            template,
+            fit_engine=FitEngine(),
+            metric=metric,
+            seed_context=stage1_context,
+            variant_budget=_STAGE1_VARIANT_BUDGET,
+            stage=1,
+        )
+
+    stage1_groups = [(family, [family.stage1_rep, *family.stage1_extras]) for family in families]
+    flat_stage1_templates = [template for _family, group in stage1_groups for template in group]
+    flat_stage1 = _run_template_assessments(
+        [_stage1_task(template) for template in flat_stage1_templates],
+        max_workers=max_workers,
+    )
+
+    # Regroup and pick each family's screening representative: gate-passers
+    # first, then best metric (a family screens on the best of its cheap
+    # Stage-1 shapes).
+    grouped_stage1: list[list[CandidateAssessment]] = []
+    cursor = 0
+    for _family, group in stage1_groups:
+        grouped_stage1.append(flat_stage1[cursor : cursor + len(group)])
+        cursor += len(group)
+
+    def _family_best(group: list[CandidateAssessment]) -> CandidateAssessment:
+        return min(
+            group,
+            key=lambda a: (
+                not a.is_successful,
+                not a.residual_gate_passed,
+                a.metric_value(metric) if a.is_successful else math.inf,
+            ),
+        )
+
+    stage1_assessments = [_family_best(group) for group in grouped_stage1]
+
+    # Peak pass B: FFT of the best smooth (non-oscillatory) fit's residuals
+    # kills relaxation leakage and exposes weak lines. This is the first-class
+    # generalisation of the global wizard's oscillatory rescue.
+    detrend_pool = [
+        assessment
+        for (family, _group), group_assessments in zip(stage1_groups, grouped_stage1)
+        for assessment in group_assessments
+        if family.key in ("relaxation", "multi_rate", "kt") and assessment.is_successful
+    ]
+    if detrend_pool:
+        best_smooth = min(detrend_pool, key=lambda a: a.metric_value(metric))
+        curve_values = _curve_parameter_values(
+            best_smooth.template.model, best_smooth.fit_result.parameters
+        )
+        detrend_curve = np.asarray(
+            best_smooth.template.model.function(
+                np.asarray(dataset.time, dtype=float), **curve_values
+            ),
+            dtype=float,
+        )
+        detrended_analysis = analyze_dataset_peaks(
+            dataset,
+            detrend_curve=detrend_curve,
+            detrend_template_key=best_smooth.template.key,
+        )
+        if user_frequencies_mhz:
+            detrended_analysis = merge_user_peaks(detrended_analysis, tuple(user_frequencies_mhz))
+        if detrended_analysis.peaks or not peak_analysis.peaks:
+            peak_analysis = detrended_analysis
+
+    multiplet_matches = match_multiplets(
+        peak_analysis, field_gauss=field_gauss, geometry=geometry_token
+    )
+    pattern_family_keys = frozenset(
+        match.family_key
+        for match in multiplet_matches
+        if any(family.key == match.family_key for family in families)
+    )
+
+    hint_family_keys = frozenset(
+        key
+        for key, hinted in (
+            ("multi_rate", fingerprint.multi_rate_hint),
+            ("kt", fingerprint.kt_like_hint),
+            ("oscillatory", fingerprint.oscillatory_hint),
+        )
+        if hinted
+    )
+    decisions = _decide_family_promotions(
+        families,
+        stage1_assessments,
+        pattern_family_keys,
+        metric,
+        hint_family_keys=hint_family_keys,
+    )
+
+    stage2_context = TemplateSeedContext(
+        peak_analysis=peak_analysis,
+        multiplet_matches=multiplet_matches,
+        field_gauss=field_gauss,
+    )
+
+    # Stage 2: expand promoted families; the oscillatory family additionally
+    # receives multiplet templates generated from the detected peak set.
+    seen_identities = {_model_identity(template.model) for template in flat_stage1_templates}
+    stage2_templates: list[CandidateTemplate] = []
+    stage2_keys_by_family: dict[str, list[str]] = {}
+    for family, _assessment, promoted, _reason in decisions:
+        if not promoted:
+            continue
+        members = list(family.stage2_members)
+        if family.key == "oscillatory":
+            for extra in build_oscillatory_multiplet_templates(peak_analysis):
+                if resolution is not None and not all(
+                    name in resolution.included_set for name in extra.model.component_names
+                ):
+                    continue
+                members.append(extra)
+        kept: list[str] = []
+        for member in members:
+            identity = _model_identity(member.model)
+            if identity in seen_identities:
+                continue
+            seen_identities.add(identity)
+            stage2_templates.append(member)
+            kept.append(member.key)
+        stage2_keys_by_family[family.key] = kept
+
+    if stage2_templates:
+        _progress(f"Stage 2: fitting {len(stage2_templates)} expanded candidates")
+
+    def _stage2_task(template: CandidateTemplate) -> Callable[[], CandidateAssessment]:
+        # Expensive members (numerical powder averages, strong-collision
+        # integral equations) get a reduced variant ladder: their match-derived
+        # seeds are already tight, and each extra variant is a full slow fit.
+        budget = (
+            2 if _template_cost_rank(template) >= _COST_RANK[ComputationalCost.EXPENSIVE] else 5
+        )
+        return lambda: _assess_candidate_template(
+            dataset,
+            fingerprint,
+            template,
+            fit_engine=FitEngine(),
+            metric=metric,
+            seed_context=stage2_context,
+            variant_budget=budget,
+            stage=2,
+        )
+
+    stage2_assessments = _run_template_assessments(
+        [_stage2_task(template) for template in stage2_templates],
+        max_workers=max_workers,
+    )
+
+    family_reports = tuple(
+        FamilyScreeningReport(
+            family_key=family.key,
+            title=family.title,
+            stage1_template_key=assessment.template.key,
+            stage1_metric_value=(
+                assessment.metric_value(metric) if assessment.is_successful else math.inf
+            ),
+            stage1_gate_passed=assessment.residual_gate_passed,
+            promoted=promoted,
+            reason=reason,
+            stage2_template_keys=tuple(stage2_keys_by_family.get(family.key, ())),
+        )
+        for family, assessment, promoted, reason in decisions
+    )
+
+    all_templates = tuple(flat_stage1_templates) + tuple(stage2_templates)
+    all_assessments = tuple(flat_stage1) + tuple(stage2_assessments)
+
+    return rerank_fit_wizard_recommendation(
+        FitWizardRecommendation(
+            fingerprint=fingerprint,
+            templates=all_templates,
+            assessments=all_assessments,
+            metric=metric,
+            recommended_key=None,
+            comparable_keys=(),
+            summary="",
+            peak_analysis=peak_analysis,
+            multiplet_matches=multiplet_matches,
+            family_reports=family_reports,
+        ),
+        metric,
     )
 
 
@@ -605,6 +1612,17 @@ def serialize_fit_wizard_recommendation(
         "recommended_key": recommendation.recommended_key,
         "comparable_keys": list(recommendation.comparable_keys),
         "summary": recommendation.summary,
+        "peak_analysis": (
+            serialize_peak_analysis(recommendation.peak_analysis)
+            if recommendation.peak_analysis is not None
+            else None
+        ),
+        "multiplet_matches": [
+            serialize_multiplet_match(match) for match in recommendation.multiplet_matches
+        ],
+        "family_reports": [
+            serialize_family_screening_report(report) for report in recommendation.family_reports
+        ],
     }
 
 
@@ -632,6 +1650,17 @@ def deserialize_fit_wizard_recommendation(
     comparable_keys = tuple(
         key for key in payload.get("comparable_keys", []) if isinstance(key, str)
     )
+    peak_analysis = deserialize_peak_analysis(payload.get("peak_analysis"))
+    multiplet_matches = tuple(
+        match
+        for entry in payload.get("multiplet_matches", []) or ()
+        if (match := deserialize_multiplet_match(entry)) is not None
+    )
+    family_reports = tuple(
+        report
+        for entry in payload.get("family_reports", []) or ()
+        if (report := deserialize_family_screening_report(entry)) is not None
+    )
     return FitWizardRecommendation(
         fingerprint=fingerprint,
         templates=templates,
@@ -642,6 +1671,9 @@ def deserialize_fit_wizard_recommendation(
         ),
         comparable_keys=comparable_keys,
         summary=str(payload.get("summary", "")),
+        peak_analysis=peak_analysis,
+        multiplet_matches=multiplet_matches,
+        family_reports=family_reports,
     )
 
 
@@ -733,6 +1765,45 @@ def _deserialize_spectrum_fingerprint(payload: object) -> SpectrumFingerprint | 
         )
     except (TypeError, ValueError):
         return None
+
+
+def serialize_family_screening_report(report: FamilyScreeningReport) -> dict[str, object]:
+    """Return a JSON-safe dict snapshot of a :class:`FamilyScreeningReport`.
+
+    ``json`` cannot hold ``inf``, so a non-finite ``stage1_metric_value`` is
+    serialized as ``None`` (and deserializes back to ``math.inf``).
+    """
+    metric = report.stage1_metric_value
+    return {
+        "family_key": str(report.family_key),
+        "title": str(report.title),
+        "stage1_template_key": str(report.stage1_template_key),
+        "stage1_metric_value": (float(metric) if math.isfinite(metric) else None),
+        "stage1_gate_passed": bool(report.stage1_gate_passed),
+        "promoted": bool(report.promoted),
+        "reason": str(report.reason),
+        "stage2_template_keys": [str(key) for key in report.stage2_template_keys],
+    }
+
+
+def deserialize_family_screening_report(payload: object) -> FamilyScreeningReport | None:
+    """Rebuild a :class:`FamilyScreeningReport` from a persisted dict, tolerating gaps."""
+    if not isinstance(payload, dict):
+        return None
+    metric_payload = payload.get("stage1_metric_value", None)
+    metric = math.inf if metric_payload is None else float(metric_payload)
+    return FamilyScreeningReport(
+        family_key=str(payload.get("family_key", "")),
+        title=str(payload.get("title", "")),
+        stage1_template_key=str(payload.get("stage1_template_key", "")),
+        stage1_metric_value=metric,
+        stage1_gate_passed=bool(payload.get("stage1_gate_passed", False)),
+        promoted=bool(payload.get("promoted", False)),
+        reason=str(payload.get("reason", "")),
+        stage2_template_keys=tuple(
+            str(key) for key in payload.get("stage2_template_keys", []) if isinstance(key, str)
+        ),
+    )
 
 
 def _serialize_parameter_set(parameters: ParameterSet) -> list[dict[str, object]]:
@@ -872,6 +1943,7 @@ def _serialize_candidate_assessment(
         "fitted_time": np.asarray(assessment.fitted_time, dtype=float).tolist(),
         "fitted_curve": np.asarray(assessment.fitted_curve, dtype=float).tolist(),
         "component_curves": _serialize_component_curves(assessment.component_curves),
+        "stage": assessment.stage,
     }
 
 
@@ -908,6 +1980,7 @@ def _deserialize_candidate_assessment(
             fitted_time=np.asarray(payload.get("fitted_time", []), dtype=float),
             fitted_curve=np.asarray(payload.get("fitted_curve", []), dtype=float),
             component_curves=_deserialize_component_curves(payload.get("component_curves", [])),
+            stage=int(payload.get("stage", 2)),
         )
     except (TypeError, ValueError):
         return None
@@ -920,10 +1993,24 @@ def _assess_candidate_template(
     *,
     fit_engine: FitEngine,
     metric: SelectionMetric,
+    seed_context: TemplateSeedContext | None = None,
+    variant_budget: int = 5,
+    stage: int = 2,
 ) -> CandidateAssessment:
+    # Frequencies measured from spectral peaks are trusted seeds: the 0.5x/2x
+    # variant scaling that rescues a blind FFT guess would only destroy them.
+    frozen_scale_names: frozenset[str] = frozenset()
+    if (
+        seed_context is not None
+        and seed_context.peak_analysis is not None
+        and seed_context.peak_analysis.peaks
+    ):
+        frozen_scale_names = frozenset({"frequency"})
     attempts = _parameter_variants(
-        _initial_parameters_for_template(dataset, fingerprint, template),
+        _initial_parameters_for_template(dataset, fingerprint, template, seed_context=seed_context),
         template=template,
+        variant_budget=variant_budget,
+        frozen_scale_names=frozen_scale_names,
     )
 
     best_result: FitResult | None = None
@@ -990,6 +2077,7 @@ def _assess_candidate_template(
         fitted_time=fitted_time,
         fitted_curve=fitted_curve,
         component_curves=component_curves,
+        stage=stage,
     )
 
 
@@ -1193,6 +2281,7 @@ def _initial_parameters_for_template(
     dataset: MuonDataset,
     fingerprint: SpectrumFingerprint,
     template: CandidateTemplate,
+    seed_context: TemplateSeedContext | None = None,
 ) -> ParameterSet:
     t = np.asarray(dataset.time, dtype=float)
     y = np.asarray(dataset.asymmetry, dtype=float)
@@ -1229,7 +2318,30 @@ def _initial_parameters_for_template(
     frequency_guess = max(fingerprint.dominant_fft_frequency_mhz, 0.25 / duration)
     phase_guess = 0.0 if (y[0] - fingerprint.tail_estimate) >= 0.0 else math.pi
 
+    # Peak-detection seeds supersede the single-line fingerprint guess; a
+    # field-derived Larmor seed (gamma_mu * B) covers the high-TF case where the
+    # dominant FFT bin under-resolves the precession (the FOLLOW-UP above).
+    seed_peaks: tuple[DetectedPeak, ...] = ()
+    if seed_context is not None and seed_context.peak_analysis is not None:
+        seed_peaks = seed_context.peak_analysis.peaks
+    if seed_peaks:
+        frequency_guess = seed_peaks[0].frequency_mhz
+    elif seed_context is not None and seed_context.field_gauss:
+        larmor = field_gauss_to_frequency_mhz(seed_context.field_gauss)
+        if 0.0 < larmor < nyquist:
+            frequency_guess = larmor
+
     overrides: dict[str, float] = {}
+    bounds_overrides: dict[str, tuple[float, float]] = {}
+    fixed_names: set[str] = set()
+
+    def _narrow_frequency_bounds(name: str, peak: DetectedPeak) -> None:
+        half_width = max(5.0 * peak.width_mhz, 0.25 * peak.frequency_mhz)
+        bounds_overrides[name] = (
+            max(0.0, peak.frequency_mhz - half_width),
+            min(peak.frequency_mhz + half_width, 0.98 * nyquist),
+        )
+
     if template.key == "exp_constant":
         amplitude = max(abs(fingerprint.initial_amplitude_estimate), 0.25 * data_span, _EPS)
         overrides = {"A": amplitude, "Lambda": lambda_guess, "A_bg": fingerprint.tail_estimate}
@@ -1295,6 +2407,77 @@ def _initial_parameters_for_template(
             "sigma": gaussian_width,
             "A_bg": fingerprint.tail_estimate,
         }
+    elif (multiplet := _MULTIPLET_TEMPLATE_KEY_RE.match(template.key)) is not None:
+        # One damped cosine per detected line: frequencies/amplitudes from the
+        # peaks; the envelope amplitude of each (Osc x Env) pair is fixed at 1
+        # so the pair's scale lives in the oscillatory amplitude alone (the
+        # parenthesised product would otherwise be A_i*A_j degenerate).
+        n_components = int(multiplet.group(1))
+        pair_peaks = _multiplet_seed_peaks(
+            seed_context.peak_analysis if seed_context else None, n_components
+        )
+        amplitude = max(abs(fingerprint.initial_amplitude_estimate), 0.25 * data_span, _EPS)
+        total = sum(max(peak.amplitude, 0.0) for peak in pair_peaks)
+        overrides = {"A_bg": fingerprint.tail_estimate}
+        for k in range(n_components):
+            osc = 2 * k + 1
+            env = 2 * k + 2
+            share = 1.0 / max(n_components, 1)
+            if k < len(pair_peaks) and total > 0.0:
+                share = max(pair_peaks[k].amplitude, 0.0) / total or share
+            overrides[f"A_{osc}"] = max(amplitude * share, _EPS)
+            overrides[f"phase_{osc}"] = phase_guess
+            overrides[f"A_{env}"] = 1.0
+            fixed_names.add(f"A_{env}")
+            overrides[f"Lambda_{env}"] = lambda_guess
+            overrides[f"sigma_{env}"] = gaussian_width
+            if k < len(pair_peaks):
+                overrides[f"frequency_{osc}"] = pair_peaks[k].frequency_mhz
+                _narrow_frequency_bounds(f"frequency_{osc}", pair_peaks[k])
+            else:
+                overrides[f"frequency_{osc}"] = min(frequency_guess, 0.98 * nyquist)
+    elif template.key in _MUONIUM_TF_TEMPLATE_KEYS:
+        amplitude = max(abs(fingerprint.initial_amplitude_estimate), 0.25 * data_span, _EPS)
+        match = (
+            seed_context.best_match(("muonium_low_tf", "muonium_high_tf")) if seed_context else None
+        )
+        a_hf = (match.derived("a_hf_mhz") if match else None) or VACUUM_MUONIUM_A_HF_MHZ
+        overrides = {
+            "A": amplitude,
+            "A_hf": a_hf,
+            "phase": phase_guess,
+            "A_bg": fingerprint.tail_estimate,
+        }
+        bounds_overrides["A_hf"] = (0.5 * a_hf, 2.0 * a_hf) if match else (1.0, 4700.0)
+    elif template.key == "muonium_zf_constant":
+        amplitude = max(abs(fingerprint.initial_amplitude_estimate), 0.25 * data_span, _EPS)
+        match = seed_context.best_match(("muonium_zf",)) if seed_context else None
+        overrides = {"A": amplitude, "A_bg": fingerprint.tail_estimate}
+        a_hf_zf = match.derived("a_hf_mhz") if match else None
+        d_zf = match.derived("d_mhz") if match else None
+        if a_hf_zf:
+            overrides["A_hf"] = a_hf_zf
+            bounds_overrides["A_hf"] = (0.5 * a_hf_zf, 2.0 * a_hf_zf)
+        if d_zf:
+            overrides["D_mu"] = d_zf
+    elif template.key in _FMUF_TEMPLATE_KEYS:
+        amplitude = max(abs(fingerprint.initial_amplitude_estimate), 0.25 * data_span, _EPS)
+        match = seed_context.best_match(("fmuf_linear", "muf")) if seed_context else None
+        r_seed = (match.derived("r_muF_angstrom") if match else None) or 1.17
+        overrides = {
+            "A": amplitude,
+            "r_muF": r_seed,
+            "r1": r_seed,
+            "r2": r_seed,
+            "Lambda": max(0.02, 0.5 * lambda_guess),
+            "A_bg": fingerprint.tail_estimate,
+        }
+        if match:
+            # omega_d ~ r^-3, so +-40 % in frequency is roughly (0.7r, 1.4r).
+            r_bounds = (0.7 * r_seed, 1.4 * r_seed)
+            bounds_overrides["r_muF"] = r_bounds
+            bounds_overrides["r1"] = r_bounds
+            bounds_overrides["r2"] = r_bounds
     else:
         overrides = {
             "A": max(abs(fingerprint.initial_amplitude_estimate), 0.25 * data_span, _EPS),
@@ -1306,6 +2489,28 @@ def _initial_parameters_for_template(
             "frequency": min(frequency_guess, 0.98 * nyquist),
             "phase": phase_guess,
         }
+
+    # A measured peak narrows any remaining free frequency (single-oscillator
+    # and Bessel templates reach here via their branches or the generic one).
+    if seed_peaks and "frequency" not in bounds_overrides:
+        _narrow_frequency_bounds("frequency", seed_peaks[0])
+
+    # Applied-field parameters: seed from run metadata and pin them — the
+    # field is measured, not fitted (muonium/vortex 'field'; LF 'B_L' is
+    # seeded but left free so a miscalibrated magnet cannot wedge the fit).
+    model_bases = {split_parameter_name(name)[0] for name in template.model.param_names}
+    if seed_context is not None and seed_context.field_gauss:
+        if "field" in model_bases:
+            overrides.setdefault("field", seed_context.field_gauss)
+            fixed_names.add("field")
+        if "B_L" in model_bases:
+            overrides.setdefault("B_L", seed_context.field_gauss)
+
+    # Honour component-definition fixed parameters (e.g. VortexLattice 'field',
+    # MuoniumLFRelax 'A_hf').
+    definition_fixed = {
+        fixed for component in template.model.components for fixed in component.fixed_params
+    }
 
     parameters = ParameterSet()
     for name in template.model.param_names:
@@ -1321,17 +2526,29 @@ def _initial_parameters_for_template(
                 ),
             )
         )
-        p_min, p_max = _parameter_bounds(
-            base_name,
-            value,
-            data_min=data_min,
-            data_max=data_max,
-            data_span=data_span,
-            duration=duration,
-            nyquist=nyquist,
-        )
+        bounds = bounds_overrides.get(name, bounds_overrides.get(base_name))
+        if bounds is not None:
+            p_min, p_max = bounds
+        else:
+            p_min, p_max = _parameter_bounds(
+                base_name,
+                value,
+                data_min=data_min,
+                data_max=data_max,
+                data_span=data_span,
+                duration=duration,
+                nyquist=nyquist,
+            )
         parameters.add(
-            Parameter(name=name, value=float(np.clip(value, p_min, p_max)), min=p_min, max=p_max)
+            Parameter(
+                name=name,
+                value=float(np.clip(value, p_min, p_max)),
+                min=p_min,
+                max=p_max,
+                fixed=(
+                    name in fixed_names or base_name in fixed_names or base_name in definition_fixed
+                ),
+            )
         )
     return parameters
 
@@ -1367,7 +2584,13 @@ def _parameter_bounds(
         return 0.0, upper
     if base_name == "frequency":
         upper = max(min(0.98 * nyquist, max(8.0 * abs(value), 0.5)), 0.5)
-        return 0.0, upper
+        # An oscillation must complete at least one cycle in the observation
+        # window (the spectral resolution limit): below 1/T a free-phase cosine
+        # degenerates into a smooth envelope and lets oscillatory templates
+        # "cheat" on non-oscillatory data. Peak-derived bounds bypass this via
+        # bounds_overrides.
+        lower = min(1.0 / max(duration, _EPS), 0.5 * upper)
+        return lower, upper
     if base_name == "phase":
         return -math.pi, math.pi
     if base_name == "beta":
@@ -1399,9 +2622,12 @@ def _parameter_variants(
     base_parameters: ParameterSet,
     *,
     template: CandidateTemplate,
+    variant_budget: int = 5,
+    frozen_scale_names: frozenset[str] = frozenset(),
 ) -> tuple[ParameterSet, ...]:
+    budget = max(1, int(variant_budget))
     if _is_additive_relaxation_mixture_template(template):
-        return _additive_relaxation_mixture_variants(base_parameters, template)
+        return _additive_relaxation_mixture_variants(base_parameters, template)[:budget]
 
     def _adjust(
         params: ParameterSet,
@@ -1413,6 +2639,8 @@ def _parameter_variants(
         clone = _clone_parameter_set(params)
         for parameter in clone:
             base_name, _index = split_parameter_name(parameter.name)
+            if parameter.fixed or base_name in frozen_scale_names:
+                continue
             if base_name in {"Lambda", "sigma", "Delta", "frequency"} and parameter.value > 0.0:
                 parameter.value = float(
                     np.clip(parameter.value * scale, parameter.min, parameter.max)
@@ -1432,13 +2660,14 @@ def _parameter_variants(
         return clone
 
     base = _clone_parameter_set(base_parameters)
-    return (
+    variants = (
         base,
         _adjust(base_parameters, scale=0.5),
         _adjust(base_parameters, scale=2.0),
         _adjust(base_parameters, amplitude_bias=0.25, phase_shift=math.pi / 6.0),
         _adjust(base_parameters, amplitude_bias=-0.25, phase_shift=-math.pi / 6.0),
     )
+    return variants[:budget]
 
 
 def _parameter_variant_by_name(
