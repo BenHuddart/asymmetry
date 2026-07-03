@@ -107,6 +107,7 @@ from asymmetry.gui.styles.widgets import (
     style_group_state_button,
 )
 from asymmetry.gui.tasks import TaskRunner
+from asymmetry.gui.utils.export import compile_gle
 from asymmetry.gui.widgets.collapsible_section import CollapsibleSection
 from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
 from asymmetry.gui.widgets.mpl_canvas import create_canvas
@@ -6192,13 +6193,7 @@ class FitParametersPanel(QWidget):
         if _gle is not None:
             output_path = gle_path.with_suffix(f".{output_format}")
             try:
-                subprocess.run(
-                    [_gle, "-d", output_format, str(gle_path)],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                    cwd=str(gle_path.parent),
-                )
+                compile_gle(_gle, gle_path, output_format, cwd=gle_path.parent)
                 if not is_test_mode:
                     fit_files = getattr(self, "_last_export_fit_files", [])
                     fit_files_text = "\n".join(str(p) for p in fit_files) if fit_files else "(none)"
@@ -6264,12 +6259,7 @@ class FitParametersPanel(QWidget):
                         if src.exists():
                             shutil.copy2(src, tmpdir_path / src.name)
                     fig.savefig(str(gle_file))
-                    subprocess.run(
-                        [_gle, "-d", "png", str(gle_file)],
-                        capture_output=True,
-                        check=True,
-                        cwd=str(tmpdir_path),
-                    )
+                    compile_gle(_gle, gle_file, "png", cwd=tmpdir_path)
 
                     pixmap = QPixmap(str(png_file))
                     if not pixmap.isNull():

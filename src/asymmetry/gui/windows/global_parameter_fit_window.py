@@ -51,6 +51,7 @@ from asymmetry.gui.gle_settings import get_gle_executable
 from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
 from asymmetry.gui.styles.widgets import apply_param_table_style
 from asymmetry.gui.tasks import TaskRunner
+from asymmetry.gui.utils.export import compile_gle
 from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
 from asymmetry.gui.widgets.mpl_canvas import create_canvas
 
@@ -2289,12 +2290,7 @@ class GlobalParameterFitWindow(QMainWindow):
                             if src.exists() and src.is_file():
                                 shutil.copy2(src, tmpdir_path / dep_name)
 
-                        subprocess.run(
-                            [_gle, "-d", "png", str(tmp_gle)],
-                            capture_output=True,
-                            check=True,
-                            cwd=str(tmpdir_path),
-                        )
+                        compile_gle(_gle, tmp_gle, "png", cwd=tmpdir_path)
 
                         pixmap = QPixmap(str(preview_png))
                         if not pixmap.isNull():
@@ -2338,13 +2334,7 @@ class GlobalParameterFitWindow(QMainWindow):
 
         output_path = gle_path.with_suffix(f".{output_format}")
         try:
-            subprocess.run(
-                [_gle, "-d", output_format, str(gle_path)],
-                capture_output=True,
-                text=True,
-                check=True,
-                cwd=str(gle_path.parent),
-            )
+            compile_gle(_gle, gle_path, output_format, cwd=gle_path.parent)
             QMessageBox.information(
                 self,
                 "Export Successful",

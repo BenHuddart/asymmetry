@@ -75,6 +75,7 @@ from asymmetry.gui.styles.plots import (
     style_legend,
 )
 from asymmetry.gui.styles.widgets import build_nav_button_qss
+from asymmetry.gui.utils.export import compile_gle
 from asymmetry.gui.widgets.axis_limits import AxisLimitControls, FloatLimitField
 from asymmetry.gui.widgets.mpl_canvas import create_canvas
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox
@@ -6296,12 +6297,7 @@ class PlotPanel(QWidget):
                     if src.exists() and src.is_file():
                         shutil.copy2(src, tmpdir_path / dep_name)
 
-                subprocess.run(
-                    [_gle, "-d", "png", str(tmp_gle)],
-                    capture_output=True,
-                    check=True,
-                    cwd=str(tmpdir_path),
-                )
+                compile_gle(_gle, tmp_gle, "png", cwd=tmpdir_path)
 
                 pixmap = QPixmap(str(preview_png))
                 if not pixmap.isNull():
@@ -6710,13 +6706,7 @@ class PlotPanel(QWidget):
         if _gle is not None:
             output_path = gle_path.with_suffix(f".{output_format}")
             try:
-                subprocess.run(
-                    [_gle, "-d", output_format, str(gle_path)],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                    cwd=str(gle_path.parent),
-                )
+                compile_gle(_gle, gle_path, output_format, cwd=gle_path.parent)
                 files_text = "\n".join(str(p) for p in written_files)
                 self._show_export_result_dialog(
                     "Export Successful",

@@ -33,3 +33,19 @@ Format: `- [ ] <area> — <what/why> (surfaced in Phase N)`
   If Phase 1c intends to unify TSV export across more than one call site,
   confirm which second call site (if any) is meant — as of 2026-07-03 there
   is only one. (surfaced in Phase 0)
+
+- [x] Phase 1c scoped down from PLAN.md's description (shared TSV writer + GLE
+  wrapper + export-path/binary-discovery helper) to just a shared GLE
+  subprocess-invocation wrapper. Export-path caching (`default_export_path`,
+  `remember_export_path`, `resolve_gle_export_paths` in
+  `src/asymmetry/gui/export_paths.py`) and GLE binary discovery
+  (`get_gle_executable` in `src/asymmetry/gui/gle_settings.py`) were already
+  shared before this audit — nothing to extract there. TSV writing is a single
+  call site (`FitParametersPanel._export_tsv`, see the Phase 0 note above), so
+  there was no duplication to consolidate. The only real duplication was the
+  `subprocess.run([_gle, "-d", <fmt>, <file>], capture_output=True, ...,
+  check=True, cwd=...)` invocation copy-pasted across 6 GLE export/preview call
+  sites in `fit_parameters_panel.py`, `plot_panel.py`, and
+  `global_parameter_fit_window.py`; that is now `compile_gle()` in
+  `src/asymmetry/gui/utils/export.py`, covered by `tests/test_export_utils.py`.
+  (surfaced in Phase 1c)
