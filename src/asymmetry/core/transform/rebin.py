@@ -13,10 +13,15 @@ Three binning modes (WiMDA ``Group.pas:1411–1418``, textbook Fig. 15.7):
   the polarization varies slowly.
 
 All modes are display/fit-input transformations on the reduced data: raw
-histograms are never modified (provenance invariant). Non-fixed modes bin the
-*counts* and then form the asymmetry per output bin — at late times the raw
-bins hold few or zero counts, where a weighted mean of per-bin asymmetry
-ratios is undefined; summed counts stay exactly Poisson.
+histograms are never modified (provenance invariant). Every mode bins the
+*counts* and then forms the asymmetry per output bin (via
+:func:`binned_fb_asymmetry`) — the order WiMDA, musrfit, and Mantid all
+use. At late times the raw bins hold few or zero counts, where a mean of
+per-bin asymmetry ratios is undefined (and its σ = 1 no-information
+sentinels inflate merged error bars); summed counts stay exactly Poisson.
+:func:`rebin` remains the curve-level combiner for data without raw
+histograms (curve-only datasets, period-combined curves, display bunching
+of an already-reduced curve).
 """
 
 from __future__ import annotations
@@ -174,16 +179,22 @@ def binned_fb_asymmetry(
     forward_error: NDArray[np.float64] | None = None,
     backward_error: NDArray[np.float64] | None = None,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
-    """Reduce grouped counts to an asymmetry curve with variable-width bins.
+    """Reduce grouped counts to a binned asymmetry curve (all binning modes).
 
     Counts (and, when supplied, count variances) are summed onto the output
     bins first and the asymmetry formed per output bin — the counts-then-
-    ratio order all reference programs use. Returns ``(time, asymmetry,
-    error)`` in µs relative to t0; the asymmetry is fractional (callers
-    scale to percent). Output times are the mean of the merged raw bins'
-    reduction time stamps ``(k − t0)·w`` — the same convention the
-    fixed-mode path and :func:`rebin` use, so switching binning modes never
-    shifts the time axis.
+    ratio order WiMDA, musrfit, and Mantid all use. This matters beyond
+    tidiness: forming the asymmetry per raw bin and then averaging gives
+    one-sided raw bins (F·B = 0) the σ = 1 no-information sentinel, which
+    leaks into every merged bin's quadrature and inflates late-time errors
+    on sparse data. Fixed mode merges ``bunching_factor`` raw bins per
+    output bin (trailing remainder dropped, like :func:`rebin`); the
+    non-fixed modes use :func:`binning_slice_edges`. Returns ``(time,
+    asymmetry, error)`` in µs relative to t0; the asymmetry is fractional
+    (callers scale to percent). Output times are the mean of the merged raw
+    bins' reduction time stamps ``(k − t0)·w`` — the same convention
+    :func:`rebin` uses, so switching binning modes never shifts the time
+    axis.
     """
     mode, bin0_us, bin10_us = resolve_binning_mode(grouping)
     f = np.asarray(forward, dtype=np.float64)
@@ -198,21 +209,34 @@ def binned_fb_asymmetry(
     t_start = (lo - int(common_t0)) * float(bin_width_us)
 
     if mode == "fixed":
-        raise ValueError("binned_fb_asymmetry handles variable/constant_error modes only")
-    edges = binning_slice_edges(
-        f.size,
-        mode=mode,
-        bin_width_us=float(bin_width_us),
-        t_start_us=t_start,
-        bin0_us=bin0_us,
-        bin10_us=bin10_us,
-    )
+        try:
+            factor = max(1, int((grouping or {}).get("bunching_factor", 1)))
+        except (TypeError, ValueError):
+            factor = 1
+        trimmed = (f.size // factor) * factor
+        edges = np.arange(0, trimmed + 1, factor, dtype=np.intp)
+        if edges.size < 2:
+            empty = np.array([], dtype=np.float64)
+            return empty, empty.copy(), empty.copy()
+        # reduceat's last segment runs to the end of the array, so drop the
+        # trailing partial block explicitly (same trim as rebin()).
+        f = f[:trimmed]
+        b = b[:trimmed]
+    else:
+        edges = binning_slice_edges(
+            f.size,
+            mode=mode,
+            bin_width_us=float(bin_width_us),
+            t_start_us=t_start,
+            bin0_us=bin0_us,
+            bin10_us=bin10_us,
+        )
     starts = edges[:-1]
     f_out = np.add.reduceat(f, starts)
     b_out = np.add.reduceat(b, starts)
     if forward_error is not None and backward_error is not None:
-        ef = np.asarray(forward_error, dtype=np.float64)[lo : hi + 1]
-        eb = np.asarray(backward_error, dtype=np.float64)[lo : hi + 1]
+        ef = np.asarray(forward_error, dtype=np.float64)[lo : hi + 1][: f.size]
+        eb = np.asarray(backward_error, dtype=np.float64)[lo : hi + 1][: f.size]
         ef_out = np.sqrt(np.add.reduceat(ef * ef, starts))
         eb_out = np.sqrt(np.add.reduceat(eb * eb, starts))
         asymmetry, error = compute_asymmetry_with_count_errors(

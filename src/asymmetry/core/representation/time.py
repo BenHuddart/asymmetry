@@ -26,9 +26,8 @@ from asymmetry.core.maxent import (
     run_cycles,
 )
 from asymmetry.core.representation.base import Representation, RepresentationType
-from asymmetry.core.transform.asymmetry import compute_asymmetry
 from asymmetry.core.transform.grouping import effective_grouping, group_forward_backward
-from asymmetry.core.transform.rebin import binned_fb_asymmetry, rebin, resolve_binning_mode
+from asymmetry.core.transform.rebin import binned_fb_asymmetry
 
 
 class TimeFBAsymmetry(Representation):
@@ -69,31 +68,19 @@ class TimeFBAsymmetry(Representation):
             first_good, last_good = 0, n - 1
 
         bin_width = float(histograms[0].bin_width)
-        binning_mode, _, _ = resolve_binning_mode(grouping)
-        if binning_mode != "fixed":
-            time, asymmetry, error = binned_fb_asymmetry(
-                forward,
-                backward,
-                grouping=grouping,
-                common_t0=common_t0,
-                bin_width_us=bin_width,
-                alpha=alpha,
-                first_good_bin=first_good,
-                last_good_bin=last_good,
-            )
-        else:
-            asymmetry, error = compute_asymmetry(forward, backward, alpha)
-            asymmetry = asymmetry[first_good : last_good + 1]
-            error = error[first_good : last_good + 1]
-            axis_start = first_good - int(common_t0)
-            time = (np.arange(asymmetry.size, dtype=float) + float(axis_start)) * bin_width
-
-            try:
-                bunch_factor = max(1, int(grouping.get("bunching_factor", 1)))
-            except (TypeError, ValueError):
-                bunch_factor = 1
-            if bunch_factor > 1 and asymmetry.size > 0:
-                time, asymmetry, error = rebin(time, asymmetry, error, bunch_factor)
+        # All binning modes (fixed bunching included) sum counts onto the
+        # output bins before forming the asymmetry — the counts-then-ratio
+        # order all reference programs use.
+        time, asymmetry, error = binned_fb_asymmetry(
+            forward,
+            backward,
+            grouping=grouping,
+            common_t0=common_t0,
+            bin_width_us=bin_width,
+            alpha=alpha,
+            first_good_bin=first_good,
+            last_good_bin=last_good,
+        )
 
         metadata = dict(run.metadata)
         metadata.update(

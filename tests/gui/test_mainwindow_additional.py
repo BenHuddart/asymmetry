@@ -25,6 +25,7 @@ from asymmetry.core.fitting.parameter_models import (
 )
 from asymmetry.core.project import load_project, save_project
 from asymmetry.core.representation import FitSlot, RepresentationType
+from asymmetry.core.transform.asymmetry import compute_asymmetry
 from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.styles import tokens
 from tests._qt_helpers import wait_for
@@ -3488,12 +3489,12 @@ class TestMainWindowBasic:
         applied, _ = mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
 
         assert applied is True
-        red_asym, red_err = mw_module.compute_asymmetry(
+        red_asym, red_err = compute_asymmetry(
             np.full(4, 100.0),
             np.full(4, 50.0),
             alpha=1.0,
         )
-        green_asym, green_err = mw_module.compute_asymmetry(
+        green_asym, green_err = compute_asymmetry(
             np.full(4, 60.0),
             np.full(4, 90.0),
             alpha=1.0,

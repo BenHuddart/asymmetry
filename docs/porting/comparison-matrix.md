@@ -214,6 +214,103 @@ Where the reference programs are materially richer:
 - **MINOS / asymmetric error analysis** — musrfit only; iminuit
   supports this but Asymmetry doesn't expose it.
 
+## Reduction numerics — source-audited conventions (2026-07)
+
+A dedicated four-source correctness audit (WiMDA Pascal, musrfit C++,
+Mantid C++/Python, Asymmetry) compared the *numerical conventions* of the
+raw-data reduction, beyond the feature level of the tables above. The
+verified facts, with the load-bearing source locations:
+
+### Corrected time axis and t0
+
+| Convention | WiMDA | musrfit | Mantid | Asymmetry |
+|---|---|---|---|---|
+| t0 source (PSI BIN) | per-histogram header int (`muondata.pas` `nt0`) | per-histogram header int; float `realT0` parsed but unused (`MuSR_td_PSI_bin.cpp`) | prefers float `realT0`, else int; collapses to **max** across slots (`LoadPSIMuonBin.cpp:186–234`) | per-histogram header int (`core/io/psi.py`) |
+| Fractional t0 | no (integer bins) | fractional t0 shifts time labels only; counts never resampled (`PRunAsymmetry.cpp:1143`) | yes (bin-edge shift) | no (integer bins) |
+| Multi-detector alignment | each detector read at its own t0 (`Group.pas:1498`) | integer shift onto group leader's t0 (`PRunAsymmetry.cpp:801–812`) | single max-t0 shift for all spectra (per-detector table optional, unused by the GUI) | integer shift onto **max** member t0 (`transform/grouping.py:56–105`) |
+| Bin time stamp | packed-bin centre (`Group.pas:1584`) | `(fgb−0.5) + pack/2 − t0` centre convention (`PRunAsymmetry.cpp:1143–1145`) | bin edges | `(k − t0)·Δt` left-edge stamps, mean under packing |
+
+Numerically the WiMDA and Asymmetry axes coincide exactly on PSI GPS
+headers; musrfit's centring convention differs by ≤ half a raw bin
+(labels only).
+
+### First / last good data
+
+- **WiMDA**: single global offset from **histogram 1 only**
+  (`tgood_beg[1] − tzero[1]`, `Group.pas:1700`).
+- **musrfit**: PSI header first/last-good are parsed but **never consulted
+  by any fit path** — the range comes from the `.msr` file or a
+  `t0 + 10 ns` fallback (`PRunAsymmetry.cpp:2028–2078`); forward/backward
+  ranges are forced to equal time-since-t0 by shifting one side.
+- **Mantid**: `max(firstGood[0..15])` but `lastGood[0]` only
+  (`LoadPSIMuonBin.cpp:183–222`); applied as a crop by the GUI, not the
+  loader.
+- **Asymmetry**: intersection across the grouped detectors — max
+  first-good offset, min last-good offset (`core/io/psi.py:886–889`) —
+  the most conservative of the four. All four drop (not mask) pre-window
+  data.
+
+### Count errors and the F−B asymmetry error
+
+- All four assign Poisson √N at the count level and use an error ≈ 1
+  sentinel/floor for empty or degenerate bins (WiMDA additionally
+  truncates the display at the first zero-count packed bin,
+  `Plot.pas:1642`).
+- **Exact-Poisson σ_A** `2|α|·√(F·B·(F+B))/(F+αB)²` is shared by WiMDA
+  (`Analyse.pas:846–849`, algebraically identical with a `+1`
+  low-count regularisation: variance `(1+N)` per group), musrfit
+  (`PRunAsymmetry.cpp:1160`, α/β applied to the *theory* so the data
+  error omits α — an approximation on their side), and Asymmetry
+  (`transform/asymmetry.py`).
+- **Mantid is the outlier**: `AsymmetryCalc` uses the
+  independent-propagation `√((F+α²B)(1+A²))/(F+αB)` over-estimate *and*
+  discards the workspace error arrays entirely, so upstream corrections
+  never reach its pair-asymmetry errors (`AsymmetryCalc.cpp:130–156`).
+- **Packing order**: all four form the binned asymmetry from **summed
+  counts** (counts-then-ratio). WiMDA `Group.pas:1443–1515`; musrfit
+  `PRunAsymmetry.cpp:1079` ("first rebin the data, than calculate the
+  asymmetry"); Mantid rebins counts in `MuonPreProcess` before
+  grouping/asymmetry. Asymmetry's fixed bunching originally rebinned the
+  *asymmetry* (value-domain quadrature) and was unified onto the
+  counts-first order in `binned_fb_asymmetry`
+  (`transform/rebin.py`) — the value-domain path inflated merged error
+  bars wherever one-sided raw bins contributed σ = 1 sentinels.
+  `rebin()` remains the curve-level combiner for histogram-less data.
+
+### Deadtime
+
+- Same non-paralyzable formula in all four:
+  `N/(1 − N·τ/(Δt·good_frames))` (WiMDA `Group.pas ccorrect`; musrfit
+  `PRunBase.cpp:212`; Mantid `ApplyDeadTimeCorr.cpp:83`; Asymmetry
+  `transform/deadtime.py`), applied per detector before grouping.
+- For PSI BIN files it is effectively **off in every program** (the
+  header carries no deadtime): WiMDA scales by `framestotal = 1`;
+  musrfit's file-mode gate fails; Mantid synthesises an all-zero table
+  (and mis-sets `goodfrm` to the *bin count* for PSI,
+  `LoadPSIMuonBin.cpp:521`).
+- **None of the four rescales errors after deadtime correction**:
+  Asymmetry takes √(N_corr), Mantid and musrfit keep the stale
+  √(N_raw), WiMDA mixes raw variance with the corrected denominator
+  (its errors *shrink* under correction). All are approximations of the
+  correct `c·√N`.
+
+### Background
+
+- Asymmetry's `range` mode is musrfit's pre-t0 window (same
+  `0.1·t0–0.6·t0` default and beam-period snapping constants,
+  `PRunAsymmetry.cpp:823/956`); `tail_fit` is WiMDA's `estBG/BGfit`
+  (Poisson MLE instead of WiMDA's σ = 10¹⁰ amputation of ≤ 4-count
+  bins — divergence D4); `reference_run` is WiMDA's FileBG with variance
+  propagation WiMDA lacks (D7). Ordering (group → subtract → asymmetry)
+  matches musrfit.
+- Asymmetry is the only one of the four that propagates the estimated
+  background's uncertainty into per-bin errors on all estimated paths.
+  musrfit does so only in its asymmetry estimated-background path (its
+  fixed-background path documents `√(f+bkg)` but implements `√f` —
+  upstream doc/code mismatch, `PRunAsymmetry.cpp:884/913`). Mantid's
+  background handling lives in the GUI corrections layer and its A0
+  uncertainty is discarded by `AsymmetryCalc` (see above).
+
 ## How this matrix was verified
 
 - WiMDA and musrfit rows seeded from each program's

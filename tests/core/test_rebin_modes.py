@@ -198,3 +198,126 @@ def test_binned_time_convention_matches_fixed_mode():
     )
     fixed_stamps = (np.arange(t0, n) - t0) * w
     np.testing.assert_allclose(time[:20], fixed_stamps[:20])
+
+
+def test_fixed_mode_bins_counts_before_ratio():
+    """Fixed bunching sums counts per block, then forms one asymmetry —
+    one-sided raw bins (F·B = 0) dissolve into the block instead of
+    injecting sigma = 1 sentinels into a value-domain quadrature (the
+    counts-then-ratio order WiMDA/musrfit/Mantid use)."""
+    from asymmetry.core.transform import compute_asymmetry, rebin
+
+    rng = np.random.default_rng(11)
+    n, t0, factor = 1200, 0, 8
+    t = np.arange(n) * BIN_WIDTH_US
+    decay = np.exp(-t / MUON_LIFETIME_US)
+    forward = rng.poisson(np.clip(3.0 * decay, 0, None)).astype(float)
+    backward = rng.poisson(np.clip(2.5 * decay, 0, None)).astype(float)
+    assert np.count_nonzero(forward * backward == 0) > 50  # sparse data
+
+    time, asym, err = binned_fb_asymmetry(
+        forward,
+        backward,
+        grouping={"bunching_factor": factor},
+        common_t0=t0,
+        bin_width_us=BIN_WIDTH_US,
+        alpha=1.0,
+        first_good_bin=0,
+        last_good_bin=n - 1,
+    )
+
+    trimmed = (n // factor) * factor
+    f_packed = forward[:trimmed].reshape(-1, factor).sum(axis=1)
+    b_packed = backward[:trimmed].reshape(-1, factor).sum(axis=1)
+    asym_ref, err_ref = compute_asymmetry(f_packed, b_packed, alpha=1.0)
+    np.testing.assert_allclose(asym, asym_ref)
+    np.testing.assert_allclose(err, err_ref)
+
+    # The old value-domain path (per-raw-bin asymmetry, then rebin) is
+    # strictly noisier on this data: sentinel bins inflate its errors.
+    asym_raw, err_raw = compute_asymmetry(forward, backward, alpha=1.0)
+    _, _, err_old = rebin(t, asym_raw, err_raw, factor)
+    populated = (f_packed > 0) & (b_packed > 0)
+    assert np.median(err_old[populated] / err[populated]) > 1.05
+
+
+def test_fixed_mode_factor_one_matches_plain_reduction():
+    """bunching_factor 1 reproduces the per-raw-bin reduction exactly."""
+    from asymmetry.core.transform import compute_asymmetry
+
+    rng = np.random.default_rng(12)
+    n, t0 = 600, 7
+    forward = rng.poisson(400.0, n).astype(float)
+    backward = rng.poisson(350.0, n).astype(float)
+    time, asym, err = binned_fb_asymmetry(
+        forward,
+        backward,
+        grouping={},
+        common_t0=t0,
+        bin_width_us=BIN_WIDTH_US,
+        alpha=1.1,
+        first_good_bin=t0,
+        last_good_bin=n - 1,
+    )
+    asym_ref, err_ref = compute_asymmetry(forward[t0:], backward[t0:], alpha=1.1)
+    np.testing.assert_allclose(asym, asym_ref)
+    np.testing.assert_allclose(err, err_ref)
+    np.testing.assert_allclose(time, (np.arange(t0, n) - t0) * BIN_WIDTH_US)
+
+
+def test_fixed_mode_time_stamps_match_value_domain_rebin():
+    """Switching a reduction to counts-first must not move the time axis:
+    the stamps equal rebin()'s mean of the (k - t0)*w left-edge stamps."""
+    from asymmetry.core.transform import rebin
+
+    n, t0, factor = 500, 4, 10
+    forward = np.full(n, 100.0)
+    backward = np.full(n, 100.0)
+    raw_time = (np.arange(t0, n) - t0) * BIN_WIDTH_US
+    expected_time, _, _ = rebin(raw_time, raw_time * 0, raw_time * 0 + 1, factor)
+    time, _, _ = binned_fb_asymmetry(
+        forward,
+        backward,
+        grouping={"bunching_factor": factor},
+        common_t0=t0,
+        bin_width_us=BIN_WIDTH_US,
+        alpha=1.0,
+        first_good_bin=t0,
+        last_good_bin=n - 1,
+    )
+    np.testing.assert_allclose(time, expected_time)
+
+
+def test_fixed_mode_bunching_reaches_time_representation():
+    """TimeFBAsymmetry applies fixed bunching counts-first (fit input)."""
+    from asymmetry.core.transform import compute_asymmetry
+
+    rng = np.random.default_rng(13)
+    n, t0, factor = 900, 5, 6
+    counts_f = rng.poisson(5.0, n).astype(float)
+    counts_b = rng.poisson(4.0, n).astype(float)
+    run = Run(
+        run_number=7002,
+        histograms=[
+            Histogram(counts=counts_f.copy(), bin_width=BIN_WIDTH_US, t0_bin=t0),
+            Histogram(counts=counts_b.copy(), bin_width=BIN_WIDTH_US, t0_bin=t0),
+        ],
+        metadata={"run_number": 7002},
+        grouping={
+            "groups": {1: [1], 2: [2]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "first_good_bin": t0,
+            "last_good_bin": n - 1,
+            "bunching_factor": factor,
+        },
+    )
+    dataset = TimeFBAsymmetry().compute(run)[0]
+    window = n - t0
+    trimmed = (window // factor) * factor
+    f_packed = counts_f[t0 : t0 + trimmed].reshape(-1, factor).sum(axis=1)
+    b_packed = counts_b[t0 : t0 + trimmed].reshape(-1, factor).sum(axis=1)
+    asym_ref, err_ref = compute_asymmetry(f_packed, b_packed, alpha=1.0)
+    np.testing.assert_allclose(dataset.asymmetry, asym_ref)
+    np.testing.assert_allclose(dataset.error, err_ref)
