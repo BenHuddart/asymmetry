@@ -15,6 +15,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel
 
+import asymmetry.gui.windows.grouping.dialog as grouping_dialog_dialog_module
 import asymmetry.gui.windows.grouping_dialog as grouping_dialog_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.utils.constants import PeriodMode
@@ -366,7 +367,7 @@ def test_calibrate_deadtime_populates_explicit_table(
     dialog = GroupingDialog([_dataset_with_histograms()])
 
     monkeypatch.setattr(
-        grouping_dialog_module,
+        grouping_dialog_dialog_module,
         "calibrate_deadtime_from_histograms",
         lambda *args, **kwargs: [0.011, 0.022],
     )
@@ -762,7 +763,7 @@ def test_pressing_enter_on_bunch_factor_does_not_trigger_save_grp(
         return "", ""
 
     monkeypatch.setattr(
-        "asymmetry.gui.windows.grouping_dialog.QFileDialog.getSaveFileName",
+        "asymmetry.gui.windows.grouping.dialog.QFileDialog.getSaveFileName",
         _stub_get_save_file_name,
     )
 
@@ -1048,11 +1049,11 @@ def test_detector_layout_prefers_saved_instrument(
             return 0
 
     monkeypatch.setattr(
-        "asymmetry.gui.windows.grouping_dialog.detect_instrument",
+        "asymmetry.gui.windows.grouping.dialog.detect_instrument",
         lambda *_args, **_kwargs: "EMU",
     )
     monkeypatch.setattr(
-        "asymmetry.gui.windows.grouping_dialog.get_instrument_layout",
+        "asymmetry.gui.windows.grouping.dialog.get_instrument_layout",
         lambda name: type("_Layout", (), {"name": name})(),
     )
     monkeypatch.setattr(
