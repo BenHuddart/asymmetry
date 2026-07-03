@@ -453,3 +453,118 @@ class TestDetectorToggle:
         dlg._on_detector_toggled(5, True)
         assert 5 in dlg._groups.get(1, set())
         assert 5 in dlg._groups.get(2, set())
+
+
+# ---------------------------------------------------------------------------
+# Group button member-count labels (problem 5a)
+# ---------------------------------------------------------------------------
+
+
+class TestGroupButtonCounts:
+    def test_button_label_shows_member_count(self, qapp):
+        layout = get_instrument_layout("HiFi")
+        dlg = DetectorLayoutDialog(layout, groups=_default_groups())
+        assert dlg._group_buttons[1].text() == "Group 1 (32)"
+        assert dlg._group_buttons[2].text() == "Group 2 (32)"
+
+    def test_button_label_uses_group_name_when_set(self, qapp):
+        layout = get_instrument_layout("HiFi")
+        dlg = DetectorLayoutDialog(
+            layout, groups=_default_groups(), group_names={1: "Forward", 2: "Backward"}
+        )
+        assert dlg._group_buttons[1].text() == "Forward (32)"
+        assert dlg._group_buttons[2].text() == "Backward (32)"
+
+    def test_empty_group_button_has_no_count_suffix(self, qapp):
+        layout = get_instrument_layout("HiFi")
+        dlg = DetectorLayoutDialog(layout, groups={})
+        assert dlg._group_buttons[3].text() == "Group 3"
+
+    def test_button_label_updates_after_detector_toggle(self, qapp):
+        layout = get_instrument_layout("HiFi")
+        dlg = DetectorLayoutDialog(layout, groups={})
+        dlg._active_group = 1
+        dlg._on_detector_toggled(5, True)
+        assert dlg._group_buttons[1].text() == "Group 1 (1)"
+
+    def test_transverse_vector_preset_matches_audited_example(self, qapp):
+        """HiFi's Transverse (Vector) preset gives each split group 18 members
+        (verbatim example from the audit: "Top-Bottom Top (18)")."""
+        layout = get_instrument_layout("HiFi")
+        dlg = DetectorLayoutDialog(layout, groups={})
+        dlg._preset_combo.setCurrentText("Transverse (Vector)")
+        dlg._on_apply_preset()
+        assert dlg._group_buttons[3].text() == "Top-Bottom Top (18)"
+
+    def test_button_label_updates_after_apply_preset(self, qapp):
+        layout = get_instrument_layout("HiFi")
+        dlg = DetectorLayoutDialog(layout, groups={})
+        dlg._preset_combo.setCurrentText("Longitudinal")
+        dlg._on_apply_preset()
+        assert dlg._group_buttons[1].text() == "Forward (32)"
+        assert dlg._group_buttons[2].text() == "Backward (32)"
+
+    def test_button_label_updates_after_clear_all(self, qapp):
+        layout = get_instrument_layout("HiFi")
+        dlg = DetectorLayoutDialog(layout, groups=_default_groups())
+        for members in dlg._groups.values():
+            members.clear()
+        dlg._sync_schematic()
+        dlg._on_group_definition_changed()
+        assert dlg._group_buttons[1].text() == "Group 1"
+
+
+# ---------------------------------------------------------------------------
+# Group-row hover highlight (problem 5b)
+# ---------------------------------------------------------------------------
+
+
+class TestGroupRowHoverHighlight:
+    def test_hover_enter_highlights_schematic_group(self, qapp):
+        from PySide6.QtCore import QEvent
+
+        layout = get_instrument_layout("HiFi")
+        dlg = DetectorLayoutDialog(layout, groups=_default_groups())
+        row = dlg._group_rows[1]
+        dlg.eventFilter(row, QEvent(QEvent.Type.Enter))
+        assert dlg._schematic._highlighted_groups == {1}
+
+    def test_hover_leave_clears_highlight(self, qapp):
+        from PySide6.QtCore import QEvent
+
+        layout = get_instrument_layout("HiFi")
+        dlg = DetectorLayoutDialog(layout, groups=_default_groups())
+        row = dlg._group_rows[1]
+        dlg.eventFilter(row, QEvent(QEvent.Type.Enter))
+        dlg.eventFilter(row, QEvent(QEvent.Type.Leave))
+        assert dlg._schematic._highlighted_groups == set()
+
+    def test_all_eight_group_rows_exist(self, qapp):
+        layout = get_instrument_layout("HiFi")
+        dlg = DetectorLayoutDialog(layout, groups={})
+        assert len(dlg._group_rows) == _MAX_GROUPS
+
+
+# ---------------------------------------------------------------------------
+# "Clear excluded" button (problem 5c)
+# ---------------------------------------------------------------------------
+
+
+class TestClearExcluded:
+    def test_clear_excluded_button_exists(self, qapp):
+        layout = get_instrument_layout("HiFi")
+        dlg = DetectorLayoutDialog(layout, groups={})
+        assert dlg._clear_excluded_btn is not None
+
+    def test_clear_excluded_empties_exclusion_set(self, qapp):
+        layout = get_instrument_layout("HiFi")
+        dlg = DetectorLayoutDialog(layout, groups={}, excluded_detectors=[1, 2, 3])
+        assert dlg._schematic.get_excluded_detectors() == {1, 2, 3}
+        dlg._on_clear_excluded()
+        assert dlg._schematic.get_excluded_detectors() == set()
+
+    def test_clear_excluded_button_click_clears_via_ui(self, qapp):
+        layout = get_instrument_layout("HiFi")
+        dlg = DetectorLayoutDialog(layout, groups={}, excluded_detectors=[7])
+        dlg._clear_excluded_btn.click()
+        assert dlg._schematic.get_excluded_detectors() == set()

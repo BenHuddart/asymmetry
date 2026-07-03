@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from PySide6.QtCore import QEvent
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -160,9 +161,12 @@ class DetectorLayoutDialog(QDialog):
         self._group_btn_group.setExclusive(True)
         self._group_buttons: dict[int, QPushButton] = {}
         self._group_name_edits: dict[int, QLineEdit] = {}
+        self._group_rows: dict[int, QWidget] = {}
 
         for gid in range(1, _MAX_GROUPS + 1):
-            row = QHBoxLayout()
+            row_widget = QWidget()
+            row = QHBoxLayout(row_widget)
+            row.setContentsMargins(0, 0, 0, 0)
             row.setSpacing(4)
 
             swatch = QLabel()
@@ -190,7 +194,12 @@ class DetectorLayoutDialog(QDialog):
             row.addWidget(swatch)
             row.addWidget(btn)
             row.addWidget(name_edit)
-            group_layout.addLayout(row)
+            group_layout.addWidget(row_widget)
+
+            # Hovering a group's row temporarily highlights that group's
+            # detectors in the schematic (edge emphasis); purely visual.
+            row_widget.installEventFilter(self)
+            self._group_rows[gid] = row_widget
 
         group_layout.addStretch()
         self._group_btn_group.idClicked.connect(self._on_group_button_clicked)
@@ -214,6 +223,15 @@ class DetectorLayoutDialog(QDialog):
         )
         self._exclude_mode_btn.toggled.connect(self._schematic.set_exclude_mode)
         group_layout.addWidget(self._exclude_mode_btn)
+
+        self._clear_excluded_btn = QPushButton("Clear excluded")
+        self._clear_excluded_btn.setAutoDefault(False)
+        self._clear_excluded_btn.setDefault(False)
+        self._clear_excluded_btn.setToolTip(
+            "Remove every detector from the exclusion set (undo all exclude-mode edits)."
+        )
+        self._clear_excluded_btn.clicked.connect(self._on_clear_excluded)
+        group_layout.addWidget(self._clear_excluded_btn)
 
         root.addWidget(group_box, stretch=3)
 
@@ -307,6 +325,20 @@ class DetectorLayoutDialog(QDialog):
         super().showEvent(event)
         self._ensure_ui_scale_sync()
 
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802
+        """Highlight a group's detectors in the schematic while its row is hovered."""
+        if event.type() == QEvent.Type.Enter:
+            for gid, row_widget in self._group_rows.items():
+                if watched is row_widget:
+                    self._schematic.set_group_highlight(gid)
+                    break
+        elif event.type() == QEvent.Type.Leave:
+            for row_widget in self._group_rows.values():
+                if watched is row_widget:
+                    self._schematic.set_group_highlight(None)
+                    break
+        return super().eventFilter(watched, event)
+
     def _ensure_ui_scale_sync(self) -> None:
         if self._ui_scale_sync_connected:
             return
@@ -376,6 +408,16 @@ class DetectorLayoutDialog(QDialog):
             {gid: list(ids) for gid, ids in self._groups.items()},
             self._active_group,
         )
+        self._schematic.set_group_names(self._current_group_names_from_edits())
+        self._refresh_group_button_labels()
+
+    def _refresh_group_button_labels(self) -> None:
+        """Update each group button's text to show its member count, e.g. "Top (18)"."""
+        for gid, btn in self._group_buttons.items():
+            name = self._group_name_edits[gid].text().strip()
+            base = name if name else f"Group {gid}"
+            count = len(self._groups.get(gid, ()))
+            btn.setText(f"{base} ({count})" if count else base)
 
     def _current_group_names_from_edits(self) -> dict[int, str]:
         """Return normalized group-name mapping from the editable name fields."""
@@ -444,8 +486,10 @@ class DetectorLayoutDialog(QDialog):
         self._tf_hint_label.setVisible(True)
 
     def _on_group_definition_changed(self, *_args) -> None:
-        """Refresh preset status when detector or name assignments are edited."""
+        """Refresh preset status and button labels when detector/name assignments change."""
         self._update_preset_status_label()
+        self._refresh_group_button_labels()
+        self._schematic.set_group_names(self._current_group_names_from_edits())
 
     # ------------------------------------------------------------------
     # Slot: group button clicked
@@ -556,6 +600,14 @@ class DetectorLayoutDialog(QDialog):
             members.clear()
         self._sync_schematic()
         self._on_group_definition_changed()
+
+    # ------------------------------------------------------------------
+    # Slot: clear excluded
+    # ------------------------------------------------------------------
+
+    def _on_clear_excluded(self) -> None:
+        """Remove every detector from the exclusion set."""
+        self._schematic.set_excluded_detectors(set())
 
     # ------------------------------------------------------------------
     # Slot: OK

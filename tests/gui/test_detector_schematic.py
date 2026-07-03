@@ -341,3 +341,338 @@ class TestInstrumentSwitch:
         assert len(widget._patches) == 64
         widget.set_instrument(layout_emu)
         assert len(widget._patches) == 96
+
+
+# ---------------------------------------------------------------------------
+# Multi-membership rendering (dual/multi-group detectors get slice patches)
+# ---------------------------------------------------------------------------
+
+
+class TestMembershipSlices:
+    def test_single_group_detector_has_no_membership_slices(self, qapp):
+        layout = get_instrument_layout("HiFi")
+        widget = DetectorSchematicWidget(layout)
+        widget.set_group_detectors(1, {1})
+        assert 1 not in widget._membership_patches
+
+    def test_hifi_boundary_detector_gets_one_membership_slice(self, qapp):
+        """HiFi's Transverse (Vector) preset puts detector 5 in two groups."""
+        layout = get_instrument_layout("HiFi")
+        widget = DetectorSchematicWidget(layout)
+        preset = layout.presets["Transverse (Vector)"]
+        groups = {gid: list(gd.detector_ids) for gid, gd in preset.groups.items()}
+        widget.set_all_groups(groups, active_group=1)
+        assert widget._detector_groups(5) == [1, 4]
+        assert 5 in widget._membership_patches
+        assert len(widget._membership_patches[5]) == 1
+
+    def test_membership_slice_uses_second_group_colour(self, qapp):
+        from asymmetry.gui.widgets.detector_schematic import _group_colour
+
+        layout = get_instrument_layout("HiFi")
+        widget = DetectorSchematicWidget(layout)
+        widget.set_all_groups({1: [5], 4: [5]}, active_group=1)
+        slice_patch = widget._membership_patches[5][0]
+        assert slice_patch.get_facecolor() == _group_colour(4)
+
+    def test_emu_vector_every_detector_has_membership_slices(self, qapp):
+        """EMU's Vector Polarization preset puts every detector in Pz + Py + Px
+        (3 groups total), so each gets 2 extra membership slices beyond the
+        primary fill."""
+        layout = get_instrument_layout("EMU")
+        widget = DetectorSchematicWidget(layout)
+        preset = layout.presets["Vector Polarization"]
+        groups = {gid: list(gd.detector_ids) for gid, gd in preset.groups.items()}
+        widget.set_all_groups(groups, active_group=1)
+        assert len(widget._membership_patches) == 96
+        for slices in widget._membership_patches.values():
+            assert len(slices) == 2
+
+    def test_membership_slices_cleared_on_refresh(self, qapp):
+        layout = get_instrument_layout("HiFi")
+        widget = DetectorSchematicWidget(layout)
+        widget.set_all_groups({1: [5], 4: [5]}, active_group=1)
+        assert 5 in widget._membership_patches
+        widget.set_all_groups({1: [5]}, active_group=1)
+        assert 5 not in widget._membership_patches
+
+    def test_overflow_marker_for_four_plus_groups(self, qapp):
+        """A detector in more than 3 groups gets a capped set of slices + '+N'."""
+        layout = get_instrument_layout("HiFi")
+        widget = DetectorSchematicWidget(layout)
+        widget.set_all_groups({1: [5], 2: [5], 3: [5], 4: [5]}, active_group=1)
+        # Primary (group 1) + 2 shown slices + 1 overflow marker for group 4.
+        assert len(widget._membership_patches[5]) == 2
+        assert 5 in widget._overflow_labels
+        assert widget._overflow_labels[5].get_text() == "+1"
+
+    def test_rectangle_membership_slices_split_horizontally(self, qapp):
+        layout = get_instrument_layout("FLAME")
+        widget = DetectorSchematicWidget(layout)
+        widget.set_all_groups({1: [3], 2: [3]}, active_group=1)
+        assert 3 in widget._membership_patches
+        assert len(widget._membership_patches[3]) == 1
+
+    def test_excluded_detector_has_no_membership_slices(self, qapp):
+        layout = get_instrument_layout("HiFi")
+        widget = DetectorSchematicWidget(layout)
+        widget.set_all_groups({1: [5], 4: [5]}, active_group=1)
+        widget.set_excluded_detectors({5})
+        assert 5 not in widget._membership_patches
+
+
+# ---------------------------------------------------------------------------
+# Hover tooltips
+# ---------------------------------------------------------------------------
+
+
+class TestHoverTooltip:
+    def test_tooltip_text_reports_id_label_and_groups(self, qapp):
+        layout = get_instrument_layout("HiFi")
+        widget = DetectorSchematicWidget(layout)
+        widget.set_group_detectors(1, {5})
+        seg = next(s for s in layout.all_segments if s.detector_id == 5)
+        text = widget._tooltip_text(5, seg)
+        assert "Detector 5" in text
+        assert "Groups: Group 1" in text
+
+    def test_tooltip_text_lists_all_memberships(self, qapp):
+        layout = get_instrument_layout("HiFi")
+        widget = DetectorSchematicWidget(layout)
+        widget.set_all_groups({1: [5], 4: [5]}, active_group=1)
+        seg = next(s for s in layout.all_segments if s.detector_id == 5)
+        text = widget._tooltip_text(5, seg)
+        assert "Group 1" in text
+        assert "Group 4" in text
+
+    def test_tooltip_uses_group_display_names(self, qapp):
+        layout = get_instrument_layout("HiFi")
+        widget = DetectorSchematicWidget(layout)
+        widget.set_group_detectors(1, {5})
+        widget.set_group_names({1: "Forward"})
+        seg = next(s for s in layout.all_segments if s.detector_id == 5)
+        text = widget._tooltip_text(5, seg)
+        assert "Groups: Forward" in text
+
+    def test_tooltip_reports_no_groups(self, qapp):
+        layout = get_instrument_layout("HiFi")
+        widget = DetectorSchematicWidget(layout)
+        seg = next(s for s in layout.all_segments if s.detector_id == 5)
+        text = widget._tooltip_text(5, seg)
+        assert "Groups: (none)" in text
+
+    def test_tooltip_reports_excluded_status(self, qapp):
+        layout = get_instrument_layout("HiFi")
+        widget = DetectorSchematicWidget(layout)
+        widget.set_excluded_detectors({5})
+        seg = next(s for s in layout.all_segments if s.detector_id == 5)
+        text = widget._tooltip_text(5, seg)
+        assert "Excluded" in text
+
+    def test_tooltip_includes_physical_label_when_present(self, qapp):
+        layout = get_instrument_layout("FLAME")
+        widget = DetectorSchematicWidget(layout)
+        seg = next(s for s in layout.all_segments if s.detector_id == 1)
+        text = widget._tooltip_text(1, seg)
+        assert "Forward" in text
+
+    def test_hit_test_event_returns_none_outside_axes(self, qapp):
+        layout = get_instrument_layout("HiFi")
+        widget = DetectorSchematicWidget(layout)
+
+        class _FakeEvent:
+            inaxes = None
+            xdata = None
+            ydata = None
+
+        assert widget._hit_test_event(_FakeEvent()) is None
+
+
+# ---------------------------------------------------------------------------
+# Group highlight (hover a group row in the layout dialog)
+# ---------------------------------------------------------------------------
+
+
+class TestGroupHighlight:
+    def test_set_group_highlight_records_group(self, qapp):
+        layout = get_instrument_layout("HiFi")
+        widget = DetectorSchematicWidget(layout)
+        widget.set_group_highlight(2)
+        assert widget._highlighted_groups == {2}
+
+    def test_set_group_highlight_none_clears(self, qapp):
+        layout = get_instrument_layout("HiFi")
+        widget = DetectorSchematicWidget(layout)
+        widget.set_group_highlight(2)
+        widget.set_group_highlight(None)
+        assert widget._highlighted_groups == set()
+
+    def test_highlighted_detector_gets_emphasised_edge(self, qapp):
+        layout = get_instrument_layout("HiFi")
+        widget = DetectorSchematicWidget(layout)
+        widget.set_group_detectors(1, {5})
+        widget.set_group_highlight(1)
+        patch = widget._patches[5]
+        assert patch.get_edgecolor()[:3] == (0.0, 0.0, 0.0)
+
+
+# ---------------------------------------------------------------------------
+# Wedge label floor (dense rings stay >= 5pt, using shorter labels)
+# ---------------------------------------------------------------------------
+
+
+class TestWedgeLabelFloor:
+    @staticmethod
+    def _detector_label_texts(widget):
+        """Return every rendered wedge-label text artist across all axes."""
+        texts = []
+        for ax in widget._axes:
+            texts.extend(ax.texts)
+        return texts
+
+    def test_hifi_32_sector_ring_labels_meet_raised_floor(self, qapp):
+        layout = get_instrument_layout("HiFi")
+        widget = DetectorSchematicWidget(layout)
+        n_sectors = len(set(s.sector_index for s in layout.all_segments))
+        assert n_sectors == 32
+        detector_labels = [t for t in self._detector_label_texts(widget) if t.get_text().isdigit()]
+        assert detector_labels, "expected bare-id wedge labels for HiFi"
+        assert all(t.get_fontsize() >= 5.0 for t in detector_labels)
+
+    def test_dense_ring_label_is_bare_id_not_id_plus_name(self, qapp):
+        """Dense rings (>24 sectors, e.g. MuSR's 32) drop any physical label to
+        fit the raised floor, even for banks that do have physical labels."""
+        layout = get_instrument_layout("MuSR")
+        widget = DetectorSchematicWidget(layout)
+        n_sectors = len(set(s.sector_index for s in layout.all_segments))
+        assert n_sectors > 24
+        texts = {t.get_text() for t in self._detector_label_texts(widget)}
+        # Every detector shows as a bare numeric id; nothing longer slipped in.
+        assert all(t.isdigit() for t in texts)
+
+    def test_emu_sparse_ring_keeps_higher_fontsize(self, qapp):
+        """EMU (16 sectors) is well under the dense-ring threshold and keeps
+        the original higher font size."""
+        layout = get_instrument_layout("EMU")
+        widget = DetectorSchematicWidget(layout)
+        detector_labels = [t for t in self._detector_label_texts(widget) if t.get_text().isdigit()]
+        assert detector_labels
+        assert all(t.get_fontsize() == pytest.approx(6.5) for t in detector_labels)
+
+
+# ---------------------------------------------------------------------------
+# Rectangle label sizing / abbreviation (GPS-RD collision fix)
+# ---------------------------------------------------------------------------
+
+
+class TestRectangleLabelFit:
+    def test_narrow_box_name_is_abbreviated(self, qapp):
+        layout = get_instrument_layout("GPS-RD")
+        widget = DetectorSchematicWidget(layout)
+        seg = next(s for s in layout.all_segments if s.detector_id == 7)  # Right_B
+        assert seg.label == "Right_B"
+        assert widget._fit_rectangle_name(seg) == "R_B"
+
+    def test_short_box_name_is_abbreviated(self, qapp):
+        layout = get_instrument_layout("GPS-RD")
+        widget = DetectorSchematicWidget(layout)
+        seg = next(s for s in layout.all_segments if s.detector_id == 11)  # Mob-RL
+        assert widget._fit_rectangle_name(seg) == "Mob"
+
+    def test_narrow_tall_box_name_is_also_abbreviated(self, qapp):
+        """Forward/Backward (0.78 wide, 1.7 tall) are narrower than the
+        `_NARROW_BOX_WIDTH` threshold, so they abbreviate despite being tall —
+        width, not height, is what risks a horizontal label overrun."""
+        layout = get_instrument_layout("GPS-RD")
+        widget = DetectorSchematicWidget(layout)
+        seg = next(
+            s
+            for s in layout.all_segments
+            if s.detector_id == 1 and s.label == "Forward" and not s.read_only
+        )
+        assert widget._fit_rectangle_name(seg) == "Fwd"
+
+    def test_wide_box_name_is_not_abbreviated(self, qapp):
+        layout = get_instrument_layout("FLAME")
+        widget = DetectorSchematicWidget(layout)
+        seg = next(s for s in layout.all_segments if s.detector_id == 3)  # "Right", 2.18 wide
+        assert widget._fit_rectangle_name(seg) == "Right"
+
+    def test_short_box_fontsize_bounded_by_height(self, qapp):
+        layout = get_instrument_layout("GPS-RD")
+        widget = DetectorSchematicWidget(layout)
+        mob = next(s for s in layout.all_segments if s.detector_id == 11)
+        tall = next(
+            s
+            for s in layout.all_segments
+            if s.detector_id == 1 and s.label == "Forward" and not s.read_only
+        )
+        # Mob-RL (0.42 tall) is far shorter than Forward/Backward (1.7 tall),
+        # so its height-bounded font size must be smaller.
+        assert widget._rectangle_label_fontsize(mob) < widget._rectangle_label_fontsize(tall)
+
+
+# ---------------------------------------------------------------------------
+# Optional per-bank/instrument caption (problem 6)
+# ---------------------------------------------------------------------------
+
+
+class TestBankCaption:
+    def test_no_caption_attribute_draws_nothing(self, qapp):
+        layout = get_instrument_layout("HiFi")
+        assert not hasattr(layout, "caption")
+        widget = DetectorSchematicWidget(layout)
+        # No exception, and no stray caption text present on either axis.
+        for ax in widget._axes:
+            texts = [t.get_text() for t in ax.texts]
+            assert "viewed looking upstream" not in texts
+
+    def test_bank_caption_attribute_is_rendered(self, qapp):
+        import types
+
+        layout = get_instrument_layout("FLAME")
+        bank = layout.banks[0]
+        # BankLayout is frozen; simulate a future `caption` field with a
+        # lightweight namespace proxy rather than mutating the dataclass.
+        captioned_bank = types.SimpleNamespace(
+            name=bank.name, segments=bank.segments, caption="viewed looking upstream"
+        )
+        proxy_layout = types.SimpleNamespace(
+            name=layout.name,
+            n_detectors=layout.n_detectors,
+            banks=(captioned_bank,),
+            presets=layout.presets,
+            view=layout.view,
+            reference_arrows=layout.reference_arrows,
+            display_name=layout.display_name,
+            display=layout.display,
+            all_segments=list(bank.segments),
+            active_segments=[s for s in bank.segments if not s.read_only],
+        )
+        widget = DetectorSchematicWidget(proxy_layout)
+        ax = widget._axes[0]
+        texts = [t.get_text() for t in ax.texts]
+        assert "viewed looking upstream" in texts
+
+    def test_instrument_level_caption_attribute_is_rendered(self, qapp):
+        import types
+
+        layout = get_instrument_layout("FLAME")
+        bank = layout.banks[0]
+        proxy_layout = types.SimpleNamespace(
+            name=layout.name,
+            n_detectors=layout.n_detectors,
+            banks=(bank,),
+            presets=layout.presets,
+            view=layout.view,
+            reference_arrows=layout.reference_arrows,
+            display_name=layout.display_name,
+            display=layout.display,
+            all_segments=list(bank.segments),
+            active_segments=[s for s in bank.segments if not s.read_only],
+            caption="viewed looking upstream",
+        )
+        widget = DetectorSchematicWidget(proxy_layout)
+        ax = widget._axes[0]
+        texts = [t.get_text() for t in ax.texts]
+        assert "viewed looking upstream" in texts
