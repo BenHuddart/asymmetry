@@ -43,8 +43,9 @@ tests.
 | 1a | (field + AxisLimitControls — test edits were import/type repoints, net 0) | +0 |
 | 1b | `test_mpl_canvas.py` (new — canvas factory coverage) | **+8** |
 | 1c | `test_export_utils.py` (new — compile_gle wrapper) | **+3** |
+| 1d | `test_fit_run_controls.py` (new — FitRunControls) | **+9** |
 
-**Running total of audit-added tests: 46.** Full-tier collection after Phase 1c = **4199** (= 4153 + 46). Standard-tier passed = 4092 (was 4046 at baseline).
+**Running total of audit-added tests: 55.** Full-tier collection after Phase 1d = **4208** (= 4153 + 55). Standard-tier passed = 4101 (was 4046 at baseline).
 
 **Phase 4 parity rule:** `new_full_collected == 4153 + Σ(tests added by audit)`.
 Any shortfall is a silent dropped-collection regression and must be root-caused,

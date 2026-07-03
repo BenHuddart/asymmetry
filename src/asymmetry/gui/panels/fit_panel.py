@@ -147,16 +147,13 @@ from asymmetry.gui.styles.widgets import (
     warning_html,
 )
 from asymmetry.gui.tasks import TaskRunner, TaskWorker
+from asymmetry.gui.utils.formatting import format_param_label
 from asymmetry.gui.widgets.axis_limits import FloatLimitField
 from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
+from asymmetry.gui.widgets.fit_run_controls import FitRunControls
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox, NoScrollSpinBox
 from asymmetry.gui.windows.fit_wizard_window import FitWizardWindow
 from asymmetry.gui.windows.global_fit_wizard_window import GlobalFitWizardWindow
-
-
-def _format_param_label(name: str) -> str:
-    """Return a display label with Greek symbols and units where applicable."""
-    return get_param_info(name).unicode_label()
 
 
 def _field_value_overrides(model: CompositeModel, field_gauss: float) -> dict[str, float]:
@@ -756,7 +753,7 @@ class AffineTieDialog(QDialog):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle(f"Affine tie — {_format_param_label(param_name)}")
+        self.setWindowTitle(f"Affine tie — {format_param_label(param_name)}")
         self._param_name = param_name
         self._candidates = candidates
 
@@ -1497,7 +1494,7 @@ class FitParameterTable(QTableWidget):
             self.setRowCount(len(names))
             for i, pname in enumerate(names):
                 self.setItem(
-                    i, self.COL_NAME, _make_param_name_item(_format_param_label(pname), pname)
+                    i, self.COL_NAME, _make_param_name_item(format_param_label(pname), pname)
                 )
 
                 default_val = overrides.get(pname, model.param_defaults.get(pname, 0.0))
@@ -1651,7 +1648,7 @@ class FitParameterTable(QTableWidget):
             try:
                 value = float(self.item(i, self.COL_VALUE).text())
             except (ValueError, AttributeError) as exc:
-                raise ValueError(f"Invalid value for {_format_param_label(param_name)}") from exc
+                raise ValueError(f"Invalid value for {format_param_label(param_name)}") from exc
 
             fix_widget = self.cellWidget(i, self.COL_FIX)
             fix_checkbox = fix_widget.findChild(QCheckBox) if fix_widget else None
@@ -2048,10 +2045,12 @@ class SingleFitTab(QWidget):
         self._fit_btn.setStyleSheet(build_primary_button_qss())
         self._fit_btn.clicked.connect(self._run_fit)
         # Stop replaces the Fit button while a worker-based fit runs.
-        self._stop_btn = QPushButton("Stop")
-        self._stop_btn.setToolTip("Cancel the running fit; no result is recorded.")
-        self._stop_btn.clicked.connect(self._on_stop_fit)
-        self._stop_btn.hide()
+        self._run_controls = FitRunControls(
+            button_label="Stop",
+            tooltip="Cancel the running fit; no result is recorded.",
+            on_cancel=self._on_stop_fit,
+        )
+        self._stop_btn = self._run_controls.button
         self._reset_btn = QPushButton("Reset")
         self._reset_btn.clicked.connect(self._reset_parameters)
         self._preview_btn = QPushButton("Preview")
@@ -3430,10 +3429,12 @@ class GlobalFitTab(QWidget):
         self._fit_btn.clicked.connect(self._run_global_fit)
         self._fit_btn.setEnabled(False)
         # Stop replaces the disabled Fit button while a worker-based fit runs.
-        self._stop_btn = QPushButton("Stop")
-        self._stop_btn.setToolTip("Cancel the running fit; no partial result is recorded.")
-        self._stop_btn.clicked.connect(self._on_stop_fit)
-        self._stop_btn.hide()
+        self._run_controls = FitRunControls(
+            button_label="Stop",
+            tooltip="Cancel the running fit; no partial result is recorded.",
+            on_cancel=self._on_stop_fit,
+        )
+        self._stop_btn = self._run_controls.button
         self._preview_btn = QPushButton("Preview")
         self._preview_btn.clicked.connect(self._on_preview_requested)
         self._preview_btn.setEnabled(False)
@@ -4145,7 +4146,7 @@ class GlobalFitTab(QWidget):
         for i, pname in enumerate(model.param_names):
             previous = preserved_state.get(pname, {})
             # Parameter name
-            name_item = _make_param_name_item(_format_param_label(pname), pname)
+            name_item = _make_param_name_item(format_param_label(pname), pname)
             self._param_table.setItem(i, 0, name_item)
 
             # Initial value — use dataset field for 'field' parameters if available
@@ -4480,7 +4481,7 @@ class GlobalFitTab(QWidget):
             try:
                 value = float(self._param_table.item(i, 1).text())
             except (ValueError, AttributeError):
-                raise ValueError(f"Error: Invalid value for {_format_param_label(pname)}") from None
+                raise ValueError(f"Error: Invalid value for {format_param_label(pname)}") from None
 
             # Get the Type selection (Global/Local/Fixed/File)
             type_combo = self._param_table.cellWidget(i, 2)
@@ -4491,7 +4492,7 @@ class GlobalFitTab(QWidget):
             if type_text != "File":
                 if not np.isfinite(value):
                     raise ValueError(
-                        f"Error: Parameter {_format_param_label(pname)} must be finite, got {value}"
+                        f"Error: Parameter {format_param_label(pname)} must be finite, got {value}"
                     )
             param_values[pname] = value
 
@@ -4507,16 +4508,16 @@ class GlobalFitTab(QWidget):
 
             if np.isfinite(min_val) and np.isfinite(max_val) and min_val > max_val:
                 raise ValueError(
-                    f"Error: Parameter {_format_param_label(pname)} has invalid bounds: {min_val} > {max_val}"
+                    f"Error: Parameter {format_param_label(pname)} has invalid bounds: {min_val} > {max_val}"
                 )
             if type_text != "File":
                 if np.isfinite(min_val) and value < min_val:
                     raise ValueError(
-                        f"Error: Parameter {_format_param_label(pname)} value {value} is below minimum {min_val}"
+                        f"Error: Parameter {format_param_label(pname)} value {value} is below minimum {min_val}"
                     )
                 if np.isfinite(max_val) and value > max_val:
                     raise ValueError(
-                        f"Error: Parameter {_format_param_label(pname)} value {value} is above maximum {max_val}"
+                        f"Error: Parameter {format_param_label(pname)} value {value} is above maximum {max_val}"
                     )
 
             param_bounds[pname] = (min_val, max_val)
@@ -4638,7 +4639,7 @@ class GlobalFitTab(QWidget):
         # user overrides still win.
         auto_seeds = self._grouped_member_nuisance_seeds()
 
-        params = [(name, _format_param_label(name), "local") for name in GROUP_NUISANCE_PARAMS]
+        params = [(name, format_param_label(name), "local") for name in GROUP_NUISANCE_PARAMS]
         members: list[tuple[int, str]] = []
         values: dict[int, dict[str, float]] = {}
         for key, label, run, group_id in self._grouped_member_specs():
@@ -4686,7 +4687,7 @@ class GlobalFitTab(QWidget):
                 role = "global"
             else:  # Fixed / File
                 role = "fixed"
-            params.append((pname, _format_param_label(pname), role))
+            params.append((pname, format_param_label(pname), role))
         members = [
             (int(ds.run_number), str(getattr(ds, "run_label", ds.run_number)))
             for ds in self._datasets
@@ -5557,7 +5558,7 @@ class GlobalFitTab(QWidget):
     def _count_param_row(self, fit_result, name: str) -> str:
         value = fit_result.parameters[name].value
         err = fit_result.uncertainties.get(name)
-        row = f"{_format_param_label(name)} = {self._fmt_value(value, err)}"
+        row = f"{format_param_label(name)} = {self._fmt_value(value, err)}"
         minos = (getattr(fit_result, "minos_errors", None) or {}).get(name)
         if minos is not None and len(minos) == 2:
             lower, upper = float(minos[0]), float(minos[1])
@@ -7287,7 +7288,7 @@ class GlobalFitTab(QWidget):
                 amplitude_defaults_by_group[str(group_id)] = amplitude_default
 
         for row, name in enumerate(GROUP_NUISANCE_PARAMS):
-            label_item = _make_param_name_item(_format_param_label(name), name)
+            label_item = _make_param_name_item(format_param_label(name), name)
             self._group_param_table.setItem(row, 0, label_item)
 
             previous = preserved_state.get(name, {}) if isinstance(preserved_state, dict) else {}
@@ -7433,7 +7434,7 @@ class GlobalFitTab(QWidget):
         for row, pname in enumerate(visible_param_names):
             previous = preserved_state.get(pname, {})
             base_name, _index = split_parameter_name(pname)
-            name_item = _make_param_name_item(_format_param_label(pname), pname)
+            name_item = _make_param_name_item(format_param_label(pname), pname)
             self._group_model_table.setItem(row, 0, name_item)
 
             default_val = grouped_model.param_defaults.get(pname, 0.0)
@@ -7579,11 +7580,11 @@ class GlobalFitTab(QWidget):
                     value = float(self._group_param_table.item(row, offset).text())
                 except (TypeError, ValueError, AttributeError):
                     raise ValueError(
-                        f"Error: Invalid value for {_format_param_label(pname)}"
+                        f"Error: Invalid value for {format_param_label(pname)}"
                     ) from None
                 if not np.isfinite(value):
                     raise ValueError(
-                        f"Error: Parameter {_format_param_label(pname)} must be finite, got {value}"
+                        f"Error: Parameter {format_param_label(pname)} must be finite, got {value}"
                     )
                 if first_value is None:
                     first_value = value
@@ -7600,11 +7601,11 @@ class GlobalFitTab(QWidget):
             for value in row_values.values():
                 if np.isfinite(min_val) and value < min_val:
                     raise ValueError(
-                        f"Error: Parameter {_format_param_label(pname)} value {value} is below minimum {min_val}"
+                        f"Error: Parameter {format_param_label(pname)} value {value} is below minimum {min_val}"
                     )
                 if np.isfinite(max_val) and value > max_val:
                     raise ValueError(
-                        f"Error: Parameter {_format_param_label(pname)} value {value} is above maximum {max_val}"
+                        f"Error: Parameter {format_param_label(pname)} value {value} is above maximum {max_val}"
                     )
 
             type_combo = self._group_param_table.cellWidget(row, group_type_column)
@@ -7643,17 +7644,17 @@ class GlobalFitTab(QWidget):
                 value = float(param.value)
                 if not np.isfinite(value):
                     raise ValueError(
-                        f"Error: Parameter {_format_param_label(pname)} must be finite, got {value}"
+                        f"Error: Parameter {format_param_label(pname)} must be finite, got {value}"
                     )
                 min_val, max_val = float(param.min), float(param.max)
                 if np.isfinite(min_val) and value < min_val:
                     raise ValueError(
-                        f"Error: Parameter {_format_param_label(pname)} value {value} "
+                        f"Error: Parameter {format_param_label(pname)} value {value} "
                         f"is below minimum {min_val}"
                     )
                 if np.isfinite(max_val) and value > max_val:
                     raise ValueError(
-                        f"Error: Parameter {_format_param_label(pname)} value {value} "
+                        f"Error: Parameter {format_param_label(pname)} value {value} "
                         f"is above maximum {max_val}"
                     )
                 if param.fixed:
@@ -7675,11 +7676,11 @@ class GlobalFitTab(QWidget):
                     value = float(self._group_model_table.item(row, 1).text())
                 except (TypeError, ValueError, AttributeError):
                     raise ValueError(
-                        f"Error: Invalid value for {_format_param_label(pname)}"
+                        f"Error: Invalid value for {format_param_label(pname)}"
                     ) from None
                 if not np.isfinite(value):
                     raise ValueError(
-                        f"Error: Parameter {_format_param_label(pname)} must be finite, got {value}"
+                        f"Error: Parameter {format_param_label(pname)} must be finite, got {value}"
                     )
 
                 bounds_text = self._group_model_table.item(row, 3).text()
@@ -7692,12 +7693,12 @@ class GlobalFitTab(QWidget):
 
                 if np.isfinite(min_val) and value < min_val:
                     raise ValueError(
-                        f"Error: Parameter {_format_param_label(pname)} value {value} "
+                        f"Error: Parameter {format_param_label(pname)} value {value} "
                         f"is below minimum {min_val}"
                     )
                 if np.isfinite(max_val) and value > max_val:
                     raise ValueError(
-                        f"Error: Parameter {_format_param_label(pname)} value {value} "
+                        f"Error: Parameter {format_param_label(pname)} value {value} "
                         f"is above maximum {max_val}"
                     )
 
@@ -8578,7 +8579,7 @@ class FitPanel(QWidget):
                 continue
             value = float(getattr(param, "value", 0.0))
             unc = float(uncertainties.get(name, 0.0))
-            lines.append(f"  {_format_param_label(name)} = {value:.6f} ± {unc:.6f}")
+            lines.append(f"  {format_param_label(name)} = {value:.6f} ± {unc:.6f}")
         return "<br>".join(lines)
 
     def _single_state_from_fit_result(

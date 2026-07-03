@@ -38,11 +38,11 @@ from asymmetry.gui.panels.fit_parameters_panel import (
     _FitRow,
     _format_gle_label,
     _format_gle_legend_label,
-    _format_param_label,
     _format_plot_label,
     _format_plot_legend_label,
     _GroupFitData,
 )
+from asymmetry.gui.utils.formatting import format_param_label as _format_param_label
 from tests._qt_helpers import wait_for
 
 

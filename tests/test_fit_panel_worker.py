@@ -15,14 +15,15 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import QEventLoop, QObject, QTimer  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from asymmetry.gui.panels.fit_panel import _format_param_label, _start_fit_call  # noqa: E402
+from asymmetry.gui.panels.fit_panel import _start_fit_call  # noqa: E402
 from asymmetry.gui.tasks import TaskRunner  # noqa: E402
+from asymmetry.gui.utils.formatting import format_param_label  # noqa: E402
 
 
 def test_format_param_label_known_and_unknown() -> None:
-    assert _format_param_label("A0") == "A₀ (%)"
-    assert _format_param_label("Lambda") == "λ (µs⁻¹)"
-    assert _format_param_label("custom") == "custom"
+    assert format_param_label("A0") == "A₀ (%)"
+    assert format_param_label("Lambda") == "λ (µs⁻¹)"
+    assert format_param_label("custom") == "custom"
 
 
 def _run_fit_call(call, timeout_ms: int = 5_000) -> dict:

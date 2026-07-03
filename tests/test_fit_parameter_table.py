@@ -20,7 +20,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox
 
 from asymmetry.core.fitting.composite import CompositeModel
-from asymmetry.gui.panels.fit_panel import FitParameterTable, _format_param_label
+from asymmetry.gui.panels.fit_panel import FitParameterTable
+from asymmetry.gui.utils.formatting import format_param_label as _format_param_label
 
 
 @pytest.fixture(scope="module")

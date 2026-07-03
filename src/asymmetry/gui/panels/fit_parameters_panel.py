@@ -108,6 +108,7 @@ from asymmetry.gui.styles.widgets import (
 )
 from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.utils.export import compile_gle
+from asymmetry.gui.utils.formatting import format_param_label
 from asymmetry.gui.widgets.collapsible_section import CollapsibleSection
 from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
 from asymmetry.gui.widgets.mpl_canvas import create_canvas
@@ -134,10 +135,6 @@ def _quality_flags_tooltip(flags: list[str]) -> str:
     return "Quality flags:\n" + "\n".join(
         f"• {_QUALITY_FLAG_LABELS.get(flag, flag)}" for flag in flags
     )
-
-
-def _format_param_label(name: str) -> str:
-    return get_param_info(name).unicode_label()
 
 
 def _format_plot_label(name: str) -> str:
@@ -2924,7 +2921,7 @@ class FitParametersPanel(QWidget):
         if self._angle_x_field is not None:
             combo.addItem(self._angle_x_field[0], userData=self._angle_x_field[1])
         for name in self._display_y_parameters():
-            combo.addItem(_format_param_label(name), userData=f"param:{name}")
+            combo.addItem(format_param_label(name), userData=f"param:{name}")
         # Data-browser custom columns (param:<…> and custom:<…> both carry their
         # key as item data so the selection survives label collisions / renames).
         for label, key in self._custom_x_fields:
@@ -3102,7 +3099,7 @@ class FitParametersPanel(QWidget):
             self._global_param_hint.setText("")
             self._global_param_hint.setVisible(False)
             return
-        labels = ", ".join(_format_param_label(name) for name in names)
+        labels = ", ".join(format_param_label(name) for name in names)
         subject = "it is" if len(names) == 1 else "they are"
         self._global_param_hint.setText(
             f"{labels} fitted as Global (one shared value), so {subject} held "
@@ -3135,11 +3132,11 @@ class FitParametersPanel(QWidget):
         self._y_selector_table.setRowCount(len(display_params))
 
         for idx, name in enumerate(display_params):
-            name_item = QTableWidgetItem(_format_param_label(name))
+            name_item = QTableWidgetItem(format_param_label(name))
             name_item.setData(Qt.ItemDataRole.UserRole, name)
             # The name column elides; back the truncated text with the full label
             # on hover so nothing is lost when the inspector is narrow.
-            name_item.setToolTip(_format_param_label(name))
+            name_item.setToolTip(format_param_label(name))
             self._y_selector_table.setItem(idx, 0, name_item)
 
             fit_button = QPushButton("Model Fit")
@@ -4359,7 +4356,7 @@ class FitParametersPanel(QWidget):
         # were distinguishable only by a mathematical-italic glyph).
         columns = ["Run", "𝐵 (G)", "𝑇 (K)"]
         for name in display_params:
-            label = _format_param_label(name)
+            label = format_param_label(name)
             columns.extend([f"{label} (fit)", f"err {label}"])
         # A free-text x-axis (Angle / custom column) is not one of the fixed
         # columns, so add it explicitly (folded as displayed) — otherwise the
@@ -4986,7 +4983,7 @@ class FitParametersPanel(QWidget):
         """
         name = _x_param_name(x_key)
         if name is not None:
-            return _format_param_label(name)
+            return format_param_label(name)
         labels = self._custom_x_labels()
         if x_key in labels:
             return labels[x_key]
