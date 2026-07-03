@@ -24,6 +24,20 @@ Format: `- [ ] <area> — <what/why> (surfaced in Phase N)`
 
 <!-- append discoveries below -->
 
+- [ ] Phase 3 (Review B2, F2 — narrowed, not fully closed): `WizardWindowBase._run_analysis`
+  no longer serializes on the prior worker by joining its thread the way the old
+  per-window code did (`thread.quit(); thread.wait()`); `TaskRunner` deliberately
+  does not block the GUI. `_run_analysis` now cooperatively `cancel()`s the prior
+  live worker, but the wizard analysis does not yet honour `cancel_callback`
+  (that arrives with the `feat/fit-wizard-scope` re-port), so a narrow
+  multi-step race remains: start a global run → re-open the wizard with a new
+  context mid-run (`set_analysis_context` clears busy) → click Build again before
+  the first worker finishes ⇒ two concurrent core fits run (the stale one's
+  result is dropped by the request-id guard, so state stays correct — it only
+  wastes cycles and interleaves the log). Fully resolved once the scope re-port
+  wires `cancel_callback` into the builders so the cancelled prior worker stops
+  promptly. (surfaced in Phase 3 Review B2)
+
 - [x] Phase 2 note (H2 param-table factory — NOT warranted): PLAN.md proposed
   folding the two tabs' "inline ~80-line parameter-table setup" into one
   `_build_parameter_table()` factory on `FitTabBase`. On inspection the setup is

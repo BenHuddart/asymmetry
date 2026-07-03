@@ -124,6 +124,17 @@ class WizardWindowBase(QMainWindow):
     # ------------------------------------------------------------------
 
     def _run_analysis(self) -> None:
+        # Cooperatively cancel any still-live prior worker before starting a new
+        # one. The old per-window code serialized by joining the prior QThread
+        # (thread.wait()); TaskRunner deliberately does not block the GUI, so we
+        # request cancel instead. A prior run whose context changed mid-flight
+        # (set_analysis_context clears busy but not _current_worker) is otherwise
+        # only dropped by the staleness guard — this stops it wasting cycles once
+        # the analysis honours cancel_callback. Its terminal signal is dropped by
+        # the staleness guard regardless.
+        if self._current_worker is not None:
+            self._current_worker.cancel()
+
         self._analysis_request_id += 1
         request_id = self._analysis_request_id
 
@@ -159,9 +170,13 @@ class WizardWindowBase(QMainWindow):
         self._current_worker = None
 
     def _handle_error(self, request_id: int, message: str) -> None:
+        # Clear busy BEFORE the staleness guard, mirroring _handle_finished: a
+        # window whose context changed mid-run (set_analysis_context bumps the
+        # id and leaves busy True, delegating the clear to the terminal slot)
+        # would otherwise stay soft-locked when the stale worker errors.
+        self._set_busy(False)
         if request_id != self._analysis_request_id:
             return
-        self._set_busy(False)
         self._on_analysis_failed(message)
         self._current_worker = None
 
@@ -171,9 +186,10 @@ class WizardWindowBase(QMainWindow):
         self._on_progress(current, total, message)
 
     def _handle_cancelled(self, request_id: int) -> None:
+        # Clear busy before the staleness guard (see _handle_error).
+        self._set_busy(False)
         if request_id != self._analysis_request_id:
             return
-        self._set_busy(False)
         self._status_label.setText("Analysis cancelled.")
         self._current_worker = None
 

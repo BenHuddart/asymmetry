@@ -140,6 +140,41 @@ def test_stale_request_id_is_ignored():
         window.close()
 
 
+def test_stale_error_clears_busy():
+    """A stale ERROR callback must still clear busy (regression: soft-lock).
+
+    Mirrors _handle_finished: if the context changes mid-run (the id is bumped
+    while busy stays True, as set_analysis_context does on its in-progress
+    branch) and the now-stale worker then raises, the window must not stay
+    soft-locked with _analysis_in_progress stuck True.
+    """
+    release = threading.Event()
+
+    def slow_error_task(worker: TaskWorker):
+        release.wait(10.0)
+        raise RuntimeError("boom")
+
+    window = _FakeWizard(task_fn=slow_error_task)
+    try:
+        window._run_analysis()
+        assert window._analysis_in_progress is True
+
+        # Context changed mid-run: bump the id but leave busy True, then let the
+        # stale task raise.
+        window._analysis_request_id += 1
+        release.set()
+
+        _wait_until(lambda: window._tasks.active_count == 0)
+        time.sleep(0.05)
+        from PySide6.QtWidgets import QApplication
+
+        QApplication.processEvents()
+
+        assert window._analysis_in_progress is False
+    finally:
+        window.close()
+
+
 def test_close_event_shuts_down_task_runner():
     """closeEvent cancels a live worker via TaskRunner.shutdown (decision #2).
 

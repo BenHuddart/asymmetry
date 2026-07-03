@@ -47,8 +47,9 @@ tests.
 | 1 (Review A fix) | `test_axis_limit_controls.py` (new — AxisLimitControls) | **+6** |
 | 2 (mechanical split) | `test_styles_tokens.py` no-hex guard parametrized over the 5 new `fit/` submodules | **+5** |
 | 3A (wizard base) | `test_wizard_base.py` (new — WizardWindowBase) | **+4** |
+| 3 (Review B2 fix) | `test_wizard_base.py` (+1 stale-error soft-lock regression) | **+1** |
 
-**Running total of audit-added tests: 70.** Full-tier collection after Phase 3A = **4223** (= 4153 + 70). Standard-tier passed = 4112 (was 4046 at baseline).
+**Running total of audit-added tests: 71.** Full-tier collection after Phase 3 = **4224** (= 4153 + 71). Standard-tier passed = 4117 (was 4046 at baseline).
 
 **Phase 4 parity rule:** `new_full_collected == 4153 + Σ(tests added by audit)`.
 Any shortfall is a silent dropped-collection regression and must be root-caused,
