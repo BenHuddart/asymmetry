@@ -36,7 +36,7 @@ _Layout = Literal["tight", "constrained", "none"]
 @overload
 def create_canvas(
     *,
-    layout: _Layout = ...,
+    layout: _Layout | None = ...,
     toolbar: Literal[False] = ...,
     parent: QWidget | None = ...,
     figsize: tuple[float, float] | None = ...,
@@ -46,7 +46,7 @@ def create_canvas(
 @overload
 def create_canvas(
     *,
-    layout: _Layout = ...,
+    layout: _Layout | None = ...,
     toolbar: Literal[True],
     parent: QWidget | None = ...,
     figsize: tuple[float, float] | None = ...,
