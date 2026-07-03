@@ -180,6 +180,13 @@ from asymmetry.core.project import (
     load_project,
     save_project,
 )
+from asymmetry.core.project.profiles import (
+    GroupingProfile,
+    active_profile_for_run,
+    effective_grouping_for_loaded_run,
+    profile_fingerprint_for_run,
+    resolve_effective_grouping,
+)
 from asymmetry.core.representation import (
     DataGroup,
     FitSeries,
@@ -613,6 +620,11 @@ class MainWindow(QMainWindow):
         # remains the FFT cache alias for existing tests and transitional project
         # fallbacks.
         self._project_model = ProjectModel()
+        #: Project-level named detector-grouping profiles (schema v12). Runs
+        #: inherit the active profile of their fingerprint unless released with a
+        #: per-run ``grouping_overrides`` payload. Edited via the grouping dialog
+        #: and persisted through the project ``grouping_profiles`` block.
+        self._grouping_profiles: list[GroupingProfile] = []
         self._next_batch_index = 1
         self._next_scan_index = 1
         #: Per-run data for the current ALC scan (fractional value + metadata),
@@ -3150,7 +3162,25 @@ class MainWindow(QMainWindow):
                     if apply_choice == "yes_to_all":
                         apply_comment_field_to_all = True
 
-                    if auto_grouping_payload is not None:
+                    # Profile inheritance takes precedence over ad-hoc
+                    # auto-grouping propagation: a freshly loaded run whose
+                    # fingerprint has an active profile inherits that profile's
+                    # resolved effective grouping (its own per-run facts merged
+                    # in). Runs of a fingerprint with no profile keep the loader
+                    # default (auto-grouping propagation below still applies).
+                    inherited_profile = (
+                        active_profile_for_run(self._grouping_profiles, dataset.run)
+                        if dataset is not None and dataset.run is not None
+                        else None
+                    )
+                    if inherited_profile is not None:
+                        resolved = effective_grouping_for_loaded_run(
+                            self._grouping_profiles, dataset.run
+                        )
+                        self._apply_grouping_settings_to_dataset(dataset, resolved)
+                        if isinstance(dataset.metadata, dict):
+                            dataset.metadata.pop("grouping_overrides", None)
+                    elif auto_grouping_payload is not None:
                         auto_grouping_attempts += 1
                         grouping_payload = dict(auto_grouping_payload)
                         # good_frames and its period companions are measured
@@ -3571,8 +3601,13 @@ class MainWindow(QMainWindow):
             selected_run_numbers=selected_run_numbers,
         )
 
+        overridden_run_numbers = [
+            int(ds.run_number) for ds in dialog_datasets if self._dataset_has_grouping_override(ds)
+        ]
         dialog = GroupingDialog(
             dialog_datasets,
+            profiles=self._grouping_profiles,
+            overridden_run_numbers=overridden_run_numbers,
             selected_run_number=dialog_selected_run_number,
             selected_run_numbers=dialog_selected_run_numbers,
             parent=self,
@@ -3583,6 +3618,16 @@ class MainWindow(QMainWindow):
         grouping_result = dialog.get_grouping_result()
         if not grouping_result:
             return
+
+        # Profile-editor result: save the draft as the active profile for its
+        # fingerprint and record the scope reconciliation. The flat
+        # ``grouping_result`` payload is still applied per inheriting run below.
+        profile_result = (
+            dialog.get_profile_result() if hasattr(dialog, "get_profile_result") else None
+        )
+        if profile_result is not None:
+            self._store_grouping_profile(profile_result["profile"])
+            self._reconcile_grouping_overrides(dialog_datasets, profile_result)
 
         run_numbers = {int(v) for v in grouping_result.get("run_numbers", [])}
         alpha = float(grouping_result.get("alpha", 1.0))
@@ -3675,6 +3720,87 @@ class MainWindow(QMainWindow):
             f"deadtime={deadtime_msg}, background={background_msg}"
         )
 
+        if profile_result is not None:
+            profile_name = profile_result["profile"].name
+            overridden = len(profile_result.get("released", set()))
+            message = f"Grouping profile '{profile_name}' applied to {updated} run(s)"
+            if overridden:
+                message += f" ({overridden} overridden run(s) unchanged)"
+            self.statusBar().showMessage(message, 8000)
+
+    def _dataset_has_grouping_override(self, dataset) -> bool:
+        """Return whether *dataset* carries an explicit per-run grouping override.
+
+        A run is *overridden* (released from its profile) when its metadata flags
+        it as such, or — for runs loaded before the flag existed — when it does
+        not inherit any active profile of its fingerprint. Runs of a fingerprint
+        with no profile at all are treated as inheriting (they will inherit once a
+        profile is created).
+        """
+        metadata = getattr(dataset, "metadata", None)
+        if isinstance(metadata, dict) and "grouping_overrides" in metadata:
+            return bool(metadata.get("grouping_overrides"))
+        run = getattr(dataset, "run", None)
+        if run is None:
+            return False
+        fingerprint = profile_fingerprint_for_run(run)
+        has_profile = any(p.fingerprint.matches(fingerprint) for p in self._grouping_profiles)
+        if not has_profile:
+            return False
+        return active_profile_for_run(self._grouping_profiles, run) is None
+
+    def _resolve_named_profile_for_run(self, name: str, run) -> dict | None:
+        """Resolve the named profile (of the run's fingerprint) onto *run*.
+
+        Returns the effective grouping payload, or ``None`` when no profile of
+        that name matches the run's fingerprint.
+        """
+        fingerprint = profile_fingerprint_for_run(run)
+        for profile in self._grouping_profiles:
+            if profile.name == name and profile.fingerprint.matches(fingerprint):
+                return resolve_effective_grouping(profile, run)
+        return None
+
+    def _store_grouping_profile(self, profile: GroupingProfile) -> None:
+        """Save *profile* as the active profile for its fingerprint.
+
+        Replaces any existing same-named profile of the fingerprint, deactivates
+        the fingerprint's other profiles, and appends it when new — enforcing the
+        one-active-profile-per-fingerprint invariant.
+        """
+        fingerprint = profile.fingerprint
+        kept: list[GroupingProfile] = []
+        for existing in self._grouping_profiles:
+            if existing.fingerprint.matches(fingerprint):
+                if existing.name == profile.name:
+                    continue  # replaced below
+                kept.append(existing.with_active(False))
+            else:
+                kept.append(existing)
+        profile.active = True
+        kept.append(profile)
+        self._grouping_profiles = kept
+
+    def _reconcile_grouping_overrides(self, datasets, profile_result: dict) -> None:
+        """Apply the scope panel's release/reattach decisions to the datasets.
+
+        A *newly released* run freezes its current grouping as a per-run override
+        (flagged in metadata for the browser badge and the project's
+        ``grouping_overrides`` persistence); a *newly reattached* run drops the
+        override so it inherits the active profile again.
+        """
+        newly_released = {int(v) for v in profile_result.get("newly_released", set())}
+        newly_reattached = {int(v) for v in profile_result.get("newly_reattached", set())}
+        by_run = {int(ds.run_number): ds for ds in datasets}
+        for run_number in newly_released:
+            dataset = by_run.get(run_number)
+            if dataset is not None and isinstance(dataset.metadata, dict):
+                dataset.metadata["grouping_overrides"] = True
+        for run_number in newly_reattached:
+            dataset = by_run.get(run_number)
+            if dataset is not None and isinstance(dataset.metadata, dict):
+                dataset.metadata.pop("grouping_overrides", None)
+
     def _resolve_grouping_dialog_context(
         self,
         *,
@@ -3722,6 +3848,22 @@ class MainWindow(QMainWindow):
             dialog_selected_run_numbers,
             combined_target_run_number,
         )
+
+    def _grouping_persistence_for_dataset(self, dataset) -> dict:
+        """Return the per-dataset grouping-persistence fragment (schema v12).
+
+        An *inheriting* run stores ``profile: <name>`` (the active profile of its
+        fingerprint) and no override; a *released* run stores its
+        ``grouping_overrides`` payload and no profile; a run of a fingerprint with
+        no profile keeps its ``grouping_overrides`` payload (as before v12), so it
+        round-trips unchanged and joins a profile only once one is created.
+        """
+        run = getattr(dataset, "run", None)
+        if not self._dataset_has_grouping_override(dataset) and run is not None:
+            profile = active_profile_for_run(self._grouping_profiles, run)
+            if profile is not None:
+                return {"profile": profile.name}
+        return {"grouping_overrides": self._extract_grouping_overrides(dataset)}
 
     def _extract_grouping_overrides(self, dataset) -> dict | None:
         """Return grouping settings that should persist in project files."""
@@ -12021,7 +12163,7 @@ class MainWindow(QMainWindow):
                     "run_number": run_number,
                     "source_file": source_file,
                     "metadata_overrides": metadata_overrides,
-                    "grouping_overrides": self._extract_grouping_overrides(dataset),
+                    **self._grouping_persistence_for_dataset(dataset),
                 }
             )
             seen_run_numbers.add(run_number)
@@ -12124,6 +12266,7 @@ class MainWindow(QMainWindow):
             "schema_version": CURRENT_SCHEMA_VERSION,
             "created_with_app_version": __version__,
             "datasets": datasets,
+            "grouping_profiles": [profile.to_dict() for profile in self._grouping_profiles],
             "combined_datasets": combined_datasets,
             "browser_state": self._data_browser.get_state(),
             "plot_state": plot_state,
@@ -12424,6 +12567,16 @@ class MainWindow(QMainWindow):
 
         datasets_info = state.get("datasets", [])
 
+        # Restore project-level grouping profiles (schema v12) before the
+        # per-dataset apply pass so runs naming a ``profile`` (or inheriting one)
+        # can be resolved against them.
+        self._grouping_profiles = []
+        for raw_profile in state.get("grouping_profiles", []) or []:
+            try:
+                self._grouping_profiles.append(GroupingProfile.from_dict(raw_profile))
+            except (TypeError, ValueError) as exc:
+                self._log_panel.log(f"WARNING: skipped malformed grouping profile: {exc}")
+
         # First pass: attempt to resolve all paths with no user interaction.
         resolved_paths: dict[int, str | None] = {}
         missing_info: list[dict] = []  # entries whose files cannot be found
@@ -12569,9 +12722,28 @@ class MainWindow(QMainWindow):
                         if dataset.run:
                             dataset.run.metadata[key] = val
 
+                    # v12: a dataset either names a ``profile`` (inherit its
+                    # resolved effective grouping), carries ``grouping_overrides``
+                    # (per-run override, as before), or neither (inherit the
+                    # active profile of its fingerprint, if any).
+                    profile_name = ds_info.get("profile")
                     grouping_overrides = ds_info.get("grouping_overrides")
-                    if isinstance(grouping_overrides, dict):
+                    if profile_name and dataset.run is not None:
+                        resolved = self._resolve_named_profile_for_run(
+                            str(profile_name), dataset.run
+                        )
+                        if resolved is not None:
+                            self._apply_grouping_settings_to_dataset(dataset, resolved)
+                            dataset.metadata.pop("grouping_overrides", None)
+                    elif isinstance(grouping_overrides, dict):
                         self._apply_grouping_settings_to_dataset(dataset, grouping_overrides)
+                        dataset.metadata["grouping_overrides"] = True
+                    elif dataset.run is not None:
+                        # Neither: inherit the active profile of the fingerprint.
+                        inherited = active_profile_for_run(self._grouping_profiles, dataset.run)
+                        if inherited is not None:
+                            resolved = resolve_effective_grouping(inherited, dataset.run)
+                            self._apply_grouping_settings_to_dataset(dataset, resolved)
 
                     self._data_browser.add_dataset(dataset)
                     loaded_run_numbers.add(dataset.run_number)
