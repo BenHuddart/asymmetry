@@ -54,6 +54,133 @@ def test_core_dependencies_do_not_include_gui_runtime_packages() -> None:
     assert harness.find_dependency_boundary_violations() == []
 
 
+def test_current_gui_has_no_duplicate_limit_field_classes() -> None:
+    harness = _load_harness()
+
+    assert harness.find_duplicate_limit_field_violations() == []
+
+
+def test_duplicate_limit_field_check_reports_stray_class_definition(tmp_path: Path) -> None:
+    gui_root = tmp_path / "gui"
+    (gui_root / "widgets").mkdir(parents=True)
+    # The canonical home is exempt even though it defines the class.
+    (gui_root / "widgets" / "axis_limits.py").write_text(
+        "class FloatLimitField(QLineEdit):\n    pass\n", encoding="utf-8"
+    )
+    stray = gui_root / "panels" / "weird_panel.py"
+    stray.parent.mkdir(parents=True)
+    stray.write_text("class WeirdLimitField(QLineEdit):\n    pass\n", encoding="utf-8")
+    harness = _load_harness()
+    harness.LIMIT_FIELD_HOME = gui_root / "widgets" / "axis_limits.py"
+
+    failures = harness.find_duplicate_limit_field_violations(gui_root)
+
+    assert len(failures) == 1
+    assert failures[0].path == stray
+    assert "FloatLimitField" in failures[0].message
+
+
+def test_current_gui_has_no_stray_mpl_canvas_construction() -> None:
+    harness = _load_harness()
+
+    assert harness.find_duplicate_mpl_canvas_violations() == []
+
+
+def test_mpl_canvas_check_reports_stray_construction_outside_allowlist(tmp_path: Path) -> None:
+    gui_root = tmp_path / "gui"
+    (gui_root / "widgets").mkdir(parents=True)
+    (gui_root / "widgets" / "mpl_canvas.py").write_text(
+        "canvas = FigureCanvasQTAgg(figure)\n", encoding="utf-8"
+    )
+    stray = gui_root / "panels" / "rogue_panel.py"
+    stray.parent.mkdir(parents=True)
+    stray.write_text("self.canvas = FigureCanvasQTAgg(self.figure)\n", encoding="utf-8")
+    harness = _load_harness()
+    harness.MPL_CANVAS_HOME = gui_root / "widgets" / "mpl_canvas.py"
+    harness.MPL_CANVAS_CONSTRUCTION_ALLOWLIST = frozenset()
+
+    failures = harness.find_duplicate_mpl_canvas_violations(gui_root)
+
+    assert len(failures) == 1
+    assert failures[0].path == stray
+    assert "create_canvas" in failures[0].message
+
+
+def test_mpl_canvas_check_is_silent_for_allowlisted_survivors(tmp_path: Path) -> None:
+    gui_root = tmp_path / "gui"
+    (gui_root / "widgets").mkdir(parents=True)
+    (gui_root / "windows").mkdir(parents=True)
+    (gui_root / "widgets" / "mpl_canvas.py").write_text(
+        "canvas = FigureCanvasQTAgg(figure)\n", encoding="utf-8"
+    )
+    allowlisted = gui_root / "windows" / "fit_wizard_window.py"
+    allowlisted.write_text("self.canvas = FigureCanvasQTAgg(self.figure)\n", encoding="utf-8")
+    harness = _load_harness()
+    harness.MPL_CANVAS_HOME = gui_root / "widgets" / "mpl_canvas.py"
+    harness.MPL_CANVAS_CONSTRUCTION_ALLOWLIST = frozenset({allowlisted})
+
+    assert harness.find_duplicate_mpl_canvas_violations(gui_root) == []
+
+
+def test_current_gui_has_no_bespoke_qthread_construction() -> None:
+    harness = _load_harness()
+
+    assert harness.find_bespoke_qthread_violations() == []
+
+
+def test_qthread_check_reports_construction_outside_tasks_module(tmp_path: Path) -> None:
+    gui_root = tmp_path / "gui"
+    gui_root.mkdir(parents=True)
+    (gui_root / "tasks.py").write_text("self._thread = QThread()\n", encoding="utf-8")
+    stray = gui_root / "windows" / "legacy_window.py"
+    stray.parent.mkdir(parents=True)
+    stray.write_text("self._thread = QThread(self)\n", encoding="utf-8")
+    harness = _load_harness()
+    harness.TASK_RUNNER_HOME = gui_root / "tasks.py"
+
+    failures = harness.find_bespoke_qthread_violations(gui_root)
+
+    assert len(failures) == 1
+    assert failures[0].path == stray
+    assert "TaskRunner" in failures[0].message
+
+
+def test_current_tests_directory_satisfies_placement_rule() -> None:
+    harness = _load_harness()
+
+    assert harness.find_test_placement_violations() == []
+
+
+def test_test_placement_check_reports_file_at_tests_root(tmp_path: Path) -> None:
+    tests_root = tmp_path / "tests"
+    tests_root.mkdir()
+    stray = tests_root / "test_stray.py"
+    stray.write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+    sanctioned = tests_root / "core" / "test_fine.py"
+    sanctioned.parent.mkdir(parents=True)
+    sanctioned.write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+    harness = _load_harness()
+
+    failures = harness.find_test_placement_violations(tests_root)
+
+    assert len(failures) == 1
+    assert failures[0].path == stray
+    assert "sanctioned tests/ subpackage" in failures[0].message
+
+
+def test_test_placement_check_reports_unsanctioned_subpackage(tmp_path: Path) -> None:
+    tests_root = tmp_path / "tests"
+    misplaced = tests_root / "scratch" / "test_misplaced.py"
+    misplaced.parent.mkdir(parents=True)
+    misplaced.write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+    harness = _load_harness()
+
+    failures = harness.find_test_placement_violations(tests_root)
+
+    assert len(failures) == 1
+    assert failures[0].path == misplaced
+
+
 def _marker(command: list[str]) -> str | None:
     """Return the pytest ``-m`` marker expression in a built command, if any.
 

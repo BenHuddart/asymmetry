@@ -48,8 +48,10 @@ tests.
 | 2 (mechanical split) | `test_styles_tokens.py` no-hex guard parametrized over the 5 new `fit/` submodules | **+5** |
 | 3A (wizard base) | `test_wizard_base.py` (new — WizardWindowBase) | **+4** |
 | 3 (Review B2 fix) | `test_wizard_base.py` (+1 stale-error soft-lock regression) | **+1** |
+| 4 (test reorg) | (pure file moves — 0 added) | +0 |
+| 5 (harness rules) | `tests/tools/test_harness.py` (+10 — 3 rules × pass-clean + fire-on-violation) | **+10** |
 
-**Running total of audit-added tests: 71.** Full-tier collection after Phase 3 = **4224** (= 4153 + 71). Standard-tier passed = 4117 (was 4046 at baseline).
+**Running total of audit-added tests: 81.** Full-tier collection after Phase 5 = **4234** (= 4153 + 81). Standard-tier passed = 4127 (was 4046 at baseline).
 
 **Phase 4 parity rule:** `new_full_collected == 4153 + Σ(tests added by audit)`.
 Any shortfall is a silent dropped-collection regression and must be root-caused,
