@@ -46,8 +46,9 @@ tests.
 | 1d | `test_fit_run_controls.py` (new — FitRunControls) | **+9** |
 | 1 (Review A fix) | `test_axis_limit_controls.py` (new — AxisLimitControls) | **+6** |
 | 2 (mechanical split) | `test_styles_tokens.py` no-hex guard parametrized over the 5 new `fit/` submodules | **+5** |
+| 3A (wizard base) | `test_wizard_base.py` (new — WizardWindowBase) | **+4** |
 
-**Running total of audit-added tests: 66.** Full-tier collection after Phase 2 mechanical split = **4219** (= 4153 + 66). Standard-tier passed = 4112 (was 4046 at baseline).
+**Running total of audit-added tests: 70.** Full-tier collection after Phase 3A = **4223** (= 4153 + 70). Standard-tier passed = 4112 (was 4046 at baseline).
 
 **Phase 4 parity rule:** `new_full_collected == 4153 + Σ(tests added by audit)`.
 Any shortfall is a silent dropped-collection regression and must be root-caused,
