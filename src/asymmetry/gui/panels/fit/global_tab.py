@@ -108,7 +108,6 @@ from asymmetry.gui.styles.widgets import (
 )
 from asymmetry.gui.tasks import TaskRunner, TaskWorker
 from asymmetry.gui.utils.formatting import format_param_label
-from asymmetry.gui.widgets.fit_run_controls import FitRunControls
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollSpinBox
 from asymmetry.gui.windows.global_fit_wizard_window import GlobalFitWizardWindow
 
@@ -543,12 +542,7 @@ class GlobalFitTab(FitTabBase):
         self._fit_btn.clicked.connect(self._run_global_fit)
         self._fit_btn.setEnabled(False)
         # Stop replaces the disabled Fit button while a worker-based fit runs.
-        self._run_controls = FitRunControls(
-            button_label="Stop",
-            tooltip="Cancel the running fit; no partial result is recorded.",
-            on_cancel=self._on_stop_fit,
-        )
-        self._stop_btn = self._run_controls.button
+        self._build_run_controls("Cancel the running fit; no partial result is recorded.")
         self._preview_btn = QPushButton("Preview")
         self._preview_btn.clicked.connect(self._on_preview_requested)
         self._preview_btn.setEnabled(False)
@@ -2713,11 +2707,8 @@ class GlobalFitTab(FitTabBase):
 
     def _set_series_busy(self, busy: bool) -> None:
         """Swap the Fit button for a Stop button (and back) around a worker fit."""
-        self._stop_btn.setVisible(busy)
-        self._stop_btn.setEnabled(busy)
-        self._fit_btn.setVisible(not busy)
+        self._toggle_fit_stop_buttons(busy)
         if busy:
-            self._fit_btn.setEnabled(False)
             # A new fit is starting: clear any stale seeding signpost until the
             # fresh results are diagnosed.
             signpost = getattr(self, "_seeding_signpost", None)

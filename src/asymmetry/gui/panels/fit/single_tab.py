@@ -59,7 +59,6 @@ from asymmetry.gui.styles.widgets import (
     success_html,
 )
 from asymmetry.gui.tasks import TaskRunner
-from asymmetry.gui.widgets.fit_run_controls import FitRunControls
 from asymmetry.gui.windows.fit_wizard_window import FitWizardWindow
 
 from .seeding import _field_value_overrides
@@ -251,12 +250,7 @@ class SingleFitTab(FitTabBase):
         self._fit_btn.setStyleSheet(build_primary_button_qss())
         self._fit_btn.clicked.connect(self._run_fit)
         # Stop replaces the Fit button while a worker-based fit runs.
-        self._run_controls = FitRunControls(
-            button_label="Stop",
-            tooltip="Cancel the running fit; no result is recorded.",
-            on_cancel=self._on_stop_fit,
-        )
-        self._stop_btn = self._run_controls.button
+        self._build_run_controls("Cancel the running fit; no result is recorded.")
         self._reset_btn = QPushButton("Reset")
         self._reset_btn.clicked.connect(self._reset_parameters)
         self._preview_btn = QPushButton("Preview")
@@ -954,12 +948,8 @@ class SingleFitTab(FitTabBase):
 
     def _set_fit_busy(self, busy: bool) -> None:
         """Swap the Fit button for a Stop button (and back) around a worker fit."""
-        self._stop_btn.setVisible(busy)
-        self._stop_btn.setEnabled(busy)
-        self._fit_btn.setVisible(not busy)
-        if busy:
-            self._fit_btn.setEnabled(False)
-        else:
+        self._toggle_fit_stop_buttons(busy)
+        if not busy:
             # Re-derive from the gating contract rather than force-enable: the
             # run may have been removed or the panel blocked while the fit ran.
             self._fit_btn.setEnabled(self._current_dataset is not None and not self._fit_blocked)

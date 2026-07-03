@@ -64,6 +64,7 @@ from asymmetry.gui.styles.widgets import (
 )
 from asymmetry.gui.utils.formatting import format_param_label
 from asymmetry.gui.widgets.axis_limits import FloatLimitField
+from asymmetry.gui.widgets.fit_run_controls import FitRunControls
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox
 
 from .seeding import _field_value_overrides
@@ -1609,6 +1610,41 @@ class FitTabBase(QWidget):
         self._fit_range_max_spin = FloatLimitField()
         self._fit_range_min_spin.editingFinished.connect(self._on_fit_range_spinbox_committed)
         self._fit_range_max_spin.editingFinished.connect(self._on_fit_range_spinbox_committed)
+
+    # ------------------------------------------------------------------
+    # Shared Stop / run-controls construction (template-method seam)
+    # ------------------------------------------------------------------
+    def _build_run_controls(self, tooltip: str) -> None:
+        """Create the shared Stop button (:class:`FitRunControls`).
+
+        Populates ``self._run_controls`` and ``self._stop_btn`` and wires the
+        cancel action to ``self._on_stop_fit`` — which each subclass defines
+        (single vs global/grouped worker selection). The ``tooltip`` differs per
+        tab (single "no result is recorded"; global "no partial result is
+        recorded"), so the subclass passes its own text and owns the
+        ``btn_layout`` placement of ``self._stop_btn``.
+        """
+        self._run_controls = FitRunControls(
+            button_label="Stop",
+            tooltip=tooltip,
+            on_cancel=self._on_stop_fit,
+        )
+        self._stop_btn = self._run_controls.button
+
+    def _toggle_fit_stop_buttons(self, busy: bool) -> None:
+        """Swap the Fit button for the Stop button (and back), busy-prefix only.
+
+        This is the byte-identical prefix shared by both tabs' busy toggles
+        (``SingleFitTab._set_fit_busy`` / ``GlobalFitTab._set_series_busy``).
+        Each subclass calls this first, then appends its own divergent tail
+        (single re-derives the Fit-button enabled state from its dataset/blocked
+        gate; global hides the seeding signpost and re-runs ``_update_mode_ui``).
+        """
+        self._stop_btn.setVisible(busy)
+        self._stop_btn.setEnabled(busy)
+        self._fit_btn.setVisible(not busy)
+        if busy:
+            self._fit_btn.setEnabled(False)
 
     def _apply_fit_range_domain(self, domain: str) -> None:
         """Apply the shared domain-dependent labels + spin decimals/ranges.

@@ -24,6 +24,19 @@ Format: `- [ ] <area> — <what/why> (surfaced in Phase N)`
 
 <!-- append discoveries below -->
 
+- [x] Phase 2 note (H2 param-table factory — NOT warranted): PLAN.md proposed
+  folding the two tabs' "inline ~80-line parameter-table setup" into one
+  `_build_parameter_table()` factory on `FitTabBase`. On inspection the setup is
+  NOT duplicated: `SingleFitTab` uses a single `FitParameterTable()` whose setup
+  already lives in the shared `FitParameterTable` class (`tab_base.py`), while
+  `GlobalFitTab` builds several bespoke, differently-configured tables (a
+  parameter-classification table + per-group model tables with hidden columns,
+  custom column widths, and grouped item-changed wiring). The genuinely-shared
+  foundation — `FitParameterTable`, the `_CommitOnTabDelegate` /
+  `_ValueUncertaintyDelegate` delegates, and `_apply_param_table_style` — is
+  ALREADY shared in `tab_base`. A cross-tab factory would be over-abstraction
+  over divergent uses, so H2 was intentionally skipped. (surfaced in Phase 2)
+
 - [ ] Phase 0 note: `global_parameter_fit_window.py` has no TSV export — only
   a GLE-plot export (`_export_plot_gle` / `_export_fit_subplot_gle` /
   `_export_local_parameters_gle`). PLAN.md's Phase 0 task description assumed
@@ -60,3 +73,41 @@ Format: `- [ ] <area> — <what/why> (surfaced in Phase N)`
   `global_parameter_fit_window.py`; that is now `compile_gle()` in
   `src/asymmetry/gui/utils/export.py`, covered by `tests/test_export_utils.py`.
   (surfaced in Phase 1c)
+
+- [ ] Phase 2 H3 — candidate (c) `_on_stop_fit` deliberately NOT unified. The
+  two implementations diverge on worker selection (single cancels
+  `self._fit_worker`; global cancels `self._count_fit_worker or self._fit_worker`
+  — global has a second worker) AND on the label widget they write "Cancelling
+  fit…" into (`_result_label` vs `_result_text`). Two independent divergences
+  make the shared inner step (disable stop, set label, `worker.cancel()`) not
+  worth extracting behind two hooks. Left in each subclass. (surfaced in Phase 2 H3)
+
+- [ ] Phase 2 H3 — candidate (d) wizard-result caching NOT hoisted. The three
+  cache attrs (`_cached_wizard_recommendation` / `_cached_wizard_signature` /
+  `_cached_wizard_log_text`) and `_fit_wizard_window` carry different concrete
+  types per tab (`FitWizardWindow`/`FitWizardRecommendation` vs
+  `GlobalFitWizardWindow`/`GlobalFitWizardRecommendation`), and the
+  signature-matching logic is entirely different: single's
+  `_wizard_base_signature_matches` compares `run_number` + `model` and caches via
+  `copy.deepcopy`; global's compares `run_numbers`/`model`/`values`/`types`/`bounds`
+  and normalizes via `_normalized_wizard_signature`. The cache-clear triplet
+  (`= None/None/""`) exists ONLY in single (`restore_state`), so there is nothing
+  to dedupe. The attr-init split alone does not justify adding an `__init__` to
+  `FitTabBase` (which currently defines none). Left entirely in each subclass. If
+  a future pass adds a base `__init__`, the shared `_cached_wizard_log_text = ""`
+  seed could move there. (surfaced in Phase 2 H3)
+
+- [ ] Phase 2 H3 — candidate (e) shared fit-precondition validation NOT hoisted.
+  The pre-fit preambles of `SingleFitTab._run_fit` and
+  `GlobalFitTab._run_global_fit` diverge in more than the dataset expression: they
+  write to different label widgets (`_result_label` vs `_result_text`), use
+  different user-visible message prefixes (`"ERROR: "` vs `"Error: "`), different
+  guard checks (single: `_current_dataset is None` + a `missing_component_names`
+  check; global: an early `is_grouped_time_domain_mode()` return + a
+  `len(_datasets) < 2` check), and different dataset pickers
+  (`_current_dataset` vs `_datasets[0]`). Only the `_fit_domain_mismatch_message`
+  call and the `_fit_blocked` bail are structurally similar, and unifying even
+  those would risk changing the observable `ERROR:`/`Error:` text. Forcing a
+  shared `_validate_fit_preconditions()` would need ~4 hooks and still not fit
+  global's grouped-mode early return — over-abstraction. Left in each subclass.
+  (surfaced in Phase 2 H3)
