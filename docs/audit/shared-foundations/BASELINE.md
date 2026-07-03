@@ -54,3 +54,10 @@ tests.
 **Phase 4 parity rule:** `new_full_collected == 4153 + Σ(tests added by audit)`.
 Any shortfall is a silent dropped-collection regression and must be root-caused,
 not accepted.
+
+**Phase 4 confirmation:** `pytest --collect-only -q` post-reorganization reports
+**4224 tests collected** — exact parity (0 dropped, 0 added by the move itself).
+Standard-tier `validate` after the move: **4117 passed, 12 skipped, 1 xfailed**
+in 89.23s — identical to the pre-move Phase-3 standard-tier result. `structural`
+and `lint` (which exercises the 84 rewritten `pyproject.toml`
+`per-file-ignores` keys) are both clean.

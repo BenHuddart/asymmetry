@@ -15,7 +15,7 @@ import pytest
 
 from asymmetry.core.fitting.composite import CATEGORY_REGISTRY, COMPONENTS
 
-DOCS_DIR = Path(__file__).resolve().parents[1] / "docs" / "reference" / "fit_functions"
+DOCS_DIR = Path(__file__).resolve().parents[2] / "docs" / "reference" / "fit_functions"
 
 #: Picker category -> documentation page, from the canonical registry in core.
 #: A new category must be added to CATEGORY_REGISTRY (with a docs page stem)

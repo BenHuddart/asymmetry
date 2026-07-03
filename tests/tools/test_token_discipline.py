@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-_GUI_ROOT = Path(__file__).parent.parent / "src" / "asymmetry" / "gui"
+_GUI_ROOT = Path(__file__).parent.parent.parent / "src" / "asymmetry" / "gui"
 _BENCH_QSS = _GUI_ROOT / "styles" / "bench.qss"
 
 _HEX = re.compile(r"#[0-9a-fA-F]{6}\b")

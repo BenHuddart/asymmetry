@@ -20,8 +20,8 @@ from asymmetry.core.fitting.parameter_models import (
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
 # EuO ν(T) real-data fixture (PSI GPS runs 2928–2943) — shared with
-# tests/test_wimda_model_function_parity.py; (T, ν, ν_err).
-from tests.test_wimda_model_function_parity import EUO_NU_T_TREND
+# tests/core/test_wimda_model_function_parity.py; (T, ν, ν_err).
+from tests.core.test_wimda_model_function_parity import EUO_NU_T_TREND
 
 
 def _linear_model() -> tuple[ParameterCompositeModel, ParameterSet]:

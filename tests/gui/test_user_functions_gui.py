@@ -197,7 +197,7 @@ def test_multi_group_simulate_seed_with_missing_component_falls_back(qapp):
     must not crash the dialog; it falls back to the default model (simulating
     a zero-valued placeholder would silently generate wrong data)."""
     from asymmetry.gui.windows.simulate_dialog import MultiGroupSimulateDialog
-    from tests.test_simulate_dialog import _ring_template_run
+    from tests.gui.test_simulate_dialog import _ring_template_run
 
     seed = {
         "model": {

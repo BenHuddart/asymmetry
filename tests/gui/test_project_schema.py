@@ -1274,7 +1274,7 @@ class TestFitPanelState:
 
 
 import asymmetry.gui.mainwindow as mw_module
-from tests.test_gui_shell import (
+from tests.gui.test_gui_shell import (
     _StubDataBrowser,
     _StubFitPanel,
     _StubFitParams,

@@ -125,3 +125,17 @@ Format: `- [ ] <area> — <what/why> (surfaced in Phase N)`
   shared `_validate_fit_preconditions()` would need ~4 hooks and still not fit
   global's grouped-mode early return — over-abstraction. Left in each subclass.
   (surfaced in Phase 2 H3)
+
+- [ ] Phase 4 (test-suite reorganization) — stale `tests/test_*.py` path examples
+  remain in two docs that were out of this phase's explicit scope
+  (`docs/HARNESS.md` and `tests/README.md` were updated; these were not):
+  `AGENTS.md` lines ~68 and ~82 (`tools/harness.py test -- tests/test_transforms.py`
+  / `tests/test_x.py`), and `docs/QUALITY.md` lines ~11–15 (five
+  `tools/harness.py test -- tests/test_*.py` example invocations across the
+  core/loaders/fitting/project rows). All of these still run (pytest reports a
+  clear "file not found" rather than silently misbehaving), so nothing is
+  broken, but the paths no longer match reality post-move
+  (e.g. `tests/test_transforms.py` → `tests/core/test_transforms.py`,
+  `tests/test_project_schema.py` → `tests/gui/test_project_schema.py`). Low-risk
+  doc-only follow-up: re-path the example invocations in both files to their new
+  `tests/<layer>/test_*.py` locations. (surfaced in Phase 4)

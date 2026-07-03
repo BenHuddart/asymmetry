@@ -24,7 +24,7 @@ from asymmetry.core.fourier.moments import (
 from asymmetry.core.fourier.units import FieldUnit, convert
 
 # Load the hyphen-named porting oracle module by path.
-_ORACLE_PATH = Path(__file__).parent / "porting" / "spectral-moments" / "wimda_oracle.py"
+_ORACLE_PATH = Path(__file__).parent.parent / "porting" / "spectral-moments" / "wimda_oracle.py"
 _spec = importlib.util.spec_from_file_location("_wimda_moments_oracle", _ORACLE_PATH)
 assert _spec and _spec.loader
 wimda_oracle = importlib.util.module_from_spec(_spec)

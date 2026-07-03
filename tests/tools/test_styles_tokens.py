@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-_GUI_ROOT = Path(__file__).parent.parent / "src" / "asymmetry" / "gui"
+_GUI_ROOT = Path(__file__).parent.parent.parent / "src" / "asymmetry" / "gui"
 
 # Regex: a hex-colour string starting with # immediately after an opening
 # quote.  Matches "  "#1f4d8a"  and  '#e8eef7'  but NOT  # comments  or

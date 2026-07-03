@@ -65,7 +65,7 @@ re-execute itself with `.venv/bin/python` when that interpreter exists.
 ```bash
 python tools/harness.py structural
 python tools/harness.py lint
-python tools/harness.py test -- tests/test_transforms.py   # focused, exact targets
+python tools/harness.py test -- tests/core/test_transforms.py   # focused, exact targets
 python tools/harness.py test --tier fast                   # inner loop, non-GUI (~25s)
 python tools/harness.py validate                           # standard tier, pre-push gate (~2 min)
 ```
@@ -79,9 +79,11 @@ The standard tier is ~4,000 tests and takes ~2 minutes locally; treat it as a
 once-per-task gate, never an iteration loop.
 
 1. **While iterating**, run exactly the tests beside the behavior you are
-   changing: `python tools/harness.py test -- tests/test_x.py` (or a
-   `::node-id`). Test files mirror feature names; find coverage with
-   `grep -l "<symbol>" tests/*.py`.
+   changing: `python tools/harness.py test -- tests/<layer>/test_x.py` (or a
+   `::node-id`). Test files mirror feature names and live under `tests/core/`,
+   `tests/gui/`, `tests/io/`, `tests/project/`, `tests/tools/`, or
+   `tests/integration/` (see `tests/README.md`); find coverage with
+   `grep -rl "<symbol>" tests/`.
 2. **After a core/non-GUI change**: `python tools/harness.py test --tier fast`
    (~25s, non-GUI).
 3. **After a GUI change**: additionally run the affected GUI test files

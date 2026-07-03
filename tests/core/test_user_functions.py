@@ -270,7 +270,7 @@ def test_docs_enforcement_exemption_is_by_user_flag():
     entries: the docs tests iterate built-ins only, selected by flag."""
     _register_stretched()
 
-    from tests.test_fit_function_docs import CATEGORY_PAGES
+    from tests.core.test_fit_function_docs import CATEGORY_PAGES
 
     builtin_categories = {d.category for d in COMPONENTS.values() if not d.user}
     assert builtin_categories <= set(CATEGORY_PAGES)
@@ -504,7 +504,7 @@ def test_placeholder_model_goes_live_once_plugin_returns():
 
 
 _EXAMPLE_PLUGIN = (
-    Path(__file__).resolve().parents[1]
+    Path(__file__).resolve().parents[2]
     / "docs"
     / "reference"
     / "examples"
