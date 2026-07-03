@@ -176,7 +176,7 @@ def _fake_recommendation(dataset: MuonDataset) -> FitWizardRecommendation:
 
 
 def _analysis_complete(window: FitWizardWindow) -> bool:
-    return window._recommendation is not None and window._analysis_thread is None
+    return window._recommendation is not None and window._tasks.active_count == 0
 
 
 def test_fit_wizard_window_populates_banners_and_tables(
@@ -304,7 +304,7 @@ def test_fit_wizard_window_shows_progress_while_analysis_runs(
     assert window._analysis_in_progress is True
     assert window._progress_bar.isHidden() is False
     wait_for(
-        lambda: window._analysis_in_progress is False and window._analysis_thread is None, qapp
+        lambda: window._analysis_in_progress is False and window._tasks.active_count == 0, qapp
     )
     assert window._progress_bar.isHidden() is True
 

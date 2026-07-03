@@ -84,3 +84,27 @@ Format:
   stretch, unit-label placement and Auto-button caps are unchanged, so any
   margin difference around the row is negligible.
 - **Phase:** 1a (surfaced by the Review A gate).
+
+### Closing a fit-wizard window mid-analysis now cancels the run
+
+- **What:** closing a fit-wizard window while an analysis is still running now
+  **cancels** the background run (cooperatively, via `TaskRunner.shutdown()`)
+  and closes the window. Previously each window's `closeEvent` **hid** the
+  window and let the analysis run to completion behind it (`hide()` +
+  `event.ignore()`).
+- **Where:** both wizard windows — `FitWizardWindow` (migrated in Phase 3B) and
+  `GlobalFitWizardWindow` (Phase 3C) — now inherit
+  `WizardWindowBase.closeEvent`, which calls `self._tasks.shutdown()` then
+  `super().closeEvent()`. The old per-window hide-and-run `closeEvent` overrides
+  are deleted.
+- **Winning variant / why:** the hide-and-run behavior actually *violated* the
+  AGENTS engineering invariant "hold strong references to live threads, and
+  shut them down in `closeEvent`" — a closed-but-hidden window left an
+  orphaned worker running. Converging both windows onto the shared
+  `TaskRunner`-driven shutdown is both the best variant and the
+  invariant-compliant one. No test pinned the old hide behavior.
+  `TaskRunner.shutdown()` bounds the wait and hands any overrunning thread to
+  the process-level reaper, so a long fit between cancel-polls cannot abort the
+  process.
+- **Phase:** 3 (base decision recorded in `wizard-base-design.md`; live for the
+  single-fit window as of 3B, for the global window as of 3C).

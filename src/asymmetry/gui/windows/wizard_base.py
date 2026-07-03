@@ -72,6 +72,10 @@ class WizardWindowBase(QMainWindow):
         layout.addLayout(self._controls_row)
         layout.addWidget(self._tabs)
         self.setCentralWidget(central)
+        #: The central QVBoxLayout ([heading, status, controls, tabs]). Exposed
+        #: so a subclass can append trailing rows (e.g. a nav row) beneath the
+        #: tabs from its _build_tabs() hook.
+        self._central_layout = layout
 
         # Subclass tab construction runs after _tabs and _controls_row exist,
         # so a subclass may append its own controls/tabs safely.
