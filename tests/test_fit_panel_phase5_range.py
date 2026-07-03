@@ -19,7 +19,8 @@ from PySide6.QtWidgets import QApplication
 import asymmetry.gui.mainwindow as mw_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.gui.mainwindow import MainWindow
-from asymmetry.gui.panels.fit_panel import SingleFitTab, _FloatLimitField
+from asymmetry.gui.panels.fit_panel import SingleFitTab
+from asymmetry.gui.widgets.axis_limits import FloatLimitField
 
 
 @pytest.fixture(scope="module")
@@ -82,8 +83,8 @@ def _make_dataset(run_number: int = 1001) -> MuonDataset:
 
 
 def test_fit_range_spinboxes_exist(tab: SingleFitTab) -> None:
-    assert isinstance(tab._fit_range_min_spin, _FloatLimitField)
-    assert isinstance(tab._fit_range_max_spin, _FloatLimitField)
+    assert isinstance(tab._fit_range_min_spin, FloatLimitField)
+    assert isinstance(tab._fit_range_max_spin, FloatLimitField)
 
 
 def test_set_fit_range_display_updates_spinboxes(tab: SingleFitTab) -> None:

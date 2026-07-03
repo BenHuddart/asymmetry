@@ -17,7 +17,7 @@ from contextlib import contextmanager
 
 import numpy as np
 from PySide6.QtCore import QEvent, QEventLoop, QSignalBlocker, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QDoubleValidator, QKeyEvent
+from PySide6.QtGui import QColor, QKeyEvent
 from PySide6.QtWidgets import (
     QAbstractItemDelegate,
     QAbstractItemView,
@@ -32,7 +32,6 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QMenu,
     QMessageBox,
     QPushButton,
@@ -148,6 +147,7 @@ from asymmetry.gui.styles.widgets import (
     warning_html,
 )
 from asymmetry.gui.tasks import TaskRunner, TaskWorker
+from asymmetry.gui.widgets.axis_limits import FloatLimitField
 from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox, NoScrollSpinBox
 from asymmetry.gui.windows.fit_wizard_window import FitWizardWindow
@@ -616,122 +616,10 @@ def _fit_range_provenance_text(min_spin, max_spin, unit_label) -> str | None:
     return f"{lo:.{decimals}f}–{hi:.{decimals}f} {unit_label.text()}"
 
 
-class _FloatLimitField(QLineEdit):
-    """Compact text field for a fit-range limit (min/max).
-
-    Replaces ``QDoubleSpinBox`` for the fit range: a plain typed field (the
-    design's limit-field style) with no spin arrows and no reserved arrow
-    padding, so it stays narrow on a 13" dock. A ``QDoubleValidator`` keeps
-    entries numeric and in range. Exposes the small spinbox-compatible surface
-    (``value``/``setValue``/``decimals``/``setDecimals``/``setRange``) that the
-    shared fit-range plumbing already relies on, so both Fit tabs reuse it and
-    ``editingFinished`` (a built-in ``QLineEdit`` signal) keeps its old wiring.
-    """
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._decimals = 3
-        self._value = 0.0
-        self._validator = QDoubleValidator(-1000.0, 1000.0, self._decimals, self)
-        self._validator.setNotation(QDoubleValidator.Notation.StandardNotation)
-        self.setValidator(self._validator)
-        self.setFont(mono_font(11.0))
-        # A bare QLineEdit sizes to ~17 chars; cap it so the min/max pair stays
-        # compact in the dock (fits "-1000.000" with room to spare).
-        self.setMinimumWidth(56)
-        self.setMaximumWidth(88)
-        self.setText(self._format(self._value))
-        # Normalise the display after a manual edit (e.g. "1" -> "1.000"). This
-        # connects first, so the external editingFinished handler reads the
-        # already-normalised text via value().
-        self.editingFinished.connect(self._normalise_text)
-
-    def _format(self, value: float) -> str:
-        return f"{float(value):.{self._decimals}f}"
-
-    def _clamp(self, value: float) -> float:
-        """Clamp to the validator's range, matching QDoubleSpinBox.
-
-        ``QDoubleValidator`` only rejects out-of-range *keystrokes*; it does not
-        bound a programmatic ``setValue`` or an Intermediate entry committed on
-        focus-out. The spinbox this replaces clamped both, so do the same here —
-        otherwise an out-of-range fit limit could reach the engine.
-        """
-        return min(max(float(value), self._validator.bottom()), self._validator.top())
-
-    def _normalise_text(self) -> None:
-        self.setText(self._format(self.value()))
-
-    def _commit(self) -> None:
-        """Normalise the text and fire ``editingFinished`` unconditionally.
-
-        ``QLineEdit`` only emits ``editingFinished`` when ``hasAcceptableInput()``
-        is true, so a value the ``QDoubleValidator`` rates *Intermediate* (e.g.
-        a digit just over the soft range, or a half-typed entry committed with
-        Return) never reaches the fit-range plumbing and the field silently
-        reverts on the next external refresh. Driving the signal ourselves makes
-        a commit land reliably regardless of how the text was entered.
-        """
-        self._normalise_text()
-        self.editingFinished.emit()
-
-    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 — Qt override
-        """Commit on Return/Enter, consuming the key.
-
-        Returning early (rather than calling super) both guarantees the commit
-        and stops the key bubbling to any default button that would push the
-        pre-edit range back into the field.
-        """
-        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            self._commit()
-            event.accept()
-            return
-        super().keyPressEvent(event)
-
-    def focusOutEvent(self, event) -> None:  # noqa: N802 — Qt override
-        """Guarantee a commit on focus-out even for Intermediate input.
-
-        For Acceptable input the base class already emits ``editingFinished``;
-        only force our own commit when it would otherwise be suppressed, so the
-        commit fires exactly once either way.
-        """
-        forced = not self.hasAcceptableInput()
-        super().focusOutEvent(event)
-        if forced:
-            self._commit()
-
-    def value(self) -> float:
-        """Current value (clamped to range), or the last set value if blank."""
-        try:
-            return self._clamp(float(self.text()))
-        except ValueError:
-            return self._value
-
-    def setValue(self, value: float) -> None:  # noqa: N802 — spinbox-API shim
-        self._value = self._clamp(value)
-        self.setText(self._format(self._value))
-
-    def set_unset(self, placeholder: str) -> None:
-        """Blank the field and show *placeholder* text (no value has been set)."""
-        self.clear()
-        self.setPlaceholderText(placeholder)
-
-    def decimals(self) -> int:
-        return self._decimals
-
-    def setDecimals(self, decimals: int) -> None:  # noqa: N802 — spinbox-API shim
-        self._decimals = int(decimals)
-        self._validator.setDecimals(self._decimals)
-        self.setText(self._format(self.value()))
-
-    def setRange(self, minimum: float, maximum: float) -> None:  # noqa: N802 — spinbox-API shim
-        self._validator.setRange(minimum, maximum, self._decimals)
-
-
 def _apply_fit_range_display(
     domain: str,
-    min_spin: _FloatLimitField,
-    max_spin: _FloatLimitField,
+    min_spin: FloatLimitField,
+    max_spin: FloatLimitField,
     x_min: float | None,
     x_max: float | None,
 ) -> None:
@@ -2124,12 +2012,12 @@ class SingleFitTab(QWidget):
         fit_range_layout.setSpacing(4)
         _fit_range_box.addLayout(fit_range_layout)
 
-        self._fit_range_min_spin = _FloatLimitField()
+        self._fit_range_min_spin = FloatLimitField()
 
         self._fit_range_mid_label = QLabel("≤ <i>t</i> ≤")
         self._fit_range_mid_label.setTextFormat(Qt.TextFormat.RichText)
 
-        self._fit_range_max_spin = _FloatLimitField()
+        self._fit_range_max_spin = FloatLimitField()
 
         self._fit_range_unit_label = QLabel("µs")
 
@@ -3338,12 +3226,12 @@ class GlobalFitTab(QWidget):
         _fr_layout.setSpacing(4)
         _fr_box.addLayout(_fr_layout)
 
-        self._fit_range_min_spin = _FloatLimitField()
+        self._fit_range_min_spin = FloatLimitField()
 
         self._fit_range_mid_label = QLabel("≤ <i>t</i> ≤")
         self._fit_range_mid_label.setTextFormat(Qt.TextFormat.RichText)
 
-        self._fit_range_max_spin = _FloatLimitField()
+        self._fit_range_max_spin = FloatLimitField()
 
         _fr_layout.addWidget(self._fit_range_min_spin)
         _fr_layout.addWidget(self._fit_range_mid_label)

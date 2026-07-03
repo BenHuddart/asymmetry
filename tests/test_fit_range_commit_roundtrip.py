@@ -2,7 +2,7 @@
 
 ``SingleFitTab``'s fit-range spinbox <-> engine round-trip is already covered
 by ``tests/test_fit_panel_phase5_range.py``. ``GlobalFitTab`` shares the same
-``_FloatLimitField`` widgets and the same ``_apply_fit_range_display`` /
+``FloatLimitField`` widgets and the same ``_apply_fit_range_display`` /
 ``fit_range_edit_committed`` plumbing (see ``fit_panel.py``), but had no
 dedicated coverage. These tests pin the observable contract only (spinbox
 values, the ``fit_range_edit_committed`` signal payload, and the plot's fit
@@ -25,7 +25,8 @@ from PySide6.QtWidgets import QApplication
 
 import asymmetry.gui.mainwindow as mw_module
 from asymmetry.gui.mainwindow import MainWindow
-from asymmetry.gui.panels.fit_panel import GlobalFitTab, _FloatLimitField
+from asymmetry.gui.panels.fit_panel import GlobalFitTab
+from asymmetry.gui.widgets.axis_limits import FloatLimitField
 
 
 @pytest.fixture(scope="module")
@@ -55,8 +56,8 @@ def win(qapp: QApplication) -> MainWindow:
 
 
 def test_global_fit_range_spinboxes_exist(tab: GlobalFitTab) -> None:
-    assert isinstance(tab._fit_range_min_spin, _FloatLimitField)
-    assert isinstance(tab._fit_range_max_spin, _FloatLimitField)
+    assert isinstance(tab._fit_range_min_spin, FloatLimitField)
+    assert isinstance(tab._fit_range_max_spin, FloatLimitField)
 
 
 def test_global_set_fit_range_display_updates_spinboxes(tab: GlobalFitTab) -> None:

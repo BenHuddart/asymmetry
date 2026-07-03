@@ -1,22 +1,27 @@
-"""Characterization tests for the two ``_FloatLimitField`` implementations.
+"""Characterization tests for the converged ``FloatLimitField`` widget.
 
-Phase 0 of the shared-foundations audit: pin the *observable* contract of both
-variants before Phase 1a converges them into a single ``FloatLimitField``.
+Phase 0 of the shared-foundations audit pinned the *observable* contract of
+the two independent ``_FloatLimitField`` implementations
+(``asymmetry.gui.panels.fit_panel`` and ``asymmetry.gui.panels.plot_panel``)
+before Phase 1a converged them into a single
+``asymmetry.gui.widgets.axis_limits.FloatLimitField``:
 
-- ``asymmetry.gui.panels.fit_panel._FloatLimitField`` (the FEATURED variant):
-  clamps to its validator range, commits on Return/Enter, and forces a commit
-  on focus-out even for "Intermediate" (not-yet-acceptable) input.
-- ``asymmetry.gui.panels.plot_panel._FloatLimitField`` (the plain variant):
-  no clamping, no commit-on-Return; relies on the base ``QLineEdit``
-  ``editingFinished`` (which only fires for acceptable input).
+- The fit_panel variant was the FEATURED one: it clamps to its validator
+  range, commits on Return/Enter, and forces a commit on focus-out even for
+  "Intermediate" (not-yet-acceptable) input.
+- The plot_panel variant was the plain one: no clamping, no commit-on-Return;
+  it relied on the base ``QLineEdit`` ``editingFinished`` (which only fires
+  for acceptable input).
 
-Per PLAN.md Phase 1a, ``plot_panel``'s field is expected to GAIN clamping and
-commit-on-Return, converging on the fit_panel behavior (with per-call-site
-width/decimals preserved as parameters). Tests that pin plot_panel's field as
-lacking those two behaviors are marked ``_current_behavior`` with an
-EXPECTED-TO-CHANGE comment so Phase 1a can update them knowingly instead of
-misreading a red test as a regression. The fit_panel-variant tests (and any
-shared-contract assertions) are NOT marked and must stay green throughout.
+Phase 1a converged both call sites onto the fit_panel behavior. The tests
+below that constructed a "plot_panel-style" field (default decimals=3,
+width=76, no ``value_range`` override i.e. the converged class's default
+±1000 range) now assert the FEATURED behavior (clamp + commit-on-Return)
+instead of its absence — this is the deliberate, expected flip; each test
+that changed carries an ``# UPDATED in Phase 1a`` comment explaining the new
+assertion. Tests that only ever exercised shared, name-agnostic behavior
+(format, decimals, empty-input fallback) are unchanged aside from repointing
+imports to the single converged class.
 """
 
 from __future__ import annotations
@@ -35,8 +40,13 @@ from PySide6.QtGui import QKeyEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
-from asymmetry.gui.panels.fit_panel import _FloatLimitField as FitPanelFloatLimitField
-from asymmetry.gui.panels.plot_panel import _FloatLimitField as PlotPanelFloatLimitField
+from asymmetry.gui.widgets.axis_limits import FloatLimitField
+
+# Both former call-site styles now construct the same converged class; keep
+# two names in this file purely to preserve the "fit_panel-style" vs.
+# "plot_panel-style" construction grouping below.
+FitPanelFloatLimitField = FloatLimitField
+PlotPanelFloatLimitField = FloatLimitField
 
 
 @pytest.fixture(scope="module")
@@ -48,7 +58,7 @@ def qapp() -> QApplication:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# fit_panel._FloatLimitField — the FEATURED variant (clamp + commit-on-Return)
+# fit_panel-style construction — FloatLimitField() with defaults (clamp + commit)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -160,8 +170,8 @@ def test_fit_panel_field_focus_out_forces_commit_for_intermediate_input(
     """An out-of-range ('Intermediate') value committed via focus-out still fires.
 
     A bare QLineEdit only emits editingFinished when hasAcceptableInput() is
-    true; the fit_panel variant forces the commit regardless so an
-    Intermediate value doesn't silently revert on the next external refresh.
+    true; this field forces the commit regardless so an Intermediate value
+    doesn't silently revert on the next external refresh.
 
     Offscreen platforms don't reliably deliver a real window-focus-out via
     clearFocus(), so drive the Qt override directly with a synthetic
@@ -188,7 +198,10 @@ def test_fit_panel_field_focus_out_forces_commit_for_intermediate_input(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# plot_panel._FloatLimitField — the plain variant (no clamp, no commit-on-Return)
+# plot_panel-style construction — FloatLimitField(value, decimals=..., ...)
+# Phase 1a converged this call style onto the same clamp + commit-on-Return
+# behavior as the fit_panel style above (per-call-site width/decimals/range
+# are still parameters, but the class itself is now one implementation).
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -206,7 +219,7 @@ def test_plot_panel_field_set_value_formats_to_decimals(qapp: QApplication) -> N
 
 
 def test_plot_panel_field_default_width_is_76px(qapp: QApplication) -> None:
-    field = PlotPanelFloatLimitField(0.0)
+    field = PlotPanelFloatLimitField(0.0, minimum_width=76)
     assert field.minimumWidth() == 76
 
 
@@ -216,45 +229,58 @@ def test_plot_panel_field_empty_input_falls_back_to_last_value(qapp: QApplicatio
     assert field.value() == pytest.approx(3.5)
 
 
-def test_plot_panel_field_has_no_clamp_method_current_behavior(qapp: QApplication) -> None:
-    # EXPECTED-TO-CHANGE in Phase 1a: plot_panel field gains clamp + commit-on-Return.
-    # Unlike the fit_panel variant, this field exposes no _clamp helper at all.
+def test_plot_panel_field_has_clamp_method(qapp: QApplication) -> None:
+    # UPDATED in Phase 1a: the converged field always exposes _clamp, since
+    # plot_panel's call sites now share the fit_panel implementation.
     field = PlotPanelFloatLimitField(0.0)
-    assert not hasattr(field, "_clamp")
+    assert hasattr(field, "_clamp")
 
 
-def test_plot_panel_field_set_value_does_not_clamp_current_behavior(qapp: QApplication) -> None:
-    # EXPECTED-TO-CHANGE in Phase 1a: plot_panel field gains clamp + commit-on-Return.
-    # setValue accepts values far outside any fit-range-sized bound unclamped;
-    # only the QDoubleValidator's very wide (-1e6, 1e6) range would reject a
-    # *keystroke*, and setValue()/programmatic writes bypass the validator
-    # entirely.
-    field = PlotPanelFloatLimitField(0.0)
+def test_plot_panel_field_set_value_clamps_to_its_value_range(qapp: QApplication) -> None:
+    # UPDATED in Phase 1a: setValue now clamps to the field's value_range,
+    # matching the fit_panel behavior. plot_panel/alc call sites construct
+    # with value_range=(-1e6, 1e6) (preserving their historical wide axis
+    # range) rather than the converged class's ±1000 default, so exercise
+    # that explicitly here alongside the default-range case.
+    field = PlotPanelFloatLimitField(0.0)  # default value_range=(-1000, 1000)
     field.setValue(2000.0)
-    assert field.value() == pytest.approx(2000.0)
+    assert field.value() == pytest.approx(1000.0)
     field.setValue(-5000.0)
-    assert field.value() == pytest.approx(-5000.0)
+    assert field.value() == pytest.approx(-1000.0)
+
+    axis_field = PlotPanelFloatLimitField(0.0, value_range=(-1e6, 1e6))
+    axis_field.setValue(2000.0)
+    assert axis_field.value() == pytest.approx(2000.0)
+    axis_field.setValue(-5000.0)
+    assert axis_field.value() == pytest.approx(-5000.0)
+    axis_field.setValue(2_000_000.0)
+    assert axis_field.value() == pytest.approx(1e6)
 
 
-def test_plot_panel_field_return_key_does_not_force_commit_current_behavior(
-    qapp: QApplication,
-) -> None:
-    # EXPECTED-TO-CHANGE in Phase 1a: plot_panel field gains clamp + commit-on-Return.
-    # There is no keyPressEvent override, so Return only commits when Qt's
-    # default QLineEdit behavior judges the input Acceptable AND a default
-    # button/return-triggered slot doesn't consume it first. We characterize
-    # the narrower, verifiable fact: the class defines no keyPressEvent
-    # override at all (behavior is entirely inherited from QLineEdit).
-    assert "keyPressEvent" not in PlotPanelFloatLimitField.__dict__
+def test_plot_panel_field_return_key_commits(qapp: QApplication) -> None:
+    # UPDATED in Phase 1a: the converged field now overrides keyPressEvent and
+    # commits on Return, matching the fit_panel behavior.
+    assert "keyPressEvent" in FloatLimitField.__dict__
+    field = PlotPanelFloatLimitField(0.0, value_range=(-1e6, 1e6))
+    field.setValue(5.0)
+    emitted: list[float] = []
+    field.editingFinished.connect(lambda: emitted.append(field.value()))
+
+    field.setFocus()
+    field.selectAll()
+    QTest.keyClicks(field, "7.25")
+    QTest.keyClick(field, Qt.Key.Key_Return)
+    qapp.processEvents()
+
+    assert emitted, "Return did not fire a commit"
+    assert emitted[-1] == pytest.approx(7.25)
 
 
-def test_plot_panel_field_has_no_focus_out_override_current_behavior(
-    qapp: QApplication,
-) -> None:
-    # EXPECTED-TO-CHANGE in Phase 1a: plot_panel field gains clamp + commit-on-Return.
-    # No focusOutEvent override means an Intermediate/unacceptable value typed
-    # and left via focus-out does NOT force a commit (unlike fit_panel's field).
-    assert "focusOutEvent" not in PlotPanelFloatLimitField.__dict__
+def test_plot_panel_field_has_focus_out_override(qapp: QApplication) -> None:
+    # UPDATED in Phase 1a: the converged field now overrides focusOutEvent so
+    # an Intermediate/unacceptable value typed and left via focus-out DOES
+    # force a commit, matching the fit_panel behavior.
+    assert "focusOutEvent" in FloatLimitField.__dict__
 
 
 def test_plot_panel_field_editing_finished_fires_for_acceptable_input(

@@ -48,7 +48,6 @@ from PySide6.QtWidgets import (
 
 from asymmetry.gui.export_paths import default_export_path, remember_export_path
 from asymmetry.gui.panels.draggable_handles import nearest_handle
-from asymmetry.gui.panels.plot_panel import _FloatLimitField
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.plots import draw_empty_state_message, draw_fit_range_span, style_axes
@@ -57,6 +56,7 @@ from asymmetry.gui.styles.widgets import (
     build_primary_button_qss,
     make_provenance_label,
 )
+from asymmetry.gui.widgets.axis_limits import FloatLimitField
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox
 
 
@@ -329,15 +329,23 @@ class ALCScanView(QWidget):
         row.setSpacing(4)
 
         row.addWidget(QLabel("X:"))
-        self._x_min = _FloatLimitField(0.0, minimum_width=64)
-        self._x_max = _FloatLimitField(1.0, minimum_width=64)
+        self._x_min = FloatLimitField(
+            0.0, minimum_width=64, maximum_width=None, value_range=(-1e6, 1e6)
+        )
+        self._x_max = FloatLimitField(
+            1.0, minimum_width=64, maximum_width=None, value_range=(-1e6, 1e6)
+        )
         row.addWidget(self._x_min)
         row.addWidget(QLabel("–"))
         row.addWidget(self._x_max)
 
         row.addWidget(QLabel("Y:"))
-        self._y_min = _FloatLimitField(0.0, minimum_width=64)
-        self._y_max = _FloatLimitField(1.0, minimum_width=64)
+        self._y_min = FloatLimitField(
+            0.0, minimum_width=64, maximum_width=None, value_range=(-1e6, 1e6)
+        )
+        self._y_max = FloatLimitField(
+            1.0, minimum_width=64, maximum_width=None, value_range=(-1e6, 1e6)
+        )
         row.addWidget(self._y_min)
         row.addWidget(QLabel("–"))
         row.addWidget(self._y_max)

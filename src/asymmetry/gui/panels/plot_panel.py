@@ -20,7 +20,6 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import QSignalBlocker, Qt, QTimer, Signal
-from PySide6.QtGui import QDoubleValidator
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -30,7 +29,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
-    QLineEdit,
     QMenu,
     QMessageBox,
     QPushButton,
@@ -77,6 +75,7 @@ from asymmetry.gui.styles.plots import (
     style_legend,
 )
 from asymmetry.gui.styles.widgets import build_nav_button_qss
+from asymmetry.gui.widgets.axis_limits import FloatLimitField
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox
 from asymmetry.gui.widgets.projection_chip_bar import ProjectionChipBar
 from asymmetry.gui.widgets.rrf_controls import (
@@ -149,54 +148,6 @@ _SIGNAL_FRAME_WEIGHTED_QUANTILE = 0.0025
 # value when forming the 1/σ² weight, so an exactly-zero error cannot produce an
 # infinite weight. Tiny relative to any real asymmetry-percent error.
 _SIGNAL_FRAME_WEIGHT_ERROR_FLOOR = 1e-6
-
-
-class _FloatLimitField(QLineEdit):
-    """Plain text field that stores a floating-point axis limit."""
-
-    def __init__(
-        self,
-        value: float,
-        *,
-        decimals: int = 3,
-        minimum_width: int = 76,
-        parent: QWidget | None = None,
-    ) -> None:
-        super().__init__(parent)
-        self._decimals = max(0, int(decimals))
-        self._last_value = float(value)
-        self.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self.setClearButtonEnabled(False)
-        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        self.setMinimumWidth(minimum_width)
-        self.setFont(mono_font(11.0))
-        validator = QDoubleValidator(-1e6, 1e6, self._decimals, self)
-        validator.setNotation(QDoubleValidator.Notation.StandardNotation)
-        self.setValidator(validator)
-        self.editingFinished.connect(self._normalize_text)
-        self.setValue(value)
-
-    def value(self) -> float:
-        """Return the current numeric value, falling back to the last valid value."""
-        text = self.text().strip()
-        if not text:
-            return self._last_value
-        try:
-            value = float(text)
-        except ValueError:
-            return self._last_value
-        self._last_value = value
-        return value
-
-    def setValue(self, value: float) -> None:  # noqa: N802
-        """Set the displayed text from a numeric value."""
-        numeric_value = float(value)
-        self._last_value = numeric_value
-        self.setText(f"{numeric_value:.{self._decimals}f}")
-
-    def _normalize_text(self) -> None:
-        """Rewrite the field using the canonical numeric format."""
-        self.setValue(self.value())
 
 
 class PlotPanel(QWidget):
@@ -467,20 +418,28 @@ class PlotPanel(QWidget):
 
         # X-axis limits
         row0.addWidget(QLabel("X:"))
-        self._x_min = _FloatLimitField(0.0, minimum_width=76)
+        self._x_min = FloatLimitField(
+            0.0, minimum_width=76, maximum_width=None, value_range=(-1e6, 1e6)
+        )
         row0.addWidget(self._x_min)
         row0.addWidget(QLabel("–"))
-        self._x_max = _FloatLimitField(10.0, minimum_width=76)
+        self._x_max = FloatLimitField(
+            10.0, minimum_width=76, maximum_width=None, value_range=(-1e6, 1e6)
+        )
         row0.addWidget(self._x_max)
         self._x_unit_label = QLabel("MHz" if self._is_frequency_plot_panel() else "µs")
         row0.addWidget(self._x_unit_label)
 
         # Y-axis limits
         row0.addWidget(QLabel("Y:"))
-        self._y_min = _FloatLimitField(-30.0, minimum_width=76)
+        self._y_min = FloatLimitField(
+            -30.0, minimum_width=76, maximum_width=None, value_range=(-1e6, 1e6)
+        )
         row0.addWidget(self._y_min)
         row0.addWidget(QLabel("–"))
-        self._y_max = _FloatLimitField(30.0, minimum_width=76)
+        self._y_max = FloatLimitField(
+            30.0, minimum_width=76, maximum_width=None, value_range=(-1e6, 1e6)
+        )
         row0.addWidget(self._y_max)
         self._y_unit_label = QLabel("a.u." if self._is_frequency_plot_panel() else "%")
         row0.addWidget(self._y_unit_label)
@@ -1352,7 +1311,7 @@ class PlotPanel(QWidget):
                 except Exception:
                     continue
 
-    def _set_limit_field_value(self, field: _FloatLimitField, value: float) -> None:
+    def _set_limit_field_value(self, field: FloatLimitField, value: float) -> None:
         """Set a limit field value without signal churn."""
         field.blockSignals(True)
         field.setValue(float(value))

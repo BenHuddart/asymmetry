@@ -21,8 +21,9 @@ from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QPushButton  # 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.export_paths import resolve_gle_export_paths
-from asymmetry.gui.panels.plot_panel import PlotPanel, _FloatLimitField
+from asymmetry.gui.panels.plot_panel import PlotPanel
 from asymmetry.gui.styles import tokens
+from asymmetry.gui.widgets.axis_limits import FloatLimitField
 
 _PROJECTION_TINTS = {"P_x": "#534AB7", "P_y": "#BA7517", "P_z": "#0F6E56"}
 
@@ -225,10 +226,10 @@ class TestPlotPanel:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
 
-        assert isinstance(panel._x_min, _FloatLimitField)
-        assert isinstance(panel._x_max, _FloatLimitField)
-        assert isinstance(panel._y_min, _FloatLimitField)
-        assert isinstance(panel._y_max, _FloatLimitField)
+        assert isinstance(panel._x_min, FloatLimitField)
+        assert isinstance(panel._x_max, FloatLimitField)
+        assert isinstance(panel._y_min, FloatLimitField)
+        assert isinstance(panel._y_max, FloatLimitField)
 
     def test_overlay_checkbox_defaults_to_disabled(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
