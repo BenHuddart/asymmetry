@@ -122,6 +122,7 @@ from .tab_base import (
     _GLOBAL_FIT_PARAMETER_CLASSIFICATION_HELP_TEXT,
     PARAM_NAME_COL_WIDTH,
     FitParameterTable,
+    FitTabBase,
     _apply_domain_mismatch_warning,
     _apply_fit_range_display,
     _apply_param_table_style,
@@ -169,7 +170,7 @@ BATCH_SEEDING_TOOLTIP = (
 )
 
 
-class GlobalFitTab(QWidget):
+class GlobalFitTab(FitTabBase):
     """Global fitting interface for simultaneous multi-dataset fitting.
 
     Allows user to specify which parameters are global (shared), local (vary per dataset),

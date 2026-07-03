@@ -1559,3 +1559,17 @@ class FitParameterTable(QTableWidget):
                 if isinstance(entry, dict) and entry.get("name") not in row_names
             ]
         self.synchronize_fractions()
+
+
+class FitTabBase(QWidget):
+    """Shared base for :class:`SingleFitTab` and :class:`GlobalFitTab`.
+
+    Introduced by the Phase 2 skeleton checkpoint with **no behaviour of its
+    own yet**: it exists so the two fit tabs share a common ancestor. The
+    machinery duplicated across the tabs — model-formula box, fit-range field
+    pair, parameter-table construction, the Stop button, wizard-result caching,
+    and shared fit-precondition validation — is hoisted into this base one
+    cluster at a time in the following checkpoints. Until then subclasses
+    behave exactly as before (``super().__init__`` resolves through here to
+    ``QWidget``).
+    """

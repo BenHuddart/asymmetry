@@ -66,6 +66,7 @@ from asymmetry.gui.windows.fit_wizard_window import FitWizardWindow
 from .seeding import _field_value_overrides
 from .tab_base import (
     FitParameterTable,
+    FitTabBase,
     _apply_domain_mismatch_warning,
     _apply_fit_range_display,
     _fit_curve_sample_count,
@@ -86,7 +87,7 @@ from .tab_base import (
 )
 
 
-class SingleFitTab(QWidget):
+class SingleFitTab(FitTabBase):
     """Single dataset fitting interface.
 
     Provides model selection, parameter configuration, and fit execution for a
