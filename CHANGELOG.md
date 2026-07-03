@@ -7,7 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.5.0] - 2026-06-21
+### Fixed
+
+- **PSI analysis convention in the GPS/FLAME/HAL presets.** PSI names detectors
+  by beam direction, and for surface muons the initial polarisation points toward
+  the *Backward* detector, so the PSI/musrfit analysis convention is
+  `A = (B − αF)/(B + αF)` (GPS instrument paper, Amato *et al.* 2017, Eq. 2). The
+  loaders already honoured this, but the built-in GPS, FLAME and HAL-9500
+  presets declared the beam-Forward group as analysis-forward, so a preset used
+  headless (core) reduced with the wrong sign/leg. Every PSI Longitudinal preset
+  now declares the Backward-named group in the analysis-forward slot, and the GPS
+  `WEP` `FB` projection follows musrfit's `forward=2(B) backward=1(F) alpha=0.75`
+  so it reduces to `(B − 0.75F)/(B + 0.75F)`. The GPS spin-rotated combined-pair
+  preset was also fixed: the ~50° upward-rotated spin points along the
+  **Backward–Up** diagonal (not Forward–Up), so it is now
+  `Spin-rotated (B+U/F+D)` (was `F+U/B+D`). The grouping-dialog beam→analysis
+  swap is widened to recognise single-letter (`F`/`B`) and compound (`B+U`) group
+  names as defence in depth, and no longer double-swaps a fixed preset.
 
 ### Added
 

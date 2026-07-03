@@ -292,9 +292,13 @@ class TestFlameLayout:
         assert abs(spin_arrow.end[1] - backward.y_center) < backward.height / 2
 
     def test_longitudinal_preset(self, layout):
+        # PSI convention: analysis-forward = beam-Backward group (group 2), which
+        # sees the polarization for surface muons. Group names stay physical.
         preset = layout.presets["Longitudinal"]
-        assert preset.forward_group == 1
-        assert preset.backward_group == 2
+        assert preset.forward_group == 2
+        assert preset.backward_group == 1
+        assert preset.groups[1].name == "Forward"
+        assert preset.groups[2].name == "Backward"
         assert preset.groups[1].detector_ids == (1,)
         assert preset.groups[2].detector_ids == (2,)
 
@@ -365,9 +369,12 @@ class TestGpsLayout:
         assert layout.default_preset_name == "Longitudinal"
 
     def test_longitudinal_preset(self, layout):
+        # PSI convention: analysis-forward = beam-Backward group (group 2).
         preset = layout.presets["Longitudinal"]
-        assert preset.forward_group == 1
-        assert preset.backward_group == 2
+        assert preset.forward_group == 2
+        assert preset.backward_group == 1
+        assert preset.groups[1].name == "Forward"
+        assert preset.groups[2].name == "Backward"
         assert preset.groups[1].detector_ids == (1,)
         assert preset.groups[2].detector_ids == (2,)
 
@@ -375,25 +382,29 @@ class TestGpsLayout:
         preset = layout.presets["Transverse (Vector)"]
         proj = {p.label: (p.forward_group, p.backward_group) for p in preset.projections}
         assert proj == {"Up-Down": (1, 2), "Left-Right": (3, 4)}
-        # Up-Down pair = Up(3)/Down(4); Left-Right pair = Left(6)/Right(5).
-        assert preset.groups[1].detector_ids == (3,)
-        assert preset.groups[2].detector_ids == (4,)
-        assert preset.groups[3].detector_ids == (6,)
-        assert preset.groups[4].detector_ids == (5,)
+        # musrfit WED(L): UD forward=U(3)/backward=D(4); RL forward=R(5)/backward=L(6).
+        assert preset.groups[1].detector_ids == (3,)  # Up
+        assert preset.groups[2].detector_ids == (4,)  # Down
+        assert preset.groups[3].detector_ids == (5,)  # Right (Left-Right forward leg)
+        assert preset.groups[4].detector_ids == (6,)  # Left
 
     def test_spin_rotated_preset(self, layout):
-        # For the ~50 deg upward-rotated spin: Forward+Up vs Backward+Down.
-        preset = layout.presets["Spin-rotated (F+U/B+D)"]
+        # For the ~50 deg upward-rotated spin the polarization points along the
+        # Backward-Up diagonal (surface muons + upward tip), so analysis-forward
+        # = B+U and analysis-backward = F+D.
+        preset = layout.presets["Spin-rotated (B+U/F+D)"]
         assert (preset.forward_group, preset.backward_group) == (1, 2)
-        assert set(preset.groups[1].detector_ids) == {1, 3}  # F + U
-        assert set(preset.groups[2].detector_ids) == {2, 4}  # B + D
+        assert set(preset.groups[1].detector_ids) == {2, 3}  # B + U
+        assert set(preset.groups[2].detector_ids) == {1, 4}  # F + D
         assert preset.projections == ()
 
     def test_wep_preset_matches_musrfit(self, layout):
         # musrfit's WEP setup: separate F/B/U/D with FB and UD asymmetry pairs.
+        # FB forward=B(2) backward=F(1) alpha=0.75; UD forward=U(3) backward=D(4).
         preset = layout.presets["WEP (spin-rotated)"]
         pairs = {p.label: (p.forward_group, p.backward_group, p.alpha) for p in preset.projections}
-        assert pairs == {"FB": (1, 2, 0.75), "UD": (3, 4, 1.0)}
+        assert pairs == {"FB": (2, 1, 0.75), "UD": (3, 4, 1.0)}
+        assert (preset.forward_group, preset.backward_group) == (2, 1)
         assert preset.groups[1].detector_ids == (1,)  # F
         assert preset.groups[2].detector_ids == (2,)  # B
         assert preset.groups[3].detector_ids == (3,)  # U
@@ -465,8 +476,11 @@ class TestGpsSubdetectorLayout:
         assert not mob.read_only and mob.shape == "rectangle"
 
     def test_longitudinal_preset(self, layout):
+        # PSI convention: analysis-forward = beam-Backward group (group 2).
         preset = layout.presets["Longitudinal"]
-        assert (preset.forward_group, preset.backward_group) == (1, 2)
+        assert (preset.forward_group, preset.backward_group) == (2, 1)
+        assert preset.groups[1].name == "Forward"
+        assert preset.groups[2].name == "Backward"
         assert preset.groups[1].detector_ids == (1,)
         assert preset.groups[2].detector_ids == (2,)
 
@@ -474,24 +488,27 @@ class TestGpsSubdetectorLayout:
         preset = layout.presets["Transverse (Vector)"]
         proj = {p.label: (p.forward_group, p.backward_group) for p in preset.projections}
         assert proj == {"Up-Down": (1, 2), "Left-Right": (3, 4)}
-        # Up/Down/Left/Right each combine their two sub-detectors.
+        # Up/Down/Left/Right each combine their two sub-detectors. musrfit WED(L)
+        # leg order: UD forward=Up, RL forward=Right.
         assert preset.groups[1].detector_ids == (3, 4)  # Up = Up_B + Up_F
         assert preset.groups[2].detector_ids == (5, 6)  # Down = Down_B + Down_F
-        assert preset.groups[3].detector_ids == (9, 10)  # Left = Left_B + Left_F
-        assert preset.groups[4].detector_ids == (7, 8)  # Right = Right_B + Right_F
+        assert preset.groups[3].detector_ids == (7, 8)  # Right = Right_B + Right_F
+        assert preset.groups[4].detector_ids == (9, 10)  # Left = Left_B + Left_F
 
     def test_spin_rotated_preset_sums_subdetectors(self, layout):
-        # Forward+Up vs Backward+Down, summing each direction's _B/_F halves.
-        preset = layout.presets["Spin-rotated (F+U/B+D)"]
+        # Backward+Up vs Forward+Down, summing each direction's _B/_F halves.
+        preset = layout.presets["Spin-rotated (B+U/F+D)"]
         assert (preset.forward_group, preset.backward_group) == (1, 2)
-        assert set(preset.groups[1].detector_ids) == {1, 3, 4}  # F + Up_B + Up_F
-        assert set(preset.groups[2].detector_ids) == {2, 5, 6}  # B + Down_B + Down_F
+        assert set(preset.groups[1].detector_ids) == {2, 3, 4}  # B + Up_B + Up_F
+        assert set(preset.groups[2].detector_ids) == {1, 5, 6}  # F + Down_B + Down_F
 
     def test_wep_preset_sums_subdetectors(self, layout):
         # musrfit WEP: FB + UD pairs, with Up/Down summing their _B/_F halves.
+        # FB forward=B(2) backward=F(1) alpha=0.75; UD forward=U(3) backward=D(4).
         preset = layout.presets["WEP (spin-rotated)"]
         pairs = {p.label: (p.forward_group, p.backward_group, p.alpha) for p in preset.projections}
-        assert pairs == {"FB": (1, 2, 0.75), "UD": (3, 4, 1.0)}
+        assert pairs == {"FB": (2, 1, 0.75), "UD": (3, 4, 1.0)}
+        assert (preset.forward_group, preset.backward_group) == (2, 1)
         assert preset.groups[1].detector_ids == (1,)  # F
         assert preset.groups[2].detector_ids == (2,)  # B
         assert set(preset.groups[3].detector_ids) == {3, 4}  # U = Up_B + Up_F
@@ -503,6 +520,84 @@ class TestGpsSubdetectorLayout:
         for preset in layout.presets.values():
             for gdef in preset.groups.values():
                 assert 11 not in gdef.detector_ids
+
+
+# ---------------------------------------------------------------------------
+# GPS PSI analysis convention: oracle + loader/preset consistency
+# ---------------------------------------------------------------------------
+
+
+class TestGpsPsiConvention:
+    """Pin the PSI A = (B - alpha F)/(B + alpha F) convention for GPS presets.
+
+    PSI names detectors by beam direction; for surface muons the polarization
+    points toward the beam-Backward detector, which must occupy the analysis-
+    forward slot.  These tests transcribe the musrfit/GPS-paper oracle literally
+    and cross-check the loader default against every GPS preset.
+    """
+
+    def test_wep_fb_projection_reduces_to_musrfit_oracle(self):
+        # Synthetic 4-histogram GPS run with distinct, known per-detector counts.
+        # Detector IDs map positionally to histograms: F->1, B->2, U->3, D->4.
+        import numpy as np
+
+        from asymmetry.core.transform.asymmetry import compute_asymmetry
+
+        counts = {1: 900.0, 2: 1500.0, 3: 1100.0, 4: 700.0}  # F, B, U, D
+        f = np.array([counts[1]])
+        b = np.array([counts[2]])
+
+        preset = get_instrument_layout("GPS").presets["WEP (spin-rotated)"]
+        fb = next(p for p in preset.projections if p.label == "FB")
+        # The FB projection's analysis-forward group is the physical Backward
+        # detector, analysis-backward is Forward, with alpha 0.75.
+        fwd_ids = preset.groups[fb.forward_group].detector_ids
+        bwd_ids = preset.groups[fb.backward_group].detector_ids
+        assert fwd_ids == (2,)  # analysis-forward = B
+        assert bwd_ids == (1,)  # analysis-backward = F
+        assert fb.alpha == 0.75
+
+        # Reduce with the preset's declared legs/alpha.
+        analysis_forward = np.array([counts[fwd_ids[0]]])
+        analysis_backward = np.array([counts[bwd_ids[0]]])
+        got = compute_asymmetry(analysis_forward, analysis_backward, fb.alpha)
+
+        # Oracle, transcribed literally: A = (B - 0.75 F) / (B + 0.75 F).
+        alpha = 0.75
+        oracle = (b - alpha * f) / (b + alpha * f)
+        assert got[0] == pytest.approx(oracle[0])
+        # Positive: B (1500) dominates 0.75*F (675), matching a Backward-forward
+        # analysis slot for a polarization pointing toward Backward.
+        assert got[0] > 0.0
+
+    @pytest.mark.parametrize("preset_key", ["GPS", "GPS-RD"])
+    def test_loader_default_and_presets_agree_on_analysis_forward_detector(self, preset_key):
+        # The PSI loader default analysis pair and each GPS preset must agree on
+        # which PHYSICAL detector group is analysis-forward: the beam-Backward one.
+        from asymmetry.core.io.psi import PsiLoader
+
+        loader = PsiLoader()
+        # Six-histogram BIN GPS label set (the ROOT variant recombines to the same
+        # six physical directions, so the beam F/B pairing is identical).
+        labels = ["Forw", "Back", "Up", "Down", "Righ", "Left"]
+        groups, names, fwd_gid, bwd_gid = loader._default_groups(labels, len(labels))
+
+        # Loader: the analysis-forward group is named for the beam-Backward det.
+        assert loader._label_direction(names[fwd_gid]) == "backward"
+        assert loader._label_direction(names[bwd_gid]) == "forward"
+
+        layout = get_instrument_layout(preset_key)
+
+        # Longitudinal preset: its analysis-forward group is the "Backward" one.
+        lon = layout.presets["Longitudinal"]
+        assert lon.groups[lon.forward_group].name == "Backward"
+        assert lon.groups[lon.backward_group].name == "Forward"
+
+        # WEP FB projection: analysis-forward group is the "B" detector.
+        wep = layout.presets["WEP (spin-rotated)"]
+        fb = next(p for p in wep.projections if p.label == "FB")
+        assert wep.groups[fb.forward_group].name == "B"
+        assert wep.groups[fb.backward_group].name == "F"
 
 
 # ---------------------------------------------------------------------------
@@ -781,9 +876,12 @@ class TestHALLayout:
         }
 
     def test_longitudinal_forward_ring_vs_backward_ring(self, layout):
+        # PSI convention: analysis-forward = beam-Backward ring (group 2).
         preset = layout.presets["Longitudinal"]
-        assert preset.forward_group == 1
-        assert preset.backward_group == 2
+        assert preset.forward_group == 2
+        assert preset.backward_group == 1
+        assert preset.groups[1].name == "Forward"
+        assert preset.groups[2].name == "Backward"
         assert set(preset.groups[1].detector_ids) == set(range(2, 10))
         assert set(preset.groups[2].detector_ids) == set(range(10, 18))
 

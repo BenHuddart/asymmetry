@@ -145,7 +145,7 @@ class TestConstruction:
 class TestTransverseFieldNudge:
     """A TF run on a longitudinal preset should nudge toward the spin-rotated one."""
 
-    _RECOMMENDED = "Spin-rotated (F+U/B+D)"
+    _RECOMMENDED = "Spin-rotated (B+U/F+D)"
 
     def test_tf_on_longitudinal_shows_hint_and_preselects(self, qapp):
         layout = get_instrument_layout("GPS")

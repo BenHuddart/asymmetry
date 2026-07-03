@@ -711,11 +711,32 @@ class GroupingDialog(QDialog):
 
     @staticmethod
     def _beam_direction_label(label: object) -> str | None:
-        """Return beam-direction label for explicit forward/backward group names."""
+        """Return the beam-direction sense of a group name, or ``None``.
+
+        Recognises the spelled-out forward/backward names (``"Forward"``,
+        ``"Fwd"``, ``"Backward"``, ``"Bwd"``) plus, as defence in depth for
+        user-defined groups, the single-letter PSI names ``"F"``/``"B"`` and the
+        compound spin-rotator names (``"F+U"``, ``"B+D"``, …) whose *first*
+        beam-axis letter sets the sense.
+
+        This only classifies groups that are named by **beam** direction, so it
+        drives the PSI beam→analysis swap in
+        :meth:`_analysis_pair_for_reference`.  Because the instrument presets now
+        declare their analysis slots directly (the Backward-named group sits in
+        the analysis-forward slot), the swap condition — forward slot holds a
+        *forward*-named group **and** backward slot holds a *backward*-named group
+        — is false for a fixed preset, so applying a preset does not get
+        re-swapped (see the exactly-once regression test).
+        """
         token = re.sub(r"[^a-z0-9]+", "", str(label).lower())
-        if token.startswith(("forw", "fwd")) or "forward" in token:
+        if not token:
+            return None
+        # Compound spin-rotator names (e.g. "F+U", "B+D") compact to "fu"/"bd";
+        # the leading beam-axis letter sets the sense. A bare "f"/"b" is the PSI
+        # single-letter name.
+        if token.startswith(("forw", "fwd")) or "forward" in token or token[0] == "f":
             return "forward"
-        if token.startswith(("back", "bwd")) or "backward" in token:
+        if token.startswith(("back", "bwd")) or "backward" in token or token[0] == "b":
             return "backward"
         return None
 
