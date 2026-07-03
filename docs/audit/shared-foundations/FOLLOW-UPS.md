@@ -24,6 +24,17 @@ Format: `- [ ] <area> — <what/why> (surfaced in Phase N)`
 
 <!-- append discoveries below -->
 
+- [ ] Phase 1b/5 (two canvas sites still constructing `FigureCanvasQTAgg` directly):
+  `src/asymmetry/gui/windows/fit_wizard_window.py` (`_build_matplotlib_widget`)
+  and `src/asymmetry/gui/widgets/detector_schematic.py` build their matplotlib
+  canvas directly rather than via `gui/widgets/mpl_canvas.py::create_canvas`.
+  Both were out of Phase 1b's declared scope (the wizard preview canvas and the
+  specialized `figsize`/`facecolor` detector schematic) and are explicitly
+  allowlisted by `find_duplicate_mpl_canvas_violations` in `tools/harness.py`.
+  Migrate them onto `create_canvas` (extending the factory for the schematic's
+  `figsize`/`facecolor` needs if required) and drop them from the allowlist in a
+  later pass. (surfaced in Phase 1b; allowlist added in Phase 5)
+
 - [ ] Phase 3 (Review B2, F2 — narrowed, not fully closed): `WizardWindowBase._run_analysis`
   no longer serializes on the prior worker by joining its thread the way the old
   per-window code did (`thread.quit(); thread.wait()`); `TaskRunner` deliberately
