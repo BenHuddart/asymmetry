@@ -22,6 +22,7 @@
 | Indexing scope | Test-suite reorg into mirrored subdirectories; internal roadmap docstrings + doc fixes; harness enforcement rules. Examples/porting-index polish is out of scope. |
 | PR strategy | Single PR, commits per phase, no intermediate pushes. Ben has pre-authorized opening the one PR after the final review gate; request his live-GUI check alongside it. |
 | Open PRs | None exist on the remote (verified 2026-07-03); no conflict management needed. |
+| `feat/fit-wizard-scope` | 11 unmerged local commits (Scope tabs in both wizards, physics tags, tiered screening, FFT peak editing) still need development work. **Audit proceeds first; that branch is re-ported onto the restructured wizard layer after this PR merges.** Phase 3's base design must not preclude it (see Phase 3). |
 
 ## Ground rules (apply to every phase)
 
@@ -181,6 +182,11 @@ the GUI thread, shim completeness. Run `gui-smoke` + full `validate`.
    `QThread` lifecycles (~96–99 and ~80–120) with `TaskRunner` from
    `gui/tasks.py`, matching how the rest of the app was migrated in PR #68.
    Cite the AGENTS.md worker-signal invariant explicitly.
+   The design must anticipate the pending `feat/fit-wizard-scope` re-port:
+   adding extra tabs (a Scope tab before analysis) and extra worker inputs must
+   be possible in subclasses without touching the base. Skim that branch's
+   diff (`git log main..feat/fit-wizard-scope` in the hub) before finalizing
+   the contract.
 2. **(Sonnet)** Implement `src/asymmetry/gui/windows/wizard_base.py` per the
    note; refactor both windows onto it; delete the duplicated lifecycle,
    progress, caching, and error-dialog code.
@@ -244,7 +250,8 @@ mid-analysis, window close during a run, cache invalidation), plus
    ("new axis/canvas/export/progress UI must use `gui/widgets/`+`gui/utils/`"),
    test-placement convention, and add the harness rules to the invariants list.
 5. Write `docs/audit/shared-foundations/FOLLOW-UPS.md` (seeded throughout):
-   at minimum plot_panel/mainwindow decomposition, fit_panel shim retirement.
+   at minimum plot_panel/mainwindow decomposition, fit_panel shim retirement,
+   and the `feat/fit-wizard-scope` re-port onto the new wizard base.
 
 ---
 
