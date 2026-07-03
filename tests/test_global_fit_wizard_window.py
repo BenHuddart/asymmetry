@@ -383,7 +383,7 @@ def _fake_single_fit_recommendation(dataset: MuonDataset) -> FitWizardRecommenda
 
 
 def _analysis_complete(window: GlobalFitWizardWindow) -> bool:
-    return window._recommendation is not None and window._analysis_thread is None
+    return window._recommendation is not None and window._tasks.active_count == 0
 
 
 def test_global_fit_wizard_window_populates_tables(
