@@ -30,7 +30,7 @@ boundary, touches shared behavior, or changes user-visible workflows.
 | `python tools/harness.py structural` | Fast repository-shape checks, including the core/GUI dependency boundary. |
 | `python tools/harness.py lint` | Ruff format check and lint check across `src`, `tests`, and `tools`. |
 | `python tools/harness.py lint-all` | Alias for the full Ruff baseline. |
-| `python tools/harness.py test -- tests/test_name.py` | Focused pytest run while iterating on a specific behavior. |
+| `python tools/harness.py test -- tests/<layer>/test_name.py` | Focused pytest run while iterating on a specific behavior. |
 | `python tools/harness.py test --tier fast` | Inner-loop suite: non-GUI tests only (~25s). |
 | `python tools/harness.py test` | Standard tier (default): everything except `slow`/`integration` (~2 min locally). |
 | `python tools/harness.py gui-smoke` | Headless GUI startup check using the app's `--smoke-test` path. |
@@ -53,8 +53,17 @@ boundary, touches shared behavior, or changes user-visible workflows.
 
 Tests inherit a type marker automatically: anything not explicitly marked `gui`
 or `io` is treated as `unit` (see `tests/conftest.py`). Naming explicit targets
-(`-- tests/test_x.py` or a `::node-id`) runs exactly those, bypassing the tier
-filter.
+(`-- tests/<layer>/test_x.py` or a `::node-id`) runs exactly those, bypassing
+the tier filter.
+
+`tests/` mirrors the `src/asymmetry/` layer boundaries — `tests/core/`,
+`tests/gui/`, `tests/io/`, `tests/project/`, `tests/tools/`, plus
+`tests/integration/` for genuinely cross-cutting end-to-end tests, and the
+already-organized `tests/negmu/`, `tests/docs/`, `tests/porting/`. See
+`tests/README.md` for the placement rules. Tiering and sharding are driven by
+pytest markers and node-id hashes, not by directory, so this layout is
+transparent to `--tier`/`--subset`/`--shard` and to CI's path filters (which
+match `tests/**` recursively).
 
 CI shards the standard tier across four runners: the fast non-GUI tests run as a
 single shard (`--subset non-gui`), and the much heavier GUI tests — which carry

@@ -7,6 +7,47 @@ The bunch-factor control rebins the displayed data and also defines the
 dataset passed to fitting in the GUI. The original MuonDataset is preserved,
 so changing the bunch factor after fitting only changes the plotted data while
 the existing fit curve remains overlaid.
+
+Navigation map
+--------------
+~7.3k lines, a single ``PlotPanel(QWidget)`` class; a known decomposition
+target (see ``docs/audit/shared-foundations/FOLLOW-UPS.md``), not split in
+this pass. Methods are not grouped by section comments in the source; they
+cluster thematically in roughly this order:
+
+- **Construction and control widgets** — ``__init__``, ``_create_limit_controls``,
+  ``_create_plot_header``/``_create_plot_footer`` build the axis-limit fields
+  (``FloatLimitField``/``AxisLimitControls`` from ``gui/widgets/axis_limits.py``)
+  and the canvas chrome.
+- **Frequency-axis unit/reference conversion** — the ``_convert_frequency_*``
+  and ``_display_x_*``/``_display_y_*`` helpers translate between canonical
+  MHz storage and the user-selected display unit/reference.
+- **Navigation mode and axis-limit sync** — ``_set_navigation_mode``,
+  ``_connect_axis_limit_callbacks``, ``_sync_limits_from_axes``,
+  ``_on_axis_limits_changed``: keeps the Matplotlib toolbar pan/zoom state,
+  the limit spin fields, and the stored view limits consistent.
+- **Dataset/projection plumbing** — ``get_analysis_dataset``, projection
+  axis helpers (``_axis_key_for_dataset``, ``set_projections``,
+  ``fit_target_projection``), and the low-count/low-confidence masking used
+  before plotting (``_low_count_mask_for_dataset``, ``_low_confidence_mask_for_dataset``).
+- **Rendering** — the ``plot_*`` family is the core draw path:
+  ``plot_datasets``/``plot_dataset`` (single/overlay), ``plot_vector_subplots``,
+  ``plot_grouped_time_domain_subplots``, ``plot_maxent_reconstruction*``, and
+  ``plot_fit``/``set_global_fits`` for fit-curve overlay. ``_apply_limits`` and
+  the ``_auto_x_limits``/``_auto_y_limits*`` helpers frame the axes afterward.
+- **Interaction** — mouse/canvas event handlers (``_on_canvas_button_press``,
+  ``_on_canvas_motion_notify``, ``_on_canvas_button_release``) drive fit-range
+  and moments-window drag handles, annotation add/edit/delete, and the cursor
+  readout.
+- **Export** — ``get_current_plot_export_data``, ``export_plotted_data_as_text``,
+  ``export_plots_to_gle`` (using ``compile_gle`` from ``gui/utils/export.py``),
+  ``export_current_plot``.
+- **State I/O** — ``get_state``/``restore_state`` at the end serialize panel
+  configuration (bunch factor, view limits, projections, decimation, RRF) for
+  project persistence.
+
+Entry points GUI callers use most: ``plot_datasets``/``plot_dataset``,
+``plot_fit``, ``set_view_limits``/``get_view_limits``, ``get_state``/``restore_state``.
 """
 
 from __future__ import annotations
@@ -20,7 +61,6 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import QSignalBlocker, Qt, QTimer, Signal
-from PySide6.QtGui import QDoubleValidator
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -30,7 +70,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
-    QLineEdit,
     QMenu,
     QMessageBox,
     QPushButton,
@@ -77,6 +116,9 @@ from asymmetry.gui.styles.plots import (
     style_legend,
 )
 from asymmetry.gui.styles.widgets import build_nav_button_qss
+from asymmetry.gui.utils.export import compile_gle
+from asymmetry.gui.widgets.axis_limits import AxisLimitControls, FloatLimitField
+from asymmetry.gui.widgets.mpl_canvas import create_canvas
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox
 from asymmetry.gui.widgets.projection_chip_bar import ProjectionChipBar
 from asymmetry.gui.widgets.rrf_controls import (
@@ -151,54 +193,6 @@ _SIGNAL_FRAME_WEIGHTED_QUANTILE = 0.0025
 _SIGNAL_FRAME_WEIGHT_ERROR_FLOOR = 1e-6
 
 
-class _FloatLimitField(QLineEdit):
-    """Plain text field that stores a floating-point axis limit."""
-
-    def __init__(
-        self,
-        value: float,
-        *,
-        decimals: int = 3,
-        minimum_width: int = 76,
-        parent: QWidget | None = None,
-    ) -> None:
-        super().__init__(parent)
-        self._decimals = max(0, int(decimals))
-        self._last_value = float(value)
-        self.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self.setClearButtonEnabled(False)
-        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        self.setMinimumWidth(minimum_width)
-        self.setFont(mono_font(11.0))
-        validator = QDoubleValidator(-1e6, 1e6, self._decimals, self)
-        validator.setNotation(QDoubleValidator.Notation.StandardNotation)
-        self.setValidator(validator)
-        self.editingFinished.connect(self._normalize_text)
-        self.setValue(value)
-
-    def value(self) -> float:
-        """Return the current numeric value, falling back to the last valid value."""
-        text = self.text().strip()
-        if not text:
-            return self._last_value
-        try:
-            value = float(text)
-        except ValueError:
-            return self._last_value
-        self._last_value = value
-        return value
-
-    def setValue(self, value: float) -> None:  # noqa: N802
-        """Set the displayed text from a numeric value."""
-        numeric_value = float(value)
-        self._last_value = numeric_value
-        self.setText(f"{numeric_value:.{self._decimals}f}")
-
-    def _normalize_text(self) -> None:
-        """Rewrite the field using the canonical numeric format."""
-        self.setValue(self.value())
-
-
 class PlotPanel(QWidget):
     """Matplotlib canvas for time- and frequency-domain plots.
 
@@ -255,11 +249,9 @@ class PlotPanel(QWidget):
         layout.setSpacing(2)
 
         try:
-            from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
-            from matplotlib.figure import Figure
-
-            self._figure = Figure(tight_layout=True)
-            self._canvas = FigureCanvasQTAgg(self._figure)
+            self._figure, self._canvas, self._nav_toolbar = create_canvas(
+                layout="tight", toolbar=True, parent=self
+            )
             self._canvas.setSizePolicy(
                 QSizePolicy.Policy.Expanding,
                 QSizePolicy.Policy.Preferred,
@@ -288,7 +280,6 @@ class PlotPanel(QWidget):
             self._ax = self._figure.add_subplot(111)
             style_figure(self._figure)
             style_axes(self._ax)
-            self._nav_toolbar = NavigationToolbar2QT(self._canvas, self)
             self._nav_toolbar.hide()
             self._axis_limit_callback_ids: list[tuple[object, int, int]] = []
             self._syncing_limits_from_axes = False
@@ -462,47 +453,23 @@ class PlotPanel(QWidget):
         self._limit_toolbar.setContentsMargins(4, 4, 4, 4)
 
         # ── Row 0: axis range fields + auto-scale buttons ─────────────────
-        row0 = QHBoxLayout()
-        row0.setSpacing(4)
+        self._axis_controls = AxisLimitControls(field_width=76, show_units=True, auto_checked=False)
+        self._x_min = self._axis_controls.x_min
+        self._x_max = self._axis_controls.x_max
+        self._y_min = self._axis_controls.y_min
+        self._y_max = self._axis_controls.y_max
+        self._x_unit_label = self._axis_controls.x_unit_label
+        self._y_unit_label = self._axis_controls.y_unit_label
+        self._auto_x_btn = self._axis_controls.auto_x_btn
+        self._auto_y_btn = self._axis_controls.auto_y_btn
 
-        # X-axis limits
-        row0.addWidget(QLabel("X:"))
-        self._x_min = _FloatLimitField(0.0, minimum_width=76)
-        row0.addWidget(self._x_min)
-        row0.addWidget(QLabel("–"))
-        self._x_max = _FloatLimitField(10.0, minimum_width=76)
-        row0.addWidget(self._x_max)
-        self._x_unit_label = QLabel("MHz" if self._is_frequency_plot_panel() else "µs")
-        row0.addWidget(self._x_unit_label)
+        self._x_unit_label.setText("MHz" if self._is_frequency_plot_panel() else "µs")
+        self._y_unit_label.setText("a.u." if self._is_frequency_plot_panel() else "%")
 
-        # Y-axis limits
-        row0.addWidget(QLabel("Y:"))
-        self._y_min = _FloatLimitField(-30.0, minimum_width=76)
-        row0.addWidget(self._y_min)
-        row0.addWidget(QLabel("–"))
-        self._y_max = _FloatLimitField(30.0, minimum_width=76)
-        row0.addWidget(self._y_max)
-        self._y_unit_label = QLabel("a.u." if self._is_frequency_plot_panel() else "%")
-        row0.addWidget(self._y_unit_label)
-
-        # Separate axis auto-scale controls.
-        _nav_qss = build_nav_button_qss()
-        self._auto_x_btn = QPushButton("Auto X")
-        self._auto_x_btn.setCheckable(True)
-        self._auto_x_btn.setStyleSheet(_nav_qss)
         self._auto_x_btn.clicked.connect(self._on_auto_x_button_clicked)
-        self._auto_x_btn.setMaximumWidth(65)
-        row0.addWidget(self._auto_x_btn)
-
-        self._auto_y_btn = QPushButton("Auto Y")
-        self._auto_y_btn.setCheckable(True)
-        self._auto_y_btn.setStyleSheet(_nav_qss)
         self._auto_y_btn.clicked.connect(self._on_auto_y_button_clicked)
-        self._auto_y_btn.setMaximumWidth(65)
-        row0.addWidget(self._auto_y_btn)
 
-        row0.addStretch()
-        self._limit_toolbar.addLayout(row0)
+        self._limit_toolbar.addWidget(self._axis_controls)
 
         # Apply limit changes immediately from text field edits. A manual edit is
         # an explicit override, so it disables that axis's Auto toggle — otherwise
@@ -1352,7 +1319,7 @@ class PlotPanel(QWidget):
                 except Exception:
                     continue
 
-    def _set_limit_field_value(self, field: _FloatLimitField, value: float) -> None:
+    def _set_limit_field_value(self, field: FloatLimitField, value: float) -> None:
         """Set a limit field value without signal churn."""
         field.blockSignals(True)
         field.setValue(float(value))
@@ -6371,12 +6338,7 @@ class PlotPanel(QWidget):
                     if src.exists() and src.is_file():
                         shutil.copy2(src, tmpdir_path / dep_name)
 
-                subprocess.run(
-                    [_gle, "-d", "png", str(tmp_gle)],
-                    capture_output=True,
-                    check=True,
-                    cwd=str(tmpdir_path),
-                )
+                compile_gle(_gle, tmp_gle, "png", cwd=tmpdir_path)
 
                 pixmap = QPixmap(str(preview_png))
                 if not pixmap.isNull():
@@ -6785,13 +6747,7 @@ class PlotPanel(QWidget):
         if _gle is not None:
             output_path = gle_path.with_suffix(f".{output_format}")
             try:
-                subprocess.run(
-                    [_gle, "-d", output_format, str(gle_path)],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                    cwd=str(gle_path.parent),
-                )
+                compile_gle(_gle, gle_path, output_format, cwd=gle_path.parent)
                 files_text = "\n".join(str(p) for p in written_files)
                 self._show_export_result_dialog(
                     "Export Successful",

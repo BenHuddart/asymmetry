@@ -43,7 +43,12 @@ asymmetry/
 │   │   ├── grouping.py       # Detector grouping
 │   │   ├── deadtime.py       # Dead-time correction
 │   │   ├── rebin.py          # Rebinning utilities
-│   │   └── background.py     # Background estimation & subtraction
+│   │   ├── background.py     # Background estimation & subtraction
+│   │   ├── integral.py       # Time-integral (ALC) asymmetry reduction
+│   │   ├── peakfit.py        # ALC baseline/peak/RF fitting helpers
+│   │   ├── promote.py        # Promote a MaxEnt/count-domain result to a dataset
+│   │   ├── rrf.py            # Rotating-reference-frame transform
+│   │   └── t0.py             # t0 (time-zero) estimation
 │   ├── fitting/        # Fitting engine
 │   │   ├── __init__.py
 │   │   ├── engine.py         # Fit driver: single-run & global
@@ -86,24 +91,38 @@ asymmetry/
 │   ├── panels/               # Dockable panels / views
 │   │   ├── data_browser.py   # Run browser / logbook view
 │   │   ├── plot_panel.py     # Interactive plotting canvas
-│   │   ├── fit_panel.py      # Fit setup and results (SingleFitTab, GlobalFitTab, FitPanel)
+│   │   ├── fit_panel.py      # Thin backward-compat shim re-exporting panels/fit/ (see below)
+│   │   ├── fit/              # Fit setup and results — split from the former fit_panel.py
+│   │   │   ├── __init__.py   # Public API re-exports; dependency order: seeding → tab_base → single_tab/global_tab → panel
+│   │   │   ├── seeding.py     # Phase/background/N0 seed math (leaf, no intra-package deps)
+│   │   │   ├── tab_base.py    # FitParameterTable, FitTabBase, tie dialog, shared delegates/helpers
+│   │   │   ├── single_tab.py  # SingleFitTab
+│   │   │   ├── global_tab.py  # GlobalFitTab + batch-seeding constants
+│   │   │   └── panel.py       # FitPanel container (hosts the two tabs)
 │   │   ├── fit_parameters_panel.py  # Parameter trending panel (pull-based, representation-aware)
 │   │   ├── fit_function_builder.py  # Composite fit-function dialog
 │   │   ├── fourier_panel.py  # Fourier analysis controls
 │   │   ├── initial_values_dialog.py # Per-member initial-values editor for batch fits
 │   │   └── log_panel.py      # Message / command log
-│   ├── dialogs/              # Modal dialogs
-│   │   ├── load_data.py      # File-open with format detection
-│   │   ├── preferences.py    # Application settings
-│   │   └── export.py         # Export data / figures
-│   ├── plotting/             # Plot helpers and renderers
-│   │   ├── __init__.py
-│   │   └── mpl_canvas.py     # Matplotlib canvas integration
-│   ├── windows/              # Top-level analysis windows
+│   ├── widgets/               # Shared foundational widgets (reused across panels/windows)
+│   │   ├── axis_limits.py     # FloatLimitField, AxisLimitControls — shared numeric limit fields
+│   │   ├── mpl_canvas.py      # create_canvas() — shared Figure/FigureCanvasQTAgg construction
+│   │   ├── fit_run_controls.py # FitRunControls — shared Stop/Cancel button + progress bar
+│   │   └── ...                # collapsible_section.py, dock_header.py, projection_chip_bar.py, etc.
+│   ├── utils/                 # Shared GUI-layer helpers (no Qt widget state)
+│   │   ├── export.py          # compile_gle() — shared GLE subprocess-invocation wrapper
+│   │   ├── formatting.py      # format_param_label() and other display-formatting helpers
+│   │   └── ...                # latex_renderer.py, series_scoring.py
+│   ├── windows/              # Top-level analysis windows (there is no separate `dialogs/` package —
+│   │   │                     # all modal/secondary windows, including simple dialogs, live here)
+│   │   ├── wizard_base.py             # WizardWindowBase — shared TaskRunner/progress/staleness/cancel skeleton
 │   │   ├── fit_wizard_window.py       # Guided single-spectrum fit wizard
+│   │   ├── global_fit_wizard_window.py # Guided batch/global fit wizard
 │   │   ├── multi_group_fit_window.py  # Grouped fit surface (Single + Batch tabs)
-│   │   └── ...
-│   └── resources/            # Icons, stylesheets, etc.
+│   │   ├── global_parameter_fit_window.py # Cross-group parameter-vs-x fit window
+│   │   ├── grouping_dialog.py         # Shared detector-grouping editor
+│   │   └── ...                        # detector_layout_dialog.py, run_info_dialog.py, simulate_dialog.py, etc.
+│   └── styles/                # BENCH design tokens, palette, and stylesheet (see below)
 │
 ├── cli.py              # Optional command-line interface
 ├── __init__.py
@@ -117,6 +136,36 @@ The core has **zero** GUI dependencies. It depends only on the scientific Python
 ### 3.2 GUI (`asymmetry.gui`)
 
 The GUI is a separate, optional install target. It wraps the core API and provides interactive visualization, fitting dialogs, and logbook management.
+
+#### Shared foundations (`gui/widgets/`, `gui/utils/`, `gui/windows/wizard_base.py`)
+
+Several small widget/helper pairs that grew up independently in two or more
+panels have been converged into shared modules. New axis-limit fields,
+Matplotlib canvases, GLE export code, formatted parameter labels, run-control
+buttons, or wizard windows should reuse these rather than re-implementing
+them:
+
+- `gui.widgets.axis_limits.FloatLimitField` / `AxisLimitControls` — the
+  numeric limit-field widget (fit-range min/max, plot axis min/max).
+- `gui.widgets.mpl_canvas.create_canvas()` — shared
+  `Figure` + `FigureCanvasQTAgg` (+ optional `NavigationToolbar2QT`)
+  construction.
+- `gui.widgets.fit_run_controls.FitRunControls` — the Stop/Cancel button plus
+  optional progress bar shared by the single and global fit tabs.
+- `gui.utils.export.compile_gle()` — the GLE subprocess-invocation wrapper
+  (`subprocess.run([gle, "-d", fmt, file], ...)`) shared by every GLE
+  export/preview call site.
+- `gui.utils.formatting.format_param_label()` — shared parameter-name display
+  formatting.
+- `gui.windows.wizard_base.WizardWindowBase` — the shared `TaskRunner` +
+  progress UI + request-id staleness + cancel/closeEvent skeleton for guided
+  fit-wizard windows; a subclass supplies its own tabs, worker task, and
+  result-tab population.
+- `gui.panels.fit/` — the fit-setup-and-results package (`FitPanel`,
+  `FitTabBase`, `SingleFitTab`, `GlobalFitTab`, `FitParameterTable`, seeding
+  helpers), split out of the former monolithic `fit_panel.py` (now a thin
+  re-export shim kept for backward compatibility until remaining private
+  imports migrate — see `docs/audit/shared-foundations/FOLLOW-UPS.md`).
 
 #### BENCH design tokens
 
