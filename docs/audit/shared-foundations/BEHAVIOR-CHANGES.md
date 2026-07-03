@@ -58,3 +58,29 @@ Format:
   (only `fit_panel`'s default caps width at 88px).
 - **Phase:** 1a (part 1 — the field only; `AxisLimitControls`/toolbar
   assembly is a separate follow-up).
+
+### Fit-range numeric fields adopt right-alignment + fixed size policy
+
+- **What:** the fit-range min/max numeric entry fields in the Fit dock now
+  render **right-aligned** with a **Fixed** horizontal size policy (and an
+  explicitly-disabled clear button). Previously the old
+  `fit_panel._FloatLimitField` set none of these, so the fields inherited
+  Qt's `QLineEdit` defaults: left-aligned text with an Expanding size policy.
+  (Width was already effectively bounded before — the old fit field set
+  `minimumWidth=56`/`maximumWidth=88` — so the visible delta is primarily the
+  left→right text alignment.)
+- **Where:** `SingleFitTab` and `GlobalFitTab` fit-range fields, via the
+  converged `asymmetry.gui.widgets.axis_limits.FloatLimitField`
+  (`__init__` sets `AlignRight`, `setClearButtonEnabled(False)`,
+  `Fixed/Fixed` size policy for all call sites).
+- **Winning variant / why:** the plot/ALC axis-field styling won here — a
+  right-aligned numeric field is conventional and now makes *all* numeric
+  limit fields in the app (plot axes, ALC axes, fit range) look consistent,
+  which is a stated goal of this audit (uniform GUI elements across
+  representations). No functional or data impact.
+- **Also (nit, no user impact):** the shared X/Y row is now wrapped in an
+  `AxisLimitControls` `QWidget` with `contentsMargins(0,0,0,0)` and added via
+  `addWidget` instead of `addLayout`; inter-widget spacing (4), order,
+  stretch, unit-label placement and Auto-button caps are unchanged, so any
+  margin difference around the row is negligible.
+- **Phase:** 1a (surfaced by the Review A gate).
