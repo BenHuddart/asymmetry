@@ -667,8 +667,11 @@ def _build_emu() -> InstrumentLayout:
 
     EMU has 96 detectors arranged in two circular banks of 48 each.
     Each bank is divided into 16 azimuthal sectors, each containing three
-    radial rings (inner, middle, outer).
-    Source: *EMU User Guide*, page 34.
+    radial rings (inner, middle, outer). Numbering is sector-major triplets
+    (inner/middle/outer of one sector before moving to the next), sector 0 is
+    at 12 o'clock, and numbers increase clockwise as viewed looking upstream
+    from downstream — matching the *EMU User Guide*, Section 8.1, and the
+    Mantid EMU instrument definition file (detector 1 at azimuth 90°).
 
     Numbering formula for azimuth sector *s* (0–15):
 
@@ -678,6 +681,19 @@ def _build_emu() -> InstrumentLayout:
     Angular convention: looking into the instrument from downstream.
     Sector 0 is at 12 o'clock (90°); numbers increase clockwise.
     Sector *s* centre: ``(90 − 22.5 × s) mod 360°``.
+
+    **The three radial rings exist for stray-count rejection, not for the**
+    **"Vector Polarization" preset below.** EMU's inner/middle/outer split lets
+    an analysis discard counts from detectors more prone to stray-muon and
+    frame-overlap background — see Giblin *et al.*, *Nucl. Instrum. Methods*
+    *Phys. Res. A* **751**, 70 (2014). The facility does not document a
+    "vector polarization" detector grouping for EMU: the ``Vector
+    Polarization`` preset defined below (Px/Py/Pz octant composition) is an
+    **Asymmetry construct**, not a facility-defined or published EMU
+    convention. It is verified internally consistent against this module's
+    own sector geometry (see ``tests/core/test_instrument.py::
+    TestEMUVectorPolarizationGeometry``) but has no external oracle to check
+    it against.
     """
     n_sectors = 16
     sector_pitch = 22.5  # degrees (360 / 16)
@@ -744,12 +760,22 @@ def _build_emu() -> InstrumentLayout:
 
     # --- Vector polarization: 6 groups across Px, Py, Pz axes ---
     #
-    # The EMU vector mode follows the paper/manual octant model where each bank
-    # is split into four 12-detector octants (4 sectors × 3 rings):
-    #   sectors 0-3   = upper-right
-    #   sectors 4-7   = lower-right
-    #   sectors 8-11  = lower-left
-    #   sectors 12-15 = upper-left
+    # This is an in-house (non-facility-documented) grouping: each bank is
+    # split into four 12-detector quadrants (4 sectors x 3 rings) by the
+    # geometric half-plane of the sector centre (sector s at angle
+    # (90 - 22.5*s) mod 360, matplotlib polar convention: 0 deg = east,
+    # 90 deg = north/12 o'clock, CCW positive):
+    #   sectors 13-3 (13,14,15,0,1,2,3) = upper half  (y > 0), Py Top
+    #   sectors 5-11  (5,6,7,8,9,10,11) = lower half  (y < 0), Py Bottom
+    #   sectors 9-15  (9,10,11,12,13,14,15) = left half (x < 0), Px Left
+    #   sectors 1-7   (1,2,3,4,5,6,7)   = right half (x > 0), Px Right
+    # The four sectors centred exactly on an axis (0 = due north/top,
+    # 4 = due east/right, 8 = due south/bottom, 12 = due west/left) are
+    # boundary cases with y or x == 0 and are assigned to the neighbouring
+    # half that keeps each quadrant an equal 8 sectors: sector 0 -> Right,
+    # sector 4 -> Bottom, sector 8 -> Left, sector 12 -> Top. This partition
+    # is verified against the layout's own DetectorSegment angles in
+    # tests/core/test_instrument.py::TestEMUVectorPolarizationGeometry.
     #
     # Composite channel definitions:
     #   Pz from forward/backward bank sums

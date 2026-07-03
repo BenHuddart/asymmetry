@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from asymmetry.core.instrument import (
@@ -608,6 +610,35 @@ class TestHiFiLayout:
         for seg in layout.banks[0].segments:
             assert abs(seg.angle_half_width_deg - 11.25 / 2) < 1e-6
 
+    def test_forward_detector_17_at_twelve_oclock(self, layout):
+        # HiFi User Manual Sec. 7.1 figure ("looking upstream"): detector 17
+        # sits at the top (12 o'clock) of the Forward disc, with numbering
+        # increasing counter-clockwise from detector 1 at the bottom through
+        # the right-hand side up to 17, then down the left-hand side back to
+        # 32/1. In this module's matplotlib polar convention (0 deg = east,
+        # 90 deg = north/12 o'clock, CCW positive) that is angle 90 deg.
+        seg = next(s for s in layout.banks[0].segments if s.detector_id == 17)
+        assert abs(seg.angle_center_deg - 90.0) < 1e-6
+
+    def test_backward_detector_48_near_twelve_oclock(self, layout):
+        # HiFi User Manual Sec. 7.1 figure: detector 48 sits just left of the
+        # top of the Backward disc (49 just right of top), with numbering
+        # increasing clockwise from 48 through 49...64 down the right side,
+        # 33 near the bottom, then 34...47 up the left side back to 48.
+        seg = next(s for s in layout.banks[1].segments if s.detector_id == 48)
+        assert abs(seg.angle_center_deg - 95.625) < 1e-6
+        assert seg.angle_center_deg > 90.0  # just past north, i.e. left of top
+        seg49 = next(s for s in layout.banks[1].segments if s.detector_id == 49)
+        assert seg49.angle_center_deg < 90.0  # just short of north, right of top
+
+    def test_backward_numbering_increases_clockwise_from_48(self, layout):
+        # Manual figure: 48 (top) -> 49 -> 50 ... increases going down the
+        # right-hand side, i.e. decreasing polar angle (clockwise in this
+        # module's CCW-positive convention).
+        seg48 = next(s for s in layout.banks[1].segments if s.detector_id == 48)
+        seg50 = next(s for s in layout.banks[1].segments if s.detector_id == 50)
+        assert seg50.angle_center_deg < seg48.angle_center_deg
+
     def test_default_preset_is_longitudinal(self, layout):
         assert layout.default_preset_name == "Longitudinal"
 
@@ -822,6 +853,26 @@ class TestMuSRLayout:
         # Detector 33 starts at 309.375°
         seg = next(s for s in layout.banks[1].segments if s.detector_id == 33)
         assert abs(seg.angle_center_deg - 309.375) < 1e-6
+
+    def test_detector_1_and_33_are_mirrored_at_the_bottom(self, layout):
+        # MuSR Manual: "Detector 33 is on the far bottom corner from detector
+        # 1" -- both sit near the bottom of their respective rings but on
+        # opposite sides (1 bottom-left, 33 bottom-right), i.e. mirrored about
+        # the vertical (south, 270 deg) axis rather than stacked at the same
+        # angle. Mantid IDF confirms detector 1 at 230.625 deg, which this
+        # module uses verbatim.
+        seg1 = next(s for s in layout.banks[0].segments if s.detector_id == 1)
+        seg33 = next(s for s in layout.banks[1].segments if s.detector_id == 33)
+        assert abs(seg1.angle_center_deg - 230.625) < 1e-6
+        assert abs(seg33.angle_center_deg - 309.375) < 1e-6
+        # Both in the lower half (south-of-centre) of the disc.
+        assert math.sin(math.radians(seg1.angle_center_deg)) < 0
+        assert math.sin(math.radians(seg33.angle_center_deg)) < 0
+        # Mirrored about the vertical axis (270 deg): equal angular offset
+        # from due south, on opposite sides.
+        offset1 = 270.0 - seg1.angle_center_deg
+        offset33 = seg33.angle_center_deg - 270.0
+        assert abs(offset1 - offset33) < 1e-6
 
     def test_longitudinal_preset(self, layout):
         preset = layout.presets["Longitudinal"]
@@ -1043,6 +1094,144 @@ class TestEMULayout:
             for gdef in preset.groups.values():
                 for det_id in gdef.detector_ids:
                     assert 1 <= det_id <= 96
+
+
+# ---------------------------------------------------------------------------
+# EMU "Vector Polarization" preset — geometric self-consistency
+#
+# EMU has no facility-documented "vector polarization" grouping (verified
+# against the EMU User Guide Sec. 8.1 and the Mantid EMU IDF); the preset is
+# an Asymmetry construct. These tests verify the preset's sector selections
+# are geometrically consistent with the layout's own DetectorSegment angles,
+# i.e. that "Py Top" really is the upper half-plane of both banks and so on,
+# using a boundary rule for the four sectors centred exactly on an axis: each
+# on-axis sector is assigned to the neighbouring half-plane that keeps every
+# quadrant an equal 8 sectors (sector 0 = due N -> Right, sector 4 = due E ->
+# Bottom, sector 8 = due S -> Left, sector 12 = due W -> Top).
+# ---------------------------------------------------------------------------
+
+
+class TestEMUVectorPolarizationGeometry:
+    @pytest.fixture(scope="class")
+    def layout(self):
+        return get_instrument_layout("EMU")
+
+    @staticmethod
+    def _xy(seg):
+        rad = math.radians(seg.angle_center_deg)
+        return math.cos(rad), math.sin(rad)
+
+    @staticmethod
+    def _group_ids(preset, name):
+        return set(next(g.detector_ids for g in preset.groups.values() if g.name == name))
+
+    def test_py_top_is_exactly_the_upper_half_plane(self, layout):
+        preset = layout.presets["Vector Polarization"]
+        top_ids = self._group_ids(preset, "Py Top")
+        for seg in layout.all_segments:
+            _x, y = self._xy(seg)
+            # On-axis boundary sectors (y == 0) are tie-broken elsewhere
+            # (sector 4 -> Bottom, sector 12 -> Top); skip the exact-zero
+            # case here and assert it explicitly below.
+            if abs(y) < 1e-9:
+                continue
+            expected = y > 0
+            assert (seg.detector_id in top_ids) == expected, (
+                f"detector {seg.detector_id} (y={y:.3f}) membership in Py Top "
+                f"disagrees with its geometric half-plane"
+            )
+
+    def test_py_bottom_is_exactly_the_lower_half_plane(self, layout):
+        preset = layout.presets["Vector Polarization"]
+        bottom_ids = self._group_ids(preset, "Py Bottom")
+        for seg in layout.all_segments:
+            _x, y = self._xy(seg)
+            if abs(y) < 1e-9:
+                continue
+            expected = y < 0
+            assert (seg.detector_id in bottom_ids) == expected, (
+                f"detector {seg.detector_id} (y={y:.3f}) membership in Py Bottom "
+                f"disagrees with its geometric half-plane"
+            )
+
+    def test_px_left_is_exactly_the_left_half_plane(self, layout):
+        preset = layout.presets["Vector Polarization"]
+        left_ids = self._group_ids(preset, "Px Left")
+        for seg in layout.all_segments:
+            x, _y = self._xy(seg)
+            if abs(x) < 1e-9:
+                continue
+            expected = x < 0
+            assert (seg.detector_id in left_ids) == expected, (
+                f"detector {seg.detector_id} (x={x:.3f}) membership in Px Left "
+                f"disagrees with its geometric half-plane"
+            )
+
+    def test_px_right_is_exactly_the_right_half_plane(self, layout):
+        preset = layout.presets["Vector Polarization"]
+        right_ids = self._group_ids(preset, "Px Right")
+        for seg in layout.all_segments:
+            x, _y = self._xy(seg)
+            if abs(x) < 1e-9:
+                continue
+            expected = x > 0
+            assert (seg.detector_id in right_ids) == expected, (
+                f"detector {seg.detector_id} (x={x:.3f}) membership in Px Right "
+                f"disagrees with its geometric half-plane"
+            )
+
+    def test_on_axis_boundary_sectors_tie_broken_consistently(self, layout):
+        """The four on-axis sectors (0, 4, 8, 12) each sit exactly on one axis
+
+        (angle a multiple of 90 deg), so each is unambiguous on the axis it
+        does NOT sit on and is a tie needing a rule on the axis it DOES sit
+        on: sector 0 (due N, x=0,y=1) is unambiguously Top and ties
+        Left/Right -> Right; sector 4 (due E, x=1,y=0) is unambiguously Right
+        and ties Top/Bottom -> Bottom; sector 8 (due S, x=0,y=-1) is
+        unambiguously Bottom and ties Left/Right -> Left; sector 12 (due W,
+        x=-1,y=0) is unambiguously Left and ties Top/Bottom -> Top. This
+        keeps every quadrant group at exactly 8 sectors.
+        """
+        preset = layout.presets["Vector Polarization"]
+        top_ids = self._group_ids(preset, "Py Top")
+        bottom_ids = self._group_ids(preset, "Py Bottom")
+        left_ids = self._group_ids(preset, "Px Left")
+        right_ids = self._group_ids(preset, "Px Right")
+
+        by_sector: dict[int, list] = {}
+        for seg in layout.all_segments:
+            by_sector.setdefault(seg.sector_index, []).append(seg)
+
+        for sector, expect_top, expect_bottom, expect_left, expect_right in [
+            (0, True, False, False, True),  # due N: Top (unambiguous) + Right (tie)
+            (4, False, True, False, True),  # due E: Right (unambiguous) + Bottom (tie)
+            (8, False, True, True, False),  # due S: Bottom (unambiguous) + Left (tie)
+            (12, True, False, True, False),  # due W: Left (unambiguous) + Top (tie)
+        ]:
+            segs = by_sector[sector]
+            x, y = self._xy(segs[0])
+            assert abs(x) < 1e-9 or abs(y) < 1e-9, f"sector {sector} is not on-axis"
+            for seg in segs:
+                assert (seg.detector_id in top_ids) == expect_top, (
+                    f"sector {sector} detector {seg.detector_id} Py Top membership"
+                )
+                assert (seg.detector_id in bottom_ids) == expect_bottom, (
+                    f"sector {sector} detector {seg.detector_id} Py Bottom membership"
+                )
+                assert (seg.detector_id in left_ids) == expect_left, (
+                    f"sector {sector} detector {seg.detector_id} Px Left membership"
+                )
+                assert (seg.detector_id in right_ids) == expect_right, (
+                    f"sector {sector} detector {seg.detector_id} Px Right membership"
+                )
+
+    def test_pz_forward_backward_are_full_banks(self, layout):
+        """Pz Forward/Backward = the complete forward/backward banks (1-48/49-96)."""
+        preset = layout.presets["Vector Polarization"]
+        pz_forward = self._group_ids(preset, "Pz Forward")
+        pz_backward = self._group_ids(preset, "Pz Backward")
+        assert pz_forward == set(range(1, 49))
+        assert pz_backward == set(range(49, 97))
 
 
 # ---------------------------------------------------------------------------

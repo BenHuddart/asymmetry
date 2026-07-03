@@ -119,6 +119,14 @@ EMU vector mode follows octant-style detector composition. The detector layout
 reference in :doc:`detector_grouping` should be used for instrument-consistent
 verification of assigned groups.
 
+EMU has no facility-documented "vector polarization" grouping — the EMU User
+Guide and the Mantid EMU instrument definition only describe the physical
+detector numbering (Section 8.1), not a Px/Py/Pz preset. The ``Vector
+Polarization`` preset is therefore an **Asymmetry construct**: it is verified
+internally consistent (each octant selection matches the geometric
+half-plane of the layout's own detector angles) but is not itself a
+published EMU convention.
+
 Related Topics
 --------------
 

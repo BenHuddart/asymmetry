@@ -222,6 +222,16 @@ EMU
 
    EMU schematic matching the in-app detector arrangement.
 
+Numbering follows the *EMU User Guide*, Section 8.1: sector-major triplets
+(inner/middle/outer ring of one sector before moving to the next sector),
+sector 0 at 12 o'clock, numbers increasing clockwise looking upstream from
+downstream. The three radial rings exist for stray-count rejection (Giblin
+*et al.*, *Nucl. Instrum. Methods Phys. Res. A* **751**, 70 (2014)), not for
+the ``Vector Polarization`` preset. That preset (:math:`P_x`/:math:`P_y`/
+:math:`P_z` octant composition) is an **Asymmetry construct** with no
+facility-documented equivalent; see :doc:`vector_polarization` and the
+module docstring in ``core/instrument.py::_build_emu``.
+
 PSI FLAME
 ~~~~~~~~~
 
