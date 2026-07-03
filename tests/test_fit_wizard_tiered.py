@@ -692,3 +692,12 @@ def test_promotion_failed_rep_not_promoted() -> None:
     by_key = {family.key: (ok, reason) for family, _a, ok, reason in decisions}
     assert by_key["b"][0] is False
     assert "failed" in by_key["b"][1]
+
+
+def test_cancel_callback_aborts_analysis() -> None:
+    from asymmetry.core.fitting.engine import FitCancelledError
+
+    t = np.linspace(0.02, 10.0, 120)
+    dataset = _tiered_dataset(t, 0.2 * np.exp(-0.8 * t) + 0.02)
+    with pytest.raises(FitCancelledError):
+        build_fit_wizard_recommendation(dataset, max_workers=1, cancel_callback=lambda: True)

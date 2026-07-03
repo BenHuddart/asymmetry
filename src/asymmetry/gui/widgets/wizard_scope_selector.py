@@ -68,6 +68,7 @@ from PySide6.QtCore import QSignalBlocker, Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QTreeWidget,
     QTreeWidgetItem,
@@ -186,6 +187,12 @@ class WizardScopeSelector(QWidget):
         self._family_tree.setColumnCount(2)
         self._family_tree.setHeaderLabels(["Family / Component", "Cost"])
         self._family_tree.setRootIsDecorated(True)
+        # The name column takes all spare width (long component names must stay
+        # readable); the cost column hugs its short labels.
+        header = self._family_tree.header()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self._family_tree.itemChanged.connect(self._on_item_changed)
 
         # ── Estimate / validity line ──────────────────────────────────────────

@@ -266,3 +266,14 @@ def test_family_parent_toggle_excludes_all_children(qapp: QApplication) -> None:
     assert set(payload["exclude"]) == {"TFCos", "TFGauss"}
     assert payload["include"] == []
     assert emitted, "at least one scope_changed emitted for the parent toggle"
+
+
+def test_name_column_stretches(qapp) -> None:
+    from PySide6.QtWidgets import QHeaderView
+
+    selector = WizardScopeSelector()
+    header = selector._family_tree.header()
+    assert header.sectionResizeMode(0) == QHeaderView.ResizeMode.Stretch
+    assert header.sectionResizeMode(1) == QHeaderView.ResizeMode.ResizeToContents
+    assert not header.stretchLastSection()
+    selector.deleteLater()

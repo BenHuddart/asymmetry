@@ -18,7 +18,7 @@ from asymmetry.core.fitting.component_tags import (
     geometry_from_field_direction,
 )
 from asymmetry.core.fitting.composite import COMPONENTS, CompositeModel
-from asymmetry.core.fitting.engine import FitEngine, FitResult
+from asymmetry.core.fitting.engine import FitCancelledError, FitEngine, FitResult
 from asymmetry.core.fitting.muonium import VACUUM_MUONIUM_A_HF_MHZ
 from asymmetry.core.fitting.parameters import (
     Parameter,
@@ -1259,6 +1259,7 @@ def build_fit_wizard_recommendation(
     user_frequencies_mhz: Sequence[float] | None = None,
     max_workers: int | None = None,
     progress_callback: Callable[[str], None] | None = None,
+    cancel_callback: Callable[[], bool] | None = None,
 ) -> FitWizardRecommendation:
     """Analyze one asymmetry spectrum and recommend a fit candidate.
 
@@ -1269,7 +1270,9 @@ def build_fit_wizard_recommendation(
     match expand to their full Stage-2 portfolios. ``scope`` restricts the
     families physically (``None`` screens the default superset);
     ``user_frequencies_mhz`` adds trusted peak seeds; ``max_workers=1`` gives
-    a deterministic serial path.
+    a deterministic serial path. ``cancel_callback`` is polled between and
+    inside fits (engine in-fit abort); cancellation raises
+    :class:`FitCancelledError`.
     """
     fingerprint = fingerprint_spectrum(dataset)
     resolution: ScopeResolution | None = None
@@ -1280,6 +1283,10 @@ def build_fit_wizard_recommendation(
     def _progress(message: str) -> None:
         if progress_callback is not None:
             progress_callback(message)
+
+    def _check_cancelled() -> None:
+        if cancel_callback is not None and cancel_callback():
+            raise FitCancelledError("Fit wizard analysis cancelled.")
 
     if not families:
         return FitWizardRecommendation(
@@ -1321,6 +1328,7 @@ def build_fit_wizard_recommendation(
             seed_context=stage1_context,
             variant_budget=_STAGE1_VARIANT_BUDGET,
             stage=1,
+            cancel_callback=cancel_callback,
         )
 
     stage1_groups = [(family, [family.stage1_rep, *family.stage1_extras]) for family in families]
@@ -1350,6 +1358,8 @@ def build_fit_wizard_recommendation(
         )
 
     stage1_assessments = [_family_best(group) for group in grouped_stage1]
+
+    _check_cancelled()
 
     # Peak pass B: FFT of the best smooth (non-oscillatory) fit's residuals
     # kills relaxation leakage and exposes weak lines. This is the first-class
@@ -1439,6 +1449,7 @@ def build_fit_wizard_recommendation(
             kept.append(member.key)
         stage2_keys_by_family[family.key] = kept
 
+    _check_cancelled()
     if stage2_templates:
         _progress(f"Stage 2: fitting {len(stage2_templates)} expanded candidates")
 
@@ -1458,6 +1469,7 @@ def build_fit_wizard_recommendation(
             seed_context=stage2_context,
             variant_budget=budget,
             stage=2,
+            cancel_callback=cancel_callback,
         )
 
     stage2_assessments = _run_template_assessments(
@@ -1996,6 +2008,7 @@ def _assess_candidate_template(
     seed_context: TemplateSeedContext | None = None,
     variant_budget: int = 5,
     stage: int = 2,
+    cancel_callback: Callable[[], bool] | None = None,
 ) -> CandidateAssessment:
     # Frequencies measured from spectral peaks are trusted seeds: the 0.5x/2x
     # variant scaling that rescues a blind FFT guess would only destroy them.
@@ -2016,7 +2029,14 @@ def _assess_candidate_template(
     best_result: FitResult | None = None
     best_parameters: ParameterSet | None = None
     for parameters in attempts:
-        result = fit_engine.fit(dataset, template.model.function, _clone_parameter_set(parameters))
+        if cancel_callback is not None and cancel_callback():
+            raise FitCancelledError("Fit wizard analysis cancelled.")
+        result = fit_engine.fit(
+            dataset,
+            template.model.function,
+            _clone_parameter_set(parameters),
+            cancel_callback=cancel_callback,
+        )
         if _needs_fit_backend_fallback(result):
             result = _scipy_fit_fallback(dataset, template.model.function, parameters)
         if best_result is None:
