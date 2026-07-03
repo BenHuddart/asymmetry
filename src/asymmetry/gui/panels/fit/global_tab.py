@@ -108,7 +108,6 @@ from asymmetry.gui.styles.widgets import (
 )
 from asymmetry.gui.tasks import TaskRunner, TaskWorker
 from asymmetry.gui.utils.formatting import format_param_label
-from asymmetry.gui.widgets.axis_limits import FloatLimitField
 from asymmetry.gui.widgets.fit_run_controls import FitRunControls
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollSpinBox
 from asymmetry.gui.windows.global_fit_wizard_window import GlobalFitWizardWindow
@@ -124,18 +123,15 @@ from .tab_base import (
     FitParameterTable,
     FitTabBase,
     _apply_domain_mismatch_warning,
-    _apply_fit_range_display,
     _apply_param_table_style,
     _CommitOnTabDelegate,
     _configure_fraction_rows_in_table,
     _fit_curve_sample_count,
     _fit_domain_mismatch_message,
-    _fit_range_provenance_text,
     _fit_summary,
     _format_bounds_pair,
     _get_file_value_for_parameter,
     _grouped_formula_string,
-    _make_formula_box,
     _make_param_name_item,
     _normalized_model_param_values,
     _param_table_rows_by_name,
@@ -191,7 +187,6 @@ class GlobalFitTab(FitTabBase):
     # fit's shared physics, so the batch grouped surface can chain-seed per run.
     single_grouped_fit_recorded = Signal(int, object, object)
     grouped_preview_requested = Signal(object, object)  # (grouped_datasets, preview_curves)
-    fit_range_edit_committed = Signal(float, float)  # (x_min, x_max) from spinbox commit
     # (dataset, {"result": FitResult|GroupedTimeDomainFitResult,
     #            "overlays": {group_id: (time, corrected_model)}}) — the fit result
     # plus the overlay curves for the Individual-Groups plot (displayed
@@ -306,9 +301,7 @@ class GlobalFitTab(FitTabBase):
         model_layout = QFormLayout()
         model_layout.setContentsMargins(0, 0, 0, 0)
         model_box.addLayout(model_layout)
-        self._formula_box, self._formula_label = _make_formula_box()
-        self._edit_model_btn = QPushButton("Edit Function...")
-        self._edit_model_btn.clicked.connect(self._edit_function)
+        self._build_formula_box()
         self._fit_wizard_btn = QPushButton("Global Wizard...")
         self._fit_wizard_btn.setToolTip("Open the Global Fit Wizard.")
         self._fit_wizard_btn.clicked.connect(self._open_fit_wizard)
@@ -351,12 +344,10 @@ class GlobalFitTab(FitTabBase):
         _fr_layout.setSpacing(4)
         _fr_box.addLayout(_fr_layout)
 
-        self._fit_range_min_spin = FloatLimitField()
+        self._build_fit_range_fields()
 
         self._fit_range_mid_label = QLabel("≤ <i>t</i> ≤")
         self._fit_range_mid_label.setTextFormat(Qt.TextFormat.RichText)
-
-        self._fit_range_max_spin = FloatLimitField()
 
         _fr_layout.addWidget(self._fit_range_min_spin)
         _fr_layout.addWidget(self._fit_range_mid_label)
@@ -365,9 +356,6 @@ class GlobalFitTab(FitTabBase):
         _fr_layout.addWidget(self._fit_range_unit_label)
         _fr_layout.addStretch()
         layout.addWidget(_fr_group)
-
-        self._fit_range_min_spin.editingFinished.connect(self._on_fit_range_spinbox_committed)
-        self._fit_range_max_spin.editingFinished.connect(self._on_fit_range_spinbox_committed)
 
         # Parameter classification table
         self._param_group, param_layout = make_section("Parameter Classification")
@@ -675,26 +663,13 @@ class GlobalFitTab(FitTabBase):
         if normalized == self._domain:
             return
         self._domain = normalized
+        self._apply_fit_range_domain(self._domain)
         if self._domain == "frequency":
-            self._formula_row_label.setText("S(ν):")
-            self._fit_range_mid_label.setText("≤ <i>ν</i> ≤")
-            self._fit_range_unit_label.setText("MHz")
-            self._fit_range_min_spin.setDecimals(4)
-            self._fit_range_max_spin.setDecimals(4)
-            self._fit_range_min_spin.setRange(-1_000_000.0, 1_000_000.0)
-            self._fit_range_max_spin.setRange(-1_000_000.0, 1_000_000.0)
             self._fit_wizard_btn.setEnabled(False)
             self._fit_wizard_btn.setToolTip(
                 "Global Fit Wizard is currently available for time-domain fits."
             )
         else:
-            self._formula_row_label.setText("A(t):")
-            self._fit_range_mid_label.setText("≤ <i>t</i> ≤")
-            self._fit_range_unit_label.setText("µs")
-            self._fit_range_min_spin.setDecimals(3)
-            self._fit_range_max_spin.setDecimals(3)
-            self._fit_range_min_spin.setRange(-1000.0, 1000.0)
-            self._fit_range_max_spin.setRange(-1000.0, 1000.0)
             self._fit_wizard_btn.setToolTip("")
         self._set_composite_model(self._default_composite_model())
         self._update_mode_ui(preserve_result=False)
@@ -1070,25 +1045,6 @@ class GlobalFitTab(FitTabBase):
         self._fit_blocked = bool(blocked)
         self._fit_block_reason = str(reason)
         self._update_mode_ui(preserve_result=True)
-
-    def set_fit_range_display(self, x_min: float | None, x_max: float | None) -> None:
-        """Update fit-range spinboxes from the plot without re-emitting."""
-        _apply_fit_range_display(
-            self._domain, self._fit_range_min_spin, self._fit_range_max_spin, x_min, x_max
-        )
-
-    def _on_fit_range_spinbox_committed(self) -> None:
-        """Emit fit_range_edit_committed when the user finishes editing a spinbox."""
-        self.fit_range_edit_committed.emit(
-            self._fit_range_min_spin.value(),
-            self._fit_range_max_spin.value(),
-        )
-
-    def current_fit_range_text(self) -> str | None:
-        """Active fit range as a provenance string (µs/MHz), or ``None``."""
-        return _fit_range_provenance_text(
-            self._fit_range_min_spin, self._fit_range_max_spin, self._fit_range_unit_label
-        )
 
     def _refresh_inherited_single_fit_defaults(self) -> None:
         """Apply single-fit seeds when every selected dataset shares one model.

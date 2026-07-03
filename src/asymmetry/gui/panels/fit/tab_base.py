@@ -1573,3 +1573,83 @@ class FitTabBase(QWidget):
     behave exactly as before (``super().__init__`` resolves through here to
     ``QWidget``).
     """
+
+    #: Emitted (x_min, x_max) when the user finishes editing a fit-range
+    #: spinbox. Shared by both fit tabs.
+    fit_range_edit_committed = Signal(float, float)  # (x_min, x_max) from spinbox commit
+
+    # ------------------------------------------------------------------
+    # Shared model-formula box construction (template-method seam)
+    # ------------------------------------------------------------------
+    def _build_formula_box(self) -> None:
+        """Create the shared model-formula box, label, and Edit-Function button.
+
+        Populates ``self._formula_box``, ``self._formula_label`` and
+        ``self._edit_model_btn`` and wires the button to ``self._edit_function``
+        — which each subclass defines (single-dataset vs grouped variants). The
+        subclass owns the surrounding layout (row label, button-loop placement)
+        and only calls this helper to build the shared widgets.
+        """
+        self._formula_box, self._formula_label = _make_formula_box()
+        self._edit_model_btn = QPushButton("Edit Function...")
+        self._edit_model_btn.clicked.connect(self._edit_function)
+
+    # ------------------------------------------------------------------
+    # Shared fit-range spinbox pair
+    # ------------------------------------------------------------------
+    def _build_fit_range_fields(self) -> None:
+        """Create and wire the two fit-range spinboxes.
+
+        Populates ``self._fit_range_min_spin`` / ``self._fit_range_max_spin``
+        and connects each ``editingFinished`` to
+        ``self._on_fit_range_spinbox_committed``. The subclass owns the
+        surrounding layout (mid/unit labels and their placement).
+        """
+        self._fit_range_min_spin = FloatLimitField()
+        self._fit_range_max_spin = FloatLimitField()
+        self._fit_range_min_spin.editingFinished.connect(self._on_fit_range_spinbox_committed)
+        self._fit_range_max_spin.editingFinished.connect(self._on_fit_range_spinbox_committed)
+
+    def _apply_fit_range_domain(self, domain: str) -> None:
+        """Apply the shared domain-dependent labels + spin decimals/ranges.
+
+        Covers the pieces identical to both tabs' ``set_domain``: the formula
+        row label, fit-range mid/unit labels, and the spin decimals/ranges.
+        Tab-specific domain behaviour (wizard enable, composite model, refresh)
+        stays in each subclass's ``set_domain``.
+        """
+        if domain == "frequency":
+            self._formula_row_label.setText("S(ν):")
+            self._fit_range_mid_label.setText("≤ <i>ν</i> ≤")
+            self._fit_range_unit_label.setText("MHz")
+            self._fit_range_min_spin.setDecimals(4)
+            self._fit_range_max_spin.setDecimals(4)
+            self._fit_range_min_spin.setRange(-1_000_000.0, 1_000_000.0)
+            self._fit_range_max_spin.setRange(-1_000_000.0, 1_000_000.0)
+        else:
+            self._formula_row_label.setText("A(t):")
+            self._fit_range_mid_label.setText("≤ <i>t</i> ≤")
+            self._fit_range_unit_label.setText("µs")
+            self._fit_range_min_spin.setDecimals(3)
+            self._fit_range_max_spin.setDecimals(3)
+            self._fit_range_min_spin.setRange(-1000.0, 1000.0)
+            self._fit_range_max_spin.setRange(-1000.0, 1000.0)
+
+    def set_fit_range_display(self, x_min: float | None, x_max: float | None) -> None:
+        """Update fit-range spinboxes from the plot without re-emitting."""
+        _apply_fit_range_display(
+            self._domain, self._fit_range_min_spin, self._fit_range_max_spin, x_min, x_max
+        )
+
+    def _on_fit_range_spinbox_committed(self) -> None:
+        """Emit fit_range_edit_committed when the user finishes editing a spinbox."""
+        self.fit_range_edit_committed.emit(
+            self._fit_range_min_spin.value(),
+            self._fit_range_max_spin.value(),
+        )
+
+    def current_fit_range_text(self) -> str | None:
+        """Active fit range as a provenance string (µs/MHz), or ``None``."""
+        return _fit_range_provenance_text(
+            self._fit_range_min_spin, self._fit_range_max_spin, self._fit_range_unit_label
+        )

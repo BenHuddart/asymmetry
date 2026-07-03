@@ -59,7 +59,6 @@ from asymmetry.gui.styles.widgets import (
     success_html,
 )
 from asymmetry.gui.tasks import TaskRunner
-from asymmetry.gui.widgets.axis_limits import FloatLimitField
 from asymmetry.gui.widgets.fit_run_controls import FitRunControls
 from asymmetry.gui.windows.fit_wizard_window import FitWizardWindow
 
@@ -68,14 +67,11 @@ from .tab_base import (
     FitParameterTable,
     FitTabBase,
     _apply_domain_mismatch_warning,
-    _apply_fit_range_display,
     _fit_curve_sample_count,
     _fit_domain_mismatch_message,
-    _fit_range_provenance_text,
     _fit_success_html,
     _fit_summary,
     _fit_warnings_html,
-    _make_formula_box,
     _model_without_trailing_background,
     _normalized_model_param_values,
     _set_formula_label_text,
@@ -114,7 +110,6 @@ class SingleFitTab(FitTabBase):
     share_function_with_group_requested = Signal(int)
     send_model_to_batch_requested = Signal()
     add_to_series_requested = Signal()
-    fit_range_edit_committed = Signal(float, float)  # (x_min, x_max) from spinbox commit
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -157,9 +152,7 @@ class SingleFitTab(FitTabBase):
         model_layout = QFormLayout()
         model_layout.setContentsMargins(0, 0, 0, 0)
         model_box.addLayout(model_layout)
-        self._formula_box, self._formula_label = _make_formula_box()
-        self._edit_model_btn = QPushButton("Edit Function...")
-        self._edit_model_btn.clicked.connect(self._edit_function)
+        self._build_formula_box()
         self._fit_wizard_btn = QPushButton("Fit Wizard...")
         self._fit_wizard_btn.clicked.connect(self._open_fit_wizard)
         self._fit_wizard_btn.setEnabled(False)
@@ -227,12 +220,10 @@ class SingleFitTab(FitTabBase):
         fit_range_layout.setSpacing(4)
         _fit_range_box.addLayout(fit_range_layout)
 
-        self._fit_range_min_spin = FloatLimitField()
+        self._build_fit_range_fields()
 
         self._fit_range_mid_label = QLabel("≤ <i>t</i> ≤")
         self._fit_range_mid_label.setTextFormat(Qt.TextFormat.RichText)
-
-        self._fit_range_max_spin = FloatLimitField()
 
         self._fit_range_unit_label = QLabel("µs")
 
@@ -242,9 +233,6 @@ class SingleFitTab(FitTabBase):
         fit_range_layout.addWidget(self._fit_range_unit_label)
         fit_range_layout.addStretch()
         layout.addWidget(fit_range_group)
-
-        self._fit_range_min_spin.editingFinished.connect(self._on_fit_range_spinbox_committed)
-        self._fit_range_max_spin.editingFinished.connect(self._on_fit_range_spinbox_committed)
 
         # Parameter table — the shared Name·Value·Fix·Min·Max·Batch·Link·Tie
         # widget (columns/delegates/Fix-Link-Tie wiring/fraction sync live in
@@ -355,29 +343,16 @@ class SingleFitTab(FitTabBase):
         if normalized == self._domain:
             return
         self._domain = normalized
+        self._apply_fit_range_domain(self._domain)
         if self._domain == "frequency":
             self._fit_wizard_btn.setEnabled(False)
             self._fit_wizard_btn.setToolTip(
                 "Fit Wizard is currently available for time-domain fits."
             )
             self._share_group_action.setEnabled(False)
-            self._formula_row_label.setText("S(ν):")
-            self._fit_range_mid_label.setText("≤ <i>ν</i> ≤")
-            self._fit_range_unit_label.setText("MHz")
-            self._fit_range_min_spin.setDecimals(4)
-            self._fit_range_max_spin.setDecimals(4)
-            self._fit_range_min_spin.setRange(-1_000_000.0, 1_000_000.0)
-            self._fit_range_max_spin.setRange(-1_000_000.0, 1_000_000.0)
             self._set_composite_model(default_frequency_model())
         else:
             self._fit_wizard_btn.setToolTip("")
-            self._formula_row_label.setText("A(t):")
-            self._fit_range_mid_label.setText("≤ <i>t</i> ≤")
-            self._fit_range_unit_label.setText("µs")
-            self._fit_range_min_spin.setDecimals(3)
-            self._fit_range_max_spin.setDecimals(3)
-            self._fit_range_min_spin.setRange(-1000.0, 1000.0)
-            self._fit_range_max_spin.setRange(-1000.0, 1000.0)
             self._set_composite_model(CompositeModel(["Exponential", "Constant"], operators=["+"]))
         self.set_dataset(self._current_dataset)
 
@@ -507,25 +482,6 @@ class SingleFitTab(FitTabBase):
         self._fit_btn.setToolTip(tooltip)
         self._preview_btn.setToolTip(tooltip)
         self._fit_wizard_btn.setToolTip(tooltip)
-
-    def set_fit_range_display(self, x_min: float | None, x_max: float | None) -> None:
-        """Update fit-range spinboxes from the plot without re-emitting."""
-        _apply_fit_range_display(
-            self._domain, self._fit_range_min_spin, self._fit_range_max_spin, x_min, x_max
-        )
-
-    def _on_fit_range_spinbox_committed(self) -> None:
-        """Emit fit_range_edit_committed when the user finishes editing a spinbox."""
-        self.fit_range_edit_committed.emit(
-            self._fit_range_min_spin.value(),
-            self._fit_range_max_spin.value(),
-        )
-
-    def current_fit_range_text(self) -> str | None:
-        """Active fit range as a provenance string (µs/MHz), or ``None``."""
-        return _fit_range_provenance_text(
-            self._fit_range_min_spin, self._fit_range_max_spin, self._fit_range_unit_label
-        )
 
     def _wizard_context_signature(self) -> dict[str, object]:
         return {
