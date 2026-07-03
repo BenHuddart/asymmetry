@@ -239,7 +239,9 @@ class GroupingDialog(QDialog):
         preset_row.addWidget(self._preset_chip)
         preset_row.addStretch()
         root.addLayout(preset_row)
-        self._rebuild_preset_combo()
+        # The preset combo is populated at the end of __init__, once the
+        # detector-layout resolution state (_detector_layout_instrument_name)
+        # exists in the form section below.
 
         # Non-blocking transverse-field nudge: shown when the reference run is
         # transverse-field but the grouping is still on a longitudinal preset
@@ -638,6 +640,7 @@ class GroupingDialog(QDialog):
 
         self._update_period_mode_visibility()
         self._update_grouping_recommendation()
+        self._rebuild_preset_combo()
         self._connect_dirty_tracking()
         self._refresh_preset_chip(self._current_grouping_payload())
         self._update_apply_enabled()

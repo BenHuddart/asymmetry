@@ -1687,3 +1687,169 @@ def test_transverse_field_gps_run_shows_grouping_nudge(qapp) -> None:
 def test_gps_run_without_field_direction_does_not_nudge(qapp) -> None:
     dialog = GroupingDialog([_gps_dataset(None)])
     assert not dialog._tf_hint_label.isVisibleTo(dialog)
+
+
+# ---------------------------------------------------------------------------
+# M2 profile-editor semantics
+# ---------------------------------------------------------------------------
+
+
+from asymmetry.core.project.profiles import (  # noqa: E402
+    GroupingProfile,
+    profile_fingerprint_for_run,
+    profile_from_payload,
+)
+
+
+def _profile_for(dataset: MuonDataset, name: str, **overrides) -> GroupingProfile:
+    """Build a GroupingProfile from a dataset's payload, with field overrides."""
+    fingerprint = profile_fingerprint_for_run(dataset.run)
+    payload = dict(dataset.run.grouping or {})
+    payload.update(overrides)
+    return profile_from_payload(payload, name, fingerprint, active=True)
+
+
+def test_preview_run_change_preserves_draft_edits(qapp: QApplication) -> None:
+    """Changing the preview run must never discard in-progress draft edits."""
+    ds_a = _dataset_with_ratio(6201, ratio=2.0)
+    ds_b = _dataset_with_ratio(6202, ratio=3.0)
+    dialog = GroupingDialog([ds_a, ds_b], selected_run_number=6201)
+
+    dialog._alpha_spin.setValue(1.2345)
+    dialog._mark_dirty()
+    idx = dialog._reference_combo.findData(6202)
+    dialog._reference_combo.setCurrentIndex(idx)
+    dialog._on_reference_dataset_changed()
+
+    assert dialog._current_grouping_payload()["alpha"] == pytest.approx(1.2345)
+    assert int(dialog._reference_dataset.run_number) == 6202
+
+
+def test_draft_seeds_from_active_profile_when_present(qapp: QApplication) -> None:
+    """An active profile for the fingerprint seeds the draft (not the run payload)."""
+    dataset = _dataset_with_histograms()
+    profile = _profile_for(dataset, "My Profile", alpha=1.75)
+    dialog = GroupingDialog([dataset], profiles=[profile])
+
+    assert dialog._draft_name == "My Profile"
+    assert dialog._current_grouping_payload()["alpha"] == pytest.approx(1.75)
+
+
+def test_default_draft_synthesized_without_profile(qapp: QApplication) -> None:
+    """A fingerprint with no profile synthesizes a Default (<instrument>) draft."""
+    dialog = GroupingDialog([_gps_dataset(None)])
+    assert dialog._draft_name.startswith("Default (")
+
+
+def test_preset_chip_clears_stale_preset_on_drift(qapp: QApplication) -> None:
+    """Editing groups away from a preset clears the stored grouping_preset."""
+    dataset = _gps_dataset(None)
+    dialog = GroupingDialog([dataset])
+    # Apply a named preset via the dropdown.
+    dialog._preset_combo.setCurrentIndex(0)
+    dialog._on_preset_combo_activated(0)
+    assert dialog._grouping_preset_name is not None
+    assert dialog._preset_chip.text().startswith("Preset:")
+
+    # Drift the groups so they no longer match the preset.
+    dialog._groups = {1: [0], 2: [1, 2, 3, 4, 5]}
+    dialog._populate_group_table()
+    dialog._refresh_preset_chip(dialog._current_grouping_payload())
+    assert dialog._grouping_preset_name is None
+    assert "Custom (edited from" in dialog._preset_chip.text()
+    # The drifted draft must not carry the stale preset.
+    assert not dialog._current_grouping_payload().get("grouping_preset")
+
+
+def test_release_from_profile_excludes_run_from_apply(qapp: QApplication) -> None:
+    """A released run leaves the inheriting set (Apply targets only inheritors)."""
+    ds_a = _dataset_with_ratio(6301, ratio=2.0)
+    ds_b = _dataset_with_ratio(6302, ratio=3.0)
+    dialog = GroupingDialog([ds_a, ds_b], selected_run_number=6301)
+
+    assert dialog._scope_panel.inheriting_run_numbers() == {6301, 6302}
+    dialog._scope_panel._released[6302] = True
+
+    result = dialog.get_grouping_result()
+    assert set(result["run_numbers"]) == {6301}
+    profile_result = dialog.get_profile_result()
+    assert profile_result["inheriting"] == {6301}
+    assert profile_result["released"] == {6302}
+    assert profile_result["newly_released"] == {6302}
+
+
+def test_reattach_run_returns_it_to_inheriting(qapp: QApplication) -> None:
+    """Reattaching an initially-overridden run returns it to the profile."""
+    ds_a = _dataset_with_ratio(6401, ratio=2.0)
+    ds_b = _dataset_with_ratio(6402, ratio=3.0)
+    dialog = GroupingDialog(
+        [ds_a, ds_b],
+        selected_run_number=6401,
+        overridden_run_numbers=[6402],
+    )
+    assert dialog._scope_panel.released_run_numbers() == {6402}
+
+    dialog._scope_panel._released[6402] = False
+    profile_result = dialog.get_profile_result()
+    assert profile_result["inheriting"] == {6401, 6402}
+    assert profile_result["newly_reattached"] == {6402}
+
+
+def test_apply_disabled_when_no_run_inherits(qapp: QApplication) -> None:
+    """Apply is disabled (with a reason) when every run is released."""
+    dataset = _dataset_with_ratio(6501, ratio=2.0)
+    dialog = GroupingDialog([dataset])
+    assert dialog._apply_btn.isEnabled()
+
+    dialog._scope_panel._released[6501] = True
+    dialog._on_scope_changed()
+    assert not dialog._apply_btn.isEnabled()
+    assert "released" in dialog._apply_btn.toolTip().lower()
+
+
+def test_unsaved_draft_guard_blocks_reject_on_keep_editing(qapp: QApplication, monkeypatch) -> None:
+    """Cancelling a dirty draft prompts; Keep-editing aborts the close."""
+    from PySide6.QtWidgets import QMessageBox
+
+    dataset = _dataset_with_histograms()
+    dialog = GroupingDialog([dataset])
+    dialog._alpha_spin.setValue(2.5)
+    dialog._mark_dirty()
+
+    answers = iter([QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Discard])
+    monkeypatch.setattr(
+        grouping_dialog_dialog_module.QMessageBox,
+        "question",
+        lambda *args, **kwargs: next(answers),
+    )
+    results: list[int] = []
+    monkeypatch.setattr(GroupingDialog, "done", lambda self, code: results.append(code))
+
+    dialog.reject()  # first answer: Cancel -> no close
+    assert results == []
+    dialog.reject()  # second answer: Discard -> closes
+    assert results  # done() was called
+
+
+def test_apply_marks_draft_saved(qapp: QApplication, monkeypatch) -> None:
+    """Applying a dirty draft clears the dirty flag so close does not prompt."""
+    dataset = _dataset_with_histograms()
+    dialog = GroupingDialog([dataset])
+    dialog._alpha_spin.setValue(1.9)
+    dialog._mark_dirty()
+    monkeypatch.setattr(GroupingDialog, "accept", lambda self: None)
+
+    dialog._on_apply()
+    assert dialog._draft_dirty is False
+
+
+def test_multi_instrument_fingerprint_separation(qapp: QApplication) -> None:
+    """The scope panel and preview list only show the current fingerprint."""
+    gps = _gps_dataset(None)  # 6 histograms, GPS
+    other = _dataset_with_histograms()  # 2 histograms, no instrument
+    dialog = GroupingDialog([gps, other], selected_run_number=5001)
+
+    fingerprint_runs = {int(ds.run_number) for ds in dialog._fingerprint_datasets()}
+    assert 5001 in fingerprint_runs
+    assert 4001 not in fingerprint_runs
+    assert dialog._scope_panel.inheriting_run_numbers() == {5001}

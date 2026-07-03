@@ -27,6 +27,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Project-level detector-grouping profiles.** The Grouping window is now a
+  *profile editor* rather than a bulk broadcast tool. One named grouping profile
+  per instrument fingerprint (instrument + histogram count) captures the
+  shareable analysis choices — the forward/backward groups and detector
+  assignments, the α balance policy, and the deadtime, background, binning and
+  period settings — while each run keeps its own file-derived facts (t0, good-bin
+  window, per-detector deadtime). Runs *inherit* their fingerprint's active
+  profile automatically: newly loaded runs pick it up, and an α or good-bin edit
+  no longer has to be broadcast run-by-run. A run can be explicitly *released
+  from* its profile (keeping a per-run grouping override, marked with a "custom
+  grouping" badge in the data browser) and later *reattached*. The window adds a
+  profile selector (New / Duplicate / Rename), a non-destructive **preview run**
+  selector that shows a run's per-run facts without disturbing the draft, an
+  instrument **preset** dropdown with a live "Preset: … / Custom (edited from …)"
+  chip, and an unsaved-changes guard. Profiles are saved in the project (schema
+  v12) and re-resolved onto their runs on open; existing projects migrate
+  automatically. Applying a profile reports how many runs it reached and how many
+  overridden runs were left untouched.
 - **Robust batch seeding for near-transition oscillatory scans.** A block-separable
   F-B asymmetry batch (every free parameter Local — e.g. an EuO ZF temperature scan
   approaching `T_C`) now honours the **Chain from previous run** / **Auto** seeding
