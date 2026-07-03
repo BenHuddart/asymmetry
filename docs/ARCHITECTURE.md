@@ -409,6 +409,17 @@ The toggle is off by default and exposed only for PSI-style raw data
 on the file-deadtime path, and Asymmetry does not use background subtraction as
 an ISIS deadtime fallback.
 
+Binning follows the same counts-first order in every mode (fixed bunching
+included): counts are summed onto the output bins and the asymmetry formed
+per output bin (`core/transform/rebin.py::binned_fb_asymmetry`) — the
+counts-then-ratio convention WiMDA, musrfit, and Mantid all use. Rebinning
+an already-formed asymmetry curve (`rebin()`) is reserved for data without
+raw histograms; on sparse data it lets one-sided raw bins' σ = 1
+no-information sentinels inflate merged error bars. The audited
+cross-program conventions are recorded in
+[docs/porting/comparison-matrix.md](porting/comparison-matrix.md)
+("Reduction numerics").
+
 ### 4.2.3 ROOT Provenance
 
 ROOT support follows musrfit's `PRunDataHandler::ReadRootFile`. Asymmetry reads

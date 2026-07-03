@@ -199,8 +199,6 @@ from asymmetry.core.transform import (
     available_background_modes,
     build_field_scan,
     common_t0_for_groups,
-    compute_asymmetry,
-    compute_asymmetry_with_count_errors,
     differentiate_scan,
     effective_group_indices,
     good_frames,
@@ -213,7 +211,7 @@ from asymmetry.core.transform.deadtime import (
     calibrate_deadtime_from_histograms,
     promote_deadtime_to_grouping,
 )
-from asymmetry.core.transform.rebin import binned_fb_asymmetry, rebin, resolve_binning_mode
+from asymmetry.core.transform.rebin import binned_fb_asymmetry, rebin
 from asymmetry.core.utils.constants import (
     GAUSS_TO_TESLA,
     MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
@@ -4488,29 +4486,11 @@ class MainWindow(QMainWindow):
             run.grouping.pop("background_values", None)
             run.grouping.pop("background_details", None)
 
-        reduction_binning_mode, _, _ = resolve_binning_mode(reduction_grouping)
-        if reduction_binning_mode != "fixed":
-            # binned_fb_asymmetry already applied the good window and bins.
-            dataset.time = time_axis.copy()
-            dataset.asymmetry = asymmetry.copy()
-            dataset.error = error.copy()
-        else:
-            lo = max(0, first_good)
-            hi = min(len(asymmetry) - 1, last_good)
-            if lo <= hi:
-                time_out = time_axis[lo : hi + 1].copy()
-                asym_out = asymmetry[lo : hi + 1].copy()
-                err_out = error[lo : hi + 1].copy()
-                if bunch_factor > 1:
-                    time_out, asym_out, err_out = rebin(
-                        time_out,
-                        asym_out,
-                        err_out,
-                        bunch_factor,
-                    )
-                dataset.time = time_out
-                dataset.asymmetry = asym_out
-                dataset.error = err_out
+        # binned_fb_asymmetry already applied the good window and the
+        # binning (fixed bunching included) inside the reduction.
+        dataset.time = time_axis.copy()
+        dataset.asymmetry = asymmetry.copy()
+        dataset.error = error.copy()
 
         run.grouping.update(
             {
@@ -4690,53 +4670,32 @@ class MainWindow(QMainWindow):
             and bkg_result.backward_error is not None
         )
 
-        binning_mode, _, _ = resolve_binning_mode(grouping)
-        if binning_mode != "fixed":
-            # Variable-width modes bin the counts before forming the
-            # asymmetry; the returned arrays are final (good window applied,
-            # no further slicing or bunching by the caller).
-            try:
-                first_good = max(0, int(grouping.get("first_good_bin", 0)))
-            except (TypeError, ValueError):
-                first_good = 0
-            try:
-                last_good = int(grouping.get("last_good_bin", n_grouped - 1))
-            except (TypeError, ValueError):
-                last_good = n_grouped - 1
-            time_axis, asymmetry, error = binned_fb_asymmetry(
-                forward,
-                backward,
-                grouping=grouping,
-                common_t0=common_t0,
-                bin_width_us=bin_width,
-                alpha=alpha,
-                first_good_bin=first_good,
-                last_good_bin=last_good,
-                forward_error=bkg_result.forward_error if background_errors else None,
-                backward_error=bkg_result.backward_error if background_errors else None,
-            )
-            return (
-                np.asarray(time_axis, dtype=np.float64),
-                np.asarray(asymmetry * 100.0, dtype=np.float64),
-                np.asarray(error * 100.0, dtype=np.float64),
-                dt_applied,
-                background_state,
-            )
-
-        if background_errors:
-            asymmetry, error = compute_asymmetry_with_count_errors(
-                forward,
-                backward,
-                bkg_result.forward_error,
-                bkg_result.backward_error,
-                alpha=alpha,
-            )
-        else:
-            asymmetry, error = compute_asymmetry(forward, backward, alpha=alpha)
-
-        time_axis = (np.arange(len(asymmetry), dtype=np.float64) - float(common_t0)) * bin_width
+        # Every binning mode (fixed included) bins the counts before forming
+        # the asymmetry — the counts-then-ratio order all reference programs
+        # use. The returned arrays are final: good window applied, bunching
+        # applied, no further slicing or bunching by the caller.
+        try:
+            first_good = max(0, int(grouping.get("first_good_bin", 0)))
+        except (TypeError, ValueError):
+            first_good = 0
+        try:
+            last_good = int(grouping.get("last_good_bin", n_grouped - 1))
+        except (TypeError, ValueError):
+            last_good = n_grouped - 1
+        time_axis, asymmetry, error = binned_fb_asymmetry(
+            forward,
+            backward,
+            grouping=grouping,
+            common_t0=common_t0,
+            bin_width_us=bin_width,
+            alpha=alpha,
+            first_good_bin=first_good,
+            last_good_bin=last_good,
+            forward_error=bkg_result.forward_error if background_errors else None,
+            backward_error=bkg_result.backward_error if background_errors else None,
+        )
         return (
-            time_axis,
+            np.asarray(time_axis, dtype=np.float64),
             np.asarray(asymmetry * 100.0, dtype=np.float64),
             np.asarray(error * 100.0, dtype=np.float64),
             dt_applied,
