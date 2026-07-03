@@ -26,9 +26,10 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QDoubleValidator, QKeyEvent
-from PySide6.QtWidgets import QLineEdit, QSizePolicy, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QPushButton, QSizePolicy, QWidget
 
 from asymmetry.gui.styles.fonts import mono_font
+from asymmetry.gui.styles.widgets import build_nav_button_qss
 
 
 class FloatLimitField(QLineEdit):
@@ -179,3 +180,103 @@ class FloatLimitField(QLineEdit):
 
     def setRange(self, minimum: float, maximum: float) -> None:  # noqa: N802 — spinbox-API shim
         self._validator.setRange(minimum, maximum, self._decimals)
+
+
+class AxisLimitControls(QWidget):
+    """Builds and owns the standard X/Y axis-limit row (fields + Auto buttons).
+
+    Converges the ``row0``/``row`` assembly duplicated in
+    ``PlotPanel._create_limit_controls`` and ``ALCPanel._build_limit_controls``:
+    an ``X:`` label, min/max :class:`FloatLimitField` pair, a ``Y:`` label,
+    min/max pair, and checkable "Auto X"/"Auto Y" buttons in the nav-button
+    style, all in one row.
+
+    This is a pure builder/holder — it constructs the widgets, exposes them as
+    attributes, and lays them out on itself, but does **not** wire any
+    ``editingFinished``/``clicked``/``toggled`` handlers. The two call sites
+    connect their own handlers to the exposed widgets, which is deliberate:
+    ``PlotPanel`` reacts to the Auto buttons' ``clicked`` signal while
+    ``ALCPanel`` reacts to ``toggled`` (different semantics, both preserved by
+    leaving the wiring to the caller).
+
+    Parameters
+    ----------
+    field_width:
+        ``minimum_width`` passed to each :class:`FloatLimitField` (fields are
+        otherwise unbounded above, i.e. ``maximum_width=None``).
+    show_units:
+        When true, also builds ``.x_unit_label``/``.y_unit_label`` (empty
+        ``QLabel``s placed after the x/y max fields) for the caller to set
+        text on. When false, those attributes are ``None`` and no unit label
+        appears in the row.
+    auto_checked:
+        Initial ``setChecked`` state for both Auto buttons.
+    value_range:
+        ``(minimum, maximum)`` forwarded to every :class:`FloatLimitField`.
+    initial_values:
+        ``(x_min, x_max, y_min, y_max)`` seed values for the four fields.
+        Defaults to ``PlotPanel``'s historical defaults; ``ALCPanel`` passes
+        its own historical ``(0.0, 1.0, 0.0, 1.0)`` to preserve its distinct
+        initial display.
+    """
+
+    def __init__(
+        self,
+        *,
+        field_width: int = 76,
+        show_units: bool = False,
+        auto_checked: bool = False,
+        value_range: tuple[float, float] = (-1e6, 1e6),
+        initial_values: tuple[float, float, float, float] = (0.0, 10.0, -30.0, 30.0),
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+
+        x_min_v, x_max_v, y_min_v, y_max_v = initial_values
+        self.x_min = FloatLimitField(
+            x_min_v, minimum_width=field_width, maximum_width=None, value_range=value_range
+        )
+        self.x_max = FloatLimitField(
+            x_max_v, minimum_width=field_width, maximum_width=None, value_range=value_range
+        )
+        self.y_min = FloatLimitField(
+            y_min_v, minimum_width=field_width, maximum_width=None, value_range=value_range
+        )
+        self.y_max = FloatLimitField(
+            y_max_v, minimum_width=field_width, maximum_width=None, value_range=value_range
+        )
+
+        self.x_unit_label: QLabel | None = QLabel("") if show_units else None
+        self.y_unit_label: QLabel | None = QLabel("") if show_units else None
+
+        nav_qss = build_nav_button_qss()
+        self.auto_x_btn = QPushButton("Auto X")
+        self.auto_x_btn.setCheckable(True)
+        self.auto_x_btn.setStyleSheet(nav_qss)
+        self.auto_x_btn.setMaximumWidth(65)
+        self.auto_x_btn.setChecked(auto_checked)
+
+        self.auto_y_btn = QPushButton("Auto Y")
+        self.auto_y_btn.setCheckable(True)
+        self.auto_y_btn.setStyleSheet(nav_qss)
+        self.auto_y_btn.setMaximumWidth(65)
+        self.auto_y_btn.setChecked(auto_checked)
+
+        row = QHBoxLayout(self)
+        row.setSpacing(4)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(QLabel("X:"))
+        row.addWidget(self.x_min)
+        row.addWidget(QLabel("–"))
+        row.addWidget(self.x_max)
+        if self.x_unit_label is not None:
+            row.addWidget(self.x_unit_label)
+        row.addWidget(QLabel("Y:"))
+        row.addWidget(self.y_min)
+        row.addWidget(QLabel("–"))
+        row.addWidget(self.y_max)
+        if self.y_unit_label is not None:
+            row.addWidget(self.y_unit_label)
+        row.addWidget(self.auto_x_btn)
+        row.addWidget(self.auto_y_btn)
+        row.addStretch()

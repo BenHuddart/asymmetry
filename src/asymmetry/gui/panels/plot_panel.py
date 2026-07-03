@@ -75,7 +75,7 @@ from asymmetry.gui.styles.plots import (
     style_legend,
 )
 from asymmetry.gui.styles.widgets import build_nav_button_qss
-from asymmetry.gui.widgets.axis_limits import FloatLimitField
+from asymmetry.gui.widgets.axis_limits import AxisLimitControls, FloatLimitField
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox
 from asymmetry.gui.widgets.projection_chip_bar import ProjectionChipBar
 from asymmetry.gui.widgets.rrf_controls import (
@@ -413,55 +413,23 @@ class PlotPanel(QWidget):
         self._limit_toolbar.setContentsMargins(4, 4, 4, 4)
 
         # ── Row 0: axis range fields + auto-scale buttons ─────────────────
-        row0 = QHBoxLayout()
-        row0.setSpacing(4)
+        self._axis_controls = AxisLimitControls(field_width=76, show_units=True, auto_checked=False)
+        self._x_min = self._axis_controls.x_min
+        self._x_max = self._axis_controls.x_max
+        self._y_min = self._axis_controls.y_min
+        self._y_max = self._axis_controls.y_max
+        self._x_unit_label = self._axis_controls.x_unit_label
+        self._y_unit_label = self._axis_controls.y_unit_label
+        self._auto_x_btn = self._axis_controls.auto_x_btn
+        self._auto_y_btn = self._axis_controls.auto_y_btn
 
-        # X-axis limits
-        row0.addWidget(QLabel("X:"))
-        self._x_min = FloatLimitField(
-            0.0, minimum_width=76, maximum_width=None, value_range=(-1e6, 1e6)
-        )
-        row0.addWidget(self._x_min)
-        row0.addWidget(QLabel("–"))
-        self._x_max = FloatLimitField(
-            10.0, minimum_width=76, maximum_width=None, value_range=(-1e6, 1e6)
-        )
-        row0.addWidget(self._x_max)
-        self._x_unit_label = QLabel("MHz" if self._is_frequency_plot_panel() else "µs")
-        row0.addWidget(self._x_unit_label)
+        self._x_unit_label.setText("MHz" if self._is_frequency_plot_panel() else "µs")
+        self._y_unit_label.setText("a.u." if self._is_frequency_plot_panel() else "%")
 
-        # Y-axis limits
-        row0.addWidget(QLabel("Y:"))
-        self._y_min = FloatLimitField(
-            -30.0, minimum_width=76, maximum_width=None, value_range=(-1e6, 1e6)
-        )
-        row0.addWidget(self._y_min)
-        row0.addWidget(QLabel("–"))
-        self._y_max = FloatLimitField(
-            30.0, minimum_width=76, maximum_width=None, value_range=(-1e6, 1e6)
-        )
-        row0.addWidget(self._y_max)
-        self._y_unit_label = QLabel("a.u." if self._is_frequency_plot_panel() else "%")
-        row0.addWidget(self._y_unit_label)
-
-        # Separate axis auto-scale controls.
-        _nav_qss = build_nav_button_qss()
-        self._auto_x_btn = QPushButton("Auto X")
-        self._auto_x_btn.setCheckable(True)
-        self._auto_x_btn.setStyleSheet(_nav_qss)
         self._auto_x_btn.clicked.connect(self._on_auto_x_button_clicked)
-        self._auto_x_btn.setMaximumWidth(65)
-        row0.addWidget(self._auto_x_btn)
-
-        self._auto_y_btn = QPushButton("Auto Y")
-        self._auto_y_btn.setCheckable(True)
-        self._auto_y_btn.setStyleSheet(_nav_qss)
         self._auto_y_btn.clicked.connect(self._on_auto_y_button_clicked)
-        self._auto_y_btn.setMaximumWidth(65)
-        row0.addWidget(self._auto_y_btn)
 
-        row0.addStretch()
-        self._limit_toolbar.addLayout(row0)
+        self._limit_toolbar.addWidget(self._axis_controls)
 
         # Apply limit changes immediately from text field edits. A manual edit is
         # an explicit override, so it disables that axis's Auto toggle — otherwise

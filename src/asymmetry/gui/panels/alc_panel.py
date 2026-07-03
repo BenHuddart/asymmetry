@@ -52,11 +52,10 @@ from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.plots import draw_empty_state_message, draw_fit_range_span, style_axes
 from asymmetry.gui.styles.widgets import (
-    build_nav_button_qss,
     build_primary_button_qss,
     make_provenance_label,
 )
-from asymmetry.gui.widgets.axis_limits import FloatLimitField
+from asymmetry.gui.widgets.axis_limits import AxisLimitControls
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox
 
 
@@ -252,7 +251,7 @@ class ALCScanView(QWidget):
         plot_layout.addLayout(controls)
         self._update_derivative_label()
 
-        plot_layout.addLayout(self._build_limit_controls())
+        plot_layout.addWidget(self._build_limit_controls())
 
         self._figure = Figure(constrained_layout=True)
         self._canvas = FigureCanvasQTAgg(self._figure)
@@ -323,51 +322,23 @@ class ALCScanView(QWidget):
 
     # --- axis-limit controls --------------------------------------------------
 
-    def _build_limit_controls(self) -> QHBoxLayout:
+    def _build_limit_controls(self) -> QWidget:
         """Build the X/Y range fields + Auto toggles (as on the main plot panels)."""
-        row = QHBoxLayout()
-        row.setSpacing(4)
+        self._axis_controls = AxisLimitControls(
+            field_width=64,
+            show_units=False,
+            auto_checked=True,
+            initial_values=(0.0, 1.0, 0.0, 1.0),
+        )
+        self._x_min = self._axis_controls.x_min
+        self._x_max = self._axis_controls.x_max
+        self._y_min = self._axis_controls.y_min
+        self._y_max = self._axis_controls.y_max
+        self._auto_x_btn = self._axis_controls.auto_x_btn
+        self._auto_y_btn = self._axis_controls.auto_y_btn
 
-        row.addWidget(QLabel("X:"))
-        self._x_min = FloatLimitField(
-            0.0, minimum_width=64, maximum_width=None, value_range=(-1e6, 1e6)
-        )
-        self._x_max = FloatLimitField(
-            1.0, minimum_width=64, maximum_width=None, value_range=(-1e6, 1e6)
-        )
-        row.addWidget(self._x_min)
-        row.addWidget(QLabel("–"))
-        row.addWidget(self._x_max)
-
-        row.addWidget(QLabel("Y:"))
-        self._y_min = FloatLimitField(
-            0.0, minimum_width=64, maximum_width=None, value_range=(-1e6, 1e6)
-        )
-        self._y_max = FloatLimitField(
-            1.0, minimum_width=64, maximum_width=None, value_range=(-1e6, 1e6)
-        )
-        row.addWidget(self._y_min)
-        row.addWidget(QLabel("–"))
-        row.addWidget(self._y_max)
-
-        nav_qss = build_nav_button_qss()
-        self._auto_x_btn = QPushButton("Auto X")
-        self._auto_x_btn.setCheckable(True)
-        self._auto_x_btn.setChecked(True)
-        self._auto_x_btn.setStyleSheet(nav_qss)
-        self._auto_x_btn.setMaximumWidth(65)
         self._auto_x_btn.toggled.connect(self._on_auto_x_toggled)
-        row.addWidget(self._auto_x_btn)
-
-        self._auto_y_btn = QPushButton("Auto Y")
-        self._auto_y_btn.setCheckable(True)
-        self._auto_y_btn.setChecked(True)
-        self._auto_y_btn.setStyleSheet(nav_qss)
-        self._auto_y_btn.setMaximumWidth(65)
         self._auto_y_btn.toggled.connect(self._on_auto_y_toggled)
-        row.addWidget(self._auto_y_btn)
-
-        row.addStretch()
 
         # A manual edit is an explicit override: it turns that axis's Auto off so
         # the next render does not reframe the typed value back to the extent.
@@ -375,7 +346,7 @@ class ALCScanView(QWidget):
         self._x_max.editingFinished.connect(self._on_x_limit_edited)
         self._y_min.editingFinished.connect(self._on_y_limit_edited)
         self._y_max.editingFinished.connect(self._on_y_limit_edited)
-        return row
+        return self._axis_controls
 
     def _on_auto_x_toggled(self, checked: bool) -> None:
         self._auto_x = checked

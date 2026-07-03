@@ -280,7 +280,9 @@ class TestPlotPanel:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
 
-        row0 = panel._limit_toolbar.itemAt(0).layout()
+        row0_widget = panel._limit_toolbar.itemAt(0).widget()
+        assert row0_widget is not None
+        row0 = row0_widget.layout()
         assert row0 is not None
         assert row0.indexOf(panel._pan_btn) == -1
         assert row0.indexOf(panel._zoom_btn) == -1
