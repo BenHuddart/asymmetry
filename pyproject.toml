@@ -203,3 +203,6 @@ ignore = ["E501"]  # Ruff format handles normal wrapping; long prose/UI strings 
 "tests/test_trend_surface.py" = ["E402"]  # pytest.importorskip guard before optional Qt/numpy imports
 "tests/test_vector_pane_collapse.py" = ["E402"]  # pytest.importorskip before optional Qt imports
 "tests/test_visual_grammar.py" = ["E402"]  # pytest.importorskip before optional Qt imports
+"tests/test_axis_limit_field_characterization.py" = ["E402"]  # pytest.importorskip before optional Qt imports
+"tests/test_fit_range_commit_roundtrip.py" = ["E402"]  # pytest.importorskip before optional Qt imports
+"tests/test_wizard_result_caching.py" = ["E402", "N802"]  # importorskip guard; Qt-style test-double method names

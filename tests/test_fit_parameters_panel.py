@@ -186,6 +186,98 @@ def test_export_tsv_headers_include_units(
     )
 
 
+def test_export_tsv_golden_header_and_data_rows(
+    panel: FitParametersPanel, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Full golden string for header + both data rows (Phase 0 characterization).
+
+    Pins the exact tab-separated content — including value/uncertainty
+    formatting sourced from the table's displayed text and the trailing
+    reduced_chi2/chi2 columns — so Phase 1c's shared-TSV-writer extraction
+    can diff its output against this literal string.
+    """
+    panel._refresh_table()
+    out = tmp_path / "fit_parameters.tsv"
+
+    monkeypatch.setattr(
+        "asymmetry.gui.panels.fit_parameters_panel.QFileDialog.getSaveFileName",
+        lambda *_a, **_k: (str(out), "TSV files (*.tsv)"),
+    )
+
+    panel._export_tsv()
+
+    lines = out.read_text(encoding="utf-8").splitlines()
+    assert lines[0] == (
+        "Run\tB (G)\tT (K)\tA0 (%)\terr_A0 (%)\tLambda (µs⁻¹)\terr_Lambda (µs⁻¹)\t"
+        "reduced_chi2\tchi2"
+    )
+    # panel fixture rows are sorted by run number ascending: run 1 (field=100)
+    # then run 2 (field=200); neither row carries a chi-squared value.
+    data_lines = lines[1:]
+    assert len(data_lines) == 2
+    assert data_lines[0].split("\t")[:7] == [
+        "1",
+        "100",
+        "10",
+        "0.2",
+        "0.01",
+        "0.1",
+        "0.01",
+    ]
+    assert data_lines[0].split("\t")[7:] == ["", ""]
+    assert data_lines[1].split("\t")[:7] == [
+        "2",
+        "200",
+        "10",
+        "0.22",
+        "0.02",
+        "0.12",
+        "0.01",
+    ]
+    assert data_lines[1].split("\t")[7:] == ["", ""]
+
+
+def test_export_tsv_includes_custom_abscissa_column(
+    qapp: QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A free-text (custom/Angle) x-axis appends its own trailing TSV column.
+
+    ``_export_abscissa_column`` is the single source of this trailing column
+    for the table, TSV, and GLE exports; this pins its TSV contribution
+    specifically (header label + per-row value) ahead of Phase 1c.
+    """
+    panel = FitParametersPanel()
+    panel._rows = [
+        _FitRow(
+            run_number=1,
+            run_label="1",
+            field=100.0,
+            temperature=5.0,
+            values={"A0": 0.20},
+            errors={"A0": 0.01},
+            custom_values={"angle_deg": "45.5"},
+        ),
+    ]
+    panel._varying_params = ["A0"]
+    panel.set_angle_x_field(("Angle", "angle_deg"))
+    panel._x_combo.setCurrentText("Angle")
+    panel._refresh_table()
+
+    out = tmp_path / "angle.tsv"
+    monkeypatch.setattr(
+        "asymmetry.gui.panels.fit_parameters_panel.QFileDialog.getSaveFileName",
+        lambda *_a, **_k: (str(out), "TSV files (*.tsv)"),
+    )
+    panel._export_tsv()
+
+    lines = out.read_text(encoding="utf-8").splitlines()
+    header = lines[0]
+    assert header.startswith("Run\tB (G)\tT (K)\tA0 (%)\terr_A0 (%)\t")
+    assert header.endswith("\tAngle\treduced_chi2\tchi2")
+    data_line = lines[1]
+    assert data_line.split("\t")[-3] == "45.5"
+
+
 def test_refresh_table_uses_run_label_for_combined_rows(qapp: QApplication) -> None:
     panel = FitParametersPanel()
     panel._rows = [
