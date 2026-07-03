@@ -16,7 +16,6 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
-    QProgressBar,
     QPushButton,
     QScrollArea,
     QTableWidget,
@@ -31,6 +30,7 @@ from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.typography import status_font
 from asymmetry.gui.styles.widgets import apply_param_table_style, build_primary_button_qss
+from asymmetry.gui.widgets.fit_run_controls import FitRunControls
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollSpinBox
 
 
@@ -359,7 +359,11 @@ class MaxEntPanel(QWidget):
         self._converge_btn = QPushButton("Converge")
         self._converge_btn.setStyleSheet(build_primary_button_qss())
         self._restart_btn = QPushButton("Restart")
-        self._cancel_btn = QPushButton("Cancel")
+        # Cancel starts visible-but-disabled (it sits fixed in the footer,
+        # unlike the fit tabs' Stop button which swaps in for Fit); MainWindow
+        # wires .clicked externally via hasattr, so on_cancel is left unset here.
+        self._run_controls = FitRunControls(button_label="Cancel", hidden=False, with_progress=True)
+        self._cancel_btn = self._run_controls.button
         self._cancel_btn.setEnabled(False)
         buttons.addWidget(self._cycle_one_btn, 0, 0)
         buttons.addWidget(self._cycle_five_btn, 0, 1)
@@ -369,13 +373,9 @@ class MaxEntPanel(QWidget):
         buttons.addWidget(self._cancel_btn, 2, 0, 1, 3)
         footer_layout.addLayout(buttons)
 
-        self._progress_label = QLabel("")
-        self._progress_label.setWordWrap(True)
+        self._progress_label = self._run_controls.progress_label
         footer_layout.addWidget(self._progress_label)
-        self._progress_bar = QProgressBar()
-        self._progress_bar.setRange(0, 1)
-        self._progress_bar.setValue(0)
-        self._progress_bar.setVisible(False)
+        self._progress_bar = self._run_controls.progress_bar
         footer_layout.addWidget(self._progress_bar)
 
         self._status_label = QLabel("")

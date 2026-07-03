@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import copy
+from dataclasses import dataclass
 
 import numpy as np
-from PySide6.QtCore import QObject, Qt, QThread, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -17,11 +18,9 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMessageBox,
-    QProgressBar,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
-    QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -49,6 +48,7 @@ from asymmetry.core.fitting.global_search.heuristics import (
 from asymmetry.core.fitting.parameters import get_param_info
 from asymmetry.gui.panels.log_panel import LogPanel
 from asymmetry.gui.widgets.screen_sizing import resize_to_available
+from asymmetry.gui.windows.wizard_base import WizardWindowBase
 
 _DEFAULT_PHASE_ONE_SINGLE_FIT_HELPER = (
     build_or_complete_single_fit_wizard_recommendations_for_global_portfolio
@@ -77,124 +77,107 @@ class AnalysisLogWindow(QMainWindow):
         return self._log_panel.to_plain_text()
 
 
-class GlobalFitWizardWorker(QObject):
-    """Run global-fit wizard analysis off the UI thread."""
+@dataclass
+class _GlobalAnalysisResult:
+    """Plain result object returned by the global-fit-wizard analysis task.
 
-    finished = Signal(int, str, object)
-    error = Signal(int, str, str)
-    progress = Signal(int, str)
-    single_fit_precomputed = Signal(int, object)
+    Folds the old ``GlobalFitWizardWorker`` signals into one value: the analysis
+    ``mode`` (screening/optimize) and any ``updated_single_fit_recommendations``
+    (formerly the one-shot ``single_fit_precomputed`` signal) ride alongside the
+    ``recommendation`` so the base's single ``finished`` path can apply them.
+    """
 
-    def __init__(
-        self,
-        mode: str,
-        request_id: int,
-        datasets: list[MuonDataset],
-        current_model: CompositeModel | None,
-        current_parameter_types: dict[str, str],
-        current_values: dict[str, float],
-        parameter_bounds: dict[str, tuple[float, float]],
-        existing_single_fit_recommendations_by_run: dict[int, object] | None,
-        metric: SelectionMetric,
-        selected_template_keys: tuple[str, ...] = (),
-    ) -> None:
-        super().__init__()
-        self._mode = str(mode)
-        self._request_id = request_id
-        self._datasets = datasets
-        self._current_model = current_model
-        self._current_parameter_types = current_parameter_types
-        self._current_values = current_values
-        self._parameter_bounds = parameter_bounds
-        self._existing_single_fit_recommendations_by_run = dict(
-            existing_single_fit_recommendations_by_run or {}
+    mode: str
+    recommendation: object
+    updated_single_fit_recommendations: dict[int, object]
+
+
+def _run_global_fit_wizard_analysis(
+    worker,
+    *,
+    mode: str,
+    datasets: list[MuonDataset],
+    current_model: CompositeModel | None,
+    current_parameter_types: dict[str, str],
+    current_values: dict[str, float],
+    parameter_bounds: dict[str, tuple[float, float]],
+    existing_single_fit_recommendations_by_run: dict[int, object] | None,
+    metric: SelectionMetric,
+    selected_template_keys: tuple[str, ...] = (),
+) -> _GlobalAnalysisResult:
+    """Run the global-fit wizard analysis off the GUI thread.
+
+    Moved verbatim from the former ``GlobalFitWizardWorker.run`` body; exceptions
+    now propagate to ``TaskWorker.run`` (→ the base error slot) instead of being
+    caught and re-emitted, and progress goes through ``worker.progress.emit``.
+    """
+    existing = dict(existing_single_fit_recommendations_by_run or {})
+    selected_template_keys = tuple(key for key in selected_template_keys if isinstance(key, str))
+
+    single_fit_recommendations_before_analysis = dict(existing)
+    screening_builder_is_custom = (
+        build_global_fit_wizard_screening_recommendation is not _DEFAULT_SCREENING_BUILDER
+    )
+    optimization_builder_is_custom = (
+        build_global_fit_wizard_recommendation is not _DEFAULT_GLOBAL_FIT_BUILDER
+    )
+    skip_implicit_phase_one = (
+        (
+            (mode == "screening" and screening_builder_is_custom)
+            or (mode == "optimize" and optimization_builder_is_custom)
         )
-        self._metric = metric
-        self._selected_template_keys = tuple(
-            key for key in selected_template_keys if isinstance(key, str)
+        and build_or_complete_single_fit_wizard_recommendations_for_global_portfolio
+        is _DEFAULT_PHASE_ONE_SINGLE_FIT_HELPER
+        and not existing
+    )
+    if skip_implicit_phase_one:
+        single_fit_recommendations_by_run = dict(existing)
+    else:
+        _portfolio, single_fit_recommendations_by_run, _generated_runs = (
+            build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
+                datasets,
+                current_model=current_model,
+                existing_recommendations_by_run=existing,
+                progress_callback=lambda message: worker.progress.emit(0, 0, message),
+            )
         )
 
-    def run(self) -> None:
-        try:
-            single_fit_recommendations_before_analysis = dict(
-                self._existing_single_fit_recommendations_by_run
-            )
-            screening_builder_is_custom = (
-                build_global_fit_wizard_screening_recommendation is not _DEFAULT_SCREENING_BUILDER
-            )
-            optimization_builder_is_custom = (
-                build_global_fit_wizard_recommendation is not _DEFAULT_GLOBAL_FIT_BUILDER
-            )
-            skip_implicit_phase_one = (
-                (
-                    (self._mode == "screening" and screening_builder_is_custom)
-                    or (self._mode == "optimize" and optimization_builder_is_custom)
-                )
-                and build_or_complete_single_fit_wizard_recommendations_for_global_portfolio
-                is _DEFAULT_PHASE_ONE_SINGLE_FIT_HELPER
-                and not self._existing_single_fit_recommendations_by_run
-            )
-            if skip_implicit_phase_one:
-                single_fit_recommendations_by_run = dict(
-                    self._existing_single_fit_recommendations_by_run
-                )
-            else:
-                _portfolio, single_fit_recommendations_by_run, _generated_runs = (
-                    build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
-                        self._datasets,
-                        current_model=self._current_model,
-                        existing_recommendations_by_run=self._existing_single_fit_recommendations_by_run,
-                        progress_callback=lambda message: self.progress.emit(
-                            self._request_id,
-                            message,
-                        ),
-                    )
-                )
+    def progress_callback(message):
+        return worker.progress.emit(0, 0, message)
 
-            def progress_callback(message):
-                return self.progress.emit(
-                    self._request_id,
-                    message,
-                )
-
-            if self._mode == "screening":
-                recommendation = build_global_fit_wizard_screening_recommendation(
-                    self._datasets,
-                    current_model=self._current_model,
-                    current_parameter_types=self._current_parameter_types,
-                    current_values=self._current_values,
-                    parameter_bounds=self._parameter_bounds,
-                    single_fit_recommendations_by_run=single_fit_recommendations_by_run,
-                    metric=self._metric,
-                    progress_callback=progress_callback,
-                )
-            else:
-                recommendation = build_global_fit_wizard_recommendation(
-                    self._datasets,
-                    current_model=self._current_model,
-                    current_parameter_types=self._current_parameter_types,
-                    current_values=self._current_values,
-                    parameter_bounds=self._parameter_bounds,
-                    single_fit_recommendations_by_run=single_fit_recommendations_by_run,
-                    metric=self._metric,
-                    progress_callback=progress_callback,
-                    selected_template_keys=self._selected_template_keys,
-                )
-            updated_single_fit_recommendations = {
-                int(run_number): recommendation
-                for run_number, recommendation in single_fit_recommendations_by_run.items()
-                if single_fit_recommendations_before_analysis.get(int(run_number))
-                is not recommendation
-            }
-            if updated_single_fit_recommendations:
-                self.single_fit_precomputed.emit(
-                    self._request_id,
-                    updated_single_fit_recommendations,
-                )
-        except Exception as exc:
-            self.error.emit(self._request_id, self._mode, str(exc))
-            return
-        self.finished.emit(self._request_id, self._mode, recommendation)
+    if mode == "screening":
+        recommendation = build_global_fit_wizard_screening_recommendation(
+            datasets,
+            current_model=current_model,
+            current_parameter_types=current_parameter_types,
+            current_values=current_values,
+            parameter_bounds=parameter_bounds,
+            single_fit_recommendations_by_run=single_fit_recommendations_by_run,
+            metric=metric,
+            progress_callback=progress_callback,
+        )
+    else:
+        recommendation = build_global_fit_wizard_recommendation(
+            datasets,
+            current_model=current_model,
+            current_parameter_types=current_parameter_types,
+            current_values=current_values,
+            parameter_bounds=parameter_bounds,
+            single_fit_recommendations_by_run=single_fit_recommendations_by_run,
+            metric=metric,
+            progress_callback=progress_callback,
+            selected_template_keys=selected_template_keys,
+        )
+    updated_single_fit_recommendations = {
+        int(run_number): rec
+        for run_number, rec in single_fit_recommendations_by_run.items()
+        if single_fit_recommendations_before_analysis.get(int(run_number)) is not rec
+    }
+    return _GlobalAnalysisResult(
+        mode=mode,
+        recommendation=recommendation,
+        updated_single_fit_recommendations=updated_single_fit_recommendations,
+    )
 
 
 class GlobalFitWizardParameterSetupDialog(QDialog):
@@ -308,7 +291,7 @@ class GlobalFitWizardParameterSetupDialog(QDialog):
         super().accept()
 
 
-class GlobalFitWizardWindow(QMainWindow):
+class GlobalFitWizardWindow(WizardWindowBase):
     """Present a guided workflow for global-fit model recommendation."""
 
     apply_assessment_requested = Signal(object, object)
@@ -317,6 +300,8 @@ class GlobalFitWizardWindow(QMainWindow):
     single_fit_recommendations_generated = Signal(object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
+        # WizardWindowBase.__init__ builds the shared frame and calls
+        # _build_tabs() before this body resumes.
         super().__init__(parent)
         self.setWindowTitle("Global Fit Wizard")
         # Cap the default to the available screen so the title bar never opens
@@ -325,6 +310,24 @@ class GlobalFitWizardWindow(QMainWindow):
         # (P1-5).
         resize_to_available(self, 1180, 740)
 
+        heading_font = QFont(self._heading_label.font())
+        heading_font.setPointSize(max(heading_font.pointSize() + 4, 14))
+        heading_font.setBold(True)
+        self._heading_label.setFont(heading_font)
+        self._heading_label.setText("Global Fit Wizard")
+        self._status_label.setText(
+            "Open the global fit wizard on a field or temperature series "
+            "to compare common model families and recommended "
+            "Global/Local parameter roles."
+        )
+
+        self._refresh_btn.setEnabled(False)
+        self._metric_combo.setEnabled(False)
+        self._optimize_btn.setEnabled(False)
+
+    def _build_tabs(self) -> None:
+        # The base calls this during __init__, before the subclass body resumes,
+        # so the result-state members are initialised here.
         self._datasets: list[MuonDataset] = []
         self._current_model: CompositeModel | None = None
         self._current_parameter_types: dict[str, str] = {}
@@ -334,66 +337,30 @@ class GlobalFitWizardWindow(QMainWindow):
         self._selected_key: str | None = None
         self._screening_selected_keys: set[str] = set()
         self._running_template_keys: set[str] = set()
-        self._analysis_request_id = 0
         self._analysis_mode = "screening"
-        self._analysis_in_progress = False
-        self._analysis_thread: QThread | None = None
-        self._analysis_worker: GlobalFitWizardWorker | None = None
         self._log_window: AnalysisLogWindow | None = None
-        self._cached_log_text = ""
-        self._cached_signature: dict[str, object] | None = None
         self._single_fit_recommendations_by_run: dict[int, object] = {}
 
-        root = QWidget(self)
-        self.setCentralWidget(root)
-        layout = QVBoxLayout(root)
-
-        self._heading_label = QLabel("Global Fit Wizard")
-        heading_font = QFont(self._heading_label.font())
-        heading_font.setPointSize(max(heading_font.pointSize() + 4, 14))
-        heading_font.setBold(True)
-        self._heading_label.setFont(heading_font)
-        layout.addWidget(self._heading_label)
-
-        self._status_label = QLabel(
-            "Open the global fit wizard on a field or temperature series "
-            "to compare common model families and recommended "
-            "Global/Local parameter roles."
-        )
-        self._status_label.setWordWrap(True)
-        layout.addWidget(self._status_label)
-
-        controls_row = QHBoxLayout()
+        # Insert the window's controls before the base-owned progress widgets
+        # (index 0..5), then a trailing stretch keeps the row left-aligned.
         self._refresh_btn = QPushButton("Build Screening Table")
         self._refresh_btn.clicked.connect(self._start_analysis)
-        controls_row.addWidget(self._refresh_btn)
+        self._controls_row.insertWidget(0, self._refresh_btn)
         self._optimize_btn = QPushButton("Optimize Selected")
         self._optimize_btn.clicked.connect(self._start_selected_optimisation)
-        controls_row.addWidget(self._optimize_btn)
-        controls_row.addWidget(QLabel("Ranking Metric:"))
+        self._controls_row.insertWidget(1, self._optimize_btn)
+        self._controls_row.insertWidget(2, QLabel("Ranking Metric:"))
         self._metric_combo = QComboBox()
         self._metric_combo.addItems([metric.value for metric in SelectionMetric])
         self._metric_combo.currentTextChanged.connect(self._on_metric_changed)
-        controls_row.addWidget(self._metric_combo)
+        self._controls_row.insertWidget(3, self._metric_combo)
         metric_info_btn = QPushButton("Metric Info")
         metric_info_btn.clicked.connect(self._show_metric_info)
-        controls_row.addWidget(metric_info_btn)
+        self._controls_row.insertWidget(4, metric_info_btn)
         warning_info_btn = QPushButton("Warning Info")
         warning_info_btn.clicked.connect(self._show_warning_info)
-        controls_row.addWidget(warning_info_btn)
-        self._progress_label = QLabel("")
-        self._progress_label.setVisible(False)
-        controls_row.addWidget(self._progress_label)
-        self._progress_bar = QProgressBar()
-        self._progress_bar.setRange(0, 0)
-        self._progress_bar.setVisible(False)
-        self._progress_bar.setMaximumWidth(220)
-        controls_row.addWidget(self._progress_bar)
-        controls_row.addStretch()
-        layout.addLayout(controls_row)
-
-        self._tabs = QTabWidget()
-        layout.addWidget(self._tabs)
+        self._controls_row.insertWidget(5, warning_info_btn)
+        self._controls_row.addStretch()
 
         self._overview_tab = QWidget()
         self._portfolio_tab = QWidget()
@@ -414,10 +381,6 @@ class GlobalFitWizardWindow(QMainWindow):
         self._build_optimized_tab()
         self._build_roles_tab()
         self._build_apply_tab()
-
-        self._refresh_btn.setEnabled(False)
-        self._metric_combo.setEnabled(False)
-        self._optimize_btn.setEnabled(False)
 
     def set_analysis_context(
         self,
@@ -589,10 +552,7 @@ class GlobalFitWizardWindow(QMainWindow):
         button_row.addStretch()
         layout.addLayout(button_row)
 
-    def _set_busy(self, busy: bool) -> None:
-        self._analysis_in_progress = busy
-        self._progress_label.setVisible(busy)
-        self._progress_bar.setVisible(busy)
+    def _update_action_enablement(self, busy: bool) -> None:
         self._progress_label.setText("Working..." if busy else "")
         self._refresh_btn.setEnabled(bool(self._datasets) and not busy)
         self._metric_combo.setEnabled(self._recommendation is not None and not busy)
@@ -632,10 +592,6 @@ class GlobalFitWizardWindow(QMainWindow):
             return
         if self._analysis_in_progress:
             return
-        if self._analysis_thread is not None:
-            self._analysis_thread.quit()
-            self._analysis_thread.wait()
-            self._cleanup_analysis_thread()
 
         try:
             portfolio = build_global_fit_wizard_candidate_portfolio(
@@ -656,51 +612,35 @@ class GlobalFitWizardWindow(QMainWindow):
                 return
             self._apply_parameter_setup(setup_config)
 
-        signature = self._analysis_signature()
-        if self._cached_signature == signature and self._recommendation is not None:
+        # Same-signature short-circuit: serve the cached recommendation without
+        # recomputing. The base bumps/caches on _run_analysis(), so this stays a
+        # subclass decision (the single-fit window always recomputes).
+        if (
+            self._cached_signature == self._analysis_signature()
+            and self._recommendation is not None
+        ):
             self._status_label.setText(self._recommendation.summary)
             self._populate_from_recommendation()
             return
 
-        self._analysis_request_id += 1
-        request_id = self._analysis_request_id
-        self._cached_signature = copy.deepcopy(signature)
-        self._set_busy(True)
-        self._set_empty_state()
+        self._analysis_mode = "screening"
         self._show_log_window()
         self._status_label.setText(
             "Building the single-fit screening table in the background. "
             "The main window stays responsive while the shared candidate portfolio is screened."
         )
-        self._append_progress_log(
-            request_id,
-            f"Starting screening for {len(self._datasets)} datasets.",
-        )
-
-        self._launch_worker(
-            GlobalFitWizardWorker(
-                "screening",
-                request_id,
-                self._datasets,
-                self._current_model,
-                self._current_parameter_types,
-                self._current_values,
-                self._parameter_bounds,
-                self._single_fit_recommendations_by_run,
-                SelectionMetric.from_value(self._metric_combo.currentText()),
-            )
-        )
+        self._append_log(f"Starting screening for {len(self._datasets)} datasets.")
+        # Base: bump request id, cache signature, set busy, _reset_result_state(),
+        # then run _create_worker_task() off-thread.
+        self._run_analysis()
 
     def _start_selected_optimisation(self) -> None:
         if self._recommendation is None or not self._screening_selected_keys:
             return
         if self._analysis_in_progress:
             return
-        self._analysis_request_id += 1
-        request_id = self._analysis_request_id
         self._analysis_mode = "optimize"
         self._running_template_keys = set(self._screening_selected_keys)
-        self._set_busy(True)
         selected_titles = [
             assessment.template.title
             for assessment in self._recommendation.assessments
@@ -710,78 +650,54 @@ class GlobalFitWizardWindow(QMainWindow):
         self._status_label.setText(
             "Running coupled global optimisation for the selected candidates. Progress is streamed to the log window."
         )
-        self._append_progress_log(
-            request_id,
-            "Starting coupled global optimisation for: " + ", ".join(selected_titles) + ".",
+        self._append_log(
+            "Starting coupled global optimisation for: " + ", ".join(selected_titles) + "."
         )
         self._populate_compare_table()
-        self._launch_worker(
-            GlobalFitWizardWorker(
-                "optimize",
-                request_id,
-                self._datasets,
-                self._current_model,
-                self._current_parameter_types,
-                self._current_values,
-                self._parameter_bounds,
-                self._single_fit_recommendations_by_run,
-                SelectionMetric.from_value(self._metric_combo.currentText()),
-                tuple(sorted(self._screening_selected_keys)),
+        self._run_analysis()
+
+    def _create_worker_task(self, request_id: int):
+        # Capture inputs at submit time; the closure runs on the worker thread
+        # and must touch no widgets — it returns a plain _GlobalAnalysisResult.
+        mode = self._analysis_mode
+        datasets = list(self._datasets)
+        current_model = self._current_model
+        current_parameter_types = dict(self._current_parameter_types)
+        current_values = dict(self._current_values)
+        parameter_bounds = dict(self._parameter_bounds)
+        existing = dict(self._single_fit_recommendations_by_run)
+        metric = SelectionMetric.from_value(self._metric_combo.currentText())
+        selected_keys = tuple(sorted(self._screening_selected_keys)) if mode == "optimize" else ()
+
+        def task(worker):
+            return _run_global_fit_wizard_analysis(
+                worker,
+                mode=mode,
+                datasets=datasets,
+                current_model=current_model,
+                current_parameter_types=current_parameter_types,
+                current_values=current_values,
+                parameter_bounds=parameter_bounds,
+                existing_single_fit_recommendations_by_run=existing,
+                metric=metric,
+                selected_template_keys=selected_keys,
             )
-        )
 
-    def _launch_worker(self, worker: GlobalFitWizardWorker) -> None:
-        if self._analysis_thread is not None:
-            self._analysis_thread.quit()
-            self._analysis_thread.wait()
-            self._cleanup_analysis_thread()
-        self._analysis_mode = worker._mode
-        if (
-            worker._mode == "screening"
-            and build_global_fit_wizard_screening_recommendation is not _DEFAULT_SCREENING_BUILDER
-        ) or (
-            worker._mode == "optimize"
-            and build_global_fit_wizard_recommendation is not _DEFAULT_GLOBAL_FIT_BUILDER
-        ):
-            self._analysis_worker = worker
-            self._analysis_worker.finished.connect(self._on_analysis_finished)
-            self._analysis_worker.error.connect(self._on_analysis_error)
-            self._analysis_worker.progress.connect(self._append_progress_log)
-            self._analysis_worker.single_fit_precomputed.connect(self._on_single_fit_precomputed)
-            self._analysis_worker.run()
-            self._analysis_worker = None
-            return
-        self._analysis_thread = QThread(self)
-        self._analysis_worker = worker
-        self._analysis_worker.moveToThread(self._analysis_thread)
-        self._analysis_thread.started.connect(self._analysis_worker.run)
-        self._analysis_worker.finished.connect(self._on_analysis_finished)
-        self._analysis_worker.error.connect(self._on_analysis_error)
-        self._analysis_worker.progress.connect(self._append_progress_log)
-        self._analysis_worker.single_fit_precomputed.connect(self._on_single_fit_precomputed)
-        self._analysis_worker.finished.connect(self._analysis_thread.quit)
-        self._analysis_worker.error.connect(self._analysis_thread.quit)
-        self._analysis_worker.finished.connect(self._analysis_worker.deleteLater)
-        self._analysis_worker.error.connect(self._analysis_worker.deleteLater)
-        self._analysis_thread.finished.connect(self._cleanup_analysis_thread)
-        self._analysis_thread.finished.connect(self._analysis_thread.deleteLater)
-        self._analysis_thread.start()
+        return task
 
-    def _on_analysis_finished(self, request_id: int, mode: str, recommendation: object) -> None:
-        thread = self._analysis_thread
-        if thread is not None:
-            thread.quit()
-            thread.wait()
-            self._cleanup_analysis_thread()
-        if request_id != self._analysis_request_id:
-            self._set_busy(False)
-            return
-        if not isinstance(recommendation, GlobalFitWizardRecommendation):
-            self._set_busy(False)
-            self._status_label.setText("Global fit wizard analysis returned an unexpected result.")
-            return
+    def _populate_results(self, result: object) -> None:
+        # Apply the single-fit update the worker computed (formerly the one-shot
+        # single_fit_precomputed signal, now folded into the result object).
+        if result.updated_single_fit_recommendations:
+            typed_payload = {
+                int(run_number): rec
+                for run_number, rec in result.updated_single_fit_recommendations.items()
+            }
+            self._single_fit_recommendations_by_run.update(typed_payload)
+            self.single_fit_recommendations_generated.emit(typed_payload)
 
-        if mode == "optimize" and self._recommendation is not None:
+        recommendation = result.recommendation
+        if result.mode == "optimize" and self._recommendation is not None:
             self._recommendation = merge_global_fit_wizard_recommendations(
                 self._recommendation,
                 recommendation,
@@ -794,47 +710,41 @@ class GlobalFitWizardWindow(QMainWindow):
         self._metric_combo.blockSignals(True)
         self._metric_combo.setCurrentText(self._recommendation.metric.value)
         self._metric_combo.blockSignals(False)
-        self._append_progress_log(request_id, self._recommendation.summary)
+        self._append_log(self._recommendation.summary)
         self.analysis_cached.emit(
             self._recommendation,
             self.current_log_text(),
             copy.deepcopy(self._cached_signature) if self._cached_signature is not None else None,
         )
-        self._set_busy(False)
+        # The base cleared busy before calling us, while _recommendation was
+        # still the old value; re-assert enablement now it is set.
+        self._update_action_enablement(False)
         self._populate_from_recommendation()
 
-    def _on_analysis_error(self, request_id: int, mode: str, message: str) -> None:
-        thread = self._analysis_thread
-        if thread is not None:
-            thread.quit()
-            thread.wait()
-            self._cleanup_analysis_thread()
-        if request_id != self._analysis_request_id:
-            self._set_busy(False)
+    def _reset_result_state(self) -> None:
+        # Screening starts from a clean slate; optimize merges into the existing
+        # screening recommendation, so it keeps the current result and the
+        # running-template highlight rather than clearing them.
+        if self._analysis_mode == "optimize":
             return
+        self._set_empty_state()
+
+    def _on_analysis_failed(self, message: str) -> None:
+        # The base has already cleared busy and run the request-id staleness
+        # guard; _analysis_mode was stashed when the run started.
         self._running_template_keys = set()
-        if mode == "screening":
+        if self._analysis_mode == "screening":
             self._recommendation = None
-        self._set_busy(False)
         self._status_label.setText(f"Global fit wizard analysis failed: {message}")
-        self._append_progress_log(request_id, f"Analysis failed: {message}")
+        self._append_log(f"Analysis failed: {message}")
         if self._recommendation is None:
             self._set_empty_state()
         else:
             self._populate_from_recommendation()
 
-    def _on_single_fit_precomputed(self, request_id: int, payload: object) -> None:
-        if request_id != self._analysis_request_id or not isinstance(payload, dict):
-            return
-        typed_payload = {
-            int(run_number): recommendation for run_number, recommendation in payload.items()
-        }
-        self._single_fit_recommendations_by_run.update(typed_payload)
-        self.single_fit_recommendations_generated.emit(typed_payload)
-
-    def _cleanup_analysis_thread(self) -> None:
-        self._analysis_thread = None
-        self._analysis_worker = None
+    def _on_progress(self, current: int, total: int, message: str) -> None:
+        # Base already guarded the request id; stream to the log window.
+        self._append_log(message)
 
     def _show_log_window(self) -> None:
         if self._log_window is None:
@@ -844,9 +754,7 @@ class GlobalFitWizardWindow(QMainWindow):
         self._log_window.raise_()
         self._log_window.activateWindow()
 
-    def _append_progress_log(self, request_id: int, message: str) -> None:
-        if request_id != self._analysis_request_id:
-            return
+    def _append_log(self, message: str) -> None:
         if self._log_window is None:
             self._cached_log_text = "\n".join(filter(None, [self._cached_log_text, message]))
             return
@@ -1427,13 +1335,6 @@ class GlobalFitWizardWindow(QMainWindow):
             if isinstance(key, str) and key in self._screening_selected_keys:
                 self._compare_table.selectRow(row)
         self._compare_table.blockSignals(False)
-
-    def closeEvent(self, event) -> None:  # type: ignore[override]  # noqa: N802
-        if self._analysis_in_progress:
-            self.hide()
-            event.ignore()
-            return
-        super().closeEvent(event)
 
 
 def _numeric_item(value: float) -> QTableWidgetItem:

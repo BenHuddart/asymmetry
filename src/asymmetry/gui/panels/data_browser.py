@@ -1,4 +1,55 @@
-"""Data browser / logbook panel with dataset grouping support."""
+"""Data browser / logbook panel with dataset grouping support.
+
+Navigation map
+--------------
+~4.4k lines. Small support classes precede the main panel:
+``NumericTableWidgetItem`` (numeric-aware sort ordering), ``DataGroup`` /
+``ExtraColumn`` (dataclasses backing data-group and user-added-column state),
+``FilterDialog`` (per-column value filter popup), and
+``_RowHighlightDelegate`` (two-line comment/period-note cell rendering and
+series highlight painting). The bulk of the module is
+``DataBrowserPanel(QWidget)``, whose methods cluster thematically (no
+section-comment markers in source):
+
+- **Construction / layout** — ``__init__``, ``_build_add_field_rail``,
+  ``_build_add_field_menu``.
+- **Batched mutation** — ``batch_updates`` (context manager) /
+  ``_flush_batch_updates``: wrap any loop that adds datasets in
+  ``batch_updates()`` to avoid an O(n^2) per-add table rebuild (see
+  ``AGENTS.md``).
+- **Dataset and group lifecycle** — ``add_dataset``, ``create_data_group``,
+  ``ungroup``, ``add_runs_to_group``/``remove_runs_from_group``,
+  ``_rebuild_table`` (the full-table repaint driven by the above).
+- **Extra / custom columns** — ``add_extra_column``, ``add_custom_column``,
+  ``add_angle_column``, ``rename_extra_column``, ``remove_extra_column``, and
+  the value resolution helpers (``_value_for_extra_column``,
+  ``_raw_value_for_column``, ``_resolve_run_info_value``).
+- **Temperature/field-from-log resolution** — ``set_use_temperature_from_log``,
+  ``_temperature_for_display``/``_field_for_display`` and their
+  per-dataset-override counterparts; these back the browser's log-derived
+  vs. manual T/B display toggle.
+- **Selection and lookup** — ``select_runs``, ``get_selected_datasets``,
+  ``get_current_dataset``, ``get_group_member_run_numbers``,
+  ``displayed_coordinate`` (resolves the active x-axis coordinate for a run).
+- **Table chrome** — column resize/fit (``_resize_columns_to_content``,
+  ``_fit_title_column``), sorting (``_sort_table``,
+  ``sort_by_run_number_if_unordered``), filtering (``_open_filter_dialog``,
+  ``_row_visible_by_filters``/``_apply_row_visibility``), and context menus
+  (``_create_table_context_menu``, ``_open_header_context_menu``).
+- **Run arithmetic** — co-add (``_coadd_selected``/``_coadd_datasets``),
+  reference subtraction (``_subtract_reference_run``/``_subtract_datasets``),
+  and signed subtraction (``_signed_subtract_selected``/
+  ``_signed_subtract_datasets``), each producing a derived dataset tracked via
+  ``_store_combined_reduction``/``_separate_combined``.
+- **Logbook export** — ``render_logbook_tsv``/``export_logbook_tsv`` and the
+  RTF equivalents (``render_logbook_rtf``/``export_logbook_rtf``).
+- **State I/O** — ``get_state``/``restore_state`` at the end serialize groups,
+  extra columns, and per-dataset log-source overrides for project persistence.
+
+Entry points GUI callers use most: ``add_dataset``/``batch_updates`` to
+populate, ``get_selected_datasets``/``get_current_dataset`` to read
+selection, ``get_state``/``restore_state`` for project persistence.
+"""
 
 from __future__ import annotations
 

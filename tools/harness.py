@@ -22,9 +22,43 @@ except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
 
 ROOT = Path(__file__).resolve().parents[1]
 CORE_ROOT = ROOT / "src" / "asymmetry" / "core"
+GUI_ROOT = ROOT / "src" / "asymmetry" / "gui"
+TESTS_ROOT = ROOT / "tests"
 
 CORE_IMPORT_BANS = ("PySide6", "matplotlib", "asymmetry.gui")
 CORE_DEPENDENCY_BANS = ("PySide6", "matplotlib")
+# Canonical home for the shared numeric-limit line edit. Any other
+# `class *LimitField` definition duplicates this foundation.
+LIMIT_FIELD_HOME = GUI_ROOT / "widgets" / "axis_limits.py"
+LIMIT_FIELD_CLASS_RE = re.compile(r"^\s*class\s+\w*LimitField\b")
+# Canonical home for `FigureCanvasQTAgg` construction. Everything else should
+# go through `asymmetry.gui.widgets.mpl_canvas.create_canvas`.
+MPL_CANVAS_HOME = GUI_ROOT / "widgets" / "mpl_canvas.py"
+# Pre-audit sites Phase 1b left out of scope for the `create_canvas` migration.
+# They may migrate later -- see docs/audit/shared-foundations/FOLLOW-UPS.md.
+MPL_CANVAS_CONSTRUCTION_ALLOWLIST = frozenset(
+    {
+        GUI_ROOT / "windows" / "fit_wizard_window.py",
+        GUI_ROOT / "widgets" / "detector_schematic.py",
+    }
+)
+# Canonical home for manual QThread lifecycles. Everything else in gui/ should
+# run background work via `asymmetry.gui.tasks.TaskRunner`.
+TASK_RUNNER_HOME = GUI_ROOT / "tasks.py"
+# Sanctioned tests/ subpackages (the Phase-4 taxonomy plus pre-existing ones).
+SANCTIONED_TEST_SUBPACKAGES = frozenset(
+    {
+        "core",
+        "gui",
+        "io",
+        "project",
+        "tools",
+        "integration",
+        "negmu",
+        "docs",
+        "porting",
+    }
+)
 REQUIRED_KNOWLEDGE_FILES = (
     "AGENTS.md",
     "README.md",
@@ -115,6 +149,105 @@ def find_core_boundary_violations(core_root: Path = CORE_ROOT) -> list[HarnessFa
                                 ),
                             )
                         )
+    return failures
+
+
+def find_duplicate_limit_field_violations(gui_root: Path = GUI_ROOT) -> list[HarnessFailure]:
+    """Return `class *LimitField` definitions outside the shared widget home."""
+
+    failures: list[HarnessFailure] = []
+    for path in _iter_python_files(gui_root):
+        if path == LIMIT_FIELD_HOME:
+            continue
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if LIMIT_FIELD_CLASS_RE.match(line):
+                failures.append(
+                    HarnessFailure(
+                        path,
+                        lineno,
+                        (
+                            "Duplicate limit-field class definition. "
+                            "Use `asymmetry.gui.widgets.axis_limits.FloatLimitField`."
+                        ),
+                    )
+                )
+    return failures
+
+
+def find_duplicate_mpl_canvas_violations(gui_root: Path = GUI_ROOT) -> list[HarnessFailure]:
+    """Return direct `FigureCanvasQTAgg(` construction outside the shared factory."""
+
+    failures: list[HarnessFailure] = []
+    for path in _iter_python_files(gui_root):
+        if path == MPL_CANVAS_HOME or path in MPL_CANVAS_CONSTRUCTION_ALLOWLIST:
+            continue
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if "FigureCanvasQTAgg(" in line:
+                failures.append(
+                    HarnessFailure(
+                        path,
+                        lineno,
+                        (
+                            "Direct `FigureCanvasQTAgg(` construction. "
+                            "Use `asymmetry.gui.widgets.mpl_canvas.create_canvas`."
+                        ),
+                    )
+                )
+    return failures
+
+
+def find_bespoke_qthread_violations(gui_root: Path = GUI_ROOT) -> list[HarnessFailure]:
+    """Return manual `QThread(` construction outside the shared task runner."""
+
+    failures: list[HarnessFailure] = []
+    for path in _iter_python_files(gui_root):
+        if path == TASK_RUNNER_HOME:
+            continue
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if "QThread(" in line:
+                failures.append(
+                    HarnessFailure(
+                        path,
+                        lineno,
+                        (
+                            "Bespoke `QThread(` construction. "
+                            "Run background work via `asymmetry.gui.tasks.TaskRunner`."
+                        ),
+                    )
+                )
+    return failures
+
+
+def find_test_placement_violations(tests_root: Path = TESTS_ROOT) -> list[HarnessFailure]:
+    """Return `test_*.py` files that live outside a sanctioned tests/ subpackage."""
+
+    failures: list[HarnessFailure] = []
+    if not tests_root.exists():
+        return failures
+
+    for path in sorted(tests_root.rglob("test_*.py")):
+        if not path.is_file():
+            continue
+        if "__pycache__" in path.parts:
+            continue
+
+        relative = path.relative_to(tests_root)
+        parts = relative.parts
+        # A sanctioned placement is `tests/<subpackage>/.../test_*.py` -- i.e. at
+        # least one directory component between `tests/` and the file itself,
+        # and that first component must be a sanctioned subpackage.
+        if len(parts) < 2 or parts[0] not in SANCTIONED_TEST_SUBPACKAGES:
+            failures.append(
+                HarnessFailure(
+                    path,
+                    0,
+                    (
+                        "Test file is not under a sanctioned tests/ subpackage. "
+                        "Place test files under a sanctioned tests/ subpackage "
+                        "(see tests/README.md)."
+                    ),
+                )
+            )
     return failures
 
 
@@ -446,6 +579,10 @@ def run_structural_checks() -> int:
         *find_porting_policy_violations(),
         *find_dependency_boundary_violations(),
         *find_core_boundary_violations(),
+        *find_duplicate_limit_field_violations(),
+        *find_duplicate_mpl_canvas_violations(),
+        *find_bespoke_qthread_violations(),
+        *find_test_placement_violations(),
     ]
     if not failures:
         print("structural: ok")

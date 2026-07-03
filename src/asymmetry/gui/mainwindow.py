@@ -15,6 +15,63 @@ Layout overview (mirroring WiMDA):
     ├────────────┴─────────────────────┴───────────────┤
     │  Log / message panel  (bottom dock)              │
     └──────────────────────────────────────────────────┘
+
+Navigation map
+--------------
+This module is ~13k lines and one dominant class (``MainWindow``); it is a
+known decomposition target (see ``docs/audit/shared-foundations/FOLLOW-UPS.md``)
+but is not being split in this pass. Module-level helpers (``_safe_float``,
+``_normalise_source_path``, ``_format_bytes``, ``_write_text_file``,
+``_load_window_icon``, ``_coerce_bool``, ``_sync_grouping_keys``,
+``_run_number_gap_ranges``, ``_format_gap_ranges``) sit before the class;
+``_InspectorStack`` and ``_inspector_scroll_area`` support the right-dock
+inspector deck. Two free functions after the class
+(``_has_saved_fit_results``, ``_has_saved_fit_parameters_results``) are
+project-restore predicates.
+
+``MainWindow.__init__`` wires menus, toolbars, and docks
+(``_setup_menus`` → ``_create_toolbars`` / ``_setup_toolbar`` →
+``_create_docks`` → ``_setup_panels`` → ``_connect_actions``), then the class
+body proceeds roughly in this order, grouped by feature area rather than by
+fixed line ranges (the file will reflow as sections are extracted):
+
+1. **View-mode / bunch-factor / plot-viewport state** — ``_apply_view_mode``,
+   ``_apply_bunch_factor_to_context``, ``_on_plot_view_limits_changed``.
+2. **Vector-axis / projection selection and rendering** —
+   ``_refresh_vector_axis_selector``, ``_build_vector_axis_datasets``,
+   ``_render_current_selection_plot`` (the main plot-refresh entry point).
+3. **File loading and dataset lifecycle** — ``_on_open``, ``_load_files``,
+   ``_load_file``, dataset overwrite/removal helpers.
+4. **Detector grouping** — ``_open_shared_grouping_dialog`` through
+   ``_apply_grouping_settings_to_dataset`` and the histogram-reduction helpers
+   (``_reduce_grouped_histograms_to_asymmetry``, ``_apply_deadtime_correction``).
+5. **Fit orchestration and fit-result recording** — ``_on_fit``,
+   ``_on_fit_completed``, ``_record_fit_series``, ``_record_global_fit_batch``,
+   ``_record_grouped_fit_series``, and the various
+   ``_on_*_fit_completed``/``_on_*_fit_started`` slots that bridge worker
+   signals back into ``FitSeries``/``ProjectModel`` state.
+6. **Fourier / MaxEnt** — ``_on_fourier``, ``_on_compute_fourier`` and the
+   frequency-recompute cache/async machinery (``_ensure_frequency_spectra_for_run``,
+   ``_start_async_frequency_recompute``), then the MaxEnt worker lifecycle
+   (``_launch_maxent_worker`` → ``_on_maxent_worker_finished``/``_error``/
+   ``_cancelled``) and spectral moments (``_refresh_spectral_moments``,
+   ``_on_moments_send_to_trend``).
+7. **ALC / field-scan** — ``_on_scan_requested``, ``_render_alc_scan``,
+   ``_on_fit_baseline``/``_on_fit_peaks``/``_on_fit_rf``.
+8. **Trend panel bridging** — ``_refresh_trend_panel``, ``_build_series_rows``,
+   the ``_on_series_*`` slots.
+9. **Project persistence** — ``collect_project_state`` /
+   ``restore_project_state`` (the serialize/deserialize round trip),
+   ``_write_project``, ``_open_project_file``, ``_clear_all_state``.
+10. **Window lifecycle** — ``_update_window_title``, ``_mark_dirty``/
+    ``_clear_dirty``, ``_maybe_save``, ``closeEvent``.
+
+Signal flow entry points: dataset selection changes arrive via
+``_on_dataset_selected``/``_update_selected_datasets`` and fan out to plot
+refresh, fit-panel rebinding, and Fourier/MaxEnt panel sync. Fit completion
+signals from panel workers arrive via the ``_on_*_fit_completed`` slots and
+fan out to plotting (``PlotPanel.plot_fit``/``set_global_fits``), trend
+recording, and the Fit Parameters panel.
 """
 
 from __future__ import annotations

@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 
 import numpy as np
-from PySide6.QtCore import QObject, Qt, QThread, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -13,13 +13,10 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
-    QMainWindow,
     QMessageBox,
-    QProgressBar,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
-    QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -38,41 +35,10 @@ from asymmetry.core.fitting.parameters import get_param_info
 from asymmetry.core.fourier.fft import fft_asymmetry
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.widgets.screen_sizing import resize_to_available
+from asymmetry.gui.windows.wizard_base import WizardWindowBase
 
 
-class FitWizardWorker(QObject):
-    """Run fit-wizard analysis off the UI thread."""
-
-    finished = Signal(int, object)  # request_id, FitWizardRecommendation
-    error = Signal(int, str)
-
-    def __init__(
-        self,
-        request_id: int,
-        dataset: MuonDataset,
-        current_model: CompositeModel | None,
-        metric: SelectionMetric,
-    ) -> None:
-        super().__init__()
-        self._request_id = request_id
-        self._dataset = dataset
-        self._current_model = current_model
-        self._metric = metric
-
-    def run(self) -> None:
-        try:
-            recommendation = build_fit_wizard_recommendation(
-                self._dataset,
-                current_model=self._current_model,
-                metric=self._metric,
-            )
-        except Exception as exc:
-            self.error.emit(self._request_id, str(exc))
-            return
-        self.finished.emit(self._request_id, recommendation)
-
-
-class FitWizardWindow(QMainWindow):
+class FitWizardWindow(WizardWindowBase):
     """Present a guided workflow for model recommendation and comparison."""
 
     apply_assessment_requested = Signal(
@@ -81,6 +47,9 @@ class FitWizardWindow(QMainWindow):
     analysis_cached = Signal(object, str, object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
+        # WizardWindowBase.__init__ builds the shared frame (heading/status/
+        # controls row/tabs, TaskRunner, progress UI) and calls _build_tabs()
+        # before this body resumes.
         super().__init__(parent)
         self.setWindowTitle("Fit Wizard")
         # Cap the default to the available screen so the title bar never opens
@@ -89,54 +58,32 @@ class FitWizardWindow(QMainWindow):
         # the display can hold it (P1-5).
         resize_to_available(self, 1180, 740)
 
-        self._dataset: MuonDataset | None = None
-        self._current_model: CompositeModel | None = None
-        self._recommendation: FitWizardRecommendation | None = None
-        self._selected_key: str | None = None
-        self._analysis_request_id = 0
-        self._analysis_in_progress = False
-        self._analysis_thread: QThread | None = None
-        self._analysis_worker: FitWizardWorker | None = None
-        self._cached_log_text = ""
-        self._cached_signature: dict[str, object] | None = None
-
-        root = QWidget(self)
-        self.setCentralWidget(root)
-        layout = QVBoxLayout(root)
-
-        heading_layout = QVBoxLayout()
-        self._heading_label = QLabel("Fit Wizard")
         heading_font = QFont(self._heading_label.font())
         heading_font.setPointSize(max(heading_font.pointSize() + 4, 14))
         heading_font.setBold(True)
         self._heading_label.setFont(heading_font)
-        heading_layout.addWidget(self._heading_label)
-
-        self._status_label = QLabel(
+        self._heading_label.setText("Fit Wizard")
+        self._status_label.setText(
             "Open the fit wizard on a single spectrum to fingerprint the data and compare curated candidate models."
         )
-        self._status_label.setWordWrap(True)
-        heading_layout.addWidget(self._status_label)
-        layout.addLayout(heading_layout)
+        self._update_navigation_buttons()
+        self._refresh_btn.setEnabled(False)
 
-        controls_row = QHBoxLayout()
+    def _build_tabs(self) -> None:
+        # The base calls this during __init__, before the subclass __init__ body
+        # resumes, so the result-state members are initialised here.
+        self._dataset: MuonDataset | None = None
+        self._current_model: CompositeModel | None = None
+        self._recommendation: FitWizardRecommendation | None = None
+        self._selected_key: str | None = None
+
+        # The Start-analysis button sits before the base-owned progress widgets;
+        # a trailing stretch keeps the row left-aligned as before.
         self._refresh_btn = QPushButton("Start Analysis")
         self._refresh_btn.clicked.connect(self._start_analysis)
-        controls_row.addWidget(self._refresh_btn)
-        self._progress_label = QLabel("")
+        self._controls_row.insertWidget(0, self._refresh_btn)
         self._progress_label.setStyleSheet(f"color: {tokens.WARN};")
-        self._progress_label.setVisible(False)
-        controls_row.addWidget(self._progress_label)
-        self._progress_bar = QProgressBar()
-        self._progress_bar.setRange(0, 0)
-        self._progress_bar.setVisible(False)
-        self._progress_bar.setMaximumWidth(220)
-        controls_row.addWidget(self._progress_bar)
-        controls_row.addStretch()
-        layout.addLayout(controls_row)
-
-        self._tabs = QTabWidget()
-        layout.addWidget(self._tabs)
+        self._controls_row.addStretch()
 
         self._fingerprint_tab = QWidget()
         self._portfolio_tab = QWidget()
@@ -160,11 +107,9 @@ class FitWizardWindow(QMainWindow):
         self._next_btn.clicked.connect(self._go_next_tab)
         nav_row.addWidget(self._next_btn)
         nav_row.addStretch()
-        layout.addLayout(nav_row)
+        self._central_layout.addLayout(nav_row)
 
         self._tabs.currentChanged.connect(self._update_navigation_buttons)
-        self._update_navigation_buttons()
-        self._refresh_btn.setEnabled(False)
 
     def set_analysis_context(
         self,
@@ -193,9 +138,6 @@ class FitWizardWindow(QMainWindow):
         )
         self._set_busy(False)
 
-    def _refresh_analysis(self) -> None:
-        self._start_analysis()
-
     def _start_analysis(self) -> None:
         if self._dataset is None:
             self._status_label.setText("No dataset is available for the fit wizard.")
@@ -203,44 +145,42 @@ class FitWizardWindow(QMainWindow):
             return
         if self._analysis_in_progress:
             return
-
-        if self._analysis_thread is not None:
-            self._analysis_thread.quit()
-            self._analysis_thread.wait()
-            self._cleanup_analysis_thread()
-
-        self._analysis_request_id += 1
-        request_id = self._analysis_request_id
-        self._cached_signature = copy.deepcopy(self._analysis_signature())
-        self._set_busy(True)
         self._status_label.setText(
             "Running fit wizard analysis in the background. You can keep using the main window while recommendations are prepared."
         )
+        # The base bumps the request id, caches the signature, sets busy, calls
+        # _reset_result_state(), then runs _create_worker_task() off-thread.
+        self._run_analysis()
+
+    def _create_worker_task(self, request_id: int):
+        # Capture the inputs now (submit time); the closure runs on the worker
+        # thread and must touch no widgets — it returns a plain recommendation.
+        dataset = self._dataset
+        current_model = self._current_model
+
+        def task(_worker):
+            return build_fit_wizard_recommendation(
+                dataset,
+                current_model=current_model,
+                metric=SelectionMetric.AICC,
+            )
+
+        return task
+
+    def _reset_result_state(self) -> None:
         self._set_empty_state()
 
-        self._analysis_thread = QThread(self)
-        self._analysis_worker = FitWizardWorker(
-            request_id=request_id,
-            dataset=self._dataset,
-            current_model=self._current_model,
-            metric=SelectionMetric.AICC,
-        )
-        self._analysis_worker.moveToThread(self._analysis_thread)
-        self._analysis_thread.started.connect(self._analysis_worker.run)
-        self._analysis_worker.finished.connect(self._on_analysis_finished)
-        self._analysis_worker.error.connect(self._on_analysis_error)
-        self._analysis_worker.finished.connect(self._analysis_thread.quit)
-        self._analysis_worker.error.connect(self._analysis_thread.quit)
-        self._analysis_worker.finished.connect(self._analysis_worker.deleteLater)
-        self._analysis_worker.error.connect(self._analysis_worker.deleteLater)
-        self._analysis_thread.finished.connect(self._cleanup_analysis_thread)
-        self._analysis_thread.finished.connect(self._analysis_thread.deleteLater)
-        self._analysis_thread.start()
+    def _on_analysis_failed(self, message: str) -> None:
+        # Reproduce the pre-unification failure handling (old _on_analysis_error):
+        # clear the recommendation (so a stale success can't be resurrected via
+        # the metric combo), keep the "Fit wizard analysis failed:" prefix (which
+        # GlobalFitWizardWindow also keeps — the two wizards must match), and
+        # empty the result tabs. The base has already cleared busy.
+        self._recommendation = None
+        self._status_label.setText(f"Fit wizard analysis failed: {message}")
+        self._set_empty_state()
 
-    def _set_busy(self, busy: bool) -> None:
-        self._analysis_in_progress = busy
-        self._progress_label.setVisible(busy)
-        self._progress_bar.setVisible(busy)
+    def _update_action_enablement(self, busy: bool) -> None:
         self._progress_label.setText("Analysis in progress..." if busy else "")
         self._refresh_btn.setEnabled(self._dataset is not None and not busy)
         self._refresh_btn.setText(
@@ -252,57 +192,26 @@ class FitWizardWindow(QMainWindow):
         self._previous_btn.setEnabled(not busy and self._tabs.currentIndex() > 0)
         self._next_btn.setEnabled(not busy and self._tabs.currentIndex() < self._tabs.count() - 1)
 
-    def _on_analysis_finished(self, request_id: int, recommendation: object) -> None:
-        thread = self._analysis_thread
-        if thread is not None:
-            thread.quit()
-            thread.wait()
-        if request_id != self._analysis_request_id:
-            self._set_busy(False)
-            self._status_label.setText(
-                "Context changed while analysis was running. Click Start Analysis to generate recommendations for the current spectrum."
-            )
-            self._set_empty_state()
-            return
-        if not isinstance(recommendation, FitWizardRecommendation):
-            self._set_busy(False)
-            self._status_label.setText("Fit wizard analysis returned an unexpected result.")
-            self._set_empty_state()
-            return
-
+    def _populate_results(self, result: object) -> None:
+        recommendation = result
         self._recommendation = recommendation
-        self._selected_key = self._recommendation.recommended_key
-        if self._selected_key is None and self._recommendation.assessments:
-            self._selected_key = self._recommendation.assessments[0].template.key
-        self._status_label.setText(self._recommendation.summary)
+        self._selected_key = recommendation.recommended_key
+        if self._selected_key is None and recommendation.assessments:
+            self._selected_key = recommendation.assessments[0].template.key
+        self._status_label.setText(recommendation.summary)
         self._metric_combo.blockSignals(True)
-        self._metric_combo.setCurrentText(self._recommendation.metric.value)
+        self._metric_combo.setCurrentText(recommendation.metric.value)
         self._metric_combo.blockSignals(False)
         self.analysis_cached.emit(
-            self._recommendation,
+            recommendation,
             self.current_log_text(),
             copy.deepcopy(self._cached_signature) if self._cached_signature is not None else None,
         )
-        self._set_busy(False)
+        # The base cleared busy before calling us, while _recommendation was
+        # still None; re-assert enablement now it is set so the metric combo and
+        # button label match the pre-refactor final state.
+        self._update_action_enablement(False)
         self._populate_from_recommendation()
-        self._refresh_btn.setText("Refresh Analysis")
-
-    def _on_analysis_error(self, request_id: int, message: str) -> None:
-        thread = self._analysis_thread
-        if thread is not None:
-            thread.quit()
-            thread.wait()
-        if request_id != self._analysis_request_id:
-            self._set_busy(False)
-            self._status_label.setText(
-                "Context changed while analysis was running. Click Start Analysis to generate recommendations for the current spectrum."
-            )
-            self._set_empty_state()
-            return
-        self._set_busy(False)
-        self._recommendation = None
-        self._status_label.setText(f"Fit wizard analysis failed: {message}")
-        self._set_empty_state()
 
     def set_cached_recommendation(
         self,
@@ -338,20 +247,6 @@ class FitWizardWindow(QMainWindow):
 
     def current_recommendation(self) -> FitWizardRecommendation | None:
         return self._recommendation
-
-    def current_log_text(self) -> str:
-        return self._cached_log_text
-
-    def _cleanup_analysis_thread(self) -> None:
-        self._analysis_thread = None
-        self._analysis_worker = None
-
-    def closeEvent(self, event) -> None:  # type: ignore[override]
-        if self._analysis_in_progress:
-            self.hide()
-            event.ignore()
-            return
-        super().closeEvent(event)
 
     def _build_fingerprint_tab(self) -> None:
         layout = QVBoxLayout(self._fingerprint_tab)

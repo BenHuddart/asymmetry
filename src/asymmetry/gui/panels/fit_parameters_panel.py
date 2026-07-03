@@ -1,4 +1,51 @@
-"""Panel for inspecting fitted parameters across multiple datasets."""
+"""Panel for inspecting fitted parameters across multiple datasets.
+
+Navigation map
+--------------
+~6.3k lines; a known decomposition target
+(see ``docs/audit/shared-foundations/FOLLOW-UPS.md``), not split in this pass.
+
+Small helper types precede the main class: ``_FitRow`` (one dataset's fitted
+parameter values/errors/provenance for a single trend point), free functions
+for abscissa/float coercion (``_coerce_abscissa``, ``_optional_float``),
+``_YParamControls`` (the per-parameter Y-axis widget group), and
+``_GroupFitData`` (per data-group cross-run model-fit state). The bulk of the
+module is ``FitParametersPanel(QWidget)``, whose methods cluster thematically
+(no section-comment markers in source):
+
+- **Construction / state I/O** — ``__init__``, ``clear``, ``get_state``/
+  ``restore_state`` (``_restore_state_locked`` does the heavy lifting),
+  ``_migrate_legacy_state`` for older ``.asymp`` schemas.
+- **Data ingestion** — ``set_fit_results`` and ``load_representation_series``
+  are the two entry points by which the panel receives new per-run parameter
+  data (pull-based from ``ProjectModel``/``FitSeries`` rather than push).
+- **Data-group selection** — ``_rebuild_group_buttons``,
+  ``_apply_group_selection_to_view``, ``_selected_group_ids_from_buttons``.
+- **Composite / Knight-shift derived parameters** — the
+  ``_apply_composite_parameters_to_rows``, ``_apply_knight_shift_to_rows``,
+  ``_detect_component_crossings``, and joint-knight-fit
+  (``_run_joint_knight_fit``/``_apply_joint_knight_fit``) helpers derive extra
+  Y-series from the raw fitted parameters.
+- **Cross-group / parameter-vs-x model fitting** — ``_run_cross_group_model_fit``,
+  ``_build_cross_group_group_model_fit``, ``_open_model_fit_dialog``, plus the
+  serialize/deserialize pairs for persisting these secondary fits
+  (``_serialize_group_fit_results``, ``_serialize_cross_group_fit_configs``,
+  ``_serialize_last_cross_group_fit``).
+- **Table + plot refresh** — ``_refresh_views`` fans out to ``_refresh_table``
+  and ``_refresh_plot``/``_draw_plot`` (the Matplotlib trend render, including
+  model overlays via ``_draw_model_overlay_mpl`` and member markers via
+  ``_overlay_member_markers``). ``_x_value``/``_x_error`` resolve the selected
+  abscissa (run number, field, temperature, angle, or a custom column) per row.
+- **Async trend-curve sampling** — ``_compute_trend_curves``/
+  ``_start_trend_curve_compute`` offload model-curve sampling to a worker;
+  ``_on_trend_curves_ready``/``_on_trend_curves_error`` marshal results back.
+- **Export** — TSV (``_export_tsv``) and GLE (``_export_gle``,
+  ``_generate_gle_plot``, ``_write_gle_data_file``) writers.
+
+Entry points GUI callers use most: ``set_fit_results``/``load_representation_series``
+to feed data in, ``get_state``/``restore_state`` for project persistence,
+``shutdown_workers``/``closeEvent`` for teardown.
+"""
 
 from __future__ import annotations
 
@@ -107,8 +154,11 @@ from asymmetry.gui.styles.widgets import (
     style_group_state_button,
 )
 from asymmetry.gui.tasks import TaskRunner
+from asymmetry.gui.utils.export import compile_gle
+from asymmetry.gui.utils.formatting import format_param_label
 from asymmetry.gui.widgets.collapsible_section import CollapsibleSection
 from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
+from asymmetry.gui.widgets.mpl_canvas import create_canvas
 
 _PARAMETER_FIT_CURVE_SAMPLE_COUNT = 800
 
@@ -132,10 +182,6 @@ def _quality_flags_tooltip(flags: list[str]) -> str:
     return "Quality flags:\n" + "\n".join(
         f"• {_QUALITY_FLAG_LABELS.get(flag, flag)}" for flag in flags
     )
-
-
-def _format_param_label(name: str) -> str:
-    return get_param_info(name).unicode_label()
 
 
 def _format_plot_label(name: str) -> str:
@@ -662,11 +708,7 @@ class FitParametersPanel(QWidget):
 
         self._has_mpl = False
         try:
-            from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
-            from matplotlib.figure import Figure
-
-            self._figure = Figure(constrained_layout=True)
-            self._canvas = FigureCanvasQTAgg(self._figure)
+            self._figure, self._canvas = create_canvas(layout="constrained")
             plot_layout.addWidget(self._canvas, 1)
             self._has_mpl = True
             self._canvas.mpl_connect("button_press_event", self._on_plot_button_press)
@@ -2926,7 +2968,7 @@ class FitParametersPanel(QWidget):
         if self._angle_x_field is not None:
             combo.addItem(self._angle_x_field[0], userData=self._angle_x_field[1])
         for name in self._display_y_parameters():
-            combo.addItem(_format_param_label(name), userData=f"param:{name}")
+            combo.addItem(format_param_label(name), userData=f"param:{name}")
         # Data-browser custom columns (param:<…> and custom:<…> both carry their
         # key as item data so the selection survives label collisions / renames).
         for label, key in self._custom_x_fields:
@@ -3104,7 +3146,7 @@ class FitParametersPanel(QWidget):
             self._global_param_hint.setText("")
             self._global_param_hint.setVisible(False)
             return
-        labels = ", ".join(_format_param_label(name) for name in names)
+        labels = ", ".join(format_param_label(name) for name in names)
         subject = "it is" if len(names) == 1 else "they are"
         self._global_param_hint.setText(
             f"{labels} fitted as Global (one shared value), so {subject} held "
@@ -3137,11 +3179,11 @@ class FitParametersPanel(QWidget):
         self._y_selector_table.setRowCount(len(display_params))
 
         for idx, name in enumerate(display_params):
-            name_item = QTableWidgetItem(_format_param_label(name))
+            name_item = QTableWidgetItem(format_param_label(name))
             name_item.setData(Qt.ItemDataRole.UserRole, name)
             # The name column elides; back the truncated text with the full label
             # on hover so nothing is lost when the inspector is narrow.
-            name_item.setToolTip(_format_param_label(name))
+            name_item.setToolTip(format_param_label(name))
             self._y_selector_table.setItem(idx, 0, name_item)
 
             fit_button = QPushButton("Model Fit")
@@ -4361,7 +4403,7 @@ class FitParametersPanel(QWidget):
         # were distinguishable only by a mathematical-italic glyph).
         columns = ["Run", "𝐵 (G)", "𝑇 (K)"]
         for name in display_params:
-            label = _format_param_label(name)
+            label = format_param_label(name)
             columns.extend([f"{label} (fit)", f"err {label}"])
         # A free-text x-axis (Angle / custom column) is not one of the fixed
         # columns, so add it explicitly (folded as displayed) — otherwise the
@@ -4988,7 +5030,7 @@ class FitParametersPanel(QWidget):
         """
         name = _x_param_name(x_key)
         if name is not None:
-            return _format_param_label(name)
+            return format_param_label(name)
         labels = self._custom_x_labels()
         if x_key in labels:
             return labels[x_key]
@@ -6195,13 +6237,7 @@ class FitParametersPanel(QWidget):
         if _gle is not None:
             output_path = gle_path.with_suffix(f".{output_format}")
             try:
-                subprocess.run(
-                    [_gle, "-d", output_format, str(gle_path)],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                    cwd=str(gle_path.parent),
-                )
+                compile_gle(_gle, gle_path, output_format, cwd=gle_path.parent)
                 if not is_test_mode:
                     fit_files = getattr(self, "_last_export_fit_files", [])
                     fit_files_text = "\n".join(str(p) for p in fit_files) if fit_files else "(none)"
@@ -6267,12 +6303,7 @@ class FitParametersPanel(QWidget):
                         if src.exists():
                             shutil.copy2(src, tmpdir_path / src.name)
                     fig.savefig(str(gle_file))
-                    subprocess.run(
-                        [_gle, "-d", "png", str(gle_file)],
-                        capture_output=True,
-                        check=True,
-                        cwd=str(tmpdir_path),
-                    )
+                    compile_gle(_gle, gle_file, "png", cwd=tmpdir_path)
 
                     pixmap = QPixmap(str(png_file))
                     if not pixmap.isNull():

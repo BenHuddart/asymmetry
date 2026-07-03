@@ -51,7 +51,9 @@ from asymmetry.gui.gle_settings import get_gle_executable
 from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
 from asymmetry.gui.styles.widgets import apply_param_table_style
 from asymmetry.gui.tasks import TaskRunner
+from asymmetry.gui.utils.export import compile_gle
 from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
+from asymmetry.gui.widgets.mpl_canvas import create_canvas
 
 _PARAMETER_FIT_CURVE_SAMPLE_COUNT = 800
 
@@ -127,11 +129,7 @@ class GlobalParameterFitWindow(QMainWindow):
         self._left_canvas = None
         self._left_figure = None
         try:
-            from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
-            from matplotlib.figure import Figure
-
-            self._left_figure = Figure(tight_layout=True)
-            self._left_canvas = FigureCanvasQTAgg(self._left_figure)
+            self._left_figure, self._left_canvas = create_canvas(layout="tight")
             left_layout.addWidget(self._left_canvas)
 
             self._left_canvas.mpl_connect("button_press_event", self._on_canvas_button_press)
@@ -215,11 +213,7 @@ class GlobalParameterFitWindow(QMainWindow):
         self._local_canvas = None
         self._local_figure = None
         try:
-            from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
-            from matplotlib.figure import Figure
-
-            self._local_figure = Figure(tight_layout=True)
-            self._local_canvas = FigureCanvasQTAgg(self._local_figure)
+            self._local_figure, self._local_canvas = create_canvas(layout="tight")
             right_layout.addWidget(self._local_canvas)
 
             self._local_canvas.mpl_connect("button_press_event", self._on_local_canvas_button_press)
@@ -2296,12 +2290,7 @@ class GlobalParameterFitWindow(QMainWindow):
                             if src.exists() and src.is_file():
                                 shutil.copy2(src, tmpdir_path / dep_name)
 
-                        subprocess.run(
-                            [_gle, "-d", "png", str(tmp_gle)],
-                            capture_output=True,
-                            check=True,
-                            cwd=str(tmpdir_path),
-                        )
+                        compile_gle(_gle, tmp_gle, "png", cwd=tmpdir_path)
 
                         pixmap = QPixmap(str(preview_png))
                         if not pixmap.isNull():
@@ -2345,13 +2334,7 @@ class GlobalParameterFitWindow(QMainWindow):
 
         output_path = gle_path.with_suffix(f".{output_format}")
         try:
-            subprocess.run(
-                [_gle, "-d", output_format, str(gle_path)],
-                capture_output=True,
-                text=True,
-                check=True,
-                cwd=str(gle_path.parent),
-            )
+            compile_gle(_gle, gle_path, output_format, cwd=gle_path.parent)
             QMessageBox.information(
                 self,
                 "Export Successful",
