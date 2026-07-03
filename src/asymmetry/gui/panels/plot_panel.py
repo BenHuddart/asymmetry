@@ -7,6 +7,47 @@ The bunch-factor control rebins the displayed data and also defines the
 dataset passed to fitting in the GUI. The original MuonDataset is preserved,
 so changing the bunch factor after fitting only changes the plotted data while
 the existing fit curve remains overlaid.
+
+Navigation map
+--------------
+~7.3k lines, a single ``PlotPanel(QWidget)`` class; a known decomposition
+target (see ``docs/audit/shared-foundations/FOLLOW-UPS.md``), not split in
+this pass. Methods are not grouped by section comments in the source; they
+cluster thematically in roughly this order:
+
+- **Construction and control widgets** — ``__init__``, ``_create_limit_controls``,
+  ``_create_plot_header``/``_create_plot_footer`` build the axis-limit fields
+  (``FloatLimitField``/``AxisLimitControls`` from ``gui/widgets/axis_limits.py``)
+  and the canvas chrome.
+- **Frequency-axis unit/reference conversion** — the ``_convert_frequency_*``
+  and ``_display_x_*``/``_display_y_*`` helpers translate between canonical
+  MHz storage and the user-selected display unit/reference.
+- **Navigation mode and axis-limit sync** — ``_set_navigation_mode``,
+  ``_connect_axis_limit_callbacks``, ``_sync_limits_from_axes``,
+  ``_on_axis_limits_changed``: keeps the Matplotlib toolbar pan/zoom state,
+  the limit spin fields, and the stored view limits consistent.
+- **Dataset/projection plumbing** — ``get_analysis_dataset``, projection
+  axis helpers (``_axis_key_for_dataset``, ``set_projections``,
+  ``fit_target_projection``), and the low-count/low-confidence masking used
+  before plotting (``_low_count_mask_for_dataset``, ``_low_confidence_mask_for_dataset``).
+- **Rendering** — the ``plot_*`` family is the core draw path:
+  ``plot_datasets``/``plot_dataset`` (single/overlay), ``plot_vector_subplots``,
+  ``plot_grouped_time_domain_subplots``, ``plot_maxent_reconstruction*``, and
+  ``plot_fit``/``set_global_fits`` for fit-curve overlay. ``_apply_limits`` and
+  the ``_auto_x_limits``/``_auto_y_limits*`` helpers frame the axes afterward.
+- **Interaction** — mouse/canvas event handlers (``_on_canvas_button_press``,
+  ``_on_canvas_motion_notify``, ``_on_canvas_button_release``) drive fit-range
+  and moments-window drag handles, annotation add/edit/delete, and the cursor
+  readout.
+- **Export** — ``get_current_plot_export_data``, ``export_plotted_data_as_text``,
+  ``export_plots_to_gle`` (using ``compile_gle`` from ``gui/utils/export.py``),
+  ``export_current_plot``.
+- **State I/O** — ``get_state``/``restore_state`` at the end serialize panel
+  configuration (bunch factor, view limits, projections, decimation, RRF) for
+  project persistence.
+
+Entry points GUI callers use most: ``plot_datasets``/``plot_dataset``,
+``plot_fit``, ``set_view_limits``/``get_view_limits``, ``get_state``/``restore_state``.
 """
 
 from __future__ import annotations

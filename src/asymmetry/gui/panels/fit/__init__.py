@@ -8,6 +8,18 @@ dependency-ordered submodules:
 No logic changed in the split; see ``docs/audit/shared-foundations``. The public
 API is re-exported here (and, for backward compatibility, through the thin
 ``asymmetry.gui.panels.fit_panel`` shim).
+
+The genuinely public surface most callers need is small: ``FitPanel``
+(container), ``SingleFitTab``/``GlobalFitTab`` (the two tabs),
+``FitParameterTable``/``FitTabBase`` (shared building blocks for a new tab),
+and the ``BATCH_SEEDING_*`` constants. Everything else in ``__all__`` —
+underscore-prefixed helpers from ``tab_base``/``seeding`` — is re-exported
+only so the ``fit_panel.py`` shim and a handful of existing call sites
+(e.g. ``multi_group_fit_window.py``, tests) keep working unchanged after the
+split; new code should import those directly from their owning submodule
+(``panels.fit.tab_base`` / ``panels.fit.seeding``) rather than from the
+package root. See ``docs/audit/shared-foundations/FOLLOW-UPS.md`` for the
+tracked follow-up to migrate those call sites and retire the shim.
 """
 
 from __future__ import annotations

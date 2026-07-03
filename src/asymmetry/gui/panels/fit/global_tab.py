@@ -1,6 +1,40 @@
 """Global / batch fit tab (``GlobalFitTab``) and batch-seeding constants.
 
 Split out of ``fit_panel.py`` (Phase 2 mechanical split).
+
+Navigation map
+--------------
+~5.0k lines. Module-level constants precede the class: ``BATCH_SEEDING_MODES``
+(the ``(label, mode)`` pairs shared by the on-tab selector and the
+``Analysis > Batch seeding`` menu so they cannot drift), ``BATCH_SEEDING_LABELS``
+(reverse lookup), and ``BATCH_SEEDING_TOOLTIP``. Everything else lives on
+``GlobalFitTab(FitTabBase)`` — one large class with no section-comment
+markers; methods cluster thematically in roughly this order:
+
+- **Construction** — ``__init__`` builds the batch-mode selector, the
+  parameter-classification table, and per-group model tables (deliberately
+  *not* sharing a factory with ``SingleFitTab``'s single table — see
+  ``docs/audit/shared-foundations/FOLLOW-UPS.md`` Phase 2 H2).
+- **Grouped/data-group model sharing** — ``_on_share_function_with_group``,
+  ``_open_grouped_initial_values_dialog``.
+- **Per-run wizard-cache lookups** — ``_single_fit_wizard_cache_for_run``.
+- **Fraction-value linking** — ``_synchronize_fraction_value_rows`` (the
+  global-tab counterpart of the single-tab fraction sync, using the shared
+  ``tab_base`` fraction helpers under the hood).
+- **Count-domain / T0 baseline fitting** — ``set_count_baseline``,
+  ``_render_count_fb_result``, ``promote_count_t0``.
+- **Fit run/stop lifecycle** — ``_on_stop_fit`` (cancels
+  ``self._count_fit_worker or self._fit_worker`` — the global tab has a
+  second, count-domain worker that ``SingleFitTab`` does not), and
+  ``_on_grouped_fit_finished`` (the completion slot that records results back
+  into the series/table state).
+- **Global-wizard status/seed reporting** — ``_status_text_from_global_wizard``,
+  ``_grouped_member_nuisance_seeds``, ``current_grouped_seed_values``.
+- **Teardown** — ``_reset_group_parameter_estimates`` and related per-group
+  reset helpers near the end of the file.
+
+Entry points GUI callers use most: construction via ``FitPanel``, then the
+``_on_*_fit_finished``/``_on_stop_fit`` pair as the fit-lifecycle boundary.
 """
 
 import copy

@@ -2,6 +2,15 @@
 
 Split out of ``fit_panel.py`` (Phase 2 mechanical split). Pure helpers; no
 intra-package dependencies.
+
+What lives here: field-value default overrides (``_field_value_overrides``),
+heuristic grouped-count background/N0/amplitude seeding
+(``_seed_group_background_and_n0``), and FFT-based per-group phase seeding
+(``_group_phase_window_mhz`` → ``_seed_group_phase_degrees`` →
+``_seed_group_absolute_phases``, with ``_bounded_phase_seed_padding`` capping
+the padded FFT size so re-seeding on every selection change stays cheap).
+Entry points used by ``global_tab.py``: ``_seed_group_background_and_n0`` and
+``_seed_group_absolute_phases``.
 """
 
 import numpy as np

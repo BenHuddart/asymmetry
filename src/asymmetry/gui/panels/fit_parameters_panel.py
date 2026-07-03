@@ -1,4 +1,51 @@
-"""Panel for inspecting fitted parameters across multiple datasets."""
+"""Panel for inspecting fitted parameters across multiple datasets.
+
+Navigation map
+--------------
+~6.3k lines; a known decomposition target
+(see ``docs/audit/shared-foundations/FOLLOW-UPS.md``), not split in this pass.
+
+Small helper types precede the main class: ``_FitRow`` (one dataset's fitted
+parameter values/errors/provenance for a single trend point), free functions
+for abscissa/float coercion (``_coerce_abscissa``, ``_optional_float``),
+``_YParamControls`` (the per-parameter Y-axis widget group), and
+``_GroupFitData`` (per data-group cross-run model-fit state). The bulk of the
+module is ``FitParametersPanel(QWidget)``, whose methods cluster thematically
+(no section-comment markers in source):
+
+- **Construction / state I/O** — ``__init__``, ``clear``, ``get_state``/
+  ``restore_state`` (``_restore_state_locked`` does the heavy lifting),
+  ``_migrate_legacy_state`` for older ``.asymp`` schemas.
+- **Data ingestion** — ``set_fit_results`` and ``load_representation_series``
+  are the two entry points by which the panel receives new per-run parameter
+  data (pull-based from ``ProjectModel``/``FitSeries`` rather than push).
+- **Data-group selection** — ``_rebuild_group_buttons``,
+  ``_apply_group_selection_to_view``, ``_selected_group_ids_from_buttons``.
+- **Composite / Knight-shift derived parameters** — the
+  ``_apply_composite_parameters_to_rows``, ``_apply_knight_shift_to_rows``,
+  ``_detect_component_crossings``, and joint-knight-fit
+  (``_run_joint_knight_fit``/``_apply_joint_knight_fit``) helpers derive extra
+  Y-series from the raw fitted parameters.
+- **Cross-group / parameter-vs-x model fitting** — ``_run_cross_group_model_fit``,
+  ``_build_cross_group_group_model_fit``, ``_open_model_fit_dialog``, plus the
+  serialize/deserialize pairs for persisting these secondary fits
+  (``_serialize_group_fit_results``, ``_serialize_cross_group_fit_configs``,
+  ``_serialize_last_cross_group_fit``).
+- **Table + plot refresh** — ``_refresh_views`` fans out to ``_refresh_table``
+  and ``_refresh_plot``/``_draw_plot`` (the Matplotlib trend render, including
+  model overlays via ``_draw_model_overlay_mpl`` and member markers via
+  ``_overlay_member_markers``). ``_x_value``/``_x_error`` resolve the selected
+  abscissa (run number, field, temperature, angle, or a custom column) per row.
+- **Async trend-curve sampling** — ``_compute_trend_curves``/
+  ``_start_trend_curve_compute`` offload model-curve sampling to a worker;
+  ``_on_trend_curves_ready``/``_on_trend_curves_error`` marshal results back.
+- **Export** — TSV (``_export_tsv``) and GLE (``_export_gle``,
+  ``_generate_gle_plot``, ``_write_gle_data_file``) writers.
+
+Entry points GUI callers use most: ``set_fit_results``/``load_representation_series``
+to feed data in, ``get_state``/``restore_state`` for project persistence,
+``shutdown_workers``/``closeEvent`` for teardown.
+"""
 
 from __future__ import annotations
 

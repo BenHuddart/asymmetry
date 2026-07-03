@@ -1,6 +1,15 @@
 """Single-dataset fit tab (``SingleFitTab``).
 
 Split out of ``fit_panel.py`` (Phase 2 mechanical split).
+
+What lives here: ``SingleFitTab(FitTabBase)``, the tab used to fit one
+dataset (or one grouped selection in time domain) against a single composite
+model. Entry points: ``set_dataset`` feeds the active dataset in;
+``current_seed_values`` reads the parameter table's current seeds; the
+``_run_fit``/``_on_stop_fit`` pair is the fit-lifecycle boundary (started via
+``tab_base._start_fit_call``, results routed back through the panel's
+``_on_single_fit_completed``); ``get_state``/``restore_state`` serialize the
+tab for project persistence.
 """
 
 import copy

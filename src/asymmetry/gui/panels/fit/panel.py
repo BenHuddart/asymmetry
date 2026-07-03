@@ -1,6 +1,17 @@
 """Fit panel container (``FitPanel``) hosting the single and global tabs.
 
 Split out of ``fit_panel.py`` (Phase 2 mechanical split).
+
+What lives here: ``_CurrentPageTabWidget`` (a ``QTabWidget`` that only
+size-hints its current page, avoiding oversized minimums from hidden tabs) and
+``FitPanel(QWidget)``, the dockable container that owns a ``QTabWidget`` with
+one ``SingleFitTab`` and one ``GlobalFitTab`` page plus the top-level
+model/formula selection shared by both. Entry points: construct a
+``FitPanel`` from ``MainWindow``; ``set_dataset``/``set_datasets`` feed data
+in; ``get_single_state``/``restore_single_state``,
+``get_global_state``/``restore_global_state``, and ``get_domain_state``/
+``restore_domain_state`` (a domain-keyed dispatch over the pair above)
+serialize each tab for project persistence.
 """
 
 import copy

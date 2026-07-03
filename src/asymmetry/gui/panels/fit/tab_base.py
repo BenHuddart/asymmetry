@@ -2,6 +2,50 @@
 module-level helpers shared by the single and global fit tabs.
 
 Split out of ``fit_panel.py`` (Phase 2 mechanical split).
+
+Navigation map
+--------------
+~1.7k lines, structured as free functions first, then classes, in this order:
+
+1. **Table/model helpers** — ``_grouped_formula_string``,
+   ``_refresh_field_defaults_in_table``, ``_param_table_rows_by_name``,
+   ``_parse_param_table_float``/``_set_param_table_value``,
+   ``_synchronize_fraction_group_values_in_table``/
+   ``_configure_fraction_rows_in_table`` (fraction-parameter linking math
+   shared by both tabs).
+2. **Fit-result summary/messaging helpers** — ``_fit_summary``,
+   ``_fit_range_provenance_text``, ``_apply_fit_range_display``,
+   ``_fit_success_html``/``_fit_warnings_html``, ``_format_tie_formula``.
+3. **Tie dialog and tie-button helpers** — ``AffineTieDialog`` (modal editor
+   for an affine parameter tie), ``_make_tie_button``/``_tie_button_value``/
+   ``_set_tie_button_value``, ``_param_name_from_tie_button``.
+4. **Link-group combo helpers** — ``_make_link_group_combo``,
+   ``_link_group_combo_value``/``_set_link_group_combo_value``.
+5. **Domain/worker-exception helpers** — ``_dataset_representation_domain``,
+   ``_fit_domain_mismatch_message``/``_apply_domain_mismatch_warning``,
+   ``_model_without_trailing_background``, ``_format_fit_worker_exception``,
+   ``_fit_curve_sample_count``, and the fit-thread wait/dispatch helpers
+   (``_fit_work_pending``, ``_wait_for_fit_thread``, ``_start_fit_call`` — the
+   shared entry point both tabs use to launch a fit worker).
+6. **Item delegates** — ``_CommitOnTabDelegate`` (commits an edit on Tab
+   instead of the Qt default) and ``_ValueUncertaintyDelegate`` (renders a
+   value ± its uncertainty in one cell), used by the parameter table.
+7. **``_size_param_table_to_content``** and ``_shift_rrf_parameters`` (RRF
+   frequency-shift helper for rotating-reference-frame fits).
+8. **``FitParameterTable(QTableWidget)``** — the shared parameter-table
+   widget: ``populate`` builds rows from a model's parameters,
+   ``read_parameter_set`` reads them back into a ``ParameterSet``,
+   ``synchronize_fractions`` keeps linked fraction parameters consistent, and
+   ``parameters_state``/``restore_parameters`` serialize/restore table state
+   for project persistence.
+9. **``FitTabBase(QWidget)``** — the shared base both ``SingleFitTab`` and
+   ``GlobalFitTab`` subclass: common formula-box/fit-range/run-control
+   construction (``_build_formula_box``, ``_build_fit_range_fields``,
+   ``_build_run_controls``) and fit-range display sync
+   (``_apply_fit_range_domain``, ``set_fit_range_display``,
+   ``current_fit_range_text``). Deliberately thin — see
+   ``docs/audit/shared-foundations/FOLLOW-UPS.md`` (Phase 2 H3) for the
+   candidates considered and rejected for further hoisting into this base.
 """
 
 import copy

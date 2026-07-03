@@ -21,11 +21,24 @@ repo-local docs and use this file as the map.
   Qt, matplotlib, or `asymmetry.gui`.
 - `src/asymmetry/gui/`: PySide6 desktop application and plotting surfaces. GUI
   code wraps the core API instead of reimplementing analysis behavior.
+  - `gui/panels/fit/`: the fit-setup-and-results package (`FitPanel`,
+    `FitTabBase`, `SingleFitTab`, `GlobalFitTab`, `FitParameterTable`, plus
+    seeding helpers) — see `docs/ARCHITECTURE.md` for the module map.
+  - New axis/limit fields, Matplotlib canvases, GLE export code, parameter
+    label formatting, or fit-tab run controls must reuse the shared
+    `gui/widgets/` and `gui/utils/` foundations (`FloatLimitField` /
+    `AxisLimitControls`, `create_canvas`, `compile_gle`,
+    `format_param_label`, `FitRunControls`) rather than re-rolling a new
+    implementation. New guided-wizard windows should subclass
+    `gui/windows/wizard_base.py::WizardWindowBase` instead of hand-rolling a
+    `TaskRunner` + progress-UI skeleton.
 - `src/asymmetry/core/io/`: loader registry and file-format adapters.
 - `src/asymmetry/core/fitting/`: fitting engines, built-in models, and wizard
   recommendation logic.
 - `src/asymmetry/core/project/`: serialized `.asymp` project schema.
-- `tests/`: pytest coverage for core, GUI, project persistence, and loaders.
+- `tests/`: pytest coverage, organized by layer under `tests/{core,gui,io,
+  project,tools,integration}/` (a new test file belongs beside its layer's
+  existing tests, mirroring the feature's module path) — see `tests/README.md`.
 - `tools/harness.py`: executable validation harness for agents and CI.
 
 ## Engineering Invariants
@@ -53,6 +66,13 @@ repo-local docs and use this file as the map.
   them down in `closeEvent`.
 - When adding datasets to the browser in a loop, wrap the loop in
   `DataBrowserPanel.batch_updates()` — per-add table rebuilds are O(n²).
+- `tools/harness.py structural` enforces the shared-foundations rules
+  mechanically, so a duplicate/bespoke implementation fails fast rather than
+  drifting: no second `*LimitField` class outside
+  `gui/widgets/axis_limits.py`, no direct `FigureCanvasQTAgg(` construction
+  outside `gui/widgets/mpl_canvas.py`, no bespoke `QThread(` construction in
+  `gui/` outside `gui/tasks.py`'s `TaskRunner`, and no `test_*.py` file
+  outside a sanctioned `tests/<subpackage>/` (see `tests/README.md`).
 
 ## Validation Ladder
 
