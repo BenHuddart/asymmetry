@@ -170,6 +170,16 @@ class FitWizardWindow(WizardWindowBase):
     def _reset_result_state(self) -> None:
         self._set_empty_state()
 
+    def _on_analysis_failed(self, message: str) -> None:
+        # Reproduce the pre-unification failure handling (old _on_analysis_error):
+        # clear the recommendation (so a stale success can't be resurrected via
+        # the metric combo), keep the "Fit wizard analysis failed:" prefix (which
+        # GlobalFitWizardWindow also keeps — the two wizards must match), and
+        # empty the result tabs. The base has already cleared busy.
+        self._recommendation = None
+        self._status_label.setText(f"Fit wizard analysis failed: {message}")
+        self._set_empty_state()
+
     def _update_action_enablement(self, busy: bool) -> None:
         self._progress_label.setText("Analysis in progress..." if busy else "")
         self._refresh_btn.setEnabled(self._dataset is not None and not busy)

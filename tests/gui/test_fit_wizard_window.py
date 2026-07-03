@@ -209,6 +209,45 @@ def test_fit_wizard_window_populates_banners_and_tables(
     assert window._apply_parameters_table.rowCount() == 3
 
 
+def test_fit_wizard_window_failed_refresh_clears_recommendation(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A refresh that fails must clear the stale recommendation and prefix the error.
+
+    Regression: after the WizardWindowBase unification the single wizard briefly
+    inherited the base default failure hook, which set only the raw message —
+    dropping the "Fit wizard analysis failed:" prefix (leaving it inconsistent
+    with the global wizard) and leaving the previous successful recommendation
+    live, so the still-enabled metric combo could resurrect stale results.
+    """
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_fit_wizard_recommendation",
+        lambda dataset, current_model=None, metric=SelectionMetric.AICC: _fake_recommendation(
+            dataset
+        ),
+    )
+    window = FitWizardWindow()
+    window.set_analysis_context(dataset)
+    window._start_analysis()
+    wait_for(lambda: _analysis_complete(window), qapp)
+    assert window._recommendation is not None
+    assert window._metric_combo.isEnabled()
+
+    def _boom(dataset, current_model=None, metric=SelectionMetric.AICC):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(wizard_window_module, "build_fit_wizard_recommendation", _boom)
+    window._start_analysis()
+    wait_for(lambda: not window._analysis_in_progress and window._tasks.active_count == 0, qapp)
+
+    assert window._recommendation is None
+    assert window._status_label.text() == "Fit wizard analysis failed: boom"
+    assert not window._metric_combo.isEnabled()
+
+
 def test_fit_wizard_window_metric_info_dialog_contains_expected_text(
     qapp: QApplication,
     monkeypatch: pytest.MonkeyPatch,
