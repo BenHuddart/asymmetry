@@ -80,7 +80,21 @@ and cached back into the normal per-run single-fit state.
 Workflow
 --------
 
-The wizard is organised into six pages.
+The wizard is organised into seven pages.
+
+Scope
+~~~~~
+
+The first page is the same physics-scope selector as the single-spectrum
+wizard, resolved over the whole series: a component is offered when it is
+in scope for *any* run, so a temperature series crossing a transition
+keeps both its ordered-state and paramagnetic families. In addition to
+the per-run screening, the wizard pattern-matches each run's detected
+spectral peaks; when at least half of the runs show the same recognised
+multiplet (a muonium pair, a µ-F or F-µ-F triplet, a Larmor line), that
+family is force-included in the coupled-optimisation shortlist and cannot
+be screened away. Changing the scope marks existing screening results
+stale and clears the screening selection.
 
 Series Overview
 ~~~~~~~~~~~~~~~

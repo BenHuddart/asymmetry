@@ -13,10 +13,11 @@ Fit Wizard
 *sample (Blundell et al. Ch 5.2).*
 
 The fit wizard is a guided workflow for choosing a sensible single-spectrum
-time-domain fit function. It fingerprints the active spectrum, fits a
-curated portfolio of around a dozen candidate composite models, ranks them
-with an information criterion (AICc by default), and writes the chosen
-result back into the single-fit tab when you accept it. The most natural
+time-domain fit function. It fingerprints the active spectrum, screens
+candidate model families drawn from the component library (restricted to the
+physics scope you choose), ranks the fitted candidates with an information
+criterion (AICc by default), and writes the chosen result back into the
+single-fit tab when you accept it. The most natural
 use is the first pass on an unfamiliar spectrum — temperature points in
 the middle of a transition, a sample whose magnetic structure is not yet
 known, a survey of multiple compounds in a synthesis batch — but the
@@ -51,7 +52,28 @@ the recommendation is rebuilt from the current context.
 Workflow
 --------
 
-The wizard is organised into four pages.
+The wizard is organised into five pages.
+
+Scope
+~~~~~
+
+The first page decides which candidate families the wizard may consider.
+A preset menu offers physics-motivated selections — ZF static magnetism,
+TF Knight shift / precession, TF superconductor, LF dynamics, fluoride
+(F-µ-F), muonium / radical, or everything — and the default ``Auto``
+preset infers a scope from the run metadata: the recorded field geometry
+selects ZF, TF, or LF families, and for TF runs the field magnitude
+excludes muonium components outside their validity regime (the low-TF
+doublet above ~150 G, the Paschen–Back pair below ~1.5 kG; the exact
+four-frequency ``MuoniumTF`` is never field-excluded). Field geometry is
+read from the data file only — it is never guessed from the field
+magnitude — and when the metadata does not record a geometry the wizard
+falls back to screening every family. The tree below the preset shows
+each component with the reason it was excluded, and any component can be
+ticked back in (or out); user-registered functions are always offered. A
+live estimate of the candidate and fit counts indicates the cost of the
+current selection. Changing the scope after an analysis marks the results
+stale — rerun to rebuild them.
 
 Fingerprint
 ~~~~~~~~~~~
@@ -69,47 +91,45 @@ spectrum:
 - semilog slope ratio for the relaxation envelope
 - late-time dip or recovery score
 
-These features are used only to decide which broad model families should be
-considered. They do not replace the actual fit comparison step.
+These features only *prioritise* the candidate families — they never
+exclude one. Every family in scope gets at least its cheap Stage-1
+representative fitted, so a misleading fingerprint cannot hide the right
+model; it can only delay it to a lower priority.
+
+Below the feature table, a peak list shows every line found by the
+multi-peak spectral search (frequency, signal-to-noise ratio, width, and
+any recognised multiplet pattern — a Larmor line at the applied field, a
+low- or high-TF muonium pair, or the characteristic µ-F and F-µ-F
+triplets). Clicking on the FFT plot adds a *user peak* at that frequency
+(dashed red marker); clicking an existing user marker, or selecting its
+row and pressing ``Remove Selected Peak``, removes it. User peaks are
+treated as trusted frequencies: they seed oscillatory candidates directly
+and participate in pattern matching, which is the quickest way to steer
+the wizard when you can see a line it underrates. Peaks can be placed
+before the first analysis run.
 
 Candidate Portfolio
 ~~~~~~~~~~~~~~~~~~~
 
-The second page shows the curated model portfolio that will be fitted. Version
-1 intentionally uses a small set of plausible, interpretable composite models
-that can already be built from the supported fit components instead of trying
-every possible combination.
-
-The always-available candidates are:
-
-- ``Exponential + Constant``
-- ``Exponential + Exponential + Constant``
-- ``Exponential + Gaussian + Constant``
-- ``Gaussian + Constant``
-- ``Gaussian + Gaussian + Constant``
-- ``Exponential + Exponential + Exponential + Constant``
-- ``Exponential + Exponential + Gaussian + Constant``
-- ``Exponential + Gaussian + Gaussian + Constant``
-- ``Gaussian + Gaussian + Gaussian + Constant``
-- ``Stretched Exponential + Constant``
-
-When the spectrum looks Kubo-Toyabe-like, the wizard also considers:
-
-- ``StaticGKT_ZF + Constant``
-- ``StaticGKT_ZF * Exponential + Constant``
-
-When the fingerprint suggests oscillations, the wizard also considers:
-
-- ``Oscillatory * Exponential + Constant``
-- ``Oscillatory * Gaussian + Constant``
+The second page shows the candidate families that will be screened. The
+wizard groups the component library into families — relaxation,
+multi-rate relaxation, Kubo-Toyabe, precession (including vortex-lattice
+line shapes), muonium, and fluorine dipolar (µ-F / F-µ-F) — and screens
+them in two stages. Stage 1 fits one cheap representative per in-scope
+family (both exponential and Gaussian shapes for the relaxation family).
+A family expands to its full Stage-2 portfolio when its representative
+passes the residual checks, scores within a small margin of the best
+family, matches a recognised multiplet pattern in the detected peaks, or
+is pointed at by a fingerprint hint; expensive members such as the
+numerical F-µ-F powder averages are only ever fitted inside a promoted
+family, with match-derived seeds (a hyperfine constant from a muonium
+pair, a µ-F distance from a triplet). When several strong spectral lines
+are detected, the wizard also constructs multi-cosine candidates with one
+damped oscillator per line. Families that are screened but not promoted
+are listed with the concrete reason, so nothing disappears silently.
 
 If the single-fit tab already has a different composite model selected, the
 wizard includes that function as a baseline comparison as well.
-
-The automatic portfolio is deliberately conservative. Specialised muon-fluorine
-functions such as ``MuF`` and ``FmuF_*`` are not auto-suggested in version 1;
-build those manually in the function builder when the experiment calls for
-them.
 
 The additive multi-component candidates are especially useful for spectra whose
 smoothed semilog envelope changes slope while remaining largely monotonic. In
