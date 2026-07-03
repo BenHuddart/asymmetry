@@ -32,8 +32,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QListWidget,
-    QListWidgetItem,
     QMessageBox,
     QPushButton,
     QRadioButton,
@@ -52,8 +50,14 @@ from asymmetry.core.instrument import (
     derive_projection_pairs,
     detect_instrument,
     get_instrument_layout,
+    instrument_display_name,
     recommend_grouping_preset,
     variant_for_histograms,
+)
+from asymmetry.core.project.profiles import (
+    GroupingProfile,
+    ProfileFingerprint,
+    profile_fingerprint_for_run,
 )
 from asymmetry.core.transform import (
     apply_grouping,
@@ -85,21 +89,44 @@ from asymmetry.gui.windows.grouping.grp_io import (
 from asymmetry.gui.windows.grouping.grp_io import (
     serialize_grp as _serialize_grp,
 )
+from asymmetry.gui.windows.grouping.profile_bridge import (
+    payload_matches_preset,
+    preset_payload,
+    profile_from_form_payload,
+)
+from asymmetry.gui.windows.grouping.scope_panel import ScopePanel
 
 
 class GroupingDialog(QDialog):
-    """Edit forward/backward grouping for multiple datasets.
+    """Profile editor for detector grouping.
+
+    The dialog edits an in-memory *draft* grouping profile (a
+    :class:`~asymmetry.core.project.profiles.GroupingProfile`). Runs of a
+    fingerprint ``(instrument, histogram_count)`` inherit the fingerprint's
+    active profile; per-run divergence is an explicit "release from profile"
+    exception managed in the scope panel. Nothing touches the project or runs
+    until Apply.
+
+    The form controls (binning, deadtime, background, period, alpha) edit the
+    draft through a flat ``run.grouping`` *payload* (see
+    :mod:`asymmetry.gui.windows.grouping.profile_bridge`); a *preview run*
+    selector supplies the per-run facts (t0, good-bin window) shown read-only,
+    and changing it never discards draft edits.
 
     Parameters
     ----------
     datasets
         Datasets available in the active project. Datasets without raw
-        histograms are ignored for grouping operations.
+        histograms are ignored.
+    profiles
+        The project's existing grouping profiles. When omitted (or empty for the
+        current fingerprint), the draft is synthesized from the current/reference
+        run's payload as ``"Default (<instrument>)"``.
     selected_run_number
-        Optional run number used as initial reference dataset.
+        Optional run number used as the initial preview run.
     selected_run_numbers
-        Optional run numbers to pre-select in the dataset tick-list. When not
-        provided, all datasets are selected by default.
+        Optional run numbers; only the first choice steers the initial preview
+        run / fingerprint. No longer a broadcast selection.
     parent
         Parent Qt widget.
     """
@@ -108,20 +135,29 @@ class GroupingDialog(QDialog):
         self,
         datasets: list[MuonDataset],
         *,
+        profiles: list[GroupingProfile] | None = None,
+        overridden_run_numbers: list[int] | None = None,
         selected_run_number: int | None = None,
         selected_run_numbers: list[int] | None = None,
         parent=None,
     ) -> None:
-        """Create a shared grouping dialog for project datasets."""
+        """Create a grouping profile editor for project datasets."""
         super().__init__(parent)
         self._datasets = [ds for ds in datasets if ds.run is not None]
+        self._project_profiles = list(profiles or [])
+        self._overridden_run_numbers = {int(v) for v in (overridden_run_numbers or [])}
         self._selected_run_number = selected_run_number
         self._selected_run_numbers = (
             {int(v) for v in selected_run_numbers} if selected_run_numbers is not None else None
         )
+        # Draft-editing state (set up once the reference/preview run is known).
+        self._draft_dirty = False
+        self._suppress_dirty = False
+        self._draft_name = ""
+        self._fingerprint: ProfileFingerprint | None = None
 
         self.setWindowTitle("Grouping")
-        self.resize(860, 500)
+        self.resize(940, 560)
 
         if not self._datasets:
             layout = QVBoxLayout(self)
@@ -134,11 +170,22 @@ class GroupingDialog(QDialog):
         self._reference_dataset = self._choose_reference_dataset()
         self._run = self._reference_dataset.run
         assert self._run is not None
+        self._fingerprint = profile_fingerprint_for_run(self._run)
+        # The draft this editor mutates. Seeded below from the active profile for
+        # the fingerprint, or synthesized from the reference run's payload.
+        self._draft = self._initial_draft()
+        self._draft_name = self._draft.name
+        # The draft resolved against the preview run: a full payload with the
+        # historical ``run.grouping`` shape that the form controls seed from. It
+        # merges the draft's shareable settings with the preview run's per-run
+        # facts, so shareable reads (groups, alpha, binning) come from the draft
+        # and per-run reads (t0, good bins) come from the run.
+        seed = self._seed_source()
 
-        self._groups = self._load_groups(self._run)
-        self._group_names: dict[int, str] = self._load_group_names(self._run)
-        self._included_groups: dict[int, bool] = self._load_included_groups(self._run)
-        self._projection_specs: list[dict] | None = self._load_projection_specs(self._run)
+        self._groups = self._load_groups(seed)
+        self._group_names: dict[int, str] = self._load_group_names(seed)
+        self._included_groups: dict[int, bool] = self._load_included_groups(seed)
+        self._projection_specs: list[dict] | None = self._load_projection_specs(seed)
         self._vector_axis_pairs: dict[str, tuple[int, int]] = {}
         self._vector_alpha_spins: dict[str, QDoubleSpinBox] = {}
         self._vector_forward_labels: dict[str, QLabel] = {}
@@ -154,19 +201,45 @@ class GroupingDialog(QDialog):
         root = QVBoxLayout(self)
         root.setSpacing(6)
 
-        # \u2500\u2500 Top bar: dataset count + reference run selector \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-        top_row = QHBoxLayout()
-        top_row.addWidget(QLabel(f"Datasets: {len(self._datasets)}"))
+        # \u2500\u2500 Top bar: profile selector + preview run + preset \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+        profile_row = QHBoxLayout()
+        profile_row.addWidget(QLabel("Profile"))
+        self._profile_combo = QComboBox()
+        self._profile_combo.setMinimumContentsLength(20)
+        self._rebuild_profile_combo()
+        self._profile_combo.activated.connect(self._on_profile_combo_activated)
+        profile_row.addWidget(self._profile_combo)
 
+        rename_btn = QPushButton("Rename\u2026")
+        rename_btn.setAutoDefault(False)
+        rename_btn.setDefault(False)
+        rename_btn.clicked.connect(self._on_rename_profile)
+        profile_row.addWidget(rename_btn)
+
+        # The reference-run combo is now a non-destructive preview-run selector:
+        # it changes only the per-run facts shown, never the draft.
         self._reference_combo = QComboBox()
-        for ds in self._datasets:
+        for ds in self._fingerprint_datasets():
             self._reference_combo.addItem(ds.run_label, int(ds.run_number))
         self._set_combo_to_run(self._reference_combo, int(self._reference_dataset.run_number))
         self._reference_combo.currentIndexChanged.connect(self._on_reference_dataset_changed)
-        top_row.addWidget(QLabel("Reference run"))
-        top_row.addWidget(self._reference_combo)
-        top_row.addStretch()
-        root.addLayout(top_row)
+        profile_row.addWidget(QLabel("Preview run"))
+        profile_row.addWidget(self._reference_combo)
+        profile_row.addStretch()
+        root.addLayout(profile_row)
+
+        preset_row = QHBoxLayout()
+        preset_row.addWidget(QLabel("Preset"))
+        self._preset_combo = QComboBox()
+        self._preset_combo.setMinimumContentsLength(18)
+        self._preset_combo.activated.connect(self._on_preset_combo_activated)
+        preset_row.addWidget(self._preset_combo)
+        self._preset_chip = QLabel("")
+        self._preset_chip.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+        preset_row.addWidget(self._preset_chip)
+        preset_row.addStretch()
+        root.addLayout(preset_row)
+        self._rebuild_preset_combo()
 
         # Non-blocking transverse-field nudge: shown when the reference run is
         # transverse-field but the grouping is still on a longitudinal preset
@@ -189,43 +262,11 @@ class GroupingDialog(QDialog):
         left_layout.setContentsMargins(0, 0, 4, 0)
         left_layout.setSpacing(4)
 
-        dataset_buttons = QHBoxLayout()
-        select_all_btn = QPushButton("Select All")
-        select_all_btn.setAutoDefault(False)
-        select_all_btn.setDefault(False)
-        select_all_btn.clicked.connect(self._select_all_datasets)
-        select_reference_btn = QPushButton("Select Reference Run")
-        select_reference_btn.setAutoDefault(False)
-        select_reference_btn.setDefault(False)
-        select_reference_btn.clicked.connect(self._select_reference_dataset)
-        deselect_all_btn = QPushButton("Deselect All")
-        deselect_all_btn.setAutoDefault(False)
-        deselect_all_btn.setDefault(False)
-        deselect_all_btn.clicked.connect(self._deselect_all_datasets)
-        dataset_buttons.addWidget(select_all_btn)
-        dataset_buttons.addWidget(select_reference_btn)
-        dataset_buttons.addWidget(deselect_all_btn)
-        dataset_buttons.addStretch()
-        left_layout.addLayout(dataset_buttons)
-
-        self._dataset_list = QListWidget()
-        for ds in self._datasets:
-            item = QListWidgetItem(ds.run_label)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            run_number = int(ds.run_number)
-            item.setData(Qt.ItemDataRole.UserRole, run_number)
-            if self._selected_run_numbers is None:
-                item.setCheckState(Qt.CheckState.Checked)
-            else:
-                state = (
-                    Qt.CheckState.Checked
-                    if run_number in self._selected_run_numbers
-                    else Qt.CheckState.Unchecked
-                )
-                item.setCheckState(state)
-            self._dataset_list.addItem(item)
-        self._dataset_list.setMaximumHeight(150)
-        left_layout.addWidget(self._dataset_list)
+        self._scope_panel = ScopePanel()
+        self._scope_panel.setMaximumHeight(180)
+        self._scope_panel.changed.connect(self._on_scope_changed)
+        left_layout.addWidget(self._scope_panel)
+        self._refresh_scope_panel()
 
         self._group_table = QTableWidget(0, 4)
         self._group_table.setHorizontalHeaderLabels(
@@ -266,7 +307,7 @@ class GroupingDialog(QDialog):
         self._backward_combo.setMinimumContentsLength(18)
         self._refresh_group_combo_items()
 
-        grouping = self._run.grouping or {}
+        grouping = self._seed_source().grouping
         self._grouping_preset_name: str | None = (
             str(grouping.get("grouping_preset")).strip()
             if grouping.get("grouping_preset")
@@ -582,21 +623,24 @@ class GroupingDialog(QDialog):
         cancel_btn.setAutoDefault(False)
         cancel_btn.setDefault(False)
         cancel_btn.clicked.connect(self.reject)
-        apply_btn = QPushButton("Apply")
-        apply_btn.setAutoDefault(False)
-        apply_btn.setDefault(False)
-        apply_btn.clicked.connect(self._on_apply)
+        self._apply_btn = QPushButton("Apply")
+        self._apply_btn.setAutoDefault(False)
+        self._apply_btn.setDefault(False)
+        self._apply_btn.clicked.connect(self._on_apply)
 
         bottom_bar = QHBoxLayout()
         bottom_bar.addWidget(load_btn)
         bottom_bar.addWidget(save_btn)
         bottom_bar.addStretch()
         bottom_bar.addWidget(cancel_btn)
-        bottom_bar.addWidget(apply_btn)
+        bottom_bar.addWidget(self._apply_btn)
         root.addLayout(bottom_bar)
 
         self._update_period_mode_visibility()
         self._update_grouping_recommendation()
+        self._connect_dirty_tracking()
+        self._refresh_preset_chip(self._current_grouping_payload())
+        self._update_apply_enabled()
 
     def _choose_reference_dataset(self) -> MuonDataset:
         """Return preferred reference dataset for initial grouping values."""
@@ -605,6 +649,340 @@ class GroupingDialog(QDialog):
                 if int(ds.run_number) == int(self._selected_run_number):
                     return ds
         return self._datasets[0]
+
+    # ------------------------------------------------------------------
+    # Draft profile plumbing (M2)
+    # ------------------------------------------------------------------
+
+    def _fingerprint_datasets(self) -> list[MuonDataset]:
+        """Datasets whose run matches the editor's current fingerprint."""
+        if self._fingerprint is None:
+            return list(self._datasets)
+        out: list[MuonDataset] = []
+        for ds in self._datasets:
+            if ds.run is None:
+                continue
+            if profile_fingerprint_for_run(ds.run).matches(self._fingerprint):
+                out.append(ds)
+        return out
+
+    def _profiles_for_fingerprint(self) -> list[GroupingProfile]:
+        """Project profiles matching the editor's current fingerprint."""
+        if self._fingerprint is None:
+            return []
+        return [p for p in self._project_profiles if p.fingerprint.matches(self._fingerprint)]
+
+    def _default_draft_name(self) -> str:
+        """Synthesized draft name for a fingerprint with no saved profile."""
+        instrument = ""
+        if self._fingerprint is not None and self._fingerprint.instrument:
+            instrument = instrument_display_name(self._fingerprint.instrument)
+        if not instrument:
+            grouping = self._run.grouping if isinstance(self._run.grouping, dict) else {}
+            instrument = str(grouping.get("instrument", "") or "instrument")
+        return f"Default ({instrument})"
+
+    def _initial_draft(self) -> GroupingProfile:
+        """Return the draft profile the editor opens on.
+
+        The active profile for the current fingerprint when the project has one;
+        otherwise a fresh draft synthesized from the reference run's own payload
+        (named ``"Default (<instrument>)"``). A copy is always returned so editing
+        the draft never mutates a stored project profile.
+        """
+        assert self._fingerprint is not None
+        for profile in self._profiles_for_fingerprint():
+            if profile.active:
+                return GroupingProfile.from_dict(profile.to_dict())
+        payload = self._run.grouping if isinstance(self._run.grouping, dict) else {}
+        return profile_from_form_payload(
+            payload,
+            name=self._default_draft_name(),
+            fingerprint=self._fingerprint,
+            active=True,
+        )
+
+    def _seed_source(self):
+        """A run-like shim whose ``grouping`` is the draft resolved for preview.
+
+        The form's ``_load_*`` helpers read ``.grouping`` for the shareable
+        settings; per-run facts (t0, good-bin window, file deadtime, period
+        tables) are merged in from the preview run by
+        :func:`resolve_effective_grouping`, so the shim carries the preview run's
+        histograms/metadata too.
+        """
+        from asymmetry.gui.windows.grouping.profile_bridge import (
+            payload_from_profile_for_preview,
+        )
+
+        payload = payload_from_profile_for_preview(self._draft, self._run)
+
+        class _SeedSource:
+            grouping = payload
+            histograms = self._run.histograms
+            metadata = self._run.metadata
+            source_file = getattr(self._run, "source_file", None)
+
+        return _SeedSource()
+
+    def _mark_dirty(self) -> None:
+        """Record that the draft diverges from its opened state."""
+        if not self._suppress_dirty:
+            self._draft_dirty = True
+
+    def _sync_draft_from_form(self) -> None:
+        """Lift the current form payload back into the draft profile.
+
+        Called before the draft is read (Apply, preset-chip refresh, profile
+        switch). Also refreshes the preset chip / clears a stale preset marker
+        when the groups have drifted from the named preset.
+        """
+        payload = self._current_grouping_payload()
+        self._refresh_preset_chip(payload)
+        # Re-read the payload after a possible drift-clear so the draft does not
+        # carry a stale ``grouping_preset``.
+        payload = self._current_grouping_payload()
+        assert self._fingerprint is not None
+        self._draft = profile_from_form_payload(
+            payload,
+            name=self._draft_name,
+            fingerprint=self._fingerprint,
+            active=True,
+        )
+
+    # -- profile selector -------------------------------------------------
+
+    def _rebuild_profile_combo(self) -> None:
+        """(Re)populate the profile selector for the current fingerprint."""
+        combo = self._profile_combo
+        combo.blockSignals(True)
+        combo.clear()
+        names = [p.name for p in self._profiles_for_fingerprint()]
+        if self._draft_name and self._draft_name not in names:
+            names.append(self._draft_name)
+        for name in names:
+            combo.addItem(name, name)
+        combo.addItem("New…", "__new__")
+        combo.addItem("Duplicate…", "__duplicate__")
+        idx = combo.findData(self._draft_name)
+        combo.setCurrentIndex(idx if idx >= 0 else 0)
+        combo.blockSignals(False)
+
+    def _on_profile_combo_activated(self, index: int) -> None:
+        """Switch the active draft, or create a new / duplicated profile."""
+        data = self._profile_combo.itemData(index)
+        if data == "__new__":
+            self._create_new_profile(duplicate=False)
+            return
+        if data == "__duplicate__":
+            self._create_new_profile(duplicate=True)
+            return
+        name = str(data)
+        if name == self._draft_name:
+            return
+        if not self._confirm_discard_before_switch():
+            self._select_profile_in_combo(self._draft_name)
+            return
+        for profile in self._profiles_for_fingerprint():
+            if profile.name == name:
+                self._draft = GroupingProfile.from_dict(profile.to_dict())
+                self._draft_name = name
+                self._draft_dirty = False
+                self._reseed_form_from_draft()
+                return
+
+    def _create_new_profile(self, *, duplicate: bool) -> None:
+        """Prompt for a name and start a fresh (or duplicated) draft."""
+        from PySide6.QtWidgets import QInputDialog
+
+        base = f"{self._draft_name} copy" if duplicate else self._default_draft_name()
+        name, accepted = QInputDialog.getText(
+            self,
+            "Duplicate Profile" if duplicate else "New Profile",
+            "Profile name:",
+            text=self._unique_profile_name(base),
+        )
+        name = str(name).strip()
+        if not accepted or not name:
+            self._select_profile_in_combo(self._draft_name)
+            return
+        if not self._confirm_discard_before_switch():
+            self._select_profile_in_combo(self._draft_name)
+            return
+        assert self._fingerprint is not None
+        if duplicate:
+            self._sync_draft_from_form()
+            self._draft = GroupingProfile.from_dict(self._draft.to_dict())
+        else:
+            payload = self._run.grouping if isinstance(self._run.grouping, dict) else {}
+            self._draft = profile_from_form_payload(
+                payload, name=name, fingerprint=self._fingerprint, active=True
+            )
+        self._draft.name = name
+        self._draft_name = name
+        self._draft_dirty = True
+        self._reseed_form_from_draft()
+
+    def _on_rename_profile(self) -> None:
+        """Rename the current draft profile."""
+        from PySide6.QtWidgets import QInputDialog
+
+        name, accepted = QInputDialog.getText(
+            self, "Rename Profile", "Profile name:", text=self._draft_name
+        )
+        name = str(name).strip()
+        if not accepted or not name or name == self._draft_name:
+            return
+        self._draft_name = name
+        self._draft.name = name
+        self._draft_dirty = True
+        self._rebuild_profile_combo()
+
+    def _unique_profile_name(self, base: str) -> str:
+        """Return *base* suffixed to avoid clashing with existing profile names."""
+        existing = {p.name for p in self._profiles_for_fingerprint()}
+        if base not in existing:
+            return base
+        index = 2
+        while f"{base} ({index})" in existing:
+            index += 1
+        return f"{base} ({index})"
+
+    def _select_profile_in_combo(self, name: str) -> None:
+        idx = self._profile_combo.findData(name)
+        if idx >= 0:
+            self._profile_combo.blockSignals(True)
+            self._profile_combo.setCurrentIndex(idx)
+            self._profile_combo.blockSignals(False)
+
+    def _confirm_discard_before_switch(self) -> bool:
+        """Ask to discard unsaved draft edits before switching profiles."""
+        if not self._draft_dirty:
+            return True
+        answer = QMessageBox.question(
+            self,
+            "Discard changes",
+            f"Discard unsaved changes to profile '{self._draft_name}'?",
+            QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        return answer == QMessageBox.StandardButton.Discard
+
+    def _reseed_form_from_draft(self) -> None:
+        """Rebuild every form control from the current draft (+ preview run)."""
+        self._suppress_dirty = True
+        try:
+            self._reload_controls_from_seed()
+        finally:
+            self._suppress_dirty = False
+        self._rebuild_profile_combo()
+        self._rebuild_preset_combo()
+        self._refresh_scope_panel()
+
+    # -- preset dropdown + chip ------------------------------------------
+
+    def _current_instrument_layout(self):
+        """Instrument layout matching the preview run, for the preset dropdown."""
+        n_histo = len(self._run.histograms) if self._run and self._run.histograms else 0
+        metadata = (
+            dict(self._run.metadata) if self._run and isinstance(self._run.metadata, dict) else {}
+        )
+        return self._resolve_detector_layout(n_histo, metadata)
+
+    def _rebuild_preset_combo(self) -> None:
+        """Populate the preset dropdown from the preview run's instrument."""
+        combo = self._preset_combo
+        combo.blockSignals(True)
+        combo.clear()
+        try:
+            layout = self._current_instrument_layout()
+            for name in layout.presets:
+                combo.addItem(name, name)
+        except (KeyError, AttributeError):
+            pass
+        combo.blockSignals(False)
+        # The chip needs the form controls; skip until they exist (they are built
+        # after the top bar during __init__).
+        if hasattr(self, "_forward_combo"):
+            self._refresh_preset_chip(self._current_grouping_payload())
+
+    def _on_preset_combo_activated(self, index: int) -> None:
+        """Apply the selected instrument preset to the draft immediately."""
+        preset_name = self._preset_combo.itemData(index)
+        if not preset_name:
+            return
+        try:
+            layout = self._current_instrument_layout()
+        except (KeyError, AttributeError):
+            return
+        payload = preset_payload(layout, str(preset_name))
+        if payload is None:
+            return
+        self._apply_preset_payload_to_form(payload)
+        self._mark_dirty()
+
+    def _apply_preset_payload_to_form(self, payload: dict[str, Any]) -> None:
+        """Adopt a preset's groups/names/slots/projections into the form state."""
+        self._groups = {
+            int(gid): sorted(max(0, int(d) - 1) for d in dets)
+            for gid, dets in payload.get("groups", {}).items()
+        }
+        self._group_names = {int(k): str(v) for k, v in payload.get("group_names", {}).items()}
+        self._included_groups = {int(gid): True for gid in self._groups}
+        self._grouping_preset_name = payload.get("grouping_preset")
+        if payload.get("instrument"):
+            self._detector_layout_instrument_name = str(payload["instrument"])
+        projections = payload.get("projections")
+        self._projection_specs = (
+            [dict(p) for p in projections if isinstance(p, dict)] if projections else None
+        )
+        forward_gid, backward_gid = self._analysis_pair_for_reference(
+            int(payload.get("forward_group", 1)),
+            int(payload.get("backward_group", 2)),
+        )
+        self._refresh_group_combo_items(forward_gid=forward_gid, backward_gid=backward_gid)
+        self._populate_group_table()
+        self._update_vector_mode_controls()
+        self._update_grouping_recommendation()
+        self._refresh_preset_chip(self._current_grouping_payload())
+
+    def _refresh_preset_chip(self, payload: dict[str, Any]) -> None:
+        """Show ``Preset: <name>`` / ``Custom (edited from <name>)``.
+
+        Clears a stale ``grouping_preset`` marker when the groups have drifted
+        from the named preset, so a drifted draft never stores it.
+        """
+        preset_name = self._grouping_preset_name
+        if not preset_name:
+            self._preset_chip.setText("Custom")
+            return
+        try:
+            layout = self._current_instrument_layout()
+        except (KeyError, AttributeError):
+            self._preset_chip.setText(f"Preset: {preset_name}")
+            return
+        if payload_matches_preset(payload, layout, preset_name):
+            self._preset_chip.setText(f"Preset: {preset_name}")
+        else:
+            self._preset_chip.setText(f"Custom (edited from {preset_name})")
+            self._grouping_preset_name = None
+
+    # -- scope panel ------------------------------------------------------
+
+    def _refresh_scope_panel(self) -> None:
+        """Repopulate the scope panel for the current fingerprint + draft."""
+        runs: list[tuple[int, str, bool]] = []
+        for ds in self._fingerprint_datasets():
+            rn = int(ds.run_number)
+            runs.append((rn, ds.run_label, rn in self._overridden_run_numbers))
+        self._scope_panel.set_runs(runs, profile_name=self._draft_name)
+        if hasattr(self, "_apply_btn"):
+            self._update_apply_enabled()
+
+    def _on_scope_changed(self) -> None:
+        """React to a release/reattach in the scope panel."""
+        self._mark_dirty()
+        self._update_apply_enabled()
 
     def _load_group_names(self, run) -> dict[int, str]:
         """Load group names from run metadata, returning an empty dict if absent."""
@@ -844,26 +1222,45 @@ class GroupingDialog(QDialog):
             combo.setCurrentIndex(idx)
 
     def _on_reference_dataset_changed(self) -> None:
-        """Reload grouping defaults when the reference dataset changes."""
+        """Switch the *preview* run without discarding draft edits.
+
+        Changing the preview run only refreshes the per-run facts (t0, good-bin
+        window, file deadtime) shown; the draft's shareable settings are first
+        lifted out of the form, then re-seeded against the new preview run so an
+        in-progress edit survives the switch.
+        """
         run_number = int(self._reference_combo.currentData())
-        dataset = next((ds for ds in self._datasets if int(ds.run_number) == run_number), None)
+        dataset = next(
+            (ds for ds in self._fingerprint_datasets() if int(ds.run_number) == run_number),
+            None,
+        )
         if dataset is None or dataset.run is None:
             return
 
+        # Preserve in-progress draft edits across the preview switch.
+        self._sync_draft_from_form()
         self._reference_dataset = dataset
         self._run = dataset.run
-        self._groups = self._load_groups(self._run)
+        self._suppress_dirty = True
+        try:
+            self._reload_controls_from_seed()
+        finally:
+            self._suppress_dirty = False
+
+    def _reload_controls_from_seed(self) -> None:
+        """Re-seed every form control from the draft resolved for the preview run."""
+        grouping = self._seed_source().grouping
+        self._groups = self._load_groups(self._seed_source())
         self._populate_group_table()
 
-        grouping = self._run.grouping or {}
         self._grouping_preset_name = (
             str(grouping.get("grouping_preset")).strip()
             if grouping.get("grouping_preset")
             else None
         )
-        self._group_names = self._load_group_names(self._run)
-        self._included_groups = self._load_included_groups(self._run)
-        self._projection_specs = self._load_projection_specs(self._run)
+        self._group_names = self._load_group_names(self._seed_source())
+        self._included_groups = self._load_included_groups(self._seed_source())
+        self._projection_specs = self._load_projection_specs(self._seed_source())
         forward_gid, backward_gid = self._analysis_pair_for_reference(
             int(grouping.get("forward_group", 1)),
             int(grouping.get("backward_group", 2)),
@@ -910,6 +1307,10 @@ class GroupingDialog(QDialog):
         self._update_period_mode_visibility()
         self._update_map_periods_visibility()
         self._update_grouping_recommendation()
+        # The preset dropdown follows the preview run's instrument; the chip
+        # follows the (possibly drifted) draft.
+        if hasattr(self, "_preset_combo"):
+            self._rebuild_preset_combo()
 
     def _reference_has_file_deadtime(self, grouping: dict[str, Any]) -> bool:
         """Return whether the reference run provides file deadtime values."""
@@ -1490,40 +1891,81 @@ class GroupingDialog(QDialog):
                         f"{label} group would have no detectors left after exclusion.",
                     )
                     return
+        # Lift the validated form state into the draft profile so
+        # get_grouping_result() returns it. The draft is considered saved once
+        # applied, so the close guard does not re-prompt.
+        self._sync_draft_from_form()
+        self._draft_dirty = False
         self.accept()
 
-    def _checked_run_numbers(self) -> list[int]:
-        """Return run numbers selected for grouping application."""
-        selected: list[int] = []
-        for i in range(self._dataset_list.count()):
-            item = self._dataset_list.item(i)
-            if item.checkState() == Qt.CheckState.Checked:
-                selected.append(int(item.data(Qt.ItemDataRole.UserRole)))
-        return selected
+    # ------------------------------------------------------------------
+    # Dirty tracking, apply-gating, close guard (M2)
+    # ------------------------------------------------------------------
 
-    def _set_all_dataset_checkstates(self, state: Qt.CheckState) -> None:
-        """Set check state for all runs in the dataset list."""
-        for i in range(self._dataset_list.count()):
-            self._dataset_list.item(i).setCheckState(state)
+    def _connect_dirty_tracking(self) -> None:
+        """Mark the draft dirty whenever an editable form control changes."""
+        self._alpha_spin.valueChanged.connect(self._mark_dirty)
+        self._alpha_method_combo.currentIndexChanged.connect(self._mark_dirty)
+        self._forward_combo.currentIndexChanged.connect(self._mark_dirty)
+        self._backward_combo.currentIndexChanged.connect(self._mark_dirty)
+        self._bunch_spin.valueChanged.connect(self._mark_dirty)
+        self._binning_mode_combo.currentIndexChanged.connect(self._mark_dirty)
+        self._bin0_spin.valueChanged.connect(self._mark_dirty)
+        self._bin10_spin.valueChanged.connect(self._mark_dirty)
+        self._exclude_edit.textEdited.connect(self._mark_dirty)
+        self._deadtime_checkbox.toggled.connect(self._mark_dirty)
+        self._background_mode_combo.currentIndexChanged.connect(self._mark_dirty)
+        self._group_table.itemChanged.connect(self._mark_dirty)
+        for button in self._period_mode_buttons.values():
+            button.toggled.connect(self._mark_dirty)
+        for button in self._deadtime_mode_buttons.values():
+            button.toggled.connect(self._mark_dirty)
 
-    def _select_all_datasets(self) -> None:
-        """Mark all datasets for grouping application."""
-        self._set_all_dataset_checkstates(Qt.CheckState.Checked)
-
-    def _select_reference_dataset(self) -> None:
-        """Select only the currently chosen reference run."""
-        reference_run = self._reference_combo.currentData()
-        for i in range(self._dataset_list.count()):
-            item = self._dataset_list.item(i)
-            run_number = item.data(Qt.ItemDataRole.UserRole)
-            state = (
-                Qt.CheckState.Checked if run_number == reference_run else Qt.CheckState.Unchecked
+    def _update_apply_enabled(self) -> None:
+        """Disable Apply (with a reason) when no run inherits this profile."""
+        inheriting = self._scope_panel.inheriting_run_numbers()
+        enabled = bool(inheriting)
+        self._apply_btn.setEnabled(enabled)
+        if enabled:
+            self._apply_btn.setToolTip(
+                f"Save profile '{self._draft_name}' and apply it to "
+                f"{len(inheriting)} inheriting run(s)."
             )
-            item.setCheckState(state)
+        else:
+            self._apply_btn.setToolTip(
+                "No run of this fingerprint inherits the profile "
+                "(all released). Reattach a run to apply."
+            )
 
-    def _deselect_all_datasets(self) -> None:
-        """Unmark all datasets for grouping application."""
-        self._set_all_dataset_checkstates(Qt.CheckState.Unchecked)
+    def _clear_dirty(self) -> None:
+        """Disarm the unsaved-draft guard (used by the test teardown fixture)."""
+        self._draft_dirty = False
+
+    def _guard_discard(self) -> bool:
+        """Return whether it is safe to close (prompting on a dirty draft)."""
+        if not self._draft_dirty:
+            return True
+        answer = QMessageBox.question(
+            self,
+            "Discard changes",
+            f"Discard changes to profile '{self._draft_name}'?",
+            QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        return answer == QMessageBox.StandardButton.Discard
+
+    def reject(self) -> None:
+        """Reject with an unsaved-draft guard (Cancel / Esc)."""
+        if self._datasets and not self._guard_discard():
+            return
+        super().reject()
+
+    def closeEvent(self, event) -> None:  # noqa: N802  (Qt override)
+        """Close with an unsaved-draft guard (window ✕)."""
+        if self._datasets and not self._guard_discard():
+            event.ignore()
+            return
+        super().closeEvent(event)
 
     def _populate_group_table(self) -> None:
         """Render the detector-group table used as grouping context."""
@@ -2549,16 +2991,55 @@ class GroupingDialog(QDialog):
         return _parse_grp(text)
 
     def get_grouping_result(self) -> dict[str, Any] | None:
-        """Return grouping settings selected in the dialog for all checked runs.
+        """Return the applied grouping payload for inheriting runs.
+
+        The dialog is now a profile editor: on Apply the draft is saved as the
+        active profile and resolved onto every *inheriting* run of the
+        fingerprint. For backward compatibility the returned dict is still the
+        flat grouping payload the main window's ``_apply_grouping_settings_to_dataset``
+        consumes, with ``run_numbers`` set to the inheriting runs (released runs
+        are excluded, so overridden runs are left untouched).
 
         Returns
         -------
         dict or None
-            Grouping payload used by the main window to recompute asymmetry.
-            Returns ``None`` when no run histograms are available.
+            Grouping payload plus ``run_numbers`` (inheriting runs). ``None``
+            when no run histograms are available.
         """
         if self._run is None or not self._run.histograms:
             return None
         payload = self._current_grouping_payload()
-        payload["run_numbers"] = self._checked_run_numbers()
+        payload["run_numbers"] = sorted(self._scope_panel.inheriting_run_numbers())
         return payload
+
+    def get_profile_result(self) -> dict[str, Any] | None:
+        """Return the profile-editor result for the main window to reconcile.
+
+        Returns
+        -------
+        dict or None
+            ``{"profile": GroupingProfile, "inheriting": set[int],
+            "released": set[int], "newly_released": set[int],
+            "newly_reattached": set[int], "preview_run_number": int}`` — the
+            saved draft profile and the scope reconciliation. ``None`` when no
+            run is available.
+        """
+        if self._run is None or not self._run.histograms:
+            return None
+        # The draft was synced by _on_apply; re-sync defensively in case a caller
+        # reads this without going through Apply.
+        self._sync_draft_from_form()
+        return {
+            "profile": GroupingProfile.from_dict(self._draft.to_dict()),
+            "inheriting": self._scope_panel.inheriting_run_numbers(),
+            "released": self._scope_panel.released_run_numbers(),
+            "newly_released": self._scope_panel.newly_released(),
+            "newly_reattached": self._scope_panel.newly_reattached(),
+            "preview_run_number": int(self._reference_dataset.run_number),
+        }
+
+    @property
+    def draft_profile(self) -> GroupingProfile:
+        """The current draft profile (a copy synced from the form)."""
+        self._sync_draft_from_form()
+        return GroupingProfile.from_dict(self._draft.to_dict())

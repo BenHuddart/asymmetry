@@ -725,17 +725,20 @@ def test_estimate_alpha_uses_reference_run_only(qapp: QApplication) -> None:
     assert dialog._alpha_spin.value() == pytest.approx(4.0)
 
 
-def test_preselected_run_numbers_set_dataset_tickboxes(qapp: QApplication) -> None:
+def test_selected_run_number_seeds_preview_run(qapp: QApplication) -> None:
+    """selected_run_number chooses the initial preview run (no broadcast list)."""
     ds_a = _dataset_with_ratio(5101, ratio=2.0)
     ds_b = _dataset_with_ratio(5102, ratio=3.0)
 
     dialog = GroupingDialog(
         [ds_a, ds_b],
-        selected_run_number=5101,
-        selected_run_numbers=[5102],
+        selected_run_number=5102,
     )
 
-    assert dialog._checked_run_numbers() == [5102]
+    assert int(dialog._reference_dataset.run_number) == 5102
+    # The scope panel lists every run of the fingerprint, inheriting by default.
+    assert dialog._scope_panel.inheriting_run_numbers() == {5101, 5102}
+    assert dialog._scope_panel.released_run_numbers() == set()
 
 
 def test_pressing_enter_on_bunch_factor_does_not_estimate_alpha(qapp: QApplication) -> None:
