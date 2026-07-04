@@ -225,7 +225,7 @@ class TestSchemaMigration:
         validate(state)  # must not raise
 
     def test_current_schema_version_constant(self):
-        assert CURRENT_SCHEMA_VERSION == 12
+        assert CURRENT_SCHEMA_VERSION == 13
 
 
 def _composite_model_dict(component: str = "Exponential") -> dict:
