@@ -4,7 +4,7 @@ transverse / spin-rotated grouping preset.
 Live-testing finding (Round-3): PSI GPS transverse-field (TF) runs default to
 the ``Longitudinal`` (Forward/Backward) preset, which washes out the precession
 so the time-domain fit collapses. Nothing in the GUI hints that the user should
-switch to ``Spin-rotated (F+U/B+D)``. The remedy is a small, pure recommendation
+switch to ``Spin-rotated (B+U/F+D)``. The remedy is a small, pure recommendation
 helper the Grouping / Detector-Layout dialog can surface as a nudge.
 
 This test pins the core recommendation logic; the GUI wiring (showing the nudge)

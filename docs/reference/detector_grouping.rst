@@ -222,6 +222,16 @@ EMU
 
    EMU schematic matching the in-app detector arrangement.
 
+Numbering follows the *EMU User Guide*, Section 8.1: sector-major triplets
+(inner/middle/outer ring of one sector before moving to the next sector),
+sector 0 at 12 o'clock, numbers increasing clockwise looking upstream from
+downstream. The three radial rings exist for stray-count rejection (Giblin
+*et al.*, *Nucl. Instrum. Methods Phys. Res. A* **751**, 70 (2014)), not for
+the ``Vector Polarization`` preset. That preset (:math:`P_x`/:math:`P_y`/
+:math:`P_z` octant composition) is an **Asymmetry construct** with no
+facility-documented equivalent; see :doc:`vector_polarization` and the
+module docstring in ``core/instrument.py::_build_emu``.
+
 PSI FLAME
 ~~~~~~~~~
 
@@ -287,15 +297,30 @@ automatically from the histogram count:
   half and a Mobile detector is added.
 
 Detector IDs match the histogram order in each format (detector *N* maps to
-histogram *N − 1*). Presets:
+histogram *N − 1*).
 
-* **Longitudinal** (default) — Forward vs Backward.
+.. note::
+
+   **Beam vs analysis convention.** PSI names its detectors by *beam* direction
+   (Forward is downstream, Backward upstream). For surface muons the spin is
+   antiparallel to the momentum, so the initial polarisation points toward the
+   **Backward** detector. Following the GPS instrument paper (Amato *et al.*,
+   *Rev. Sci. Instrum.* **88**, 093301 (2017), Eq. 2) and musrfit, the analysis
+   convention is :math:`A = (B - \alpha F)/(B + \alpha F)` — the *Backward*-named
+   group occupies the analysis-forward slot. Every GPS preset declares that
+   convention directly, while keeping the physical F/B/U/D group names.
+
+Presets:
+
+* **Longitudinal** (default) — Forward vs Backward (analysis-forward = Backward).
 * **Transverse (Vector)** — the Up–Down and Left–Right pairs exposed as two
-  asymmetry projections (musrfit's ``WED(L)`` transverse setup).
-* **Spin-rotated (F+U/B+D)** — Forward+Up vs Backward+Down. When the spin
+  asymmetry projections (musrfit's ``WED(L)`` transverse setup: UD forward = Up,
+  RL forward = Right).
+* **Spin-rotated (B+U/F+D)** — Backward+Up vs Forward+Down. When the spin
   rotator (a Wien filter on πM3.2) is used in
-  transverse geometry the muon spin is rotated up by about 50°, so the
-  polarisation points along the Forward–Up diagonal; summing those detectors
+  transverse geometry the muon spin is rotated up by about 50°. The initial
+  polarisation points toward Backward, so tipping it up leaves it along the
+  **Backward–Up diagonal**; summing those detectors against Forward+Down
   realigns one asymmetry axis with the rotated spin and recovers the full
   amplitude.
 * **WEP (spin-rotated)** — the same rotated-spin mode following musrfit's
