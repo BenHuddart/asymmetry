@@ -1657,6 +1657,7 @@ class GroupingDialog(QDialog):
             self._deadtime_source_run = policy.source_run
         self._update_deadtime_status()
         self._mark_dirty()
+        self._refresh_preview()
 
     def _on_configure_background(self) -> None:
         """Open the background dialog, seeded from the current state."""
@@ -1736,6 +1737,7 @@ class GroupingDialog(QDialog):
             self._background_run_payload = payload
         self._update_background_status()
         self._mark_dirty()
+        self._refresh_preview()
 
     def _available_background_modes(self) -> tuple[str, ...]:
         metadata: dict[str, Any] = {}
@@ -1894,13 +1896,12 @@ class GroupingDialog(QDialog):
         self._t_good_offset_spin.valueChanged.connect(self._refresh_preview)
         self._last_good_spin.valueChanged.connect(self._refresh_preview)
         self._exclude_edit.textEdited.connect(self._refresh_preview)
-        self._deadtime_checkbox.toggled.connect(self._refresh_preview)
-        self._background_mode_combo.currentIndexChanged.connect(self._refresh_preview)
         self._group_table.itemChanged.connect(self._refresh_preview)
         for button in self._period_mode_buttons.values():
             button.toggled.connect(self._refresh_preview)
-        for button in self._deadtime_mode_buttons.values():
-            button.toggled.connect(self._refresh_preview)
+        # Deadtime and background live in their own dialogs; the accept paths in
+        # _on_configure_deadtime/_on_configure_background call _refresh_preview()
+        # directly after folding the returned policy into the draft.
 
     def _refresh_preview(self, *args: object) -> None:
         """Recompute the live asymmetry preview for the draft + preview run.
