@@ -6,6 +6,32 @@ subsystems or days.
 
 ## Active
 
+### Fit Function Builder Redesign (Option C)
+
+Status: in progress (branch `feat/fit-builder-redesign`, single PR)
+
+Replace the calculator-style expression dialogs with a two-panel builder:
+searchable component library (left) + structured model-row list (right), with
+fraction groups as visual containers and an "Edit as text" escape hatch.
+Both `FitFunctionBuilderDialog` and `ParameterModelBuilderDialog` build on one
+shared base in `gui/widgets/function_builder/`.
+
+Core rework included: fraction groups expose n−1 free parameters named
+`f_<Component>` (last term = remainder `max(0, 1−Σ)` computed in
+`CompositeModel`); legacy `fraction_i` parameter values are migrated on
+project load. Deep component search (name/alias/category/param/description,
+ranked) lives GUI-free in `core/fitting/component_search.py`.
+
+Acceptance criteria:
+
+- Both builder dialogs use the shared library + row-list base; the old
+  free-text-primary editor and text-selection Fractions gesture are gone.
+- Fraction groups survive structural edits; the displayed model is never
+  ambiguous (no hidden parentheses).
+- Pre-rework `.asymp` projects load, display, and refit with migrated
+  fraction values.
+- `harness validate` passes; docs updated with GUI walkthrough screenshots.
+
 ### Harness Adoption
 
 Status: in progress
