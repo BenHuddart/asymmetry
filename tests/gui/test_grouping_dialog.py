@@ -1893,6 +1893,21 @@ def test_default_draft_synthesized_without_profile(qapp: QApplication) -> None:
     assert dialog._draft_name.startswith("Default (")
 
 
+def test_default_draft_name_is_neutral_without_positive_instrument(qapp: QApplication) -> None:
+    """A generic 'PSI' instrument token never names a profile after an instrument.
+
+    An unresolved PSI file (loader fallback instrument ``"PSI"``) must get the
+    neutral ``Default (<N> detectors)`` name rather than masquerading as a
+    specific spectrometer (the "Default (FLAME)" bug).
+    """
+    dataset = _gps_dataset(None)
+    dataset.run.metadata["instrument"] = "PSI"
+    dataset.metadata["instrument"] = "PSI"
+    dataset.run.grouping.pop("instrument", None)
+    dialog = GroupingDialog([dataset])
+    assert dialog._draft_name == "Default (6 detectors)"
+
+
 def test_preset_chip_clears_stale_preset_on_drift(qapp: QApplication) -> None:
     """Editing groups away from a preset clears the stored grouping_preset."""
     dataset = _gps_dataset(None)

@@ -695,13 +695,24 @@ class GroupingDialog(QDialog):
         return [p for p in self._project_profiles if p.fingerprint.matches(self._fingerprint)]
 
     def _default_draft_name(self) -> str:
-        """Synthesized draft name for a fingerprint with no saved profile."""
+        """Synthesized draft name for a fingerprint with no saved profile.
+
+        Requires positive instrument identification: a generic facility token
+        (``"PSI"``) or an empty instrument never names a profile after an
+        instrument — the neutral ``"Default (<N> detectors)"`` is used instead,
+        so an unresolved file cannot masquerade as a specific spectrometer.
+        """
         instrument = ""
         if self._fingerprint is not None and self._fingerprint.instrument:
             instrument = instrument_display_name(self._fingerprint.instrument)
         if not instrument:
             grouping = self._run.grouping if isinstance(self._run.grouping, dict) else {}
-            instrument = str(grouping.get("instrument", "") or "instrument")
+            instrument = str(grouping.get("instrument", "") or "")
+        if not instrument or instrument.strip().upper() == "PSI":
+            n = len(self._run.histograms) if self._run is not None and self._run.histograms else 0
+            if n:
+                return f"Default ({n} detectors)"
+            return "Default"
         return f"Default ({instrument})"
 
     def _initial_draft(self) -> GroupingProfile:
