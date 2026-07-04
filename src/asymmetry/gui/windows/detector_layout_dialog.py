@@ -21,9 +21,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from PySide6.QtCore import QEvent
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QEvent, Qt
+from PySide6.QtGui import QColor, QFontMetrics
 from PySide6.QtWidgets import (
+    QApplication,
     QButtonGroup,
     QComboBox,
     QDialog,
@@ -36,6 +37,8 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizePolicy,
+    QStyle,
+    QStyleOptionButton,
     QVBoxLayout,
     QWidget,
 )
@@ -182,6 +185,9 @@ class DetectorLayoutDialog(QDialog):
             btn.setCheckable(True)
             btn.setAutoDefault(False)
             btn.setDefault(False)
+            # Preferred (not Fixed) horizontally so setMinimumWidth can grow the
+            # button to fit its label; height stays pinned via setFixedHeight.
+            btn.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
             self._group_btn_group.addButton(btn, gid)
             self._group_buttons[gid] = btn
 
@@ -357,13 +363,37 @@ class DetectorLayoutDialog(QDialog):
         self._apply_group_button_metrics()
         self._apply_group_button_styles()
 
+    def _button_text_min_width(self, button: QPushButton) -> int:
+        """Return the narrowest width that shows *button*'s full text unclipped.
+
+        Uses the button's font-advance for its current text plus the style's
+        contents margins (the same inputs Qt's own ``sizeHint`` combines), so
+        this stays consistent whether the text or a UI-scale change is what
+        triggered the recompute.
+        """
+        fm = QFontMetrics(button.font())
+        text_width = fm.horizontalAdvance(button.text())
+        option = QStyleOptionButton()
+        option.initFrom(button)
+        option.text = button.text()
+        style = button.style() or QApplication.style()
+        # sizeFromContents adds the style's frame/padding around the raw text
+        # extent (mirrors what setFixedWidth previously ignored).
+        content_size = style.sizeFromContents(
+            QStyle.ContentsType.CT_PushButton,
+            option,
+            button.fontMetrics().boundingRect(button.text()).size(),
+            button,
+        )
+        return max(text_width + 16, content_size.width())
+
     def _apply_group_button_metrics(self) -> None:
         scale = max(0.8, float(self._group_button_scale))
-        button_width = max(68, round(76 * scale))
+        button_width_floor = max(68, round(76 * scale))
         button_height = max(28, round(28 * scale))
         edit_width = max(100, round(110 * scale))
         for button in self._group_buttons.values():
-            button.setFixedWidth(button_width)
+            button.setMinimumWidth(max(button_width_floor, self._button_text_min_width(button)))
             button.setFixedHeight(button_height)
         for edit in self._group_name_edits.values():
             edit.setFixedWidth(edit_width)
@@ -411,13 +441,37 @@ class DetectorLayoutDialog(QDialog):
         self._schematic.set_group_names(self._current_group_names_from_edits())
         self._refresh_group_button_labels()
 
+    # Buttons wider than this are elided; pathologically long custom group
+    # names should not be allowed to blow out the centre panel's layout.
+    # Ordinary labels — including composite preset names like
+    # "Top-Bottom Top (18)" — must stay well under this so only genuinely
+    # excessive user-entered names ever get elided.
+    _MAX_GROUP_BUTTON_TEXT_WIDTH = 320
+
     def _refresh_group_button_labels(self) -> None:
         """Update each group button's text to show its member count, e.g. "Top (18)"."""
         for gid, btn in self._group_buttons.items():
             name = self._group_name_edits[gid].text().strip()
             base = name if name else f"Group {gid}"
             count = len(self._groups.get(gid, ()))
-            btn.setText(f"{base} ({count})" if count else base)
+            full_text = f"{base} ({count})" if count else base
+            btn.setToolTip(full_text)
+
+            fm = QFontMetrics(btn.font())
+            if fm.horizontalAdvance(full_text) > self._MAX_GROUP_BUTTON_TEXT_WIDTH:
+                display_text = fm.elidedText(
+                    full_text, Qt.TextElideMode.ElideRight, self._MAX_GROUP_BUTTON_TEXT_WIDTH
+                )
+            else:
+                display_text = full_text
+            btn.setText(display_text)
+
+            # Text changed independently of any UI-scale change, so the
+            # minimum width needs recomputing here too (not only from
+            # _apply_group_button_metrics).
+            scale = max(0.8, float(self._group_button_scale))
+            button_width_floor = max(68, round(76 * scale))
+            btn.setMinimumWidth(max(button_width_floor, self._button_text_min_width(btn)))
 
     def _current_group_names_from_edits(self) -> dict[int, str]:
         """Return normalized group-name mapping from the editable name fields."""
