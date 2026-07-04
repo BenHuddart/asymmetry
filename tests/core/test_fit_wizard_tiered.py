@@ -1673,6 +1673,219 @@ def test_policy_holds_when_reranking_by_a_different_metric() -> None:
     assert out.verdict is RecommendationVerdict.STRUCTURED
 
 
+def _family_report(
+    family_key: str,
+    stage1_key: str,
+    *,
+    stage2_keys: tuple[str, ...] = (),
+) -> FamilyScreeningReport:
+    return FamilyScreeningReport(
+        family_key=family_key,
+        title=family_key,
+        stage1_template_key=stage1_key,
+        stage1_metric_value=0.0,
+        stage1_gate_passed=True,
+        promoted=True,
+        reason="",
+        stage2_template_keys=stage2_keys,
+    )
+
+
+def test_tie_break_same_family_still_prefers_simpler() -> None:
+    # (a) Both templates screened under the same family: the ±2-AICc
+    # simpler-preferred swap still applies, as before this change.
+    rec = _policy_recommendation(
+        _policy_assessment("biexp_constant", 100.0, gate=True, param_count=5),
+        _policy_assessment("risch_kehr_constant", 101.0, gate=True, param_count=3),
+        _policy_assessment("null_constant", 400.0, param_count=1, null=True),
+    )
+    rec = replace(
+        rec,
+        family_reports=(
+            _family_report(
+                "multi_rate",
+                "biexp_constant",
+                stage2_keys=("risch_kehr_constant",),
+            ),
+        ),
+    )
+    out = rerank_fit_wizard_recommendation(rec, SelectionMetric.AICC)
+    assert out.recommended_key == "risch_kehr_constant"
+    assert set(out.comparable_keys) == {"biexp_constant", "risch_kehr_constant"}
+
+
+def test_tie_break_cross_family_keeps_metric_winner_primary() -> None:
+    # (b) The S7 flip regression: stretched_constant (relaxation) is the
+    # metric winner within 2 AICc of risch_kehr_constant (multi_rate) — a
+    # different family. The metric winner must stay primary; the simpler
+    # cross-family template only appears in comparable_keys.
+    rec = _policy_recommendation(
+        _policy_assessment("stretched_constant", 100.0, gate=True, param_count=4),
+        _policy_assessment("risch_kehr_constant", 101.0, gate=True, param_count=3),
+        _policy_assessment("null_constant", 400.0, param_count=1, null=True),
+    )
+    rec = replace(
+        rec,
+        family_reports=(
+            _family_report("relaxation", "exp_constant", stage2_keys=("stretched_constant",)),
+            _family_report("multi_rate", "biexp_constant", stage2_keys=("risch_kehr_constant",)),
+        ),
+    )
+    out = rerank_fit_wizard_recommendation(rec, SelectionMetric.AICC)
+    assert out.recommended_key == "stretched_constant"
+    assert set(out.comparable_keys) == {"stretched_constant", "risch_kehr_constant"}
+
+    # (h, tie-break half) Reranking the same payload by BIC must not change
+    # the cross-family behavior — the metric winner (by BIC score) still
+    # stays primary rather than flipping to the simpler template.
+    out_bic = rerank_fit_wizard_recommendation(rec, SelectionMetric.BIC)
+    assert out_bic.recommended_key == "stretched_constant"
+    assert set(out_bic.comparable_keys) == {"stretched_constant", "risch_kehr_constant"}
+
+
+def test_tie_break_old_payload_without_family_reports_does_not_flip() -> None:
+    # (c) No family_reports at all (old payload / explicit-template path):
+    # every key is "unknown family", so the swap never fires and the metric
+    # winner stays primary — the safe direction.
+    rec = _policy_recommendation(
+        _policy_assessment("stretched_constant", 100.0, gate=True, param_count=4),
+        _policy_assessment("risch_kehr_constant", 101.0, gate=True, param_count=3),
+        _policy_assessment("null_constant", 400.0, param_count=1, null=True),
+    )
+    assert rec.family_reports == ()
+    out = rerank_fit_wizard_recommendation(rec, SelectionMetric.AICC)
+    assert out.recommended_key == "stretched_constant"
+    assert set(out.comparable_keys) == {"stretched_constant", "risch_kehr_constant"}
+
+
+def _oscillatory_assessment(
+    key: str,
+    value: float,
+    *,
+    frequency: float,
+    param_count: int = 4,
+    gate: bool = True,
+) -> CandidateAssessment:
+    parameters = ParameterSet()
+    parameters.add(Parameter(name="frequency", value=frequency))
+    for i in range(max(param_count - 1, 0)):
+        parameters.add(Parameter(name=f"p{i}", value=1.0))
+    return _policy_assessment(
+        key,
+        value,
+        parameters=parameters,
+        gate=gate,
+        model=CompositeModel(["Oscillatory", "Exponential", "Constant"], operators=["*", "+"]),
+    )
+
+
+def _peak_analysis_with(frequency_mhz: float, snr: float, *, resolution_mhz: float) -> PeakAnalysis:
+    return PeakAnalysis(
+        peaks=(
+            DetectedPeak(
+                frequency_mhz=frequency_mhz,
+                amplitude=1.0,
+                snr=snr,
+                width_mhz=resolution_mhz,
+                prominence=1.0,
+                source="fft",
+            ),
+        ),
+        noise_floor=0.1,
+        resolution_mhz=resolution_mhz,
+        nyquist_mhz=50.0,
+        detrended=False,
+    )
+
+
+def test_edge_caveat_fires_at_ag_candlestick_anchor() -> None:
+    # (d) Ag-candlestick real-data calibration anchor: ~2.25 effective cycles,
+    # peak SNR 4.4 -> caveat fires.
+    resolution_mhz = 1.0
+    frequency = 2.25
+    winner = _oscillatory_assessment("oscillatory_exp_constant", 100.0, frequency=frequency)
+    rec = replace(
+        _policy_recommendation(winner),
+        peak_analysis=_peak_analysis_with(frequency, 4.4, resolution_mhz=resolution_mhz),
+    )
+    out = rerank_fit_wizard_recommendation(rec, SelectionMetric.AICC)
+    assert out.recommended_key == "oscillatory_exp_constant"
+    assert "edge" not in out.caveat.lower()  # sanity: caveat text doesn't use that word
+    assert "spectral support is weak" in out.caveat.lower()
+    assert "2.2" in out.caveat or "2.3" in out.caveat
+    # This is the HIGH-confidence path (gate passes -> empty base caveat), so
+    # the edge caveat alone determines the final string: pin exact casing
+    # (regression guard — a naive ``str.capitalize()`` would lowercase "MHz"
+    # and "SNR" while upcasing the leading letter).
+    assert "MHz" in out.caveat
+    assert "SNR" in out.caveat
+    assert out.caveat[0].isupper()
+
+
+def test_edge_caveat_absent_at_s1_evidence_anchor() -> None:
+    # (e) S1 Larmor evidence calibration anchor: ~2.1 cycles but SNR ~37 ->
+    # the strong spectral line saves it, no caveat.
+    resolution_mhz = 1.0
+    frequency = 2.1
+    winner = _oscillatory_assessment("oscillatory_exp_constant", 100.0, frequency=frequency)
+    rec = replace(
+        _policy_recommendation(winner),
+        peak_analysis=_peak_analysis_with(frequency, 37.0, resolution_mhz=resolution_mhz),
+    )
+    out = rerank_fit_wizard_recommendation(rec, SelectionMetric.AICC)
+    assert out.recommended_key == "oscillatory_exp_constant"
+    assert "spectral support is weak" not in out.caveat.lower()
+
+
+def test_edge_caveat_absent_well_inside_window_even_with_weak_snr() -> None:
+    # (f) 4 effective cycles is well past the edge band -> no caveat even
+    # though the peak SNR (4.0) would count as weak.
+    resolution_mhz = 1.0
+    frequency = 4.0
+    winner = _oscillatory_assessment("oscillatory_exp_constant", 100.0, frequency=frequency)
+    rec = replace(
+        _policy_recommendation(winner),
+        peak_analysis=_peak_analysis_with(frequency, 4.0, resolution_mhz=resolution_mhz),
+    )
+    out = rerank_fit_wizard_recommendation(rec, SelectionMetric.AICC)
+    assert out.recommended_key == "oscillatory_exp_constant"
+    assert "spectral support is weak" not in out.caveat.lower()
+
+
+def test_edge_caveat_appends_to_existing_medium_caveat() -> None:
+    # (g) The residual-gate Medium caveat and the edge-of-window caveat must
+    # both be visible — appended, never replacing one another.
+    resolution_mhz = 1.0
+    frequency = 2.25
+    winner = _oscillatory_assessment(
+        "oscillatory_exp_constant", 100.0, frequency=frequency, gate=False
+    )
+    rec = replace(
+        _policy_recommendation(winner),
+        peak_analysis=_peak_analysis_with(frequency, 4.4, resolution_mhz=resolution_mhz),
+    )
+    out = rerank_fit_wizard_recommendation(rec, SelectionMetric.AICC)
+    assert out.confidence is ConfidenceTier.MEDIUM
+    assert "structured residuals" in out.caveat.lower()
+    assert "spectral support is weak" in out.caveat.lower()
+
+
+def test_edge_caveat_behavior_identical_when_reranking_by_bic() -> None:
+    # (h) Rerank by BIC exercises the same caveat path as AICc; the trigger is
+    # metric-independent (it only reads peak_analysis + fitted frequency).
+    resolution_mhz = 1.0
+    frequency = 2.25
+    winner = _oscillatory_assessment("oscillatory_exp_constant", 100.0, frequency=frequency)
+    rec = replace(
+        _policy_recommendation(winner),
+        peak_analysis=_peak_analysis_with(frequency, 4.4, resolution_mhz=resolution_mhz),
+    )
+    out = rerank_fit_wizard_recommendation(rec, SelectionMetric.BIC)
+    assert out.metric is SelectionMetric.BIC
+    assert out.recommended_key == "oscillatory_exp_constant"
+    assert "spectral support is weak" in out.caveat.lower()
+
+
 def test_null_baseline_templates_are_simple_and_tagged() -> None:
     nulls = build_null_baseline_templates()
     keys = {t.key for t in nulls}

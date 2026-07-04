@@ -297,6 +297,14 @@ A disqualified candidate is still shown, with its title suffixed
 tooltip on that row, but the wizard moves on to the next candidate rather than
 recommending it.
 
+A recommended oscillation that clears that floor but only just — completing
+somewhere around two to three cycles inside the informative part of the
+window — keeps its computed confidence tier, but if its spectral line is also
+weak or missing from the detected-peaks table, the banner adds a caveat
+noting that the oscillation sits at the edge of what the run can resolve and
+suggesting a longer or higher-statistics measurement to confirm it. A strong,
+well-corroborated line at the same cycle count is not flagged.
+
 Before settling on a winner among the surviving candidates, the wizard also
 checks it against two cheap **null baselines** that are always fitted
 unconditionally: a flat constant, and a plain exponential decay plus constant.

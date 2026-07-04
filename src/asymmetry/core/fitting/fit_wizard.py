@@ -1190,6 +1190,26 @@ _MIN_CYCLES_IN_EFFECTIVE_WINDOW = 2.0
 #: the spectral-corroboration check (widened by the effective resolution).
 _FREQUENCY_SUPPORT_REL_TOL = 0.10
 
+#: Effective-window cycle count above which a recommended oscillation is no
+#: longer flagged as sitting at the "edge" of resolvability. Below
+#: ``_MIN_CYCLES_IN_EFFECTIVE_WINDOW`` (2.0) the frequency is disqualified
+#: outright by ``_apply_frequency_support_disqualifiers``; the [2.0, 3.0) band
+#: is the zone where the fit survives that gate but is still marginal, so a
+#: caveat rather than a veto is appropriate when spectral support is also
+#: weak. Calibration anchors from the validation programme: the genuine S1
+#: Larmor evidence case sits at ~2.1 effective cycles but its peak SNR is ~37
+#: (see ``_EDGE_WINDOW_WEAK_SNR`` below) — no caveat, the strong line saves
+#: it. The Ag-candlestick real-data case sits at ~2.25 cycles with peak SNR
+#: 4.4 — the caveat fires.
+_EDGE_WINDOW_MAX_CYCLES = 3.0
+
+#: Peak SNR below which the spectral support for an edge-of-window
+#: recommended oscillation counts as "weak" for the caveat in
+#: ``rerank_fit_wizard_recommendation``. Set so the S1 evidence case (SNR ~37)
+#: is well clear of the line while the Ag-candlestick case (SNR ~4.4) is
+#: caught.
+_EDGE_WINDOW_WEAK_SNR = 6.0
+
 
 @dataclass(frozen=True)
 class TemplateSeedContext:
@@ -2030,6 +2050,101 @@ def _better_simpler_null(
     return min(simpler, key=lambda null: null.metric_value(metric))
 
 
+def _template_family_map(
+    family_reports: Sequence[FamilyScreeningReport],
+) -> dict[str, str]:
+    """Map each known template key to its owning family key.
+
+    Built from ``family_reports`` (Stage-1 representative + Stage-2 members of
+    every screened family), so it reflects the actual family membership used
+    for promotion rather than requiring a fresh lookup against
+    ``build_wizard_families``. Template keys absent from every report (old
+    payloads that predate ``family_reports``, the explicit-template path, or
+    multiplet/extra templates never surfaced in a report) are simply absent
+    from the returned map — callers must treat that as "unknown family", not
+    as membership in some default family.
+    """
+    mapping: dict[str, str] = {}
+    for report in family_reports:
+        mapping[report.stage1_template_key] = report.family_key
+        for key in report.stage2_template_keys:
+            mapping[key] = report.family_key
+    return mapping
+
+
+def _same_family(
+    key_a: str,
+    key_b: str,
+    family_map: dict[str, str],
+) -> bool:
+    """True only when both keys resolve to the same known family.
+
+    Either key missing from ``family_map`` (unknown family — old payloads, the
+    explicit-template path, or a template never listed in a screening report)
+    is treated as "not the same family": the safe direction, since it only
+    suppresses the simpler-preferred swap rather than risking a wrong-family
+    promotion.
+    """
+    family_a = family_map.get(key_a)
+    family_b = family_map.get(key_b)
+    if family_a is None or family_b is None:
+        return False
+    return family_a == family_b
+
+
+def _edge_of_window_caveat(
+    assessment: CandidateAssessment,
+    peak_analysis: PeakAnalysis | None,
+) -> str:
+    """Caveat text when ``assessment``'s oscillation sits at the edge of resolvability.
+
+    Computed entirely from serialized state (``peak_analysis``), so a metric
+    rerank or an ``.asymp`` reload sees the same verdict as the original build.
+    Fires when a ``frequency``-named fitted parameter completes
+    ``[_MIN_CYCLES_IN_EFFECTIVE_WINDOW, _EDGE_WINDOW_MAX_CYCLES)`` cycles in
+    the effective window (fewer would already be disqualified by
+    ``_apply_frequency_support_disqualifiers``) AND its supporting spectral
+    peak — matched with the same tolerance rule as that disqualifier — is
+    either absent or weak (SNR < ``_EDGE_WINDOW_WEAK_SNR``). A strong
+    supporting line (e.g. the S1 evidence case at SNR ~37) is exempted even at
+    the edge of the window. Returns ``""`` when no trigger fires or
+    ``peak_analysis`` is unavailable (explicit-template path, old payloads).
+    """
+    if peak_analysis is None:
+        return ""
+    resolution_mhz = peak_analysis.resolution_mhz
+    if not np.isfinite(resolution_mhz) or resolution_mhz <= _EPS:
+        return ""
+    for parameter in assessment.fit_result.parameters:
+        if split_parameter_name(parameter.name)[0] != "frequency":
+            continue
+        frequency = abs(float(parameter.value))
+        if frequency <= _EPS:
+            continue
+        cycles = frequency / resolution_mhz
+        if not (_MIN_CYCLES_IN_EFFECTIVE_WINDOW <= cycles < _EDGE_WINDOW_MAX_CYCLES):
+            continue
+        tolerance = max(2.0 * resolution_mhz, _FREQUENCY_SUPPORT_REL_TOL * frequency)
+        supporting_peak = min(
+            (
+                peak
+                for peak in peak_analysis.peaks
+                if abs(peak.frequency_mhz - frequency) <= tolerance
+            ),
+            key=lambda peak: abs(peak.frequency_mhz - frequency),
+            default=None,
+        )
+        snr = supporting_peak.snr if supporting_peak is not None else 0.0
+        if snr >= _EDGE_WINDOW_WEAK_SNR:
+            continue
+        return (
+            f"the {frequency:.4g} MHz oscillation completes only {cycles:.2g} cycles "
+            "inside the statistically informative window and its spectral support is "
+            f"weak (peak SNR {snr:.2g}) — verify against a longer or higher-statistics run."
+        )
+    return ""
+
+
 def rerank_fit_wizard_recommendation(
     recommendation: FitWizardRecommendation,
     metric: SelectionMetric,
@@ -2118,17 +2233,28 @@ def rerank_fit_wizard_recommendation(
         runner_up = eligible[1]
         score_delta = abs(primary.metric_value(metric) - runner_up.metric_value(metric))
         if score_delta <= _COMPARABLE_SCORE_DELTA:
-            preferred = min(
-                (primary, runner_up),
-                key=lambda assessment: (
-                    assessment.parameter_count,
-                    assessment.additive_terms,
-                    assessment.template.title,
-                ),
-            )
-            alternate = runner_up if preferred.template.key == primary.template.key else primary
-            primary = preferred
-            comparable_keys = (preferred.template.key, alternate.template.key)
+            # The simpler-preferred swap only applies within one family: a
+            # cross-family tie (e.g. stretched-exponential vs. Risch-Kehr, S7)
+            # must keep the metric winner primary — swapping to the simpler
+            # template across families let a wrong-family model win on
+            # param-count alone. Family membership is derived from
+            # ``family_reports``; a key missing from that map is "unknown
+            # family" and never swaps (the safe direction).
+            family_map = _template_family_map(recommendation.family_reports)
+            if _same_family(primary.template.key, runner_up.template.key, family_map):
+                preferred = min(
+                    (primary, runner_up),
+                    key=lambda assessment: (
+                        assessment.parameter_count,
+                        assessment.additive_terms,
+                        assessment.template.title,
+                    ),
+                )
+                alternate = runner_up if preferred.template.key == primary.template.key else primary
+                primary = preferred
+                comparable_keys = (preferred.template.key, alternate.template.key)
+            else:
+                comparable_keys = (primary.template.key, runner_up.template.key)
 
     # Null-baseline significance test against the best strictly-simpler null.
     reference_null = _better_simpler_null(primary, null_assessments, metric)
@@ -2166,6 +2292,18 @@ def rerank_fit_wizard_recommendation(
             "Structured residuals remain: "
             + ("; ".join(primary.residual_gate_reasons) or "residual checks flagged this fit")
             + "."
+        )
+
+    # Edge-of-window caveat: keep the tier as computed, but flag an
+    # oscillation that only just clears the cycle-count disqualifier and has
+    # weak (or no) spectral corroboration. Appended rather than replacing any
+    # policy caveat already set above.
+    edge_caveat = _edge_of_window_caveat(primary, recommendation.peak_analysis)
+    if edge_caveat:
+        caveat = (
+            f"{caveat} {edge_caveat}".strip()
+            if caveat
+            else edge_caveat[0].upper() + edge_caveat[1:]
         )
 
     compare_summary = (
