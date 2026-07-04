@@ -20,11 +20,22 @@ shape produced by :meth:`CrossGroupFitDialog._collect_config`:
   ``"Global" | "Local" | "Fixed"``.
 - ``error_mode`` / ``error_value``: :class:`ErrorMode` value + scalar.
 - ``use_x_errors``: whether to pass per-group σ_x for effective-variance.
+
+``run_cross_group_fit_from_config`` self-heals a config whose
+``parameter_rows`` have drifted from ``model``'s current ``param_names`` (a
+model edited after the config was saved, e.g. via a resaved study whose
+dialog cache went stale — see ``CrossGroupFitDialog._on_model_edited``): rows
+naming a parameter the model no longer has are dropped, and any model
+parameter missing a row is added as Global with the model's default initial
+value and open bounds. The healed config — not the one passed in — comes
+back on :attr:`CrossGroupFitRun.config` so a caller that persists it (the
+refit path) fixes the stored config in place instead of re-saving the same
+stale rows.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -56,6 +67,14 @@ class CrossGroupFitRun:
     fitted_groups: list[ParameterGroupData]
     fit_x_min: float
     fit_x_max: float
+    #: The config actually used to run the fit, healed against ``model``:
+    #: ``parameter_rows`` entries naming a parameter the model no longer has
+    #: are dropped, and any model parameter missing a row is appended as
+    #: Global with the model's default initial value/bounds. Callers that
+    #: persist the config that produced a result (e.g. the refit path) should
+    #: save THIS, not the config they passed in, so a corrupted/stale config
+    #: self-heals in place instead of re-failing on the next refit.
+    config: dict[str, object] = field(default_factory=dict)
 
 
 def run_cross_group_fit_from_config(
@@ -74,6 +93,11 @@ def run_cross_group_fit_from_config(
     the caller surfaces the message. A fit that runs but does not converge is
     *not* an error here: it comes back as an unsuccessful
     :class:`CrossGroupFitResult`, matching the dialog's "use anyway" path.
+
+    Parameter roles are classified against ``model.param_names`` (see module
+    docstring): rows for parameters the model no longer has are dropped, and
+    model parameters missing a row default to Global. The resulting healed
+    config is returned on :attr:`CrossGroupFitRun.config`.
     """
     model_data = config.get("model")
     if not isinstance(model_data, dict):
@@ -130,13 +154,31 @@ def run_cross_group_fit_from_config(
     initial_params: dict[str, float] = {}
     parameter_bounds: dict[str, tuple[float, float]] = {}
 
+    # Self-heal: classify roles from the CURRENT model's param_names, not
+    # blindly from the stored rows. A model edit (component add/remove) after
+    # the config was saved leaves ``parameter_rows`` out of sync with
+    # ``model.param_names`` — e.g. a removed component's rows linger, or a
+    # newly added component's params are missing entirely. Feeding stale rows
+    # straight to global_fit_parameter_model trips its "Unknown parameter
+    # classification" guard (parameter_models.py) instead of fitting.
+    model_param_names = list(model.param_names)
+    model_param_name_set = set(model_param_names)
     rows = config.get("parameter_rows")
+    healed_rows: list[dict[str, object]] = []
+    seen_names: set[str] = set()
     for entry in rows if isinstance(rows, list) else []:
         if not isinstance(entry, dict):
             continue
         pname = str(entry.get("name", "")).strip()
         if not pname:
             continue
+        if pname not in model_param_name_set:
+            # Dropped: this parameter no longer exists on the model (e.g. its
+            # component was removed).
+            continue
+        if pname in seen_names:
+            continue
+        seen_names.add(pname)
         value = (
             float(entry.get("initial", 0.0))
             if isinstance(entry.get("initial"), (int, float))
@@ -153,6 +195,33 @@ def run_cross_group_fit_from_config(
             fixed_params[pname] = value
         else:
             global_params.append(pname)
+        healed_rows.append(
+            {"name": pname, "initial": value, "min": pmin, "max": pmax, "type": role}
+        )
+
+    # Any model parameter missing a row (e.g. a newly added component, or one
+    # that arrived after this config was saved) defaults to Global with the
+    # model's own default initial value and open bounds.
+    for pname in model_param_names:
+        if pname in seen_names:
+            continue
+        default_value = float(model.param_defaults.get(pname, 0.0))
+        initial_params[pname] = default_value
+        parameter_bounds[pname] = (-float("inf"), float("inf"))
+        global_params.append(pname)
+        healed_rows.append(
+            {
+                "name": pname,
+                "initial": default_value,
+                "min": -float("inf"),
+                "max": float("inf"),
+                "type": "Global",
+            }
+        )
+
+    healed_config = dict(config)
+    healed_config["model"] = model.to_dict()
+    healed_config["parameter_rows"] = healed_rows
 
     error_mode = ErrorMode(str(config.get("error_mode", ErrorMode.COLUMN.value)))
     error_value_raw = config.get("error_value")
@@ -193,4 +262,5 @@ def run_cross_group_fit_from_config(
         fitted_groups=fitted_groups,
         fit_x_min=(x_min if np.isfinite(x_min) else float("nan")),
         fit_x_max=(x_max if np.isfinite(x_max) else float("nan")),
+        config=healed_config,
     )

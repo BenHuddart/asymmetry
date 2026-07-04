@@ -404,8 +404,26 @@ class FitParametersPanel(QWidget):
         """Return the most recent cross-group fit payload, if available."""
         return self._last_cross_group_fit
 
+    @property
+    def data_revision(self) -> int:
+        """Monotonic revision of the panel's trend inputs (see ``_data_revision``)."""
+        return self._data_revision
+
+    def _bump_data_revision(self) -> None:
+        """Advance :attr:`data_revision` — a trend input changed."""
+        self._data_revision += 1
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+
+        #: Monotonic counter bumped at every trend-input choke point (series
+        #: recorded/updated/deleted via :meth:`load_representation_series` /
+        #: :meth:`set_fit_results`, membership toggles — routed through
+        #: ``load_representation_series`` by the host — and custom-value relinks).
+        #: The MainWindow keys its per-study staleness cache on
+        #: ``(study.updated, data_revision)`` so a rebuild that changes nothing the
+        #: assembly reads reuses the cached verdict instead of reassembling groups.
+        self._data_revision: int = 0
 
         self._rows: list[_FitRow] = []
         self._varying_params: list[str] = []
@@ -792,6 +810,7 @@ class FitParametersPanel(QWidget):
         self._refresh_group_button_styles()
 
     def clear(self) -> None:
+        self._bump_data_revision()
         self._rows = []
         self._varying_params = []
         self._global_params = None
@@ -1144,6 +1163,8 @@ class FitParametersPanel(QWidget):
         group_id: str | None = None,
         group_name: str | None = None,
     ) -> None:
+        # A fresh fit's results become new trend rows — invalidate staleness.
+        self._bump_data_revision()
         self._sync_active_group_state()
         rows: list[_FitRow] = []
 
@@ -1272,6 +1293,11 @@ class FitParametersPanel(QWidget):
             set it overrides the "keep prior selection / fall back to newest"
             default, so a freshly-recorded series is surfaced immediately.
         """
+        # This is the host's pull entry point after a series is recorded, updated
+        # or deleted, after a representation change, and after a membership toggle
+        # (via _refresh_trend_panel); each rebuilds the rows the cross-group
+        # assembly reads, so the study-staleness cache must invalidate.
+        self._bump_data_revision()
         self._sync_active_group_state()
 
         # Preserve any model-fit / composite-param / annotation state for
@@ -3039,6 +3065,8 @@ class FitParametersPanel(QWidget):
                 changed = True
         if not changed:
             return
+        # A custom column used as the trend abscissa changed the assembly inputs.
+        self._bump_data_revision()
         # Keep the active group's snapshot in step with the mutated rows so a
         # later view rebuild (group switch / re-plot) doesn't resurrect stale
         # values, then redraw if a custom/Angle column is the live abscissa.

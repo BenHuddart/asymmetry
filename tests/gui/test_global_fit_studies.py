@@ -283,6 +283,9 @@ def test_exclusion_flips_study_stale_and_refit_clears_it(mainwindow: MainWindow)
         return list(live_groups)
 
     mainwindow._fit_parameters_panel.assemble_cross_group_groups = _assemble  # type: ignore
+    # Swapping the assembly stub is a data-input change from the cache's point of
+    # view; bump the revision so the swapped assembly is consulted.
+    mainwindow._fit_parameters_panel._bump_data_revision()
     stale, reason = mainwindow._study_staleness(study)
     assert not stale
 
@@ -294,6 +297,9 @@ def test_exclusion_flips_study_stale_and_refit_clears_it(mainwindow: MainWindow)
         return list(shifted)
 
     mainwindow._fit_parameters_panel.assemble_cross_group_groups = _assemble_shifted  # type: ignore
+    # A real exclusion routes through the panel and bumps its data revision, which
+    # invalidates the per-study staleness cache; mirror that here.
+    mainwindow._fit_parameters_panel._bump_data_revision()
     stale, reason = mainwindow._study_staleness(study)
     assert stale
     assert compute_group_input_digest(shifted) != study.input_digest
@@ -312,6 +318,50 @@ def test_exclusion_flips_study_stale_and_refit_clears_it(mainwindow: MainWindow)
     assert compute_group_input_digest(shifted) == updated.input_digest
     stale, reason = mainwindow._study_staleness(updated)
     assert not stale
+
+
+def test_refit_done_persists_healed_config_not_stale_one(mainwindow: MainWindow) -> None:
+    """WP-C: _on_global_fit_refit_done must save the config the run actually
+    used (run.config, healed by run_cross_group_fit_from_config against the
+    model's current param_names), not the stale study.config that was passed
+    in to request the refit. Drives the handler directly with a stub run
+    object so it does not depend on a real fit executing off-thread."""
+    g = _groups("A")
+    mainwindow._on_cross_group_fit_completed("A", g, _output("A", "field", g))
+    _wait_idle(mainwindow)
+    study_id = mainwindow._cross_group_batch_id("A", "field", g)
+    study = mainwindow._global_fit_studies[study_id]
+
+    # The study's stored config is corrupted/stale (as it would be after an
+    # edit-fit bug): still Linear's "m"/"b" rows.
+    assert {row["name"] for row in study.config["parameter_rows"]} == {"m", "b"}
+
+    # A healed config, as run_cross_group_fit_from_config would return after
+    # classifying roles from a NEW Arrhenius model: "m"/"b" dropped, "a"/"Ea"
+    # added as Global with model defaults.
+    healed_config = dict(study.config)
+    healed_config["model"] = ParameterCompositeModel(["Arrhenius"], []).to_dict()
+    healed_config["parameter_rows"] = [
+        {"name": "a", "initial": 1.0, "min": -float("inf"), "max": float("inf"), "type": "Global"},
+        {"name": "Ea", "initial": 1.0, "min": -float("inf"), "max": float("inf"), "type": "Global"},
+    ]
+
+    stub_run = SimpleNamespace(
+        model=ParameterCompositeModel(["Arrhenius"], []),
+        result=_result(),
+        fitted_groups=g,
+        fit_x_min=float("nan"),
+        fit_x_max=float("nan"),
+        config=healed_config,
+    )
+
+    mainwindow._on_global_fit_refit_done(study_id, stub_run)
+    _wait_idle(mainwindow)
+
+    updated = mainwindow._global_fit_studies[study_id]
+    assert updated.config["model"]["component_names"] == ["Arrhenius"]
+    persisted_names = {row["name"] for row in updated.config["parameter_rows"]}
+    assert persisted_names == {"a", "Ea"}
 
 
 def test_deleted_source_series_marks_stale_and_disables_refit(
@@ -592,6 +642,9 @@ def test_setup_group_variable_flows_into_study_and_survives_refit(
         return out
 
     mainwindow._fit_parameters_panel.assemble_cross_group_groups = _assemble  # type: ignore
+    # Force a cache miss so the (stubbed) reassembly actually runs, as it would
+    # after any trend-input change bumped the panel's data revision.
+    mainwindow._fit_parameters_panel._bump_data_revision()
     stale, _reason = mainwindow._study_staleness(study)
     assert captured["overrides"] == {"g0": 111.0, "g1": 222.0}
     assert captured["order"] == ["g0", "g1"]
@@ -607,3 +660,98 @@ def test_setup_group_variable_label_reaches_window(mainwindow: MainWindow) -> No
     assert window is not None
     # set_study carries group_variable_label → the window's local-axis override.
     assert window._local_group_axis_label() == "My custom T (K)"
+
+
+# ── WP-A: per-study staleness cache ──────────────────────────────────────────
+
+
+def test_staleness_computed_once_per_revision_across_menu_and_sidebar(
+    mainwindow: MainWindow,
+) -> None:
+    """A menu + sidebar rebuild reassembles each study at most once per revision.
+
+    Both rebuilds iterate every study calling ``_study_staleness``; with the
+    cache keyed on ``(study.updated, data_revision)`` the underlying reassembly
+    (``_compute_study_staleness``) runs once per study, then every later consult
+    is a cache hit — no matter how many rebuilds fire.
+    """
+    g_a = _groups("A")
+    g_b = _groups("D_2D")
+    mainwindow._on_cross_group_fit_completed("A", g_a, _output("A", "field", g_a))
+    mainwindow._on_cross_group_fit_completed("D_2D", g_b, _output("D_2D", "field", g_b))
+    _wait_idle(mainwindow)
+
+    calls: list[str] = []
+    real = mainwindow._compute_study_staleness
+
+    def _counting(study):
+        calls.append(study.study_id)
+        return real(study)
+
+    mainwindow._compute_study_staleness = _counting  # type: ignore
+    # Bump so the display's pre-primed entries miss, then prime once for the new
+    # revision — one reassembly per study.
+    mainwindow._fit_parameters_panel._bump_data_revision()
+    for study in mainwindow._global_fit_studies.values():
+        mainwindow._study_staleness(study)
+    primed = len(calls)
+    assert primed == len(mainwindow._global_fit_studies)
+
+    calls.clear()
+    # A menu rebuild AND a sidebar rebuild — no reassembly at all (all cached).
+    mainwindow._rebuild_global_fit_studies_menu()
+    mainwindow._global_fit_sidebar_entries()
+    assert calls == []
+
+
+def test_data_revision_bump_invalidates_staleness_cache(mainwindow: MainWindow) -> None:
+    """Bumping the panel's data revision forces a reassembly on next consult."""
+    g = _groups("A")
+    mainwindow._on_cross_group_fit_completed("A", g, _output("A", "field", g))
+    _wait_idle(mainwindow)
+    study = next(iter(mainwindow._global_fit_studies.values()))
+
+    calls: list[str] = []
+    real = mainwindow._compute_study_staleness
+
+    def _counting(s):
+        calls.append(s.study_id)
+        return real(s)
+
+    mainwindow._compute_study_staleness = _counting  # type: ignore
+    # Bump once so the display's pre-primed cache entry misses and our counting
+    # wrapper runs on this first consult.
+    mainwindow._fit_parameters_panel._bump_data_revision()
+    mainwindow._study_staleness(study)
+    assert len(calls) == 1
+    # A second consult at the same revision is a cache hit.
+    mainwindow._study_staleness(study)
+    assert len(calls) == 1
+    # A membership toggle bumps the revision (mirrored here) → recompute.
+    mainwindow._fit_parameters_panel._bump_data_revision()
+    mainwindow._study_staleness(study)
+    assert len(calls) == 2
+
+
+def test_duplicated_sentinel_short_circuits_without_reassembly(
+    mainwindow: MainWindow,
+) -> None:
+    """A duplicated study is stale-by-construction and never reassembled."""
+    g = _groups("A")
+    mainwindow._on_cross_group_fit_completed("A", g, _output("A", "field", g))
+    _wait_idle(mainwindow)
+    source_id = next(iter(mainwindow._global_fit_studies))
+
+    mainwindow._on_global_fit_study_duplicate_requested(source_id)
+    _wait_idle(mainwindow)
+    copy = next(
+        s for s in mainwindow._global_fit_studies.values() if s.input_digest == "duplicated"
+    )
+
+    def _boom(_study):
+        raise AssertionError("duplicated sentinel must not reassemble groups")
+
+    mainwindow._compute_study_staleness = _boom  # type: ignore
+    stale, reason = mainwindow._study_staleness(copy)
+    assert stale
+    assert reason == "duplicated — refit to solve"

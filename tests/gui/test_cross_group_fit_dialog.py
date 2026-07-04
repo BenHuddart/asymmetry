@@ -773,3 +773,119 @@ def test_suggest_roles_cancel_restores_button(monkeypatch) -> None:
     assert dlg._suggest_btn.isEnabled() is True
     assert dlg._suggest_cancel_btn.isVisibleTo(dlg) is False
     assert "cancel" in dlg._rationale_panel.toPlainText().lower()
+
+
+# --- WP-C: model-edit invalidates the stale cross-group result ---------------
+
+
+def _wait_fit_done(dlg: CrossGroupFitDialog, timeout_s: float = 5.0) -> None:
+    app = QApplication.instance()
+    deadline = time.time() + timeout_s
+    while dlg._fit_in_progress and time.time() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+
+
+class _FakeModelBuilder:
+    """Stand-in for ParameterModelBuilderDialog: accepts immediately with a
+    fixed replacement model, mirroring the pattern used for the base
+    ModelFitDialog's own _edit_model tests."""
+
+    _next_model: ParameterCompositeModel | None = None
+
+    def __init__(self, *_args, **_kwargs) -> None:
+        pass
+
+    def exec(self):
+        return QDialog.DialogCode.Accepted
+
+    def get_model(self):
+        return type(self)._next_model
+
+
+def test_edit_model_clears_stale_result_and_blocks_use_fit(monkeypatch) -> None:
+    """Editing the range model after a successful run must drop the cached
+    result/config so _on_use_fit refuses until the fit is re-run — otherwise a
+    study could be saved with the NEW model but the OLD (now-mismatched)
+    parameter_rows, which fails on the next refit."""
+    app = QApplication.instance() or QApplication([])
+    dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=_groups(),
+        parent=None,
+    )
+
+    # Default model is Linear (m, b); run it for real so _result/_last_config
+    # are populated exactly as the live flow would leave them.
+    dlg._run_fit(0)
+    _wait_fit_done(dlg)
+    assert dlg._result is not None
+    assert dlg._result.success is True
+    assert dlg._last_config is not None
+
+    # Edit the model to something with a disjoint parameter set (Arrhenius:
+    # a, Ea) via the base dialog's _edit_model, stubbing the builder dialog.
+    _FakeModelBuilder._next_model = ParameterCompositeModel(["Arrhenius"], [])
+    monkeypatch.setattr(
+        "asymmetry.gui.panels.model_fit_dialog.ParameterModelBuilderDialog",
+        _FakeModelBuilder,
+    )
+    dlg._edit_model(0)
+
+    assert dlg._result is None
+    assert dlg._last_config is None
+
+    info_calls: list[tuple] = []
+    from PySide6.QtWidgets import QMessageBox
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "information",
+        lambda *args, **kwargs: info_calls.append(args) or None,
+    )
+    dlg._on_use_fit()
+
+    assert dlg.result() != dlg.DialogCode.Accepted
+    assert len(info_calls) == 1
+    assert "Run Cross-Group Fit before using the fit" in str(info_calls[0])
+    assert app is not None
+
+
+def test_edit_model_then_rerun_accepts_with_new_model_config(monkeypatch) -> None:
+    """After the invalidation above, re-running the (now edited) fit clears
+    the block and output().config reflects the NEW model, not the stale one."""
+    app = QApplication.instance() or QApplication([])
+    dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=_groups(),
+        parent=None,
+    )
+
+    dlg._run_fit(0)
+    _wait_fit_done(dlg)
+
+    _FakeModelBuilder._next_model = ParameterCompositeModel(["Arrhenius"], [])
+    monkeypatch.setattr(
+        "asymmetry.gui.panels.model_fit_dialog.ParameterModelBuilderDialog",
+        _FakeModelBuilder,
+    )
+    dlg._edit_model(0)
+    assert dlg._result is None
+
+    # Re-run against the new model.
+    dlg._run_fit(0)
+    _wait_fit_done(dlg)
+    assert dlg._result is not None
+
+    dlg._on_use_fit()
+    assert dlg.result() == dlg.DialogCode.Accepted
+
+    output = dlg.output()
+    assert output is not None
+    assert output.model.component_names == ["Arrhenius"]
+    assert set(output.config["model"]["component_names"]) == {"Arrhenius"}
+    row_names = {row["name"] for row in output.config["parameter_rows"]}
+    assert row_names == {"a", "Ea"}
+    assert app is not None

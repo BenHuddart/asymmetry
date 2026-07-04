@@ -131,11 +131,11 @@ def test_set_results_computes_fit_curves_off_thread_behind_overlay(
 
     _wait_fit_curves(window)
 
-    # Landed: overlay cleared, the precompute consumed-then-dropped, and the
-    # red model curve drawn on the fit plot.
+    # Landed: overlay cleared, the curve cache warm for the current flag, and
+    # the red model curve drawn on the fit plot.
     assert not window._fit_curve_compute_active
     assert window._fit_overlay.isHidden()
-    assert window._precomputed_left_curves is None
+    assert window._curve_cache.get(False) is not None
     assert window._left_figure is not None and window._left_figure.axes
     red_lines = [
         line

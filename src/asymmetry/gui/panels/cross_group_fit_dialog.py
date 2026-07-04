@@ -175,6 +175,20 @@ class CrossGroupFitDialog(ModelFitDialog):
         for widgets in self._range_widgets:
             widgets.active.setVisible(False)
 
+    def _on_model_edited(self, idx: int) -> None:
+        # The base class's per-range ``fit_range.result`` was already cleared
+        # by the caller (``ModelFitDialog._edit_model``), but cross-group mode
+        # additionally caches the last run's result/config on the dialog
+        # itself (``self._result`` / ``self._last_config``, spanning the
+        # single shared range) for ``_on_use_fit``/``output()``. Editing the
+        # model — add/remove/edit a component — changes ``param_names``, so a
+        # result fitted against the OLD model must not survive: drop both
+        # caches so ``_on_use_fit`` reports "no fit result" until the fit is
+        # re-run against the new model.
+        self._result = None
+        self._last_config = None
+        self._range_results.pop(idx, None)
+
     # ── Suggest roles (Phase 4) ──────────────────────────────────────────────
 
     def _build_suggest_roles_ui(self) -> None:
@@ -928,6 +942,19 @@ class CrossGroupFitDialog(ModelFitDialog):
 
         self._start_fit_task(_task, _on_done)
 
+    @staticmethod
+    def _result_param_names(result: CrossGroupFitResult) -> set[str]:
+        """Every parameter name the stored *result* actually covers.
+
+        Global/fixed parameters are shared across the fit; local parameters
+        vary per group but share the same name set, so the first group's
+        entry is representative.
+        """
+        names = set(result.global_parameters.names) | set(result.fixed_parameters.names)
+        for pset in result.local_parameters.values():
+            names |= set(pset.names)
+        return names
+
     def _on_use_fit(self) -> None:
         if self._fit_in_progress:
             QMessageBox.information(
@@ -943,6 +970,23 @@ class CrossGroupFitDialog(ModelFitDialog):
                 "Run Cross-Group Fit before using the fit.",
             )
             return
+
+        # Only a result that actually ran classifies parameters (even a
+        # non-converged Minuit run populates global/local/fixed with every
+        # attempted name); the early-return failures inside
+        # global_fit_parameter_model (bad windows, <2 groups, unknown
+        # classification, missing iminuit) leave them empty and are not a
+        # stale-model mismatch, so skip the check for those rather than
+        # mislabel a genuine failure as "out of date".
+        if self._result.success or self._result_param_names(self._result):
+            current_param_names = set(self._model.param_names)
+            if self._result_param_names(self._result) != current_param_names:
+                QMessageBox.information(
+                    self,
+                    "Fit is out of date",
+                    "The model changed since the last run — Run the fit again.",
+                )
+                return
 
         if not self._result.success:
             choice = QMessageBox.question(

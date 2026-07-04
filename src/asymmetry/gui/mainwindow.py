@@ -724,6 +724,14 @@ class MainWindow(QMainWindow):
         #: ``global_fit_studies`` list. The study currently shown in the results
         #: window is tracked by its window's ``batch_id`` (== the study id).
         self._global_fit_studies: dict[str, GlobalFitStudy] = {}
+        #: Per-study staleness cache: ``study_id → (key, (stale, reason))`` where
+        #: ``key = (study.updated, panel.data_revision)``. A menu + sidebar rebuild
+        #: (each iterating every study) would otherwise reassemble every study's
+        #: groups twice per click; keying on the study's own ``updated`` stamp and
+        #: the panel's trend-input revision means the reassembly runs at most once
+        #: per (revision, study) and every later consult is a dict hit. See
+        #: :meth:`_study_staleness`.
+        self._study_staleness_cache: dict[str, tuple[tuple, tuple[bool, str]]] = {}
         self._multi_group_fit_window: MultiGroupFitWindow | None = None
         self._fit_stack: QStackedWidget | None = None
         self._ui_scale_action_group = QActionGroup(self)
@@ -11219,6 +11227,36 @@ class MainWindow(QMainWindow):
         Phase 4: any explicit group-variable overrides the study stores are
         applied to the reassembly so the digest matches the one recorded at fit
         time (an unchanged override does not spuriously read as stale).
+
+        The full result (which reassembles the study's groups and digests them)
+        is cached per study, keyed by ``(study.updated, panel.data_revision)``,
+        so a menu + sidebar rebuild computes each study's verdict once rather than
+        reassembling its groups on every action. A study whose ``input_digest`` is
+        the ``"duplicated"`` sentinel is stale by construction and short-circuits
+        without any reassembly at all.
+        """
+        panel = self._fit_parameters_panel
+        # A freshly duplicated study is stale until refit — never reassembled.
+        if study.input_digest == "duplicated":
+            return (True, "duplicated — refit to solve")
+
+        cache_key = (
+            study.updated,
+            getattr(panel, "data_revision", None),
+        )
+        cached = self._study_staleness_cache.get(study.study_id)
+        if cached is not None and cached[0] == cache_key:
+            return cached[1]
+
+        result = self._compute_study_staleness(study)
+        self._study_staleness_cache[study.study_id] = (cache_key, result)
+        return result
+
+    def _compute_study_staleness(self, study: GlobalFitStudy) -> tuple[bool, str]:
+        """Reassemble *study*'s groups from live data and return ``(stale, reason)``.
+
+        The uncached core of :meth:`_study_staleness` — assembles the groups the
+        study would be built from now and compares the digest with the snapshot's.
         """
         panel = self._fit_parameters_panel
         if not hasattr(panel, "assemble_cross_group_groups"):
@@ -11296,6 +11334,13 @@ class MainWindow(QMainWindow):
         study = self._global_fit_studies.get(study_id)
         if study is None:
             return
+        # Persist the config the run actually used, not the one requested:
+        # run_cross_group_fit_from_config self-heals parameter_rows against
+        # the model's current param_names (dropping removed params, defaulting
+        # newly-added ones), so saving the healed config lets a corrupted
+        # study config repair itself in place instead of re-failing next time.
+        healed_config = getattr(run, "config", None)
+        config = dict(healed_config) if healed_config else dict(study.config)
         self._upsert_global_fit_study(
             study_id=study_id,
             parameter_name=study.parameter_name,
@@ -11303,7 +11348,7 @@ class MainWindow(QMainWindow):
             groups=list(run.fitted_groups),
             model=run.model,
             result=run.result,
-            config=dict(study.config),
+            config=config,
             fit_x_min=run.fit_x_min,
             fit_x_max=run.fit_x_max,
         )
@@ -11385,10 +11430,10 @@ class MainWindow(QMainWindow):
         )
         self._global_fit_studies[new_id] = copy
         self._mark_dirty()
+        # _display_global_fit_study computes staleness via _study_staleness, which
+        # short-circuits the "duplicated" sentinel to (True, "duplicated — refit
+        # to solve") and sets the banner accordingly — no second set_stale needed.
         self._display_global_fit_study(new_id)
-        window = self._global_parameter_fit_window
-        if window is not None and hasattr(window, "set_stale"):
-            window.set_stale(True, "duplicated — refit to solve")
 
     def _on_global_fit_study_delete_requested(self, study_id: str) -> None:
         """Delete a study; display the most-recent remaining one, else clear."""
@@ -11400,6 +11445,7 @@ class MainWindow(QMainWindow):
             and self._global_parameter_fit_window.batch_id() == sid
         )
         del self._global_fit_studies[sid]
+        self._study_staleness_cache.pop(sid, None)
         self._mark_dirty()
         if not was_displayed:
             self._rebuild_global_fit_studies_menu()
@@ -11549,6 +11595,7 @@ class MainWindow(QMainWindow):
         the prior behaviour of reopening when a fit existed).
         """
         self._global_fit_studies = {}
+        self._study_staleness_cache = {}
         raw_studies = state.get("global_fit_studies")
         if isinstance(raw_studies, list):
             for entry in raw_studies:

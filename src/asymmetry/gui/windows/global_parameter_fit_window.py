@@ -188,9 +188,19 @@ class GlobalParameterFitWindow(QMainWindow):
         # open), so the burst collapses to a single rerun instead of a thread
         # per call.
         self._fit_curve_recompute_pending = False
-        #: Per-group precomputed fit curves consumed by the *next* _refresh_plot
-        #: draw, then dropped so user-driven redraws (toggles) evaluate inline.
-        self._precomputed_left_curves: dict[str, dict] | None = None
+        #: Window-lifetime curve cache: ``{show_components_flag: {group_id: curve}}``.
+        #: The per-group curve dict carries ``xx``/``yy``/``components`` (the 800-pt
+        #: model sample, optional stacked components) *and* ``pulls`` (the
+        #: data-x residual ``(x, pull)`` arrays), all computed off-thread in one
+        #: worker payload. Curves depend only on (result, model, groups, x-range,
+        #: x_key, show_components) — every one of those changes solely via
+        #: :meth:`set_results`, which is the only place the cache is cleared. Every
+        #: user-driven control (Log X/Y, Share X/Y, Columns, Groups show/hide,
+        #: Residuals, Show-components) is therefore a cache-backed redraw:
+        #: :meth:`_refresh_plot` draws from the cache on a hit and kicks an
+        #: off-thread compute (then returns) on a miss — it NEVER evaluates the
+        #: model inline.
+        self._curve_cache: dict[bool, dict[str, dict]] = {}
 
         root = QWidget(self)
         self.setCentralWidget(root)
@@ -446,7 +456,9 @@ class GlobalParameterFitWindow(QMainWindow):
 
     def _on_show_components_toggled(self, _checked: bool) -> None:
         self._sync_fit_scale_controls()
-        self._start_fit_curve_compute()
+        # Cache-backed: _refresh_plot draws from the flag's cache entry on a hit,
+        # or kicks the off-thread compute for that flag on the first miss.
+        self._refresh_plot()
 
     def _on_residuals_toggled(self, _checked: bool) -> None:
         self._sync_fit_scale_controls()
@@ -997,6 +1009,10 @@ class GlobalParameterFitWindow(QMainWindow):
         # that are no longer present.
         valid_ids = {g.group_id for g in groups}
         self._group_visibility = {gid: self._group_visibility.get(gid, True) for gid in valid_ids}
+        # Curves depend only on the inputs just rebound above, so the previous
+        # fit's cached curves are now invalid — clear them. Both components-flag
+        # entries are dropped; the display recomputes the one it needs off-thread.
+        self._curve_cache = {}
         self._refresh_table()
         self._refresh_quality_bar()
         self._refresh_local_parameter_plots()
@@ -1166,7 +1182,7 @@ class GlobalParameterFitWindow(QMainWindow):
         self._x_label_override = None
         self._group_variable_label_override = None
         self._group_visibility = {}
-        self._precomputed_left_curves = None
+        self._curve_cache = {}
         self.setWindowTitle("Global Parameter Fit")
         self.set_stale(False, "")
         self._refresh_table()
@@ -1184,12 +1200,18 @@ class GlobalParameterFitWindow(QMainWindow):
             self.edit_requested.emit(self._study_id)
 
     def _start_fit_curve_compute(self) -> None:
-        """Recompute the cross-group fit curves off-thread, overlaying the plot."""
+        """Compute the current-flag cross-group fit curves off-thread, into the cache.
+
+        Evaluates the per-group 800-pt curves (plus components when
+        Show-components is on, plus the data-x residual pulls) for the *current*
+        components flag, stores them under ``self._curve_cache[flag]``, and
+        redraws from the cache. Coalesces concurrent requests (the set_results +
+        restore burst) into a single rerun.
+        """
         if self._left_canvas is None or self._left_figure is None:
             return
         if self._result is None or self._model is None:
             # Nothing to evaluate; _refresh_plot just clears the canvas (cheap).
-            self._precomputed_left_curves = None
             self._refresh_plot()
             return
         if self._fit_curve_compute_active:
@@ -1199,6 +1221,9 @@ class GlobalParameterFitWindow(QMainWindow):
             return
         groups = list(self._groups)
         show_components = self._show_components_check.isChecked()
+        #: The components flag the in-flight worker is computing for, so
+        #: :meth:`_on_fit_curves_ready` files the result under the right cache key.
+        self._fit_curve_compute_flag = show_components
         # Snapshot the model/result/x-range references so the worker never reads
         # state that a concurrent set_results may rebind on the GUI thread.
         result = self._result
@@ -1236,11 +1261,11 @@ class GlobalParameterFitWindow(QMainWindow):
             return
         if self._fit_overlay is not None:
             self._fit_overlay.hide()
-        # Consume the precompute for this one draw, then drop it so later
-        # user-driven redraws (control toggles) evaluate inline.
-        self._precomputed_left_curves = curves if isinstance(curves, dict) else None
+        # File the computed curves under the flag they were computed for, so
+        # later redraws (control toggles) draw from the cache without re-eval.
+        flag = getattr(self, "_fit_curve_compute_flag", self._show_components_check.isChecked())
+        self._curve_cache[bool(flag)] = curves if isinstance(curves, dict) else {}
         self._refresh_plot()
-        self._precomputed_left_curves = None
 
     def _on_fit_curves_error(self, message: str) -> None:
         self._fit_curve_compute_active = False
@@ -1250,11 +1275,12 @@ class GlobalParameterFitWindow(QMainWindow):
             return
         if self._fit_overlay is not None:
             self._fit_overlay.hide()
-        # Draw the data points without curves rather than re-evaluating inline,
-        # which would re-raise the same error on the GUI thread.
-        self._precomputed_left_curves = {}
+        # Cache an empty result for this flag so the plot draws the data points
+        # without curves rather than re-evaluating inline (which would re-raise
+        # the same error on the GUI thread) on every later redraw.
+        flag = getattr(self, "_fit_curve_compute_flag", self._show_components_check.isChecked())
+        self._curve_cache[bool(flag)] = {}
         self._refresh_plot()
-        self._precomputed_left_curves = None
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt override
         """Cancel and join any in-flight fit-curve recompute before closing."""
@@ -1367,9 +1393,30 @@ class GlobalParameterFitWindow(QMainWindow):
             return {}
         return self._model_kwargs(self._result, self._model, group_id)
 
+    def _cached_group_total_curve(self, group_id: str) -> tuple[np.ndarray, np.ndarray] | None:
+        """Return a group's cached total ``(xx, yy)`` curve, or ``None`` if cold.
+
+        The total fit curve is identical across both components flags, so either
+        cache entry serves the GLE export. Returns ``None`` when neither flag has
+        been computed yet (cold cache) or the entry carries an error.
+        """
+        for flag in (False, True):
+            entry = self._curve_cache.get(flag)
+            if not entry:
+                continue
+            curve = entry.get(group_id)
+            if isinstance(curve, dict) and "error" not in curve and curve.get("xx") is not None:
+                return curve["xx"], curve["yy"]
+        return None
+
     def _sample_group_fit_curve(
         self, group: ParameterGroupData
     ) -> tuple[np.ndarray, np.ndarray] | None:
+        # Reuse the warm curve cache when present (post-display it always is);
+        # only fall back to an inline evaluation when the cache is cold.
+        cached = self._cached_group_total_curve(group.group_id)
+        if cached is not None:
+            return cached
         if self._model is None:
             return None
         kwargs = self._model_kwargs_for_group(group.group_id)
@@ -1783,7 +1830,10 @@ class GlobalParameterFitWindow(QMainWindow):
         and the ``show_components`` flag — never ``self`` GUI state, no widget or
         matplotlib access — so the fit-curve worker can call it off the GUI
         thread without racing ``set_results`` (which rebinds ``self._result`` /
-        ``self._model`` on the GUI thread). Returns ``{"xx", "yy", "components"}``,
+        ``self._model`` on the GUI thread). Returns
+        ``{"xx", "yy", "components", "pulls"}`` — where ``pulls`` is the
+        ``(x, pull)`` residual arrays evaluated at the *data* x (always computed,
+        so the Residuals toggle is a cache-backed redraw, never an inline eval) —
         ``{"error": msg}`` when the model rejects the parameters, or ``None``
         when there is nothing to draw.
         """
@@ -1815,19 +1865,66 @@ class GlobalParameterFitWindow(QMainWindow):
                 else None
             )
             yy = np.asarray(model.function(xx, **kwargs), dtype=float)
+            pulls = self._compute_group_pulls(group, model=model, kwargs=kwargs)
         except KeyError as exc:
             return {"error": str(exc)}
-        return {"xx": xx, "yy": yy, "components": components}
+        return {"xx": xx, "yy": yy, "components": components, "pulls": pulls}
+
+    @staticmethod
+    def _compute_group_pulls(
+        group: ParameterGroupData, *, model, kwargs: dict[str, float]
+    ) -> tuple[np.ndarray, np.ndarray] | None:
+        """Return ``(xs, pulls)`` for ``(data − model)/σ`` at the *data* x, or None.
+
+        Pure — evaluates the model at the group's data x (N points, cheap next to
+        the 800-sample curve) so the residual pulls ride along in the same
+        off-thread worker payload and the Residuals toggle never re-evaluates the
+        model on the GUI thread. May raise ``KeyError`` (caught by the caller,
+        which turns the whole group into an ``{"error": …}`` entry).
+        """
+        x = np.asarray(group.x, dtype=float)
+        y = np.asarray(group.y, dtype=float)
+        e = np.asarray(group.yerr, dtype=float)
+        mask = np.isfinite(x) & np.isfinite(y)
+        if not np.any(mask):
+            return None
+        xm = x[mask]
+        ym = y[mask]
+        em = e[mask] if e.shape == y.shape else np.full_like(ym, np.nan)
+        model_y = np.asarray(model.function(xm, **kwargs), dtype=float)
+        sigma = np.where(np.isfinite(em) & (em > 0), em, np.nan)
+        pulls = (ym - model_y) / sigma
+        order = np.argsort(xm)
+        return xm[order], pulls[order]
+
+    def _current_curve_cache(self) -> dict[str, dict] | None:
+        """Return the cached per-group curves for the current components flag.
+
+        ``None`` signals a cache miss — the caller (:meth:`_refresh_plot`) then
+        kicks an off-thread compute rather than evaluating inline. The pulls used
+        by residual mode ride on the same cached entries, so residual redraws are
+        cache-backed too.
+        """
+        return self._curve_cache.get(self._show_components_check.isChecked())
 
     def _refresh_plot(self) -> None:
         if self._left_canvas is None or self._left_figure is None:
             return
+        if self._result is not None and self._model is not None:
+            # The heavy per-group curves (and residual pulls) are never evaluated
+            # inline here: a cache hit draws from the cache; a miss kicks the
+            # off-thread compute (overlay + coalescing) and returns — its ready
+            # callback re-enters _refresh_plot once the cache is warm.
+            if self._current_curve_cache() is None:
+                self._start_fit_curve_compute()
+                return
         self._left_figure.clear()
         self._axes_tag_map = {}
         if self._result is None or self._model is None:
             self._left_canvas.draw()
             return
 
+        curves = self._current_curve_cache() or {}
         residuals = self._fit_residuals_check.isChecked()
         shown_groups = self._shown_groups()
         # Group-label annotations are keyed by group_id; prune stale ones against
@@ -1870,10 +1967,11 @@ class GlobalParameterFitWindow(QMainWindow):
                 shared_y_ax = ax
             self._axes_tag_map[id(ax)] = group.group_id
 
+            curve = curves.get(group.group_id)
             if residuals:
-                self._draw_group_residuals(ax, group)
+                self._draw_group_residuals(ax, group, curve)
             else:
-                self._draw_group_fit_panel(ax, group, legend_entries)
+                self._draw_group_fit_panel(ax, group, legend_entries, curve)
 
             row = idx // ncols
             col = idx % ncols
@@ -1927,28 +2025,17 @@ class GlobalParameterFitWindow(QMainWindow):
         self._left_canvas.draw()
 
     def _draw_group_fit_panel(
-        self, ax, group: ParameterGroupData, legend_entries: dict[str, str]
+        self, ax, group: ParameterGroupData, legend_entries: dict[str, str], curve: dict | None
     ) -> None:
-        """Draw one group's data + stacked components + total curve on *ax*."""
+        """Draw one group's data + stacked components + total curve on *ax*.
+
+        The heavy per-group curve (800-pt model eval) is supplied pre-computed
+        from the window curve cache (:meth:`_current_curve_cache`); this method
+        never evaluates the model itself.
+        """
         ax.errorbar(
             group.x, group.y, yerr=group.yerr, fmt="o", linestyle="none", color="black", capsize=2
         )
-
-        # The per-group curve is heavy (model eval over an 800-point axis):
-        # consume the off-thread precompute when present (project open), else
-        # evaluate inline for direct/interactive redraws (control toggles).
-        if self._precomputed_left_curves is not None:
-            curve = self._precomputed_left_curves.get(group.group_id)
-        else:
-            curve = self._compute_group_fit_curve(
-                group,
-                self._show_components_check.isChecked(),
-                result=self._result,
-                model=self._model,
-                fit_x_min=self._fit_x_min,
-                fit_x_max=self._fit_x_max,
-                x_key=self._x_key,
-            )
 
         if curve is not None and "error" in curve:
             ax.text(
@@ -1988,36 +2075,22 @@ class GlobalParameterFitWindow(QMainWindow):
                 cumulative = upper
         ax.plot(xx, curve["yy"], color="red", linewidth=1.5)
 
-    def _draw_group_residuals(self, ax, group: ParameterGroupData) -> None:
+    def _draw_group_residuals(self, ax, group: ParameterGroupData, curve: dict | None) -> None:
         """Draw ``(data − model)/σ`` pulls for one group around a zero line.
 
-        The model is evaluated at the data x (cheap — N points, not the
-        800-sample curve) so this stays fine on the GUI thread; components and
-        the fit curve are omitted in residual mode.
+        The pulls are read from the cached ``curve`` (computed off-thread in the
+        same worker payload as the fit curves); this method never evaluates the
+        model. Components and the fit curve are omitted in residual mode.
         """
-        x = np.asarray(group.x, dtype=float)
-        y = np.asarray(group.y, dtype=float)
-        e = np.asarray(group.yerr, dtype=float)
         ax.axhline(0.0, color=tokens.PLOT_ZERO_LINE, linewidth=1.0, zorder=1)
-
-        kwargs = self._model_kwargs_for_group(group.group_id)
-        if not kwargs:
+        if not isinstance(curve, dict):
             return
-        mask = np.isfinite(x) & np.isfinite(y)
-        if not np.any(mask):
+        pulls = curve.get("pulls")
+        if pulls is None:
             return
-        xm = x[mask]
-        ym = y[mask]
-        em = e[mask] if e.shape == y.shape else np.full_like(ym, np.nan)
-        try:
-            model_y = np.asarray(self._model.function(xm, **kwargs), dtype=float)
-        except KeyError:
-            return
-        sigma = np.where(np.isfinite(em) & (em > 0), em, np.nan)
-        pulls = (ym - model_y) / sigma
-        order = np.argsort(xm)
-        xs = xm[order]
-        ps = pulls[order]
+        xs, ps = pulls
+        xs = np.asarray(xs, dtype=float)
+        ps = np.asarray(ps, dtype=float)
         finite = np.isfinite(ps)
         if np.any(finite):
             ax.stem(
@@ -3084,6 +3157,12 @@ class GlobalParameterFitWindow(QMainWindow):
             return
         remember_export_path(path)
 
+        # The fit-subplot export reuses the warm curve cache; if it is cold
+        # (export before the plot has drawn) the builder falls back to an inline
+        # 800-pt evaluation per group — show a busy cursor for that stretch.
+        cold = self._fit_curve_cache_is_cold()
+        if cold:
+            QGuiApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             glp = importlib.import_module("gleplot")
             requested_gle_path = Path(path)
@@ -3105,6 +3184,21 @@ class GlobalParameterFitWindow(QMainWindow):
             QMessageBox.warning(self, "Export failed", f"Could not export GLE: {exc}")
         except Exception as exc:
             QMessageBox.warning(self, "Export failed", f"Could not export GLE: {exc}")
+        finally:
+            if cold:
+                QGuiApplication.restoreOverrideCursor()
+
+    def _fit_curve_cache_is_cold(self) -> bool:
+        """Return ``True`` when any shown group lacks a cached total fit curve.
+
+        A warm cache (the normal post-display state) lets the GLE export reuse
+        the off-thread curves; a cold cache means the export will evaluate the
+        800-pt curve inline, so the caller shows a busy cursor.
+        """
+        for group in self._groups:
+            if self._cached_group_total_curve(group.group_id) is None:
+                return True
+        return False
 
     def _export_fit_subplot_gle(self) -> None:
         self._export_plot_gle(

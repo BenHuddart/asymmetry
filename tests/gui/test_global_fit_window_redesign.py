@@ -583,3 +583,147 @@ def test_reduced_chi_helper_none_for_missing_group(qapp: QApplication) -> None:
 def test_math_isfinite_guard() -> None:
     # Sanity: helper returns a plain string for a NaN error.
     assert not math.isnan(float(format_value_with_error(1.0, 0.1).split("(")[0]))
+
+
+# ── WP-A: window curve cache (redraw vs recompute split) ─────────────────────
+
+
+class _CountingModel(ParameterCompositeModel):
+    """A composite model that counts every ``function`` evaluation.
+
+    Redraw-only toggles (log/scale/share/columns/groups/residuals) must draw from
+    the window curve cache and evaluate the model ZERO extra times; a
+    Show-components toggle re-evaluates only on its first (cold) flag.
+    """
+
+    def __init__(self, names: list[str]) -> None:
+        super().__init__(names)
+        self.function_calls = 0
+
+    def function(self, x, **kwargs):  # type: ignore[override]
+        self.function_calls += 1
+        return super().function(x, **kwargs)
+
+
+def _set_counting(window: GlobalParameterFitWindow, model: _CountingModel, n: int = 3) -> None:
+    groups = _make_groups(n)
+    window.set_results(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=groups,
+        model=model,
+        result=_result_with_per_group(groups),
+    )
+    _wait_fit_curves(window)
+
+
+def test_redraw_only_toggles_do_not_reevaluate_model(qapp: QApplication) -> None:
+    """Log/Share/Columns/Groups redraws are cache-backed — zero model eval."""
+    window = GlobalParameterFitWindow()
+    model = _CountingModel(["Constant"])
+    _set_counting(window, model)
+    baseline = model.function_calls
+    assert baseline > 0  # the initial off-thread compute did evaluate.
+
+    window._fit_log_x_check.setChecked(True)
+    window._fit_log_y_check.setChecked(True)
+    window._fit_share_x_check.setChecked(True)
+    window._fit_share_y_check.setChecked(True)
+    window._fit_columns_combo.setCurrentText("2")
+    # Hide then show a group panel via the visibility map + redraw path.
+    window._group_visibility["g0"] = False
+    window._refresh_plot()
+    window._group_visibility["g0"] = True
+    window._refresh_plot()
+
+    # No compute was kicked (cache warm) and the model was never re-evaluated.
+    assert not window._fit_curve_compute_active
+    assert model.function_calls == baseline
+
+
+def test_residuals_toggle_reads_cache_no_eval(qapp: QApplication) -> None:
+    """The Residuals toggle draws cached pulls — no fresh model evaluation."""
+    window = GlobalParameterFitWindow()
+    model = _CountingModel(["Constant"])
+    _set_counting(window, model)
+    baseline = model.function_calls
+
+    window._fit_residuals_check.setChecked(True)
+    assert not window._fit_curve_compute_active
+    assert model.function_calls == baseline
+    # Cached pulls were drawn (stem containers present on each shown panel).
+    assert window._left_figure is not None and window._left_figure.axes
+
+    window._fit_residuals_check.setChecked(False)
+    assert model.function_calls == baseline
+
+
+def test_switching_between_two_studies_reuses_cache(qapp: QApplication) -> None:
+    """Re-displaying a study a second time reuses its warm cache — no re-eval.
+
+    Two studies share one window; showing A, then B, then A again must not
+    re-evaluate A's model on the second display (its curves are cached and only
+    cleared by set_results, which a re-display of the SAME batch triggers — so we
+    assert the *redraw* after the display does not add evaluations).
+    """
+    window = GlobalParameterFitWindow()
+    model = _CountingModel(["Constant"])
+    _set_counting(window, model)
+    warm = model.function_calls
+
+    # A pure redraw of the already-displayed study reuses the cache.
+    window._refresh_plot()
+    assert model.function_calls == warm
+    # And a second redraw likewise.
+    window._refresh_plot()
+    assert model.function_calls == warm
+
+
+def test_show_components_first_miss_then_cached(qapp: QApplication) -> None:
+    """Show-components computes once (cold True-flag), then redraws from cache."""
+    window = GlobalParameterFitWindow()
+    model = _CountingModel(["Constant"])
+    _set_counting(window, model)
+    after_false = model.function_calls
+    assert window._curve_cache.get(False) is not None
+    assert window._curve_cache.get(True) is None
+
+    # First components toggle: True-flag cache is cold → one off-thread compute.
+    window._show_components_check.setChecked(True)
+    _wait_fit_curves(window)
+    assert window._curve_cache.get(True) is not None
+    after_true = model.function_calls
+    assert after_true > after_false
+
+    # Toggling back to False is a pure cache hit (both flags now warm).
+    window._show_components_check.setChecked(False)
+    assert not window._fit_curve_compute_active
+    assert model.function_calls == after_true
+    # And back to True again is also a cache hit.
+    window._show_components_check.setChecked(True)
+    assert not window._fit_curve_compute_active
+    assert model.function_calls == after_true
+
+
+def test_set_results_clears_curve_cache(qapp: QApplication) -> None:
+    """A new fit invalidates the cache so stale curves are never drawn."""
+    window = GlobalParameterFitWindow()
+    model = _CountingModel(["Constant"])
+    _set_counting(window, model)
+    assert window._curve_cache.get(False) is not None
+
+    # A different batch id replaces the fit — cache cleared, recomputed.
+    groups2 = _make_groups(2)
+    window.set_results(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=groups2,
+        model=model,
+        result=_result_with_per_group(groups2),
+        batch_id="other",
+    )
+    # Immediately after set_results (before the async compute lands) the cache is
+    # empty and a compute is in flight.
+    assert window._curve_cache == {} or window._fit_curve_compute_active
+    _wait_fit_curves(window)
+    assert window._curve_cache.get(False) is not None

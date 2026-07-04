@@ -2780,3 +2780,48 @@ def test_setup_overrides_reach_parameter_group_data(
     assert gv["key"] == "temperature"
     assert gv["label"] == "My T (K)"
     assert gv["values"] == {"g_a": 111.0, "g_b": 222.0}
+
+
+# ── WP-A: data_revision (staleness-cache invalidation signal) ────────────────
+
+
+def test_data_revision_bumps_at_trend_input_choke_points(qapp: QApplication) -> None:
+    """The revision advances on ingest, clear, and a value-changing relink."""
+    panel = FitParametersPanel()
+    start = panel.data_revision
+
+    # load_representation_series is the host's pull entry point (series
+    # recorded/updated/deleted, representation change, membership toggle).
+    panel.load_representation_series(
+        [
+            (
+                "batch-1",
+                "S1",
+                [
+                    {
+                        "run_number": 1,
+                        "run_label": "1",
+                        "field": 100.0,
+                        "temperature": 10.0,
+                        "values": {"Lambda": 0.1},
+                        "errors": {"Lambda": 0.01},
+                        "custom_values": {"custom:c1": "5"},
+                    }
+                ],
+            )
+        ],
+        select_id="batch-1",
+    )
+    after_load = panel.data_revision
+    assert after_load > start
+
+    # A relink that changes a row's custom values bumps; a no-op relink does not.
+    panel.relink_custom_values({1: {"custom:c1": "9"}})
+    after_relink = panel.data_revision
+    assert after_relink > after_load
+    panel.relink_custom_values({1: {"custom:c1": "9"}})  # unchanged → no bump
+    assert panel.data_revision == after_relink
+
+    # clear() drops all rows — a trend-input change.
+    panel.clear()
+    assert panel.data_revision > after_relink
