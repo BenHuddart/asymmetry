@@ -44,6 +44,11 @@ GROUP_MEMBER_BG = "#ebeff7"
 
 # ── Semantic states ───────────────────────────────────────────────────────────
 WARN = "#b66815"
+# Amber banner fill + text for a non-blocking "out of date" warning strip (used
+# by the Global Parameter Fit window's stale banner). A muted amber background
+# with a darker amber text keeps the strip legible against the light theme.
+WARN_BANNER_BG = "#fdf2d9"
+WARN_BANNER_TEXT = "#7a5210"
 OK = "#2a7a3f"
 FIT = "#c34a2c"
 ERROR = "#b3261e"

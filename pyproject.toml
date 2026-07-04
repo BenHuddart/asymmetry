@@ -143,6 +143,7 @@ ignore = ["E501"]  # Ruff format handles normal wrapping; long prose/UI strings 
 "tests/core/test_grouped_time_domain_fitting.py" = ["N803"]  # Physics parameter names (Lambda)
 "tests/gui/test_wimda_parity_components.py" = ["N803", "N806"]  # Physics parameter names (J, A, B)
 "tests/core/test_result_summary.py" = ["N806"]  # Physics symbol R (χ² confidence level)
+"tests/core/test_diffusion.py" = ["N803", "N806"]  # Physics notation (D_nD, D_perp) as args/locals
 # E402: pytest.importorskip / pytestmark before optional-dependency imports is intentional in all GUI and IO test files
 "tests/gui/test_background_dialog.py" = ["E402"]
 "tests/gui/test_batch_partial_failure.py" = ["E402"]

@@ -337,3 +337,124 @@ def test_migration_infers_manual_t0_when_stored_differs_from_file():
     profile = migrated["grouping_profiles"][0]
     assert profile["t0_policy"] == {"mode": "manual", "value": 9}
     assert GroupingProfile.from_dict(profile).t0_policy.value == 9
+
+
+# --------------------------------------------------------------------------- #
+# v12 -> v13: global_fit_studies (GlobalFitStudy persistence, Phase 1B)
+# --------------------------------------------------------------------------- #
+
+
+def _v12_state(**extra) -> dict:
+    state = {
+        "schema_version": 12,
+        "created_with_app_version": "0.1.0",
+        "datasets": [],
+        "combined_datasets": [],
+        "grouping_profiles": [],
+    }
+    state.update(extra)
+    return state
+
+
+def _serialized_study(study_id: str) -> dict:
+    from asymmetry.core.fitting.parameter_models import (
+        ParameterCompositeModel,
+        ParameterGroupData,
+        global_fit_parameter_model,
+    )
+    from asymmetry.core.representation.global_fit_study import (
+        GlobalFitStudy,
+        compute_group_input_digest,
+    )
+
+    x = [0.0, 1.0, 2.0, 3.0]
+    groups = [
+        ParameterGroupData(
+            group_id="g0",
+            group_name="G0",
+            x=x,
+            y=[1.0, 3.0, 5.0, 7.0],
+            yerr=[0.05, 0.05, 0.05, 0.05],
+            group_variable_value=10.0,
+        ),
+        ParameterGroupData(
+            group_id="g1",
+            group_name="G1",
+            x=x,
+            y=[-0.5, 1.5, 3.5, 5.5],
+            yerr=[0.05, 0.05, 0.05, 0.05],
+            group_variable_value=20.0,
+        ),
+    ]
+    model = ParameterCompositeModel(["Linear"])
+    result = global_fit_parameter_model(
+        groups=groups,
+        model=model,
+        global_params=["m"],
+        local_params=["b"],
+        fixed_params={},
+        initial_params={"m": 1.0, "b": 0.0},
+    )
+    study = GlobalFitStudy(
+        study_id=study_id,
+        name=f"Study {study_id}",
+        parameter_name="lambda",
+        x_key="field",
+        x_label="Field (G)",
+        group_variable_key="temperature",
+        group_variable_label="Temperature (K)",
+        created="2026-07-04T00:00:00",
+        updated="2026-07-04T00:00:00",
+        groups=groups,
+        model=model,
+        result=result,
+        input_digest=compute_group_input_digest(groups),
+    )
+    return study.to_dict()
+
+
+def test_legacy_project_without_global_fit_studies_key_loads_with_empty_list():
+    state = _v12_state()
+    migrated = migrate_to_current(copy.deepcopy(state))
+    validate(migrated)
+    assert migrated["schema_version"] == CURRENT_SCHEMA_VERSION
+    assert migrated["global_fit_studies"] == []
+
+
+def test_v11_project_migrates_through_v13_with_empty_studies():
+    state = _v11_state([])
+    migrated = migrate_to_current(copy.deepcopy(state))
+    assert migrated["schema_version"] == CURRENT_SCHEMA_VERSION
+    assert migrated["global_fit_studies"] == []
+
+
+def test_project_with_two_serialized_studies_survives_save_and_load(tmp_path):
+    from asymmetry.core.project.schema import load_project, save_project
+    from asymmetry.core.representation.global_fit_study import GlobalFitStudy
+
+    studies = [_serialized_study("modelfit-aaa"), _serialized_study("modelfit-bbb")]
+    state = _v12_state(global_fit_studies=studies)
+    state["schema_version"] = CURRENT_SCHEMA_VERSION
+
+    path = tmp_path / "project.asymp"
+    save_project(state, path)
+    loaded = load_project(path)
+
+    assert loaded["schema_version"] == CURRENT_SCHEMA_VERSION
+    assert len(loaded["global_fit_studies"]) == 2
+    ids = set()
+    for payload in loaded["global_fit_studies"]:
+        study = GlobalFitStudy.from_dict(payload)
+        assert study is not None
+        ids.add(study.study_id)
+    assert ids == {"modelfit-aaa", "modelfit-bbb"}
+
+
+def test_v12_project_with_no_studies_key_migrates_additively():
+    """Purely additive: an old v12 project with no notion of studies gets the
+    empty list, and all of its other state is preserved verbatim."""
+    state = _v12_state()
+    state["browser_state"] = {"extra_columns": [{"id": "x", "label": "X", "kind": "custom"}]}
+    migrated = migrate_to_current(copy.deepcopy(state))
+    assert migrated["global_fit_studies"] == []
+    assert migrated["browser_state"] == state["browser_state"]

@@ -225,7 +225,7 @@ class TestSchemaMigration:
         validate(state)  # must not raise
 
     def test_current_schema_version_constant(self):
-        assert CURRENT_SCHEMA_VERSION == 12
+        assert CURRENT_SCHEMA_VERSION == 13
 
 
 def _composite_model_dict(component: str = "Exponential") -> dict:
@@ -2503,14 +2503,22 @@ class TestMainWindowProjectState:
         monkeypatch.setattr(mw_module, "FitParametersPanel", _StubFitParamsWithCrossGroup)
 
         class _StubGlobalParameterFitWindow:
+            # Phase 2: a study is displayed via set_study; the window-state key
+            # carries only view preferences (applied via restore_state).
+            refit_requested = None  # no Signal; _connect_global_fit_window guards
+
             def __init__(self, _parent):
                 self.restored_state = None
+                self._batch_id = None
 
-            def set_results(self, **_kwargs):
-                return
+            def set_study(self, study, *, stale=False, stale_reason=""):
+                self._batch_id = study.study_id
 
             def restore_state(self, state):
                 self.restored_state = state
+
+            def batch_id(self):
+                return self._batch_id
 
             def show(self):
                 return
@@ -2529,8 +2537,38 @@ class TestMainWindowProjectState:
 
         monkeypatch.setattr(mw_module, "GlobalParameterFitWindow", _StubGlobalParameterFitWindow)
 
+        from asymmetry.core.fitting.parameter_models import (
+            CrossGroupFitResult,
+            ParameterCompositeModel,
+        )
+        from asymmetry.core.fitting.parameters import ParameterSet
+
         window = mw_module.MainWindow()
         state = _minimal_state()
+        # A persisted study (schema v13 top-level list) drives the window open.
+        study = mw_module.GlobalFitStudy(
+            study_id="modelfit-abc123",
+            name="Lambda vs B (G)",
+            parameter_name="Lambda",
+            x_key="field",
+            x_label="B (G)",
+            group_variable_key="temperature",
+            group_variable_label="T (K)",
+            created="2026-01-01T00:00:00",
+            updated="2026-01-01T00:00:00",
+            source_group_ids=["g0", "g1"],
+            groups=[],
+            model=ParameterCompositeModel(["Linear"]),
+            result=CrossGroupFitResult(
+                success=True,
+                chi_squared=1.0,
+                reduced_chi_squared=1.0,
+                global_parameters=ParameterSet(),
+                local_parameters={},
+                fixed_parameters=ParameterSet(),
+            ),
+        )
+        state["global_fit_studies"] = [study.to_dict()]
         state["global_parameter_fit_window_state"] = {
             "show_components": True,
             "fit_share_x": True,
@@ -2544,6 +2582,7 @@ class TestMainWindowProjectState:
             "show_components": True,
             "fit_share_x": True,
         }
+        assert window._global_parameter_fit_window.batch_id() == "modelfit-abc123"
 
 
 class TestNonFiniteJsonSafety:

@@ -85,6 +85,7 @@ from collections.abc import Iterable, Sequence
 from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 from PySide6.QtCore import QEvent, QEventLoop, QObject, QSettings, Qt, QThread, QTimer, QUrl, Signal
@@ -135,6 +136,7 @@ from asymmetry.core.fitting import (
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.parameter_models import (
     CrossGroupFitResult,
+    ParameterGroupData,
     effective_range_bounds,
 )
 from asymmetry.core.fitting.parameters import ParameterSet
@@ -198,6 +200,11 @@ from asymmetry.core.representation import (
     composite_model_label,
     default_series_label,
 )
+from asymmetry.core.representation.global_fit_study import (
+    GlobalFitStudy,
+    compute_group_input_digest,
+    study_from_legacy_cross_group_payload,
+)
 from asymmetry.core.representation.project_model import ProjectModel
 from asymmetry.core.transform import (
     EFFECTIVE_DETECTOR_T0_KEY,
@@ -228,6 +235,7 @@ from asymmetry.gui.export_paths import default_export_path, remember_export_path
 from asymmetry.gui.fit_settings import fit_quality_confidence, set_fit_quality_confidence
 from asymmetry.gui.gle_settings import GleSetupDialog
 from asymmetry.gui.panels.alc_panel import ALCFitPanel, ALCScanView, IntegralScanPanel
+from asymmetry.gui.panels.cross_group_config import run_cross_group_fit_from_config
 from asymmetry.gui.panels.data_browser import DataBrowserPanel
 from asymmetry.gui.panels.fit_panel import (
     BATCH_SEEDING_LABELS,
@@ -258,7 +266,11 @@ from asymmetry.gui.ui_manager import (
 from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
 from asymmetry.gui.widgets.dock_header import DockHeader
 from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
-from asymmetry.gui.windows.global_parameter_fit_window import GlobalParameterFitWindow
+from asymmetry.gui.windows.global_fit_compare_dialog import GlobalFitCompareDialog
+from asymmetry.gui.windows.global_parameter_fit_window import (
+    GlobalParameterFitWindow,
+    StudySidebarEntry,
+)
 from asymmetry.gui.windows.grouping_dialog import GroupingDialog
 from asymmetry.gui.windows.multi_group_fit_window import MultiGroupFitWindow
 from asymmetry.gui.windows.run_info_dialog import RunInfoDialog
@@ -703,6 +715,24 @@ class MainWindow(QMainWindow):
         # stores its panel state before each re-sync, so it needs no such guard.)
         self._fourier_included_seeded: set[int] = set()
         self._global_parameter_fit_window: GlobalParameterFitWindow | None = None
+        #: The single open two-study comparison dialog (opened from the results
+        #: window's "Compare with…" submenu). Only one is allowed at a time; a new
+        #: comparison closes the previous one.
+        self._global_fit_compare_dialog: GlobalFitCompareDialog | None = None
+        #: The named cross-group global-parameter-fit studies, insertion-ordered
+        #: (dict preserves order). Replaces the trend panel's single-slot
+        #: ``last_cross_group_fit``; persisted under the schema-v13 top-level
+        #: ``global_fit_studies`` list. The study currently shown in the results
+        #: window is tracked by its window's ``batch_id`` (== the study id).
+        self._global_fit_studies: dict[str, GlobalFitStudy] = {}
+        #: Per-study staleness cache: ``study_id → (key, (stale, reason))`` where
+        #: ``key = (study.updated, panel.data_revision)``. A menu + sidebar rebuild
+        #: (each iterating every study) would otherwise reassemble every study's
+        #: groups twice per click; keying on the study's own ``updated`` stamp and
+        #: the panel's trend-input revision means the reassembly runs at most once
+        #: per (revision, study) and every later consult is a dict hit. See
+        #: :meth:`_study_staleness`.
+        self._study_staleness_cache: dict[str, tuple[tuple, tuple[bool, str]]] = {}
         self._multi_group_fit_window: MultiGroupFitWindow | None = None
         self._fit_stack: QStackedWidget | None = None
         self._ui_scale_action_group = QActionGroup(self)
@@ -904,6 +934,18 @@ class MainWindow(QMainWindow):
             self._on_global_parameter_fit,
         )
         self._update_global_parameter_fit_menu_style(False)
+        # Explicit setup entry point (Phase 4): opens the setup dialog with
+        # nothing preselected, then the cross-group fit dialog on Continue.
+        analysis_menu.addAction(
+            "New global parameter fit…",
+            self._on_new_global_parameter_fit,
+        )
+        # Studies registry submenu: one entry per persisted cross-group fit,
+        # rebuilt from the registry whenever it changes (see
+        # _rebuild_global_fit_studies_menu). Rename/duplicate/delete live in the
+        # Phase 3 sidebar, not here.
+        self._global_fit_studies_menu = analysis_menu.addMenu("Global parameter fits")
+        self._rebuild_global_fit_studies_menu()
 
         # Batch-series seeding mode (chain-from-previous for scans). "Auto" picks
         # per the order key; the others force a mode. All reach fit_grouped_series.
@@ -8253,6 +8295,19 @@ class MainWindow(QMainWindow):
         self._global_parameter_fit_window.raise_()
         self._global_parameter_fit_window.activateWindow()
 
+    def _on_new_global_parameter_fit(self) -> None:
+        """Open the explicit global-fit setup dialog with nothing preselected.
+
+        The trend panel owns the setup dialog (it holds the series/parameter/
+        x-key data); on Continue it runs the cross-group fit, which emits
+        ``cross_group_fit_completed`` → ``_on_cross_group_fit_completed`` and so
+        creates/updates the study exactly like the trend-panel button path.
+        """
+        panel = getattr(self, "_fit_parameters_panel", None)
+        if panel is None or not hasattr(panel, "open_global_fit_setup"):
+            return
+        panel.open_global_fit_setup()
+
     def _update_global_parameter_fit_menu_style(self, has_result: bool) -> None:
         if not hasattr(self, "_global_parameter_fit_action"):
             return
@@ -9221,6 +9276,10 @@ class MainWindow(QMainWindow):
         # OrderParameter / Linear overlay drops the excluded point immediately.
         if hasattr(self._fit_parameters_panel, "refit_active_model_fits"):
             self._fit_parameters_panel.refit_active_model_fits()
+        # A membership change may have made a persisted global-fit study stale
+        # (its snapshot no longer matches the live included rows); refresh the
+        # displayed study's banner and the menu's " (stale)" suffixes.
+        self._refresh_global_fit_study_staleness()
 
     def _current_single_fit_projection(self) -> str | None:
         """Return the projection a single fit should be keyed under, or ``None``.
@@ -10933,8 +10992,6 @@ class MainWindow(QMainWindow):
 
     def _on_cross_group_fit_completed(self, parameter_name, groups, output) -> None:
         """Display cross-group fit output in the Global Parameter Fit window."""
-        if self._global_parameter_fit_window is None:
-            self._global_parameter_fit_window = GlobalParameterFitWindow(self)
         fit_result = getattr(output, "fit_result", None)
         model = getattr(output, "model", None)
         x_key = getattr(output, "x_key", "run")
@@ -10943,35 +11000,108 @@ class MainWindow(QMainWindow):
         if fit_result is None or model is None:
             return
         batch_id = self._cross_group_batch_id(parameter_name, x_key, groups)
-        prev_batch_id = self._global_parameter_fit_window.batch_id()
+        config = getattr(output, "config", None)
+
+        # Create or update the registry study (study id == batch id) *before*
+        # display, so a re-run of the same fit updates in place (preserving the
+        # user's name/created) rather than minting a duplicate.
+        self._upsert_global_fit_study(
+            study_id=batch_id,
+            parameter_name=parameter_name,
+            x_key=x_key,
+            groups=list(groups),
+            model=model,
+            result=fit_result,
+            config=dict(config) if isinstance(config, dict) else {},
+            fit_x_min=float(fit_x_min) if fit_x_min is not None else float("nan"),
+            fit_x_max=float(fit_x_max) if fit_x_max is not None else float("nan"),
+        )
+
+        # Item 3: record the per-group local + global outputs as a trendable
+        # results series so model-fit outputs can themselves be trended. Done
+        # before display so the study's backing series exists for decorations.
+        self._record_model_fit_results_series(parameter_name, groups, output)
+
+        self._display_global_fit_study(batch_id)
+
+    def _display_global_fit_study(self, study_id: str) -> None:
+        """Show the study *study_id* in the Global Parameter Fit window."""
+        study = self._global_fit_studies.get(study_id)
+        if study is None or study.result is None or study.model is None:
+            return
+        if self._global_parameter_fit_window is None:
+            self._global_parameter_fit_window = GlobalParameterFitWindow(self)
+            self._connect_global_fit_window()
+        window = self._global_parameter_fit_window
+        prev_batch_id = window.batch_id()
         # Switching to a different fit: persist the outgoing fit's decorations to
         # its own series first, before set_results clears them, so switching back
         # to it restores them even without an intervening save.
-        if prev_batch_id is not None and prev_batch_id != batch_id:
+        if prev_batch_id is not None and prev_batch_id != study_id:
             self._sync_global_fit_decorations_to_series()
-        self._global_parameter_fit_window.set_results(
-            parameter_name=parameter_name,
-            x_key=x_key,
-            groups=groups,
-            model=model,
-            result=fit_result,
-            fit_x_min=fit_x_min,
-            fit_x_max=fit_x_max,
-            batch_id=batch_id,
-        )
+
+        stale, stale_reason = self._study_staleness(study)
+        window.set_study(study, stale=stale, stale_reason=stale_reason)
         # Then load any decorations previously stamped on the incoming fit's
         # series; a re-run of the same fit keeps the window's live decorations
-        # (set_results leaves them untouched when the batch matches).
-        if batch_id != prev_batch_id:
-            self._restore_global_fit_decorations(batch_id)
-        self._global_parameter_fit_window.show()
-        self._global_parameter_fit_window.raise_()
-        self._global_parameter_fit_window.activateWindow()
+        # (set_study leaves them untouched when the batch matches).
+        if study_id != prev_batch_id:
+            self._restore_global_fit_decorations(study_id)
+        window.show()
+        window.raise_()
+        window.activateWindow()
         self._update_global_parameter_fit_menu_style(True)
+        self._rebuild_global_fit_studies_menu()
+        self._refresh_global_fit_sidebar()
 
-        # Item 3: record the per-group local + global outputs as a trendable
-        # results series so model-fit outputs can themselves be trended.
-        self._record_model_fit_results_series(parameter_name, groups, output)
+    def _connect_global_fit_window(self) -> None:
+        """Wire the Global Parameter Fit window's outbound signals once."""
+        window = self._global_parameter_fit_window
+        if window is None:
+            return
+        for name, handler in (
+            ("refit_requested", self._on_global_fit_refit_requested),
+            ("study_selected", self._display_global_fit_study),
+            ("study_rename_requested", self._on_global_fit_study_rename_requested),
+            ("study_duplicate_requested", self._on_global_fit_study_duplicate_requested),
+            ("study_delete_requested", self._on_global_fit_study_delete_requested),
+            ("study_compare_requested", self._on_global_fit_study_compare_requested),
+            ("edit_requested", self._on_global_fit_edit_requested),
+        ):
+            signal = getattr(window, name, None)
+            if signal is not None and hasattr(signal, "connect"):
+                signal.connect(handler)
+
+    def _global_fit_sidebar_entries(self) -> list[StudySidebarEntry]:
+        """Return :class:`StudySidebarEntry` records for the window's sidebar.
+
+        Each carries ``parameter_name``/``x_key`` so the window can offer a
+        "Compare with…" submenu of studies that share this one's parameter and
+        x-axis.
+        """
+        entries: list[StudySidebarEntry] = []
+        for study in self._global_fit_studies.values():
+            stale, _reason = self._study_staleness(study)
+            entries.append(
+                StudySidebarEntry(
+                    study_id=study.study_id,
+                    name=study.name,
+                    stale=stale,
+                    parameter_name=study.parameter_name,
+                    x_key=study.x_key,
+                )
+            )
+        return entries
+
+    def _refresh_global_fit_sidebar(self) -> None:
+        """Push the current registry + active study into the window's sidebar."""
+        window = self._global_parameter_fit_window
+        if window is None:
+            return
+        if hasattr(window, "set_studies_list"):
+            window.set_studies_list(self._global_fit_sidebar_entries())
+        if hasattr(window, "set_active_study_id"):
+            window.set_active_study_id(window.batch_id())
 
     def _cross_group_batch_id(self, parameter_name: str, x_key: str, groups: object) -> str:
         """Return the deterministic ``modelfit-<digest>`` id for a cross-group fit.
@@ -10987,6 +11117,615 @@ class MainWindow(QMainWindow):
         logical_key = f"{parameter_name}::{x_key}::{group_ids}"
         digest = hashlib.sha1(logical_key.encode("utf-8")).hexdigest()[:12]
         return f"modelfit-{digest}"
+
+    # ── Global fit studies registry ─────────────────────────────────────────
+
+    @staticmethod
+    def _group_variable_for_x_key(x_key: str) -> tuple[str, str]:
+        """Return ``(group_variable_key, group_variable_label)`` for an x-key.
+
+        Mirrors ``GlobalParameterFitWindow._local_group_axis_label``: local
+        parameters of a field fit trend against temperature and vice versa; any
+        other abscissa (run/angle/custom/param) has no canonical orthogonal
+        coordinate, so it reads as a generic "Group variable". Phase 4 will make
+        this an explicit user choice; for now it is inferred.
+        """
+        if x_key == "field":
+            return ("temperature", "T (K)")
+        if x_key == "temperature":
+            return ("field", "B (G)")
+        return ("run", "Group variable")
+
+    def _unique_study_name(self, base_name: str) -> str:
+        """Return *base_name*, suffixed " (2)"/" (3)"/… to avoid a collision.
+
+        Only used when *minting a new* study whose default name clashes with an
+        existing one; a re-run of an existing study keeps its (possibly renamed)
+        name, so this is never called for updates.
+        """
+        existing = {study.name for study in self._global_fit_studies.values()}
+        if base_name not in existing:
+            return base_name
+        n = 2
+        while f"{base_name} ({n})" in existing:
+            n += 1
+        return f"{base_name} ({n})"
+
+    def _upsert_global_fit_study(
+        self,
+        *,
+        study_id: str,
+        parameter_name: str,
+        x_key: str,
+        groups: list,
+        model,
+        result,
+        config: dict,
+        fit_x_min: float,
+        fit_x_max: float,
+    ) -> GlobalFitStudy:
+        """Create a study, or update the existing one with *study_id* in place.
+
+        On update the user-assigned ``name`` and original ``created`` timestamp
+        are preserved; ``updated``, ``result``, ``groups`` snapshot, ``config``
+        and ``input_digest`` are refreshed. Insertion order is preserved (a
+        re-run keeps the study's position in the registry).
+        """
+        now = datetime.now().isoformat()
+        try:
+            x_label = self._fit_parameters_panel._x_axis_display_label(x_key)
+        except Exception:
+            x_label = x_key
+        # Phase 4: an explicit setup-dialog choice, carried in the config under
+        # "group_variable", replaces the T↔B inference for the group-variable key
+        # and axis label. A config without it (legacy quick path / pre-Phase-4
+        # study) falls back to the inference.
+        gv_key, gv_label = self._group_variable_for_x_key(x_key)
+        gv_block = config.get("group_variable") if isinstance(config, dict) else None
+        if isinstance(gv_block, dict):
+            key = gv_block.get("key")
+            label = gv_block.get("label")
+            if isinstance(key, str) and key:
+                gv_key = key
+            if isinstance(label, str) and label:
+                gv_label = label
+        source_group_ids = [str(getattr(g, "group_id", "")) for g in groups]
+        group_snapshot = [g for g in groups if isinstance(g, ParameterGroupData)]
+        digest = compute_group_input_digest(group_snapshot)
+
+        existing = self._global_fit_studies.get(study_id)
+        if existing is not None:
+            existing.parameter_name = parameter_name
+            existing.x_key = x_key
+            existing.x_label = x_label
+            existing.group_variable_key = gv_key
+            existing.group_variable_label = gv_label
+            existing.updated = now
+            existing.source_group_ids = source_group_ids
+            existing.groups = group_snapshot
+            existing.model = model
+            existing.result = result
+            existing.config = dict(config)
+            existing.fit_x_min = fit_x_min
+            existing.fit_x_max = fit_x_max
+            existing.input_digest = digest
+            return existing
+
+        default_name = f"{parameter_name} vs {x_label}"
+        study = GlobalFitStudy(
+            study_id=study_id,
+            name=self._unique_study_name(default_name),
+            parameter_name=parameter_name,
+            x_key=x_key,
+            x_label=x_label,
+            group_variable_key=gv_key,
+            group_variable_label=gv_label,
+            created=now,
+            updated=now,
+            source_group_ids=source_group_ids,
+            groups=group_snapshot,
+            model=model,
+            config=dict(config),
+            result=result,
+            fit_x_min=fit_x_min,
+            fit_x_max=fit_x_max,
+            input_digest=digest,
+        )
+        self._global_fit_studies[study_id] = study
+        return study
+
+    @staticmethod
+    def _study_group_variable_overrides(
+        study: GlobalFitStudy,
+    ) -> tuple[dict[str, float] | None, list[str] | None]:
+        """Return ``(overrides, order)`` from a study's stored group-variable block.
+
+        Phase 4 studies persist the setup dialog's explicit per-group group
+        variable values (and checklist order) under ``config["group_variable"]``.
+        Reassembling groups (staleness digest, Refit, Edit) must apply the same
+        overrides so the digest is stable across display → refit and the refitted
+        groups carry the user's chosen orthogonal coordinate. A study without the
+        block (pre-Phase-4 / legacy quick path) returns ``(None, None)`` so the
+        inference is used, unchanged.
+        """
+        gv_block = study.config.get("group_variable") if isinstance(study.config, dict) else None
+        if not isinstance(gv_block, dict):
+            return (None, None)
+        raw_values = gv_block.get("values")
+        overrides: dict[str, float] | None = None
+        if isinstance(raw_values, dict):
+            overrides = {}
+            for gid, value in raw_values.items():
+                if isinstance(value, (int, float)):
+                    overrides[str(gid)] = float(value)
+            overrides = overrides or None
+        raw_order = gv_block.get("order")
+        order = (
+            [str(gid) for gid in raw_order] if isinstance(raw_order, list) and raw_order else None
+        )
+        return (overrides, order)
+
+    def _study_staleness(self, study: GlobalFitStudy) -> tuple[bool, str]:
+        """Return ``(stale, reason)`` for *study* against the live trend data.
+
+        A study is stale when the groups it would be assembled from *now* (same
+        parameter/x-key/source groups, ``include_in_trend``-filtered) differ from
+        the snapshot it was fit against — a data change. A source series that has
+        been deleted (or no longer carries the parameter) is a harder staleness:
+        it cannot be refitted, so the reason is surfaced and Refit disabled.
+
+        Phase 4: any explicit group-variable overrides the study stores are
+        applied to the reassembly so the digest matches the one recorded at fit
+        time (an unchanged override does not spuriously read as stale).
+
+        The full result (which reassembles the study's groups and digests them)
+        is cached per study, keyed by ``(study.updated, panel.data_revision)``,
+        so a menu + sidebar rebuild computes each study's verdict once rather than
+        reassembling its groups on every action. A study whose ``input_digest`` is
+        the ``"duplicated"`` sentinel is stale by construction and short-circuits
+        without any reassembly at all.
+        """
+        panel = self._fit_parameters_panel
+        # A freshly duplicated study is stale until refit — never reassembled.
+        if study.input_digest == "duplicated":
+            return (True, "duplicated — refit to solve")
+
+        cache_key = (
+            study.updated,
+            getattr(panel, "data_revision", None),
+        )
+        cached = self._study_staleness_cache.get(study.study_id)
+        if cached is not None and cached[0] == cache_key:
+            return cached[1]
+
+        result = self._compute_study_staleness(study)
+        self._study_staleness_cache[study.study_id] = (cache_key, result)
+        return result
+
+    def _compute_study_staleness(self, study: GlobalFitStudy) -> tuple[bool, str]:
+        """Reassemble *study*'s groups from live data and return ``(stale, reason)``.
+
+        The uncached core of :meth:`_study_staleness` — assembles the groups the
+        study would be built from now and compares the digest with the snapshot's.
+        """
+        panel = self._fit_parameters_panel
+        if not hasattr(panel, "assemble_cross_group_groups"):
+            return (False, "")
+        overrides, order = self._study_group_variable_overrides(study)
+        current = panel.assemble_cross_group_groups(
+            study.parameter_name,
+            study.x_key,
+            list(study.source_group_ids),
+            group_variable_overrides=overrides,
+            group_order=order,
+        )
+        if current is None:
+            return (True, "source series missing")
+        if len(current) < 2:
+            return (True, "source series missing")
+        digest = compute_group_input_digest(current)
+        if digest != study.input_digest:
+            return (True, "trend data changed since this fit")
+        return (False, "")
+
+    def _refresh_global_fit_study_staleness(self) -> None:
+        """Recompute the displayed study's stale banner, if the window is open."""
+        window = self._global_parameter_fit_window
+        if window is None:
+            return
+        study_id = window.batch_id()
+        if not study_id:
+            return
+        study = self._global_fit_studies.get(study_id)
+        if study is None:
+            return
+        stale, reason = self._study_staleness(study)
+        if hasattr(window, "set_stale"):
+            window.set_stale(stale, reason)
+        self._rebuild_global_fit_studies_menu()
+        self._refresh_global_fit_sidebar()
+
+    def _on_global_fit_refit_requested(self, study_id: str) -> None:
+        """Re-run a study's fit over the current trend data, off-thread."""
+        study = self._global_fit_studies.get(str(study_id))
+        if study is None:
+            return
+        panel = self._fit_parameters_panel
+        overrides, order = self._study_group_variable_overrides(study)
+        groups = panel.assemble_cross_group_groups(
+            study.parameter_name,
+            study.x_key,
+            list(study.source_group_ids),
+            group_variable_overrides=overrides,
+            group_order=order,
+        )
+        if groups is None or len(groups) < 2:
+            QMessageBox.warning(
+                self,
+                "Refit not possible",
+                "The trend series this fit was built from are no longer available "
+                "(deleted, or missing the fitted parameter). Re-run the fit from the "
+                "Fit Parameters panel instead.",
+            )
+            return
+        config = dict(study.config)
+
+        def _task(_worker):
+            return run_cross_group_fit_from_config(groups, config)
+
+        self._tasks.start(
+            _task,
+            on_finished=lambda run, sid=str(study_id): self._on_global_fit_refit_done(sid, run),
+            on_error=lambda message: self._on_global_fit_refit_error(message),
+        )
+
+    def _on_global_fit_refit_done(self, study_id: str, run: object) -> None:
+        """Fold a completed refit back into the study and re-display it."""
+        study = self._global_fit_studies.get(study_id)
+        if study is None:
+            return
+        # Persist the config the run actually used, not the one requested:
+        # run_cross_group_fit_from_config self-heals parameter_rows against
+        # the model's current param_names (dropping removed params, defaulting
+        # newly-added ones), so saving the healed config lets a corrupted
+        # study config repair itself in place instead of re-failing next time.
+        healed_config = getattr(run, "config", None)
+        config = dict(healed_config) if healed_config else dict(study.config)
+        self._upsert_global_fit_study(
+            study_id=study_id,
+            parameter_name=study.parameter_name,
+            x_key=study.x_key,
+            groups=list(run.fitted_groups),
+            model=run.model,
+            result=run.result,
+            config=config,
+            fit_x_min=run.fit_x_min,
+            fit_x_max=run.fit_x_max,
+        )
+        # Re-record the trendable results series so the refit's outputs replace
+        # the stale ones, then re-display (which clears the stale banner).
+        # ``_record_model_fit_results_series`` reads only ``fit_result`` and
+        # ``x_key`` off the output, so a minimal namespace suffices.
+        output = SimpleNamespace(fit_result=run.result, x_key=study.x_key)
+        self._record_model_fit_results_series(study.parameter_name, run.fitted_groups, output)
+        self._mark_dirty()
+        self._display_global_fit_study(study_id)
+
+    def _on_global_fit_refit_error(self, message: str) -> None:
+        QMessageBox.critical(
+            self,
+            "Refit failed",
+            f"The global parameter fit could not be re-run:\n\n{message}",
+        )
+
+    # ── Global fit studies: rename / duplicate / delete / edit ───────────────
+
+    def _on_global_fit_study_rename_requested(self, study_id: str, new_name: str) -> None:
+        """Rename a study in place (id preserved), refreshing menu/sidebar/title."""
+        study = self._global_fit_studies.get(str(study_id))
+        if study is None:
+            return
+        name = str(new_name).strip()
+        if not name or name == study.name:
+            return
+        study.name = name
+        study.updated = datetime.now().isoformat()
+        window = self._global_parameter_fit_window
+        if window is not None and window.batch_id() == study.study_id:
+            window.setWindowTitle(f"Global Parameter Fit — {study.name}")
+        self._mark_dirty()
+        self._rebuild_global_fit_studies_menu()
+        self._refresh_global_fit_sidebar()
+
+    def _duplicate_study_id(self, source_id: str) -> str:
+        """Return a fresh, non-colliding ``<source_id>-copy[N]`` study id."""
+        candidate = f"{source_id}-copy"
+        n = 2
+        while candidate in self._global_fit_studies:
+            candidate = f"{source_id}-copy{n}"
+            n += 1
+        return candidate
+
+    def _on_global_fit_study_duplicate_requested(self, study_id: str) -> None:
+        """Duplicate a study: new id, copied config/model/result, marked stale.
+
+        Decorations do NOT carry over (they key by study id). The copy is marked
+        stale with a reason so the window offers Refit.
+        """
+        source = self._global_fit_studies.get(str(study_id))
+        if source is None:
+            return
+        new_id = self._duplicate_study_id(source.study_id)
+        now = datetime.now().isoformat()
+        copy = GlobalFitStudy(
+            study_id=new_id,
+            name=self._unique_study_name(f"{source.name} (copy)"),
+            parameter_name=source.parameter_name,
+            x_key=source.x_key,
+            x_label=source.x_label,
+            group_variable_key=source.group_variable_key,
+            group_variable_label=source.group_variable_label,
+            created=now,
+            updated=now,
+            source_group_ids=list(source.source_group_ids),
+            groups=list(source.groups),
+            model=source.model,
+            config=dict(source.config),
+            result=source.result,
+            fit_x_min=source.fit_x_min,
+            fit_x_max=source.fit_x_max,
+            # A deliberately mismatched digest so the copy reads as stale until
+            # the user refits it (the banner then offers Refit).
+            input_digest="duplicated",
+        )
+        self._global_fit_studies[new_id] = copy
+        self._mark_dirty()
+        # _display_global_fit_study computes staleness via _study_staleness, which
+        # short-circuits the "duplicated" sentinel to (True, "duplicated — refit
+        # to solve") and sets the banner accordingly — no second set_stale needed.
+        self._display_global_fit_study(new_id)
+
+    def _on_global_fit_study_delete_requested(self, study_id: str) -> None:
+        """Delete a study; display the most-recent remaining one, else clear."""
+        sid = str(study_id)
+        if sid not in self._global_fit_studies:
+            return
+        was_displayed = (
+            self._global_parameter_fit_window is not None
+            and self._global_parameter_fit_window.batch_id() == sid
+        )
+        del self._global_fit_studies[sid]
+        self._study_staleness_cache.pop(sid, None)
+        self._mark_dirty()
+        if not was_displayed:
+            self._rebuild_global_fit_studies_menu()
+            self._refresh_global_fit_sidebar()
+            return
+        if self._global_fit_studies:
+            latest = max(
+                self._global_fit_studies.values(),
+                key=lambda s: (s.updated or "", s.created or ""),
+            )
+            self._display_global_fit_study(latest.study_id)
+        else:
+            window = self._global_parameter_fit_window
+            if window is not None and hasattr(window, "clear_display"):
+                window.clear_display()
+            self._update_global_parameter_fit_menu_style(False)
+            self._rebuild_global_fit_studies_menu()
+            self._refresh_global_fit_sidebar()
+
+    def _on_global_fit_study_compare_requested(self, id_a: str, id_b: str) -> None:
+        """Open the two-study comparison dialog for *id_a* vs *id_b*.
+
+        Both studies must exist and carry a result/model. The dialog is
+        non-modal and only one may be open at a time — opening a new comparison
+        closes the previous dialog first.
+        """
+        study_a = self._global_fit_studies.get(str(id_a))
+        study_b = self._global_fit_studies.get(str(id_b))
+        if study_a is None or study_b is None:
+            return
+        if study_a.result is None or study_b.result is None:
+            return
+        previous = self._global_fit_compare_dialog
+        if previous is not None:
+            previous.close()
+        dialog = GlobalFitCompareDialog(study_a, study_b, self)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        dialog.destroyed.connect(self._on_global_fit_compare_dialog_destroyed)
+        self._global_fit_compare_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+
+    def _on_global_fit_compare_dialog_destroyed(self, *_args) -> None:
+        """Drop the reference when the comparison dialog is closed/destroyed."""
+        self._global_fit_compare_dialog = None
+
+    def _on_global_fit_edit_requested(self, study_id: str) -> None:
+        """Reopen the cross-group fit dialog seeded from a study's config.
+
+        Reassembles the study's groups from the live trend data; falls back to
+        the stored snapshot (with a warning) when the source series are gone.
+        The dialog output is routed through the same path as a fresh fit so the
+        study updates in place and redisplays.
+        """
+        study = self._global_fit_studies.get(str(study_id))
+        if study is None:
+            return
+        panel = self._fit_parameters_panel
+        overrides, order = self._study_group_variable_overrides(study)
+        groups = panel.assemble_cross_group_groups(
+            study.parameter_name,
+            study.x_key,
+            list(study.source_group_ids),
+            group_variable_overrides=overrides,
+            group_order=order,
+        )
+        if groups is None or len(groups) < 2:
+            QMessageBox.warning(
+                self,
+                "Editing from stored data",
+                "The trend series this fit was built from are no longer fully "
+                "available; editing against the stored snapshot instead.",
+            )
+            groups = list(study.groups)
+        if len(groups) < 2:
+            QMessageBox.warning(
+                self,
+                "Cannot edit fit",
+                "This fit has fewer than two groups of data to edit.",
+            )
+            return
+
+        from asymmetry.gui.panels.cross_group_fit_dialog import CrossGroupFitDialog
+
+        dialog = CrossGroupFitDialog(
+            parameter_name=study.parameter_name,
+            x_key=study.x_key,
+            groups=groups,
+            existing_config=dict(study.config),
+            x_label=study.x_label or None,
+            parent=self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        output = dialog.output()
+        if output is None:
+            return
+        # Route through the fresh-fit path so the study updates in place: the
+        # batch id derives from (parameter, x_key, groups), which is unchanged
+        # for the same source groups, so the existing study is updated.
+        self._on_cross_group_fit_completed(study.parameter_name, output.groups, output)
+
+    def _rebuild_global_fit_studies_menu(self) -> None:
+        """Rebuild the Analysis ▸ Global parameter fits submenu from the registry.
+
+        One action per study (checked/bold for the one shown in the window, with
+        a " (stale)" suffix when its inputs have drifted), plus a "Show window"
+        entry. Rename/duplicate/delete belong to Phase 3's sidebar, not here.
+        """
+        menu = getattr(self, "_global_fit_studies_menu", None)
+        if menu is None:
+            return
+        menu.clear()
+        window = self._global_parameter_fit_window
+        shown_id = window.batch_id() if window is not None else None
+        if not self._global_fit_studies:
+            action = menu.addAction("(no global parameter fits yet)")
+            action.setEnabled(False)
+            menu.setEnabled(True)
+            return
+        for study in self._global_fit_studies.values():
+            stale, _reason = self._study_staleness(study)
+            label = study.name + (" (stale)" if stale else "")
+            action = menu.addAction(
+                label, lambda sid=study.study_id: self._display_global_fit_study(sid)
+            )
+            action.setCheckable(True)
+            action.setChecked(study.study_id == shown_id)
+            if study.study_id == shown_id:
+                font = action.font()
+                font.setBold(True)
+                action.setFont(font)
+        menu.addSeparator()
+        menu.addAction("Show window", self._on_global_parameter_fit)
+
+    def _restore_global_fit_studies(self, state: dict, fit_parameters_state: object) -> None:
+        """Rebuild the studies registry on project load and show the latest one.
+
+        Reads the schema-v13 top-level ``global_fit_studies`` list (tolerantly:
+        a ``None`` from ``GlobalFitStudy.from_dict`` is skipped). Then MIGRATES a
+        pre-v13 project's single-slot cross-group fit: the trend panel's
+        serialized ``last_cross_group_fit`` payload, if present and not already
+        represented by a study of the same id, is lifted into a study via
+        :func:`study_from_legacy_cross_group_payload` (its id derived from the
+        same digest scheme so decorations keep keying by it). Finally the
+        most-recently-updated study is displayed (reopening the window, matching
+        the prior behaviour of reopening when a fit existed).
+        """
+        self._global_fit_studies = {}
+        self._study_staleness_cache = {}
+        raw_studies = state.get("global_fit_studies")
+        if isinstance(raw_studies, list):
+            for entry in raw_studies:
+                study = GlobalFitStudy.from_dict(entry) if isinstance(entry, dict) else None
+                if study is not None and study.study_id:
+                    self._global_fit_studies[study.study_id] = study
+
+        # Legacy migration: lift the single-slot payload from the panel state.
+        legacy_payload = None
+        if isinstance(fit_parameters_state, dict):
+            legacy_payload = fit_parameters_state.get("last_cross_group_fit")
+        if isinstance(legacy_payload, dict):
+            raw_groups = legacy_payload.get("groups")
+            groups = raw_groups if isinstance(raw_groups, list) else []
+            parameter_name = str(legacy_payload.get("parameter_name", ""))
+            x_key = str(legacy_payload.get("x_key", "run"))
+            # Reuse the digest id so a migrated study keeps its decoration key.
+            study_id = self._cross_group_batch_id(
+                parameter_name,
+                x_key,
+                [
+                    SimpleNamespace(group_id=str(g.get("group_id", "")))
+                    for g in groups
+                    if isinstance(g, dict)
+                ],
+            )
+            already = any(
+                study.study_id == study_id
+                or study.config.get("config_key") == legacy_payload.get("config_key")
+                for study in self._global_fit_studies.values()
+            )
+            if not already:
+                default_name = parameter_name or "Global parameter fit"
+                migrated = study_from_legacy_cross_group_payload(
+                    legacy_payload,
+                    study_id=study_id,
+                    name=self._unique_study_name(default_name),
+                    created=datetime.now().isoformat(),
+                )
+                if migrated is not None:
+                    # Fill the group-variable inference the legacy payload lacked.
+                    gv_key, gv_label = self._group_variable_for_x_key(migrated.x_key)
+                    migrated.group_variable_key = gv_key
+                    migrated.group_variable_label = gv_label
+                    try:
+                        migrated.x_label = self._fit_parameters_panel._x_axis_display_label(
+                            migrated.x_key
+                        )
+                    except Exception:
+                        pass
+                    self._global_fit_studies[migrated.study_id] = migrated
+
+        if not self._global_fit_studies:
+            self._update_global_parameter_fit_menu_style(False)
+            self._rebuild_global_fit_studies_menu()
+            return
+
+        # Display the most-recently-updated study (reopens the window).
+        latest = max(
+            self._global_fit_studies.values(),
+            key=lambda s: (s.updated or "", s.created or ""),
+        )
+        global_parameter_fit_window_state = state.get("global_parameter_fit_window_state")
+        if self._global_parameter_fit_window is None:
+            self._global_parameter_fit_window = GlobalParameterFitWindow(self)
+            self._connect_global_fit_window()
+        stale, stale_reason = self._study_staleness(latest)
+        self._global_parameter_fit_window.set_study(latest, stale=stale, stale_reason=stale_reason)
+        # View preferences (and, for legacy projects, inline decorations) come
+        # from the window-state key; series-attached decorations applied
+        # afterwards win when present.
+        if isinstance(global_parameter_fit_window_state, dict):
+            self._global_parameter_fit_window.restore_state(global_parameter_fit_window_state)
+        self._restore_global_fit_decorations(latest.study_id)
+        self._global_parameter_fit_window.show()
+        self._global_parameter_fit_window.raise_()
+        self._global_parameter_fit_window.activateWindow()
+        self._update_global_parameter_fit_menu_style(True)
+        self._rebuild_global_fit_studies_menu()
+        self._refresh_global_fit_sidebar()
 
     def _record_model_fit_results_series(
         self, parameter_name: str, groups: object, output: object
@@ -12247,6 +12986,7 @@ class MainWindow(QMainWindow):
             "created_with_app_version": __version__,
             "datasets": datasets,
             "grouping_profiles": [profile.to_dict() for profile in self._grouping_profiles],
+            "global_fit_studies": [study.to_dict() for study in self._global_fit_studies.values()],
             "combined_datasets": combined_datasets,
             "browser_state": self._data_browser.get_state(),
             "plot_state": plot_state,
@@ -12956,53 +13696,7 @@ class MainWindow(QMainWindow):
             # left blank.
             self._fit_parameters_panel.refresh_display()
 
-        restored_cross_group = getattr(self._fit_parameters_panel, "last_cross_group_fit", None)
-        global_parameter_fit_window_state = state.get("global_parameter_fit_window_state")
-        if isinstance(restored_cross_group, dict):
-            fit_result = restored_cross_group.get("fit_result")
-            model = restored_cross_group.get("model")
-            groups = restored_cross_group.get("groups")
-            parameter_name = restored_cross_group.get("parameter_name")
-            x_key = restored_cross_group.get("x_key", "run")
-            fit_x_min = restored_cross_group.get("fit_x_min", float("nan"))
-            fit_x_max = restored_cross_group.get("fit_x_max", float("nan"))
-            if (
-                fit_result is not None
-                and model is not None
-                and isinstance(groups, list)
-                and isinstance(parameter_name, str)
-            ):
-                if self._global_parameter_fit_window is None:
-                    self._global_parameter_fit_window = GlobalParameterFitWindow(self)
-                batch_id = self._cross_group_batch_id(parameter_name, str(x_key), groups)
-                self._global_parameter_fit_window.set_results(
-                    parameter_name=parameter_name,
-                    x_key=str(x_key),
-                    groups=groups,
-                    model=model,
-                    result=fit_result,
-                    fit_x_min=float(fit_x_min),
-                    fit_x_max=float(fit_x_max),
-                    batch_id=batch_id,
-                )
-                # View preferences (and, for legacy projects, inline decorations)
-                # come from the window-state key. Decorations from the new home
-                # (the owning series' ``extra``) are applied afterwards and win
-                # when present — so a migrated project shows them, and a not-yet-
-                # migrated legacy project keeps the inline ones restore_state set.
-                if isinstance(global_parameter_fit_window_state, dict):
-                    self._global_parameter_fit_window.restore_state(
-                        global_parameter_fit_window_state
-                    )
-                self._restore_global_fit_decorations(batch_id)
-                self._global_parameter_fit_window.show()
-                self._global_parameter_fit_window.raise_()
-                self._global_parameter_fit_window.activateWindow()
-                self._update_global_parameter_fit_menu_style(True)
-            else:
-                self._update_global_parameter_fit_menu_style(False)
-        else:
-            self._update_global_parameter_fit_menu_style(False)
+        self._restore_global_fit_studies(state, fit_parameters_state)
 
         # ── restore Fourier state ──────────────────────────────────────
         fourier_state = state.get("fourier_state")
@@ -13118,7 +13812,9 @@ class MainWindow(QMainWindow):
         if self._global_parameter_fit_window is not None:
             self._global_parameter_fit_window.close()
             self._global_parameter_fit_window = None
+        self._global_fit_studies = {}
         self._update_global_parameter_fit_menu_style(False)
+        self._rebuild_global_fit_studies_menu()
         self._sync_temperature_log_option_action()
         self._sync_field_log_option_action()
 
