@@ -6196,3 +6196,101 @@ def test_group_header_selection_keeps_individual_groups_view(mainwindow: MainWin
     assert "overlay" not in captured
     assert mw._current_dataset is not None
     assert int(mw._current_dataset.run_number) in (701, 702)
+
+
+# ---------------------------------------------------------------------------
+# M3 grouping-profile wiring (MainWindow + project persistence)
+# ---------------------------------------------------------------------------
+
+
+from asymmetry.core.project.profiles import (  # noqa: E402
+    profile_fingerprint_for_run,
+    profile_from_payload,
+)
+
+
+def _grouping_profile_from(dataset: MuonDataset, name: str, **overrides):
+    fingerprint = profile_fingerprint_for_run(dataset.run)
+    payload = dict(dataset.run.grouping or {})
+    payload.update(overrides)
+    return profile_from_payload(payload, name, fingerprint, active=True)
+
+
+def test_store_grouping_profile_keeps_one_active_per_fingerprint(
+    mainwindow: MainWindow,
+) -> None:
+    ds = _make_dataset(7101, with_grouping=True)
+    profile_a = _grouping_profile_from(ds, "A", alpha=1.1)
+    profile_b = _grouping_profile_from(ds, "B", alpha=1.2)
+
+    mainwindow._store_grouping_profile(profile_a)
+    mainwindow._store_grouping_profile(profile_b)
+
+    fingerprint = profile_fingerprint_for_run(ds.run)
+    same = [p for p in mainwindow._grouping_profiles if p.fingerprint.matches(fingerprint)]
+    active = [p for p in same if p.active]
+    assert {p.name for p in same} == {"A", "B"}
+    assert len(active) == 1 and active[0].name == "B"
+
+
+def test_new_run_inherits_active_profile_grouping(mainwindow: MainWindow) -> None:
+    """effective_grouping_for_loaded_run applies the active profile to a fresh run."""
+    from asymmetry.core.project.profiles import effective_grouping_for_loaded_run
+
+    template = _make_dataset(7201, with_grouping=True)
+    profile = _grouping_profile_from(template, "Shared", alpha=1.7)
+    mainwindow._grouping_profiles = [profile]
+
+    fresh = _make_dataset(7202, with_grouping=True)
+    resolved = effective_grouping_for_loaded_run(mainwindow._grouping_profiles, fresh.run)
+    assert resolved["alpha"] == pytest.approx(1.7)
+
+
+def test_grouping_profiles_round_trip_through_project(
+    mainwindow: MainWindow, tmp_path: Path
+) -> None:
+    """Profiles + per-dataset profile refs persist and re-resolve on reload."""
+    ds = _make_dataset(7301, with_grouping=True)
+    mainwindow._data_browser.add_dataset(ds)
+    profile = _grouping_profile_from(ds, "Persisted", alpha=1.55)
+    mainwindow._store_grouping_profile(profile)
+
+    state = mainwindow.collect_project_state()
+    assert state["grouping_profiles"], "profiles must be serialized"
+    assert state["grouping_profiles"][0]["name"] == "Persisted"
+    # The inheriting dataset stores a profile reference, not a full override.
+    entry = next(e for e in state["datasets"] if int(e["run_number"]) == 7301)
+    assert entry.get("profile") == "Persisted"
+    assert entry.get("grouping_overrides") in (None, {}) or "profile" in entry
+
+    path = tmp_path / "profiles.asymp"
+    save_project(state, str(path))
+    loaded = load_project(str(path))
+    assert loaded["grouping_profiles"][0]["name"] == "Persisted"
+    assert loaded["grouping_profiles"][0]["alpha_policy"]["value"] == pytest.approx(1.55)
+
+
+def test_released_run_persists_grouping_overrides(mainwindow: MainWindow, tmp_path: Path) -> None:
+    """A released run persists grouping_overrides, not a profile reference."""
+    ds = _make_dataset(7401, with_grouping=True)
+    ds.metadata["grouping_overrides"] = True
+    mainwindow._data_browser.add_dataset(ds)
+    profile = _grouping_profile_from(ds, "P", alpha=1.3)
+    mainwindow._store_grouping_profile(profile)
+
+    state = mainwindow.collect_project_state()
+    entry = next(e for e in state["datasets"] if int(e["run_number"]) == 7401)
+    assert "profile" not in entry
+    assert isinstance(entry.get("grouping_overrides"), dict)
+
+
+def test_reconcile_grouping_overrides_flags_metadata(mainwindow: MainWindow) -> None:
+    ds_a = _make_dataset(7501, with_grouping=True)
+    ds_b = _make_dataset(7502, with_grouping=True)
+    profile_result = {
+        "newly_released": {7502},
+        "newly_reattached": set(),
+    }
+    mainwindow._reconcile_grouping_overrides([ds_a, ds_b], profile_result)
+    assert ds_a.metadata.get("grouping_overrides") in (None, False)
+    assert ds_b.metadata.get("grouping_overrides") is True

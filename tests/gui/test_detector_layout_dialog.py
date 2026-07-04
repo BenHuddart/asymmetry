@@ -92,7 +92,15 @@ class TestConstruction:
 
         dlg._on_ui_scale_changed(1.0, 1.1)
 
-        assert dlg._group_buttons[1].width() == 84
+        # Buttons are no longer fixed-width (that clipped longer labels — see
+        # TestGroupButtonSizing below); the scaled floor is now a *minimum*
+        # that never undercuts the style's fitted content width. Font metrics
+        # differ across platforms, so assert the invariant rather than a pixel
+        # value: minimum = max(scaled floor, style-fitted text width).
+        button = dlg._group_buttons[1]
+        scaled_floor = max(68, round(76 * 1.1))
+        expected = max(scaled_floor, dlg._button_text_min_width(button))
+        assert button.minimumWidth() == expected
         assert dlg._group_name_edits[1].width() == 121
         assert "border-radius: 15px;" in dlg._group_buttons[1].styleSheet()
 
@@ -453,3 +461,208 @@ class TestDetectorToggle:
         dlg._on_detector_toggled(5, True)
         assert 5 in dlg._groups.get(1, set())
         assert 5 in dlg._groups.get(2, set())
+
+
+# ---------------------------------------------------------------------------
+# Group button member-count labels (problem 5a)
+# ---------------------------------------------------------------------------
+
+
+class TestGroupButtonCounts:
+    def test_button_label_shows_member_count(self, qapp):
+        layout = get_instrument_layout("HiFi")
+        dlg = DetectorLayoutDialog(layout, groups=_default_groups())
+        assert dlg._group_buttons[1].text() == "Group 1 (32)"
+        assert dlg._group_buttons[2].text() == "Group 2 (32)"
+
+    def test_button_label_uses_group_name_when_set(self, qapp):
+        layout = get_instrument_layout("HiFi")
+        dlg = DetectorLayoutDialog(
+            layout, groups=_default_groups(), group_names={1: "Forward", 2: "Backward"}
+        )
+        assert dlg._group_buttons[1].text() == "Forward (32)"
+        assert dlg._group_buttons[2].text() == "Backward (32)"
+
+    def test_empty_group_button_has_no_count_suffix(self, qapp):
+        layout = get_instrument_layout("HiFi")
+        dlg = DetectorLayoutDialog(layout, groups={})
+        assert dlg._group_buttons[3].text() == "Group 3"
+
+    def test_button_label_updates_after_detector_toggle(self, qapp):
+        layout = get_instrument_layout("HiFi")
+        dlg = DetectorLayoutDialog(layout, groups={})
+        dlg._active_group = 1
+        dlg._on_detector_toggled(5, True)
+        assert dlg._group_buttons[1].text() == "Group 1 (1)"
+
+    def test_transverse_vector_preset_matches_audited_example(self, qapp):
+        """HiFi's Transverse (Vector) preset gives each split group 18 members
+        (verbatim example from the audit: "Top-Bottom Top (18)")."""
+        layout = get_instrument_layout("HiFi")
+        dlg = DetectorLayoutDialog(layout, groups={})
+        dlg._preset_combo.setCurrentText("Transverse (Vector)")
+        dlg._on_apply_preset()
+        assert dlg._group_buttons[3].text() == "Top-Bottom Top (18)"
+
+    def test_button_label_updates_after_apply_preset(self, qapp):
+        layout = get_instrument_layout("HiFi")
+        dlg = DetectorLayoutDialog(layout, groups={})
+        dlg._preset_combo.setCurrentText("Longitudinal")
+        dlg._on_apply_preset()
+        assert dlg._group_buttons[1].text() == "Forward (32)"
+        assert dlg._group_buttons[2].text() == "Backward (32)"
+
+    def test_button_label_updates_after_clear_all(self, qapp):
+        layout = get_instrument_layout("HiFi")
+        dlg = DetectorLayoutDialog(layout, groups=_default_groups())
+        for members in dlg._groups.values():
+            members.clear()
+        dlg._sync_schematic()
+        dlg._on_group_definition_changed()
+        assert dlg._group_buttons[1].text() == "Group 1"
+
+
+# ---------------------------------------------------------------------------
+# Group-row hover highlight (problem 5b)
+# ---------------------------------------------------------------------------
+
+
+class TestGroupRowHoverHighlight:
+    def test_hover_enter_highlights_schematic_group(self, qapp):
+        from PySide6.QtCore import QEvent
+
+        layout = get_instrument_layout("HiFi")
+        dlg = DetectorLayoutDialog(layout, groups=_default_groups())
+        row = dlg._group_rows[1]
+        dlg.eventFilter(row, QEvent(QEvent.Type.Enter))
+        assert dlg._schematic._highlighted_groups == {1}
+
+    def test_hover_leave_clears_highlight(self, qapp):
+        from PySide6.QtCore import QEvent
+
+        layout = get_instrument_layout("HiFi")
+        dlg = DetectorLayoutDialog(layout, groups=_default_groups())
+        row = dlg._group_rows[1]
+        dlg.eventFilter(row, QEvent(QEvent.Type.Enter))
+        dlg.eventFilter(row, QEvent(QEvent.Type.Leave))
+        assert dlg._schematic._highlighted_groups == set()
+
+    def test_all_eight_group_rows_exist(self, qapp):
+        layout = get_instrument_layout("HiFi")
+        dlg = DetectorLayoutDialog(layout, groups={})
+        assert len(dlg._group_rows) == _MAX_GROUPS
+
+
+# ---------------------------------------------------------------------------
+# "Clear excluded" button (problem 5c)
+# ---------------------------------------------------------------------------
+
+
+class TestClearExcluded:
+    def test_clear_excluded_button_exists(self, qapp):
+        layout = get_instrument_layout("HiFi")
+        dlg = DetectorLayoutDialog(layout, groups={})
+        assert dlg._clear_excluded_btn is not None
+
+    def test_clear_excluded_empties_exclusion_set(self, qapp):
+        layout = get_instrument_layout("HiFi")
+        dlg = DetectorLayoutDialog(layout, groups={}, excluded_detectors=[1, 2, 3])
+        assert dlg._schematic.get_excluded_detectors() == {1, 2, 3}
+        dlg._on_clear_excluded()
+        assert dlg._schematic.get_excluded_detectors() == set()
+
+    def test_clear_excluded_button_click_clears_via_ui(self, qapp):
+        layout = get_instrument_layout("HiFi")
+        dlg = DetectorLayoutDialog(layout, groups={}, excluded_detectors=[7])
+        dlg._clear_excluded_btn.click()
+        assert dlg._schematic.get_excluded_detectors() == set()
+
+
+# ---------------------------------------------------------------------------
+# Group button sizing: no clipping of the member-count label (bug fix)
+# ---------------------------------------------------------------------------
+
+
+class TestGroupButtonSizing:
+    """The member-count suffix (e.g. "Backward (1)") must never be clipped.
+
+    Previously every group button was pinned to a uniform ``setFixedWidth``
+    that was narrower than the text it had to display once a name and member
+    count were applied, clipping the centred label at both ends. Buttons now
+    get a per-button ``setMinimumWidth`` derived from their own text.
+    """
+
+    def test_flame_longitudinal_buttons_fit_their_text(self, qapp):
+        from PySide6.QtGui import QFontMetrics
+
+        layout = get_instrument_layout("FLAME")
+        preset = layout.presets["Longitudinal"]
+        groups = {gid: list(gdef.detector_ids) for gid, gdef in preset.groups.items()}
+        names = {gid: gdef.name for gid, gdef in preset.groups.items()}
+        dlg = DetectorLayoutDialog(
+            layout,
+            groups=groups,
+            group_names=names,
+            initial_preset_name="Longitudinal",
+            forward_group=preset.forward_group,
+            backward_group=preset.backward_group,
+        )
+
+        for gid, btn in dlg._group_buttons.items():
+            fm = QFontMetrics(btn.font())
+            text_advance = fm.horizontalAdvance(btn.text())
+            # Some headroom for the style's own button padding/frame, mirroring
+            # the fallback floor used by _button_text_min_width.
+            assert btn.minimumWidth() >= text_advance, (
+                f"gid={gid} text={btn.text()!r} minimumWidth={btn.minimumWidth()} "
+                f"< text_advance={text_advance} (would clip)"
+            )
+
+    def test_flame_longitudinal_buttons_carry_full_tooltip(self, qapp):
+        layout = get_instrument_layout("FLAME")
+        preset = layout.presets["Longitudinal"]
+        groups = {gid: list(gdef.detector_ids) for gid, gdef in preset.groups.items()}
+        names = {gid: gdef.name for gid, gdef in preset.groups.items()}
+        dlg = DetectorLayoutDialog(
+            layout,
+            groups=groups,
+            group_names=names,
+            initial_preset_name="Longitudinal",
+            forward_group=preset.forward_group,
+            backward_group=preset.backward_group,
+        )
+
+        # FLAME's Longitudinal preset names group 1 "Forward" and group 2
+        # "Backward" (independent of which group id is wired up as the
+        # forward/backward *role* for asymmetry — that mapping is swapped
+        # for this instrument and is not part of this bug fix).
+        assert dlg._group_buttons[1].toolTip() == "Forward (1)"
+        assert dlg._group_buttons[2].toolTip() == "Backward (1)"
+        for gid, btn in dlg._group_buttons.items():
+            assert btn.toolTip() == btn.text()
+
+    def test_button_grows_to_fit_after_typing_a_long_name(self, qapp):
+        layout = get_instrument_layout("FLAME")
+        dlg = DetectorLayoutDialog(layout, groups={1: [1]})
+        from PySide6.QtGui import QFontMetrics
+
+        # Long enough to need more than the scaled floor, short enough to
+        # stay under the pathological-name elide ceiling (see the dedicated
+        # elision test below for that boundary).
+        dlg._group_name_edits[1].setText("Custom Name")
+        btn = dlg._group_buttons[1]
+        fm = QFontMetrics(btn.font())
+        assert btn.minimumWidth() >= fm.horizontalAdvance(btn.text())
+        assert btn.toolTip() == btn.text()
+        assert btn.text() == "Custom Name (1)"
+
+    def test_pathologically_long_name_is_elided_but_tooltip_keeps_full_text(self, qapp):
+        layout = get_instrument_layout("FLAME")
+        dlg = DetectorLayoutDialog(layout, groups={1: [1]})
+        long_name = "An Extremely Long Group Name That Should Never Fit On A Button"
+        dlg._group_name_edits[1].setText(long_name)
+        btn = dlg._group_buttons[1]
+        full_text = f"{long_name} (1)"
+        assert btn.toolTip() == full_text
+        assert btn.text() != full_text
+        assert btn.text().endswith("…")

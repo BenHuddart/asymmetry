@@ -1218,4 +1218,16 @@ class PsiLoader(BaseLoader):
         for key, values in mapping.items():
             if f"_{key}_" in token or token.startswith(f"{key}_") or token.endswith(f"_{key}"):
                 return values
+        # Also accept an instrument token directly abutting a run number with no
+        # separator (e.g. ``gps2923.bin`` / ``gpd0001``): the token at the start
+        # of the stem immediately followed by digits, or at the end immediately
+        # preceded by digits. Anchored + digit-bounded so a token appearing as a
+        # substring of an unrelated word (e.g. a sample name) is not matched.
+        # ``flame`` is deliberately excluded here — it keeps its broad substring
+        # match above and needs no digit-adjacent rule.
+        for key, values in mapping.items():
+            if key == "flame":
+                continue
+            if re.match(rf"^{key}\d", token) or re.search(rf"\d{key}$", token):
+                return values
         return "PSI", "n/a", "continuous muon source"

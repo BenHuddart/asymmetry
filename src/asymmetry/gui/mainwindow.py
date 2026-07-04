@@ -180,6 +180,13 @@ from asymmetry.core.project import (
     load_project,
     save_project,
 )
+from asymmetry.core.project.profiles import (
+    GroupingProfile,
+    active_profile_for_run,
+    effective_grouping_for_loaded_run,
+    profile_fingerprint_for_run,
+    resolve_effective_grouping,
+)
 from asymmetry.core.representation import (
     DataGroup,
     FitSeries,
@@ -194,8 +201,6 @@ from asymmetry.core.representation.project_model import ProjectModel
 from asymmetry.core.transform import (
     FieldScan,
     apply_deadtime_correction,
-    apply_grouped_background_correction,
-    apply_grouping_aligned,
     available_background_modes,
     build_field_scan,
     common_t0_for_groups,
@@ -203,15 +208,15 @@ from asymmetry.core.transform import (
     effective_group_indices,
     good_frames,
     has_file_deadtime,
-    has_resolved_deadtime,
     prepare_histograms_with_deadtime,
+    reduce_grouped_asymmetry,
     resolve_background_mode,
 )
 from asymmetry.core.transform.deadtime import (
     calibrate_deadtime_from_histograms,
     promote_deadtime_to_grouping,
 )
-from asymmetry.core.transform.rebin import binned_fb_asymmetry, rebin, resolve_binning_mode
+from asymmetry.core.transform.rebin import rebin, resolve_binning_mode
 from asymmetry.core.utils.constants import (
     GAUSS_TO_TESLA,
     MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
@@ -613,6 +618,11 @@ class MainWindow(QMainWindow):
         # remains the FFT cache alias for existing tests and transitional project
         # fallbacks.
         self._project_model = ProjectModel()
+        #: Project-level named detector-grouping profiles (schema v12). Runs
+        #: inherit the active profile of their fingerprint unless released with a
+        #: per-run ``grouping_overrides`` payload. Edited via the grouping dialog
+        #: and persisted through the project ``grouping_profiles`` block.
+        self._grouping_profiles: list[GroupingProfile] = []
         self._next_batch_index = 1
         self._next_scan_index = 1
         #: Per-run data for the current ALC scan (fractional value + metadata),
@@ -3150,7 +3160,25 @@ class MainWindow(QMainWindow):
                     if apply_choice == "yes_to_all":
                         apply_comment_field_to_all = True
 
-                    if auto_grouping_payload is not None:
+                    # Profile inheritance takes precedence over ad-hoc
+                    # auto-grouping propagation: a freshly loaded run whose
+                    # fingerprint has an active profile inherits that profile's
+                    # resolved effective grouping (its own per-run facts merged
+                    # in). Runs of a fingerprint with no profile keep the loader
+                    # default (auto-grouping propagation below still applies).
+                    inherited_profile = (
+                        active_profile_for_run(self._grouping_profiles, dataset.run)
+                        if dataset is not None and dataset.run is not None
+                        else None
+                    )
+                    if inherited_profile is not None:
+                        resolved = effective_grouping_for_loaded_run(
+                            self._grouping_profiles, dataset.run
+                        )
+                        self._apply_grouping_settings_to_dataset(dataset, resolved)
+                        if isinstance(dataset.metadata, dict):
+                            dataset.metadata.pop("grouping_overrides", None)
+                    elif auto_grouping_payload is not None:
                         auto_grouping_attempts += 1
                         grouping_payload = dict(auto_grouping_payload)
                         # good_frames and its period companions are measured
@@ -3571,8 +3599,13 @@ class MainWindow(QMainWindow):
             selected_run_numbers=selected_run_numbers,
         )
 
+        overridden_run_numbers = [
+            int(ds.run_number) for ds in dialog_datasets if self._dataset_has_grouping_override(ds)
+        ]
         dialog = GroupingDialog(
             dialog_datasets,
+            profiles=self._grouping_profiles,
+            overridden_run_numbers=overridden_run_numbers,
             selected_run_number=dialog_selected_run_number,
             selected_run_numbers=dialog_selected_run_numbers,
             parent=self,
@@ -3583,6 +3616,16 @@ class MainWindow(QMainWindow):
         grouping_result = dialog.get_grouping_result()
         if not grouping_result:
             return
+
+        # Profile-editor result: save the draft as the active profile for its
+        # fingerprint and record the scope reconciliation. The flat
+        # ``grouping_result`` payload is still applied per inheriting run below.
+        profile_result = (
+            dialog.get_profile_result() if hasattr(dialog, "get_profile_result") else None
+        )
+        if profile_result is not None:
+            self._store_grouping_profile(profile_result["profile"])
+            self._reconcile_grouping_overrides(dialog_datasets, profile_result)
 
         run_numbers = {int(v) for v in grouping_result.get("run_numbers", [])}
         alpha = float(grouping_result.get("alpha", 1.0))
@@ -3675,6 +3718,87 @@ class MainWindow(QMainWindow):
             f"deadtime={deadtime_msg}, background={background_msg}"
         )
 
+        if profile_result is not None:
+            profile_name = profile_result["profile"].name
+            overridden = len(profile_result.get("released", set()))
+            message = f"Grouping profile '{profile_name}' applied to {updated} run(s)"
+            if overridden:
+                message += f" ({overridden} overridden run(s) unchanged)"
+            self.statusBar().showMessage(message, 8000)
+
+    def _dataset_has_grouping_override(self, dataset) -> bool:
+        """Return whether *dataset* carries an explicit per-run grouping override.
+
+        A run is *overridden* (released from its profile) when its metadata flags
+        it as such, or — for runs loaded before the flag existed — when it does
+        not inherit any active profile of its fingerprint. Runs of a fingerprint
+        with no profile at all are treated as inheriting (they will inherit once a
+        profile is created).
+        """
+        metadata = getattr(dataset, "metadata", None)
+        if isinstance(metadata, dict) and "grouping_overrides" in metadata:
+            return bool(metadata.get("grouping_overrides"))
+        run = getattr(dataset, "run", None)
+        if run is None:
+            return False
+        fingerprint = profile_fingerprint_for_run(run)
+        has_profile = any(p.fingerprint.matches(fingerprint) for p in self._grouping_profiles)
+        if not has_profile:
+            return False
+        return active_profile_for_run(self._grouping_profiles, run) is None
+
+    def _resolve_named_profile_for_run(self, name: str, run) -> dict | None:
+        """Resolve the named profile (of the run's fingerprint) onto *run*.
+
+        Returns the effective grouping payload, or ``None`` when no profile of
+        that name matches the run's fingerprint.
+        """
+        fingerprint = profile_fingerprint_for_run(run)
+        for profile in self._grouping_profiles:
+            if profile.name == name and profile.fingerprint.matches(fingerprint):
+                return resolve_effective_grouping(profile, run)
+        return None
+
+    def _store_grouping_profile(self, profile: GroupingProfile) -> None:
+        """Save *profile* as the active profile for its fingerprint.
+
+        Replaces any existing same-named profile of the fingerprint, deactivates
+        the fingerprint's other profiles, and appends it when new — enforcing the
+        one-active-profile-per-fingerprint invariant.
+        """
+        fingerprint = profile.fingerprint
+        kept: list[GroupingProfile] = []
+        for existing in self._grouping_profiles:
+            if existing.fingerprint.matches(fingerprint):
+                if existing.name == profile.name:
+                    continue  # replaced below
+                kept.append(existing.with_active(False))
+            else:
+                kept.append(existing)
+        profile.active = True
+        kept.append(profile)
+        self._grouping_profiles = kept
+
+    def _reconcile_grouping_overrides(self, datasets, profile_result: dict) -> None:
+        """Apply the scope panel's release/reattach decisions to the datasets.
+
+        A *newly released* run freezes its current grouping as a per-run override
+        (flagged in metadata for the browser badge and the project's
+        ``grouping_overrides`` persistence); a *newly reattached* run drops the
+        override so it inherits the active profile again.
+        """
+        newly_released = {int(v) for v in profile_result.get("newly_released", set())}
+        newly_reattached = {int(v) for v in profile_result.get("newly_reattached", set())}
+        by_run = {int(ds.run_number): ds for ds in datasets}
+        for run_number in newly_released:
+            dataset = by_run.get(run_number)
+            if dataset is not None and isinstance(dataset.metadata, dict):
+                dataset.metadata["grouping_overrides"] = True
+        for run_number in newly_reattached:
+            dataset = by_run.get(run_number)
+            if dataset is not None and isinstance(dataset.metadata, dict):
+                dataset.metadata.pop("grouping_overrides", None)
+
     def _resolve_grouping_dialog_context(
         self,
         *,
@@ -3722,6 +3846,22 @@ class MainWindow(QMainWindow):
             dialog_selected_run_numbers,
             combined_target_run_number,
         )
+
+    def _grouping_persistence_for_dataset(self, dataset) -> dict:
+        """Return the per-dataset grouping-persistence fragment (schema v12).
+
+        An *inheriting* run stores ``profile: <name>`` (the active profile of its
+        fingerprint) and no override; a *released* run stores its
+        ``grouping_overrides`` payload and no profile; a run of a fingerprint with
+        no profile keeps its ``grouping_overrides`` payload (as before v12), so it
+        round-trips unchanged and joins a profile only once one is created.
+        """
+        run = getattr(dataset, "run", None)
+        if not self._dataset_has_grouping_override(dataset) and run is not None:
+            profile = active_profile_for_run(self._grouping_profiles, run)
+            if profile is not None:
+                return {"profile": profile.name}
+        return {"grouping_overrides": self._extract_grouping_overrides(dataset)}
 
     def _extract_grouping_overrides(self, dataset) -> dict | None:
         """Return grouping settings that should persist in project files."""
@@ -4573,138 +4713,38 @@ class MainWindow(QMainWindow):
         deadtime_mode: str,
         use_background: bool,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, bool, dict[str, object] | None]:
-        """Return reduced grouped asymmetry arrays for one histogram source."""
-        effective_use_deadtime = bool(use_deadtime)
-        if effective_use_deadtime:
-            if deadtime_mode == "file":
-                effective_use_deadtime = has_file_deadtime(grouping, len(histograms))
-            else:
-                effective_use_deadtime = has_resolved_deadtime(grouping, len(histograms))
+        """Return reduced grouped asymmetry arrays for one histogram source.
 
-        working_histograms, dt_applied = self._prepare_grouping_histograms(
-            histograms,
-            grouping,
-            effective_use_deadtime,
-        )
-
-        common_t0 = common_t0_for_groups(working_histograms, forward_idx, backward_idx)
-        forward = apply_grouping_aligned(
-            working_histograms,
-            forward_idx,
-            common_t0_bin=common_t0,
-        )
-        backward = apply_grouping_aligned(
-            working_histograms,
-            backward_idx,
-            common_t0_bin=common_t0,
-        )
-        n_grouped = min(len(forward), len(backward))
-        forward = forward[:n_grouped]
-        backward = backward[:n_grouped]
-
-        background_state: dict[str, object] | None = None
-        bkg_result = None
-        if use_background:
-            bin_width = float(working_histograms[0].bin_width) if working_histograms else 1.0
-            facility = str(
-                run.metadata.get(
-                    "facility",
-                    dataset.metadata.get("facility", dataset.metadata.get("instrument", "")),
-                )
+        Thin GUI wrapper over the Qt-free
+        :func:`asymmetry.core.transform.reduce_grouped_asymmetry` chokepoint: it
+        resolves the facility string off the run/dataset metadata and binds the
+        ``reference_run`` background resolver to the loaded-dataset registry, so
+        the numerics stay shared with the grouping window's preview pane.
+        """
+        facility = str(
+            run.metadata.get(
+                "facility",
+                dataset.metadata.get("facility", dataset.metadata.get("instrument", "")),
             )
-            reference_forward = None
-            reference_backward = None
-            reference_scale = None
-            if resolve_background_mode(grouping) == "reference_run":
-                resolved = self._resolve_background_reference(grouping, run)
-                if resolved is not None:
-                    reference_histograms, reference_scale = resolved
-                    reference_prepared, _ = self._prepare_grouping_histograms(
-                        reference_histograms,
-                        grouping,
-                        effective_use_deadtime,
-                    )
-                    reference_forward = apply_grouping_aligned(
-                        reference_prepared,
-                        forward_idx,
-                        common_t0_bin=common_t0,
-                    )
-                    reference_backward = apply_grouping_aligned(
-                        reference_prepared,
-                        backward_idx,
-                        common_t0_bin=common_t0,
-                    )
-            try:
-                last_good = int(grouping.get("last_good_bin", n_grouped - 1))
-            except (TypeError, ValueError):
-                last_good = n_grouped - 1
-            bkg_result = apply_grouped_background_correction(
-                forward,
-                backward,
-                grouping=grouping,
-                t0_bin=common_t0,
-                bin_width_us=bin_width,
-                facility=facility,
-                last_good_bin=last_good,
-                reference_forward=reference_forward,
-                reference_backward=reference_backward,
-                reference_scale=reference_scale,
-            )
-            forward = bkg_result.forward
-            backward = bkg_result.backward
-            background_state = {"method": bkg_result.method}
-            if bkg_result.applied:
-                if bkg_result.values is not None:
-                    background_state["values"] = [
-                        float(bkg_result.values[0]),
-                        float(bkg_result.values[1]),
-                    ]
-                if bkg_result.ranges is not None:
-                    background_state["ranges"] = [
-                        [int(v) for v in bkg_result.ranges[0]],
-                        [int(v) for v in bkg_result.ranges[1]],
-                    ]
-                if bkg_result.details is not None:
-                    background_state["details"] = dict(bkg_result.details)
-
-        bin_width = float(working_histograms[0].bin_width) if working_histograms else 1.0
-        background_errors = (
-            bkg_result is not None
-            and bkg_result.applied
-            and bkg_result.forward_error is not None
-            and bkg_result.backward_error is not None
         )
-
-        # Every binning mode (fixed included) bins the counts before forming
-        # the asymmetry — the counts-then-ratio order all reference programs
-        # use. The returned arrays are final: good window applied, bunching
-        # applied, no further slicing or bunching by the caller.
-        try:
-            first_good = max(0, int(grouping.get("first_good_bin", 0)))
-        except (TypeError, ValueError):
-            first_good = 0
-        try:
-            last_good = int(grouping.get("last_good_bin", n_grouped - 1))
-        except (TypeError, ValueError):
-            last_good = n_grouped - 1
-        time_axis, asymmetry, error = binned_fb_asymmetry(
-            forward,
-            backward,
+        result = reduce_grouped_asymmetry(
+            histograms=histograms,
             grouping=grouping,
-            common_t0=common_t0,
-            bin_width_us=bin_width,
+            forward_idx=forward_idx,
+            backward_idx=backward_idx,
             alpha=alpha,
-            first_good_bin=first_good,
-            last_good_bin=last_good,
-            forward_error=bkg_result.forward_error if background_errors else None,
-            backward_error=bkg_result.backward_error if background_errors else None,
+            use_deadtime=use_deadtime,
+            deadtime_mode=deadtime_mode,
+            use_background=use_background,
+            facility=facility,
+            reference_resolver=lambda g: self._resolve_background_reference(g, run),
         )
         return (
-            np.asarray(time_axis, dtype=np.float64),
-            np.asarray(asymmetry * 100.0, dtype=np.float64),
-            np.asarray(error * 100.0, dtype=np.float64),
-            dt_applied,
-            background_state,
+            result.time,
+            result.asymmetry,
+            result.error,
+            result.deadtime_applied,
+            result.background_state,
         )
 
     def _counts_first_rebunched_arrays(
@@ -12021,7 +12061,7 @@ class MainWindow(QMainWindow):
                     "run_number": run_number,
                     "source_file": source_file,
                     "metadata_overrides": metadata_overrides,
-                    "grouping_overrides": self._extract_grouping_overrides(dataset),
+                    **self._grouping_persistence_for_dataset(dataset),
                 }
             )
             seen_run_numbers.add(run_number)
@@ -12124,6 +12164,7 @@ class MainWindow(QMainWindow):
             "schema_version": CURRENT_SCHEMA_VERSION,
             "created_with_app_version": __version__,
             "datasets": datasets,
+            "grouping_profiles": [profile.to_dict() for profile in self._grouping_profiles],
             "combined_datasets": combined_datasets,
             "browser_state": self._data_browser.get_state(),
             "plot_state": plot_state,
@@ -12424,6 +12465,16 @@ class MainWindow(QMainWindow):
 
         datasets_info = state.get("datasets", [])
 
+        # Restore project-level grouping profiles (schema v12) before the
+        # per-dataset apply pass so runs naming a ``profile`` (or inheriting one)
+        # can be resolved against them.
+        self._grouping_profiles = []
+        for raw_profile in state.get("grouping_profiles", []) or []:
+            try:
+                self._grouping_profiles.append(GroupingProfile.from_dict(raw_profile))
+            except (TypeError, ValueError) as exc:
+                self._log_panel.log(f"WARNING: skipped malformed grouping profile: {exc}")
+
         # First pass: attempt to resolve all paths with no user interaction.
         resolved_paths: dict[int, str | None] = {}
         missing_info: list[dict] = []  # entries whose files cannot be found
@@ -12569,9 +12620,28 @@ class MainWindow(QMainWindow):
                         if dataset.run:
                             dataset.run.metadata[key] = val
 
+                    # v12: a dataset either names a ``profile`` (inherit its
+                    # resolved effective grouping), carries ``grouping_overrides``
+                    # (per-run override, as before), or neither (inherit the
+                    # active profile of its fingerprint, if any).
+                    profile_name = ds_info.get("profile")
                     grouping_overrides = ds_info.get("grouping_overrides")
-                    if isinstance(grouping_overrides, dict):
+                    if profile_name and dataset.run is not None:
+                        resolved = self._resolve_named_profile_for_run(
+                            str(profile_name), dataset.run
+                        )
+                        if resolved is not None:
+                            self._apply_grouping_settings_to_dataset(dataset, resolved)
+                            dataset.metadata.pop("grouping_overrides", None)
+                    elif isinstance(grouping_overrides, dict):
                         self._apply_grouping_settings_to_dataset(dataset, grouping_overrides)
+                        dataset.metadata["grouping_overrides"] = True
+                    elif dataset.run is not None:
+                        # Neither: inherit the active profile of the fingerprint.
+                        inherited = active_profile_for_run(self._grouping_profiles, dataset.run)
+                        if inherited is not None:
+                            resolved = resolve_effective_grouping(inherited, dataset.run)
+                            self._apply_grouping_settings_to_dataset(dataset, resolved)
 
                     self._data_browser.add_dataset(dataset)
                     loaded_run_numbers.add(dataset.run_number)

@@ -112,6 +112,7 @@ def _import_scenarios() -> None:
     """Import all scenario modules so they register with the base registry."""
     from .scenarios import (  # noqa: F401
         alc_field_scan,
+        alpha_calibration_dialog,
         apodisation_comparison,
         bunching_comparison,
         composite_fractions_dialog,
@@ -133,6 +134,8 @@ def _import_scenarios() -> None:
         # global_fit_lfkt,
         # lf_kt_global_results,
         grouped_fit_ybco_knight,
+        grouping_window_profile_editor,
+        hifi_transverse_layout,
         knight_shift_angle,
         lf_kt_series_plot,
         logbook_view,
@@ -211,9 +214,7 @@ def main(argv: list[str] | None = None) -> int:
         selected = scenarios
 
     if args.skip_fits:
-        skipped = [
-            name for name, scenario in selected.items() if scenario.requires_fit
-        ]
+        skipped = [name for name, scenario in selected.items() if scenario.requires_fit]
         for name in skipped:
             del selected[name]
             print(f"[screenshots] skipping {name} (requires_fit=True)", flush=True)
