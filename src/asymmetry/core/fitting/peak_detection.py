@@ -40,6 +40,21 @@ USER_PEAK_SNR_SENTINEL = 1e6
 #: often (see ``detect_peaks_in_spectrum``).
 _FALSE_PEAK_RATE = 0.01
 
+#: SNR-truncation factor for the detection window (see
+#: :func:`effective_analysis_window`).  Real μSR error bars grow exponentially
+#: with time (dying-muon statistics, capped at 100 %); the pure-noise late tail
+#: otherwise whitens the FFT and buries even strong lines.  The window is cut
+#: where the per-point σ first exceeds ``_SNR_TRUNCATION_FACTOR`` times the
+#: early-time σ — i.e. where per-point information (∝ 1/σ²) has dropped to
+#: ~1/25 of its early value.  Chosen so a low-f line still retains ≳2 cycles
+#: (keeping the fingerprint's ``cycles_in_window`` hint alive) while the
+#: noise-dominated tail is discarded.
+_SNR_TRUNCATION_FACTOR = 5.0
+
+#: Never truncate below this many points — a short record has no meaningful
+#: tail to shed and needs its full resolution.
+_MIN_WINDOW_POINTS = 32
+
 #: Sidelobe guard anchor: the Hann window's worst sidelobe is -31.5 dB (~2.7 %
 #: of the main lobe) at ~2.5 resolution elements, decaying at -18 dB/octave.
 #: The ceiling carries headroom over the textbook level because noise and
@@ -316,9 +331,12 @@ def detect_peaks_in_spectrum(
     if df <= 0.0:
         df = _EPS
 
-    # Positive frequencies past the DC guard band.
+    # Positive frequencies inside the guard bands.  The DC guard rejects the
+    # relaxation/leakage hump at the bottom edge; the mirrored top-edge guard
+    # rejects artifact lines hard against Nyquist (aliased structure, filter
+    # roll-off), which — like DC — carry no genuine oscillation frequency.
     guard = max(3.0 * df, 0.5 * resolution_mhz)
-    valid = freqs > guard
+    valid = (freqs > guard) & (freqs < nyquist - guard)
     empty = PeakAnalysis(
         peaks=(),
         noise_floor=0.0,
@@ -421,6 +439,47 @@ def detect_peaks_in_spectrum(
 # --------------------------------------------------------------------------- #
 
 
+def effective_analysis_window(
+    time: NDArray[np.float64],
+    error: NDArray[np.float64],
+    *,
+    factor: float = _SNR_TRUNCATION_FACTOR,
+    min_points: int = _MIN_WINDOW_POINTS,
+) -> int:
+    """Return the exclusive end index of the noise-truncated analysis window.
+
+    μSR error bars grow roughly exponentially with time (dying-muon statistics)
+    and are capped at 100 %; a full-window FFT is then dominated by the late-time
+    pure-noise tail, whitening the spectrum so even clean lines vanish.  This
+    truncates the record at the first point whose per-point error exceeds
+    ``factor`` times the early-time error — i.e. where the per-point information
+    ``1/σ²`` has fallen below ``1/factor²`` of its early value — keeping the
+    statistically informative early window and shedding the noise tail.
+
+    The criterion is strictly **per-point**, so flat-error records (constant σ,
+    the synthetic/test convention) are never truncated: the returned index is the
+    full length and the reported resolution is unchanged.  Returns the full
+    length for short records (``≤ min_points``) or degenerate error arrays.
+    """
+    err = np.asarray(error, dtype=float)
+    n = err.size
+    if n <= int(min_points) or int(time.size) != n:
+        return n
+    finite = np.isfinite(err) & (err > 0.0)
+    if not np.any(finite):
+        return n
+    early = max(5, n // 20)
+    sigma_early = float(np.median(err[:early][finite[:early]])) if np.any(finite[:early]) else 0.0
+    if not np.isfinite(sigma_early) or sigma_early <= 0.0:
+        return n
+    # First point that is finite and exceeds the SNR-truncation threshold.
+    exceeds = finite & (err > float(factor) * sigma_early)
+    if not np.any(exceeds):
+        return n
+    end = int(np.argmax(exceeds))
+    return max(end, int(min_points))
+
+
 def _centered_signal(
     dataset: MuonDataset, detrend_curve: NDArray[np.float64] | None
 ) -> tuple[NDArray[np.float64], bool]:
@@ -471,8 +530,18 @@ def analyze_dataset_peaks(
         ``"auto"`` (run when ``n_points < 512`` or two peaks fall within
         ``2·resolution``), ``"always"`` or ``"never"``.
     """
-    t = np.asarray(dataset.time, dtype=float)
-    signal, detrended = _centered_signal(dataset, detrend_curve)
+    t_full = np.asarray(dataset.time, dtype=float)
+    err_full = np.asarray(dataset.error, dtype=float)
+
+    # SNR-truncate the window before transforming: the late-time error blow-up
+    # (capped at 100 %) otherwise whitens the FFT and buries even strong lines.
+    # dt (hence Nyquist) is unchanged; only the duration — and thus resolution —
+    # reflects the effective window actually used.
+    end = effective_analysis_window(t_full, err_full)
+    t = t_full[:end]
+    signal_full, detrended = _centered_signal(dataset, detrend_curve)
+    signal = signal_full[:end]
+    error = err_full[:end]
 
     n = t.size
     if n > 1:
@@ -489,7 +558,7 @@ def analyze_dataset_peaks(
     fft_dataset = MuonDataset(
         time=t.copy(),
         asymmetry=signal.copy(),
-        error=np.asarray(dataset.error, dtype=float).copy(),
+        error=error.copy(),
         metadata=dict(dataset.metadata),
         run=dataset.run,
     )

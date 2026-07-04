@@ -33,6 +33,7 @@ from asymmetry.core.fitting.peak_detection import (
     analyze_dataset_peaks,
     deserialize_multiplet_match,
     deserialize_peak_analysis,
+    effective_analysis_window,
     match_multiplets,
     merge_user_peaks,
     serialize_multiplet_match,
@@ -301,10 +302,25 @@ def fingerprint_spectrum(dataset: MuonDataset) -> SpectrumFingerprint:
     smoothed_zero_crossings = _count_zero_crossings(smoothed_centered)
     smoothed_turning_points = _count_turning_points(smoothed_centered)
 
+    # Fingerprint the same SNR-truncated window the peak detector uses.  Real
+    # μSR error bars grow exponentially with time (capped at 100 %); over the
+    # full record the pure-noise late tail both whitens the FFT and — because
+    # the smoothed decay/slope features are then computed over noise — reads as
+    # a monotonic non-oscillatory envelope, so clean TF precession is mislabelled
+    # as KT/multi-rate.  Truncating to the informative early window fixes both.
+    # Flat-error records (constant σ) truncate to the full length, so this is a
+    # no-op there.  Purely early-time features (curvature, early mean) are
+    # unaffected; the effective window only ever discards the noisy tail.
+    error_full = np.asarray(dataset.error, dtype=float)
+    fft_end = effective_analysis_window(t, error_full)
+    t_win = t[:fft_end]
+    centered_win = centered[:fft_end]
+    smoothed_win = smoothed_centered[:fft_end]
+    error_win = error_full[:fft_end]
     fft_dataset = MuonDataset(
-        time=t.copy(),
-        asymmetry=centered.copy(),
-        error=np.asarray(dataset.error, dtype=float).copy(),
+        time=t_win.copy(),
+        asymmetry=centered_win.copy(),
+        error=error_win.copy(),
         metadata=dict(dataset.metadata),
         run=dataset.run,
     )
@@ -314,20 +330,20 @@ def fingerprint_spectrum(dataset: MuonDataset) -> SpectrumFingerprint:
         padding_factor=_DEFAULT_FFT_PADDING,
     )
     dominant_fft_frequency_mhz, dominant_fft_snr = _dominant_peak_metrics(frequencies, magnitude)
-    duration = max(float(t[-1] - t[0]), _EPS) if t.size > 1 else 1.0
+    duration = max(float(t_win[-1] - t_win[0]), _EPS) if t_win.size > 1 else 1.0
     dominant_fft_cycles_in_window = float(dominant_fft_frequency_mhz * duration)
 
     curvature_count = min(n_points, max(8, n_points // 6))
     early_time_curvature = _quadratic_curvature(t[:curvature_count], centered[:curvature_count])
     monotonic_decay_fraction = _monotonic_decay_fraction(
-        smoothed_centered,
-        np.asarray(dataset.error, dtype=float),
+        smoothed_win,
+        error_win,
         initial_amplitude_estimate,
     )
     semilog_slope_ratio = _semilog_slope_ratio(
-        t,
-        smoothed_centered,
-        np.asarray(dataset.error, dtype=float),
+        t_win,
+        smoothed_win,
+        error_win,
         initial_amplitude_estimate,
     )
 

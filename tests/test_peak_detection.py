@@ -14,6 +14,7 @@ from asymmetry.core.fitting.peak_detection import (
     deserialize_detected_peak,
     deserialize_peak_analysis,
     detect_peaks_in_spectrum,
+    effective_analysis_window,
     merge_user_peaks,
     serialize_detected_peak,
     serialize_peak_analysis,
@@ -345,3 +346,114 @@ def test_detect_peaks_handles_tiny_spectrum() -> None:
         resolution_mhz=1.0,
     )
     assert analysis.peaks == ()
+
+
+# --------------------------------------------------------------------------- #
+# 8. Exploding late-time errors — SNR-truncated detection window (failure F2)
+# --------------------------------------------------------------------------- #
+
+
+def _exploding_error_larmor(seed: int = 12345) -> MuonDataset:
+    """A clean percent-scale 0.271 MHz Larmor line with realistic μSR statistics.
+
+    Amplitude 20 %, constant 4 % background, damped at λ = 0.1 µs⁻¹; per-point
+    σ(t) = 0.7·exp(t / (2·2.2)) capped at 100 % (dying-muon statistics), with
+    Gaussian noise drawn per point from σ(t).  ~1/3 of the record is pure noise
+    at the 100 % cap — enough to whiten a naive full-window FFT to zero peaks.
+    """
+    t = np.linspace(0.15, 32.6, 2000)
+    signal = 20.0 * np.exp(-0.1 * t) * np.cos(2.0 * np.pi * 0.271 * t) + 4.0
+    sigma = np.minimum(0.7 * np.exp(t / (2.0 * 2.2)), 100.0)
+    rng = np.random.default_rng(seed)
+    noise = rng.normal(0.0, sigma)
+    return MuonDataset(
+        time=t,
+        asymmetry=signal + noise,
+        error=sigma,
+        metadata={"run_number": 1, "field": 20.0},
+    )
+
+
+def test_exploding_errors_larmor_line_recovered() -> None:
+    # The late-time σ blow-up (capped at 100 %) dominates the full-window FFT and
+    # whitens the spectrum; the SNR-truncated window recovers the 0.271 MHz line.
+    dataset = _exploding_error_larmor(seed=12345)
+    analysis = analyze_dataset_peaks(dataset, burg_check="never")
+
+    assert len(analysis.peaks) >= 1
+    best = max(analysis.peaks, key=lambda p: p.snr)
+    # Within 5 % of the true 20 G Larmor frequency.
+    assert abs(best.frequency_mhz - 0.271) <= 0.05 * 0.271
+    assert best.snr >= 2.5
+
+    # The reported resolution reflects the *effective* (truncated) window, not
+    # the full record — the noise tail was discarded before the transform.
+    end = effective_analysis_window(dataset.time, dataset.error)
+    assert end < dataset.n_points
+    effective_duration = dataset.time[end - 1] - dataset.time[0]
+    assert analysis.resolution_mhz == pytest.approx(1.0 / effective_duration, rel=1e-6)
+    # Nyquist is set by the sampling interval and is unaffected by truncation.
+    assert analysis.nyquist_mhz == pytest.approx(30.8, rel=0.02)
+
+
+def test_snr_truncation_window_is_no_op_on_flat_errors() -> None:
+    # Constant-σ records (the synthetic/test convention) must keep the full
+    # window so the reported resolution — and the existing suite's tolerances —
+    # are unchanged.
+    t = np.linspace(0.0, 16.0, 4096)
+    flat = np.full_like(t, 0.05)
+    assert effective_analysis_window(t, flat) == t.size
+
+    # ...and a monotonically growing σ truncates the noisy tail.
+    growing = 0.5 * np.exp(t / 4.0)
+    assert effective_analysis_window(t, growing) < t.size
+
+
+# --------------------------------------------------------------------------- #
+# 9. Nyquist top-edge guard mirrors the DC guard
+# --------------------------------------------------------------------------- #
+
+
+def test_nyquist_guard_rejects_near_nyquist_artifact() -> None:
+    # A flat spectrum with one artifact line hard against Nyquist and one clean
+    # mid-band line: the near-Nyquist artifact is rejected (mirroring the DC
+    # guard at the bottom edge) while the mid-band line survives.
+    df = 0.01
+    freqs = np.arange(0.0, 10.0, df)
+    nyquist = float(freqs[-1])
+    mags = np.ones_like(freqs)
+
+    mid_idx = int(np.argmin(np.abs(freqs - 5.0)))
+    artifact_idx = int(np.argmin(np.abs(freqs - (nyquist - 0.02))))
+    mags[mid_idx] = 50.0
+    mags[artifact_idx] = 50.0
+
+    analysis = detect_peaks_in_spectrum(freqs, mags, resolution_mhz=0.05, min_snr=2.0)
+
+    detected = sorted(p.frequency_mhz for p in analysis.peaks)
+    assert len(detected) == 1
+    assert abs(detected[0] - 5.0) < 0.05
+    # Nothing survives in the top-edge guard band.
+    assert all(p.frequency_mhz < nyquist - 0.02 for p in analysis.peaks)
+
+
+# --------------------------------------------------------------------------- #
+# 10. Fingerprint de-whitening on the same SNR-truncated window
+# --------------------------------------------------------------------------- #
+
+
+def test_fingerprint_dewhitens_exploding_error_precession() -> None:
+    # ``fingerprint_spectrum`` (core, Qt-free) shares the SNR-truncated window,
+    # so clean TF precession with exploding late-time errors yields a strong,
+    # correctly-located dominant spectral line rather than a whitened spectrum.
+    from asymmetry.core.fitting.fit_wizard import fingerprint_spectrum
+
+    dataset = _exploding_error_larmor(seed=12345)
+    fingerprint = fingerprint_spectrum(dataset)
+
+    assert fingerprint.dominant_fft_snr >= 3.0
+    assert fingerprint.dominant_fft_cycles_in_window >= 1.5
+    # Dominant line within 10 % of the 0.271 MHz Larmor frequency (the FFT bin
+    # granularity of the truncated window is coarser than the peak detector's
+    # zero-padded refinement, hence the looser tolerance than the peak test).
+    assert abs(fingerprint.dominant_fft_frequency_mhz - 0.271) <= 0.10 * 0.271
