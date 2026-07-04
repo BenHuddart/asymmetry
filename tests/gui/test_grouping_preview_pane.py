@@ -1,0 +1,377 @@
+"""Live asymmetry preview pane for the grouping editor.
+
+Covers the pane's behaviour end-to-end: it populates for a synthetic run, an
+edit (and specifically an alpha change) recomputes and visibly changes the curve
+data, the reduction error path is muted rather than crashing, and a
+histogram-less dataset hides the pane with a note. Also pins that the core
+reduction the pane shares with MainWindow (:func:`reduce_grouped_asymmetry`) is
+bit-identical to a from-scratch replay of the documented counts-then-ratio
+pipeline, so the extraction never forks the numerics.
+
+The TaskRunner-based flow is driven deterministically the same way
+``test_gui_tasks.py`` does: a real nested event loop is pumped until the
+background reduction lands (``QTest.qWait`` / a ``QEventLoop`` guarded by a
+timeout, both fine offscreen). The pane's ``flush()`` bypasses the 300 ms
+debounce so tests do not wait on wall-clock.
+"""
+
+from __future__ import annotations
+
+import os
+
+import numpy as np
+import pytest
+
+pytestmark = [pytest.mark.gui]
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+pytest.importorskip("PySide6")
+from PySide6.QtCore import QEventLoop, QTimer
+from PySide6.QtWidgets import QApplication
+
+from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.transform import (
+    apply_grouped_background_correction,
+    apply_grouping_aligned,
+    binned_fb_asymmetry,
+    common_t0_for_groups,
+    prepare_histograms_with_deadtime,
+    reduce_grouped_asymmetry,
+)
+from asymmetry.gui.windows.grouping.dialog import GroupingDialog
+from asymmetry.gui.windows.grouping.preview_pane import GroupingPreviewPane
+
+
+@pytest.fixture(scope="module")
+def qapp() -> QApplication:
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication([])
+    return app
+
+
+def _wait_until(predicate, timeout_ms: int = 30_000) -> None:
+    """Pump a real nested event loop until *predicate* holds (queued signals)."""
+    if predicate():
+        return
+    loop = QEventLoop()
+    check = QTimer()
+    check.timeout.connect(lambda: loop.quit() if predicate() else None)
+    check.start(10)
+    guard = QTimer()
+    guard.setSingleShot(True)
+    guard.timeout.connect(loop.quit)
+    guard.start(timeout_ms)
+    loop.exec()
+    check.stop()
+    guard.stop()
+    assert predicate(), "timed out waiting for the preview reduction"
+
+
+def _histogram_dataset(
+    *,
+    run_number: int = 5001,
+    forward: np.ndarray | None = None,
+    backward: np.ndarray | None = None,
+    grouping_extra: dict | None = None,
+) -> MuonDataset:
+    """A run with two raw histograms and a minimal recorded grouping."""
+    if forward is None:
+        forward = np.array([120.0, 90.0, 70.0, 55.0, 44.0, 36.0], dtype=float)
+    if backward is None:
+        backward = np.array([80.0, 62.0, 50.0, 40.0, 33.0, 27.0], dtype=float)
+    n = forward.size
+    grouping = {
+        "groups": {1: [1], 2: [2]},
+        "forward_group": 1,
+        "backward_group": 2,
+        "alpha": 1.0,
+        "instrument": "TESTINST",
+        "t0_bin": 0,
+        "first_good_bin": 0,
+        "last_good_bin": n - 1,
+        "bunching_factor": 1,
+        "deadtime_correction": False,
+        "background_correction": False,
+    }
+    if grouping_extra:
+        grouping.update(grouping_extra)
+    run = Run(
+        run_number=run_number,
+        histograms=[
+            Histogram(counts=forward.copy(), bin_width=0.016, t0_bin=0),
+            Histogram(counts=backward.copy(), bin_width=0.016, t0_bin=0),
+        ],
+        metadata={"run_number": run_number, "instrument": "TESTINST"},
+        grouping=grouping,
+    )
+    t = np.arange(n, dtype=float) * 0.016
+    return MuonDataset(
+        time=t,
+        asymmetry=np.zeros_like(t),
+        error=np.full_like(t, 0.01),
+        metadata={"run_number": run_number, "instrument": "TESTINST"},
+        run=run,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Standalone pane behaviour
+# --------------------------------------------------------------------------- #
+
+
+def _last_curve(pane: GroupingPreviewPane) -> np.ndarray:
+    """Return the y-data of the errorbar the pane last drew."""
+    axes = pane._axes
+    assert axes is not None
+    lines = axes.get_lines()
+    assert lines, "expected a plotted curve"
+    return np.asarray(lines[0].get_ydata(), dtype=float)
+
+
+def test_pane_populates_for_synthetic_run(qapp: QApplication) -> None:
+    dataset = _histogram_dataset()
+    pane = GroupingPreviewPane()
+    pane.request_preview(
+        histograms=dataset.run.histograms,
+        grouping=dataset.run.grouping,
+        run_number=int(dataset.run_number),
+    )
+    pane.flush()
+    _wait_until(lambda: pane._tasks.active_count == 0 and bool(pane._axes.get_lines()))
+    assert pane.isVisible()
+    assert "Preview: run 5001" in pane._status.text()
+    curve = _last_curve(pane)
+    assert curve.size > 0 and np.all(np.isfinite(curve))
+    pane.shutdown()
+
+
+def test_alpha_change_visibly_changes_curve(qapp: QApplication) -> None:
+    dataset = _histogram_dataset()
+    pane = GroupingPreviewPane()
+
+    grouping_a = dict(dataset.run.grouping)
+    grouping_a["alpha"] = 1.0
+    pane.request_preview(histograms=dataset.run.histograms, grouping=grouping_a, run_number=5001)
+    pane.flush()
+    _wait_until(lambda: pane._tasks.active_count == 0 and bool(pane._axes.get_lines()))
+    curve_alpha_1 = _last_curve(pane).copy()
+
+    grouping_b = dict(dataset.run.grouping)
+    grouping_b["alpha"] = 2.5
+    pane.request_preview(histograms=dataset.run.histograms, grouping=grouping_b, run_number=5001)
+    pane.flush()
+    _wait_until(
+        lambda: pane._tasks.active_count == 0 and not np.allclose(_last_curve(pane), curve_alpha_1)
+    )
+    curve_alpha_25 = _last_curve(pane)
+    assert not np.allclose(curve_alpha_1, curve_alpha_25)
+    pane.shutdown()
+
+
+def test_error_path_is_muted_not_crashing(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dataset = _histogram_dataset()
+    pane = GroupingPreviewPane()
+    # Force a genuine reduction failure on the worker thread and assert it is
+    # surfaced as a muted status message — never a popup or a crash.
+    import asymmetry.gui.windows.grouping.preview_pane as pane_module
+
+    def _boom(**_kwargs):
+        raise RuntimeError("synthetic reduction failure")
+
+    monkeypatch.setattr(pane_module, "reduce_grouped_asymmetry", _boom)
+    pane.request_preview(
+        histograms=dataset.run.histograms,
+        grouping=dataset.run.grouping,
+        run_number=5001,
+    )
+    pane.flush()
+    _wait_until(lambda: pane._tasks.active_count == 0 and "unavailable" in pane._status.text())
+    assert "unavailable" in pane._status.text().lower()
+    assert "synthetic reduction failure" in pane._status.text()
+    pane.shutdown()
+
+
+def test_histogramless_dataset_hides_pane(qapp: QApplication) -> None:
+    pane = GroupingPreviewPane()
+    pane.request_preview(histograms=None, grouping={}, run_number=5002)
+    assert not pane.isVisible()
+    assert "histogram" in pane._status.text().lower()
+    pane.shutdown()
+
+
+# --------------------------------------------------------------------------- #
+# Dialog integration
+# --------------------------------------------------------------------------- #
+
+
+def test_dialog_preview_populates_and_recomputes_on_edit(qapp: QApplication) -> None:
+    dataset = _histogram_dataset()
+    dialog = GroupingDialog([dataset])
+    pane = dialog._preview_pane
+    pane.flush()
+    _wait_until(lambda: pane._tasks.active_count == 0 and bool(pane._axes.get_lines()))
+    first = _last_curve(pane).copy()
+
+    # Editing alpha drives a debounced recompute; flush + wait for a new curve.
+    dialog._alpha_spin.setValue(3.0)
+    pane.flush()
+    _wait_until(lambda: pane._tasks.active_count == 0 and not np.allclose(_last_curve(pane), first))
+    assert not np.allclose(_last_curve(pane), first)
+
+    dialog._clear_dirty()
+    dialog.close()
+
+
+def test_dialog_hides_preview_for_histogramless_dataset(qapp: QApplication) -> None:
+    # A dataset with a run but no histograms cannot be previewed. The grouping
+    # dialog drops run-less datasets, so use a run whose histograms are empty.
+    dataset = _histogram_dataset()
+    dataset.run.histograms = []
+    # The dialog needs at least one usable dataset; pair the empty one with a
+    # normal run so the dialog opens, then point the preview at the empty run.
+    good = _histogram_dataset(run_number=5003)
+    dialog = GroupingDialog([good])
+    dialog._preview_pane.request_preview(histograms=None, grouping={}, run_number=5001)
+    assert not dialog._preview_pane.isVisible()
+    dialog._clear_dirty()
+    dialog.close()
+
+
+# --------------------------------------------------------------------------- #
+# Core-reduction pin: MainWindow reduction unchanged by the extraction
+# --------------------------------------------------------------------------- #
+
+
+def _replay_reduction(
+    histograms,
+    grouping,
+    forward_idx,
+    backward_idx,
+    alpha,
+    *,
+    use_deadtime,
+    use_background,
+    facility,
+):
+    """From-scratch replay of the documented counts-then-ratio pipeline."""
+    working = list(histograms)
+    if use_deadtime:
+        working, _ = prepare_histograms_with_deadtime(histograms, grouping, True)
+    common_t0 = common_t0_for_groups(working, forward_idx, backward_idx)
+    forward = apply_grouping_aligned(working, forward_idx, common_t0_bin=common_t0)
+    backward = apply_grouping_aligned(working, backward_idx, common_t0_bin=common_t0)
+    n = min(len(forward), len(backward))
+    forward, backward = forward[:n], backward[:n]
+    f_err = b_err = None
+    if use_background:
+        bw = float(working[0].bin_width)
+        last_good = int(grouping.get("last_good_bin", n - 1))
+        res = apply_grouped_background_correction(
+            forward,
+            backward,
+            grouping=grouping,
+            t0_bin=common_t0,
+            bin_width_us=bw,
+            facility=facility,
+            last_good_bin=last_good,
+        )
+        forward, backward = res.forward, res.backward
+        if res.applied and res.forward_error is not None and res.backward_error is not None:
+            f_err, b_err = res.forward_error, res.backward_error
+    bw = float(working[0].bin_width)
+    first_good = max(0, int(grouping.get("first_good_bin", 0)))
+    last_good = int(grouping.get("last_good_bin", n - 1))
+    t, a, e = binned_fb_asymmetry(
+        forward,
+        backward,
+        grouping=grouping,
+        common_t0=common_t0,
+        bin_width_us=bw,
+        alpha=alpha,
+        first_good_bin=first_good,
+        last_good_bin=last_good,
+        forward_error=f_err,
+        backward_error=b_err,
+    )
+    return t, a * 100.0, e * 100.0
+
+
+@pytest.mark.parametrize("bunch", [1, 2])
+@pytest.mark.parametrize("alpha", [1.0, 1.7])
+def test_reduce_grouped_asymmetry_matches_replay(bunch: float, alpha: float) -> None:
+    dataset = _histogram_dataset(grouping_extra={"bunching_factor": bunch})
+    grouping = dataset.run.grouping
+    forward_idx = [0]
+    backward_idx = [1]
+    result = reduce_grouped_asymmetry(
+        histograms=dataset.run.histograms,
+        grouping=grouping,
+        forward_idx=forward_idx,
+        backward_idx=backward_idx,
+        alpha=alpha,
+        use_deadtime=False,
+        deadtime_mode="off",
+        use_background=False,
+        facility="TESTINST",
+    )
+    exp_t, exp_a, exp_e = _replay_reduction(
+        dataset.run.histograms,
+        grouping,
+        forward_idx,
+        backward_idx,
+        alpha,
+        use_deadtime=False,
+        use_background=False,
+        facility="TESTINST",
+    )
+    np.testing.assert_array_equal(result.time, exp_t)
+    np.testing.assert_array_equal(result.asymmetry, exp_a)
+    np.testing.assert_array_equal(result.error, exp_e)
+    assert result.deadtime_applied is False
+
+
+def test_reduce_grouped_asymmetry_pins_mainwindow_delegation(qapp: QApplication) -> None:
+    """The MainWindow method now delegates; pin that it returns core's arrays."""
+    from PySide6.QtCore import QSettings
+
+    import asymmetry.gui.mainwindow as mw_module
+    from asymmetry.gui.mainwindow import MainWindow
+
+    settings = QSettings()
+    settings.setValue(mw_module._UI_SCALE_SETTINGS_KEY, 1.0)
+    window = MainWindow()
+    try:
+        dataset = _histogram_dataset()
+        grouping = dataset.run.grouping
+        mw_time, mw_asym, mw_err, mw_dt, _bkg = window._reduce_grouped_histograms_to_asymmetry(
+            histograms=dataset.run.histograms,
+            grouping=grouping,
+            dataset=dataset,
+            run=dataset.run,
+            forward_idx=[0],
+            backward_idx=[1],
+            alpha=1.3,
+            use_deadtime=False,
+            deadtime_mode="off",
+            use_background=False,
+        )
+        core = reduce_grouped_asymmetry(
+            histograms=dataset.run.histograms,
+            grouping=grouping,
+            forward_idx=[0],
+            backward_idx=[1],
+            alpha=1.3,
+            use_deadtime=False,
+            deadtime_mode="off",
+            use_background=False,
+            facility="TESTINST",
+        )
+        np.testing.assert_array_equal(mw_time, core.time)
+        np.testing.assert_array_equal(mw_asym, core.asymmetry)
+        np.testing.assert_array_equal(mw_err, core.error)
+        assert mw_dt == core.deadtime_applied
+    finally:
+        window.close()

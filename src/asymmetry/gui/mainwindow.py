@@ -201,8 +201,6 @@ from asymmetry.core.representation.project_model import ProjectModel
 from asymmetry.core.transform import (
     FieldScan,
     apply_deadtime_correction,
-    apply_grouped_background_correction,
-    apply_grouping_aligned,
     available_background_modes,
     build_field_scan,
     common_t0_for_groups,
@@ -210,15 +208,15 @@ from asymmetry.core.transform import (
     effective_group_indices,
     good_frames,
     has_file_deadtime,
-    has_resolved_deadtime,
     prepare_histograms_with_deadtime,
+    reduce_grouped_asymmetry,
     resolve_background_mode,
 )
 from asymmetry.core.transform.deadtime import (
     calibrate_deadtime_from_histograms,
     promote_deadtime_to_grouping,
 )
-from asymmetry.core.transform.rebin import binned_fb_asymmetry, rebin, resolve_binning_mode
+from asymmetry.core.transform.rebin import rebin, resolve_binning_mode
 from asymmetry.core.utils.constants import (
     GAUSS_TO_TESLA,
     MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
@@ -4715,138 +4713,38 @@ class MainWindow(QMainWindow):
         deadtime_mode: str,
         use_background: bool,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, bool, dict[str, object] | None]:
-        """Return reduced grouped asymmetry arrays for one histogram source."""
-        effective_use_deadtime = bool(use_deadtime)
-        if effective_use_deadtime:
-            if deadtime_mode == "file":
-                effective_use_deadtime = has_file_deadtime(grouping, len(histograms))
-            else:
-                effective_use_deadtime = has_resolved_deadtime(grouping, len(histograms))
+        """Return reduced grouped asymmetry arrays for one histogram source.
 
-        working_histograms, dt_applied = self._prepare_grouping_histograms(
-            histograms,
-            grouping,
-            effective_use_deadtime,
-        )
-
-        common_t0 = common_t0_for_groups(working_histograms, forward_idx, backward_idx)
-        forward = apply_grouping_aligned(
-            working_histograms,
-            forward_idx,
-            common_t0_bin=common_t0,
-        )
-        backward = apply_grouping_aligned(
-            working_histograms,
-            backward_idx,
-            common_t0_bin=common_t0,
-        )
-        n_grouped = min(len(forward), len(backward))
-        forward = forward[:n_grouped]
-        backward = backward[:n_grouped]
-
-        background_state: dict[str, object] | None = None
-        bkg_result = None
-        if use_background:
-            bin_width = float(working_histograms[0].bin_width) if working_histograms else 1.0
-            facility = str(
-                run.metadata.get(
-                    "facility",
-                    dataset.metadata.get("facility", dataset.metadata.get("instrument", "")),
-                )
+        Thin GUI wrapper over the Qt-free
+        :func:`asymmetry.core.transform.reduce_grouped_asymmetry` chokepoint: it
+        resolves the facility string off the run/dataset metadata and binds the
+        ``reference_run`` background resolver to the loaded-dataset registry, so
+        the numerics stay shared with the grouping window's preview pane.
+        """
+        facility = str(
+            run.metadata.get(
+                "facility",
+                dataset.metadata.get("facility", dataset.metadata.get("instrument", "")),
             )
-            reference_forward = None
-            reference_backward = None
-            reference_scale = None
-            if resolve_background_mode(grouping) == "reference_run":
-                resolved = self._resolve_background_reference(grouping, run)
-                if resolved is not None:
-                    reference_histograms, reference_scale = resolved
-                    reference_prepared, _ = self._prepare_grouping_histograms(
-                        reference_histograms,
-                        grouping,
-                        effective_use_deadtime,
-                    )
-                    reference_forward = apply_grouping_aligned(
-                        reference_prepared,
-                        forward_idx,
-                        common_t0_bin=common_t0,
-                    )
-                    reference_backward = apply_grouping_aligned(
-                        reference_prepared,
-                        backward_idx,
-                        common_t0_bin=common_t0,
-                    )
-            try:
-                last_good = int(grouping.get("last_good_bin", n_grouped - 1))
-            except (TypeError, ValueError):
-                last_good = n_grouped - 1
-            bkg_result = apply_grouped_background_correction(
-                forward,
-                backward,
-                grouping=grouping,
-                t0_bin=common_t0,
-                bin_width_us=bin_width,
-                facility=facility,
-                last_good_bin=last_good,
-                reference_forward=reference_forward,
-                reference_backward=reference_backward,
-                reference_scale=reference_scale,
-            )
-            forward = bkg_result.forward
-            backward = bkg_result.backward
-            background_state = {"method": bkg_result.method}
-            if bkg_result.applied:
-                if bkg_result.values is not None:
-                    background_state["values"] = [
-                        float(bkg_result.values[0]),
-                        float(bkg_result.values[1]),
-                    ]
-                if bkg_result.ranges is not None:
-                    background_state["ranges"] = [
-                        [int(v) for v in bkg_result.ranges[0]],
-                        [int(v) for v in bkg_result.ranges[1]],
-                    ]
-                if bkg_result.details is not None:
-                    background_state["details"] = dict(bkg_result.details)
-
-        bin_width = float(working_histograms[0].bin_width) if working_histograms else 1.0
-        background_errors = (
-            bkg_result is not None
-            and bkg_result.applied
-            and bkg_result.forward_error is not None
-            and bkg_result.backward_error is not None
         )
-
-        # Every binning mode (fixed included) bins the counts before forming
-        # the asymmetry — the counts-then-ratio order all reference programs
-        # use. The returned arrays are final: good window applied, bunching
-        # applied, no further slicing or bunching by the caller.
-        try:
-            first_good = max(0, int(grouping.get("first_good_bin", 0)))
-        except (TypeError, ValueError):
-            first_good = 0
-        try:
-            last_good = int(grouping.get("last_good_bin", n_grouped - 1))
-        except (TypeError, ValueError):
-            last_good = n_grouped - 1
-        time_axis, asymmetry, error = binned_fb_asymmetry(
-            forward,
-            backward,
+        result = reduce_grouped_asymmetry(
+            histograms=histograms,
             grouping=grouping,
-            common_t0=common_t0,
-            bin_width_us=bin_width,
+            forward_idx=forward_idx,
+            backward_idx=backward_idx,
             alpha=alpha,
-            first_good_bin=first_good,
-            last_good_bin=last_good,
-            forward_error=bkg_result.forward_error if background_errors else None,
-            backward_error=bkg_result.backward_error if background_errors else None,
+            use_deadtime=use_deadtime,
+            deadtime_mode=deadtime_mode,
+            use_background=use_background,
+            facility=facility,
+            reference_resolver=lambda g: self._resolve_background_reference(g, run),
         )
         return (
-            np.asarray(time_axis, dtype=np.float64),
-            np.asarray(asymmetry * 100.0, dtype=np.float64),
-            np.asarray(error * 100.0, dtype=np.float64),
-            dt_applied,
-            background_state,
+            result.time,
+            result.asymmetry,
+            result.error,
+            result.deadtime_applied,
+            result.background_state,
         )
 
     def _counts_first_rebunched_arrays(

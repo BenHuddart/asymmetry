@@ -64,6 +64,11 @@ from asymmetry.core.transform.rebin import (
     rebin,
     resolve_binning_mode,
 )
+from asymmetry.core.transform.reduce import (
+    GroupedAsymmetryReduction,
+    ReferenceResolver,
+    reduce_grouped_asymmetry,
+)
 from asymmetry.core.transform.rrf import (
     RRFCurve,
     default_bandwidth_mhz,
@@ -128,6 +133,9 @@ __all__ = [
     "binned_fb_asymmetry",
     "binning_slice_edges",
     "resolve_binning_mode",
+    "GroupedAsymmetryReduction",
+    "ReferenceResolver",
+    "reduce_grouped_asymmetry",
     "RunT0Search",
     "T0Estimate",
     "find_t0",

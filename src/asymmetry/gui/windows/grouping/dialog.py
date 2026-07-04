@@ -89,6 +89,7 @@ from asymmetry.gui.windows.grouping.grp_io import (
 from asymmetry.gui.windows.grouping.grp_io import (
     serialize_grp as _serialize_grp,
 )
+from asymmetry.gui.windows.grouping.preview_pane import GroupingPreviewPane
 from asymmetry.gui.windows.grouping.profile_bridge import (
     payload_matches_preset,
     preset_payload,
@@ -625,6 +626,13 @@ class GroupingDialog(QDialog):
 
         right_layout.addLayout(form)
         right_layout.addStretch()
+
+        # Live asymmetry preview of the preview run under the current draft.
+        # Fixed-height so it never fights the form for space; it reduces off the
+        # GUI thread (debounced) and redraws as the form is edited.
+        self._preview_pane = GroupingPreviewPane()
+        right_layout.addWidget(self._preview_pane)
+
         splitter.addWidget(right_pane)
 
         splitter.setSizes([330, 520])
@@ -664,6 +672,8 @@ class GroupingDialog(QDialog):
         self._connect_dirty_tracking()
         self._refresh_preset_chip(self._current_grouping_payload())
         self._update_apply_enabled()
+        self._connect_preview_refresh()
+        self._refresh_preview()
 
     def _choose_reference_dataset(self) -> MuonDataset:
         """Return preferred reference dataset for initial grouping values."""
@@ -1336,6 +1346,9 @@ class GroupingDialog(QDialog):
         # follows the (possibly drifted) draft.
         if hasattr(self, "_preset_combo"):
             self._rebuild_preset_combo()
+        # Preview-run change / profile switch: recompute against the new state.
+        if hasattr(self, "_preview_pane"):
+            self._refresh_preview()
 
     def _reference_has_file_deadtime(self, grouping: dict[str, Any]) -> bool:
         """Return whether the reference run provides file deadtime values."""
@@ -1946,6 +1959,105 @@ class GroupingDialog(QDialog):
         for button in self._deadtime_mode_buttons.values():
             button.toggled.connect(self._mark_dirty)
 
+    # ------------------------------------------------------------------
+    # Live preview pane
+    # ------------------------------------------------------------------
+
+    def _connect_preview_refresh(self) -> None:
+        """Refresh the live preview whenever an editable control changes.
+
+        Reuses the same control set as dirty-tracking (groups, alpha, binning,
+        exclusions, deadtime, background, period) so every edit routed to the
+        draft also drives a debounced recompute. The pane itself coalesces rapid
+        edits, so connecting broadly here is cheap.
+        """
+        self._alpha_spin.valueChanged.connect(self._refresh_preview)
+        self._alpha_method_combo.currentIndexChanged.connect(self._refresh_preview)
+        self._forward_combo.currentIndexChanged.connect(self._refresh_preview)
+        self._backward_combo.currentIndexChanged.connect(self._refresh_preview)
+        self._bunch_spin.valueChanged.connect(self._refresh_preview)
+        self._binning_mode_combo.currentIndexChanged.connect(self._refresh_preview)
+        self._bin0_spin.valueChanged.connect(self._refresh_preview)
+        self._bin10_spin.valueChanged.connect(self._refresh_preview)
+        self._t0_spin.valueChanged.connect(self._refresh_preview)
+        self._t_good_offset_spin.valueChanged.connect(self._refresh_preview)
+        self._last_good_spin.valueChanged.connect(self._refresh_preview)
+        self._exclude_edit.textEdited.connect(self._refresh_preview)
+        self._deadtime_checkbox.toggled.connect(self._refresh_preview)
+        self._background_mode_combo.currentIndexChanged.connect(self._refresh_preview)
+        self._group_table.itemChanged.connect(self._refresh_preview)
+        for button in self._period_mode_buttons.values():
+            button.toggled.connect(self._refresh_preview)
+        for button in self._deadtime_mode_buttons.values():
+            button.toggled.connect(self._refresh_preview)
+
+    def _refresh_preview(self, *args: object) -> None:
+        """Recompute the live asymmetry preview for the draft + preview run.
+
+        Resolves the current form payload against the preview run into the
+        effective ``run.grouping`` shape and hands it to the pane, which debounces
+        and reduces off the GUI thread. Any resolution error is swallowed and
+        surfaced as a muted status message rather than a popup — the preview is
+        advisory. Datasets without raw histograms (co-added curves) make the pane
+        hide itself with a note.
+        """
+        pane = getattr(self, "_preview_pane", None)
+        if pane is None:
+            return
+        run = self._run
+        histograms = list(run.histograms) if run is not None and run.histograms else []
+        try:
+            grouping = self._preview_effective_grouping()
+        except Exception:  # noqa: BLE001 — advisory preview, never crash the dialog
+            grouping = None
+        if grouping is None:
+            pane.request_preview(
+                histograms=None,
+                grouping={},
+                run_number=self._preview_run_number(),
+            )
+            return
+        metadata: dict[str, Any] = {}
+        if self._reference_dataset is not None:
+            metadata.update(getattr(self._reference_dataset, "metadata", {}) or {})
+        if run is not None:
+            metadata.update(getattr(run, "metadata", {}) or {})
+        facility = str(metadata.get("facility", metadata.get("instrument", "")))
+        pane.request_preview(
+            histograms=histograms,
+            grouping=grouping,
+            facility=facility,
+            run_number=self._preview_run_number(),
+        )
+
+    def _preview_run_number(self) -> int | None:
+        if self._reference_dataset is None:
+            return None
+        try:
+            return int(self._reference_dataset.run_number)
+        except (TypeError, ValueError):
+            return None
+
+    def _preview_effective_grouping(self) -> dict[str, Any] | None:
+        """Resolve the current form payload against the preview run.
+
+        Builds a throwaway draft profile from the live form payload (without
+        mutating ``self._draft`` or its dirty state) and resolves it against the
+        preview run into the full ``run.grouping`` shape the reduction consumes.
+        """
+        if self._run is None or not self._run.histograms or self._fingerprint is None:
+            return None
+        from asymmetry.core.project.profiles import resolve_effective_grouping
+
+        payload = self._current_grouping_payload()
+        profile = profile_from_form_payload(
+            payload,
+            name=self._draft_name,
+            fingerprint=self._fingerprint,
+            active=True,
+        )
+        return resolve_effective_grouping(profile, self._run)
+
     def _update_apply_enabled(self) -> None:
         """Disable Apply (with a reason) when no run inherits this profile."""
         inheriting = self._scope_panel.inheriting_run_numbers()
@@ -1990,7 +2102,19 @@ class GroupingDialog(QDialog):
         if self._datasets and not self._guard_discard():
             event.ignore()
             return
+        self._teardown_preview()
         super().closeEvent(event)
+
+    def done(self, result: int) -> None:
+        """Tear the preview runner down on every dialog dismissal (accept/reject)."""
+        self._teardown_preview()
+        super().done(result)
+
+    def _teardown_preview(self) -> None:
+        """Cancel and join the preview runner (idempotent)."""
+        pane = getattr(self, "_preview_pane", None)
+        if pane is not None:
+            pane.shutdown()
 
     def _populate_group_table(self) -> None:
         """Render the detector-group table used as grouping context."""
