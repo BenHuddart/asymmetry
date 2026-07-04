@@ -57,12 +57,14 @@ from asymmetry.core.project.profiles import (
     DeadtimePolicy,
     GroupingProfile,
     ProfileFingerprint,
+    T0Policy,
     profile_fingerprint_for_run,
 )
 from asymmetry.core.transform import (
     apply_grouping,
     available_background_modes,
     calibrate_deadtime_from_histograms,
+    common_t0_for_groups,
     estimate_deadtime_from_histograms,
     excluded_detector_indices,
     filter_excluded_indices,
@@ -99,6 +101,7 @@ from asymmetry.gui.windows.grouping.grp_io import (
 )
 from asymmetry.gui.windows.grouping.preview_pane import GroupingPreviewPane
 from asymmetry.gui.windows.grouping.profile_bridge import (
+    instrument_display_for_fingerprint,
     payload_matches_preset,
     preset_payload,
     profile_from_form_payload,
@@ -164,6 +167,14 @@ class GroupingDialog(QDialog):
         self._suppress_dirty = False
         self._draft_name = ""
         self._fingerprint: ProfileFingerprint | None = None
+        # Override-editing mode (M3): active when the preview run is an
+        # overridden run. In this mode the form seeds from — and edits are
+        # written back to — the run's own ``run.grouping`` override payload, and
+        # the profile draft (``self._draft``) is left untouched.
+        self._override_mode = False
+        self._override_run_number: int | None = None
+        self._override_draft_dirty = False
+        self._override_payload: dict[str, Any] | None = None
 
         self.setWindowTitle("Grouping")
         self.resize(940, 560)
@@ -224,6 +235,17 @@ class GroupingDialog(QDialog):
         rename_btn.clicked.connect(self._on_rename_profile)
         profile_row.addWidget(rename_btn)
 
+        # Instrument switcher: lists every fingerprint present in the loaded
+        # datasets. Hidden when the project holds a single instrument (nothing to
+        # switch between); shown as "<display> \u2014 N runs" otherwise.
+        self._instrument_label = QLabel("Instrument")
+        self._instrument_combo = QComboBox()
+        self._instrument_combo.setMinimumContentsLength(18)
+        self._rebuild_instrument_combo()
+        self._instrument_combo.activated.connect(self._on_instrument_combo_activated)
+        profile_row.addWidget(self._instrument_label)
+        profile_row.addWidget(self._instrument_combo)
+
         # The reference-run combo is now a non-destructive preview-run selector:
         # it changes only the per-run facts shown, never the draft.
         self._reference_combo = QComboBox()
@@ -261,6 +283,17 @@ class GroupingDialog(QDialog):
         self._tf_hint_label.setVisible(False)
         root.addWidget(self._tf_hint_label)
 
+        # Override-editing banner (M3): warning-styled, shown only while editing
+        # an overridden run's own grouping (which applies to that run alone).
+        self._override_banner = QLabel()
+        self._override_banner.setWordWrap(True)
+        self._override_banner.setStyleSheet(
+            f"color: {tokens.WARN}; font-weight: bold; "
+            f"border: 1px solid {tokens.WARN}; border-radius: 3px; padding: 4px;"
+        )
+        self._override_banner.setVisible(False)
+        root.addWidget(self._override_banner)
+
         # \u2500\u2500 Main split: left pane (datasets + groups) | right pane (form) \u2500
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setChildrenCollapsible(False)
@@ -275,6 +308,7 @@ class GroupingDialog(QDialog):
         self._scope_panel = ScopePanel()
         self._scope_panel.setMaximumHeight(180)
         self._scope_panel.changed.connect(self._on_scope_changed)
+        self._scope_panel.edit_requested.connect(self._on_scope_edit_requested)
         left_layout.addWidget(self._scope_panel)
         self._refresh_scope_panel()
 
@@ -343,9 +377,39 @@ class GroupingDialog(QDialog):
         default_t0_internal = self._default_t0_bin(grouping, max_bin)
         default_t_good = self._default_t_good_offset(grouping, default_t0_internal, max_bin)
 
+        # t0 mode selector (From file / Manual / Auto-detect) — mirrors WiMDA's
+        # FileValues checkbox: "From file" uses the header t0 per run and locks
+        # the spinbox; "Manual" is the historical editable override; "Auto-detect"
+        # runs the prompt-peak / pulse-edge search per run at resolution time.
+        self._t0_mode_combo = QComboBox()
+        for label, key, tooltip in (
+            (
+                "From file",
+                "from_file",
+                "Use each run's own file-derived t0 (per-detector values preserved).",
+            ),
+            ("Manual", "manual", "Type a common t0 override applied to every run as an offset."),
+            (
+                "Auto-detect",
+                "auto_detect",
+                "Search each run for t0 (prompt peak at continuous sources, "
+                "pulse-edge midpoint at pulsed sources) at reduction time.",
+            ),
+        ):
+            self._t0_mode_combo.addItem(label, key)
+            self._t0_mode_combo.setItemData(
+                self._t0_mode_combo.count() - 1, tooltip, Qt.ItemDataRole.ToolTipRole
+            )
+        self._t0_mode_combo.setMaximumWidth(130)
+
         self._t0_spin = QSpinBox()
         self._t0_spin.setRange(index_base, max_bin + index_base)
         self._t0_spin.setValue(default_t0_internal + index_base)
+
+        # Provenance / per-run note shown beneath the mode selector.
+        self._t0_mode_label = QLabel("")
+        self._t0_mode_label.setWordWrap(True)
+        self._t0_mode_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
 
         self._t_good_offset_spin = QSpinBox()
         self._t_good_offset_spin.setRange(0, max_bin)
@@ -420,9 +484,10 @@ class GroupingDialog(QDialog):
         self._find_t0_btn.setAutoDefault(False)
         self._find_t0_btn.setDefault(False)
         self._find_t0_btn.setToolTip(
-            "Estimate t0 from the reference run (prompt peak at continuous "
-            "sources, pulse-edge midpoint at pulsed sources) and fill the "
-            "override — nothing is applied until you press Apply."
+            "One-shot fill for Manual mode: estimate t0 from the reference run "
+            "(prompt peak at continuous sources, pulse-edge midpoint at pulsed "
+            "sources) into the spinbox. For a per-run search on every run, choose "
+            "the Auto-detect mode instead. Nothing is applied until you press Apply."
         )
         self._find_t0_btn.clicked.connect(self._on_find_t0)
 
@@ -576,9 +641,11 @@ class GroupingDialog(QDialog):
         t0_row_widget = QWidget()
         t0_row = QHBoxLayout(t0_row_widget)
         t0_row.setContentsMargins(0, 0, 0, 0)
+        t0_row.addWidget(self._t0_mode_combo)
         t0_row.addWidget(self._t0_spin)
         t0_row.addWidget(self._find_t0_btn)
         form.addRow("t0 Bin", t0_row_widget)
+        form.addRow("", self._t0_mode_label)
         form.addRow("t_good Offset", self._t_good_offset_spin)
         form.addRow("Last Good Bin", self._last_good_spin)
         binning_row_widget = QWidget()
@@ -658,11 +725,18 @@ class GroupingDialog(QDialog):
         self._update_period_mode_visibility()
         self._update_grouping_recommendation()
         self._rebuild_preset_combo()
+        self._seed_t0_mode_from_draft()
         self._connect_dirty_tracking()
         self._refresh_preset_chip(self._current_grouping_payload())
         self._update_apply_enabled()
         self._connect_preview_refresh()
         self._refresh_preview()
+
+        # Open directly in override-editing mode when the initial preview run is
+        # itself overridden, so the editor never silently shows the profile view
+        # for a run whose grouping the profile does not govern.
+        if self._run_is_overridden(int(self._reference_dataset.run_number)):
+            self._enter_override_mode(int(self._reference_dataset.run_number))
 
     def _choose_reference_dataset(self) -> MuonDataset:
         """Return preferred reference dataset for initial grouping values."""
@@ -693,6 +767,110 @@ class GroupingDialog(QDialog):
         if self._fingerprint is None:
             return []
         return [p for p in self._project_profiles if p.fingerprint.matches(self._fingerprint)]
+
+    # -- instrument switcher (M2) ----------------------------------------
+
+    def _project_fingerprints(self) -> list[ProfileFingerprint]:
+        """Distinct fingerprints present in the loaded datasets, first-seen order.
+
+        Each fingerprint appears once; the order follows the datasets so the
+        combo is stable across rebuilds. Datasets without a run are skipped.
+        """
+        seen: list[ProfileFingerprint] = []
+        for ds in self._datasets:
+            if ds.run is None:
+                continue
+            fingerprint = profile_fingerprint_for_run(ds.run)
+            if not any(fp.matches(fingerprint) for fp in seen):
+                seen.append(fingerprint)
+        return seen
+
+    def _datasets_for_fingerprint(self, fingerprint: ProfileFingerprint) -> list[MuonDataset]:
+        """Datasets whose run matches *fingerprint* (any fingerprint, not just current)."""
+        out: list[MuonDataset] = []
+        for ds in self._datasets:
+            if ds.run is None:
+                continue
+            if profile_fingerprint_for_run(ds.run).matches(fingerprint):
+                out.append(ds)
+        return out
+
+    def _rebuild_instrument_combo(self) -> None:
+        """(Re)populate the Instrument switcher for the loaded datasets.
+
+        Lists every distinct fingerprint as ``"<display> — N runs"``. The switcher
+        (and its label) are hidden when only one instrument is present, since
+        there is nothing to switch between.
+        """
+        fingerprints = self._project_fingerprints()
+        combo = self._instrument_combo
+        combo.blockSignals(True)
+        combo.clear()
+        for index, fingerprint in enumerate(fingerprints):
+            display = instrument_display_for_fingerprint(fingerprint, fingerprints)
+            n_runs = len(self._datasets_for_fingerprint(fingerprint))
+            noun = "run" if n_runs == 1 else "runs"
+            combo.addItem(f"{display} — {n_runs} {noun}", index)
+            if self._fingerprint is not None and fingerprint.matches(self._fingerprint):
+                combo.setCurrentIndex(index)
+        combo.blockSignals(False)
+        single = len(fingerprints) <= 1
+        self._instrument_combo.setVisible(not single)
+        self._instrument_label.setVisible(not single)
+
+    def _on_instrument_combo_activated(self, index: int) -> None:
+        """Switch the editor to another instrument's fingerprint.
+
+        Prompts to discard unsaved draft edits first (the same guard the profile
+        switcher uses); then swaps the fingerprint, preview/reference run, draft,
+        and re-seeds every form control, scope panel, preset list, and preview
+        through the shared reload path.
+        """
+        combo_index = self._instrument_combo.itemData(index)
+        fingerprints = self._project_fingerprints()
+        if combo_index is None or not (0 <= int(combo_index) < len(fingerprints)):
+            return
+        target = fingerprints[int(combo_index)]
+        if self._fingerprint is not None and target.matches(self._fingerprint):
+            return
+        if not self._confirm_discard_before_switch():
+            self._select_current_instrument_in_combo()
+            return
+        self._switch_to_fingerprint(target)
+
+    def _select_current_instrument_in_combo(self) -> None:
+        """Restore the combo selection to the current fingerprint (after a cancel)."""
+        fingerprints = self._project_fingerprints()
+        combo = self._instrument_combo
+        combo.blockSignals(True)
+        for i, fingerprint in enumerate(fingerprints):
+            if self._fingerprint is not None and fingerprint.matches(self._fingerprint):
+                combo.setCurrentIndex(i)
+                break
+        combo.blockSignals(False)
+
+    def _switch_to_fingerprint(self, fingerprint: ProfileFingerprint) -> None:
+        """Adopt *fingerprint*: swap reference run, draft, and re-seed the form."""
+        datasets = self._datasets_for_fingerprint(fingerprint)
+        if not datasets or datasets[0].run is None:
+            return
+        self._fingerprint = fingerprint
+        self._reference_dataset = datasets[0]
+        self._run = datasets[0].run
+        # Draft: the new instrument's active profile, or a fresh default.
+        self._draft = self._initial_draft()
+        self._draft_name = self._draft.name
+        self._draft_dirty = False
+        # Repopulate the preview-run combo for the new instrument's runs.
+        self._reference_combo.blockSignals(True)
+        self._reference_combo.clear()
+        for ds in datasets:
+            self._reference_combo.addItem(ds.run_label, int(ds.run_number))
+        self._set_combo_to_run(self._reference_combo, int(self._reference_dataset.run_number))
+        self._reference_combo.blockSignals(False)
+        # Re-seed every form control, scope panel, preset list, and preview.
+        self._reseed_form_from_draft()
+        self._rebuild_instrument_combo()
 
     def _default_draft_name(self) -> str:
         """Synthesized draft name for a fingerprint with no saved profile.
@@ -748,7 +926,14 @@ class GroupingDialog(QDialog):
             payload_from_profile_for_preview,
         )
 
-        payload = payload_from_profile_for_preview(self._draft, self._run)
+        if self._override_mode:
+            # Override-editing mode seeds the form from the run's own grouping
+            # payload directly (its frozen per-run override), not from the
+            # profile draft — so the shareable form controls reflect the
+            # override, and editing them writes back to that run alone.
+            payload = dict(self._run.grouping) if isinstance(self._run.grouping, dict) else {}
+        else:
+            payload = payload_from_profile_for_preview(self._draft, self._run)
 
         class _SeedSource:
             grouping = payload
@@ -759,22 +944,33 @@ class GroupingDialog(QDialog):
         return _SeedSource()
 
     def _mark_dirty(self) -> None:
-        """Record that the draft diverges from its opened state."""
-        if not self._suppress_dirty:
+        """Record that the draft (or the override draft) diverges from its open state."""
+        if self._suppress_dirty:
+            return
+        if self._override_mode:
+            self._override_draft_dirty = True
+        else:
             self._draft_dirty = True
 
     def _sync_draft_from_form(self) -> None:
-        """Lift the current form payload back into the draft profile.
+        """Lift the current form payload back into the draft (or override) payload.
 
         Called before the draft is read (Apply, preset-chip refresh, profile
         switch). Also refreshes the preset chip / clears a stale preset marker
         when the groups have drifted from the named preset.
+
+        In override-editing mode the profile draft is deliberately left
+        untouched: the form payload is captured into ``self._override_payload``
+        so Apply can write it back to the overridden run alone.
         """
         payload = self._current_grouping_payload()
         self._refresh_preset_chip(payload)
         # Re-read the payload after a possible drift-clear so the draft does not
         # carry a stale ``grouping_preset``.
         payload = self._current_grouping_payload()
+        if self._override_mode:
+            self._override_payload = payload
+            return
         assert self._fingerprint is not None
         self._draft = profile_from_form_payload(
             payload,
@@ -782,6 +978,9 @@ class GroupingDialog(QDialog):
             fingerprint=self._fingerprint,
             active=True,
         )
+        # The t0 mode is an explicit selector, not something to infer from the
+        # per-run t0 value the form carries: set it on the draft directly.
+        self._draft.t0_policy = self._current_t0_policy()
 
     # -- profile selector -------------------------------------------------
 
@@ -1013,9 +1212,59 @@ class GroupingDialog(QDialog):
             self._update_apply_enabled()
 
     def _on_scope_changed(self) -> None:
-        """React to a release/reattach in the scope panel."""
-        self._mark_dirty()
+        """React to a release/reattach in the scope panel.
+
+        A release/reattach is a profile-scope decision, not an override edit, so
+        it always marks the *profile* draft dirty (even inside override-editing
+        mode). Reattaching the run currently being override-edited drops its
+        override, so the editor leaves override mode and re-seeds from the
+        profile draft.
+        """
+        if (
+            self._override_mode
+            and self._override_run_number is not None
+            and not self._run_is_overridden(self._override_run_number)
+        ):
+            # The override we were editing was reattached: leave the mode without
+            # a discard prompt (the reattach itself is the user's intent).
+            self._override_draft_dirty = False
+            self._exit_override_mode()
+            self._suppress_dirty = True
+            try:
+                self._reload_controls_from_seed()
+            finally:
+                self._suppress_dirty = False
+        self._draft_dirty = True
         self._update_apply_enabled()
+
+    def _on_scope_edit_requested(self, run_number: int) -> None:
+        """Select *run_number* as the preview run, entering override-editing mode.
+
+        Discoverability affordance for the same mode reached by picking an
+        overridden run in the preview-run combo: routes through the same
+        preview-run switch so the guard/entry logic is shared.
+        """
+        idx = self._reference_combo.findData(int(run_number))
+        if idx < 0:
+            return
+        if self._reference_combo.currentIndex() == idx:
+            # Already the preview run — enter the mode directly if not already in it.
+            if not self._override_mode and self._run_is_overridden(run_number):
+                dataset = next(
+                    (
+                        ds
+                        for ds in self._fingerprint_datasets()
+                        if int(ds.run_number) == int(run_number)
+                    ),
+                    None,
+                )
+                if dataset is not None and dataset.run is not None:
+                    self._reference_dataset = dataset
+                    self._run = dataset.run
+                    self._enter_override_mode(int(run_number))
+            return
+        # Setting the index fires currentIndexChanged → _on_reference_dataset_changed.
+        self._reference_combo.setCurrentIndex(idx)
 
     def _load_group_names(self, run) -> dict[int, str]:
         """Load group names from run metadata, returning an empty dict if absent."""
@@ -1240,6 +1489,135 @@ class GroupingDialog(QDialog):
         if int(self._t_good_offset_spin.value()) > max_offset:
             self._t_good_offset_spin.setValue(max_offset)
 
+    def _set_t0_mode_combo(self, mode: str) -> None:
+        """Select *mode* in the t0 mode combo without emitting change signals."""
+        idx = self._t0_mode_combo.findData(mode)
+        if idx < 0:
+            idx = self._t0_mode_combo.findData("from_file")
+        blocked = self._t0_mode_combo.blockSignals(True)
+        try:
+            self._t0_mode_combo.setCurrentIndex(max(0, idx))
+        finally:
+            self._t0_mode_combo.blockSignals(blocked)
+
+    def _seed_t0_mode_from_draft(self) -> None:
+        """Set the t0 mode combo + manual value from the draft policy, then gate."""
+        policy = self._draft.t0_policy
+        self._set_t0_mode_combo(policy.mode)
+        if policy.mode == "manual" and policy.value is not None:
+            base = self._bin_index_base()
+            max_bin = self._max_bin_index_for_reference_dataset()
+            value = max(0, min(max_bin, int(policy.value)))
+            blocked = self._t0_spin.blockSignals(True)
+            try:
+                self._t0_spin.setValue(value + base)
+            finally:
+                self._t0_spin.blockSignals(blocked)
+        self._apply_t0_mode_to_controls()
+
+    def _current_t0_mode(self) -> str:
+        """The t0 policy mode currently selected (from_file / manual / auto_detect)."""
+        data = self._t0_mode_combo.currentData()
+        return str(data) if data else "from_file"
+
+    def _current_t0_policy(self) -> T0Policy:
+        """Build the draft :class:`T0Policy` from the t0 mode selector + spinbox.
+
+        Manual mode carries the spinbox value (internal, base-adjusted). The
+        other modes carry no value — resolution reads each run's file / detected
+        t0. Auto-detect provenance is display-only and recomputed at resolve time.
+        """
+        mode = self._current_t0_mode()
+        if mode == "manual":
+            base = self._bin_index_base()
+            max_bin = self._max_bin_index_for_reference_dataset()
+            value = max(0, min(max_bin, int(self._t0_spin.value()) - base))
+            return T0Policy(mode="manual", value=value)
+        return T0Policy(mode=mode)
+
+    def _apply_t0_mode_to_controls(self) -> None:
+        """Gate the t0 spinbox / Find button and set the provenance note per mode.
+
+        * ``from_file`` — spinbox read-only, shows the preview run's file t0;
+          note records the per-run derivation.
+        * ``manual`` — spinbox editable (the historical behaviour); Find t0 fills it.
+        * ``auto_detect`` — spinbox read-only, shows the preview run's detected t0
+          plus the strategy / spread provenance.
+        """
+        mode = self._current_t0_mode()
+        self._t0_spin.setReadOnly(mode != "manual")
+        self._find_t0_btn.setEnabled(mode == "manual")
+        if mode == "from_file":
+            self._t0_mode_label.setText("t0 from each run's file")
+            self._seed_t0_spin_from_preview()
+        elif mode == "auto_detect":
+            self._seed_t0_spin_from_detection()
+        else:  # manual
+            self._t0_mode_label.setText("Common t0 override applied to every run")
+
+    def _seed_t0_spin_from_preview(self) -> None:
+        """Show the preview run's file-derived common t0 in the (read-only) spin.
+
+        Derives the value from the run's own histograms and the current
+        forward/backward groups — never from the stored payload ``t0_bin``,
+        which can carry a manual/override shift (e.g. in override-editing
+        mode). "From file" must always display the file value, and selecting
+        it must genuinely clear any stored shift on Apply.
+        """
+        max_bin = self._max_bin_index_for_reference_dataset()
+        base = self._bin_index_base()
+        t0_internal = 0
+        if self._run is not None and self._run.histograms:
+            forward_idx = self._filtered_group_indices(int(self._forward_combo.currentData() or 1))
+            backward_idx = self._filtered_group_indices(
+                int(self._backward_combo.currentData() or 2)
+            )
+            n_hist = len(self._run.histograms)
+            forward_idx = [i for i in forward_idx if 0 <= i < n_hist]
+            backward_idx = [i for i in backward_idx if 0 <= i < n_hist]
+            if forward_idx or backward_idx:
+                t0_internal = common_t0_for_groups(self._run.histograms, forward_idx, backward_idx)
+            else:
+                t0_internal = max(h.t0_bin for h in self._run.histograms)
+        t0_internal = max(0, min(max_bin, int(t0_internal)))
+        blocked = self._t0_spin.blockSignals(True)
+        try:
+            self._t0_spin.setValue(t0_internal + base)
+        finally:
+            self._t0_spin.blockSignals(blocked)
+
+    def _seed_t0_spin_from_detection(self) -> None:
+        """Run the t0 search on the preview run and show it in the read-only spin."""
+        base = self._bin_index_base()
+        if self._run is None or not self._run.histograms:
+            self._t0_mode_label.setText("Auto-detect: preview run has no histograms")
+            return
+        metadata = dict(getattr(self._reference_dataset, "metadata", {}) or {})
+        metadata.update(self._run.metadata or {})
+        search = find_t0_for_run(self._run.histograms, metadata)
+        if not search.ok:
+            self._t0_mode_label.setText(f"Auto-detect: {search.message}")
+            return
+        blocked = self._t0_spin.blockSignals(True)
+        try:
+            self._t0_spin.setValue(int(search.consensus_t0_bin) + base)
+        finally:
+            self._t0_spin.blockSignals(blocked)
+        strategy = "prompt peak" if search.strategy == "prompt_peak" else "pulse-edge midpoint"
+        self._t0_mode_label.setText(
+            f"Auto-detect: {strategy}, detector spread {search.spread_bins} bins (per run)"
+        )
+
+    def _on_t0_mode_changed(self, *args: object) -> None:
+        """React to a t0 mode change: gate controls, then refresh the preview."""
+        self._apply_t0_mode_to_controls()
+        self._refresh_preview()
+
+    def _on_manual_t0_edited(self, *args: object) -> None:
+        """A spinbox edit only dirties the draft while Manual mode is active."""
+        if self._current_t0_mode() == "manual":
+            self._mark_dirty()
+
     def _resolve_good_bin_limits_from_controls(self) -> tuple[int, int, int, int]:
         """Return validated ``(t0_bin, t_good_offset, first_good_bin, last_good_bin)``."""
         max_bin = self._max_bin_index_for_reference_dataset()
@@ -1256,13 +1634,22 @@ class GroupingDialog(QDialog):
         if idx >= 0:
             combo.setCurrentIndex(idx)
 
-    def _on_reference_dataset_changed(self) -> None:
-        """Switch the *preview* run without discarding draft edits.
+    def _run_is_overridden(self, run_number: int) -> bool:
+        """Return whether *run_number* currently carries a per-run override.
 
-        Changing the preview run only refreshes the per-run facts (t0, good-bin
-        window, file deadtime) shown; the draft's shareable settings are first
-        lifted out of the form, then re-seeded against the new preview run so an
-        in-progress edit survives the switch.
+        The scope panel is the live source of truth (a run released this session
+        counts as overridden immediately, a reattached one no longer does).
+        """
+        return int(run_number) in self._scope_panel.released_run_numbers()
+
+    def _on_reference_dataset_changed(self) -> None:
+        """Switch the *preview* run, entering/leaving override-editing mode (M3).
+
+        Changing the preview run to an *inheriting* run refreshes the per-run
+        facts shown while preserving in-progress draft edits. Changing it to an
+        *overridden* run instead switches into override-editing mode: the form
+        seeds from that run's own grouping and edits apply to it alone. A dirty
+        override draft prompts before the switch takes it out of the mode.
         """
         run_number = int(self._reference_combo.currentData())
         dataset = next(
@@ -1272,15 +1659,94 @@ class GroupingDialog(QDialog):
         if dataset is None or dataset.run is None:
             return
 
-        # Preserve in-progress draft edits across the preview switch.
-        self._sync_draft_from_form()
+        target_overridden = self._run_is_overridden(run_number)
+
+        # Leaving an override we have edited needs its own discard prompt.
+        if (
+            self._override_mode
+            and (not target_overridden or run_number != self._override_run_number)
+            and not self._confirm_discard_override()
+        ):
+            # Revert the combo to the run we are editing.
+            self._reference_combo.blockSignals(True)
+            self._set_combo_to_run(self._reference_combo, int(self._override_run_number))
+            self._reference_combo.blockSignals(False)
+            return
+
+        if not self._override_mode and not target_overridden:
+            # Ordinary preview switch: preserve in-progress draft edits.
+            self._sync_draft_from_form()
+
         self._reference_dataset = dataset
         self._run = dataset.run
+
+        if target_overridden:
+            self._enter_override_mode(run_number)
+            return
+        # Switching to an inheriting run (from either state) re-seeds from the
+        # profile draft; leave override mode if we were in it.
+        self._exit_override_mode()
         self._suppress_dirty = True
         try:
             self._reload_controls_from_seed()
         finally:
             self._suppress_dirty = False
+
+    # ------------------------------------------------------------------
+    # Override-editing mode (M3)
+    # ------------------------------------------------------------------
+
+    def _enter_override_mode(self, run_number: int) -> None:
+        """Switch the editor into override-editing mode for *run_number*.
+
+        Seeds the form from the run's own ``run.grouping`` override payload,
+        disables the profile + instrument switchers, shows the warning banner,
+        and leaves the profile draft (``self._draft``) untouched.
+        """
+        self._override_mode = True
+        self._override_run_number = int(run_number)
+        self._override_draft_dirty = False
+        self._override_payload = None
+        self._override_banner.setText(
+            f"Editing override for run {run_number} — changes apply to this run only."
+        )
+        self._override_banner.setVisible(True)
+        self._profile_combo.setEnabled(False)
+        self._instrument_combo.setEnabled(False)
+        self._suppress_dirty = True
+        try:
+            self._reload_controls_from_seed()
+        finally:
+            self._suppress_dirty = False
+        self._update_apply_enabled()
+
+    def _exit_override_mode(self) -> None:
+        """Leave override-editing mode and restore the profile-editing controls."""
+        if not self._override_mode:
+            return
+        self._override_mode = False
+        self._override_run_number = None
+        self._override_draft_dirty = False
+        self._override_payload = None
+        self._override_banner.setVisible(False)
+        self._profile_combo.setEnabled(True)
+        # The instrument switcher stays disabled when there is only one
+        # instrument (it is hidden then anyway); re-enable it here.
+        self._instrument_combo.setEnabled(True)
+        self._update_apply_enabled()
+
+    def _confirm_discard_override(self) -> bool:
+        """Ask to discard unsaved override edits before leaving the mode."""
+        if not self._override_draft_dirty:
+            return True
+        answer = QMessageBox.question(
+            self,
+            "Discard changes",
+            f"Discard unsaved changes to the override for run {self._override_run_number}?",
+            QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        return answer == QMessageBox.StandardButton.Discard
 
     def _reload_controls_from_seed(self) -> None:
         """Re-seed every form control from the draft resolved for the preview run."""
@@ -1317,6 +1783,9 @@ class GroupingDialog(QDialog):
         self._t0_spin.setValue(default_t0_internal + index_base)
         self._t_good_offset_spin.setValue(default_t_good)
         self._on_t0_changed()
+        # Re-assert the t0 mode gating so from_file/auto_detect show the correct
+        # per-run value and the spinbox read-only state survives the reseed.
+        self._seed_t0_mode_from_draft()
         default_first_good = min(max_bin, default_t0_internal + default_t_good)
         default_last_good = int(grouping.get("last_good_bin", max_bin))
         if default_last_good < default_first_good:
@@ -1856,11 +2325,13 @@ class GroupingDialog(QDialog):
                         f"{label} group would have no detectors left after exclusion.",
                     )
                     return
-        # Lift the validated form state into the draft profile so
-        # get_grouping_result() returns it. The draft is considered saved once
-        # applied, so the close guard does not re-prompt.
+        # Lift the validated form state into the draft profile (or, in
+        # override-editing mode, into the override payload) so the result getters
+        # return it. Both drafts are considered saved once applied, so the close
+        # guard does not re-prompt.
         self._sync_draft_from_form()
         self._draft_dirty = False
+        self._override_draft_dirty = False
         self.accept()
 
     # ------------------------------------------------------------------
@@ -1878,6 +2349,11 @@ class GroupingDialog(QDialog):
         self._bin0_spin.valueChanged.connect(self._mark_dirty)
         self._bin10_spin.valueChanged.connect(self._mark_dirty)
         self._exclude_edit.textEdited.connect(self._mark_dirty)
+        # The t0 mode selector is a *shareable* profile choice, so it dirties the
+        # draft (unlike the per-run t0/t_good spins). A manual t0 value likewise
+        # dirties the draft, but only while Manual mode is selected.
+        self._t0_mode_combo.currentIndexChanged.connect(self._mark_dirty)
+        self._t0_spin.valueChanged.connect(self._on_manual_t0_edited)
         # Deadtime/background dirty-tracking happens inline in
         # ``_on_configure_deadtime``/``_on_configure_background`` (the
         # Configure… dialogs mark the draft dirty on Accept).
@@ -1908,6 +2384,7 @@ class GroupingDialog(QDialog):
         self._t0_spin.valueChanged.connect(self._refresh_preview)
         self._t_good_offset_spin.valueChanged.connect(self._refresh_preview)
         self._last_good_spin.valueChanged.connect(self._refresh_preview)
+        self._t0_mode_combo.currentIndexChanged.connect(self._on_t0_mode_changed)
         self._exclude_edit.textEdited.connect(self._refresh_preview)
         self._group_table.itemChanged.connect(self._refresh_preview)
         for button in self._period_mode_buttons.values():
@@ -1985,6 +2462,14 @@ class GroupingDialog(QDialog):
 
     def _update_apply_enabled(self) -> None:
         """Disable Apply (with a reason) when no run inherits this profile."""
+        if self._override_mode:
+            # Override-editing mode applies to the single overridden run, which
+            # is always a valid target, so Apply stays enabled.
+            self._apply_btn.setEnabled(True)
+            self._apply_btn.setToolTip(
+                f"Apply the edited override to run {self._override_run_number} only."
+            )
+            return
         inheriting = self._scope_panel.inheriting_run_numbers()
         enabled = bool(inheriting)
         self._apply_btn.setEnabled(enabled)
@@ -2004,7 +2489,21 @@ class GroupingDialog(QDialog):
         self._draft_dirty = False
 
     def _guard_discard(self) -> bool:
-        """Return whether it is safe to close (prompting on a dirty draft)."""
+        """Return whether it is safe to close (prompting on a dirty draft).
+
+        Covers both a dirty profile draft and — in override-editing mode — a
+        dirty override draft, so a half-finished per-run override edit cannot be
+        lost silently either.
+        """
+        if self._override_mode and self._override_draft_dirty:
+            answer = QMessageBox.question(
+                self,
+                "Discard changes",
+                f"Discard unsaved changes to the override for run {self._override_run_number}?",
+                QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            return answer == QMessageBox.StandardButton.Discard
         if not self._draft_dirty:
             return True
         answer = QMessageBox.question(
@@ -3183,7 +3682,13 @@ class GroupingDialog(QDialog):
         if self._run is None or not self._run.histograms:
             return None
         payload = self._current_grouping_payload()
-        payload["run_numbers"] = sorted(self._scope_panel.inheriting_run_numbers())
+        if self._override_mode:
+            # In override-editing mode the profile is not broadcast: the edited
+            # payload applies to the overridden run alone (via override_edits in
+            # get_profile_result), so no inheriting run is touched here.
+            payload["run_numbers"] = []
+        else:
+            payload["run_numbers"] = sorted(self._scope_panel.inheriting_run_numbers())
         return payload
 
     def get_profile_result(self) -> dict[str, Any] | None:
@@ -3194,15 +3699,24 @@ class GroupingDialog(QDialog):
         dict or None
             ``{"profile": GroupingProfile, "inheriting": set[int],
             "released": set[int], "newly_released": set[int],
-            "newly_reattached": set[int], "preview_run_number": int}`` — the
-            saved draft profile and the scope reconciliation. ``None`` when no
+            "newly_reattached": set[int], "preview_run_number": int,
+            "override_edits": {run_number: payload}}`` — the saved draft profile,
+            the scope reconciliation, and (in override-editing mode) the edited
+            per-run override payload to apply to that run alone. ``None`` when no
             run is available.
         """
         if self._run is None or not self._run.histograms:
             return None
         # The draft was synced by _on_apply; re-sync defensively in case a caller
-        # reads this without going through Apply.
+        # reads this without going through Apply. In override mode this captures
+        # the override payload and leaves self._draft (the profile) untouched.
         self._sync_draft_from_form()
+        override_edits: dict[int, dict[str, Any]] = {}
+        if self._override_mode and self._override_run_number is not None:
+            payload = self._override_payload
+            if payload is None:
+                payload = self._current_grouping_payload()
+            override_edits[int(self._override_run_number)] = dict(payload)
         return {
             "profile": GroupingProfile.from_dict(self._draft.to_dict()),
             "inheriting": self._scope_panel.inheriting_run_numbers(),
@@ -3210,6 +3724,7 @@ class GroupingDialog(QDialog):
             "newly_released": self._scope_panel.newly_released(),
             "newly_reattached": self._scope_panel.newly_reattached(),
             "preview_run_number": int(self._reference_dataset.run_number),
+            "override_edits": override_edits,
         }
 
     @property
