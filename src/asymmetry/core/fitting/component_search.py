@@ -258,19 +258,33 @@ ALIASES: dict[str, tuple[str, ...]] = {
 
 
 def _alias_targets_for_token(token: str) -> tuple[str, ...] | None:
-    """Return alias targets for *token*, or ``None`` if no alias matches.
+    """Return merged alias targets for *token*, or ``None`` if no alias matches.
 
     A token matches an alias key exactly, or matches a prefix of it (so
     ``'kub'`` hits ``'kubo'``). Hyphenated alias keys (e.g. ``'kubo-toyabe'``)
     also match the token with the hyphen stripped, so a query typed either
     with or without the hyphen surfaces the same family.
+
+    A short prefix can match more than one alias family (e.g. ``'b'`` hits
+    ``bg``/``background``/``baseline``/``beta``/``bessel``): every matching
+    key's targets are merged into one deduped tuple, in first-seen order
+    across ``ALIASES`` (dict insertion order), rather than stopping at the
+    first match.
     """
     token_nohyphen = token.replace("-", "")
+    merged: list[str] = []
+    seen: set[str] = set()
+    matched = False
     for alias_key, targets in ALIASES.items():
         key_nohyphen = alias_key.replace("-", "")
-        if alias_key.startswith(token) or key_nohyphen.startswith(token_nohyphen):
-            return targets
-    return None
+        if not (alias_key.startswith(token) or key_nohyphen.startswith(token_nohyphen)):
+            continue
+        matched = True
+        for target in targets:
+            if target not in seen:
+                seen.add(target)
+                merged.append(target)
+    return tuple(merged) if matched else None
 
 
 def _category_of(component: ComponentDefinition) -> str:

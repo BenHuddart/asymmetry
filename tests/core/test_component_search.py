@@ -147,6 +147,19 @@ def test_alias_fmuf_family():
     assert "DynamicFmuF" in names
 
 
+def test_alias_prefix_merges_multiple_families():
+    """A short prefix matching several alias keys surfaces every family's targets.
+
+    ``'be'`` is a prefix of both ``beta`` (-> StretchedExponential) and
+    ``bessel`` (-> Bessel); before the merge fix, dict iteration order meant
+    only the first matching alias key's targets were returned.
+    """
+    results = search_components("be", components=COMPONENTS)
+    names = set(_names(results))
+    assert "StretchedExponential" in names
+    assert "Bessel" in names
+
+
 def test_alias_bessel_abragam_keren_are_specific():
     assert _names(search_components("bessel", components=COMPONENTS)) == ["Bessel"] or (
         "Bessel" in _names(search_components("bessel", components=COMPONENTS))

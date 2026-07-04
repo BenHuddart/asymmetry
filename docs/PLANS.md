@@ -8,7 +8,8 @@ subsystems or days.
 
 ### Fit Function Builder Redesign (Option C)
 
-Status: in progress (branch `feat/fit-builder-redesign`, single PR)
+Status: implemented on branch `feat/fit-builder-redesign`; awaiting live GUI
+review before the PR opens
 
 Replace the calculator-style expression dialogs with a two-panel builder:
 searchable component library (left) + structured model-row list (right), with

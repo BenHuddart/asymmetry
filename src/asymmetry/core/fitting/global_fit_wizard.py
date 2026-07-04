@@ -13,7 +13,12 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.fitting.composite import CompositeModel
+from asymmetry.core.fitting.composite import (
+    CompositeModel,
+    _legacy_fraction_rename_map,
+    has_legacy_fraction_values,
+    migrate_legacy_fraction_values,
+)
 from asymmetry.core.fitting.engine import FitEngine, FitResult
 from asymmetry.core.fitting.fit_wizard import (
     CandidateAssessment,
@@ -26,6 +31,7 @@ from asymmetry.core.fitting.fit_wizard import (
     _dense_fit_curves,
     _initial_parameters_for_template,
     _is_additive_relaxation_mixture_template,
+    _migrate_fit_result_fractions,
     _needs_fit_backend_fallback,
     _parameter_variants,
     _residual_diagnostics,
@@ -2099,6 +2105,69 @@ def _serialize_global_candidate_assessment(
     }
 
 
+def _migrate_global_parameter_set_fractions(
+    parameters: ParameterSet, model: CompositeModel
+) -> ParameterSet:
+    """Rename a cached ``global_parameters`` set's legacy ``fraction_<k>`` params.
+
+    Mirrors :func:`asymmetry.core.fitting.fit_wizard._migrate_fit_result_fractions`
+    for the global-fit wizard's standalone ``global_parameters`` :class:`ParameterSet`
+    (recommendation payloads carry this separately from any per-run
+    :class:`~asymmetry.core.fitting.engine.FitResult`). A no-op when there are no
+    legacy keys for this model.
+    """
+    value_map = {parameter.name: float(parameter.value) for parameter in parameters}
+    if not has_legacy_fraction_values(model, value_map):
+        return parameters
+
+    migrated_values = migrate_legacy_fraction_values(model, value_map)
+    rename = _legacy_fraction_rename_map(model)
+
+    migrated = ParameterSet()
+    for parameter in parameters:
+        if parameter.name in rename:
+            new_name = rename[parameter.name]
+            if new_name is None:
+                continue
+            migrated.add(
+                Parameter(
+                    name=new_name,
+                    value=migrated_values.get(new_name, parameter.value),
+                    min=parameter.min,
+                    max=parameter.max,
+                    fixed=parameter.fixed,
+                    expr=parameter.expr,
+                )
+            )
+        else:
+            migrated.add(parameter)
+    return migrated
+
+
+def _migrate_global_param_name_tuple(
+    names: tuple[str, ...], model: CompositeModel
+) -> tuple[str, ...]:
+    """Rename/drop legacy ``fraction_<k>`` entries in a cached parameter-role tuple.
+
+    Applies the same rename map as :func:`_migrate_global_parameter_set_fractions`
+    to a ``global_param_names``/``local_param_names``/``fixed_param_names`` tuple,
+    preserving order and dropping names that map to ``None`` (the derived last
+    term of a fraction group, which never has a free-parameter name of its own).
+    """
+    rename = _legacy_fraction_rename_map(model)
+    if not rename:
+        return names
+    migrated: list[str] = []
+    for name in names:
+        if name in rename:
+            new_name = rename[name]
+            if new_name is not None and new_name not in migrated:
+                migrated.append(new_name)
+        elif name not in migrated:
+            migrated.append(name)
+    return tuple(migrated)
+
+
 def _deserialize_global_candidate_assessment(
     payload: object,
 ) -> GlobalCandidateAssessment | None:
@@ -2108,8 +2177,13 @@ def _deserialize_global_candidate_assessment(
     if template is None:
         return None
 
+    # A recommendation cached before the fraction rework carries legacy
+    # ``fraction_<k>`` names/values across the per-run fit results, the
+    # standalone global-parameter set, and the three parameter-role tuples.
+    # Migrate all of them against the template's model (mirrors
+    # fit_wizard._deserialize_candidate_assessment's single-fit treatment).
     fit_results_by_run = {
-        int(run_number): result
+        int(run_number): _migrate_fit_result_fractions(result, template.model)
         for run_number, entry in (payload.get("fit_results_by_run", {}) or {}).items()
         if (result := _deserialize_fit_result(entry)) is not None
     }
@@ -2133,20 +2207,30 @@ def _deserialize_global_candidate_assessment(
         for run_number, entry in (payload.get("component_curves_by_run", {}) or {}).items()
     }
 
+    global_parameters = _migrate_global_parameter_set_fractions(
+        _deserialize_parameter_set(payload.get("global_parameters", [])), template.model
+    )
+    global_param_names = _migrate_global_param_name_tuple(
+        tuple(name for name in payload.get("global_param_names", []) if isinstance(name, str)),
+        template.model,
+    )
+    local_param_names = _migrate_global_param_name_tuple(
+        tuple(name for name in payload.get("local_param_names", []) if isinstance(name, str)),
+        template.model,
+    )
+    fixed_param_names = _migrate_global_param_name_tuple(
+        tuple(name for name in payload.get("fixed_param_names", []) if isinstance(name, str)),
+        template.model,
+    )
+
     try:
         return GlobalCandidateAssessment(
             template=template,
             fit_results_by_run=fit_results_by_run,
-            global_parameters=_deserialize_parameter_set(payload.get("global_parameters", [])),
-            global_param_names=tuple(
-                name for name in payload.get("global_param_names", []) if isinstance(name, str)
-            ),
-            local_param_names=tuple(
-                name for name in payload.get("local_param_names", []) if isinstance(name, str)
-            ),
-            fixed_param_names=tuple(
-                name for name in payload.get("fixed_param_names", []) if isinstance(name, str)
-            ),
+            global_parameters=global_parameters,
+            global_param_names=global_param_names,
+            local_param_names=local_param_names,
+            fixed_param_names=fixed_param_names,
             parameter_recommendations=parameter_recommendations,
             run_diagnostics=run_diagnostics,
             series_warnings=tuple(

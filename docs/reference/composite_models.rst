@@ -5,10 +5,12 @@ Composite Models
    :alt: Fit Function Builder dialog with an Oscillatory + Exponential + Constant expression
    :width: 100%
 
-*The Fit Function Builder dialog parses free-form expressions over the*
-*registered components. The keypad inserts operators and grouping symbols;*
-*the* **Fractions** *button binds two or more additive components into a*
-*shared-amplitude fraction group. The preview line at the bottom shows the*
+*The Build Fit Function dialog searches a component library on the left*
+*(type to match names, aliases, parameters, or descriptions) and assembles*
+*the model as structured rows on the right, one per component, joined by*
+*editable operators. Selecting two or more '+'-joined rows and pressing*
+*"Group as fractions" binds them into a shared-amplitude fraction group,*
+*shown as an accented container. The preview line at the bottom shows the*
 *compiled formula with mangled parameter names (A_1, A_2, …) for each*
 *component (Blundell et al.,* Muon Spectroscopy: An Introduction *(Oxford University Press, Oxford, 2022), Ch. 6.4).*
 
