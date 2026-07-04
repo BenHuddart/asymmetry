@@ -3350,6 +3350,19 @@ class FitParametersPanel(QWidget):
             else:
                 controls.fit_button.setText("Model Fit")
                 controls.fit_button.setToolTip("")
+        # The relabel above can widen the button past the column width that was
+        # fixed in _rebuild_y_controls (which only ever saw "Model Fit"/"Model
+        # Fit*") — "Global fit (N groups)…" is wider still. Re-pin the column to
+        # whatever the buttons need *now*, in their post-relabel state, so the
+        # text never clips (round-10 regression: column width was set once at
+        # populate time and never revisited on a later relabel).
+        if self._y_controls:
+            fit_column_width = max(
+                max(controls.fit_button.minimumWidth(), controls.fit_button.sizeHint().width())
+                for controls in self._y_controls.values()
+            )
+            if fit_column_width > self._y_selector_table.columnWidth(1):
+                self._y_selector_table.setColumnWidth(1, fit_column_width)
 
     def _has_successful_fit_curve(self, fit: ParameterModelFit) -> bool:
         for fit_range in fit.ranges:

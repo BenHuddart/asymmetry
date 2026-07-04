@@ -58,7 +58,7 @@ from asymmetry.gui.export_paths import (
 from asymmetry.gui.gle_settings import get_gle_executable
 from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
 from asymmetry.gui.styles import tokens
-from asymmetry.gui.styles.widgets import apply_param_table_style
+from asymmetry.gui.styles.widgets import apply_param_table_style, widest_button_width
 from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.utils.export import compile_gle
 from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
@@ -550,13 +550,19 @@ class GlobalParameterFitWindow(QMainWindow):
     def _configure_y_selector_header(self) -> None:
         """Apply per-section resize policies to the local Y-selector table.
 
-        The parameter-name column stretches; the "Model Fit" button column and
-        the "log" column size to their content so neither label truncates.
+        The parameter-name column stretches; the "log" column sizes to its
+        content. The "Model Fit" button column is ``Fixed``: ``ResizeToContents``
+        only measures whichever label is current *at layout time*, and the
+        button can later relabel to the wider "Model Fit*" (active-fit marker),
+        which would then clip. :meth:`_rebuild_local_y_controls` computes the
+        widest label state up front via ``widest_button_width`` and pins that
+        width here with :meth:`QTableWidget.setColumnWidth`, which only sticks
+        under ``Fixed`` (``ResizeToContents`` would immediately override it).
         Reapplied on every populate via :meth:`_rebuild_local_y_controls`.
         """
         header = self._local_y_selector_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         header.setStretchLastSection(False)
 
@@ -974,6 +980,7 @@ class GlobalParameterFitWindow(QMainWindow):
             return
 
         self._local_y_selector_table.setRowCount(len(parameter_names))
+        fit_column_width = 0
         for idx, name in enumerate(parameter_names):
             item = QTableWidgetItem(get_param_info(name).unicode_label())
             item.setData(Qt.ItemDataRole.UserRole, name)
@@ -1003,6 +1010,13 @@ class GlobalParameterFitWindow(QMainWindow):
             if fit is not None and fit.active and self._has_successful_local_fit_curve(fit):
                 fit_button.setText("Model Fit*")
 
+            # Probe every label this button can ever show (not just its current
+            # text) so a later active-fit relabel to "Model Fit*" never exceeds
+            # the column width fixed here — see widest_button_width docstring.
+            fit_column_width = max(
+                fit_column_width, widest_button_width(fit_button, "Model Fit", "Model Fit*")
+            )
+
         preferred = [p for p in (preferred_selected or []) if p in parameter_names]
         if preferred:
             for idx, name in enumerate(parameter_names):
@@ -1014,9 +1028,14 @@ class GlobalParameterFitWindow(QMainWindow):
             if item is not None:
                 item.setSelected(True)
 
-        # Reapply the section policies (Parameter stretches; Fit-button and log
-        # columns size to content so "Model Fit"/"log" never truncate).
+        # Reapply the section policies (Parameter stretches; log column sizes to
+        # content), then pin the button column to the widest label state
+        # ("Model Fit*") computed above: ResizeToContents alone measures a
+        # single button's sizeHint at layout time and can undercount that wider
+        # state, especially under font scaling.
         self._configure_y_selector_header()
+        if fit_column_width > 0:
+            self._local_y_selector_table.setColumnWidth(1, fit_column_width)
         self._local_selected_y_names = self._selected_local_y_parameters()
         self._local_y_selector_table.blockSignals(False)
 

@@ -1325,3 +1325,56 @@ def test_local_y_selector_uses_non_latex_labels(qapp: QApplication) -> None:
     item = window._local_y_selector_table.item(0, 0)
     assert item is not None
     assert "$" not in item.text()
+
+
+def test_local_y_selector_fit_button_column_fits_widest_label(qapp: QApplication) -> None:
+    """The "Model Fit" button column must never clip, even for "Model Fit*".
+
+    Regression (live-reported, screenshot evidence): the per-row button starts
+    out reading "Model Fit". Completing a fit via the model-fit dialog relabels
+    that *same, already-laid-out* button to "Model Fit*" in place
+    (``_open_local_model_fit_dialog``), without rebuilding the whole table.
+    ``ResizeToContents`` measures a cell widget's sizeHint only at layout time
+    and does not react to a later in-place ``setText`` on an existing cell
+    widget (confirmed directly against QTableWidget), so the column stayed at
+    the narrower "Model Fit" width and the new text clipped to "Model Fi". The
+    fix pins the button column's width up front to the widest state the row
+    can ever show, so this later in-place relabel never needs to widen it.
+    """
+    window = GlobalParameterFitWindow()
+    window._rebuild_local_y_controls(["Lambda", "nu"], preferred_selected=["Lambda"])
+
+    fit_button = window._local_y_controls["Lambda"]["fit_button"]
+    assert fit_button.text() == "Model Fit"
+    column_width_before = window._local_y_selector_table.columnWidth(1)
+
+    # Reproduce _open_local_model_fit_dialog's post-fit relabel exactly: set
+    # the model fit, then relabel the *existing* button in place (no table
+    # rebuild) — this is the real trigger, not a fresh populate.
+    fit_model = ParameterCompositeModel(["Linear"])
+    fit_result = ParameterModelFitResult(
+        success=True,
+        parameters=ParameterSet([Parameter("m", value=0.08), Parameter("b", value=0.012)]),
+    )
+    window._local_model_fits["Lambda"] = ParameterModelFit(
+        parameter_name="Lambda",
+        x_key="temperature",
+        ranges=[
+            ModelFitRange(
+                x_min=1.0,
+                x_max=10.0,
+                model=fit_model,
+                parameters=ParameterSet([Parameter("m", value=0.08), Parameter("b", value=0.012)]),
+                result=fit_result,
+            )
+        ],
+        active=True,
+    )
+    fit_button.setText("Model Fit*")
+
+    column_width_after = window._local_y_selector_table.columnWidth(1)
+    assert column_width_after == column_width_before, (
+        "column width changed without a table rebuild — the fixture no longer "
+        "reproduces the in-place relabel this test targets"
+    )
+    assert column_width_after >= fit_button.sizeHint().width()

@@ -777,10 +777,14 @@ def test_params_table_header_modes_survive_populate(qapp: QApplication) -> None:
 def test_y_selector_header_resize_modes(qapp: QApplication) -> None:
     window = GlobalParameterFitWindow()
     header = window._local_y_selector_table.horizontalHeader()
-    # Parameter-name column stretches; button + log columns size to content so
-    # "Model Fit"/"log" never truncate.
+    # Parameter-name column stretches; the log column sizes to content. The
+    # button column is Fixed (not ResizeToContents): ResizeToContents does not
+    # react to an in-place setText() on an already-laid-out button (e.g. the
+    # "Model Fit" -> "Model Fit*" relabel after a fit completes), so
+    # _rebuild_local_y_controls computes the widest label's width up front and
+    # pins it with setColumnWidth, which only sticks under Fixed.
     assert header.sectionResizeMode(0) == QHeaderView.ResizeMode.Stretch
-    assert header.sectionResizeMode(1) == QHeaderView.ResizeMode.ResizeToContents
+    assert header.sectionResizeMode(1) == QHeaderView.ResizeMode.Fixed
     assert header.sectionResizeMode(2) == QHeaderView.ResizeMode.ResizeToContents
     assert not header.stretchLastSection()
 
@@ -790,7 +794,7 @@ def test_y_selector_header_modes_survive_populate(qapp: QApplication) -> None:
     window._rebuild_local_y_controls(["A", "Lambda", "c"])
     header = window._local_y_selector_table.horizontalHeader()
     assert header.sectionResizeMode(0) == QHeaderView.ResizeMode.Stretch
-    assert header.sectionResizeMode(1) == QHeaderView.ResizeMode.ResizeToContents
+    assert header.sectionResizeMode(1) == QHeaderView.ResizeMode.Fixed
     assert header.sectionResizeMode(2) == QHeaderView.ResizeMode.ResizeToContents
 
 

@@ -2680,7 +2680,13 @@ def test_model_fit_button_relabels_for_two_groups(qapp: QApplication) -> None:
     panel._set_selected_group_ids(["g_a", "g_b"], emit=False)
     panel._apply_group_selection_to_view(sync_active=False)
     panel._refresh_model_fit_button_labels()
-    assert panel._y_controls["Lambda"].fit_button.text() == "Global fit (2 groups)…"
+    fit_button = panel._y_controls["Lambda"].fit_button
+    assert fit_button.text() == "Global fit (2 groups)…"
+    # Regression: this relabel happens well after _rebuild_y_controls fixed the
+    # column width from "Model Fit"/"Model Fit*" alone. "Global fit (2
+    # groups)…" is wider still, so the column must widen to match or the label
+    # clips (e.g. renders as "Global fit (2 gro").
+    assert panel._y_selector_table.columnWidth(1) >= fit_button.sizeHint().width()
 
 
 def test_setup_overrides_reach_parameter_group_data(
