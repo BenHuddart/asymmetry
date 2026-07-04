@@ -57,6 +57,26 @@ MUONIUM_LOW_TF_MAX_GAUSS: float = 150.0
 #: Below this TF field (gauss), the high-TF intratriplet forms are not yet valid.
 MUONIUM_HIGH_TF_MIN_GAUSS: float = 1500.0
 
+# --- B≈0 geometry-label override ----------------------------------------
+#
+# Real ISIS runs are sometimes recorded with a TF/LF beamline label while the
+# applied-field *setpoint* sits at (or near) zero — the run is physically a ZF
+# measurement on a TF-capable beamline (see docs/porting/field-geometry/,
+# "MUSR00044991.nxs: magnetic_field_state='TF' at magnetic_field=0 G"). Trusting
+# the label alone excludes ZF-only families (F-mu-F, Kubo-Toyabe) exactly on the
+# data that needs them.
+#
+# This is deliberately distinct from the "geometry is never inferred from field
+# magnitude" invariant honoured elsewhere in this module: that rule forbids
+# *guessing a TF/LF direction* from |B| (a TF run can legitimately sit at 0 G,
+# so |B|==0 must never be read as "this was actually LF"). Reading the recorded
+# setpoint and concluding "there is no applied field" is a different claim —
+# it says nothing about which direction a nonzero field would have pointed.
+# The override therefore only ever *widens* scope (adds the ZF family list on
+# top of the labelled one); it never removes or overrides the recorded label,
+# because the label may still be correct about which magnet/hardware was live.
+ZERO_FIELD_MAX_GAUSS: float = 2.0
+
 # --- cost ordering ------------------------------------------------------
 #
 # ``ComputationalCost`` is a ``str``-Enum, so a naive ``<=`` compares members
@@ -280,6 +300,7 @@ def infer_auto_query(
     """
     geometry = geometry_from_field_direction(field_direction)
     exclusions: tuple[ExcludedComponent, ...] = ()
+    near_zero = field_gauss is not None and abs(field_gauss) <= ZERO_FIELD_MAX_GAUSS
 
     if geometry is FieldGeometry.ZF:
         # All classes: molecular / muonium ZF physics can't be ruled out here.
@@ -287,13 +308,27 @@ def infer_auto_query(
         effective = WizardScopePreset.ZF_STATIC_MAGNETISM
         note = "run geometry: zero field — screening ZF families"
     elif geometry is FieldGeometry.LF:
-        query = ScopeQuery(frozenset({FieldGeometry.LF}), frozenset(PhysicsClass))
-        effective = WizardScopePreset.LF_DYNAMICS
+        geometries = {FieldGeometry.LF}
         note = "run geometry: longitudinal field — screening LF families"
+        if near_zero:
+            geometries.add(FieldGeometry.ZF)
+            note += (
+                f"; applied-field setpoint {field_gauss:g} G is within "
+                f"{ZERO_FIELD_MAX_GAUSS:g} G of zero — widening to include ZF families"
+            )
+        query = ScopeQuery(frozenset(geometries), frozenset(PhysicsClass))
+        effective = WizardScopePreset.LF_DYNAMICS
     elif geometry is FieldGeometry.TF:
-        query = ScopeQuery(frozenset({FieldGeometry.TF}), frozenset(PhysicsClass))
-        effective = WizardScopePreset.TF_KNIGHT_PRECESSION
+        geometries = {FieldGeometry.TF}
         note = "run geometry: transverse field — screening TF families"
+        if near_zero:
+            geometries.add(FieldGeometry.ZF)
+            note += (
+                f"; applied-field setpoint {field_gauss:g} G is within "
+                f"{ZERO_FIELD_MAX_GAUSS:g} G of zero — widening to include ZF families"
+            )
+        query = ScopeQuery(frozenset(geometries), frozenset(PhysicsClass))
+        effective = WizardScopePreset.TF_KNIGHT_PRECESSION
         exclusions = _muonium_regime_exclusions(field_gauss)
     else:
         query = ScopeQuery(ALL_GEOMETRIES, frozenset(PhysicsClass))

@@ -13,6 +13,7 @@ from asymmetry.core.fitting.user_functions import register_component
 from asymmetry.core.fitting.wizard_scope import (
     MUONIUM_HIGH_TF_MIN_GAUSS,
     MUONIUM_LOW_TF_MAX_GAUSS,
+    ZERO_FIELD_MAX_GAUSS,
     ExcludedComponent,
     ScopeResolution,
     WizardScope,
@@ -155,6 +156,83 @@ def test_auto_unknown_geometry_is_superset_of_zf_preset():
     assert zf.included_set <= unknown.included_set
     # And it equals the ALL query set (every time-domain component).
     assert unknown.included_set == _time_component_names()
+
+
+# --- B≈0 geometry-label override -----------------------------------------
+#
+# Real ISIS runs are sometimes recorded "TF" with the applied-field setpoint
+# at (or near) zero — a ZF measurement on a TF-capable beamline (see
+# docs/porting/field-geometry/: "MUSR00044991.nxs: magnetic_field_state='TF'
+# at magnetic_field=0 G"). Auto must widen to include ZF families in that case
+# without dropping the labelled TF family, which may still be hardware-correct.
+
+
+def test_tf_label_zero_field_widens_to_include_zf_families():
+    res = resolve_scope(WizardScope(), field_direction="TF", field_gauss=0.0)
+    # ZF-only molecular family now in scope...
+    assert "FmuF_Linear" in res.included_set
+    # ...without losing the labelled TF family (VortexLattice is TF-only).
+    assert "VortexLattice" in res.included_set
+    assert "zero" in res.inference_note.lower()
+
+
+def test_tf_label_nonzero_field_unchanged_behavior():
+    res = resolve_scope(WizardScope(), field_direction="TF", field_gauss=100.0)
+    assert "FmuF_Linear" not in res.included_set
+    assert "VortexLattice" in res.included_set
+
+
+def test_tf_label_at_override_threshold_widens():
+    res = resolve_scope(WizardScope(), field_direction="TF", field_gauss=ZERO_FIELD_MAX_GAUSS)
+    assert "FmuF_Linear" in res.included_set
+
+
+def test_tf_label_just_above_threshold_does_not_widen():
+    res = resolve_scope(WizardScope(), field_direction="TF", field_gauss=ZERO_FIELD_MAX_GAUSS + 0.5)
+    assert "FmuF_Linear" not in res.included_set
+
+
+def test_tf_label_negative_near_zero_field_widens():
+    # A signed setpoint near zero (e.g. a small negative residual) still counts.
+    res = resolve_scope(WizardScope(), field_direction="TF", field_gauss=-1.0)
+    assert "FmuF_Linear" in res.included_set
+
+
+def test_lf_label_zero_field_widens_to_include_zf_families():
+    res = resolve_scope(WizardScope(), field_direction="LF", field_gauss=0.5)
+    assert "FmuF_Linear" in res.included_set
+    # LF-only dynamics family (labelled geometry) is preserved.
+    zf_only = _resolve(WizardScopePreset.ZF_STATIC_MAGNETISM)
+    lf_only = _resolve(WizardScopePreset.LF_DYNAMICS)
+    assert lf_only.included_set <= res.included_set
+    assert zf_only.included_set <= res.included_set
+
+
+def test_lf_label_nonzero_field_unchanged_behavior():
+    res = resolve_scope(WizardScope(), field_direction="LF", field_gauss=680.0)
+    assert "FmuF_Linear" not in res.included_set
+
+
+def test_tf_label_unknown_field_does_not_widen():
+    # No override without a recorded setpoint magnitude.
+    res = resolve_scope(WizardScope(), field_direction="TF", field_gauss=None)
+    assert "FmuF_Linear" not in res.included_set
+
+
+def test_zf_label_unaffected_by_override():
+    # ZF geometry is already the override's target; a field_gauss value must
+    # not further change Auto's ZF behaviour one way or the other.
+    with_field = resolve_scope(WizardScope(), field_direction="ZF", field_gauss=0.0)
+    without_field = resolve_scope(WizardScope(), field_direction="ZF", field_gauss=None)
+    assert with_field.included_set == without_field.included_set
+    assert with_field.effective_preset is WizardScopePreset.ZF_STATIC_MAGNETISM
+
+
+def test_zero_field_override_via_dataset_wrapper():
+    dataset = _fake_dataset("TF", field=0.0)
+    res = resolve_scope_for_dataset(dataset, WizardScope())
+    assert "FmuF_Linear" in res.included_set
+    assert res.effective_preset is WizardScopePreset.TF_KNIGHT_PRECESSION
 
 
 # --- fluorine sniff -----------------------------------------------------
