@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Instrument switcher in the Grouping window.** When a project holds runs from
+  more than one instrument, the Grouping window now shows an **Instrument**
+  selector ("GPS — 3 runs") that swaps the whole editor — its draft, preview run,
+  scope panel, and preset list — between them, after the usual discard prompt for
+  unsaved edits. It is hidden when only one instrument is loaded.
+- **Editing an overridden run's grouping.** A run released from its profile could
+  previously only be created or dropped; its per-run grouping is now editable.
+  Selecting an overridden run as the preview run (or clicking **Edit…** on its
+  scope-panel row) puts the window into an explicit *override-editing mode*: a
+  warning banner reads "Editing override for run *N* — changes apply to this run
+  only", the profile and instrument switchers are disabled, and the form seeds
+  from the run's own grouping. Edits stay off the profile draft and Apply writes
+  the edited grouping back to that one run alone (the status bar confirms "Updated
+  override for run *N*"); every inheriting run is left untouched. Leaving the mode
+  with unsaved override edits — including on window close — prompts to discard.
+
+### Changed
+
+- **"Instrument" replaces "fingerprint" throughout the Grouping window and its
+  documentation.** The user-facing term for a run's `(instrument, histogram
+  count)` identity is now plainly "Instrument"; the scope panel is headed "Runs
+  of this instrument", and the detector count is shown ("GPS (6 detectors)") only
+  when two variants of the same instrument are both loaded. The internal
+  `ProfileFingerprint` API is unchanged.
+
 ### Fixed
 
 - **PSI analysis convention in the GPS/FLAME/HAL presets.** PSI names detectors
@@ -26,6 +53,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names as defence in depth, and no longer double-swaps a fixed preset.
 
 ### Added
+
+- **Time-zero (t0) policy on grouping profiles.** The **t0 Bin** row gains a
+  mode selector — *From file*, *Manual*, or *Auto-detect* — carried by the
+  grouping profile as a `T0Policy` (mirroring the α and deadtime policies and
+  WiMDA's *FileValues* checkbox). *From file* (the new default) uses each run's
+  own file-derived t0 exactly as before, with the spinbox read-only and
+  following the preview run. *Manual* is the historical editable override, and
+  *Auto-detect* runs the prompt-peak / pulse-edge search on every run at
+  reduction time. Critically, a manual or detected t0 edit is now
+  **non-destructive**: instead of permanently rewriting each histogram's
+  `t0_bin`, the shift is published as an `effective_detector_t0_bins` override
+  that the reduction chokepoints align on, so the loaded histograms are left as
+  read from the file and an override can be changed or cleared freely. The
+  existing **Find t0** button becomes the one-shot fill for Manual mode.
+  Existing projects migrate per profile: a stored common t0 that differs from
+  the run's file t0 becomes `manual`, otherwise `from_file` (no schema bump).
 
 - **Project-level detector-grouping profiles.** The Grouping window is now a
   *profile editor* rather than a bulk broadcast tool. One named grouping profile

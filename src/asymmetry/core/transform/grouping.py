@@ -53,11 +53,56 @@ def apply_grouping(
     return total
 
 
+#: Grouping-dict key carrying the T0Policy-resolved effective per-detector t0
+#: bins (0-based, one per histogram). Distinct from the file-derived
+#: ``detector_t0_bins`` per-run fact so a *manual* policy can shift alignment
+#: without touching the file values. Absent for the ``from_file`` default.
+EFFECTIVE_DETECTOR_T0_KEY = "effective_detector_t0_bins"
+
+
+def detector_t0_overrides(grouping: dict | None, n_histograms: int) -> list[int] | None:
+    """Extract policy-resolved per-detector t0 overrides from a grouping dict.
+
+    Reads :data:`EFFECTIVE_DETECTOR_T0_KEY` (a *manual* T0Policy writes it) and
+    returns it as an int list when it lines up with the histogram count, else
+    ``None`` (the ``from_file`` default aligns on ``Histogram.t0_bin``).
+    """
+    grouping = grouping if isinstance(grouping, dict) else {}
+    raw = grouping.get(EFFECTIVE_DETECTOR_T0_KEY)
+    if not isinstance(raw, (list, tuple)) or len(raw) != n_histograms:
+        return None
+    try:
+        return [int(v) for v in raw]
+    except (TypeError, ValueError):
+        return None
+
+
+def _detector_t0(
+    histograms: list[Histogram],
+    index: int,
+    detector_t0_bins: list[int] | None,
+) -> int:
+    """The t0 bin to align detector ``index`` to.
+
+    Prefers a per-detector override from ``detector_t0_bins`` (the effective
+    t0 a T0Policy resolved for this run without mutating the histograms) and
+    falls back to the histogram's own file-derived ``t0_bin``. The override
+    lets a *manual* t0 policy shift the alignment point non-destructively —
+    the loaded ``Histogram.t0_bin`` values stay as read from the file.
+    """
+    if detector_t0_bins is not None and 0 <= index < len(detector_t0_bins):
+        override = detector_t0_bins[index]
+        if override is not None:
+            return int(override)
+    return int(histograms[index].t0_bin)
+
+
 def apply_grouping_aligned(
     histograms: list[Histogram],
     group_indices: list[int],
     *,
     common_t0_bin: int | None = None,
+    detector_t0_bins: list[int] | None = None,
 ) -> NDArray[np.float64]:
     """Sum detector counts after aligning each detector's own ``t0_bin``.
 
@@ -65,19 +110,27 @@ def apply_grouping_aligned(
     :func:`apply_grouping` is sufficient. PSI BIN/MDU data can carry different
     ``t0`` values per detector. This helper shifts each selected detector so
     that its local ``t0_bin`` lands on ``common_t0_bin`` before summing.
+
+    ``detector_t0_bins`` optionally overrides each detector's alignment t0
+    (indexed 0-based across the full histogram list) — the non-destructive
+    route a *manual* T0Policy uses to shift the effective t0 without rewriting
+    ``Histogram.t0_bin``. When ``None``, each histogram's own ``t0_bin`` is used.
     """
-    selected = [histograms[i] for i in _present_indices(group_indices, len(histograms))]
+    present = _present_indices(group_indices, len(histograms))
+    selected = [(i, histograms[i]) for i in present]
     if not selected:
         return np.array([], dtype=np.float64)
 
     if common_t0_bin is None:
-        common_t0_bin = max(0, max(int(hist.t0_bin) for hist in selected))
+        common_t0_bin = max(
+            0, max(_detector_t0(histograms, i, detector_t0_bins) for i, _ in selected)
+        )
     common_t0_bin = max(0, int(common_t0_bin))
 
     shifted: list[NDArray[np.float64]] = []
-    for hist in selected:
+    for i, hist in selected:
         counts = np.asarray(hist.counts, dtype=np.float64)
-        offset = common_t0_bin - int(hist.t0_bin)
+        offset = common_t0_bin - _detector_t0(histograms, i, detector_t0_bins)
         if offset <= 0:
             shifted.append(counts[-offset:].copy() if offset < 0 else counts.copy())
             continue
@@ -96,13 +149,21 @@ def apply_grouping_aligned(
 def common_t0_for_groups(
     histograms: list[Histogram],
     *group_indices: list[int],
+    detector_t0_bins: list[int] | None = None,
 ) -> int:
-    """Return a common t0 suitable for comparing multiple detector groups."""
+    """Return a common t0 suitable for comparing multiple detector groups.
+
+    ``detector_t0_bins`` optionally overrides the per-detector t0 (see
+    :func:`apply_grouping_aligned`) so a *manual* T0Policy can shift the common
+    t0 without mutating ``Histogram.t0_bin``.
+    """
     indices = sorted({idx for group in group_indices for idx in group})
     indices = _present_indices(indices, len(histograms))
     if not indices:
-        return int(histograms[0].t0_bin) if histograms else 0
-    return max(0, max(int(histograms[idx].t0_bin) for idx in indices))
+        if not histograms:
+            return 0
+        return _detector_t0(histograms, 0, detector_t0_bins)
+    return max(0, max(_detector_t0(histograms, idx, detector_t0_bins) for idx in indices))
 
 
 def good_frames(grouping: dict | None, default: float = 1.0) -> float:
@@ -430,9 +491,16 @@ def group_forward_backward(
     if not np.isfinite(alpha) or alpha <= 0.0:
         alpha = 1.0
 
-    common_t0 = common_t0_for_groups(histograms, forward_indices, backward_indices)
-    forward = apply_grouping_aligned(histograms, forward_indices, common_t0_bin=common_t0)
-    backward = apply_grouping_aligned(histograms, backward_indices, common_t0_bin=common_t0)
+    detector_t0_bins = detector_t0_overrides(grouping, len(histograms))
+    common_t0 = common_t0_for_groups(
+        histograms, forward_indices, backward_indices, detector_t0_bins=detector_t0_bins
+    )
+    forward = apply_grouping_aligned(
+        histograms, forward_indices, common_t0_bin=common_t0, detector_t0_bins=detector_t0_bins
+    )
+    backward = apply_grouping_aligned(
+        histograms, backward_indices, common_t0_bin=common_t0, detector_t0_bins=detector_t0_bins
+    )
     return GroupedForwardBackward(
         forward=forward,
         backward=backward,

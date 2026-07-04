@@ -199,6 +199,7 @@ from asymmetry.core.representation import (
 )
 from asymmetry.core.representation.project_model import ProjectModel
 from asymmetry.core.transform import (
+    EFFECTIVE_DETECTOR_T0_KEY,
     FieldScan,
     apply_deadtime_correction,
     available_background_modes,
@@ -3623,9 +3624,13 @@ class MainWindow(QMainWindow):
         profile_result = (
             dialog.get_profile_result() if hasattr(dialog, "get_profile_result") else None
         )
+        override_updated_run: int | None = None
         if profile_result is not None:
             self._store_grouping_profile(profile_result["profile"])
             self._reconcile_grouping_overrides(dialog_datasets, profile_result)
+            override_updated_run = self._apply_grouping_override_edits(
+                dialog_datasets, profile_result
+            )
 
         run_numbers = {int(v) for v in grouping_result.get("run_numbers", [])}
         alpha = float(grouping_result.get("alpha", 1.0))
@@ -3693,7 +3698,7 @@ class MainWindow(QMainWindow):
                     self._current_dataset = rebuilt_combined_dataset
                     self._fit_panel.set_dataset(self._get_fit_dataset(rebuilt_combined_dataset))
 
-        if updated > 0:
+        if updated > 0 or override_updated_run is not None:
             self._mark_dirty()
             bunch_factor = max(1, int(grouping_result.get("bunching_factor", 1)))
             self._view_modes[self._active_view_mode_index]["bunch_factor"] = bunch_factor
@@ -3718,7 +3723,9 @@ class MainWindow(QMainWindow):
             f"deadtime={deadtime_msg}, background={background_msg}"
         )
 
-        if profile_result is not None:
+        if override_updated_run is not None:
+            self.statusBar().showMessage(f"Updated override for run {override_updated_run}", 8000)
+        elif profile_result is not None:
             profile_name = profile_result["profile"].name
             overridden = len(profile_result.get("released", set()))
             message = f"Grouping profile '{profile_name}' applied to {updated} run(s)"
@@ -3798,6 +3805,36 @@ class MainWindow(QMainWindow):
             dataset = by_run.get(run_number)
             if dataset is not None and isinstance(dataset.metadata, dict):
                 dataset.metadata.pop("grouping_overrides", None)
+
+    def _apply_grouping_override_edits(self, datasets, profile_result: dict) -> int | None:
+        """Apply an override-editing-mode edit to its run alone.
+
+        When the grouping window was in override-editing mode, ``profile_result``
+        carries ``override_edits`` — a ``{run_number: grouping_payload}`` map for
+        the single overridden run whose own grouping was edited. The payload is
+        applied to that run only; the run stays marked overridden (the edit
+        *is* its new per-run override). Returns the edited run number, or
+        ``None`` when there was no override edit.
+        """
+        override_edits = profile_result.get("override_edits") or {}
+        if not override_edits:
+            return None
+        by_run = {int(ds.run_number): ds for ds in datasets}
+        applied_run: int | None = None
+        for run_number, payload in override_edits.items():
+            dataset = by_run.get(int(run_number))
+            if dataset is None or dataset.run is None:
+                continue
+            applied, _dt = self._apply_grouping_settings_to_dataset(dataset, dict(payload))
+            if not applied:
+                continue
+            # The run keeps its override badge: the edit is its new override.
+            if isinstance(dataset.metadata, dict):
+                dataset.metadata["grouping_overrides"] = True
+            if dataset is self._current_dataset:
+                self._fit_panel.set_dataset(self._get_fit_dataset(dataset))
+            applied_run = int(run_number)
+        return applied_run
 
     def _resolve_grouping_dialog_context(
         self,
@@ -4386,34 +4423,23 @@ class MainWindow(QMainWindow):
         if isinstance(grouping_result.get("histogram_labels"), list):
             run.grouping["histogram_labels"] = list(grouping_result.get("histogram_labels", []))
 
-        detector_t0_bins = run.grouping.get("detector_t0_bins")
-        if isinstance(detector_t0_bins, list) and len(detector_t0_bins) == len(run.histograms):
-            try:
-                previous_common_t0 = int(existing_grouping.get("t0_bin", t0_default))
-            except (TypeError, ValueError):
-                previous_common_t0 = t0_default
-            delta = int(t0_bin) - previous_common_t0
-            run.histograms = [
-                Histogram(
-                    counts=hist.counts,
-                    bin_width=hist.bin_width,
-                    t0_bin=max(0, int(detector_t0_bins[i]) + delta),
-                    good_bin_start=hist.good_bin_start,
-                    good_bin_end=hist.good_bin_end,
-                )
-                for i, hist in enumerate(run.histograms)
+        # A user t0 edit is applied NON-DESTRUCTIVELY (T0Policy semantics): the
+        # run's histograms keep their file-derived t0_bin values, and the effective
+        # common-t0 shift is published as per-detector overrides that the reduction
+        # chokepoints (common_t0_for_groups / apply_grouping_aligned) prefer. A
+        # manual t0 therefore no longer permanently rewrites the loaded histograms.
+        file_common_t0 = (
+            common_t0_for_groups(run.histograms, forward_idx, backward_idx)
+            if run.histograms and (forward_idx or backward_idx)
+            else t0_default
+        )
+        delta = int(t0_bin) - int(file_common_t0)
+        if run.histograms and delta != 0:
+            run.grouping[EFFECTIVE_DETECTOR_T0_KEY] = [
+                max(0, int(hist.t0_bin) + delta) for hist in run.histograms
             ]
-        elif run.histograms and any(int(hist.t0_bin) != t0_bin for hist in run.histograms):
-            run.histograms = [
-                Histogram(
-                    counts=hist.counts,
-                    bin_width=hist.bin_width,
-                    t0_bin=t0_bin,
-                    good_bin_start=hist.good_bin_start,
-                    good_bin_end=hist.good_bin_end,
-                )
-                for hist in run.histograms
-            ]
+        else:
+            run.grouping.pop(EFFECTIVE_DETECTOR_T0_KEY, None)
 
         if has_file_deadtime(existing_grouping, len(run.histograms)):
             run.grouping["deadtime_file_us"] = list(existing_grouping.get("dead_time_us", []))
@@ -4660,7 +4686,13 @@ class MainWindow(QMainWindow):
             run.grouping["alpha_x"] = float(vector_alphas.get("P_x", run_alpha))
             run.grouping["alpha_y"] = float(vector_alphas.get("P_y", run_alpha))
             run.grouping["alpha_z"] = float(vector_alphas.get("P_z", run_alpha))
-        if isinstance(detector_t0_bins, list) and len(detector_t0_bins) == len(run.histograms):
+        # Keep the file-derived per-detector t0 table in sync with the (unmutated)
+        # histograms; a manual t0 shift is carried non-destructively via the
+        # effective-t0 override, never by rewriting these file values.
+        existing_detector_t0 = run.grouping.get("detector_t0_bins")
+        if isinstance(existing_detector_t0, list) and len(existing_detector_t0) == len(
+            run.histograms
+        ):
             run.grouping["detector_t0_bins"] = [int(hist.t0_bin) for hist in run.histograms]
         # Persist group names if provided
         group_names = grouping_result.get("group_names")

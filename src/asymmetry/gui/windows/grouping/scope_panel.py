@@ -37,6 +37,8 @@ class ScopePanel(QWidget):
 
     #: Emitted whenever the released-run set changes (release / reattach).
     changed = Signal()
+    #: Emitted (with the run number) when the user asks to edit an override.
+    edit_requested = Signal(int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         """Create an empty scope panel; call :meth:`set_runs` to populate it."""
@@ -53,7 +55,7 @@ class ScopePanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
 
-        self._heading = QLabel("Runs of this fingerprint")
+        self._heading = QLabel("Runs of this instrument")
         layout.addWidget(self._heading)
 
         self._list = QListWidget()
@@ -77,8 +79,17 @@ class ScopePanel(QWidget):
             "Drop the per-run override so the selected runs inherit this profile again."
         )
         self._reattach_btn.clicked.connect(self._on_reattach)
+        self._edit_btn = QPushButton("Edit…")
+        self._edit_btn.setAutoDefault(False)
+        self._edit_btn.setDefault(False)
+        self._edit_btn.setToolTip(
+            "Edit the selected overridden run's own grouping — changes apply to "
+            "that run only. Selects it as the preview run."
+        )
+        self._edit_btn.clicked.connect(self._on_edit)
         button_row.addWidget(self._release_btn)
         button_row.addWidget(self._reattach_btn)
+        button_row.addWidget(self._edit_btn)
         button_row.addStretch()
         layout.addLayout(button_row)
 
@@ -123,6 +134,16 @@ class ScopePanel(QWidget):
         any_override = any(self._released.get(rn, False) for rn in selected)
         self._release_btn.setEnabled(any_inherit)
         self._reattach_btn.setEnabled(any_override)
+        # Edit… acts on exactly one overridden run.
+        overridden_selected = [rn for rn in selected if self._released.get(rn, False)]
+        self._edit_btn.setEnabled(len(overridden_selected) == 1)
+
+    def _on_edit(self) -> None:
+        overridden_selected = [
+            rn for rn in self._selected_run_numbers() if self._released.get(rn, False)
+        ]
+        if len(overridden_selected) == 1:
+            self.edit_requested.emit(int(overridden_selected[0]))
 
     def _on_release(self) -> None:
         changed = False

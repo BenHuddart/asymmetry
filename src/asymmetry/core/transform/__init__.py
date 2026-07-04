@@ -29,10 +29,12 @@ from asymmetry.core.transform.deadtime import (
     prepare_histograms_with_deadtime,
 )
 from asymmetry.core.transform.grouping import (
+    EFFECTIVE_DETECTOR_T0_KEY,
     GroupedForwardBackward,
     apply_grouping,
     apply_grouping_aligned,
     common_t0_for_groups,
+    detector_t0_overrides,
     effective_group_indices,
     effective_grouping,
     excluded_detector_indices,
@@ -103,6 +105,8 @@ __all__ = [
     "apply_grouping",
     "apply_grouping_aligned",
     "common_t0_for_groups",
+    "detector_t0_overrides",
+    "EFFECTIVE_DETECTOR_T0_KEY",
     "resolve_group_indices",
     "effective_group_indices",
     "effective_grouping",

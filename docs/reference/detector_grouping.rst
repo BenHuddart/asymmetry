@@ -38,23 +38,25 @@ the same series from silently drifting apart. A profile fixes the shareable
 choices in one place: edit it once, and every run that matches it is
 analysed the same way.
 
-Fingerprint and scope
+Instrument and scope
 ~~~~~~~~~~~~~~~~~~~~~~
 
-A profile applies to runs matching its **fingerprint** — the pair
-``(instrument, histogram count)``. The histogram count disambiguates layout
-variants of the same physical instrument, such as PSI GPS's six-detector
-PSI-BIN export and eleven-detector MusrRoot export (see `PSI GPS`_ below):
-they are shown to the user as one instrument but resolve against separate
-fingerprints, so a GPS PSI-BIN profile is never offered to an eleven-detector
-GPS ROOT run.
+A profile applies to every run of one **instrument** — matched, internally, on
+the pair ``(instrument, histogram count)``. The histogram count disambiguates
+layout variants of the same physical instrument, such as PSI GPS's
+six-detector PSI-BIN export and eleven-detector MusrRoot export (see `PSI GPS`_
+below): both are shown as one instrument, but a GPS PSI-BIN profile is never
+offered to an eleven-detector GPS ROOT run. The window names the instrument
+plainly — "GPS" — and appends the detector count only when two variants of the
+same instrument are both loaded, so they can be told apart: "GPS (6 detectors)"
+and "GPS (11 detectors)".
 
-A project may hold several saved profiles per fingerprint (a "silver
+A project may hold several saved profiles per instrument (a "silver
 calibration" profile and a "custom two-group" profile for the same
 instrument, say), but only one is **active** at a time. A newly loaded run
-inherits its fingerprint's active profile automatically — no per-run Apply
+inherits its instrument's active profile automatically — no per-run Apply
 step is needed. Switching which profile is active re-resolves every run of
-that fingerprint against the new profile the next time it is displayed or
+that instrument against the new profile the next time it is displayed or
 reduced.
 
 A run can be explicitly **released** from its profile, freezing its current
@@ -104,8 +106,8 @@ Migration from older projects
 
 Projects saved before profiles existed (schema v11 and earlier) store a
 complete grouping payload on every dataset. Opening such a project migrates
-it to schema v12 automatically: datasets are grouped by fingerprint, and
-within each fingerprint
+it to schema v12 automatically: datasets are grouped by instrument, and
+within each instrument
 
 * if every run's *shareable* settings already agree, one active profile named
   "Default (<instrument>)" is created and every contributing run switches
@@ -116,9 +118,9 @@ within each fingerprint
   a manually released run would.
 
 The migration is additive: nothing that could not be faithfully represented
-as a profile is discarded, and a run that cannot even be fingerprinted
-(missing instrument metadata) is left with its original payload and joins no
-profile. Saving the project afterwards writes schema v12.
+as a profile is discarded, and a run whose instrument cannot be
+identified (missing instrument metadata) is left with its original payload and
+joins no profile. Saving the project afterwards writes schema v12.
 
 The Grouping window
 --------------------
@@ -138,15 +140,23 @@ draft is what gets applied to every run inheriting the profile.
 
 * **Profile selector** — switches which saved profile is being edited, and
   offers **New…** and **Duplicate…** to start a fresh profile or branch one
-  from the current settings. Only profiles matching the loaded run's
-  fingerprint are listed. Renaming is available from the same control.
+  from the current settings. Only profiles for the selected instrument are
+  listed. Renaming is available from the same control.
   Switching away from a profile with unsaved edits prompts to discard them.
+* **Instrument switcher** ("Instrument") — chooses which instrument's profile
+  the window edits, listing every instrument present in the loaded datasets as
+  "GPS — 3 runs". It is hidden when the project holds a single instrument, since
+  there is then nothing to switch between. Picking another instrument swaps the
+  whole editor — its draft, preview run, scope panel, and preset list all follow
+  — after the same discard prompt the profile selector uses for unsaved edits.
 * **Preview run selector** ("Preview run") — chooses which run's per-run
   facts (:math:`t_0`, good-bin window, file deadtime, period tables) seed the
-  preview and the status rows. This is **non-destructive**: changing it never
-  edits the draft's shareable settings and never changes which run is
-  "active" elsewhere in the program — it only changes which run's facts the
-  window is currently looking at.
+  preview and the status rows. For an *inheriting* run this is
+  **non-destructive**: changing it never edits the draft's shareable settings
+  and never changes which run is "active" elsewhere in the program — it only
+  changes which run's facts the window is currently looking at. Choosing an
+  *overridden* run instead switches the window into override-editing mode
+  (`Editing an override`_ below).
 * **Preset dropdown and chip** — an instrument-aware preset dropdown seeds a
   sensible starting arrangement (see the per-instrument sections below), and
   a chip beside it reads either **"Preset: <name>"** when the draft's groups
@@ -155,10 +165,12 @@ draft is what gets applied to every run inheriting the profile.
   This comparison is re-made every time the draft changes rather than cached,
   so the chip never keeps showing a preset name the settings have since
   drifted away from.
-* **Scope panel** — lists the runs of the current fingerprint, each tagged
-  either **inherits <profile>** or **override**, with **Release** and
-  **Reattach** buttons to move a run between the two. Apply is disabled when
-  every run of the fingerprint has been released, since there would then be
+* **Scope panel** — headed "Runs of this instrument", it lists the runs of the
+  selected instrument, each tagged either **inherits <profile>** or
+  **override**, with **Release** and **Reattach** buttons to move a run between
+  the two. A third **Edit…** button opens the selected overridden run's own
+  grouping for editing (`Editing an override`_ below). Apply is disabled when
+  every run of the instrument has been released, since there would then be
   nothing left for the profile to reach.
 * **Live asymmetry preview** — a debounced plot of the forward/backward
   asymmetry the current draft would produce on the preview run, recomputed
@@ -193,6 +205,9 @@ The grouping payload stores:
 * instrument and preset metadata
 * optional per-detector ``t0`` metadata for formats such as PSI BIN/MDU and
   MusrRoot/LEM ROOT
+* the time-zero policy (``from_file``, ``manual``, or ``auto_detect``); a
+  manual/detected shift is carried as ``effective_detector_t0_bins`` so the
+  raw histograms are never rewritten (see `Time-zero (t0) modes`_)
 * optional deadtime metadata: ``deadtime_mode``, ``deadtime_method``, and any
    resolved ``dead_time_us`` values used for manual, calibrated, or estimated
    deadtime correction
@@ -201,6 +216,32 @@ The grouping payload stores:
 
 These settings are persisted in project files (as grouping profiles, schema
 v12) and in ``.grp`` files.
+
+.. _Editing an override:
+
+Editing an override
+~~~~~~~~~~~~~~~~~~~~
+
+A released run keeps its own frozen grouping, which the profile no longer
+governs. To change that per-run grouping — rather than only creating it
+(Release) or dropping it (Reattach) — put the window into **override-editing
+mode**: either select the overridden run in the **Preview run** selector, or
+select its row in the scope panel and click **Edit…**.
+
+In this mode a warning-styled banner reads "Editing override for run *N* —
+changes apply to this run only", and the form seeds from that run's own
+grouping. The profile selector and the Instrument switcher are disabled, since
+you are no longer editing a profile; the scope panel stays visible, so
+**Reattach** remains reachable if you would rather drop the override
+altogether. Your edits go to a separate override draft and never touch the
+profile draft. **Apply** writes the edited grouping back to that one run — every
+inheriting run is left untouched — and the run stays marked overridden; the
+status bar confirms "Updated override for run *N*".
+
+Selecting an inheriting run in the preview selector leaves the mode and returns
+to editing the profile; if the override draft has unsaved edits you are prompted
+to discard them first, and the window's close guard covers a dirty override
+draft too.
 
 Period mode controls
 ---------------------
@@ -211,6 +252,40 @@ green-minus-red, or green-plus-red. This row is hidden for every other run —
 it only appears once the currently selected preview run actually carries two
 period histograms — so it never clutters the window for ordinary
 single-period data.
+
+Time-zero (t0) modes
+--------------------
+
+The **t0 Bin** row carries a mode selector that decides where each run's
+analysis time-zero comes from. This mirrors WiMDA's *FileValues* checkbox on
+the grouping panel: with it ticked the header t0 and good-bin values are used
+and the manual controls are disabled; unticked, your own values apply.
+
+* **From file** (the default) — every run uses its own file-derived t0. All
+  loaders already read t0 verbatim from the file header (PSI per-detector
+  ``nt0``, MusrRoot ``DetectorInfo``, NeXus ``time_zero``), and the common t0
+  is the maximum over the analysis groups, so per-detector values are
+  preserved and each run is aligned by its own time-zero. The spinbox is
+  read-only and shows the preview run's resolved t0; switching the preview run
+  updates it. Nothing is stored on the profile — resolution reads each run's
+  file again.
+* **Manual** — type a common t0 override. It is applied to every run of the
+  profile as an *offset*: the difference between your value and the run's file
+  common t0 is added to each detector's own file t0. Crucially this is
+  non-destructive — the run's loaded histograms keep their file-derived t0, and
+  the shift lives only in the resolved grouping (so an override can be changed
+  or cleared without re-loading the data). **Find t0** is the one-shot fill for
+  this mode: it runs the search on the preview run and drops the result into the
+  spinbox for you to confirm.
+* **Auto-detect** — run the t0 search on *every* run at reduction time (the
+  prompt-peak maximum at continuous sources, the pulse-edge midpoint at pulsed
+  sources). The spinbox is read-only and shows the preview run's detected value
+  with its provenance (strategy and detector spread); each run resolves its own
+  detected t0.
+
+The *t_good* offset and last-good-bin controls are per-run facts and are
+unaffected by the t0 mode — a manual or detected t0 shift carries the good
+window with it so the offset from t0 stays fixed.
 
 Alpha calibration
 ------------------
@@ -226,7 +301,7 @@ Alpha calibration
    α) preview shows the balancing effect.
 
 Click **Calibrate…** beside the alpha status row to open the alpha
-calibration dialog. It lists every run of the current fingerprint in a
+calibration dialog. It lists every run of the current instrument in a
 dropdown, with likely calibration candidates highlighted and auto-selected:
 a run is flagged when its metadata carries explicit transverse-field
 evidence (a structured ``Transverse`` field-geometry classification, or a
@@ -566,7 +641,7 @@ GPS is recognised automatically from PSI data carrying a ``GPS`` instrument
 string or a ``deltat_tdc_gps_*`` run name. Two histogram conventions are
 supported and presented to the user as a single "GPS" layout, selected
 automatically from the histogram count — and, per `Grouping profiles`_ above,
-resolved against separate profile fingerprints:
+each carries its own separate grouping profile:
 
 * the **PSI-BIN** export with six combined detectors (``Forw, Back, Up, Down,
   Righ, Left``); and
