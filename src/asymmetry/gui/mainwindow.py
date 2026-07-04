@@ -10967,15 +10967,42 @@ class MainWindow(QMainWindow):
         window.activateWindow()
         self._update_global_parameter_fit_menu_style(True)
         self._rebuild_global_fit_studies_menu()
+        self._refresh_global_fit_sidebar()
 
     def _connect_global_fit_window(self) -> None:
         """Wire the Global Parameter Fit window's outbound signals once."""
         window = self._global_parameter_fit_window
         if window is None:
             return
-        signal = getattr(window, "refit_requested", None)
-        if signal is not None and hasattr(signal, "connect"):
-            signal.connect(self._on_global_fit_refit_requested)
+        for name, handler in (
+            ("refit_requested", self._on_global_fit_refit_requested),
+            ("study_selected", self._display_global_fit_study),
+            ("study_rename_requested", self._on_global_fit_study_rename_requested),
+            ("study_duplicate_requested", self._on_global_fit_study_duplicate_requested),
+            ("study_delete_requested", self._on_global_fit_study_delete_requested),
+            ("edit_requested", self._on_global_fit_edit_requested),
+        ):
+            signal = getattr(window, name, None)
+            if signal is not None and hasattr(signal, "connect"):
+                signal.connect(handler)
+
+    def _global_fit_sidebar_entries(self) -> list[tuple[str, str, bool]]:
+        """Return ``(study_id, name, stale)`` tuples for the window's sidebar."""
+        entries: list[tuple[str, str, bool]] = []
+        for study in self._global_fit_studies.values():
+            stale, _reason = self._study_staleness(study)
+            entries.append((study.study_id, study.name, stale))
+        return entries
+
+    def _refresh_global_fit_sidebar(self) -> None:
+        """Push the current registry + active study into the window's sidebar."""
+        window = self._global_parameter_fit_window
+        if window is None:
+            return
+        if hasattr(window, "set_studies_list"):
+            window.set_studies_list(self._global_fit_sidebar_entries())
+        if hasattr(window, "set_active_study_id"):
+            window.set_active_study_id(window.batch_id())
 
     def _cross_group_batch_id(self, parameter_name: str, x_key: str, groups: object) -> str:
         """Return the deterministic ``modelfit-<digest>`` id for a cross-group fit.
@@ -11135,6 +11162,7 @@ class MainWindow(QMainWindow):
         if hasattr(window, "set_stale"):
             window.set_stale(stale, reason)
         self._rebuild_global_fit_studies_menu()
+        self._refresh_global_fit_sidebar()
 
     def _on_global_fit_refit_requested(self, study_id: str) -> None:
         """Re-run a study's fit over the current trend data, off-thread."""
@@ -11196,6 +11224,153 @@ class MainWindow(QMainWindow):
             "Refit failed",
             f"The global parameter fit could not be re-run:\n\n{message}",
         )
+
+    # ── Global fit studies: rename / duplicate / delete / edit ───────────────
+
+    def _on_global_fit_study_rename_requested(self, study_id: str, new_name: str) -> None:
+        """Rename a study in place (id preserved), refreshing menu/sidebar/title."""
+        study = self._global_fit_studies.get(str(study_id))
+        if study is None:
+            return
+        name = str(new_name).strip()
+        if not name or name == study.name:
+            return
+        study.name = name
+        study.updated = datetime.now().isoformat()
+        window = self._global_parameter_fit_window
+        if window is not None and window.batch_id() == study.study_id:
+            window.setWindowTitle(f"Global Parameter Fit — {study.name}")
+        self._mark_dirty()
+        self._rebuild_global_fit_studies_menu()
+        self._refresh_global_fit_sidebar()
+
+    def _duplicate_study_id(self, source_id: str) -> str:
+        """Return a fresh, non-colliding ``<source_id>-copy[N]`` study id."""
+        candidate = f"{source_id}-copy"
+        n = 2
+        while candidate in self._global_fit_studies:
+            candidate = f"{source_id}-copy{n}"
+            n += 1
+        return candidate
+
+    def _on_global_fit_study_duplicate_requested(self, study_id: str) -> None:
+        """Duplicate a study: new id, copied config/model/result, marked stale.
+
+        Decorations do NOT carry over (they key by study id). The copy is marked
+        stale with a reason so the window offers Refit.
+        """
+        source = self._global_fit_studies.get(str(study_id))
+        if source is None:
+            return
+        new_id = self._duplicate_study_id(source.study_id)
+        now = datetime.now().isoformat()
+        copy = GlobalFitStudy(
+            study_id=new_id,
+            name=self._unique_study_name(f"{source.name} (copy)"),
+            parameter_name=source.parameter_name,
+            x_key=source.x_key,
+            x_label=source.x_label,
+            group_variable_key=source.group_variable_key,
+            group_variable_label=source.group_variable_label,
+            created=now,
+            updated=now,
+            source_group_ids=list(source.source_group_ids),
+            groups=list(source.groups),
+            model=source.model,
+            config=dict(source.config),
+            result=source.result,
+            fit_x_min=source.fit_x_min,
+            fit_x_max=source.fit_x_max,
+            # A deliberately mismatched digest so the copy reads as stale until
+            # the user refits it (the banner then offers Refit).
+            input_digest="duplicated",
+        )
+        self._global_fit_studies[new_id] = copy
+        self._mark_dirty()
+        self._display_global_fit_study(new_id)
+        window = self._global_parameter_fit_window
+        if window is not None and hasattr(window, "set_stale"):
+            window.set_stale(True, "duplicated — refit to solve")
+
+    def _on_global_fit_study_delete_requested(self, study_id: str) -> None:
+        """Delete a study; display the most-recent remaining one, else clear."""
+        sid = str(study_id)
+        if sid not in self._global_fit_studies:
+            return
+        was_displayed = (
+            self._global_parameter_fit_window is not None
+            and self._global_parameter_fit_window.batch_id() == sid
+        )
+        del self._global_fit_studies[sid]
+        self._mark_dirty()
+        if not was_displayed:
+            self._rebuild_global_fit_studies_menu()
+            self._refresh_global_fit_sidebar()
+            return
+        if self._global_fit_studies:
+            latest = max(
+                self._global_fit_studies.values(),
+                key=lambda s: (s.updated or "", s.created or ""),
+            )
+            self._display_global_fit_study(latest.study_id)
+        else:
+            window = self._global_parameter_fit_window
+            if window is not None and hasattr(window, "clear_display"):
+                window.clear_display()
+            self._update_global_parameter_fit_menu_style(False)
+            self._rebuild_global_fit_studies_menu()
+            self._refresh_global_fit_sidebar()
+
+    def _on_global_fit_edit_requested(self, study_id: str) -> None:
+        """Reopen the cross-group fit dialog seeded from a study's config.
+
+        Reassembles the study's groups from the live trend data; falls back to
+        the stored snapshot (with a warning) when the source series are gone.
+        The dialog output is routed through the same path as a fresh fit so the
+        study updates in place and redisplays.
+        """
+        study = self._global_fit_studies.get(str(study_id))
+        if study is None:
+            return
+        panel = self._fit_parameters_panel
+        groups = panel.assemble_cross_group_groups(
+            study.parameter_name, study.x_key, list(study.source_group_ids)
+        )
+        if groups is None or len(groups) < 2:
+            QMessageBox.warning(
+                self,
+                "Editing from stored data",
+                "The trend series this fit was built from are no longer fully "
+                "available; editing against the stored snapshot instead.",
+            )
+            groups = list(study.groups)
+        if len(groups) < 2:
+            QMessageBox.warning(
+                self,
+                "Cannot edit fit",
+                "This fit has fewer than two groups of data to edit.",
+            )
+            return
+
+        from asymmetry.gui.panels.cross_group_fit_dialog import CrossGroupFitDialog
+
+        dialog = CrossGroupFitDialog(
+            parameter_name=study.parameter_name,
+            x_key=study.x_key,
+            groups=groups,
+            existing_config=dict(study.config),
+            x_label=study.x_label or None,
+            parent=self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        output = dialog.output()
+        if output is None:
+            return
+        # Route through the fresh-fit path so the study updates in place: the
+        # batch id derives from (parameter, x_key, groups), which is unchanged
+        # for the same source groups, so the existing study is updated.
+        self._on_cross_group_fit_completed(study.parameter_name, output.groups, output)
 
     def _rebuild_global_fit_studies_menu(self) -> None:
         """Rebuild the Analysis ▸ Global parameter fits submenu from the registry.
@@ -11323,6 +11498,7 @@ class MainWindow(QMainWindow):
         self._global_parameter_fit_window.activateWindow()
         self._update_global_parameter_fit_menu_style(True)
         self._rebuild_global_fit_studies_menu()
+        self._refresh_global_fit_sidebar()
 
     def _record_model_fit_results_series(
         self, parameter_name: str, groups: object, output: object

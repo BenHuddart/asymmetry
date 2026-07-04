@@ -11,6 +11,7 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -21,7 +22,10 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSplitter,
@@ -49,11 +53,30 @@ from asymmetry.gui.export_paths import (
 )
 from asymmetry.gui.gle_settings import get_gle_executable
 from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
+from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import apply_param_table_style
 from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.utils.export import compile_gle
 from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
 from asymmetry.gui.widgets.mpl_canvas import create_canvas
+from asymmetry.gui.windows.global_fit_window_helpers import (
+    CorrelationMatrixDialog,
+    _label_indicates_no_verdict,
+    global_table_csv,
+    global_table_latex,
+    global_table_tsv,
+)
+
+#: Stable stacked-component fill colours, indexed by component order (after
+#: ``_ordered_components_for_stacking``). One legend entry per component name.
+_COMPONENT_COLORS = [
+    "#8ecae6",
+    "#90be6d",
+    "#f4a261",
+    "#e5989b",
+    "#bdb2ff",
+    "#ffd166",
+]
 
 _PARAMETER_FIT_CURVE_SAMPLE_COUNT = 800
 
@@ -76,6 +99,18 @@ class GlobalParameterFitWindow(QMainWindow):
     #: MainWindow re-assembles the study's groups from the live trend data, re-runs
     #: the fit off-thread, and updates the study.
     refit_requested = Signal(str)
+    #: Emitted (study_id) when a sidebar row is selected — the MainWindow displays
+    #: that study.
+    study_selected = Signal(str)
+    #: Emitted (study_id, new_name) from the sidebar Rename… context action.
+    study_rename_requested = Signal(str, str)
+    #: Emitted (study_id) from the sidebar Duplicate context action.
+    study_duplicate_requested = Signal(str)
+    #: Emitted (study_id) from the sidebar Delete… context action.
+    study_delete_requested = Signal(str)
+    #: Emitted (study_id) from the "Edit fit…" button; the MainWindow reopens the
+    #: cross-group fit dialog seeded from the study config against current data.
+    edit_requested = Signal(str)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -97,6 +132,14 @@ class GlobalParameterFitWindow(QMainWindow):
         self._x_key: str = "run"
         self._fit_x_min: float = float("nan")
         self._fit_x_max: float = float("nan")
+        #: Study-carried axis labels (Phase 3): when set they override the
+        #: hardcoded field/T/run maps in ``_x_label*`` / ``_local_group_axis_*``.
+        #: ``None`` falls back to the legacy hardcoded maps (older results).
+        self._x_label_override: str | None = None
+        self._group_variable_label_override: str | None = None
+        #: Per-group show/hide state for the Fig-3 grid (group_id -> shown). A
+        #: hidden group is excluded from the grid but NOT from the fit/result.
+        self._group_visibility: dict[str, bool] = {}
 
         self._axes_tag_map: dict[int, str] = {}
         self._local_axes_tag_map: dict[int, str] = {}
@@ -142,13 +185,34 @@ class GlobalParameterFitWindow(QMainWindow):
         stale_layout.addWidget(self._stale_label, 1)
         stale_layout.addWidget(self._refit_btn, 0)
         self._stale_banner.setStyleSheet(
-            "QWidget { background-color: #6b4a00; }QLabel { color: #ffe08a; font-weight: bold; }"
+            f"QWidget {{ background-color: {tokens.WARN_BANNER_BG}; }}"
+            f"QLabel {{ color: {tokens.WARN_BANNER_TEXT}; font-weight: bold; }}"
         )
         self._stale_banner.setVisible(False)
         root_layout.addWidget(self._stale_banner)
 
+        # Outer splitter: [studies sidebar | plots+tables]. The sidebar is a
+        # compact list of studies driven by the MainWindow; selecting a row asks
+        # to display it (context menu: rename/duplicate/delete).
+        outer_splitter = QSplitter(Qt.Orientation.Horizontal)
+        root_layout.addWidget(outer_splitter)
+
+        self._studies_list = QListWidget()
+        self._studies_list.setMaximumWidth(220)
+        self._studies_list.setMinimumWidth(140)
+        self._studies_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._studies_list.customContextMenuRequested.connect(self._on_studies_context_menu)
+        self._studies_list.currentRowChanged.connect(self._on_studies_row_changed)
+        #: Guards :meth:`set_studies_list`/:meth:`set_active_study_id` from
+        #: emitting ``study_selected`` while the MainWindow is repopulating.
+        self._suppress_study_selection = False
+        outer_splitter.addWidget(self._studies_list)
+
         splitter = QSplitter(Qt.Orientation.Horizontal)
-        root_layout.addWidget(splitter)
+        outer_splitter.addWidget(splitter)
+        outer_splitter.setStretchFactor(0, 0)
+        outer_splitter.setStretchFactor(1, 1)
+        outer_splitter.setSizes([180, 1020])
 
         left = QWidget()
         left_layout = QVBoxLayout(left)
@@ -188,6 +252,29 @@ class GlobalParameterFitWindow(QMainWindow):
         self._fit_share_x_check.toggled.connect(self._refresh_plot)
         fit_controls_row.addWidget(self._fit_share_x_check)
 
+        self._fit_share_y_check = QCheckBox("Share Y Axis")
+        self._fit_share_y_check.setChecked(False)
+        self._fit_share_y_check.toggled.connect(self._refresh_plot)
+        fit_controls_row.addWidget(self._fit_share_y_check)
+
+        self._fit_residuals_check = QCheckBox("Residuals")
+        self._fit_residuals_check.setToolTip(
+            "Show (data − model)/σ pulls per group instead of the fit curves."
+        )
+        self._fit_residuals_check.toggled.connect(self._on_residuals_toggled)
+        fit_controls_row.addWidget(self._fit_residuals_check)
+
+        fit_controls_row.addWidget(QLabel("Columns:"))
+        self._fit_columns_combo = QComboBox()
+        self._fit_columns_combo.addItems(["Auto", "1", "2", "3", "4"])
+        self._fit_columns_combo.currentTextChanged.connect(lambda _t: self._refresh_plot())
+        fit_controls_row.addWidget(self._fit_columns_combo)
+
+        self._groups_popup_btn = QPushButton("Groups…")
+        self._groups_popup_btn.setToolTip("Show or hide individual group panels.")
+        self._groups_popup_btn.clicked.connect(self._show_groups_popup)
+        fit_controls_row.addWidget(self._groups_popup_btn)
+
         fit_controls_row.addStretch()
         left_layout.addLayout(fit_controls_row)
 
@@ -216,10 +303,42 @@ class GlobalParameterFitWindow(QMainWindow):
         controls_row.addStretch()
         right_layout.addLayout(controls_row)
 
-        self._params_table = QTableWidget(0, 3)
-        self._params_table.setHorizontalHeaderLabels(["Parameter", "Value", "Uncertainty"])
+        # Quality bar: χ², χ²ᵣ, n, error-mode chip, and (on failure) the message.
+        quality_row = QHBoxLayout()
+        quality_row.setContentsMargins(0, 0, 0, 0)
+        self._quality_label = QLabel("")
+        self._quality_label.setTextFormat(Qt.TextFormat.RichText)
+        quality_row.addWidget(self._quality_label, 1)
+        self._edit_fit_btn = QPushButton("Edit fit…")
+        self._edit_fit_btn.setToolTip("Reopen the cross-group fit dialog seeded from this fit.")
+        self._edit_fit_btn.clicked.connect(self._on_edit_fit_clicked)
+        quality_row.addWidget(self._edit_fit_btn, 0)
+        right_layout.addLayout(quality_row)
+
+        self._params_table = QTableWidget(0, 4)
+        self._params_table.setHorizontalHeaderLabels(["Parameter", "Value", "Uncertainty", "Units"])
         apply_param_table_style(self._params_table)
         right_layout.addWidget(self._params_table)
+
+        # Table actions: Copy (TSV to clipboard), Export (CSV/LaTeX), and the
+        # correlation-matrix dialog (enabled only when correlations exist).
+        table_actions_row = QHBoxLayout()
+        table_actions_row.setContentsMargins(0, 0, 0, 0)
+        self._copy_table_btn = QPushButton("Copy")
+        self._copy_table_btn.setToolTip("Copy the global parameter table (TSV) to the clipboard.")
+        self._copy_table_btn.clicked.connect(self._on_copy_global_table)
+        table_actions_row.addWidget(self._copy_table_btn)
+        self._export_table_btn = QPushButton("Export…")
+        self._export_table_btn.setToolTip("Export the global parameter table as CSV or LaTeX.")
+        self._export_table_btn.clicked.connect(self._on_export_global_table)
+        table_actions_row.addWidget(self._export_table_btn)
+        self._correlations_btn = QPushButton("Correlations…")
+        self._correlations_btn.setToolTip("Show the free-global-parameter correlation matrix.")
+        self._correlations_btn.clicked.connect(self._on_show_correlations)
+        self._correlations_btn.setEnabled(False)
+        table_actions_row.addWidget(self._correlations_btn)
+        table_actions_row.addStretch()
+        right_layout.addLayout(table_actions_row)
 
         self._local_y_selector_table = QTableWidget(0, 3)
         self._local_y_selector_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -289,11 +408,20 @@ class GlobalParameterFitWindow(QMainWindow):
 
     def _sync_fit_scale_controls(self) -> None:
         components_on = self._show_components_check.isChecked()
-        if components_on and self._fit_log_y_check.isChecked():
+        residuals_on = self._fit_residuals_check.isChecked()
+        # Log-Y makes no sense for stacked components (which fill from 0) nor for
+        # pull residuals (signed values around zero).
+        if (components_on or residuals_on) and self._fit_log_y_check.isChecked():
             self._fit_log_y_check.setChecked(False)
-        self._fit_log_y_check.setEnabled(not components_on)
+        self._fit_log_y_check.setEnabled(not components_on and not residuals_on)
+        # Components and the fit curve are meaningless in residual mode.
+        self._show_components_check.setEnabled(not residuals_on)
 
     def _on_show_components_toggled(self, _checked: bool) -> None:
+        self._sync_fit_scale_controls()
+        self._start_fit_curve_compute()
+
+    def _on_residuals_toggled(self, _checked: bool) -> None:
         self._sync_fit_scale_controls()
         self._refresh_plot()
 
@@ -510,6 +638,9 @@ class GlobalParameterFitWindow(QMainWindow):
             "fit_log_x": bool(self._fit_log_x_check.isChecked()),
             "fit_log_y": bool(self._fit_log_y_check.isChecked()),
             "fit_share_x": bool(self._fit_share_x_check.isChecked()),
+            "fit_share_y": bool(self._fit_share_y_check.isChecked()),
+            "fit_residuals": bool(self._fit_residuals_check.isChecked()),
+            "fit_columns": str(self._fit_columns_combo.currentText()),
             "fit_subplot_aspect": float(self._fit_subplot_aspect_spin.value()),
             "local_log_x": bool(self._local_log_x_check.isChecked()),
             "local_log_y": bool(self._local_log_y_check.isChecked()),
@@ -530,6 +661,11 @@ class GlobalParameterFitWindow(QMainWindow):
         self._fit_log_x_check.setChecked(bool(state.get("fit_log_x", False)))
         self._fit_log_y_check.setChecked(bool(state.get("fit_log_y", False)))
         self._fit_share_x_check.setChecked(bool(state.get("fit_share_x", False)))
+        self._fit_share_y_check.setChecked(bool(state.get("fit_share_y", False)))
+        self._fit_residuals_check.setChecked(bool(state.get("fit_residuals", False)))
+        fit_columns = state.get("fit_columns")
+        if isinstance(fit_columns, str) and fit_columns in {"Auto", "1", "2", "3", "4"}:
+            self._fit_columns_combo.setCurrentText(fit_columns)
         self._local_log_x_check.setChecked(bool(state.get("local_log_x", False)))
         self._local_log_y_check.setChecked(bool(state.get("local_log_y", False)))
         raw_local_param_log = state.get("local_param_log_y", {})
@@ -807,6 +943,8 @@ class GlobalParameterFitWindow(QMainWindow):
         fit_x_min: float = float("nan"),
         fit_x_max: float = float("nan"),
         batch_id: str | None = None,
+        x_label: str | None = None,
+        group_variable_label: str | None = None,
     ) -> None:
         # Showing a *different* fit replaces the decoration context: the previous
         # fit's local model fits and annotations belong to its own series and
@@ -826,7 +964,14 @@ class GlobalParameterFitWindow(QMainWindow):
         self._result = result
         self._fit_x_min = float(fit_x_min)
         self._fit_x_max = float(fit_x_max)
+        self._x_label_override = x_label or None
+        self._group_variable_label_override = group_variable_label or None
+        # New fit ⇒ show every group by default; drop visibility flags for groups
+        # that are no longer present.
+        valid_ids = {g.group_id for g in groups}
+        self._group_visibility = {gid: self._group_visibility.get(gid, True) for gid in valid_ids}
         self._refresh_table()
+        self._refresh_quality_bar()
         self._refresh_local_parameter_plots()
         # The cross-group fit curves are the heavy part (per-group model eval
         # over an 800-point axis); compute them off-thread behind the overlay so
@@ -851,6 +996,8 @@ class GlobalParameterFitWindow(QMainWindow):
             fit_x_min=study.fit_x_min,
             fit_x_max=study.fit_x_max,
             batch_id=study.study_id,
+            x_label=getattr(study, "x_label", None),
+            group_variable_label=getattr(study, "group_variable_label", None),
         )
         self.setWindowTitle(f"Global Parameter Fit — {study.name}")
         self.set_stale(stale, stale_reason)
@@ -867,6 +1014,117 @@ class GlobalParameterFitWindow(QMainWindow):
     def _on_refit_clicked(self) -> None:
         if self._study_id:
             self.refit_requested.emit(self._study_id)
+
+    # ── Studies sidebar ─────────────────────────────────────────────────────
+
+    def set_studies_list(self, entries: list[tuple[str, str, bool]]) -> None:
+        """Populate the sidebar from ``(study_id, name, stale)`` tuples.
+
+        Driven by the MainWindow whenever the registry, staleness, or displayed
+        study changes. Repopulating does not emit :attr:`study_selected` (the
+        selection is set separately via :meth:`set_active_study_id`).
+        """
+        self._suppress_study_selection = True
+        try:
+            self._studies_list.clear()
+            for study_id, name, stale in entries:
+                label = f"⚠ {name}" if stale else name
+                item = QListWidgetItem(label)
+                item.setData(Qt.ItemDataRole.UserRole, str(study_id))
+                if stale:
+                    item.setToolTip("This fit is out of date — refit to update.")
+                self._studies_list.addItem(item)
+        finally:
+            self._suppress_study_selection = False
+
+    def set_active_study_id(self, study_id: str | None) -> None:
+        """Select the sidebar row for *study_id* without emitting a signal."""
+        self._suppress_study_selection = True
+        try:
+            target = -1
+            for row in range(self._studies_list.count()):
+                item = self._studies_list.item(row)
+                if item is not None and item.data(Qt.ItemDataRole.UserRole) == study_id:
+                    target = row
+                    break
+            self._studies_list.setCurrentRow(target)
+        finally:
+            self._suppress_study_selection = False
+
+    def _study_id_at_row(self, row: int) -> str | None:
+        item = self._studies_list.item(row)
+        if item is None:
+            return None
+        value = item.data(Qt.ItemDataRole.UserRole)
+        return str(value) if isinstance(value, str) and value else None
+
+    def _on_studies_row_changed(self, row: int) -> None:
+        if self._suppress_study_selection:
+            return
+        study_id = self._study_id_at_row(row)
+        if study_id:
+            self.study_selected.emit(study_id)
+
+    def _on_studies_context_menu(self, pos) -> None:
+        item = self._studies_list.itemAt(pos)
+        if item is None:
+            return
+        study_id = str(item.data(Qt.ItemDataRole.UserRole) or "")
+        if not study_id:
+            return
+        menu = QMenu(self._studies_list)
+        rename_action = menu.addAction("Rename…")
+        duplicate_action = menu.addAction("Duplicate")
+        menu.addSeparator()
+        delete_action = menu.addAction("Delete…")
+        chosen = menu.exec(self._studies_list.mapToGlobal(pos))
+        if chosen is None:
+            return
+        if chosen == rename_action:
+            current = item.text().lstrip("⚠ ").strip()
+            new_name, ok = QInputDialog.getText(self, "Rename study", "Name:", text=current)
+            if ok and new_name.strip():
+                self.study_rename_requested.emit(study_id, new_name.strip())
+        elif chosen == duplicate_action:
+            self.study_duplicate_requested.emit(study_id)
+        elif chosen == delete_action:
+            confirm = QMessageBox.question(
+                self,
+                "Delete study",
+                "Delete this global parameter fit? This cannot be undone.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if confirm == QMessageBox.StandardButton.Yes:
+                self.study_delete_requested.emit(study_id)
+
+    def clear_display(self) -> None:
+        """Empty the window (plots, tables, banner, title) — no study shown."""
+        self._batch_id = None
+        self._study_id = None
+        self._result = None
+        self._model = None
+        self._groups = []
+        self._parameter_name = None
+        self._x_label_override = None
+        self._group_variable_label_override = None
+        self._group_visibility = {}
+        self._precomputed_left_curves = None
+        self.setWindowTitle("Global Parameter Fit")
+        self.set_stale(False, "")
+        self._refresh_table()
+        self._refresh_quality_bar()
+        self._refresh_local_parameter_plots()
+        if self._left_canvas is not None and self._left_figure is not None:
+            self._left_figure.clear()
+            self._axes_tag_map = {}
+            self._left_canvas.draw()
+
+    # ── Edit fit ────────────────────────────────────────────────────────────
+
+    def _on_edit_fit_clicked(self) -> None:
+        if self._study_id:
+            self.edit_requested.emit(self._study_id)
 
     def _start_fit_curve_compute(self) -> None:
         """Recompute the cross-group fit curves off-thread, overlaying the plot."""
@@ -947,6 +1205,8 @@ class GlobalParameterFitWindow(QMainWindow):
         super().closeEvent(event)
 
     def _x_label(self) -> str:
+        if self._x_label_override:
+            return self._x_label_override
         return {
             "field": "$B$ (G)",
             "temperature": "$T$ (K)",
@@ -954,13 +1214,22 @@ class GlobalParameterFitWindow(QMainWindow):
         }.get(self._x_key, "x")
 
     def _x_label_gle(self) -> str:
-        return {
+        # Known keys keep the {\it B}/{\it T} classics; a custom study label is
+        # rendered as plain text (GLE-safe) since it carries no math markup.
+        known = {
             "field": "{\\it B} (G)",
             "temperature": "{\\it T} (K)",
             "run": "Run Number",
-        }.get(self._x_key, "x")
+        }
+        if self._x_key in known:
+            return known[self._x_key]
+        if self._x_label_override:
+            return self._x_label_override
+        return "x"
 
     def _local_group_axis_label(self) -> str:
+        if self._group_variable_label_override:
+            return self._group_variable_label_override
         return {
             "field": "$T$ (K)",
             "temperature": "$B$ (G)",
@@ -968,18 +1237,28 @@ class GlobalParameterFitWindow(QMainWindow):
         }.get(self._x_key, "Group variable")
 
     def _local_group_axis_label_gle(self) -> str:
-        return {
+        known = {
             "field": "{\\it T} (K)",
             "temperature": "{\\it B} (G)",
             "run": "Group variable",
-        }.get(self._x_key, "Group variable")
+        }
+        if self._x_key in known:
+            return known[self._x_key]
+        if self._group_variable_label_override:
+            return self._group_variable_label_override
+        return "Group variable"
 
     def _local_group_axis_label_plain(self) -> str:
-        return {
+        known = {
             "field": "T (K)",
             "temperature": "B (G)",
             "run": "Group variable",
-        }.get(self._x_key, "Group variable")
+        }
+        if self._x_key in known:
+            return known[self._x_key]
+        if self._group_variable_label_override:
+            return self._group_variable_label_override
+        return "Group variable"
 
     def _parameter_label(self, name: str | None) -> str:
         if not name:
@@ -1125,6 +1404,21 @@ class GlobalParameterFitWindow(QMainWindow):
             lines.append(f"! error_mode: {result.error_mode}")
             if result.n_points:
                 lines.append(f"! n_points: {int(result.n_points)}")
+            if result.per_group_chi_squared:
+                lines.append("! Per-group chi-squared:")
+                for gid in sorted(result.per_group_chi_squared):
+                    chi = result.per_group_chi_squared[gid]
+                    npts = result.per_group_n_points.get(gid)
+                    npts_txt = f" (n={int(npts)})" if npts is not None else ""
+                    lines.append(f"!   {gid}: {float(chi):.8g}{npts_txt}")
+            if result.global_correlations is not None:
+                names, matrix = result.global_correlations
+                lines.append("! Global parameter correlations:")
+                lines.append("!   " + " ".join(str(n) for n in names))
+                for i, name in enumerate(names):
+                    row = matrix[i] if i < len(matrix) else []
+                    row_txt = " ".join(f"{float(v):+.3f}" for v in row)
+                    lines.append(f"!   {name}: {row_txt}")
         return lines
 
     def _write_fit_subplot_files(self, gle_path: Path) -> dict[str, dict[str, object]]:
@@ -1204,31 +1498,216 @@ class GlobalParameterFitWindow(QMainWindow):
 
     def _refresh_table(self) -> None:
         self._params_table.setRowCount(0)
+        has_corr = bool(self._result is not None and self._result.global_correlations)
+        if hasattr(self, "_correlations_btn"):
+            self._correlations_btn.setEnabled(has_corr)
         if self._result is None:
             return
 
         for p in self._result.global_parameters:
+            info = get_param_info(p.name)
             row = self._params_table.rowCount()
             self._params_table.insertRow(row)
             self._params_table.setItem(
-                row, 0, QTableWidgetItem(get_param_info(p.name).unicode_label())
+                row, 0, QTableWidgetItem(info.unicode_label(include_unit=False))
             )
             self._params_table.setItem(row, 1, QTableWidgetItem(f"{p.value:.6g}"))
             err = self._result.global_uncertainties.get(p.name)
             self._params_table.setItem(
                 row, 2, QTableWidgetItem("" if err is None else f"{err:.3g}")
             )
+            self._params_table.setItem(row, 3, QTableWidgetItem(info.unit or ""))
 
         for p in self._result.fixed_parameters:
+            info = get_param_info(p.name)
             row = self._params_table.rowCount()
             self._params_table.insertRow(row)
             self._params_table.setItem(
-                row, 0, QTableWidgetItem(f"{get_param_info(p.name).unicode_label()} (fixed)")
+                row, 0, QTableWidgetItem(f"{info.unicode_label(include_unit=False)} (fixed)")
             )
             self._params_table.setItem(row, 1, QTableWidgetItem(f"{p.value:.6g}"))
             self._params_table.setItem(row, 2, QTableWidgetItem(""))
+            self._params_table.setItem(row, 3, QTableWidgetItem(info.unit or ""))
 
         self._params_table.resizeColumnsToContents()
+
+    def _refresh_quality_bar(self) -> None:
+        """Update the compact χ²/χ²ᵣ/n/error-mode row above the global table.
+
+        For NONE/SCATTER error modes χ²ᵣ carries no goodness verdict (the σ used
+        is not a measured column error), so the value is shown greyed with a
+        tooltip rather than as a quality figure. A failed fit surfaces its
+        message in red.
+        """
+        result = self._result
+        if result is None:
+            self._quality_label.setText("")
+            self._quality_label.setToolTip("")
+            return
+
+        parts: list[str] = []
+        if np.isfinite(result.chi_squared):
+            parts.append(f"χ²={result.chi_squared:.4g}")
+
+        no_verdict = _label_indicates_no_verdict(result.error_mode)
+        if np.isfinite(result.reduced_chi_squared):
+            chi_r = f"χ²ᵣ={result.reduced_chi_squared:.4g}"
+            if no_verdict:
+                parts.append(f"<span style='color:{tokens.TEXT_DIM}'>{chi_r}</span>")
+            else:
+                parts.append(chi_r)
+        if result.n_points:
+            parts.append(f"n={int(result.n_points)}")
+        # Error-mode chip.
+        mode_text = {
+            "column": "column σ",
+            "percent": "percent σ",
+            "absolute": "absolute σ",
+            "none": "no errors",
+            "scatter": "scatter σ",
+        }.get(str(result.error_mode).lower(), str(result.error_mode))
+        parts.append(
+            f"<span style='background:{tokens.SURFACE_HI};padding:1px 5px;"
+            f"border-radius:3px'>{mode_text}</span>"
+        )
+
+        text = " &nbsp; ".join(parts)
+        if not result.success and result.message:
+            text += (
+                f" &nbsp; <span style='color:{tokens.ERROR};font-weight:bold'>"
+                f"{result.message}</span>"
+            )
+        self._quality_label.setText(text)
+        if no_verdict:
+            self._quality_label.setToolTip(
+                "χ²ᵣ carries no goodness-of-fit verdict under this error mode: the "
+                "per-point σ is not a measured uncertainty."
+            )
+        else:
+            self._quality_label.setToolTip("")
+
+    # ── Global table: copy / export / correlations ──────────────────────────
+
+    def _on_copy_global_table(self) -> None:
+        if self._result is None:
+            return
+        clipboard = QGuiApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(global_table_tsv(self._result))
+
+    def _on_export_global_table(self) -> None:
+        if self._result is None:
+            QMessageBox.information(self, "No result", "Run a cross-group fit first.")
+            return
+        path, selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Export global parameter table",
+            default_export_path("global_parameter_table.csv"),
+            "CSV (*.csv);;LaTeX (*.tex)",
+        )
+        if not path:
+            return
+        remember_export_path(path)
+        is_latex = path.lower().endswith(".tex") or "LaTeX" in selected_filter
+        try:
+            content = (
+                global_table_latex(self._result, parameter_name=self._parameter_name)
+                if is_latex
+                else global_table_csv(self._result)
+            )
+            Path(path).write_text(content, encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.warning(self, "Export failed", f"Could not write file: {exc}")
+
+    def _on_show_correlations(self) -> None:
+        if self._result is None or not self._result.global_correlations:
+            return
+        names, matrix = self._result.global_correlations
+        dialog = CorrelationMatrixDialog(list(names), [list(row) for row in matrix], parent=self)
+        dialog.exec()
+
+    # ── Fig-3 grid: columns / show-hide ─────────────────────────────────────
+
+    def _shown_groups(self) -> list[ParameterGroupData]:
+        """Return the groups whose panel is shown (visibility flag True)."""
+        return [g for g in self._groups if self._group_visibility.get(g.group_id, True)]
+
+    def _grid_columns(self, n: int) -> int:
+        """Return the column count for *n* shown panels honouring the combo.
+
+        Auto = ``ceil(sqrt(n))`` capped at 4 (so 8 groups → 3 columns); an
+        explicit "1"/"2"/"3"/"4" pins that many columns (never more than *n*).
+        """
+        if n <= 0:
+            return 1
+        text = self._fit_columns_combo.currentText()
+        if text == "Auto":
+            cols = int(np.ceil(np.sqrt(n)))
+            return max(1, min(cols, 4))
+        try:
+            cols = int(text)
+        except (TypeError, ValueError):
+            cols = 1
+        return max(1, min(cols, n))
+
+    def _show_groups_popup(self) -> None:
+        """Pop up a checkable list to show/hide individual group panels."""
+        if not self._groups:
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Show groups")
+        layout = QVBoxLayout(dialog)
+        list_widget = QListWidget()
+        for group in self._groups:
+            item = QListWidgetItem(group.group_name or group.group_id)
+            item.setData(Qt.ItemDataRole.UserRole, group.group_id)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(
+                Qt.CheckState.Checked
+                if self._group_visibility.get(group.group_id, True)
+                else Qt.CheckState.Unchecked
+            )
+            list_widget.addItem(item)
+        layout.addWidget(list_widget)
+        close_btn = QPushButton("Done")
+        close_btn.clicked.connect(dialog.accept)
+        layout.addWidget(close_btn)
+        dialog.exec()
+        for row in range(list_widget.count()):
+            item = list_widget.item(row)
+            gid = str(item.data(Qt.ItemDataRole.UserRole))
+            self._group_visibility[gid] = item.checkState() == Qt.CheckState.Checked
+        self._refresh_plot()
+
+    def _per_group_reduced_chi_squared(self, group_id: str) -> float | None:
+        """Return a per-group reduced χ² for the panel chip, or ``None``.
+
+        dof convention: per-group ``n_points`` minus the number of *local*
+        parameters for that group. The shared global parameters' dof cost is
+        borne jointly across all groups, so it is deliberately NOT subtracted
+        here — this makes the chip a per-panel data-vs-model figure, not a
+        rigorous joint χ²ᵣ (documented so it is not mistaken for one).
+        """
+        result = self._result
+        if result is None:
+            return None
+        chi = result.per_group_chi_squared.get(group_id)
+        n = result.per_group_n_points.get(group_id)
+        if chi is None or n is None or not np.isfinite(chi):
+            return None
+        local = result.local_parameters.get(group_id)
+        local_count = len(local) if local is not None else 0
+        dof = max(int(n) - local_count, 1)
+        return float(chi) / dof
+
+    def _group_chip_visible(self) -> bool:
+        """Chips are shown only when per-group data exists and σ is meaningful."""
+        result = self._result
+        if result is None:
+            return False
+        if not result.per_group_chi_squared or not result.per_group_n_points:
+            return False
+        return not _label_indicates_no_verdict(result.error_mode)
 
     def _compute_group_fit_curve(
         self,
@@ -1292,99 +1771,223 @@ class GlobalParameterFitWindow(QMainWindow):
             self._left_canvas.draw()
             return
 
-        n = max(1, len(self._groups))
+        residuals = self._fit_residuals_check.isChecked()
+        shown_groups = self._shown_groups()
+        # Group-label annotations are keyed by group_id; prune stale ones against
+        # the full group set (a hidden group's annotation is kept for when it is
+        # shown again).
+        valid_group_tags = {group.group_id for group in self._groups}
+        self._prune_stale_group_label_annotations(valid_group_tags)
+
+        if not shown_groups:
+            ax = self._left_figure.add_subplot(111)
+            ax.set_title("No group panels shown")
+            ax.grid(True, alpha=0.3)
+            self._left_canvas.draw()
+            return
+
         x_label = self._x_label()
         y_label = self._parameter_label(self._parameter_name)
         share_x_axis = self._fit_share_x_check.isChecked()
-        valid_group_tags = {group.group_id for group in self._groups}
-        self._prune_stale_group_label_annotations(valid_group_tags)
+        share_y_axis = self._fit_share_y_check.isChecked()
+
+        n = len(shown_groups)
+        ncols = self._grid_columns(n)
+        nrows = (n + ncols - 1) // ncols
+
+        # Track component names+colors seen so a single figure-level legend can
+        # be assembled after the loop.
+        legend_entries: dict[str, str] = {}
         shared_x_ax = None
-        for idx, group in enumerate(self._groups):
+        shared_y_ax = None
+        for idx, group in enumerate(shown_groups):
+            share_kwargs = {}
             if share_x_axis and shared_x_ax is not None:
-                ax = self._left_figure.add_subplot(n, 1, idx + 1, sharex=shared_x_ax)
-            else:
-                ax = self._left_figure.add_subplot(n, 1, idx + 1)
-                if share_x_axis and shared_x_ax is None:
-                    shared_x_ax = ax
+                share_kwargs["sharex"] = shared_x_ax
+            if share_y_axis and shared_y_ax is not None:
+                share_kwargs["sharey"] = shared_y_ax
+            ax = self._left_figure.add_subplot(nrows, ncols, idx + 1, **share_kwargs)
+            if share_x_axis and shared_x_ax is None:
+                shared_x_ax = ax
+            if share_y_axis and shared_y_ax is None:
+                shared_y_ax = ax
             self._axes_tag_map[id(ax)] = group.group_id
-            x = group.x
-            y = group.y
-            e = group.yerr
-            ax.errorbar(x, y, yerr=e, fmt="o", linestyle="none", color="black", capsize=2)
 
-            # The per-group curve is heavy (model eval over an 800-point axis):
-            # consume the off-thread precompute when present (project open), else
-            # evaluate inline for direct/interactive redraws (control toggles).
-            if self._precomputed_left_curves is not None:
-                curve = self._precomputed_left_curves.get(group.group_id)
+            if residuals:
+                self._draw_group_residuals(ax, group)
             else:
-                curve = self._compute_group_fit_curve(
-                    group,
-                    self._show_components_check.isChecked(),
-                    result=self._result,
-                    model=self._model,
-                    fit_x_min=self._fit_x_min,
-                    fit_x_max=self._fit_x_max,
-                    x_key=self._x_key,
-                )
+                self._draw_group_fit_panel(ax, group, legend_entries)
 
-            if curve is not None and "error" in curve:
-                ax.text(
-                    0.02,
-                    0.95,
-                    f"Fit curve unavailable: {curve['error']}",
-                    transform=ax.transAxes,
-                    fontsize=9,
-                    va="top",
-                    color="tab:red",
-                )
-            elif curve is not None:
-                xx = curve["xx"]
-                components = curve.get("components")
-                if components is not None:
-                    ordered = self._ordered_components_for_stacking(components)
-                    cumulative = np.zeros_like(xx, dtype=float)
-                    component_colors = [
-                        "#8ecae6",
-                        "#90be6d",
-                        "#f4a261",
-                        "#e5989b",
-                        "#bdb2ff",
-                        "#ffd166",
-                    ]
-                    for cidx, (_name, comp_y) in enumerate(ordered):
-                        fill_color = component_colors[cidx % len(component_colors)]
-                        comp_fill = np.maximum(np.asarray(comp_y, dtype=float), 0.0)
-                        lower = cumulative
-                        upper = cumulative + comp_fill
-                        ax.fill_between(xx, lower, upper, color=fill_color, alpha=0.3, zorder=1)
-                        ax.plot(
-                            xx,
-                            upper,
-                            linestyle="--",
-                            linewidth=0.8,
-                            color=fill_color,
-                            alpha=0.9,
-                            zorder=2,
-                        )
-                        cumulative = upper
-                ax.plot(xx, curve["yy"], color="red", linewidth=1.5)
+            row = idx // ncols
+            col = idx % ncols
             if share_x_axis:
                 self._ensure_group_label_annotation(group.group_id, group.group_name, ax)
                 ax.set_title("")
             else:
                 ax.set_title(group.group_name, pad=10)
-            ax.set_ylabel(y_label)
+            # Only the left column carries the y-label to reduce clutter in wide
+            # grids; single-column grids always label.
+            if col == 0 or ncols == 1:
+                ax.set_ylabel("(data − model)/σ" if residuals else y_label)
             ax.grid(True, alpha=0.3)
-            self._apply_fit_axis_scales(ax)
-            if (not share_x_axis) or idx == n - 1:
+            if not residuals:
+                self._apply_fit_axis_scales(ax)
+            elif self._fit_log_x_check.isChecked():
+                try:
+                    ax.set_xscale("log")
+                except Exception:
+                    pass
+            # X-label on the bottom row of each column (or the last panel when
+            # sharing x reduces to one axis).
+            is_bottom = row == nrows - 1 or (idx + ncols) >= n
+            if (not share_x_axis) or is_bottom:
                 ax.set_xlabel(x_label)
+
+            if (not residuals) and self._group_chip_visible():
+                self._draw_group_chi_chip(ax, group.group_id)
+
+        # One figure-level component legend (names in stacking order, stable
+        # colours), only in component mode with entries collected.
+        if legend_entries and not residuals:
+            from matplotlib.patches import Patch
+
+            handles = [
+                Patch(facecolor=color, alpha=0.5, label=name)
+                for name, color in legend_entries.items()
+            ]
+            self._left_figure.legend(
+                handles=handles,
+                loc="upper center",
+                ncol=min(len(handles), 4),
+                fontsize=8,
+                frameon=False,
+            )
 
         self._draw_plot_annotations(local=False)
 
         self._left_figure.tight_layout(h_pad=1.8)
-        self._left_figure.subplots_adjust(left=0.16, hspace=0.5)
+        self._left_figure.subplots_adjust(left=0.12, hspace=0.5)
         self._left_canvas.draw()
+
+    def _draw_group_fit_panel(
+        self, ax, group: ParameterGroupData, legend_entries: dict[str, str]
+    ) -> None:
+        """Draw one group's data + stacked components + total curve on *ax*."""
+        ax.errorbar(
+            group.x, group.y, yerr=group.yerr, fmt="o", linestyle="none", color="black", capsize=2
+        )
+
+        # The per-group curve is heavy (model eval over an 800-point axis):
+        # consume the off-thread precompute when present (project open), else
+        # evaluate inline for direct/interactive redraws (control toggles).
+        if self._precomputed_left_curves is not None:
+            curve = self._precomputed_left_curves.get(group.group_id)
+        else:
+            curve = self._compute_group_fit_curve(
+                group,
+                self._show_components_check.isChecked(),
+                result=self._result,
+                model=self._model,
+                fit_x_min=self._fit_x_min,
+                fit_x_max=self._fit_x_max,
+                x_key=self._x_key,
+            )
+
+        if curve is not None and "error" in curve:
+            ax.text(
+                0.02,
+                0.95,
+                f"Fit curve unavailable: {curve['error']}",
+                transform=ax.transAxes,
+                fontsize=9,
+                va="top",
+                color="tab:red",
+            )
+            return
+        if curve is None:
+            return
+
+        xx = curve["xx"]
+        components = curve.get("components")
+        if components is not None:
+            ordered = self._ordered_components_for_stacking(components)
+            cumulative = np.zeros_like(xx, dtype=float)
+            for cidx, (name, comp_y) in enumerate(ordered):
+                fill_color = _COMPONENT_COLORS[cidx % len(_COMPONENT_COLORS)]
+                legend_entries.setdefault(str(name), fill_color)
+                comp_fill = np.maximum(np.asarray(comp_y, dtype=float), 0.0)
+                lower = cumulative
+                upper = cumulative + comp_fill
+                ax.fill_between(xx, lower, upper, color=fill_color, alpha=0.3, zorder=1)
+                ax.plot(
+                    xx,
+                    upper,
+                    linestyle="--",
+                    linewidth=0.8,
+                    color=fill_color,
+                    alpha=0.9,
+                    zorder=2,
+                )
+                cumulative = upper
+        ax.plot(xx, curve["yy"], color="red", linewidth=1.5)
+
+    def _draw_group_residuals(self, ax, group: ParameterGroupData) -> None:
+        """Draw ``(data − model)/σ`` pulls for one group around a zero line.
+
+        The model is evaluated at the data x (cheap — N points, not the
+        800-sample curve) so this stays fine on the GUI thread; components and
+        the fit curve are omitted in residual mode.
+        """
+        x = np.asarray(group.x, dtype=float)
+        y = np.asarray(group.y, dtype=float)
+        e = np.asarray(group.yerr, dtype=float)
+        ax.axhline(0.0, color=tokens.PLOT_ZERO_LINE, linewidth=1.0, zorder=1)
+
+        kwargs = self._model_kwargs_for_group(group.group_id)
+        if not kwargs:
+            return
+        mask = np.isfinite(x) & np.isfinite(y)
+        if not np.any(mask):
+            return
+        xm = x[mask]
+        ym = y[mask]
+        em = e[mask] if e.shape == y.shape else np.full_like(ym, np.nan)
+        try:
+            model_y = np.asarray(self._model.function(xm, **kwargs), dtype=float)
+        except KeyError:
+            return
+        sigma = np.where(np.isfinite(em) & (em > 0), em, np.nan)
+        pulls = (ym - model_y) / sigma
+        order = np.argsort(xm)
+        xs = xm[order]
+        ps = pulls[order]
+        finite = np.isfinite(ps)
+        if np.any(finite):
+            ax.stem(
+                xs[finite],
+                ps[finite],
+                linefmt="C0-",
+                markerfmt="C0o",
+                basefmt=" ",
+            )
+
+    def _draw_group_chi_chip(self, ax, group_id: str) -> None:
+        """Annotate a panel with a subtle ``χ²ᵣ=<val>`` chip in its corner."""
+        chi_r = self._per_group_reduced_chi_squared(group_id)
+        if chi_r is None or not np.isfinite(chi_r):
+            return
+        ax.text(
+            0.97,
+            0.95,
+            f"χ²ᵣ={chi_r:.2f}",
+            transform=ax.transAxes,
+            fontsize=8,
+            ha="right",
+            va="top",
+            color=tokens.TEXT_MUTED,
+            bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.6, "pad": 1.5},
+            zorder=8,
+        )
 
     def _refresh_local_parameter_plots(self) -> None:
         if self._local_canvas is None or self._local_figure is None:

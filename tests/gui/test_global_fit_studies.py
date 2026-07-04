@@ -345,3 +345,149 @@ def test_deleted_source_series_marks_stale_and_disables_refit(
     # Refit is a no-op warning path (no study change) when the source is gone.
     mainwindow._on_global_fit_refit_requested(study_id)
     assert mainwindow._global_fit_studies[study_id] is study
+
+
+# ── Phase 3 sidebar handlers: rename / duplicate / delete ────────────────────
+
+
+def test_rename_updates_name_and_menu(mainwindow: MainWindow) -> None:
+    g = _groups("A")
+    mainwindow._on_cross_group_fit_completed("A", g, _output("A", "field", g))
+    _wait_idle(mainwindow)
+    study_id = mainwindow._cross_group_batch_id("A", "field", g)
+
+    mainwindow._on_global_fit_study_rename_requested(study_id, "My study")
+    assert mainwindow._global_fit_studies[study_id].name == "My study"
+    # The window title reflects the new name.
+    window = mainwindow._global_parameter_fit_window
+    assert window is not None
+    assert "My study" in window.windowTitle()
+    # The sidebar carries the new name too.
+    entries = mainwindow._global_fit_sidebar_entries()
+    assert any(name == "My study" for _sid, name, _stale in entries)
+
+
+def test_duplicate_creates_suffixed_id_marked_stale(mainwindow: MainWindow) -> None:
+    g = _groups("A")
+    mainwindow._on_cross_group_fit_completed("A", g, _output("A", "field", g))
+    _wait_idle(mainwindow)
+    study_id = mainwindow._cross_group_batch_id("A", "field", g)
+
+    mainwindow._on_global_fit_study_duplicate_requested(study_id)
+    _wait_idle(mainwindow)
+
+    copy_id = f"{study_id}-copy"
+    assert copy_id in mainwindow._global_fit_studies
+    assert copy_id != study_id
+    copy = mainwindow._global_fit_studies[copy_id]
+    assert "(copy)" in copy.name
+    # The copy's digest is deliberately mismatched so it reads as stale.
+    assert copy.input_digest == "duplicated"
+    # The copy is displayed and its banner is up.
+    window = mainwindow._global_parameter_fit_window
+    assert window is not None
+    assert window.batch_id() == copy_id
+    assert window._stale_banner.isVisible()
+
+
+def test_duplicate_twice_avoids_id_collision(mainwindow: MainWindow) -> None:
+    g = _groups("A")
+    mainwindow._on_cross_group_fit_completed("A", g, _output("A", "field", g))
+    _wait_idle(mainwindow)
+    study_id = mainwindow._cross_group_batch_id("A", "field", g)
+
+    mainwindow._on_global_fit_study_duplicate_requested(study_id)
+    _wait_idle(mainwindow)
+    mainwindow._on_global_fit_study_duplicate_requested(study_id)
+    _wait_idle(mainwindow)
+
+    assert f"{study_id}-copy" in mainwindow._global_fit_studies
+    assert f"{study_id}-copy2" in mainwindow._global_fit_studies
+
+
+def test_delete_displays_remaining_study(mainwindow: MainWindow) -> None:
+    g_a = _groups("A")
+    g_b = _groups("D_2D")
+    mainwindow._on_cross_group_fit_completed("A", g_a, _output("A", "field", g_a))
+    mainwindow._on_cross_group_fit_completed("D_2D", g_b, _output("D_2D", "field", g_b))
+    _wait_idle(mainwindow)
+    id_a = mainwindow._cross_group_batch_id("A", "field", g_a)
+    id_b = mainwindow._cross_group_batch_id("D_2D", "field", g_b)
+
+    # Delete the displayed study (id_b, the most recent) → id_a displayed.
+    mainwindow._on_global_fit_study_delete_requested(id_b)
+    _wait_idle(mainwindow)
+    assert id_b not in mainwindow._global_fit_studies
+    assert id_a in mainwindow._global_fit_studies
+    window = mainwindow._global_parameter_fit_window
+    assert window is not None
+    assert window.batch_id() == id_a
+
+
+def test_delete_last_study_clears_window(mainwindow: MainWindow) -> None:
+    g = _groups("A")
+    mainwindow._on_cross_group_fit_completed("A", g, _output("A", "field", g))
+    _wait_idle(mainwindow)
+    study_id = mainwindow._cross_group_batch_id("A", "field", g)
+
+    mainwindow._on_global_fit_study_delete_requested(study_id)
+    _wait_idle(mainwindow)
+    assert not mainwindow._global_fit_studies
+    window = mainwindow._global_parameter_fit_window
+    assert window is not None
+    assert not window.has_result()
+    assert window.windowTitle() == "Global Parameter Fit"
+
+
+def test_edit_fit_routes_through_fresh_fit_path(
+    mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    g = _groups("A")
+    mainwindow._on_cross_group_fit_completed("A", g, _output("A", "field", g))
+    _wait_idle(mainwindow)
+    study_id = mainwindow._cross_group_batch_id("A", "field", g)
+    study = mainwindow._global_fit_studies[study_id]
+    study.name = "Kept name"
+
+    # Live groups available for re-assembly.
+    live = _groups("A")
+    mainwindow._fit_parameters_panel.assemble_cross_group_groups = (  # type: ignore
+        lambda param, x_key, ids: list(live)
+    )
+
+    # Stub the dialog so exec() returns Accepted with an output over the same
+    # groups (same batch id → in-place update).
+    from types import SimpleNamespace
+
+    fresh_output = SimpleNamespace(
+        fit_result=_result(),
+        model=ParameterCompositeModel(["Linear"]),
+        x_key="field",
+        fit_x_min=float("nan"),
+        fit_x_max=float("nan"),
+        config=_config("A"),
+        groups=live,
+    )
+
+    class _FakeDialog:
+        def __init__(self, *a, **k):
+            pass
+
+        def exec(self):
+            from PySide6.QtWidgets import QDialog
+
+            return QDialog.DialogCode.Accepted
+
+        def output(self):
+            return fresh_output
+
+    monkeypatch.setattr(
+        "asymmetry.gui.panels.cross_group_fit_dialog.CrossGroupFitDialog", _FakeDialog
+    )
+
+    mainwindow._on_global_fit_edit_requested(study_id)
+    _wait_idle(mainwindow)
+
+    # In-place update: same id, name preserved.
+    assert study_id in mainwindow._global_fit_studies
+    assert mainwindow._global_fit_studies[study_id].name == "Kept name"
