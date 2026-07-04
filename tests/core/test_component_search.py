@@ -302,13 +302,21 @@ def test_parameter_model_components_searchable_by_param():
 
 
 def test_parameter_model_components_empty_query_canonical_order():
-    # PARAMETER_MODEL_COMPONENTS has no 'category' attribute at all, so every
-    # entry should fall back to the default 'General' bucket and sort
-    # alphabetically.
+    # Parameter-model definitions carry categories: 'General' (a known
+    # canonical category) leads, the remaining categories follow
+    # alphabetically, and names sort alphabetically within each category.
     results = search_components("", components=PARAMETER_MODEL_COMPONENTS)
     names = _names(results)
-    assert names == sorted(names)
     assert set(names) == set(PARAMETER_MODEL_COMPONENTS)
+
+    from asymmetry.core.fitting.component_search import _category_sort_key
+
+    keys = [(_category_sort_key(PARAMETER_MODEL_COMPONENTS[name].category), name) for name in names]
+    assert keys == sorted(keys), (
+        "empty query must order by canonical category, then name; "
+        "'General' leads and unknown categories follow the known ones alphabetically"
+    )
+    assert PARAMETER_MODEL_COMPONENTS[names[0]].category == "General"
 
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-"""Tests for fit-function builder dialog."""
+"""Tests for the fit-function builder dialog (structured-foundation rebuild)."""
 
 from __future__ import annotations
 
@@ -11,12 +11,12 @@ pytestmark = [pytest.mark.gui]
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QApplication, QDialogButtonBox
+from PySide6.QtWidgets import QApplication, QDialog, QDialogButtonBox
 
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.gui.panels.fit_function_builder import (
     FitFunctionBuilderDialog,
-    _ComponentSelectorButton,
+    _build_components_by_category,
 )
 
 
@@ -28,42 +28,24 @@ def qapp() -> QApplication:
     return app
 
 
+def _ok(dialog: FitFunctionBuilderDialog):
+    return dialog._buttons.button(QDialogButtonBox.StandardButton.Ok)
+
+
+# ------------------------------------------------------------------ defaults
 def test_dialog_builds_default_model(qapp: QApplication) -> None:
     dialog = FitFunctionBuilderDialog()
+    assert dialog._domain == "time"
     dialog._on_accept()
     model = dialog.get_composite_model()
 
     assert model is not None
     assert model.component_names == ["Exponential", "Constant"]
     assert model.operators == ["+"]
-    assert dialog._expression_edit.text() == "Exponential + Constant"
+    assert "Preview: A(t) =" in dialog._preview_label.text()
 
 
-def test_dialog_insert_function_updates_expression_and_preview(qapp: QApplication) -> None:
-    dialog = FitFunctionBuilderDialog()
-    dialog._expression_edit.clear()
-    dialog._component_selector.setCurrentText("Constant")
-    dialog._insert_component_button.click()
-    dialog._insert_token(" + ")
-    dialog._component_selector.setCurrentText("Gaussian")
-    dialog._insert_component_button.click()
-
-    assert dialog._expression_edit.text() == "Constant + Gaussian"
-    assert "Preview:" in dialog._preview_label.text()
-    assert "A_bg" in dialog._preview_label.text()
-
-
-def test_dialog_invalid_expression_disables_ok(qapp: QApplication) -> None:
-    dialog = FitFunctionBuilderDialog()
-    dialog._expression_edit.setText("Exponential +")
-
-    ok = dialog._buttons.button(QDialogButtonBox.StandardButton.Ok)
-    assert ok is not None
-    assert ok.isEnabled() is False
-    assert "operator" in dialog._status_label.text().lower()
-
-
-def test_dialog_prepopulate_model(qapp: QApplication) -> None:
+def test_dialog_prepopulate_model_roundtrips(qapp: QApplication) -> None:
     initial = CompositeModel(
         ["Gaussian", "Constant", "Constant"],
         operators=["*", "+"],
@@ -72,7 +54,7 @@ def test_dialog_prepopulate_model(qapp: QApplication) -> None:
     )
     dialog = FitFunctionBuilderDialog(initial_model=initial)
 
-    assert dialog._expression_edit.text() == "Gaussian * (Constant + Constant)"
+    assert dialog._rows.expression() == "Gaussian * (Constant + Constant)"
     dialog._on_accept()
     model = dialog.get_composite_model()
     assert model is not None
@@ -82,175 +64,58 @@ def test_dialog_prepopulate_model(qapp: QApplication) -> None:
     assert model.close_parentheses == initial.close_parentheses
 
 
-def test_dialog_builds_parenthesized_model(qapp: QApplication) -> None:
-    dialog = FitFunctionBuilderDialog()
-    dialog._expression_edit.setText("Exponential * ( Constant + Constant )")
-
+def test_nested_paren_model_roundtrips_unchanged(qapp: QApplication) -> None:
+    initial = CompositeModel(
+        ["Exponential", "Gaussian", "Constant", "Constant"],
+        operators=["*", "+", "+"],
+        open_parentheses=[0, 1, 1, 0],
+        close_parentheses=[0, 0, 0, 2],
+    )
+    dialog = FitFunctionBuilderDialog(initial_model=initial)
     dialog._on_accept()
     model = dialog.get_composite_model()
 
     assert model is not None
-    assert model.open_parentheses == [0, 1, 0]
-    assert model.close_parentheses == [0, 0, 1]
+    assert model.component_names == initial.component_names
+    assert model.operators == initial.operators
+    assert model.open_parentheses == initial.open_parentheses
+    assert model.close_parentheses == initial.close_parentheses
 
 
-def test_dialog_builds_fraction_group_model(qapp: QApplication) -> None:
+# ------------------------------------------------------------------- gating
+def test_empty_structure_disables_ok(qapp: QApplication) -> None:
     dialog = FitFunctionBuilderDialog()
-    dialog._expression_edit.setText("Exponential + Gaussian")
-    cursor = dialog._expression_edit.textCursor()
-    cursor.setPosition(0)
-    cursor.setPosition(len("Exponential + Gaussian"), cursor.MoveMode.KeepAnchor)
-    dialog._expression_edit.setTextCursor(cursor)
-    dialog._group_fraction_button.click()
+    dialog._rows.clear()
 
+    ok = _ok(dialog)
+    assert ok is not None
+    assert ok.isEnabled() is False
+
+
+def test_invalid_text_reports_error_and_refuses_accept(qapp: QApplication) -> None:
+    dialog = FitFunctionBuilderDialog()
+    dialog._toggle_text_mode()
+    dialog._text_edit.setPlainText("Exponential +")
+
+    # Applying an invalid expression stays in text mode with a surfaced error.
+    assert dialog._apply_text() is False
+    assert "operator" in dialog._status_label.text().lower()
+
+    # Accepting an invalid expression does not fire acceptance.
     dialog._on_accept()
-    model = dialog.get_composite_model()
-
-    assert model is not None
-    assert model.fraction_groups == [(0, 1)]
-    assert "fraction_1" in model.param_names
-    assert "fraction_2" in model.param_names
+    assert dialog.result() != QDialog.DialogCode.Accepted
 
 
-def test_dialog_exposes_fraction_group_ui_controls(qapp: QApplication) -> None:
-    dialog = FitFunctionBuilderDialog()
-
-    assert dialog._group_fraction_button.text() == "Fractions"
-    assert dialog._separate_fraction_button.text() == "Separate"
-    assert "matching colors" in dialog._syntax_help_label.text()
-
-
-def test_dialog_normalizes_fraction_syntax_to_color_groups(qapp: QApplication) -> None:
-    dialog = FitFunctionBuilderDialog()
-    dialog._expression_edit.setText("( Exponential + Gaussian ){frac}")
-
-    assert dialog._expression_edit.text() == "Exponential + Gaussian"
-    dialog._on_accept()
-    model = dialog.get_composite_model()
-
-    assert model is not None
-    assert model.fraction_groups == [(0, 1)]
-
-
-def test_fraction_button_groups_selected_components(qapp: QApplication) -> None:
-    dialog = FitFunctionBuilderDialog()
-    text = "Exponential + Gaussian + Constant"
-    dialog._expression_edit.setText(text)
-    cursor = dialog._expression_edit.textCursor()
-    cursor.setPosition(0)
-    cursor.setPosition(len("Exponential + Gaussian"), cursor.MoveMode.KeepAnchor)
-    dialog._expression_edit.setTextCursor(cursor)
-
-    dialog._group_fraction_button.click()
-
-    assert dialog._expression_edit.text() == text
-    dialog._on_accept()
-    model = dialog.get_composite_model()
-
-    assert model is not None
-    assert model.fraction_groups == [(0, 1)]
-    assert "Fractions:" in dialog._preview_label.text()
-
-
-def test_separate_button_removes_fraction_group(qapp: QApplication) -> None:
-    dialog = FitFunctionBuilderDialog()
-    text = "Exponential + Gaussian + Constant"
-    dialog._expression_edit.setText(text)
-    cursor = dialog._expression_edit.textCursor()
-    cursor.setPosition(0)
-    cursor.setPosition(len("Exponential + Gaussian"), cursor.MoveMode.KeepAnchor)
-    dialog._expression_edit.setTextCursor(cursor)
-
-    dialog._group_fraction_button.click()
-    dialog._expression_edit.setTextCursor(cursor)
-
-    dialog._separate_fraction_button.click()
-
-    assert dialog._expression_edit.text() == text
-    dialog._on_accept()
-    model = dialog.get_composite_model()
-
-    assert model is not None
-    assert model.fraction_groups == []
-
-
-def test_backspace_removes_whole_function_token(qapp: QApplication) -> None:
-    dialog = FitFunctionBuilderDialog()
-    dialog._expression_edit.setText("Exponential + Constant")
-    dialog._expression_edit.setCursorPosition(len(dialog._expression_edit.text()))
-
-    dialog._backspace_expression()
-
-    assert dialog._expression_edit.text().strip() == "Exponential +"
-
-
-def test_dialog_has_info_button_and_selector(qapp: QApplication) -> None:
-    dialog = FitFunctionBuilderDialog()
-
-    assert isinstance(dialog._component_selector, _ComponentSelectorButton)
-    assert dialog._info_button.text() == "Info"
-    assert dialog._component_selector.text().endswith("\u25be")
-
-
-def test_component_selector_category_submenus(qapp: QApplication) -> None:
-    dialog = FitFunctionBuilderDialog()
-    component_widget = dialog._component_selector
-
-    assert isinstance(component_widget, _ComponentSelectorButton)
-    menu = component_widget._build_component_menu()
-    assert menu is not None
-
-    submenu_titles = [action.text() for action in menu.actions() if action.menu() is not None]
-    # Canonical display order (no top-level "General" components remain in the
-    # time-domain registry; frequency-domain components are filtered out).
-    expected_order = [
-        "Relaxation",
-        "Oscillation",
-        "Kubo-Toyabe",
-        "Muonium",
-        "Nuclear dipolar",
-        "Background",
-    ]
-    assert submenu_titles == expected_order
-
-    def _submenu_items(title: str) -> list[str]:
-        for action in menu.actions():
-            submenu = action.menu()
-            if submenu is not None and action.text() == title:
-                return [a.text() for a in submenu.actions() if a.isEnabled()]
-        return []
-
-    dipolar_items = _submenu_items("Nuclear dipolar")
-    for name in (
-        "MuF",
-        "FmuF_Linear",
-        "FmuF_General",
-        "FmuF_Triangle",
-        "DynamicFmuF",
-        "DipolarPairField",
-        "ProtonDipole",
-        "ElectronDipole",
-        "DipolarSpinJ",
-    ):
-        assert name in dipolar_items
-
-    assert "Bessel" in _submenu_items("Oscillation")
-    assert "RischKehr" in _submenu_items("Relaxation")
-    assert "GaussianBroadenedKT" in _submenu_items("Kubo-Toyabe")
-    for name in ("MuoniumHighTF", "MuoniumHighTFAniso", "MuoniumLFRelax"):
-        assert name in _submenu_items("Muonium")
-
-
+# ----------------------------------------------------------- domain filtering
 def test_time_domain_builder_excludes_frequency_components(qapp: QApplication) -> None:
     dialog = FitFunctionBuilderDialog()
 
-    assert dialog._domain == "time"
     assert "GaussianPeak" not in dialog._allowed_components
     assert "LorentzianPeak" not in dialog._allowed_components
     assert "Exponential" in dialog._allowed_components
 
 
-def test_frequency_domain_builder_is_flat_and_filtered(qapp: QApplication) -> None:
+def test_frequency_domain_builder_is_filtered(qapp: QApplication) -> None:
     dialog = FitFunctionBuilderDialog(domain="frequency")
 
     assert dialog._domain == "frequency"
@@ -260,47 +125,141 @@ def test_frequency_domain_builder_is_flat_and_filtered(qapp: QApplication) -> No
         "ConstantBackground",
         "LinearBackground",
     }
-    # Default model follows the frequency-domain default.
-    assert dialog._expression_edit.text().strip() == "GaussianPeak + ConstantBackground"
-
-    menu = dialog._component_selector._build_component_menu()
-    assert menu is not None
-    submenu_titles = [action.text() for action in menu.actions() if action.menu() is not None]
-    assert submenu_titles == []  # flat list: no submenus
-    top_level = [
-        action.text()
-        for action in menu.actions()
-        if action.menu() is None and not action.isSeparator()
-    ]
-    assert top_level == sorted(dialog._allowed_components)
+    assert dialog._rows.expression() == "GaussianPeak + ConstantBackground"
+    assert "Preview: S(ν) =" in dialog._preview_label.text()
 
 
-def test_out_of_domain_component_gets_domain_hint_error(qapp: QApplication) -> None:
+def test_out_of_domain_component_gets_domain_hint_in_text_mode(qapp: QApplication) -> None:
     dialog = FitFunctionBuilderDialog()
-    dialog._expression_edit.setText("GaussianPeak + Constant")
+    dialog._toggle_text_mode()
+    dialog._text_edit.setPlainText("GaussianPeak + Constant")
 
-    valid, error, model = False, None, None
-    try:
-        valid, error, model = dialog._validate_expression()
-    except ValueError as exc:
-        error = str(exc)
+    applied = dialog._apply_text()
+    assert applied is False  # stayed in text mode with an error
 
-    assert not valid or model is None
-    assert error is not None
-    assert "frequency-domain component" in error
-    assert "time domain" in error
+    status = dialog._status_label.text()
+    assert "frequency-domain component" in status
+    assert "time domain" in status
 
-    ok_button = dialog._buttons.button(QDialogButtonBox.StandardButton.Ok)
-    assert ok_button is not None and not ok_button.isEnabled()
+    # The invalid expression is not accepted.
+    dialog._on_accept()
+    assert dialog.result() != QDialog.DialogCode.Accepted
 
 
-def test_component_info_availability_reflects_domain(qapp: QApplication) -> None:
+def test_frequency_builder_rejects_time_component(qapp: QApplication) -> None:
+    dialog = FitFunctionBuilderDialog(domain="frequency")
+    dialog._toggle_text_mode()
+    dialog._text_edit.setPlainText("Exponential + ConstantBackground")
+
+    assert dialog._apply_text() is False
+    status = dialog._status_label.text()
+    assert "time-domain component" in status
+    assert "frequency domain" in status
+
+
+# -------------------------------------------------------------- fraction groups
+def test_dialog_builds_fraction_group_model(qapp: QApplication) -> None:
+    """Grouping two additive terms yields the new ``f_<Component>`` naming.
+
+    The previously-failing legacy test asserted ``fraction_1``/``fraction_2``;
+    the current model names free fractions ``f_<Component>`` (one fewer than the
+    number of terms) with a derived remainder label from
+    :meth:`CompositeModel.derived_fraction_names`.
+    """
+    dialog = FitFunctionBuilderDialog()
+    dialog._rows.set_structure(["Exponential", "Gaussian"], ["+"], [0, 0], [0, 0], [])
+    dialog._rows._selected_indices = {0, 1}
+    dialog._update_action_buttons()
+    dialog._group_selection_as_fractions()
+
+    dialog._on_accept()
+    model = dialog.get_composite_model()
+
+    assert model is not None
+    assert model.fraction_groups == [(0, 1)]
+    # One free fraction parameter for two terms (n-1).
+    free = model.fraction_parameter_groups()
+    assert free == [["f_Exponential"]]
+    assert "f_Exponential" in model.param_names
+    # The remainder term is a derived, display-only label (no free parameter).
+    assert model.derived_fraction_names() == ["f_Gaussian"]
+    assert "f_Gaussian" not in model.param_names
+    # Preview enumerates the fraction group.
+    assert "Fraction group" in dialog._preview_label.text()
+
+
+def test_initial_fraction_group_roundtrips(qapp: QApplication) -> None:
+    initial = CompositeModel(
+        ["Exponential", "Gaussian", "Constant"],
+        operators=["+", "+"],
+        open_parentheses=[1, 0, 0],
+        close_parentheses=[0, 1, 0],
+        fraction_groups=[(0, 1)],
+    )
+    dialog = FitFunctionBuilderDialog(initial_model=initial)
+    assert "{frac}" in dialog._rows.expression()
+
+    dialog._on_accept()
+    model = dialog.get_composite_model()
+    assert model is not None
+    assert model.fraction_groups == [(0, 1)]
+
+
+# --------------------------------------------------------------- missing user fn
+def test_missing_user_component_opens_with_placeholder(qapp: QApplication) -> None:
+    model = CompositeModel(
+        ["Exponential", "MyMissingFn", "Constant"],
+        operators=["+", "+"],
+        allow_missing=True,
+    )
+    assert model.missing_component_names == ("MyMissingFn",)
+
+    dialog = FitFunctionBuilderDialog(initial_model=model)
+
+    # The row list renders every component, including the missing one.
+    names, *_rest = dialog._rows.structure()
+    assert names == ["Exponential", "MyMissingFn", "Constant"]
+    # A placeholder definition backs the missing name (warning-tinted row).
+    assert "MyMissingFn" in dialog._placeholder_definitions
+    # The missing name is never leaked into the global registry.
     from asymmetry.core.fitting.composite import COMPONENTS
-    from asymmetry.gui.widgets.component_info_dialog import build_component_info_html
 
-    freq_html = build_component_info_html(COMPONENTS["GaussianPeak"], render_latex_images=False)
-    time_html = build_component_info_html(COMPONENTS["Exponential"], render_latex_images=False)
+    assert "MyMissingFn" not in COMPONENTS
 
-    assert "Frequency-domain fit builder" in freq_html
-    assert "Time-domain fit builder" not in freq_html
-    assert "Time-domain fit builder" in time_html
+    dialog._on_accept()
+    built = dialog.get_composite_model()
+    assert built is not None
+    assert built.component_names == ["Exponential", "MyMissingFn", "Constant"]
+    assert built.missing_component_names == ("MyMissingFn",)
+
+
+# --------------------------------------------------------- simulate invocation
+def test_simulate_style_invocation(qapp: QApplication) -> None:
+    """A parent + initial_model construction (as SimulateDialog does) works."""
+    parent = None  # SimulateDialog passes a real parent; None exercises the path
+    initial = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    dialog = FitFunctionBuilderDialog(parent, initial_model=initial, domain="time")
+
+    dialog._on_accept()
+    model = dialog.get_composite_model()
+    assert model is not None
+    assert model.component_names == ["Exponential", "Constant"]
+
+
+# ----------------------------------------------------------------- library add
+def test_library_activation_appends_component(qapp: QApplication) -> None:
+    dialog = FitFunctionBuilderDialog()
+    dialog._library.component_activated.emit("Gaussian")
+    names, *_rest = dialog._rows.structure()
+    assert names == ["Exponential", "Constant", "Gaussian"]
+
+
+# ------------------------------------------------------------- category helper
+def test_build_components_by_category_time_and_frequency() -> None:
+    time_grouped = _build_components_by_category("time")
+    assert "Muonium" in time_grouped
+    assert "GaussianPeak" not in time_grouped.get("Background", [])
+
+    freq_grouped = _build_components_by_category("frequency")
+    assert set(freq_grouped) == {"General"}
+    assert "GaussianPeak" in freq_grouped["General"]

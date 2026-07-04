@@ -123,20 +123,29 @@ def _register_badged_component():
 
 
 def test_builder_picker_badges_user_components(qapp, _registry_snapshot):
-    from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
+    from asymmetry.gui.panels.fit_function_builder import (
+        FitFunctionBuilderDialog,
+        _build_components_by_category,
+    )
 
-    _register_badged_component()
+    definition = _register_badged_component()
     dialog = FitFunctionBuilderDialog(domain="time")
-    selector = dialog._component_selector
-    assert "UserBadgeDecay" in selector._user_components
-    assert "user" in selector._menu_label("UserBadgeDecay")
-    assert selector._menu_label("Keren") == "Keren"
-    # The badge is display-only: selecting still inserts the bare name.
-    selector.setCurrentText("UserBadgeDecay")
-    assert selector.currentText() == "UserBadgeDecay"
-    # The user component lands in its own "User" submenu of the picker.
-    from asymmetry.gui.panels.fit_function_builder import _build_components_by_category
 
+    # The rebuilt dialog searches a component library; the user function is in
+    # the pool and its definition carries the ``user`` provenance flag that the
+    # library renders as a "· user" badge.
+    library = dialog._library
+    assert library._definitions["UserBadgeDecay"] is definition
+    assert getattr(definition, "user", False) is True
+    # Selecting it in the library and activating inserts the bare name.
+    library.set_search_text("UserBadgeDecay")
+    assert library.current_component_name() == "UserBadgeDecay"
+    inserted: list[str] = []
+    library.component_activated.connect(inserted.append)
+    library._activate_current()
+    assert inserted == ["UserBadgeDecay"]
+
+    # The user component lands in its own "User" category of the picker map.
     assert "UserBadgeDecay" in _build_components_by_category("time")["User"]
     dialog.deleteLater()
 

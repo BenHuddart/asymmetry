@@ -16,6 +16,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import QEventLoop, Qt, QTimer
 from PySide6.QtWidgets import QApplication, QCheckBox, QDialog
 
+from asymmetry.core.fitting.composite import QUADRATURE_OPERATOR
 from asymmetry.core.fitting.parameter_models import (
     ModelFitRange,
     ParameterCompositeModel,
@@ -24,11 +25,9 @@ from asymmetry.core.fitting.parameter_models import (
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.model_fit_dialog import (
-    _SC_COMPONENT_MENU_TITLE,
     ModelFitDialog,
     ParameterModelBuilderDialog,
     _component_pool_for_context,
-    _ComponentSelectorButton,
     _default_component_for_context,
     _format_model_param_label,
 )
@@ -414,16 +413,30 @@ def test_edit_model_to_sc_component_keeps_shape_factor_a_fixed_by_default(
     assert checkboxes[0].isChecked() is True
 
 
-def test_parameter_model_builder_has_info_column(qapp: QApplication) -> None:
+def test_parameter_model_builder_seeds_initial_expression(qapp: QApplication) -> None:
     dialog = ParameterModelBuilderDialog(component_pool=["Linear", "Arrhenius"])
 
-    assert dialog._info_button.text() == "Info"
-    assert dialog._expression_edit.text() == "Arrhenius"
+    # No initial_model: seeds from the sorted pool's first entry.
+    assert dialog._rows.expression() == "Arrhenius"
+
+
+def test_parameter_model_builder_initial_model_round_trips(qapp: QApplication) -> None:
+    initial = ParameterCompositeModel(["Linear", "Constant"], ["+"])
+    dialog = ParameterModelBuilderDialog(
+        component_pool=["Linear", "Arrhenius", "Constant"], initial_model=initial
+    )
+
+    assert dialog._rows.expression() == "Linear + Constant"
+    model = dialog.get_model()
+    assert model is not None
+    assert model.component_names == ["Linear", "Constant"]
 
 
 def test_parameter_model_builder_accepts_parenthesized_expression(qapp: QApplication) -> None:
     dialog = ParameterModelBuilderDialog(component_pool=["Linear", "Arrhenius", "Constant"])
-    dialog._expression_edit.setText("Linear + ( Arrhenius * Constant )")
+    dialog._toggle_text_mode()
+    dialog._text_edit.setPlainText("Linear + ( Arrhenius * Constant )")
+    assert dialog._apply_text() is True
 
     dialog._on_accept()
     model = dialog.get_model()
@@ -436,42 +449,51 @@ def test_parameter_model_builder_accepts_parenthesized_expression(qapp: QApplica
 
 
 def test_parameter_model_builder_offers_quadrature_operator(qapp: QApplication) -> None:
-    """The parameter-model builder exposes a ⊕ keypad button and accepts a
-    quadrature expression (the operator is parameter-grammar only)."""
+    """The parameter-model builder's row operator combos include ⊕, and text
+    mode accepts a quadrature expression (the operator is parameter-grammar
+    only)."""
     dialog = ParameterModelBuilderDialog(component_pool=["PowerLaw", "Constant"])
-    assert "⊕" in dialog._extra_token_buttons
+    assert QUADRATURE_OPERATOR in dialog._rows._operators_available
 
-    dialog._expression_edit.setText("PowerLaw ⊕ Constant")
+    dialog._toggle_text_mode()
+    dialog._text_edit.setPlainText(f"PowerLaw {QUADRATURE_OPERATOR} Constant")
+    assert dialog._apply_text() is True
+
     dialog._on_accept()
     model = dialog.get_model()
     assert model is not None
-    assert model.operators == ["⊕"]
+    assert model.operators == [QUADRATURE_OPERATOR]
     assert model.component_names == ["PowerLaw", "Constant"]
 
 
-def test_parameter_model_builder_groups_sc_models_in_submenu(qapp: QApplication) -> None:
-    dialog = ParameterModelBuilderDialog(component_pool=["Linear", "SC_SWave", "SC_DWave"])
+def test_parameter_model_builder_rejects_component_outside_pool(qapp: QApplication) -> None:
+    """A component that is registered but not offered in this context (e.g.
+    typed directly in text mode) is rejected with a helpful message rather
+    than silently accepted."""
+    dialog = ParameterModelBuilderDialog(component_pool=["Linear", "Constant"])
+    dialog._toggle_text_mode()
+    dialog._text_edit.setPlainText("Arrhenius")
 
-    selector = dialog._component_selector
-    assert isinstance(selector, _ComponentSelectorButton)
+    assert dialog._apply_text() is False
+    assert dialog._stack.currentWidget() is dialog._text_edit
+    assert "Arrhenius" in dialog._status_label.text()
 
-    menu = selector._build_component_menu()
-    assert menu is not None
+    result = dialog.result()
+    dialog._on_accept()
+    # The Ok path re-validates and refuses to accept: the dialog's result
+    # code is unchanged (accept() was never reached), so a caller's
+    # `if dlg.exec() != Accepted: return` guard would correctly bail out.
+    assert dialog.result() == result
 
-    top_actions = menu.actions()
-    assert any(action.text() == "Linear" and action.menu() is None for action in top_actions)
 
-    sc_action = next(
-        (
-            action
-            for action in top_actions
-            if action.menu() is not None and action.text() == _SC_COMPONENT_MENU_TITLE
-        ),
-        None,
-    )
-    assert sc_action is not None
-    sc_items = [action.text() for action in sc_action.menu().actions()]
-    assert sc_items == ["SC_DWave", "SC_SWave"]
+def test_parameter_model_builder_get_model_returns_none_when_invalid(
+    qapp: QApplication,
+) -> None:
+    dialog = ParameterModelBuilderDialog(component_pool=["Linear", "Constant"])
+    dialog._toggle_text_mode()
+    dialog._text_edit.setPlainText("")
+    dialog._validate_and_update("")
+    assert dialog.get_model() is None
 
 
 def test_component_info_html_contains_equation_and_parameters() -> None:

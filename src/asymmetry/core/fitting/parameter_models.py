@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from functools import partial
 from itertools import product
@@ -60,6 +60,10 @@ class ParameterModelComponentDefinition:
     #: (:mod:`asymmetry.core.fitting.user_functions`); see
     #: ``ComponentDefinition.user``.
     user: bool = False
+    #: Library-panel grouping (mirrors ``ComponentDefinition.category``).
+    #: Assigned in bulk via ``_PARAMETER_MODEL_CATEGORIES`` below rather than
+    #: per-definition, so the taxonomy is reviewable in one place.
+    category: str = "General"
 
 
 #: Recognised scope tokens for :attr:`ParameterModelComponentDefinition.scopes`
@@ -1178,6 +1182,53 @@ def _register_superconducting_components() -> None:
 
 
 _register_superconducting_components()
+
+#: Library-panel category per component. Names absent from this table keep the
+#: "General" default (Constant, Linear, and user-registered functions). Every
+#: key must exist in the registry — pinned by
+#: ``test_parameter_model_categories_cover_registry``.
+_PARAMETER_MODEL_CATEGORIES: dict[str, str] = {
+    **dict.fromkeys(["Polynomial", "Cubic", "Quartic", "Quintic", "Sextic"], "Polynomial"),
+    **dict.fromkeys(
+        ["PowerLaw", "PowerLawQuadBG", "ExponentialDecay", "Arrhenius"],
+        "Scaling & activation",
+    ),
+    **dict.fromkeys(["CriticalDivergence", "OrderParameter"], "Critical behaviour"),
+    **dict.fromkeys(
+        [
+            "Redfield",
+            "Lorentzian",
+            "MuRepolarisation",
+            "GaussianLCR",
+            "LorentzianLCR",
+            "RFResonanceMuP",
+        ],
+        "Field scan",
+    ),
+    **dict.fromkeys(
+        [
+            "DiffusionLF_1D",
+            "DiffusionLF_2D",
+            "DiffusionLF_3D",
+            "BallisticLF_1D",
+            "BallisticLF_2D",
+            "BallisticLF_3D",
+        ],
+        "Spin dynamics",
+    ),
+    "Lambda_bg": "Background",
+    **dict.fromkeys(["KnightAnisotropy", "AngularCos2"], "Angular"),
+    **dict.fromkeys(
+        [name for name in PARAMETER_MODEL_COMPONENTS if name.startswith("SC_")],
+        "Superconducting gap",
+    ),
+}
+
+for _name, _category in _PARAMETER_MODEL_CATEGORIES.items():
+    if _name in PARAMETER_MODEL_COMPONENTS:
+        PARAMETER_MODEL_COMPONENTS[_name] = replace(
+            PARAMETER_MODEL_COMPONENTS[_name], category=_category
+        )
 
 _ALLOWED_OPERATORS: frozenset[str] = frozenset({"+", "-", "*", "/"})
 #: The parameter-vs-x grammar additionally supports the quadrature combinator
