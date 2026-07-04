@@ -99,6 +99,7 @@ from asymmetry.gui.windows.grouping.grp_io import (
 )
 from asymmetry.gui.windows.grouping.preview_pane import GroupingPreviewPane
 from asymmetry.gui.windows.grouping.profile_bridge import (
+    instrument_display_for_fingerprint,
     payload_matches_preset,
     preset_payload,
     profile_from_form_payload,
@@ -223,6 +224,17 @@ class GroupingDialog(QDialog):
         rename_btn.setDefault(False)
         rename_btn.clicked.connect(self._on_rename_profile)
         profile_row.addWidget(rename_btn)
+
+        # Instrument switcher: lists every fingerprint present in the loaded
+        # datasets. Hidden when the project holds a single instrument (nothing to
+        # switch between); shown as "<display> \u2014 N runs" otherwise.
+        self._instrument_label = QLabel("Instrument")
+        self._instrument_combo = QComboBox()
+        self._instrument_combo.setMinimumContentsLength(18)
+        self._rebuild_instrument_combo()
+        self._instrument_combo.activated.connect(self._on_instrument_combo_activated)
+        profile_row.addWidget(self._instrument_label)
+        profile_row.addWidget(self._instrument_combo)
 
         # The reference-run combo is now a non-destructive preview-run selector:
         # it changes only the per-run facts shown, never the draft.
@@ -693,6 +705,110 @@ class GroupingDialog(QDialog):
         if self._fingerprint is None:
             return []
         return [p for p in self._project_profiles if p.fingerprint.matches(self._fingerprint)]
+
+    # -- instrument switcher (M2) ----------------------------------------
+
+    def _project_fingerprints(self) -> list[ProfileFingerprint]:
+        """Distinct fingerprints present in the loaded datasets, first-seen order.
+
+        Each fingerprint appears once; the order follows the datasets so the
+        combo is stable across rebuilds. Datasets without a run are skipped.
+        """
+        seen: list[ProfileFingerprint] = []
+        for ds in self._datasets:
+            if ds.run is None:
+                continue
+            fingerprint = profile_fingerprint_for_run(ds.run)
+            if not any(fp.matches(fingerprint) for fp in seen):
+                seen.append(fingerprint)
+        return seen
+
+    def _datasets_for_fingerprint(self, fingerprint: ProfileFingerprint) -> list[MuonDataset]:
+        """Datasets whose run matches *fingerprint* (any fingerprint, not just current)."""
+        out: list[MuonDataset] = []
+        for ds in self._datasets:
+            if ds.run is None:
+                continue
+            if profile_fingerprint_for_run(ds.run).matches(fingerprint):
+                out.append(ds)
+        return out
+
+    def _rebuild_instrument_combo(self) -> None:
+        """(Re)populate the Instrument switcher for the loaded datasets.
+
+        Lists every distinct fingerprint as ``"<display> — N runs"``. The switcher
+        (and its label) are hidden when only one instrument is present, since
+        there is nothing to switch between.
+        """
+        fingerprints = self._project_fingerprints()
+        combo = self._instrument_combo
+        combo.blockSignals(True)
+        combo.clear()
+        for index, fingerprint in enumerate(fingerprints):
+            display = instrument_display_for_fingerprint(fingerprint, fingerprints)
+            n_runs = len(self._datasets_for_fingerprint(fingerprint))
+            noun = "run" if n_runs == 1 else "runs"
+            combo.addItem(f"{display} — {n_runs} {noun}", index)
+            if self._fingerprint is not None and fingerprint.matches(self._fingerprint):
+                combo.setCurrentIndex(index)
+        combo.blockSignals(False)
+        single = len(fingerprints) <= 1
+        self._instrument_combo.setVisible(not single)
+        self._instrument_label.setVisible(not single)
+
+    def _on_instrument_combo_activated(self, index: int) -> None:
+        """Switch the editor to another instrument's fingerprint.
+
+        Prompts to discard unsaved draft edits first (the same guard the profile
+        switcher uses); then swaps the fingerprint, preview/reference run, draft,
+        and re-seeds every form control, scope panel, preset list, and preview
+        through the shared reload path.
+        """
+        combo_index = self._instrument_combo.itemData(index)
+        fingerprints = self._project_fingerprints()
+        if combo_index is None or not (0 <= int(combo_index) < len(fingerprints)):
+            return
+        target = fingerprints[int(combo_index)]
+        if self._fingerprint is not None and target.matches(self._fingerprint):
+            return
+        if not self._confirm_discard_before_switch():
+            self._select_current_instrument_in_combo()
+            return
+        self._switch_to_fingerprint(target)
+
+    def _select_current_instrument_in_combo(self) -> None:
+        """Restore the combo selection to the current fingerprint (after a cancel)."""
+        fingerprints = self._project_fingerprints()
+        combo = self._instrument_combo
+        combo.blockSignals(True)
+        for i, fingerprint in enumerate(fingerprints):
+            if self._fingerprint is not None and fingerprint.matches(self._fingerprint):
+                combo.setCurrentIndex(i)
+                break
+        combo.blockSignals(False)
+
+    def _switch_to_fingerprint(self, fingerprint: ProfileFingerprint) -> None:
+        """Adopt *fingerprint*: swap reference run, draft, and re-seed the form."""
+        datasets = self._datasets_for_fingerprint(fingerprint)
+        if not datasets or datasets[0].run is None:
+            return
+        self._fingerprint = fingerprint
+        self._reference_dataset = datasets[0]
+        self._run = datasets[0].run
+        # Draft: the new instrument's active profile, or a fresh default.
+        self._draft = self._initial_draft()
+        self._draft_name = self._draft.name
+        self._draft_dirty = False
+        # Repopulate the preview-run combo for the new instrument's runs.
+        self._reference_combo.blockSignals(True)
+        self._reference_combo.clear()
+        for ds in datasets:
+            self._reference_combo.addItem(ds.run_label, int(ds.run_number))
+        self._set_combo_to_run(self._reference_combo, int(self._reference_dataset.run_number))
+        self._reference_combo.blockSignals(False)
+        # Re-seed every form control, scope panel, preset list, and preview.
+        self._reseed_form_from_draft()
+        self._rebuild_instrument_combo()
 
     def _default_draft_name(self) -> str:
         """Synthesized draft name for a fingerprint with no saved profile.

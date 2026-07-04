@@ -143,6 +143,12 @@ draft is what gets applied to every run inheriting the profile.
   from the current settings. Only profiles for the selected instrument are
   listed. Renaming is available from the same control.
   Switching away from a profile with unsaved edits prompts to discard them.
+* **Instrument switcher** ("Instrument") — chooses which instrument's profile
+  the window edits, listing every instrument present in the loaded datasets as
+  "GPS — 3 runs". It is hidden when the project holds a single instrument, since
+  there is then nothing to switch between. Picking another instrument swaps the
+  whole editor — its draft, preview run, scope panel, and preset list all follow
+  — after the same discard prompt the profile selector uses for unsaved edits.
 * **Preview run selector** ("Preview run") — chooses which run's per-run
   facts (:math:`t_0`, good-bin window, file deadtime, period tables) seed the
   preview and the status rows. This is **non-destructive**: changing it never
