@@ -618,7 +618,16 @@ def _preferred_venv_python(root: Path = ROOT) -> Path | None:
 
 
 def _maybe_reexec_with_venv(argv: Sequence[str] | None) -> None:
-    """Prefer the project venv when the harness is launched from another Python."""
+    """Prefer the project venv when the harness is launched from another Python.
+
+    On POSIX ``os.execv`` replaces the current process, so the venv interpreter
+    inherits the caller's exit-code contract for free. On Windows there is no
+    real ``exec``: ``os.execv`` spawns a *child* and terminates the parent
+    immediately with exit code 0, so a failing pytest run inside the child would
+    be reported to the shell as success (observed: 70 failing tests, ``$LASTEXITCODE``
+    still 0). To preserve the failure signal there we run the child synchronously
+    and exit with its return code instead.
+    """
 
     if os.environ.get("ASYMMETRY_HARNESS_NO_VENV") == "1":
         return
@@ -632,8 +641,12 @@ def _maybe_reexec_with_venv(argv: Sequence[str] | None) -> None:
         return
 
     args = list(sys.argv[1:] if argv is None else argv)
+    child_argv = [str(venv_python), str(Path(__file__).resolve()), *args]
     print(f"Re-executing harness with {venv_python}", file=sys.stderr)
-    os.execv(str(venv_python), [str(venv_python), str(Path(__file__).resolve()), *args])
+    if os.name == "nt":
+        completed = subprocess.run(child_argv, check=False)  # noqa: S603
+        sys.exit(completed.returncode)
+    os.execv(str(venv_python), child_argv)
 
 
 def _run_command(args: Sequence[str]) -> int:
