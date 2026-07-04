@@ -60,6 +60,24 @@ def test_zf_run_ignores_unrelated_field_channels() -> None:
     assert reading.field_gauss < 1.0
 
 
+def test_emu_lowercase_channel_names_parse() -> None:
+    """EMU logs write the same channels lowercase (``field_ZF_magnitude``,
+    ``field_danfysik``, ``field_musr``) — channel matching is case-insensitive.
+    The unselected ``field_musr`` at 300 G must still be ignored on a ZF run.
+    """
+    text = (
+        "2026-03-03T14:03:45\tField_X\t-0.005\n"
+        "2026-03-03T14:03:45\tfield_ZF_magnitude\t0.13995468695133287\n"
+        "2026-03-03T14:03:45\tfield_danfysik\t0.10996119918\n"
+        "2026-03-03T14:03:45\tfield_musr\t300.03000048\n"
+        "2026-03-03T14:03:45\ta_selected_magnet\tActive ZF\n"
+    )
+    reading = parse_icp_log_text(text)
+    assert reading is not None
+    assert reading.field_direction == "Zero field"
+    assert reading.field_gauss == pytest.approx(0.13995468695133287)
+
+
 def test_named_magnet_reads_magnitude_with_no_direction_claim() -> None:
     reading = parse_icp_log_text(_DANFYSIK_RUN_LOG)
     assert reading is not None

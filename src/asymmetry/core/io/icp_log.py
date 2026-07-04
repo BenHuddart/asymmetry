@@ -48,12 +48,17 @@ from pathlib import Path
 #: Maps a known ``a_selected_magnet`` value (or substring) to the channel
 #: whose readings represent that magnet's field, in gauss. Names are matched
 #: case-insensitively, longest/most-specific key first is not required: only
-#: one magnet is ever selected at a time.
+#: one magnet is ever selected at a time. Channel names are stored lowercase:
+#: instruments differ in capitalisation of the SAME channels (MUSR logs write
+#: ``Field_Danfysik`` / ``Field_ZF_Magnitude``, EMU logs write
+#: ``field_danfysik`` / ``field_ZF_magnitude``), so all channel lookups
+#: normalise to lowercase.
 _MAGNET_TO_FIELD_CHANNEL: dict[str, str] = {
-    "danfysik": "Field_Danfysik",
-    "t20": "Field_T20",
-    "hifi": "Field_Hifi",
-    "emu": "Field_Emu",
+    "danfysik": "field_danfysik",
+    "t20": "field_t20",
+    "hifi": "field_hifi",
+    "emu": "field_emu",
+    "musr": "field_musr",
 }
 
 #: Substring in ``a_selected_magnet`` that marks "no magnet selected" — the
@@ -61,7 +66,7 @@ _MAGNET_TO_FIELD_CHANNEL: dict[str, str] = {
 _ZF_MAGNET_TOKEN = "zf"
 
 #: Channel carrying the residual/ambient field magnitude when ZF is selected.
-_ZF_MAGNITUDE_CHANNEL = "Field_ZF_Magnitude"
+_ZF_MAGNITUDE_CHANNEL = "field_zf_magnitude"
 
 
 @dataclass(frozen=True)
@@ -123,9 +128,10 @@ def parse_icp_log_text(text: str) -> IcpFieldReading | None:
                 last_magnet = value_text
             continue
 
-        if channel.startswith("Field_"):
+        # Case-insensitive: MUSR logs write ``Field_*``, EMU logs ``field_*``.
+        if channel.lower().startswith("field_"):
             try:
-                field_values[channel] = float(value_text)
+                field_values[channel.lower()] = float(value_text)
             except ValueError:
                 continue
 
