@@ -38,23 +38,25 @@ the same series from silently drifting apart. A profile fixes the shareable
 choices in one place: edit it once, and every run that matches it is
 analysed the same way.
 
-Fingerprint and scope
+Instrument and scope
 ~~~~~~~~~~~~~~~~~~~~~~
 
-A profile applies to runs matching its **fingerprint** — the pair
-``(instrument, histogram count)``. The histogram count disambiguates layout
-variants of the same physical instrument, such as PSI GPS's six-detector
-PSI-BIN export and eleven-detector MusrRoot export (see `PSI GPS`_ below):
-they are shown to the user as one instrument but resolve against separate
-fingerprints, so a GPS PSI-BIN profile is never offered to an eleven-detector
-GPS ROOT run.
+A profile applies to every run of one **instrument** — matched, internally, on
+the pair ``(instrument, histogram count)``. The histogram count disambiguates
+layout variants of the same physical instrument, such as PSI GPS's
+six-detector PSI-BIN export and eleven-detector MusrRoot export (see `PSI GPS`_
+below): both are shown as one instrument, but a GPS PSI-BIN profile is never
+offered to an eleven-detector GPS ROOT run. The window names the instrument
+plainly — "GPS" — and appends the detector count only when two variants of the
+same instrument are both loaded, so they can be told apart: "GPS (6 detectors)"
+and "GPS (11 detectors)".
 
-A project may hold several saved profiles per fingerprint (a "silver
+A project may hold several saved profiles per instrument (a "silver
 calibration" profile and a "custom two-group" profile for the same
 instrument, say), but only one is **active** at a time. A newly loaded run
-inherits its fingerprint's active profile automatically — no per-run Apply
+inherits its instrument's active profile automatically — no per-run Apply
 step is needed. Switching which profile is active re-resolves every run of
-that fingerprint against the new profile the next time it is displayed or
+that instrument against the new profile the next time it is displayed or
 reduced.
 
 A run can be explicitly **released** from its profile, freezing its current
@@ -104,8 +106,8 @@ Migration from older projects
 
 Projects saved before profiles existed (schema v11 and earlier) store a
 complete grouping payload on every dataset. Opening such a project migrates
-it to schema v12 automatically: datasets are grouped by fingerprint, and
-within each fingerprint
+it to schema v12 automatically: datasets are grouped by instrument, and
+within each instrument
 
 * if every run's *shareable* settings already agree, one active profile named
   "Default (<instrument>)" is created and every contributing run switches
@@ -116,9 +118,9 @@ within each fingerprint
   a manually released run would.
 
 The migration is additive: nothing that could not be faithfully represented
-as a profile is discarded, and a run that cannot even be fingerprinted
-(missing instrument metadata) is left with its original payload and joins no
-profile. Saving the project afterwards writes schema v12.
+as a profile is discarded, and a run whose instrument cannot be
+identified (missing instrument metadata) is left with its original payload and
+joins no profile. Saving the project afterwards writes schema v12.
 
 The Grouping window
 --------------------
@@ -138,8 +140,8 @@ draft is what gets applied to every run inheriting the profile.
 
 * **Profile selector** — switches which saved profile is being edited, and
   offers **New…** and **Duplicate…** to start a fresh profile or branch one
-  from the current settings. Only profiles matching the loaded run's
-  fingerprint are listed. Renaming is available from the same control.
+  from the current settings. Only profiles for the selected instrument are
+  listed. Renaming is available from the same control.
   Switching away from a profile with unsaved edits prompts to discard them.
 * **Preview run selector** ("Preview run") — chooses which run's per-run
   facts (:math:`t_0`, good-bin window, file deadtime, period tables) seed the
@@ -155,11 +157,11 @@ draft is what gets applied to every run inheriting the profile.
   This comparison is re-made every time the draft changes rather than cached,
   so the chip never keeps showing a preset name the settings have since
   drifted away from.
-* **Scope panel** — lists the runs of the current fingerprint, each tagged
-  either **inherits <profile>** or **override**, with **Release** and
-  **Reattach** buttons to move a run between the two. Apply is disabled when
-  every run of the fingerprint has been released, since there would then be
-  nothing left for the profile to reach.
+* **Scope panel** — headed "Runs of this instrument", it lists the runs of the
+  selected instrument, each tagged either **inherits <profile>** or
+  **override**, with **Release** and **Reattach** buttons to move a run between
+  the two. Apply is disabled when every run of the instrument has been
+  released, since there would then be nothing left for the profile to reach.
 * **Live asymmetry preview** — a debounced plot of the forward/backward
   asymmetry the current draft would produce on the preview run, recomputed
   automatically as groups, :math:`\alpha`, binning, deadtime, or background
@@ -226,7 +228,7 @@ Alpha calibration
    α) preview shows the balancing effect.
 
 Click **Calibrate…** beside the alpha status row to open the alpha
-calibration dialog. It lists every run of the current fingerprint in a
+calibration dialog. It lists every run of the current instrument in a
 dropdown, with likely calibration candidates highlighted and auto-selected:
 a run is flagged when its metadata carries explicit transverse-field
 evidence (a structured ``Transverse`` field-geometry classification, or a
@@ -566,7 +568,7 @@ GPS is recognised automatically from PSI data carrying a ``GPS`` instrument
 string or a ``deltat_tdc_gps_*`` run name. Two histogram conventions are
 supported and presented to the user as a single "GPS" layout, selected
 automatically from the histogram count — and, per `Grouping profiles`_ above,
-resolved against separate profile fingerprints:
+each carries its own separate grouping profile:
 
 * the **PSI-BIN** export with six combined detectors (``Forw, Back, Up, Down,
   Righ, Left``); and

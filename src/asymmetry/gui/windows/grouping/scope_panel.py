@@ -53,7 +53,7 @@ class ScopePanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
 
-        self._heading = QLabel("Runs of this fingerprint")
+        self._heading = QLabel("Runs of this instrument")
         layout.addWidget(self._heading)
 
         self._list = QListWidget()

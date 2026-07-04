@@ -23,13 +23,68 @@ from __future__ import annotations
 
 from typing import Any
 
-from asymmetry.core.instrument import InstrumentLayout, PresetGrouping
+from asymmetry.core.instrument import (
+    InstrumentLayout,
+    PresetGrouping,
+    instrument_display_name,
+)
 from asymmetry.core.project.profiles import (
     GroupingProfile,
     ProfileFingerprint,
     profile_from_payload,
     resolve_effective_grouping,
 )
+
+
+def instrument_display_for_fingerprint(
+    fingerprint: ProfileFingerprint,
+    all_fingerprints: list[ProfileFingerprint],
+) -> str:
+    """Return the user-facing instrument label for *fingerprint*.
+
+    The grouping editor keys everything off a
+    :class:`~asymmetry.core.project.profiles.ProfileFingerprint`
+    ``(instrument, histogram_count)`` pair, but the term "fingerprint" never
+    appears in the interface — the user only ever sees the *instrument*.
+
+    The label is the instrument's display name (``"GPS"``), resolved through
+    :func:`instrument_display_name` so a variant key such as ``"GPS-RD"`` still
+    reads as ``"GPS"``. The detector count is appended — ``"GPS (6 detectors)"``
+    — only when *another* fingerprint in *all_fingerprints* shares the same
+    display name, so the two are told apart. An empty / unresolved instrument
+    falls back to ``"<N> detectors"`` (or ``"Unknown instrument"`` when even the
+    count is unknown).
+
+    Parameters
+    ----------
+    fingerprint
+        The fingerprint to describe.
+    all_fingerprints
+        Every fingerprint present in the current project; used only to decide
+        whether the detector-count disambiguator is needed.
+    """
+    display = instrument_display_name(fingerprint.instrument).strip()
+    count = int(fingerprint.histogram_count)
+    if not display:
+        if count > 0:
+            return f"{count} detectors"
+        return "Unknown instrument"
+
+    # Disambiguate only when a *different* fingerprint shares this display name.
+    shared = False
+    for other in all_fingerprints:
+        if other is fingerprint:
+            continue
+        if int(other.histogram_count) == count and other.instrument == fingerprint.instrument:
+            # The same fingerprint may appear twice in the list; ignore exact twins.
+            continue
+        if instrument_display_name(other.instrument).strip() == display:
+            shared = True
+            break
+    if shared:
+        noun = "detector" if count == 1 else "detectors"
+        return f"{display} ({count} {noun})"
+    return display
 
 
 def payload_from_profile_for_preview(profile: GroupingProfile, preview_run) -> dict[str, Any]:
@@ -162,6 +217,7 @@ def _is_int(value: object) -> bool:
 
 
 __all__ = [
+    "instrument_display_for_fingerprint",
     "payload_from_profile_for_preview",
     "profile_from_form_payload",
     "preset_payload",
