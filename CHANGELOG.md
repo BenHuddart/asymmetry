@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Instrument switcher in the Grouping window.** When a project holds runs from
+  more than one instrument, the Grouping window now shows an **Instrument**
+  selector ("GPS — 3 runs") that swaps the whole editor — its draft, preview run,
+  scope panel, and preset list — between them, after the usual discard prompt for
+  unsaved edits. It is hidden when only one instrument is loaded.
+- **Editing an overridden run's grouping.** A run released from its profile could
+  previously only be created or dropped; its per-run grouping is now editable.
+  Selecting an overridden run as the preview run (or clicking **Edit…** on its
+  scope-panel row) puts the window into an explicit *override-editing mode*: a
+  warning banner reads "Editing override for run *N* — changes apply to this run
+  only", the profile and instrument switchers are disabled, and the form seeds
+  from the run's own grouping. Edits stay off the profile draft and Apply writes
+  the edited grouping back to that one run alone (the status bar confirms "Updated
+  override for run *N*"); every inheriting run is left untouched. Leaving the mode
+  with unsaved override edits — including on window close — prompts to discard.
+
+### Changed
+
+- **"Instrument" replaces "fingerprint" throughout the Grouping window and its
+  documentation.** The user-facing term for a run's `(instrument, histogram
+  count)` identity is now plainly "Instrument"; the scope panel is headed "Runs
+  of this instrument", and the detector count is shown ("GPS (6 detectors)") only
+  when two variants of the same instrument are both loaded. The internal
+  `ProfileFingerprint` API is unchanged.
+
 ### Fixed
 
 - **PSI analysis convention in the GPS/FLAME/HAL presets.** PSI names detectors

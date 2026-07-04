@@ -3623,9 +3623,13 @@ class MainWindow(QMainWindow):
         profile_result = (
             dialog.get_profile_result() if hasattr(dialog, "get_profile_result") else None
         )
+        override_updated_run: int | None = None
         if profile_result is not None:
             self._store_grouping_profile(profile_result["profile"])
             self._reconcile_grouping_overrides(dialog_datasets, profile_result)
+            override_updated_run = self._apply_grouping_override_edits(
+                dialog_datasets, profile_result
+            )
 
         run_numbers = {int(v) for v in grouping_result.get("run_numbers", [])}
         alpha = float(grouping_result.get("alpha", 1.0))
@@ -3693,7 +3697,7 @@ class MainWindow(QMainWindow):
                     self._current_dataset = rebuilt_combined_dataset
                     self._fit_panel.set_dataset(self._get_fit_dataset(rebuilt_combined_dataset))
 
-        if updated > 0:
+        if updated > 0 or override_updated_run is not None:
             self._mark_dirty()
             bunch_factor = max(1, int(grouping_result.get("bunching_factor", 1)))
             self._view_modes[self._active_view_mode_index]["bunch_factor"] = bunch_factor
@@ -3718,7 +3722,9 @@ class MainWindow(QMainWindow):
             f"deadtime={deadtime_msg}, background={background_msg}"
         )
 
-        if profile_result is not None:
+        if override_updated_run is not None:
+            self.statusBar().showMessage(f"Updated override for run {override_updated_run}", 8000)
+        elif profile_result is not None:
             profile_name = profile_result["profile"].name
             overridden = len(profile_result.get("released", set()))
             message = f"Grouping profile '{profile_name}' applied to {updated} run(s)"
@@ -3798,6 +3804,36 @@ class MainWindow(QMainWindow):
             dataset = by_run.get(run_number)
             if dataset is not None and isinstance(dataset.metadata, dict):
                 dataset.metadata.pop("grouping_overrides", None)
+
+    def _apply_grouping_override_edits(self, datasets, profile_result: dict) -> int | None:
+        """Apply an override-editing-mode edit to its run alone.
+
+        When the grouping window was in override-editing mode, ``profile_result``
+        carries ``override_edits`` — a ``{run_number: grouping_payload}`` map for
+        the single overridden run whose own grouping was edited. The payload is
+        applied to that run only; the run stays marked overridden (the edit
+        *is* its new per-run override). Returns the edited run number, or
+        ``None`` when there was no override edit.
+        """
+        override_edits = profile_result.get("override_edits") or {}
+        if not override_edits:
+            return None
+        by_run = {int(ds.run_number): ds for ds in datasets}
+        applied_run: int | None = None
+        for run_number, payload in override_edits.items():
+            dataset = by_run.get(int(run_number))
+            if dataset is None or dataset.run is None:
+                continue
+            applied, _dt = self._apply_grouping_settings_to_dataset(dataset, dict(payload))
+            if not applied:
+                continue
+            # The run keeps its override badge: the edit is its new override.
+            if isinstance(dataset.metadata, dict):
+                dataset.metadata["grouping_overrides"] = True
+            if dataset is self._current_dataset:
+                self._fit_panel.set_dataset(self._get_fit_dataset(dataset))
+            applied_run = int(run_number)
+        return applied_run
 
     def _resolve_grouping_dialog_context(
         self,

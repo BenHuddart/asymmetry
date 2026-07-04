@@ -151,10 +151,12 @@ draft is what gets applied to every run inheriting the profile.
   — after the same discard prompt the profile selector uses for unsaved edits.
 * **Preview run selector** ("Preview run") — chooses which run's per-run
   facts (:math:`t_0`, good-bin window, file deadtime, period tables) seed the
-  preview and the status rows. This is **non-destructive**: changing it never
-  edits the draft's shareable settings and never changes which run is
-  "active" elsewhere in the program — it only changes which run's facts the
-  window is currently looking at.
+  preview and the status rows. For an *inheriting* run this is
+  **non-destructive**: changing it never edits the draft's shareable settings
+  and never changes which run is "active" elsewhere in the program — it only
+  changes which run's facts the window is currently looking at. Choosing an
+  *overridden* run instead switches the window into override-editing mode
+  (`Editing an override`_ below).
 * **Preset dropdown and chip** — an instrument-aware preset dropdown seeds a
   sensible starting arrangement (see the per-instrument sections below), and
   a chip beside it reads either **"Preset: <name>"** when the draft's groups
@@ -166,8 +168,10 @@ draft is what gets applied to every run inheriting the profile.
 * **Scope panel** — headed "Runs of this instrument", it lists the runs of the
   selected instrument, each tagged either **inherits <profile>** or
   **override**, with **Release** and **Reattach** buttons to move a run between
-  the two. Apply is disabled when every run of the instrument has been
-  released, since there would then be nothing left for the profile to reach.
+  the two. A third **Edit…** button opens the selected overridden run's own
+  grouping for editing (`Editing an override`_ below). Apply is disabled when
+  every run of the instrument has been released, since there would then be
+  nothing left for the profile to reach.
 * **Live asymmetry preview** — a debounced plot of the forward/backward
   asymmetry the current draft would produce on the preview run, recomputed
   automatically as groups, :math:`\alpha`, binning, deadtime, or background
@@ -209,6 +213,32 @@ The grouping payload stores:
 
 These settings are persisted in project files (as grouping profiles, schema
 v12) and in ``.grp`` files.
+
+.. _Editing an override:
+
+Editing an override
+~~~~~~~~~~~~~~~~~~~~
+
+A released run keeps its own frozen grouping, which the profile no longer
+governs. To change that per-run grouping — rather than only creating it
+(Release) or dropping it (Reattach) — put the window into **override-editing
+mode**: either select the overridden run in the **Preview run** selector, or
+select its row in the scope panel and click **Edit…**.
+
+In this mode a warning-styled banner reads "Editing override for run *N* —
+changes apply to this run only", and the form seeds from that run's own
+grouping. The profile selector and the Instrument switcher are disabled, since
+you are no longer editing a profile; the scope panel stays visible, so
+**Reattach** remains reachable if you would rather drop the override
+altogether. Your edits go to a separate override draft and never touch the
+profile draft. **Apply** writes the edited grouping back to that one run — every
+inheriting run is left untouched — and the run stays marked overridden; the
+status bar confirms "Updated override for run *N*".
+
+Selecting an inheriting run in the preview selector leaves the mode and returns
+to editing the profile; if the override draft has unsaved edits you are prompted
+to discard them first, and the window's close guard covers a dirty override
+draft too.
 
 Period mode controls
 ---------------------

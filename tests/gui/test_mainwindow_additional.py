@@ -6294,3 +6294,31 @@ def test_reconcile_grouping_overrides_flags_metadata(mainwindow: MainWindow) -> 
     mainwindow._reconcile_grouping_overrides([ds_a, ds_b], profile_result)
     assert ds_a.metadata.get("grouping_overrides") in (None, False)
     assert ds_b.metadata.get("grouping_overrides") is True
+
+
+def test_apply_grouping_override_edits_writes_only_that_run(mainwindow: MainWindow) -> None:
+    """An override edit applies to its run alone and keeps it marked overridden."""
+    ds_a = _make_dataset(7601, with_grouping=True)
+    ds_b = _make_dataset(7602, with_grouping=True)
+    ds_b.metadata["grouping_overrides"] = True
+
+    # Edit run 7602's own grouping (a new alpha) via override_edits.
+    override_payload = dict(ds_b.run.grouping)
+    override_payload["alpha"] = 4.2
+    profile_result = {"override_edits": {7602: override_payload}}
+
+    applied_run = mainwindow._apply_grouping_override_edits([ds_a, ds_b], profile_result)
+
+    assert applied_run == 7602
+    # Run 7602 got the new alpha and stays overridden.
+    assert ds_b.run.grouping["alpha"] == pytest.approx(4.2)
+    assert ds_b.metadata.get("grouping_overrides") is True
+    # Run 7601 is untouched.
+    assert ds_a.run.grouping["alpha"] == pytest.approx(1.0)
+
+
+def test_apply_grouping_override_edits_noop_without_edits(mainwindow: MainWindow) -> None:
+    """No override_edits key returns None and changes nothing."""
+    ds_a = _make_dataset(7611, with_grouping=True)
+    result = mainwindow._apply_grouping_override_edits([ds_a], {"newly_released": set()})
+    assert result is None
