@@ -3651,7 +3651,14 @@ class MainWindow(QMainWindow):
                 dialog_datasets, profile_result
             )
 
-        run_numbers = {int(v) for v in grouping_result.get("run_numbers", [])}
+        # An explicitly-present run_numbers list is authoritative — an EMPTY
+        # list means "the profile applies to no runs" (every run released,
+        # Apply commits override edits only), not "no filter". Only a missing
+        # key (legacy callers) means unfiltered.
+        raw_run_numbers = grouping_result.get("run_numbers")
+        run_numbers: set[int] | None = (
+            {int(v) for v in raw_run_numbers} if raw_run_numbers is not None else None
+        )
         alpha = float(grouping_result.get("alpha", 1.0))
         use_deadtime = bool(grouping_result.get("deadtime_correction", False))
         use_background = bool(grouping_result.get("background_correction", False))
@@ -3665,7 +3672,7 @@ class MainWindow(QMainWindow):
         first_updated_dataset = None
 
         for dataset in dialog_datasets:
-            if run_numbers and int(dataset.run_number) not in run_numbers:
+            if run_numbers is not None and int(dataset.run_number) not in run_numbers:
                 continue
             applied, dt_applied = self._apply_grouping_settings_to_dataset(dataset, grouping_result)
             if not applied:

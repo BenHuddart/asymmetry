@@ -4873,6 +4873,81 @@ class TestMainWindowBasic:
         assert calls["multi"] == 1
         assert calls["single"] == 0
 
+    def test_empty_run_numbers_is_authoritative_not_unfiltered(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An explicit empty run_numbers list applies the profile to NO runs.
+
+        With every run released, Apply commits override edits only —
+        ``get_grouping_result()`` legitimately returns ``run_numbers=[]``. The
+        apply loop must treat that as authoritative filtering, not "no filter":
+        broadcasting the profile payload would clobber the per-run overrides it
+        was told to respect (Copilot review, PR #178).
+        """
+        ds1 = _make_dataset(8121, with_grouping=True)
+        ds2 = _make_dataset(8122, with_grouping=True)
+        mainwindow._data_browser.add_dataset(ds1)
+        mainwindow._data_browser.add_dataset(ds2)
+        mainwindow._current_dataset = ds1
+
+        class _StubGroupingDialog:
+            class DialogCode:
+                Accepted = 1
+
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def exec(self):
+                return self.DialogCode.Accepted
+
+            def get_grouping_result(self):
+                return {
+                    "run_numbers": [],  # every run released: profile reaches no one
+                    "groups": {1: [1], 2: [2]},
+                    "forward_group": 1,
+                    "backward_group": 2,
+                    "alpha": 9.9,
+                    "first_good_bin": 0,
+                    "last_good_bin": 3,
+                    "deadtime_correction": False,
+                }
+
+            def get_profile_result(self):
+                import types
+
+                return {
+                    "profile": types.SimpleNamespace(name="Default (Test)"),
+                    "override_edits": {8121: {"alpha": 2.2}},
+                    "newly_released": set(),
+                    "newly_reattached": set(),
+                }
+
+        monkeypatch.setattr(mw_module, "GroupingDialog", _StubGroupingDialog)
+        monkeypatch.setattr(mainwindow, "_store_grouping_profile", lambda _profile: None)
+        monkeypatch.setattr(
+            mainwindow, "_reconcile_grouping_overrides", lambda _datasets, _result: None
+        )
+        monkeypatch.setattr(
+            mainwindow, "_apply_grouping_override_edits", lambda _datasets, _result: [8121]
+        )
+        monkeypatch.setattr(mainwindow._data_browser, "_rebuild_table", lambda: None)
+        monkeypatch.setattr(mainwindow._data_browser, "get_selected_datasets", lambda: [ds1])
+
+        profile_applications: list[int] = []
+        monkeypatch.setattr(
+            mainwindow,
+            "_apply_grouping_settings_to_dataset",
+            lambda dataset, _payload: (
+                profile_applications.append(int(dataset.run_number)) or (True, False)
+            ),
+        )
+
+        mainwindow._open_shared_grouping_dialog(selected_run_number=8121)
+
+        assert profile_applications == []
+
     def test_grouping_apply_vector_alphas_to_multiple_selected_runs(
         self,
         mainwindow: MainWindow,
