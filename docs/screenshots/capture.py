@@ -146,6 +146,7 @@ def _import_scenarios() -> None:
         parameter_trending_mgb2,
         temperature_trend_fit,
         vector_polarization_emu,
+        ybzn2gao5_global_fit,
     )
 
 
