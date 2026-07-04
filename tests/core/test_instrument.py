@@ -128,6 +128,59 @@ class TestDetectInstrument:
             == "GPS"
         )
 
+    def test_psi_classic_gps_bin_five_counters_detected_as_gps(self):
+        # Classic GPS .bin files omit the Left counter: only five histograms
+        # (Forw, Back, Up, Down, Righ). They still resolve to GPS, never FLAME,
+        # even when the instrument token is the generic "PSI".
+        labels = ["Forw", "Back", "Up", "Down", "Righ"]
+        assert (
+            detect_instrument(
+                5,
+                metadata={
+                    "facility": "PSI",
+                    "psi_format": "psi-bin",
+                    "instrument": "PSI",
+                    "histogram_labels": labels,
+                },
+            )
+            == "GPS"
+        )
+
+    def test_psi_classic_gps_bin_detected_without_any_instrument_token(self):
+        # A GPS .bin whose filename carries no instrument token (e.g. run1234.bin)
+        # and whose stored instrument fell through to the generic "PSI" is still
+        # positively identified as GPS from its five-counter label set — it must
+        # not fall through to None (which the layout editor would turn into a
+        # wrong HiFi/ISIS default) or to FLAME.
+        assert (
+            detect_instrument(
+                5,
+                metadata={
+                    "facility": "PSI",
+                    "psi_format": "psi-bin",
+                    "instrument": "PSI",
+                    "histogram_labels": ["Forw", "Back", "Up", "Down", "Righ"],
+                },
+                source_file="/data/run1234.bin",
+            )
+            == "GPS"
+        )
+
+    def test_psi_gps_digit_adjacent_filename_detected_as_gps(self):
+        # gps2923.bin: the instrument token abuts the run number with no
+        # separator. It must resolve to GPS (never FLAME).
+        assert (
+            detect_instrument(
+                5,
+                metadata={"facility": "PSI", "psi_format": "psi-bin", "instrument": "GPS"},
+                source_file="/data/gps2923.bin",
+                # instrument already "GPS" here because the loader's
+                # _guess_psi_instrument now matches the digit-adjacent token;
+                # detection must agree.
+            )
+            == "GPS"
+        )
+
     def test_psi_gpd_is_not_detected_as_gps(self):
         # GPD (decay-channel instrument) carries a "gpd" token, not "gps".
         assert (
@@ -137,6 +190,64 @@ class TestDetectInstrument:
                 source_file="/data/deltat_tdc_gpd_0001.bin",
             )
             is None
+        )
+
+    def test_psi_gpd_label_set_is_not_detected_as_gps(self):
+        # GPD's four-counter Back/Forw/Up/Down set has no transverse (right/left)
+        # counter, so it must never be mistaken for the GPS classic label set.
+        for labels in (["B", "F", "U", "D"], ["Back", "Forw", "Up", "Down"]):
+            assert (
+                detect_instrument(
+                    4,
+                    metadata={
+                        "facility": "PSI",
+                        "psi_format": "psi-bin",
+                        "instrument": "PSI",
+                        "histogram_labels": labels,
+                    },
+                )
+                is None
+            )
+
+    def test_psi_dolly_label_set_is_not_detected_as_gps(self):
+        # DOLLY's four-counter Forw/Back/Left/Right set has no up/down axis, so
+        # it must never be mistaken for the GPS classic label set (nor FLAME).
+        assert (
+            detect_instrument(
+                4,
+                metadata={
+                    "facility": "PSI",
+                    "psi_format": "psi-bin",
+                    "instrument": "PSI",
+                    "histogram_labels": ["Forw", "Back", "Left", "Rite"],
+                },
+            )
+            is None
+        )
+
+    def test_flame_requires_split_plate_corners_not_just_main_axes(self):
+        # An eight-histogram PSI file with the FLAME main axes but WITHOUT the
+        # four split-plate corners (R_F/R_B/L_F/L_B) is not FLAME — the corners
+        # are the FLAME-specific positive evidence.
+        assert (
+            detect_instrument(
+                8,
+                metadata={
+                    "facility": "PSI",
+                    "instrument": "PSI",
+                    "histogram_labels": [
+                        "Forw",
+                        "Back",
+                        "Left",
+                        "Righ",
+                        "Up",
+                        "Down",
+                        "Mon1",
+                        "Mon2",
+                    ],
+                },
+            )
+            != "FLAME"
         )
 
     def test_psi_gps_root_subdetectors_detected_as_gps_rd(self):
