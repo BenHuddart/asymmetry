@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import importlib.util
+import os
+import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -179,6 +182,118 @@ def test_test_placement_check_reports_unsanctioned_subpackage(tmp_path: Path) ->
 
     assert len(failures) == 1
     assert failures[0].path == misplaced
+
+
+def _install_fake_os(monkeypatch, harness, *, name: str, execv=None):
+    """Swap ``harness.os`` for a shim with a chosen ``name``.
+
+    ``_maybe_reexec_with_venv`` branches on ``os.name``, but that attribute is
+    shared with ``pathlib`` (which picks Windows/Posix Path at construction).
+    Mutating the real ``os.name`` would make ``Path()`` raise on the running
+    platform, so we give the harness its own ``os`` view instead. ``environ``
+    and ``execv`` stay wired to the real module unless overridden.
+    """
+    fake_os = SimpleNamespace(
+        name=name,
+        environ=os.environ,
+        execv=execv if execv is not None else os.execv,
+    )
+    monkeypatch.setattr(harness, "os", fake_os)
+    return fake_os
+
+
+def test_windows_reexec_propagates_child_exit_code(monkeypatch, tmp_path: Path) -> None:
+    # On Windows os.execv spawns a *child* and exits the parent with 0, so a
+    # failing pytest run inside the re-exec would be reported to the shell as a
+    # success. The nt branch must instead run the child synchronously and exit
+    # with its return code so failures still fail.
+    harness = _load_harness()
+
+    fake_venv_python = tmp_path / ".venv" / "Scripts" / "python.exe"
+    monkeypatch.setattr(harness, "_preferred_venv_python", lambda root=None: fake_venv_python)
+    # Do not let the "already inside the venv" short-circuit fire.
+    monkeypatch.setattr(harness.sys, "prefix", str(tmp_path / "not-the-venv"))
+    _install_fake_os(monkeypatch, harness, name="nt")
+
+    recorded: dict[str, object] = {}
+
+    class _Completed:
+        returncode = 7
+
+    def _fake_run(argv, check=False):
+        recorded["argv"] = list(argv)
+        recorded["check"] = check
+        return _Completed()
+
+    monkeypatch.setattr(harness.subprocess, "run", _fake_run)
+
+    with pytest.raises(SystemExit) as excinfo:
+        harness._maybe_reexec_with_venv(["test", "--", "tests/does_not_exist.py"])
+
+    assert excinfo.value.code == 7
+    assert recorded["argv"][0] == str(fake_venv_python)
+    assert recorded["check"] is False
+
+
+def test_posix_reexec_replaces_process_with_execv(monkeypatch, tmp_path: Path) -> None:
+    # POSIX keeps the real exec semantics: os.execv replaces the process, so the
+    # venv interpreter inherits the caller's exit-code contract directly and we
+    # must not fall back to subprocess.run.
+    harness = _load_harness()
+
+    fake_venv_python = tmp_path / ".venv" / "bin" / "python"
+    monkeypatch.setattr(harness, "_preferred_venv_python", lambda root=None: fake_venv_python)
+    monkeypatch.setattr(harness.sys, "prefix", str(tmp_path / "not-the-venv"))
+
+    recorded: dict[str, object] = {}
+
+    def _fake_execv(path, argv):
+        recorded["path"] = path
+        recorded["argv"] = list(argv)
+
+    _install_fake_os(monkeypatch, harness, name="posix", execv=_fake_execv)
+
+    def _forbidden_run(*args, **kwargs):
+        raise AssertionError("POSIX re-exec must use os.execv, not subprocess.run")
+
+    monkeypatch.setattr(harness.subprocess, "run", _forbidden_run)
+
+    # os.execv is stubbed so control returns normally instead of replacing us.
+    harness._maybe_reexec_with_venv(["structural"])
+
+    assert recorded["path"] == str(fake_venv_python)
+    assert recorded["argv"][0] == str(fake_venv_python)
+
+
+def test_harness_test_command_fails_on_failing_tests(tmp_path: Path) -> None:
+    # End-to-end guard: the harness `test` subcommand must surface a non-zero
+    # exit code when the underlying pytest run fails. Run with the re-exec
+    # disabled so we exercise this interpreter's entry point directly and stay
+    # independent of whether a project .venv exists.
+    failing_test = tmp_path / "test_deliberate_failure.py"
+    failing_test.write_text("def test_fails():\n    assert False\n", encoding="utf-8")
+
+    env = {**os.environ, "ASYMMETRY_HARNESS_NO_VENV": "1"}
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(HARNESS_PATH),
+            "test",
+            "--no-parallel",
+            "--",
+            str(failing_test),
+        ],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+
+    assert completed.returncode != 0, (
+        "harness `test` returned 0 despite a failing pytest run\n"
+        f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+    )
 
 
 def _marker(command: list[str]) -> str | None:
