@@ -664,6 +664,7 @@ def _real_spawn_tasks() -> list[_AssessmentTask]:
 
 
 @pytest.mark.integration
+@pytest.mark.timeout(300)
 def test_run_template_assessments_process_path_matches_serial() -> None:
     """Real spawn pool vs. serial: same template keys/order, metrics agree to 1e-6.
 
@@ -700,6 +701,7 @@ def test_run_template_assessments_process_path_matches_serial() -> None:
 
 
 @pytest.mark.integration
+@pytest.mark.timeout(300)
 def test_run_template_assessments_process_path_cancellation_is_prompt() -> None:
     """Real spawn pool: cancel_callback flipping True after one completion aborts."""
     probe_pool = fit_wizard_module.open_spawn_pool(2)
@@ -757,6 +759,7 @@ def _tiered_dataset(
 
 
 @pytest.mark.integration
+@pytest.mark.timeout(300)
 def test_tiered_flow_screens_all_families_and_reports() -> None:
     rng = np.random.default_rng(21)
     t = np.linspace(0.02, 10.0, 220)
@@ -802,6 +805,7 @@ def _strip_expensive_members(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.integration
+@pytest.mark.timeout(300)
 def test_pattern_promotion_expands_fmuf_family(monkeypatch: pytest.MonkeyPatch) -> None:
     _strip_expensive_members(monkeypatch)
     rng = np.random.default_rng(22)
@@ -848,6 +852,7 @@ def _exploding_tiered_dataset(signal_fn, *, seed: int, metadata: dict | None = N
 
 
 @pytest.mark.integration
+@pytest.mark.timeout(300)
 def test_envelope_matcher_promotes_and_recommends_fmuf_on_exploding_s4(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -879,6 +884,7 @@ def test_envelope_matcher_promotes_and_recommends_fmuf_on_exploding_s4(
 
 
 @pytest.mark.integration
+@pytest.mark.timeout(300)
 def test_envelope_matcher_matches_kt_on_exploding_gkt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -906,6 +912,7 @@ def test_envelope_matcher_matches_kt_on_exploding_gkt(
 
 
 @pytest.mark.integration
+@pytest.mark.timeout(300)
 def test_envelope_matcher_no_match_on_exploding_pure_noise(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -925,6 +932,7 @@ def test_envelope_matcher_no_match_on_exploding_pure_noise(
 
 
 @pytest.mark.integration
+@pytest.mark.timeout(300)
 def test_fluorine_sniff_promotes_fmuf_family(monkeypatch: pytest.MonkeyPatch) -> None:
     # A chemical-formula fluorine in the sample name promotes the fmuf family even
     # when no pattern matches (relaxation-only data). ZF metadata keeps fmuf in
@@ -947,6 +955,7 @@ def test_fluorine_sniff_promotes_fmuf_family(monkeypatch: pytest.MonkeyPatch) ->
 
 
 @pytest.mark.integration
+@pytest.mark.timeout(300)
 def test_multiplet_templates_generated_for_two_lines(monkeypatch: pytest.MonkeyPatch) -> None:
     _strip_expensive_members(monkeypatch)
     rng = np.random.default_rng(23)
@@ -967,6 +976,7 @@ def test_multiplet_templates_generated_for_two_lines(monkeypatch: pytest.MonkeyP
 
 
 @pytest.mark.integration
+@pytest.mark.timeout(300)
 def test_scope_restricts_screened_families() -> None:
     rng = np.random.default_rng(24)
     t = np.linspace(0.02, 10.0, 200)
@@ -984,6 +994,7 @@ def test_scope_restricts_screened_families() -> None:
 
 
 @pytest.mark.integration
+@pytest.mark.timeout(300)
 def test_user_frequencies_merge_into_peaks() -> None:
     rng = np.random.default_rng(25)
     t = np.linspace(0.02, 10.0, 200)
@@ -1001,6 +1012,7 @@ def test_user_frequencies_merge_into_peaks() -> None:
 
 
 @pytest.mark.integration
+@pytest.mark.timeout(300)
 def test_empty_scope_reports_no_candidates() -> None:
     t = np.linspace(0.02, 10.0, 50)
     dataset = _tiered_dataset(t, np.exp(-t))
@@ -1019,6 +1031,7 @@ def test_empty_scope_reports_no_candidates() -> None:
 
 
 @pytest.mark.integration
+@pytest.mark.timeout(300)
 def test_control_flat_zf_noise_yields_no_significant_structure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1041,6 +1054,7 @@ def test_control_flat_zf_noise_yields_no_significant_structure(
 
 
 @pytest.mark.integration
+@pytest.mark.timeout(300)
 def test_control_pure_noise_yields_no_significant_structure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1060,6 +1074,7 @@ def test_control_pure_noise_yields_no_significant_structure(
 
 
 @pytest.mark.integration
+@pytest.mark.timeout(300)
 def test_control_flat_lf_oscillatory_frequency_floor_disqualified(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1184,6 +1199,7 @@ def test_flat_error_record_keeps_full_window_for_the_floor() -> None:
 
 
 @pytest.mark.integration
+@pytest.mark.timeout(300)
 def test_control_kt_plus_drift_suppresses_uncorroborated_cosine(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
