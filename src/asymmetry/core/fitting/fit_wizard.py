@@ -1351,6 +1351,18 @@ def _decide_family_promotions(
             )
         elif family.key == "baseline":
             promoted, reason, exempt = True, "current-model baseline", True
+        elif family.key == "relaxation":
+            # Always expand the smooth-relaxation portfolio: exotic families
+            # (fmuf/KT with free envelopes) are flexible enough to win Stage-1
+            # screening on smooth data, and the Δ cutoff would then lock the
+            # simpler true model (e.g. a stretched exponential) out of the
+            # final metric comparison entirely. These are cheap 1-D relaxation
+            # fits — the guard-rail is worth far more than they cost.
+            promoted, reason, exempt = (
+                True,
+                "smooth-relaxation reference family — always expanded",
+                True,
+            )
         elif not assessment.is_successful:
             promoted, reason = False, "not promoted: Stage-1 representative fit failed"
         elif delta <= 0.0:

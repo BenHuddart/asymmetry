@@ -107,12 +107,17 @@ def _monotonic_detrend(
 ) -> NDArray[np.float64]:
     """Return ``y`` minus its best weighted ``A e^{-lambda t} + c`` fit.
 
-    A single monotonic exponential (plus constant) is removed so that a plain or
-    stretched relaxation — which *is* essentially one monotonic decay — collapses
-    to ~zero residual, while the non-monotonic KT dip/recovery and the F-mu-F
-    oscillation survive.  The fit is nonlinear but runs once per signal and once
-    per template (templates are cached), so it is off the per-call hot path.  A
-    failed/ill-conditioned fit falls back to weighted-mean subtraction.
+    A single monotonic exponential (plus constant) is removed so that a plain
+    relaxation collapses to ~zero residual, while the non-monotonic KT
+    dip/recovery and the F-mu-F oscillation survive.  Deliberately *not* a
+    stretched/compressed (beta-free) family: static-KT early-time decay is
+    Gaussian, so a beta -> 2 detrend absorbs genuine KT signal and kills the
+    true positive.  Stretched/compressed relaxations that survive this fixed
+    exponential are instead rejected by the monotonic veto in
+    :func:`match_envelope_banks` (see ``_monotonic_model_sse``).  The fit is
+    nonlinear but runs once per signal and once per template (templates are
+    cached), so it is off the per-call hot path.  A failed/ill-conditioned fit
+    falls back to weighted-mean subtraction.
     """
     import warnings
 
@@ -134,6 +139,73 @@ def _monotonic_detrend(
         return y - _model(t, *popt)
     except Exception:
         return y - float(np.average(y, weights=weights))
+
+
+def _monotonic_model_sse(
+    t: NDArray[np.float64], y: NDArray[np.float64], weights: NDArray[np.float64]
+) -> float:
+    """Weighted SSE of the best ``A e^{-(lambda t)^beta} + c`` fit to ``y``.
+
+    The monotonic-veto reference: the best *any* single stretched/compressed
+    relaxation (beta free in [0.3, 2.5]) can do at explaining the signal.  A
+    failed fit falls back to the weighted-mean model (infinite-family member
+    with amp = 0), which makes the veto conservative (fail-open: the template
+    only has to beat a constant).
+    """
+    import warnings
+
+    from scipy.optimize import OptimizeWarning, curve_fit
+
+    def _model(
+        tt: NDArray[np.float64], amp: float, lam: float, beta: float, base: float
+    ) -> NDArray[np.float64]:
+        exponent = np.clip((np.clip(lam, 0.0, None) * tt) ** beta, 0.0, 700.0)
+        return amp * np.exp(-exponent) + base
+
+    sigma = 1.0 / np.sqrt(np.clip(weights, _EPS, None))
+    p0 = [float(y[0] - y[-1]), _DETREND_LAMBDA_SEED, 1.0, float(y[-1])]
+    bounds = ([-np.inf, 0.0, 0.3, -np.inf], [np.inf, np.inf, 2.5, np.inf])
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", OptimizeWarning)
+            popt, _ = curve_fit(_model, t, y, p0=p0, sigma=sigma, bounds=bounds, maxfev=5000)
+        residual = y - _model(t, *popt)
+    except Exception:
+        residual = y - float(np.average(y, weights=weights))
+    return float(np.sum(weights * residual**2))
+
+
+def _enveloped_template_sse(
+    t: NDArray[np.float64],
+    y: NDArray[np.float64],
+    template: NDArray[np.float64],
+    weights: NDArray[np.float64],
+) -> float:
+    """Weighted SSE of the best ``a * template * e^{-mu t} + b`` fit to ``y``.
+
+    The template side of the monotonic veto.  The free decaying envelope
+    mirrors the physical model (and the Stage-1 representatives): real F-mu-F
+    and KT signals carry an unknown multiplicative relaxation on top of the
+    bank shape, and the correlation matcher is deliberately invariant to it —
+    an envelope-less affine fit would veto genuine matches.  For fixed ``mu``
+    the problem is linear in ``(a, b)``, so scan a small ``mu`` grid and solve
+    each by weighted least squares (robust, no nonlinear search to fail).
+    """
+    w = np.sqrt(weights)
+    yw = y * w
+    best = float("inf")
+    # mu = 0 (undamped) up to a decay comparable with losing the signal within
+    # the window; log-spaced because the SSE varies slowly in log-mu.
+    t_span = max(float(t[-1] - t[0]), _EPS)
+    mu_grid = np.concatenate([[0.0], np.geomspace(0.02, 8.0 / t_span * 4.0, 12)])
+    for mu in mu_grid:
+        shaped = template * np.exp(-mu * (t - t[0]))
+        design = np.column_stack([shaped * w, w])
+        coeffs, _residual, _rank, _sv = np.linalg.lstsq(design, yw, rcond=None)
+        sse = float(np.sum((yw - design @ coeffs) ** 2))
+        if sse < best:
+            best = sse
+    return best
 
 
 def _normalise(
@@ -345,6 +417,10 @@ def match_envelope_banks(
     banks = _banks_for_window(t, weights)
     seed = _seed_from_signal(signal_detrended)
 
+    # Monotonic-veto reference, computed lazily (one beta-free stretched fit)
+    # the first time any bank clears its surrogate threshold.
+    mono_sse: float | None = None
+
     matches: list[MultipletMatch] = []
     for bank in banks:
         if include_families is not None and bank.family_key not in include_families:
@@ -362,6 +438,19 @@ def match_envelope_banks(
         if best_score <= threshold:
             continue
         best_param = float(bank.grid[best_index])
+        # Monotonic veto: the correlation is computed on exponentially detrended
+        # residuals, so a stretched/compressed relaxation (which the fixed-beta
+        # detrend cannot fully remove — static-KT early decay is Gaussian, i.e.
+        # beta ~ 2) can leave structure the KT bank matches. Accept the template
+        # only if, as an envelope-scaled explanation of the raw tail-centred
+        # signal, it beats the best single stretched/compressed exponential
+        # outright. Genuine KT/F-mu-F clears this (the dip/beats are unfittable
+        # by any monotonic curve); a lone stretched relaxation does not.
+        raw_template = _template_values(bank.kind, t, best_param)
+        if mono_sse is None:
+            mono_sse = _monotonic_model_sse(t, signal, weights)
+        if _enveloped_template_sse(t, signal, raw_template, weights) >= mono_sse:
+            continue
         matches.append(_build_match(bank, best_index, best_score, best_param, field_gauss))
     return tuple(matches)
 

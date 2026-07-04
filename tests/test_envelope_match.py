@@ -129,6 +129,21 @@ def test_stretched_exponential_matches_no_bank() -> None:
     assert match_envelope_banks(dataset) == ()
 
 
+def test_compressed_exponential_matches_no_bank() -> None:
+    # beta > 1 is the sharpest KT-bank false-positive mode: static-KT early-time
+    # decay is Gaussian (beta ~ 2), so the fixed-exponential detrend leaves a
+    # compressed-exponential residual the bank matched at quality ~0.96 before
+    # the monotonic veto existed. The veto must reject it: a lone monotonic
+    # relaxation explains this signal at least as well as any enveloped
+    # template.
+    dataset = _exploding_dataset(
+        lambda t: 20.0 * np.exp(-((0.35 * t) ** 1.6)) + 4.0,
+        seed=106,
+        metadata={"field_direction": "Zero field"},
+    )
+    assert match_envelope_banks(dataset) == ()
+
+
 # --------------------------------------------------------------------------- #
 # 3. Normalization invariance to amplitude scale and DC offset
 # --------------------------------------------------------------------------- #
