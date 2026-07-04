@@ -211,7 +211,7 @@ from asymmetry.core.transform.deadtime import (
     calibrate_deadtime_from_histograms,
     promote_deadtime_to_grouping,
 )
-from asymmetry.core.transform.rebin import binned_fb_asymmetry, rebin
+from asymmetry.core.transform.rebin import binned_fb_asymmetry, rebin, resolve_binning_mode
 from asymmetry.core.utils.constants import (
     GAUSS_TO_TESLA,
     MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
@@ -1681,6 +1681,11 @@ class MainWindow(QMainWindow):
             )
         if hasattr(self._plot_panel, "bunch_factor_changed"):
             self._plot_panel.bunch_factor_changed.connect(self._update_selected_datasets)
+        # Display bunching packs corrected counts through the reduction
+        # chokepoint (counts-then-ratio) whenever the run still has raw
+        # histograms, rather than value-domain rebinning the reduced curve.
+        if hasattr(self._plot_panel, "set_counts_rebunch_provider"):
+            self._plot_panel.set_counts_rebunch_provider(self._counts_first_rebunched_arrays)
         if hasattr(self._plot_panel, "view_limits_changed"):
             self._plot_panel.view_limits_changed.connect(self._on_plot_view_limits_changed)
         if hasattr(self._plot_panel, "overlay_toggled"):
@@ -4701,6 +4706,111 @@ class MainWindow(QMainWindow):
             dt_applied,
             background_state,
         )
+
+    def _counts_first_rebunched_arrays(
+        self, dataset, extra_bunch_factor: int
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
+        """Re-run *dataset*'s recorded reduction with extra display bunching.
+
+        The plot panel's bunch control multiplies the grouping
+        ``bunching_factor``, so the merged bins are packed from the corrected
+        counts (deadtime/background as recorded in ``run.grouping``) and the
+        asymmetry formed once per output bin — instead of value-domain
+        rebinning the reduced curve, where one-sided raw bins' σ sentinels
+        inflate every merged bin's quadrature on sparse data. Returns
+        ``None`` when the recorded reduction cannot be replayed as a wider
+        fixed packing (no histograms or groups, non-fixed binning modes,
+        G±R period-combined curves); the panel then keeps the curve-level
+        :func:`rebin`.
+        """
+        extra = int(extra_bunch_factor)
+        run = getattr(dataset, "run", None)
+        if extra <= 1 or run is None or not getattr(run, "histograms", None):
+            return None
+        grouping = run.grouping if isinstance(run.grouping, dict) else {}
+
+        binning_mode, _, _ = resolve_binning_mode(grouping)
+        if binning_mode != "fixed":
+            return None
+
+        groups_raw = grouping.get("groups")
+        if not isinstance(groups_raw, dict):
+            return None
+        groups: dict[int, list[object]] = {}
+        for key, values in groups_raw.items():
+            try:
+                gid = int(key)
+            except (TypeError, ValueError):
+                continue
+            entries = self._normalize_group_entries(values)
+            if entries:
+                groups[gid] = entries
+        if not groups:
+            return None
+        try:
+            forward_gid = int(grouping.get("forward_group", 1))
+            backward_gid = int(grouping.get("backward_group", 2))
+        except (TypeError, ValueError):
+            return None
+        resolution_grouping = {
+            "groups": groups,
+            "excluded_detectors": grouping.get("excluded_detectors"),
+        }
+        forward_idx = effective_group_indices(resolution_grouping, forward_gid)
+        backward_idx = effective_group_indices(resolution_grouping, backward_gid)
+        if not forward_idx or not backward_idx:
+            return None
+        if max(forward_idx) >= len(run.histograms) or max(backward_idx) >= len(run.histograms):
+            return None
+
+        period_mode = str(grouping.get("period_mode", PeriodMode.RED))
+        has_two_period_histograms = bool(
+            isinstance(grouping.get("period_histograms"), list)
+            and len(grouping.get("period_histograms", [])) == 2
+        )
+        if has_two_period_histograms and period_mode in {
+            str(PeriodMode.GREEN_MINUS_RED),
+            str(PeriodMode.GREEN_PLUS_RED),
+        }:
+            # G±R combines two already-reduced curves; bunching that
+            # combination stays at the curve level.
+            return None
+
+        try:
+            base_factor = max(1, int(grouping.get("bunching_factor", 1)))
+        except (TypeError, ValueError):
+            base_factor = 1
+        reduction_grouping = dict(grouping)
+        reduction_grouping["bunching_factor"] = base_factor * extra
+
+        try:
+            alpha = float(grouping.get("alpha", 1.0))
+        except (TypeError, ValueError):
+            alpha = 1.0
+        deadtime_mode = str(grouping.get("deadtime_mode", "off")).strip().lower() or "off"
+        period_index = 1 if period_mode == str(PeriodMode.GREEN) else 0
+        selected_histograms, selected_grouping = self._period_histograms_for_mode(
+            run.histograms,
+            reduction_grouping,
+            period_index=period_index,
+        )
+        time_axis, asymmetry, error, _dt_applied, _background_state = (
+            self._reduce_grouped_histograms_to_asymmetry(
+                histograms=selected_histograms,
+                grouping=selected_grouping,
+                dataset=dataset,
+                run=run,
+                forward_idx=forward_idx,
+                backward_idx=backward_idx,
+                alpha=alpha if alpha > 0 else 1.0,
+                use_deadtime=bool(grouping.get("deadtime_correction", False)),
+                deadtime_mode=deadtime_mode,
+                use_background=bool(grouping.get("background_correction", False)),
+            )
+        )
+        if len(time_axis) == 0:
+            return None
+        return time_axis, asymmetry, error
 
     def _prepare_grouping_histograms(self, histograms, grouping: dict, use_deadtime: bool):
         """Return histograms prepared for grouping, with optional deadtime correction.
