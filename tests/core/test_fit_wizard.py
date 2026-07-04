@@ -298,15 +298,19 @@ def test_fit_wizard_recommends_three_exponentials_for_three_rate_spectrum(
     model = CompositeModel(
         ["Exponential", "Exponential", "Exponential", "Constant"], operators=["+", "+", "+"]
     )
-    dataset = _dataset_for(
-        model,
-        A_1=0.10,
-        Lambda_1=4.0,
-        A_2=0.07,
-        Lambda_2=0.9,
-        A_3=0.05,
-        Lambda_3=0.12,
-        A_bg=0.01,
+    # Three well-separated rates (8.0 / 1.2 / 0.2 µs⁻¹) over a long window so
+    # that AICc genuinely favours the three-rate model — under the
+    # confidence-tier policy the recommendation is the metric winner outright,
+    # not a gate-passing runner-up, so the third (slow) rate must be resolvable.
+    # ``_dataset_for``'s 8 µs / 140-point window leaves the slow rate degenerate
+    # with the constant, so build a longer window inline.
+    t = np.linspace(0.0, 12.0, 240)
+    params = dict(A_1=0.10, Lambda_1=8.0, A_2=0.08, Lambda_2=1.2, A_3=0.06, Lambda_3=0.2, A_bg=0.01)
+    dataset = MuonDataset(
+        time=t,
+        asymmetry=model.function(t, **params),
+        error=np.full_like(t, 0.004),
+        metadata={"run_number": 1},
     )
 
     recommendation = build_fit_wizard_recommendation(dataset)
@@ -368,9 +372,12 @@ def test_residual_gate_demotes_structured_residuals() -> None:
     )
 
 
-def test_no_confident_recommendation_when_every_candidate_is_forced_to_warn(
+def test_medium_confidence_recommendation_when_every_candidate_is_forced_to_warn(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Under the confidence-tier policy the gates classify rather than veto: an
+    # all-gates-failing spectrum still gets a best-by-metric recommendation, now
+    # at Medium confidence with the gate reasons carried as a caveat (F1 fix).
     _configure_scipy_fit_backend(monkeypatch)
     model = CompositeModel(["Exponential", "Constant"], operators=["+"])
     dataset = _dataset_for(model, A_1=0.2, Lambda=0.4, A_bg=0.01)
@@ -383,8 +390,10 @@ def test_no_confident_recommendation_when_every_candidate_is_forced_to_warn(
 
     recommendation = build_fit_wizard_recommendation(dataset)
 
-    assert recommendation.recommended_key is None
-    assert "No candidate passed" in recommendation.summary
+    assert recommendation.recommended_key is not None
+    assert recommendation.confidence is wizard_module.ConfidenceTier.MEDIUM
+    assert recommendation.verdict is wizard_module.RecommendationVerdict.STRUCTURED
+    assert recommendation.caveat
 
 
 def test_failed_candidate_fit_is_retained_in_the_comparison_table(
@@ -427,6 +436,10 @@ def test_fit_wizard_recommendation_serialization_round_trip(
         assessment.template.key for assessment in recommendation.assessments
     ]
     assert restored.assessment_for_key(recommendation.recommended_key) is not None
+    # New additive policy fields survive the round trip.
+    assert restored.confidence is recommendation.confidence
+    assert restored.verdict is recommendation.verdict
+    assert restored.caveat == recommendation.caveat
 
 
 def test_fit_wizard_can_evaluate_explicit_template_set(

@@ -100,6 +100,67 @@ _FIT_WIZARD_TITLES = {
 }
 
 
+class ConfidenceTier(str, Enum):
+    """Confidence a recommendation carries, decoupled from the veto policy.
+
+    The residual gates no longer suppress a recommendation; they classify it.
+    ``HIGH`` means the recommended template's residuals passed every gate;
+    ``MEDIUM`` means it is the clear metric winner but leaves structured
+    residuals (a caveat, surfaced to the user, not a veto). ``NONE`` is carried
+    when there is no confident recommendation at all (out of scope, no
+    successful fit, or the null-baseline verdict fired).
+    """
+
+    HIGH = "high"
+    MEDIUM = "medium"
+    NONE = "none"
+
+    @classmethod
+    def from_value(cls, value: object) -> ConfidenceTier:
+        if isinstance(value, cls):
+            return value
+        # A missing field (``None``) takes the default explicitly — do not let
+        # ``str(None) == "none"`` masquerade as a real serialized value.
+        if value is None:
+            return cls.NONE
+        text = str(value).strip().lower()
+        for member in cls:
+            if member.value == text:
+                return member
+        return cls.NONE
+
+
+class RecommendationVerdict(str, Enum):
+    """Top-level meaning of a recommendation, orthogonal to the metric ranking.
+
+    ``STRUCTURED`` — the recommended template describes real structure (the
+    normal case). ``NO_SIGNIFICANT_STRUCTURE`` — the best template does not beat
+    a strictly-simpler null baseline by a meaningful AICc margin, so the data are
+    consistent with a plain relaxation/constant and no oscillatory or multi-rate
+    claim is warranted (fixes pure-noise over-confidence, F6). ``NONE`` — no
+    recommendation could be formed (out of scope or no successful fit).
+    """
+
+    STRUCTURED = "structured"
+    NO_SIGNIFICANT_STRUCTURE = "no_significant_structure"
+    NONE = "none"
+
+    @classmethod
+    def from_value(cls, value: object) -> RecommendationVerdict:
+        if isinstance(value, cls):
+            return value
+        # A missing field (``None``) means the payload predates this enum, so it
+        # defaults to STRUCTURED — not the "none" member that ``str(None)`` would
+        # otherwise select.
+        if value is None:
+            return cls.STRUCTURED
+        text = str(value).strip().lower()
+        for member in cls:
+            if member.value == text:
+                return member
+        return cls.STRUCTURED
+
+
 class SelectionMetric(str, Enum):
     """Model-selection metrics exposed in the fit wizard."""
 
@@ -181,6 +242,19 @@ class CandidateAssessment:
     #: Screening stage that produced this assessment: 1 = Stage-1 family
     #: representative (cheap first-pass fit), 2 = full assessment.
     stage: int = 2
+    #: Targeted-disqualifier reasons that make this candidate unfit to recommend
+    #: even when it wins by metric (frequency at the resolution floor / pinned at
+    #: a bound, oscillation amplitude consistent with zero). Empty when the
+    #: candidate is eligible. Additive — old payloads deserialize to ``()``.
+    disqualification_reasons: tuple[str, ...] = ()
+    #: True for the flat/plain-exponential null baselines fitted unconditionally
+    #: as a "no significant structure" reference; these never win a normal
+    #: recommendation and are excluded from the ranked candidate pool.
+    is_null_baseline: bool = False
+
+    @property
+    def is_disqualified(self) -> bool:
+        return bool(self.disqualification_reasons)
 
     @property
     def parameter_count(self) -> int:
@@ -236,6 +310,18 @@ class FitWizardRecommendation:
     peak_analysis: PeakAnalysis | None = None
     multiplet_matches: tuple[MultipletMatch, ...] = ()
     family_reports: tuple[FamilyScreeningReport, ...] = ()
+    #: Confidence tier of ``recommended_key`` (High = gates passed, Medium =
+    #: metric winner with structured residuals, None = no recommendation).
+    #: Additive — old payloads default to ``NONE``.
+    confidence: ConfidenceTier = ConfidenceTier.NONE
+    #: Whether the recommendation describes real structure or the data are
+    #: consistent with a null baseline. Additive — old payloads default to
+    #: ``NONE`` (they predate the null-baseline test).
+    verdict: RecommendationVerdict = RecommendationVerdict.NONE
+    #: Human-readable caveat carried when ``confidence`` is Medium (the residual
+    #: gate reasons for the recommended template) or when the null-baseline
+    #: verdict fires. Empty for a clean High recommendation. GUI-facing.
+    caveat: str = ""
 
     @property
     def recommended_assessment(self) -> CandidateAssessment | None:
@@ -1063,6 +1149,28 @@ _STAGE2_MAX_FAMILIES = 4
 #: (user-declared peaks always qualify).
 _MULTIPLET_MIN_SNR = 4.0
 
+#: The best template must beat the better *strictly-simpler* null baseline by at
+#: least this much AICc to count as describing significant structure. Burnham &
+#: Anderson (2002): ΔAICc > 10 ⇒ the simpler (null) model has "essentially no
+#: support", so below this margin the extra complexity is not warranted and the
+#: verdict becomes "no significant structure". Nulls with the same or more free
+#: parameters than the candidate are not a required hurdle (an exponential
+#: candidate is not asked to out-score the exponential null it equals).
+_NULL_BASELINE_MIN_DELTA_AICC = 10.0
+
+#: Sigma multiple below which a fitted oscillation amplitude counts as
+#: consistent with zero (|A| < k·σ_A). k = 2 ≈ the 95% two-sided bound.
+_ZERO_AMPLITUDE_SIGMA = 2.0
+
+#: A fitted frequency within this fractional slack of the 1/T resolution floor
+#: is treated as "at the floor" — a free-phase cosine that completes barely one
+#: cycle in the window is indistinguishable from a smooth envelope.
+_FREQUENCY_FLOOR_SLACK = 0.05
+
+#: Template keys of the two null baselines fitted unconditionally.
+_NULL_CONSTANT_KEY = "null_constant"
+_NULL_EXPONENTIAL_KEY = "null_exp"
+
 
 @dataclass(frozen=True)
 class TemplateSeedContext:
@@ -1143,6 +1251,34 @@ def build_oscillatory_multiplet_templates(
             )
         )
     return tuple(templates)
+
+
+def build_null_baseline_templates() -> tuple[CandidateTemplate, ...]:
+    """The two cheap null models fitted unconditionally as a significance floor.
+
+    A flat constant (1 free parameter) and a plain exponential + constant
+    (3 free parameters). Any real recommendation must beat the better
+    *strictly-simpler* of these by a meaningful AICc margin; otherwise the data
+    carry no structure worth a richer model (fixes pure-noise over-confidence).
+    They are tagged as baselines so callers can keep them out of the ranked
+    candidate pool.
+    """
+    return (
+        CandidateTemplate(
+            key=_NULL_CONSTANT_KEY,
+            title="Null baseline: constant",
+            category="Baseline",
+            rationale="Flat null model — the no-structure reference.",
+            model=CompositeModel(["Constant"], operators=[]),
+        ),
+        CandidateTemplate(
+            key=_NULL_EXPONENTIAL_KEY,
+            title="Null baseline: exponential + constant",
+            category="Baseline",
+            rationale="Plain relaxation null model — the no-oscillation reference.",
+            model=CompositeModel(["Exponential", "Constant"], operators=["+"]),
+        ),
+    )
 
 
 _MULTIPLET_TEMPLATE_KEY_RE = re.compile(r"^oscillatory(\d+)_(exp|gaussian)_constant$")
@@ -1493,6 +1629,31 @@ def build_fit_wizard_recommendation(
         max_workers=max_workers,
     )
 
+    _check_cancelled()
+    # Null baselines: fitted unconditionally (independent of scope/promotion and
+    # of the Stage-1/2 dedup) so the "no significant structure" verdict always
+    # has a reference. They are 1–2 free-parameter fits, so cheap.
+    null_templates = build_null_baseline_templates()
+    null_assessments = _run_template_assessments(
+        [
+            (
+                lambda template=template: _assess_candidate_template(
+                    dataset,
+                    fingerprint,
+                    template,
+                    fit_engine=FitEngine(),
+                    metric=metric,
+                    seed_context=stage2_context,
+                    variant_budget=_STAGE1_VARIANT_BUDGET,
+                    stage=1,
+                    cancel_callback=cancel_callback,
+                )
+            )
+            for template in null_templates
+        ],
+        max_workers=max_workers,
+    )
+
     family_reports = tuple(
         FamilyScreeningReport(
             family_key=family.key,
@@ -1509,8 +1670,8 @@ def build_fit_wizard_recommendation(
         for family, assessment, promoted, reason in decisions
     )
 
-    all_templates = tuple(flat_stage1_templates) + tuple(stage2_templates)
-    all_assessments = tuple(flat_stage1) + tuple(stage2_assessments)
+    all_templates = tuple(flat_stage1_templates) + tuple(stage2_templates) + tuple(null_templates)
+    all_assessments = tuple(flat_stage1) + tuple(stage2_assessments) + tuple(null_assessments)
 
     return rerank_fit_wizard_recommendation(
         FitWizardRecommendation(
@@ -1564,37 +1725,117 @@ def build_fit_wizard_recommendation_for_templates(
     )
 
 
+def _better_simpler_null(
+    candidate: CandidateAssessment,
+    null_assessments: Sequence[CandidateAssessment],
+    metric: SelectionMetric,
+) -> CandidateAssessment | None:
+    """Best null baseline strictly simpler than ``candidate``, or ``None``.
+
+    "Strictly simpler" = fewer free parameters. Same/richer nulls are not a
+    required hurdle, so a plain-exponential candidate is never asked to out-score
+    the equal-complexity exponential null it equals — only the flat 1-parameter
+    null. This is what lets richer families (oscillatory/KT/F-µ-F) be forced to
+    clear both nulls while the exponential family clears just the flat one.
+    """
+    simpler = [
+        null
+        for null in null_assessments
+        if null.is_successful
+        and np.isfinite(null.metric_value(metric))
+        and null.parameter_count < candidate.parameter_count
+    ]
+    if not simpler:
+        return None
+    return min(simpler, key=lambda null: null.metric_value(metric))
+
+
 def rerank_fit_wizard_recommendation(
     recommendation: FitWizardRecommendation,
     metric: SelectionMetric,
 ) -> FitWizardRecommendation:
-    """Reuse existing fit assessments and compute a recommendation for a new metric."""
-    passing = [
+    """Apply the recommendation policy against the (already fitted) assessments.
+
+    Policy (gates classify, they no longer veto):
+
+    * Recommend the **best-by-metric** successful, non-null, non-disqualified
+      candidate. Targeted disqualifiers (frequency at the resolution floor /
+      pinned at a bound, zero-consistent oscillation amplitude) drop a candidate
+      to the next survivor.
+    * Confidence tier: **High** when the winner's residuals pass every gate,
+      **Medium** when it is the clear metric winner but leaves structured
+      residuals (its gate reasons ride along as a ``caveat``).
+    * Null-baseline verdict: if the winner does not beat the better
+      *strictly-simpler* null baseline by ``_NULL_BASELINE_MIN_DELTA_AICC``, the
+      verdict becomes ``NO_SIGNIFICANT_STRUCTURE`` and the recommendation points
+      at the winning null (fixes pure-noise over-confidence). Tolerates missing
+      nulls (old payloads, the explicit-template path): the test is skipped.
+    """
+    null_assessments = [
         assessment
         for assessment in recommendation.assessments
-        if assessment.is_successful and assessment.residual_gate_passed
+        if assessment.is_null_baseline and assessment.is_successful
     ]
-    if not passing:
+    candidates = [
+        assessment
+        for assessment in recommendation.assessments
+        if assessment.is_successful and not assessment.is_null_baseline
+    ]
+
+    eligible = sorted(
+        (a for a in candidates if not a.is_disqualified),
+        key=lambda assessment: _assessment_sort_key(assessment, metric),
+    )
+
+    if not eligible:
+        # Nothing survives the disqualifiers (or nothing fitted). Fall back to a
+        # null baseline if one is available so callers still get a concrete,
+        # low-confidence anchor; otherwise there is genuinely no recommendation.
+        best_null = min(
+            (a for a in null_assessments if np.isfinite(a.metric_value(metric))),
+            key=lambda a: a.metric_value(metric),
+            default=None,
+        )
+        if best_null is None:
+            summary = (
+                "No candidate could be recommended — every successful fit was "
+                "disqualified and no null baseline is available. Inspect the "
+                "comparison table before applying a model."
+            )
+            return replace(
+                recommendation,
+                metric=metric,
+                recommended_key=None,
+                comparable_keys=(),
+                summary=summary,
+                confidence=ConfidenceTier.NONE,
+                verdict=RecommendationVerdict.NONE,
+                caveat="",
+            )
+        caveat = (
+            "Every candidate model was disqualified (e.g. an oscillation at the "
+            "resolution floor or with amplitude consistent with zero); the data "
+            "are consistent with the null baseline."
+        )
         summary = (
-            "No candidate passed the residual checks automatically. "
-            "Inspect the comparison table and residual warnings before applying a model."
+            f"No significant structure — recommending the {best_null.template.title} "
+            f"null baseline by {metric.value}."
         )
         return replace(
             recommendation,
             metric=metric,
-            recommended_key=None,
+            recommended_key=best_null.template.key,
             comparable_keys=(),
             summary=summary,
+            confidence=ConfidenceTier.NONE,
+            verdict=RecommendationVerdict.NO_SIGNIFICANT_STRUCTURE,
+            caveat=caveat,
         )
 
-    passing_sorted = sorted(
-        passing, key=lambda assessment: _assessment_sort_key(assessment, metric)
-    )
-    primary = passing_sorted[0]
+    primary = eligible[0]
     comparable_keys: tuple[str, ...] = ()
-
-    if len(passing_sorted) > 1:
-        runner_up = passing_sorted[1]
+    if len(eligible) > 1:
+        runner_up = eligible[1]
         score_delta = abs(primary.metric_value(metric) - runner_up.metric_value(metric))
         if score_delta <= _COMPARABLE_SCORE_DELTA:
             preferred = min(
@@ -1609,18 +1850,58 @@ def rerank_fit_wizard_recommendation(
             primary = preferred
             comparable_keys = (preferred.template.key, alternate.template.key)
 
-    if comparable_keys:
-        compare_summary = ", with a similarly scoring alternative to inspect."
-    else:
-        compare_summary = "."
+    # Null-baseline significance test against the best strictly-simpler null.
+    reference_null = _better_simpler_null(primary, null_assessments, metric)
+    if reference_null is not None:
+        delta = reference_null.metric_value(metric) - primary.metric_value(metric)
+        if delta < _NULL_BASELINE_MIN_DELTA_AICC:
+            caveat = (
+                f"{primary.template.title} improves on the {reference_null.template.title} "
+                f"null baseline by only Δ{metric.value} = {delta:.1f} "
+                f"(< {_NULL_BASELINE_MIN_DELTA_AICC:.0f}); the data show no significant "
+                "structure beyond the null."
+            )
+            summary = (
+                f"No significant structure — {primary.template.title} does not beat the "
+                f"{reference_null.template.title} null baseline by {metric.value}."
+            )
+            return replace(
+                recommendation,
+                metric=metric,
+                recommended_key=reference_null.template.key,
+                comparable_keys=(),
+                summary=summary,
+                confidence=ConfidenceTier.NONE,
+                verdict=RecommendationVerdict.NO_SIGNIFICANT_STRUCTURE,
+                caveat=caveat,
+            )
 
-    summary = f"Recommended: {primary.template.title} by {metric.value}{compare_summary}"
+    # A genuine structured recommendation. Gates classify the confidence.
+    if primary.residual_gate_passed:
+        confidence = ConfidenceTier.HIGH
+        caveat = ""
+    else:
+        confidence = ConfidenceTier.MEDIUM
+        caveat = (
+            "Structured residuals remain: "
+            + ("; ".join(primary.residual_gate_reasons) or "residual checks flagged this fit")
+            + "."
+        )
+
+    compare_summary = (
+        ", with a similarly scoring alternative to inspect." if comparable_keys else "."
+    )
+    tier_note = "" if confidence is ConfidenceTier.HIGH else " (medium confidence)"
+    summary = f"Recommended: {primary.template.title} by {metric.value}{tier_note}{compare_summary}"
     return replace(
         recommendation,
         metric=metric,
         recommended_key=primary.template.key,
         comparable_keys=comparable_keys,
         summary=summary,
+        confidence=confidence,
+        verdict=RecommendationVerdict.STRUCTURED,
+        caveat=caveat,
     )
 
 
@@ -1651,6 +1932,9 @@ def serialize_fit_wizard_recommendation(
         "family_reports": [
             serialize_family_screening_report(report) for report in recommendation.family_reports
         ],
+        "confidence": recommendation.confidence.value,
+        "verdict": recommendation.verdict.value,
+        "caveat": recommendation.caveat,
     }
 
 
@@ -1702,6 +1986,11 @@ def deserialize_fit_wizard_recommendation(
         peak_analysis=peak_analysis,
         multiplet_matches=multiplet_matches,
         family_reports=family_reports,
+        # Additive: tolerate old payloads that predate the confidence/verdict
+        # fields — ``from_value`` defaults them to NONE/STRUCTURED sensibly.
+        confidence=ConfidenceTier.from_value(payload.get("confidence")),
+        verdict=RecommendationVerdict.from_value(payload.get("verdict")),
+        caveat=str(payload.get("caveat", "")),
     )
 
 
@@ -1972,6 +2261,8 @@ def _serialize_candidate_assessment(
         "fitted_curve": np.asarray(assessment.fitted_curve, dtype=float).tolist(),
         "component_curves": _serialize_component_curves(assessment.component_curves),
         "stage": assessment.stage,
+        "disqualification_reasons": list(assessment.disqualification_reasons),
+        "is_null_baseline": bool(assessment.is_null_baseline),
     }
 
 
@@ -2009,6 +2300,12 @@ def _deserialize_candidate_assessment(
             fitted_curve=np.asarray(payload.get("fitted_curve", []), dtype=float),
             component_curves=_deserialize_component_curves(payload.get("component_curves", [])),
             stage=int(payload.get("stage", 2)),
+            disqualification_reasons=tuple(
+                reason
+                for reason in payload.get("disqualification_reasons", [])
+                if isinstance(reason, str)
+            ),
+            is_null_baseline=bool(payload.get("is_null_baseline", False)),
         )
     except (TypeError, ValueError):
         return None
@@ -2088,6 +2385,7 @@ def _assess_candidate_template(
         bound_hits=bound_hits,
     )
     residual_gate_passed = not residual_gate_reasons
+    disqualification_reasons = _disqualification_reasons(dataset, template, best_result, bound_hits)
 
     fitted_time, fitted_curve, component_curves = _dense_fit_curves(
         dataset,
@@ -2114,6 +2412,8 @@ def _assess_candidate_template(
         fitted_curve=fitted_curve,
         component_curves=component_curves,
         stage=stage,
+        disqualification_reasons=tuple(disqualification_reasons),
+        is_null_baseline=template.key in (_NULL_CONSTANT_KEY, _NULL_EXPONENTIAL_KEY),
     )
 
 
@@ -3059,6 +3359,93 @@ def _max_abs_autocorrelation(values: NDArray[np.float64]) -> float:
         corr = float(np.dot(centered[:-lag], centered[lag:]) / denom)
         correlations.append(abs(corr))
     return float(max(correlations, default=0.0))
+
+
+def _fit_window_duration(dataset: MuonDataset) -> float:
+    """Length T of the fit window (µs); sets the 1/T spectral-resolution floor."""
+    if dataset.n_points < 2:
+        return 0.0
+    time = np.asarray(dataset.time, dtype=float)
+    return float(time.max() - time.min())
+
+
+def _paired_amplitude(parameters: ParameterSet, freq_index: str | None) -> Parameter | None:
+    """Return the oscillation amplitude sharing a frequency parameter's suffix.
+
+    An ``Oscillatory``/``Bessel`` component names its amplitude ``A`` and its
+    frequency ``frequency`` with the same numeric suffix (``A_2`` ↔
+    ``frequency_2``); an unindexed single-oscillator model uses bare ``A`` ↔
+    ``frequency``. Match the amplitude to the frequency by that suffix so the
+    zero-amplitude test targets the right component.
+    """
+    target = "A" if freq_index is None else f"A_{freq_index}"
+    for parameter in parameters:
+        if parameter.name == target:
+            return parameter
+    return None
+
+
+def _disqualification_reasons(
+    dataset: MuonDataset,
+    template: CandidateTemplate,
+    fit_result: FitResult,
+    bound_hits: Sequence[str],
+) -> list[str]:
+    """Targeted disqualifiers that suppress an otherwise metric-winning candidate.
+
+    Metric-independent, so computed once at assessment time and carried on the
+    assessment. Two families of failure, both specific to oscillatory templates
+    (any component contributing a ``frequency`` parameter):
+
+    * **Resolution-floor frequency** — a fitted ``frequency`` at or below the
+      1/T spectral-resolution floor (within ``_FREQUENCY_FLOOR_SLACK``), or one
+      pinned at its lower/upper bound. Below 1/T a free-phase cosine degenerates
+      into a smooth envelope; such a "fit" is a systematics artefact, not a real
+      line. This complements — never replaces — the 1/T anti-cheating bound on
+      the seeds.
+    * **Zero-consistent amplitude** — the paired oscillation amplitude with
+      ``|A| < k·σ_A`` (``k = _ZERO_AMPLITUDE_SIGMA``). Skipped when the fitted
+      error is missing/non-finite (we do not suppress on unknown uncertainty).
+    """
+    if not fit_result.success:
+        return []
+    parameters = fit_result.parameters
+    freq_params = [
+        parameter
+        for parameter in parameters
+        if split_parameter_name(parameter.name)[0] == "frequency"
+    ]
+    if not freq_params:
+        return []
+
+    reasons: list[str] = []
+    duration = _fit_window_duration(dataset)
+    floor = 1.0 / duration if duration > _EPS else 0.0
+    bound_hit_set = set(bound_hits)
+    uncertainties = fit_result.uncertainties or {}
+
+    for parameter in freq_params:
+        _base, index = split_parameter_name(parameter.name)
+        value = abs(float(parameter.value))
+        if floor > 0.0 and value <= floor * (1.0 + _FREQUENCY_FLOOR_SLACK):
+            reasons.append(
+                f"{parameter.name} at the 1/T resolution floor ({value:.4g} ≤ {floor:.4g} MHz)"
+            )
+        elif f"{parameter.name} at lower bound" in bound_hit_set:
+            reasons.append(f"{parameter.name} pinned at its lower bound")
+        elif f"{parameter.name} at upper bound" in bound_hit_set:
+            reasons.append(f"{parameter.name} pinned at its upper bound")
+
+        amplitude = _paired_amplitude(parameters, index)
+        if amplitude is not None:
+            sigma = float(uncertainties.get(amplitude.name, float("nan")))
+            if np.isfinite(sigma) and sigma > 0.0:
+                if abs(float(amplitude.value)) < _ZERO_AMPLITUDE_SIGMA * sigma:
+                    reasons.append(
+                        f"oscillation amplitude {amplitude.name} consistent with zero "
+                        f"(|{amplitude.value:.3g}| < {_ZERO_AMPLITUDE_SIGMA:.0f}·{sigma:.3g})"
+                    )
+    return reasons
 
 
 def _bound_hit_names(parameters: ParameterSet) -> list[str]:

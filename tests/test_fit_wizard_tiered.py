@@ -23,21 +23,26 @@ from asymmetry.core.fitting.fit_wizard import (
     _FIT_WIZARD_TITLES,
     CandidateAssessment,
     CandidateTemplate,
+    ConfidenceTier,
     FamilyScreeningReport,
     FitWizardRecommendation,
+    RecommendationVerdict,
     SelectionMetric,
     SpectrumFingerprint,
     WizardFamily,
     _decide_family_promotions,
     _run_template_assessments,
     build_fit_wizard_recommendation,
+    build_null_baseline_templates,
     build_wizard_families,
     deserialize_family_screening_report,
     deserialize_fit_wizard_recommendation,
+    rerank_fit_wizard_recommendation,
     serialize_family_screening_report,
     serialize_fit_wizard_recommendation,
 )
 from asymmetry.core.fitting.muon_fluorine.polarization import linear_fmuf_polarization
+from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.peak_detection import (
     DetectedPeak,
     MultipletMatch,
@@ -571,6 +576,98 @@ def test_empty_scope_reports_no_candidates() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Regression controls (end-to-end): structureless data must NOT yield a
+# confident oscillatory recommendation. Each control is one row of the failure
+# taxonomy (F6 / spurious oscillation) and must stay suppressed.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.integration
+def test_control_flat_zf_noise_yields_no_significant_structure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Control (a): Ag-ZF-like flat spectrum + noise. Previously a spurious
+    # 0.28 MHz cosine won; the null-baseline test must catch it — no oscillatory
+    # model beats the flat null by ΔAICc ≥ 10, so the verdict is null.
+    _strip_expensive_members(monkeypatch)
+    rng = np.random.default_rng(3)
+    t = np.linspace(0.08, 10.0, 500)
+    y = 0.05 + rng.normal(0.0, 0.006, t.size)
+    dataset = _tiered_dataset(t, y, error=0.006, metadata={"field_direction": "Zero field"})
+
+    recommendation = build_fit_wizard_recommendation(dataset, max_workers=1)
+
+    assert recommendation.verdict is RecommendationVerdict.NO_SIGNIFICANT_STRUCTURE
+    assert recommendation.confidence is ConfidenceTier.NONE
+    # The recommendation, if any, points at a null baseline — never a confident
+    # oscillatory template.
+    assert recommendation.recommended_key in ("null_constant", "null_exp")
+
+
+@pytest.mark.integration
+def test_control_pure_noise_yields_no_significant_structure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Control (c): pure white noise (F6). Must NOT produce a confident (High)
+    # structured recommendation — expect "no significant structure".
+    _strip_expensive_members(monkeypatch)
+    rng = np.random.default_rng(99)
+    t = np.linspace(0.1, 12.0, 400)
+    y = rng.normal(0.0, 0.01, t.size)
+    dataset = _tiered_dataset(t, y, error=0.01)
+
+    recommendation = build_fit_wizard_recommendation(dataset, max_workers=1)
+
+    assert recommendation.confidence is not ConfidenceTier.HIGH
+    assert recommendation.verdict is RecommendationVerdict.NO_SIGNIFICANT_STRUCTURE
+    assert recommendation.recommended_key in ("null_constant", "null_exp")
+
+
+@pytest.mark.integration
+def test_control_flat_lf_oscillatory_frequency_floor_disqualified(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Control (b): flat LF-like data where oscillatory/bessel templates fit with
+    # their frequency driven down to the 1/T resolution floor (a smooth envelope
+    # masquerading as a barely-one-cycle cosine). The resolution-floor
+    # disqualifier must FIRE on every such fit, and none of them may be the
+    # confident (High) recommendation.
+    _strip_expensive_members(monkeypatch)
+    rng = np.random.default_rng(11)
+    t = np.linspace(0.05, 8.0, 400)
+    # Slowly decaying, essentially non-oscillatory LF-like envelope + noise.
+    y = 0.18 * np.exp(-0.05 * t) + 0.02 + rng.normal(0.0, 0.005, t.size)
+    dataset = _tiered_dataset(t, y, error=0.005, metadata={"field_direction": "Longitudinal"})
+
+    recommendation = build_fit_wizard_recommendation(dataset, max_workers=1)
+
+    def _frequency_params(assessment: CandidateAssessment) -> list[float]:
+        return [
+            float(p.value)
+            for p in assessment.fit_result.parameters
+            if p.name.split("_")[0] == "frequency"
+        ]
+
+    floor = 1.0 / float(t.max() - t.min())
+    at_floor = [
+        assessment
+        for assessment in recommendation.assessments
+        if assessment.is_successful
+        and any(abs(value) <= floor * 1.05 for value in _frequency_params(assessment))
+    ]
+    # The construction must actually exercise the disqualifier — an oscillatory
+    # candidate must have collapsed to the floor for this control to mean anything.
+    assert at_floor, "expected an oscillatory candidate to fit at the resolution floor"
+    for assessment in at_floor:
+        assert any("resolution floor" in reason for reason in assessment.disqualification_reasons)
+
+    # No floor-frequency oscillation is the confident recommendation.
+    recommended = recommendation.recommended_assessment
+    if recommended is not None and _frequency_params(recommended):
+        assert recommendation.confidence is not ConfidenceTier.HIGH
+
+
+# --------------------------------------------------------------------------- #
 # Promotion decisions (unit)
 # --------------------------------------------------------------------------- #
 
@@ -701,3 +798,401 @@ def test_cancel_callback_aborts_analysis() -> None:
     dataset = _tiered_dataset(t, 0.2 * np.exp(-0.8 * t) + 0.02)
     with pytest.raises(FitCancelledError):
         build_fit_wizard_recommendation(dataset, max_workers=1, cancel_callback=lambda: True)
+
+
+# --------------------------------------------------------------------------- #
+# Recommendation policy: confidence tiers, null baselines, disqualifiers.
+#
+# These exercise ``rerank_fit_wizard_recommendation`` — the single policy
+# engine — on hand-built assessments, so they run without the expensive
+# orchestrator and stay in the fast (non-integration) tier.
+# --------------------------------------------------------------------------- #
+
+
+def _policy_assessment(
+    key: str,
+    value: float,
+    *,
+    parameters: ParameterSet | None = None,
+    param_count: int | None = None,
+    uncertainties: dict[str, float] | None = None,
+    gate: bool = True,
+    success: bool = True,
+    disqualified: tuple[str, ...] = (),
+    null: bool = False,
+    model: CompositeModel | None = None,
+) -> CandidateAssessment:
+    """Build a fully-formed assessment for policy-engine tests.
+
+    ``value`` is used as the AICc/AIC/BIC so metric ranking is deterministic.
+    ``param_count`` (via a padded ParameterSet) drives the strictly-simpler null
+    comparison; ``gate`` maps to ``residual_gate_passed`` (High vs Medium tier).
+    """
+    if parameters is None:
+        parameters = ParameterSet()
+        for i in range(param_count if param_count is not None else 1):
+            parameters.add(Parameter(name=f"p{i}", value=1.0))
+    fit_result = FitResult(
+        success=success,
+        chi_squared=value,
+        reduced_chi_squared=1.0,
+        parameters=parameters,
+        uncertainties=uncertainties or {},
+    )
+    empty = np.array([], dtype=float)
+    return CandidateAssessment(
+        template=CandidateTemplate(
+            key=key,
+            title=key,
+            category="Baseline" if null else "General",
+            rationale="",
+            model=model or CompositeModel(["Exponential", "Constant"], operators=["+"]),
+        ),
+        fit_result=fit_result,
+        aic=value,
+        aicc=value,
+        bic=value,
+        selected_score=value,
+        residual_rms=1.0,
+        runs_z_score=0.0 if gate else 5.0,
+        max_abs_autocorrelation=0.0,
+        residual_fft_peak_snr=0.0,
+        residual_gate_passed=gate,
+        residual_gate_reasons=() if gate else ("runs-test z score suggests structure (5.00)",),
+        bound_hits=(),
+        fitted_time=empty,
+        fitted_curve=empty,
+        component_curves=(),
+        stage=2,
+        disqualification_reasons=disqualified,
+        is_null_baseline=null,
+    )
+
+
+def _policy_recommendation(*assessments: CandidateAssessment) -> FitWizardRecommendation:
+    return FitWizardRecommendation(
+        fingerprint=_plain_fingerprint(),
+        templates=tuple(a.template for a in assessments),
+        assessments=tuple(assessments),
+        metric=SelectionMetric.AICC,
+        recommended_key=None,
+        comparable_keys=(),
+        summary="",
+    )
+
+
+def test_policy_recommends_best_metric_even_when_gates_fail() -> None:
+    # F1 fix: gate failure no longer vetoes. A gate-failing metric winner is
+    # still recommended, at Medium confidence, with the gate reasons as caveat.
+    rec = _policy_recommendation(
+        _policy_assessment("winner", 100.0, gate=False, param_count=4),
+        _policy_assessment("null_constant", 400.0, param_count=1, null=True),
+        _policy_assessment("null_exp", 250.0, param_count=3, null=True),
+    )
+    out = rerank_fit_wizard_recommendation(rec, SelectionMetric.AICC)
+    assert out.recommended_key == "winner"
+    assert out.confidence is ConfidenceTier.MEDIUM
+    assert out.verdict is RecommendationVerdict.STRUCTURED
+    assert "residual" in out.caveat.lower() or "structured" in out.caveat.lower()
+
+
+def test_policy_high_confidence_when_gates_pass() -> None:
+    rec = _policy_recommendation(
+        _policy_assessment("winner", 100.0, gate=True, param_count=4),
+        _policy_assessment("null_constant", 400.0, param_count=1, null=True),
+    )
+    out = rerank_fit_wizard_recommendation(rec, SelectionMetric.AICC)
+    assert out.recommended_key == "winner"
+    assert out.confidence is ConfidenceTier.HIGH
+    assert out.verdict is RecommendationVerdict.STRUCTURED
+    assert out.caveat == ""
+
+
+def test_policy_null_verdict_when_winner_ties_simpler_null() -> None:
+    # Control (c): pure noise. A 4-param winner that barely beats the flat null
+    # (Δ < 10) must fall back to "no significant structure" -> null, not High.
+    rec = _policy_recommendation(
+        _policy_assessment("winner", 395.0, gate=True, param_count=4),
+        _policy_assessment("null_constant", 400.0, param_count=1, null=True),
+        _policy_assessment("null_exp", 402.0, param_count=3, null=True),
+    )
+    out = rerank_fit_wizard_recommendation(rec, SelectionMetric.AICC)
+    assert out.recommended_key == "null_constant"
+    assert out.confidence is ConfidenceTier.NONE
+    assert out.verdict is RecommendationVerdict.NO_SIGNIFICANT_STRUCTURE
+    assert "no significant structure" in out.caveat.lower()
+
+
+def test_policy_exponential_need_not_beat_equal_complexity_null() -> None:
+    # The strictly-simpler rule: an exp candidate (3 params) that equals the
+    # exp null (3 params) but beats the flat null (1 param) IS structured — it
+    # must not be vetoed by the equal-complexity null.
+    rec = _policy_recommendation(
+        _policy_assessment("exp_constant", 300.0, gate=True, param_count=3),
+        _policy_assessment("null_constant", 400.0, param_count=1, null=True),
+        _policy_assessment("null_exp", 300.5, param_count=3, null=True),
+    )
+    out = rerank_fit_wizard_recommendation(rec, SelectionMetric.AICC)
+    assert out.recommended_key == "exp_constant"
+    assert out.verdict is RecommendationVerdict.STRUCTURED
+
+
+def test_policy_disqualified_candidate_drops_to_next_survivor() -> None:
+    # Control (a)/(b): a spurious oscillation at the resolution floor is
+    # disqualified even though it wins by metric, dropping to the next model.
+    rec = _policy_recommendation(
+        _policy_assessment(
+            "spurious_cosine",
+            100.0,
+            gate=True,
+            param_count=4,
+            disqualified=("frequency at the 1/T resolution floor (0.28 ≤ 0.30 MHz)",),
+        ),
+        _policy_assessment("exp_constant", 150.0, gate=True, param_count=3),
+        _policy_assessment("null_constant", 400.0, param_count=1, null=True),
+    )
+    out = rerank_fit_wizard_recommendation(rec, SelectionMetric.AICC)
+    assert out.recommended_key == "exp_constant"
+    assert out.verdict is RecommendationVerdict.STRUCTURED
+
+
+def test_policy_all_disqualified_falls_back_to_null() -> None:
+    rec = _policy_recommendation(
+        _policy_assessment(
+            "spurious_cosine",
+            100.0,
+            gate=True,
+            param_count=4,
+            disqualified=("oscillation amplitude A consistent with zero",),
+        ),
+        _policy_assessment("null_constant", 400.0, param_count=1, null=True),
+    )
+    out = rerank_fit_wizard_recommendation(rec, SelectionMetric.AICC)
+    assert out.recommended_key == "null_constant"
+    assert out.verdict is RecommendationVerdict.NO_SIGNIFICANT_STRUCTURE
+    assert out.confidence is ConfidenceTier.NONE
+
+
+def test_policy_tolerates_missing_nulls() -> None:
+    # The explicit-template path and old payloads carry no nulls; the null test
+    # is skipped and a normal structured recommendation is returned.
+    rec = _policy_recommendation(
+        _policy_assessment("exp_constant", 100.0, gate=True, param_count=3),
+    )
+    out = rerank_fit_wizard_recommendation(rec, SelectionMetric.AICC)
+    assert out.recommended_key == "exp_constant"
+    assert out.verdict is RecommendationVerdict.STRUCTURED
+    assert out.confidence is ConfidenceTier.HIGH
+
+
+def test_policy_no_successful_candidate_yields_none_verdict() -> None:
+    rec = _policy_recommendation(
+        _policy_assessment("failed", 100.0, success=False, param_count=3),
+    )
+    out = rerank_fit_wizard_recommendation(rec, SelectionMetric.AICC)
+    assert out.recommended_key is None
+    assert out.verdict is RecommendationVerdict.NONE
+    assert out.confidence is ConfidenceTier.NONE
+
+
+def test_policy_holds_when_reranking_by_a_different_metric() -> None:
+    # Requirement 6: rerank by BIC (not the AICc the recommendation was built
+    # with) must recompute tier/verdict coherently. Disqualifiers are stored on
+    # the assessment (metric-independent) and still suppress; the null-baseline
+    # verdict is re-derived against the BIC-best strictly-simpler null.
+    rec = _policy_recommendation(
+        _policy_assessment(
+            "spurious_cosine",
+            50.0,
+            gate=True,
+            param_count=4,
+            disqualified=("frequency at the 1/T resolution floor",),
+        ),
+        _policy_assessment("exp_constant", 120.0, gate=False, param_count=3),
+        _policy_assessment("null_constant", 400.0, param_count=1, null=True),
+    )
+    out = rerank_fit_wizard_recommendation(rec, SelectionMetric.BIC)
+    assert out.metric is SelectionMetric.BIC
+    # The disqualified metric winner is skipped; exp_constant survives (Medium,
+    # since its gates fail) and beats the flat null by ΔBIC = 280 ≥ 10.
+    assert out.recommended_key == "exp_constant"
+    assert out.confidence is ConfidenceTier.MEDIUM
+    assert out.verdict is RecommendationVerdict.STRUCTURED
+
+
+def test_null_baseline_templates_are_simple_and_tagged() -> None:
+    nulls = build_null_baseline_templates()
+    keys = {t.key for t in nulls}
+    assert keys == {"null_constant", "null_exp"}
+    by_key = {t.key: t for t in nulls}
+    assert by_key["null_constant"].parameter_count == 1
+    # Constant is strictly simpler than exp+constant.
+    assert by_key["null_constant"].parameter_count < by_key["null_exp"].parameter_count
+
+
+# --------------------------------------------------------------------------- #
+# Frequency-floor / zero-amplitude disqualifiers (unit).
+# --------------------------------------------------------------------------- #
+
+
+def test_disqualifier_flags_frequency_at_resolution_floor() -> None:
+    from asymmetry.core.fitting.fit_wizard import _disqualification_reasons
+
+    # Window T = 10 µs -> 1/T = 0.1 MHz floor. A 0.05 MHz cosine is below it.
+    t = np.linspace(0.0, 10.0, 200)
+    dataset = _tiered_dataset(t, np.zeros_like(t))
+    params = ParameterSet()
+    params.add(Parameter(name="A", value=0.2))
+    params.add(Parameter(name="frequency", value=0.05))
+    params.add(Parameter(name="phase", value=0.0))
+    fit_result = FitResult(
+        success=True,
+        chi_squared=1.0,
+        reduced_chi_squared=1.0,
+        parameters=params,
+        uncertainties={"A": 0.01},
+    )
+    template = CandidateTemplate(
+        key="oscillatory_exp_constant",
+        title="osc",
+        category="Oscillatory",
+        rationale="",
+        model=CompositeModel(["Oscillatory", "Constant"], operators=["+"]),
+    )
+    reasons = _disqualification_reasons(dataset, template, fit_result, bound_hits=[])
+    assert any("resolution floor" in reason for reason in reasons)
+
+
+def test_disqualifier_flags_zero_consistent_amplitude() -> None:
+    from asymmetry.core.fitting.fit_wizard import _disqualification_reasons
+
+    t = np.linspace(0.0, 10.0, 200)
+    dataset = _tiered_dataset(t, np.zeros_like(t))
+    params = ParameterSet()
+    params.add(Parameter(name="A", value=0.01))  # tiny amplitude
+    params.add(Parameter(name="frequency", value=1.5))  # well above the floor
+    params.add(Parameter(name="phase", value=0.0))
+    fit_result = FitResult(
+        success=True,
+        chi_squared=1.0,
+        reduced_chi_squared=1.0,
+        parameters=params,
+        uncertainties={"A": 0.02},  # |A| = 0.01 < 2*0.02 -> consistent with zero
+    )
+    template = CandidateTemplate(
+        key="oscillatory_exp_constant",
+        title="osc",
+        category="Oscillatory",
+        rationale="",
+        model=CompositeModel(["Oscillatory", "Constant"], operators=["+"]),
+    )
+    reasons = _disqualification_reasons(dataset, template, fit_result, bound_hits=[])
+    assert any("consistent with zero" in reason for reason in reasons)
+
+
+def test_disqualifier_skips_amplitude_when_error_missing() -> None:
+    from asymmetry.core.fitting.fit_wizard import _disqualification_reasons
+
+    t = np.linspace(0.0, 10.0, 200)
+    dataset = _tiered_dataset(t, np.zeros_like(t))
+    params = ParameterSet()
+    params.add(Parameter(name="A", value=0.01))
+    params.add(Parameter(name="frequency", value=1.5))
+    fit_result = FitResult(
+        success=True,
+        chi_squared=1.0,
+        reduced_chi_squared=1.0,
+        parameters=params,
+        uncertainties={},  # no error -> do not suppress on unknown uncertainty
+    )
+    template = CandidateTemplate(
+        key="oscillatory_exp_constant",
+        title="osc",
+        category="Oscillatory",
+        rationale="",
+        model=CompositeModel(["Oscillatory", "Constant"], operators=["+"]),
+    )
+    reasons = _disqualification_reasons(dataset, template, fit_result, bound_hits=[])
+    assert not any("consistent with zero" in reason for reason in reasons)
+
+
+def test_disqualifier_ignores_non_oscillatory_templates() -> None:
+    from asymmetry.core.fitting.fit_wizard import _disqualification_reasons
+
+    t = np.linspace(0.0, 10.0, 200)
+    dataset = _tiered_dataset(t, np.zeros_like(t))
+    params = ParameterSet()
+    params.add(Parameter(name="A_1", value=0.001))  # tiny, but no frequency here
+    params.add(Parameter(name="Lambda", value=0.4))
+    fit_result = FitResult(
+        success=True,
+        chi_squared=1.0,
+        reduced_chi_squared=1.0,
+        parameters=params,
+        uncertainties={"A_1": 0.02},
+    )
+    template = CandidateTemplate(
+        key="exp_constant",
+        title="exp",
+        category="Relaxation",
+        rationale="",
+        model=CompositeModel(["Exponential", "Constant"], operators=["+"]),
+    )
+    reasons = _disqualification_reasons(dataset, template, fit_result, bound_hits=[])
+    assert reasons == []
+
+
+# --------------------------------------------------------------------------- #
+# Serialization round-trip of the new additive policy fields.
+# --------------------------------------------------------------------------- #
+
+
+def test_policy_fields_round_trip_through_serialization() -> None:
+    winner = _policy_assessment(
+        "winner",
+        100.0,
+        gate=False,
+        param_count=4,
+        disqualified=("frequency at the 1/T resolution floor",),
+    )
+    null = _policy_assessment("null_constant", 400.0, param_count=1, null=True)
+    rec = replace(
+        _policy_recommendation(winner, null),
+        confidence=ConfidenceTier.MEDIUM,
+        verdict=RecommendationVerdict.STRUCTURED,
+        caveat="structured residuals remain",
+    )
+    restored = deserialize_fit_wizard_recommendation(serialize_fit_wizard_recommendation(rec))
+    assert restored is not None
+    assert restored.confidence is ConfidenceTier.MEDIUM
+    assert restored.verdict is RecommendationVerdict.STRUCTURED
+    assert restored.caveat == "structured residuals remain"
+    restored_winner = restored.assessment_for_key("winner")
+    assert restored_winner is not None
+    assert restored_winner.disqualification_reasons == ("frequency at the 1/T resolution floor",)
+    restored_null = restored.assessment_for_key("null_constant")
+    assert restored_null is not None
+    assert restored_null.is_null_baseline is True
+
+
+def test_old_payload_without_policy_fields_deserializes_with_defaults() -> None:
+    # Tolerant deserializer: a payload predating the new fields loads with
+    # sensible defaults (NONE confidence, STRUCTURED verdict, empty caveat).
+    payload = serialize_fit_wizard_recommendation(
+        _policy_recommendation(_policy_assessment("exp_constant", 100.0, param_count=3))
+    )
+    payload.pop("confidence", None)
+    payload.pop("verdict", None)
+    payload.pop("caveat", None)
+    for assessment in payload.get("assessments", []):
+        assessment.pop("disqualification_reasons", None)
+        assessment.pop("is_null_baseline", None)
+    restored = deserialize_fit_wizard_recommendation(payload)
+    assert restored is not None
+    assert restored.confidence is ConfidenceTier.NONE
+    assert restored.verdict is RecommendationVerdict.STRUCTURED
+    assert restored.caveat == ""
+    restored_exp = restored.assessment_for_key("exp_constant")
+    assert restored_exp is not None
+    assert restored_exp.disqualification_reasons == ()
+    assert restored_exp.is_null_baseline is False
