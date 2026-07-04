@@ -169,6 +169,57 @@ def test_alpha_change_visibly_changes_curve(qapp: QApplication) -> None:
     pane.shutdown()
 
 
+def test_rapid_edits_coalesce_to_one_inflight_reduction(qapp: QApplication) -> None:
+    """Rapid requests never spawn concurrent workers: latest-pending wins.
+
+    Copilot review (PR #174): each edit used to start its own TaskRunner
+    thread; only the *result* was generation-gated. The pane now keeps at most
+    one reduction in flight and dispatches only the newest pending request
+    when it completes.
+    """
+    import threading
+
+    from asymmetry.gui.windows.grouping import preview_pane as pane_module
+
+    dataset = _histogram_dataset()
+    pane = GroupingPreviewPane()
+
+    lock = threading.Lock()
+    concurrency = {"now": 0, "max": 0, "calls": 0}
+    original_reduction = pane_module._run_reduction
+
+    def tracking_reduction(worker, request):
+        with lock:
+            concurrency["now"] += 1
+            concurrency["calls"] += 1
+            concurrency["max"] = max(concurrency["max"], concurrency["now"])
+        try:
+            return original_reduction(worker, request)
+        finally:
+            with lock:
+                concurrency["now"] -= 1
+
+    pane_module._run_reduction = tracking_reduction
+    try:
+        for alpha in (1.0, 1.5, 2.0, 2.5, 3.0):
+            grouping = dict(dataset.run.grouping)
+            grouping["alpha"] = alpha
+            pane.request_preview(
+                histograms=dataset.run.histograms, grouping=grouping, run_number=5001
+            )
+            pane.flush()
+        _wait_until(lambda: pane._tasks.active_count == 0 and pane._pending is None)
+        _wait_until(lambda: bool(pane._axes.get_lines()))
+    finally:
+        pane_module._run_reduction = original_reduction
+    # Reductions never overlapped, and intermediate requests coalesced (at
+    # most first + latest-pending per completion — never one thread per edit).
+    assert concurrency["max"] == 1
+    assert concurrency["calls"] <= 5
+    assert "Preview: run 5001" in pane._status.text()
+    pane.shutdown()
+
+
 def test_error_path_is_muted_not_crashing(
     qapp: QApplication, monkeypatch: pytest.MonkeyPatch
 ) -> None:

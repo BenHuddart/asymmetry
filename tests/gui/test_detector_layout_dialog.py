@@ -93,10 +93,14 @@ class TestConstruction:
         dlg._on_ui_scale_changed(1.0, 1.1)
 
         # Buttons are no longer fixed-width (that clipped longer labels — see
-        # TestGroupButtonSizing below); the scaled floor is now a *minimum*,
-        # and the style's fitted content width for "Group 1" (106px) exceeds
-        # the 84px scaled floor, so the minimum tracks the content width.
-        assert dlg._group_buttons[1].minimumWidth() == 106
+        # TestGroupButtonSizing below); the scaled floor is now a *minimum*
+        # that never undercuts the style's fitted content width. Font metrics
+        # differ across platforms, so assert the invariant rather than a pixel
+        # value: minimum = max(scaled floor, style-fitted text width).
+        button = dlg._group_buttons[1]
+        scaled_floor = max(68, round(76 * 1.1))
+        expected = max(scaled_floor, dlg._button_text_min_width(button))
+        assert button.minimumWidth() == expected
         assert dlg._group_name_edits[1].width() == 121
         assert "border-radius: 15px;" in dlg._group_buttons[1].styleSheet()
 

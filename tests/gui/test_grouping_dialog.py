@@ -1914,6 +1914,27 @@ def test_default_draft_name_is_neutral_without_positive_instrument(qapp: QApplic
     assert dialog._draft_name == "Default (6 detectors)"
 
 
+def test_payload_matches_preset_accepts_detector_t0_pair_entries(qapp: QApplication) -> None:
+    """Group entries stored as (detector_id, t0_bin) pairs still match a preset.
+
+    resolve_group_indices() accepts pair entries, so the drift check must
+    decode them the same way or a pair-carrying payload looks falsely
+    "drifted" (Copilot review, PR #174).
+    """
+    from asymmetry.core.instrument import get_instrument_layout
+    from asymmetry.gui.windows.grouping.profile_bridge import payload_matches_preset
+
+    layout = get_instrument_layout("GPS")
+    preset = layout.presets["Longitudinal"]
+    payload = {
+        "groups": {1: [[1, 100]], 2: [[2, 100]]},
+        "group_names": {1: "Forward", 2: "Backward"},
+        "forward_group": preset.forward_group,
+        "backward_group": preset.backward_group,
+    }
+    assert payload_matches_preset(payload, layout, "Longitudinal")
+
+
 def test_preset_chip_clears_stale_preset_on_drift(qapp: QApplication) -> None:
     """Editing groups away from a preset clears the stored grouping_preset."""
     dataset = _gps_dataset(None)

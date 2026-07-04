@@ -123,7 +123,11 @@ def payload_matches_preset(
             gid = int(key)
         except (TypeError, ValueError):
             continue
-        ids = {int(v) for v in values if _is_int(v)}
+        # Payload group entries may be plain detector ids or (detector_id,
+        # t0_bin) pairs — resolve_group_indices() accepts both, so the drift
+        # check must too or a pair-carrying payload looks falsely "drifted".
+        decoded = (v[0] if isinstance(v, (list, tuple)) and v else v for v in values)
+        ids = {int(v) for v in decoded if _is_int(v)}
         if ids:
             current_groups[gid] = ids
     if current_groups != _preset_groups(preset):

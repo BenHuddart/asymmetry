@@ -484,7 +484,11 @@ class GroupingProfile:
                 gid = _as_int(key)
                 if gid is None or not isinstance(dets, (list, tuple)):
                     continue
-                groups[gid] = [d for d in (_as_int(v) for v in dets) if d is not None]
+                # Entries may be plain detector ids or (detector_id, t0_bin)
+                # pairs — decode like resolve_group_indices() so a pair-carrying
+                # payload round-trips without dropping detectors.
+                decoded = (v[0] if isinstance(v, (list, tuple)) and v else v for v in dets)
+                groups[gid] = [d for d in (_as_int(v) for v in decoded) if d is not None]
 
         names_raw = data.get("group_names")
         group_names = (

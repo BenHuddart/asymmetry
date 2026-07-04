@@ -103,6 +103,11 @@ class GroupingPreviewPane(QWidget):
         self._tasks = TaskRunner(self)
         self._generation = 0
         self._pending: _PreviewRequest | None = None
+        #: Coalescing guard: at most one reduction runs at a time. While a task
+        #: is in flight, newer requests wait in ``_pending`` (latest wins) and
+        #: are dispatched from the finished/error callback instead of spawning
+        #: concurrent worker threads.
+        self._in_flight = False
 
         self._debounce = QTimer(self)
         self._debounce.setSingleShot(True)
@@ -195,10 +200,16 @@ class GroupingPreviewPane(QWidget):
     # -- dispatch + worker ----------------------------------------------
 
     def _dispatch_pending(self) -> None:
+        if self._pending is None:
+            return
+        if self._in_flight:
+            # Coalesce: keep the latest request pending; the finished/error
+            # callback of the running task dispatches it. This bounds the
+            # worker-thread count at one no matter how fast edits arrive.
+            return
         request = self._pending
         self._pending = None
-        if request is None:
-            return
+        self._in_flight = True
         # A ``reference_run`` background needs the loaded-dataset registry the
         # dialog does not own; the preview simply skips that subtraction (the
         # resolver returns None) so the curve still renders.
@@ -208,7 +219,13 @@ class GroupingPreviewPane(QWidget):
             on_error=self._on_error,
         )
 
+    def _dispatch_next_after_completion(self) -> None:
+        self._in_flight = False
+        if self._pending is not None and not self._debounce.isActive():
+            self._dispatch_pending()
+
     def _on_finished(self, result: object) -> None:
+        self._dispatch_next_after_completion()
         if not isinstance(result, _PreviewResult):
             return
         if result.generation != self._generation:
@@ -216,6 +233,7 @@ class GroupingPreviewPane(QWidget):
         self._draw(result)
 
     def _on_error(self, message: str) -> None:
+        self._dispatch_next_after_completion()
         self._set_error(f"Preview unavailable: {message}")
 
     # -- drawing ---------------------------------------------------------
