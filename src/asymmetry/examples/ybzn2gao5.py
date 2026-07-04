@@ -55,7 +55,7 @@ Unit conventions (read carefully)
 
 Deviations from a literal figure reading (documented for honesty)
 -----------------------------------------------------------------
-The eight global (Table I) truths are used **exactly**. The per-temperature
+The six global (Table I) truths are used **exactly**. The per-temperature
 local ladders (:data:`TRUTH.local`) are *representative* values chosen to
 resemble Figs. 3-4 while keeping the synthetic global fit cleanly identifiable:
 

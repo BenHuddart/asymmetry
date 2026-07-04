@@ -17,4 +17,6 @@ Available examples
 
 from __future__ import annotations
 
+from asymmetry.examples import ybzn2gao5
+
 __all__ = ["ybzn2gao5"]

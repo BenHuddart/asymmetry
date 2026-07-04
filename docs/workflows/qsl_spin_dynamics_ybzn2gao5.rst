@@ -24,7 +24,7 @@ fluctuation rate :math:`\nu` is deliberately retuned to a smaller scale
 than the paper's Fig. 4 reading so that the sharp :math:`m = 7` cutoff
 falls inside the accessible field window and the synthetic global fit
 stays cleanly identifiable — see the module docstring for the full
-rationale. The eight shared (Table I) parameters are used exactly.
+rationale. The six shared (Table I) parameters are used exactly.
 
 The screenshots below are taken from the GUI driving the synthetic
 dataset; they show what each stage of the analysis looks like in
