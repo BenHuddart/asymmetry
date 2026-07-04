@@ -585,12 +585,19 @@ class ModelRowList(QWidget):
 
         insert_at = component_index + 1
         group = self._group_containing(component_index)
+        # Was the duplicated row the group's LAST member? If so, the insertion
+        # point (insert_at == group end + 1) lands strictly after the group's
+        # remapped end, so `_shift_groups_for_insert` (called by
+        # `_insert_component_at` below) does NOT extend the group — extending it
+        # here is our job. If the duplicated row was any earlier member, the
+        # insertion point falls inside the group's remapped span, so the shift
+        # itself already grew the group's end by one; calling
+        # `_extend_group_end` on top would double-extend it and swallow the
+        # next sibling (see tests/gui/test_function_builder_rows.py).
+        is_last_member = group is not None and component_index == group[1]
         self._insert_component_at(insert_at, name, operator=operator, opens=0, closes=0)
 
-        # Duplicating inside a fraction group keeps the duplicate in the group:
-        # extend the group's end by one (the insert shift already moved groups
-        # that start/end strictly after the insert point).
-        if group is not None:
+        if is_last_member:
             self._extend_group_end(group, insert_at)
 
         self._render()
@@ -724,27 +731,58 @@ class ModelRowList(QWidget):
 
         ``delta`` is ``-1`` (up) or ``+1`` (down). Movement is constrained to
         siblings within the same container; a whole sub-container moves as a
-        unit.
+        unit. Renders + emits ``structure_changed`` once.
+        """
+        if not self._move_row_no_render(component_index, delta):
+            return
+        self._selected_indices.clear()
+        self._anchor_index = None
+        self._render()
+        self.structure_changed.emit()
+
+    def _move_row_no_render(self, component_index: int, delta: int) -> bool:
+        """Move a row (and its sub-container) past a sibling (no render, no emit).
+
+        Structural counterpart of :meth:`move_row`, factored out so
+        :meth:`_drop_row` can chain several single-step moves and pay for a
+        render + ``structure_changed`` emission only once, at the end, rather
+        than once per intermediate swap.
         """
         if delta not in (-1, 1):
-            return
+            return False
         container = self._parent_container_for_move(component_index)
         terms = self._sibling_term_ranges(container)
         pos = next((i for i, (s, e) in enumerate(terms) if s <= component_index <= e), None)
         if pos is None:
-            return
+            return False
         target = pos + delta
         if not (0 <= target < len(terms)):
-            return
-        self._swap_terms(terms[pos], terms[target])
+            return False
+        return self._swap_terms_no_render(terms[pos], terms[target])
 
     def _swap_terms(self, left: tuple[int, int], right: tuple[int, int]) -> None:
-        """Swap two adjacent sibling spans as whole units."""
+        """Swap two adjacent sibling spans as whole units, then render + emit once."""
+        if not self._swap_terms_no_render(left, right):
+            return
+        self._selected_indices.clear()
+        self._anchor_index = None
+        self._render()
+        self.structure_changed.emit()
+
+    def _swap_terms_no_render(self, left: tuple[int, int], right: tuple[int, int]) -> bool:
+        """Swap two adjacent sibling spans as whole units (no render, no emit).
+
+        Pure structural-list arithmetic factored out of :meth:`_swap_terms` so
+        :meth:`_drop_row` can perform a multi-step reorder as repeated swaps
+        without paying for a full re-render + ``structure_changed`` emission on
+        every intermediate step. Returns ``True`` when a swap was applied
+        (``left``/``right`` were adjacent); ``False`` (no-op) otherwise.
+        """
         if left[0] > right[0]:
             left, right = right, left
         # Only adjacent swaps are supported (right must immediately follow left).
         if right[0] != left[1] + 1:
-            return
+            return False
 
         def slice_of(lists: list, span: tuple[int, int]) -> list:
             return lists[span[0] : span[1] + 1]
@@ -804,11 +842,7 @@ class ModelRowList(QWidget):
             lo, hi = min(ns, ne), max(ns, ne)
             remapped.append((lo, hi))
         self._fraction_groups = sorted(set(remapped))
-
-        self._selected_indices.clear()
-        self._anchor_index = None
-        self._render()
-        self.structure_changed.emit()
+        return True
 
     def _drop_row(
         self, source_index: int, container_span: tuple[int, int], before_index: int
@@ -819,7 +853,10 @@ class ModelRowList(QWidget):
         move unit) must be the drop zone's container. Returns ``True`` when a
         move was applied. Implemented as repeated adjacent swaps toward the
         target, recomputing the moving block's head each step so arithmetic
-        stays in the well-tested :meth:`_swap_terms` path.
+        stays in the well-tested :meth:`_swap_terms_no_render` path. Each
+        intermediate swap uses the no-render/no-emit variants, so a
+        multi-position drop renders and emits ``structure_changed`` exactly
+        once, at the end, rather than once per swap.
         """
         source_container = self._parent_container_for_move(source_index)
         if source_container != container_span:
@@ -847,14 +884,22 @@ class ModelRowList(QWidget):
         target_index = dst_pos if dst_pos < src_pos else dst_pos - 1
         cur_pos = src_pos
         guard = 0
+        moved = False
         while cur_pos != target_index and guard < len(self._component_names) + 2:
             guard += 1
             current_terms = self._sibling_term_ranges(container_span)
             if not (0 <= cur_pos < len(current_terms)):
                 break
             direction = 1 if target_index > cur_pos else -1
-            self.move_row(current_terms[cur_pos][0], direction)
+            if self._move_row_no_render(current_terms[cur_pos][0], direction):
+                moved = True
             cur_pos += direction
+
+        if moved:
+            self._selected_indices.clear()
+            self._anchor_index = None
+            self._render()
+            self.structure_changed.emit()
         return True
 
     # ------------------------------------------------------------- grouping
@@ -970,6 +1015,17 @@ class ModelRowList(QWidget):
             widget = item.widget()
             if widget is not None:
                 widget.setParent(None)
+                # _empty_label is a persistent, reused widget (re-added on the
+                # next empty render), so it must survive teardown; every other
+                # torn-down child (rows, drop targets, group frames) is
+                # rebuilt fresh each render and must be scheduled for deletion
+                # here — setParent(None) alone detaches it but does not delete
+                # it, and Qt only dispatches a detached widget's queued
+                # deleteLater via an explicit DeferredDelete event, so without
+                # this call these accumulate for the life of the app (the
+                # repo's established leaked-widget pattern; see CLAUDE.md).
+                if widget is not self._empty_label:
+                    widget.deleteLater()
 
         if not self._component_names:
             self._body_layout.addWidget(self._empty_label)

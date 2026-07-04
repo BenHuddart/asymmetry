@@ -3151,6 +3151,33 @@ def test_single_fit_fraction_row_edit_caps_at_remainder(qapp: QApplication) -> N
     assert float(tab._param_table.item(row_by_name["f_Constant"], 1).text()) == pytest.approx(0.0)
 
 
+def test_tie_candidates_exclude_derived_fraction_row(qapp: QApplication) -> None:
+    # Regression: the synthesized derived-fraction (remainder) row, e.g.
+    # f_Gaussian for (Exponential + Gaussian){frac}, has no fitted parameter and
+    # must never be offered as a tie target.
+    tab = SingleFitTab()
+    model = CompositeModel.from_expression("( Exponential + Gaussian ){frac}")
+    tab._set_composite_model(model)
+
+    table = tab._param_table
+    row_by_name = {
+        table.item(row, table.COL_NAME).data(Qt.ItemDataRole.UserRole): row
+        for row in range(table.rowCount())
+    }
+    derived_names = set(model.derived_fraction_names())
+    assert derived_names  # sanity: the group really does have a derived remainder
+    assert "f_Gaussian" in derived_names
+
+    some_row = row_by_name["A_1"]
+    candidates = table._tie_candidate_names(some_row)
+    for name in derived_names:
+        assert name not in candidates
+    # The free fraction and other real parameters remain valid tie targets.
+    assert "f_Exponential" in candidates
+    assert "Lambda" in candidates
+    assert "sigma" in candidates
+
+
 def test_global_fit_fraction_rows_auto_complete_final_fraction(qapp: QApplication) -> None:
     tab = GlobalFitTab()
     tab._set_composite_model(

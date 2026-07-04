@@ -28,6 +28,31 @@ def test_get_param_info_shape_factor_a_has_expected_defaults() -> None:
     assert info.description is not None
 
 
+def test_get_param_info_registry_entries_not_shadowed_by_fraction_pattern() -> None:
+    # f_cut, f_dip, f_quad are real registered muonium parameters that happen to
+    # match the f_<Component> fraction-weight naming pattern. The registry
+    # lookup must win so these keep their own description/unit rather than
+    # being shadowed by fabricated fraction-weight metadata.
+    f_cut = get_param_info("f_cut")
+    assert f_cut.description == (
+        "Lorentzian cutoff frequency damping high-frequency muonium lines (0 disables it)."
+    )
+    assert f_cut.unit == "MHz"
+
+    f_dip = get_param_info("f_dip")
+    assert f_dip.description == (
+        "Dipolar coupling frequency between the muon and the spin-J nucleus."
+    )
+    assert f_dip.unit == "MHz"
+
+    f_quad = get_param_info("f_quad")
+    assert (
+        f_quad.description
+        == "Quadrupolar splitting frequency of the spin-J nucleus (sign-sensitive)."
+    )
+    assert f_quad.unit == "MHz"
+
+
 def test_get_param_info_fraction_weight_name() -> None:
     # f_<Component> fraction weights are synthesized (not registered): a
     # component-labelled symbol, a [0, 1] floor, and a description.

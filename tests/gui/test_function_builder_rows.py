@@ -126,6 +126,49 @@ def test_duplicate_inside_fraction_group_extends_it(qapp: QApplication) -> None:
     assert model.fraction_groups == [(0, 2)]
 
 
+def test_duplicate_first_member_of_group_followed_by_sibling(qapp: QApplication) -> None:
+    # Regression: duplicating the FIRST member of a group whose insertion point
+    # falls strictly inside the group's remapped span must not double-extend
+    # the group and swallow the next sibling. See _extend_group_end /
+    # duplicate_row in model_rows.py.
+    widget = _rows()
+    _seed(widget, "( Exponential + Gaussian ){frac} + Oscillatory")
+    names, ops, opens, closes, fracs = widget.structure()
+    assert fracs == [(0, 1)]
+    widget.duplicate_row(0)  # duplicate Exponential, the group's first member
+    names, ops, opens, closes, fracs = widget.structure()
+    assert names == ["Exponential", "Exponential", "Gaussian", "Oscillatory"]
+    # The group extends by exactly one; Oscillatory stays outside the group.
+    assert fracs == [(0, 2)]
+    model = CompositeModel.from_expression(widget.expression())
+    assert model.fraction_groups == [(0, 2)]
+
+
+def test_duplicate_last_member_of_group_followed_by_sibling(qapp: QApplication) -> None:
+    # Existing behavior preserved: duplicating the LAST member of a group
+    # extends the group by one (the insertion point lands after the group's
+    # remapped end, so _extend_group_end must do the extending).
+    widget = _rows()
+    _seed(widget, "( Exponential + Gaussian ){frac} + Oscillatory")
+    widget.duplicate_row(1)  # duplicate Gaussian, the group's last member
+    names, ops, opens, closes, fracs = widget.structure()
+    assert names == ["Exponential", "Gaussian", "Gaussian", "Oscillatory"]
+    assert fracs == [(0, 2)]
+    model = CompositeModel.from_expression(widget.expression())
+    assert model.fraction_groups == [(0, 2)]
+
+
+def test_duplicate_member_of_group_with_no_following_sibling(qapp: QApplication) -> None:
+    widget = _rows()
+    _seed(widget, "( Exponential + Gaussian ){frac}")
+    widget.duplicate_row(0)  # duplicate Exponential; no sibling after the group
+    names, ops, opens, closes, fracs = widget.structure()
+    assert names == ["Exponential", "Exponential", "Gaussian"]
+    assert fracs == [(0, 2)]
+    model = CompositeModel.from_expression(widget.expression())
+    assert model.fraction_groups == [(0, 2)]
+
+
 def test_duplicate_shifts_following_group(qapp: QApplication) -> None:
     widget = _rows()
     _seed(widget, "Exponential + ( Gaussian + Constant ){frac}")
@@ -292,6 +335,25 @@ def test_drop_row_rejects_cross_container(qapp: QApplication) -> None:
     _seed(widget, "Exponential + ( Gaussian + Constant )")
     # Dropping the top-level Exponential into the inner container is rejected.
     assert widget._drop_row(0, (1, 2), 1) is False
+
+
+def test_drop_row_multi_position_emits_structure_changed_once(qapp: QApplication) -> None:
+    # Regression: _drop_row moved a row via repeated _swap_terms calls, each
+    # doing a full re-render + structure_changed emission. A multi-position
+    # drop (here: 4 sibling terms, moving index 0 to the very end, three
+    # single-step swaps) must render + emit exactly once, not once per swap.
+    widget = _rows()
+    _seed(widget, "Exponential + Gaussian + Constant + Oscillatory")
+    emit_count = 0
+
+    def _on_structure_changed() -> None:
+        nonlocal emit_count
+        emit_count += 1
+
+    widget.structure_changed.connect(_on_structure_changed)
+    assert widget._drop_row(0, (0, 3), 4) is True
+    assert widget.structure()[0] == ["Gaussian", "Constant", "Oscillatory", "Exponential"]
+    assert emit_count == 1
 
 
 def test_empty_state(qapp: QApplication) -> None:

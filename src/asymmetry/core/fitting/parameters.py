@@ -600,9 +600,13 @@ def _fraction_weight_param_info(base_name: str) -> ParamInfo | None:
 def get_param_info(name: str) -> ParamInfo:
     """Return metadata for a parameter name, including indexed variants."""
     base_name, index = split_parameter_name(name)
-    info = _fraction_weight_param_info(base_name)
+    # Registry lookup takes priority: real registered parameters (e.g. the
+    # muonium f_cut/f_dip/f_quad) must keep their own metadata rather than
+    # being shadowed by the synthesized fraction-weight pattern below, which
+    # only applies to names the registry does not already know about.
+    info = PARAM_INFO_REGISTRY.get(base_name)
     if info is None:
-        info = PARAM_INFO_REGISTRY.get(base_name)
+        info = _fraction_weight_param_info(base_name)
     if info is None:
         # Mathtext-wrap the fallback only for clean symbol names. Free-text
         # quantities (e.g. the integral scan's "Integral asymmetry (%)")

@@ -217,9 +217,16 @@ class FunctionBuilderDialog(QDialog):
         button_row.addWidget(self._buttons)
         root.addLayout(button_row)
 
-        # Seed the structured editor from the initial expression.
+        # Seed the structured editor from the initial expression. A parse
+        # failure switches to text mode (see _seed_structure), in which case
+        # re-validate the text buffer rather than the now-empty structured
+        # rows, so the parse-error status _seed_structure just set is not
+        # immediately overwritten by the generic "add a function" message.
         self._seed_structure(initial_expression)
-        self._on_structure_changed()
+        if self._stack.currentWidget() is self._text_edit:
+            self._validate_and_update(self._text_edit.toPlainText())
+        else:
+            self._on_structure_changed()
         self._update_action_buttons()
 
         resize_to_available(self, 940, 640, min_width=760, min_height=520)
@@ -237,8 +244,21 @@ class FunctionBuilderDialog(QDialog):
             return
         try:
             names, operators, opens, closes, fractions = self._expression_parser(expression)
-        except Exception:
+        except Exception as exc:
+            # Don't silently discard the caller's expression: switch to text
+            # mode seeded with the original string so the user sees exactly
+            # what they passed in and why it didn't parse, rather than an
+            # unexplained empty dialog. OK stays gated by _validate_and_update
+            # (called below), which will find the same parse failure.
             self._rows.set_structure([], [], [], [], [])
+            self._text_edit.setPlainText(expression)
+            self._stack.setCurrentWidget(self._text_edit)
+            self._text_mode_button.setText("Back to structured")
+            self._apply_text_button.setVisible(True)
+            self._group_button.setEnabled(False)
+            self._group_fraction_button.setEnabled(False)
+            self._ungroup_button.setEnabled(False)
+            self._set_status(str(exc), valid=False)
             return
         self._rows.set_structure(names, operators, opens, closes, fractions)
 

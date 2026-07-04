@@ -420,6 +420,41 @@ def test_migrate_legacy_fraction_values_zero_sum_uses_equal_weights() -> None:
     assert migrated["f_Exponential_2"] == pytest.approx(1.0 / 3.0)
 
 
+def test_migrate_legacy_fraction_values_malformed_values_treated_as_zero() -> None:
+    # A corrupted legacy project can carry None or a non-numeric string for a
+    # fraction value; migration must never raise (TypeError/ValueError), and
+    # that weight is treated as 0.0 so the others normalize consistently.
+    model = CompositeModel.from_expression("( Exponential + Exponential + Constant ){frac}")
+    legacy = {
+        "fraction_1": None,
+        "fraction_2": "garbage",
+        "fraction_3": 2.0,
+    }
+    migrated = migrate_legacy_fraction_values(model, legacy)
+    # fraction_1 and fraction_2 both coerce to 0.0; only fraction_3 contributes,
+    # so the normalized weights are [0, 0, 1] and the first n-1 free params are 0.
+    assert migrated["f_Exponential"] == pytest.approx(0.0)
+    assert migrated["f_Exponential_2"] == pytest.approx(0.0)
+    assert "fraction_1" not in migrated
+    assert "fraction_2" not in migrated
+    assert "fraction_3" not in migrated
+
+
+def test_migrate_legacy_fraction_parameter_entries_malformed_value_does_not_raise() -> None:
+    model = CompositeModel.from_expression("( Exponential + Gaussian ){frac}")
+    entries = [
+        {"name": "A_1", "value": 20.0},
+        {"name": "fraction_1", "value": None, "fixed": False},
+        {"name": "fraction_2", "value": "garbage", "fixed": False},
+    ]
+    migrated = migrate_legacy_fraction_parameter_entries(model, entries)
+    names = [entry["name"] for entry in migrated]
+    assert names == ["A_1", "f_Exponential"]
+    by_name = {entry["name"]: entry for entry in migrated}
+    # Both legacy values coerce to 0.0 -> equal-weight fallback (sum <= 1e-30).
+    assert by_name["f_Exponential"]["value"] == pytest.approx(0.5)
+
+
 def test_has_legacy_fraction_values_false_for_new_scheme() -> None:
     model = CompositeModel.from_expression("( Exponential + Gaussian ){frac}")
     new_values = {"A_1": 1.0, "Lambda": 0.3, "sigma": 0.2, "f_Exponential": 0.4}

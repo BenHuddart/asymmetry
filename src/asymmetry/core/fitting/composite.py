@@ -2433,6 +2433,23 @@ def _legacy_fraction_numbering(model: CompositeModel) -> list[list[int]]:
     return numbering
 
 
+def _coerce_float(value: object, default: float = 0.0) -> float:
+    """Best-effort ``float(value)``, falling back to *default* when malformed.
+
+    A corrupted legacy project can carry ``None`` or a non-numeric string for a
+    fraction value (hand-edited or truncated ``.asymp`` file). The old
+    positional scheme's parse path silently defaulted such values, so this
+    preserves that behavior instead of letting ``TypeError``/``ValueError``
+    abort project loading (see the migration functions below, which are called
+    outside any try/except by ``FitSlot.from_dict`` and
+    ``migrate_legacy_fraction_state``).
+    """
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+
+
 def has_legacy_fraction_values(model: CompositeModel, values: Mapping[str, float]) -> bool:
     """Return True when ``values`` carries old ``fraction_<k>`` keys for ``model``.
 
@@ -2466,7 +2483,7 @@ def migrate_legacy_fraction_values(
         legacy_keys = [f"fraction_{k}" for k in group_numbers]
         if not any(key in migrated for key in legacy_keys):
             continue
-        raw = [max(float(migrated.get(key, 0.0)), 0.0) for key in legacy_keys]
+        raw = [max(_coerce_float(migrated.get(key, 0.0)), 0.0) for key in legacy_keys]
         total = sum(raw)
         if total <= 1e-30:
             weights = [1.0 / float(len(raw))] * len(raw)
@@ -2518,7 +2535,7 @@ def migrate_legacy_fraction_parameter_entries(
     copy) when the parameter list carries no legacy fraction keys for the model.
     """
     value_map = {
-        str(entry["name"]): float(entry.get("value", 0.0))
+        str(entry["name"]): _coerce_float(entry.get("value", 0.0))
         for entry in parameters
         if isinstance(entry, dict) and "name" in entry
     }

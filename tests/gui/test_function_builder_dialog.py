@@ -101,6 +101,21 @@ def test_built_model_is_composite(qapp: QApplication) -> None:
     assert model.component_names == ["Exponential", "Constant"]
 
 
+# ------------------------------------------------------- unparseable seed
+def test_unparseable_initial_expression_opens_in_text_mode_with_error(qapp: QApplication) -> None:
+    # Regression: an initial_expression that fails to parse (e.g. a bad name
+    # pasted/restored from elsewhere) must not silently open an empty
+    # structured editor discarding the user's original text. It must switch to
+    # text mode seeded with the raw string and surface the parse error.
+    dialog = _fit_dialog("NotAComponent + Constant")
+    assert dialog._stack.currentWidget() is dialog._text_edit
+    assert dialog._text_edit.toPlainText() == "NotAComponent + Constant"
+    assert dialog._status_label.text()  # error surfaced
+    ok = _ok(dialog)
+    assert ok is not None
+    assert ok.isEnabled() is False
+
+
 # --------------------------------------------------------------- library add
 def test_library_activation_appends_component(qapp: QApplication) -> None:
     dialog = _fit_dialog("Exponential + Constant")

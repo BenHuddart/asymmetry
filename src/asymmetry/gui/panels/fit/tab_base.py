@@ -51,6 +51,7 @@ Navigation map
 import copy
 import html
 import re
+from collections.abc import Iterator
 from contextlib import contextmanager
 
 import numpy as np
@@ -1415,15 +1416,32 @@ class FitParameterTable(QTableWidget):
         fix_checkbox.toggled.connect(on_fix_toggled)
         link_combo.currentIndexChanged.connect(on_link_changed)
 
+    def _iter_parameter_rows(self) -> Iterator[tuple[int, str]]:
+        """Yield ``(row, name)`` for rows that back a real fitted parameter.
+
+        Skips synthesized derived-fraction (remainder) rows, which are
+        display-only and must never be treated as a real parameter — in
+        particular, never offered as a tie target (see
+        :meth:`_tie_candidate_names`). A row's name is its ``UserRole`` data
+        (always set when a name cell is populated, see ``populate``); a row
+        whose name item is missing or carries no ``UserRole`` string falls
+        back to the cell's plain text (or a positional placeholder), matching
+        the historical defensive behavior of the read/serialize paths.
+        """
+        for row in range(self.rowCount()):
+            if _is_derived_fraction_row(self, row, self.COL_NAME):
+                continue
+            name_item = self.item(row, self.COL_NAME)
+            name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
+            if not isinstance(name, str):
+                name = name_item.text() if name_item else f"param_{row}"
+            yield row, name
+
     def _tie_candidate_names(self, row: int) -> list[str]:
         """Names a row may reference in a tie: other, *untied* rows + auxiliaries."""
         names: list[str] = []
-        for i in range(self.rowCount()):
+        for i, name in self._iter_parameter_rows():
             if i == row:
-                continue
-            name_item = self.item(i, self.COL_NAME)
-            name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
-            if not isinstance(name, str):
                 continue
             if _tie_button_value(self.cellWidget(i, self.COL_TIE)) is not None:
                 continue
@@ -1469,16 +1487,7 @@ class FitParameterTable(QTableWidget):
     def read_parameter_set(self) -> ParameterSet:
         """Build a :class:`ParameterSet` from the table (raises on a bad value)."""
         parameters = ParameterSet()
-        for i in range(self.rowCount()):
-            # Derived-fraction remainder rows are display-only (no fitted
-            # parameter); never assemble a Parameter from them.
-            if _is_derived_fraction_row(self, i, self.COL_NAME):
-                continue
-            name_item = self.item(i, self.COL_NAME)
-            param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
-            if not isinstance(param_name, str):
-                param_name = name_item.text() if name_item else f"param_{i}"
-
+        for i, param_name in self._iter_parameter_rows():
             try:
                 value = float(self.item(i, self.COL_VALUE).text())
             except (ValueError, AttributeError) as exc:
@@ -1520,15 +1529,7 @@ class FitParameterTable(QTableWidget):
     def current_seed_values(self) -> dict[str, str]:
         """Return the live seed text per parameter name (skips non-finite cells)."""
         seeds: dict[str, str] = {}
-        for row in range(self.rowCount()):
-            if _is_derived_fraction_row(self, row, self.COL_NAME):
-                continue
-            name_item = self.item(row, self.COL_NAME)
-            if name_item is None:
-                continue
-            name = name_item.data(Qt.ItemDataRole.UserRole)
-            if not isinstance(name, str):
-                continue
+        for row, name in self._iter_parameter_rows():
             value_item = self.item(row, self.COL_VALUE)
             if value_item is None:
                 continue
@@ -1549,15 +1550,7 @@ class FitParameterTable(QTableWidget):
         fall back to the open ``-inf``/``inf`` bound.
         """
         bounds: dict[str, str] = {}
-        for row in range(self.rowCount()):
-            if _is_derived_fraction_row(self, row, self.COL_NAME):
-                continue
-            name_item = self.item(row, self.COL_NAME)
-            if name_item is None:
-                continue
-            name = name_item.data(Qt.ItemDataRole.UserRole)
-            if not isinstance(name, str):
-                continue
+        for row, name in self._iter_parameter_rows():
             min_item = self.item(row, self.COL_MIN)
             max_item = self.item(row, self.COL_MAX)
             min_text = (min_item.text().strip() if min_item else "") or "-inf"
@@ -1568,16 +1561,7 @@ class FitParameterTable(QTableWidget):
     def parameters_state(self) -> list[dict]:
         """Serialise the table rows (+ auxiliaries) as parameter-state dicts."""
         params: list[dict] = []
-        for i in range(self.rowCount()):
-            # Synthesized derived-fraction (remainder) rows are display-only — they
-            # carry no fitted parameter and must never enter the serialised state.
-            if _is_derived_fraction_row(self, i, self.COL_NAME):
-                continue
-            name_item = self.item(i, self.COL_NAME)
-            param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else f"param_{i}"
-            if not isinstance(param_name, str):
-                param_name = name_item.text() if name_item else f"param_{i}"
-
+        for i, param_name in self._iter_parameter_rows():
             value_item = self.item(i, self.COL_VALUE)
             try:
                 value = float(value_item.text()) if value_item else 0.0

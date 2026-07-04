@@ -17,27 +17,18 @@ import difflib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from asymmetry.core.fitting.composite import CATEGORY_REGISTRY
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from asymmetry.core.fitting.composite import ComponentDefinition
 
-#: Canonical category display order, mirrored here (rather than imported)
-#: because both ``COMPONENTS``-shaped and ``PARAMETER_MODEL_COMPONENTS``-shaped
-#: registries must rank consistently, and the latter has no category field at
-#: all (see ``_category_of``). Kept in sync with
-#: ``asymmetry.core.fitting.composite.CATEGORY_REGISTRY`` by
-#: ``test_category_order_matches_composite_registry``.
-_CATEGORY_ORDER: tuple[str, ...] = (
-    "General",
-    "Relaxation",
-    "Oscillation",
-    "Kubo-Toyabe",
-    "Muonium",
-    "Nuclear dipolar",
-    "Background",
-    "Frequency Domain",
-)
+#: Canonical category display order. Both ``COMPONENTS``-shaped and
+#: ``PARAMETER_MODEL_COMPONENTS``-shaped registries must rank consistently, and
+#: the latter has no category field at all (see ``_category_of``), so this is
+#: imported directly from the single source of truth rather than duplicated.
+_CATEGORY_ORDER: tuple[str, ...] = tuple(CATEGORY_REGISTRY)
 
 
 @dataclass(frozen=True)
