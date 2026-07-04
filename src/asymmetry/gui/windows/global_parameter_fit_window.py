@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -80,6 +81,25 @@ _COMPONENT_COLORS = [
 
 _PARAMETER_FIT_CURVE_SAMPLE_COUNT = 800
 
+
+@dataclass(frozen=True)
+class StudySidebarEntry:
+    """One row of the studies sidebar, driven by the MainWindow.
+
+    Carries enough to render the row (``name``/``stale``) and to build the
+    "Compare with…" submenu: two studies can be compared only when they share a
+    ``parameter_name`` *and* an ``x_key`` (so the per-group overlay is
+    apples-to-apples). Replaces the earlier bare ``(study_id, name, stale)``
+    tuple that :meth:`GlobalParameterFitWindow.set_studies_list` used to take.
+    """
+
+    study_id: str
+    name: str
+    stale: bool
+    parameter_name: str
+    x_key: str
+
+
 #: Keys in :meth:`GlobalParameterFitWindow.get_state` that are *decorations* —
 #: trend-attached state (local model fits, plot annotations) that persists inside
 #: the owning ``FitSeries.extra`` rather than under the window-state project key.
@@ -108,6 +128,10 @@ class GlobalParameterFitWindow(QMainWindow):
     study_duplicate_requested = Signal(str)
     #: Emitted (study_id) from the sidebar Delete… context action.
     study_delete_requested = Signal(str)
+    #: Emitted (id_a, id_b) from the sidebar "Compare with…" submenu: ``id_a`` is
+    #: the right-clicked study, ``id_b`` the chosen comparison target (same
+    #: parameter_name and x_key). The MainWindow opens the comparison dialog.
+    study_compare_requested = Signal(str, str)
     #: Emitted (study_id) from the "Edit fit…" button; the MainWindow reopens the
     #: cross-group fit dialog seeded from the study config against current data.
     edit_requested = Signal(str)
@@ -206,6 +230,9 @@ class GlobalParameterFitWindow(QMainWindow):
         #: Guards :meth:`set_studies_list`/:meth:`set_active_study_id` from
         #: emitting ``study_selected`` while the MainWindow is repopulating.
         self._suppress_study_selection = False
+        #: The most recent :class:`StudySidebarEntry` list, keyed by study_id, so
+        #: the context menu can offer same-parameter/x_key comparison candidates.
+        self._sidebar_entries: dict[str, StudySidebarEntry] = {}
         outer_splitter.addWidget(self._studies_list)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -1017,21 +1044,24 @@ class GlobalParameterFitWindow(QMainWindow):
 
     # ── Studies sidebar ─────────────────────────────────────────────────────
 
-    def set_studies_list(self, entries: list[tuple[str, str, bool]]) -> None:
-        """Populate the sidebar from ``(study_id, name, stale)`` tuples.
+    def set_studies_list(self, entries: list[StudySidebarEntry]) -> None:
+        """Populate the sidebar from :class:`StudySidebarEntry` records.
 
         Driven by the MainWindow whenever the registry, staleness, or displayed
         study changes. Repopulating does not emit :attr:`study_selected` (the
-        selection is set separately via :meth:`set_active_study_id`).
+        selection is set separately via :meth:`set_active_study_id`). The full
+        entry list is retained so the "Compare with…" context submenu can offer
+        the studies that share a parameter and x-axis with the right-clicked one.
         """
+        self._sidebar_entries = {entry.study_id: entry for entry in entries}
         self._suppress_study_selection = True
         try:
             self._studies_list.clear()
-            for study_id, name, stale in entries:
-                label = f"⚠ {name}" if stale else name
+            for entry in entries:
+                label = f"⚠ {entry.name}" if entry.stale else entry.name
                 item = QListWidgetItem(label)
-                item.setData(Qt.ItemDataRole.UserRole, str(study_id))
-                if stale:
+                item.setData(Qt.ItemDataRole.UserRole, str(entry.study_id))
+                if entry.stale:
                     item.setToolTip("This fit is out of date — refit to update.")
                 self._studies_list.addItem(item)
         finally:
@@ -1075,10 +1105,37 @@ class GlobalParameterFitWindow(QMainWindow):
         menu = QMenu(self._studies_list)
         rename_action = menu.addAction("Rename…")
         duplicate_action = menu.addAction("Duplicate")
+
+        # "Compare with…" submenu: other studies sharing this one's parameter
+        # and x-axis (an apples-to-apples model-selection comparison). Disabled
+        # when there are no such candidates.
+        compare_menu = menu.addMenu("Compare with…")
+        compare_actions: dict[object, str] = {}
+        this_entry = self._sidebar_entries.get(study_id)
+        candidates = []
+        if this_entry is not None:
+            for other in self._sidebar_entries.values():
+                if other.study_id == study_id:
+                    continue
+                if (
+                    other.parameter_name == this_entry.parameter_name
+                    and other.x_key == this_entry.x_key
+                ):
+                    candidates.append(other)
+        if candidates:
+            for other in candidates:
+                action = compare_menu.addAction(other.name)
+                compare_actions[action] = other.study_id
+        else:
+            compare_menu.setEnabled(False)
+
         menu.addSeparator()
         delete_action = menu.addAction("Delete…")
         chosen = menu.exec(self._studies_list.mapToGlobal(pos))
         if chosen is None:
+            return
+        if chosen in compare_actions:
+            self.study_compare_requested.emit(study_id, compare_actions[chosen])
             return
         if chosen == rename_action:
             current = item.text().lstrip("⚠ ").strip()

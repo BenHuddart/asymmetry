@@ -33,6 +33,7 @@ from asymmetry.gui.windows.global_fit_window_helpers import (  # noqa: E402
 )
 from asymmetry.gui.windows.global_parameter_fit_window import (  # noqa: E402
     GlobalParameterFitWindow,
+    StudySidebarEntry,
 )
 from tests._qt_helpers import wait_for  # noqa: E402
 
@@ -449,7 +450,12 @@ def test_correlations_button_disabled_without_matrix(qapp: QApplication) -> None
 
 def test_sidebar_renders_rows_and_selection_emits(qapp: QApplication) -> None:
     window = GlobalParameterFitWindow()
-    window.set_studies_list([("id-a", "Study A", False), ("id-b", "Study B", True)])
+    window.set_studies_list(
+        [
+            StudySidebarEntry("id-a", "Study A", False, "A", "field"),
+            StudySidebarEntry("id-b", "Study B", True, "A", "field"),
+        ]
+    )
     assert window._studies_list.count() == 2
     assert window._studies_list.item(0).text() == "Study A"
     assert window._studies_list.item(1).text().startswith("⚠")
@@ -462,7 +468,12 @@ def test_sidebar_renders_rows_and_selection_emits(qapp: QApplication) -> None:
 
 def test_set_active_study_id_does_not_emit(qapp: QApplication) -> None:
     window = GlobalParameterFitWindow()
-    window.set_studies_list([("id-a", "Study A", False), ("id-b", "Study B", False)])
+    window.set_studies_list(
+        [
+            StudySidebarEntry("id-a", "Study A", False, "A", "field"),
+            StudySidebarEntry("id-b", "Study B", False, "A", "field"),
+        ]
+    )
     selected: list[str] = []
     window.study_selected.connect(selected.append)
     window.set_active_study_id("id-b")

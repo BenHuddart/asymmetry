@@ -27,11 +27,75 @@ from asymmetry.core.fitting.parameters import get_param_info
 __all__ = [
     "format_value_with_error",
     "build_global_table_rows",
+    "count_free_parameters",
+    "information_criteria",
     "global_table_tsv",
     "global_table_csv",
     "global_table_latex",
     "CorrelationMatrixDialog",
 ]
+
+
+def count_free_parameters(result) -> int:
+    """Return the number of *free* parameters in a cross-group fit result.
+
+    ``k = len(global_parameters) + Σ len(local_parameters[group])`` — the shared
+    globals plus every group's local parameters. Fixed parameters are excluded
+    *by construction*: :class:`~asymmetry.core.fitting.parameter_models.CrossGroupFitResult`
+    keeps fixed values in a separate ``fixed_parameters`` set that is never part
+    of ``global_parameters``/``local_parameters``, so they simply do not appear
+    in this sum. ``0`` when *result* is ``None``.
+    """
+    if result is None:
+        return 0
+    k = len(result.global_parameters)
+    for pset in result.local_parameters.values():
+        k += len(pset)
+    return k
+
+
+def information_criteria(result) -> dict | None:
+    """Return likelihood-based information criteria for a cross-group fit.
+
+    Returns ``{"aic", "aicc", "bic", "k", "n"}`` computed from the fit's total
+    χ² and free-parameter count ``k`` (:func:`count_free_parameters`) over
+    ``n = result.n_points`` fitted points::
+
+        AIC  = χ² + 2k
+        AICc = AIC + 2k(k+1)/(n - k - 1)   (``inf`` when ``n - k - 1 <= 0``)
+        BIC  = χ² + k·ln(n)
+
+    Returns ``None`` when ``n <= 0`` or χ² is non-finite (no meaningful
+    criterion can be formed).
+
+    .. caution::
+       These absolute values are likelihood-based **only for the column /
+       percent / absolute error modes**, where χ² is a genuine
+       ``Σ (residual/σ)²``. Under ``"none"``/``"scatter"`` the χ² has no
+       likelihood interpretation, so the absolute numbers are not meaningful —
+       and *any* comparison of two fits' criteria is valid only when they were
+       fit to the **same data with the same error mode** (mirroring the caveat
+       on :mod:`asymmetry.core.fitting.cross_group_roles`). AIC/AICc/BIC
+       *differences* are the comparable quantity, and only under those
+       conditions.
+    """
+    if result is None:
+        return None
+    n = int(result.n_points)
+    if n <= 0:
+        return None
+    chi2 = float(result.chi_squared)
+    if not math.isfinite(chi2):
+        return None
+    k = count_free_parameters(result)
+    aic = chi2 + 2.0 * k
+    denom = n - k - 1
+    if denom <= 0:
+        aicc = float("inf")
+    else:
+        aicc = aic + (2.0 * k * (k + 1)) / denom
+    bic = chi2 + k * math.log(n)
+    return {"aic": aic, "aicc": aicc, "bic": bic, "k": k, "n": n}
 
 
 def format_value_with_error(value: float, err: float | None) -> str:

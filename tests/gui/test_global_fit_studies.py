@@ -364,7 +364,7 @@ def test_rename_updates_name_and_menu(mainwindow: MainWindow) -> None:
     assert "My study" in window.windowTitle()
     # The sidebar carries the new name too.
     entries = mainwindow._global_fit_sidebar_entries()
-    assert any(name == "My study" for _sid, name, _stale in entries)
+    assert any(entry.name == "My study" for entry in entries)
 
 
 def test_duplicate_creates_suffixed_id_marked_stale(mainwindow: MainWindow) -> None:

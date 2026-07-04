@@ -265,7 +265,11 @@ from asymmetry.gui.ui_manager import (
 from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
 from asymmetry.gui.widgets.dock_header import DockHeader
 from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
-from asymmetry.gui.windows.global_parameter_fit_window import GlobalParameterFitWindow
+from asymmetry.gui.windows.global_fit_compare_dialog import GlobalFitCompareDialog
+from asymmetry.gui.windows.global_parameter_fit_window import (
+    GlobalParameterFitWindow,
+    StudySidebarEntry,
+)
 from asymmetry.gui.windows.grouping_dialog import GroupingDialog
 from asymmetry.gui.windows.multi_group_fit_window import MultiGroupFitWindow
 from asymmetry.gui.windows.run_info_dialog import RunInfoDialog
@@ -710,6 +714,10 @@ class MainWindow(QMainWindow):
         # stores its panel state before each re-sync, so it needs no such guard.)
         self._fourier_included_seeded: set[int] = set()
         self._global_parameter_fit_window: GlobalParameterFitWindow | None = None
+        #: The single open two-study comparison dialog (opened from the results
+        #: window's "Compare with…" submenu). Only one is allowed at a time; a new
+        #: comparison closes the previous one.
+        self._global_fit_compare_dialog: GlobalFitCompareDialog | None = None
         #: The named cross-group global-parameter-fit studies, insertion-ordered
         #: (dict preserves order). Replaces the trend panel's single-slot
         #: ``last_cross_group_fit``; persisted under the schema-v13 top-level
@@ -10999,18 +11007,32 @@ class MainWindow(QMainWindow):
             ("study_rename_requested", self._on_global_fit_study_rename_requested),
             ("study_duplicate_requested", self._on_global_fit_study_duplicate_requested),
             ("study_delete_requested", self._on_global_fit_study_delete_requested),
+            ("study_compare_requested", self._on_global_fit_study_compare_requested),
             ("edit_requested", self._on_global_fit_edit_requested),
         ):
             signal = getattr(window, name, None)
             if signal is not None and hasattr(signal, "connect"):
                 signal.connect(handler)
 
-    def _global_fit_sidebar_entries(self) -> list[tuple[str, str, bool]]:
-        """Return ``(study_id, name, stale)`` tuples for the window's sidebar."""
-        entries: list[tuple[str, str, bool]] = []
+    def _global_fit_sidebar_entries(self) -> list[StudySidebarEntry]:
+        """Return :class:`StudySidebarEntry` records for the window's sidebar.
+
+        Each carries ``parameter_name``/``x_key`` so the window can offer a
+        "Compare with…" submenu of studies that share this one's parameter and
+        x-axis.
+        """
+        entries: list[StudySidebarEntry] = []
         for study in self._global_fit_studies.values():
             stale, _reason = self._study_staleness(study)
-            entries.append((study.study_id, study.name, stale))
+            entries.append(
+                StudySidebarEntry(
+                    study_id=study.study_id,
+                    name=study.name,
+                    stale=stale,
+                    parameter_name=study.parameter_name,
+                    x_key=study.x_key,
+                )
+            )
         return entries
 
     def _refresh_global_fit_sidebar(self) -> None:
@@ -11396,6 +11418,33 @@ class MainWindow(QMainWindow):
             self._update_global_parameter_fit_menu_style(False)
             self._rebuild_global_fit_studies_menu()
             self._refresh_global_fit_sidebar()
+
+    def _on_global_fit_study_compare_requested(self, id_a: str, id_b: str) -> None:
+        """Open the two-study comparison dialog for *id_a* vs *id_b*.
+
+        Both studies must exist and carry a result/model. The dialog is
+        non-modal and only one may be open at a time — opening a new comparison
+        closes the previous dialog first.
+        """
+        study_a = self._global_fit_studies.get(str(id_a))
+        study_b = self._global_fit_studies.get(str(id_b))
+        if study_a is None or study_b is None:
+            return
+        if study_a.result is None or study_b.result is None:
+            return
+        previous = self._global_fit_compare_dialog
+        if previous is not None:
+            previous.close()
+        dialog = GlobalFitCompareDialog(study_a, study_b, self)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        dialog.destroyed.connect(self._on_global_fit_compare_dialog_destroyed)
+        self._global_fit_compare_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+
+    def _on_global_fit_compare_dialog_destroyed(self, *_args) -> None:
+        """Drop the reference when the comparison dialog is closed/destroyed."""
+        self._global_fit_compare_dialog = None
 
     def _on_global_fit_edit_requested(self, study_id: str) -> None:
         """Reopen the cross-group fit dialog seeded from a study's config.
