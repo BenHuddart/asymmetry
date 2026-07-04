@@ -1244,7 +1244,11 @@ def test_detector_layout_resolves_psi_hifi_to_hal(
             return 1  # Accepted
 
         def get_result(self):
-            return {"instrument": captured["instrument"], "groups": {}, "group_names": {}}
+            return {
+                "instrument": captured["instrument"],
+                "groups": {1: [1], 2: [2]},
+                "group_names": {},
+            }
 
     monkeypatch.setattr(
         "asymmetry.gui.windows.detector_layout_dialog.DetectorLayoutDialog",
@@ -1335,6 +1339,119 @@ def test_psi_detector_layout_result_is_swapped_for_analysis_dropdowns(
 
     assert dialog._forward_combo.currentData() == 2
     assert dialog._backward_combo.currentData() == 1
+
+
+def test_detector_layout_custom_edit_refreshes_preset_chip_and_marks_dirty(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A drifted (custom) result from the detector-layout editor must refresh the
+    preset chip and arm the dialog's dirty/close-guard flag immediately, not just
+    update the internal state silently (regression: _on_detector_layout updated
+    ``_grouping_preset_name``/groups/combos but never called ``_mark_dirty`` or
+    ``_refresh_preset_chip``, so the chip kept showing the stale preset name)."""
+    dataset = _dataset_with_histograms()
+    assert dataset.run is not None
+    dataset.run.grouping["instrument"] = "GPS"
+    dataset.run.grouping["grouping_preset"] = "Longitudinal"
+    dataset.run.grouping["group_names"] = {1: "Forward", 2: "Backward"}
+    # GPS's Longitudinal preset declares forward=2 / backward=1.
+    dataset.run.grouping["forward_group"] = 2
+    dataset.run.grouping["backward_group"] = 1
+
+    dialog = GroupingDialog([dataset])
+    assert dialog._preset_chip.text() == "Preset: Longitudinal"
+    assert dialog._draft_dirty is False
+
+    # Drifted from the preset: the layout editor itself detects the state no
+    # longer matches any preset and reports grouping_preset=None (see
+    # DetectorLayoutDialog._update_preset_status_label).
+    result = {
+        "groups": {1: [1, 3], 2: [2]},
+        "group_names": {1: "Forward", 2: "Backward"},
+        "forward_group": 2,
+        "backward_group": 1,
+        "instrument": "GPS",
+        "grouping_preset": None,
+        "excluded_detectors": [],
+        "projections": [],
+    }
+
+    class _FakeDialog:
+        DialogCode = type("DialogCode", (), {"Accepted": 1})
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def exec(self):
+            return 1
+
+        def get_result(self):
+            return result
+
+    monkeypatch.setattr(
+        "asymmetry.gui.windows.detector_layout_dialog.DetectorLayoutDialog",
+        _FakeDialog,
+    )
+
+    dialog._on_detector_layout()
+
+    assert dialog._grouping_preset_name is None
+    assert dialog._preset_chip.text() == "Custom (edited from Longitudinal)"
+    assert dialog._draft_dirty is True
+
+
+def test_detector_layout_unchanged_preset_does_not_clear_chip(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the layout editor reconfirms the same preset (no drift), the chip
+    must keep reading "Preset: <name>" rather than being over-cleared to
+    Custom."""
+    dataset = _dataset_with_histograms()
+    assert dataset.run is not None
+    dataset.run.grouping["instrument"] = "GPS"
+    dataset.run.grouping["grouping_preset"] = "Longitudinal"
+    dataset.run.grouping["group_names"] = {1: "Forward", 2: "Backward"}
+    # GPS's Longitudinal preset declares forward=2 / backward=1.
+    dataset.run.grouping["forward_group"] = 2
+    dataset.run.grouping["backward_group"] = 1
+
+    dialog = GroupingDialog([dataset])
+    assert dialog._preset_chip.text() == "Preset: Longitudinal"
+
+    result = {
+        "groups": {1: [1], 2: [2]},
+        "group_names": {1: "Forward", 2: "Backward"},
+        "forward_group": 2,
+        "backward_group": 1,
+        "instrument": "GPS",
+        "grouping_preset": "Longitudinal",
+        "excluded_detectors": [],
+        "projections": [],
+    }
+
+    class _FakeDialog:
+        DialogCode = type("DialogCode", (), {"Accepted": 1})
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def exec(self):
+            return 1
+
+        def get_result(self):
+            return result
+
+    monkeypatch.setattr(
+        "asymmetry.gui.windows.detector_layout_dialog.DetectorLayoutDialog",
+        _FakeDialog,
+    )
+
+    dialog._on_detector_layout()
+
+    assert dialog._grouping_preset_name == "Longitudinal"
+    assert dialog._preset_chip.text() == "Preset: Longitudinal"
 
 
 # ---------------------------------------------------------------------------

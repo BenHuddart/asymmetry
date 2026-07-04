@@ -2432,7 +2432,13 @@ class GroupingDialog(QDialog):
         }
         self._group_names = result.get("group_names", {})
         preset_name = result.get("grouping_preset")
-        self._grouping_preset_name = str(preset_name) if preset_name else None
+        # When the editor reports a match, adopt its name outright. When it
+        # reports None (custom/drifted state), keep the *previous* preset name
+        # for now: ``_refresh_preset_chip`` below re-derives drift from the
+        # payload itself and clears it to None, which is what lets the chip
+        # read "Custom (edited from <old preset>)" instead of a bare "Custom".
+        if preset_name:
+            self._grouping_preset_name = str(preset_name)
         instrument_name = result.get("instrument")
         self._detector_layout_instrument_name = str(instrument_name) if instrument_name else None
 
@@ -2445,6 +2451,9 @@ class GroupingDialog(QDialog):
         self._populate_group_table()
         self._update_vector_mode_controls()
         self._update_grouping_recommendation()
+        self._mark_dirty()
+        self._refresh_preset_chip(self._current_grouping_payload())
+        self._refresh_preview()
 
     def _set_combo_to_group(self, combo: QComboBox, group_id: int) -> None:
         """Set combo box to a group ID if present, preserving defaults otherwise."""
