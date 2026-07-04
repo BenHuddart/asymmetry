@@ -79,6 +79,7 @@ class BackgroundReferenceRunCandidate:
     def __init__(
         self, run_number: int, label: str, source_file: str, good_frames: float | None
     ) -> None:
+        """Store the candidate's run number, display label, source file, and good frames."""
         self.run_number = run_number
         self.label = label
         self.source_file = source_file
@@ -150,6 +151,7 @@ class BackgroundDialog(QDialog):
         backward_label: str = "B",
         parent=None,
     ) -> None:
+        """Build the dialog; see the class docstring for parameter semantics."""
         super().__init__(parent)
         self.setWindowTitle("Background Correction")
         self.resize(560, 480)
@@ -235,6 +237,7 @@ class BackgroundDialog(QDialog):
         self._mode_combo.setCurrentIndex(idx if idx >= 0 else 0)
 
     def current_mode(self) -> str:
+        """Return the mode key currently selected in the mode combo."""
         return str(self._mode_combo.currentData() or "none")
 
     def _on_mode_changed(self) -> None:

@@ -51,7 +51,8 @@ analogue in the reference programs) are deferred to the closing
 | Feature | WiMDA | musrfit | Mantid | Asymmetry |
 |---|---|---|---|---|
 | Forward / backward grouping | ✅ `Analyse.pas` | ✅ `PRunAsymmetry.cpp` | ✅ `MuonPairingAsymmetry` | ✅ `core/transform/asymmetry.py`, `grouping.py` |
-| α estimation | ◐ form-driven | ◐ in `.msr` RUN | ✅ `AlphaCalc`, `EstimateMuonAsymmetryFromCounts` | ◐ `core/transform/grouping.py` (manual entry) |
+| α estimation | ◐ form-driven | ◐ in `.msr` RUN | ✅ `AlphaCalc`, `EstimateMuonAsymmetryFromCounts` | ★ `core/transform/asymmetry.py` (diamagnetic / general / ratio, bootstrap uncertainty), dedicated calibration dialog with TF-candidate auto-suggestion |
+| Named, shareable calibration profile | ❌ (per-form) | ◐ shared across a `.msr` RUN block | ❌ (per-workspace) | ★ project-level `GroupingProfile` per instrument fingerprint (`core/project/profiles.py`); one active profile per fingerprint, runs inherit/release |
 | β (asymmetric grouping) | ◐ form | ✅ `PRunAsymmetry.cpp` | ◐ via group pair α | ❌ |
 | Auto phase calibration | ❌ | ❌ | ★ `CalMuonDetectorPhases` | ❌ |
 | Background subtraction | ◐ embedded | ◐ via theory | ✅ `RemoveExpDecay`, `PSIBackgroundSubtraction` | ✅ `core/transform/background.py` |
@@ -310,6 +311,55 @@ headers; musrfit's centring convention differs by ≤ half a raw bin
   upstream doc/code mismatch, `PRunAsymmetry.cpp:884/913`). Mantid's
   background handling lives in the GUI corrections layer and its A0
   uncertainty is discarded by `AsymmetryCalc` (see above).
+
+### Default α and the PSI beam-vs-analysis sign convention (2026-07)
+
+- **All current Asymmetry loaders default their own internal reduction to**
+  **`alpha = 1.0`, by design.** PSI-BIN (`core/io/psi.py`), MusrRoot
+  (`core/io/root.py`), and ISIS NeXus (`core/io/nexus.py`) each hard-code
+  `alpha = 1.0` for the asymmetry they compute at load time; any facility- or
+  sample-specific value is applied only by a subsequent, explicit calibration
+  (the Grouping window's alpha calibration dialog, a grouping-profile's
+  `AlphaPolicy`, or a scripted `estimate_alpha`/`compute_asymmetry` call).
+  Nothing in the loader path guesses a non-unity α from instrument identity.
+  Mantid's `LoadPSIMuonBin`/`LoadMuonNexus` follow the same load-time-unity
+  convention; musrfit's `.msr` `RUN` block and WiMDA's form both require the
+  user to supply α explicitly before the first fit, so the "calibration is
+  always explicit, never inferred from geometry" policy is shared across all
+  four programs, not an Asymmetry-only choice.
+- **PSI beam-vs-analysis sign convention, corrected in the built-in
+  presets.** PSI names its two beam-axis detectors by *beam* direction
+  (Forward = downstream, Backward = upstream); for surface muons the initial
+  polarisation is antiparallel to the momentum, so it points toward the
+  *Backward*-named detector, and the PSI/musrfit analysis convention is
+  `A = (B − αF)/(B + αF)` (GPS instrument paper, Amato *et al.*, *Rev. Sci.
+  Instrum.* **88**, 093301 (2017), Eq. 2; musrfit
+  `instrument_def_psi.xml`, `logic_asym_detector FB forward=2(B)
+  backward=1(F)`). Asymmetry's PSI **loaders** always honoured this, but the
+  built-in GPS/FLAME/HAL-9500 **presets** originally declared the
+  beam-Forward group as analysis-forward — correct only because the GUI's
+  grouping dialog silently re-swapped it, so a preset consumed headlessly
+  from the core API (or via `.grp`) reduced with the wrong sign. Every PSI
+  Longitudinal preset now declares the Backward-named group as
+  analysis-forward directly (`core/instrument.py`), and the GPS `WEP` `FB`
+  projection follows musrfit's own leg order and default, `forward=2(B)
+  backward=1(F) alpha=0.75`. The GPS spin-rotated combined-pair preset was
+  corrected the same way: the ~50° upward-rotated spin lies along the
+  **Backward–Up** diagonal (musrfit's own WEP phases, B at −45° and U at
+  +45°, bisect exactly there), so the preset is now `Spin-rotated
+  (B+U/F+D)`, not the previous `F+U/B+D`. ISIS instruments (HiFi, MuSR, EMU)
+  need no such correction: ISIS names banks by the direction of the *muon
+  spin*, not the beam, so the bank the polarisation points toward is already
+  named "Forward".
+- **Per-detector t0 alignment parity.** Asymmetry aligns each PSI/ROOT
+  detector histogram to its own `detector_t0_bins` entry before grouping
+  (`core/transform/grouping.py`, `common_t0_for_groups` /
+  `apply_grouping_aligned`), matching WiMDA's per-detector t0 read
+  (`Group.pas:1498`) rather than musrfit's or Mantid's single-shift
+  approximation (see "Multi-detector alignment" above); this was verified
+  unchanged by the grouping-profile refactor, since `resolve_effective_grouping`
+  copies `detector_t0_bins` straight through as a per-run fact rather than
+  storing it on the shareable profile.
 
 ## How this matrix was verified
 

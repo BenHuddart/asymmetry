@@ -144,6 +144,7 @@ class DeadtimeDialog(QDialog):
         good_frames: float,
         parent=None,
     ) -> None:
+        """Build the dialog; see the class docstring for parameter semantics."""
         super().__init__(parent)
         self.setWindowTitle("Deadtime Correction")
         self.resize(520, 480)

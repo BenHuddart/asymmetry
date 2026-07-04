@@ -41,10 +41,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   profile selector (New / Duplicate / Rename), a non-destructive **preview run**
   selector that shows a run's per-run facts without disturbing the draft, an
   instrument **preset** dropdown with a live "Preset: … / Custom (edited from …)"
-  chip, and an unsaved-changes guard. Profiles are saved in the project (schema
-  v12) and re-resolved onto their runs on open; existing projects migrate
-  automatically. Applying a profile reports how many runs it reached and how many
-  overridden runs were left untouched.
+  chip, a debounced **live asymmetry preview** (computed off the GUI thread, so
+  editing stays responsive), and an unsaved-changes guard. Profiles are saved in
+  the project (schema v12) and re-resolved onto their runs on open; existing
+  projects migrate automatically. Applying a profile reports how many runs it
+  reached and how many overridden runs were left untouched.
+- **Dedicated alpha, deadtime, and background calibration dialogs.** The three
+  corrections that used to live as inline controls in the Grouping window are
+  now their own dialogs, opened from a compact status row ("α = 1.2345(67) ·
+  diamagnetic · run 2923", "Deadtime: manual …", "Background: …") with a
+  **Calibrate…**/**Configure…** button. The alpha dialog highlights and
+  auto-selects a likely weak-transverse-field calibration run in its run
+  dropdown (from the run's field-geometry metadata and, when recorded, its
+  field magnitude), offers **diamagnetic** / **general** / **ratio**
+  estimation methods, and shows a live before/after (α = 1 vs. the fitted
+  value) preview; accepting a calibration records its provenance, and a manual
+  edit of α drops the provenance back to plain "manual". Each vector or
+  multi-projection axis (EMU P_x/P_y/P_z, GPS WEP FB/UD, MuSR/HiFi transverse
+  pairs) calibrates and stores its own alpha independently. The deadtime
+  dialog adds a "maximum correction at t=0" summary; the background dialog
+  adds a shaded-window preview for the range/reference-run modes.
+- **Detector schematic: multi-group membership and hover detail.** A detector
+  that belongs to more than one group (the ordinary case for transverse and
+  vector-polarisation layouts, and now visible for HiFi's manual
+  transverse-quadrant grouping) is drawn as one thin slice per membership
+  instead of showing only its primary group. Hovering a detector shows its id,
+  physical label, full list of group memberships, and exclusion state; each
+  group button shows a live member count, and a **Clear excluded** button
+  resets every exclusion in one action. A source-audited pass confirmed the
+  EMU `Vector Polarization` preset's octant composition is internally
+  consistent with the layout's own detector angles (and remains an Asymmetry
+  construct with no facility-documented equivalent) and that the HiFi and MuSR
+  schematic orientations already matched their respective user manuals.
 - **Robust batch seeding for near-transition oscillatory scans.** A block-separable
   F-B asymmetry batch (every free parameter Local — e.g. an EuO ZF temperature scan
   approaching `T_C`) now honours the **Chain from previous run** / **Auto** seeding

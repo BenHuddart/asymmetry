@@ -88,6 +88,7 @@ class GroupingPreviewPane(QWidget):
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
+        """Build the canvas, status strip, and debounce/worker plumbing."""
         super().__init__(parent)
         self.setFixedHeight(_PANE_HEIGHT)
 

@@ -197,6 +197,7 @@ class AlphaPolicy:
     source_run: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
+        """Serialize to a plain, JSON-safe dict (round-trips via :meth:`from_dict`)."""
         data: dict[str, Any] = {"mode": self.mode}
         if self.mode in ("fixed", "calibrated"):
             data["value"] = float(self.value)
@@ -211,6 +212,7 @@ class AlphaPolicy:
 
     @classmethod
     def from_dict(cls, data: Any) -> AlphaPolicy:
+        """Reconstruct a policy from :meth:`to_dict` output (lenient; defaults to ``fixed``)."""
         if not isinstance(data, dict):
             return cls()
         mode = str(data.get("mode", "fixed")).strip().lower()
@@ -247,6 +249,7 @@ class DeadtimePolicy:
     source_path: str = ""
 
     def to_dict(self) -> dict[str, Any]:
+        """Serialize to a plain, JSON-safe dict (round-trips via :meth:`from_dict`)."""
         data: dict[str, Any] = {"mode": self.mode}
         if self.mode == "manual":
             if self.values:
@@ -270,6 +273,7 @@ class DeadtimePolicy:
 
     @classmethod
     def from_dict(cls, data: Any) -> DeadtimePolicy:
+        """Reconstruct a policy from :meth:`to_dict` output (lenient; defaults to ``off``)."""
         if not isinstance(data, dict):
             return cls()
         mode = str(data.get("mode", "off")).strip().lower()
@@ -308,6 +312,7 @@ class BackgroundPolicy:
     details: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        """Serialize to a plain, JSON-safe dict (round-trips via :meth:`from_dict`)."""
         data: dict[str, Any] = {"mode": self.mode}
         if self.details:
             data["details"] = dict(self.details)
@@ -315,6 +320,7 @@ class BackgroundPolicy:
 
     @classmethod
     def from_dict(cls, data: Any) -> BackgroundPolicy:
+        """Reconstruct a policy from :meth:`to_dict` output (lenient; defaults to ``none``)."""
         if not isinstance(data, dict):
             return cls()
         mode = str(data.get("mode", "none")).strip().lower()
@@ -342,10 +348,12 @@ class ProfileFingerprint:
     histogram_count: int
 
     def to_dict(self) -> dict[str, Any]:
+        """Serialize to a plain, JSON-safe dict (round-trips via :meth:`from_dict`)."""
         return {"instrument": self.instrument, "histogram_count": int(self.histogram_count)}
 
     @classmethod
     def from_dict(cls, data: Any) -> ProfileFingerprint:
+        """Reconstruct a fingerprint from :meth:`to_dict` output (lenient)."""
         if not isinstance(data, dict):
             return cls(instrument="", histogram_count=0)
         return cls(
@@ -354,6 +362,7 @@ class ProfileFingerprint:
         )
 
     def matches(self, other: ProfileFingerprint) -> bool:
+        """Return whether *other* names the same instrument and histogram count."""
         return self.instrument.strip().lower() == other.instrument.strip().lower() and int(
             self.histogram_count
         ) == int(other.histogram_count)

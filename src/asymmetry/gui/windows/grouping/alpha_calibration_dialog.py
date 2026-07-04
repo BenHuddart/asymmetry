@@ -105,6 +105,7 @@ class AlphaCalibrationDialog(QDialog):
         selected_run_number: int | None = None,
         parent=None,
     ) -> None:
+        """Build the dialog; see the class docstring for parameter semantics."""
         super().__init__(parent)
         self._datasets = [ds for ds in datasets if ds.run is not None]
         self._groups = {int(gid): [int(i) for i in idxs] for gid, idxs in groups.items()}
