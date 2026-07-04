@@ -10,7 +10,7 @@ import subprocess
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -72,10 +72,18 @@ _DECORATION_STATE_KEYS = (
 class GlobalParameterFitWindow(QMainWindow):
     """Display cross-group fit data, fitted model curves, and global/local values."""
 
+    #: Emitted (study_id) when the user clicks Refit on the stale banner. The
+    #: MainWindow re-assembles the study's groups from the live trend data, re-runs
+    #: the fit off-thread, and updates the study.
+    refit_requested = Signal(str)
+
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Global Parameter Fit")
         self.resize(1200, 800)
+        #: The id of the study currently displayed (== batch id), for the Refit
+        #: signal. ``None`` until :meth:`set_study`/:meth:`set_results` runs.
+        self._study_id: str | None = None
 
         self._result: CrossGroupFitResult | None = None
         self._groups: list[ParameterGroupData] = []
@@ -119,7 +127,25 @@ class GlobalParameterFitWindow(QMainWindow):
 
         root = QWidget(self)
         self.setCentralWidget(root)
-        root_layout = QHBoxLayout(root)
+        root_layout = QVBoxLayout(root)
+
+        # Stale banner: a highlighted row above the splitter, hidden unless the
+        # displayed study's inputs have drifted from the live trend data. Its
+        # Refit button asks the MainWindow to re-run the fit on current data.
+        self._stale_banner = QWidget()
+        stale_layout = QHBoxLayout(self._stale_banner)
+        stale_layout.setContentsMargins(8, 4, 8, 4)
+        self._stale_label = QLabel("")
+        self._stale_label.setWordWrap(True)
+        self._refit_btn = QPushButton("Refit")
+        self._refit_btn.clicked.connect(self._on_refit_clicked)
+        stale_layout.addWidget(self._stale_label, 1)
+        stale_layout.addWidget(self._refit_btn, 0)
+        self._stale_banner.setStyleSheet(
+            "QWidget { background-color: #6b4a00; }QLabel { color: #ffe08a; font-weight: bold; }"
+        )
+        self._stale_banner.setVisible(False)
+        root_layout.addWidget(self._stale_banner)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         root_layout.addWidget(splitter)
@@ -792,6 +818,7 @@ class GlobalParameterFitWindow(QMainWindow):
             self._local_plot_annotations = []
             self._suppressed_group_label_tags = set()
         self._batch_id = batch_id
+        self._study_id = batch_id
         self._parameter_name = parameter_name
         self._x_key = x_key
         self._groups = groups
@@ -805,6 +832,41 @@ class GlobalParameterFitWindow(QMainWindow):
         # over an 800-point axis); compute them off-thread behind the overlay so
         # restoring a saved fit on project open does not block the GUI.
         self._start_fit_curve_compute()
+
+    def set_study(self, study, *, stale: bool, stale_reason: str = "") -> None:
+        """Display *study* (a ``GlobalFitStudy``) with a stale banner if needed.
+
+        Thin adapter over :meth:`set_results`: the study is the persisted entity,
+        this window is the view. The study id is the batch id (they share the
+        digest scheme), so decorations keep keying by it. Custom x/group-variable
+        labels are carried so the plots read the study's stored labels rather than
+        this window's hardcoded field/T/run maps (Phase 3 consumes them fully).
+        """
+        self.set_results(
+            parameter_name=study.parameter_name,
+            x_key=study.x_key,
+            groups=list(study.groups),
+            model=study.model,
+            result=study.result,
+            fit_x_min=study.fit_x_min,
+            fit_x_max=study.fit_x_max,
+            batch_id=study.study_id,
+        )
+        self.setWindowTitle(f"Global Parameter Fit — {study.name}")
+        self.set_stale(stale, stale_reason)
+
+    def set_stale(self, stale: bool, reason: str = "") -> None:
+        """Show or hide the stale banner (with *reason*) above the plot."""
+        self._stale_label.setText(
+            f"This fit is out of date: {reason}." if reason else "This fit is out of date."
+        )
+        # A study whose source series are gone cannot be refitted from live data.
+        self._refit_btn.setEnabled(reason != "source series missing")
+        self._stale_banner.setVisible(bool(stale))
+
+    def _on_refit_clicked(self) -> None:
+        if self._study_id:
+            self.refit_requested.emit(self._study_id)
 
     def _start_fit_curve_compute(self) -> None:
         """Recompute the cross-group fit curves off-thread, overlaying the plot."""

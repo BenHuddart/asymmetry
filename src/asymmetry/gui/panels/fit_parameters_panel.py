@@ -877,7 +877,14 @@ class FitParametersPanel(QWidget):
             "group_fit_results": self._serialize_group_fit_results(),
             "active_group_id": self._active_group_id,
             "selected_group_ids": self._selected_group_ids_from_buttons(),
-            "last_cross_group_fit": self._serialize_last_cross_group_fit(),
+            # The single-slot cross-group fit (``last_cross_group_fit``) is no
+            # longer written here: cross-group fits are now persisted as a
+            # first-class studies registry owned by MainWindow (schema v13
+            # ``global_fit_studies``). A pre-v13 project's ``last_cross_group_fit``
+            # is still *read* on load and migrated into a study — see
+            # ``MainWindow._restore_global_fit_studies`` — so ``_deserialize_last_
+            # cross_group_fit`` and the ``last_cross_group_fit`` property are kept
+            # for that legacy path, and the per-config seeds still round-trip.
             "cross_group_fit_configs": self._serialize_cross_group_fit_configs(),
         }
 
@@ -3875,22 +3882,47 @@ class FitParametersPanel(QWidget):
         self._refresh_model_fit_button_labels()
         self._refresh_plot()
 
-    def _run_cross_group_model_fit(
+    def assemble_cross_group_groups(
         self,
         param_name: str,
-        selected_groups: list[_GroupFitData],
-    ) -> dict[str, object] | None:
-        if not selected_groups:
-            return None
+        x_key: str,
+        group_ids: list[str],
+    ) -> list[ParameterGroupData] | None:
+        """Assemble ``ParameterGroupData`` for a cross-group fit from live rows.
 
-        x_key = self._effective_x_key()
+        Resolves *group_ids* against the panel's live group registry, then
+        delegates to :meth:`_assemble_cross_group_from_data`. This is the single
+        source of truth the staleness digest and a study Refit use, so they see
+        exactly the fitting path's data. Returns ``None`` when any id is missing
+        from the registry (a deleted source series) or a group lacks the fitted
+        parameter for an included member; a group with fewer than two valid
+        points is dropped, so the list may be shorter than *group_ids*.
+        """
+        groups: list[_GroupFitData] = []
+        for gid in group_ids:
+            group = self._group_fit_results.get(str(gid))
+            if group is None:
+                return None  # a source series the study was built from is gone
+            groups.append(group)
+        return self._assemble_cross_group_from_data(param_name, x_key, groups)
+
+    def _assemble_cross_group_from_data(
+        self,
+        param_name: str,
+        x_key: str,
+        groups: list[_GroupFitData],
+    ) -> list[ParameterGroupData] | None:
+        """Build ``ParameterGroupData`` from live ``_GroupFitData`` objects.
+
+        For each group it keeps only the members the user left in the trend
+        (``include_in_trend``, mirroring :meth:`_included_trend_rows`), sorts
+        them by the abscissa, and applies the same y/σ fallback and per-group
+        orthogonal coordinate the dialog path used. Returns ``None`` when a group
+        does not carry ``param_name`` for every included member; a group with
+        fewer than two valid points is dropped.
+        """
         group_payload: list[ParameterGroupData] = []
-        for group in selected_groups:
-            # Only members the user kept in the trend feed the cross-group fit
-            # (mirroring the single-group path's ``_included_trend_rows``): an
-            # excluded row stays visible on the plot but must not pull a
-            # global/local parameter fit, and must not block the "all groups
-            # have this parameter" completeness check below.
+        for group in groups:
             rows = sorted(
                 (r for r in group.rows if r.include_in_trend),
                 key=lambda r: self._x_value(r, x_key),
@@ -3898,11 +3930,6 @@ class FitParametersPanel(QWidget):
             if len(rows) < 2:
                 continue
             if any(param_name not in row.values for row in rows):
-                QMessageBox.information(
-                    self,
-                    "Cross-group fit",
-                    f"Selected groups do not all contain fitted values for '{param_name}'.",
-                )
                 return None
             x_vals = np.array([self._x_value(r, x_key) for r in rows], dtype=float)
             y_vals = np.array([row.values.get(param_name, np.nan) for row in rows], dtype=float)
@@ -3928,6 +3955,28 @@ class FitParametersPanel(QWidget):
                     xerr=self._x_error_array(rows, x_key),
                 )
             )
+        return group_payload
+
+    def _run_cross_group_model_fit(
+        self,
+        param_name: str,
+        selected_groups: list[_GroupFitData],
+    ) -> dict[str, object] | None:
+        if not selected_groups:
+            return None
+
+        x_key = self._effective_x_key()
+        # The selected groups are live ``_GroupFitData`` objects from the group
+        # buttons, so assemble from them directly (they may not yet be looked up
+        # by id — the completeness/None case surfaces the same message as before).
+        group_payload = self._assemble_cross_group_from_data(param_name, x_key, selected_groups)
+        if group_payload is None:
+            QMessageBox.information(
+                self,
+                "Cross-group fit",
+                f"Selected groups do not all contain fitted values for '{param_name}'.",
+            )
+            return None
 
         if len(group_payload) < 2:
             QMessageBox.information(
