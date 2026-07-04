@@ -35,6 +35,7 @@ from asymmetry.core.fitting.fit_wizard import (
     SelectionMetric,
     SpectrumFingerprint,
     WizardFamily,
+    _apply_frequency_support_disqualifiers,
     _AssessmentTask,
     _decide_family_promotions,
     _effective_hint_keys,
@@ -1100,6 +1101,127 @@ def test_control_flat_lf_oscillatory_frequency_floor_disqualified(
     recommended = recommendation.recommended_assessment
     if recommended is not None and _frequency_params(recommended):
         assert recommendation.confidence is not ConfidenceTier.HIGH
+
+
+# --------------------------------------------------------------------------- #
+# Frequency-support disqualifiers (unit + control)
+# --------------------------------------------------------------------------- #
+
+
+def _exploding_error_dataset_for_support(n: int = 1200) -> MuonDataset:
+    """Percent-scale flat record whose σ explodes with t (effective window ≪ full)."""
+    t = np.linspace(0.15, 32.6, n)
+    sigma = np.minimum(0.7 * np.exp(t / (2.0 * 2.2)), 100.0)
+    return MuonDataset(
+        time=t, asymmetry=np.full(t.size, 4.0), error=sigma, metadata={"run_number": 1}
+    )
+
+
+def _assessment_with_frequency(frequency: float) -> CandidateAssessment:
+    base = _dummy_assessment("oscillatory_exp_constant")
+    params = ParameterSet([Parameter(name="frequency", value=frequency)])
+    return replace(
+        base,
+        fit_result=FitResult(
+            success=True, chi_squared=1.0, reduced_chi_squared=1.0, parameters=params
+        ),
+    )
+
+
+def _peaks_at(*frequencies: float) -> PeakAnalysis:
+    return PeakAnalysis(
+        peaks=tuple(
+            DetectedPeak(
+                frequency_mhz=f, amplitude=1.0, snr=5.0, width_mhz=0.1, prominence=1.0, source="fft"
+            )
+            for f in frequencies
+        ),
+        noise_floor=1.0,
+        resolution_mhz=0.1,
+        nyquist_mhz=31.0,
+        detrended=False,
+    )
+
+
+def test_frequency_below_effective_window_floor_is_disqualified() -> None:
+    # σ explodes with t, so the informative window is ~8 µs of the 32.5 µs
+    # record; a 0.1 MHz claim (<1 effective cycle) is unsupportable even though
+    # it clears the 1/T_full floor with ~3 cycles.
+    dataset = _exploding_error_dataset_for_support()
+    (updated,) = _apply_frequency_support_disqualifiers(
+        dataset, (_assessment_with_frequency(0.1),), _peaks_at(0.1)
+    )
+    assert any("informative window" in reason for reason in updated.disqualification_reasons)
+
+
+def test_resolvable_frequency_with_matching_peak_is_not_disqualified() -> None:
+    dataset = _exploding_error_dataset_for_support()
+    (updated,) = _apply_frequency_support_disqualifiers(
+        dataset, (_assessment_with_frequency(1.30),), _peaks_at(1.32)
+    )
+    assert updated.disqualification_reasons == ()
+
+
+def test_resolvable_frequency_without_any_peak_is_disqualified() -> None:
+    dataset = _exploding_error_dataset_for_support()
+    (updated,) = _apply_frequency_support_disqualifiers(
+        dataset, (_assessment_with_frequency(1.30),), _peaks_at()
+    )
+    assert any("no supporting detected" in r for r in updated.disqualification_reasons)
+
+
+def test_flat_error_record_keeps_full_window_for_the_floor() -> None:
+    # Constant σ ⇒ no truncation ⇒ the effective floor reduces to ~2/T_full;
+    # a 0.5 MHz line over 10 µs (5 cycles) with a matching peak passes.
+    t = np.linspace(0.1, 10.0, 400)
+    dataset = MuonDataset(
+        time=t, asymmetry=np.zeros(t.size), error=np.full(t.size, 0.01), metadata={}
+    )
+    (updated,) = _apply_frequency_support_disqualifiers(
+        dataset, (_assessment_with_frequency(0.5),), _peaks_at(0.5)
+    )
+    assert updated.disqualification_reasons == ()
+
+
+@pytest.mark.integration
+def test_control_kt_plus_drift_suppresses_uncorroborated_cosine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Validation-programme control (S5c-class): static KT + a slow smooth
+    # systematic on exploding-error data. Pre-fix, a ~0.08 MHz damped cosine
+    # absorbed drift + KT dip and won by AICc at HIGH confidence even though
+    # the kt family was correctly promoted. The fitted frequency completes <2
+    # cycles inside the SNR-truncated informative window, so the
+    # effective-window floor must disqualify every free-frequency oscillator
+    # and let the kt family win.
+    _strip_expensive_members(monkeypatch)
+
+    def signal(t: np.ndarray) -> np.ndarray:
+        kt = longitudinal_field_kubo_toyabe(t, 20.0, 0.3, 0.0, 0.0) + 4.0
+        drift = 0.8 * np.sin(2 * np.pi * t / 40.0) + 1.5 * np.exp(-t / 0.4)
+        return kt + drift
+
+    dataset = _exploding_tiered_dataset(signal, seed=77, metadata={"field_direction": "Zero field"})
+
+    recommendation = build_fit_wizard_recommendation(dataset, max_workers=1)
+
+    free_frequency_keys = {
+        "oscillatory_exp_constant",
+        "oscillatory_gaussian_constant",
+        "bessel_exp_constant",
+    }
+    assert recommendation.recommended_key not in free_frequency_keys
+    disqualified = [
+        assessment
+        for assessment in recommendation.assessments
+        if assessment.template.key in free_frequency_keys and assessment.is_successful
+    ]
+    assert disqualified, "expected free-frequency oscillators to have been fitted"
+    for assessment in disqualified:
+        assert any(
+            "informative window" in reason or "no supporting detected" in reason
+            for reason in assessment.disqualification_reasons
+        )
 
 
 # --------------------------------------------------------------------------- #

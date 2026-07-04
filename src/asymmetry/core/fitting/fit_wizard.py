@@ -1175,6 +1175,21 @@ _FREQUENCY_FLOOR_SLACK = 0.05
 _NULL_CONSTANT_KEY = "null_constant"
 _NULL_EXPONENTIAL_KEY = "null_exp"
 
+#: Minimum oscillation cycles inside the SNR-truncated *effective* window for a
+#: fitted frequency to be a supportable claim. Real muSR errors explode with t,
+#: so the statistically informative record is often much shorter than the fit
+#: window; a free-phase oscillation completing fewer than ~2 cycles there is
+#: indistinguishable from a smooth envelope + systematics, however well it
+#: scores by AICc (the validation programme's flat-Ag/Cu-ZF and KT-plus-drift
+#: false positives were all of this kind). Generalises the 1/T_full floor in
+#: ``_disqualification_reasons`` to the window that actually carries
+#: information.
+_MIN_CYCLES_IN_EFFECTIVE_WINDOW = 2.0
+
+#: Fractional tolerance for matching a fitted frequency to a detected peak in
+#: the spectral-corroboration check (widened by the effective resolution).
+_FREQUENCY_SUPPORT_REL_TOL = 0.10
+
 
 @dataclass(frozen=True)
 class TemplateSeedContext:
@@ -1553,11 +1568,19 @@ def _run_template_assessments(
 
     shutdown_on_exit = opened_here
     try:
-        future_to_index = {
-            pool.submit(_execute_assessment_task, task): index
-            for index, task in enumerate(task_list)
-        }
         results: list[CandidateAssessment | None] = [None] * len(task_list)
+        try:
+            future_to_index = {
+                pool.submit(_execute_assessment_task, task): index
+                for index, task in enumerate(task_list)
+            }
+        except Exception:
+            # A pool broken at submission time (e.g. spawn workers cannot
+            # re-import __main__ under an interactive/stdin host) leaves NO
+            # futures to drain — run everything serially in-parent instead.
+            # FitCancelledError cannot arise from submit, so a blanket except
+            # is safe here.
+            return [_execute_assessment_task(task, cancel_callback) for task in task_list]
         remaining = len(task_list)
         completed = as_completed(future_to_index)
         while remaining:
@@ -1913,7 +1936,11 @@ def build_fit_wizard_recommendation(
     )
 
     all_templates = tuple(flat_stage1_templates) + tuple(stage2_templates) + tuple(null_templates)
-    all_assessments = tuple(flat_stage1) + tuple(stage2_assessments) + tuple(null_assessments)
+    all_assessments = _apply_frequency_support_disqualifiers(
+        dataset,
+        tuple(flat_stage1) + tuple(stage2_assessments) + tuple(null_assessments),
+        peak_analysis,
+    )
 
     return rerank_fit_wizard_recommendation(
         FitWizardRecommendation(
@@ -3691,6 +3718,90 @@ def _paired_amplitude(parameters: ParameterSet, freq_index: str | None) -> Param
         if parameter.name == target:
             return parameter
     return None
+
+
+def _apply_frequency_support_disqualifiers(
+    dataset: MuonDataset,
+    assessments: tuple[CandidateAssessment, ...],
+    peak_analysis: PeakAnalysis | None,
+) -> tuple[CandidateAssessment, ...]:
+    """Disqualify fitted frequencies the data cannot actually support.
+
+    Applied once at build time against the FINAL peak set (after the
+    residual-FFT pass), not per-stage — a line found only by the residual FFT
+    must still corroborate the Stage-1 assessment that carries it. Two prongs,
+    both targeted at free-frequency templates (plain oscillatory/bessel; the
+    multiplet templates seed their frequencies from detected peaks, and the
+    muonium/fluorine families carry no literal ``frequency`` parameter):
+
+    * **Effective-window floor** — the frequency completes fewer than
+      ``_MIN_CYCLES_IN_EFFECTIVE_WINDOW`` cycles inside the SNR-truncated
+      informative window (see :func:`effective_analysis_window`); such a claim
+      rests on the noise-dominated tail or on smooth systematics.
+    * **Spectral corroboration** — the frequency is resolvable in the effective
+      window but no detected or user-declared peak lies within
+      ``max(2·1/T_eff, _FREQUENCY_SUPPORT_REL_TOL·f)``. The validation
+      programme's surviving false positives (flat-Ag-ZF 0.28 MHz cosine,
+      Cu-ZF floor bessel, KT-plus-drift cosine) were all AICc-winning
+      oscillations with no spectral support.
+
+    Reasons are appended to the assessments' ``disqualification_reasons`` so
+    the policy in :func:`rerank_fit_wizard_recommendation` (and any later
+    metric rerank of the serialized payload) treats them like every other
+    targeted disqualifier.
+    """
+    time = np.asarray(dataset.time, dtype=float)
+    error = np.asarray(dataset.error, dtype=float)
+    if time.size < 2:
+        return assessments
+    end = effective_analysis_window(time, error)
+    if end < 2:
+        return assessments
+    t_eff = float(time[end - 1] - time[0])
+    if t_eff <= _EPS:
+        return assessments
+    resolution_eff = 1.0 / t_eff
+    peak_freqs = (
+        tuple(peak.frequency_mhz for peak in peak_analysis.peaks)
+        if peak_analysis is not None
+        else ()
+    )
+
+    updated: list[CandidateAssessment] = []
+    for assessment in assessments:
+        if not assessment.is_successful or assessment.is_null_baseline:
+            updated.append(assessment)
+            continue
+        reasons: list[str] = []
+        for parameter in assessment.fit_result.parameters:
+            if split_parameter_name(parameter.name)[0] != "frequency":
+                continue
+            frequency = abs(float(parameter.value))
+            cycles = frequency * t_eff
+            if cycles < _MIN_CYCLES_IN_EFFECTIVE_WINDOW:
+                reasons.append(
+                    f"{parameter.name} completes only {cycles:.1f} cycles inside the "
+                    f"statistically informative window ({t_eff:.1f} µs)"
+                )
+                continue
+            tolerance = max(2.0 * resolution_eff, _FREQUENCY_SUPPORT_REL_TOL * frequency)
+            if not any(abs(peak - frequency) <= tolerance for peak in peak_freqs):
+                reasons.append(
+                    f"{parameter.name} = {frequency:.4g} MHz has no supporting "
+                    "detected spectral peak"
+                )
+        if reasons:
+            updated.append(
+                replace(
+                    assessment,
+                    disqualification_reasons=(
+                        tuple(assessment.disqualification_reasons) + tuple(reasons)
+                    ),
+                )
+            )
+        else:
+            updated.append(assessment)
+    return tuple(updated)
 
 
 def _disqualification_reasons(
