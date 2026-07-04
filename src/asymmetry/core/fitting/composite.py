@@ -10,7 +10,7 @@ from __future__ import annotations
 import difflib
 import re
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 import numpy as np
@@ -1406,7 +1406,6 @@ class CompositeModel:
         self.open_parentheses = list(open_parentheses)
         self.close_parentheses = list(close_parentheses)
         self.fraction_groups = self._validate_fraction_groups(fraction_groups or [])
-        self._fraction_param_number_by_component = self._build_fraction_param_number_map()
         self._fraction_term_number_by_component = self._build_fraction_term_number_map()
         self._fraction_group_by_component = self._build_fraction_group_component_map()
         self.missing_component_names: tuple[str, ...] = tuple(missing)
@@ -1419,6 +1418,12 @@ class CompositeModel:
         self._share_chain_amplitude = not self._uses_parentheses
         self._suppress_component_amplitude = self._identify_suppressed_amplitudes()
         self._param_mappings = self._build_param_mapping()
+        # Component-based fraction names depend on the (already-built) non-fraction
+        # parameter mapping so a candidate f_<Component> can dodge collisions.
+        (
+            self._fraction_param_name_by_component,
+            self._derived_fraction_name_by_group,
+        ) = self._build_fraction_naming()
 
         param_names: list[str] = []
         defaults: dict[str, float] = {}
@@ -1442,10 +1447,14 @@ class CompositeModel:
                     defaults[unique_name] = component.param_defaults[pname]
                     param_info[unique_name] = get_param_info(unique_name)
 
-            if group is not None and idx in self._fraction_group_term_starts(group):
-                fraction_name = self._fraction_param_name(idx)
+            # Only the first n-1 additive terms of a group carry a free fraction
+            # parameter; the last term's weight is 1 - Σ (the remainder), so it
+            # has no parameter. Each free fraction defaults to 1/n.
+            if idx in self._fraction_param_name_by_component:
+                fraction_name = self._fraction_param_name_by_component[idx]
+                term_starts = self._fraction_group_term_starts(group)
                 param_names.append(fraction_name)
-                defaults[fraction_name] = 1.0 / float(len(self._fraction_group_term_starts(group)))
+                defaults[fraction_name] = 1.0 / float(len(term_starts))
                 param_info[fraction_name] = get_param_info(fraction_name)
         self.param_names = param_names
         self.param_defaults = defaults
@@ -1555,14 +1564,74 @@ class CompositeModel:
                 mapping[idx] = group
         return mapping
 
-    def _build_fraction_param_number_map(self) -> dict[int, int]:
-        mapping: dict[int, int] = {}
-        next_number = 1
+    def _non_fraction_param_names(self) -> set[str]:
+        """Return every non-fraction unique parameter name the model exposes.
+
+        Group amplitudes (``A_{start+1}``) plus each component's mapped
+        parameter name (dropping the unit-amplitude sentinel). Fraction names
+        are disambiguated against this set so a synthesized ``f_<Component>``
+        never shadows a real parameter.
+        """
+        names: set[str] = set()
         for group in self.fraction_groups:
-            for idx in self._fraction_group_term_starts(group):
-                mapping[idx] = next_number
-                next_number += 1
-        return mapping
+            names.add(self._fraction_group_amplitude_name(group))
+        for mapping in self._param_mappings:
+            for unique_name in mapping.values():
+                if unique_name != _UNIT_AMPLITUDE_SENTINEL:
+                    names.add(unique_name)
+        return names
+
+    def _build_fraction_naming(
+        self,
+    ) -> tuple[dict[int, str], dict[tuple[int, int], str]]:
+        """Assign component-based fraction names for free terms and remainders.
+
+        For a group with additive term starts ``t_1..t_n``:
+        - ``t_1..t_{n-1}`` each get a free parameter ``f_<Component>`` (the
+          component at the term start), disambiguated with ``_2``, ``_3``, …
+          when a base name would repeat across all fraction parameters or
+          collide with any other model parameter name.
+        - ``t_n`` gets no parameter; its remainder weight is displayed under a
+          synthesized ``f_<Component>`` name guaranteed not to collide with any
+          real parameter name (free fractions or otherwise).
+        """
+        reserved = self._non_fraction_param_names()
+        used = set(reserved)
+        free_names: dict[int, str] = {}
+
+        def disambiguate(base: str) -> str:
+            if base not in used:
+                used.add(base)
+                return base
+            suffix = 2
+            while f"{base}_{suffix}" in used:
+                suffix += 1
+            candidate = f"{base}_{suffix}"
+            used.add(candidate)
+            return candidate
+
+        for group in self.fraction_groups:
+            term_starts = self._fraction_group_term_starts(group)
+            for idx in term_starts[:-1]:
+                base = f"f_{self.component_names[idx]}"
+                free_names[idx] = disambiguate(base)
+
+        # Remainder display names are chosen after every free name is fixed, so
+        # they only need to avoid the real parameter set (reserved + free).
+        remainder_used = set(reserved) | set(free_names.values())
+        derived_names: dict[tuple[int, int], str] = {}
+        for group in self.fraction_groups:
+            last_start = self._fraction_group_term_starts(group)[-1]
+            base = f"f_{self.component_names[last_start]}"
+            candidate = base
+            suffix = 2
+            while candidate in remainder_used:
+                candidate = f"{base}_{suffix}"
+                suffix += 1
+            remainder_used.add(candidate)
+            derived_names[group] = candidate
+
+        return free_names, derived_names
 
     def _build_fraction_term_number_map(self) -> dict[int, int]:
         mapping: dict[int, int] = {}
@@ -1614,9 +1683,13 @@ class CompositeModel:
     def _fraction_group_amplitude_name(self, group: tuple[int, int]) -> str:
         return f"A_{group[0] + 1}"
 
-    def _fraction_param_name(self, component_index: int) -> str:
-        number = self._fraction_param_number_by_component.get(component_index, component_index + 1)
-        return f"fraction_{number}"
+    def _fraction_param_name(self, component_index: int) -> str | None:
+        """Return the free fraction parameter name for a term start, if any.
+
+        The last additive term of a group is the derived remainder and has no
+        free parameter, so this returns ``None`` for it.
+        """
+        return self._fraction_param_name_by_component.get(component_index)
 
     def _fraction_group_default_amplitude(self, group: tuple[int, int]) -> float:
         start, end = group
@@ -1632,62 +1705,96 @@ class CompositeModel:
         group: tuple[int, int],
         kwargs: dict[str, float],
     ) -> dict[int, float]:
-        component_indices = self._fraction_group_term_starts(group)
-        raw_weights: list[float] = []
-        for idx in component_indices:
-            name = self._fraction_param_name(idx)
-            if name not in kwargs:
-                raise KeyError(f"Missing composite parameter '{name}'")
-            raw_weights.append(max(float(kwargs[name]), 0.0))
+        """Return ``{term_start: weight}`` for one group under the n-1 scheme.
 
-        total = sum(raw_weights)
-        if total <= 1e-30:
-            normalized = [1.0 / float(len(raw_weights))] * len(raw_weights)
-        else:
-            normalized = [value / total for value in raw_weights]
-        return dict(zip(component_indices, normalized, strict=True))
+        Each of the n-1 free terms weighs ``clamp(value, 0, 1)``; the remainder
+        term weighs ``clamp(1 - Σ free, 0, 1)``. No sum-normalization: with the
+        free values already in [0, 1] the weights are the physical partition
+        (they sum to 1 whenever Σ free ≤ 1, and the remainder floors at 0 once
+        the free weights over-subscribe the group).
+        """
+        component_indices = self._fraction_group_term_starts(group)
+        weights: dict[int, float] = {}
+        free_total = 0.0
+        for idx in component_indices[:-1]:
+            name = self._fraction_param_name(idx)
+            if name is None or name not in kwargs:
+                raise KeyError(f"Missing composite parameter '{name}'")
+            weight = min(max(float(kwargs[name]), 0.0), 1.0)
+            weights[idx] = weight
+            free_total += weight
+        weights[component_indices[-1]] = min(max(1.0 - free_total, 0.0), 1.0)
+        return weights
 
     def fraction_weights(self, values: dict[str, float]) -> dict[str, float]:
-        """Return ``{fraction_param: normalized_weight}`` for each fraction group.
+        """Return ``{name: weight}`` for every fraction term across all groups.
 
-        The weight is ``fraction_i / Σ fraction`` over the group — the physical
-        amplitude partition (sums to 1 per group), as applied at evaluation. A
-        group is **skipped entirely** when any of its fraction parameters is
-        missing from ``values``, so callers never receive raw, un-normalized
-        values mislabeled as weights.
+        Both the n-1 free parameters (keyed by their real names, carrying the
+        clamped [0, 1] value) and the derived remainder of each group (keyed by
+        its synthesized display name, carrying ``1 - Σ free``) appear. A group
+        is **skipped entirely** when any of its free parameters is missing from
+        ``values``, so callers never receive a partial partition.
         """
         out: dict[str, float] = {}
         for group in self.fraction_groups:
-            names = [
-                self._fraction_param_name(idx) for idx in self._fraction_group_term_starts(group)
-            ]
+            free_starts = self._fraction_group_term_starts(group)[:-1]
+            names = [self._fraction_param_name(idx) for idx in free_starts]
             if not all(name in values for name in names):
                 continue
             weights = self._fraction_group_weights(group, values)
+            last_start = self._fraction_group_term_starts(group)[-1]
             for idx, weight in weights.items():
-                out[self._fraction_param_name(idx)] = weight
+                if idx == last_start:
+                    out[self._derived_fraction_name_by_group[group]] = weight
+                else:
+                    out[self._fraction_param_name(idx)] = weight
         return out
 
     def normalized_parameter_values(self, values: dict[str, float]) -> dict[str, float]:
-        """Return a copy with fraction-group parameters normalized for display."""
+        """Return a copy with free fraction parameters clamped into [0, 1].
+
+        Under the n-1 scheme the fitted values are already the physical free
+        weights, so this only clamps each free fraction into its [0, 1] range
+        (leaving every other entry untouched). Kept because callers rely on it
+        to present display-ready values.
+        """
         normalized = dict(values)
-        for group in self.fraction_groups:
-            try:
-                group_weights = self._fraction_group_weights(group, normalized)
-            except KeyError:
-                continue
-            for idx, weight in group_weights.items():
-                normalized[self._fraction_param_name(idx)] = weight
+        for idx, name in self._fraction_param_name_by_component.items():
+            if name in normalized:
+                normalized[name] = min(max(float(normalized[name]), 0.0), 1.0)
         return normalized
 
     def fraction_parameter_groups(self) -> list[list[str]]:
-        """Return fraction-parameter names grouped by additive fraction group."""
+        """Return the free fraction-parameter names grouped by fraction group.
+
+        Each group contributes its n-1 free parameter names; the remainder term
+        has no parameter and is not listed here (see :meth:`derived_fraction_names`
+        for its display label).
+        """
         groups: list[list[str]] = []
         for group in self.fraction_groups:
-            groups.append(
-                [self._fraction_param_name(idx) for idx in self._fraction_group_term_starts(group)]
-            )
+            free_starts = self._fraction_group_term_starts(group)[:-1]
+            groups.append([self._fraction_param_name(idx) for idx in free_starts])
         return groups
+
+    def derived_fraction_names(self) -> list[str]:
+        """Return one synthesized display name per group for its remainder term.
+
+        These are the ``f_<Component>`` labels of each group's last additive
+        term — display-only names (no fitted parameter) that never collide with
+        a real parameter name. Ordered to match :attr:`fraction_groups`.
+        """
+        return [self._derived_fraction_name_by_group[group] for group in self.fraction_groups]
+
+    def derived_fraction_terms(self) -> list[tuple[str, tuple[int, int]]]:
+        """Return ``(display_name, group)`` for each group's remainder term.
+
+        Pairs each derived remainder name with the fraction group it labels, so
+        a caller can place the remainder row and know which group it belongs to.
+        """
+        return [
+            (self._derived_fraction_name_by_group[group], group) for group in self.fraction_groups
+        ]
 
     def with_default_fraction_groups(self) -> CompositeModel:
         """Return a copy with a top-level additive fraction group when suitable."""
@@ -2156,17 +2263,27 @@ class CompositeModel:
         return term
 
     def _formula_string_with_fraction_groups(self) -> str:
+        # Weight prefix for each additive term start: free terms use their real
+        # fraction parameter; the remainder term renders its derived weight
+        # explicitly as (1-f_X-f_Y) over the group's free parameter names.
+        weight_prefix_by_start: dict[int, str] = {}
+        for group in self.fraction_groups:
+            term_starts = self._fraction_group_term_starts(group)
+            for idx in term_starts[:-1]:
+                weight_prefix_by_start[idx] = self._fraction_param_name(idx)
+            free_names = [self._fraction_param_name(idx) for idx in term_starts[:-1]]
+            weight_prefix_by_start[term_starts[-1]] = (
+                "(1" + "".join(f"-{name}" for name in free_names) + ")"
+            )
+
         terms: list[str] = []
-        fraction_term_starts = {
-            idx for group in self.fraction_groups for idx in self._fraction_group_term_starts(group)
-        }
         for idx, (component, mapping) in enumerate(
             zip(self.components, self._param_mappings, strict=True)
         ):
             term = self._component_formula_term(idx, component, mapping)
-            if idx in fraction_term_starts:
-                fraction_name = self._fraction_param_name(idx)
-                term = fraction_name if term == "1" else f"{fraction_name}*{term}"
+            if idx in weight_prefix_by_start:
+                prefix = weight_prefix_by_start[idx]
+                term = prefix if term == "1" else f"{prefix}*{term}"
             terms.append(term)
 
         value_stack: list[str] = []
@@ -2296,3 +2413,70 @@ class CompositeModel:
             fraction_groups=[(start, end) for start, end in (fraction_groups or [])],
             allow_missing=allow_missing,
         )
+
+
+def _legacy_fraction_numbering(model: CompositeModel) -> list[list[int]]:
+    """Return the old ``fraction_<k>`` numbers per group, in group order.
+
+    The retired scheme numbered one ``fraction_<k>`` per additive term,
+    consecutively across all groups in group order (see the pre-migration
+    ``_build_fraction_param_number_map``). This reconstructs that numbering so
+    legacy value dicts can be located and migrated.
+    """
+    numbering: list[list[int]] = []
+    next_number = 1
+    for group in model.fraction_groups:
+        term_starts = model._fraction_group_term_starts(group)
+        group_numbers = list(range(next_number, next_number + len(term_starts)))
+        numbering.append(group_numbers)
+        next_number += len(term_starts)
+    return numbering
+
+
+def has_legacy_fraction_values(model: CompositeModel, values: Mapping[str, float]) -> bool:
+    """Return True when ``values`` carries old ``fraction_<k>`` keys for ``model``.
+
+    Only the numbers that the model's fraction groups would have used under the
+    retired positional scheme count — a stray ``fraction_9`` unrelated to any
+    group does not trigger migration.
+    """
+    for group_numbers in _legacy_fraction_numbering(model):
+        if any(f"fraction_{k}" in values for k in group_numbers):
+            return True
+    return False
+
+
+def migrate_legacy_fraction_values(
+    model: CompositeModel, values: Mapping[str, float]
+) -> dict[str, float]:
+    """Convert a legacy fraction value dict to the n-1 free-parameter scheme.
+
+    For each group whose legacy keys ``fraction_a..fraction_b`` are present (one
+    per term), compute the old normalized weights (clamp ≥ 0, divide by the sum;
+    equal weights when the sum ≤ 1e-30) and assign the first n-1 to the group's
+    new free parameters, dropping the last (now the derived remainder). All
+    non-fraction keys pass through untouched; consumed legacy keys are removed.
+    The model's structural :meth:`CompositeModel.to_dict` is unaffected — only
+    value dicts need migrating.
+    """
+    migrated = dict(values)
+    for group, group_numbers in zip(
+        model.fraction_groups, _legacy_fraction_numbering(model), strict=True
+    ):
+        legacy_keys = [f"fraction_{k}" for k in group_numbers]
+        if not any(key in migrated for key in legacy_keys):
+            continue
+        raw = [max(float(migrated.get(key, 0.0)), 0.0) for key in legacy_keys]
+        total = sum(raw)
+        if total <= 1e-30:
+            weights = [1.0 / float(len(raw))] * len(raw)
+        else:
+            weights = [value / total for value in raw]
+        # Assign the first n-1 normalized weights to the new free parameters;
+        # the last term is the derived remainder and gets no key.
+        term_starts = model._fraction_group_term_starts(group)
+        for idx, weight in zip(term_starts[:-1], weights[:-1], strict=True):
+            migrated[model._fraction_param_name(idx)] = weight
+        for key in legacy_keys:
+            migrated.pop(key, None)
+    return migrated

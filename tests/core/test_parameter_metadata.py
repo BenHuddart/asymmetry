@@ -28,6 +28,24 @@ def test_get_param_info_shape_factor_a_has_expected_defaults() -> None:
     assert info.description is not None
 
 
+def test_get_param_info_fraction_weight_name() -> None:
+    # f_<Component> fraction weights are synthesized (not registered): a
+    # component-labelled symbol, a [0, 1] floor, and a description.
+    info = get_param_info("f_Oscillatory")
+    assert info.plain == "f_Oscillatory"
+    assert info.latex == r"$f_{\mathrm{Oscillatory}}$"
+    assert info.default_min == 0.0
+    assert info.description == "Fractional weight of the Oscillatory term."
+
+
+def test_get_param_info_fraction_weight_disambiguated_name() -> None:
+    # A _<n> suffix merges into the subscript rather than double-subscripting.
+    info = get_param_info("f_Gaussian_2")
+    assert info.plain == "f_Gaussian_2"
+    assert info.latex == r"$f_{\mathrm{Gaussian},2}$"
+    assert info.default_min == 0.0
+
+
 def test_signed_baseline_params_have_no_lower_bound() -> None:
     # A_bg is a signed DC baseline of the asymmetry: a 2-group F–B transverse-
     # field asymmetry sits on a large negative offset, so a 0 lower bound would

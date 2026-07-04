@@ -6,6 +6,10 @@ import re
 from dataclasses import dataclass
 
 _INDEXED_PARAM_RE = re.compile(r"^(.+)_([0-9]+)$")
+# A fraction-group weight parameter is ``f_<ComponentName>`` (optionally with a
+# ``_<n>`` disambiguation suffix, handled by the indexed-variant split). The
+# component name is a CamelCase COMPONENTS key, so the leading char is a letter.
+_FRACTION_WEIGHT_RE = re.compile(r"^f_([A-Za-z][A-Za-z0-9_]*)$")
 # Names safe to wrap in $...$ for matplotlib mathtext: bare alphanumeric
 # symbols only. Free-text names (spaces, %, parentheses) and anything with
 # backslashes (a stray/incomplete control sequence still raises at draw
@@ -570,10 +574,35 @@ PARAM_INFO_REGISTRY = {
 _BUILTIN_PARAM_NAMES = frozenset(PARAM_INFO_REGISTRY)
 
 
+def _fraction_weight_param_info(base_name: str) -> ParamInfo | None:
+    """Return metadata for a ``f_<Component>`` fraction-weight parameter.
+
+    Fraction weights are synthesized per fraction group (see
+    :mod:`asymmetry.core.fitting.composite`) rather than registered, so their
+    metadata is built here: a component-labelled symbol, a ``[0, 1]`` floor, and
+    a description. Returns ``None`` for names that are not fraction weights.
+    """
+    match = _FRACTION_WEIGHT_RE.match(base_name)
+    if match is None:
+        return None
+    component = match.group(1)
+    return ParamInfo(
+        name=base_name,
+        plain=base_name,
+        unicode=base_name,
+        latex=rf"$f_{{\mathrm{{{component}}}}}$",
+        gle=rf"{{\it f}}_{{{component}}}",
+        default_min=0.0,
+        description=f"Fractional weight of the {component} term.",
+    )
+
+
 def get_param_info(name: str) -> ParamInfo:
     """Return metadata for a parameter name, including indexed variants."""
     base_name, index = split_parameter_name(name)
-    info = PARAM_INFO_REGISTRY.get(base_name)
+    info = _fraction_weight_param_info(base_name)
+    if info is None:
+        info = PARAM_INFO_REGISTRY.get(base_name)
     if info is None:
         # Mathtext-wrap the fallback only for clean symbol names. Free-text
         # quantities (e.g. the integral scan's "Integral asymmetry (%)")
