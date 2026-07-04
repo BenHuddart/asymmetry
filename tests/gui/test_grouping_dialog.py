@@ -2118,6 +2118,23 @@ def test_t0_manual_mode_enables_spin_and_dirties_draft(qapp: QApplication) -> No
     assert dialog._draft.t0_policy.value == 5
 
 
+def test_t0_from_file_shows_file_value_not_stored_override(qapp: QApplication) -> None:
+    """From-file display derives from histograms, not a stored/shifted payload t0.
+
+    An overridden run's payload can carry a manual t0 shift; "From file" must
+    still show (and on Apply, restore) the genuine file value so the shift can
+    be cleared (Copilot review, PR #177).
+    """
+    ds = _detector_t0_dataset()  # file t0 (max over groups) = 3
+    ds.run.grouping["t0_bin"] = 25  # stored manual/override shift
+    ds.run.grouping["effective_detector_t0_bins"] = [24, 25]
+    dialog = GroupingDialog([ds])
+    assert dialog._current_t0_mode() != "from_file" or dialog._t0_spin.value() == 3
+    dialog._set_t0_mode_combo("from_file")
+    dialog._apply_t0_mode_to_controls()
+    assert dialog._t0_spin.value() == 3
+
+
 def test_t0_from_file_spin_follows_preview_run(qapp: QApplication) -> None:
     """Switching the preview run refreshes the read-only from_file t0."""
     ds_a = _detector_t0_dataset(run_number=4601, detector_t0=(2, 3))  # file t0 = 3

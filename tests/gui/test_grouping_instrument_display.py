@@ -55,6 +55,11 @@ def test_empty_instrument_falls_back_to_detector_count() -> None:
     assert instrument_display_for_fingerprint(fp, [fp]) == "32 detectors"
 
 
+def test_empty_instrument_single_detector_is_singular() -> None:
+    fp = ProfileFingerprint(instrument="", histogram_count=1)
+    assert instrument_display_for_fingerprint(fp, [fp]) == "1 detector"
+
+
 def test_empty_instrument_and_no_count_is_unknown() -> None:
     """A wholly unidentified fingerprint reads as 'Unknown instrument'."""
     fp = ProfileFingerprint(instrument="", histogram_count=0)

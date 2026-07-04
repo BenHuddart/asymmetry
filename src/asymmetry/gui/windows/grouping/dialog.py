@@ -64,6 +64,7 @@ from asymmetry.core.transform import (
     apply_grouping,
     available_background_modes,
     calibrate_deadtime_from_histograms,
+    common_t0_for_groups,
     estimate_deadtime_from_histograms,
     excluded_detector_indices,
     filter_excluded_indices,
@@ -1555,11 +1556,30 @@ class GroupingDialog(QDialog):
             self._t0_mode_label.setText("Common t0 override applied to every run")
 
     def _seed_t0_spin_from_preview(self) -> None:
-        """Show the preview run's file-derived common t0 in the (read-only) spin."""
-        grouping = self._seed_source().grouping
+        """Show the preview run's file-derived common t0 in the (read-only) spin.
+
+        Derives the value from the run's own histograms and the current
+        forward/backward groups — never from the stored payload ``t0_bin``,
+        which can carry a manual/override shift (e.g. in override-editing
+        mode). "From file" must always display the file value, and selecting
+        it must genuinely clear any stored shift on Apply.
+        """
         max_bin = self._max_bin_index_for_reference_dataset()
         base = self._bin_index_base()
-        t0_internal = self._default_t0_bin(grouping, max_bin)
+        t0_internal = 0
+        if self._run is not None and self._run.histograms:
+            forward_idx = self._filtered_group_indices(int(self._forward_combo.currentData() or 1))
+            backward_idx = self._filtered_group_indices(
+                int(self._backward_combo.currentData() or 2)
+            )
+            n_hist = len(self._run.histograms)
+            forward_idx = [i for i in forward_idx if 0 <= i < n_hist]
+            backward_idx = [i for i in backward_idx if 0 <= i < n_hist]
+            if forward_idx or backward_idx:
+                t0_internal = common_t0_for_groups(self._run.histograms, forward_idx, backward_idx)
+            else:
+                t0_internal = max(h.t0_bin for h in self._run.histograms)
+        t0_internal = max(0, min(max_bin, int(t0_internal)))
         blocked = self._t0_spin.blockSignals(True)
         try:
             self._t0_spin.setValue(t0_internal + base)

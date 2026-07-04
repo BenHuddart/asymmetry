@@ -67,7 +67,8 @@ def instrument_display_for_fingerprint(
     count = int(fingerprint.histogram_count)
     if not display:
         if count > 0:
-            return f"{count} detectors"
+            noun = "detector" if count == 1 else "detectors"
+            return f"{count} {noun}"
         return "Unknown instrument"
 
     # Disambiguate only when a *different* fingerprint shares this display name.
