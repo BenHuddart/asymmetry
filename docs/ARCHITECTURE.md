@@ -54,6 +54,7 @@ asymmetry/
 │   │   ├── engine.py         # Fit driver: single-run & global
 │   │   ├── composite.py      # Composite A(t) builder primitives
 │   │   ├── fit_wizard.py     # Single-spectrum fit fingerprinting and model comparison
+│   │   ├── cross_group_roles.py    # AIC/AICc/BIC Global-vs-Local role suggestion for cross-group fits
 │   │   ├── grouped_time_domain.py  # Grouped-series fit engine
 │   │   ├── result_summary.py # Shared JSON-serialisable fit-result summary
 │   │   ├── models.py         # Built-in μSR fit functions
@@ -75,10 +76,11 @@ asymmetry/
 │   │   ├── frequency.py      # FrequencyFFT, FrequencyMaxEnt representations
 │   │   ├── series.py         # FitSeries — ordered member series + divergence tracking
 │   │   ├── trend_state.py    # TrendState dataclass for Fit Parameters panel state
+│   │   ├── global_fit_study.py # GlobalFitStudy — persisted named cross-group fit + staleness digest
 │   │   └── project_model.py  # ProjectModel — in-memory owner of representations + batches
 │   ├── project/        # Project persistence
 │   │   ├── __init__.py
-│   │   └── schema.py         # load_project, save_project, migrate_to_current (v1–v7)
+│   │   └── schema.py         # load_project, save_project, migrate_to_current (v1–v13)
 │   └── utils/          # Shared utilities
 │       ├── __init__.py
 │       ├── constants.py      # Physical constants (μ⁺ gyromagnetic ratio, etc.)
@@ -100,6 +102,9 @@ asymmetry/
 │   │   │   ├── global_tab.py  # GlobalFitTab + batch-seeding constants
 │   │   │   └── panel.py       # FitPanel container (hosts the two tabs)
 │   │   ├── fit_parameters_panel.py  # Parameter trending panel (pull-based, representation-aware)
+│   │   ├── cross_group_fit_dialog.py     # Cross-group Global/Local/Fixed role dialog (+ Suggest roles)
+│   │   ├── cross_group_config.py         # Widget-free config→global_fit_parameter_model bridge (shared by dialog + refit)
+│   │   ├── global_fit_setup_dialog.py    # Explicit setup dialog: parameter, series, x-axis, editable group variable
 │   │   ├── fit_function_builder.py  # Composite fit-function dialog
 │   │   ├── fourier_panel.py  # Fourier analysis controls
 │   │   ├── initial_values_dialog.py # Per-member initial-values editor for batch fits
@@ -119,7 +124,9 @@ asymmetry/
 │   │   ├── fit_wizard_window.py       # Guided single-spectrum fit wizard
 │   │   ├── global_fit_wizard_window.py # Guided batch/global fit wizard
 │   │   ├── multi_group_fit_window.py  # Grouped fit surface (Single + Batch tabs)
-│   │   ├── global_parameter_fit_window.py # Cross-group parameter-vs-x fit window
+│   │   ├── global_parameter_fit_window.py # Cross-group parameter-vs-x fit window (studies sidebar, grid, exports)
+│   │   ├── global_fit_window_helpers.py   # Widget-free value/table-export builders + CorrelationMatrixDialog for the fit window
+│   │   ├── global_fit_compare_dialog.py   # Read-only side-by-side comparison of two studies (Δχ²ᵣ/ΔAIC)
 │   │   ├── grouping_dialog.py         # Shared detector-grouping editor
 │   │   └── ...                        # detector_layout_dialog.py, run_info_dialog.py, simulate_dialog.py, etc.
 │   └── styles/                # BENCH design tokens, palette, and stylesheet (see below)
@@ -392,6 +399,63 @@ dialog with a profile editor: a draft `GroupingProfile` edited in place,
 a scope panel for release/reattach, and a debounced live-preview pane whose
 reduction runs on a `TaskRunner` worker thread per the threading invariant in
 `AGENTS.md`.
+
+### 3.7 Global Parameter Fit Studies
+
+The cross-group global parameter fit — "fit a trend parameter such as
+λ(B) at several temperatures with some parameters shared" (Wu *et al.*,
+arXiv:2502.00130) — is a first-class, persisted, and named entity rather than a
+single ephemeral result.
+
+**Core.** `asymmetry.core.fitting.parameter_models.global_fit_parameter_model`
+is the fitter: one `iminuit` problem over `N` `ParameterGroupData` snapshots,
+each model parameter assigned a role of Global (one shared value), Local (one
+value per group, named `{param}_{group}`), or Fixed. `CrossGroupFitResult`
+carries the shared/local/fixed `ParameterSet`s plus per-group χ², n-points, and
+the free-global correlation matrix, with canonical `to_dict()`/`from_dict()`.
+`asymmetry.core.fitting.cross_group_roles.suggest_cross_group_roles` recommends
+Global-vs-Local roles by a bounded (not `3^k`), deterministic AIC/AICc/BIC
+search — an all-global baseline, single "flip to local" refits, then a greedy
+beam accumulation — reusing the vocabulary of `global_fit_wizard`
+(`score_delta`/`total_variation`/`roughness`/`rationale`).
+`asymmetry.core.representation.global_fit_study.GlobalFitStudy` is the persisted
+entity: a `study_id`, name, parameter/x/group-variable keys and labels, the
+`ParameterGroupData` snapshot, the model, the dialog config (roles, bounds,
+windows, error mode), the `CrossGroupFitResult`, and an `input_digest`
+(`compute_group_input_digest`) used to detect that a study's inputs have drifted
+from the live trend data (**staleness** is recomputed at load time, never
+stored). Project schema **v13** adds a top-level `global_fit_studies` list;
+`_migrate_v12_to_v13` is purely additive (version bump plus an empty default
+for the new list). A legacy single-slot `last_cross_group_fit` payload is
+lifted into one named study on the GUI side at project load
+(`MainWindow._restore_global_fit_studies`, via
+`study_from_legacy_cross_group_payload`), and old projects still open.
+
+**GUI workflow.** Analysis ▸ *New global parameter fit…* (or the trend panel's
+*Global fit (N groups)…* button when ≥2 group buttons are selected) opens
+`gui/panels/global_fit_setup_dialog.py::GlobalFitSetupDialog` — parameter,
+series checklist, x-axis, and an editable **group variable** with per-group
+values (prefilled from inference but overridable, incl. custom columns).
+*Continue* opens `gui/panels/cross_group_fit_dialog.py::CrossGroupFitDialog`,
+which carries the per-parameter Global/Local/Fixed role table and a *Suggest
+roles* button that runs `suggest_cross_group_roles` off-thread and applies the
+recommendation. `gui/panels/cross_group_config.py` is the widget-free
+config→`global_fit_parameter_model` bridge shared by the dialog and the
+off-thread **Refit** path. On accept, `MainWindow._on_cross_group_fit_completed`
+creates or updates (in place, by deterministic batch id) a `GlobalFitStudy` in
+the MainWindow-owned registry (`_global_fit_studies`), persisted via schema v13,
+and displays it in `gui/windows/global_parameter_fit_window.py`. That window
+gained a studies sidebar (rename/duplicate/delete, stale badges), a grid Fig-3
+pane with per-panel χ²ᵣ chips and a component legend, a quality bar, a
+residual/pull toggle, a correlation-matrix view, table exports (TSV/CSV/LaTeX),
+an *Edit fit…* re-entry, custom-x labels, and a stale banner with *Refit*.
+`gui/windows/global_fit_window_helpers.py` holds its widget-free value/export
+builders and the `CorrelationMatrixDialog`;
+`gui/windows/global_fit_compare_dialog.py` is a read-only side-by-side
+comparison of two same-parameter studies (overlaid curves, Δχ²ᵣ/ΔAIC/AICc/BIC).
+The `_record_model_fit_results_series` bridge (each study result recorded as a
+trendable results series) and the `modelfit-<digest>` decoration keying are
+preserved.
 
 ---
 

@@ -2632,3 +2632,202 @@ def test_load_representation_series_without_global_names_reports_none(
     ]
     panel.load_representation_series([("batch-2", "Series 2", row_dicts)], select_id="batch-2")
     assert panel._global_params is None
+
+
+# ── Phase 4: setup entry point, button relabel, group-variable overrides ─────
+
+
+def _phase4_group(gid: str, name: str, temps: list[float], fields: list[float]) -> _GroupFitData:
+    rows = [
+        _FitRow(
+            run_number=i + 1,
+            run_label=str(i + 1),
+            field=f,
+            temperature=t,
+            values={"Lambda": 0.10 + 0.01 * i},
+            errors={"Lambda": 0.01},
+        )
+        for i, (t, f) in enumerate(zip(temps, fields, strict=True))
+    ]
+    return _GroupFitData(
+        group_id=gid,
+        group_name=name,
+        rows=rows,
+        global_params=None,
+        varying_params=["Lambda"],
+        inferred_x_key="field",
+        model_fits={},
+        plot_annotations=[],
+    )
+
+
+def test_model_fit_button_relabels_for_two_groups(qapp: QApplication) -> None:
+    panel = FitParametersPanel()
+    panel._group_fit_results = {
+        "g_a": _phase4_group("g_a", "Group A", [10.0, 10.0], [100.0, 200.0]),
+        "g_b": _phase4_group("g_b", "Group B", [20.0, 20.0], [100.0, 200.0]),
+    }
+    panel._active_group_id = "g_a"
+    panel._rebuild_group_buttons()
+
+    # One group selected → single-series label.
+    panel._set_selected_group_ids(["g_a"], emit=False)
+    panel._apply_group_selection_to_view(sync_active=False)
+    panel._refresh_model_fit_button_labels()
+    assert panel._y_controls["Lambda"].fit_button.text() == "Model Fit"
+
+    # Two groups selected → cross-group "Global fit (N groups)…" label.
+    panel._set_selected_group_ids(["g_a", "g_b"], emit=False)
+    panel._apply_group_selection_to_view(sync_active=False)
+    panel._refresh_model_fit_button_labels()
+    fit_button = panel._y_controls["Lambda"].fit_button
+    assert fit_button.text() == "Global fit (2 groups)…"
+    # Regression: this relabel happens well after _rebuild_y_controls fixed the
+    # column width from "Model Fit"/"Model Fit*" alone. "Global fit (2
+    # groups)…" is wider still, so the column must widen to match or the label
+    # clips (e.g. renders as "Global fit (2 gro").
+    assert panel._y_selector_table.columnWidth(1) >= fit_button.sizeHint().width()
+
+
+def test_setup_overrides_reach_parameter_group_data(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The setup dialog's per-group group-variable value replaces the inferred
+    orthogonal coordinate in the assembled ParameterGroupData."""
+    from asymmetry.gui.panels import fit_parameters_panel as panel_mod
+    from asymmetry.gui.panels.global_fit_setup_dialog import GlobalFitSetupResult
+
+    panel = FitParametersPanel()
+    panel._group_fit_results = {
+        "g_a": _phase4_group("g_a", "Group A", [10.0, 10.0], [100.0, 200.0]),
+        "g_b": _phase4_group("g_b", "Group B", [20.0, 20.0], [100.0, 200.0]),
+    }
+
+    # Stub the setup dialog: accept with explicit overrides that differ from the
+    # T-median inference (which would give 10 and 20).
+    setup_result = GlobalFitSetupResult(
+        parameter_name="Lambda",
+        x_key="field",
+        x_label="B (G)",
+        group_ids=["g_a", "g_b"],
+        group_variable_key="temperature",
+        group_variable_label="My T (K)",
+        group_variable_values={"g_a": 111.0, "g_b": 222.0},
+    )
+
+    class _SetupStub:
+        def __init__(self, *a, **k):
+            pass
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def result_data(self):
+            return setup_result
+
+    monkeypatch.setattr(panel_mod, "GlobalFitSetupDialog", _SetupStub, raising=False)
+    # Also patch the lazily-imported name inside open_global_fit_setup.
+    import asymmetry.gui.panels.global_fit_setup_dialog as setup_mod
+
+    monkeypatch.setattr(setup_mod, "GlobalFitSetupDialog", _SetupStub)
+
+    class _RecordingDialogStub:
+        captured_groups: list | None = None
+        captured_config: dict | None = None
+
+        def __init__(self, *, groups, **_kwargs):
+            type(self).captured_groups = groups
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def output(self):
+            model = panel_mod.ParameterCompositeModel(["Linear"], [])
+            result = panel_mod.CrossGroupFitResult(
+                success=True, chi_squared=1.0, reduced_chi_squared=1.0
+            )
+            config: dict = {"model": model.to_dict(), "parameter_rows": []}
+            type(self).captured_config = config
+            return SimpleNamespace(
+                model=model,
+                fit_result=result,
+                groups=type(self).captured_groups,
+                x_key="field",
+                fit_x_min=float("nan"),
+                fit_x_max=float("nan"),
+                config=config,
+            )
+
+    monkeypatch.setattr(panel_mod, "CrossGroupFitDialog", _RecordingDialogStub)
+
+    recorded: list = []
+    panel.cross_group_fit_completed.connect(
+        lambda param, groups, output: recorded.append((param, groups, output))
+    )
+
+    payload = panel.open_global_fit_setup(
+        preselected_group_ids=["g_a", "g_b"],
+        preselected_parameter="Lambda",
+        preselected_x_key="field",
+    )
+
+    assert payload is not None
+    captured = _RecordingDialogStub.captured_groups
+    assert captured is not None
+    by_id = {g.group_id: g for g in captured}
+    # Overrides replaced the inferred temperature medians (10 / 20).
+    assert by_id["g_a"].group_variable_value == 111.0
+    assert by_id["g_b"].group_variable_value == 222.0
+
+    # The output config carries the group_variable block for the study path.
+    assert recorded
+    _param, _groups, output = recorded[0]
+    gv = output.config["group_variable"]
+    assert gv["key"] == "temperature"
+    assert gv["label"] == "My T (K)"
+    assert gv["values"] == {"g_a": 111.0, "g_b": 222.0}
+
+
+# ── WP-A: data_revision (staleness-cache invalidation signal) ────────────────
+
+
+def test_data_revision_bumps_at_trend_input_choke_points(qapp: QApplication) -> None:
+    """The revision advances on ingest, clear, and a value-changing relink."""
+    panel = FitParametersPanel()
+    start = panel.data_revision
+
+    # load_representation_series is the host's pull entry point (series
+    # recorded/updated/deleted, representation change, membership toggle).
+    panel.load_representation_series(
+        [
+            (
+                "batch-1",
+                "S1",
+                [
+                    {
+                        "run_number": 1,
+                        "run_label": "1",
+                        "field": 100.0,
+                        "temperature": 10.0,
+                        "values": {"Lambda": 0.1},
+                        "errors": {"Lambda": 0.01},
+                        "custom_values": {"custom:c1": "5"},
+                    }
+                ],
+            )
+        ],
+        select_id="batch-1",
+    )
+    after_load = panel.data_revision
+    assert after_load > start
+
+    # A relink that changes a row's custom values bumps; a no-op relink does not.
+    panel.relink_custom_values({1: {"custom:c1": "9"}})
+    after_relink = panel.data_revision
+    assert after_relink > after_load
+    panel.relink_custom_values({1: {"custom:c1": "9"}})  # unchanged → no bump
+    assert panel.data_revision == after_relink
+
+    # clear() drops all rows — a trend-input change.
+    panel.clear()
+    assert panel.data_revision > after_relink

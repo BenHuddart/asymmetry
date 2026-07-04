@@ -24,6 +24,11 @@ from asymmetry.core.representation.factory import (
     representation_from_dict,
 )
 from asymmetry.core.representation.frequency import FrequencyFFT, FrequencyMaxEnt
+from asymmetry.core.representation.global_fit_study import (
+    GlobalFitStudy,
+    compute_group_input_digest,
+    study_from_legacy_cross_group_payload,
+)
 from asymmetry.core.representation.group import DataGroup
 from asymmetry.core.representation.naming import (
     composite_model_label,
@@ -58,6 +63,7 @@ __all__ = [
     "FitSlot",
     "FrequencyFFT",
     "FrequencyMaxEnt",
+    "GlobalFitStudy",
     "Representation",
     "RepresentationType",
     "TrendState",
@@ -67,8 +73,10 @@ __all__ = [
     "build_maxent_reconstruction_datasets",
     "canonical_model_matches",
     "composite_model_label",
+    "compute_group_input_digest",
     "default_series_label",
     "make_representation",
     "member_range",
     "representation_from_dict",
+    "study_from_legacy_cross_group_payload",
 ]

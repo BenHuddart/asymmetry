@@ -966,9 +966,21 @@ class ModelFitDialog(QDialog):
                 )
         fit_range.parameters = new_params
         fit_range.result = None
+        self._on_model_edited(idx)
 
         self._rebuild_ranges_ui()
         self._select_range(idx)
+
+    def _on_model_edited(self, idx: int) -> None:
+        """Hook: called after a range's model (component add/remove/edit) changes.
+
+        The base dialog already tracks fit state per-range via
+        ``fit_range.result`` (cleared just above), so it needs no extra
+        invalidation here. Subclasses that cache a fit result *outside* the
+        per-range model (e.g. ``CrossGroupFitDialog``'s ``self._result`` /
+        ``self._last_config``, which span the single shared range) override
+        this to drop that cache too.
+        """
 
     def _run_fit(self, idx: int) -> None:
         if self._fit_in_progress:

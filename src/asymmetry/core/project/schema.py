@@ -11,8 +11,16 @@ Compatibility policy
 * Migration functions are one-per-step and retained for at least one major schema revision.
 * Unknown top-level fields in a valid schema are preserved on load/save cycles.
 
-Current schema (version 12)
+Current schema (version 13)
 ---------------------------
+
+Version 13 adds a top-level ``global_fit_studies`` list: each entry is a
+serialized :class:`~asymmetry.core.representation.global_fit_study.GlobalFitStudy`
+(the persisted, named cross-group global parameter fit — "study" — that
+replaces the single-slot ``last_cross_group_fit`` the trend panel used to
+keep in its own panel state). Absent/empty in older files, mirroring the
+pattern used for other optional top-level lists (e.g. ``grouping_profiles``
+below); see :func:`_migrate_v12_to_v13`.
 
 Version 12 adds project-level named **grouping profiles**. The project carries a
 top-level ``grouping_profiles`` list (serialized
@@ -138,9 +146,9 @@ import json
 import math
 from pathlib import Path
 
-CURRENT_SCHEMA_VERSION: int = 12
+CURRENT_SCHEMA_VERSION: int = 13
 
-_SUPPORTED_VERSIONS: frozenset[int] = frozenset({1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12})
+_SUPPORTED_VERSIONS: frozenset[int] = frozenset({1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13})
 
 #: Fourier-state keys that describe the FFT generation recipe (recipe-only
 #: persistence carries these into each dataset's ``freq_fft`` representation).
@@ -238,6 +246,9 @@ def migrate_to_current(data: dict) -> dict:
         version = 11
     if version == 11:
         migrated = _migrate_v11_to_v12(migrated)
+        version = 12
+    if version == 12:
+        migrated = _migrate_v12_to_v13(migrated)
     return migrated
 
 
@@ -613,6 +624,24 @@ def _migrate_v11_to_v12(data: dict) -> dict:
 
     migrated["datasets"] = updated
     migrated["grouping_profiles"] = profiles
+    return migrated
+
+
+def _migrate_v12_to_v13(data: dict) -> dict:
+    """Migrate schema v12 project state to v13.
+
+    v13 adds a top-level ``global_fit_studies`` list — the persisted registry
+    of named cross-group global parameter fits (see
+    :class:`asymmetry.core.representation.global_fit_study.GlobalFitStudy`).
+    This is purely additive: pre-v13 projects carried at most one such fit,
+    single-slot, inside the trend panel's own serialized panel state (a key
+    this migration does not touch); it is left for the GUI-side migration
+    (a later phase) to lift into a study on first load, so this step is just
+    the version bump plus an empty default for the new list.
+    """
+    migrated = dict(data)
+    migrated["schema_version"] = 13
+    migrated.setdefault("global_fit_studies", [])
     return migrated
 
 

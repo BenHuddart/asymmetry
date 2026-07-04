@@ -56,11 +56,16 @@ Both write FitSeries instances into the same collection; they differ only in
 in the container. This is why a grouped fit and a global fit both appear as
 selectable series in the panel and trend through identical machinery.
 
-The **Global Parameter Fit window** is a *transient view*, not a third
-container. It displays one ephemeral cross-group fit result; its *decorations*
-(the per-parameter local model fits and free-floating plot annotations you add
-in the window) are stored inside the FitSeries it is viewing — keyed by batch
-id, in the series' ``extra`` — rather than under a separate project key. They
+The **Global Parameter Fit window** is a *view onto persisted studies*, not a
+third container. Each cross-group fit is a named **study** (a
+``GlobalFitStudy``) kept in a project-level registry, so several can sit side by
+side — rename, duplicate, or delete them from the window's studies sidebar, and
+select one to display it. A study records the group snapshot it was fit against
+and detects when the live trend data has drifted from it (a *stale* badge, with
+a **Refit** action). The window's *decorations* (the per-parameter local model
+fits and free-floating plot annotations you add in the window) are stored inside
+the FitSeries it is viewing — keyed by batch id, in the series' ``extra`` —
+rather than under a separate project key. They
 therefore travel with the data they annotate and reappear whenever the window
 shows that fit again, including across a project save/reload, and can no longer
 be orphaned when the fit is re-run. View *preferences* (log axes, plot mode,

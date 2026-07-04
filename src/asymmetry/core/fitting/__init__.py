@@ -11,6 +11,12 @@ from asymmetry.core.fitting.composite_parameters import (
     FunctionSpec,
     validate_composite_expression,
 )
+from asymmetry.core.fitting.cross_group_roles import (
+    CrossGroupCandidate,
+    CrossGroupParameterRecommendation,
+    CrossGroupRoleRecommendation,
+    suggest_cross_group_roles,
+)
 from asymmetry.core.fitting.engine import (
     AsymmetryScaleWarning,
     FitCancelledError,
@@ -158,6 +164,10 @@ __all__ = [
     "GlobalCandidateAssessment",
     "GlobalFitWizardCandidatePortfolio",
     "GlobalFitWizardRecommendation",
+    "CrossGroupCandidate",
+    "CrossGroupParameterRecommendation",
+    "CrossGroupRoleRecommendation",
+    "suggest_cross_group_roles",
     "GROUP_NUISANCE_PARAMS",
     "GROUPED_SERIES_RELATIONSHIPS",
     "GROUPED_SERIES_SEEDING",

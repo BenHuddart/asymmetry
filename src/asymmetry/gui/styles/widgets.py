@@ -298,6 +298,33 @@ def apply_param_table_header_font(table: QTableWidget) -> None:
     table.horizontalHeader().setFont(header_font())
 
 
+def widest_button_width(button: QPushButton, *labels: str) -> int:
+    """Return the widest ``sizeHint().width()`` ``button`` would need for ``labels``.
+
+    Per-row action buttons in a table cell (e.g. "Model Fit" / "Model Fit*" /
+    "Global fit (N groups)…") can be relabeled after the column width was last
+    set — a plain ``ResizeToContents`` column only measures whichever label was
+    current *at layout time*, and a later, wider relabel then clips. Callers
+    that own a real, already-styled button should probe it with every label the
+    row can ever show (including states set well after construction) and use
+    the maximum as the column's minimum/fixed width, so the widest state always
+    fits regardless of font scaling or style padding.
+
+    This mutates and restores ``button``'s text; call it with the row's real
+    button (not a throwaway probe) so the measured ``sizeHint`` reflects the
+    same style/font the button will actually render with.
+    """
+    original_text = button.text()
+    try:
+        width = 0
+        for label in labels:
+            button.setText(label)
+            width = max(width, button.sizeHint().width())
+        return width
+    finally:
+        button.setText(original_text)
+
+
 # ── Segmented toolbar / toggle-button QSS ────────────────────────────────────
 
 

@@ -404,8 +404,26 @@ class FitParametersPanel(QWidget):
         """Return the most recent cross-group fit payload, if available."""
         return self._last_cross_group_fit
 
+    @property
+    def data_revision(self) -> int:
+        """Monotonic revision of the panel's trend inputs (see ``_data_revision``)."""
+        return self._data_revision
+
+    def _bump_data_revision(self) -> None:
+        """Advance :attr:`data_revision` — a trend input changed."""
+        self._data_revision += 1
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+
+        #: Monotonic counter bumped at every trend-input choke point (series
+        #: recorded/updated/deleted via :meth:`load_representation_series` /
+        #: :meth:`set_fit_results`, membership toggles — routed through
+        #: ``load_representation_series`` by the host — and custom-value relinks).
+        #: The MainWindow keys its per-study staleness cache on
+        #: ``(study.updated, data_revision)`` so a rebuild that changes nothing the
+        #: assembly reads reuses the cached verdict instead of reassembling groups.
+        self._data_revision: int = 0
 
         self._rows: list[_FitRow] = []
         self._varying_params: list[str] = []
@@ -792,6 +810,7 @@ class FitParametersPanel(QWidget):
         self._refresh_group_button_styles()
 
     def clear(self) -> None:
+        self._bump_data_revision()
         self._rows = []
         self._varying_params = []
         self._global_params = None
@@ -877,7 +896,14 @@ class FitParametersPanel(QWidget):
             "group_fit_results": self._serialize_group_fit_results(),
             "active_group_id": self._active_group_id,
             "selected_group_ids": self._selected_group_ids_from_buttons(),
-            "last_cross_group_fit": self._serialize_last_cross_group_fit(),
+            # The single-slot cross-group fit (``last_cross_group_fit``) is no
+            # longer written here: cross-group fits are now persisted as a
+            # first-class studies registry owned by MainWindow (schema v13
+            # ``global_fit_studies``). A pre-v13 project's ``last_cross_group_fit``
+            # is still *read* on load and migrated into a study — see
+            # ``MainWindow._restore_global_fit_studies`` — so ``_deserialize_last_
+            # cross_group_fit`` and the ``last_cross_group_fit`` property are kept
+            # for that legacy path, and the per-config seeds still round-trip.
             "cross_group_fit_configs": self._serialize_cross_group_fit_configs(),
         }
 
@@ -1137,6 +1163,8 @@ class FitParametersPanel(QWidget):
         group_id: str | None = None,
         group_name: str | None = None,
     ) -> None:
+        # A fresh fit's results become new trend rows — invalidate staleness.
+        self._bump_data_revision()
         self._sync_active_group_state()
         rows: list[_FitRow] = []
 
@@ -1265,6 +1293,11 @@ class FitParametersPanel(QWidget):
             set it overrides the "keep prior selection / fall back to newest"
             default, so a freshly-recorded series is surfaced immediately.
         """
+        # This is the host's pull entry point after a series is recorded, updated
+        # or deleted, after a representation change, and after a membership toggle
+        # (via _refresh_trend_panel); each rebuilds the rows the cross-group
+        # assembly reads, so the study-staleness cache must invalidate.
+        self._bump_data_revision()
         self._sync_active_group_state()
 
         # Preserve any model-fit / composite-param / annotation state for
@@ -1608,6 +1641,9 @@ class FitParametersPanel(QWidget):
         # refer to the newly clicked group while self._rows still contains the
         # previous group's data.
         self._apply_group_selection_to_view(sync_active=False)
+        # Relabel the per-row fit buttons to reflect single-series vs cross-group
+        # (Global fit) mode now that the selection count may have changed.
+        self._refresh_model_fit_button_labels()
         # Notify listeners (e.g. main window → data-browser highlight).
         if self._active_group_id is not None:
             self.series_selection_changed.emit(self._active_group_id)
@@ -3029,6 +3065,8 @@ class FitParametersPanel(QWidget):
                 changed = True
         if not changed:
             return
+        # A custom column used as the trend abscissa changed the assembly inputs.
+        self._bump_data_revision()
         # Keep the active group's snapshot in step with the mutated rows so a
         # later view rebuild (group switch / re-plot) doesn't resurrect stale
         # values, then redraw if a custom/Angle column is the live abscissa.
@@ -3292,7 +3330,19 @@ class FitParametersPanel(QWidget):
         self._y_selector_table.setMaximumHeight(height)
 
     def _refresh_model_fit_button_labels(self) -> None:
+        # When ≥2 group buttons are selected the per-row button drives a
+        # cross-group *global* fit instead of a single-series model fit, so it
+        # relabels to make that mode obvious (Phase 4). One (or zero) group
+        # selected keeps the single-series "Model Fit" / "Model Fit*" labels.
+        n_groups = len(self._selected_group_ids_from_buttons())
         for name, controls in self._y_controls.items():
+            if n_groups >= 2:
+                controls.fit_button.setText(f"Global fit ({n_groups} groups)…")
+                controls.fit_button.setToolTip(
+                    "Fit this parameter jointly across the selected series "
+                    "(shared / per-series parameters)."
+                )
+                continue
             fit = self._model_fits.get(name)
             if fit is not None and fit.active and self._has_successful_fit_curve(fit):
                 controls.fit_button.setText("Model Fit*")
@@ -3300,6 +3350,19 @@ class FitParametersPanel(QWidget):
             else:
                 controls.fit_button.setText("Model Fit")
                 controls.fit_button.setToolTip("")
+        # The relabel above can widen the button past the column width that was
+        # fixed in _rebuild_y_controls (which only ever saw "Model Fit"/"Model
+        # Fit*") — "Global fit (N groups)…" is wider still. Re-pin the column to
+        # whatever the buttons need *now*, in their post-relabel state, so the
+        # text never clips (round-10 regression: column width was set once at
+        # populate time and never revisited on a later relabel).
+        if self._y_controls:
+            fit_column_width = max(
+                max(controls.fit_button.minimumWidth(), controls.fit_button.sizeHint().width())
+                for controls in self._y_controls.values()
+            )
+            if fit_column_width > self._y_selector_table.columnWidth(1):
+                self._y_selector_table.setColumnWidth(1, fit_column_width)
 
     def _has_successful_fit_curve(self, fit: ParameterModelFit) -> bool:
         for fit_range in fit.ranges:
@@ -3814,9 +3877,13 @@ class FitParametersPanel(QWidget):
         ]
 
         if len(selected_groups) >= 2:
-            payload = self._run_cross_group_model_fit(param_name, selected_groups)
-            if payload is not None:
-                self._last_cross_group_fit = payload
+            # Cross-group path: route through the explicit setup dialog, prefilled
+            # with the current selection / parameter / x-key (Phase 4).
+            self.open_global_fit_setup(
+                preselected_group_ids=selected_group_ids,
+                preselected_parameter=param_name,
+                preselected_x_key=self._effective_x_key(),
+            )
             return
 
         if not self._rows:
@@ -3875,36 +3942,101 @@ class FitParametersPanel(QWidget):
         self._refresh_model_fit_button_labels()
         self._refresh_plot()
 
-    def _run_cross_group_model_fit(
+    def assemble_cross_group_groups(
         self,
         param_name: str,
-        selected_groups: list[_GroupFitData],
-    ) -> dict[str, object] | None:
-        if not selected_groups:
-            return None
+        x_key: str,
+        group_ids: list[str],
+        *,
+        group_variable_overrides: dict[str, float] | None = None,
+        group_order: list[str] | None = None,
+    ) -> list[ParameterGroupData] | None:
+        """Assemble ``ParameterGroupData`` for a cross-group fit from live rows.
 
-        x_key = self._effective_x_key()
+        Resolves *group_ids* against the panel's live group registry, then
+        delegates to :meth:`_assemble_cross_group_from_data`. This is the single
+        source of truth the staleness digest and a study Refit use, so they see
+        exactly the fitting path's data. Returns ``None`` when any id is missing
+        from the registry (a deleted source series) or a group lacks the fitted
+        parameter for an included member; a group with fewer than two valid
+        points is dropped, so the list may be shorter than *group_ids*.
+
+        ``group_variable_overrides`` (Phase 4) replaces the inferred per-group
+        orthogonal coordinate with the user's explicit setup values; when a group
+        id is absent from it the inference is used, so a study built before
+        Phase 4 (no overrides) keeps the same digest. ``group_order`` orders the
+        output by the setup's checklist order rather than the registry order.
+        """
+        groups: list[_GroupFitData] = []
+        for gid in group_ids:
+            group = self._group_fit_results.get(str(gid))
+            if group is None:
+                return None  # a source series the study was built from is gone
+            groups.append(group)
+        return self._assemble_cross_group_from_data(
+            param_name,
+            x_key,
+            groups,
+            group_variable_overrides=group_variable_overrides,
+            group_order=group_order,
+        )
+
+    def _assemble_cross_group_from_data(
+        self,
+        param_name: str,
+        x_key: str,
+        groups: list[_GroupFitData],
+        *,
+        group_variable_overrides: dict[str, float] | None = None,
+        group_order: list[str] | None = None,
+    ) -> list[ParameterGroupData] | None:
+        """Build ``ParameterGroupData`` from live ``_GroupFitData`` objects.
+
+        For each group it keeps only the members the user left in the trend
+        (``include_in_trend``, mirroring :meth:`_included_trend_rows`), sorts
+        them by the abscissa, and applies the same y/σ fallback and per-group
+        orthogonal coordinate the dialog path used. Returns ``None`` when a group
+        does not carry ``param_name`` for every included member; a group with
+        fewer than two valid points is dropped.
+
+        ``group_variable_overrides`` maps ``group_id`` → explicit group-variable
+        value; a group present there uses that value instead of the inference.
+        ``group_order`` (a list of group ids) reorders the assembled output so a
+        setup dialog's checklist order is honoured (groups not listed keep their
+        original relative order at the end).
+        """
+        if group_order:
+            order = {gid: i for i, gid in enumerate(group_order)}
+            groups = sorted(
+                groups,
+                key=lambda g: order.get(g.group_id, len(order) + 1),
+            )
+        overrides = group_variable_overrides or {}
         group_payload: list[ParameterGroupData] = []
-        for group in selected_groups:
-            rows = sorted(group.rows, key=lambda r: self._x_value(r, x_key))
-            if not rows:
+        for group in groups:
+            rows = sorted(
+                (r for r in group.rows if r.include_in_trend),
+                key=lambda r: self._x_value(r, x_key),
+            )
+            if len(rows) < 2:
                 continue
             if any(param_name not in row.values for row in rows):
-                QMessageBox.information(
-                    self,
-                    "Cross-group fit",
-                    f"Selected groups do not all contain fitted values for '{param_name}'.",
-                )
                 return None
             x_vals = np.array([self._x_value(r, x_key) for r in rows], dtype=float)
             y_vals = np.array([row.values.get(param_name, np.nan) for row in rows], dtype=float)
             y_err = np.array([row.errors.get(param_name, np.nan) for row in rows], dtype=float)
+            if np.count_nonzero(np.isfinite(y_vals)) < 2:
+                continue
             invalid_err = ~np.isfinite(y_err) | (y_err <= 0)
             if np.any(invalid_err):
                 finite = np.abs(y_vals[np.isfinite(y_vals)])
                 fallback = max(float(np.nanmedian(finite)) * 0.02, 1e-9) if finite.size else 1e-3
                 y_err = y_err.copy()
                 y_err[invalid_err] = fallback
+            if group.group_id in overrides:
+                gv_value = float(overrides[group.group_id])
+            else:
+                gv_value = self._group_variable_value_for_rows(rows, x_key)
             group_payload.append(
                 ParameterGroupData(
                     group_id=group.group_id,
@@ -3912,18 +4044,116 @@ class FitParametersPanel(QWidget):
                     x=x_vals,
                     y=y_vals,
                     yerr=y_err,
-                    group_variable_value=self._group_variable_value_for_rows(rows, x_key),
+                    group_variable_value=gv_value,
                     # Per-point x-uncertainty for the effective-variance option —
                     # only present (non-None) when the abscissa is a fitted param.
                     xerr=self._x_error_array(rows, x_key),
                 )
             )
+        return group_payload
+
+    def open_global_fit_setup(
+        self,
+        *,
+        preselected_group_ids: list[str] | None = None,
+        preselected_parameter: str | None = None,
+        preselected_x_key: str | None = None,
+    ) -> dict[str, object] | None:
+        """Open the explicit global-fit setup dialog and run the resulting fit.
+
+        The single entry point for both trend-panel triggers (the relabelled
+        per-row "Global fit (N groups)…" button) and the MainWindow's Analysis ▸
+        "New global parameter fit…" action. On accept it routes into
+        :meth:`_run_cross_group_model_fit` with the setup's explicit group order,
+        group-variable key/label and per-group values.
+        """
+        from asymmetry.gui.panels.global_fit_setup_dialog import GlobalFitSetupDialog
+
+        setup_data = self.global_fit_setup_data()
+        if len(setup_data.series) < 2:
+            QMessageBox.information(
+                self,
+                "Global parameter fit",
+                "Load at least two trend series before setting up a global parameter fit.",
+            )
+            return None
+
+        dialog = GlobalFitSetupDialog(
+            setup_data,
+            preselected_group_ids=preselected_group_ids,
+            preselected_parameter=preselected_parameter,
+            preselected_x_key=preselected_x_key,
+            parent=self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        result = dialog.result_data()
+        if result is None:
+            return None
+
+        selected_groups = [
+            self._group_fit_results[gid]
+            for gid in result.group_ids
+            if gid in self._group_fit_results
+        ]
+        if len(selected_groups) < 2:
+            return None
+
+        payload = self._run_cross_group_model_fit(
+            result.parameter_name,
+            selected_groups,
+            x_key_override=result.x_key,
+            group_variable_key=result.group_variable_key,
+            group_variable_label=result.group_variable_label,
+            group_variable_values=dict(result.group_variable_values),
+            group_order=list(result.group_ids),
+        )
+        if payload is not None:
+            self._last_cross_group_fit = payload
+        return payload
+
+    def _run_cross_group_model_fit(
+        self,
+        param_name: str,
+        selected_groups: list[_GroupFitData],
+        *,
+        x_key_override: str | None = None,
+        group_variable_key: str | None = None,
+        group_variable_label: str | None = None,
+        group_variable_values: dict[str, float] | None = None,
+        group_order: list[str] | None = None,
+    ) -> dict[str, object] | None:
+        if not selected_groups:
+            return None
+
+        x_key = x_key_override if x_key_override is not None else self._effective_x_key()
+        # The selected groups are live ``_GroupFitData`` objects from the group
+        # buttons, so assemble from them directly (they may not yet be looked up
+        # by id — the completeness/None case surfaces the same message as before).
+        # Setup-dialog choices (Phase 4) supply the group order and the per-group
+        # group-variable values that replace the T↔B inference.
+        group_payload = self._assemble_cross_group_from_data(
+            param_name,
+            x_key,
+            selected_groups,
+            group_variable_overrides=group_variable_values,
+            group_order=group_order,
+        )
+        if group_payload is None:
+            QMessageBox.information(
+                self,
+                "Cross-group fit",
+                f"Selected groups do not all contain fitted values for '{param_name}'.",
+            )
+            return None
 
         if len(group_payload) < 2:
             QMessageBox.information(
                 self,
                 "Cross-group fit",
-                "Need at least two selected groups with valid points for cross-group fitting.",
+                "Need at least two selected groups with valid points for cross-group "
+                "fitting. Members excluded from the trend (unchecked Trend column) do "
+                "not count toward a group's points.",
             )
             return None
 
@@ -3959,6 +4189,27 @@ class FitParametersPanel(QWidget):
         )
 
         fitted_groups = output.groups if output.groups else group_payload
+
+        # Carry the setup dialog's explicit group-variable choice in the output
+        # config under "group_variable" so the study (via
+        # ``_on_cross_group_fit_completed`` → ``_upsert_global_fit_study``) prefers
+        # it over the T↔B inference. Values are keyed by the *fitted* group ids so
+        # a Refit that reassembles groups can re-apply the same overrides. Only
+        # written when the setup path supplied a choice — the legacy quick path
+        # (no explicit key) leaves the config unchanged so old digests match.
+        if isinstance(output.config, dict) and group_variable_key is not None:
+            fitted_ids = {g.group_id for g in fitted_groups}
+            values = {
+                str(gid): float(v)
+                for gid, v in (group_variable_values or {}).items()
+                if str(gid) in fitted_ids
+            }
+            output.config["group_variable"] = {
+                "key": str(group_variable_key),
+                "label": str(group_variable_label or ""),
+                "values": values,
+                "order": [str(g.group_id) for g in fitted_groups],
+            }
 
         payload: dict[str, object] = {
             "parameter_name": param_name,
@@ -4018,6 +4269,128 @@ class FitParametersPanel(QWidget):
             return float(np.nanmedian(finite_f))
 
         return float(rows[0].run_number)
+
+    def _group_variable_value_for_gv_key(self, rows: list[_FitRow], gv_key: str) -> float:
+        """Prefill value for a chosen group-variable key over a group's rows.
+
+        ``temperature``/``field`` take the median member value; ``run`` the
+        median run number; a ``custom:<id>`` (or Angle) column takes the per-group
+        median of the numeric cell values, falling back to the first non-empty
+        cell coerced to a float, else 0. This is the setup dialog's prefill only —
+        the user may edit it — so a missing/empty column reads as 0 rather than
+        raising.
+        """
+        if not rows:
+            return 0.0
+        if gv_key == "temperature":
+            vals = np.asarray([r.temperature for r in rows], dtype=float)
+        elif gv_key == "field":
+            vals = np.asarray([r.field for r in rows], dtype=float)
+        elif gv_key == "run":
+            vals = np.asarray([float(r.run_number) for r in rows], dtype=float)
+        else:
+            # custom:<id> / angle column: coerce each cell to a numeric abscissa.
+            numeric = np.asarray(
+                [_coerce_abscissa(r.custom_values.get(gv_key, "")) for r in rows],
+                dtype=float,
+            )
+            finite = numeric[np.isfinite(numeric)]
+            if finite.size:
+                return float(np.nanmedian(finite))
+            return 0.0
+        finite = vals[np.isfinite(vals)]
+        return float(np.nanmedian(finite)) if finite.size else 0.0
+
+    def global_fit_setup_data(self):
+        """Plain-data snapshot of everything the setup dialog needs (Phase 4).
+
+        Returns a :class:`GlobalFitSetupData`: the loaded trend series (id, name,
+        member count, fitted-parameter set), the same x-axis options the trend
+        panel's X selector offers, the group-variable options
+        (temperature/field/run + every custom column), and callables the dialog
+        uses to prefill the group-variable default key/value/label. Widget-free
+        beyond reading the panel's own state, so the dialog can be unit-tested
+        against a hand-built snapshot.
+        """
+        from asymmetry.gui.panels.global_fit_setup_dialog import (
+            GlobalFitSetupData,
+            GlobalFitSetupSeries,
+        )
+
+        series: list[GlobalFitSetupSeries] = []
+        for group in sorted(self._group_fit_results.values(), key=lambda g: g.group_name.lower()):
+            param_names = tuple(sorted({p for r in group.rows for p in r.values}))
+            series.append(
+                GlobalFitSetupSeries(
+                    group_id=group.group_id,
+                    group_name=group.group_name,
+                    member_count=len(group.rows),
+                    param_names=param_names,
+                )
+            )
+
+        # X-axis options — the fixed run-level axes, the Angle field, trendable
+        # params, then custom columns — carrying their x-key as the second tuple
+        # element (mirrors _rebuild_x_axis_combo / _effective_x_key).
+        x_options: list[tuple[str, str]] = [
+            ("B (G)", "field"),
+            ("T (K)", "temperature"),
+            ("Run", "run"),
+        ]
+        if self._angle_x_field is not None:
+            x_options.append((self._angle_x_field[0], self._angle_x_field[1]))
+        for name in self._display_y_parameters():
+            x_options.append((format_param_label(name), f"param:{name}"))
+        for label, key in self._custom_x_fields:
+            x_options.append((str(label), str(key)))
+
+        # Group-variable options — the run-level coordinates plus every custom
+        # column (a custom column is a plausible orthogonal group coordinate).
+        gv_options: list[tuple[str, str]] = [
+            ("Temperature", "temperature"),
+            ("Field", "field"),
+            ("Run", "run"),
+        ]
+        for label, key in self._custom_x_fields:
+            gv_options.append((str(label), str(key)))
+
+        def _default_gv_key(x_key: str) -> str:
+            return self._group_variable_for_x_key_default(x_key)
+
+        def _gv_value(group_id: str, gv_key: str) -> float:
+            group = self._group_fit_results.get(str(group_id))
+            if group is None:
+                return 0.0
+            rows = [r for r in group.rows if r.include_in_trend] or list(group.rows)
+            return self._group_variable_value_for_gv_key(rows, gv_key)
+
+        def _gv_label(gv_key: str) -> str:
+            defaults = {
+                "temperature": "T (K)",
+                "field": "B (G)",
+                "run": "Run",
+            }
+            if gv_key in defaults:
+                return defaults[gv_key]
+            return self._custom_x_labels().get(gv_key, gv_key)
+
+        return GlobalFitSetupData(
+            series=tuple(series),
+            x_key_options=tuple(x_options),
+            group_variable_options=tuple(gv_options),
+            default_group_variable_key=_default_gv_key,
+            group_variable_value=_gv_value,
+            group_variable_label=_gv_label,
+        )
+
+    @staticmethod
+    def _group_variable_for_x_key_default(x_key: str) -> str:
+        """Inference default group-variable key for an x-key (field↔temp)."""
+        if x_key == "field":
+            return "temperature"
+        if x_key == "temperature":
+            return "field"
+        return "run"
 
     def _build_inherited_cross_group_config(
         self,

@@ -1868,6 +1868,87 @@ class ParameterGroupData:
     #: effective-variance fit when the abscissa is itself a fitted parameter.
     xerr: NDArray[np.float64] | None = None
 
+    def to_dict(self) -> dict:
+        """Canonical, JSON-safe serialization (numpy arrays -> lists)."""
+        return {
+            "group_id": self.group_id,
+            "group_name": self.group_name,
+            "x": np.asarray(self.x, dtype=float).tolist(),
+            "y": np.asarray(self.y, dtype=float).tolist(),
+            "yerr": np.asarray(self.yerr, dtype=float).tolist(),
+            "group_variable_value": float(self.group_variable_value),
+            "xerr": (None if self.xerr is None else np.asarray(self.xerr, dtype=float).tolist()),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, object]) -> ParameterGroupData:
+        """Tolerant deserialization: missing arrays default to empty."""
+        raw_xerr = data.get("xerr")
+        xerr = None if raw_xerr is None else np.asarray(raw_xerr, dtype=float)
+        return cls(
+            group_id=str(data.get("group_id", "")),
+            group_name=str(data.get("group_name", "")),
+            x=np.asarray(data.get("x", []), dtype=float),
+            y=np.asarray(data.get("y", []), dtype=float),
+            yerr=np.asarray(data.get("yerr", []), dtype=float),
+            group_variable_value=float(data.get("group_variable_value", 0.0)),
+            xerr=xerr,
+        )
+
+
+def _parameter_set_to_dicts(parameters: ParameterSet) -> list[dict]:
+    """Serialize a :class:`ParameterSet` as a list of plain dicts.
+
+    Matches the ``{name, value, min, max, fixed}`` shape used throughout the
+    GUI's project-state serialization (e.g.
+    ``fit_parameters_panel._serialize_group_fit_results`` and
+    ``global_parameter_fit_window._serialize_local_model_fits``), so callers
+    that already speak that shape can round-trip through either place.
+    """
+    return [
+        {
+            "name": p.name,
+            "value": float(p.value),
+            "min": float(p.min),
+            "max": float(p.max),
+            "fixed": bool(p.fixed),
+        }
+        for p in parameters
+    ]
+
+
+def _parameter_set_from_dicts(entries: object) -> ParameterSet:
+    """Tolerant inverse of :func:`_parameter_set_to_dicts`.
+
+    Skips malformed entries (missing name, non-numeric value/min/max) rather
+    than raising, so a legacy or hand-edited payload never crashes project
+    load.
+    """
+    pset = ParameterSet()
+    if not isinstance(entries, (list, tuple)):
+        return pset
+    for entry in entries:
+        if not isinstance(entry, Mapping):
+            continue
+        name = entry.get("name")
+        if not isinstance(name, str) or not name:
+            continue
+        try:
+            value = float(entry.get("value", 0.0))
+        except (TypeError, ValueError):
+            continue
+        try:
+            p_min = float(entry.get("min", -float("inf")))
+        except (TypeError, ValueError):
+            p_min = -float("inf")
+        try:
+            p_max = float(entry.get("max", float("inf")))
+        except (TypeError, ValueError):
+            p_max = float("inf")
+        fixed = bool(entry.get("fixed", False))
+        pset.add(Parameter(name=name, value=value, min=p_min, max=p_max, fixed=fixed))
+    return pset
+
 
 @dataclass
 class CrossGroupFitResult:
@@ -1887,6 +1968,160 @@ class CrossGroupFitResult:
     error_mode: str = ErrorMode.COLUMN.value
     #: Number of points that entered the fit across all groups (0 if unknown).
     n_points: int = 0
+    #: Per-group χ², keyed by ``group_id``. Computed from the same masked/
+    #: windowed residuals (and xerr effective-variance term, when active) that
+    #: the joint cost function used, so ``sum(per_group_chi_squared.values())
+    #: == chi_squared``. Under SCATTER error mode this is reported on the
+    #: *pre-rescale* basis — the same basis ``chi_squared`` itself uses (the
+    #: rescale only touches parameter uncertainties, never the fitted χ²).
+    per_group_chi_squared: dict[str, float] = field(default_factory=dict)
+    #: Number of points that entered the fit for each group (post mask/window).
+    per_group_n_points: dict[str, int] = field(default_factory=dict)
+    #: ``(names, matrix)`` of free GLOBAL parameter correlations derived from
+    #: the Minuit covariance (``corr_ij = cov_ij / sqrt(cov_ii * cov_jj)``).
+    #: ``None`` when unavailable: fewer than two free global parameters, a
+    #: failed fit, or no covariance from Minuit.
+    global_correlations: tuple[list[str], list[list[float]]] | None = None
+
+    def to_dict(self) -> dict:
+        """Canonical, JSON-safe serialization.
+
+        ``ParameterSet``\\ s serialize as lists of ``{name, value, min, max,
+        fixed}`` dicts (see :func:`_parameter_set_to_dicts`), matching the
+        shape already used by the GUI's project-state serializers.
+        """
+        return {
+            "success": bool(self.success),
+            "chi_squared": float(self.chi_squared),
+            "reduced_chi_squared": float(self.reduced_chi_squared),
+            "global_parameters": _parameter_set_to_dicts(self.global_parameters),
+            "local_parameters": {
+                gid: _parameter_set_to_dicts(pset) for gid, pset in self.local_parameters.items()
+            },
+            "fixed_parameters": _parameter_set_to_dicts(self.fixed_parameters),
+            "global_uncertainties": {
+                name: float(err) for name, err in self.global_uncertainties.items()
+            },
+            "local_uncertainties": {
+                gid: {name: float(err) for name, err in unc.items()}
+                for gid, unc in self.local_uncertainties.items()
+            },
+            "message": self.message,
+            "error_mode": self.error_mode,
+            "n_points": int(self.n_points),
+            "per_group_chi_squared": {
+                gid: float(val) for gid, val in self.per_group_chi_squared.items()
+            },
+            "per_group_n_points": {gid: int(val) for gid, val in self.per_group_n_points.items()},
+            "global_correlations": (
+                None
+                if self.global_correlations is None
+                else [
+                    list(self.global_correlations[0]),
+                    [list(row) for row in self.global_correlations[1]],
+                ]
+            ),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, object]) -> CrossGroupFitResult:
+        """Tolerant deserialization: missing/malformed keys fall back to
+        empty defaults rather than raising, so a legacy payload (recorded
+        before these fields existed) still loads.
+        """
+        local_parameters: dict[str, ParameterSet] = {}
+        raw_local_parameters = data.get("local_parameters", {})
+        if isinstance(raw_local_parameters, Mapping):
+            for gid, entries in raw_local_parameters.items():
+                local_parameters[str(gid)] = _parameter_set_from_dicts(entries)
+
+        local_uncertainties: dict[str, dict[str, float]] = {}
+        raw_local_uncertainties = data.get("local_uncertainties", {})
+        if isinstance(raw_local_uncertainties, Mapping):
+            for gid, unc in raw_local_uncertainties.items():
+                if not isinstance(unc, Mapping):
+                    continue
+                parsed: dict[str, float] = {}
+                for name, err in unc.items():
+                    try:
+                        parsed[str(name)] = float(err)
+                    except (TypeError, ValueError):
+                        continue
+                local_uncertainties[str(gid)] = parsed
+
+        global_uncertainties: dict[str, float] = {}
+        raw_global_uncertainties = data.get("global_uncertainties", {})
+        if isinstance(raw_global_uncertainties, Mapping):
+            for name, err in raw_global_uncertainties.items():
+                try:
+                    global_uncertainties[str(name)] = float(err)
+                except (TypeError, ValueError):
+                    continue
+
+        per_group_chi_squared: dict[str, float] = {}
+        raw_per_group_chi_squared = data.get("per_group_chi_squared", {})
+        if isinstance(raw_per_group_chi_squared, Mapping):
+            for gid, val in raw_per_group_chi_squared.items():
+                try:
+                    per_group_chi_squared[str(gid)] = float(val)
+                except (TypeError, ValueError):
+                    continue
+
+        per_group_n_points: dict[str, int] = {}
+        raw_per_group_n_points = data.get("per_group_n_points", {})
+        if isinstance(raw_per_group_n_points, Mapping):
+            for gid, val in raw_per_group_n_points.items():
+                try:
+                    per_group_n_points[str(gid)] = int(val)
+                except (TypeError, ValueError):
+                    continue
+
+        global_correlations: tuple[list[str], list[list[float]]] | None = None
+        raw_correlations = data.get("global_correlations")
+        if isinstance(raw_correlations, (list, tuple)) and len(raw_correlations) == 2:
+            raw_names, raw_matrix = raw_correlations
+            if isinstance(raw_names, (list, tuple)) and isinstance(raw_matrix, (list, tuple)):
+                try:
+                    names = [str(n) for n in raw_names]
+                    matrix = [[float(v) for v in row] for row in raw_matrix]
+                    if len(matrix) == len(names) and all(len(row) == len(names) for row in matrix):
+                        global_correlations = (names, matrix)
+                except (TypeError, ValueError):
+                    global_correlations = None
+
+        try:
+            success = bool(data.get("success", False))
+        except (TypeError, ValueError):
+            success = False
+        try:
+            chi_squared = float(data.get("chi_squared", 0.0))
+        except (TypeError, ValueError):
+            chi_squared = 0.0
+        try:
+            reduced_chi_squared = float(data.get("reduced_chi_squared", 0.0))
+        except (TypeError, ValueError):
+            reduced_chi_squared = 0.0
+        try:
+            n_points = int(data.get("n_points", 0))
+        except (TypeError, ValueError):
+            n_points = 0
+
+        return cls(
+            success=success,
+            chi_squared=chi_squared,
+            reduced_chi_squared=reduced_chi_squared,
+            global_parameters=_parameter_set_from_dicts(data.get("global_parameters", [])),
+            local_parameters=local_parameters,
+            fixed_parameters=_parameter_set_from_dicts(data.get("fixed_parameters", [])),
+            global_uncertainties=global_uncertainties,
+            local_uncertainties=local_uncertainties,
+            message=str(data.get("message", "")),
+            error_mode=str(data.get("error_mode", ErrorMode.COLUMN.value)),
+            n_points=n_points,
+            per_group_chi_squared=per_group_chi_squared,
+            per_group_n_points=per_group_n_points,
+            global_correlations=global_correlations,
+        )
 
 
 _TRANSPORT_RATE_SEED_GRID = (
@@ -2580,6 +2815,31 @@ def global_fit_parameter_model(
 
     ndof = max(total_points - len(fit_param_names), 1)
 
+    # Per-group χ²: the same masked/windowed residual (incl. the xerr
+    # effective-variance term when active) that `cost_function` sums over all
+    # groups, evaluated at the best-fit point and split out per group_id, so
+    # `sum(per_group_chi_squared.values()) == chi_squared` exactly (both are
+    # the same sum of squared residuals, just grouped differently).
+    best_arg_map = {name: float(m.values[name]) for name in fit_param_names}
+    per_group_chi_squared: dict[str, float] = {}
+    per_group_n_points: dict[str, int] = {}
+    for gidx, group in enumerate(groups):
+        xx, yy, ee, xe2, xstep = group_fit_arrays[gidx]
+        if xx.size == 0:
+            per_group_chi_squared[group.group_id] = 0.0
+            per_group_n_points[group.group_id] = 0
+            continue
+        kwargs = _build_kwargs(best_arg_map, gidx)
+        if xe2 is None or xstep is None:
+            pred = np.asarray(model.function(xx, **kwargs), dtype=float)
+            resid = (yy - pred) / ee
+        else:
+            resid = _effective_variance_residual(
+                partial(model.function, **kwargs), xx, yy, ee**2, xe2, xstep
+            )
+        per_group_chi_squared[group.group_id] = float(np.sum(resid**2))
+        per_group_n_points[group.group_id] = int(xx.size)
+
     global_parameter_set = ParameterSet()
     local_parameter_sets: dict[str, ParameterSet] = {}
     fixed_parameter_set = ParameterSet()
@@ -2619,6 +2879,31 @@ def global_fit_parameter_model(
             Parameter(name=pname, value=fixed_values[pname], min=p_min, max=p_max, fixed=True)
         )
 
+    # Correlation matrix for the free GLOBAL parameters only, from Minuit's
+    # covariance: corr_ij = cov_ij / sqrt(cov_ii * cov_jj). None when fewer
+    # than two free globals, the fit failed, or Minuit has no covariance
+    # (e.g. HESSE did not run/converge).
+    global_minuit_names = [f"g__{pname}" for pname in sorted(global_names)]
+    global_correlations: tuple[list[str], list[list[float]]] | None = None
+    if m.valid and len(global_minuit_names) >= 2 and m.covariance is not None:
+        try:
+            cov_sub = np.array(m.covariance[global_minuit_names], dtype=float)
+        except (KeyError, ValueError):
+            cov_sub = None
+        if cov_sub is not None and cov_sub.shape == (
+            len(global_minuit_names),
+            len(global_minuit_names),
+        ):
+            diag = np.diag(cov_sub)
+            if np.all(np.isfinite(diag)) and np.all(diag > 0.0):
+                denom = np.sqrt(np.outer(diag, diag))
+                corr = np.divide(cov_sub, denom, out=np.zeros_like(cov_sub), where=denom > 0.0)
+                if np.all(np.isfinite(corr)):
+                    global_correlations = (
+                        [pname for pname in sorted(global_names)],
+                        corr.tolist(),
+                    )
+
     message = "Fit successful" if m.valid else "Fit failed"
     if error_mode is ErrorMode.SCATTER and m.valid:
         # Estimate errors from the scatter of the points: rescale *all* (global
@@ -2650,6 +2935,9 @@ def global_fit_parameter_model(
         message=message,
         error_mode=error_mode.value,
         n_points=int(total_points),
+        per_group_chi_squared=per_group_chi_squared,
+        per_group_n_points=per_group_n_points,
+        global_correlations=global_correlations,
     )
 
 
