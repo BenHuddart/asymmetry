@@ -22,7 +22,6 @@ import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QButtonGroup,
-    QCheckBox,
     QComboBox,
     QDialog,
     QDoubleSpinBox,
@@ -35,7 +34,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QRadioButton,
-    QSizePolicy,
     QSpinBox,
     QSplitter,
     QTableWidget,
@@ -56,6 +54,7 @@ from asymmetry.core.instrument import (
 )
 from asymmetry.core.project.profiles import (
     AlphaPolicy,
+    DeadtimePolicy,
     GroupingProfile,
     ProfileFingerprint,
     profile_fingerprint_for_run,
@@ -77,6 +76,15 @@ from asymmetry.core.transform import (
 from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import apply_param_table_style, clear_layout
+from asymmetry.gui.windows.grouping.background_dialog import (
+    BackgroundDialog,
+    BackgroundReferenceRunCandidate,
+)
+from asymmetry.gui.windows.grouping.deadtime_dialog import (
+    DeadtimeDialog,
+    DeadtimeSourceRun,
+    deadtime_status_text,
+)
 from asymmetry.gui.windows.grouping.grp_io import (
     ALPHA_METHOD_ITEMS as _ALPHA_METHOD_ITEMS,
 )
@@ -193,7 +201,6 @@ class GroupingDialog(QDialog):
         self._vector_backward_labels: dict[str, QLabel] = {}
         self._vector_estimate_buttons: dict[str, QPushButton] = {}
         self._estimate_all_btn: QPushButton | None = None
-        self._updating_deadtime_value_combo = False
         # Last successful estimate per slot ("single" or axis name):
         # (alpha, alpha_error, reference_run). Used to attach provenance to
         # the payload only while the spin still holds the estimated value.
@@ -419,77 +426,61 @@ class GroupingDialog(QDialog):
         )
         self._find_t0_btn.clicked.connect(self._on_find_t0)
 
-        self._deadtime_checkbox = QCheckBox("Enable Deadtime Correction")
-        self._deadtime_checkbox.setChecked(bool(grouping.get("deadtime_correction", False)))
-        self._deadtime_checkbox.toggled.connect(self._update_deadtime_controls)
-
-        self._deadtime_mode_group = QButtonGroup(self)
-        self._deadtime_mode_buttons: dict[str, QRadioButton] = {}
+        # Deadtime and background are configured in dedicated dialogs
+        # (deadtime_dialog.py / background_dialog.py); the form only shows a
+        # compact status row + "Configure…" button per cluster. State lives
+        # here (not in inline widgets) so ``_current_grouping_payload`` and the
+        # ``.grp`` load/save paths are unchanged.
+        self._deadtime_mode = (
+            self._default_deadtime_mode(grouping)
+            if bool(grouping.get("deadtime_correction", False))
+            else "off"
+        )
         self._deadtime_manual_values_us = self._initial_manual_deadtime_values(grouping)
         self._deadtime_manual_method = self._initial_manual_deadtime_method(grouping)
-
-        self._deadtime_value_combo = QComboBox()
-        self._deadtime_value_combo.setEditable(True)
-        self._deadtime_value_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
-        self._deadtime_value_combo.activated.connect(self._on_deadtime_value_index_changed)
-        line_edit = self._deadtime_value_combo.lineEdit()
-        if line_edit is not None:
-            line_edit.editingFinished.connect(self._on_deadtime_value_edited)
-
-        self._deadtime_mode_widget = QWidget()
-        deadtime_mode_layout = QGridLayout(self._deadtime_mode_widget)
-        deadtime_mode_layout.setContentsMargins(0, 0, 0, 0)
-        deadtime_mode_layout.setHorizontalSpacing(8)
-        deadtime_mode_layout.setVerticalSpacing(4)
-        deadtime_mode_layout.setColumnStretch(1, 1)
-
-        deadtime_mode_specs = [
-            ("file", "File"),
-            ("manual", "Manual"),
-            ("estimate", "Estimate"),
-        ]
-        for col, (mode, label) in enumerate(deadtime_mode_specs):
-            button = QRadioButton(label)
-            button.toggled.connect(self._update_deadtime_controls)
-            self._deadtime_mode_group.addButton(button)
-            self._deadtime_mode_buttons[mode] = button
-            deadtime_mode_layout.addWidget(button, 0, col)
-
-        deadtime_mode_layout.addWidget(QLabel("Detector Values"), 1, 0)
-        deadtime_mode_layout.addWidget(self._deadtime_value_combo, 1, 1)
-
-        self._deadtime_calibrate_btn = QPushButton("Cal")
-        self._deadtime_calibrate_btn.setAutoDefault(False)
-        self._deadtime_calibrate_btn.setDefault(False)
-        self._deadtime_calibrate_btn.clicked.connect(self._calibrate_deadtime_from_reference)
-        self._deadtime_calibrate_btn.setToolTip(
-            "Fit one deadtime value per detector from the selected reference run and populate the manual detector table."
+        self._deadtime_estimated_us: float | None = (
+            float(grouping["deadtime_estimated_us"])
+            if grouping.get("deadtime_estimated_us") is not None
+            else None
         )
-        deadtime_mode_layout.addWidget(self._deadtime_calibrate_btn, 1, 2)
+        self._deadtime_source_run: int | None = (
+            int(grouping["deadtime_reference_run"])
+            if grouping.get("deadtime_reference_run") is not None
+            else None
+        )
 
+        self._deadtime_status_row = QWidget()
+        deadtime_status_layout = QHBoxLayout(self._deadtime_status_row)
+        deadtime_status_layout.setContentsMargins(0, 0, 0, 0)
         self._deadtime_status_label = QLabel("")
         self._deadtime_status_label.setWordWrap(True)
-        self._deadtime_status_label.setAlignment(
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
-        )
-        self._deadtime_status_label.setSizePolicy(
-            QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.MinimumExpanding,
-        )
-        self._deadtime_status_label.setMinimumHeight(self.fontMetrics().lineSpacing() * 3)
-        deadtime_mode_layout.addWidget(self._deadtime_status_label, 2, 0, 1, 3)
+        deadtime_status_layout.addWidget(self._deadtime_status_label, stretch=1)
+        self._deadtime_configure_btn = QPushButton("Configure…")
+        self._deadtime_configure_btn.setAutoDefault(False)
+        self._deadtime_configure_btn.setDefault(False)
+        self._deadtime_configure_btn.clicked.connect(self._on_configure_deadtime)
+        deadtime_status_layout.addWidget(self._deadtime_configure_btn)
+        self._update_deadtime_status()
 
-        self._set_deadtime_mode(self._default_deadtime_mode(grouping))
-        self._update_deadtime_controls(grouping)
-        self._background_mode_combo = QComboBox()
         payload = grouping.get("background_run")
         self._background_run_payload: dict[str, Any] | None = (
             dict(payload) if isinstance(payload, dict) else None
         )
-        self._populate_background_modes(grouping)
-        self._background_mode_combo.currentIndexChanged.connect(self._on_background_mode_changed)
+        self._background_mode = "none"
+        if bool(grouping.get("background_correction", False)):
+            self._background_mode = resolve_background_mode(grouping)
+
+        self._background_status_row = QWidget()
+        background_status_layout = QHBoxLayout(self._background_status_row)
+        background_status_layout.setContentsMargins(0, 0, 0, 0)
         self._background_status_label = QLabel("")
         self._background_status_label.setWordWrap(True)
+        background_status_layout.addWidget(self._background_status_label, stretch=1)
+        self._background_configure_btn = QPushButton("Configure…")
+        self._background_configure_btn.setAutoDefault(False)
+        self._background_configure_btn.setDefault(False)
+        self._background_configure_btn.clicked.connect(self._on_configure_background)
+        background_status_layout.addWidget(self._background_configure_btn)
 
         self._period_mode_label = QLabel("RG Mode")
         self._period_mode_group = QButtonGroup(self)
@@ -602,10 +593,8 @@ class GroupingDialog(QDialog):
         form.addRow("Binning", binning_row_widget)
         self._on_binning_mode_changed()
         form.addRow("Exclude Detectors", self._exclude_edit)
-        form.addRow("Deadtime", self._deadtime_checkbox)
-        form.addRow("Deadtime Mode", self._deadtime_mode_widget)
-        form.addRow("Background", self._background_mode_combo)
-        form.addRow("", self._background_status_label)
+        form.addRow("Deadtime", self._deadtime_status_row)
+        form.addRow("Background", self._background_status_row)
         self._update_background_status()
         self._map_periods_btn = QPushButton("Map periods…")
         self._map_periods_btn.setAutoDefault(False)
@@ -1322,14 +1311,31 @@ class GroupingDialog(QDialog):
         self._last_good_spin.setValue(default_last_good + index_base)
         requested_bunching = int(grouping.get("bunching_factor", 1))
         self._bunch_spin.setValue(requested_bunching)
-        self._deadtime_checkbox.setChecked(bool(grouping.get("deadtime_correction", False)))
         self._deadtime_manual_values_us = self._initial_manual_deadtime_values(grouping)
         self._deadtime_manual_method = self._initial_manual_deadtime_method(grouping)
-        self._set_deadtime_mode(self._default_deadtime_mode(grouping))
-        self._update_deadtime_controls(grouping)
+        self._deadtime_mode = (
+            self._default_deadtime_mode(grouping)
+            if bool(grouping.get("deadtime_correction", False))
+            else "off"
+        )
+        self._deadtime_estimated_us = (
+            float(grouping["deadtime_estimated_us"])
+            if grouping.get("deadtime_estimated_us") is not None
+            else None
+        )
+        self._deadtime_source_run = (
+            int(grouping["deadtime_reference_run"])
+            if grouping.get("deadtime_reference_run") is not None
+            else None
+        )
+        self._update_deadtime_status()
         payload = grouping.get("background_run")
         self._background_run_payload = dict(payload) if isinstance(payload, dict) else None
-        self._populate_background_modes(grouping)
+        self._background_mode = (
+            resolve_background_mode(grouping)
+            if bool(grouping.get("background_correction", False))
+            else "none"
+        )
         self._update_background_status()
         mode, bin0_us, bin10_us = resolve_binning_mode(grouping)
         self._bin0_spin.setValue(bin0_us)
@@ -1379,20 +1385,13 @@ class GroupingDialog(QDialog):
         return "file"
 
     def _set_deadtime_mode(self, mode: str) -> None:
-        """Select the requested deadtime mode button when available."""
-        button = self._deadtime_mode_buttons.get(str(mode).strip().lower())
-        if button is None:
-            button = self._deadtime_mode_buttons["file"]
-        button.setChecked(True)
+        """Set the active deadtime mode state (drives the status row)."""
+        mode = str(mode).strip().lower()
+        self._deadtime_mode = mode if mode in {"off", "file", "manual", "estimate"} else "file"
 
     def _current_deadtime_mode(self) -> str:
         """Return the active deadtime mode, or ``off`` when disabled."""
-        if not self._deadtime_checkbox.isChecked():
-            return "off"
-        for mode, button in self._deadtime_mode_buttons.items():
-            if button.isChecked():
-                return mode
-        return "file"
+        return self._deadtime_mode
 
     def _initial_manual_deadtime_method(self, grouping: dict[str, Any]) -> str:
         """Return provenance for explicit manual deadtime values."""
@@ -1450,97 +1449,6 @@ class GroupingDialog(QDialog):
         n_histograms = self._histogram_deadtime_count()
         default_tau = float(grouping.get("deadtime_manual_us", 0.01) or 0.01)
         return [default_tau] * n_histograms
-
-    def _formatted_deadtime_value_text(self, detector_index: int, tau_us: float) -> str:
-        """Return combo label for a detector deadtime value."""
-        return f"H{detector_index + 1}: {tau_us * 1000.0:.3f} ns"
-
-    def _set_deadtime_combo_values(self, values_us: list[float]) -> None:
-        """Populate the detector deadtime combo from values in microseconds."""
-        current_index = self._deadtime_value_combo.currentIndex()
-        self._updating_deadtime_value_combo = True
-        self._deadtime_value_combo.blockSignals(True)
-        self._deadtime_value_combo.clear()
-        for index, tau_us in enumerate(values_us):
-            self._deadtime_value_combo.addItem(
-                self._formatted_deadtime_value_text(index, tau_us),
-                index,
-            )
-        if values_us:
-            self._deadtime_value_combo.setCurrentIndex(
-                min(max(current_index, 0), len(values_us) - 1)
-            )
-        self._deadtime_value_combo.blockSignals(False)
-        self._updating_deadtime_value_combo = False
-
-    def _parse_deadtime_value_text(self, text: str) -> float | None:
-        """Parse a detector deadtime edit string as nanoseconds."""
-        match = re.search(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", text)
-        if match is None:
-            return None
-        try:
-            value_ns = float(match.group(0))
-        except ValueError:
-            return None
-        if not np.isfinite(value_ns) or value_ns <= 0.0:
-            return None
-        return value_ns
-
-    def _current_deadtime_display_values(
-        self, grouping: dict[str, Any] | None = None
-    ) -> list[float]:
-        """Return detector deadtime values that should be shown in the combo."""
-        if grouping is None:
-            grouping = self._run.grouping if self._run is not None else {}
-        mode = self._current_deadtime_mode()
-        if mode == "file":
-            file_values = self._reference_file_deadtime_values(grouping)
-            if file_values:
-                return file_values
-        if mode == "estimate":
-            tau_us = self._estimate_deadtime_us_from_reference()
-            if tau_us is not None and tau_us > 0.0:
-                return [tau_us] * self._histogram_deadtime_count()
-        if self._deadtime_manual_values_us:
-            return list(self._deadtime_manual_values_us)
-        return self._initial_manual_deadtime_values(grouping or {})
-
-    def _on_deadtime_value_index_changed(self, index: int) -> None:
-        """Normalize combo text when the current detector selection changes."""
-        if self._updating_deadtime_value_combo or index < 0:
-            return
-        values = self._current_deadtime_display_values()
-        if 0 <= index < len(values):
-            self._deadtime_value_combo.setItemText(
-                index,
-                self._formatted_deadtime_value_text(index, values[index]),
-            )
-
-    def _on_deadtime_value_edited(self) -> None:
-        """Commit manual deadtime edits from the current combo entry."""
-        if self._updating_deadtime_value_combo:
-            return
-        if self._current_deadtime_mode() != "manual":
-            return
-        index = self._deadtime_value_combo.currentIndex()
-        if index < 0 or index >= len(self._deadtime_manual_values_us):
-            return
-        value_ns = self._parse_deadtime_value_text(self._deadtime_value_combo.currentText())
-        if value_ns is None:
-            self._deadtime_value_combo.setItemText(
-                index,
-                self._formatted_deadtime_value_text(index, self._deadtime_manual_values_us[index]),
-            )
-            return
-        self._deadtime_manual_values_us[index] = value_ns / 1000.0
-        self._deadtime_manual_method = "manual"
-        self._deadtime_value_combo.setItemText(
-            index,
-            self._formatted_deadtime_value_text(index, self._deadtime_manual_values_us[index]),
-        )
-        self._set_deadtime_status(
-            f"Manual deadtime table ready for {len(self._deadtime_manual_values_us)} detectors."
-        )
 
     def _estimate_deadtime_us_from_reference(self) -> float | None:
         """Estimate a uniform deadtime value from the current reference run."""
@@ -1654,88 +1562,180 @@ class GroupingDialog(QDialog):
         self._deadtime_manual_values_us = list(values)
         self._deadtime_manual_method = "calibrate"
         self._set_deadtime_mode("manual")
-        self._deadtime_checkbox.setChecked(True)
-        self._update_deadtime_controls()
+        self._update_deadtime_status()
 
-    def _set_deadtime_status(self, text: str) -> None:
-        """Update helper text and keep enough height for wrapped content."""
-        self._deadtime_status_label.setText(text)
-        self._deadtime_status_label.updateGeometry()
-        self._deadtime_mode_widget.updateGeometry()
-
-    def _update_deadtime_controls(self, grouping: dict[str, Any] | None = None) -> None:
-        """Refresh deadtime mode availability, editor state, and status text."""
-        if grouping is None:
-            grouping = self._run.grouping if self._run is not None else {}
-        enabled = bool(self._deadtime_checkbox.isChecked())
-        file_available = self._reference_has_file_deadtime(grouping or {})
-
-        self._deadtime_checkbox.setToolTip(
-            "Apply deadtime correction using the selected deadtime mode."
+    def _update_deadtime_status(self) -> None:
+        """Refresh the compact deadtime status row from the current state."""
+        self._deadtime_status_label.setText(
+            deadtime_status_text(self._deadtime_policy_from_state())
         )
-        self._deadtime_mode_buttons["file"].setEnabled(enabled)
-        self._deadtime_mode_buttons["manual"].setEnabled(enabled)
-        self._deadtime_mode_buttons["estimate"].setEnabled(enabled and bool(self._run.histograms))
 
-        mode = self._current_deadtime_mode()
-        self._deadtime_value_combo.setEnabled(enabled)
-        self._deadtime_value_combo.setEditable(enabled and mode == "manual")
-        line_edit = self._deadtime_value_combo.lineEdit()
-        if line_edit is not None:
-            line_edit.setReadOnly(not (enabled and mode == "manual"))
-        self._deadtime_calibrate_btn.setEnabled(
-            enabled and mode == "manual" and bool(self._run.histograms)
-        )
-        self._set_deadtime_combo_values(self._current_deadtime_display_values(grouping))
-
-        if not enabled:
-            self._set_deadtime_status("Deadtime disabled.")
-            return
+    def _deadtime_policy_from_state(self) -> DeadtimePolicy:
+        """Build the :class:`DeadtimePolicy` the status row / dialog reflect."""
+        mode = self._deadtime_mode
+        if mode == "off":
+            return DeadtimePolicy(mode="off")
         if mode == "file":
-            if file_available:
-                self._set_deadtime_status("Use this run's file deadtime values.")
-            else:
-                self._set_deadtime_status(
-                    "Use file deadtime values when the selected run provides them."
-                )
-            return
+            return DeadtimePolicy(mode="from_file")
         if mode == "manual":
-            self._set_deadtime_status(
-                f"Edit the detector table directly, or use Cal to fit one deadtime value per detector from reference run {self._reference_dataset.run_number}."
+            return DeadtimePolicy(
+                mode="manual",
+                values=list(self._deadtime_manual_values_us),
+                method=self._deadtime_manual_method,
+                source_run=self._deadtime_source_run,
             )
-            return
-        if mode == "estimate":
-            self._set_deadtime_status(
-                f"Estimate one value from reference run {self._reference_dataset.run_number} and apply it to all selected runs."
+        return DeadtimePolicy(
+            mode="estimate",
+            estimated_us=self._deadtime_estimated_us,
+            source_run=self._deadtime_source_run,
+        )
+
+    def _on_configure_deadtime(self) -> None:
+        """Open the deadtime dialog, seeded from the current state."""
+        n_detectors = len(self._run.histograms) if self._run is not None else 0
+        grouping = self._run.grouping if isinstance(self._run.grouping, dict) else {}
+        file_values = self._reference_file_deadtime_values(grouping)
+
+        source_runs: list[DeadtimeSourceRun] = []
+        for ds in self._fingerprint_datasets():
+            if ds.run is None or not ds.run.histograms:
+                continue
+            run_grouping = ds.run.grouping if isinstance(ds.run.grouping, dict) else {}
+            try:
+                good_frames = float(run_grouping.get("good_frames", 1.0))
+            except (TypeError, ValueError):
+                good_frames = 1.0
+            source_runs.append(
+                DeadtimeSourceRun(
+                    run_number=int(ds.run_number),
+                    label=f"{ds.run_label} (run {ds.run_number})",
+                    histograms=ds.run.histograms,
+                    good_frames=good_frames,
+                )
             )
+
+        peak_rates: list[float] = []
+        bin_width_us = 0.0
+        good_frames = 1.0
+        if self._run is not None and self._run.histograms:
+            bin_width_us = float(self._run.histograms[0].bin_width)
+            try:
+                good_frames = float(grouping.get("good_frames", 1.0))
+            except (TypeError, ValueError):
+                good_frames = 1.0
+            for hist in self._run.histograms:
+                counts = np.asarray(hist.counts, dtype=np.float64)
+                peak = float(np.max(counts)) if counts.size else 0.0
+                peak_rates.append(peak / bin_width_us if bin_width_us > 0.0 else 0.0)
+
+        dlg = DeadtimeDialog(
+            n_detectors=n_detectors,
+            mode=self._deadtime_mode,
+            file_values_us=file_values,
+            manual_values_us=list(self._deadtime_manual_values_us),
+            manual_method=self._deadtime_manual_method,
+            estimated_us=self._deadtime_estimated_us,
+            source_run=self._deadtime_source_run or int(self._reference_dataset.run_number),
+            source_runs=source_runs,
+            reference_run_number=int(self._reference_dataset.run_number),
+            peak_rates_per_us=peak_rates,
+            bin_width_us=bin_width_us,
+            good_frames=good_frames,
+            parent=self,
+        )
+        if dlg.exec() != QDialog.DialogCode.Accepted:
             return
 
-    _BACKGROUND_MODE_ITEMS = (
-        ("None", "none", "No background subtraction."),
-        (
-            "Range average (pre-t0)",
-            "range",
-            "Mean count over a pre-t0 bin window (musrfit convention) — "
-            "continuous-source data only; pulsed files have no pre-t0 region.",
-        ),
-        (
-            "Tail fit (late-time)",
-            "tail_fit",
-            "Fit muon exponential + flat rate to the late half of the good "
-            "window and subtract the flat part — the pulsed-source mode.",
-        ),
-        (
-            "Background run…",
-            "reference_run",
-            "Subtract a reference run (sample holder / silver / laser-off) "
-            "scaled by the good-frame ratio.",
-        ),
-        (
-            "Fixed values",
-            "fixed",
-            "Subtract stored per-group constants (from the loaded grouping).",
-        ),
-    )
+        policy = dlg.get_policy()
+        self._deadtime_mode = policy.mode if policy.mode != "from_file" else "file"
+        if policy.mode == "manual":
+            self._deadtime_manual_values_us = list(policy.values)
+            self._deadtime_manual_method = policy.method or "manual"
+            self._deadtime_source_run = policy.source_run
+        elif policy.mode == "estimate":
+            self._deadtime_estimated_us = policy.estimated_us
+            self._deadtime_source_run = policy.source_run
+        self._update_deadtime_status()
+        self._mark_dirty()
+
+    def _on_configure_background(self) -> None:
+        """Open the background dialog, seeded from the current state."""
+        grouping = self._run.grouping if isinstance(self._run.grouping, dict) else {}
+        has_fixed = any(
+            isinstance(grouping.get(key), (list, tuple))
+            for key in ("background_fixed_values", "background_fix", "bkg_fix")
+        )
+        candidates = [
+            BackgroundReferenceRunCandidate(
+                run_number=int(ds.run_number),
+                label=f"{ds.run_label} (run {ds.run_number})",
+                source_file=str(ds.run.source_file or "") if ds.run is not None else "",
+                good_frames=(ds.run.grouping or {}).get("good_frames")
+                if ds.run is not None and isinstance(ds.run.grouping, dict)
+                else None,
+            )
+            for ds in self._datasets
+            if ds.run is not None
+            and ds.run.histograms
+            and int(ds.run_number) != int(self._reference_dataset.run_number)
+        ]
+
+        preview = None
+        if self._run is not None and self._run.histograms:
+            forward_gid = int(self._forward_combo.currentData())
+            backward_gid = int(self._backward_combo.currentData())
+            forward_indices = self._filtered_group_indices(forward_gid)
+            backward_indices = self._filtered_group_indices(backward_gid)
+            n_hist = len(self._run.histograms)
+            if (
+                forward_indices
+                and backward_indices
+                and max(forward_indices) < n_hist
+                and max(backward_indices) < n_hist
+            ):
+                t0_bin, _offset, _first, last_good = self._resolve_good_bin_limits_from_controls()
+                forward_counts = apply_grouping(self._run.histograms, forward_indices)
+                backward_counts = apply_grouping(self._run.histograms, backward_indices)
+                bin_width = float(self._run.histograms[0].bin_width)
+                preview = (forward_counts, backward_counts, bin_width, t0_bin, last_good)
+
+        # Attach the sample side's good_frames so a payload built from the
+        # picked candidate can compute the frame-ratio scale immediately.
+        reference_grouping = (
+            self._run.grouping
+            if self._run is not None and isinstance(self._run.grouping, dict)
+            else {}
+        )
+        background_run_payload = (
+            dict(self._background_run_payload) if self._background_run_payload else None
+        )
+        if background_run_payload is not None:
+            background_run_payload.setdefault(
+                "good_frames_sample", reference_grouping.get("good_frames")
+            )
+
+        dlg = BackgroundDialog(
+            available_modes=self._available_background_modes(),
+            has_fixed_values=has_fixed,
+            initial_mode=self._background_mode,
+            background_run_payload=background_run_payload,
+            reference_run_candidates=candidates,
+            preview=preview,
+            forward_label="F",
+            backward_label="B",
+            parent=self,
+        )
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        policy = dlg.get_policy()
+        self._background_mode = policy.mode
+        if policy.mode == "reference_run":
+            payload = dict(policy.details.get("background_run") or {})
+            payload["good_frames_sample"] = reference_grouping.get("good_frames")
+            self._background_run_payload = payload
+        self._update_background_status()
+        self._mark_dirty()
 
     def _available_background_modes(self) -> tuple[str, ...]:
         metadata: dict[str, Any] = {}
@@ -1746,99 +1746,11 @@ class GroupingDialog(QDialog):
         source_file = str(getattr(self._run, "source_file", "") or metadata.get("source_file", ""))
         return available_background_modes(metadata=metadata, source_file=source_file)
 
-    def _populate_background_modes(self, grouping: dict[str, Any]) -> None:
-        """Fill the background mode combo, gating entries per dataset type."""
-        available = set(self._available_background_modes())
-        has_fixed = any(
-            isinstance(grouping.get(key), (list, tuple))
-            for key in ("background_fixed_values", "background_fix", "bkg_fix")
-        )
-        self._background_mode_combo.blockSignals(True)
-        self._background_mode_combo.clear()
-        for label, key, tooltip in self._BACKGROUND_MODE_ITEMS:
-            if key == "fixed" and not has_fixed:
-                continue
-            self._background_mode_combo.addItem(label, key)
-            index = self._background_mode_combo.count() - 1
-            self._background_mode_combo.setItemData(index, tooltip, Qt.ItemDataRole.ToolTipRole)
-            if key != "none" and key not in available:
-                item = self._background_mode_combo.model().item(index)
-                if item is not None:
-                    item.setEnabled(False)
-        initial = "none"
-        if bool(grouping.get("background_correction", False)):
-            initial = resolve_background_mode(grouping)
-        idx = self._background_mode_combo.findData(initial)
-        self._background_mode_combo.setCurrentIndex(idx if idx >= 0 else 0)
-        self._background_mode_combo.blockSignals(False)
-
     def _current_background_mode(self) -> str:
-        return str(self._background_mode_combo.currentData() or "none")
-
-    def _on_background_mode_changed(self) -> None:
-        if self._current_background_mode() == "reference_run" and not self._background_run_payload:
-            self._pick_background_run()
-        self._update_background_status()
-
-    def _pick_background_run(self) -> None:
-        """Choose the reference run for background subtraction."""
-        candidates = [
-            ds
-            for ds in self._datasets
-            if ds.run is not None
-            and ds.run.histograms
-            and int(ds.run_number) != int(self._reference_dataset.run_number)
-        ]
-        labels = [f"{ds.run_label} (run {ds.run_number})" for ds in candidates] + [
-            "Browse for file…"
-        ]
-        from PySide6.QtWidgets import QInputDialog
-
-        choice, accepted = QInputDialog.getItem(
-            self,
-            "Background Run",
-            "Reference run to subtract (scaled by the good-frame ratio):",
-            labels,
-            0,
-            False,
-        )
-        if not accepted:
-            self._set_background_mode_to_none()
-            return
-        if choice == "Browse for file…":
-            path, _ = QFileDialog.getOpenFileName(
-                self,
-                "Background Run File",
-                "",
-                "Muon data (*.nxs *.bin *.mdu *.root);;All files (*)",
-            )
-            if not path:
-                self._set_background_mode_to_none()
-                return
-            self._background_run_payload = {"run_number": None, "source_file": path}
-        else:
-            selected = candidates[labels.index(choice)]
-            grouping = selected.run.grouping if isinstance(selected.run.grouping, dict) else {}
-            self._background_run_payload = {
-                "run_number": int(selected.run_number),
-                "source_file": str(selected.run.source_file or ""),
-                "good_frames_reference": grouping.get("good_frames"),
-            }
-        reference_grouping = (
-            self._run.grouping
-            if self._run is not None and isinstance(self._run.grouping, dict)
-            else {}
-        )
-        self._background_run_payload["good_frames_sample"] = reference_grouping.get("good_frames")
-        self._update_background_status()
-
-    def _set_background_mode_to_none(self) -> None:
-        idx = self._background_mode_combo.findData("none")
-        if idx >= 0:
-            self._background_mode_combo.setCurrentIndex(idx)
+        return self._background_mode
 
     def _update_background_status(self) -> None:
-        """Show the per-mode summary under the background combo."""
+        """Show the per-mode summary under the background status row."""
         mode = self._current_background_mode()
         if mode == "tail_fit":
             self._background_status_label.setText(self._tail_fit_preview_text())
@@ -1859,7 +1771,7 @@ class GroupingDialog(QDialog):
                     f"Subtract {label} (frame ratio resolved at reduction)."
                 )
             return
-        self._background_status_label.setText("")
+        self._background_status_label.setText(f"Background: {mode}" if mode != "none" else "")
 
     def _tail_fit_preview_text(self) -> str:
         """Run the tail fit on the reference run's groups for display."""
@@ -1910,7 +1822,7 @@ class GroupingDialog(QDialog):
             )
             return
         if (
-            self._deadtime_checkbox.isChecked()
+            self._deadtime_mode != "off"
             and self._resolve_deadtime_payload(show_warnings=True) is None
         ):
             return
@@ -1951,12 +1863,11 @@ class GroupingDialog(QDialog):
         self._bin0_spin.valueChanged.connect(self._mark_dirty)
         self._bin10_spin.valueChanged.connect(self._mark_dirty)
         self._exclude_edit.textEdited.connect(self._mark_dirty)
-        self._deadtime_checkbox.toggled.connect(self._mark_dirty)
-        self._background_mode_combo.currentIndexChanged.connect(self._mark_dirty)
+        # Deadtime/background dirty-tracking happens inline in
+        # ``_on_configure_deadtime``/``_on_configure_background`` (the
+        # Configure… dialogs mark the draft dirty on Accept).
         self._group_table.itemChanged.connect(self._mark_dirty)
         for button in self._period_mode_buttons.values():
-            button.toggled.connect(self._mark_dirty)
-        for button in self._deadtime_mode_buttons.values():
             button.toggled.connect(self._mark_dirty)
 
     # ------------------------------------------------------------------
@@ -3180,12 +3091,33 @@ class GroupingDialog(QDialog):
         last_good_bin = max(0, min(max_bin, last_good_bin))
         self._last_good_spin.setValue(last_good_bin + index_base)
         self._bunch_spin.setValue(int(payload.get("bunching_factor", self._bunch_spin.value())))
-        self._deadtime_checkbox.setChecked(bool(payload.get("deadtime_correction", False)))
         self._deadtime_manual_values_us = self._initial_manual_deadtime_values(payload)
         self._deadtime_manual_method = self._initial_manual_deadtime_method(payload)
-        self._set_deadtime_mode(self._default_deadtime_mode(payload))
-        self._update_deadtime_controls(payload)
-        self._populate_background_modes(payload)
+        self._deadtime_mode = (
+            self._default_deadtime_mode(payload)
+            if bool(payload.get("deadtime_correction", False))
+            else "off"
+        )
+        self._deadtime_estimated_us = (
+            float(payload["deadtime_estimated_us"])
+            if payload.get("deadtime_estimated_us") is not None
+            else None
+        )
+        self._deadtime_source_run = (
+            int(payload["deadtime_reference_run"])
+            if payload.get("deadtime_reference_run") is not None
+            else None
+        )
+        self._update_deadtime_status()
+        background_run_payload = payload.get("background_run")
+        self._background_run_payload = (
+            dict(background_run_payload) if isinstance(background_run_payload, dict) else None
+        )
+        self._background_mode = (
+            resolve_background_mode(payload)
+            if bool(payload.get("background_correction", False))
+            else "none"
+        )
         self._update_background_status()
         self._set_period_mode(str(payload.get("period_mode", PeriodMode.RED)))
         self._populate_group_table()

@@ -272,9 +272,8 @@ def test_get_grouping_result_contains_required_keys(qapp: QApplication) -> None:
     dataset.run.metadata["facility"] = "PSI"
     dataset.run.grouping["dead_time_us"] = [0.01, 0.01]
     dialog = GroupingDialog([dataset])
-    dialog._deadtime_checkbox.setChecked(True)
-    idx = dialog._background_mode_combo.findData("range")
-    dialog._background_mode_combo.setCurrentIndex(idx)
+    dialog._set_deadtime_mode("file")
+    dialog._background_mode = "range"
     dialog._bunch_spin.setValue(1234)
     result = dialog.get_grouping_result()
     assert result is not None
@@ -312,33 +311,27 @@ def test_grouping_dialog_does_not_show_bunching_rules(qapp: QApplication) -> Non
 
 
 def test_deadtime_modes_available_without_file_deadtime(qapp: QApplication) -> None:
+    """Deadtime state defaults to off; setting a mode does not require the
+    (now dedicated-dialog) file/manual/estimate widgets to exist inline."""
     dialog = GroupingDialog([_dataset_with_histograms()])
     payload = dialog._current_grouping_payload()
 
-    assert dialog._deadtime_checkbox.isEnabled()
-    assert dialog._deadtime_checkbox.isChecked() is False
-    assert dialog._deadtime_mode_buttons["file"].isChecked()
-    assert "load" not in dialog._deadtime_mode_buttons
+    assert dialog._deadtime_mode == "off"
     assert payload["deadtime_correction"] is False
-    dialog._deadtime_checkbox.setChecked(True)
-    assert dialog._deadtime_mode_buttons["file"].isEnabled()
-    assert dialog._deadtime_mode_buttons["file"].isChecked()
-    assert dialog._deadtime_mode_buttons["manual"].isEnabled()
-    assert dialog._deadtime_mode_buttons["estimate"].isEnabled()
+    dialog._set_deadtime_mode("file")
+    assert dialog._current_deadtime_mode() == "file"
+    dialog._set_deadtime_mode("manual")
+    assert dialog._current_deadtime_mode() == "manual"
+    dialog._set_deadtime_mode("estimate")
+    assert dialog._current_deadtime_mode() == "estimate"
 
 
 def test_manual_deadtime_payload_resolves_uniform_values(qapp: QApplication) -> None:
     dialog = GroupingDialog([_dataset_with_histograms()])
 
-    dialog._deadtime_checkbox.setChecked(True)
     dialog._set_deadtime_mode("manual")
-    dialog._update_deadtime_controls()
-    dialog._deadtime_value_combo.setCurrentIndex(0)
-    dialog._deadtime_value_combo.setEditText("25.0")
-    dialog._on_deadtime_value_edited()
-    dialog._deadtime_value_combo.setCurrentIndex(1)
-    dialog._deadtime_value_combo.setEditText("25.0")
-    dialog._on_deadtime_value_edited()
+    dialog._deadtime_manual_values_us = [0.025, 0.025]
+    dialog._deadtime_manual_method = "manual"
 
     payload = dialog.get_grouping_result()
 
@@ -349,19 +342,17 @@ def test_manual_deadtime_payload_resolves_uniform_values(qapp: QApplication) -> 
     assert payload["dead_time_us"] == pytest.approx([0.025, 0.025])
 
 
-def test_file_deadtime_updates_detector_value_combo(qapp: QApplication) -> None:
+def test_file_deadtime_status_reflects_reference_run(qapp: QApplication) -> None:
     dataset = _dataset_with_histograms()
     assert dataset.run is not None
     dataset.run.grouping["dead_time_us"] = [0.011, 0.022]
     dialog = GroupingDialog([dataset])
 
-    dialog._deadtime_checkbox.setChecked(True)
     dialog._set_deadtime_mode("file")
-    dialog._update_deadtime_controls()
+    dialog._update_deadtime_status()
 
-    assert dialog._deadtime_value_combo.count() == 2
-    assert dialog._deadtime_value_combo.itemText(0) == "H1: 11.000 ns"
-    assert dialog._deadtime_value_combo.itemText(1) == "H2: 22.000 ns"
+    assert dialog._reference_file_deadtime_values() == pytest.approx([0.011, 0.022])
+    assert dialog._deadtime_status_label.text() == "Deadtime: from file"
 
 
 def test_estimate_deadtime_uses_reference_run_only(qapp: QApplication) -> None:
@@ -373,7 +364,6 @@ def test_estimate_deadtime_uses_reference_run_only(qapp: QApplication) -> None:
         selected_run_numbers=[4101, 4102],
     )
 
-    dialog._deadtime_checkbox.setChecked(True)
     dialog._set_deadtime_mode("estimate")
 
     payload = dialog.get_grouping_result()
@@ -384,7 +374,6 @@ def test_estimate_deadtime_uses_reference_run_only(qapp: QApplication) -> None:
     assert payload["deadtime_reference_run"] == 4101
     assert payload["run_numbers"] == [4101, 4102]
     assert payload["dead_time_us"] == pytest.approx([0.02, 0.02, 0.02, 0.02], rel=1e-2, abs=5e-4)
-    assert dialog._deadtime_value_combo.itemText(0).startswith("H1: 20.000")
 
 
 def test_calibrate_deadtime_populates_explicit_table(
@@ -399,33 +388,26 @@ def test_calibrate_deadtime_populates_explicit_table(
         lambda *args, **kwargs: [0.011, 0.022],
     )
 
-    dialog._deadtime_checkbox.setChecked(True)
     dialog._set_deadtime_mode("manual")
-    dialog._update_deadtime_controls()
-    assert dialog._deadtime_calibrate_btn.isEnabled()
-    assert "Fit one deadtime value per detector" in dialog._deadtime_calibrate_btn.toolTip()
     dialog._calibrate_deadtime_from_reference()
     payload = dialog.get_grouping_result()
 
     assert payload is not None
-    assert dialog._deadtime_mode_buttons["manual"].isChecked()
+    assert dialog._current_deadtime_mode() == "manual"
     assert payload["deadtime_mode"] == "manual"
     assert payload["deadtime_method"] == "calibrate"
     assert payload["dead_time_us"] == pytest.approx([0.011, 0.022])
     assert payload["deadtime_reference_run"] == 4001
-    assert dialog._deadtime_value_combo.itemText(0) == "H1: 11.000 ns"
 
 
 def test_background_range_mode_disabled_for_non_psi_data(qapp: QApplication) -> None:
     dialog = GroupingDialog([_dataset_with_histograms()])
 
-    idx = dialog._background_mode_combo.findData("range")
-    item = dialog._background_mode_combo.model().item(idx)
-    assert item is not None and not item.isEnabled()
+    available = dialog._available_background_modes()
+    assert "range" not in available
     # Tail fit and background-run modes stay available on pulsed data.
-    for mode in ("tail_fit", "reference_run"):
-        idx = dialog._background_mode_combo.findData(mode)
-        assert dialog._background_mode_combo.model().item(idx).isEnabled()
+    assert "tail_fit" in available
+    assert "reference_run" in available
     assert dialog._current_grouping_payload()["background_correction"] is False
     assert dialog._current_grouping_payload()["background_mode"] == "none"
 
@@ -1531,8 +1513,8 @@ def test_tail_fit_mode_shows_preview_status(qapp: QApplication) -> None:
     ]
     dataset.run.grouping["last_good_bin"] = 399
     dialog = GroupingDialog([dataset])
-    idx = dialog._background_mode_combo.findData("tail_fit")
-    dialog._background_mode_combo.setCurrentIndex(idx)
+    dialog._background_mode = "tail_fit"
+    dialog._update_background_status()
     assert "Tail-fit background" in dialog._background_status_label.text()
     result = dialog.get_grouping_result()
     assert result["background_mode"] == "tail_fit"
@@ -1546,6 +1528,7 @@ def test_background_run_payload_round_trips(qapp: QApplication) -> None:
     dataset.run.grouping["background_run"] = {"run_number": 9001, "source_file": "/tmp/x.nxs"}
     dialog = GroupingDialog([dataset])
     assert dialog._current_background_mode() == "reference_run"
+    dialog._update_background_status()
     result = dialog.get_grouping_result()
     assert result["background_run"]["run_number"] == 9001
     assert "9001" in dialog._background_status_label.text()
