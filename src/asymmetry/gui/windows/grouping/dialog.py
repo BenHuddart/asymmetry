@@ -1126,10 +1126,12 @@ class GroupingDialog(QDialog):
             return None
         # Compound spin-rotator names (e.g. "F+U", "B+D") compact to "fu"/"bd";
         # the leading beam-axis letter sets the sense. A bare "f"/"b" is the PSI
-        # single-letter name.
-        if token.startswith(("forw", "fwd")) or "forward" in token or token[0] == "f":
+        # single-letter name. Only these exact compact forms are accepted —
+        # a leading letter alone would misclassify unrelated names ("fit",
+        # "baseline") and trigger a spurious swap.
+        if token.startswith(("forw", "fwd")) or "forward" in token or token in ("f", "fu", "fd"):
             return "forward"
-        if token.startswith(("back", "bwd")) or "backward" in token or token[0] == "b":
+        if token.startswith(("back", "bwd")) or "backward" in token or token in ("b", "bu", "bd"):
             return "backward"
         return None
 

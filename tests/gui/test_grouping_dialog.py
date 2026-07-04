@@ -1020,6 +1020,12 @@ def test_beam_direction_label_recognises_single_letter_and_compound_names() -> N
     assert fn("Left") is None
     assert fn("Right") is None
     assert fn("") is None
+    # Names that merely START with f/b must not be swept up by the
+    # single-letter rule (Copilot review, PR #173).
+    assert fn("fit") is None
+    assert fn("baseline") is None
+    assert fn("F1") is None  # HAL per-detector groups are not beam pairs
+    assert fn("B3") is None
 
 
 def test_applying_fixed_gps_preset_is_not_re_swapped(qapp: QApplication) -> None:

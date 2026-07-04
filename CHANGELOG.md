@@ -121,7 +121,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the precession and collapses the time-domain fit — toward the recommended
   spin-rotated/transverse preset. The Grouping dialog points at the Detector
   Layout editor; the editor pre-selects the recommended preset (e.g. GPS
-  `Spin-rotated (F+U/B+D)`) so applying it is one click. The recommendation is a
+  `Spin-rotated (B+U/F+D)`) so applying it is one click. The recommendation is a
   pure helper, `asymmetry.core.instrument.recommend_grouping_preset(layout,
   field_direction)`; nothing is auto-applied.
 - **PSI field geometry from free text**: the PSI `.bin`/`.mdu`/`.root` loaders
