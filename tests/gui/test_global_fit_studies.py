@@ -279,7 +279,7 @@ def test_exclusion_flips_study_stale_and_refit_clears_it(mainwindow: MainWindow)
     # Fresh study over the same groups is not stale.
     live_groups = _groups("A")
 
-    def _assemble(param, x_key, group_ids):
+    def _assemble(param, x_key, group_ids, **_kwargs):
         return list(live_groups)
 
     mainwindow._fit_parameters_panel.assemble_cross_group_groups = _assemble  # type: ignore
@@ -290,7 +290,7 @@ def test_exclusion_flips_study_stale_and_refit_clears_it(mainwindow: MainWindow)
     # so the digest no longer matches the stored snapshot.
     shifted = _groups("A", scale=1.5)
 
-    def _assemble_shifted(param, x_key, group_ids):
+    def _assemble_shifted(param, x_key, group_ids, **_kwargs):
         return list(shifted)
 
     mainwindow._fit_parameters_panel.assemble_cross_group_groups = _assemble_shifted  # type: ignore
@@ -326,7 +326,7 @@ def test_deleted_source_series_marks_stale_and_disables_refit(
     study_id = mainwindow._cross_group_batch_id("A", "field", g)
     study = mainwindow._global_fit_studies[study_id]
 
-    def _assemble_missing(param, x_key, group_ids):
+    def _assemble_missing(param, x_key, group_ids, **_kwargs):
         return None  # a source series was deleted
 
     mainwindow._fit_parameters_panel.assemble_cross_group_groups = _assemble_missing  # type: ignore
@@ -452,7 +452,7 @@ def test_edit_fit_routes_through_fresh_fit_path(
     # Live groups available for re-assembly.
     live = _groups("A")
     mainwindow._fit_parameters_panel.assemble_cross_group_groups = (  # type: ignore
-        lambda param, x_key, ids: list(live)
+        lambda param, x_key, ids, **_kwargs: list(live)
     )
 
     # Stub the dialog so exec() returns Accepted with an output over the same
@@ -491,3 +491,119 @@ def test_edit_fit_routes_through_fresh_fit_path(
     # In-place update: same id, name preserved.
     assert study_id in mainwindow._global_fit_studies
     assert mainwindow._global_fit_studies[study_id].name == "Kept name"
+
+
+# ── Phase 4: setup-sourced group-variable choices ───────────────────────────
+
+
+def _config_with_group_variable() -> dict:
+    """Config carrying an explicit setup-dialog group_variable block."""
+    cfg = _config("A")
+    cfg["group_variable"] = {
+        "key": "temperature",
+        "label": "My custom T (K)",
+        "values": {"g0": 111.0, "g1": 222.0},
+        "order": ["g0", "g1"],
+    }
+    return cfg
+
+
+def _output_with_group_variable(x_key: str, groups: list[ParameterGroupData]) -> SimpleNamespace:
+    return SimpleNamespace(
+        fit_result=_result(),
+        model=ParameterCompositeModel(["Linear"]),
+        x_key=x_key,
+        fit_x_min=float("nan"),
+        fit_x_max=float("nan"),
+        config=_config_with_group_variable(),
+    )
+
+
+def test_new_global_parameter_fit_menu_action_exists(mainwindow: MainWindow) -> None:
+    from PySide6.QtWidgets import QMenu
+
+    labels: list[str] = []
+    for menu in mainwindow.menuBar().findChildren(QMenu):
+        for action in menu.actions():
+            labels.append(action.text())
+    assert any("New global parameter fit" in label for label in labels)
+
+
+def _groups_with_overridden_gv() -> list[ParameterGroupData]:
+    """Fitted groups carrying the setup dialog's overridden group-variable value.
+
+    Mirrors what the panel emits: the fitted ParameterGroupData already have the
+    explicit per-group values (111 / 222), so the study's stored digest is
+    computed over those.
+    """
+    base = _groups("A")
+    for grp, value in zip(base, (111.0, 222.0), strict=True):
+        grp.group_variable_value = value
+    return base
+
+
+def test_setup_group_variable_flows_into_study_and_survives_refit(
+    mainwindow: MainWindow,
+) -> None:
+    g = _groups_with_overridden_gv()
+    mainwindow._on_cross_group_fit_completed("A", g, _output_with_group_variable("field", g))
+    _wait_idle(mainwindow)
+
+    study_id = mainwindow._cross_group_batch_id("A", "field", g)
+    study = mainwindow._global_fit_studies[study_id]
+
+    # The explicit setup choice replaced the field→temperature inference default
+    # ("temperature"/"T (K)") with the user's custom axis label, and the config
+    # carries the per-group values + order.
+    assert study.group_variable_key == "temperature"
+    assert study.group_variable_label == "My custom T (K)"
+    assert study.config["group_variable"]["values"] == {"g0": 111.0, "g1": 222.0}
+
+    # The overrides are surfaced back out for the reassembly path.
+    overrides, order = mainwindow._study_group_variable_overrides(study)
+    assert overrides == {"g0": 111.0, "g1": 222.0}
+    assert order == ["g0", "g1"]
+
+    # Staleness reassembly applies the overrides, so a study over the same live
+    # groups stays fresh (digest stable across display → refit): the panel's real
+    # assembly (stubbed here) must receive the overrides and honour them.
+    captured: dict = {}
+
+    def _assemble(param, x_key, group_ids, *, group_variable_overrides=None, group_order=None):
+        captured["overrides"] = group_variable_overrides
+        captured["order"] = group_order
+        # Rebuild groups carrying the overridden group-variable value so the
+        # digest matches the one recorded at fit time.
+        out = []
+        for gid in group_order or group_ids:
+            base = next(gg for gg in g if gg.group_id == gid)
+            out.append(
+                ParameterGroupData(
+                    group_id=base.group_id,
+                    group_name=base.group_name,
+                    x=base.x,
+                    y=base.y,
+                    yerr=base.yerr,
+                    group_variable_value=(group_variable_overrides or {}).get(
+                        gid, base.group_variable_value
+                    ),
+                )
+            )
+        return out
+
+    mainwindow._fit_parameters_panel.assemble_cross_group_groups = _assemble  # type: ignore
+    stale, _reason = mainwindow._study_staleness(study)
+    assert captured["overrides"] == {"g0": 111.0, "g1": 222.0}
+    assert captured["order"] == ["g0", "g1"]
+    assert not stale
+
+
+def test_setup_group_variable_label_reaches_window(mainwindow: MainWindow) -> None:
+    g = _groups("A")
+    mainwindow._on_cross_group_fit_completed("A", g, _output_with_group_variable("field", g))
+    _wait_idle(mainwindow)
+
+    window = mainwindow._global_parameter_fit_window
+    assert window is not None
+    # set_study carries group_variable_label → the window's local-axis override.
+    assert window._local_group_axis_label() == "My custom T (K)"

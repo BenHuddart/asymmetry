@@ -10,8 +10,21 @@ from dataclasses import dataclass
 
 import numpy as np
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QComboBox, QLabel, QMessageBox, QTableWidgetItem
+from PySide6.QtWidgets import (
+    QComboBox,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QTableWidgetItem,
+    QTextEdit,
+    QWidget,
+)
 
+from asymmetry.core.fitting.cross_group_roles import (
+    CrossGroupRoleRecommendation,
+    suggest_cross_group_roles,
+)
 from asymmetry.core.fitting.parameter_models import (
     CrossGroupFitResult,
     ErrorMode,
@@ -141,16 +154,276 @@ class CrossGroupFitDialog(ModelFitDialog):
             del self._fit.ranges[-1]
         self._range_roles = [{} for _ in self._fit.ranges]
 
+        # Role-suggestion state (Phase 4). A busy suggestion sets a cancel flag
+        # polled by the engine's cancel_callback; the last recommendation is kept
+        # for the rationale panel. Reuses the base dialog's TaskRunner
+        # (self._tasks), shut down in the inherited closeEvent.
+        self._suggest_in_progress = False
+        self._suggest_cancel_requested = False
+        self._suggest_recommendation: CrossGroupRoleRecommendation | None = None
+
         self._apply_existing_config(existing_config)
         self._refresh_range_selector()
         self._post_rebuild_ranges_ui()
         self._select_range(0)
+
+        self._build_suggest_roles_ui()
 
     def _post_rebuild_ranges_ui(self) -> None:
         # Cross-group mode has no per-range activity concept; keep the
         # checkboxes hidden across every rebuild, not just the first one.
         for widgets in self._range_widgets:
             widgets.active.setVisible(False)
+
+    # ── Suggest roles (Phase 4) ──────────────────────────────────────────────
+
+    def _build_suggest_roles_ui(self) -> None:
+        """Insert the "Suggest roles…" control row and rationale panel.
+
+        Placed just above the dialog's OK/Cancel button box. The button runs the
+        AICc/AIC/BIC role search off-thread; the criterion combo picks the
+        statistic; the rationale panel (hidden until first run) shows the
+        per-parameter recommendation and the candidate ranking.
+        """
+        layout = self.layout()
+        if layout is None:
+            return
+
+        controls = QHBoxLayout()
+        self._suggest_btn = QPushButton("Suggest roles…")
+        self._suggest_btn.setToolTip(
+            "Recommend Global vs Local for each parameter by comparing candidate "
+            "fits with an information criterion (AICc/AIC/BIC). Fixed rows are left "
+            "as you set them; you can still edit roles before fitting."
+        )
+        self._suggest_btn.clicked.connect(self._on_suggest_roles_clicked)
+        controls.addWidget(self._suggest_btn)
+
+        self._suggest_cancel_btn = QPushButton("Cancel")
+        self._suggest_cancel_btn.setVisible(False)
+        self._suggest_cancel_btn.clicked.connect(self._on_suggest_cancel_clicked)
+        controls.addWidget(self._suggest_cancel_btn)
+
+        controls.addWidget(QLabel("Criterion:"))
+        self._criterion_combo = QComboBox()
+        for label, key in (("AICc", "aicc"), ("AIC", "aic"), ("BIC", "bic")):
+            self._criterion_combo.addItem(label, userData=key)
+        controls.addWidget(self._criterion_combo)
+
+        self._suggest_status = QLabel("")
+        self._suggest_status.setStyleSheet(f"color: {tokens.ACCENT};")
+        controls.addWidget(self._suggest_status, 1)
+        controls.addStretch()
+
+        # A container so the whole row can be inserted at a fixed position.
+        controls_container = QWidget()
+        controls_container.setLayout(controls)
+
+        self._rationale_panel = QTextEdit()
+        self._rationale_panel.setReadOnly(True)
+        self._rationale_panel.setVisible(False)
+        self._rationale_panel.setMaximumHeight(180)
+
+        # Insert above the OK/Cancel button box (the last item added in the base
+        # constructor); fall back to appending if the button box is not found.
+        insert_at = layout.count()
+        for i in range(layout.count()):
+            item = layout.itemAt(i)
+            if item is not None and item.widget() is getattr(self, "_buttons", None):
+                insert_at = i
+                break
+        layout.insertWidget(insert_at, controls_container)
+        layout.insertWidget(insert_at + 1, self._rationale_panel)
+
+    def _selected_criterion(self) -> str:
+        data = self._criterion_combo.currentData() if hasattr(self, "_criterion_combo") else None
+        return str(data) if data else "aicc"
+
+    def _on_suggest_cancel_clicked(self) -> None:
+        self._suggest_cancel_requested = True
+        self._suggest_status.setText("Cancelling…")
+
+    def _set_suggest_busy(self, busy: bool) -> None:
+        self._suggest_in_progress = busy
+        self._suggest_btn.setEnabled(not busy)
+        self._criterion_combo.setEnabled(not busy)
+        self._suggest_cancel_btn.setVisible(busy)
+
+    def _on_suggest_roles_clicked(self) -> None:
+        """Run the role suggestion off-thread over the current fitting setup."""
+        if self._suggest_in_progress or self._fit_in_progress:
+            return
+        if not self._fit.ranges:
+            return
+
+        self._commit_param_table(notify_adjustments=False)
+        fit_range = self._fit.ranges[0]
+        idx = self._active_range_idx if self._active_range_idx is not None else 0
+        roles = self._range_roles[idx] if idx < len(self._range_roles) else {}
+
+        fixed_params: dict[str, float] = {}
+        initial_params: dict[str, float] = {}
+        parameter_bounds: dict[str, tuple[float, float]] = {}
+        for p in fit_range.parameters:
+            initial_params[p.name] = float(p.value)
+            parameter_bounds[p.name] = (float(p.min), float(p.max))
+            default_role = "Fixed" if p.fixed else "Global"
+            if roles.get(p.name, default_role) == "Fixed":
+                fixed_params[p.name] = float(p.value)
+
+        # Snapshot everything the worker needs as plain data (no widget access
+        # off-thread). The engine masks to windows/range itself, so pass the full
+        # groups plus the shared range/windows.
+        model_snapshot = ParameterCompositeModel(
+            component_names=list(fit_range.model.component_names),
+            operators=list(fit_range.model.operators),
+        )
+        groups_snapshot = [
+            ParameterGroupData(
+                group_id=g.group_id,
+                group_name=g.group_name,
+                x=np.asarray(g.x, dtype=float).copy(),
+                y=np.asarray(g.y, dtype=float).copy(),
+                yerr=np.asarray(g.yerr, dtype=float).copy(),
+                group_variable_value=float(g.group_variable_value),
+                xerr=(
+                    None
+                    if getattr(g, "xerr", None) is None
+                    else np.asarray(g.xerr, dtype=float).copy()
+                ),
+            )
+            for g in self._groups
+        ]
+        windows = list(fit_range.windows) if fit_range.windows else None
+        error_mode = self._error_mode()
+        error_value = self._error_value()
+        criterion = self._selected_criterion()
+
+        xerr_map: dict[str, object] | None = None
+        if self._use_x_errors():
+            xerr_map = {
+                g.group_id: np.asarray(g.xerr, dtype=float)
+                for g in groups_snapshot
+                if getattr(g, "xerr", None) is not None
+            } or None
+
+        self._suggest_cancel_requested = False
+        self._set_suggest_busy(True)
+        self._suggest_status.setText("Suggesting roles… (this may take a moment)")
+
+        def _cancel_callback() -> bool:
+            return self._suggest_cancel_requested
+
+        def _task(_worker):
+            return suggest_cross_group_roles(
+                groups_snapshot,
+                model_snapshot,
+                initial_params=initial_params,
+                parameter_bounds=parameter_bounds,
+                fixed_params=fixed_params,
+                error_mode=error_mode,
+                error_value=error_value,
+                windows=windows,
+                xerr=xerr_map,
+                criterion=criterion,
+                max_fits=40,
+                cancel_callback=_cancel_callback,
+            )
+
+        self._tasks.start(
+            _task,
+            on_finished=self._on_suggest_roles_done,
+            on_error=self._on_suggest_roles_error,
+        )
+
+    def _on_suggest_roles_done(self, recommendation: object) -> None:
+        self._set_suggest_busy(False)
+        if not isinstance(recommendation, CrossGroupRoleRecommendation):
+            self._suggest_status.setText("")
+            return
+        self._suggest_recommendation = recommendation
+        if self._suggest_cancel_requested:
+            self._suggest_status.setText("Suggestion cancelled")
+            self._render_rationale(recommendation, cancelled=True)
+            return
+        self._suggest_status.setText("")
+        self._apply_recommended_roles(recommendation)
+        self._render_rationale(recommendation, cancelled=False)
+
+    def _on_suggest_roles_error(self, message: str) -> None:
+        self._set_suggest_busy(False)
+        self._suggest_status.setText("Role suggestion failed")
+        self._rationale_panel.setVisible(True)
+        self._rationale_panel.setPlainText(f"Role suggestion failed:\n\n{message}")
+
+    def _apply_recommended_roles(self, recommendation: CrossGroupRoleRecommendation) -> None:
+        """Set the role combo of each recommended parameter; leave Fixed rows."""
+        recommended = recommendation.recommended
+        if recommended is None:
+            return
+        recommended_local = set(recommended.local_params)
+        for row in range(self._param_table.rowCount()):
+            name_item = self._param_table.item(row, 0)
+            combo = self._param_table.cellWidget(row, 4)
+            if name_item is None or not isinstance(combo, QComboBox):
+                continue
+            pname_data = name_item.data(Qt.ItemDataRole.UserRole)
+            pname = (
+                str(pname_data)
+                if isinstance(pname_data, str) and pname_data
+                else name_item.text().strip()
+            )
+            # A user-pinned Fixed row is respected (the engine never flips it).
+            if combo.currentText() == "Fixed":
+                continue
+            combo.setCurrentText("Local" if pname in recommended_local else "Global")
+        # Persist the applied roles back into the range-role map.
+        self._commit_param_table(notify_adjustments=False)
+
+    def _render_rationale(
+        self, recommendation: CrossGroupRoleRecommendation, *, cancelled: bool
+    ) -> None:
+        """Populate the rationale panel with the per-parameter + candidate view."""
+        crit = recommendation.criterion.upper()
+        lines: list[str] = []
+        if cancelled:
+            lines.append("Suggestion cancelled — roles left unchanged.")
+            lines.append("")
+        if recommendation.message:
+            lines.append(recommendation.message)
+            lines.append("")
+
+        if recommendation.parameters:
+            lines.append("Per-parameter recommendation:")
+            for rec in recommendation.parameters:
+                delta = f"{rec.score_delta:+.2f}" if np.isfinite(rec.score_delta) else "n/a"
+                lines.append(
+                    f"  • {rec.name}: {rec.recommended_role.capitalize()} "
+                    f"(Δ{crit} {delta}) — {rec.rationale}"
+                )
+            lines.append("")
+
+        if recommendation.candidates:
+            best = None
+            for cand in recommendation.candidates:
+                if cand.success:
+                    best = cand.criterion_value(recommendation.criterion)
+                    break
+            lines.append(f"Top candidates ({crit}):")
+            for cand in recommendation.candidates[:5]:
+                local_label = ", ".join(cand.local_params) or "none"
+                if not cand.success:
+                    lines.append(f"  ✗ local = [{local_label}] — did not converge")
+                    continue
+                value = cand.criterion_value(recommendation.criterion)
+                if best is not None and np.isfinite(value) and np.isfinite(best):
+                    delta = f"  (Δ {value - best:+.2f})"
+                else:
+                    delta = ""
+                lines.append(f"  local = [{local_label}]: {crit} {value:.2f}{delta}")
+
+        self._rationale_panel.setPlainText("\n".join(lines))
+        self._rationale_panel.setVisible(True)
 
     def _collect_config(self) -> dict[str, object]:
         self._commit_param_table()

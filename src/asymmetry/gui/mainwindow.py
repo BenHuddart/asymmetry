@@ -917,6 +917,12 @@ class MainWindow(QMainWindow):
             self._on_global_parameter_fit,
         )
         self._update_global_parameter_fit_menu_style(False)
+        # Explicit setup entry point (Phase 4): opens the setup dialog with
+        # nothing preselected, then the cross-group fit dialog on Continue.
+        analysis_menu.addAction(
+            "New global parameter fit…",
+            self._on_new_global_parameter_fit,
+        )
         # Studies registry submenu: one entry per persisted cross-group fit,
         # rebuilt from the registry whenever it changes (see
         # _rebuild_global_fit_studies_menu). Rename/duplicate/delete live in the
@@ -8223,6 +8229,19 @@ class MainWindow(QMainWindow):
         self._global_parameter_fit_window.raise_()
         self._global_parameter_fit_window.activateWindow()
 
+    def _on_new_global_parameter_fit(self) -> None:
+        """Open the explicit global-fit setup dialog with nothing preselected.
+
+        The trend panel owns the setup dialog (it holds the series/parameter/
+        x-key data); on Continue it runs the cross-group fit, which emits
+        ``cross_group_fit_completed`` → ``_on_cross_group_fit_completed`` and so
+        creates/updates the study exactly like the trend-panel button path.
+        """
+        panel = getattr(self, "_fit_parameters_panel", None)
+        if panel is None or not hasattr(panel, "open_global_fit_setup"):
+            return
+        panel.open_global_fit_setup()
+
     def _update_global_parameter_fit_menu_style(self, has_result: bool) -> None:
         if not hasattr(self, "_global_parameter_fit_action"):
             return
@@ -11077,7 +11096,19 @@ class MainWindow(QMainWindow):
             x_label = self._fit_parameters_panel._x_axis_display_label(x_key)
         except Exception:
             x_label = x_key
+        # Phase 4: an explicit setup-dialog choice, carried in the config under
+        # "group_variable", replaces the T↔B inference for the group-variable key
+        # and axis label. A config without it (legacy quick path / pre-Phase-4
+        # study) falls back to the inference.
         gv_key, gv_label = self._group_variable_for_x_key(x_key)
+        gv_block = config.get("group_variable") if isinstance(config, dict) else None
+        if isinstance(gv_block, dict):
+            key = gv_block.get("key")
+            label = gv_block.get("label")
+            if isinstance(key, str) and key:
+                gv_key = key
+            if isinstance(label, str) and label:
+                gv_label = label
         source_group_ids = [str(getattr(g, "group_id", "")) for g in groups]
         group_snapshot = [g for g in groups if isinstance(g, ParameterGroupData)]
         digest = compute_group_input_digest(group_snapshot)
@@ -11123,6 +11154,37 @@ class MainWindow(QMainWindow):
         self._global_fit_studies[study_id] = study
         return study
 
+    @staticmethod
+    def _study_group_variable_overrides(
+        study: GlobalFitStudy,
+    ) -> tuple[dict[str, float] | None, list[str] | None]:
+        """Return ``(overrides, order)`` from a study's stored group-variable block.
+
+        Phase 4 studies persist the setup dialog's explicit per-group group
+        variable values (and checklist order) under ``config["group_variable"]``.
+        Reassembling groups (staleness digest, Refit, Edit) must apply the same
+        overrides so the digest is stable across display → refit and the refitted
+        groups carry the user's chosen orthogonal coordinate. A study without the
+        block (pre-Phase-4 / legacy quick path) returns ``(None, None)`` so the
+        inference is used, unchanged.
+        """
+        gv_block = study.config.get("group_variable") if isinstance(study.config, dict) else None
+        if not isinstance(gv_block, dict):
+            return (None, None)
+        raw_values = gv_block.get("values")
+        overrides: dict[str, float] | None = None
+        if isinstance(raw_values, dict):
+            overrides = {}
+            for gid, value in raw_values.items():
+                if isinstance(value, (int, float)):
+                    overrides[str(gid)] = float(value)
+            overrides = overrides or None
+        raw_order = gv_block.get("order")
+        order = (
+            [str(gid) for gid in raw_order] if isinstance(raw_order, list) and raw_order else None
+        )
+        return (overrides, order)
+
     def _study_staleness(self, study: GlobalFitStudy) -> tuple[bool, str]:
         """Return ``(stale, reason)`` for *study* against the live trend data.
 
@@ -11131,12 +11193,21 @@ class MainWindow(QMainWindow):
         the snapshot it was fit against — a data change. A source series that has
         been deleted (or no longer carries the parameter) is a harder staleness:
         it cannot be refitted, so the reason is surfaced and Refit disabled.
+
+        Phase 4: any explicit group-variable overrides the study stores are
+        applied to the reassembly so the digest matches the one recorded at fit
+        time (an unchanged override does not spuriously read as stale).
         """
         panel = self._fit_parameters_panel
         if not hasattr(panel, "assemble_cross_group_groups"):
             return (False, "")
+        overrides, order = self._study_group_variable_overrides(study)
         current = panel.assemble_cross_group_groups(
-            study.parameter_name, study.x_key, list(study.source_group_ids)
+            study.parameter_name,
+            study.x_key,
+            list(study.source_group_ids),
+            group_variable_overrides=overrides,
+            group_order=order,
         )
         if current is None:
             return (True, "source series missing")
@@ -11170,8 +11241,13 @@ class MainWindow(QMainWindow):
         if study is None:
             return
         panel = self._fit_parameters_panel
+        overrides, order = self._study_group_variable_overrides(study)
         groups = panel.assemble_cross_group_groups(
-            study.parameter_name, study.x_key, list(study.source_group_ids)
+            study.parameter_name,
+            study.x_key,
+            list(study.source_group_ids),
+            group_variable_overrides=overrides,
+            group_order=order,
         )
         if groups is None or len(groups) < 2:
             QMessageBox.warning(
@@ -11333,8 +11409,13 @@ class MainWindow(QMainWindow):
         if study is None:
             return
         panel = self._fit_parameters_panel
+        overrides, order = self._study_group_variable_overrides(study)
         groups = panel.assemble_cross_group_groups(
-            study.parameter_name, study.x_key, list(study.source_group_ids)
+            study.parameter_name,
+            study.x_key,
+            list(study.source_group_ids),
+            group_variable_overrides=overrides,
+            group_order=order,
         )
         if groups is None or len(groups) < 2:
             QMessageBox.warning(

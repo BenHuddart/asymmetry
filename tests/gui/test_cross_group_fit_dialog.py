@@ -602,3 +602,174 @@ def test_cross_group_fit_all_included_matches_prior_unfiltered_behaviour(
     assert list(by_id["g_a"].y) == [0.10, 0.20, 0.30]
     assert list(by_id["g_b"].x) == [100.0, 200.0, 300.0]
     assert list(by_id["g_b"].y) == [0.12, 0.22, 0.32]
+
+
+# --- Phase 4: Suggest roles button --------------------------------------------
+
+
+def _suggest_wait(dlg, timeout_s: float = 20.0) -> None:
+    """Wait for a Suggest-roles task to leave the busy state."""
+    app = QApplication.instance()
+    deadline = time.time() + timeout_s
+    while dlg._suggest_in_progress and time.time() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+
+
+def _linear_groups() -> list[ParameterGroupData]:
+    """Two groups following y = m·x + b with a shared slope, distinct offset."""
+    x = np.linspace(0.0, 10.0, 8)
+    g0 = ParameterGroupData(
+        group_id="g0",
+        group_name="G0",
+        x=x.copy(),
+        y=0.02 * x + 0.10,
+        yerr=np.full_like(x, 0.005),
+        group_variable_value=10.0,
+    )
+    g1 = ParameterGroupData(
+        group_id="g1",
+        group_name="G1",
+        x=x.copy(),
+        y=0.02 * x + 0.40,
+        yerr=np.full_like(x, 0.005),
+        group_variable_value=20.0,
+    )
+    return [g0, g1]
+
+
+def test_suggest_roles_applies_recommendation_and_shows_rationale() -> None:
+    QApplication.instance() or QApplication([])
+    dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=_linear_groups(),
+        parent=None,
+    )
+    # Default model is Linear (m, b). Run the real suggestion off-thread.
+    dlg._on_suggest_roles_clicked()
+    _suggest_wait(dlg)
+
+    assert dlg._suggest_recommendation is not None
+    # A recommendation was applied to the role combos and the rationale is shown.
+    assert dlg._rationale_panel.isVisibleTo(dlg)
+    text = dlg._rationale_panel.toPlainText()
+    assert "Per-parameter recommendation" in text
+    assert "candidates" in text.lower()
+
+    # Every role combo now reads a concrete Global/Local (not blank).
+    for row in range(dlg._param_table.rowCount()):
+        combo = dlg._param_table.cellWidget(row, 4)
+        assert combo is not None
+        assert combo.currentText() in {"Global", "Local", "Fixed"}
+
+
+def test_suggest_roles_renders_failed_candidate(monkeypatch) -> None:
+    QApplication.instance() or QApplication([])
+    from asymmetry.core.fitting.cross_group_roles import (
+        CrossGroupCandidate,
+        CrossGroupParameterRecommendation,
+        CrossGroupRoleRecommendation,
+    )
+
+    good = CrossGroupCandidate(
+        global_params=("m", "b"),
+        local_params=(),
+        fixed_params=(),
+        success=True,
+        chi_squared=1.0,
+        reduced_chi_squared=1.0,
+        n_free=2,
+        n_points=16,
+        aic=5.0,
+        aicc=6.0,
+        bic=7.0,
+        result=CrossGroupFitResult(success=True, chi_squared=1.0, reduced_chi_squared=1.0),
+    )
+    bad = CrossGroupCandidate(
+        global_params=("m",),
+        local_params=("b",),
+        fixed_params=(),
+        success=False,
+        chi_squared=float("inf"),
+        reduced_chi_squared=float("inf"),
+        n_free=3,
+        n_points=16,
+        aic=float("inf"),
+        aicc=float("inf"),
+        bic=float("inf"),
+        result=None,
+    )
+    rec = CrossGroupRoleRecommendation(
+        candidates=[good, bad],
+        recommended=good,
+        parameters=[
+            CrossGroupParameterRecommendation(
+                name="m",
+                recommended_role="global",
+                score_delta=-1.0,
+                total_variation=0.0,
+                roughness=0.0,
+                rationale="Sharing m is favoured.",
+            ),
+        ],
+        criterion="aicc",
+        message="Recommended partition: local = [] (AICc = 6.00).",
+    )
+
+    monkeypatch.setattr(
+        "asymmetry.gui.panels.cross_group_fit_dialog.suggest_cross_group_roles",
+        lambda *a, **k: rec,
+    )
+
+    dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=_linear_groups(),
+        parent=None,
+    )
+    dlg._on_suggest_roles_clicked()
+    _suggest_wait(dlg)
+
+    text = dlg._rationale_panel.toPlainText()
+    assert "did not converge" in text
+    assert "Sharing m is favoured" in text
+
+
+def test_suggest_roles_cancel_restores_button(monkeypatch) -> None:
+    QApplication.instance() or QApplication([])
+    from asymmetry.core.fitting.cross_group_roles import CrossGroupRoleRecommendation
+
+    gate = threading.Event()
+
+    def _slow_suggest(*_a, cancel_callback=None, **_k):
+        # Wait until the test flips cancel, then honour it like the real engine.
+        gate.wait(timeout=2.0)
+        return CrossGroupRoleRecommendation(criterion="aicc", message="cancelled")
+
+    monkeypatch.setattr(
+        "asymmetry.gui.panels.cross_group_fit_dialog.suggest_cross_group_roles",
+        _slow_suggest,
+    )
+
+    dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=_linear_groups(),
+        parent=None,
+    )
+    dlg._on_suggest_roles_clicked()
+    assert dlg._suggest_in_progress is True
+    assert dlg._suggest_btn.isEnabled() is False
+    assert dlg._suggest_cancel_btn.isVisibleTo(dlg) is True
+
+    # User cancels; release the worker.
+    dlg._on_suggest_cancel_clicked()
+    gate.set()
+    _suggest_wait(dlg)
+
+    # Button state restored, cancellation noted, table unchanged.
+    assert dlg._suggest_in_progress is False
+    assert dlg._suggest_btn.isEnabled() is True
+    assert dlg._suggest_cancel_btn.isVisibleTo(dlg) is False
+    assert "cancel" in dlg._rationale_panel.toPlainText().lower()
