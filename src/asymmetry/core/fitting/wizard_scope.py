@@ -495,6 +495,17 @@ def _dataset_sample_text(dataset: MuonDataset) -> str:
     return ""
 
 
+def dataset_suggests_fluorine(dataset: MuonDataset) -> bool:
+    """Whether the run's sample/title text carries a chemical-formula fluorine.
+
+    The same case-sensitive ``F``-element token the Auto scope uses to prioritise
+    F-mu-F candidates (:data:`_FLUORINE_TOKEN`); surfaced as a boolean so the fit
+    wizard can *promote* the fmuf family on a fluorine sniff, not merely annotate
+    the scope note.  Matches ``CaF2``/``NaF``/``LiF``; rejects ``Fe``/``FeSe``.
+    """
+    return bool(_FLUORINE_TOKEN.search(_dataset_sample_text(dataset) or ""))
+
+
 def resolve_scope_for_dataset(dataset: MuonDataset, scope: WizardScope) -> ScopeResolution:
     """Resolve *scope* for a single dataset, reading geometry/field/sample from it."""
     return resolve_scope(

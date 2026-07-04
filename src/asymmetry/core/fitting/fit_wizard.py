@@ -19,6 +19,7 @@ from asymmetry.core.fitting.component_tags import (
 )
 from asymmetry.core.fitting.composite import COMPONENTS, CompositeModel
 from asymmetry.core.fitting.engine import FitCancelledError, FitEngine, FitResult
+from asymmetry.core.fitting.envelope_match import match_envelope_banks
 from asymmetry.core.fitting.muonium import VACUUM_MUONIUM_A_HF_MHZ
 from asymmetry.core.fitting.parameters import (
     Parameter,
@@ -43,6 +44,7 @@ from asymmetry.core.fitting.spectral import field_gauss_to_frequency_mhz
 from asymmetry.core.fitting.wizard_scope import (
     ScopeResolution,
     WizardScope,
+    dataset_suggests_fluorine,
     resolve_scope_for_dataset,
 )
 from asymmetry.core.fourier.fft import fft_asymmetry
@@ -1297,6 +1299,16 @@ _FMUF_TEMPLATE_KEYS = frozenset(
         "dipolar_pair_constant",
     }
 )
+#: Fluorine-dipolar template parameter names carrying an F-mu distance (Angstrom).
+_FMUF_DISTANCE_PARAM_BASES = frozenset({"r_muF", "r1", "r2"})
+#: Default r_muF seed (a typical F-mu bond length) when no match constrains it.
+_FMUF_DEFAULT_R_SEED = 1.17
+#: r_muF ladder (Angstrom) spanning typical F-mu bond lengths. The lone default
+#: seed converges to a spurious ~0.53 A minimum on some F-mu-F data, losing the
+#: family; the ladder brackets the physical 1.06-1.28 A range so at least one
+#: rung lands in the right basin. A match-derived r (when present) replaces the
+#: first rung. Sized to ``_STAGE1_VARIANT_BUDGET`` so it fully populates Stage 1.
+_FMUF_R_LADDER = (1.17, 1.06, 1.28)
 
 
 def _decide_family_promotions(
@@ -1305,16 +1317,19 @@ def _decide_family_promotions(
     pattern_family_keys: frozenset[str],
     metric: SelectionMetric,
     hint_family_keys: frozenset[str] = frozenset(),
+    sniff_family_keys: frozenset[str] = frozenset(),
 ) -> list[tuple[WizardFamily, CandidateAssessment, bool, str]]:
     """Decide which families expand to Stage 2, with a concrete reason each.
 
     Promotion: residual gates passed, metric within ``_STAGE1_PROMOTE_DELTA``
-    of the best representative, a multiplet pattern names the family, a
-    fingerprint hint points at it (a family's Stage-2 member can differ enough
-    in shape from its representative — e.g. damped KT vs bare KT — that the
-    rep's score alone under-promotes), or the family is the best/baseline one.
-    Score/hint promotions are capped at ``_STAGE2_MAX_FAMILIES`` by metric
-    rank; pattern and baseline promotions are exempt from the cap.
+    of the best representative, a multiplet pattern names the family, a fluorine
+    sniff names it (a chemical-formula scope prior for fmuf), a fingerprint hint
+    points at it (a family's Stage-2 member can differ enough in shape from its
+    representative — e.g. damped KT vs bare KT — that the rep's score alone
+    under-promotes), or the family is the best/baseline one. Score/hint
+    promotions are capped at ``_STAGE2_MAX_FAMILIES`` by metric rank; pattern,
+    fluorine-sniff and baseline promotions are exempt from the cap (they are
+    scope priors / structural, not score/hint over-expansion).
     """
     reps = dict(zip((family.key for family in families), rep_assessments))
     successful = [a for a in rep_assessments if a.is_successful]
@@ -1328,6 +1343,12 @@ def _decide_family_promotions(
         exempt = False
         if family.key in pattern_family_keys:
             promoted, reason, exempt = True, "pattern match promotes this family", True
+        elif family.key in sniff_family_keys:
+            promoted, reason, exempt = (
+                True,
+                "sample name suggests fluorine — promoting the F-mu-F family",
+                True,
+            )
         elif family.key == "baseline":
             promoted, reason, exempt = True, "current-model baseline", True
         elif not assessment.is_successful:
@@ -1546,11 +1567,37 @@ def build_fit_wizard_recommendation(
     multiplet_matches = match_multiplets(
         peak_analysis, field_gauss=field_gauss, geometry=geometry_token
     )
+    # Time-domain matched filter for damped-envelope families (F-mu-F / mu-F /
+    # KT): their signatures are envelopes, not sharp lines, so the line-based
+    # ``match_multiplets`` above rarely fires on them (the circular-dependency
+    # failure). Run the banks on the tail-centred raw signal — NOT the Peak-pass-B
+    # residual (the KT family is itself that residual's detrend model, so it would
+    # subtract the shape it looks for). Gate to the in-scope envelope families so
+    # out-of-scope runs skip the work.
+    in_scope_family_keys = frozenset(family.key for family in families)
+    envelope_scope = frozenset({"fmuf", "kt"}) & in_scope_family_keys
+    if envelope_scope:
+        multiplet_matches = (
+            *multiplet_matches,
+            *match_envelope_banks(
+                dataset,
+                field_gauss=field_gauss,
+                include_families=envelope_scope,
+            ),
+        )
     pattern_family_keys = frozenset(
-        match.family_key
-        for match in multiplet_matches
-        if any(family.key == match.family_key for family in families)
+        match.family_key for match in multiplet_matches if match.family_key in in_scope_family_keys
     )
+
+    # Fluorine sniff: a chemical-formula fluorine in the sample/title name is a
+    # physics-scope prior for the fmuf family. It previously only annotated the
+    # scope note; here it *promotes* fmuf (exempt from the Stage-2 family cap, the
+    # same class as a pattern match — it is a scope prior, not a score/hint
+    # over-expansion), but only when fmuf is actually in scope so the promotion
+    # cannot force the EXPENSIVE fmuf powder-average members on a non-fluoride run.
+    sniff_family_keys: frozenset[str] = frozenset()
+    if "fmuf" in in_scope_family_keys and dataset_suggests_fluorine(dataset):
+        sniff_family_keys = frozenset({"fmuf"})
 
     hint_family_keys = frozenset(
         key
@@ -1567,6 +1614,7 @@ def build_fit_wizard_recommendation(
         pattern_family_keys,
         metric,
         hint_family_keys=hint_family_keys,
+        sniff_family_keys=sniff_family_keys,
     )
 
     stage2_context = TemplateSeedContext(
@@ -2712,11 +2760,18 @@ def _initial_parameters_for_template(
         # ladder) is deferred to a focused follow-up. The wizard still offers the
         # dynamic model and recovers weak/moderate dynamics from the Delta seed.
         amplitude = max(1.5 * abs(fingerprint.initial_amplitude_estimate), 0.25 * data_span, _EPS)
+        # A time-domain KT envelope match (dip + 1/3 tail) supplies a Delta seed
+        # directly; it supersedes the early-time curvature guess and narrows the
+        # bounds around the recognised width.
+        kt_match = seed_context.best_match(("kt_envelope",)) if seed_context else None
+        delta_seed = (kt_match.derived("Delta") if kt_match else None) or gaussian_width
         overrides = {
             "A": amplitude,
-            "Delta": gaussian_width,
+            "Delta": delta_seed,
             "A_bg": fingerprint.tail_estimate - amplitude / 3.0,
         }
+        if kt_match:
+            bounds_overrides["Delta"] = (0.5 * delta_seed, 2.0 * delta_seed)
     elif template.key == "static_gkt_exp_constant":
         amplitude = max(1.5 * abs(fingerprint.initial_amplitude_estimate), 0.25 * data_span, _EPS)
         overrides = {
@@ -2798,8 +2853,14 @@ def _initial_parameters_for_template(
             overrides["D_mu"] = d_zf
     elif template.key in _FMUF_TEMPLATE_KEYS:
         amplitude = max(abs(fingerprint.initial_amplitude_estimate), 0.25 * data_span, _EPS)
-        match = seed_context.best_match(("fmuf_linear", "muf")) if seed_context else None
-        r_seed = (match.derived("r_muF_angstrom") if match else None) or 1.17
+        # Line-based (fmuf_linear/muf) and time-domain envelope matches both carry
+        # a derived r_muF; either seeds the shape-critical distance.
+        match = (
+            seed_context.best_match(("fmuf_linear", "muf", "fmuf_envelope", "muF_envelope"))
+            if seed_context
+            else None
+        )
+        r_seed = (match.derived("r_muF_angstrom") if match else None) or _FMUF_DEFAULT_R_SEED
         overrides = {
             "A": amplitude,
             "r_muF": r_seed,
@@ -2964,6 +3025,8 @@ def _parameter_variants(
     budget = max(1, int(variant_budget))
     if _is_additive_relaxation_mixture_template(template):
         return _additive_relaxation_mixture_variants(base_parameters, template)[:budget]
+    if template.key in _FMUF_TEMPLATE_KEYS:
+        return _fmuf_r_ladder_variants(base_parameters)[:budget]
 
     def _adjust(
         params: ParameterSet,
@@ -3004,6 +3067,40 @@ def _parameter_variants(
         _adjust(base_parameters, amplitude_bias=-0.25, phase_shift=-math.pi / 6.0),
     )
     return variants[:budget]
+
+
+def _fmuf_r_ladder_variants(base_parameters: ParameterSet) -> tuple[ParameterSet, ...]:
+    """Seed variants stepping ``r_muF`` (and ``r1``/``r2``) across the physical ladder.
+
+    F-mu-F fits are shape-critical in the F-mu distance: a lone default seed can
+    slide into a spurious ~0.53 A minimum (frequency ~1/r^3, so a far-off r gives
+    a completely wrong beat), the representative then scores badly and the family
+    loses promotion (failure F5). Each rung reseeds every distance parameter to a
+    physical F-mu bond length so at least one attempt starts in the right basin.
+
+    The **first** rung preserves the base seed — that is where a matched r_muF
+    (from a time-domain envelope or line match) or the default already sits — so a
+    trusted distance is tried first; the remaining rungs bracket it. Non-distance
+    parameters are inherited unchanged from the base (amplitude/relaxation/bg were
+    already seeded from the fingerprint).
+    """
+    distance_names = [
+        parameter.name
+        for parameter in base_parameters
+        if split_parameter_name(parameter.name)[0] in _FMUF_DISTANCE_PARAM_BASES
+        and not parameter.fixed
+    ]
+    if not distance_names:
+        return (_clone_parameter_set(base_parameters),)
+
+    variants: list[ParameterSet] = [_clone_parameter_set(base_parameters)]
+    for r_value in _FMUF_R_LADDER[1:]:
+        clone = _clone_parameter_set(base_parameters)
+        for parameter in clone:
+            if parameter.name in distance_names:
+                parameter.value = float(np.clip(r_value, parameter.min, parameter.max))
+        variants.append(clone)
+    return tuple(variants)
 
 
 def _parameter_variant_by_name(

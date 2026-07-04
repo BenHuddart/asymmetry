@@ -21,6 +21,7 @@ from asymmetry.core.fitting.composite import COMPONENTS, CompositeModel
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.fit_wizard import (
     _FIT_WIZARD_TITLES,
+    _FMUF_R_LADDER,
     CandidateAssessment,
     CandidateTemplate,
     ConfidenceTier,
@@ -31,6 +32,9 @@ from asymmetry.core.fitting.fit_wizard import (
     SpectrumFingerprint,
     WizardFamily,
     _decide_family_promotions,
+    _fmuf_r_ladder_variants,
+    _initial_parameters_for_template,
+    _parameter_variants,
     _run_template_assessments,
     build_fit_wizard_recommendation,
     build_null_baseline_templates,
@@ -41,6 +45,7 @@ from asymmetry.core.fitting.fit_wizard import (
     serialize_family_screening_report,
     serialize_fit_wizard_recommendation,
 )
+from asymmetry.core.fitting.models import longitudinal_field_kubo_toyabe
 from asymmetry.core.fitting.muon_fluorine.polarization import linear_fmuf_polarization
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.peak_detection import (
@@ -510,6 +515,125 @@ def test_pattern_promotion_expands_fmuf_family(monkeypatch: pytest.MonkeyPatch) 
     assert recommended.startswith(("fmuf", "muf", "dynamic_fmuf", "dipolar", "oscillatory"))
 
 
+def _exploding_tiered_dataset(signal_fn, *, seed: int, metadata: dict | None = None) -> MuonDataset:
+    """Percent-scale record with realistic dying-muon (exploding, capped) errors.
+
+    The envelope matcher's whole point is the data FFT peak detection misses; the
+    exploding-error model (σ grows exp with t, capped at 100 %) is where the
+    SNR-truncated window and the surrogate-null significance test actually matter.
+    """
+    t = np.linspace(0.15, 32.6, 2000)
+    sigma = np.minimum(0.7 * np.exp(t / (2.0 * 2.2)), 100.0)
+    rng = np.random.default_rng(seed)
+    payload = {"run_number": 1}
+    payload.update(metadata or {})
+    return MuonDataset(
+        time=t,
+        asymmetry=signal_fn(t) + rng.normal(0.0, sigma),
+        error=sigma,
+        metadata=payload,
+    )
+
+
+@pytest.mark.integration
+def test_envelope_matcher_promotes_and_recommends_fmuf_on_exploding_s4(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # S4: linear F-mu-F r = 1.17 A under exp(-0.2 t), ZF metadata, exploding
+    # errors. FFT peak detection finds no lines; the time-domain matcher must
+    # match the fmuf bank (r within 10 %), promote the family via the pattern
+    # exemption, and let a fmuf-family template be recommended.
+    _strip_expensive_members(monkeypatch)
+    dataset = _exploding_tiered_dataset(
+        lambda t: 20.0 * np.exp(-0.2 * t) * linear_fmuf_polarization(t, 1.17) + 4.0,
+        seed=101,
+        metadata={"field_direction": "Zero field"},
+    )
+
+    recommendation = build_fit_wizard_recommendation(dataset, max_workers=1)
+
+    envelope = [m for m in recommendation.multiplet_matches if m.kind == "fmuf_envelope"]
+    assert envelope, "the fmuf envelope bank should match the F-mu-F signature"
+    r = envelope[0].derived("r_muF_angstrom")
+    assert r is not None and abs(r - 1.17) <= 0.10 * 1.17
+
+    fmuf_report = next(
+        report for report in recommendation.family_reports if report.family_key == "fmuf"
+    )
+    assert fmuf_report.promoted
+    assert fmuf_report.reason.startswith("pattern match")
+    recommended = recommendation.recommended_key or ""
+    assert recommended.startswith(("fmuf", "muf", "dynamic_fmuf", "dipolar"))
+
+
+@pytest.mark.integration
+def test_envelope_matcher_matches_kt_on_exploding_gkt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Static Gaussian KT, Delta = 0.3, ZF metadata, exploding errors -> kt_envelope
+    # match with Delta within ~15 %, and the kt family promoted via the pattern
+    # exemption.
+    _strip_expensive_members(monkeypatch)
+    dataset = _exploding_tiered_dataset(
+        lambda t: 20.0 * longitudinal_field_kubo_toyabe(t, 1.0, 0.3, 0.0, 0.0) + 4.0,
+        seed=102,
+        metadata={"field_direction": "Zero field"},
+    )
+
+    recommendation = build_fit_wizard_recommendation(dataset, max_workers=1)
+
+    envelope = [m for m in recommendation.multiplet_matches if m.kind == "kt_envelope"]
+    assert envelope, "the KT envelope bank should match the dip + 1/3 tail"
+    delta = envelope[0].derived("Delta")
+    assert delta is not None and abs(delta - 0.3) <= 0.15 * 0.3
+    kt_report = next(
+        report for report in recommendation.family_reports if report.family_key == "kt"
+    )
+    assert kt_report.promoted
+    assert kt_report.reason.startswith("pattern match")
+
+
+@pytest.mark.integration
+def test_envelope_matcher_no_match_on_exploding_pure_noise(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression control extension: pure noise on the exploding-error model (ZF
+    # metadata, so fmuf/kt banks are in scope) must produce NO envelope match.
+    _strip_expensive_members(monkeypatch)
+    dataset = _exploding_tiered_dataset(
+        lambda t: np.full_like(t, 4.0),
+        seed=105,
+        metadata={"field_direction": "Zero field"},
+    )
+
+    recommendation = build_fit_wizard_recommendation(dataset, max_workers=1)
+
+    envelope = [m for m in recommendation.multiplet_matches if "envelope" in m.kind]
+    assert envelope == []
+
+
+@pytest.mark.integration
+def test_fluorine_sniff_promotes_fmuf_family(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A chemical-formula fluorine in the sample name promotes the fmuf family even
+    # when no pattern matches (relaxation-only data). ZF metadata keeps fmuf in
+    # scope; the promotion reason names the sniff.
+    _strip_expensive_members(monkeypatch)
+    rng = np.random.default_rng(31)
+    t = np.linspace(0.02, 10.0, 300)
+    y = 0.2 * np.exp(-0.5 * t) + 0.02 + rng.normal(0.0, 0.004, t.size)
+    dataset = _tiered_dataset(
+        t, y, error=0.004, metadata={"field_direction": "Zero field", "sample": "CaF2 powder"}
+    )
+
+    recommendation = build_fit_wizard_recommendation(dataset, max_workers=1)
+
+    fmuf_report = next(
+        report for report in recommendation.family_reports if report.family_key == "fmuf"
+    )
+    assert fmuf_report.promoted
+    assert "fluorine" in fmuf_report.reason
+
+
 @pytest.mark.integration
 def test_multiplet_templates_generated_for_two_lines(monkeypatch: pytest.MonkeyPatch) -> None:
     _strip_expensive_members(monkeypatch)
@@ -777,6 +901,86 @@ def test_promotion_hint_rescues_shape_mismatched_family() -> None:
     by_key = {family.key: (ok, reason) for family, _a, ok, reason in decisions}
     assert by_key["kt"][0] is True
     assert "hint" in by_key["kt"][1]
+
+
+def test_promotion_fluorine_sniff_exempt_from_cap() -> None:
+    # The fluorine sniff promotes fmuf even when it scores worst and the score
+    # promotions are already at the cap — same exemption class as a pattern match.
+    keys = ["f1", "f2", "f3", "f4", "f5", "f6", "fmuf"]
+    families = [_unit_family(k) for k in keys]
+    reps = [_scored_assessment(f"{k}_rep", 100.0 + i, gate=True) for i, k in enumerate(keys)]
+    reps[-1] = _scored_assessment("fmuf_rep", 1000.0)  # fmuf scores worst
+    decisions = _decide_family_promotions(
+        families,
+        reps,
+        frozenset(),
+        SelectionMetric.AICC,
+        sniff_family_keys=frozenset({"fmuf"}),
+    )
+    by_key = {family.key: (ok, reason) for family, _a, ok, reason in decisions}
+    assert by_key["fmuf"][0] is True
+    assert "fluorine" in by_key["fmuf"][1]
+    promoted = {key for key, (ok, _r) in by_key.items() if ok}
+    assert len(promoted - {"fmuf"}) == 4  # score promotions still capped at 4
+
+
+def _fmuf_rep_template() -> CandidateTemplate:
+    return CandidateTemplate(
+        key="fmuf_linear_exp_constant",
+        title="F-mu-F",
+        category="Nuclear dipolar",
+        rationale="",
+        model=CompositeModel(["FmuF_Linear", "Exponential", "Constant"], operators=["*", "+"]),
+    )
+
+
+def test_fmuf_r_ladder_spans_the_physical_range() -> None:
+    # Belt-and-braces: independent of any match, the fmuf rep's variants must step
+    # r_muF across the physical ladder rather than sit at one default that falls
+    # into the ~0.53 A minimum.
+    dataset = _tiered_dataset(
+        np.linspace(0.02, 24.0, 400),
+        0.2 * linear_fmuf_polarization(np.linspace(0.02, 24.0, 400), 1.17) + 0.02,
+        metadata={"field_direction": "Zero field"},
+    )
+    template = _fmuf_rep_template()
+    from asymmetry.core.fitting.fit_wizard import fingerprint_spectrum
+
+    base = _initial_parameters_for_template(dataset, fingerprint_spectrum(dataset), template)
+    variants = _parameter_variants(base, template=template, variant_budget=3)
+    assert len(variants) == 3
+    seeds = [next(p.value for p in variant if p.name.split("_")[0] == "r") for variant in variants]
+    # First rung keeps the base seed (default 1.17); the rest bracket it.
+    assert seeds[0] == pytest.approx(1.17, abs=1e-6)
+    assert set(round(s, 2) for s in seeds) == {round(r, 2) for r in _FMUF_R_LADDER}
+
+
+def test_fmuf_r_ladder_first_rung_honours_match_derived_r() -> None:
+    # When a match supplies r_muF (via seed context), it seeds the base params and
+    # thus becomes the first ladder rung.
+    from asymmetry.core.fitting.fit_wizard import TemplateSeedContext, fingerprint_spectrum
+
+    dataset = _tiered_dataset(
+        np.linspace(0.02, 24.0, 400),
+        0.2 * linear_fmuf_polarization(np.linspace(0.02, 24.0, 400), 1.24) + 0.02,
+        metadata={"field_direction": "Zero field"},
+    )
+    template = _fmuf_rep_template()
+    match = MultipletMatch(
+        kind="fmuf_envelope",
+        family_key="fmuf",
+        peak_indices=(),
+        quality=0.9,
+        derived_values=(("r_muF_angstrom", 1.24),),
+        note="",
+    )
+    ctx = TemplateSeedContext(multiplet_matches=(match,))
+    base = _initial_parameters_for_template(
+        dataset, fingerprint_spectrum(dataset), template, seed_context=ctx
+    )
+    variants = _fmuf_r_ladder_variants(base)
+    first_r = next(p.value for p in variants[0] if p.name.split("_")[0] == "r")
+    assert first_r == pytest.approx(1.24, abs=1e-6)
 
 
 def test_promotion_failed_rep_not_promoted() -> None:
