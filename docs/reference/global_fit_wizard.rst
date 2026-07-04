@@ -99,7 +99,7 @@ stale and clears the screening selection.
 Series Overview
 ~~~~~~~~~~~~~~~
 
-The first page lists the selected runs — one row per dataset — as soon as the
+The second page lists the selected runs — one row per dataset — as soon as the
 series is loaded, with the **Run**, **Field (G)**, and **Temperature (K)**
 columns filled immediately (no need to run screening first). The remaining
 columns summarise the same deterministic fingerprint hints used by the
@@ -114,6 +114,23 @@ screening table they read ``—``; once screening completes they fill with
 ``Yes`` / ``No`` and the rows reorder to follow the inferred sweep axis. Until
 then the rows follow the order in which the runs were selected.
 
+Two further columns report the same per-run recommendation that the
+single-spectrum wizard would reach on that run in isolation:
+
+- **Confidence** — ``High``, ``Medium``, or ``—`` before screening has run,
+  using the same High/Medium meaning described for the single-spectrum wizard
+  (see :ref:`fit-wizard-confidence-and-verdicts`)
+- **Recommendation** — the recommended candidate's name for that run, or
+  ``No significant structure`` when that run's best candidate does not clear
+  the null-baseline bar on its own
+
+When one or more runs come back with no significant structure, a banner above
+the table calls out how many runs were affected and names them, and the
+affected rows are highlighted so they are easy to find in a long series. This
+is a per-run readout, not a series-wide verdict: it is entirely possible for
+most of a temperature scan to show clean structure while a handful of runs
+near a transition (or at the noisy end of a decoupling series) do not.
+
 The wizard infers one dominant sweep axis. Version 1 supports:
 
 - field sweeps
@@ -126,7 +143,7 @@ cannot make an automatic recommendation for that mixed grid.
 Candidate Portfolio
 ~~~~~~~~~~~~~~~~~~~
 
-The second page shows the curated model portfolio that will be compared. It
+The third page shows the curated model portfolio that will be compared. It
 reuses the same version-1 candidate family as the single-spectrum fit wizard,
 including the current global-fit function as a baseline when one is already
 selected in the tab.
@@ -157,7 +174,7 @@ When the fingerprints suggest oscillations, the wizard also considers:
 Single-Fit Screening
 ~~~~~~~~~~~~~~~~~~~~
 
-The third page ranks every candidate family using the independent single-fit
+The fourth page ranks every candidate family using the independent single-fit
 wizard results for each dataset. For each candidate the wizard sums the per-run
 ``AIC``, ``AICc``, and ``BIC`` values across the whole series and sorts the
 shared portfolio by the currently selected metric.
@@ -187,7 +204,7 @@ at a time or in batches.
 Global Optimized Fits
 ~~~~~~~~~~~~~~~~~~~~~
 
-The fourth page lists only candidates that have already been run through the
+The fifth page lists only candidates that have already been run through the
 coupled global optimisation stage. These results are the only rows that can be
 recommended or applied back into the global-fit tab.
 
@@ -222,7 +239,7 @@ datasets, model, bounds, or expected roles change.
 Parameter Sharing
 ~~~~~~~~~~~~~~~~~
 
-The fifth page explains the recommended role for each non-fixed parameter of
+The sixth page explains the recommended role for each non-fixed parameter of
 the currently selected optimised candidate. For each parameter the wizard
 reports:
 

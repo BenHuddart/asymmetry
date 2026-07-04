@@ -78,7 +78,7 @@ stale — rerun to rebuild them.
 Fingerprint
 ~~~~~~~~~~~
 
-The first page summarises deterministic features extracted from the active
+The second page summarises deterministic features extracted from the active
 spectrum:
 
 - background or late-time tail estimate
@@ -97,21 +97,22 @@ representative fitted, so a misleading fingerprint cannot hide the right
 model; it can only delay it to a lower priority.
 
 Below the feature table, a peak list shows every line found by the
-multi-peak spectral search (frequency, signal-to-noise ratio, width, and
-any recognised multiplet pattern — a Larmor line at the applied field, a
+multi-peak spectral search (frequency, signal-to-noise ratio, width, any
+recognised multiplet pattern — a Larmor line at the applied field, a
 low- or high-TF muonium pair, or the characteristic µ-F and F-µ-F
-triplets). Clicking on the FFT plot adds a *user peak* at that frequency
-(dashed red marker); clicking an existing user marker, or selecting its
-row and pressing ``Remove Selected Peak``, removes it. User peaks are
-treated as trusted frequencies: they seed oscillatory candidates directly
-and participate in pattern matching, which is the quickest way to steer
-the wizard when you can see a line it underrates. Peaks can be placed
-before the first analysis run.
+triplets — and a source column marking whether the row came from the
+automatic search or from a click). Clicking on the FFT plot adds a *user
+peak* at that frequency (dashed red marker); clicking an existing user
+marker, or selecting its row and pressing ``Remove Selected Peak``,
+removes it. User peaks are treated as trusted frequencies: they seed
+oscillatory candidates directly and participate in pattern matching,
+which is the quickest way to steer the wizard when you can see a line it
+underrates. Peaks can be placed before the first analysis run.
 
 Candidate Portfolio
 ~~~~~~~~~~~~~~~~~~~
 
-The second page shows the candidate families that will be screened. The
+The third page shows the candidate families that will be screened. The
 wizard groups the component library into families — relaxation,
 multi-rate relaxation, Kubo-Toyabe, precession (including vortex-lattice
 line shapes), muonium, and fluorine dipolar (µ-F / F-µ-F) — and screens
@@ -174,17 +175,21 @@ correction when :math:`n` is not large compared with :math:`k`. If
 ``AIC`` for that candidate. ``BIC`` applies a stronger penalty to model
 complexity and therefore usually favours simpler descriptions.
 
-The compare page also shows residual plots. A candidate is not recommended
-automatically unless it passes a lightweight residual gate:
+The compare page also shows residual plots and a lightweight residual gate
+built from four diagnostics:
 
 - standardised residual RMS
 - runs-test z score
 - low-lag autocorrelation magnitude
 - residual FFT peak signal-to-noise ratio
 
-Candidates that fail the residual gate are still listed, because they may still
-be scientifically useful, but the wizard will flag the warning and avoid making
-them the default recommendation.
+The residual gate no longer decides *whether* a candidate can be recommended —
+it decides how much confidence the recommendation carries. The best-scoring
+eligible candidate is recommended either way; see
+:ref:`fit-wizard-confidence-and-verdicts` below for what "eligible" excludes
+and what the resulting confidence label means. A confidence banner above the
+compare table reports the tier and, for a Medium-confidence recommendation,
+which diagnostics still show structure.
 
 The current model from the single-fit tab is kept as a baseline candidate when
 it differs from the standard curated portfolio. This is useful when you already
@@ -238,15 +243,74 @@ Recommendation Rules
 The wizard does not claim that there is always one unquestionable winner. Its
 default recommendation policy is:
 
-1. Rank successful candidates that pass the residual gate by the selected
-   metric.
+1. Rank successful candidates by the selected metric, excluding null baselines
+   and any candidate disqualified for a targeted physical reason (see
+   :ref:`fit-wizard-confidence-and-verdicts`).
 2. Break ties by preferring fewer free parameters.
 3. Break remaining ties by preferring fewer additive terms.
-4. If the top two candidates are within 2 score units and both pass the gate,
-   present them as a comparable pair and recommend the simpler one.
+4. If the top two candidates are within 2 score units, present them as a
+   comparable pair and recommend the simpler one.
+5. Check the winner against the simpler null baseline (see below). If it does
+   not clear that bar, recommend the null instead.
+6. Otherwise recommend the winner, with a confidence tier set from the
+   residual gate.
 
 This keeps the default behaviour interpretable and favours models that are good
 enough without adding unnecessary physical parameters.
+
+.. _fit-wizard-confidence-and-verdicts:
+
+Confidence and verdicts
+------------------------
+
+Every recommendation carries a confidence tier and, in the unusual case that
+nothing in the portfolio is worth recommending, a different kind of verdict
+altogether.
+
+**High confidence** means the recommended candidate's residuals pass every
+check in the residual gate listed above — nothing about the fit's mismatch
+with the data looks structured. **Medium confidence** means the candidate is
+still the clear winner by the selected metric, but one or more residual
+diagnostics still show structure; the confidence banner on the compare page
+carries a caveat naming which diagnostics triggered, so you know exactly what
+to look at in the residual plot before trusting the fit. Either way the
+best-scoring candidate is recommended — the residual gate no longer removes a
+candidate from consideration, it only tells you how much to trust the
+number at the top.
+
+What *does* remove a candidate from consideration is a **targeted
+disqualifier** — a check aimed at a specific, physically implausible failure
+mode rather than general residual shape:
+
+- a fitted oscillation frequency sitting at the 1/T resolution floor of the
+  fit window, or pinned against one of its bounds — both are signs the "line"
+  is really an artefact of a too-short window or an unconstrained fit, not a
+  resolved frequency
+- an oscillation amplitude statistically consistent with zero — the component
+  is present in the model but not actually needed by the data
+- a free-running oscillation frequency with no supporting line in the
+  detected-peaks table and too few cycles inside the statistically
+  informative part of the window to stand on its own
+
+A disqualified candidate is still shown, with its title suffixed
+``(disqualified)`` in the compare table and the specific reason available as a
+tooltip on that row, but the wizard moves on to the next candidate rather than
+recommending it.
+
+Before settling on a winner among the surviving candidates, the wizard also
+checks it against two cheap **null baselines** that are always fitted
+unconditionally: a flat constant, and a plain exponential decay plus constant.
+These appear in the compare table with their titles suffixed ``(baseline)``.
+If the best candidate does not improve on the simpler of the two nulls by
+roughly 10 AICc units or more, the wizard concludes that the data do not carry
+enough structure to justify the richer model and recommends the null baseline
+itself — this is the wizard's way of saying "there is nothing here worth a
+richer model." The banner on the compare page reports this as no significant
+structure, and the recommended row in the table is the null, not the
+originally best-scoring candidate. Treat this verdict as useful information in
+its own right: it usually means the spectrum is well described by a plain
+relaxation (or is flat within the noise), and chasing a more elaborate model
+would be over-fitting.
 
 Limitations
 -----------
