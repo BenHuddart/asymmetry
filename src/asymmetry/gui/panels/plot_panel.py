@@ -57,6 +57,7 @@ import os
 import re
 import shutil
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -223,6 +224,12 @@ class PlotPanel(QWidget):
     def __init__(self, parent: QWidget | None = None, *, domain: str = "time") -> None:
         super().__init__(parent)
         self._domain = "frequency" if str(domain).strip().lower() == "frequency" else "time"
+        #: Host-injected counts-first re-reduction hook for display bunching
+        #: (see :meth:`set_counts_rebunch_provider`). ``None`` outside a
+        #: MainWindow (standalone panels fall back to the curve-level rebin).
+        self._counts_rebunch_provider: (
+            Callable[[MuonDataset, int], tuple[np.ndarray, np.ndarray, np.ndarray] | None] | None
+        ) = None
         self._current_time_view_mode = "fb_asymmetry"
         self._available_time_view_modes = ["fb_asymmetry"]
         self._default_canvas_min_height = 360
@@ -1819,12 +1826,58 @@ class PlotPanel(QWidget):
                 continue
         return restored
 
+    def set_counts_rebunch_provider(
+        self,
+        provider: Callable[[MuonDataset, int], tuple[np.ndarray, np.ndarray, np.ndarray] | None]
+        | None,
+    ) -> None:
+        """Install the counts-first re-reduction hook for display bunching.
+
+        ``provider(dataset, factor)`` re-runs the dataset's recorded reduction
+        (deadtime/background corrections included) with the panel's bunch
+        factor multiplied onto the grouping ``bunching_factor``, returning
+        ``(time, asymmetry, error)`` on the percent scale — or ``None`` when
+        counts-first bunching does not apply (no raw histograms, non-fixed
+        binning, period-combined curves), in which case
+        :meth:`get_analysis_dataset` falls back to the curve-level rebin.
+        """
+        self._counts_rebunch_provider = provider
+
+    def _counts_first_rebunched(
+        self, dataset: MuonDataset, bunch_factor: int
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
+        """Counts-first bunched arrays via the injected hook, or ``None``.
+
+        Rebinning the already-formed asymmetry curve merges the σ = 100 %
+        no-information sentinels of one-sided raw bins (F·B = 0) into every
+        block's quadrature, inflating late-time errors on sparse data; when
+        the run still carries its raw histograms the provider redoes the
+        reduction on the counts instead.
+        """
+        provider = self._counts_rebunch_provider
+        run = getattr(dataset, "run", None)
+        if provider is None or run is None or not getattr(run, "histograms", None):
+            return None
+        result = provider(dataset, int(bunch_factor))
+        if result is None:
+            return None
+        time, asymmetry, error = result
+        time = np.asarray(time, dtype=float)
+        asymmetry = np.asarray(asymmetry, dtype=float)
+        error = np.asarray(error, dtype=float)
+        if time.size == 0 or asymmetry.size != time.size or error.size != time.size:
+            return None
+        return time, asymmetry, error
+
     def get_analysis_dataset(self, dataset: MuonDataset | None) -> MuonDataset | None:
         """Return the dataset that should be used for plotting and fitting.
 
         When the bunch factor is 1, the original dataset is returned. For a
         larger bunch factor, a rebinned MuonDataset copy is returned with the
-        same metadata and run association.
+        same metadata and run association. Runs that still carry raw
+        histograms are re-reduced counts-first through the host-injected
+        provider; histogram-less curves (co-added data, G±R combinations)
+        keep the curve-level :func:`rebin`.
         """
         if dataset is None:
             return None
@@ -1836,12 +1889,16 @@ class PlotPanel(QWidget):
         if bunch_factor <= 1:
             return dataset
 
-        time, asymmetry, error = rebin(
-            dataset.time,
-            dataset.asymmetry,
-            dataset.error,
-            bunch_factor,
-        )
+        rebunched = self._counts_first_rebunched(dataset, bunch_factor)
+        if rebunched is not None:
+            time, asymmetry, error = rebunched
+        else:
+            time, asymmetry, error = rebin(
+                dataset.time,
+                dataset.asymmetry,
+                dataset.error,
+                bunch_factor,
+            )
         if time.size == 0 or asymmetry.size == 0 or error.size == 0:
             return dataset
         return MuonDataset(
