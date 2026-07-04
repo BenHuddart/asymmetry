@@ -375,13 +375,26 @@ def test_dialog_delta_bolds_better_side_when_comparable(qapp: QApplication) -> N
 
 def test_dialog_snapshot_caveat_on_digest_mismatch(qapp: QApplication) -> None:
     groups = [_group("g0", "G0"), _group("g1", "G1")]
-    study_a = _study("id-a", "Study A", groups, _result(), input_digest="aaa")
-    study_b = _study("id-b", "Study B", groups, _result(), input_digest="bbb")
+    study_a = _study("id-a", "Study A", groups, _result(chi2=3.0), input_digest="aaa")
+    study_b = _study("id-b", "Study B", groups, _result(chi2=5.0), input_digest="bbb")
     dialog = GlobalFitCompareDialog(study_a, study_b)
     from PySide6.QtWidgets import QLabel
 
     labels = [w.text() for w in dialog.findChildren(QLabel)]
     assert any("different data snapshots" in t for t in labels)
+    # The generic mode/n caveat does not apply: same error mode, same n.
+    assert not any("different data/error mode" in t for t in labels)
+    # Digest mismatch alone must suppress the Δ-column bolding: two studies
+    # fitted to different data snapshots are not criterion-comparable even
+    # when their error mode and point count coincide.
+    assert not dialog._criteria_comparable
+    table = dialog._stats_table
+    any_bold = any(
+        table.item(r, c) is not None and table.item(r, c).font().bold()
+        for r in range(table.rowCount())
+        for c in range(table.columnCount())
+    )
+    assert not any_bold
 
 
 # ── window sidebar: Compare with… candidate filtering + signal ───────────────

@@ -425,8 +425,11 @@ windows, error mode), the `CrossGroupFitResult`, and an `input_digest`
 (`compute_group_input_digest`) used to detect that a study's inputs have drifted
 from the live trend data (**staleness** is recomputed at load time, never
 stored). Project schema **v13** adds a top-level `global_fit_studies` list;
-`_migrate_v12_to_v13` migrates a legacy single-slot `last_cross_group_fit`
-payload into one named study, and old projects still open.
+`_migrate_v12_to_v13` is purely additive (version bump plus an empty default
+for the new list). A legacy single-slot `last_cross_group_fit` payload is
+lifted into one named study on the GUI side at project load
+(`MainWindow._restore_global_fit_studies`, via
+`study_from_legacy_cross_group_payload`), and old projects still open.
 
 **GUI workflow.** Analysis ▸ *New global parameter fit…* (or the trend panel's
 *Global fit (N groups)…* button when ≥2 group buttons are selected) opens

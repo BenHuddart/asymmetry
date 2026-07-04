@@ -199,11 +199,17 @@ class GlobalFitCompareDialog(QDialog):
         mode_b = str(getattr(study_b.result, "error_mode", "") or "")
         n_a = int(getattr(study_a.result, "n_points", 0) or 0)
         n_b = int(getattr(study_b.result, "n_points", 0) or 0)
+        same_mode_and_n = (mode_a == mode_b) and (n_a == n_b)
+        same_snapshot = str(study_a.input_digest) == str(study_b.input_digest)
         #: Criteria differences are only meaningful with matching data + error
-        #: mode; when they differ we show a caveat and suppress the Δ bolding.
-        self._criteria_comparable = (mode_a == mode_b) and (n_a == n_b)
+        #: mode. "Matching data" includes the input digest: two studies fit to
+        #: different data snapshots (e.g. one refit after a trend edit) must not
+        #: have their Δ column bolded even when the error mode and point count
+        #: coincide. When any of these differ we show a caveat and suppress the
+        #: Δ bolding.
+        self._criteria_comparable = same_mode_and_n and same_snapshot
 
-        if not self._criteria_comparable:
+        if not same_mode_and_n:
             caveat = QLabel("Criteria not comparable: different data/error mode")
             caveat.setStyleSheet(
                 "QLabel { background-color: #ffd9b3; color: #7a3b00; "
@@ -212,7 +218,7 @@ class GlobalFitCompareDialog(QDialog):
             caveat.setWordWrap(True)
             layout.addWidget(caveat)
 
-        if str(study_a.input_digest) != str(study_b.input_digest):
+        if not same_snapshot:
             snap_caveat = QLabel("Fitted to different data snapshots")
             snap_caveat.setStyleSheet(
                 "QLabel { background-color: #fff3cd; color: #66512c; padding: 4px 8px; }"
