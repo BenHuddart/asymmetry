@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import math
+import os
 import re
 from collections.abc import Callable, Sequence
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Executor, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 from enum import Enum
 
@@ -40,6 +41,7 @@ from asymmetry.core.fitting.peak_detection import (
     serialize_multiplet_match,
     serialize_peak_analysis,
 )
+from asymmetry.core.fitting.process_pool import open_spawn_pool
 from asymmetry.core.fitting.spectral import field_gauss_to_frequency_mhz
 from asymmetry.core.fitting.wizard_scope import (
     ScopeResolution,
@@ -1311,6 +1313,25 @@ _FMUF_DEFAULT_R_SEED = 1.17
 _FMUF_R_LADDER = (1.17, 1.06, 1.28)
 
 
+def _effective_hint_keys(
+    hint_keys: frozenset[str],
+    pattern_keys: frozenset[str],
+    sniff_keys: frozenset[str],
+) -> frozenset[str]:
+    """Suppress fingerprint hints once a stronger signal already names a family.
+
+    Fingerprint hints are weak evidence used to rescue under-promotion when
+    nothing stronger fired. A multiplet pattern match or a fluorine sniff is
+    concrete evidence that already names the families it names; letting hints
+    additionally expand the promotion set in that case only adds runtime for
+    families the stronger signal did not ask for (failure F3's
+    over-promotion), so hints are dropped entirely whenever either fires.
+    """
+    if pattern_keys or sniff_keys:
+        return frozenset()
+    return hint_keys
+
+
 def _decide_family_promotions(
     families: Sequence[WizardFamily],
     rep_assessments: Sequence[CandidateAssessment],
@@ -1406,33 +1427,160 @@ def _decide_family_promotions(
     return decisions
 
 
+#: Stage-1 screening fits only need to rank families, not converge to full
+#: precision: a fit that has not settled in 3000 calls is either pathological
+#: or seeded in the wrong basin, and the parameter-variant ladder (not a longer
+#: migrad run) is what rescues a bad seed. Stage-2 refits of promoted families
+#: run at full precision with no cap.
+_SCREENING_MIGRAD_NCALL = 3000
+
+
+@dataclass(frozen=True)
+class _AssessmentTask:
+    """One self-contained unit of work for :func:`_run_template_assessments`.
+
+    A plain-data payload (rather than a closure) so a task can cross a process
+    boundary via ``pickle`` under ``spawn``. ``seed_context`` may be ``None``
+    (the Stage-1 pass runs without one); ``screening_cap`` is explicit rather
+    than keyed off ``stage`` because the null-baseline templates are fitted as
+    stage-1-style cheap fits but must never be call-capped (they are 1-3
+    parameter fits already).
+    """
+
+    dataset: MuonDataset
+    fingerprint: SpectrumFingerprint
+    template: CandidateTemplate
+    metric: SelectionMetric
+    seed_context: TemplateSeedContext | None
+    variant_budget: int
+    stage: int
+    screening_cap: bool = False
+
+
+def _execute_assessment_task(
+    task: _AssessmentTask,
+    cancel_callback: Callable[[], bool] | None = None,
+) -> CandidateAssessment:
+    """Run one :class:`_AssessmentTask` to a :class:`CandidateAssessment`.
+
+    Module-level (not a closure) so it can be pickled and sent to a worker
+    process. Builds its own :class:`FitEngine` per call — engines carry no
+    state worth sharing, and a fresh one keeps each task fully self-contained.
+    """
+    migrad_ncall = _SCREENING_MIGRAD_NCALL if task.screening_cap else None
+    return _assess_candidate_template(
+        task.dataset,
+        task.fingerprint,
+        task.template,
+        fit_engine=FitEngine(),
+        metric=task.metric,
+        seed_context=task.seed_context,
+        variant_budget=task.variant_budget,
+        stage=task.stage,
+        cancel_callback=cancel_callback,
+        migrad_ncall=migrad_ncall,
+    )
+
+
 def _run_template_assessments(
-    tasks: Sequence[Callable[[], CandidateAssessment]],
+    tasks: Sequence[_AssessmentTask],
     *,
     max_workers: int | None = None,
+    cancel_callback: Callable[[], bool] | None = None,
+    executor: Executor | None = None,
 ) -> list[CandidateAssessment]:
-    """Run candidate-assessment callables, returning results in task order.
+    """Run candidate-assessment tasks, returning results in task order.
 
-    Each callable must be self-contained — it constructs its own
-    :class:`FitEngine` and captures its own dataset/template — so that the
-    callables can be fanned out across worker threads with no shared mutable
-    state. With ``max_workers is None`` the pool width is ``min(4, len(tasks))``;
-    when the resolved width is ``<= 1`` (or there is at most one task) a plain
-    serial loop runs instead, giving tests a deterministic path.
+    Tasks are plain-data :class:`_AssessmentTask` payloads (not closures) so
+    they can be fanned out across worker *processes* via ``pickle`` under
+    ``spawn`` — the GIL makes a thread pool of CPU-bound fits effectively
+    serial, so processes are what actually buys parallelism here.
+
+    Worker count: ``max_workers`` wins when given; otherwise
+    ``min(len(tasks), max(1, cpu_count - 2))``. A resolved width ``<= 1`` (or
+    at most one task) runs a plain serial loop calling
+    :func:`_execute_assessment_task` with ``cancel_callback`` — this is the
+    deterministic test path and it is also the only path that can honour an
+    *in-fit* cancellation (a cancel_callback cannot cross a process boundary).
+
+    Process path: reuses ``executor`` if given (a caller-managed shared pool);
+    otherwise opens one via :func:`open_spawn_pool` and closes it in a
+    ``finally`` — but only the pool this call opened; a caller-supplied
+    ``executor`` remains the caller's to shut down. ``cancel_callback`` cannot
+    be forwarded across the process boundary, so cancellation is instead
+    polled between completions via an ``as_completed`` loop; on cancellation
+    the *locally opened* pool is shut down with
+    ``cancel_futures=True`` and :class:`FitCancelledError` is raised (never
+    swallowed). A pool that could not start (``open_spawn_pool`` returns
+    ``None``) falls back to the historical thread-pool path, which keeps
+    in-fit cancellation working.
+
+    Per-task resilience: if a submitted future raises (a pickling failure or a
+    worker crash), that one task is retried serially in-parent with
+    ``cancel_callback``; only if the retry also raises does the exception
+    propagate. :class:`FitCancelledError` is never treated as a per-task
+    failure — it always propagates immediately.
     """
     task_list = list(tasks)
     if not task_list:
         return []
-    workers = min(4, len(task_list)) if max_workers is None else int(max_workers)
-    if workers <= 1 or len(task_list) <= 1:
-        return [task() for task in task_list]
 
-    results: list[CandidateAssessment | None] = [None] * len(task_list)
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        future_to_index = {executor.submit(task): index for index, task in enumerate(task_list)}
-        for future in future_to_index:
-            results[future_to_index[future]] = future.result()
-    return [result for result in results if result is not None]
+    if max_workers is not None:
+        workers = int(max_workers)
+    else:
+        workers = min(len(task_list), max(1, (os.cpu_count() or 4) - 2))
+
+    if workers <= 1 or len(task_list) <= 1:
+        return [_execute_assessment_task(task, cancel_callback) for task in task_list]
+
+    opened_here = executor is None
+    pool: Executor | None = executor
+    if opened_here:
+        pool = open_spawn_pool(workers)
+
+    if pool is None:
+        # spawn unavailable in this environment (e.g. a restricted sandbox) —
+        # fall back to the thread pool, which still honours in-fit cancellation.
+        results: list[CandidateAssessment | None] = [None] * len(task_list)
+        with ThreadPoolExecutor(max_workers=workers) as thread_executor:
+            future_to_index = {
+                thread_executor.submit(_execute_assessment_task, task, cancel_callback): index
+                for index, task in enumerate(task_list)
+            }
+            for future in future_to_index:
+                results[future_to_index[future]] = future.result()
+        return [result for result in results if result is not None]
+
+    shutdown_on_exit = opened_here
+    try:
+        future_to_index = {
+            pool.submit(_execute_assessment_task, task): index
+            for index, task in enumerate(task_list)
+        }
+        results: list[CandidateAssessment | None] = [None] * len(task_list)
+        remaining = len(task_list)
+        completed = as_completed(future_to_index)
+        while remaining:
+            if cancel_callback is not None and cancel_callback():
+                if opened_here:
+                    pool.shutdown(wait=False, cancel_futures=True)
+                    shutdown_on_exit = False
+                raise FitCancelledError("Fit wizard analysis cancelled.")
+            future = next(completed)
+            index = future_to_index[future]
+            try:
+                results[index] = future.result()
+            except FitCancelledError:
+                raise
+            except Exception:
+                # Pickling failure or worker crash: retry this one task
+                # serially in-parent before giving up on it.
+                results[index] = _execute_assessment_task(task_list[index], cancel_callback)
+            remaining -= 1
+        return [result for result in results if result is not None]
+    finally:
+        if shutdown_on_exit:
+            pool.shutdown()
 
 
 def build_fit_wizard_recommendation(
@@ -1456,8 +1604,11 @@ def build_fit_wizard_recommendation(
     families physically (``None`` screens the default superset);
     ``user_frequencies_mhz`` adds trusted peak seeds; ``max_workers=1`` gives
     a deterministic serial path. ``cancel_callback`` is polled between and
-    inside fits (engine in-fit abort); cancellation raises
-    :class:`FitCancelledError`.
+    inside fits when running serially or on the thread-pool fallback (engine
+    in-fit abort); when the resolved worker count allows a shared *process*
+    pool, cancellation instead takes effect only between fits (a
+    cancel_callback cannot cross a process boundary) — either way,
+    cancellation raises :class:`FitCancelledError`.
     """
     fingerprint = fingerprint_spectrum(dataset)
     resolution: ScopeResolution | None = None
@@ -1503,216 +1654,247 @@ def build_fit_wizard_recommendation(
 
     _progress(f"Stage 1: screening {len(families)} candidate families")
 
-    def _stage1_task(template: CandidateTemplate) -> Callable[[], CandidateAssessment]:
-        return lambda: _assess_candidate_template(
-            dataset,
-            fingerprint,
-            template,
-            fit_engine=FitEngine(),
+    def _stage1_task(template: CandidateTemplate) -> _AssessmentTask:
+        return _AssessmentTask(
+            dataset=dataset,
+            fingerprint=fingerprint,
+            template=template,
             metric=metric,
             seed_context=stage1_context,
             variant_budget=_STAGE1_VARIANT_BUDGET,
             stage=1,
-            cancel_callback=cancel_callback,
+            screening_cap=True,
         )
 
     stage1_groups = [(family, [family.stage1_rep, *family.stage1_extras]) for family in families]
     flat_stage1_templates = [template for _family, group in stage1_groups for template in group]
-    flat_stage1 = _run_template_assessments(
-        [_stage1_task(template) for template in flat_stage1_templates],
-        max_workers=max_workers,
+
+    # One process pool for the whole build, shared across the three fan-outs
+    # below (Stage 1, Stage 2, null baselines) — opening a spawn pool per call
+    # would pay the process-startup cost three times over for no benefit, since
+    # the pool is idle between fan-outs anyway.
+    resolved_workers = (
+        int(max_workers)
+        if max_workers is not None
+        else min(
+            max(len(flat_stage1_templates), 1),
+            max(1, (os.cpu_count() or 4) - 2),
+        )
     )
+    shared_pool = open_spawn_pool(resolved_workers) if resolved_workers > 1 else None
 
-    # Regroup and pick each family's screening representative: gate-passers
-    # first, then best metric (a family screens on the best of its cheap
-    # Stage-1 shapes).
-    grouped_stage1: list[list[CandidateAssessment]] = []
-    cursor = 0
-    for _family, group in stage1_groups:
-        grouped_stage1.append(flat_stage1[cursor : cursor + len(group)])
-        cursor += len(group)
-
-    def _family_best(group: list[CandidateAssessment]) -> CandidateAssessment:
-        return min(
-            group,
-            key=lambda a: (
-                not a.is_successful,
-                not a.residual_gate_passed,
-                a.metric_value(metric) if a.is_successful else math.inf,
-            ),
-        )
-
-    stage1_assessments = [_family_best(group) for group in grouped_stage1]
-
-    _check_cancelled()
-
-    # Peak pass B: FFT of the best smooth (non-oscillatory) fit's residuals
-    # kills relaxation leakage and exposes weak lines. This is the first-class
-    # generalisation of the global wizard's oscillatory rescue.
-    detrend_pool = [
-        assessment
-        for (family, _group), group_assessments in zip(stage1_groups, grouped_stage1)
-        for assessment in group_assessments
-        if family.key in ("relaxation", "multi_rate", "kt") and assessment.is_successful
-    ]
-    if detrend_pool:
-        best_smooth = min(detrend_pool, key=lambda a: a.metric_value(metric))
-        curve_values = _curve_parameter_values(
-            best_smooth.template.model, best_smooth.fit_result.parameters
-        )
-        detrend_curve = np.asarray(
-            best_smooth.template.model.function(
-                np.asarray(dataset.time, dtype=float), **curve_values
-            ),
-            dtype=float,
-        )
-        detrended_analysis = analyze_dataset_peaks(
-            dataset,
-            detrend_curve=detrend_curve,
-            detrend_template_key=best_smooth.template.key,
-        )
-        if user_frequencies_mhz:
-            detrended_analysis = merge_user_peaks(detrended_analysis, tuple(user_frequencies_mhz))
-        if detrended_analysis.peaks or not peak_analysis.peaks:
-            peak_analysis = detrended_analysis
-
-    multiplet_matches = match_multiplets(
-        peak_analysis, field_gauss=field_gauss, geometry=geometry_token
-    )
-    # Time-domain matched filter for damped-envelope families (F-mu-F / mu-F /
-    # KT): their signatures are envelopes, not sharp lines, so the line-based
-    # ``match_multiplets`` above rarely fires on them (the circular-dependency
-    # failure). Run the banks on the tail-centred raw signal — NOT the Peak-pass-B
-    # residual (the KT family is itself that residual's detrend model, so it would
-    # subtract the shape it looks for). Gate to the in-scope envelope families so
-    # out-of-scope runs skip the work.
-    in_scope_family_keys = frozenset(family.key for family in families)
-    envelope_scope = frozenset({"fmuf", "kt"}) & in_scope_family_keys
-    if envelope_scope:
-        multiplet_matches = (
-            *multiplet_matches,
-            *match_envelope_banks(
-                dataset,
-                field_gauss=field_gauss,
-                include_families=envelope_scope,
-            ),
-        )
-    pattern_family_keys = frozenset(
-        match.family_key for match in multiplet_matches if match.family_key in in_scope_family_keys
-    )
-
-    # Fluorine sniff: a chemical-formula fluorine in the sample/title name is a
-    # physics-scope prior for the fmuf family. It previously only annotated the
-    # scope note; here it *promotes* fmuf (exempt from the Stage-2 family cap, the
-    # same class as a pattern match — it is a scope prior, not a score/hint
-    # over-expansion), but only when fmuf is actually in scope so the promotion
-    # cannot force the EXPENSIVE fmuf powder-average members on a non-fluoride run.
-    sniff_family_keys: frozenset[str] = frozenset()
-    if "fmuf" in in_scope_family_keys and dataset_suggests_fluorine(dataset):
-        sniff_family_keys = frozenset({"fmuf"})
-
-    hint_family_keys = frozenset(
-        key
-        for key, hinted in (
-            ("multi_rate", fingerprint.multi_rate_hint),
-            ("kt", fingerprint.kt_like_hint),
-            ("oscillatory", fingerprint.oscillatory_hint),
-        )
-        if hinted
-    )
-    decisions = _decide_family_promotions(
-        families,
-        stage1_assessments,
-        pattern_family_keys,
-        metric,
-        hint_family_keys=hint_family_keys,
-        sniff_family_keys=sniff_family_keys,
-    )
-
-    stage2_context = TemplateSeedContext(
-        peak_analysis=peak_analysis,
-        multiplet_matches=multiplet_matches,
-        field_gauss=field_gauss,
-    )
-
-    # Stage 2: expand promoted families; the oscillatory family additionally
-    # receives multiplet templates generated from the detected peak set.
-    seen_identities = {_model_identity(template.model) for template in flat_stage1_templates}
-    stage2_templates: list[CandidateTemplate] = []
-    stage2_keys_by_family: dict[str, list[str]] = {}
-    for family, _assessment, promoted, _reason in decisions:
-        if not promoted:
-            continue
-        members = list(family.stage2_members)
-        if family.key == "oscillatory":
-            for extra in build_oscillatory_multiplet_templates(peak_analysis):
-                if resolution is not None and not all(
-                    name in resolution.included_set for name in extra.model.component_names
-                ):
-                    continue
-                members.append(extra)
-        kept: list[str] = []
-        for member in members:
-            identity = _model_identity(member.model)
-            if identity in seen_identities:
-                continue
-            seen_identities.add(identity)
-            stage2_templates.append(member)
-            kept.append(member.key)
-        stage2_keys_by_family[family.key] = kept
-
-    _check_cancelled()
-    if stage2_templates:
-        _progress(f"Stage 2: fitting {len(stage2_templates)} expanded candidates")
-
-    def _stage2_task(template: CandidateTemplate) -> Callable[[], CandidateAssessment]:
-        # Expensive members (numerical powder averages, strong-collision
-        # integral equations) get a reduced variant ladder: their match-derived
-        # seeds are already tight, and each extra variant is a full slow fit.
-        budget = (
-            2 if _template_cost_rank(template) >= _COST_RANK[ComputationalCost.EXPENSIVE] else 5
-        )
-        return lambda: _assess_candidate_template(
-            dataset,
-            fingerprint,
-            template,
-            fit_engine=FitEngine(),
-            metric=metric,
-            seed_context=stage2_context,
-            variant_budget=budget,
-            stage=2,
+    try:
+        flat_stage1 = _run_template_assessments(
+            [_stage1_task(template) for template in flat_stage1_templates],
+            max_workers=max_workers,
             cancel_callback=cancel_callback,
+            executor=shared_pool,
         )
 
-    stage2_assessments = _run_template_assessments(
-        [_stage2_task(template) for template in stage2_templates],
-        max_workers=max_workers,
-    )
+        # Regroup and pick each family's screening representative: gate-passers
+        # first, then best metric (a family screens on the best of its cheap
+        # Stage-1 shapes).
+        grouped_stage1: list[list[CandidateAssessment]] = []
+        cursor = 0
+        for _family, group in stage1_groups:
+            grouped_stage1.append(flat_stage1[cursor : cursor + len(group)])
+            cursor += len(group)
 
-    _check_cancelled()
-    # Null baselines: fitted unconditionally (independent of scope/promotion and
-    # of the Stage-1/2 dedup) so the "no significant structure" verdict always
-    # has a reference. They are 1–2 free-parameter fits, so cheap.
-    null_templates = build_null_baseline_templates()
-    null_assessments = _run_template_assessments(
-        [
-            (
-                lambda template=template: _assess_candidate_template(
+        def _family_best(group: list[CandidateAssessment]) -> CandidateAssessment:
+            return min(
+                group,
+                key=lambda a: (
+                    not a.is_successful,
+                    not a.residual_gate_passed,
+                    a.metric_value(metric) if a.is_successful else math.inf,
+                ),
+            )
+
+        stage1_assessments = [_family_best(group) for group in grouped_stage1]
+
+        _check_cancelled()
+
+        # Peak pass B: FFT of the best smooth (non-oscillatory) fit's residuals
+        # kills relaxation leakage and exposes weak lines. This is the first-class
+        # generalisation of the global wizard's oscillatory rescue.
+        detrend_pool = [
+            assessment
+            for (family, _group), group_assessments in zip(stage1_groups, grouped_stage1)
+            for assessment in group_assessments
+            if family.key in ("relaxation", "multi_rate", "kt") and assessment.is_successful
+        ]
+        if detrend_pool:
+            best_smooth = min(detrend_pool, key=lambda a: a.metric_value(metric))
+            curve_values = _curve_parameter_values(
+                best_smooth.template.model, best_smooth.fit_result.parameters
+            )
+            detrend_curve = np.asarray(
+                best_smooth.template.model.function(
+                    np.asarray(dataset.time, dtype=float), **curve_values
+                ),
+                dtype=float,
+            )
+            detrended_analysis = analyze_dataset_peaks(
+                dataset,
+                detrend_curve=detrend_curve,
+                detrend_template_key=best_smooth.template.key,
+            )
+            if user_frequencies_mhz:
+                detrended_analysis = merge_user_peaks(
+                    detrended_analysis, tuple(user_frequencies_mhz)
+                )
+            if detrended_analysis.peaks or not peak_analysis.peaks:
+                peak_analysis = detrended_analysis
+
+        multiplet_matches = match_multiplets(
+            peak_analysis, field_gauss=field_gauss, geometry=geometry_token
+        )
+        # Time-domain matched filter for damped-envelope families (F-mu-F / mu-F /
+        # KT): their signatures are envelopes, not sharp lines, so the line-based
+        # ``match_multiplets`` above rarely fires on them (the circular-dependency
+        # failure). Run the banks on the tail-centred raw signal — NOT the Peak-pass-B
+        # residual (the KT family is itself that residual's detrend model, so it would
+        # subtract the shape it looks for). Gate to the in-scope envelope families so
+        # out-of-scope runs skip the work.
+        in_scope_family_keys = frozenset(family.key for family in families)
+        envelope_scope = frozenset({"fmuf", "kt"}) & in_scope_family_keys
+        if envelope_scope:
+            multiplet_matches = (
+                *multiplet_matches,
+                *match_envelope_banks(
                     dataset,
-                    fingerprint,
-                    template,
-                    fit_engine=FitEngine(),
+                    field_gauss=field_gauss,
+                    include_families=envelope_scope,
+                ),
+            )
+        pattern_family_keys = frozenset(
+            match.family_key
+            for match in multiplet_matches
+            if match.family_key in in_scope_family_keys
+        )
+
+        # Fluorine sniff: a chemical-formula fluorine in the sample/title name is a
+        # physics-scope prior for the fmuf family. It previously only annotated the
+        # scope note; here it *promotes* fmuf (exempt from the Stage-2 family cap, the
+        # same class as a pattern match — it is a scope prior, not a score/hint
+        # over-expansion), but only when fmuf is actually in scope so the promotion
+        # cannot force the EXPENSIVE fmuf powder-average members on a non-fluoride run.
+        sniff_family_keys: frozenset[str] = frozenset()
+        if "fmuf" in in_scope_family_keys and dataset_suggests_fluorine(dataset):
+            sniff_family_keys = frozenset({"fmuf"})
+
+        hint_family_keys = _effective_hint_keys(
+            frozenset(
+                key
+                for key, hinted in (
+                    ("multi_rate", fingerprint.multi_rate_hint),
+                    ("kt", fingerprint.kt_like_hint),
+                    ("oscillatory", fingerprint.oscillatory_hint),
+                )
+                if hinted
+            ),
+            pattern_family_keys,
+            sniff_family_keys,
+        )
+        decisions = _decide_family_promotions(
+            families,
+            stage1_assessments,
+            pattern_family_keys,
+            metric,
+            hint_family_keys=hint_family_keys,
+            sniff_family_keys=sniff_family_keys,
+        )
+
+        stage2_context = TemplateSeedContext(
+            peak_analysis=peak_analysis,
+            multiplet_matches=multiplet_matches,
+            field_gauss=field_gauss,
+        )
+
+        # Stage 2: expand promoted families; the oscillatory family additionally
+        # receives multiplet templates generated from the detected peak set.
+        seen_identities = {_model_identity(template.model) for template in flat_stage1_templates}
+        stage2_templates: list[CandidateTemplate] = []
+        stage2_keys_by_family: dict[str, list[str]] = {}
+        for family, _assessment, promoted, _reason in decisions:
+            if not promoted:
+                continue
+            members = list(family.stage2_members)
+            if family.key == "oscillatory":
+                for extra in build_oscillatory_multiplet_templates(peak_analysis):
+                    if resolution is not None and not all(
+                        name in resolution.included_set for name in extra.model.component_names
+                    ):
+                        continue
+                    members.append(extra)
+            kept: list[str] = []
+            for member in members:
+                identity = _model_identity(member.model)
+                if identity in seen_identities:
+                    continue
+                seen_identities.add(identity)
+                stage2_templates.append(member)
+                kept.append(member.key)
+            stage2_keys_by_family[family.key] = kept
+
+        _check_cancelled()
+        if stage2_templates:
+            _progress(f"Stage 2: fitting {len(stage2_templates)} expanded candidates")
+
+        def _stage2_task(template: CandidateTemplate) -> _AssessmentTask:
+            # Expensive members (numerical powder averages, strong-collision
+            # integral equations) get a reduced variant ladder: their
+            # match-derived seeds are already tight, and each extra variant is
+            # a full slow fit.
+            budget = (
+                2 if _template_cost_rank(template) >= _COST_RANK[ComputationalCost.EXPENSIVE] else 5
+            )
+            return _AssessmentTask(
+                dataset=dataset,
+                fingerprint=fingerprint,
+                template=template,
+                metric=metric,
+                seed_context=stage2_context,
+                variant_budget=budget,
+                stage=2,
+                screening_cap=False,
+            )
+
+        stage2_assessments = _run_template_assessments(
+            [_stage2_task(template) for template in stage2_templates],
+            max_workers=max_workers,
+            cancel_callback=cancel_callback,
+            executor=shared_pool,
+        )
+
+        _check_cancelled()
+        # Null baselines: fitted unconditionally (independent of scope/promotion
+        # and of the Stage-1/2 dedup) so the "no significant structure" verdict
+        # always has a reference. They are 1-2 free-parameter fits, so cheap —
+        # never call-capped (screening_cap=False) even though they are tagged
+        # stage=1 like the other cheap first-pass fits.
+        null_templates = build_null_baseline_templates()
+        null_assessments = _run_template_assessments(
+            [
+                _AssessmentTask(
+                    dataset=dataset,
+                    fingerprint=fingerprint,
+                    template=template,
                     metric=metric,
                     seed_context=stage2_context,
                     variant_budget=_STAGE1_VARIANT_BUDGET,
                     stage=1,
-                    cancel_callback=cancel_callback,
+                    screening_cap=False,
                 )
-            )
-            for template in null_templates
-        ],
-        max_workers=max_workers,
-    )
+                for template in null_templates
+            ],
+            max_workers=max_workers,
+            cancel_callback=cancel_callback,
+            executor=shared_pool,
+        )
+    finally:
+        if shared_pool is not None:
+            shared_pool.shutdown()
 
     family_reports = tuple(
         FamilyScreeningReport(
@@ -1760,16 +1942,27 @@ def build_fit_wizard_recommendation_for_templates(
     """Evaluate one dataset against an explicit candidate-template list."""
     active_fingerprint = fingerprint or fingerprint_spectrum(dataset)
     active_templates = tuple(templates)
-    fit_engine = FitEngine()
+    # max_workers=1 preserves this function's historical serial semantics (one
+    # fit engine's worth of work at a time, in list order); the previous single
+    # shared FitEngine() is replaced by one-per-task, which is equivalent since
+    # FitEngine carries no state across calls.
     assessments = tuple(
-        _assess_candidate_template(
-            dataset,
-            active_fingerprint,
-            template,
-            fit_engine=fit_engine,
-            metric=metric,
+        _run_template_assessments(
+            [
+                _AssessmentTask(
+                    dataset=dataset,
+                    fingerprint=active_fingerprint,
+                    template=template,
+                    metric=metric,
+                    seed_context=None,
+                    variant_budget=5,
+                    stage=2,
+                    screening_cap=False,
+                )
+                for template in active_templates
+            ],
+            max_workers=1,
         )
-        for template in active_templates
     )
     return rerank_fit_wizard_recommendation(
         FitWizardRecommendation(
@@ -2382,6 +2575,7 @@ def _assess_candidate_template(
     variant_budget: int = 5,
     stage: int = 2,
     cancel_callback: Callable[[], bool] | None = None,
+    migrad_ncall: int | None = None,
 ) -> CandidateAssessment:
     # Frequencies measured from spectral peaks are trusted seeds: the 0.5x/2x
     # variant scaling that rescues a blind FFT guess would only destroy them.
@@ -2399,6 +2593,10 @@ def _assess_candidate_template(
         frozen_scale_names=frozen_scale_names,
     )
 
+    # Screening cap (Stage 1 only): forwarded to the engine's migrad drive, not
+    # the scipy fallback below (scipy has no call-count knob).
+    migrad_kwargs = {"ncall": migrad_ncall} if migrad_ncall is not None else None
+
     best_result: FitResult | None = None
     best_parameters: ParameterSet | None = None
     for parameters in attempts:
@@ -2409,6 +2607,7 @@ def _assess_candidate_template(
             template.model.function,
             _clone_parameter_set(parameters),
             cancel_callback=cancel_callback,
+            migrad_kwargs=migrad_kwargs,
         )
         if _needs_fit_backend_fallback(result):
             result = _scipy_fit_fallback(dataset, template.model.function, parameters)

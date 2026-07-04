@@ -562,6 +562,7 @@ class FitEngine:
         cancel_callback: Callable[[], bool] | None = None,
         frequency_offsets: dict[str, float] | None = None,
         cost_factory: CostFactory | None = None,
+        migrad_kwargs: dict | None = None,
     ) -> FitResult:
         """Run a single-dataset fit.
 
@@ -586,6 +587,10 @@ class FitEngine:
             With :data:`POISSON_COST` the ``chi_squared``/``reduced_chi_squared``
             report the Cash statistic (asymptotically χ²-distributed), and the
             data must be raw Poisson counts with a count-expectation model.
+        migrad_kwargs : dict, optional
+            Forwarded to ``m.migrad``/``m.simplex`` via the shared
+            :func:`drive_minuit` seam (e.g. ``ncall`` to cap iterations for a
+            cheap screening fit). ``None`` keeps the historical unbounded drive.
         frequency_offsets : dict[str, float], optional
             Rotating-reference-frame offsets ``{param: ν₀}`` resolved by
             :func:`asymmetry.core.fitting.rrf_offset.rrf_frequency_offsets`.
@@ -716,7 +721,7 @@ class FitEngine:
 
         # Run minimization (migrad/simplex + explicit HESSE + opt-in MINOS) through
         # the shared drive seam.
-        minos_errors_raw = drive_minuit(m, method=method, minos=minos)
+        minos_errors_raw = drive_minuit(m, method=method, minos=minos, migrad_kwargs=migrad_kwargs)
 
         # Pack results
         result_params = ParameterSet()

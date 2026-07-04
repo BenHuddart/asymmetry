@@ -3,22 +3,26 @@
 These cover the mechanical pieces added ahead of the tiered-screening flow:
 ``build_wizard_families``, the ``FamilyScreeningReport`` serializer, the
 additive recommendation/assessment serializer keys, and the
-``_run_template_assessments`` threading helper. The orchestrating flow tests
-land later in the same file.
+``_run_template_assessments`` process/thread fan-out helper. The orchestrating
+flow tests land later in the same file.
 """
 
 from __future__ import annotations
 
+import concurrent.futures
 import math
+import pickle
+import time
 from dataclasses import replace
 
 import numpy as np
 import pytest
 
+import asymmetry.core.fitting.fit_wizard as fit_wizard_module
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.component_tags import ComputationalCost
 from asymmetry.core.fitting.composite import COMPONENTS, CompositeModel
-from asymmetry.core.fitting.engine import FitResult
+from asymmetry.core.fitting.engine import FitCancelledError, FitResult
 from asymmetry.core.fitting.fit_wizard import (
     _FIT_WIZARD_TITLES,
     _FMUF_R_LADDER,
@@ -31,7 +35,9 @@ from asymmetry.core.fitting.fit_wizard import (
     SelectionMetric,
     SpectrumFingerprint,
     WizardFamily,
+    _AssessmentTask,
     _decide_family_promotions,
+    _effective_hint_keys,
     _fmuf_r_ladder_variants,
     _initial_parameters_for_template,
     _parameter_variants,
@@ -41,6 +47,7 @@ from asymmetry.core.fitting.fit_wizard import (
     build_wizard_families,
     deserialize_family_screening_report,
     deserialize_fit_wizard_recommendation,
+    fingerprint_spectrum,
     rerank_fit_wizard_recommendation,
     serialize_family_screening_report,
     serialize_fit_wizard_recommendation,
@@ -401,19 +408,82 @@ def test_candidate_assessment_stage_default_on_legacy_payload() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# _run_template_assessments threading helper
+# _AssessmentTask / _run_template_assessments fan-out helper
 # --------------------------------------------------------------------------- #
 
 
-def _order_preserving_tasks() -> list:
+def _dummy_task(key: str) -> _AssessmentTask:
+    template = CandidateTemplate(
+        key=key,
+        title=key,
+        category="General",
+        rationale="",
+        model=CompositeModel(["Exponential", "Constant"], operators=["+"]),
+    )
+    return _AssessmentTask(
+        dataset=MuonDataset(
+            time=np.linspace(0.0, 1.0, 4),
+            asymmetry=np.zeros(4),
+            error=np.ones(4),
+            metadata={"run_number": 1},
+        ),
+        fingerprint=_plain_fingerprint(),
+        template=template,
+        metric=SelectionMetric.AICC,
+        seed_context=None,
+        variant_budget=1,
+        stage=1,
+    )
+
+
+def _order_preserving_tasks() -> tuple[list[_AssessmentTask], list[str]]:
     keys = ["a", "b", "c", "d", "e"]
-    return [(lambda k=k: _dummy_assessment(k)) for k in keys], keys
+    return [_dummy_task(k) for k in keys], keys
 
 
-def test_run_template_assessments_preserves_order_parallel() -> None:
-    tasks, keys = _order_preserving_tasks()
-    results = _run_template_assessments(tasks, max_workers=4)
-    assert [a.template.key for a in results] == keys
+class _FakeProcessPool:
+    """A stand-in for a spawn ``ProcessPoolExecutor`` that runs tasks inline.
+
+    Mirrors the pattern in ``test_global_fit_wizard.py``: submitting a task
+    just calls it synchronously. Real :class:`concurrent.futures.Future`
+    objects are used (not a bespoke fake) because ``_run_template_assessments``
+    drives completion through ``concurrent.futures.as_completed``, which
+    reaches into a future's internal condition/state — a duck-typed fake with
+    only ``.result()`` cannot satisfy it. Running synchronously (rather than on
+    a real process) keeps the test deterministic and keeps test-only
+    monkeypatches visible (a real ``spawn`` worker cannot see them).
+    """
+
+    def __init__(self) -> None:
+        self.shutdown_calls: list[dict] = []
+
+    def submit(self, fn, *args):
+        future: concurrent.futures.Future = concurrent.futures.Future()
+        try:
+            future.set_result(fn(*args))
+        except BaseException as exc:  # noqa: BLE001 - mirror a real future's behavior
+            future.set_exception(exc)
+        return future
+
+    def shutdown(self, wait: bool = True, cancel_futures: bool = False) -> None:
+        self.shutdown_calls.append({"wait": wait, "cancel_futures": cancel_futures})
+
+
+def _monkeypatch_dummy_worker(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Replace the real fit worker with one that maps a task to ``_dummy_assessment``.
+
+    ``_execute_assessment_task`` normally drives a real fit; these tests only
+    care about fan-out mechanics (ordering, cancellation, pool lifecycle), so a
+    fake keeps them fast and deterministic on both the serial and process-pool
+    paths (a monkeypatch on the plain function is visible to
+    ``_FakeProcessPool.submit`` because it calls it in-process, unlike a real
+    spawned worker).
+    """
+
+    def _fake_execute(task, cancel_callback=None):
+        return _dummy_assessment(task.template.key, stage=task.stage)
+
+    monkeypatch.setattr(fit_wizard_module, "_execute_assessment_task", _fake_execute)
 
 
 def test_run_template_assessments_preserves_order_serial() -> None:
@@ -424,6 +494,247 @@ def test_run_template_assessments_preserves_order_serial() -> None:
 
 def test_run_template_assessments_empty_returns_empty() -> None:
     assert _run_template_assessments([]) == []
+
+
+def test_run_template_assessments_preserves_order_process_pool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _monkeypatch_dummy_worker(monkeypatch)
+    tasks, keys = _order_preserving_tasks()
+    pool = _FakeProcessPool()
+    monkeypatch.setattr(fit_wizard_module, "open_spawn_pool", lambda workers: pool)
+
+    results = _run_template_assessments(tasks, max_workers=4)
+
+    assert [a.template.key for a in results] == keys
+    # A pool passed in by the caller (or, here, opened by this call because no
+    # executor= was supplied) is closed by this call in its finally.
+    assert pool.shutdown_calls == [{"wait": True, "cancel_futures": False}]
+
+
+def test_run_template_assessments_reuses_caller_supplied_executor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _monkeypatch_dummy_worker(monkeypatch)
+    tasks, keys = _order_preserving_tasks()
+    pool = _FakeProcessPool()
+
+    def _fail_open(_workers):
+        raise AssertionError("must not open a new pool when executor= is given")
+
+    monkeypatch.setattr(fit_wizard_module, "open_spawn_pool", _fail_open)
+
+    results = _run_template_assessments(tasks, max_workers=4, executor=pool)
+
+    assert [a.template.key for a in results] == keys
+    # A caller-supplied pool is the caller's to shut down, not this call's.
+    assert pool.shutdown_calls == []
+
+
+def test_run_template_assessments_falls_back_to_threads_when_spawn_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _monkeypatch_dummy_worker(monkeypatch)
+    tasks, keys = _order_preserving_tasks()
+    monkeypatch.setattr(fit_wizard_module, "open_spawn_pool", lambda workers: None)
+
+    results = _run_template_assessments(tasks, max_workers=4)
+
+    assert [a.template.key for a in results] == keys
+
+
+def test_run_template_assessments_process_path_cancels_promptly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _monkeypatch_dummy_worker(monkeypatch)
+    tasks, _keys = _order_preserving_tasks()
+    pool = _FakeProcessPool()
+    monkeypatch.setattr(fit_wizard_module, "open_spawn_pool", lambda workers: pool)
+
+    calls = {"n": 0}
+
+    def _cancel_after_first() -> bool:
+        calls["n"] += 1
+        return calls["n"] > 1
+
+    with pytest.raises(FitCancelledError):
+        _run_template_assessments(tasks, max_workers=4, cancel_callback=_cancel_after_first)
+
+    # The pool this call opened is torn down with cancel_futures on abort.
+    assert pool.shutdown_calls == [{"wait": False, "cancel_futures": True}]
+
+
+def test_run_template_assessments_retries_failed_future_serially(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tasks, keys = _order_preserving_tasks()
+    pool = _FakeProcessPool()
+    monkeypatch.setattr(fit_wizard_module, "open_spawn_pool", lambda workers: pool)
+
+    call_count = {"c": 0}
+
+    def _fake_execute(task, cancel_callback=None):
+        # Fail the *first* call for task "c" (the submitted, process-pool
+        # call) and succeed on the retry (the serial in-parent fallback).
+        if task.template.key == "c":
+            call_count["c"] += 1
+            if call_count["c"] == 1:
+                raise RuntimeError("boom")
+        return _dummy_assessment(task.template.key, stage=task.stage)
+
+    monkeypatch.setattr(fit_wizard_module, "_execute_assessment_task", _fake_execute)
+
+    results = _run_template_assessments(tasks, max_workers=4)
+
+    assert [a.template.key for a in results] == keys
+    assert call_count["c"] == 2
+
+
+def test_run_template_assessments_propagates_cancelled_error_from_future(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tasks, _keys = _order_preserving_tasks()
+    pool = _FakeProcessPool()
+    monkeypatch.setattr(fit_wizard_module, "open_spawn_pool", lambda workers: pool)
+
+    def _fake_execute(task, cancel_callback=None):
+        raise FitCancelledError("cancelled inside worker")
+
+    monkeypatch.setattr(fit_wizard_module, "_execute_assessment_task", _fake_execute)
+
+    with pytest.raises(FitCancelledError):
+        _run_template_assessments(tasks, max_workers=4)
+
+
+def test_assessment_task_pickle_round_trip() -> None:
+    task = _dummy_task("exp_constant")
+    restored = pickle.loads(pickle.dumps(task))
+    assert restored.template.key == task.template.key
+    assert restored.stage == task.stage
+    assert restored.variant_budget == task.variant_budget
+    assert restored.screening_cap == task.screening_cap
+    assert np.array_equal(restored.dataset.time, task.dataset.time)
+
+
+def _real_spawn_tasks() -> list[_AssessmentTask]:
+    """Two cheap, real (picklable) tasks: flat + exp templates, budget 1.
+
+    Small enough that a real ``spawn`` pool's process-startup cost stays a
+    few seconds — this is the one test in the suite that exercises an actual
+    subprocess rather than a monkeypatched fan-out mechanic.
+    """
+    rng = np.random.default_rng(7)
+    t = np.linspace(0.1, 6.0, 80)
+    y = 0.18 * np.exp(-0.5 * t) + 0.02 + rng.normal(0.0, 0.003, t.size)
+    dataset = MuonDataset(
+        time=t,
+        asymmetry=y,
+        error=np.full_like(t, 0.003),
+        metadata={"run_number": 1},
+    )
+    fingerprint = fingerprint_spectrum(dataset)
+    flat_template = CandidateTemplate(
+        key="null_constant",
+        title="Null baseline: constant",
+        category="Baseline",
+        rationale="",
+        model=CompositeModel(["Constant"], operators=[]),
+    )
+    exp_template = CandidateTemplate(
+        key="exp_constant",
+        title="Exponential + Constant",
+        category="General",
+        rationale="",
+        model=CompositeModel(["Exponential", "Constant"], operators=["+"]),
+    )
+    return [
+        _AssessmentTask(
+            dataset=dataset,
+            fingerprint=fingerprint,
+            template=template,
+            metric=SelectionMetric.AICC,
+            seed_context=None,
+            variant_budget=1,
+            stage=1,
+            screening_cap=True,
+        )
+        for template in (flat_template, exp_template)
+    ]
+
+
+@pytest.mark.integration
+def test_run_template_assessments_process_path_matches_serial() -> None:
+    """Real spawn pool vs. serial: same template keys/order, metrics agree to 1e-6.
+
+    This is the actual process-vs-serial equivalence check (no monkeypatched
+    worker) — it proves ``_run_template_assessments`` gives the same answer
+    whichever path executes the fits, not just that the fan-out plumbing works.
+    """
+    probe_pool = fit_wizard_module.open_spawn_pool(2)
+    if probe_pool is None:
+        pytest.skip("spawn pool unavailable in this environment.")
+    probe_pool.shutdown()
+
+    serial_tasks = _real_spawn_tasks()
+    process_tasks = _real_spawn_tasks()
+
+    start = time.monotonic()
+    serial_results = _run_template_assessments(serial_tasks, max_workers=1)
+    process_results = _run_template_assessments(process_tasks, max_workers=2)
+    elapsed = time.monotonic() - start
+
+    serial_keys = [a.template.key for a in serial_results]
+    process_keys = [a.template.key for a in process_results]
+    assert process_keys == serial_keys
+
+    for serial_assessment, process_assessment in zip(serial_results, process_results):
+        assert process_assessment.selected_score == pytest.approx(
+            serial_assessment.selected_score, abs=1e-6
+        )
+        assert process_assessment.fit_result.chi_squared == pytest.approx(
+            serial_assessment.fit_result.chi_squared, abs=1e-6
+        )
+
+    print(f"\nprocess-equivalence wall time: {elapsed:.2f}s")
+
+
+@pytest.mark.integration
+def test_run_template_assessments_process_path_cancellation_is_prompt() -> None:
+    """Real spawn pool: cancel_callback flipping True after one completion aborts."""
+    probe_pool = fit_wizard_module.open_spawn_pool(2)
+    if probe_pool is None:
+        pytest.skip("spawn pool unavailable in this environment.")
+    probe_pool.shutdown()
+
+    tasks = _real_spawn_tasks()
+    seen = {"n": 0}
+
+    def _cancel_after_first() -> bool:
+        seen["n"] += 1
+        return seen["n"] > 1
+
+    with pytest.raises(FitCancelledError):
+        _run_template_assessments(tasks, max_workers=2, cancel_callback=_cancel_after_first)
+
+
+# --------------------------------------------------------------------------- #
+# _effective_hint_keys
+# --------------------------------------------------------------------------- #
+
+
+def test_effective_hint_keys_kept_when_no_pattern_or_sniff() -> None:
+    hints = frozenset({"kt", "multi_rate"})
+    assert _effective_hint_keys(hints, frozenset(), frozenset()) == hints
+
+
+def test_effective_hint_keys_dropped_when_pattern_present() -> None:
+    hints = frozenset({"kt", "multi_rate"})
+    assert _effective_hint_keys(hints, frozenset({"oscillatory"}), frozenset()) == frozenset()
+
+
+def test_effective_hint_keys_dropped_when_sniff_present() -> None:
+    hints = frozenset({"kt"})
+    assert _effective_hint_keys(hints, frozenset(), frozenset({"fmuf"})) == frozenset()
 
 
 # --------------------------------------------------------------------------- #

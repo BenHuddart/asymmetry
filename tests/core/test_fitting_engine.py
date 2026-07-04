@@ -98,6 +98,34 @@ def test_fit_import_error_returns_failure(
     assert "iminuit import error" in result.message
 
 
+def test_fit_migrad_kwargs_caps_iterations_without_raising(dataset: MuonDataset) -> None:
+    # A real (non-faked) drive: an aggressively low ncall may not converge, but
+    # migrad_kwargs must reach drive_minuit and never raise — a wizard screening
+    # fit that hits the cap should come back as a (possibly unsuccessful) FitResult.
+    params = ParameterSet(
+        [
+            Parameter("A0", value=0.2, min=0.0, max=1.0),
+            Parameter("Lambda", value=0.4, min=0.0),
+            Parameter("baseline", value=0.0, fixed=True),
+        ]
+    )
+
+    result = FitEngine().fit(dataset, _exp_model, params, migrad_kwargs={"ncall": 5})
+
+    assert isinstance(result, FitResult)
+
+
+def test_fit_omitting_migrad_kwargs_is_unchanged(
+    dataset: MuonDataset, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_fake_iminuit(monkeypatch)
+
+    params = ParameterSet([Parameter("A0", value=0.2), Parameter("Lambda", value=0.4)])
+    result = FitEngine().fit(dataset, _exp_model, params)
+
+    assert result.success is True
+
+
 def test_global_fit_requires_non_empty_dataset_list() -> None:
     with pytest.raises(ValueError, match="No datasets provided"):
         FitEngine().global_fit([], _exp_model, ["A0"], ["Lambda"], {})

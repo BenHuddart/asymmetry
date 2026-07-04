@@ -71,7 +71,7 @@ def test_fit_wizard_recommends_exponential_for_exponential_spectrum(
     model = CompositeModel(["Exponential", "Constant"], operators=["+"])
     dataset = _dataset_for(model, A_1=0.2, Lambda=0.4, A_bg=0.01)
 
-    recommendation = build_fit_wizard_recommendation(dataset)
+    recommendation = build_fit_wizard_recommendation(dataset, max_workers=1)
 
     assert recommendation.recommended_key == "exp_constant"
     assert recommendation.recommended_assessment is not None
@@ -85,7 +85,7 @@ def test_fit_wizard_recommends_two_exponentials_for_biexponential_spectrum(
     model = CompositeModel(["Exponential", "Exponential", "Constant"], operators=["+", "+"])
     dataset = _dataset_for(model, A_1=0.14, Lambda_1=2.4, A_2=0.08, Lambda_2=0.18, A_bg=0.01)
 
-    recommendation = build_fit_wizard_recommendation(dataset)
+    recommendation = build_fit_wizard_recommendation(dataset, max_workers=1)
 
     assert recommendation.recommended_key == "biexp_constant"
 
@@ -97,7 +97,7 @@ def test_fit_wizard_recommends_exponential_plus_gaussian_for_mixed_spectrum(
     model = CompositeModel(["Exponential", "Gaussian", "Constant"], operators=["+", "+"])
     dataset = _dataset_for(model, A_1=0.13, Lambda=1.7, A_2=0.09, sigma=0.28, A_bg=0.01)
 
-    recommendation = build_fit_wizard_recommendation(dataset)
+    recommendation = build_fit_wizard_recommendation(dataset, max_workers=1)
 
     assert recommendation.recommended_key == "exp_gaussian_constant"
 
@@ -109,7 +109,7 @@ def test_fit_wizard_recommends_gaussian_for_gaussian_spectrum(
     model = CompositeModel(["Gaussian", "Constant"], operators=["+"])
     dataset = _dataset_for(model, A_1=0.2, sigma=0.6, A_bg=0.01)
 
-    recommendation = build_fit_wizard_recommendation(dataset)
+    recommendation = build_fit_wizard_recommendation(dataset, max_workers=1)
 
     assert recommendation.recommended_key == "gaussian_constant"
 
@@ -121,7 +121,7 @@ def test_fit_wizard_recommends_stretched_exponential_for_stretched_spectrum(
     model = CompositeModel(["StretchedExponential", "Constant"], operators=["+"])
     dataset = _dataset_for(model, A_1=0.2, Lambda=0.35, beta=1.6, A_bg=0.01)
 
-    recommendation = build_fit_wizard_recommendation(dataset)
+    recommendation = build_fit_wizard_recommendation(dataset, max_workers=1)
 
     assert recommendation.recommended_key == "stretched_constant"
 
@@ -133,7 +133,7 @@ def test_fit_wizard_recommends_static_kt_for_static_kt_spectrum(
     model = CompositeModel(["StaticGKT_ZF", "Constant"], operators=["+"])
     dataset = _dataset_for(model, A_1=0.25, Delta=0.5, A_bg=0.01)
 
-    recommendation = build_fit_wizard_recommendation(dataset)
+    recommendation = build_fit_wizard_recommendation(dataset, max_workers=1)
 
     assert recommendation.recommended_key == "static_gkt_constant"
 
@@ -145,7 +145,7 @@ def test_fit_wizard_recommends_static_kt_times_exponential_for_damped_kt_spectru
     model = CompositeModel(["StaticGKT_ZF", "Exponential", "Constant"], operators=["*", "+"])
     dataset = _dataset_for(model, A_1=0.25, Delta=0.45, Lambda=0.2, A_bg=0.01)
 
-    recommendation = build_fit_wizard_recommendation(dataset)
+    recommendation = build_fit_wizard_recommendation(dataset, max_workers=1)
 
     assert recommendation.recommended_key == "static_gkt_exp_constant"
 
@@ -157,7 +157,7 @@ def test_fit_wizard_recommends_damped_oscillation_for_oscillatory_spectrum(
     model = CompositeModel(["Oscillatory", "Exponential", "Constant"], operators=["*", "+"])
     dataset = _dataset_for(model, A_1=0.2, frequency=0.6, phase=0.0, Lambda=0.3, A_bg=0.01)
 
-    recommendation = build_fit_wizard_recommendation(dataset)
+    recommendation = build_fit_wizard_recommendation(dataset, max_workers=1)
 
     assert recommendation.recommended_key == "oscillatory_exp_constant"
 
@@ -172,7 +172,7 @@ def test_fit_wizard_recommends_risch_kehr_for_1d_diffusion_spectrum(
     model = CompositeModel(["RischKehr", "Constant"], operators=["+"])
     dataset = _dataset_for(model, A_1=0.25, Gamma=2.0, A_bg=0.01)
 
-    recommendation = build_fit_wizard_recommendation(dataset)
+    recommendation = build_fit_wizard_recommendation(dataset, max_workers=1)
 
     assert recommendation.recommended_key == "risch_kehr_constant"
 
@@ -184,7 +184,7 @@ def test_fit_wizard_recommends_bessel_for_bessel_oscillation_spectrum(
     model = CompositeModel(["Bessel", "Exponential", "Constant"], operators=["*", "+"])
     dataset = _dataset_for(model, A_1=0.25, frequency=0.6, phase=0.0, Lambda=0.2, A_bg=0.01)
 
-    recommendation = build_fit_wizard_recommendation(dataset)
+    recommendation = build_fit_wizard_recommendation(dataset, max_workers=1)
 
     assert recommendation.recommended_key == "bessel_exp_constant"
 
@@ -198,7 +198,7 @@ def test_fit_wizard_recommends_gbkt_for_broadened_kt_spectrum(
     # regime GBKT is for. Pure ZF (B_L = 0) correctly defers to StaticGKT_ZF.
     dataset = _dataset_for(model, A_1=0.25, Delta=0.6, B_L=5.0, w_rel=0.3, A_bg=0.01)
 
-    recommendation = build_fit_wizard_recommendation(dataset)
+    recommendation = build_fit_wizard_recommendation(dataset, max_workers=1)
 
     assert recommendation.recommended_key == "gbkt_constant"
 
@@ -283,7 +283,7 @@ def test_monotonic_low_frequency_spectrum_prefers_multi_rate_over_oscillation(
     )
 
     fingerprint = fingerprint_spectrum(dataset)
-    recommendation = build_fit_wizard_recommendation(dataset)
+    recommendation = build_fit_wizard_recommendation(dataset, max_workers=1)
 
     assert fingerprint.oscillatory_hint is False
     assert fingerprint.multi_rate_hint is True
@@ -313,7 +313,7 @@ def test_fit_wizard_recommends_three_exponentials_for_three_rate_spectrum(
         metadata={"run_number": 1},
     )
 
-    recommendation = build_fit_wizard_recommendation(dataset)
+    recommendation = build_fit_wizard_recommendation(dataset, max_workers=1)
 
     assert recommendation.recommended_key == "triple_exp_constant"
 
@@ -325,8 +325,8 @@ def test_fit_wizard_analysis_is_deterministic_for_the_same_spectrum(
     model = CompositeModel(["Gaussian", "Constant"], operators=["+"])
     dataset = _dataset_for(model, A_1=0.2, sigma=0.6, A_bg=0.01)
 
-    first = build_fit_wizard_recommendation(dataset)
-    second = build_fit_wizard_recommendation(dataset)
+    first = build_fit_wizard_recommendation(dataset, max_workers=1)
+    second = build_fit_wizard_recommendation(dataset, max_workers=1)
 
     assert first.recommended_key == second.recommended_key
     first_scores = [
@@ -388,7 +388,7 @@ def test_medium_confidence_recommendation_when_every_candidate_is_forced_to_warn
         lambda **kwargs: ["forced warning"],
     )
 
-    recommendation = build_fit_wizard_recommendation(dataset)
+    recommendation = build_fit_wizard_recommendation(dataset, max_workers=1)
 
     assert recommendation.recommended_key is not None
     assert recommendation.confidence is wizard_module.ConfidenceTier.MEDIUM
@@ -411,7 +411,7 @@ def test_failed_candidate_fit_is_retained_in_the_comparison_table(
     model = CompositeModel(["Exponential", "Constant"], operators=["+"])
     dataset = _dataset_for(model, A_1=0.2, Lambda=0.4, A_bg=0.01)
 
-    recommendation = build_fit_wizard_recommendation(dataset)
+    recommendation = build_fit_wizard_recommendation(dataset, max_workers=1)
     {assessment.template.key: assessment for assessment in recommendation.assessments}
 
 
@@ -422,7 +422,7 @@ def test_fit_wizard_recommendation_serialization_round_trip(
     model = CompositeModel(["Exponential", "Constant"], operators=["+"])
     dataset = _dataset_for(model, A_1=0.2, Lambda=0.4, A_bg=0.01)
 
-    recommendation = build_fit_wizard_recommendation(dataset)
+    recommendation = build_fit_wizard_recommendation(dataset, max_workers=1)
     restored = deserialize_fit_wizard_recommendation(
         serialize_fit_wizard_recommendation(recommendation)
     )
