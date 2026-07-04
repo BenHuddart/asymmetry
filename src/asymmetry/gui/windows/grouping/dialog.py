@@ -55,6 +55,7 @@ from asymmetry.core.instrument import (
     variant_for_histograms,
 )
 from asymmetry.core.project.profiles import (
+    AlphaPolicy,
     GroupingProfile,
     ProfileFingerprint,
     profile_fingerprint_for_run,
@@ -73,7 +74,6 @@ from asymmetry.core.transform import (
     resolve_background_mode,
     resolve_binning_mode,
 )
-from asymmetry.core.transform.asymmetry import AlphaEstimate, estimate_alpha_detailed
 from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import apply_param_table_style, clear_layout
@@ -513,11 +513,20 @@ class GroupingDialog(QDialog):
         period_layout.addStretch()
         self._set_period_mode(str(grouping.get("period_mode", PeriodMode.RED)))
 
-        estimate_btn = QPushButton("Estimate α")
-        estimate_btn.setAutoDefault(False)
-        estimate_btn.setDefault(False)
-        estimate_btn.clicked.connect(self._estimate_alpha)
+        calibrate_btn = QPushButton("Calibrate…")
+        calibrate_btn.setAutoDefault(False)
+        calibrate_btn.setDefault(False)
+        calibrate_btn.setToolTip(
+            "Open the Alpha calibration dialog: pick a transverse-field "
+            "calibration run and see α balance the asymmetry about zero."
+        )
+        calibrate_btn.clicked.connect(self._estimate_alpha)
 
+        # The estimation *method* is now chosen inside the calibration dialog, so
+        # the inline method combo is retired from the visible row. It is kept as a
+        # hidden control because the current-method key still seeds the payload's
+        # ``alpha_method`` provenance (and a calibration writes the chosen method
+        # back into it).
         self._alpha_method_combo = QComboBox()
         for label, key, explanation in _ALPHA_METHOD_ITEMS:
             self._alpha_method_combo.addItem(label, key)
@@ -527,6 +536,13 @@ class GroupingDialog(QDialog):
                 Qt.ItemDataRole.ToolTipRole,
             )
         self._set_alpha_method(str(grouping.get("alpha_method", "diamagnetic")))
+        self._alpha_method_combo.setVisible(False)
+
+        # Provenance status for the single alpha: "calibrated" reads the estimate
+        # summary, "manual" once the spin is hand-edited.
+        self._alpha_provenance_label = QLabel("")
+        self._alpha_provenance_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+        self._alpha_provenance_label.setWordWrap(True)
 
         self._alpha_result_label = QLabel("")
         self._alpha_result_label.setWordWrap(True)
@@ -542,10 +558,14 @@ class GroupingDialog(QDialog):
         alpha_row = QHBoxLayout(self._single_alpha_widget)
         alpha_row.setContentsMargins(0, 0, 0, 0)
         alpha_row.addWidget(self._alpha_spin)
-        alpha_row.addWidget(self._alpha_method_combo)
-        alpha_row.addWidget(estimate_btn)
+        alpha_row.addWidget(calibrate_btn)
+        alpha_row.addWidget(self._alpha_provenance_label, stretch=1)
         form.addRow(self._alpha_row_label, self._single_alpha_widget)
         form.addRow("", self._alpha_result_label)
+        # A hand-edit of the alpha spin clears calibration provenance → "manual".
+        self._alpha_spin.valueChanged.connect(self._on_alpha_spin_edited)
+        self._reseed_alpha_provenance_from_grouping(grouping)
+        self._refresh_alpha_provenance_label()
 
         # Vector alpha widget: one row per declared projection. The rows are
         # built dynamically (see :meth:`_rebuild_vector_alpha_table`) because the
@@ -1272,7 +1292,9 @@ class GroupingDialog(QDialog):
         self._alpha_spin.setValue(float(grouping.get("alpha", 1.0)))
         self._set_alpha_method(str(grouping.get("alpha_method", "diamagnetic")))
         self._alpha_estimate_state.clear()
+        self._reseed_alpha_provenance_from_grouping(grouping)
         self._alpha_result_label.setText("")
+        self._refresh_alpha_provenance_label()
         max_bin = self._max_bin_index_for_reference_dataset()
         index_base = self._bin_index_base(grouping)
         self._t0_spin.setRange(index_base, max_bin + index_base)
@@ -2403,31 +2425,6 @@ class GroupingDialog(QDialog):
         """Return the grouping-dict key of the selected estimation method."""
         return str(self._alpha_method_combo.currentData() or "diamagnetic")
 
-    def _reference_time_us(self, n_bins: int, t0_bin: int) -> np.ndarray:
-        """Bin-centre times (µs, relative to t0) for the reference run."""
-        bin_width = 0.016
-        if self._run is not None and self._run.histograms:
-            bin_width = float(self._run.histograms[0].bin_width)
-        return (np.arange(n_bins, dtype=np.float64) - float(t0_bin)) * bin_width
-
-    def _record_alpha_estimate(self, slot: str, estimate: AlphaEstimate) -> None:
-        """Remember a successful estimate and show it in the result label."""
-        self._alpha_estimate_state[slot] = (
-            float(estimate.alpha),
-            estimate.alpha_error,
-            int(self._reference_dataset.run_number),
-        )
-        method_label = next(
-            (label for label, key, _ in _ALPHA_METHOD_ITEMS if key == estimate.method),
-            estimate.method,
-        )
-        formatted = _format_value_with_uncertainty(estimate.alpha, estimate.alpha_error)
-        slot_prefix = "" if slot == "single" else f"{slot}: "
-        self._alpha_result_label.setText(
-            f"{slot_prefix}α = {formatted} — {method_label}, "
-            f"run {self._reference_dataset.run_number}"
-        )
-
     def _set_binning_mode(self, mode_key: str) -> None:
         """Select the binning-mode combo entry, defaulting to fixed."""
         idx = self._binning_mode_combo.findData(str(mode_key))
@@ -2560,81 +2557,178 @@ class GroupingDialog(QDialog):
         )
 
     def _estimate_alpha(self) -> None:
-        """Estimate alpha using only the current reference run.
+        """Launch the Alpha calibration dialog for the single-alpha grouping.
 
-        This mirrors the intended workflow where alpha is determined from a
-        single representative run, then optionally applied to multiple runs.
+        Replaces the old inline "Estimate α" action: the dialog lets the user
+        pick a calibration run, method and window and *see* alpha balance the
+        asymmetry. On OK the calibrated policy is written back into the alpha
+        spin and its provenance (method, error, source run), so the payload's
+        ``alpha_method`` / ``alpha_error`` / ``alpha_reference_run`` — and hence
+        the resolved ``AlphaPolicy`` — carry the calibration exactly as the old
+        inline estimate did.
         """
         forward_gid = int(self._forward_combo.currentData())
         backward_gid = int(self._backward_combo.currentData())
-        estimate = self._estimate_alpha_for_group_ids(forward_gid, backward_gid)
-        if estimate is not None:
-            self._alpha_spin.setValue(float(estimate.alpha))
-            self._record_alpha_estimate("single", estimate)
+        self._launch_calibration_dialog("single", forward_gid, backward_gid, self._alpha_spin)
 
-    def _estimate_alpha_for_group_ids(
-        self, forward_gid: int, backward_gid: int
-    ) -> AlphaEstimate | None:
-        """Estimate alpha for the provided group IDs using the reference run."""
+    def _launch_calibration_dialog(
+        self,
+        slot: str,
+        forward_gid: int,
+        backward_gid: int,
+        target_spin: QDoubleSpinBox,
+        *,
+        slot_label: str | None = None,
+    ) -> None:
+        """Open the calibration dialog for one group pair and write the result.
+
+        *slot* is the ``_alpha_estimate_state`` key (``"single"`` or an axis /
+        projection label) the calibration provenance is recorded under; *target_spin*
+        is the alpha spin the calibrated value is written into.
+        """
         if forward_gid == backward_gid:
             QMessageBox.warning(
                 self, "Invalid Grouping", "Forward and backward groups must differ."
             )
-            return None
-
-        forward_indices = self._filtered_group_indices(forward_gid)
-        backward_indices = self._filtered_group_indices(backward_gid)
-        if not forward_indices or not backward_indices:
-            QMessageBox.warning(
-                self,
-                "Invalid Grouping",
-                "Selected groups are empty (after detector exclusion).",
-            )
-            return None
-
+            return
         if self._run is None or not self._run.histograms:
-            QMessageBox.warning(self, "Estimate Failed", "Reference run has no histograms.")
-            return None
+            QMessageBox.warning(self, "Alpha Calibration", "Reference run has no histograms.")
+            return
 
-        if max(forward_indices, default=-1) >= len(self._run.histograms):
-            QMessageBox.warning(
-                self, "Estimate Failed", "Forward group exceeds detector count for reference run."
-            )
-            return None
-        if max(backward_indices, default=-1) >= len(self._run.histograms):
-            QMessageBox.warning(
-                self, "Estimate Failed", "Backward group exceeds detector count for reference run."
-            )
-            return None
-
-        forward_counts = apply_grouping(self._run.histograms, forward_indices)
-        backward_counts = apply_grouping(self._run.histograms, backward_indices)
-
-        t0_bin, _t_good_offset, first_good_bin, last_good_bin = (
-            self._resolve_good_bin_limits_from_controls()
+        from asymmetry.gui.windows.grouping.alpha_calibration_dialog import (
+            AlphaCalibrationDialog,
         )
-        method = self._current_alpha_method()
-        time_us = None
-        if method == "general":
-            time_us = self._reference_time_us(len(forward_counts), int(t0_bin))
-        estimate = estimate_alpha_detailed(
-            forward_counts,
-            backward_counts,
-            method=method,
-            time_us=time_us,
-            first_good_bin=first_good_bin,
-            last_good_bin=last_good_bin,
+
+        initial_policy = AlphaPolicy(
+            mode="calibrated",
+            value=float(target_spin.value()),
+            method=self._current_alpha_method(),
+            source_run=self._alpha_estimate_state.get(slot, (None, None, None))[2],
         )
-        if not estimate.ok:
-            QMessageBox.warning(self, "Estimate Failed", estimate.message)
-            return None
-        return estimate
+        dialog = AlphaCalibrationDialog(
+            self._fingerprint_datasets(),
+            groups=self._groups,
+            group_names=self._group_names,
+            forward_group=int(forward_gid),
+            backward_group=int(backward_gid),
+            excluded_detectors=self._current_excluded_detectors() or [],
+            initial_policy=initial_policy,
+            slot_label=slot_label if slot != "single" else None,
+            selected_run_number=int(self._reference_dataset.run_number),
+            parent=self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        policy = dialog.result_policy()
+        if policy is None:
+            return
+        self._apply_calibrated_policy(slot, target_spin, policy)
+
+    def _apply_calibrated_policy(
+        self, slot: str, target_spin: QDoubleSpinBox, policy: AlphaPolicy
+    ) -> None:
+        """Write a calibrated :class:`AlphaPolicy` back into the form + provenance."""
+        # Record provenance the same shape the old inline estimate produced, so
+        # _current_grouping_payload emits alpha_method/alpha_error/alpha_reference_run.
+        self._alpha_estimate_state[slot] = (
+            float(policy.value),
+            policy.error,
+            int(policy.source_run) if policy.source_run is not None else -1,
+        )
+        if policy.method:
+            self._set_alpha_method(policy.method)
+        self._suppress_alpha_provenance_reset = True
+        try:
+            target_spin.setValue(float(policy.value))
+        finally:
+            self._suppress_alpha_provenance_reset = False
+        if slot == "single":
+            self._refresh_alpha_provenance_label()
+        elif slot == "P_z":
+            self._suppress_alpha_provenance_reset = True
+            try:
+                self._alpha_spin.setValue(float(policy.value))
+            finally:
+                self._suppress_alpha_provenance_reset = False
+            self._refresh_alpha_provenance_label()
+        self._record_calibration_result_label(slot, policy)
+        self._mark_dirty()
+
+    def _record_calibration_result_label(self, slot: str, policy: AlphaPolicy) -> None:
+        """Show the calibrated α in the shared result label."""
+        method_label = next(
+            (label for label, key, _ in _ALPHA_METHOD_ITEMS if key == policy.method),
+            policy.method,
+        )
+        formatted = _format_value_with_uncertainty(policy.value, policy.error)
+        slot_prefix = "" if slot == "single" else f"{slot}: "
+        run_text = f", run {policy.source_run}" if policy.source_run is not None else ""
+        self._alpha_result_label.setText(f"{slot_prefix}α = {formatted} — {method_label}{run_text}")
+
+    def _on_alpha_spin_edited(self) -> None:
+        """A hand-edit of the single alpha spin drops calibration provenance."""
+        if getattr(self, "_suppress_alpha_provenance_reset", False):
+            return
+        self._alpha_estimate_state.pop("single", None)
+        self._alpha_estimate_state.pop("P_z", None)
+        self._refresh_alpha_provenance_label()
+
+    def _reseed_alpha_provenance_from_grouping(self, grouping: dict[str, Any]) -> None:
+        """Re-seed ``_alpha_estimate_state['single']`` from a resolved payload.
+
+        A profile whose alpha policy is ``calibrated`` resolves to a payload
+        carrying ``alpha_reference_run`` (and optionally ``alpha_error``); lifting
+        it back into the estimate state lets the provenance label show the
+        calibration on reopen instead of falling back to "manual".
+        """
+        reference = grouping.get("alpha_reference_run")
+        if reference is None:
+            return
+        try:
+            run = int(reference)
+        except (TypeError, ValueError):
+            return
+        error = grouping.get("alpha_error")
+        try:
+            error_val = None if error is None else float(error)
+        except (TypeError, ValueError):
+            error_val = None
+        self._alpha_estimate_state["single"] = (
+            float(self._alpha_spin.value()),
+            error_val,
+            run,
+        )
+
+    def _refresh_alpha_provenance_label(self) -> None:
+        """Reflect the single alpha's provenance ("calibrated …" or "manual")."""
+        if not hasattr(self, "_alpha_provenance_label"):
+            return
+        recorded = self._alpha_estimate_state.get("single") or self._alpha_estimate_state.get("P_z")
+        value = float(self._alpha_spin.value())
+        if recorded is not None and abs(recorded[0] - value) < 1e-9:
+            method_label = next(
+                (
+                    label
+                    for label, key, _ in _ALPHA_METHOD_ITEMS
+                    if key == self._current_alpha_method()
+                ),
+                self._current_alpha_method(),
+            )
+            formatted = _format_value_with_uncertainty(recorded[0], recorded[1])
+            run = recorded[2]
+            run_text = f" · run {run}" if run is not None and run >= 0 else ""
+            self._alpha_provenance_label.setText(f"α = {formatted} · {method_label}{run_text}")
+        else:
+            self._alpha_provenance_label.setText("manual")
 
     def _estimate_alpha_for_axis(self, axis: str) -> None:
-        """Estimate alpha for one projection pair (canonical axis or otherwise).
+        """Launch the calibration dialog for one projection pair.
 
         *axis* is the projection slot/label — a canonical EMU axis (P_x/P_y/P_z)
-        or a non-canonical projection label (FB, Top-Bottom, …).
+        or a non-canonical projection label (FB, Top-Bottom, …). The dialog
+        preselects that projection's forward/backward groups and writes the
+        calibrated value + provenance back into the projection's alpha spin (and,
+        for the canonical P_z anchor, the single-alpha spin too).
         """
         pair = self._vector_axis_pairs.get(axis)
         if pair is None:
@@ -2642,12 +2736,10 @@ class GroupingDialog(QDialog):
                 self, "Estimate Failed", f"No grouping pair is available for {axis}."
             )
             return
-        estimate = self._estimate_alpha_for_group_ids(int(pair[0]), int(pair[1]))
-        if estimate is not None:
-            self._vector_alpha_spins[axis].setValue(float(estimate.alpha))
-            self._record_alpha_estimate(axis, estimate)
-            if axis == "P_z":
-                self._alpha_spin.setValue(float(estimate.alpha))
+        spin = self._vector_alpha_spins.get(axis)
+        if spin is None:
+            return
+        self._launch_calibration_dialog(axis, int(pair[0]), int(pair[1]), spin, slot_label=axis)
 
     def _estimate_all_alpha(self) -> None:
         """Estimate alpha for every projection pair in the current table."""

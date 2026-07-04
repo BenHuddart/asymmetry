@@ -13,13 +13,37 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QLabel
+from PySide6.QtWidgets import QApplication, QDialog, QLabel
 
 import asymmetry.gui.windows.grouping.dialog as grouping_dialog_dialog_module
 import asymmetry.gui.windows.grouping_dialog as grouping_dialog_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.utils.constants import PeriodMode
+from asymmetry.gui.windows.grouping.alpha_calibration_dialog import AlphaCalibrationDialog
 from asymmetry.gui.windows.grouping_dialog import GroupingDialog
+
+
+def _autocalibrate(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the launched Alpha calibration dialog run headlessly.
+
+    The grouping dialog's ``Calibrate…`` (and the per-projection estimate
+    buttons) now open :class:`AlphaCalibrationDialog` modally. Tests that used to
+    call the old synchronous ``_estimate_alpha`` drive the *real* calibration
+    flow instead: this patches ``exec`` to run the dialog's own estimate + accept
+    path (so the estimator, provenance and returned policy are all exercised) and
+    never blocks. ``result_policy()`` then returns the genuine calibrated policy.
+    """
+
+    def _fake_exec(self: AlphaCalibrationDialog) -> int:
+        self._on_estimate()
+        if self._estimate is None:
+            # Estimate failed (e.g. the General method on flat data): behave like
+            # a user who cancels, so the caller leaves alpha untouched.
+            return QDialog.DialogCode.Rejected
+        self._on_accept()
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(AlphaCalibrationDialog, "exec", _fake_exec, raising=True)
 
 
 @pytest.fixture(scope="module")
@@ -232,7 +256,10 @@ def _two_period_dataset(run_number: int = 6001) -> MuonDataset:
     )
 
 
-def test_estimate_alpha_updates_spinbox(qapp: QApplication) -> None:
+def test_estimate_alpha_updates_spinbox(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _autocalibrate(monkeypatch)
     dialog = GroupingDialog([_dataset_with_histograms()])
     dialog._estimate_alpha()
     assert dialog._alpha_spin.value() == pytest.approx(2.0)
@@ -544,10 +571,11 @@ def test_per_projection_alpha_seeds_from_declared_projection_alpha(
 
 
 def test_per_projection_alpha_estimate_updates_and_persists(
-    qapp: QApplication,
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Estimating a non-canonical projection updates its spin and the estimated
     value persists into the projection payload."""
+    _autocalibrate(monkeypatch)
     dialog = GroupingDialog([_tf_dataset_with_histograms()])
     dialog._estimate_alpha_for_axis("Top-Bottom")
     estimated = dialog._vector_alpha_spins["Top-Bottom"].value()
@@ -557,10 +585,13 @@ def test_per_projection_alpha_estimate_updates_and_persists(
     assert by_label["Top-Bottom"]["alpha"] == pytest.approx(estimated)
 
 
-def test_per_projection_alpha_estimate_persists_provenance(qapp: QApplication) -> None:
+def test_per_projection_alpha_estimate_persists_provenance(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A non-canonical projection's estimate carries its reference-run provenance
     into the projection payload, and a manual edit invalidates it — mirroring the
     canonical per-axis provenance."""
+    _autocalibrate(monkeypatch)
     dialog = GroupingDialog([_tf_dataset_with_histograms()])
     dialog._estimate_alpha_for_axis("Top-Bottom")
     estimated = dialog._vector_alpha_spins["Top-Bottom"].value()
@@ -677,9 +708,12 @@ def test_vector_payload_contains_per_axis_alpha_values(qapp: QApplication) -> No
     assert payload["alpha"] == pytest.approx(1.33)
 
 
-def test_vector_payload_records_per_axis_alpha_provenance(qapp: QApplication) -> None:
+def test_vector_payload_records_per_axis_alpha_provenance(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """After estimating an axis, the payload carries that axis's error and
     reference run (per-axis provenance, skipped in Phase 1)."""
+    _autocalibrate(monkeypatch)
     dialog = GroupingDialog([_vector_dataset_with_histograms()])
     dialog._estimate_alpha_for_axis("P_x")
     estimated = dialog._vector_alpha_spins["P_x"].value()
@@ -696,14 +730,20 @@ def test_vector_payload_records_per_axis_alpha_provenance(qapp: QApplication) ->
     assert "alpha_x_reference_run" not in payload2
 
 
-def test_vector_estimate_alpha_for_axis_updates_axis_spin(qapp: QApplication) -> None:
+def test_vector_estimate_alpha_for_axis_updates_axis_spin(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _autocalibrate(monkeypatch)
     dialog = GroupingDialog([_vector_dataset_with_histograms()])
     dialog._estimate_alpha_for_axis("P_x")
 
     assert dialog._vector_alpha_spins["P_x"].value() == pytest.approx(2.0)
 
 
-def test_vector_estimate_alpha_uses_selected_reference_run(qapp: QApplication) -> None:
+def test_vector_estimate_alpha_uses_selected_reference_run(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _autocalibrate(monkeypatch)
     ds_a = _vector_dataset_with_ratio(5201, ratio=2.0)
     ds_b = _vector_dataset_with_ratio(5202, ratio=4.0)
 
@@ -714,7 +754,10 @@ def test_vector_estimate_alpha_uses_selected_reference_run(qapp: QApplication) -
     assert dialog._vector_alpha_spins["P_x"].value() == pytest.approx(4.0)
 
 
-def test_estimate_alpha_uses_reference_run_only(qapp: QApplication) -> None:
+def test_estimate_alpha_uses_reference_run_only(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _autocalibrate(monkeypatch)
     ds_a = _dataset_with_ratio(5001, ratio=2.0)
     ds_b = _dataset_with_ratio(5002, ratio=4.0)
 
@@ -1425,11 +1468,16 @@ def test_alpha_method_round_trips_through_payload_and_reload(qapp: QApplication)
     assert dialog2._current_alpha_method() == "general"
 
 
-def test_estimate_records_provenance_in_payload(qapp: QApplication) -> None:
+def test_estimate_records_provenance_in_payload(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _autocalibrate(monkeypatch)
     dialog = GroupingDialog([_dataset_with_histograms()])
     dialog._estimate_alpha()
     assert dialog._alpha_spin.value() == pytest.approx(2.0)
     assert dialog._alpha_result_label.text() != ""
+    # The single-alpha provenance status reflects the calibration, not "manual".
+    assert dialog._alpha_provenance_label.text() != "manual"
     result = dialog.get_grouping_result()
     assert result["alpha_method"] == "diamagnetic"
     assert result["alpha_reference_run"] == 4001
@@ -1437,7 +1485,10 @@ def test_estimate_records_provenance_in_payload(qapp: QApplication) -> None:
     assert result.get("alpha_error") is None or result["alpha_error"] >= 0.0
 
 
-def test_manual_alpha_edit_invalidates_estimate_provenance(qapp: QApplication) -> None:
+def test_manual_alpha_edit_invalidates_estimate_provenance(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _autocalibrate(monkeypatch)
     dialog = GroupingDialog([_dataset_with_histograms()])
     dialog._estimate_alpha()
     dialog._alpha_spin.setValue(dialog._alpha_spin.value() + 0.5)
@@ -1445,21 +1496,19 @@ def test_manual_alpha_edit_invalidates_estimate_provenance(qapp: QApplication) -
     assert "alpha_error" not in result
     assert "alpha_reference_run" not in result
     assert result["alpha_method"] == "diamagnetic"
+    # A hand-edit flips the provenance status to "manual".
+    assert dialog._alpha_provenance_label.text() == "manual"
 
 
-def test_estimate_failure_warns_and_leaves_alpha(qapp: QApplication, monkeypatch) -> None:
+def test_estimate_failure_leaves_alpha(qapp: QApplication, monkeypatch) -> None:
+    """A failed estimate inside the calibration dialog leaves the alpha untouched
+    (the dialog reports the failure; the caller does not write a value back)."""
+    _autocalibrate(monkeypatch)
     dataset = _dataset_with_histograms()
     dialog = GroupingDialog([dataset])
     dialog._set_alpha_method("general")  # flat 4-bin data: no relaxation contrast
-    warnings: list[str] = []
-    monkeypatch.setattr(
-        grouping_dialog_module.QMessageBox,
-        "warning",
-        lambda *args, **kwargs: warnings.append(str(args[2]) if len(args) > 2 else ""),
-    )
     before = dialog._alpha_spin.value()
     dialog._estimate_alpha()
-    assert warnings, "expected a warning dialog for the failed estimate"
     assert dialog._alpha_spin.value() == pytest.approx(before)
 
 
@@ -1595,9 +1644,12 @@ def test_apply_blocks_when_exclusion_empties_a_group(qapp: QApplication, monkeyp
     assert any("no detectors left" in w for w in warnings)
 
 
-def test_estimate_alpha_respects_detector_exclusion(qapp: QApplication) -> None:
+def test_estimate_alpha_respects_detector_exclusion(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Review fix: the estimate is computed on the same detector set the
     reduction will use."""
+    _autocalibrate(monkeypatch)
     dataset = _dataset_with_histograms()
     dataset.run.histograms = [
         Histogram(counts=np.full(4, 100.0), bin_width=0.01),  # det 1 (forward)
