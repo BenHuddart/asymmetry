@@ -16,7 +16,13 @@ import pytest
 pytestmark = [pytest.mark.gui]
 
 pyside6 = pytest.importorskip("PySide6")
-from PySide6.QtWidgets import QApplication  # type: ignore  # noqa: E402
+from PySide6.QtCore import Qt  # type: ignore  # noqa: E402
+from PySide6.QtWidgets import (  # type: ignore  # noqa: E402
+    QApplication,
+    QHeaderView,
+    QScrollArea,
+    QSplitter,
+)
 
 from asymmetry.core.fitting.parameter_models import (  # noqa: E402
     CrossGroupFitResult,
@@ -28,8 +34,10 @@ from asymmetry.core.representation.global_fit_study import GlobalFitStudy  # noq
 from asymmetry.gui.windows.global_fit_window_helpers import (  # noqa: E402
     build_global_table_rows,
     format_value_with_error,
+    global_table_csv,
     global_table_latex,
     global_table_tsv,
+    uncertainty_trust_flag,
 )
 from asymmetry.gui.windows.global_parameter_fit_window import (  # noqa: E402
     GlobalParameterFitWindow,
@@ -368,7 +376,7 @@ def test_copy_puts_tsv_on_clipboard(qapp: QApplication) -> None:
     clipboard = QApplication.clipboard()
     text = clipboard.text()
     assert "\t" in text
-    assert "Parameter\tValue\tUncertainty\tUnits" in text
+    assert "Parameter\tValue\tUncertainty\tValue(err)\tFlag\tUnits" in text
 
 
 def test_latex_export_content(qapp: QApplication) -> None:
@@ -727,3 +735,306 @@ def test_set_results_clears_curve_cache(qapp: QApplication) -> None:
     assert window._curve_cache == {} or window._fit_curve_compute_active
     _wait_fit_curves(window)
     assert window._curve_cache.get(False) is not None
+
+
+# ── WP-BD: right-pane splitter + header resize policies ─────────────────────
+
+
+def test_params_table_header_resize_modes(qapp: QApplication) -> None:
+    window = GlobalParameterFitWindow()
+    header = window._params_table.horizontalHeader()
+    # symbol=ResizeToContents, Value/Uncertainty=Interactive, Units=ResizeToContents,
+    # last section stretches.
+    assert header.sectionResizeMode(0) == QHeaderView.ResizeMode.ResizeToContents
+    assert header.sectionResizeMode(1) == QHeaderView.ResizeMode.Interactive
+    assert header.sectionResizeMode(2) == QHeaderView.ResizeMode.Interactive
+    assert header.sectionResizeMode(3) == QHeaderView.ResizeMode.ResizeToContents
+    assert header.stretchLastSection()
+    # The interactive numeric columns carry a content-based minimum wide enough
+    # for the "Uncertainty" header — it can never truncate.
+    fm = header.fontMetrics()
+    assert header.minimumSectionSize() >= fm.horizontalAdvance("Uncertainty")
+
+
+def test_params_table_header_modes_survive_populate(qapp: QApplication) -> None:
+    window = GlobalParameterFitWindow()
+    groups = _make_groups(2)
+    result = CrossGroupFitResult(
+        success=True,
+        chi_squared=1.0,
+        reduced_chi_squared=1.0,
+        global_parameters=ParameterSet([Parameter("Lambda", value=0.12)]),
+        global_uncertainties={"Lambda": 0.005},
+        local_parameters={"g0": ParameterSet(), "g1": ParameterSet()},
+    )
+    _set_and_wait(window, groups, result)
+    header = window._params_table.horizontalHeader()
+    assert header.sectionResizeMode(0) == QHeaderView.ResizeMode.ResizeToContents
+    assert header.sectionResizeMode(1) == QHeaderView.ResizeMode.Interactive
+    assert header.stretchLastSection()
+
+
+def test_y_selector_header_resize_modes(qapp: QApplication) -> None:
+    window = GlobalParameterFitWindow()
+    header = window._local_y_selector_table.horizontalHeader()
+    # Parameter-name column stretches; button + log columns size to content so
+    # "Model Fit"/"log" never truncate.
+    assert header.sectionResizeMode(0) == QHeaderView.ResizeMode.Stretch
+    assert header.sectionResizeMode(1) == QHeaderView.ResizeMode.ResizeToContents
+    assert header.sectionResizeMode(2) == QHeaderView.ResizeMode.ResizeToContents
+    assert not header.stretchLastSection()
+
+
+def test_y_selector_header_modes_survive_populate(qapp: QApplication) -> None:
+    window = GlobalParameterFitWindow()
+    window._rebuild_local_y_controls(["A", "Lambda", "c"])
+    header = window._local_y_selector_table.horizontalHeader()
+    assert header.sectionResizeMode(0) == QHeaderView.ResizeMode.Stretch
+    assert header.sectionResizeMode(1) == QHeaderView.ResizeMode.ResizeToContents
+    assert header.sectionResizeMode(2) == QHeaderView.ResizeMode.ResizeToContents
+
+
+def test_right_pane_is_vertical_splitter_with_min_heights(qapp: QApplication) -> None:
+    window = GlobalParameterFitWindow()
+    splitter = window._right_splitter
+    assert isinstance(splitter, QSplitter)
+    assert splitter.orientation() == Qt.Orientation.Vertical
+    # Three blocks: params-table block, Y-selector, local canvas block.
+    assert splitter.count() == 3
+    # The Y-selector is the middle child.
+    assert splitter.widget(1) is window._local_y_selector_table
+    # Every block carries a non-zero minimum height so none collapses.
+    for i in range(3):
+        assert splitter.widget(i).minimumHeight() > 0
+
+
+# ── WP-BD: grid scroll area + canvas minimum height ─────────────────────────
+
+
+def test_left_grid_lives_in_scroll_area_no_hscroll(qapp: QApplication) -> None:
+    window = GlobalParameterFitWindow()
+    scroll = window._left_scroll
+    assert isinstance(scroll, QScrollArea)
+    assert scroll.widgetResizable()
+    assert scroll.widget() is window._left_canvas
+    assert scroll.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+
+
+def test_grid_canvas_min_height_grows_with_rows(qapp: QApplication) -> None:
+    window = GlobalParameterFitWindow()
+    # Two groups → one row (2 columns) → shorter canvas.
+    groups2 = _make_groups(2)
+    _set_and_wait(window, groups2, _result_with_per_group(groups2))
+    two_row_h = window._left_canvas.minimumHeight()
+
+    # Eight groups → 3 rows → taller canvas.
+    window.set_results(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=_make_groups(8),
+        model=ParameterCompositeModel(["Constant"]),
+        result=_result_with_per_group(_make_groups(8)),
+        batch_id="eight",
+    )
+    _wait_fit_curves(window)
+    tall_h = window._left_canvas.minimumHeight()
+    assert tall_h > two_row_h
+    assert two_row_h > 0
+
+
+def test_grid_canvas_min_height_updates_on_column_change(qapp: QApplication) -> None:
+    window = GlobalParameterFitWindow()
+    groups = _make_groups(8)
+    _set_and_wait(window, groups, _result_with_per_group(groups))
+    # Auto → 3 columns → 3 rows.
+    auto_h = window._left_canvas.minimumHeight()
+    # Force 1 column → 8 rows → much taller.
+    window._fit_columns_combo.setCurrentText("1")
+    tall_h = window._left_canvas.minimumHeight()
+    assert tall_h > auto_h
+
+
+def test_columns_choice_persisted_in_state(qapp: QApplication) -> None:
+    window = GlobalParameterFitWindow()
+    window._fit_columns_combo.setCurrentText("3")
+    state = window.get_state()
+    assert state["fit_columns"] == "3"
+
+    other = GlobalParameterFitWindow()
+    other.restore_state(state)
+    assert other._fit_columns_combo.currentText() == "3"
+
+
+# ── WP-BD: legend top-margin reservation ────────────────────────────────────
+
+
+def _first_row_axes(window: GlobalParameterFitWindow) -> list:
+    axes = window._left_figure.axes
+    return [ax for ax in axes if ax.get_subplotspec().rowspan.start == 0]
+
+
+def _legend_bbox_fig(window: GlobalParameterFitWindow):
+    window._left_canvas.draw()
+    renderer = window._left_canvas.get_renderer()
+    legends = window._left_figure.legends
+    assert legends, "expected a figure-level component legend"
+    bbox_px = legends[0].get_window_extent(renderer)
+    return bbox_px.transformed(window._left_figure.transFigure.inverted())
+
+
+def _component_result(groups: list[ParameterGroupData]) -> CrossGroupFitResult:
+    return CrossGroupFitResult(
+        success=True,
+        chi_squared=1.0,
+        reduced_chi_squared=1.0,
+        global_parameters=ParameterSet([Parameter("a", value=0.1), Parameter("c", value=0.05)]),
+        local_parameters={g.group_id: ParameterSet() for g in groups},
+    )
+
+
+def _set_components(window: GlobalParameterFitWindow, groups, batch_id: str) -> None:
+    window._show_components_check.setChecked(True)
+    window.set_results(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=groups,
+        model=ParameterCompositeModel.from_expression("Linear + Constant"),
+        result=_component_result(groups),
+        batch_id=batch_id,
+    )
+    _wait_fit_curves(window)
+
+
+def test_legend_does_not_overlap_first_row_titles_single_row(qapp: QApplication) -> None:
+    window = GlobalParameterFitWindow()
+    window.resize(900, 700)
+    groups = _make_groups(2)  # one row
+    _set_components(window, groups, "one_row")
+    legend_bbox = _legend_bbox_fig(window)
+    # Legend sits strictly above every first-row panel (title band included).
+    for ax in _first_row_axes(window):
+        ax_top = ax.get_position().y1
+        assert legend_bbox.y0 >= ax_top - 1e-6, (
+            f"legend y0={legend_bbox.y0:.3f} overlaps axis top {ax_top:.3f}"
+        )
+
+
+def test_legend_does_not_overlap_first_row_titles_three_rows(qapp: QApplication) -> None:
+    window = GlobalParameterFitWindow()
+    window.resize(900, 900)
+    groups = _make_groups(8)  # 3 rows at auto (3 cols)
+    _set_components(window, groups, "three_rows")
+    legend_bbox = _legend_bbox_fig(window)
+    for ax in _first_row_axes(window):
+        ax_top = ax.get_position().y1
+        assert legend_bbox.y0 >= ax_top - 1e-6, (
+            f"legend y0={legend_bbox.y0:.3f} overlaps axis top {ax_top:.3f}"
+        )
+
+
+# ── WP-BD: uncertainty trust flag ───────────────────────────────────────────
+
+
+def _degenerate_result() -> CrossGroupFitResult:
+    # A=1.7e-5 ± 616 → err ≫ 3×|value| → flagged. c=0.15 ± 0.005 → healthy.
+    return CrossGroupFitResult(
+        success=True,
+        chi_squared=1.0,
+        reduced_chi_squared=1.0,
+        global_parameters=ParameterSet([Parameter("A", value=1.7e-5), Parameter("c", value=0.15)]),
+        global_uncertainties={"A": 616.0, "c": 0.005},
+        local_parameters={"g0": ParameterSet(), "g1": ParameterSet()},
+    )
+
+
+def test_uncertainty_flag_background_and_tooltip_on_degenerate_row(qapp: QApplication) -> None:
+    window = GlobalParameterFitWindow()
+    groups = _make_groups(2)
+    _set_and_wait(window, groups, _degenerate_result())
+    # Row 0 = A (degenerate) → warning background + tooltip on the Uncertainty cell.
+    a_err = window._params_table.item(0, 2)
+    assert a_err is not None
+    assert a_err.background().color().isValid()
+    assert a_err.background().style() != Qt.BrushStyle.NoBrush
+    assert a_err.toolTip()
+    # Row 1 = c (healthy) → no warning brush, no tooltip.
+    c_err = window._params_table.item(1, 2)
+    assert c_err is not None
+    assert c_err.background().style() == Qt.BrushStyle.NoBrush
+    assert not c_err.toolTip()
+
+
+def test_uncertainty_trust_flag_helper() -> None:
+    assert uncertainty_trust_flag(1.7e-5, 616.0) == "degenerate"
+    assert uncertainty_trust_flag(0.15, 0.005) == ""
+    assert uncertainty_trust_flag(1.0, float("nan")) == "degenerate"
+    assert uncertainty_trust_flag(1.0, None) == ""
+    # err exactly 3×|value| is not flagged (strict >).
+    assert uncertainty_trust_flag(1.0, 3.0) == ""
+    assert uncertainty_trust_flag(1.0, 3.0001) == "degenerate"
+
+
+# ── WP-BD: correlations-disabled tooltip ────────────────────────────────────
+
+
+def test_correlations_disabled_button_has_explanatory_tooltip(qapp: QApplication) -> None:
+    window = GlobalParameterFitWindow()
+    groups = _make_groups(2)
+    # No global_correlations on the result → button disabled with explanation.
+    result = CrossGroupFitResult(
+        success=True,
+        chi_squared=1.0,
+        reduced_chi_squared=1.0,
+        global_parameters=ParameterSet([Parameter("c", value=0.15)]),
+        local_parameters={"g0": ParameterSet(), "g1": ParameterSet()},
+    )
+    _set_and_wait(window, groups, result)
+    assert not window._correlations_btn.isEnabled()
+    assert "correlation matrix unavailable" in window._correlations_btn.toolTip()
+
+
+def test_correlations_enabled_button_restores_default_tooltip(qapp: QApplication) -> None:
+    window = GlobalParameterFitWindow()
+    groups = _make_groups(2)
+    result = CrossGroupFitResult(
+        success=True,
+        chi_squared=1.0,
+        reduced_chi_squared=1.0,
+        global_parameters=ParameterSet([Parameter("a", value=0.1), Parameter("b", value=0.2)]),
+        global_correlations=(["a", "b"], [[1.0, 0.3], [0.3, 1.0]]),
+        local_parameters={"g0": ParameterSet(), "g1": ParameterSet()},
+    )
+    _set_and_wait(window, groups, result)
+    assert window._correlations_btn.isEnabled()
+    assert "correlation matrix unavailable" not in window._correlations_btn.toolTip()
+
+
+# ── WP-BD: TSV/CSV combined + flag columns ──────────────────────────────────
+
+
+def test_tsv_export_has_combined_and_flag_columns() -> None:
+    result = _degenerate_result()
+    tsv = global_table_tsv(result)
+    header = tsv.splitlines()[0]
+    assert header == "Parameter\tValue\tUncertainty\tValue(err)\tFlag\tUnits"
+    # The degenerate A row carries the "degenerate" flag; the raw columns remain.
+    a_line = next(line for line in tsv.splitlines() if line.split("\t")[0].startswith("A"))
+    cells = a_line.split("\t")
+    assert cells[4] == "degenerate"
+    # Value(err) column is populated (combined form).
+    assert cells[3]
+
+
+def test_csv_export_has_combined_and_flag_columns() -> None:
+    import csv
+    import io
+
+    result = _degenerate_result()
+    csv_text = global_table_csv(result)
+    reader = list(csv.reader(io.StringIO(csv_text)))
+    assert reader[0] == ["Parameter", "Value", "Uncertainty", "Value(err)", "Flag", "Units"]
+    a_row = next(r for r in reader[1:] if r[0] == "A")
+    assert a_row[4] == "degenerate"
+    assert a_row[3]  # combined Value(err) populated
+    c_row = next(r for r in reader[1:] if r[0] == "c")
+    assert c_row[4] == ""  # healthy row not flagged

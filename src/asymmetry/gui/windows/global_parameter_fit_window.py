@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import math
 import os
 import re
 import shutil
@@ -12,7 +13,7 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtGui import QColor, QGuiApplication
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -21,6 +22,7 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
     QHBoxLayout,
+    QHeaderView,
     QInputDialog,
     QLabel,
     QListWidget,
@@ -29,6 +31,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -80,6 +83,43 @@ _COMPONENT_COLORS = [
 ]
 
 _PARAMETER_FIT_CURVE_SAMPLE_COUNT = 800
+
+#: Absolute floor (guards the ``err > 3×|value|`` test when ``value`` is ~0) for
+#: the uncertainty trust flag. An uncertainty above ``max(3×|value|, this)`` — or
+#: a non-finite uncertainty — marks the parameter as effectively unconstrained.
+_UNCERTAINTY_FLAG_ABS_FLOOR = 1e-300
+
+
+def _uncertainty_is_untrustworthy(value: float, err: float | None) -> bool:
+    """Return ``True`` when *err* signals a degenerate/unconstrained parameter.
+
+    The parameter is flagged when the reported uncertainty is present but
+    non-finite, or exceeds ``max(3×|value|, _UNCERTAINTY_FLAG_ABS_FLOOR)`` — i.e.
+    the error bar is larger than (three times) the value itself, so the fit did
+    not meaningfully pin the parameter down. ``err is None`` (fixed / no
+    covariance) is *not* flagged.
+    """
+    if err is None:
+        return False
+    try:
+        e = float(err)
+        v = float(value)
+    except (TypeError, ValueError):
+        return False
+    if not math.isfinite(e):
+        return True
+    threshold = max(3.0 * abs(v), _UNCERTAINTY_FLAG_ABS_FLOOR)
+    return e > threshold
+
+
+#: Minimum on-screen height (px) for one group panel in the Fig-3 grid. The left
+#: canvas lives inside a :class:`QScrollArea` and is given a minimum height of
+#: ``nrows × _MIN_PANEL_PX + _GRID_MARGIN_PX`` so panels never squeeze below
+#: legibility; the grid scrolls vertically instead (horizontal always fits).
+_MIN_PANEL_PX = 230
+#: Fixed vertical slack added to the per-row panel budget for the figure legend
+#: band, inter-panel padding, and axis labels.
+_GRID_MARGIN_PX = 60
 
 
 @dataclass(frozen=True)
@@ -255,9 +295,20 @@ class GlobalParameterFitWindow(QMainWindow):
         left_layout = QVBoxLayout(left)
         self._left_canvas = None
         self._left_figure = None
+        #: Vertical scroll host for the Fig-3 grid. ``widgetResizable`` lets the
+        #: canvas fill the viewport width (so the grid never needs a horizontal
+        #: scrollbar) while the canvas' minimum height — set to
+        #: ``nrows × _MIN_PANEL_PX + _GRID_MARGIN_PX`` in
+        #: :meth:`_update_grid_canvas_min_height` — forces a vertical scrollbar
+        #: rather than squeezing panels below legibility.
+        self._left_scroll: QScrollArea | None = None
         try:
             self._left_figure, self._left_canvas = create_canvas(layout="tight")
-            left_layout.addWidget(self._left_canvas)
+            self._left_scroll = QScrollArea()
+            self._left_scroll.setWidgetResizable(True)
+            self._left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            self._left_scroll.setWidget(self._left_canvas)
+            left_layout.addWidget(self._left_scroll, 1)
 
             self._left_canvas.mpl_connect("button_press_event", self._on_canvas_button_press)
             self._left_canvas.mpl_connect("motion_notify_event", self._on_canvas_motion)
@@ -315,8 +366,85 @@ class GlobalParameterFitWindow(QMainWindow):
         fit_controls_row.addStretch()
         left_layout.addLayout(fit_controls_row)
 
+        # The right pane is a vertical splitter of three blocks so the user can
+        # trade space between the global parameter table, the local Y-selector,
+        # and the local trend canvas: [params-table block] / [Y-selector] /
+        # [local canvas]. Each block carries a minimum height so none collapses
+        # to nothing when another is dragged large.
         right = QWidget()
-        right_layout = QVBoxLayout(right)
+        right_outer_layout = QVBoxLayout(right)
+        right_outer_layout.setContentsMargins(0, 0, 0, 0)
+        self._right_splitter = QSplitter(Qt.Orientation.Vertical)
+        right_outer_layout.addWidget(self._right_splitter)
+
+        # ── Block 1: global parameter table (quality bar + table + actions) ──
+        params_block = QWidget()
+        right_layout = QVBoxLayout(params_block)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+
+        # Quality bar: χ², χ²ᵣ, n, error-mode chip, and (on failure) the message.
+        quality_row = QHBoxLayout()
+        quality_row.setContentsMargins(0, 0, 0, 0)
+        self._quality_label = QLabel("")
+        self._quality_label.setTextFormat(Qt.TextFormat.RichText)
+        quality_row.addWidget(self._quality_label, 1)
+        self._edit_fit_btn = QPushButton("Edit fit…")
+        self._edit_fit_btn.setToolTip("Reopen the cross-group fit dialog seeded from this fit.")
+        self._edit_fit_btn.clicked.connect(self._on_edit_fit_clicked)
+        quality_row.addWidget(self._edit_fit_btn, 0)
+        right_layout.addLayout(quality_row)
+
+        self._params_table = QTableWidget(0, 4)
+        self._params_table.setHorizontalHeaderLabels(["Parameter", "Value", "Uncertainty", "Units"])
+        apply_param_table_style(self._params_table)
+        self._configure_params_table_header()
+        right_layout.addWidget(self._params_table, 1)
+
+        # Table actions: Copy (TSV to clipboard), Export (CSV/LaTeX), and the
+        # correlation-matrix dialog (enabled only when correlations exist).
+        table_actions_row = QHBoxLayout()
+        table_actions_row.setContentsMargins(0, 0, 0, 0)
+        self._copy_table_btn = QPushButton("Copy")
+        self._copy_table_btn.setToolTip("Copy the global parameter table (TSV) to the clipboard.")
+        self._copy_table_btn.clicked.connect(self._on_copy_global_table)
+        table_actions_row.addWidget(self._copy_table_btn)
+        self._export_table_btn = QPushButton("Export…")
+        self._export_table_btn.setToolTip("Export the global parameter table as CSV or LaTeX.")
+        self._export_table_btn.clicked.connect(self._on_export_global_table)
+        table_actions_row.addWidget(self._export_table_btn)
+        self._correlations_btn = QPushButton("Correlations…")
+        self._correlations_btn.setToolTip("Show the free-global-parameter correlation matrix.")
+        self._correlations_btn.clicked.connect(self._on_show_correlations)
+        self._correlations_btn.setEnabled(False)
+        table_actions_row.addWidget(self._correlations_btn)
+        table_actions_row.addStretch()
+        right_layout.addLayout(table_actions_row)
+        params_block.setMinimumHeight(160)
+        self._right_splitter.addWidget(params_block)
+
+        # ── Block 2: local Y-parameter selector table ───────────────────────
+        self._local_y_selector_table = QTableWidget(0, 3)
+        self._local_y_selector_table.setHorizontalHeaderLabels(["Parameter", "Fit", "Log"])
+        self._local_y_selector_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._local_y_selector_table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self._local_y_selector_table.setSelectionMode(
+            QAbstractItemView.SelectionMode.ExtendedSelection
+        )
+        self._local_y_selector_table.horizontalHeader().setVisible(False)
+        self._local_y_selector_table.verticalHeader().setVisible(False)
+        self._local_y_selector_table.itemSelectionChanged.connect(
+            self._on_local_y_selection_changed
+        )
+        self._configure_y_selector_header()
+        self._local_y_selector_table.setMinimumHeight(80)
+        self._right_splitter.addWidget(self._local_y_selector_table)
+
+        # ── Block 3: local trend canvas (controls + canvas) ─────────────────
+        canvas_block = QWidget()
+        canvas_layout = QVBoxLayout(canvas_block)
+        canvas_layout.setContentsMargins(0, 0, 0, 0)
 
         controls_row = QHBoxLayout()
         self._local_plot_mode_combo = QComboBox()
@@ -338,65 +466,13 @@ class GlobalParameterFitWindow(QMainWindow):
         self._add_label_btn.toggled.connect(self._set_add_label_mode)
         controls_row.addWidget(self._add_label_btn)
         controls_row.addStretch()
-        right_layout.addLayout(controls_row)
-
-        # Quality bar: χ², χ²ᵣ, n, error-mode chip, and (on failure) the message.
-        quality_row = QHBoxLayout()
-        quality_row.setContentsMargins(0, 0, 0, 0)
-        self._quality_label = QLabel("")
-        self._quality_label.setTextFormat(Qt.TextFormat.RichText)
-        quality_row.addWidget(self._quality_label, 1)
-        self._edit_fit_btn = QPushButton("Edit fit…")
-        self._edit_fit_btn.setToolTip("Reopen the cross-group fit dialog seeded from this fit.")
-        self._edit_fit_btn.clicked.connect(self._on_edit_fit_clicked)
-        quality_row.addWidget(self._edit_fit_btn, 0)
-        right_layout.addLayout(quality_row)
-
-        self._params_table = QTableWidget(0, 4)
-        self._params_table.setHorizontalHeaderLabels(["Parameter", "Value", "Uncertainty", "Units"])
-        apply_param_table_style(self._params_table)
-        right_layout.addWidget(self._params_table)
-
-        # Table actions: Copy (TSV to clipboard), Export (CSV/LaTeX), and the
-        # correlation-matrix dialog (enabled only when correlations exist).
-        table_actions_row = QHBoxLayout()
-        table_actions_row.setContentsMargins(0, 0, 0, 0)
-        self._copy_table_btn = QPushButton("Copy")
-        self._copy_table_btn.setToolTip("Copy the global parameter table (TSV) to the clipboard.")
-        self._copy_table_btn.clicked.connect(self._on_copy_global_table)
-        table_actions_row.addWidget(self._copy_table_btn)
-        self._export_table_btn = QPushButton("Export…")
-        self._export_table_btn.setToolTip("Export the global parameter table as CSV or LaTeX.")
-        self._export_table_btn.clicked.connect(self._on_export_global_table)
-        table_actions_row.addWidget(self._export_table_btn)
-        self._correlations_btn = QPushButton("Correlations…")
-        self._correlations_btn.setToolTip("Show the free-global-parameter correlation matrix.")
-        self._correlations_btn.clicked.connect(self._on_show_correlations)
-        self._correlations_btn.setEnabled(False)
-        table_actions_row.addWidget(self._correlations_btn)
-        table_actions_row.addStretch()
-        right_layout.addLayout(table_actions_row)
-
-        self._local_y_selector_table = QTableWidget(0, 3)
-        self._local_y_selector_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._local_y_selector_table.setSelectionBehavior(
-            QAbstractItemView.SelectionBehavior.SelectRows
-        )
-        self._local_y_selector_table.setSelectionMode(
-            QAbstractItemView.SelectionMode.ExtendedSelection
-        )
-        self._local_y_selector_table.horizontalHeader().setVisible(False)
-        self._local_y_selector_table.verticalHeader().setVisible(False)
-        self._local_y_selector_table.itemSelectionChanged.connect(
-            self._on_local_y_selection_changed
-        )
-        right_layout.addWidget(self._local_y_selector_table)
+        canvas_layout.addLayout(controls_row)
 
         self._local_canvas = None
         self._local_figure = None
         try:
             self._local_figure, self._local_canvas = create_canvas(layout="tight")
-            right_layout.addWidget(self._local_canvas)
+            canvas_layout.addWidget(self._local_canvas, 1)
 
             self._local_canvas.mpl_connect("button_press_event", self._on_local_canvas_button_press)
             self._local_canvas.mpl_connect("motion_notify_event", self._on_local_canvas_motion)
@@ -405,6 +481,13 @@ class GlobalParameterFitWindow(QMainWindow):
             )
         except ImportError:
             pass
+        canvas_block.setMinimumHeight(180)
+        self._right_splitter.addWidget(canvas_block)
+
+        self._right_splitter.setStretchFactor(0, 0)
+        self._right_splitter.setStretchFactor(1, 0)
+        self._right_splitter.setStretchFactor(2, 1)
+        self._right_splitter.setSizes([260, 140, 360])
 
         self._export_btn = QPushButton("Export fits to GLE")
         self._export_btn.clicked.connect(self._export_fit_subplot_gle)
@@ -436,12 +519,62 @@ class GlobalParameterFitWindow(QMainWindow):
         local_export_row.addWidget(QLabel("Format:"))
         local_export_row.addWidget(self._local_gle_format_combo)
         local_export_row.addStretch()
-        right_layout.addLayout(local_export_row)
+        canvas_layout.addLayout(local_export_row)
 
         splitter.addWidget(left)
         splitter.addWidget(right)
         splitter.setSizes([700, 500])
         self._sync_fit_scale_controls()
+
+    def _configure_params_table_header(self) -> None:
+        """Apply per-section resize policies to the global-parameter table.
+
+        Symbol/Units size to their content; Value/Uncertainty are user-resizable
+        but never shrink below a content-derived minimum (so the "Uncertainty"
+        header and wide numeric strings are never truncated); the last section
+        stretches to fill. Reapplied on every populate via :meth:`_refresh_table`.
+        """
+        header = self._params_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        header.setStretchLastSection(True)
+        # Content-based minimums for the interactive numeric columns so neither
+        # the header text nor a wide value/error string can be clipped.
+        fm = header.fontMetrics()
+        header.setMinimumSectionSize(
+            max(header.minimumSectionSize(), fm.horizontalAdvance("Uncertainty") + 24)
+        )
+
+    def _configure_y_selector_header(self) -> None:
+        """Apply per-section resize policies to the local Y-selector table.
+
+        The parameter-name column stretches; the "Model Fit" button column and
+        the "log" column size to their content so neither label truncates.
+        Reapplied on every populate via :meth:`_rebuild_local_y_controls`.
+        """
+        header = self._local_y_selector_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setStretchLastSection(False)
+
+    def _update_grid_canvas_min_height(self, nrows: int) -> None:
+        """Size the scrolled Fig-3 canvas so each panel keeps a legible height.
+
+        The canvas' minimum height is ``nrows × _MIN_PANEL_PX + _GRID_MARGIN_PX``.
+        Inside the ``widgetResizable`` :class:`QScrollArea` this forces a vertical
+        scrollbar (rather than squeezing panels) when the grid is taller than the
+        viewport, while the width still tracks the viewport (no horizontal
+        scrollbar). Called from :meth:`_refresh_plot` whenever the grid shape
+        (row count, columns, show/hide, residual toggle) changes.
+        """
+        if self._left_canvas is None or self._left_scroll is None:
+            return
+        rows = max(1, int(nrows))
+        min_h = rows * _MIN_PANEL_PX + _GRID_MARGIN_PX
+        self._left_canvas.setMinimumHeight(min_h)
 
     def _sync_fit_scale_controls(self) -> None:
         components_on = self._show_components_check.isChecked()
@@ -881,7 +1014,9 @@ class GlobalParameterFitWindow(QMainWindow):
             if item is not None:
                 item.setSelected(True)
 
-        self._local_y_selector_table.resizeColumnsToContents()
+        # Reapply the section policies (Parameter stretches; Fit-button and log
+        # columns size to content so "Model Fit"/"log" never truncate).
+        self._configure_y_selector_header()
         self._local_selected_y_names = self._selected_local_y_parameters()
         self._local_y_selector_table.blockSignals(False)
 
@@ -1605,6 +1740,11 @@ class GlobalParameterFitWindow(QMainWindow):
         has_corr = bool(self._result is not None and self._result.global_correlations)
         if hasattr(self, "_correlations_btn"):
             self._correlations_btn.setEnabled(has_corr)
+            self._correlations_btn.setToolTip(
+                "Show the free-global-parameter correlation matrix."
+                if has_corr
+                else "correlation matrix unavailable — fit covariance is missing or singular"
+            )
         if self._result is None:
             return
 
@@ -1617,9 +1757,9 @@ class GlobalParameterFitWindow(QMainWindow):
             )
             self._params_table.setItem(row, 1, QTableWidgetItem(f"{p.value:.6g}"))
             err = self._result.global_uncertainties.get(p.name)
-            self._params_table.setItem(
-                row, 2, QTableWidgetItem("" if err is None else f"{err:.3g}")
-            )
+            err_item = QTableWidgetItem("" if err is None else f"{err:.3g}")
+            self._apply_uncertainty_trust_flag(err_item, float(p.value), err)
+            self._params_table.setItem(row, 2, err_item)
             self._params_table.setItem(row, 3, QTableWidgetItem(info.unit or ""))
 
         for p in self._result.fixed_parameters:
@@ -1633,7 +1773,27 @@ class GlobalParameterFitWindow(QMainWindow):
             self._params_table.setItem(row, 2, QTableWidgetItem(""))
             self._params_table.setItem(row, 3, QTableWidgetItem(info.unit or ""))
 
-        self._params_table.resizeColumnsToContents()
+        # Reapply the section resize policies (row inserts can reset them) and
+        # snap the interactive numeric columns to their content width.
+        self._configure_params_table_header()
+        self._params_table.resizeColumnToContents(1)
+        self._params_table.resizeColumnToContents(2)
+
+    def _apply_uncertainty_trust_flag(
+        self, item: QTableWidgetItem, value: float, err: float | None
+    ) -> None:
+        """Colour + tooltip an Uncertainty cell when the error bar is untrustworthy.
+
+        Flags (warning background + explanatory tooltip) a parameter whose
+        reported uncertainty exceeds ``max(3×|value|, tiny-floor)`` or is
+        non-finite — the fit did not meaningfully constrain it. Healthy cells are
+        left with the default background and no tooltip.
+        """
+        if _uncertainty_is_untrustworthy(value, err):
+            item.setBackground(QColor(tokens.WARN_BANNER_BG))
+            item.setToolTip(
+                "uncertainty exceeds |value| — parameter likely degenerate/unconstrained"
+            )
 
     def _refresh_quality_bar(self) -> None:
         """Update the compact χ²/χ²ᵣ/n/error-mode row above the global table.
@@ -1948,6 +2108,9 @@ class GlobalParameterFitWindow(QMainWindow):
         n = len(shown_groups)
         ncols = self._grid_columns(n)
         nrows = (n + ncols - 1) // ncols
+        # Size the scrolled canvas so each panel row keeps a legible height; the
+        # QScrollArea grows a vertical scrollbar rather than squeezing panels.
+        self._update_grid_canvas_min_height(nrows)
 
         # Track component names+colors seen so a single figure-level legend can
         # be assembled after the loop.
@@ -2002,7 +2165,10 @@ class GlobalParameterFitWindow(QMainWindow):
                 self._draw_group_chi_chip(ax, group.group_id)
 
         # One figure-level component legend (names in stacking order, stable
-        # colours), only in component mode with entries collected.
+        # colours), only in component mode with entries collected. The legend is
+        # anchored in the top figure margin, and that margin is *reserved* below
+        # so the first-row panel titles never overlap it (see below).
+        legend = None
         if legend_entries and not residuals:
             from matplotlib.patches import Patch
 
@@ -2010,9 +2176,10 @@ class GlobalParameterFitWindow(QMainWindow):
                 Patch(facecolor=color, alpha=0.5, label=name)
                 for name, color in legend_entries.items()
             ]
-            self._left_figure.legend(
+            legend = self._left_figure.legend(
                 handles=handles,
                 loc="upper center",
+                bbox_to_anchor=(0.5, 1.0),
                 ncol=min(len(handles), 4),
                 fontsize=8,
                 frameon=False,
@@ -2020,8 +2187,36 @@ class GlobalParameterFitWindow(QMainWindow):
 
         self._draw_plot_annotations(local=False)
 
-        self._left_figure.tight_layout(h_pad=1.8)
-        self._left_figure.subplots_adjust(left=0.12, hspace=0.5)
+        # Lay the grid out, reserving a top band for the legend so first-row
+        # titles never collide with it. We measure the legend's rendered height
+        # in figure coordinates and pass ``tight_layout`` a ``rect`` whose top
+        # edge sits just below the legend; ``tight_layout`` then packs every
+        # panel (titles included) into the remaining area.
+        top_rect = 1.0
+        if legend is not None:
+            try:
+                renderer = self._left_canvas.get_renderer()
+                legend_bbox = legend.get_window_extent(renderer)
+                fig_h = float(self._left_figure.bbox.height) or 1.0
+                legend_frac = float(legend_bbox.height) / fig_h
+                # Reserve the legend band plus a small gap; clamp so the axes
+                # never collapse on a very tall legend.
+                top_rect = float(np.clip(1.0 - (legend_frac + 0.02), 0.5, 0.98))
+            except Exception:
+                top_rect = 0.94
+        import warnings
+
+        # tight_layout emits a benign UserWarning when the (scrolled) canvas is
+        # temporarily smaller than the packed decorations need — the QScrollArea
+        # gives the canvas its full minimum height once shown, so suppress the
+        # transient here rather than let it clutter logs.
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="Tight layout not applied")
+            try:
+                self._left_figure.tight_layout(h_pad=1.8, rect=(0.0, 0.0, 1.0, top_rect))
+            except Exception:
+                self._left_figure.tight_layout(h_pad=1.8)
+            self._left_figure.subplots_adjust(left=0.12, hspace=0.5)
         self._left_canvas.draw()
 
     def _draw_group_fit_panel(

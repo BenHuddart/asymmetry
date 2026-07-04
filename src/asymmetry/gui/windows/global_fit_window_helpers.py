@@ -26,6 +26,7 @@ from asymmetry.core.fitting.parameters import get_param_info
 
 __all__ = [
     "format_value_with_error",
+    "uncertainty_trust_flag",
     "build_global_table_rows",
     "count_free_parameters",
     "information_criteria",
@@ -34,6 +35,32 @@ __all__ = [
     "global_table_latex",
     "CorrelationMatrixDialog",
 ]
+
+#: Absolute floor for the uncertainty trust flag — guards ``err > 3×|value|``
+#: when ``value`` is ~0. Mirrors the window's live-table threshold so the export
+#: "flag" column and the on-screen warning colour use one definition.
+_UNCERTAINTY_FLAG_ABS_FLOOR = 1e-300
+
+
+def uncertainty_trust_flag(value: float, err: float | None) -> str:
+    """Return ``"degenerate"`` when *err* signals an unconstrained parameter, else ``""``.
+
+    Flagged when the uncertainty is present but non-finite, or exceeds
+    ``max(3×|value|, _UNCERTAINTY_FLAG_ABS_FLOOR)`` — the error bar is bigger than
+    (three times) the value, so the fit did not pin the parameter down. ``None``
+    (fixed / no covariance) is not flagged.
+    """
+    if err is None:
+        return ""
+    try:
+        e = float(err)
+        v = float(value)
+    except (TypeError, ValueError):
+        return ""
+    if not math.isfinite(e):
+        return "degenerate"
+    threshold = max(3.0 * abs(v), _UNCERTAINTY_FLAG_ABS_FLOOR)
+    return "degenerate" if e > threshold else ""
 
 
 def count_free_parameters(result) -> int:
@@ -207,8 +234,14 @@ def build_global_table_rows(result) -> list[dict[str, object]]:
 
 
 def global_table_tsv(result) -> str:
-    """Tab-separated global-parameter table (with header) for the clipboard."""
-    lines = ["Parameter\tValue\tUncertainty\tUnits"]
+    """Tab-separated global-parameter table (with header) for the clipboard.
+
+    Alongside the raw ``Value``/``Uncertainty`` columns the export carries a
+    combined ``Value(err)`` column (:func:`format_value_with_error`, paper-style)
+    and a ``Flag`` column (:func:`uncertainty_trust_flag`) so a degenerate error
+    bar is visible in a copied/pasted table, not just on screen.
+    """
+    lines = ["Parameter\tValue\tUncertainty\tValue(err)\tFlag\tUnits"]
     for row in build_global_table_rows(result):
         name = str(row["symbol"])
         if row["fixed"]:
@@ -216,29 +249,40 @@ def global_table_tsv(result) -> str:
         value = f"{float(row['value']):.6g}"
         err = row["err"]
         err_text = "" if err is None else f"{float(err):.3g}"
+        combined = format_value_with_error(float(row["value"]), err)
+        flag = uncertainty_trust_flag(float(row["value"]), err)
         unit = str(row["unit"])
-        lines.append(f"{name}\t{value}\t{err_text}\t{unit}")
+        lines.append(f"{name}\t{value}\t{err_text}\t{combined}\t{flag}\t{unit}")
     return "\n".join(lines) + "\n"
 
 
 def global_table_csv(result) -> str:
-    """Comma-separated global-parameter table (with header) for CSV export."""
+    """Comma-separated global-parameter table (with header) for CSV export.
+
+    Adds a combined ``Value(err)`` column (:func:`format_value_with_error`) and a
+    ``Flag`` column (:func:`uncertainty_trust_flag`) alongside the raw
+    ``Value``/``Uncertainty`` columns.
+    """
     import csv
     import io
 
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["Parameter", "Value", "Uncertainty", "Units"])
+    writer.writerow(["Parameter", "Value", "Uncertainty", "Value(err)", "Flag", "Units"])
     for row in build_global_table_rows(result):
         name = str(row["name"])
         if row["fixed"]:
             name = f"{name} (fixed)"
         err = row["err"]
+        combined = format_value_with_error(float(row["value"]), err)
+        flag = uncertainty_trust_flag(float(row["value"]), err)
         writer.writerow(
             [
                 name,
                 f"{float(row['value']):.8g}",
                 "" if err is None else f"{float(err):.6g}",
+                combined,
+                flag,
                 str(row["unit"]),
             ]
         )
