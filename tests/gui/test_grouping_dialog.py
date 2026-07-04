@@ -2047,3 +2047,106 @@ def test_multi_instrument_fingerprint_separation(qapp: QApplication) -> None:
     assert 5001 in fingerprint_runs
     assert 4001 not in fingerprint_runs
     assert dialog._scope_panel.inheriting_run_numbers() == {5001}
+
+
+# --------------------------------------------------------------------------- #
+# t0 mode selector (T0Policy)
+# --------------------------------------------------------------------------- #
+
+
+def _detector_t0_dataset(run_number: int = 4600, detector_t0: tuple[int, int] = (2, 3)):
+    """A dataset whose two detectors carry distinct file-derived t0 bins."""
+    h1 = Histogram(
+        counts=np.array([10.0, 20.0, 100.0, 40.0, 30.0, 20.0]),
+        bin_width=0.01,
+        t0_bin=detector_t0[0],
+    )
+    h2 = Histogram(
+        counts=np.array([12.0, 22.0, 60.0, 90.0, 30.0, 20.0]),
+        bin_width=0.01,
+        t0_bin=detector_t0[1],
+    )
+    run = Run(
+        run_number=run_number,
+        histograms=[h1, h2],
+        metadata={"run_number": run_number, "facility": "PSI"},
+        grouping={
+            "groups": {1: [1], 2: [2]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "t0_bin": max(detector_t0),
+            "first_good_bin": max(detector_t0),
+            "last_good_bin": 5,
+            "detector_t0_bins": list(detector_t0),
+        },
+    )
+    t = np.arange(6, dtype=float) * 0.01
+    return MuonDataset(
+        time=t,
+        asymmetry=np.zeros_like(t),
+        error=np.full_like(t, 0.01),
+        metadata={"run_number": run_number, "facility": "PSI"},
+        run=run,
+    )
+
+
+def test_t0_mode_defaults_to_from_file_with_readonly_spin(qapp: QApplication) -> None:
+    dialog = GroupingDialog([_detector_t0_dataset()])
+    assert dialog._current_t0_mode() == "from_file"
+    assert dialog._t0_spin.isReadOnly() is True
+    assert dialog._find_t0_btn.isEnabled() is False
+    # Read-only spin shows the preview run's file common t0 (max over groups = 3).
+    assert dialog._t0_spin.value() == 3
+    assert "each run's file" in dialog._t0_mode_label.text()
+    assert dialog._draft.t0_policy.mode == "from_file"
+
+
+def test_t0_manual_mode_enables_spin_and_dirties_draft(qapp: QApplication) -> None:
+    dialog = GroupingDialog([_detector_t0_dataset()])
+    dialog._draft_dirty = False
+    dialog._set_t0_mode_combo("manual")
+    dialog._on_t0_mode_changed()
+    assert dialog._t0_spin.isReadOnly() is False
+    assert dialog._find_t0_btn.isEnabled() is True
+
+    dialog._draft_dirty = False
+    dialog._t0_spin.setValue(5)
+    assert dialog._draft_dirty is True
+    dialog._sync_draft_from_form()
+    assert dialog._draft.t0_policy.mode == "manual"
+    assert dialog._draft.t0_policy.value == 5
+
+
+def test_t0_from_file_spin_follows_preview_run(qapp: QApplication) -> None:
+    """Switching the preview run refreshes the read-only from_file t0."""
+    ds_a = _detector_t0_dataset(run_number=4601, detector_t0=(2, 3))  # file t0 = 3
+    ds_b = _detector_t0_dataset(run_number=4602, detector_t0=(1, 1))  # file t0 = 1
+    dialog = GroupingDialog([ds_a, ds_b], selected_run_number=4601)
+    assert dialog._current_t0_mode() == "from_file"
+    assert dialog._t0_spin.value() == 3
+    dialog._set_combo_to_run(dialog._reference_combo, 4602)
+    dialog._on_reference_dataset_changed()
+    assert dialog._t0_spin.value() == 1
+
+
+def test_t0_auto_detect_shows_detected_value_and_provenance(qapp: QApplication) -> None:
+    dialog = GroupingDialog([_detector_t0_dataset()])
+    dialog._set_t0_mode_combo("auto_detect")
+    dialog._on_t0_mode_changed()
+    assert dialog._t0_spin.isReadOnly() is True
+    # PSI (continuous) → prompt-peak argmax. h1 peak at bin 2, h2 peak at bin 3.
+    # median consensus rounds to 2 or 3; provenance text names the strategy.
+    assert dialog._t0_spin.value() in (2, 3)
+    assert "prompt peak" in dialog._t0_mode_label.text()
+    dialog._sync_draft_from_form()
+    assert dialog._draft.t0_policy.mode == "auto_detect"
+
+
+def test_t0_find_button_fills_manual_spin(qapp: QApplication) -> None:
+    dialog = GroupingDialog([_detector_t0_dataset()])
+    dialog._set_t0_mode_combo("manual")
+    dialog._on_t0_mode_changed()
+    dialog._on_find_t0()
+    # Find fills the spin with the detected consensus (prompt peak).
+    assert dialog._t0_spin.value() in (2, 3)

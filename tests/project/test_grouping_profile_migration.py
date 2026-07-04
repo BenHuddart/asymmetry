@@ -302,3 +302,38 @@ def test_migrated_profile_resolves_to_original_shareable_grouping():
     assert resolved["backward_group"] == 2
     # Fingerprint carries through so a reload re-inherits the profile.
     assert profile.fingerprint == ProfileFingerprint("EMU", 4)
+
+
+# --------------------------------------------------------------------------- #
+# t0 policy inference during migration
+# --------------------------------------------------------------------------- #
+
+
+def test_migration_infers_from_file_t0_when_stored_matches_file():
+    """A payload whose t0 equals its file common t0 migrates to from_file (default)."""
+    state = _v11_state(
+        [
+            {"run_number": 1, "source_file": "a.nxs", "grouping_overrides": _overrides()},
+            {"run_number": 2, "source_file": "b.nxs", "grouping_overrides": _overrides()},
+        ]
+    )
+    migrated = migrate_to_current(copy.deepcopy(state))
+    profile = migrated["grouping_profiles"][0]
+    # from_file is the default → no t0_policy key stored (no schema bump).
+    assert "t0_policy" not in profile
+    assert GroupingProfile.from_dict(profile).t0_policy.mode == "from_file"
+
+
+def test_migration_infers_manual_t0_when_stored_differs_from_file():
+    """A payload whose common t0 was shifted from the file t0 migrates to manual."""
+    shifted = _overrides(extra={"t0_bin": 9})  # detector_t0_bins stay [5,5,5,5]
+    state = _v11_state(
+        [
+            {"run_number": 1, "source_file": "a.nxs", "grouping_overrides": shifted},
+            {"run_number": 2, "source_file": "b.nxs", "grouping_overrides": copy.deepcopy(shifted)},
+        ]
+    )
+    migrated = migrate_to_current(copy.deepcopy(state))
+    profile = migrated["grouping_profiles"][0]
+    assert profile["t0_policy"] == {"mode": "manual", "value": 9}
+    assert GroupingProfile.from_dict(profile).t0_policy.value == 9

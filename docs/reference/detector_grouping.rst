@@ -205,6 +205,9 @@ The grouping payload stores:
 * instrument and preset metadata
 * optional per-detector ``t0`` metadata for formats such as PSI BIN/MDU and
   MusrRoot/LEM ROOT
+* the time-zero policy (``from_file``, ``manual``, or ``auto_detect``); a
+  manual/detected shift is carried as ``effective_detector_t0_bins`` so the
+  raw histograms are never rewritten (see `Time-zero (t0) modes`_)
 * optional deadtime metadata: ``deadtime_mode``, ``deadtime_method``, and any
    resolved ``dead_time_us`` values used for manual, calibrated, or estimated
    deadtime correction
@@ -249,6 +252,40 @@ green-minus-red, or green-plus-red. This row is hidden for every other run —
 it only appears once the currently selected preview run actually carries two
 period histograms — so it never clutters the window for ordinary
 single-period data.
+
+Time-zero (t0) modes
+--------------------
+
+The **t0 Bin** row carries a mode selector that decides where each run's
+analysis time-zero comes from. This mirrors WiMDA's *FileValues* checkbox on
+the grouping panel: with it ticked the header t0 and good-bin values are used
+and the manual controls are disabled; unticked, your own values apply.
+
+* **From file** (the default) — every run uses its own file-derived t0. All
+  loaders already read t0 verbatim from the file header (PSI per-detector
+  ``nt0``, MusrRoot ``DetectorInfo``, NeXus ``time_zero``), and the common t0
+  is the maximum over the analysis groups, so per-detector values are
+  preserved and each run is aligned by its own time-zero. The spinbox is
+  read-only and shows the preview run's resolved t0; switching the preview run
+  updates it. Nothing is stored on the profile — resolution reads each run's
+  file again.
+* **Manual** — type a common t0 override. It is applied to every run of the
+  profile as an *offset*: the difference between your value and the run's file
+  common t0 is added to each detector's own file t0. Crucially this is
+  non-destructive — the run's loaded histograms keep their file-derived t0, and
+  the shift lives only in the resolved grouping (so an override can be changed
+  or cleared without re-loading the data). **Find t0** is the one-shot fill for
+  this mode: it runs the search on the preview run and drops the result into the
+  spinbox for you to confirm.
+* **Auto-detect** — run the t0 search on *every* run at reduction time (the
+  prompt-peak maximum at continuous sources, the pulse-edge midpoint at pulsed
+  sources). The spinbox is read-only and shows the preview run's detected value
+  with its provenance (strategy and detector spread); each run resolves its own
+  detected t0.
+
+The *t_good* offset and last-good-bin controls are per-run facts and are
+unaffected by the t0 mode — a manual or detected t0 shift carries the good
+window with it so the offset from t0 stays fixed.
 
 Alpha calibration
 ------------------

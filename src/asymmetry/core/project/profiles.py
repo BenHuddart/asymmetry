@@ -106,10 +106,12 @@ from typing import Any
 from asymmetry.core.data.dataset import Run
 from asymmetry.core.transform.asymmetry import estimate_alpha
 from asymmetry.core.transform.grouping import (
+    EFFECTIVE_DETECTOR_T0_KEY,
     apply_grouping_aligned,
     common_t0_for_groups,
     effective_group_indices,
 )
+from asymmetry.core.transform.t0 import find_t0_for_run
 
 # --------------------------------------------------------------------------- #
 # Policy defaults and vocabulary
@@ -123,6 +125,9 @@ DEADTIME_POLICY_MODES = ("off", "from_file", "manual", "estimate")
 
 #: Background policy modes (mirror ``transform.background.BACKGROUND_MODES``).
 BACKGROUND_POLICY_MODES = ("none", "range", "tail_fit", "reference_run", "fixed")
+
+#: Time-zero policy modes.
+T0_POLICY_MODES = ("from_file", "manual", "auto_detect")
 
 #: Keys copied verbatim from a payload into ``GroupingProfile.background`` for
 #: the ``fixed`` / ``range`` / ``reference_run`` modes. Only present keys are
@@ -299,6 +304,72 @@ class DeadtimePolicy:
 
 
 @dataclass
+class T0Policy:
+    """How a profile determines the analysis time-zero for a run.
+
+    File-derived t0 is the **default**: every loader already reads t0 from the
+    file header verbatim (PSI per-detector ``nt0``, MusrRoot ``DetectorInfo``,
+    NeXus ``time_zero``), and the common t0 is the max over the analysis groups.
+    The two alternatives make the historical manual/search behaviour explicit.
+
+    This mirrors WiMDA's *FileValues* checkbox on the grouping panel: when it is
+    ticked the header t0/tgood are used and the user t0 controls are disabled
+    (our :attr:`mode` ``"from_file"`` analogue); unticked, the user's own values
+    apply (:attr:`mode` ``"manual"``). WiMDA's *SearchT0* button is the one-shot
+    fill our :attr:`mode` ``"auto_detect"`` automates per run.
+
+    * ``from_file`` (**default**) — the run's own file-derived t0. Per-detector
+      values are preserved and the common t0 is the max over the analysis groups,
+      exactly as today. Resolution stores nothing and ignores :attr:`value`.
+    * ``manual`` — an explicit common-t0 override (:attr:`value`, a bin index)
+      applied to every run as an *offset*: ``delta = value − file_common_t0`` is
+      added to each detector's file t0. Resolution writes the resulting effective
+      per-detector t0 bins into the payload (``effective_detector_t0_bins``) so
+      reduction aligns on them **without** mutating ``Histogram.t0_bin`` — the
+      run's histograms stay exactly as loaded.
+    * ``auto_detect`` — runs :func:`~asymmetry.core.transform.t0.find_t0_for_run`
+      per run at resolution time; :attr:`strategy` and :attr:`spread_bins` carry
+      the last detection's provenance for display.
+    """
+
+    mode: str = "from_file"
+    value: int | None = None
+    strategy: str = ""
+    spread_bins: int | None = None
+    source_run: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a plain, JSON-safe dict (round-trips via :meth:`from_dict`)."""
+        data: dict[str, Any] = {"mode": self.mode}
+        if self.mode == "manual" and self.value is not None:
+            data["value"] = int(self.value)
+        if self.mode == "auto_detect":
+            if self.strategy:
+                data["strategy"] = str(self.strategy)
+            if self.spread_bins is not None:
+                data["spread_bins"] = int(self.spread_bins)
+            if self.source_run is not None:
+                data["source_run"] = int(self.source_run)
+        return data
+
+    @classmethod
+    def from_dict(cls, data: Any) -> T0Policy:
+        """Reconstruct a policy from :meth:`to_dict` output (lenient; defaults to ``from_file``)."""
+        if not isinstance(data, dict):
+            return cls()
+        mode = str(data.get("mode", "from_file")).strip().lower()
+        if mode not in T0_POLICY_MODES:
+            mode = "from_file"
+        return cls(
+            mode=mode,
+            value=_as_int(data.get("value")),
+            strategy=str(data.get("strategy", "")),
+            spread_bins=_as_int(data.get("spread_bins")),
+            source_run=_as_int(data.get("source_run")),
+        )
+
+
+@dataclass
 class BackgroundPolicy:
     """How a profile subtracts background.
 
@@ -428,6 +499,7 @@ class GroupingProfile:
     alpha_policy: AlphaPolicy = field(default_factory=AlphaPolicy)
     deadtime_policy: DeadtimePolicy = field(default_factory=DeadtimePolicy)
     background_policy: BackgroundPolicy = field(default_factory=BackgroundPolicy)
+    t0_policy: T0Policy = field(default_factory=T0Policy)
 
     # Binning ----------------------------------------------------------------
     binning_mode: str = "fixed"
@@ -462,6 +534,12 @@ class GroupingProfile:
             "binning_mode": str(self.binning_mode),
             "bunching_factor": int(self.bunching_factor),
         }
+        # ``t0_policy`` rides inside the profile dict. It is emitted only when it
+        # departs from the ``from_file`` default so existing projects (which
+        # never stored one) round-trip unchanged and ``from_dict`` stays lenient
+        # — no schema bump is needed.
+        if self.t0_policy.mode != "from_file":
+            data["t0_policy"] = self.t0_policy.to_dict()
         if self.bin0_us is not None:
             data["bin0_us"] = float(self.bin0_us)
         if self.bin10_us is not None:
@@ -526,6 +604,7 @@ class GroupingProfile:
             alpha_policy=AlphaPolicy.from_dict(data.get("alpha_policy")),
             deadtime_policy=DeadtimePolicy.from_dict(data.get("deadtime_policy")),
             background_policy=BackgroundPolicy.from_dict(data.get("background_policy")),
+            t0_policy=T0Policy.from_dict(data.get("t0_policy")),
             binning_mode=str(data.get("binning_mode", "fixed")),
             bin0_us=None if data.get("bin0_us") is None else _as_float(data.get("bin0_us"), 0.0),
             bin10_us=None if data.get("bin10_us") is None else _as_float(data.get("bin10_us"), 0.0),
@@ -546,6 +625,42 @@ class GroupingProfile:
 #: Payload keys that make up the *shareable* alpha provenance carried in
 #: ``profile.extra`` (the per-axis vector alphas plus their provenance).
 _ALPHA_EXTRA_KEYS = _VECTOR_ALPHA_KEYS
+
+
+def _t0_policy_from_payload(payload: dict[str, Any]) -> T0Policy:
+    """Infer a :class:`T0Policy` from a stored grouping payload.
+
+    A payload records a *value*, not a policy. The inference rule (shared by the
+    project migration and the GUI "save as profile" action) is: the mode is
+    ``manual`` **only** when the payload's stored common ``t0_bin`` differs from
+    the run's file-derived t0 — i.e. the user shifted t0 away from the header.
+    Otherwise it is the ``from_file`` default.
+
+    The file-derived t0 is reconstructed from the payload's own per-run facts:
+    the max over the file's per-detector ``detector_t0_bins`` when present (PSI /
+    ROOT), else the payload's ``t0_bin`` itself (a common-t0 NeXus file has no
+    per-detector table, so nothing to differ from). An explicit
+    ``effective_detector_t0_bins`` override (written by a manual resolution) is
+    an unambiguous manual signal on its own.
+    """
+    stored_t0 = _as_int(payload.get("t0_bin"))
+    if stored_t0 is None:
+        return T0Policy(mode="from_file")
+
+    # An explicit effective-t0 override means a manual policy already resolved.
+    override = payload.get("effective_detector_t0_bins")
+    if isinstance(override, (list, tuple)) and override:
+        return T0Policy(mode="manual", value=stored_t0)
+
+    detector_t0 = payload.get("detector_t0_bins")
+    if isinstance(detector_t0, (list, tuple)) and detector_t0:
+        file_common_t0 = max(
+            (v for v in (_as_int(d) for d in detector_t0) if v is not None),
+            default=None,
+        )
+        if file_common_t0 is not None and stored_t0 != int(file_common_t0):
+            return T0Policy(mode="manual", value=stored_t0)
+    return T0Policy(mode="from_file")
 
 
 def profile_from_payload(
@@ -627,6 +742,7 @@ def profile_from_payload(
         alpha_policy=_alpha_policy_from_payload(payload),
         deadtime_policy=_deadtime_policy_from_payload(payload),
         background_policy=_background_policy_from_payload(payload),
+        t0_policy=_t0_policy_from_payload(payload),
         binning_mode=binning_mode,
         bin0_us=None if payload.get("bin0_us") is None else _as_float(payload.get("bin0_us"), 0.0),
         bin10_us=None
@@ -779,6 +895,7 @@ def resolve_effective_grouping(profile: GroupingProfile, run: Run) -> dict[str, 
         grouping["period_mode"] = run_grouping["period_mode"]
 
     # -- policies -----------------------------------------------------------
+    _apply_t0_policy(grouping, profile.t0_policy, run, n_hist)
     _apply_alpha_policy(grouping, profile.alpha_policy, run, n_hist)
     _apply_deadtime_policy(grouping, profile.deadtime_policy, run_grouping, n_hist)
     _apply_background_policy(grouping, profile.background_policy)
@@ -817,6 +934,71 @@ def _copy_per_run_facts(grouping: dict[str, Any], run_grouping: dict[str, Any], 
     # grouping did not record one (matches the loaders / GUI extract behaviour).
     if "t0_bin" not in grouping and run.histograms:
         grouping["t0_bin"] = int(run.histograms[0].t0_bin)
+
+
+def _file_common_t0(grouping: dict[str, Any], run: Run, n_hist: int) -> int:
+    """The file-derived common t0: max histogram t0 over the analysis groups.
+
+    Reproduces :func:`common_t0_for_groups` over the forward+backward groups,
+    the same value today's reduction aligns to. Falls back to the copied
+    ``t0_bin`` (then the first histogram's t0, then 0) when the groups reference
+    no present detectors.
+    """
+    forward_gid = int(grouping.get("forward_group", 1))
+    backward_gid = int(grouping.get("backward_group", 2))
+    forward_idx = effective_group_indices(grouping, forward_gid, n_histograms=n_hist)
+    backward_idx = effective_group_indices(grouping, backward_gid, n_histograms=n_hist)
+    if run.histograms and (forward_idx or backward_idx):
+        return common_t0_for_groups(run.histograms, forward_idx, backward_idx)
+    stored = _as_int(grouping.get("t0_bin"))
+    if stored is not None:
+        return stored
+    return int(run.histograms[0].t0_bin) if run.histograms else 0
+
+
+def _apply_t0_policy(grouping: dict[str, Any], policy: T0Policy, run: Run, n_hist: int) -> None:
+    """Resolve the analysis time-zero into the grouping per the policy.
+
+    ``from_file`` (default) leaves the copied per-run t0 facts untouched — the
+    payload is bit-identical to today's file-derived resolution. ``manual`` and
+    ``auto_detect`` rewrite the common ``t0_bin`` (and ``first_good_bin`` so the
+    good-window offset from t0 is preserved) and, for per-detector data, publish
+    the effective per-detector t0 bins under
+    :data:`~asymmetry.core.transform.grouping.EFFECTIVE_DETECTOR_T0_KEY` so
+    reduction aligns on them without ``Histogram.t0_bin`` ever being mutated.
+    """
+    if policy.mode == "from_file" or not run.histograms:
+        return
+
+    file_common_t0 = _file_common_t0(grouping, run, n_hist)
+
+    if policy.mode == "manual":
+        if policy.value is None:
+            return
+        new_common_t0 = max(0, int(policy.value))
+    else:  # auto_detect
+        search = find_t0_for_run(run.histograms, run.metadata)
+        if not search.ok:
+            return
+        new_common_t0 = max(0, int(search.consensus_t0_bin))
+        grouping["t0_search_strategy"] = str(search.strategy)
+        grouping["t0_search_spread_bins"] = int(search.spread_bins)
+
+    delta = new_common_t0 - int(file_common_t0)
+    if delta == 0:
+        return
+
+    # Apply the common-t0 shift as an OFFSET on each detector's file t0 (the
+    # semantics the destructive MainWindow rewrite used), but only in the
+    # payload — the run's histograms are never touched.
+    grouping[EFFECTIVE_DETECTOR_T0_KEY] = [
+        max(0, int(hist.t0_bin) + delta) for hist in run.histograms
+    ]
+    grouping["t0_bin"] = new_common_t0
+    # Keep the good-window offset from t0 fixed: shift first_good_bin with t0.
+    first_good = _as_int(grouping.get("first_good_bin"))
+    if first_good is not None:
+        grouping["first_good_bin"] = max(0, first_good + delta)
 
 
 def _apply_alpha_policy(
@@ -964,9 +1146,11 @@ __all__ = [
     "ALPHA_POLICY_MODES",
     "DEADTIME_POLICY_MODES",
     "BACKGROUND_POLICY_MODES",
+    "T0_POLICY_MODES",
     "AlphaPolicy",
     "DeadtimePolicy",
     "BackgroundPolicy",
+    "T0Policy",
     "ProfileFingerprint",
     "GroupingProfile",
     "profile_fingerprint_for_run",

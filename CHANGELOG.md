@@ -54,6 +54,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Time-zero (t0) policy on grouping profiles.** The **t0 Bin** row gains a
+  mode selector — *From file*, *Manual*, or *Auto-detect* — carried by the
+  grouping profile as a `T0Policy` (mirroring the α and deadtime policies and
+  WiMDA's *FileValues* checkbox). *From file* (the new default) uses each run's
+  own file-derived t0 exactly as before, with the spinbox read-only and
+  following the preview run. *Manual* is the historical editable override, and
+  *Auto-detect* runs the prompt-peak / pulse-edge search on every run at
+  reduction time. Critically, a manual or detected t0 edit is now
+  **non-destructive**: instead of permanently rewriting each histogram's
+  `t0_bin`, the shift is published as an `effective_detector_t0_bins` override
+  that the reduction chokepoints align on, so the loaded histograms are left as
+  read from the file and an override can be changed or cleared freely. The
+  existing **Find t0** button becomes the one-shot fill for Manual mode.
+  Existing projects migrate per profile: a stored common t0 that differs from
+  the run's file t0 becomes `manual`, otherwise `from_file` (no schema bump).
+
 - **Project-level detector-grouping profiles.** The Grouping window is now a
   *profile editor* rather than a bulk broadcast tool. One named grouping profile
   per instrument fingerprint (instrument + histogram count) captures the

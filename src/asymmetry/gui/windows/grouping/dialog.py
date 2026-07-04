@@ -57,6 +57,7 @@ from asymmetry.core.project.profiles import (
     DeadtimePolicy,
     GroupingProfile,
     ProfileFingerprint,
+    T0Policy,
     profile_fingerprint_for_run,
 )
 from asymmetry.core.transform import (
@@ -375,9 +376,39 @@ class GroupingDialog(QDialog):
         default_t0_internal = self._default_t0_bin(grouping, max_bin)
         default_t_good = self._default_t_good_offset(grouping, default_t0_internal, max_bin)
 
+        # t0 mode selector (From file / Manual / Auto-detect) — mirrors WiMDA's
+        # FileValues checkbox: "From file" uses the header t0 per run and locks
+        # the spinbox; "Manual" is the historical editable override; "Auto-detect"
+        # runs the prompt-peak / pulse-edge search per run at resolution time.
+        self._t0_mode_combo = QComboBox()
+        for label, key, tooltip in (
+            (
+                "From file",
+                "from_file",
+                "Use each run's own file-derived t0 (per-detector values preserved).",
+            ),
+            ("Manual", "manual", "Type a common t0 override applied to every run as an offset."),
+            (
+                "Auto-detect",
+                "auto_detect",
+                "Search each run for t0 (prompt peak at continuous sources, "
+                "pulse-edge midpoint at pulsed sources) at reduction time.",
+            ),
+        ):
+            self._t0_mode_combo.addItem(label, key)
+            self._t0_mode_combo.setItemData(
+                self._t0_mode_combo.count() - 1, tooltip, Qt.ItemDataRole.ToolTipRole
+            )
+        self._t0_mode_combo.setMaximumWidth(130)
+
         self._t0_spin = QSpinBox()
         self._t0_spin.setRange(index_base, max_bin + index_base)
         self._t0_spin.setValue(default_t0_internal + index_base)
+
+        # Provenance / per-run note shown beneath the mode selector.
+        self._t0_mode_label = QLabel("")
+        self._t0_mode_label.setWordWrap(True)
+        self._t0_mode_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
 
         self._t_good_offset_spin = QSpinBox()
         self._t_good_offset_spin.setRange(0, max_bin)
@@ -452,9 +483,10 @@ class GroupingDialog(QDialog):
         self._find_t0_btn.setAutoDefault(False)
         self._find_t0_btn.setDefault(False)
         self._find_t0_btn.setToolTip(
-            "Estimate t0 from the reference run (prompt peak at continuous "
-            "sources, pulse-edge midpoint at pulsed sources) and fill the "
-            "override — nothing is applied until you press Apply."
+            "One-shot fill for Manual mode: estimate t0 from the reference run "
+            "(prompt peak at continuous sources, pulse-edge midpoint at pulsed "
+            "sources) into the spinbox. For a per-run search on every run, choose "
+            "the Auto-detect mode instead. Nothing is applied until you press Apply."
         )
         self._find_t0_btn.clicked.connect(self._on_find_t0)
 
@@ -608,9 +640,11 @@ class GroupingDialog(QDialog):
         t0_row_widget = QWidget()
         t0_row = QHBoxLayout(t0_row_widget)
         t0_row.setContentsMargins(0, 0, 0, 0)
+        t0_row.addWidget(self._t0_mode_combo)
         t0_row.addWidget(self._t0_spin)
         t0_row.addWidget(self._find_t0_btn)
         form.addRow("t0 Bin", t0_row_widget)
+        form.addRow("", self._t0_mode_label)
         form.addRow("t_good Offset", self._t_good_offset_spin)
         form.addRow("Last Good Bin", self._last_good_spin)
         binning_row_widget = QWidget()
@@ -690,6 +724,7 @@ class GroupingDialog(QDialog):
         self._update_period_mode_visibility()
         self._update_grouping_recommendation()
         self._rebuild_preset_combo()
+        self._seed_t0_mode_from_draft()
         self._connect_dirty_tracking()
         self._refresh_preset_chip(self._current_grouping_payload())
         self._update_apply_enabled()
@@ -942,6 +977,9 @@ class GroupingDialog(QDialog):
             fingerprint=self._fingerprint,
             active=True,
         )
+        # The t0 mode is an explicit selector, not something to infer from the
+        # per-run t0 value the form carries: set it on the draft directly.
+        self._draft.t0_policy = self._current_t0_policy()
 
     # -- profile selector -------------------------------------------------
 
@@ -1450,6 +1488,116 @@ class GroupingDialog(QDialog):
         if int(self._t_good_offset_spin.value()) > max_offset:
             self._t_good_offset_spin.setValue(max_offset)
 
+    def _set_t0_mode_combo(self, mode: str) -> None:
+        """Select *mode* in the t0 mode combo without emitting change signals."""
+        idx = self._t0_mode_combo.findData(mode)
+        if idx < 0:
+            idx = self._t0_mode_combo.findData("from_file")
+        blocked = self._t0_mode_combo.blockSignals(True)
+        try:
+            self._t0_mode_combo.setCurrentIndex(max(0, idx))
+        finally:
+            self._t0_mode_combo.blockSignals(blocked)
+
+    def _seed_t0_mode_from_draft(self) -> None:
+        """Set the t0 mode combo + manual value from the draft policy, then gate."""
+        policy = self._draft.t0_policy
+        self._set_t0_mode_combo(policy.mode)
+        if policy.mode == "manual" and policy.value is not None:
+            base = self._bin_index_base()
+            max_bin = self._max_bin_index_for_reference_dataset()
+            value = max(0, min(max_bin, int(policy.value)))
+            blocked = self._t0_spin.blockSignals(True)
+            try:
+                self._t0_spin.setValue(value + base)
+            finally:
+                self._t0_spin.blockSignals(blocked)
+        self._apply_t0_mode_to_controls()
+
+    def _current_t0_mode(self) -> str:
+        """The t0 policy mode currently selected (from_file / manual / auto_detect)."""
+        data = self._t0_mode_combo.currentData()
+        return str(data) if data else "from_file"
+
+    def _current_t0_policy(self) -> T0Policy:
+        """Build the draft :class:`T0Policy` from the t0 mode selector + spinbox.
+
+        Manual mode carries the spinbox value (internal, base-adjusted). The
+        other modes carry no value — resolution reads each run's file / detected
+        t0. Auto-detect provenance is display-only and recomputed at resolve time.
+        """
+        mode = self._current_t0_mode()
+        if mode == "manual":
+            base = self._bin_index_base()
+            max_bin = self._max_bin_index_for_reference_dataset()
+            value = max(0, min(max_bin, int(self._t0_spin.value()) - base))
+            return T0Policy(mode="manual", value=value)
+        return T0Policy(mode=mode)
+
+    def _apply_t0_mode_to_controls(self) -> None:
+        """Gate the t0 spinbox / Find button and set the provenance note per mode.
+
+        * ``from_file`` — spinbox read-only, shows the preview run's file t0;
+          note records the per-run derivation.
+        * ``manual`` — spinbox editable (the historical behaviour); Find t0 fills it.
+        * ``auto_detect`` — spinbox read-only, shows the preview run's detected t0
+          plus the strategy / spread provenance.
+        """
+        mode = self._current_t0_mode()
+        self._t0_spin.setReadOnly(mode != "manual")
+        self._find_t0_btn.setEnabled(mode == "manual")
+        if mode == "from_file":
+            self._t0_mode_label.setText("t0 from each run's file")
+            self._seed_t0_spin_from_preview()
+        elif mode == "auto_detect":
+            self._seed_t0_spin_from_detection()
+        else:  # manual
+            self._t0_mode_label.setText("Common t0 override applied to every run")
+
+    def _seed_t0_spin_from_preview(self) -> None:
+        """Show the preview run's file-derived common t0 in the (read-only) spin."""
+        grouping = self._seed_source().grouping
+        max_bin = self._max_bin_index_for_reference_dataset()
+        base = self._bin_index_base()
+        t0_internal = self._default_t0_bin(grouping, max_bin)
+        blocked = self._t0_spin.blockSignals(True)
+        try:
+            self._t0_spin.setValue(t0_internal + base)
+        finally:
+            self._t0_spin.blockSignals(blocked)
+
+    def _seed_t0_spin_from_detection(self) -> None:
+        """Run the t0 search on the preview run and show it in the read-only spin."""
+        base = self._bin_index_base()
+        if self._run is None or not self._run.histograms:
+            self._t0_mode_label.setText("Auto-detect: preview run has no histograms")
+            return
+        metadata = dict(getattr(self._reference_dataset, "metadata", {}) or {})
+        metadata.update(self._run.metadata or {})
+        search = find_t0_for_run(self._run.histograms, metadata)
+        if not search.ok:
+            self._t0_mode_label.setText(f"Auto-detect: {search.message}")
+            return
+        blocked = self._t0_spin.blockSignals(True)
+        try:
+            self._t0_spin.setValue(int(search.consensus_t0_bin) + base)
+        finally:
+            self._t0_spin.blockSignals(blocked)
+        strategy = "prompt peak" if search.strategy == "prompt_peak" else "pulse-edge midpoint"
+        self._t0_mode_label.setText(
+            f"Auto-detect: {strategy}, detector spread {search.spread_bins} bins (per run)"
+        )
+
+    def _on_t0_mode_changed(self, *args: object) -> None:
+        """React to a t0 mode change: gate controls, then refresh the preview."""
+        self._apply_t0_mode_to_controls()
+        self._refresh_preview()
+
+    def _on_manual_t0_edited(self, *args: object) -> None:
+        """A spinbox edit only dirties the draft while Manual mode is active."""
+        if self._current_t0_mode() == "manual":
+            self._mark_dirty()
+
     def _resolve_good_bin_limits_from_controls(self) -> tuple[int, int, int, int]:
         """Return validated ``(t0_bin, t_good_offset, first_good_bin, last_good_bin)``."""
         max_bin = self._max_bin_index_for_reference_dataset()
@@ -1615,6 +1763,9 @@ class GroupingDialog(QDialog):
         self._t0_spin.setValue(default_t0_internal + index_base)
         self._t_good_offset_spin.setValue(default_t_good)
         self._on_t0_changed()
+        # Re-assert the t0 mode gating so from_file/auto_detect show the correct
+        # per-run value and the spinbox read-only state survives the reseed.
+        self._seed_t0_mode_from_draft()
         default_first_good = min(max_bin, default_t0_internal + default_t_good)
         default_last_good = int(grouping.get("last_good_bin", max_bin))
         if default_last_good < default_first_good:
@@ -2178,6 +2329,11 @@ class GroupingDialog(QDialog):
         self._bin0_spin.valueChanged.connect(self._mark_dirty)
         self._bin10_spin.valueChanged.connect(self._mark_dirty)
         self._exclude_edit.textEdited.connect(self._mark_dirty)
+        # The t0 mode selector is a *shareable* profile choice, so it dirties the
+        # draft (unlike the per-run t0/t_good spins). A manual t0 value likewise
+        # dirties the draft, but only while Manual mode is selected.
+        self._t0_mode_combo.currentIndexChanged.connect(self._mark_dirty)
+        self._t0_spin.valueChanged.connect(self._on_manual_t0_edited)
         # Deadtime/background dirty-tracking happens inline in
         # ``_on_configure_deadtime``/``_on_configure_background`` (the
         # Configure… dialogs mark the draft dirty on Accept).
@@ -2208,6 +2364,7 @@ class GroupingDialog(QDialog):
         self._t0_spin.valueChanged.connect(self._refresh_preview)
         self._t_good_offset_spin.valueChanged.connect(self._refresh_preview)
         self._last_good_spin.valueChanged.connect(self._refresh_preview)
+        self._t0_mode_combo.currentIndexChanged.connect(self._on_t0_mode_changed)
         self._exclude_edit.textEdited.connect(self._refresh_preview)
         self._group_table.itemChanged.connect(self._refresh_preview)
         for button in self._period_mode_buttons.values():

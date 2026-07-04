@@ -199,6 +199,7 @@ from asymmetry.core.representation import (
 )
 from asymmetry.core.representation.project_model import ProjectModel
 from asymmetry.core.transform import (
+    EFFECTIVE_DETECTOR_T0_KEY,
     FieldScan,
     apply_deadtime_correction,
     available_background_modes,
@@ -4422,34 +4423,23 @@ class MainWindow(QMainWindow):
         if isinstance(grouping_result.get("histogram_labels"), list):
             run.grouping["histogram_labels"] = list(grouping_result.get("histogram_labels", []))
 
-        detector_t0_bins = run.grouping.get("detector_t0_bins")
-        if isinstance(detector_t0_bins, list) and len(detector_t0_bins) == len(run.histograms):
-            try:
-                previous_common_t0 = int(existing_grouping.get("t0_bin", t0_default))
-            except (TypeError, ValueError):
-                previous_common_t0 = t0_default
-            delta = int(t0_bin) - previous_common_t0
-            run.histograms = [
-                Histogram(
-                    counts=hist.counts,
-                    bin_width=hist.bin_width,
-                    t0_bin=max(0, int(detector_t0_bins[i]) + delta),
-                    good_bin_start=hist.good_bin_start,
-                    good_bin_end=hist.good_bin_end,
-                )
-                for i, hist in enumerate(run.histograms)
+        # A user t0 edit is applied NON-DESTRUCTIVELY (T0Policy semantics): the
+        # run's histograms keep their file-derived t0_bin values, and the effective
+        # common-t0 shift is published as per-detector overrides that the reduction
+        # chokepoints (common_t0_for_groups / apply_grouping_aligned) prefer. A
+        # manual t0 therefore no longer permanently rewrites the loaded histograms.
+        file_common_t0 = (
+            common_t0_for_groups(run.histograms, forward_idx, backward_idx)
+            if run.histograms and (forward_idx or backward_idx)
+            else t0_default
+        )
+        delta = int(t0_bin) - int(file_common_t0)
+        if run.histograms and delta != 0:
+            run.grouping[EFFECTIVE_DETECTOR_T0_KEY] = [
+                max(0, int(hist.t0_bin) + delta) for hist in run.histograms
             ]
-        elif run.histograms and any(int(hist.t0_bin) != t0_bin for hist in run.histograms):
-            run.histograms = [
-                Histogram(
-                    counts=hist.counts,
-                    bin_width=hist.bin_width,
-                    t0_bin=t0_bin,
-                    good_bin_start=hist.good_bin_start,
-                    good_bin_end=hist.good_bin_end,
-                )
-                for hist in run.histograms
-            ]
+        else:
+            run.grouping.pop(EFFECTIVE_DETECTOR_T0_KEY, None)
 
         if has_file_deadtime(existing_grouping, len(run.histograms)):
             run.grouping["deadtime_file_us"] = list(existing_grouping.get("dead_time_us", []))
@@ -4696,7 +4686,13 @@ class MainWindow(QMainWindow):
             run.grouping["alpha_x"] = float(vector_alphas.get("P_x", run_alpha))
             run.grouping["alpha_y"] = float(vector_alphas.get("P_y", run_alpha))
             run.grouping["alpha_z"] = float(vector_alphas.get("P_z", run_alpha))
-        if isinstance(detector_t0_bins, list) and len(detector_t0_bins) == len(run.histograms):
+        # Keep the file-derived per-detector t0 table in sync with the (unmutated)
+        # histograms; a manual t0 shift is carried non-destructively via the
+        # effective-t0 override, never by rewriting these file values.
+        existing_detector_t0 = run.grouping.get("detector_t0_bins")
+        if isinstance(existing_detector_t0, list) and len(existing_detector_t0) == len(
+            run.histograms
+        ):
             run.grouping["detector_t0_bins"] = [int(hist.t0_bin) for hist in run.histograms]
         # Persist group names if provided
         group_names = grouping_result.get("group_names")

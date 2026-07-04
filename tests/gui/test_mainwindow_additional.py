@@ -2895,10 +2895,17 @@ class TestMainWindowBasic:
         self,
         mainwindow: MainWindow,
     ) -> None:
-        """Applying grouping should persist and apply edited t0/offset controls."""
+        """Applying grouping should persist and apply edited t0/offset controls.
+
+        A manual t0 edit is now NON-DESTRUCTIVE: the run's histograms keep their
+        file-derived ``t0_bin`` and the shift is published as per-detector
+        effective-t0 overrides that reduction aligns on instead.
+        """
         dataset = _make_dataset(7406, with_grouping=False)
         assert dataset.run is not None
         dataset.run.grouping["bin_index_base"] = 1
+        # File common t0 is 0 (default histograms); a t0 of 1 is a +1 shift.
+        original_hist_t0 = [int(h.t0_bin) for h in dataset.run.histograms]
 
         payload = {
             "groups": {1: [1], 2: [2]},
@@ -2919,7 +2926,11 @@ class TestMainWindowBasic:
         assert dataset.run.grouping["t_good_offset"] == 2
         assert dataset.run.grouping["first_good_bin"] == 3
         assert dataset.run.grouping["bin_index_base"] == 1
-        assert all(hist.t0_bin == 1 for hist in dataset.run.histograms)
+        # Histograms are UNCHANGED; the +1 shift lives in the effective override.
+        assert [int(h.t0_bin) for h in dataset.run.histograms] == original_hist_t0
+        assert dataset.run.grouping["effective_detector_t0_bins"] == [
+            t0 + 1 for t0 in original_hist_t0
+        ]
 
     def test_apply_grouping_without_histograms_updates_bunching(
         self,
