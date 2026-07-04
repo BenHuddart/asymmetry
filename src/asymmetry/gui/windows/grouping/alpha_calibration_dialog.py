@@ -55,7 +55,7 @@ from asymmetry.core.transform.asymmetry import AlphaEstimate, estimate_alpha_det
 from asymmetry.core.transform.grouping import group_forward_backward
 from asymmetry.core.transform.rebin import binned_fb_asymmetry
 from asymmetry.gui.styles import tokens
-from asymmetry.gui.windows.grouping.grp_io import (
+from asymmetry.gui.windows.grouping.format import (
     ALPHA_METHOD_ITEMS,
     format_value_with_uncertainty,
 )

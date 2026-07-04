@@ -59,9 +59,6 @@ settings out to whichever runs happen to be checked:
 * **Scope panel** — every run of this instrument, tagged **inherits <profile>**
   or **override**, with **Release** / **Reattach** to move a run between the
   two (see `Scope: inheriting and releasing`_ below).
-* **Load .grp** / **Save .grp** — read or write a grouping definition as a
-  ``.grp`` file, so a calibration can be reused across sessions or shared
-  outside a project.
 
 Press **Apply** to write the draft back to the profile. The **LOG** reports
 how many inheriting runs the profile reached and how many overridden runs

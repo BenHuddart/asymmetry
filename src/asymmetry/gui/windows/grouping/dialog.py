@@ -1,16 +1,13 @@
-"""WiMDA-style shared grouping dialog with alpha estimation and .grp I/O.
+"""Shared grouping profile editor with alpha estimation and live preview.
 
-The dialog edits detector grouping once and applies it across multiple datasets
-in the active project. Grouping definitions can be saved to and loaded from
-``.grp`` files.
+The dialog edits the grouping profile for an instrument (and per-run overrides
+for released runs) and applies the changes across the active project's
+datasets.
 
-This module holds the :class:`GroupingDialog` shell. The line-based ``.grp``
-serialization and the alpha-estimate display helpers live in
-:mod:`asymmetry.gui.windows.grouping.grp_io`; the dialog's static
-``serialize_grp``/``parse_grp`` methods and the module-level
-``_format_value_with_uncertainty``/``_ALPHA_METHOD_ITEMS`` names delegate to (or
-alias) that module so the historical class/module API is unchanged after the
-package split.
+This module holds the :class:`GroupingDialog` shell. The alpha-estimate display
+helpers live in :mod:`asymmetry.gui.windows.grouping.format`; the module-level
+``_format_value_with_uncertainty``/``_ALPHA_METHOD_ITEMS`` names alias that
+module so the historical module API is unchanged after the package split.
 """
 
 from __future__ import annotations
@@ -25,7 +22,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDoubleSpinBox,
-    QFileDialog,
     QFormLayout,
     QGridLayout,
     QHBoxLayout,
@@ -87,21 +83,16 @@ from asymmetry.gui.windows.grouping.deadtime_dialog import (
     DeadtimeSourceRun,
     deadtime_status_text,
 )
-from asymmetry.gui.windows.grouping.grp_io import (
+from asymmetry.gui.windows.grouping.format import (
     ALPHA_METHOD_ITEMS as _ALPHA_METHOD_ITEMS,
 )
-from asymmetry.gui.windows.grouping.grp_io import (
+from asymmetry.gui.windows.grouping.format import (
     format_value_with_uncertainty as _format_value_with_uncertainty,
-)
-from asymmetry.gui.windows.grouping.grp_io import (
-    parse_grp as _parse_grp,
-)
-from asymmetry.gui.windows.grouping.grp_io import (
-    serialize_grp as _serialize_grp,
 )
 from asymmetry.gui.windows.grouping.preview_pane import GroupingPreviewPane
 from asymmetry.gui.windows.grouping.profile_bridge import (
     instrument_display_for_fingerprint,
+    payload_from_profile_for_preview,
     payload_matches_preset,
     preset_payload,
     profile_from_form_payload,
@@ -119,11 +110,15 @@ class GroupingDialog(QDialog):
     exception managed in the scope panel. Nothing touches the project or runs
     until Apply.
 
-    The form controls (binning, deadtime, background, period, alpha) edit the
-    draft through a flat ``run.grouping`` *payload* (see
-    :mod:`asymmetry.gui.windows.grouping.profile_bridge`); a *preview run*
-    selector supplies the per-run facts (t0, good-bin window) shown read-only,
-    and changing it never discards draft edits.
+    The scope panel is the **selector**: the run selected there is the one the
+    form previews and edits, and the *editing target* follows that run's status.
+    An inheriting run edits the profile draft (through a flat ``run.grouping``
+    *payload* — see :mod:`asymmetry.gui.windows.grouping.profile_bridge`); an
+    overridden run edits that run's own override draft, seeded once from its
+    stored payload and kept in ``self._override_drafts``. Selecting never
+    prompts — each target keeps its draft — and **Apply** commits everything
+    dirty: the profile to every inheriting run plus each edited override to its
+    own run. The only guard is closing the window with uncommitted changes.
 
     Parameters
     ----------
@@ -135,9 +130,9 @@ class GroupingDialog(QDialog):
         current fingerprint), the draft is synthesized from the current/reference
         run's payload as ``"Default (<instrument>)"``.
     selected_run_number
-        Optional run number used as the initial preview run.
+        Optional run number used as the initially selected run.
     selected_run_numbers
-        Optional run numbers; only the first choice steers the initial preview
+        Optional run numbers; only the first choice steers the initial selected
         run / fingerprint. No longer a broadcast selection.
     parent
         Parent Qt widget.
@@ -167,14 +162,21 @@ class GroupingDialog(QDialog):
         self._suppress_dirty = False
         self._draft_name = ""
         self._fingerprint: ProfileFingerprint | None = None
-        # Override-editing mode (M3): active when the preview run is an
-        # overridden run. In this mode the form seeds from — and edits are
-        # written back to — the run's own ``run.grouping`` override payload, and
-        # the profile draft (``self._draft``) is left untouched.
-        self._override_mode = False
-        self._override_run_number: int | None = None
-        self._override_draft_dirty = False
-        self._override_payload: dict[str, Any] | None = None
+        # Unified editing model: the scope-panel selection is the selector, and
+        # the editing target follows the selected run's status. An inheriting run
+        # edits the profile draft (``self._draft``); an overridden run edits that
+        # run's own override draft, kept in ``self._override_drafts`` keyed by run
+        # number. Override drafts accumulate across selections — switching never
+        # prompts; each target keeps its draft — and Apply commits every dirty
+        # one alongside the profile. ``_current_run`` mirrors the selected run so
+        # the target can be resolved without touching the scope panel mid-reseed.
+        self._override_drafts: dict[int, dict[str, Any]] = {}
+        #: overridden runs whose override draft has uncommitted edits this session.
+        self._override_dirty_runs: set[int] = set()
+        #: overridden runs whose edits were committed by the last Apply (read by
+        #: get_profile_result after the dirty set is cleared).
+        self._committed_override_runs: set[int] = set()
+        self._current_run: int | None = None
 
         self.setWindowTitle("Grouping")
         self.resize(940, 560)
@@ -246,15 +248,10 @@ class GroupingDialog(QDialog):
         profile_row.addWidget(self._instrument_label)
         profile_row.addWidget(self._instrument_combo)
 
-        # The reference-run combo is now a non-destructive preview-run selector:
-        # it changes only the per-run facts shown, never the draft.
-        self._reference_combo = QComboBox()
-        for ds in self._fingerprint_datasets():
-            self._reference_combo.addItem(ds.run_label, int(ds.run_number))
-        self._set_combo_to_run(self._reference_combo, int(self._reference_dataset.run_number))
-        self._reference_combo.currentIndexChanged.connect(self._on_reference_dataset_changed)
-        profile_row.addWidget(QLabel("Preview run"))
-        profile_row.addWidget(self._reference_combo)
+        # The preview + editing target is now driven by the scope-panel
+        # selection (built in the left pane below), so there is no separate
+        # preview-run combo. ``_current_run`` tracks the selected run.
+        self._current_run = int(self._reference_dataset.run_number)
         profile_row.addStretch()
         root.addLayout(profile_row)
 
@@ -283,17 +280,6 @@ class GroupingDialog(QDialog):
         self._tf_hint_label.setVisible(False)
         root.addWidget(self._tf_hint_label)
 
-        # Override-editing banner (M3): warning-styled, shown only while editing
-        # an overridden run's own grouping (which applies to that run alone).
-        self._override_banner = QLabel()
-        self._override_banner.setWordWrap(True)
-        self._override_banner.setStyleSheet(
-            f"color: {tokens.WARN}; font-weight: bold; "
-            f"border: 1px solid {tokens.WARN}; border-radius: 3px; padding: 4px;"
-        )
-        self._override_banner.setVisible(False)
-        root.addWidget(self._override_banner)
-
         # \u2500\u2500 Main split: left pane (datasets + groups) | right pane (form) \u2500
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setChildrenCollapsible(False)
@@ -308,7 +294,7 @@ class GroupingDialog(QDialog):
         self._scope_panel = ScopePanel()
         self._scope_panel.setMaximumHeight(180)
         self._scope_panel.changed.connect(self._on_scope_changed)
-        self._scope_panel.edit_requested.connect(self._on_scope_edit_requested)
+        self._scope_panel.selected.connect(self._on_scope_run_selected)
         left_layout.addWidget(self._scope_panel)
         self._refresh_scope_panel()
 
@@ -339,6 +325,16 @@ class GroupingDialog(QDialog):
         right_layout = QVBoxLayout(right_pane)
         right_layout.setContentsMargins(4, 4, 0, 0)
         right_layout.setSpacing(0)
+
+        # Persistent editing-target strip, directly above the form: accent-tinted
+        # while editing the profile ("Editing profile 'X' — applies to N runs"),
+        # warning-tinted while editing a single run's override ("Editing override
+        # for run N — this run only"). One of three redundant cues (with the
+        # scope-list row tint and the "override *" chip).
+        self._editing_strip = QLabel()
+        self._editing_strip.setWordWrap(True)
+        right_layout.addWidget(self._editing_strip)
+        right_layout.addSpacing(6)
 
         form = QFormLayout()
         form.setVerticalSpacing(8)
@@ -494,8 +490,8 @@ class GroupingDialog(QDialog):
         # Deadtime and background are configured in dedicated dialogs
         # (deadtime_dialog.py / background_dialog.py); the form only shows a
         # compact status row + "Configure…" button per cluster. State lives
-        # here (not in inline widgets) so ``_current_grouping_payload`` and the
-        # ``.grp`` load/save paths are unchanged.
+        # here (not in inline widgets) so ``_current_grouping_payload`` stays
+        # the single payload assembly point.
         self._deadtime_mode = (
             self._default_deadtime_mode(grouping)
             if bool(grouping.get("deadtime_correction", False))
@@ -696,15 +692,7 @@ class GroupingDialog(QDialog):
 
         self._update_vector_mode_controls(grouping)
 
-        # ── Bottom bar: file I/O + action buttons ────────────────────────
-        load_btn = QPushButton("Load .grp")
-        load_btn.setAutoDefault(False)
-        load_btn.setDefault(False)
-        load_btn.clicked.connect(self._load_grp_file)
-        save_btn = QPushButton("Save .grp")
-        save_btn.setAutoDefault(False)
-        save_btn.setDefault(False)
-        save_btn.clicked.connect(self._save_grp_file)
+        # ── Bottom bar: action buttons ───────────────────────────────────
         cancel_btn = QPushButton("Cancel")
         cancel_btn.setAutoDefault(False)
         cancel_btn.setDefault(False)
@@ -715,8 +703,6 @@ class GroupingDialog(QDialog):
         self._apply_btn.clicked.connect(self._on_apply)
 
         bottom_bar = QHBoxLayout()
-        bottom_bar.addWidget(load_btn)
-        bottom_bar.addWidget(save_btn)
         bottom_bar.addStretch()
         bottom_bar.addWidget(cancel_btn)
         bottom_bar.addWidget(self._apply_btn)
@@ -732,11 +718,12 @@ class GroupingDialog(QDialog):
         self._connect_preview_refresh()
         self._refresh_preview()
 
-        # Open directly in override-editing mode when the initial preview run is
-        # itself overridden, so the editor never silently shows the profile view
-        # for a run whose grouping the profile does not govern.
-        if self._run_is_overridden(int(self._reference_dataset.run_number)):
-            self._enter_override_mode(int(self._reference_dataset.run_number))
+        # Select the reference run in the scope panel so its row is highlighted
+        # and the editing-target strip reflects the initial target. When that run
+        # is itself overridden the form was already seeded from its override draft
+        # by _seed_source (which resolves the target), so no re-seed is needed.
+        self._scope_panel.set_current_run(int(self._reference_dataset.run_number))
+        self._refresh_editing_strip()
 
     def _choose_reference_dataset(self) -> MuonDataset:
         """Return preferred reference dataset for initial grouping values."""
@@ -821,10 +808,12 @@ class GroupingDialog(QDialog):
     def _on_instrument_combo_activated(self, index: int) -> None:
         """Switch the editor to another instrument's fingerprint.
 
-        Prompts to discard unsaved draft edits first (the same guard the profile
-        switcher uses); then swaps the fingerprint, preview/reference run, draft,
-        and re-seeds every form control, scope panel, preset list, and preview
-        through the shared reload path.
+        Like the profile switcher, an instrument change edits against the profile
+        draft, so if an overridden run is selected we first switch selection to an
+        inheriting run of the *current* instrument (never prompting — its override
+        draft is kept). Then prompts to discard unsaved profile-draft edits, and
+        swaps the fingerprint, selected run, draft, and re-seeds every form
+        control, scope panel, preset list, and preview through the shared path.
         """
         combo_index = self._instrument_combo.itemData(index)
         fingerprints = self._project_fingerprints()
@@ -833,6 +822,7 @@ class GroupingDialog(QDialog):
         target = fingerprints[int(combo_index)]
         if self._fingerprint is not None and target.matches(self._fingerprint):
             return
+        self._select_inheriting_run_before_profile_change()
         if not self._confirm_discard_before_switch():
             self._select_current_instrument_in_combo()
             return
@@ -850,27 +840,27 @@ class GroupingDialog(QDialog):
         combo.blockSignals(False)
 
     def _switch_to_fingerprint(self, fingerprint: ProfileFingerprint) -> None:
-        """Adopt *fingerprint*: swap reference run, draft, and re-seed the form."""
+        """Adopt *fingerprint*: swap selected run, draft, and re-seed the form."""
         datasets = self._datasets_for_fingerprint(fingerprint)
         if not datasets or datasets[0].run is None:
             return
         self._fingerprint = fingerprint
         self._reference_dataset = datasets[0]
         self._run = datasets[0].run
+        self._current_run = int(datasets[0].run_number)
         # Draft: the new instrument's active profile, or a fresh default.
         self._draft = self._initial_draft()
         self._draft_name = self._draft.name
         self._draft_dirty = False
-        # Repopulate the preview-run combo for the new instrument's runs.
-        self._reference_combo.blockSignals(True)
-        self._reference_combo.clear()
-        for ds in datasets:
-            self._reference_combo.addItem(ds.run_label, int(ds.run_number))
-        self._set_combo_to_run(self._reference_combo, int(self._reference_dataset.run_number))
-        self._reference_combo.blockSignals(False)
-        # Re-seed every form control, scope panel, preset list, and preview.
+        # Re-seed every form control, scope panel, preset list, and preview; the
+        # scope panel is repopulated for the new instrument's runs by
+        # _reseed_form_from_draft → _refresh_scope_panel below.
         self._reseed_form_from_draft()
         self._rebuild_instrument_combo()
+        # Select the new instrument's first run in the scope panel (drives the
+        # editing strip + preview) and reflect the target.
+        self._scope_panel.set_current_run(int(self._reference_dataset.run_number))
+        self._refresh_editing_strip()
 
     def _default_draft_name(self) -> str:
         """Synthesized draft name for a fingerprint with no saved profile.
@@ -922,16 +912,13 @@ class GroupingDialog(QDialog):
         :func:`resolve_effective_grouping`, so the shim carries the preview run's
         histograms/metadata too.
         """
-        from asymmetry.gui.windows.grouping.profile_bridge import (
-            payload_from_profile_for_preview,
-        )
-
-        if self._override_mode:
-            # Override-editing mode seeds the form from the run's own grouping
-            # payload directly (its frozen per-run override), not from the
-            # profile draft — so the shareable form controls reflect the
-            # override, and editing them writes back to that run alone.
-            payload = dict(self._run.grouping) if isinstance(self._run.grouping, dict) else {}
+        target = self._editing_target()
+        if target != "profile":
+            # An overridden run is selected: seed from that run's override draft.
+            # The draft is seeded once from the run's stored payload and then
+            # accumulates edits (see :meth:`_override_draft_for`), so switching
+            # back to it later restores the in-progress edits, not the file.
+            payload = dict(self._override_draft_for(int(target)))
         else:
             payload = payload_from_profile_for_preview(self._draft, self._run)
 
@@ -943,33 +930,81 @@ class GroupingDialog(QDialog):
 
         return _SeedSource()
 
+    # -- editing-target resolution --------------------------------------
+
+    def _editing_target(self) -> str | int:
+        """Return the current editing target: ``"profile"`` or an overridden run number.
+
+        The selection is the selector: an inheriting run (or no selection) edits
+        the profile draft; an overridden run edits that run's own override draft.
+        Resolved from ``self._current_run`` against the scope panel's live
+        released-run set so a release/reattach flips the target immediately.
+        """
+        run = self._current_run
+        if run is not None and self._run_is_overridden(int(run)):
+            return int(run)
+        return "profile"
+
+    def _override_draft_for(self, run_number: int) -> dict[str, Any]:
+        """Return the override draft for *run_number*, seeding it once if new.
+
+        Seeded from the run's current effective settings (its stored override
+        payload) the first time the run is selected as an override target; from
+        then on the accumulated draft is returned so in-progress edits survive
+        switching selection away and back.
+        """
+        run_number = int(run_number)
+        draft = self._override_drafts.get(run_number)
+        if draft is None:
+            dataset = next(
+                (ds for ds in self._fingerprint_datasets() if int(ds.run_number) == run_number),
+                None,
+            )
+            run = dataset.run if dataset is not None else None
+            grouping = run.grouping if run is not None and isinstance(run.grouping, dict) else {}
+            draft = dict(grouping)
+            self._override_drafts[run_number] = draft
+        return draft
+
     def _mark_dirty(self) -> None:
-        """Record that the draft (or the override draft) diverges from its open state."""
+        """Record that the current editing target diverges from its open state."""
         if self._suppress_dirty:
             return
-        if self._override_mode:
-            self._override_draft_dirty = True
-        else:
+        target = self._editing_target()
+        if target == "profile":
             self._draft_dirty = True
+        else:
+            self._sync_override_draft_from_form(int(target))
+            newly_dirty = int(target) not in self._override_dirty_runs
+            self._override_dirty_runs.add(int(target))
+            self._scope_panel.mark_override_dirty(int(target), True)
+            if newly_dirty and hasattr(self, "_apply_btn"):
+                # Reflect the new override in the Apply blast-radius label.
+                self._update_apply_enabled()
+
+    def _sync_override_draft_from_form(self, run_number: int) -> None:
+        """Capture the live form payload into *run_number*'s override draft."""
+        self._override_drafts[int(run_number)] = self._current_grouping_payload()
 
     def _sync_draft_from_form(self) -> None:
-        """Lift the current form payload back into the draft (or override) payload.
+        """Lift the current form payload back into the current target's payload.
 
-        Called before the draft is read (Apply, preset-chip refresh, profile
+        Called before the target is read (Apply, preset-chip refresh, profile
         switch). Also refreshes the preset chip / clears a stale preset marker
         when the groups have drifted from the named preset.
 
-        In override-editing mode the profile draft is deliberately left
-        untouched: the form payload is captured into ``self._override_payload``
-        so Apply can write it back to the overridden run alone.
+        When an overridden run is the editing target the profile draft is left
+        untouched: the form payload is captured into that run's override draft so
+        Apply can write it back to the overridden run alone.
         """
         payload = self._current_grouping_payload()
         self._refresh_preset_chip(payload)
         # Re-read the payload after a possible drift-clear so the draft does not
         # carry a stale ``grouping_preset``.
         payload = self._current_grouping_payload()
-        if self._override_mode:
-            self._override_payload = payload
+        target = self._editing_target()
+        if target != "profile":
+            self._override_drafts[int(target)] = payload
             return
         assert self._fingerprint is not None
         self._draft = profile_from_form_payload(
@@ -1001,7 +1036,16 @@ class GroupingDialog(QDialog):
         combo.blockSignals(False)
 
     def _on_profile_combo_activated(self, index: int) -> None:
-        """Switch the active draft, or create a new / duplicated profile."""
+        """Switch the active draft, or create a new / duplicated profile.
+
+        Changing the profile edits the profile draft, so if an overridden run is
+        currently selected we first switch selection to an inheriting run (never
+        prompting — the override draft is kept). If no run inherits, the profile
+        cannot be edited: restore the combo and bail.
+        """
+        if not self._select_inheriting_run_before_profile_change():
+            self._select_profile_in_combo(self._draft_name)
+            return
         data = self._profile_combo.itemData(index)
         if data == "__new__":
             self._create_new_profile(duplicate=False)
@@ -1211,60 +1255,101 @@ class GroupingDialog(QDialog):
         if hasattr(self, "_apply_btn"):
             self._update_apply_enabled()
 
+    def _refresh_editing_strip(self) -> None:
+        """Refresh the persistent editing-target strip above the form.
+
+        Accent-tinted while editing the profile ("Editing profile 'X' — applies
+        to N runs"); warning-tinted while editing a single run's override
+        ("Editing override for run N — this run only"). The run count is the only
+        "applies to many" signal (owner decision).
+        """
+        if not hasattr(self, "_editing_strip"):
+            return
+        target = self._editing_target()
+        if target == "profile":
+            n = len(self._scope_panel.inheriting_run_numbers())
+            noun = "run" if n == 1 else "runs"
+            self._editing_strip.setText(
+                f"Editing profile '{self._draft_name}' — applies to {n} {noun}"
+            )
+            self._editing_strip.setStyleSheet(
+                f"color: {tokens.ACCENT}; font-weight: bold; "
+                f"background: {tokens.ACCENT_SOFT}; border: 1px solid {tokens.ACCENT}; "
+                f"border-radius: 3px; padding: 4px;"
+            )
+        else:
+            self._editing_strip.setText(f"Editing override for run {int(target)} — this run only")
+            self._editing_strip.setStyleSheet(
+                f"color: {tokens.WARN}; font-weight: bold; "
+                f"border: 1px solid {tokens.WARN}; border-radius: 3px; padding: 4px;"
+            )
+
     def _on_scope_changed(self) -> None:
         """React to a release/reattach in the scope panel.
 
-        A release/reattach is a profile-scope decision, not an override edit, so
-        it always marks the *profile* draft dirty (even inside override-editing
-        mode). Reattaching the run currently being override-edited drops its
-        override, so the editor leaves override mode and re-seeds from the
-        profile draft.
+        A release/reattach is a profile-scope decision, so it marks the profile
+        draft dirty. It can also flip the current run's editing target: releasing
+        the selected run turns it into an override target (seeded on demand from
+        its current effective settings), and reattaching flips it back to the
+        profile. Reattaching a run whose override draft has uncommitted edits
+        confirms first; on cancel the reattach is undone. The form is re-seeded
+        from the (new) target so what is shown matches what edits go to.
         """
-        if (
-            self._override_mode
-            and self._override_run_number is not None
-            and not self._run_is_overridden(self._override_run_number)
-        ):
-            # The override we were editing was reattached: leave the mode without
-            # a discard prompt (the reattach itself is the user's intent).
-            self._override_draft_dirty = False
-            self._exit_override_mode()
-            self._suppress_dirty = True
-            try:
-                self._reload_controls_from_seed()
-            finally:
-                self._suppress_dirty = False
+        # Reattach discards pending override edits — confirm for any run that
+        # went override → inheriting with a dirty override draft. On cancel,
+        # re-release it (undo the reattach) and stop.
+        reattached_dirty = {
+            rn for rn in self._override_dirty_runs if not self._run_is_overridden(int(rn))
+        }
+        if reattached_dirty and not self._confirm_discard_override(sorted(reattached_dirty)):
+            for rn in reattached_dirty:
+                self._scope_panel.set_released(int(rn), True)
+            return
         self._draft_dirty = True
+        # Drop override drafts for any run that is now inheriting.
+        for rn in list(self._override_drafts):
+            if not self._run_is_overridden(int(rn)):
+                self._override_drafts.pop(int(rn), None)
+                self._override_dirty_runs.discard(int(rn))
+                self._scope_panel.mark_override_dirty(int(rn), False)
+        # Re-seed the form from the target the current run now resolves to.
+        self._suppress_dirty = True
+        try:
+            self._reload_controls_from_seed()
+        finally:
+            self._suppress_dirty = False
+        self._refresh_editing_strip()
         self._update_apply_enabled()
 
-    def _on_scope_edit_requested(self, run_number: int) -> None:
-        """Select *run_number* as the preview run, entering override-editing mode.
+    def _on_scope_run_selected(self, run_number: int) -> None:
+        """Switch the previewed + edited run to the scope-panel selection.
 
-        Discoverability affordance for the same mode reached by picking an
-        overridden run in the preview-run combo: routes through the same
-        preview-run switch so the guard/entry logic is shared.
+        Selection is preview + editing target in one: the form shows (and edits
+        route to) the selected run's effective settings — the profile draft for
+        an inheriting run, that run's override draft for an overridden one.
+        Switching never prompts: the previous target keeps its in-progress draft
+        (the profile draft, or the run's entry in ``self._override_drafts``).
         """
-        idx = self._reference_combo.findData(int(run_number))
-        if idx < 0:
+        run_number = int(run_number)
+        dataset = next(
+            (ds for ds in self._fingerprint_datasets() if int(ds.run_number) == run_number),
+            None,
+        )
+        if dataset is None or dataset.run is None:
             return
-        if self._reference_combo.currentIndex() == idx:
-            # Already the preview run — enter the mode directly if not already in it.
-            if not self._override_mode and self._run_is_overridden(run_number):
-                dataset = next(
-                    (
-                        ds
-                        for ds in self._fingerprint_datasets()
-                        if int(ds.run_number) == int(run_number)
-                    ),
-                    None,
-                )
-                if dataset is not None and dataset.run is not None:
-                    self._reference_dataset = dataset
-                    self._run = dataset.run
-                    self._enter_override_mode(int(run_number))
-            return
-        # Setting the index fires currentIndexChanged → _on_reference_dataset_changed.
-        self._reference_combo.setCurrentIndex(idx)
+        # Capture the outgoing target's edits before moving on, so nothing is
+        # lost (accumulate, never prompt).
+        self._sync_draft_from_form()
+        self._current_run = run_number
+        self._reference_dataset = dataset
+        self._run = dataset.run
+        self._suppress_dirty = True
+        try:
+            self._reload_controls_from_seed()
+        finally:
+            self._suppress_dirty = False
+        self._refresh_editing_strip()
+        self._update_apply_enabled()
 
     def _load_group_names(self, run) -> dict[int, str]:
         """Load group names from run metadata, returning an empty dict if absent."""
@@ -1628,12 +1713,6 @@ class GroupingDialog(QDialog):
         last_good_bin = max(0, min(max_bin, int(self._last_good_spin.value()) - base))
         return t0_bin, t_good_offset, first_good_bin, last_good_bin
 
-    def _set_combo_to_run(self, combo: QComboBox, run_number: int) -> None:
-        """Set reference-run combo to the provided run number if it exists."""
-        idx = combo.findData(run_number)
-        if idx >= 0:
-            combo.setCurrentIndex(idx)
-
     def _run_is_overridden(self, run_number: int) -> bool:
         """Return whether *run_number* currently carries a per-run override.
 
@@ -1642,111 +1721,34 @@ class GroupingDialog(QDialog):
         """
         return int(run_number) in self._scope_panel.released_run_numbers()
 
-    def _on_reference_dataset_changed(self) -> None:
-        """Switch the *preview* run, entering/leaving override-editing mode (M3).
-
-        Changing the preview run to an *inheriting* run refreshes the per-run
-        facts shown while preserving in-progress draft edits. Changing it to an
-        *overridden* run instead switches into override-editing mode: the form
-        seeds from that run's own grouping and edits apply to it alone. A dirty
-        override draft prompts before the switch takes it out of the mode.
-        """
-        run_number = int(self._reference_combo.currentData())
-        dataset = next(
-            (ds for ds in self._fingerprint_datasets() if int(ds.run_number) == run_number),
-            None,
-        )
-        if dataset is None or dataset.run is None:
-            return
-
-        target_overridden = self._run_is_overridden(run_number)
-
-        # Leaving an override we have edited needs its own discard prompt.
-        if (
-            self._override_mode
-            and (not target_overridden or run_number != self._override_run_number)
-            and not self._confirm_discard_override()
-        ):
-            # Revert the combo to the run we are editing.
-            self._reference_combo.blockSignals(True)
-            self._set_combo_to_run(self._reference_combo, int(self._override_run_number))
-            self._reference_combo.blockSignals(False)
-            return
-
-        if not self._override_mode and not target_overridden:
-            # Ordinary preview switch: preserve in-progress draft edits.
-            self._sync_draft_from_form()
-
-        self._reference_dataset = dataset
-        self._run = dataset.run
-
-        if target_overridden:
-            self._enter_override_mode(run_number)
-            return
-        # Switching to an inheriting run (from either state) re-seeds from the
-        # profile draft; leave override mode if we were in it.
-        self._exit_override_mode()
-        self._suppress_dirty = True
-        try:
-            self._reload_controls_from_seed()
-        finally:
-            self._suppress_dirty = False
-
-    # ------------------------------------------------------------------
-    # Override-editing mode (M3)
-    # ------------------------------------------------------------------
-
-    def _enter_override_mode(self, run_number: int) -> None:
-        """Switch the editor into override-editing mode for *run_number*.
-
-        Seeds the form from the run's own ``run.grouping`` override payload,
-        disables the profile + instrument switchers, shows the warning banner,
-        and leaves the profile draft (``self._draft``) untouched.
-        """
-        self._override_mode = True
-        self._override_run_number = int(run_number)
-        self._override_draft_dirty = False
-        self._override_payload = None
-        self._override_banner.setText(
-            f"Editing override for run {run_number} — changes apply to this run only."
-        )
-        self._override_banner.setVisible(True)
-        self._profile_combo.setEnabled(False)
-        self._instrument_combo.setEnabled(False)
-        self._suppress_dirty = True
-        try:
-            self._reload_controls_from_seed()
-        finally:
-            self._suppress_dirty = False
-        self._update_apply_enabled()
-
-    def _exit_override_mode(self) -> None:
-        """Leave override-editing mode and restore the profile-editing controls."""
-        if not self._override_mode:
-            return
-        self._override_mode = False
-        self._override_run_number = None
-        self._override_draft_dirty = False
-        self._override_payload = None
-        self._override_banner.setVisible(False)
-        self._profile_combo.setEnabled(True)
-        # The instrument switcher stays disabled when there is only one
-        # instrument (it is hidden then anyway); re-enable it here.
-        self._instrument_combo.setEnabled(True)
-        self._update_apply_enabled()
-
-    def _confirm_discard_override(self) -> bool:
-        """Ask to discard unsaved override edits before leaving the mode."""
-        if not self._override_draft_dirty:
-            return True
+    def _confirm_discard_override(self, run_numbers: list[int]) -> bool:
+        """Ask to discard uncommitted override edits for *run_numbers*."""
+        runs = ", ".join(str(rn) for rn in run_numbers)
         answer = QMessageBox.question(
             self,
             "Discard changes",
-            f"Discard unsaved changes to the override for run {self._override_run_number}?",
+            f"Discard uncommitted override edits for run(s) {runs}?",
             QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel,
         )
         return answer == QMessageBox.StandardButton.Discard
+
+    def _select_inheriting_run_before_profile_change(self) -> bool:
+        """Ensure the current run is inheriting before a profile/instrument change.
+
+        Profile and instrument edits target the profile draft, so they only make
+        sense while an inheriting run is selected. When the selection is on an
+        overridden run, switch to the first inheriting run of the fingerprint
+        first (keeping the override draft intact — switching never prompts).
+        Returns ``False`` when no inheriting run exists (nothing to edit against).
+        """
+        if self._editing_target() == "profile":
+            return True
+        inheriting = sorted(self._scope_panel.inheriting_run_numbers())
+        if not inheriting:
+            return False
+        self._scope_panel.set_current_run(int(inheriting[0]))
+        return True
 
     def _reload_controls_from_seed(self) -> None:
         """Re-seed every form control from the draft resolved for the preview run."""
@@ -2325,13 +2327,15 @@ class GroupingDialog(QDialog):
                         f"{label} group would have no detectors left after exclusion.",
                     )
                     return
-        # Lift the validated form state into the draft profile (or, in
-        # override-editing mode, into the override payload) so the result getters
-        # return it. Both drafts are considered saved once applied, so the close
-        # guard does not re-prompt.
+        # Lift the validated form state back into the current editing target
+        # (the profile draft, or the selected run's override draft) so the result
+        # getters return it. Snapshot the dirty overrides as *committed* so
+        # get_profile_result still reports them after the dirty set is cleared,
+        # then disarm the close guard.
         self._sync_draft_from_form()
+        self._committed_override_runs = set(self._pending_override_runs())
         self._draft_dirty = False
-        self._override_draft_dirty = False
+        self._override_dirty_runs.clear()
         self.accept()
 
     # ------------------------------------------------------------------
@@ -2460,56 +2464,70 @@ class GroupingDialog(QDialog):
         )
         return resolve_effective_grouping(profile, self._run)
 
+    def _pending_override_runs(self) -> list[int]:
+        """Overridden runs with a dirty override draft, in ascending order."""
+        return sorted(rn for rn in self._override_dirty_runs if self._run_is_overridden(int(rn)))
+
     def _update_apply_enabled(self) -> None:
-        """Disable Apply (with a reason) when no run inherits this profile."""
-        if self._override_mode:
-            # Override-editing mode applies to the single overridden run, which
-            # is always a valid target, so Apply stays enabled.
-            self._apply_btn.setEnabled(True)
+        """Enable/label Apply, showing the blast radius of everything dirty.
+
+        Apply commits the profile to every inheriting run plus each dirty
+        override to its own run. The label shows the pending override count when
+        any override is dirty ("Apply (profile + 2 overrides)"). Apply is disabled
+        only when there is nothing to commit: no inheriting run *and* no pending
+        override.
+        """
+        inheriting = self._scope_panel.inheriting_run_numbers()
+        pending = self._pending_override_runs()
+        enabled = bool(inheriting) or bool(pending)
+        self._apply_btn.setEnabled(enabled)
+        if pending:
+            noun = "override" if len(pending) == 1 else "overrides"
+            self._apply_btn.setText(f"Apply (profile + {len(pending)} {noun})")
+        else:
+            self._apply_btn.setText("Apply")
+        if not enabled:
             self._apply_btn.setToolTip(
-                f"Apply the edited override to run {self._override_run_number} only."
+                "No run of this instrument inherits the profile (all released) "
+                "and no override has pending edits. Reattach a run to apply."
             )
             return
-        inheriting = self._scope_panel.inheriting_run_numbers()
-        enabled = bool(inheriting)
-        self._apply_btn.setEnabled(enabled)
-        if enabled:
-            self._apply_btn.setToolTip(
-                f"Save profile '{self._draft_name}' and apply it to "
-                f"{len(inheriting)} inheriting run(s)."
+        parts: list[str] = []
+        if inheriting:
+            parts.append(
+                f"save profile '{self._draft_name}' to {len(inheriting)} inheriting run(s)"
             )
-        else:
-            self._apply_btn.setToolTip(
-                "No run of this fingerprint inherits the profile "
-                "(all released). Reattach a run to apply."
-            )
+        if pending:
+            parts.append(f"apply override edits to run(s) {', '.join(str(r) for r in pending)}")
+        self._apply_btn.setToolTip("Apply will " + " and ".join(parts) + ".")
 
     def _clear_dirty(self) -> None:
         """Disarm the unsaved-draft guard (used by the test teardown fixture)."""
         self._draft_dirty = False
+        self._override_dirty_runs.clear()
 
     def _guard_discard(self) -> bool:
-        """Return whether it is safe to close (prompting on a dirty draft).
+        """Return whether it is safe to close (prompting on any uncommitted edit).
 
-        Covers both a dirty profile draft and — in override-editing mode — a
-        dirty override draft, so a half-finished per-run override edit cannot be
-        lost silently either.
+        The single close-time guard for the unified model. It covers a dirty
+        profile draft *and* every run with uncommitted override edits, and the
+        prompt names both parts — e.g. "profile 'Default (GPS)' and overrides for
+        runs 12, 15" — so nothing can be lost silently.
         """
-        if self._override_mode and self._override_draft_dirty:
-            answer = QMessageBox.question(
-                self,
-                "Discard changes",
-                f"Discard unsaved changes to the override for run {self._override_run_number}?",
-                QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
-                QMessageBox.StandardButton.Cancel,
-            )
-            return answer == QMessageBox.StandardButton.Discard
-        if not self._draft_dirty:
+        pending = self._pending_override_runs()
+        if not self._draft_dirty and not pending:
             return True
+        lost: list[str] = []
+        if self._draft_dirty:
+            lost.append(f"profile '{self._draft_name}'")
+        if pending:
+            noun = "override" if len(pending) == 1 else "overrides"
+            run_word = "run" if len(pending) == 1 else "runs"
+            lost.append(f"{noun} for {run_word} {', '.join(str(r) for r in pending)}")
         answer = QMessageBox.question(
             self,
             "Discard changes",
-            f"Discard changes to profile '{self._draft_name}'?",
+            f"Discard uncommitted changes to {' and '.join(lost)}?",
             QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel,
         )
@@ -3492,186 +3510,36 @@ class GroupingDialog(QDialog):
         ids = self._current_excluded_detectors() or []
         return {"excluded_detectors": [int(v) for v in ids]}
 
-    def _save_grp_file(self) -> None:
-        """Save current grouping configuration to a ``.grp`` file."""
-        payload = self._current_grouping_payload()
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Save Grouping",
-            "grouping.grp",
-            "Grouping files (*.grp);;All files (*)",
-        )
-        if not path:
-            return
-        if not path.lower().endswith(".grp"):
-            path += ".grp"
+    def _profile_broadcast_payload(self) -> dict[str, Any]:
+        """Return the flat profile payload broadcast to inheriting runs.
 
-        with open(path, "w", encoding="utf-8") as handle:
-            handle.write(self.serialize_grp(payload))
-
-    def _load_grp_file(self) -> None:
-        """Load grouping configuration from a ``.grp`` file into the dialog."""
-        path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Load Grouping",
-            "",
-            "Grouping files (*.grp);;All files (*)",
-        )
-        if not path:
-            return
-
-        with open(path, encoding="utf-8") as handle:
-            payload = self.parse_grp(handle.read())
-
-        loaded_index_base = (
-            1 if int(payload.get("bin_index_base", self._bin_index_base())) == 1 else 0
-        )
-        if isinstance(self._run.grouping, dict):
-            self._run.grouping["bin_index_base"] = loaded_index_base
-
-        loaded_groups = payload.get("groups", {})
-        if not isinstance(loaded_groups, dict) or len(loaded_groups) < 2:
-            QMessageBox.warning(
-                self, "Invalid Grouping", "Loaded .grp file does not define at least two groups."
-            )
-            return
-
-        groups: dict[int, list[int]] = {}
-        for key, dets in loaded_groups.items():
-            gid = int(key)
-            idxs = [max(0, int(v) - 1) for v in dets]
-            groups[gid] = sorted(set(idxs))
-
-        self._groups = groups
-        loaded_included_groups = payload.get("included_groups", {})
-        if isinstance(loaded_included_groups, dict):
-            self._included_groups = {
-                int(k): bool(v) for k, v in loaded_included_groups.items() if str(k).strip()
-            }
-        else:
-            self._included_groups = {int(gid): True for gid in groups}
-        self._populate_group_table()
-        self._refresh_group_combo_items(
-            forward_gid=int(payload.get("forward_group", 1)),
-            backward_gid=int(payload.get("backward_group", 2)),
-        )
-
-        loaded_group_names = payload.get("group_names", {})
-        if isinstance(loaded_group_names, dict):
-            self._group_names = {int(k): str(v) for k, v in loaded_group_names.items()}
-            self._refresh_group_combo_items(
-                forward_gid=int(payload.get("forward_group", 1)),
-                backward_gid=int(payload.get("backward_group", 2)),
-            )
-        # Adopt any projections the .grp declared so the per-projection alpha
-        # table (rebuilt by _update_vector_mode_controls below) reflects the
-        # loaded grouping; a .grp without projections clears them.
-        loaded_projections = payload.get("projections")
-        if isinstance(loaded_projections, list) and loaded_projections:
-            self._projection_specs = [dict(p) for p in loaded_projections if isinstance(p, dict)]
-        else:
-            self._projection_specs = None
-
-        self._alpha_spin.setValue(float(payload.get("alpha", 1.0)))
-        # Seed the canonical axis spins when present; the table is rebuilt (and
-        # re-seeded) by _update_vector_mode_controls below, but only the
-        # canonical rows exist as P_x/P_y/P_z slots.
-        if ("alpha_x" in payload or "alpha_px" in payload) and "P_x" in self._vector_alpha_spins:
-            self._vector_alpha_spins["P_x"].setValue(
-                float(payload.get("alpha_x", payload.get("alpha_px", payload.get("alpha", 1.0))))
-            )
-        if ("alpha_y" in payload or "alpha_py" in payload) and "P_y" in self._vector_alpha_spins:
-            self._vector_alpha_spins["P_y"].setValue(
-                float(payload.get("alpha_y", payload.get("alpha_py", payload.get("alpha", 1.0))))
-            )
-        if ("alpha_z" in payload or "alpha_pz" in payload) and "P_z" in self._vector_alpha_spins:
-            self._vector_alpha_spins["P_z"].setValue(
-                float(payload.get("alpha_z", payload.get("alpha_pz", payload.get("alpha", 1.0))))
-            )
-
-        max_bin = self._max_bin_index_for_reference_dataset()
-        index_base = loaded_index_base
-        self._t0_spin.setRange(index_base, max_bin + index_base)
-        self._last_good_spin.setRange(index_base, max_bin + index_base)
-
-        t0_bin = int(payload.get("t0_bin", self._t0_spin.value() - index_base))
-        t0_bin = max(0, min(max_bin, t0_bin))
-        self._t0_spin.setValue(t0_bin + index_base)
-        self._on_t0_changed()
-
-        raw_offset = payload.get("t_good_offset")
-        if raw_offset is None:
-            try:
-                raw_offset = int(payload.get("first_good_bin", t0_bin)) - t0_bin
-            except (TypeError, ValueError):
-                raw_offset = self._t_good_offset_spin.value()
-        t_good_offset = max(0, int(raw_offset))
-        t_good_offset = min(t_good_offset, int(self._t_good_offset_spin.maximum()))
-        self._t_good_offset_spin.setValue(t_good_offset)
-
-        last_good_bin = int(payload.get("last_good_bin", self._last_good_spin.value() - index_base))
-        last_good_bin = max(0, min(max_bin, last_good_bin))
-        self._last_good_spin.setValue(last_good_bin + index_base)
-        self._bunch_spin.setValue(int(payload.get("bunching_factor", self._bunch_spin.value())))
-        self._deadtime_manual_values_us = self._initial_manual_deadtime_values(payload)
-        self._deadtime_manual_method = self._initial_manual_deadtime_method(payload)
-        self._deadtime_mode = (
-            self._default_deadtime_mode(payload)
-            if bool(payload.get("deadtime_correction", False))
-            else "off"
-        )
-        self._deadtime_estimated_us = (
-            float(payload["deadtime_estimated_us"])
-            if payload.get("deadtime_estimated_us") is not None
-            else None
-        )
-        self._deadtime_source_run = (
-            int(payload["deadtime_reference_run"])
-            if payload.get("deadtime_reference_run") is not None
-            else None
-        )
-        self._update_deadtime_status()
-        background_run_payload = payload.get("background_run")
-        self._background_run_payload = (
-            dict(background_run_payload) if isinstance(background_run_payload, dict) else None
-        )
-        self._background_mode = (
-            resolve_background_mode(payload)
-            if bool(payload.get("background_correction", False))
-            else "none"
-        )
-        self._update_background_status()
-        self._set_period_mode(str(payload.get("period_mode", PeriodMode.RED)))
-        self._populate_group_table()
-        self._update_vector_mode_controls(payload)
-
-    @staticmethod
-    def serialize_grp(payload: dict[str, Any]) -> str:
-        """Serialize grouping payload to text ``.grp`` format.
-
-        Thin delegate to :func:`asymmetry.gui.windows.grouping.grp_io.serialize_grp`;
-        kept as a static method so the historical ``GroupingDialog.serialize_grp``
-        call sites (and tests) keep working after the package split.
+        When the current editing target *is* the profile, the live form is the
+        profile edit, so the live ``_current_grouping_payload`` is returned
+        directly (preserving the historical form-driven keys — alpha provenance,
+        deadtime table, binning knobs). When an overridden run is the selected
+        target the form is showing that override instead, so the payload is built
+        from the profile draft (``self._draft``) resolved against a representative
+        inheriting run, never from the form.
         """
-        return _serialize_grp(payload)
-
-    @staticmethod
-    def parse_grp(text: str) -> dict[str, Any]:
-        """Parse line-based ``.grp`` text into a grouping payload dictionary.
-
-        Thin delegate to :func:`asymmetry.gui.windows.grouping.grp_io.parse_grp`.
-        """
-        return _parse_grp(text)
+        if self._editing_target() == "profile":
+            return self._current_grouping_payload()
+        inheriting = sorted(self._scope_panel.inheriting_run_numbers())
+        reference_run = self._run
+        for ds in self._fingerprint_datasets():
+            if int(ds.run_number) in inheriting and ds.run is not None:
+                reference_run = ds.run
+                break
+        return dict(payload_from_profile_for_preview(self._draft, reference_run))
 
     def get_grouping_result(self) -> dict[str, Any] | None:
         """Return the applied grouping payload for inheriting runs.
 
-        The dialog is now a profile editor: on Apply the draft is saved as the
-        active profile and resolved onto every *inheriting* run of the
-        fingerprint. For backward compatibility the returned dict is still the
-        flat grouping payload the main window's ``_apply_grouping_settings_to_dataset``
-        consumes, with ``run_numbers`` set to the inheriting runs (released runs
-        are excluded, so overridden runs are left untouched).
+        The dialog is a profile editor: on Apply the draft is saved as the active
+        profile and resolved onto every *inheriting* run of the instrument. The
+        returned dict is the flat grouping payload the main window's
+        ``_apply_grouping_settings_to_dataset`` consumes, with ``run_numbers``
+        set to the inheriting runs. Per-run override edits are carried separately
+        in :meth:`get_profile_result`.
 
         Returns
         -------
@@ -3681,14 +3549,8 @@ class GroupingDialog(QDialog):
         """
         if self._run is None or not self._run.histograms:
             return None
-        payload = self._current_grouping_payload()
-        if self._override_mode:
-            # In override-editing mode the profile is not broadcast: the edited
-            # payload applies to the overridden run alone (via override_edits in
-            # get_profile_result), so no inheriting run is touched here.
-            payload["run_numbers"] = []
-        else:
-            payload["run_numbers"] = sorted(self._scope_panel.inheriting_run_numbers())
+        payload = self._profile_broadcast_payload()
+        payload["run_numbers"] = sorted(self._scope_panel.inheriting_run_numbers())
         return payload
 
     def get_profile_result(self) -> dict[str, Any] | None:
@@ -3701,22 +3563,25 @@ class GroupingDialog(QDialog):
             "released": set[int], "newly_released": set[int],
             "newly_reattached": set[int], "preview_run_number": int,
             "override_edits": {run_number: payload}}`` — the saved draft profile,
-            the scope reconciliation, and (in override-editing mode) the edited
-            per-run override payload to apply to that run alone. ``None`` when no
-            run is available.
+            the scope reconciliation, and every dirty per-run override payload to
+            apply to its run alone. ``None`` when no run is available.
         """
         if self._run is None or not self._run.histograms:
             return None
-        # The draft was synced by _on_apply; re-sync defensively in case a caller
-        # reads this without going through Apply. In override mode this captures
-        # the override payload and leaves self._draft (the profile) untouched.
+        # The current target was synced by _on_apply; re-sync defensively in case
+        # a caller reads this without going through Apply. This captures the live
+        # form into whichever draft it is currently editing.
         self._sync_draft_from_form()
+        # Report every override edited this session: the still-dirty ones plus
+        # any Apply just committed (Apply clears the dirty set before this runs).
         override_edits: dict[int, dict[str, Any]] = {}
-        if self._override_mode and self._override_run_number is not None:
-            payload = self._override_payload
-            if payload is None:
-                payload = self._current_grouping_payload()
-            override_edits[int(self._override_run_number)] = dict(payload)
+        run_numbers = set(self._pending_override_runs()) | self._committed_override_runs
+        for run_number in sorted(run_numbers):
+            if not self._run_is_overridden(int(run_number)):
+                continue
+            draft = self._override_drafts.get(int(run_number))
+            if draft is not None:
+                override_edits[int(run_number)] = dict(draft)
         return {
             "profile": GroupingProfile.from_dict(self._draft.to_dict()),
             "inheriting": self._scope_panel.inheriting_run_numbers(),

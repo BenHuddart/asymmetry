@@ -104,6 +104,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from asymmetry.core.data.dataset import Run
+from asymmetry.core.instrument import detect_instrument, instrument_display_name
 from asymmetry.core.transform.asymmetry import estimate_alpha
 from asymmetry.core.transform.grouping import (
     EFFECTIVE_DETECTOR_T0_KEY,
@@ -465,6 +466,143 @@ def fingerprint_from_payload(
         instrument=str(payload.get("instrument", "") or ""),
         histogram_count=int(histogram_count),
     )
+
+
+# --------------------------------------------------------------------------- #
+# Instrument self-healing on re-detection
+# --------------------------------------------------------------------------- #
+
+#: Structural / instrument-dependent payload keys discarded when a stale
+#: persisted instrument identity is corrected by fresh detection. These describe
+#: a *detector layout* (which detectors form which group, the named preset the
+#: groups came from, the vector projections and their per-axis alphas); once the
+#: instrument changes they no longer apply and would paste the wrong instrument's
+#: group names/geometry over the run. Everything else — the per-run/file-derived
+#: facts (:data:`_PER_RUN_FACT_KEYS`) and the instrument-independent correction
+#: *policies* (deadtime/background modes, scalar ``alpha``, binning) — is trivially
+#: separable and kept, so the whole payload need not be discarded.
+_INSTRUMENT_DEPENDENT_STRUCTURE_KEYS: tuple[str, ...] = (
+    "groups",
+    "group_names",
+    "included_groups",
+    "forward_group",
+    "backward_group",
+    "grouping_preset",
+    "projections",
+    "excluded_detectors",
+    "vector_axis",
+    "forward_indices",
+    "backward_indices",
+    "alpha_x",
+    "alpha_y",
+    "alpha_z",
+    "alpha_x_error",
+    "alpha_x_reference_run",
+    "alpha_y_error",
+    "alpha_y_reference_run",
+    "alpha_z_error",
+    "alpha_z_reference_run",
+)
+
+
+def _same_instrument_family(a: str, b: str) -> bool:
+    """Whether two instrument names denote the same physical instrument.
+
+    Compared by *display name* so layout variants of one instrument — e.g. the
+    6-detector ``"GPS"`` (PSI-BIN) and 11-detector ``"GPS-RD"`` (ROOT) — count as
+    the same family and never trigger a spurious "heal". Falls back to a plain
+    case-insensitive comparison for names outside the registry.
+    """
+    a_norm, b_norm = str(a or "").strip(), str(b or "").strip()
+    if a_norm.lower() == b_norm.lower():
+        return True
+    return instrument_display_name(a_norm).lower() == instrument_display_name(b_norm).lower()
+
+
+def detect_instrument_for_run(run: Run) -> str | None:
+    """Detection result for a freshly loaded *run* (a fact about the data).
+
+    Thin wrapper over :func:`~asymmetry.core.instrument.detect_instrument` that
+    feeds it the run's own histogram count, metadata, and source file — the
+    inputs a loader used when it first identified the instrument. Returns the
+    canonical instrument name, or ``None`` when detection is inconclusive.
+    """
+    metadata = run.metadata if isinstance(run.metadata, dict) else None
+    return detect_instrument(
+        len(run.histograms),
+        metadata=metadata,
+        source_file=run.source_file or None,
+    )
+
+
+def reconcile_instrument_for_payload(
+    run: Run, payload: dict[str, Any] | None
+) -> tuple[dict[str, Any], str | None]:
+    """Self-heal a stale persisted instrument identity against fresh detection.
+
+    A freshly loaded run is the ground truth for its own instrument: the
+    instrument is a fact about the data, not a user preference. An earlier app
+    version with broken detection may have persisted the *wrong*
+    ``grouping["instrument"]`` (e.g. a real FLAME run saved as "GPS"); re-applying
+    that stale payload over the fresh run would pin the wrong profile fingerprint
+    and paste the wrong instrument's group names/geometry onto the run.
+
+    Given the freshly loaded *run* and a persisted grouping *payload* about to be
+    applied to it, this compares the payload's stored ``instrument`` with
+    :func:`detect_instrument_for_run`:
+
+    * **Detection positive and disagrees** with the stored value (different
+      physical instrument): detection wins. ``run.grouping["instrument"]`` and, if
+      the loader set one, ``run.metadata["instrument"]`` are updated to the
+      detected name, and the payload's stale *structural* fields
+      (:data:`_INSTRUMENT_DEPENDENT_STRUCTURE_KEYS` — groups, group names,
+      forward/backward, preset, projections, per-axis vector alphas) are discarded
+      in favour of the loader defaults. Instrument-independent settings (per-run
+      facts, deadtime/background policy, scalar alpha, binning) are kept.
+    * **Detection returns None** (inconclusive): the stored value is kept and the
+      payload is returned unchanged.
+    * **Detection agrees** with the stored value: the payload is returned
+      unchanged (byte-identical).
+
+    Returns ``(reconciled_payload, note)`` where *note* is a human-readable log
+    line when a heal occurred, else ``None``. The returned payload is always a new
+    dict when a heal occurred (the input is never mutated); otherwise it is the
+    input payload object unchanged.
+    """
+    payload = payload if isinstance(payload, dict) else {}
+    detected = detect_instrument_for_run(run)
+    if not detected:
+        return payload, None
+
+    stored = str(payload.get("instrument", "") or "").strip()
+    if stored and _same_instrument_family(stored, detected):
+        return payload, None
+    if not stored:
+        # No stored identity to contradict — nothing to heal. (Resolution/loader
+        # will fill instrument in via the normal fingerprint path.)
+        return payload, None
+
+    # Detection disagrees: the freshly loaded data wins. Correct the run's own
+    # identity in place so the fingerprint recomputes to the detected instrument.
+    if isinstance(run.grouping, dict):
+        run.grouping["instrument"] = detected
+    if isinstance(run.metadata, dict) and run.metadata.get("instrument"):
+        run.metadata["instrument"] = detected
+
+    # Drop the stale payload's instrument-dependent structural fields so the wrong
+    # instrument's groups/names/preset cannot survive; keep the rest.
+    reconciled = {
+        key: value
+        for key, value in payload.items()
+        if key not in _INSTRUMENT_DEPENDENT_STRUCTURE_KEYS
+    }
+    reconciled["instrument"] = detected
+    note = (
+        f"Corrected stale instrument identity '{stored}' -> '{detected}' for "
+        f"{run.source_file or 'run'} (detected from the freshly loaded data); "
+        "discarded the stale grouping structure in favour of the loader defaults."
+    )
+    return reconciled, note
 
 
 # --------------------------------------------------------------------------- #
@@ -1155,6 +1293,8 @@ __all__ = [
     "GroupingProfile",
     "profile_fingerprint_for_run",
     "fingerprint_from_payload",
+    "detect_instrument_for_run",
+    "reconcile_instrument_for_payload",
     "profile_from_payload",
     "resolve_effective_grouping",
     "active_profile_for_run",

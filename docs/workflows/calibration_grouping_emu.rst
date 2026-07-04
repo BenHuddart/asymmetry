@@ -97,8 +97,6 @@ profile:
    * - **Scope panel**
      - Every run of this instrument, tagged *inherits* or *override*, with
        **Release** / **Reattach** to move a run between the two.
-   * - **Load .grp / Save .grp**
-     - Read or write a WiMDA-style grouping file.
    * - **Apply**
      - Write the draft back to the profile. The Log echoes how many
        inheriting runs it reached.
@@ -210,8 +208,9 @@ when you switch to a new sample, start a **new profile** for that sample
 and **re-Calibrate α** from a reference run before trusting the asymmetry.
 If one run in a series genuinely needs its own grouping — a masked
 detector, say — use the scope panel's **Release** button rather than
-starting a new profile for the whole series. Save a finished profile with
-**Save .grp** to reuse it in a later session.
+starting a new profile for the whole series. A finished profile is saved
+with the project, so it is ready to reuse the next time that project is
+opened.
 
 Where to go next
 -----------------

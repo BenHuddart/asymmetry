@@ -11,19 +11,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Instrument switcher in the Grouping window.** When a project holds runs from
   more than one instrument, the Grouping window now shows an **Instrument**
-  selector ("GPS — 3 runs") that swaps the whole editor — its draft, preview run,
-  scope panel, and preset list — between them, after the usual discard prompt for
-  unsaved edits. It is hidden when only one instrument is loaded.
-- **Editing an overridden run's grouping.** A run released from its profile could
-  previously only be created or dropped; its per-run grouping is now editable.
-  Selecting an overridden run as the preview run (or clicking **Edit…** on its
-  scope-panel row) puts the window into an explicit *override-editing mode*: a
-  warning banner reads "Editing override for run *N* — changes apply to this run
-  only", the profile and instrument switchers are disabled, and the form seeds
-  from the run's own grouping. Edits stay off the profile draft and Apply writes
-  the edited grouping back to that one run alone (the status bar confirms "Updated
-  override for run *N*"); every inheriting run is left untouched. Leaving the mode
-  with unsaved override edits — including on window close — prompts to discard.
+  selector ("GPS — 3 runs") that swaps the whole editor — its draft, selected
+  run, scope panel, and preset list — between them, after the usual discard
+  prompt for unsaved edits. It is hidden when only one instrument is loaded.
+- **Unified selection-driven grouping editor.** The Grouping window's scope panel
+  is now the single **selector**: the run you select there is previewed and
+  edited, and the editing target follows that run's status. Selecting an
+  inheriting run edits the profile; selecting an overridden (released) run edits
+  that run's own grouping — which is now editable, where a released run could
+  previously only be created or dropped. A persistent strip above the form states
+  what your edits apply to (accent-tinted "Editing profile '<name>' — applies to
+  N runs" versus warning-tinted "Editing override for run *N* — this run only"),
+  matched by the selected row's tint in the scope list and an "override \*" marker
+  on runs with pending edits. There is no separate mode and nothing is disabled;
+  switching selection never prompts, so edits to the profile and to several
+  overrides **accumulate** in one session. **Apply** commits everything at once —
+  the profile to its inheriting runs and every edited override to its own run —
+  with the button naming the blast radius ("Apply (profile + 2 overrides)") and
+  the status bar naming both parts. The only guard is closing the window with
+  uncommitted changes, which lists exactly what would be lost ("profile 'Default
+  (GPS)' and overrides for runs 12, 15").
 
 ### Changed
 
@@ -34,8 +41,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when two variants of the same instrument are both loaded. The internal
   `ProfileFingerprint` API is unchanged.
 
+### Removed
+
+- **`.grp` file Load/Save.** The Grouping window's "Load .grp" / "Save .grp"
+  buttons, and the underlying line-based `.grp` serialization
+  (`GroupingDialog.serialize_grp`/`parse_grp`), have been retired. Project
+  persistence (grouping profiles saved in `.asymp` files) and instrument
+  presets now cover what `.grp` files were for — sharing and reusing a
+  grouping/calibration between sessions — without a separate file format to
+  keep in sync with the profile schema. Existing `.grp` files are unaffected
+  on disk; there is simply no in-app way to read or write them any more.
+
 ### Fixed
 
+- **Stale persisted instrument identities now self-heal on reload.** A run whose
+  saved grouping named the wrong instrument (e.g. a FLAME run stored as "GPS" by
+  an earlier version with broken detection) stayed wrong forever: the stale string
+  pinned the wrong profile fingerprint, so the run inherited a mismatched profile
+  and kept the wrong preset's group names. A freshly loaded run is now treated as
+  the ground truth for its own instrument — when detection positively disagrees
+  with the stored value, the detected instrument wins (the run's grouping and
+  metadata are corrected and the stale instrument-dependent structure is
+  discarded in favour of the loader defaults), so the run re-detected as FLAME no
+  longer inherits a (GPS, 8) profile. Inconclusive detection leaves the stored
+  value untouched, and a matching value is preserved byte-identical. Saved
+  profiles are never modified; only runs heal.
 - **PSI analysis convention in the GPS/FLAME/HAL presets.** PSI names detectors
   by beam direction, and for surface muons the initial polarisation points toward
   the *Backward* detector, so the PSI/musrfit analysis convention is
