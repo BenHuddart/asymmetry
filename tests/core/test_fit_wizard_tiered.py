@@ -43,6 +43,7 @@ from asymmetry.core.fitting.fit_wizard import (
     _initial_parameters_for_template,
     _parameter_variants,
     _run_template_assessments,
+    _stage2_variant_budget,
     build_fit_wizard_recommendation,
     build_null_baseline_templates,
     build_wizard_families,
@@ -615,6 +616,107 @@ def test_assessment_task_pickle_round_trip() -> None:
     assert restored.variant_budget == task.variant_budget
     assert restored.screening_cap == task.screening_cap
     assert np.array_equal(restored.dataset.time, task.dataset.time)
+
+
+# --------------------------------------------------------------------------- #
+# Support-gated Stage-2 fit effort (per-member variant budget)
+# --------------------------------------------------------------------------- #
+
+
+def test_stage2_budget_unsupported_family_is_trimmed() -> None:
+    # A cheap member whose family reached Stage 2 with no pattern/hint/sniff
+    # support runs the reduced ladder.
+    assert (
+        _stage2_variant_budget(
+            is_expensive=False,
+            is_peak_seeded=False,
+            family_key="muonium",
+            supported=False,
+        )
+        == 2
+    )
+
+
+def test_stage2_budget_supported_family_keeps_full_ladder() -> None:
+    # The same family, now positively identified (pattern/hint/sniff), keeps 5.
+    assert (
+        _stage2_variant_budget(
+            is_expensive=False,
+            is_peak_seeded=False,
+            family_key="muonium",
+            supported=True,
+        )
+        == 5
+    )
+
+
+@pytest.mark.parametrize("family_key", ["relaxation", "baseline"])
+def test_stage2_budget_never_trim_families_keep_full_ladder(family_key: str) -> None:
+    # Guard-rail families are never trimmed even when unsupported.
+    assert (
+        _stage2_variant_budget(
+            is_expensive=False,
+            is_peak_seeded=False,
+            family_key=family_key,
+            supported=False,
+        )
+        == 5
+    )
+
+
+def test_stage2_budget_peak_seeded_multiplet_keeps_full_ladder() -> None:
+    # Peak-seeded multiplet members keep the full ladder even inside an
+    # unsupported family (their frequencies are already tight from detected peaks).
+    assert (
+        _stage2_variant_budget(
+            is_expensive=False,
+            is_peak_seeded=True,
+            family_key="oscillatory",
+            supported=False,
+        )
+        == 5
+    )
+
+
+def test_stage2_budget_expensive_member_always_reduced() -> None:
+    # EXPENSIVE members get the reduced ladder regardless of support / seeding
+    # (unchanged from the prior behaviour).
+    for supported in (True, False):
+        for is_peak_seeded in (True, False):
+            assert (
+                _stage2_variant_budget(
+                    is_expensive=True,
+                    is_peak_seeded=is_peak_seeded,
+                    family_key="fmuf",
+                    supported=supported,
+                )
+                == 2
+            )
+
+
+def test_execute_assessment_task_caps_only_screening_stage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Stage-1 screening tasks carry the migrad call cap; Stage-2 tasks (and the
+    # uncapped null baselines) run the engine's adaptive drive with no cap, so
+    # their final AICc is exact. This pins the "no EXPENSIVE Stage-2 cap" decision.
+    captured: dict[str, object] = {}
+
+    def _fake_assess(*_args: object, migrad_ncall: int | None = None, **_kwargs: object):
+        captured["migrad_ncall"] = migrad_ncall
+        return object()
+
+    monkeypatch.setattr(fit_wizard_module, "_assess_candidate_template", _fake_assess)
+
+    task = _dummy_task("exp_constant")
+
+    # A screening task is call-capped.
+    fit_wizard_module._execute_assessment_task(replace(task, screening_cap=True))
+    assert captured["migrad_ncall"] == fit_wizard_module._SCREENING_MIGRAD_NCALL
+
+    # A Stage-2 task is not.
+    fit_wizard_module._execute_assessment_task(replace(task, screening_cap=False))
+    assert captured["migrad_ncall"] is None
 
 
 def _real_spawn_tasks() -> list[_AssessmentTask]:

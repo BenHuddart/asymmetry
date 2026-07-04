@@ -1469,6 +1469,67 @@ def _decide_family_promotions(
 #: run at full precision with no cap.
 _SCREENING_MIGRAD_NCALL = 3000
 
+#: Full parameter-variant budget for a Stage-2 member (the blind-seed ladder that
+#: rescues a bad initial guess).
+_STAGE2_FULL_VARIANT_BUDGET = 5
+#: Reduced variant budget for Stage-2 members of a family promoted with no
+#: independent support (no pattern match, no fingerprint hint, no fluorine
+#: sniff). Such a family reached Stage 2 only by Stage-1 score / Δ-margin / gates
+#: — it is a "screen everything" hedge, not a positively-identified shape — so a
+#: full blind-seed ladder buys little and costs the family's slowest members a
+#: seconds-per-call fit each. Two rungs keep the seed + one perturbation that
+#: catches a mis-scaled guess.
+_STAGE2_UNSUPPORTED_VARIANT_BUDGET = 2
+
+# NOTE: a fixed migrad ncall cap on EXPENSIVE Stage-2 members was investigated
+# and deliberately rejected. iminuit's default ``migrad(ncall=None)`` uses an
+# adaptive per-problem heuristic that already stops these powder-average /
+# strong-collision fits at a sensible point; forcing an explicit cap (e.g. 5000)
+# instead *raises* the ceiling and, because ``migrad`` auto-iterates up to five
+# times when a run hits its call limit without converging, multiplies the work
+# on exactly the slow non-converging fits it was meant to bound (a clean TF@20G
+# worst case regressed ~5x). The support-gated variant-budget trim below is the
+# safe win; EXPENSIVE members keep the adaptive drive so their final AICc is
+# unchanged.
+
+#: Families whose Stage-2 effort is never trimmed regardless of support, because
+#: their promotion is a structural guard-rail rather than a score/hint hedge:
+#: ``relaxation`` is the always-expanded smooth-relaxation reference, ``baseline``
+#: is the current-model reference. (Null baselines are fitted outside the
+#: promotion loop and so are inherently unaffected.)
+_STAGE2_NEVER_TRIM_FAMILY_KEYS = frozenset({"relaxation", "baseline"})
+
+
+def _stage2_variant_budget(
+    *,
+    is_expensive: bool,
+    is_peak_seeded: bool,
+    family_key: str,
+    supported: bool,
+) -> int:
+    """Pure per-member Stage-2 variant budget (no fits — unit-testable).
+
+    ``supported`` is TRUE when the member's family is named by a multiplet
+    pattern match, a fingerprint hint, or a fluorine sniff (set membership, not
+    the promotion reason string — a hinted family can be promoted by score, so
+    the reason alone under-reports support).
+
+    Ordering of the rules:
+
+    * EXPENSIVE members always get the reduced ladder (their match-derived seeds
+      are already tight and each extra variant is a full slow fit — unchanged
+      from the prior behaviour).
+    * Peak-seeded multiplet members, never-trim families, and supported families
+      keep the full ladder.
+    * Everything else — an unsupported family that reached Stage 2 only by
+      score / Δ-margin / gates — gets the reduced ladder.
+    """
+    if is_expensive:
+        return _STAGE2_UNSUPPORTED_VARIANT_BUDGET
+    if is_peak_seeded or family_key in _STAGE2_NEVER_TRIM_FAMILY_KEYS or supported:
+        return _STAGE2_FULL_VARIANT_BUDGET
+    return _STAGE2_UNSUPPORTED_VARIANT_BUDGET
+
 
 @dataclass(frozen=True)
 class _AssessmentTask:
@@ -1854,29 +1915,46 @@ def build_fit_wizard_recommendation(
             field_gauss=field_gauss,
         )
 
+        # A family reached Stage 2 with *independent support* when it is named by
+        # a multiplet pattern match, a fingerprint hint, or a fluorine sniff —
+        # i.e. something positively identified its shape, rather than it merely
+        # surviving the "screen everything" Stage-1 score / Δ-margin / gate hedge.
+        # This is set membership, not the promotion reason string: a hinted family
+        # can still be promoted by "best Stage-1 score" (the hint check is a later
+        # elif in _decide_family_promotions), so the reason alone under-reports
+        # support. Unsupported families run a reduced Stage-2 variant ladder.
+        supported_family_keys = pattern_family_keys | hint_family_keys | sniff_family_keys
+
         # Stage 2: expand promoted families; the oscillatory family additionally
         # receives multiplet templates generated from the detected peak set.
         seen_identities = {_model_identity(template.model) for template in flat_stage1_templates}
         stage2_templates: list[CandidateTemplate] = []
         stage2_keys_by_family: dict[str, list[str]] = {}
+        # Per-member Stage-2 fit-effort metadata, keyed by the (unique) member key:
+        # (family_key, family_supported, is_peak_seeded_multiplet). Peak-seeded
+        # multiplet members keep the full ladder even inside an unsupported family
+        # (their frequencies come straight from detected peaks — already tight).
+        stage2_member_meta: dict[str, tuple[str, bool, bool]] = {}
         for family, _assessment, promoted, _reason in decisions:
             if not promoted:
                 continue
-            members = list(family.stage2_members)
+            supported = family.key in supported_family_keys
+            members = [(member, False) for member in family.stage2_members]
             if family.key == "oscillatory":
                 for extra in build_oscillatory_multiplet_templates(peak_analysis):
                     if resolution is not None and not all(
                         name in resolution.included_set for name in extra.model.component_names
                     ):
                         continue
-                    members.append(extra)
+                    members.append((extra, True))
             kept: list[str] = []
-            for member in members:
+            for member, is_peak_seeded in members:
                 identity = _model_identity(member.model)
                 if identity in seen_identities:
                     continue
                 seen_identities.add(identity)
                 stage2_templates.append(member)
+                stage2_member_meta[member.key] = (family.key, supported, is_peak_seeded)
                 kept.append(member.key)
             stage2_keys_by_family[family.key] = kept
 
@@ -1885,12 +1963,13 @@ def build_fit_wizard_recommendation(
             _progress(f"Stage 2: fitting {len(stage2_templates)} expanded candidates")
 
         def _stage2_task(template: CandidateTemplate) -> _AssessmentTask:
-            # Expensive members (numerical powder averages, strong-collision
-            # integral equations) get a reduced variant ladder: their
-            # match-derived seeds are already tight, and each extra variant is
-            # a full slow fit.
-            budget = (
-                2 if _template_cost_rank(template) >= _COST_RANK[ComputationalCost.EXPENSIVE] else 5
+            family_key, supported, is_peak_seeded = stage2_member_meta[template.key]
+            is_expensive = _template_cost_rank(template) >= _COST_RANK[ComputationalCost.EXPENSIVE]
+            budget = _stage2_variant_budget(
+                is_expensive=is_expensive,
+                is_peak_seeded=is_peak_seeded,
+                family_key=family_key,
+                supported=supported,
             )
             return _AssessmentTask(
                 dataset=dataset,
