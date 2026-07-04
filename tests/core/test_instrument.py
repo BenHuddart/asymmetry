@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from asymmetry.core.instrument import (
@@ -290,9 +292,13 @@ class TestFlameLayout:
         assert abs(spin_arrow.end[1] - backward.y_center) < backward.height / 2
 
     def test_longitudinal_preset(self, layout):
+        # PSI convention: analysis-forward = beam-Backward group (group 2), which
+        # sees the polarization for surface muons. Group names stay physical.
         preset = layout.presets["Longitudinal"]
-        assert preset.forward_group == 1
-        assert preset.backward_group == 2
+        assert preset.forward_group == 2
+        assert preset.backward_group == 1
+        assert preset.groups[1].name == "Forward"
+        assert preset.groups[2].name == "Backward"
         assert preset.groups[1].detector_ids == (1,)
         assert preset.groups[2].detector_ids == (2,)
 
@@ -363,9 +369,12 @@ class TestGpsLayout:
         assert layout.default_preset_name == "Longitudinal"
 
     def test_longitudinal_preset(self, layout):
+        # PSI convention: analysis-forward = beam-Backward group (group 2).
         preset = layout.presets["Longitudinal"]
-        assert preset.forward_group == 1
-        assert preset.backward_group == 2
+        assert preset.forward_group == 2
+        assert preset.backward_group == 1
+        assert preset.groups[1].name == "Forward"
+        assert preset.groups[2].name == "Backward"
         assert preset.groups[1].detector_ids == (1,)
         assert preset.groups[2].detector_ids == (2,)
 
@@ -373,25 +382,29 @@ class TestGpsLayout:
         preset = layout.presets["Transverse (Vector)"]
         proj = {p.label: (p.forward_group, p.backward_group) for p in preset.projections}
         assert proj == {"Up-Down": (1, 2), "Left-Right": (3, 4)}
-        # Up-Down pair = Up(3)/Down(4); Left-Right pair = Left(6)/Right(5).
-        assert preset.groups[1].detector_ids == (3,)
-        assert preset.groups[2].detector_ids == (4,)
-        assert preset.groups[3].detector_ids == (6,)
-        assert preset.groups[4].detector_ids == (5,)
+        # musrfit WED(L): UD forward=U(3)/backward=D(4); RL forward=R(5)/backward=L(6).
+        assert preset.groups[1].detector_ids == (3,)  # Up
+        assert preset.groups[2].detector_ids == (4,)  # Down
+        assert preset.groups[3].detector_ids == (5,)  # Right (Left-Right forward leg)
+        assert preset.groups[4].detector_ids == (6,)  # Left
 
     def test_spin_rotated_preset(self, layout):
-        # For the ~50 deg upward-rotated spin: Forward+Up vs Backward+Down.
-        preset = layout.presets["Spin-rotated (F+U/B+D)"]
+        # For the ~50 deg upward-rotated spin the polarization points along the
+        # Backward-Up diagonal (surface muons + upward tip), so analysis-forward
+        # = B+U and analysis-backward = F+D.
+        preset = layout.presets["Spin-rotated (B+U/F+D)"]
         assert (preset.forward_group, preset.backward_group) == (1, 2)
-        assert set(preset.groups[1].detector_ids) == {1, 3}  # F + U
-        assert set(preset.groups[2].detector_ids) == {2, 4}  # B + D
+        assert set(preset.groups[1].detector_ids) == {2, 3}  # B + U
+        assert set(preset.groups[2].detector_ids) == {1, 4}  # F + D
         assert preset.projections == ()
 
     def test_wep_preset_matches_musrfit(self, layout):
         # musrfit's WEP setup: separate F/B/U/D with FB and UD asymmetry pairs.
+        # FB forward=B(2) backward=F(1) alpha=0.75; UD forward=U(3) backward=D(4).
         preset = layout.presets["WEP (spin-rotated)"]
         pairs = {p.label: (p.forward_group, p.backward_group, p.alpha) for p in preset.projections}
-        assert pairs == {"FB": (1, 2, 0.75), "UD": (3, 4, 1.0)}
+        assert pairs == {"FB": (2, 1, 0.75), "UD": (3, 4, 1.0)}
+        assert (preset.forward_group, preset.backward_group) == (2, 1)
         assert preset.groups[1].detector_ids == (1,)  # F
         assert preset.groups[2].detector_ids == (2,)  # B
         assert preset.groups[3].detector_ids == (3,)  # U
@@ -463,8 +476,11 @@ class TestGpsSubdetectorLayout:
         assert not mob.read_only and mob.shape == "rectangle"
 
     def test_longitudinal_preset(self, layout):
+        # PSI convention: analysis-forward = beam-Backward group (group 2).
         preset = layout.presets["Longitudinal"]
-        assert (preset.forward_group, preset.backward_group) == (1, 2)
+        assert (preset.forward_group, preset.backward_group) == (2, 1)
+        assert preset.groups[1].name == "Forward"
+        assert preset.groups[2].name == "Backward"
         assert preset.groups[1].detector_ids == (1,)
         assert preset.groups[2].detector_ids == (2,)
 
@@ -472,24 +488,27 @@ class TestGpsSubdetectorLayout:
         preset = layout.presets["Transverse (Vector)"]
         proj = {p.label: (p.forward_group, p.backward_group) for p in preset.projections}
         assert proj == {"Up-Down": (1, 2), "Left-Right": (3, 4)}
-        # Up/Down/Left/Right each combine their two sub-detectors.
+        # Up/Down/Left/Right each combine their two sub-detectors. musrfit WED(L)
+        # leg order: UD forward=Up, RL forward=Right.
         assert preset.groups[1].detector_ids == (3, 4)  # Up = Up_B + Up_F
         assert preset.groups[2].detector_ids == (5, 6)  # Down = Down_B + Down_F
-        assert preset.groups[3].detector_ids == (9, 10)  # Left = Left_B + Left_F
-        assert preset.groups[4].detector_ids == (7, 8)  # Right = Right_B + Right_F
+        assert preset.groups[3].detector_ids == (7, 8)  # Right = Right_B + Right_F
+        assert preset.groups[4].detector_ids == (9, 10)  # Left = Left_B + Left_F
 
     def test_spin_rotated_preset_sums_subdetectors(self, layout):
-        # Forward+Up vs Backward+Down, summing each direction's _B/_F halves.
-        preset = layout.presets["Spin-rotated (F+U/B+D)"]
+        # Backward+Up vs Forward+Down, summing each direction's _B/_F halves.
+        preset = layout.presets["Spin-rotated (B+U/F+D)"]
         assert (preset.forward_group, preset.backward_group) == (1, 2)
-        assert set(preset.groups[1].detector_ids) == {1, 3, 4}  # F + Up_B + Up_F
-        assert set(preset.groups[2].detector_ids) == {2, 5, 6}  # B + Down_B + Down_F
+        assert set(preset.groups[1].detector_ids) == {2, 3, 4}  # B + Up_B + Up_F
+        assert set(preset.groups[2].detector_ids) == {1, 5, 6}  # F + Down_B + Down_F
 
     def test_wep_preset_sums_subdetectors(self, layout):
         # musrfit WEP: FB + UD pairs, with Up/Down summing their _B/_F halves.
+        # FB forward=B(2) backward=F(1) alpha=0.75; UD forward=U(3) backward=D(4).
         preset = layout.presets["WEP (spin-rotated)"]
         pairs = {p.label: (p.forward_group, p.backward_group, p.alpha) for p in preset.projections}
-        assert pairs == {"FB": (1, 2, 0.75), "UD": (3, 4, 1.0)}
+        assert pairs == {"FB": (2, 1, 0.75), "UD": (3, 4, 1.0)}
+        assert (preset.forward_group, preset.backward_group) == (2, 1)
         assert preset.groups[1].detector_ids == (1,)  # F
         assert preset.groups[2].detector_ids == (2,)  # B
         assert set(preset.groups[3].detector_ids) == {3, 4}  # U = Up_B + Up_F
@@ -501,6 +520,84 @@ class TestGpsSubdetectorLayout:
         for preset in layout.presets.values():
             for gdef in preset.groups.values():
                 assert 11 not in gdef.detector_ids
+
+
+# ---------------------------------------------------------------------------
+# GPS PSI analysis convention: oracle + loader/preset consistency
+# ---------------------------------------------------------------------------
+
+
+class TestGpsPsiConvention:
+    """Pin the PSI A = (B - alpha F)/(B + alpha F) convention for GPS presets.
+
+    PSI names detectors by beam direction; for surface muons the polarization
+    points toward the beam-Backward detector, which must occupy the analysis-
+    forward slot.  These tests transcribe the musrfit/GPS-paper oracle literally
+    and cross-check the loader default against every GPS preset.
+    """
+
+    def test_wep_fb_projection_reduces_to_musrfit_oracle(self):
+        # Synthetic 4-histogram GPS run with distinct, known per-detector counts.
+        # Detector IDs map positionally to histograms: F->1, B->2, U->3, D->4.
+        import numpy as np
+
+        from asymmetry.core.transform.asymmetry import compute_asymmetry
+
+        counts = {1: 900.0, 2: 1500.0, 3: 1100.0, 4: 700.0}  # F, B, U, D
+        f = np.array([counts[1]])
+        b = np.array([counts[2]])
+
+        preset = get_instrument_layout("GPS").presets["WEP (spin-rotated)"]
+        fb = next(p for p in preset.projections if p.label == "FB")
+        # The FB projection's analysis-forward group is the physical Backward
+        # detector, analysis-backward is Forward, with alpha 0.75.
+        fwd_ids = preset.groups[fb.forward_group].detector_ids
+        bwd_ids = preset.groups[fb.backward_group].detector_ids
+        assert fwd_ids == (2,)  # analysis-forward = B
+        assert bwd_ids == (1,)  # analysis-backward = F
+        assert fb.alpha == 0.75
+
+        # Reduce with the preset's declared legs/alpha.
+        analysis_forward = np.array([counts[fwd_ids[0]]])
+        analysis_backward = np.array([counts[bwd_ids[0]]])
+        got = compute_asymmetry(analysis_forward, analysis_backward, fb.alpha)
+
+        # Oracle, transcribed literally: A = (B - 0.75 F) / (B + 0.75 F).
+        alpha = 0.75
+        oracle = (b - alpha * f) / (b + alpha * f)
+        assert got[0] == pytest.approx(oracle[0])
+        # Positive: B (1500) dominates 0.75*F (675), matching a Backward-forward
+        # analysis slot for a polarization pointing toward Backward.
+        assert got[0] > 0.0
+
+    @pytest.mark.parametrize("preset_key", ["GPS", "GPS-RD"])
+    def test_loader_default_and_presets_agree_on_analysis_forward_detector(self, preset_key):
+        # The PSI loader default analysis pair and each GPS preset must agree on
+        # which PHYSICAL detector group is analysis-forward: the beam-Backward one.
+        from asymmetry.core.io.psi import PsiLoader
+
+        loader = PsiLoader()
+        # Six-histogram BIN GPS label set (the ROOT variant recombines to the same
+        # six physical directions, so the beam F/B pairing is identical).
+        labels = ["Forw", "Back", "Up", "Down", "Righ", "Left"]
+        groups, names, fwd_gid, bwd_gid = loader._default_groups(labels, len(labels))
+
+        # Loader: the analysis-forward group is named for the beam-Backward det.
+        assert loader._label_direction(names[fwd_gid]) == "backward"
+        assert loader._label_direction(names[bwd_gid]) == "forward"
+
+        layout = get_instrument_layout(preset_key)
+
+        # Longitudinal preset: its analysis-forward group is the "Backward" one.
+        lon = layout.presets["Longitudinal"]
+        assert lon.groups[lon.forward_group].name == "Backward"
+        assert lon.groups[lon.backward_group].name == "Forward"
+
+        # WEP FB projection: analysis-forward group is the "B" detector.
+        wep = layout.presets["WEP (spin-rotated)"]
+        fb = next(p for p in wep.projections if p.label == "FB")
+        assert wep.groups[fb.forward_group].name == "B"
+        assert wep.groups[fb.backward_group].name == "F"
 
 
 # ---------------------------------------------------------------------------
@@ -607,6 +704,35 @@ class TestHiFiLayout:
     def test_segment_half_width(self, layout):
         for seg in layout.banks[0].segments:
             assert abs(seg.angle_half_width_deg - 11.25 / 2) < 1e-6
+
+    def test_forward_detector_17_at_twelve_oclock(self, layout):
+        # HiFi User Manual Sec. 7.1 figure ("looking upstream"): detector 17
+        # sits at the top (12 o'clock) of the Forward disc, with numbering
+        # increasing counter-clockwise from detector 1 at the bottom through
+        # the right-hand side up to 17, then down the left-hand side back to
+        # 32/1. In this module's matplotlib polar convention (0 deg = east,
+        # 90 deg = north/12 o'clock, CCW positive) that is angle 90 deg.
+        seg = next(s for s in layout.banks[0].segments if s.detector_id == 17)
+        assert abs(seg.angle_center_deg - 90.0) < 1e-6
+
+    def test_backward_detector_48_near_twelve_oclock(self, layout):
+        # HiFi User Manual Sec. 7.1 figure: detector 48 sits just left of the
+        # top of the Backward disc (49 just right of top), with numbering
+        # increasing clockwise from 48 through 49...64 down the right side,
+        # 33 near the bottom, then 34...47 up the left side back to 48.
+        seg = next(s for s in layout.banks[1].segments if s.detector_id == 48)
+        assert abs(seg.angle_center_deg - 95.625) < 1e-6
+        assert seg.angle_center_deg > 90.0  # just past north, i.e. left of top
+        seg49 = next(s for s in layout.banks[1].segments if s.detector_id == 49)
+        assert seg49.angle_center_deg < 90.0  # just short of north, right of top
+
+    def test_backward_numbering_increases_clockwise_from_48(self, layout):
+        # Manual figure: 48 (top) -> 49 -> 50 ... increases going down the
+        # right-hand side, i.e. decreasing polar angle (clockwise in this
+        # module's CCW-positive convention).
+        seg48 = next(s for s in layout.banks[1].segments if s.detector_id == 48)
+        seg50 = next(s for s in layout.banks[1].segments if s.detector_id == 50)
+        assert seg50.angle_center_deg < seg48.angle_center_deg
 
     def test_default_preset_is_longitudinal(self, layout):
         assert layout.default_preset_name == "Longitudinal"
@@ -750,9 +876,12 @@ class TestHALLayout:
         }
 
     def test_longitudinal_forward_ring_vs_backward_ring(self, layout):
+        # PSI convention: analysis-forward = beam-Backward ring (group 2).
         preset = layout.presets["Longitudinal"]
-        assert preset.forward_group == 1
-        assert preset.backward_group == 2
+        assert preset.forward_group == 2
+        assert preset.backward_group == 1
+        assert preset.groups[1].name == "Forward"
+        assert preset.groups[2].name == "Backward"
         assert set(preset.groups[1].detector_ids) == set(range(2, 10))
         assert set(preset.groups[2].detector_ids) == set(range(10, 18))
 
@@ -822,6 +951,26 @@ class TestMuSRLayout:
         # Detector 33 starts at 309.375°
         seg = next(s for s in layout.banks[1].segments if s.detector_id == 33)
         assert abs(seg.angle_center_deg - 309.375) < 1e-6
+
+    def test_detector_1_and_33_are_mirrored_at_the_bottom(self, layout):
+        # MuSR Manual: "Detector 33 is on the far bottom corner from detector
+        # 1" -- both sit near the bottom of their respective rings but on
+        # opposite sides (1 bottom-left, 33 bottom-right), i.e. mirrored about
+        # the vertical (south, 270 deg) axis rather than stacked at the same
+        # angle. Mantid IDF confirms detector 1 at 230.625 deg, which this
+        # module uses verbatim.
+        seg1 = next(s for s in layout.banks[0].segments if s.detector_id == 1)
+        seg33 = next(s for s in layout.banks[1].segments if s.detector_id == 33)
+        assert abs(seg1.angle_center_deg - 230.625) < 1e-6
+        assert abs(seg33.angle_center_deg - 309.375) < 1e-6
+        # Both in the lower half (south-of-centre) of the disc.
+        assert math.sin(math.radians(seg1.angle_center_deg)) < 0
+        assert math.sin(math.radians(seg33.angle_center_deg)) < 0
+        # Mirrored about the vertical axis (270 deg): equal angular offset
+        # from due south, on opposite sides.
+        offset1 = 270.0 - seg1.angle_center_deg
+        offset33 = seg33.angle_center_deg - 270.0
+        assert abs(offset1 - offset33) < 1e-6
 
     def test_longitudinal_preset(self, layout):
         preset = layout.presets["Longitudinal"]
@@ -1043,6 +1192,144 @@ class TestEMULayout:
             for gdef in preset.groups.values():
                 for det_id in gdef.detector_ids:
                     assert 1 <= det_id <= 96
+
+
+# ---------------------------------------------------------------------------
+# EMU "Vector Polarization" preset — geometric self-consistency
+#
+# EMU has no facility-documented "vector polarization" grouping (verified
+# against the EMU User Guide Sec. 8.1 and the Mantid EMU IDF); the preset is
+# an Asymmetry construct. These tests verify the preset's sector selections
+# are geometrically consistent with the layout's own DetectorSegment angles,
+# i.e. that "Py Top" really is the upper half-plane of both banks and so on,
+# using a boundary rule for the four sectors centred exactly on an axis: each
+# on-axis sector is assigned to the neighbouring half-plane that keeps every
+# quadrant an equal 8 sectors (sector 0 = due N -> Right, sector 4 = due E ->
+# Bottom, sector 8 = due S -> Left, sector 12 = due W -> Top).
+# ---------------------------------------------------------------------------
+
+
+class TestEMUVectorPolarizationGeometry:
+    @pytest.fixture(scope="class")
+    def layout(self):
+        return get_instrument_layout("EMU")
+
+    @staticmethod
+    def _xy(seg):
+        rad = math.radians(seg.angle_center_deg)
+        return math.cos(rad), math.sin(rad)
+
+    @staticmethod
+    def _group_ids(preset, name):
+        return set(next(g.detector_ids for g in preset.groups.values() if g.name == name))
+
+    def test_py_top_is_exactly_the_upper_half_plane(self, layout):
+        preset = layout.presets["Vector Polarization"]
+        top_ids = self._group_ids(preset, "Py Top")
+        for seg in layout.all_segments:
+            _x, y = self._xy(seg)
+            # On-axis boundary sectors (y == 0) are tie-broken elsewhere
+            # (sector 4 -> Bottom, sector 12 -> Top); skip the exact-zero
+            # case here and assert it explicitly below.
+            if abs(y) < 1e-9:
+                continue
+            expected = y > 0
+            assert (seg.detector_id in top_ids) == expected, (
+                f"detector {seg.detector_id} (y={y:.3f}) membership in Py Top "
+                f"disagrees with its geometric half-plane"
+            )
+
+    def test_py_bottom_is_exactly_the_lower_half_plane(self, layout):
+        preset = layout.presets["Vector Polarization"]
+        bottom_ids = self._group_ids(preset, "Py Bottom")
+        for seg in layout.all_segments:
+            _x, y = self._xy(seg)
+            if abs(y) < 1e-9:
+                continue
+            expected = y < 0
+            assert (seg.detector_id in bottom_ids) == expected, (
+                f"detector {seg.detector_id} (y={y:.3f}) membership in Py Bottom "
+                f"disagrees with its geometric half-plane"
+            )
+
+    def test_px_left_is_exactly_the_left_half_plane(self, layout):
+        preset = layout.presets["Vector Polarization"]
+        left_ids = self._group_ids(preset, "Px Left")
+        for seg in layout.all_segments:
+            x, _y = self._xy(seg)
+            if abs(x) < 1e-9:
+                continue
+            expected = x < 0
+            assert (seg.detector_id in left_ids) == expected, (
+                f"detector {seg.detector_id} (x={x:.3f}) membership in Px Left "
+                f"disagrees with its geometric half-plane"
+            )
+
+    def test_px_right_is_exactly_the_right_half_plane(self, layout):
+        preset = layout.presets["Vector Polarization"]
+        right_ids = self._group_ids(preset, "Px Right")
+        for seg in layout.all_segments:
+            x, _y = self._xy(seg)
+            if abs(x) < 1e-9:
+                continue
+            expected = x > 0
+            assert (seg.detector_id in right_ids) == expected, (
+                f"detector {seg.detector_id} (x={x:.3f}) membership in Px Right "
+                f"disagrees with its geometric half-plane"
+            )
+
+    def test_on_axis_boundary_sectors_tie_broken_consistently(self, layout):
+        """The four on-axis sectors (0, 4, 8, 12) each sit exactly on one axis
+
+        (angle a multiple of 90 deg), so each is unambiguous on the axis it
+        does NOT sit on and is a tie needing a rule on the axis it DOES sit
+        on: sector 0 (due N, x=0,y=1) is unambiguously Top and ties
+        Left/Right -> Right; sector 4 (due E, x=1,y=0) is unambiguously Right
+        and ties Top/Bottom -> Bottom; sector 8 (due S, x=0,y=-1) is
+        unambiguously Bottom and ties Left/Right -> Left; sector 12 (due W,
+        x=-1,y=0) is unambiguously Left and ties Top/Bottom -> Top. This
+        keeps every quadrant group at exactly 8 sectors.
+        """
+        preset = layout.presets["Vector Polarization"]
+        top_ids = self._group_ids(preset, "Py Top")
+        bottom_ids = self._group_ids(preset, "Py Bottom")
+        left_ids = self._group_ids(preset, "Px Left")
+        right_ids = self._group_ids(preset, "Px Right")
+
+        by_sector: dict[int, list] = {}
+        for seg in layout.all_segments:
+            by_sector.setdefault(seg.sector_index, []).append(seg)
+
+        for sector, expect_top, expect_bottom, expect_left, expect_right in [
+            (0, True, False, False, True),  # due N: Top (unambiguous) + Right (tie)
+            (4, False, True, False, True),  # due E: Right (unambiguous) + Bottom (tie)
+            (8, False, True, True, False),  # due S: Bottom (unambiguous) + Left (tie)
+            (12, True, False, True, False),  # due W: Left (unambiguous) + Top (tie)
+        ]:
+            segs = by_sector[sector]
+            x, y = self._xy(segs[0])
+            assert abs(x) < 1e-9 or abs(y) < 1e-9, f"sector {sector} is not on-axis"
+            for seg in segs:
+                assert (seg.detector_id in top_ids) == expect_top, (
+                    f"sector {sector} detector {seg.detector_id} Py Top membership"
+                )
+                assert (seg.detector_id in bottom_ids) == expect_bottom, (
+                    f"sector {sector} detector {seg.detector_id} Py Bottom membership"
+                )
+                assert (seg.detector_id in left_ids) == expect_left, (
+                    f"sector {sector} detector {seg.detector_id} Px Left membership"
+                )
+                assert (seg.detector_id in right_ids) == expect_right, (
+                    f"sector {sector} detector {seg.detector_id} Px Right membership"
+                )
+
+    def test_pz_forward_backward_are_full_banks(self, layout):
+        """Pz Forward/Backward = the complete forward/backward banks (1-48/49-96)."""
+        preset = layout.presets["Vector Polarization"]
+        pz_forward = self._group_ids(preset, "Pz Forward")
+        pz_backward = self._group_ids(preset, "Pz Backward")
+        assert pz_forward == set(range(1, 49))
+        assert pz_backward == set(range(49, 97))
 
 
 # ---------------------------------------------------------------------------

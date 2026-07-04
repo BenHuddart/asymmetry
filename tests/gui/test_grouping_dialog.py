@@ -975,6 +975,65 @@ def test_psi_already_swapped_grouping_dropdowns_are_preserved(qapp: QApplication
     assert dialog._backward_combo.currentData() == 1
 
 
+def test_beam_direction_label_recognises_single_letter_and_compound_names() -> None:
+    """Defence in depth: the swap classifier reads F/B and compound spin-rotator
+    names, not only the spelled-out Forward/Backward group names."""
+    fn = GroupingDialog._beam_direction_label
+    assert fn("Forward") == "forward"
+    assert fn("Backward") == "backward"
+    assert fn("F") == "forward"
+    assert fn("B") == "backward"
+    assert fn("F+D") == "forward"  # compound: leading beam-axis letter wins
+    assert fn("B+U") == "backward"
+    # Non-beam directions and unrelated names never classify as F/B.
+    assert fn("Up") is None
+    assert fn("Down") is None
+    assert fn("Left") is None
+    assert fn("Right") is None
+    assert fn("") is None
+    # Names that merely START with f/b must not be swept up by the
+    # single-letter rule (Copilot review, PR #173).
+    assert fn("fit") is None
+    assert fn("baseline") is None
+    assert fn("F1") is None  # HAL per-detector groups are not beam pairs
+    assert fn("B3") is None
+
+
+def test_applying_fixed_gps_preset_is_not_re_swapped(qapp: QApplication) -> None:
+    """Exactly-once: a GPS preset already declares its analysis slots (the
+    Backward-named group in the analysis-forward slot), so the PSI beam->analysis
+    swap in the dialog must NOT fire again when that preset is applied on a PSI
+    reference. Applying the preset's declared pair leaves it unchanged."""
+    from asymmetry.core.instrument import get_instrument_layout
+
+    dataset = _dataset_with_histograms()
+    assert dataset.run is not None
+    dataset.run.metadata["facility"] = "PSI"
+
+    dialog = GroupingDialog([dataset])
+    assert dialog._reference_is_psi()
+
+    layout = get_instrument_layout("GPS")
+    lon = layout.presets["Longitudinal"]
+    # Mirror the detector-layout editor's group_names into the dialog so the swap
+    # classifier sees the physical F/B names the preset carries.
+    dialog._group_names = {gid: gdef.name for gid, gdef in lon.groups.items()}
+
+    # The preset already declares analysis-forward = the Backward-named group.
+    assert lon.groups[lon.forward_group].name == "Backward"
+
+    # Applying the preset's declared pair (the payload path at _on_apply calls
+    # _analysis_pair_for_reference on result["forward_group"]/["backward_group"]).
+    result_fwd, result_bwd = lon.forward_group, lon.backward_group
+    once_fwd, once_bwd = dialog._analysis_pair_for_reference(result_fwd, result_bwd)
+    # No swap: the forward slot does not hold a forward-NAMED group.
+    assert (once_fwd, once_bwd) == (result_fwd, result_bwd)
+
+    # Idempotent under a second pass (proves it cannot drift on re-entry).
+    twice = dialog._analysis_pair_for_reference(once_fwd, once_bwd)
+    assert twice == (once_fwd, once_bwd)
+
+
 def test_detector_layout_prefers_saved_instrument(
     qapp: QApplication,
     monkeypatch: pytest.MonkeyPatch,
@@ -1624,7 +1683,7 @@ def test_transverse_field_gps_run_shows_grouping_nudge(qapp) -> None:
     """B8a: a TF GPS run on the longitudinal default nudges toward spin-rotated."""
     dialog = GroupingDialog([_gps_dataset("Transverse")])
     assert dialog._tf_hint_label.isVisibleTo(dialog)
-    assert "Spin-rotated (F+U/B+D)" in dialog._tf_hint_label.text()
+    assert "Spin-rotated (B+U/F+D)" in dialog._tf_hint_label.text()
 
 
 def test_gps_run_without_field_direction_does_not_nudge(qapp) -> None:

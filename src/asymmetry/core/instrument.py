@@ -667,8 +667,11 @@ def _build_emu() -> InstrumentLayout:
 
     EMU has 96 detectors arranged in two circular banks of 48 each.
     Each bank is divided into 16 azimuthal sectors, each containing three
-    radial rings (inner, middle, outer).
-    Source: *EMU User Guide*, page 34.
+    radial rings (inner, middle, outer). Numbering is sector-major triplets
+    (inner/middle/outer of one sector before moving to the next), sector 0 is
+    at 12 o'clock, and numbers increase clockwise as viewed looking upstream
+    from downstream — matching the *EMU User Guide*, Section 8.1, and the
+    Mantid EMU instrument definition file (detector 1 at azimuth 90°).
 
     Numbering formula for azimuth sector *s* (0–15):
 
@@ -678,6 +681,19 @@ def _build_emu() -> InstrumentLayout:
     Angular convention: looking into the instrument from downstream.
     Sector 0 is at 12 o'clock (90°); numbers increase clockwise.
     Sector *s* centre: ``(90 − 22.5 × s) mod 360°``.
+
+    **The three radial rings exist for stray-count rejection, not for the**
+    **"Vector Polarization" preset below.** EMU's inner/middle/outer split lets
+    an analysis discard counts from detectors more prone to stray-muon and
+    frame-overlap background — see Giblin *et al.*, *Nucl. Instrum. Methods*
+    *Phys. Res. A* **751**, 70 (2014). The facility does not document a
+    "vector polarization" detector grouping for EMU: the ``Vector
+    Polarization`` preset defined below (Px/Py/Pz octant composition) is an
+    **Asymmetry construct**, not a facility-defined or published EMU
+    convention. It is verified internally consistent against this module's
+    own sector geometry (see ``tests/core/test_instrument.py::
+    TestEMUVectorPolarizationGeometry``) but has no external oracle to check
+    it against.
     """
     n_sectors = 16
     sector_pitch = 22.5  # degrees (360 / 16)
@@ -744,12 +760,22 @@ def _build_emu() -> InstrumentLayout:
 
     # --- Vector polarization: 6 groups across Px, Py, Pz axes ---
     #
-    # The EMU vector mode follows the paper/manual octant model where each bank
-    # is split into four 12-detector octants (4 sectors × 3 rings):
-    #   sectors 0-3   = upper-right
-    #   sectors 4-7   = lower-right
-    #   sectors 8-11  = lower-left
-    #   sectors 12-15 = upper-left
+    # This is an in-house (non-facility-documented) grouping: each bank is
+    # split into four 12-detector quadrants (4 sectors x 3 rings) by the
+    # geometric half-plane of the sector centre (sector s at angle
+    # (90 - 22.5*s) mod 360, matplotlib polar convention: 0 deg = east,
+    # 90 deg = north/12 o'clock, CCW positive):
+    #   sectors 13-3 (13,14,15,0,1,2,3) = upper half  (y > 0), Py Top
+    #   sectors 5-11  (5,6,7,8,9,10,11) = lower half  (y < 0), Py Bottom
+    #   sectors 9-15  (9,10,11,12,13,14,15) = left half (x < 0), Px Left
+    #   sectors 1-7   (1,2,3,4,5,6,7)   = right half (x > 0), Px Right
+    # The four sectors centred exactly on an axis (0 = due north/top,
+    # 4 = due east/right, 8 = due south/bottom, 12 = due west/left) are
+    # boundary cases with y or x == 0 and are assigned to the neighbouring
+    # half that keeps each quadrant an equal 8 sectors: sector 0 -> Right,
+    # sector 4 -> Bottom, sector 8 -> Left, sector 12 -> Top. This partition
+    # is verified against the layout's own DetectorSegment angles in
+    # tests/core/test_instrument.py::TestEMUVectorPolarizationGeometry.
     #
     # Composite channel definitions:
     #   Pz from forward/backward bank sums
@@ -876,15 +902,24 @@ def _build_flame() -> InstrumentLayout:
     banks = (BankLayout(name="FLAME top view", segments=segments),)
 
     presets: dict[str, PresetGrouping] = {}
+    # FLAME is a PSI instrument: Forward/Backward name the *beam* directions, and
+    # for surface muons the spin is antiparallel to the momentum so the initial
+    # polarization points toward the Backward detector.  Declaring the
+    # analysis-forward slot as the Backward-named group (2) makes the preset match
+    # the PSI convention A = (B − αF)/(B + αF) standalone (headless core, no GUI
+    # swap to compensate) — the same treatment applied to the GPS presets.
     presets["Longitudinal"] = PresetGrouping(
         name="Longitudinal",
         groups={
             1: GroupDefinition("Forward", (1,)),
             2: GroupDefinition("Backward", (2,)),
         },
-        forward_group=1,
-        backward_group=2,
+        forward_group=2,  # analysis-forward = beam-Backward group (sees polarization)
+        backward_group=1,  # analysis-backward = beam-Forward group
     )
+    # Transverse: Right vs Left. musrfit ships no FLAME transverse definition, so
+    # there is no reference leg order to match; the two are a transverse pair
+    # whose order only sets the phase convention. Left as declared.
     presets["Transverse"] = PresetGrouping(
         name="Transverse",
         groups={
@@ -941,16 +976,31 @@ def _gps_endon(detector_id: int, name: str, x: float, y: float, *, into: bool) -
     )
 
 
-#: Longitudinal preset shared by both GPS variants: Forward (1) vs Backward (2).
+#: Longitudinal preset shared by both GPS variants.
 def _gps_longitudinal_preset() -> PresetGrouping:
+    """Return the GPS Longitudinal preset in the PSI *analysis* convention.
+
+    PSI names the two beam-axis detectors by **beam** direction (Forward = +z
+    downstream, Backward = −z upstream), so the group *names* stay "Forward"/
+    "Backward" (physical convention).  For surface muons the spin is antiparallel
+    to the momentum, so the initial polarization points toward the **Backward**
+    detector — that is the group that sees the polarization and must occupy the
+    analysis-forward slot.  musrfit's GPS ZF/LF definitions encode exactly this
+    with ``logic_asym_detector FB forward=2(B) backward=1(F)``
+    (``instrument_def_psi.xml``), giving A = (B − αF)/(B + αF) as in the GPS
+    instrument paper (Amato *et al.*, Rev. Sci. Instrum. 88, 093301 (2017),
+    Eq. 2).  We therefore declare ``forward_group`` = the Backward-named group
+    (2) and ``backward_group`` = the Forward-named group (1) so the preset is
+    correct standalone (headless core, with no GUI swap to compensate).
+    """
     return PresetGrouping(
         name="Longitudinal",
         groups={
             1: GroupDefinition("Forward", (1,)),
             2: GroupDefinition("Backward", (2,)),
         },
-        forward_group=1,
-        backward_group=2,
+        forward_group=2,  # analysis-forward = beam-Backward group (sees polarization)
+        backward_group=1,  # analysis-backward = beam-Forward group
     )
 
 
@@ -970,13 +1020,20 @@ def _gps_presets(
     """
     return {
         "Longitudinal": _gps_longitudinal_preset(),
+        # Transverse (Vector): rotator-off transverse geometry. The spin is
+        # antiparallel to the beam and precesses, so leg order only sets the
+        # phase convention. We match musrfit's GPS ``WED(L)`` definition
+        # (``instrument_def_psi.xml``): ``UD forward=3(U) backward=4(D)`` and
+        # ``RL forward=5(R) backward=6(L)``. Group 1 = Up, 2 = Down give the
+        # Up-Down pair forward=Up; group 3 = Right, 4 = Left give the Left-Right
+        # pair forward=Right, both matching musrfit.
         "Transverse (Vector)": PresetGrouping(
             name="Transverse (Vector)",
             groups={
                 1: GroupDefinition("Up-Down Up", up),
                 2: GroupDefinition("Up-Down Down", down),
-                3: GroupDefinition("Left-Right Left", left),
-                4: GroupDefinition("Left-Right Right", right),
+                3: GroupDefinition("Left-Right Right", right),
+                4: GroupDefinition("Left-Right Left", left),
             },
             forward_group=1,
             backward_group=2,
@@ -990,23 +1047,36 @@ def _gps_presets(
             ),
         ),
         # Spin-rotated: with the spin rotator in transverse geometry the muon spin
-        # is tipped up by ~50 deg (GPS User Guide, Section 13), so the polarization
-        # points along the Forward-Up diagonal. Summing Forward+Up vs Backward+Down
-        # realigns one asymmetry axis with the rotated spin, recovering amplitude a
-        # plain Forward/Backward pair would lose.
-        "Spin-rotated (F+U/B+D)": PresetGrouping(
-            name="Spin-rotated (F+U/B+D)",
+        # is tipped up by ~50 deg (GPS User Guide, Section 13).
+        #
+        # Geometry. For surface muons the *initial* polarization is antiparallel
+        # to the momentum, i.e. it points toward the Backward detector (−z). The
+        # rotator then tips it up (+y). The rotated polarization therefore points
+        # up-and-*backward* and lies in the plane between the **Backward** and
+        # **Up** detectors — NOT Forward+Up. The group that sees the rotated
+        # polarization (analysis-forward) is thus **B+U**, and the opposed group
+        # (analysis-backward) is **F+D**. This is corroborated by musrfit's WEP
+        # phases (B rel_phase=−45, U=+45, F=+135, D=+225): the polarization axis
+        # bisects B and U. (The old F+U/B+D grouping put the up-and-*forward*
+        # diagonal in the forward slot, which is roughly orthogonal to the true
+        # polarization and loses amplitude — the bug this preset fix corrects.)
+        # The name keeps the physical B/U/F/D detector letters.
+        "Spin-rotated (B+U/F+D)": PresetGrouping(
+            name="Spin-rotated (B+U/F+D)",
             groups={
-                1: GroupDefinition("F+U", (1, *up)),
-                2: GroupDefinition("B+D", (2, *down)),
+                1: GroupDefinition("B+U", (2, *up)),
+                2: GroupDefinition("F+D", (1, *down)),
             },
-            forward_group=1,
-            backward_group=2,
+            forward_group=1,  # B+U sees the rotated polarization (analysis-forward)
+            backward_group=2,  # F+D is the opposed group
         ),
         # WEP: follows musrfit's spin-rotated GPS setup -- F/B/U/D as four groups
         # exposed as the FB and UD asymmetry pairs, each reduced with its own
-        # declared alpha (FB = 0.75, UD = 1.0). See _build_gps for the verbatim
-        # musrfit definition and provenance.
+        # declared alpha (FB = 0.75, UD = 1.0). musrfit declares
+        # ``FB forward=2(B) backward=1(F) alpha=0.75`` and
+        # ``UD forward=3(U) backward=4(D) alpha=1.0``, so the FB projection's
+        # forward leg is the Backward-named group and the UD forward leg is Up.
+        # See _build_gps for the verbatim musrfit definition and provenance.
         "WEP (spin-rotated)": PresetGrouping(
             name="WEP (spin-rotated)",
             groups={
@@ -1015,12 +1085,15 @@ def _gps_presets(
                 3: GroupDefinition("U", up),
                 4: GroupDefinition("D", down),
             },
-            forward_group=1,
-            backward_group=2,
+            forward_group=2,  # analysis-forward = B (matches FB projection below)
+            backward_group=1,  # analysis-backward = F
             projections=(
+                # FB: A = (B − 0.75 F)/(B + 0.75 F). forward=B(group 2),
+                # backward=F(group 1), alpha=0.75 -- musrfit's leg order and sign.
                 AsymmetryProjection(
-                    "FB", 1, 2, alpha=0.75, tint=TRANSVERSE_PROJECTION_TINTS["Fwd-Back"]
+                    "FB", 2, 1, alpha=0.75, tint=TRANSVERSE_PROJECTION_TINTS["Fwd-Back"]
                 ),
+                # UD: forward=U(group 3), backward=D(group 4), alpha=1.0.
                 AsymmetryProjection("UD", 3, 4, tint=TRANSVERSE_PROJECTION_TINTS["Top-Bottom"]),
             ),
         ),
@@ -1056,19 +1129,36 @@ def _build_gps() -> InstrumentLayout:
     Each detector is clickable (active) in its home panel and read-only in the
     other, which keeps the 3-D geometry legible.
 
-    **Spin rotator and the F+U / B+D preset.** GPS sits behind a spin rotator on
+    **PSI beam-vs-analysis convention.** PSI names detectors by **beam**
+    direction: Forward (F) is downstream (+z), Backward (B) upstream (−z).  For
+    surface muons the spin is *antiparallel* to the momentum, so the initial
+    polarization points toward the **Backward** detector.  The PSI/musrfit
+    analysis convention (GPS instrument paper, Amato *et al.*,
+    Rev. Sci. Instrum. 88, 093301 (2017), Eq. 2) is therefore
+
+        A = (B − α F) / (B + α F),
+
+    i.e. the *Backward*-named group occupies the analysis-**forward** slot.  All
+    GPS presets here declare that analysis convention directly in their
+    ``forward_group``/``backward_group`` (and projection legs) while keeping the
+    physical beam-referenced group *names* (F/B/U/D), so a preset is correct
+    standalone in the headless core — no GUI swap is needed to compensate.
+
+    **Spin rotator and the B+U / F+D preset.** GPS sits behind a spin rotator on
     πM3.2 — crossed electric and magnetic fields (a Wien filter), GPS User Guide
     Section 13.  In *longitudinal geometry* it acts as a velocity separator that
     cleans positron contamination from the beam (and tips the polarization up by
     ~7°).  In *transverse geometry* the field is raised so the muon spin is
-    rotated **up by ~50°**, giving a large transverse component for TF work.  Once
-    the spin is rotated by ~45–50° in the vertical (beam–up) plane the initial
-    polarization points along the **Forward–Up diagonal**, so a plain
-    Forward/Backward asymmetry only sees its cosine projection and loses
-    amplitude.  Summing **Forward+Up** against **Backward+Down** realigns one
-    asymmetry axis with the rotated spin and recovers the full amplitude — this is
-    the ``Spin-rotated (F+U/B+D)`` preset.  The forward/backward sense follows the
-    rotation direction; swap the groups if a setup rotates the spin the other way.
+    rotated **up by ~50°**, giving a large transverse component for TF work.  The
+    initial polarization points toward **Backward** (−z, surface-muon geometry);
+    rotating it up by ~45–50° in the vertical plane leaves it pointing
+    up-and-*backward*, along the **Backward–Up diagonal**.  A plain
+    Forward/Backward asymmetry then only sees its cosine projection and loses
+    amplitude.  Summing **Backward+Up** (which sees the rotated spin) against
+    **Forward+Down** realigns one asymmetry axis with the rotated spin and
+    recovers the full amplitude — this is the ``Spin-rotated (B+U/F+D)`` preset.
+    (The bisector of musrfit's WEP phases below, B at −45° and U at +45°,
+    confirms the polarization lies along the B–U diagonal, not F–U.)
 
     **WEP mode — follows musrfit.** musrfit ships a GPS setup named
     ``WEP`` for exactly this spin-rotated configuration, and the
@@ -1087,14 +1177,16 @@ def _build_gps() -> InstrumentLayout:
         logic_asym_detector  UD forward=3 backward=4  alpha=1.0
 
     The preset here maps F/B/U/D to four groups exposed as the **FB** and **UD**
-    projections.  The FB projection declares musrfit's default ``alpha = 0.75``
-    and the UD projection ``alpha = 1.0``; the reduction **applies each
-    projection's own declared alpha**, so reducing or fitting the FB pair uses
-    0.75 and the UD pair uses 1.0 (see
+    projections, following musrfit's leg order: **FB** has forward = B (group 2),
+    backward = F (group 1) so it reduces to (B − 0.75 F)/(B + 0.75 F), and **UD**
+    has forward = U (group 3), backward = D (group 4).  The FB projection declares
+    musrfit's default ``alpha = 0.75`` and the UD projection ``alpha = 1.0``; the
+    reduction **applies each projection's own declared alpha**, so reducing or
+    fitting the FB pair uses 0.75 and the UD pair uses 1.0 (see
     :meth:`asymmetry.gui.mainwindow.MainWindow._resolve_vector_alpha_values`).
     The per-detector phase offsets musrfit uses to encode the rotation are a
     fitting detail not stored in the layout — only the groupings.
-    (``Spin-rotated (F+U/B+D)`` above is *our* combined-pair alternative for the
+    (``Spin-rotated (B+U/F+D)`` above is *our* combined-pair alternative for the
     same physics, not a musrfit construct.)
     """
     top = BankLayout(
@@ -1310,15 +1402,21 @@ def _build_hal() -> InstrumentLayout:
 
     presets: dict[str, PresetGrouping] = {}
 
-    # Longitudinal (default): forward ring vs backward ring.
+    # Longitudinal (default): forward ring vs backward ring.  HAL-9500 is a PSI
+    # instrument, so the rings are named by *beam* direction; for surface muons
+    # the initial polarization points toward the Backward ring.  Declare the
+    # analysis-forward slot as the Backward ring (group 2) so the preset follows
+    # the PSI convention A = (B − αF)/(B + αF) standalone — matching the GPS/FLAME
+    # presets.  (The Transverse/Per-octant presets below use opposed detector
+    # pairs, not a beam F/B split, so their pairing is left as musrfit's.)
     presets["Longitudinal"] = PresetGrouping(
         name="Longitudinal",
         groups={
             1: GroupDefinition("Forward", fwd_ring),
             2: GroupDefinition("Backward", bwd_ring),
         },
-        forward_group=1,
-        backward_group=2,
+        forward_group=2,  # analysis-forward = beam-Backward ring (sees polarization)
+        backward_group=1,  # analysis-backward = beam-Forward ring
     )
 
     # Transverse (opposed pairs): musrfit's high-field scheme — each forward
@@ -1401,7 +1499,7 @@ def recommend_grouping_preset(layout: InstrumentLayout, field_direction: str | N
     default to the ``Longitudinal`` (Forward/Backward) preset, but the spin
     rotator on πM3.2 tips the muon spin ~50° up (see :func:`_build_gps`), so a
     plain Forward/Backward asymmetry only sees the cosine projection and the
-    time-domain fit collapses.  The remedy is the ``Spin-rotated (F+U/B+D)``
+    time-domain fit collapses.  The remedy is the ``Spin-rotated (B+U/F+D)``
     preset, which realigns one asymmetry axis with the rotated spin.  Nothing in
     the GUI hinted at this, which caused a long dead-end in live testing.
 
@@ -1426,7 +1524,7 @@ def recommend_grouping_preset(layout: InstrumentLayout, field_direction: str | N
         field), an unknown/absent field direction, or no suitable transverse
         preset on this instrument.  For transverse data a single forward/backward
         pair (a preset with no declared projections, e.g. GPS
-        ``Spin-rotated (F+U/B+D)``) is preferred over a multi-projection
+        ``Spin-rotated (B+U/F+D)``) is preferred over a multi-projection
         vector/WEP preset, so the recommendation is directly usable for the basic
         time-domain fit the longitudinal default would collapse.
 
