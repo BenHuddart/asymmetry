@@ -23,7 +23,9 @@ from asymmetry.core.fitting.parameter_models import (
     ParameterCompositeModel,
     ParameterGroupData,
 )
+from asymmetry.core.instrument import instrument_display_name
 from asymmetry.core.project import load_project, save_project
+from asymmetry.core.project.profiles import profile_fingerprint_for_run
 from asymmetry.core.representation import FitSlot, RepresentationType
 from asymmetry.core.transform.asymmetry import compute_asymmetry
 from asymmetry.gui.mainwindow import MainWindow
@@ -4871,6 +4873,81 @@ class TestMainWindowBasic:
         assert calls["multi"] == 1
         assert calls["single"] == 0
 
+    def test_empty_run_numbers_is_authoritative_not_unfiltered(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An explicit empty run_numbers list applies the profile to NO runs.
+
+        With every run released, Apply commits override edits only —
+        ``get_grouping_result()`` legitimately returns ``run_numbers=[]``. The
+        apply loop must treat that as authoritative filtering, not "no filter":
+        broadcasting the profile payload would clobber the per-run overrides it
+        was told to respect (Copilot review, PR #178).
+        """
+        ds1 = _make_dataset(8121, with_grouping=True)
+        ds2 = _make_dataset(8122, with_grouping=True)
+        mainwindow._data_browser.add_dataset(ds1)
+        mainwindow._data_browser.add_dataset(ds2)
+        mainwindow._current_dataset = ds1
+
+        class _StubGroupingDialog:
+            class DialogCode:
+                Accepted = 1
+
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def exec(self):
+                return self.DialogCode.Accepted
+
+            def get_grouping_result(self):
+                return {
+                    "run_numbers": [],  # every run released: profile reaches no one
+                    "groups": {1: [1], 2: [2]},
+                    "forward_group": 1,
+                    "backward_group": 2,
+                    "alpha": 9.9,
+                    "first_good_bin": 0,
+                    "last_good_bin": 3,
+                    "deadtime_correction": False,
+                }
+
+            def get_profile_result(self):
+                import types
+
+                return {
+                    "profile": types.SimpleNamespace(name="Default (Test)"),
+                    "override_edits": {8121: {"alpha": 2.2}},
+                    "newly_released": set(),
+                    "newly_reattached": set(),
+                }
+
+        monkeypatch.setattr(mw_module, "GroupingDialog", _StubGroupingDialog)
+        monkeypatch.setattr(mainwindow, "_store_grouping_profile", lambda _profile: None)
+        monkeypatch.setattr(
+            mainwindow, "_reconcile_grouping_overrides", lambda _datasets, _result: None
+        )
+        monkeypatch.setattr(
+            mainwindow, "_apply_grouping_override_edits", lambda _datasets, _result: [8121]
+        )
+        monkeypatch.setattr(mainwindow._data_browser, "_rebuild_table", lambda: None)
+        monkeypatch.setattr(mainwindow._data_browser, "get_selected_datasets", lambda: [ds1])
+
+        profile_applications: list[int] = []
+        monkeypatch.setattr(
+            mainwindow,
+            "_apply_grouping_settings_to_dataset",
+            lambda dataset, _payload: (
+                profile_applications.append(int(dataset.run_number)) or (True, False)
+            ),
+        )
+
+        mainwindow._open_shared_grouping_dialog(selected_run_number=8121)
+
+        assert profile_applications == []
+
     def test_grouping_apply_vector_alphas_to_multiple_selected_runs(
         self,
         mainwindow: MainWindow,
@@ -6215,7 +6292,6 @@ def test_group_header_selection_keeps_individual_groups_view(mainwindow: MainWin
 
 
 from asymmetry.core.project.profiles import (  # noqa: E402
-    profile_fingerprint_for_run,
     profile_from_payload,
 )
 
@@ -6318,9 +6394,9 @@ def test_apply_grouping_override_edits_writes_only_that_run(mainwindow: MainWind
     override_payload["alpha"] = 4.2
     profile_result = {"override_edits": {7602: override_payload}}
 
-    applied_run = mainwindow._apply_grouping_override_edits([ds_a, ds_b], profile_result)
+    applied_runs = mainwindow._apply_grouping_override_edits([ds_a, ds_b], profile_result)
 
-    assert applied_run == 7602
+    assert applied_runs == [7602]
     # Run 7602 got the new alpha and stays overridden.
     assert ds_b.run.grouping["alpha"] == pytest.approx(4.2)
     assert ds_b.metadata.get("grouping_overrides") is True
@@ -6328,8 +6404,149 @@ def test_apply_grouping_override_edits_writes_only_that_run(mainwindow: MainWind
     assert ds_a.run.grouping["alpha"] == pytest.approx(1.0)
 
 
+def test_apply_grouping_override_edits_writes_multiple_runs(mainwindow: MainWindow) -> None:
+    """All dirty overrides in override_edits are applied in one pass."""
+    ds_a = _make_dataset(7621, with_grouping=True)
+    ds_b = _make_dataset(7622, with_grouping=True)
+    ds_a.metadata["grouping_overrides"] = True
+    ds_b.metadata["grouping_overrides"] = True
+    payload_a = dict(ds_a.run.grouping)
+    payload_a["alpha"] = 2.2
+    payload_b = dict(ds_b.run.grouping)
+    payload_b["alpha"] = 3.3
+    profile_result = {"override_edits": {7621: payload_a, 7622: payload_b}}
+
+    applied_runs = mainwindow._apply_grouping_override_edits([ds_a, ds_b], profile_result)
+
+    assert applied_runs == [7621, 7622]
+    assert ds_a.run.grouping["alpha"] == pytest.approx(2.2)
+    assert ds_b.run.grouping["alpha"] == pytest.approx(3.3)
+
+
 def test_apply_grouping_override_edits_noop_without_edits(mainwindow: MainWindow) -> None:
-    """No override_edits key returns None and changes nothing."""
+    """No override_edits key returns an empty list and changes nothing."""
     ds_a = _make_dataset(7611, with_grouping=True)
     result = mainwindow._apply_grouping_override_edits([ds_a], {"newly_released": set()})
-    assert result is None
+    assert result == []
+
+
+# --------------------------------------------------------------------------- #
+# Stale persisted instrument self-heals on reload
+# --------------------------------------------------------------------------- #
+
+#: The real FLAME eight-counter label set from the investigation.
+_FLAME_LABELS = ["Forw", "Back", "Righ", "Left", "R_F", "R_B", "L_F", "L_B"]
+
+
+def _flame_dataset(run_number: int, *, grouping_instrument: str) -> MuonDataset:
+    """An 8-histogram FLAME-detectable dataset whose grouping carries a
+    (possibly stale) *grouping_instrument* (e.g. "GPS")."""
+    counts = np.array([100.0, 95.0, 90.0, 85.0], dtype=float)
+    metadata = {
+        "run_number": run_number,
+        "facility": "PSI",
+        "instrument": "PSI",
+        "histogram_labels": list(_FLAME_LABELS),
+    }
+    run = Run(
+        run_number=run_number,
+        histograms=[Histogram(counts=counts * (0.9**i), bin_width=0.01) for i in range(8)],
+        metadata=dict(metadata),
+        grouping={"instrument": grouping_instrument},
+    )
+    t = np.array([0.0, 0.01, 0.02, 0.03])
+    return MuonDataset(
+        time=t,
+        asymmetry=np.zeros_like(t),
+        error=np.full_like(t, 0.01),
+        metadata=dict(metadata),
+        run=run,
+    )
+
+
+def _stale_gps_overrides() -> dict:
+    """A persisted per-run override with a stale GPS instrument + GPS structure."""
+    return {
+        "instrument": "GPS",
+        "groups": {1: [1], 2: [2]},
+        "group_names": {1: "Up", 2: "Down"},
+        "forward_group": 1,
+        "backward_group": 2,
+        "grouping_preset": "Transverse (Vector)",
+        "alpha": 1.0,
+        "first_good_bin": 0,
+        "last_good_bin": 3,
+        "bunching_factor": 1,
+        "deadtime_correction": False,
+    }
+
+
+def test_heal_run_instrument_corrects_stale_grouping(mainwindow: MainWindow) -> None:
+    """_heal_run_instrument rewrites a FLAME run mis-carried as GPS."""
+    dataset = _flame_dataset(9101, grouping_instrument="GPS")
+    mainwindow._heal_run_instrument(dataset.run)
+    assert dataset.run.grouping["instrument"] == "FLAME"
+    fingerprint = profile_fingerprint_for_run(dataset.run)
+    assert (fingerprint.instrument, fingerprint.histogram_count) == ("FLAME", 8)
+
+
+def test_project_restore_heals_stale_instrument_override(
+    mainwindow: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A FLAME run persisted as a (GPS, 8) override self-heals on project reload.
+
+    After restore the run reports the FLAME fingerprint, does NOT inherit the
+    stored (GPS, 8) profile, and the stale GPS group names/structure are gone.
+    """
+    source_file = tmp_path / "run_flame_9102.bin"
+    source_file.write_text("placeholder", encoding="utf-8")
+
+    def _fake_load_file(_path: str) -> MuonDataset:
+        loaded = _flame_dataset(9102, grouping_instrument="FLAME")
+        loaded.run.source_file = str(source_file)
+        loaded.metadata["source_file"] = str(source_file)
+        return loaded
+
+    monkeypatch.setattr(mainwindow, "_load_file", _fake_load_file)
+
+    # The project persists a stale (GPS, 8) override AND a (GPS, 8) profile.
+    state = {
+        "version": 12,
+        "grouping_profiles": [
+            {
+                "name": "Default (GPS)",
+                "fingerprint": {"instrument": "GPS", "histogram_count": 8},
+                "active": True,
+                "groups": {"1": [1], "2": [2]},
+                "group_names": {"1": "Up", "2": "Down"},
+                "forward_group": 1,
+                "backward_group": 2,
+            }
+        ],
+        "datasets": [
+            {
+                "run_number": 9102,
+                "source_file": str(source_file),
+                "grouping_overrides": _stale_gps_overrides(),
+            }
+        ],
+    }
+
+    mainwindow.restore_project_state(state, str(tmp_path / "stale.asymp"))
+
+    dataset = mainwindow._data_browser.get_dataset(9102)
+    assert dataset is not None
+    grouping = dataset.run.grouping
+    # Healed to FLAME.
+    assert grouping["instrument"] == "FLAME"
+    fingerprint = profile_fingerprint_for_run(dataset.run)
+    assert (fingerprint.instrument, fingerprint.histogram_count) == ("FLAME", 8)
+    # Must NOT have inherited the (GPS, 8) profile: no GPS Up/Down names survive.
+    group_names = grouping.get("group_names") or {}
+    assert "Up" not in group_names.values()
+    assert "Down" not in group_names.values()
+    # The display identity reflects FLAME with 8 detectors.
+    assert instrument_display_name(fingerprint.instrument) == "FLAME"
+    assert fingerprint.histogram_count == 8

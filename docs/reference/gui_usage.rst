@@ -416,8 +416,7 @@ Key behaviour:
 
   The instrument can always be overridden from the instrument dropdown, and the
   chosen instrument is saved with the dataset so it survives project reloads.
-* Group names are saved in project grouping payloads and in ``.grp`` files via
-   ``group_name.N=...`` entries.
+* Group names are saved in project grouping payloads.
 
 Preset highlights:
 
@@ -519,8 +518,7 @@ Colour behaviour in the main plot:
    use contrasting colours for additional selected runs so traces remain
    distinguishable.
 
-The selected RG mode is saved in the grouping payload and in ``.grp`` files as
-``period_mode``.
+The selected RG mode is saved in the grouping payload as ``period_mode``.
 
 Low-count Tail Display
 ~~~~~~~~~~~~~~~~~~~~~~

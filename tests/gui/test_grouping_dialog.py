@@ -642,40 +642,6 @@ def test_per_projection_alpha_edit_survives_detector_layout_accept(
     assert dialog._vector_alpha_spins["FB"].value() == pytest.approx(0.83)
 
 
-def test_grp_round_trip_preserves_projections() -> None:
-    """serialize_grp/parse_grp round-trip the projections list (label, groups,
-    per-projection alpha, tint) so non-canonical per-projection alpha survives a
-    .grp save/load."""
-    payload = {
-        "groups": {1: [1], 2: [2], 3: [1], 4: [2]},
-        "forward_group": 1,
-        "backward_group": 2,
-        "alpha": 1.0,
-        "projections": [
-            {
-                "label": "FB",
-                "forward_group": 1,
-                "backward_group": 2,
-                "alpha": 0.75,
-                "tint": "#2E8B74",
-            },
-            {"label": "UD", "forward_group": 3, "backward_group": 4, "alpha": 1.0},
-        ],
-    }
-    text = GroupingDialog.serialize_grp(payload)
-    assert "projection.0=" in text
-    parsed = GroupingDialog.parse_grp(text)
-
-    projs = parsed["projections"]
-    assert [p["label"] for p in projs] == ["FB", "UD"]
-    assert projs[0]["forward_group"] == 1
-    assert projs[0]["backward_group"] == 2
-    assert projs[0]["alpha"] == pytest.approx(0.75)
-    assert projs[0]["tint"] == "#2E8B74"
-    assert projs[1]["alpha"] == pytest.approx(1.0)
-    assert "tint" not in projs[1]
-
-
 def test_vector_payload_contains_per_axis_alpha_values(qapp: QApplication) -> None:
     dialog = GroupingDialog([_vector_dataset_with_histograms()])
     dialog._vector_alpha_spins["P_x"].setValue(1.11)
@@ -776,127 +742,6 @@ def test_pressing_enter_on_bunch_factor_does_not_estimate_alpha(qapp: QApplicati
 
     # Enter on bunching should not trigger the Estimate alpha action.
     assert dialog._alpha_spin.value() == pytest.approx(1.0)
-
-
-def test_pressing_enter_on_bunch_factor_does_not_trigger_save_grp(
-    qapp: QApplication,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    dialog = GroupingDialog([_dataset_with_histograms()])
-
-    save_called = {"value": False}
-
-    def _stub_get_save_file_name(*_args, **_kwargs):
-        save_called["value"] = True
-        return "", ""
-
-    monkeypatch.setattr(
-        "asymmetry.gui.windows.grouping.dialog.QFileDialog.getSaveFileName",
-        _stub_get_save_file_name,
-    )
-
-    dialog._bunch_spin.setFocus()
-    dialog._bunch_spin.setValue(9)
-    QTest.keyClick(dialog._bunch_spin, Qt.Key.Key_Return)
-
-    assert save_called["value"] is False
-
-
-def test_grp_round_trip_parser_and_serializer() -> None:
-    payload = {
-        "groups": {1: [1, 2], 2: [3, 4]},
-        "forward_group": 1,
-        "backward_group": 2,
-        "alpha": 1.2345,
-        "t0_bin": 2,
-        "t_good_offset": 7,
-        "first_good_bin": 9,
-        "last_good_bin": 2048,
-        "bunching_factor": 5,
-        "deadtime_correction": True,
-        "background_correction": True,
-        "period_mode": str(PeriodMode.GREEN_PLUS_RED),
-    }
-    text = GroupingDialog.serialize_grp(payload)
-    parsed = GroupingDialog.parse_grp(text)
-
-    assert parsed["groups"][1] == [1, 2]
-    assert parsed["groups"][2] == [3, 4]
-    assert parsed["forward_group"] == 1
-    assert parsed["backward_group"] == 2
-    assert parsed["alpha"] == pytest.approx(1.2345)
-    assert parsed["t0_bin"] == 2
-    assert parsed["t_good_offset"] == 7
-    assert parsed["first_good_bin"] == 9
-    assert parsed["last_good_bin"] == 2048
-    assert parsed["bunching_factor"] == 5
-    assert parsed["deadtime_correction"] is True
-    assert parsed["background_correction"] is True
-    assert parsed["period_mode"] == str(PeriodMode.GREEN_PLUS_RED)
-
-
-def test_grp_round_trip_preserves_deadtime_mode_metadata() -> None:
-    payload = {
-        "groups": {1: [1, 2], 2: [3, 4]},
-        "forward_group": 1,
-        "backward_group": 2,
-        "alpha": 1.0,
-        "deadtime_correction": True,
-        "deadtime_mode": "manual",
-        "deadtime_method": "manual",
-        "deadtime_manual_us": 0.025,
-        "dead_time_us": [0.025, 0.025],
-    }
-
-    text = GroupingDialog.serialize_grp(payload)
-    parsed = GroupingDialog.parse_grp(text)
-
-    assert parsed["deadtime_correction"] is True
-    assert parsed["deadtime_mode"] == "manual"
-    assert parsed["deadtime_method"] == "manual"
-    assert parsed["deadtime_manual_us"] == pytest.approx(0.025)
-    assert parsed["dead_time_us"] == pytest.approx([0.025, 0.025])
-
-
-def test_grp_round_trip_parser_and_serializer_with_vector_alphas() -> None:
-    payload = {
-        "groups": {1: [1, 2], 2: [3, 4]},
-        "forward_group": 1,
-        "backward_group": 2,
-        "alpha": 1.2345,
-        "alpha_x": 1.1,
-        "alpha_y": 1.2,
-        "alpha_z": 1.3,
-        "first_good_bin": 9,
-        "last_good_bin": 2048,
-        "bunching_factor": 5,
-        "deadtime_correction": True,
-        "period_mode": str(PeriodMode.GREEN_PLUS_RED),
-    }
-    text = GroupingDialog.serialize_grp(payload)
-    parsed = GroupingDialog.parse_grp(text)
-
-    assert parsed["alpha_x"] == pytest.approx(1.1)
-    assert parsed["alpha_y"] == pytest.approx(1.2)
-    assert parsed["alpha_z"] == pytest.approx(1.3)
-
-
-def test_parse_grp_legacy_first_good_derives_t_good_offset() -> None:
-    text = "\n".join(
-        [
-            "forward_group=1",
-            "backward_group=2",
-            "t0_bin=3",
-            "first_good_bin=11",
-            "last_good_bin=50",
-            "group.1=1",
-            "group.2=2",
-        ]
-    )
-    parsed = GroupingDialog.parse_grp(text)
-    assert parsed["t0_bin"] == 3
-    assert parsed["first_good_bin"] == 11
-    assert parsed["t_good_offset"] == 8
 
 
 def test_current_payload_uses_t0_and_t_good_offset(qapp: QApplication) -> None:
@@ -1461,71 +1306,6 @@ def test_detector_layout_unchanged_preset_does_not_clear_chip(
 
 
 # ---------------------------------------------------------------------------
-# .grp format: group_name round-trip
-# ---------------------------------------------------------------------------
-
-
-def test_grp_round_trip_with_group_names() -> None:
-    payload = {
-        "groups": {1: [1, 2], 2: [3, 4]},
-        "included_groups": {1: True, 2: False},
-        "forward_group": 1,
-        "backward_group": 2,
-        "alpha": 1.0,
-        "first_good_bin": 0,
-        "last_good_bin": 2048,
-        "bunching_factor": 1,
-        "deadtime_correction": False,
-        "group_names": {1: "Forward", 2: "Backward"},
-    }
-    text = GroupingDialog.serialize_grp(payload)
-    assert "group_name.1=Forward" in text
-    assert "group_name.2=Backward" in text
-    assert "group_include.1=1" in text
-    assert "group_include.2=0" in text
-    parsed = GroupingDialog.parse_grp(text)
-    assert parsed.get("group_names", {}).get(1) == "Forward"
-    assert parsed.get("group_names", {}).get(2) == "Backward"
-    assert parsed.get("included_groups", {}).get(1) is True
-    assert parsed.get("included_groups", {}).get(2) is False
-
-
-def test_grp_round_trip_without_group_names_backwards_compat() -> None:
-    """Old .grp files without group_name lines must still parse cleanly."""
-    payload = {
-        "groups": {1: [1, 2], 2: [3, 4]},
-        "forward_group": 1,
-        "backward_group": 2,
-        "alpha": 1.0,
-        "first_good_bin": 0,
-        "last_good_bin": 2048,
-        "bunching_factor": 1,
-        "deadtime_correction": False,
-    }
-    text = GroupingDialog.serialize_grp(payload)
-    parsed = GroupingDialog.parse_grp(text)
-    # Should produce empty dict, not raise
-    assert parsed.get("group_names", {}) == {}
-
-
-def test_serialize_grp_no_group_names_no_spurious_lines() -> None:
-    """serialize_grp with empty group_names must not emit group_name lines."""
-    payload = {
-        "groups": {1: [1]},
-        "forward_group": 1,
-        "backward_group": 2,
-        "alpha": 1.0,
-        "first_good_bin": 0,
-        "last_good_bin": 10,
-        "bunching_factor": 1,
-        "deadtime_correction": False,
-        "group_names": {},
-    }
-    text = GroupingDialog.serialize_grp(payload)
-    assert "group_name" not in text
-
-
-# ---------------------------------------------------------------------------
 # "Detector Layout…" button exists in the GroupingDialog UI
 # ---------------------------------------------------------------------------
 
@@ -1875,9 +1655,9 @@ def test_preview_run_change_preserves_draft_edits(qapp: QApplication) -> None:
 
     dialog._alpha_spin.setValue(1.2345)
     dialog._mark_dirty()
-    idx = dialog._reference_combo.findData(6202)
-    dialog._reference_combo.setCurrentIndex(idx)
-    dialog._on_reference_dataset_changed()
+    # Selecting another (inheriting) run in the scope panel is the preview switch;
+    # in-progress profile-draft edits must survive it.
+    dialog._scope_panel.set_current_run(6202)
 
     assert dialog._current_grouping_payload()["alpha"] == pytest.approx(1.2345)
     assert int(dialog._reference_dataset.run_number) == 6202
@@ -2142,8 +1922,7 @@ def test_t0_from_file_spin_follows_preview_run(qapp: QApplication) -> None:
     dialog = GroupingDialog([ds_a, ds_b], selected_run_number=4601)
     assert dialog._current_t0_mode() == "from_file"
     assert dialog._t0_spin.value() == 3
-    dialog._set_combo_to_run(dialog._reference_combo, 4602)
-    dialog._on_reference_dataset_changed()
+    dialog._scope_panel.set_current_run(4602)
     assert dialog._t0_spin.value() == 1
 
 

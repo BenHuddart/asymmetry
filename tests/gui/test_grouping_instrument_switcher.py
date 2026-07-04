@@ -100,9 +100,9 @@ def test_switch_swaps_fingerprint_scope_and_preview(qapp: QApplication) -> None:
     assert dialog._fingerprint.instrument == "GPS"
     assert int(dialog._reference_dataset.run_number) == 3
     assert dialog._scope_panel.inheriting_run_numbers() == {3}
-    # The preview-run combo now lists only the GPS run.
-    combo = dialog._reference_combo
-    assert [combo.itemData(i) for i in range(combo.count())] == [3]
+    # The scope panel (the window's selector) now lists only the GPS run, and it
+    # is the current selection.
+    assert dialog._scope_panel.current_run_number() == 3
 
 
 def test_switch_swaps_draft_and_presets(qapp: QApplication) -> None:

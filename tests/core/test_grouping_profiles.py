@@ -7,6 +7,8 @@ inheritance helper. These are pure-core tests (no Qt / no GUI).
 
 from __future__ import annotations
 
+import copy
+
 import numpy as np
 import pytest
 
@@ -19,9 +21,11 @@ from asymmetry.core.project.profiles import (
     ProfileFingerprint,
     T0Policy,
     active_profile_for_run,
+    detect_instrument_for_run,
     effective_grouping_for_loaded_run,
     profile_fingerprint_for_run,
     profile_from_payload,
+    reconcile_instrument_for_payload,
     resolve_effective_grouping,
 )
 from asymmetry.core.transform.grouping import (
@@ -641,3 +645,154 @@ def test_profile_from_payload_no_detector_table_is_from_file():
     payload = {"groups": {1: [1], 2: [2]}, "instrument": "EMU", "t0_bin": 40}
     profile = profile_from_payload(payload, "P", ProfileFingerprint("EMU", 2))
     assert profile.t0_policy.mode == "from_file"
+
+
+# --------------------------------------------------------------------------- #
+# Instrument self-healing on re-detection
+# --------------------------------------------------------------------------- #
+
+#: The real FLAME eight-counter label set (Forw/Back/Righ/Left + the four split
+#: corner plates) from the investigation. ``detect_instrument`` returns FLAME for
+#: this label set even when the instrument token is a generic "PSI".
+_FLAME_LABELS = ["Forw", "Back", "Righ", "Left", "R_F", "R_B", "L_F", "L_B"]
+
+
+def _flame_run(*, grouping_instrument: str) -> Run:
+    """An 8-histogram run whose fresh detection is FLAME but whose grouping
+    carries *grouping_instrument* (e.g. a stale "GPS")."""
+    return _run(
+        instrument=grouping_instrument,
+        n_hist=8,
+        grouping={"instrument": grouping_instrument},
+        metadata={
+            "facility": "PSI",
+            "instrument": "PSI",
+            "histogram_labels": list(_FLAME_LABELS),
+        },
+    )
+
+
+def test_detect_instrument_for_run_uses_run_metadata():
+    run = _flame_run(grouping_instrument="GPS")
+    assert detect_instrument_for_run(run) == "FLAME"
+
+
+def test_reconcile_heals_stale_instrument_and_discards_structure():
+    """A FLAME run persisted as GPS heals to FLAME and drops GPS structure."""
+    run = _flame_run(grouping_instrument="GPS")
+    stale_payload = {
+        "instrument": "GPS",
+        "groups": {1: [1], 2: [2]},
+        "group_names": {1: "Up", 2: "Down"},
+        "forward_group": 1,
+        "backward_group": 2,
+        "grouping_preset": "Transverse (Vector)",
+        "projections": [{"label": "Up-Down", "forward_group": 1, "backward_group": 2}],
+        "vector_axis": "P_y",
+        # Instrument-independent settings that must survive.
+        "t0_bin": 5,
+        "first_good_bin": 6,
+        "alpha": 1.23,
+        "deadtime_mode": "off",
+    }
+    reconciled, note = reconcile_instrument_for_payload(run, stale_payload)
+
+    assert note is not None
+    assert "GPS" in note and "FLAME" in note
+    # The run's own identity is corrected in place.
+    assert run.grouping["instrument"] == "FLAME"
+    assert run.metadata["instrument"] == "FLAME"
+    # The fingerprint now reports FLAME (8), not GPS.
+    assert profile_fingerprint_for_run(run) == ProfileFingerprint("FLAME", 8)
+    # Stale GPS structure is gone; instrument-independent settings kept.
+    assert reconciled["instrument"] == "FLAME"
+    for key in (
+        "groups",
+        "group_names",
+        "forward_group",
+        "backward_group",
+        "grouping_preset",
+        "projections",
+        "vector_axis",
+    ):
+        assert key not in reconciled
+    assert reconciled["t0_bin"] == 5
+    assert reconciled["first_good_bin"] == 6
+    assert reconciled["alpha"] == 1.23
+    assert reconciled["deadtime_mode"] == "off"
+
+
+def test_reconcile_does_not_inherit_wrong_fingerprint_profile():
+    """After healing, the run must not inherit a (GPS, 8) profile."""
+    run = _flame_run(grouping_instrument="GPS")
+    gps_profile = GroupingProfile(
+        name="Default (GPS)",
+        fingerprint=ProfileFingerprint("GPS", 8),
+        groups={1: [1], 2: [2]},
+        group_names={1: "Up", 2: "Down"},
+    )
+    reconcile_instrument_for_payload(run, {"instrument": "GPS", "groups": {1: [1]}})
+    assert active_profile_for_run([gps_profile], run) is None
+
+
+def test_reconcile_none_detection_keeps_stored_value():
+    """When detection is inconclusive, the stored instrument is kept."""
+    # A 2-histogram run with no instrument hints -> detect_instrument returns None.
+    run = _run(instrument="GPS", n_hist=2, metadata={"instrument": ""})
+    assert detect_instrument_for_run(run) is None
+    payload = {"instrument": "GPS", "groups": {1: [1], 2: [2]}}
+    reconciled, note = reconcile_instrument_for_payload(run, payload)
+    assert note is None
+    assert reconciled is payload  # unchanged object
+    assert run.grouping["instrument"] == "GPS"
+
+
+def test_reconcile_matching_value_leaves_payload_byte_identical():
+    """A payload whose stored instrument matches detection is untouched."""
+    run = _flame_run(grouping_instrument="FLAME")
+    payload = {
+        "instrument": "FLAME",
+        "groups": {1: [1], 2: [2]},
+        "group_names": {1: "Forward", 2: "Backward"},
+        "forward_group": 2,
+        "backward_group": 1,
+        "alpha": 1.0,
+    }
+    snapshot = copy.deepcopy(payload)
+    reconciled, note = reconcile_instrument_for_payload(run, payload)
+    assert note is None
+    assert reconciled is payload  # same object, not a copy
+    assert payload == snapshot  # byte-identical
+
+
+def test_reconcile_gps_variants_are_same_family_no_heal():
+    """GPS vs GPS-RD are variants of one instrument; never a spurious heal."""
+    # An 11-histogram GPS ROOT run detects as "GPS-RD"; a payload stored as the
+    # display-name "GPS" must not be "healed" to GPS-RD.
+    run = _run(
+        instrument="GPS",
+        n_hist=11,
+        metadata={
+            "facility": "PSI",
+            "psi_format": "psi-root",
+            "instrument": "LMU_BULKMUSR_GPS",
+            "histogram_labels": [
+                "Forw",
+                "Back",
+                "Up_B",
+                "Up_F",
+                "Down_B",
+                "Down_F",
+                "Right_B",
+                "Right_F",
+                "Left_B",
+                "Left_F",
+                "Mob-RL",
+            ],
+        },
+    )
+    assert detect_instrument_for_run(run) == "GPS-RD"
+    payload = {"instrument": "GPS", "groups": {1: [1]}}
+    reconciled, note = reconcile_instrument_for_payload(run, payload)
+    assert note is None
+    assert reconciled is payload

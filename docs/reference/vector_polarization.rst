@@ -90,7 +90,6 @@ Per-axis alpha values are persisted in:
 
 * project files (schema v4+)
 * dataset grouping state
-* ``.grp`` files
 
 This preserves axis-specific alpha values across save/load cycles and across
 axis switching in vector mode.
