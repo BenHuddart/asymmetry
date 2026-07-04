@@ -2480,3 +2480,94 @@ def migrate_legacy_fraction_values(
         for key in legacy_keys:
             migrated.pop(key, None)
     return migrated
+
+
+def _legacy_fraction_rename_map(model: CompositeModel) -> dict[str, str | None]:
+    """Map each legacy ``fraction_<k>`` name to its new name (or ``None`` to drop).
+
+    For every group the positional legacy keys ``fraction_a..fraction_b`` (one
+    per additive term) map to the group's term starts ``t_1..t_n``. Under the
+    n-1 scheme ``t_1..t_{n-1}`` become free parameters (their new names) and
+    ``t_n`` — the derived remainder — has no parameter, so its legacy key maps
+    to ``None`` (drop). Only names that a value/entry dict must be rewritten
+    against appear here.
+    """
+    rename: dict[str, str | None] = {}
+    for group, group_numbers in zip(
+        model.fraction_groups, _legacy_fraction_numbering(model), strict=True
+    ):
+        term_starts = model._fraction_group_term_starts(group)
+        for number, idx in zip(group_numbers[:-1], term_starts[:-1], strict=True):
+            rename[f"fraction_{number}"] = model._fraction_param_name(idx)
+        rename[f"fraction_{group_numbers[-1]}"] = None
+    return rename
+
+
+def migrate_legacy_fraction_parameter_entries(
+    model: CompositeModel, parameters: list[dict]
+) -> list[dict]:
+    """Migrate a list of parameter-state dicts from the legacy fraction scheme.
+
+    Each entry is a GUI/serialised parameter-state dict carrying at least a
+    ``"name"`` and ``"value"`` (plus metadata such as ``fixed``/``min``/``max``/
+    ``uncertainty``/``type``/``bounds``). Legacy ``fraction_<k>`` entries are
+    rewritten in place: the first n-1 terms of each group keep their metadata but
+    are renamed to the new free-parameter name and take the normalised migrated
+    weight as their value; the dropped last-term entry is removed. Every other
+    entry passes through untouched, preserving order. A no-op (returns a shallow
+    copy) when the parameter list carries no legacy fraction keys for the model.
+    """
+    value_map = {
+        str(entry["name"]): float(entry.get("value", 0.0))
+        for entry in parameters
+        if isinstance(entry, dict) and "name" in entry
+    }
+    if not has_legacy_fraction_values(model, value_map):
+        return [dict(entry) for entry in parameters]
+
+    migrated_values = migrate_legacy_fraction_values(model, value_map)
+    rename = _legacy_fraction_rename_map(model)
+
+    migrated: list[dict] = []
+    for entry in parameters:
+        if not isinstance(entry, dict):
+            migrated.append(entry)
+            continue
+        name = str(entry.get("name", ""))
+        if name in rename:
+            new_name = rename[name]
+            if new_name is None:
+                # Dropped derived-remainder term: no parameter under the new scheme.
+                continue
+            new_entry = dict(entry)
+            new_entry["name"] = new_name
+            new_entry["value"] = migrated_values.get(new_name, entry.get("value"))
+            migrated.append(new_entry)
+        else:
+            migrated.append(dict(entry))
+    return migrated
+
+
+def migrate_legacy_fraction_state(state: Mapping[str, object]) -> dict[str, object]:
+    """Migrate a saved single/global fit-state blob to the n-1 fraction scheme.
+
+    ``state`` is the GUI single-/global-fit form payload carrying a
+    ``composite_model`` dict and a ``parameters`` list of parameter-state dicts.
+    When the model reconstructs and its parameter list carries legacy
+    ``fraction_<k>`` keys, the ``parameters`` list is migrated via
+    :func:`migrate_legacy_fraction_parameter_entries`; otherwise (missing/
+    malformed model, or no legacy keys) the state is returned with a shallow-
+    copied ``parameters`` list and is otherwise unchanged. Never raises — a
+    model that fails to reconstruct simply skips migration.
+    """
+    migrated = dict(state)
+    parameters = state.get("parameters")
+    model_data = state.get("composite_model")
+    if not isinstance(parameters, list) or not isinstance(model_data, dict):
+        return migrated
+    try:
+        model = CompositeModel.from_dict(model_data, allow_missing=True)
+    except (ValueError, KeyError, TypeError):
+        return migrated
+    migrated["parameters"] = migrate_legacy_fraction_parameter_entries(model, parameters)
+    return migrated

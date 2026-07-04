@@ -85,6 +85,38 @@ def test_fit_slot_round_trip_and_provenance_guard():
     assert FitSlot().is_empty()
 
 
+def test_fit_slot_migrates_legacy_fraction_parameters():
+    """A pre-rework .asymp slot (fraction_<k> keys) migrates to the n-1 scheme.
+
+    ``FitSlot.from_dict`` rebuilds the composite model from the ``model`` payload
+    and, when the parameter list carries legacy ``fraction_<k>`` keys, renames the
+    first n-1 to the new free names (normalised weights) and drops the last-term
+    entry — so pre-rework projects load, display, and refit.
+    """
+    model = CompositeModel.from_expression("( Exponential + Gaussian + Constant ){frac}")
+    slot = FitSlot.from_dict(
+        {
+            "model": model.to_dict(),
+            "parameters": [
+                {"name": "A_1", "value": 20.0},
+                {"name": "Lambda", "value": 0.5},
+                {"name": "fraction_1", "value": 2.0, "fixed": False},
+                {"name": "sigma", "value": 0.3},
+                {"name": "fraction_2", "value": 1.0, "fixed": True},
+                {"name": "fraction_3", "value": 1.0},
+            ],
+            "provenance": "single",
+        }
+    )
+    names = [entry["name"] for entry in slot.parameters]
+    assert names == ["A_1", "Lambda", "f_Exponential", "sigma", "f_Gaussian"]
+    by_name = {entry["name"]: entry for entry in slot.parameters}
+    assert by_name["f_Exponential"]["value"] == pytest.approx(0.5)
+    assert by_name["f_Gaussian"]["value"] == pytest.approx(0.25)
+    assert by_name["f_Gaussian"]["fixed"] is True
+    assert not any(name.startswith("fraction_") for name in names)
+
+
 def test_fit_slot_result_provenance_keys_round_trip():
     """The additive fit-log provenance keys (Item 2) survive .asymp persistence.
 

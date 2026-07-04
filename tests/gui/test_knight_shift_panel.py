@@ -238,22 +238,21 @@ def test_crossings_detected_but_markers_suppressed(qapp):
     assert not axvlines, "crossing markers should be suppressed"
 
 
-def test_fraction_weights_note_shows_normalised_partition(qapp):
-    # Raw fractions can sum to >1 (relative weights); the note reports the
-    # normalised partition that sums to 1, including the fixed last fraction.
+def test_fraction_weights_note_shows_partition(qapp):
+    # Under the n-1 scheme the free fractions are the weights and the group's last
+    # term is the derived remainder; the note reports the full per-group partition
+    # (free fractions plus the derived remainder) which sums to 1.
     panel = FitParametersPanel()
     panel.load_representation_series(
         [("batch-1", "S", [_row(1, 7000.0, {"field_1": 7050.0})])],
-        fraction_weights_by_id={
-            "batch-1": {"fraction_1": 0.465, "fraction_2": 0.310, "fraction_3": 0.225}
-        },
+        fraction_weights_by_id={"batch-1": {"f_Aa": 0.465, "f_Bb": 0.310, "f_Cc": 0.225}},
     )
     note = panel._fraction_weights_note()
-    assert "Normalised fraction weights" in note
-    assert "fraction_1 = 0.465" in note
-    assert "fraction_3 = 0.225" in note  # the otherwise-hidden fixed fraction
-    # Ordered by component index.
-    assert note.index("fraction_1") < note.index("fraction_2") < note.index("fraction_3")
+    assert "Fraction weights" in note
+    assert "f_Aa = 0.465" in note
+    assert "f_Cc = 0.225" in note  # the derived remainder of the group
+    # Deterministically ordered (index then name).
+    assert note.index("f_Aa") < note.index("f_Bb") < note.index("f_Cc")
 
 
 def test_fraction_weights_note_empty_without_data(qapp):

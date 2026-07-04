@@ -9,6 +9,8 @@ from asymmetry.core.fitting.composite import (
     COMPONENTS,
     CompositeModel,
     has_legacy_fraction_values,
+    migrate_legacy_fraction_parameter_entries,
+    migrate_legacy_fraction_state,
     migrate_legacy_fraction_values,
 )
 from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
@@ -424,6 +426,71 @@ def test_has_legacy_fraction_values_false_for_new_scheme() -> None:
     assert not has_legacy_fraction_values(model, new_values)
     # A migration on new-scheme values is a no-op passthrough.
     assert migrate_legacy_fraction_values(model, new_values) == new_values
+
+
+def test_migrate_legacy_fraction_parameter_entries_renames_and_drops() -> None:
+    model = CompositeModel.from_expression("( Exponential + Gaussian + Constant ){frac}")
+    entries = [
+        {"name": "A_1", "value": 20.0, "fixed": False, "min": "0", "max": "inf"},
+        {"name": "Lambda", "value": 0.5, "fixed": False},
+        {"name": "fraction_1", "value": 2.0, "fixed": False, "min": "0", "max": "1"},
+        {"name": "sigma", "value": 0.3, "fixed": False},
+        {"name": "fraction_2", "value": 1.0, "fixed": True, "min": "0", "max": "1"},
+        {"name": "fraction_3", "value": 1.0, "fixed": False},
+    ]
+    migrated = migrate_legacy_fraction_parameter_entries(model, entries)
+    names = [entry["name"] for entry in migrated]
+    # Legacy fraction_1/2 → free names (order preserved); fraction_3 dropped.
+    assert names == ["A_1", "Lambda", "f_Exponential", "sigma", "f_Gaussian"]
+    by_name = {entry["name"]: entry for entry in migrated}
+    # Raw [2, 1, 1] normalise to [0.5, 0.25, 0.25]; free params take the first n-1.
+    assert by_name["f_Exponential"]["value"] == pytest.approx(0.5)
+    assert by_name["f_Gaussian"]["value"] == pytest.approx(0.25)
+    # Renamed entries keep their metadata (the fixed flag / bounds).
+    assert by_name["f_Gaussian"]["fixed"] is True
+    assert by_name["f_Exponential"]["min"] == "0"
+    # No legacy keys survive.
+    assert not any(name.startswith("fraction_") for name in names)
+
+
+def test_migrate_legacy_fraction_parameter_entries_noop_for_new_scheme() -> None:
+    model = CompositeModel.from_expression("( Exponential + Gaussian ){frac}")
+    entries = [
+        {"name": "A_1", "value": 1.0},
+        {"name": "f_Exponential", "value": 0.4},
+    ]
+    migrated = migrate_legacy_fraction_parameter_entries(model, entries)
+    assert [e["name"] for e in migrated] == ["A_1", "f_Exponential"]
+    assert migrated == entries
+
+
+def test_migrate_legacy_fraction_state_round_trip() -> None:
+    model = CompositeModel.from_expression("( Exponential + Gaussian + Constant ){frac}")
+    state = {
+        "composite_model": model.to_dict(),
+        "parameters": [
+            {"name": "A_1", "value": 20.0},
+            {"name": "Lambda", "value": 0.5},
+            {"name": "fraction_1", "value": 2.0},
+            {"name": "sigma", "value": 0.3},
+            {"name": "fraction_2", "value": 1.0},
+            {"name": "fraction_3", "value": 1.0},
+        ],
+        "result_html": "kept",
+    }
+    migrated = migrate_legacy_fraction_state(state)
+    names = [entry["name"] for entry in migrated["parameters"]]
+    assert names == ["A_1", "Lambda", "f_Exponential", "sigma", "f_Gaussian"]
+    # Other keys untouched; the model payload is not rewritten.
+    assert migrated["result_html"] == "kept"
+    assert migrated["composite_model"] == model.to_dict()
+
+
+def test_migrate_legacy_fraction_state_skips_malformed_model() -> None:
+    state = {"composite_model": {"bogus": True}, "parameters": [{"name": "fraction_1"}]}
+    migrated = migrate_legacy_fraction_state(state)
+    # No usable model → state returned unchanged (parameters shallow-copied).
+    assert migrated["parameters"] == [{"name": "fraction_1"}]
 
 
 def test_fraction_group_uses_group_amplitude_and_free_fraction_parameters() -> None:

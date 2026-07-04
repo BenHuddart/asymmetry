@@ -196,36 +196,127 @@ def _set_param_table_value(table: QTableWidget, row: int, value: float) -> None:
         item.setText(f"{float(value):.6g}")
 
 
+#: Custom item-data role tagging a synthesized derived-fraction (remainder) row.
+#: Every read path that assembles fit inputs or serialises table state skips rows
+#: carrying this role — they are display-only (no fitted parameter). The value is
+#: the derived remainder's display name (also stored in ``UserRole``).
+_DERIVED_FRACTION_ROLE = int(Qt.ItemDataRole.UserRole) + 1
+
+#: A muted foreground for the read-only derived-fraction value, so the remainder
+#: reads as computed rather than editable.
+_DERIVED_FRACTION_TOOLTIP = "Remainder: 1 − the other fractions in this group"
+
+
+def _derived_fraction_row_names(model: CompositeModel) -> set[str]:
+    """Return the display-only remainder names the model synthesises, if any."""
+    return set(model.derived_fraction_names()) if model is not None else set()
+
+
+def _is_derived_fraction_row(table: QTableWidget, row: int, name_column: int = 0) -> bool:
+    """Return True when ``row`` is a synthesized derived-fraction (remainder) row."""
+    item = table.item(row, name_column)
+    return item is not None and item.data(_DERIVED_FRACTION_ROLE) is not None
+
+
+def _ensure_derived_fraction_rows_in_table(
+    table: QTableWidget,
+    model: CompositeModel,
+    *,
+    value_column: int = 1,
+    column_count: int | None = None,
+) -> None:
+    """Append one display-only remainder row per fraction group (idempotent).
+
+    Each group's last additive term has no fitted parameter — its weight is the
+    remainder ``1 − Σ(free)``. This synthesises a read-only, visually-muted row
+    (name from :meth:`CompositeModel.derived_fraction_terms`) tagged with
+    :data:`_DERIVED_FRACTION_ROLE` so every fit-input/serialisation read path
+    skips it. Fix/Link/Tie/bounds controls are deliberately absent. Stale derived
+    rows from a previous model are removed first, so re-populating a table with a
+    different model never leaves orphans. The remainder value itself is filled by
+    :func:`_synchronize_fraction_group_values_in_table`.
+    """
+    # Drop any existing derived rows first (bottom-up so indices stay valid).
+    for row in range(table.rowCount() - 1, -1, -1):
+        if _is_derived_fraction_row(table, row):
+            table.removeRow(row)
+
+    terms = model.derived_fraction_terms() if model is not None else []
+    if not terms:
+        return
+
+    muted = QColor(tokens.TEXT_MUTED)
+    cols = column_count if column_count is not None else table.columnCount()
+    for display_name, _group in terms:
+        row = table.rowCount()
+        table.insertRow(row)
+        name_item = _make_param_name_item(format_param_label(display_name), display_name)
+        name_item.setData(_DERIVED_FRACTION_ROLE, display_name)
+        name_item.setForeground(muted)
+        name_item.setToolTip(_DERIVED_FRACTION_TOOLTIP)
+        table.setItem(row, 0, name_item)
+
+        value_item = QTableWidgetItem("")
+        value_item.setFont(mono_font(11.0))
+        value_item.setFlags(value_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        value_item.setForeground(muted)
+        value_item.setToolTip(_DERIVED_FRACTION_TOOLTIP)
+        table.setItem(row, value_column, value_item)
+
+        # Blank, non-editable placeholders in every other column so the row reads
+        # as inert (no Fix box, Link combo, Tie button, or bounds fields).
+        for col in range(cols):
+            if col in (0, value_column):
+                continue
+            if table.cellWidget(row, col) is not None:
+                continue
+            filler = QTableWidgetItem("")
+            filler.setFlags(filler.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            filler.setToolTip(_DERIVED_FRACTION_TOOLTIP)
+            table.setItem(row, col, filler)
+
+
 def _synchronize_fraction_group_values_in_table(
     table: QTableWidget,
     model: CompositeModel,
     *,
     edited_param_name: str | None = None,
+    value_column: int = 1,
 ) -> None:
+    """Clamp free fraction rows into [0, 1] and recompute each derived remainder.
+
+    Under the n-1 scheme every listed fraction parameter is a FREE, editable row;
+    no row is locked. Each free value is clamped to [0, 1] and, when a user edits
+    one, capped at ``1 − Σ(other free values in its group)`` so a group's free
+    fractions never over-subscribe. The synthesized derived-remainder display row
+    (if present) is then written with ``max(0, 1 − Σ free)`` for its group.
+    """
     row_by_name = _param_table_rows_by_name(table)
-    for group in model.fraction_parameter_groups():
-        if len(group) < 2:
-            continue
-        if edited_param_name is not None and edited_param_name not in group:
+    derived_by_name = {
+        display_name: group for display_name, group in model.derived_fraction_terms()
+    }
+    # Map each group to its derived display name for the remainder write-back.
+    derived_name_by_group = {group: name for name, group in derived_by_name.items()}
+
+    for free_names, (derived_name, group) in zip(
+        model.fraction_parameter_groups(), model.derived_fraction_terms(), strict=True
+    ):
+        if edited_param_name is not None and edited_param_name not in free_names:
             continue
 
-        editable_names = group[:-1]
-        final_name = group[-1]
         values: dict[str, float] = {}
-        for name in editable_names:
+        for name in free_names:
             row = row_by_name.get(name)
             if row is None:
                 continue
             values[name] = min(max(_parse_param_table_float(table, row, 0.0), 0.0), 1.0)
 
-        if edited_param_name in editable_names:
-            remaining = 1.0 - sum(
-                values[name] for name in editable_names if name != edited_param_name
-            )
+        if edited_param_name in free_names:
+            remaining = 1.0 - sum(values[name] for name in free_names if name != edited_param_name)
             values[edited_param_name] = min(values[edited_param_name], max(0.0, remaining))
         else:
             running_sum = 0.0
-            for name in editable_names:
+            for name in free_names:
                 values[name] = min(values.get(name, 0.0), max(0.0, 1.0 - running_sum))
                 running_sum += values[name]
 
@@ -234,10 +325,12 @@ def _synchronize_fraction_group_values_in_table(
             if row is not None:
                 _set_param_table_value(table, row, value)
 
-        final_row = row_by_name.get(final_name)
-        if final_row is not None:
-            final_value = max(0.0, 1.0 - sum(values.get(name, 0.0) for name in editable_names))
-            _set_param_table_value(table, final_row, final_value)
+        remainder = max(0.0, 1.0 - sum(values.get(name, 0.0) for name in free_names))
+        derived_row = row_by_name.get(derived_name_by_group.get(group))
+        if derived_row is not None:
+            item = table.item(derived_row, value_column)
+            if item is not None:
+                item.setText(f"{remainder:.6g}")
 
 
 def _configure_fraction_rows_in_table(
@@ -249,36 +342,36 @@ def _configure_fraction_rows_in_table(
     bounds_column: int | None = None,
     type_column: int | None = None,
 ) -> None:
-    row_by_name = _param_table_rows_by_name(table)
-    final_fraction_names = {group[-1] for group in model.fraction_parameter_groups() if group}
-    all_fraction_names = {name for group in model.fraction_parameter_groups() for name in group}
+    """Set [0, 1] bounds and a hint tooltip on every FREE fraction row.
 
-    for name in all_fraction_names:
+    Under the n-1 scheme all listed fraction parameters are free and editable, so
+    no row is ever locked or forced to ``Fixed``. This ensures the synthesized
+    derived-remainder row exists, then bounds/tooltips the free rows. Must be
+    called after the caller has built its parameter rows (populate/rebuild).
+    """
+    _ensure_derived_fraction_rows_in_table(
+        table,
+        model,
+        value_column=1,
+        column_count=table.columnCount(),
+    )
+    row_by_name = _param_table_rows_by_name(table)
+    all_free_names = {name for group in model.fraction_parameter_groups() for name in group}
+    tooltip = "Free fraction in [0, 1]; the group's remainder is 1 − the others."
+
+    for name in all_free_names:
         row = row_by_name.get(name)
         if row is None:
             continue
         value_item = table.item(row, 1)
         if value_item is not None:
-            tooltip = (
-                "Final fraction is computed automatically."
-                if name in final_fraction_names
-                else "Edit the first n-1 fractions; the final fraction is the remainder to 1."
-            )
             value_item.setToolTip(tooltip)
-            if name in final_fraction_names:
-                value_item.setFlags(value_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
 
         if type_column is not None:
             type_combo = table.cellWidget(row, type_column)
             if isinstance(type_combo, QComboBox):
                 type_combo.setToolTip(tooltip)
-                if name in final_fraction_names:
-                    fixed_index = type_combo.findText("Fixed")
-                    if fixed_index >= 0:
-                        type_combo.setCurrentIndex(fixed_index)
-                    type_combo.setEnabled(False)
-                else:
-                    type_combo.setEnabled(True)
+                type_combo.setEnabled(True)
 
         if min_column is not None:
             min_item = table.item(row, min_column)
@@ -1377,6 +1470,10 @@ class FitParameterTable(QTableWidget):
         """Build a :class:`ParameterSet` from the table (raises on a bad value)."""
         parameters = ParameterSet()
         for i in range(self.rowCount()):
+            # Derived-fraction remainder rows are display-only (no fitted
+            # parameter); never assemble a Parameter from them.
+            if _is_derived_fraction_row(self, i, self.COL_NAME):
+                continue
             name_item = self.item(i, self.COL_NAME)
             param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
             if not isinstance(param_name, str):
@@ -1424,6 +1521,8 @@ class FitParameterTable(QTableWidget):
         """Return the live seed text per parameter name (skips non-finite cells)."""
         seeds: dict[str, str] = {}
         for row in range(self.rowCount()):
+            if _is_derived_fraction_row(self, row, self.COL_NAME):
+                continue
             name_item = self.item(row, self.COL_NAME)
             if name_item is None:
                 continue
@@ -1451,6 +1550,8 @@ class FitParameterTable(QTableWidget):
         """
         bounds: dict[str, str] = {}
         for row in range(self.rowCount()):
+            if _is_derived_fraction_row(self, row, self.COL_NAME):
+                continue
             name_item = self.item(row, self.COL_NAME)
             if name_item is None:
                 continue
@@ -1468,6 +1569,10 @@ class FitParameterTable(QTableWidget):
         """Serialise the table rows (+ auxiliaries) as parameter-state dicts."""
         params: list[dict] = []
         for i in range(self.rowCount()):
+            # Synthesized derived-fraction (remainder) rows are display-only — they
+            # carry no fitted parameter and must never enter the serialised state.
+            if _is_derived_fraction_row(self, i, self.COL_NAME):
+                continue
             name_item = self.item(i, self.COL_NAME)
             param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else f"param_{i}"
             if not isinstance(param_name, str):

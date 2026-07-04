@@ -429,6 +429,103 @@ def test_fit_wizard_recommendation_serialization_round_trip(
     assert restored.assessment_for_key(recommendation.recommended_key) is not None
 
 
+def test_deserialize_recommendation_migrates_legacy_fraction_params() -> None:
+    """A recommendation cached before the fraction rework migrates on load.
+
+    Its assessment's fitted ``fraction_<k>`` params (and matching uncertainty
+    keys) are renamed to the n-1 free scheme against the template's model, so the
+    cached fit still applies onto the new ``f_<Component>`` rows.
+    """
+    model = CompositeModel.from_expression("( Exponential + Gaussian + Constant ){frac}")
+    payload = {
+        "fingerprint": {},
+        "templates": [
+            {"key": "cand", "title": "", "category": "", "rationale": "", "model": model.to_dict()}
+        ],
+        "assessments": [
+            {
+                "template": {
+                    "key": "cand",
+                    "title": "",
+                    "category": "",
+                    "rationale": "",
+                    "model": model.to_dict(),
+                },
+                "fit_result": {
+                    "success": True,
+                    "chi_squared": 1.0,
+                    "reduced_chi_squared": 1.0,
+                    "parameters": [
+                        {"name": "A_1", "value": 20.0, "min": 0.0, "max": 1e9, "fixed": False},
+                        {"name": "Lambda", "value": 0.5, "min": 0.0, "max": 1e9, "fixed": False},
+                        {
+                            "name": "fraction_1",
+                            "value": 2.0,
+                            "min": 0.0,
+                            "max": 1.0,
+                            "fixed": False,
+                        },
+                        {"name": "sigma", "value": 0.3, "min": 0.0, "max": 1e9, "fixed": False},
+                        {
+                            "name": "fraction_2",
+                            "value": 1.0,
+                            "min": 0.0,
+                            "max": 1.0,
+                            "fixed": False,
+                        },
+                        {
+                            "name": "fraction_3",
+                            "value": 1.0,
+                            "min": 0.0,
+                            "max": 1.0,
+                            "fixed": False,
+                        },
+                    ],
+                    "uncertainties": {"fraction_1": 0.01, "fraction_2": 0.02, "fraction_3": 0.03},
+                },
+            }
+        ],
+        "metric": "aicc",
+        "recommended_key": "cand",
+        "comparable_keys": ["cand"],
+        "summary": "",
+    }
+    # A valid fingerprint is required (deserialize returns None otherwise).
+    payload["fingerprint"] = _minimal_fingerprint_payload()
+
+    restored = deserialize_fit_wizard_recommendation(payload)
+    assert restored is not None
+    assessment = restored.assessments[0]
+    names = {parameter.name for parameter in assessment.fit_result.parameters}
+    assert "f_Exponential" in names
+    assert "f_Gaussian" in names
+    assert not any(name.startswith("fraction_") for name in names)
+    # Uncertainties re-keyed to the surviving free params; the dropped last key gone.
+    assert "f_Exponential" in assessment.fit_result.uncertainties
+    assert "f_Gaussian" in assessment.fit_result.uncertainties
+    assert not any(key.startswith("fraction_") for key in assessment.fit_result.uncertainties)
+
+
+def _minimal_fingerprint_payload() -> dict:
+    return {
+        "tail_estimate": 0.0,
+        "initial_amplitude_estimate": 0.0,
+        "zero_crossings": 0,
+        "smoothed_zero_crossings": 0,
+        "smoothed_turning_points": 0,
+        "dominant_fft_frequency_mhz": 0.0,
+        "dominant_fft_snr": 0.0,
+        "dominant_fft_cycles_in_window": 0.0,
+        "monotonic_decay_fraction": 0.0,
+        "early_time_curvature": 0.0,
+        "semilog_slope_ratio": 0.0,
+        "late_time_dip_recovery_score": 0.0,
+        "oscillatory_hint": False,
+        "kt_like_hint": False,
+        "multi_rate_hint": False,
+    }
+
+
 def test_fit_wizard_can_evaluate_explicit_template_set(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

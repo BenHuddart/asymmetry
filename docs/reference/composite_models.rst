@@ -62,23 +62,30 @@ Fraction Groups
 ---------------
 
 Composite models can also share one overall amplitude across several additive
-components while fitting normalised fractions inside that group. In Python,
-write the grouped sum as ``(...){frac}``:
+components while fitting the fractional weight of each term inside that group.
+In Python, write the grouped sum as ``(...){frac}``:
 
 .. code-block:: python
 
   fraction_model = CompositeModel.from_expression(
-     "( Exponential + Gaussian ){frac} + Constant"
+     "( Exponential + Gaussian + Constant ){frac} + Constant"
   )
 
-This creates one amplitude for the grouped sum together with fraction
-parameters ``fraction_1``, ``fraction_2``, ... that are normalised internally
-so the effective fractions always satisfy :math:`\sum_i f_i = 1`.
+A group of :math:`n` additive terms has :math:`n - 1` **free** fraction
+parameters, named after their components — ``f_Exponential``, ``f_Gaussian``,
+... (duplicates are suffixed ``_2``, ``_3``, ...). Each free fraction is a
+weight in :math:`[0, 1]`. The **last** term of the group has *no* fitted
+parameter: its weight is the remainder, :math:`1 - \sum_i f_i`, clamped to
+:math:`[0, 1]`. There is no sum-normalisation — the free fractions are the
+weights directly, so together with the derived remainder they partition the
+group's amplitude.
 
 In the GUI fit-function builder, you do not need to type ``{frac}``. Instead,
 select two or more additive components, press ``Fractions``, and the dialog
 uses matching colours in the expression editor and preview to show which terms
-belong to the same fraction group.
+belong to the same fraction group. In the fit-panel parameter table the free
+fractions are ordinary editable rows; the group's remainder appears as a muted,
+read-only row that updates automatically as you edit the others.
 
 Parameter Naming Rules
 ----------------------
@@ -89,8 +96,11 @@ Composite models generate unique parameter names automatically:
 * Components joined by ``*`` or ``/`` share a single amplitude for that
     multiplicative chain. For example, ``Exponential * Gaussian`` uses only
     ``A_1``.
-* Fraction groups share one amplitude across the whole grouped sum and add
-  normalised fraction parameters: ``A_1``, ``fraction_1``, ``fraction_2``, ...
+* Fraction groups share one amplitude across the whole grouped sum (``A_1``)
+  and add one free fraction per term named after its component —
+  ``f_Exponential``, ``f_Gaussian``, ... (duplicates suffixed ``_2``, ``_3``,
+  ...) — for all but the last term. The last term carries no parameter; its
+  weight is the derived remainder :math:`1 - \sum_i f_i`.
 * Repeated symbols are indexed: ``Lambda_1``, ``Lambda_2``
 * Unique symbols remain unindexed: ``frequency``
 * Constant background uses ``A_bg``
@@ -99,9 +109,11 @@ This keeps the parameterisation closer to the usual physics notation for
 products such as an exponentially damped oscillation, where the envelope and
 oscillation share one overall asymmetry.
 
-For fraction groups, the final effective weights are always normalised even if
-the raw fit parameters move during minimisation, so the grouped amplitudes stay
-on a physically interpretable simplex.
+For fraction groups the free fractions *are* the weights (each clamped to
+:math:`[0, 1]`); the final term takes whatever remains, :math:`1 - \sum_i f_i`
+(floored at zero if the free fractions over-subscribe). There is no
+sum-normalisation, so the fitted free values are directly interpretable as the
+physical fractional weights.
 
 Always read ``.param_names`` before building a ``ParameterSet``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
