@@ -3886,8 +3886,16 @@ class FitParametersPanel(QWidget):
         x_key = self._effective_x_key()
         group_payload: list[ParameterGroupData] = []
         for group in selected_groups:
-            rows = sorted(group.rows, key=lambda r: self._x_value(r, x_key))
-            if not rows:
+            # Only members the user kept in the trend feed the cross-group fit
+            # (mirroring the single-group path's ``_included_trend_rows``): an
+            # excluded row stays visible on the plot but must not pull a
+            # global/local parameter fit, and must not block the "all groups
+            # have this parameter" completeness check below.
+            rows = sorted(
+                (r for r in group.rows if r.include_in_trend),
+                key=lambda r: self._x_value(r, x_key),
+            )
+            if len(rows) < 2:
                 continue
             if any(param_name not in row.values for row in rows):
                 QMessageBox.information(
@@ -3899,6 +3907,8 @@ class FitParametersPanel(QWidget):
             x_vals = np.array([self._x_value(r, x_key) for r in rows], dtype=float)
             y_vals = np.array([row.values.get(param_name, np.nan) for row in rows], dtype=float)
             y_err = np.array([row.errors.get(param_name, np.nan) for row in rows], dtype=float)
+            if np.count_nonzero(np.isfinite(y_vals)) < 2:
+                continue
             invalid_err = ~np.isfinite(y_err) | (y_err <= 0)
             if np.any(invalid_err):
                 finite = np.abs(y_vals[np.isfinite(y_vals)])
@@ -3923,7 +3933,9 @@ class FitParametersPanel(QWidget):
             QMessageBox.information(
                 self,
                 "Cross-group fit",
-                "Need at least two selected groups with valid points for cross-group fitting.",
+                "Need at least two selected groups with valid points for cross-group "
+                "fitting. Members excluded from the trend (unchecked Trend column) do "
+                "not count toward a group's points.",
             )
             return None
 

@@ -11,7 +11,7 @@ import time
 
 import numpy as np
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QDialog
 
 from asymmetry.core.fitting.parameter_models import (
     CrossGroupFitResult,
@@ -20,6 +20,7 @@ from asymmetry.core.fitting.parameter_models import (
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.cross_group_fit_dialog import CrossGroupFitDialog
+from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel, _FitRow, _GroupFitData
 
 
 def _groups() -> list[ParameterGroupData]:
@@ -397,3 +398,207 @@ def test_local_param_error_cell_shows_per_group_values_not_just_group0() -> None
     assert dlg._build_error_cell("b", "Fixed", result).text() == ""
     # No result yet: blank.
     assert dlg._build_error_cell("b", "Local", None).text() == ""
+
+
+# --- Phase 0: _run_cross_group_model_fit must honour include_in_trend --------
+
+
+def _fit_row(
+    run_number: int, field: float, value: float, *, include_in_trend: bool = True
+) -> _FitRow:
+    return _FitRow(
+        run_number=run_number,
+        run_label=str(run_number),
+        field=field,
+        temperature=5.0,
+        values={"Lambda": value},
+        errors={"Lambda": 0.01},
+        include_in_trend=include_in_trend,
+    )
+
+
+class _RecordingDialogStub:
+    """Stand-in for CrossGroupFitDialog: records the assembled groups and
+    reports the dialog as cancelled, so ``_run_cross_group_model_fit`` returns
+    ``None`` right after assembly without needing a full dialog/fit round trip."""
+
+    captured_groups: list[ParameterGroupData] | None = None
+
+    def __init__(self, *, groups: list[ParameterGroupData], **_kwargs) -> None:
+        type(self).captured_groups = groups
+
+    def exec(self) -> int:
+        return QDialog.DialogCode.Rejected
+
+
+def test_cross_group_fit_excludes_trend_excluded_member(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A member with include_in_trend=False must be absent from the assembled
+    ParameterGroupData x/y arrays fed to the cross-group dialog/fit — mirroring
+    the single-group path's ``_included_trend_rows`` gate."""
+    from asymmetry.gui.panels import fit_parameters_panel as panel_mod
+
+    monkeypatch.setattr(panel_mod, "CrossGroupFitDialog", _RecordingDialogStub)
+    _RecordingDialogStub.captured_groups = None
+
+    panel = FitParametersPanel()
+    rows_a = [
+        _fit_row(1, 100.0, 0.10),
+        _fit_row(2, 200.0, 0.20),
+        _fit_row(3, 300.0, 999.0, include_in_trend=False),  # excluded outlier
+    ]
+    rows_b = [
+        _fit_row(4, 100.0, 0.12),
+        _fit_row(5, 200.0, 0.22),
+    ]
+    group_a = _GroupFitData(
+        group_id="g_a",
+        group_name="Group A",
+        rows=rows_a,
+        global_params=None,
+        varying_params=["Lambda"],
+        inferred_x_key="field",
+        model_fits={},
+        plot_annotations=[],
+    )
+    group_b = _GroupFitData(
+        group_id="g_b",
+        group_name="Group B",
+        rows=rows_b,
+        global_params=None,
+        varying_params=["Lambda"],
+        inferred_x_key="field",
+        model_fits={},
+        plot_annotations=[],
+    )
+
+    payload = panel._run_cross_group_model_fit("Lambda", [group_a, group_b])
+
+    assert payload is None  # dialog was "cancelled" by the stub
+    captured = _RecordingDialogStub.captured_groups
+    assert captured is not None
+    assert len(captured) == 2
+
+    by_id = {g.group_id: g for g in captured}
+    # The excluded run-3 point (x=300, y=999) must not appear.
+    assert list(by_id["g_a"].x) == [100.0, 200.0]
+    assert list(by_id["g_a"].y) == [0.10, 0.20]
+    assert list(by_id["g_b"].x) == [100.0, 200.0]
+    assert list(by_id["g_b"].y) == [0.12, 0.22]
+
+
+def test_cross_group_fit_drops_fully_excluded_group_and_guards_below_two(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A group whose members are all trend-excluded (or left with <2 included
+    points) is dropped entirely; if that leaves fewer than two groups, the
+    existing "need two groups" guard fires and the dialog is never opened."""
+    from asymmetry.gui.panels import fit_parameters_panel as panel_mod
+
+    monkeypatch.setattr(panel_mod, "CrossGroupFitDialog", _RecordingDialogStub)
+    _RecordingDialogStub.captured_groups = None
+
+    info_calls: list[tuple] = []
+    from PySide6.QtWidgets import QMessageBox
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "information",
+        lambda *args, **kwargs: info_calls.append(args) or None,
+    )
+
+    panel = FitParametersPanel()
+    rows_a = [
+        _fit_row(1, 100.0, 0.10),
+        _fit_row(2, 200.0, 0.20),
+    ]
+    # Every member of group B is excluded from the trend.
+    rows_b = [
+        _fit_row(4, 100.0, 0.12, include_in_trend=False),
+        _fit_row(5, 200.0, 0.22, include_in_trend=False),
+    ]
+    group_a = _GroupFitData(
+        group_id="g_a",
+        group_name="Group A",
+        rows=rows_a,
+        global_params=None,
+        varying_params=["Lambda"],
+        inferred_x_key="field",
+        model_fits={},
+        plot_annotations=[],
+    )
+    group_b = _GroupFitData(
+        group_id="g_b",
+        group_name="Group B",
+        rows=rows_b,
+        global_params=None,
+        varying_params=["Lambda"],
+        inferred_x_key="field",
+        model_fits={},
+        plot_annotations=[],
+    )
+
+    payload = panel._run_cross_group_model_fit("Lambda", [group_a, group_b])
+
+    assert payload is None
+    # The dialog was never constructed — the guard fired first.
+    assert _RecordingDialogStub.captured_groups is None
+    assert len(info_calls) == 1
+    guard_text = str(info_calls[0])
+    assert "trend" in guard_text.lower()
+
+
+def test_cross_group_fit_all_included_matches_prior_unfiltered_behaviour(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When every member is included (the common case), the assembled arrays
+    are unchanged from a plain group.rows pass-through."""
+    from asymmetry.gui.panels import fit_parameters_panel as panel_mod
+
+    monkeypatch.setattr(panel_mod, "CrossGroupFitDialog", _RecordingDialogStub)
+    _RecordingDialogStub.captured_groups = None
+
+    panel = FitParametersPanel()
+    rows_a = [
+        _fit_row(1, 300.0, 0.30),
+        _fit_row(2, 100.0, 0.10),
+        _fit_row(3, 200.0, 0.20),
+    ]
+    rows_b = [
+        _fit_row(4, 100.0, 0.12),
+        _fit_row(5, 200.0, 0.22),
+        _fit_row(6, 300.0, 0.32),
+    ]
+    group_a = _GroupFitData(
+        group_id="g_a",
+        group_name="Group A",
+        rows=rows_a,
+        global_params=None,
+        varying_params=["Lambda"],
+        inferred_x_key="field",
+        model_fits={},
+        plot_annotations=[],
+    )
+    group_b = _GroupFitData(
+        group_id="g_b",
+        group_name="Group B",
+        rows=rows_b,
+        global_params=None,
+        varying_params=["Lambda"],
+        inferred_x_key="field",
+        model_fits={},
+        plot_annotations=[],
+    )
+
+    payload = panel._run_cross_group_model_fit("Lambda", [group_a, group_b])
+
+    assert payload is None
+    captured = _RecordingDialogStub.captured_groups
+    assert captured is not None
+    by_id = {g.group_id: g for g in captured}
+    # Sorted ascending by x (field), all three points present per group.
+    assert list(by_id["g_a"].x) == [100.0, 200.0, 300.0]
+    assert list(by_id["g_a"].y) == [0.10, 0.20, 0.30]
+    assert list(by_id["g_b"].x) == [100.0, 200.0, 300.0]
+    assert list(by_id["g_b"].y) == [0.12, 0.22, 0.32]
