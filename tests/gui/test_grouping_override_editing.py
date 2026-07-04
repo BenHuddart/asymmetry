@@ -1,10 +1,12 @@
-"""Tests for override-editing mode in the grouping window (M3).
+"""Tests for the unified selection-driven editing model in the grouping window.
 
-An overridden run's grouping was previously uneditable — it could only be
-created (Release) or dropped (Reattach). This adds an explicit override-editing
-mode: selecting an overridden run as the preview run seeds the form from that
-run's own grouping, keeps edits off the profile draft, and applies to that run
-alone.
+The scope-panel selection is the selector: the run selected there is previewed
+and edited, and the editing target follows the run's status. Selecting an
+inheriting run edits the profile draft; selecting an overridden run edits that
+run's own override draft (seeded once from its stored payload). Override drafts
+accumulate — switching selection never prompts — and Apply commits everything
+dirty: the profile plus each edited override. The only guard is closing the
+window with uncommitted changes.
 """
 
 from __future__ import annotations
@@ -67,157 +69,212 @@ def _dialog(overridden: list[int], *, selected: int | None = None) -> GroupingDi
     )
 
 
-def _select_preview_run(dialog: GroupingDialog, run_number: int) -> None:
-    idx = dialog._reference_combo.findData(int(run_number))
-    dialog._reference_combo.setCurrentIndex(idx)
+def _select_run(dialog: GroupingDialog, run_number: int) -> None:
+    """Select *run_number* in the scope panel (the window's selector)."""
+    dialog._scope_panel.set_current_run(int(run_number))
 
 
-def test_enter_override_mode_via_preview_switch(qapp: QApplication) -> None:
-    """Selecting an overridden run as preview enters override-editing mode."""
+def test_selecting_overridden_run_switches_editing_target(qapp: QApplication) -> None:
+    """Selecting an overridden run makes it the editing target (no profile edit)."""
     dialog = _dialog(overridden=[2], selected=1)
-    assert dialog._override_mode is False
+    assert dialog._editing_target() == "profile"
 
-    _select_preview_run(dialog, 2)
+    _select_run(dialog, 2)
 
-    assert dialog._override_mode is True
-    assert dialog._override_run_number == 2
-    assert dialog._override_banner.isHidden() is False
-    assert "run 2" in dialog._override_banner.text()
-    # Profile + instrument switchers are disabled; scope panel stays present.
-    assert dialog._profile_combo.isEnabled() is False
-    assert dialog._instrument_combo.isEnabled() is False
+    assert dialog._editing_target() == 2
+    # The editing-target strip reflects the override (warning-tinted text).
+    assert "override for run 2" in dialog._editing_strip.text()
+    assert "this run only" in dialog._editing_strip.text()
+    # No modal state: the profile + instrument switchers stay enabled.
+    assert dialog._profile_combo.isEnabled() is True
+    assert dialog._instrument_combo.isEnabled() is True
 
 
 def test_override_form_seeds_from_run_grouping(qapp: QApplication) -> None:
     """The override form seeds from the run's own grouping payload (its alpha)."""
     dialog = _dialog(overridden=[2], selected=1)
-    _select_preview_run(dialog, 2)
+    _select_run(dialog, 2)
     # Run 2 was built with alpha=2.0; the form reflects the override, not the profile.
     assert dialog._alpha_spin.value() == pytest.approx(2.0)
 
 
 def test_edits_do_not_leak_into_profile_draft(qapp: QApplication) -> None:
-    """Editing in override mode leaves the profile draft untouched."""
+    """Editing an overridden run leaves the profile draft's settings untouched."""
     dialog = _dialog(overridden=[2], selected=1)
-    draft_before = dialog._draft.to_dict()
+    alpha_before = dialog._draft.alpha_policy.value
 
-    _select_preview_run(dialog, 2)
+    _select_run(dialog, 2)
     dialog._alpha_spin.setValue(3.5)
     dialog._sync_draft_from_form()
 
-    # The profile draft is unchanged; the override payload captured the edit.
-    assert dialog._draft.to_dict() == draft_before
-    assert dialog._override_payload is not None
-    assert dialog._override_payload["alpha"] == pytest.approx(3.5)
+    # The override edit (alpha=3.5) went to the override draft, not the profile.
+    assert dialog._override_drafts[2]["alpha"] == pytest.approx(3.5)
+    assert dialog._draft.alpha_policy.value == pytest.approx(alpha_before)
+    assert dialog._draft.alpha_policy.value != pytest.approx(3.5)
 
 
 def test_apply_writes_only_the_overridden_run(qapp: QApplication) -> None:
-    """Apply in override mode returns override_edits for that run and no broadcast."""
+    """Apply returns override_edits for the edited run and no broadcast to it."""
     dialog = _dialog(overridden=[2], selected=1)
-    _select_preview_run(dialog, 2)
+    _select_run(dialog, 2)
     dialog._alpha_spin.setValue(3.5)
     dialog._on_apply()
 
     grouping_result = dialog.get_grouping_result()
     profile_result = dialog.get_profile_result()
 
-    # No inheriting run is broadcast to; the override is carried separately.
-    assert grouping_result["run_numbers"] == []
+    # Only run 1 inherits; run 2 (overridden) is not broadcast to.
+    assert grouping_result["run_numbers"] == [1]
     assert set(profile_result["override_edits"].keys()) == {2}
     assert profile_result["override_edits"][2]["alpha"] == pytest.approx(3.5)
-    # Run 1 (inheriting) is untouched: not present in any apply target.
     assert 1 not in profile_result["override_edits"]
 
 
-def test_exit_mode_via_switch_back_to_inheriting_run(qapp: QApplication) -> None:
-    """Switching preview back to an inheriting run exits override mode."""
+def test_switching_selection_never_prompts_and_accumulates(qapp: QApplication) -> None:
+    """Switching selection keeps each target's draft — no prompt, edits accumulate."""
+    dialog = _dialog(overridden=[1, 2], selected=1)
+
+    _select_run(dialog, 1)
+    dialog._alpha_spin.setValue(1.25)
+    # Switching to run 2 must not prompt (monkeypatch would blow up if it did).
+    _select_run(dialog, 2)
+    dialog._alpha_spin.setValue(2.75)
+    # Back to run 1: its in-progress override draft is restored, not the file.
+    _select_run(dialog, 1)
+    assert dialog._alpha_spin.value() == pytest.approx(1.25)
+    _select_run(dialog, 2)
+    assert dialog._alpha_spin.value() == pytest.approx(2.75)
+
+
+def test_apply_commits_all_dirty_overrides(qapp: QApplication) -> None:
+    """Apply commits every dirty override alongside the profile in one pass."""
+    dialog = _dialog(overridden=[1, 2], selected=1)
+    _select_run(dialog, 1)
+    dialog._alpha_spin.setValue(1.25)
+    _select_run(dialog, 2)
+    dialog._alpha_spin.setValue(2.75)
+    dialog._on_apply()
+
+    edits = dialog.get_profile_result()["override_edits"]
+    assert set(edits.keys()) == {1, 2}
+    assert edits[1]["alpha"] == pytest.approx(1.25)
+    assert edits[2]["alpha"] == pytest.approx(2.75)
+
+
+def test_apply_label_shows_override_blast_radius(qapp: QApplication) -> None:
+    """The Apply button names the pending override count when overrides are dirty."""
+    dialog = _dialog(overridden=[1, 2], selected=1)
+    assert dialog._apply_btn.text() == "Apply"
+    _select_run(dialog, 1)
+    dialog._alpha_spin.setValue(1.25)
+    assert dialog._apply_btn.text() == "Apply (profile + 1 override)"
+    _select_run(dialog, 2)
+    dialog._alpha_spin.setValue(2.75)
+    assert dialog._apply_btn.text() == "Apply (profile + 2 overrides)"
+
+
+def test_editing_strip_accent_for_inheriting_run(qapp: QApplication) -> None:
+    """Selecting an inheriting run shows the accent profile strip."""
     dialog = _dialog(overridden=[2], selected=1)
-    _select_preview_run(dialog, 2)
-    assert dialog._override_mode is True
-
-    _select_preview_run(dialog, 1)
-    assert dialog._override_mode is False
-    assert dialog._override_banner.isHidden() is True
-    assert dialog._profile_combo.isEnabled() is True
+    _select_run(dialog, 1)
+    assert dialog._editing_target() == "profile"
+    assert "Editing profile" in dialog._editing_strip.text()
+    assert "applies to" in dialog._editing_strip.text()
 
 
-def test_dirty_override_guards_on_exit(qapp: QApplication, monkeypatch) -> None:
-    """A dirty override prompts before a preview switch takes it out of the mode."""
+def test_close_guard_lists_profile_and_overrides(qapp: QApplication, monkeypatch) -> None:
+    """The close guard names the profile and every dirty override that would be lost."""
     dialog = _dialog(overridden=[2], selected=1)
-    _select_preview_run(dialog, 2)
-    dialog._alpha_spin.setValue(3.5)  # marks the override draft dirty
-    assert dialog._override_draft_dirty is True
+    # Dirty the profile (inheriting run) and an override.
+    _select_run(dialog, 1)
+    dialog._alpha_spin.setValue(1.9)
+    _select_run(dialog, 2)
+    dialog._alpha_spin.setValue(3.5)
 
-    # Cancel the discard prompt: the switch is aborted, still in override mode.
+    captured = {}
+
+    def _question(_parent, _title, text, *_a, **_k):
+        captured["text"] = text
+        return QMessageBox.StandardButton.Cancel
+
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(_question))
+    dialog.reject()  # consults the guard; cancel keeps the window open
+    assert "profile" in captured["text"]
+    assert "run 2" in captured["text"] or "runs 2" in captured["text"]
+
+
+def test_close_guard_clean_when_nothing_dirty(qapp: QApplication) -> None:
+    """No prompt when neither the profile nor any override has edits."""
+    dialog = _dialog(overridden=[2], selected=1)
+    # Guard returns True immediately without a QMessageBox.
+    assert dialog._guard_discard() is True
+
+
+def test_release_selected_run_flips_to_fresh_override_draft(qapp: QApplication) -> None:
+    """Releasing the selected run flips its target to an override seeded from effect."""
+    dialog = _dialog(overridden=[], selected=1)
+    _select_run(dialog, 1)
+    assert dialog._editing_target() == "profile"
+
+    # Release run 1 through the scope panel, then fire the change signal.
+    dialog._scope_panel.set_released(1, True)
+    dialog._on_scope_changed()
+
+    assert dialog._editing_target() == 1
+    # The override draft is seeded from run 1's current effective settings.
+    assert dialog._alpha_spin.value() == pytest.approx(1.0)
+
+
+def test_reattach_dirty_override_confirms_then_discards(qapp: QApplication, monkeypatch) -> None:
+    """Reattaching a run with a dirty override draft confirms, then drops it."""
+    dialog = _dialog(overridden=[2], selected=2)
+    _select_run(dialog, 2)
+    dialog._alpha_spin.setValue(3.5)
+    assert 2 in dialog._override_dirty_runs
+
+    # Cancel the discard: the reattach is undone, run 2 stays overridden + dirty.
     monkeypatch.setattr(
         QMessageBox,
         "question",
         staticmethod(lambda *a, **k: QMessageBox.StandardButton.Cancel),
     )
-    _select_preview_run(dialog, 1)
-    assert dialog._override_mode is True
-    assert int(dialog._reference_combo.currentData()) == 2
+    dialog._scope_panel.set_released(2, False)
+    dialog._on_scope_changed()
+    assert 2 in dialog._scope_panel.released_run_numbers()
+    assert 2 in dialog._override_dirty_runs
 
-    # Accept the discard: the switch proceeds and leaves the mode.
+    # Accept the discard: the override draft is dropped, run 2 inherits again.
     monkeypatch.setattr(
         QMessageBox,
         "question",
         staticmethod(lambda *a, **k: QMessageBox.StandardButton.Discard),
     )
-    _select_preview_run(dialog, 1)
-    assert dialog._override_mode is False
-
-
-def test_dirty_override_guards_on_close(qapp: QApplication, monkeypatch) -> None:
-    """The close guard covers a dirty override draft."""
-    dialog = _dialog(overridden=[2], selected=1)
-    _select_preview_run(dialog, 2)
-    dialog._alpha_spin.setValue(3.5)
-
-    calls = {"n": 0}
-
-    def _question(*_a, **_k):
-        calls["n"] += 1
-        return QMessageBox.StandardButton.Cancel
-
-    monkeypatch.setattr(QMessageBox, "question", staticmethod(_question))
-    # reject() consults the guard; cancelling keeps the override-editing state.
-    dialog.reject()
-    assert calls["n"] == 1
-    assert dialog._override_mode is True
-    assert dialog._override_draft_dirty is True
-
-
-def test_enter_override_mode_via_scope_edit(qapp: QApplication) -> None:
-    """The scope panel's Edit… affordance selects the run and enters the mode."""
-    dialog = _dialog(overridden=[2], selected=1)
-    assert dialog._override_mode is False
-
-    # Drive the scope panel's Edit… request directly (as clicking would).
-    dialog._scope_panel.edit_requested.emit(2)
-
-    assert dialog._override_mode is True
-    assert dialog._override_run_number == 2
-    assert int(dialog._reference_combo.currentData()) == 2
-
-
-def test_reattach_from_within_override_mode_exits(qapp: QApplication) -> None:
-    """Reattaching the run being override-edited drops the override and exits."""
-    dialog = _dialog(overridden=[2], selected=1)
-    _select_preview_run(dialog, 2)
-    assert dialog._override_mode is True
-
-    # Reattach run 2 through the scope panel state, then fire the change signal.
-    dialog._scope_panel._released[2] = False
-    dialog._scope_panel._rebuild()
+    dialog._scope_panel.set_released(2, False)
     dialog._on_scope_changed()
-
-    assert dialog._override_mode is False
     assert 2 not in dialog._scope_panel.released_run_numbers()
+    assert 2 not in dialog._override_drafts
 
 
-def test_open_directly_on_overridden_run_enters_mode(qapp: QApplication) -> None:
-    """Opening the dialog on an already-overridden run enters override mode."""
+def test_open_directly_on_overridden_run_edits_that_run(qapp: QApplication) -> None:
+    """Opening on an already-overridden run edits that run's override from the start."""
     dialog = _dialog(overridden=[2], selected=2)
-    assert dialog._override_mode is True
-    assert dialog._override_run_number == 2
+    assert dialog._editing_target() == 2
+    assert dialog._alpha_spin.value() == pytest.approx(2.0)
+
+
+def test_profile_change_on_overridden_run_selects_inheriting_first(qapp: QApplication) -> None:
+    """Changing the profile while an overridden run is selected first picks inheriting."""
+    dialog = _dialog(overridden=[2], selected=2)
+    assert dialog._editing_target() == 2
+
+    # The rule (invoked by the profile/instrument combos) switches selection to
+    # the inheriting run 1 first, so a profile edit has a valid target.
+    assert dialog._select_inheriting_run_before_profile_change() is True
+    assert dialog._editing_target() == "profile"
+    assert dialog._current_run == 1
+
+
+def test_profile_change_blocked_when_all_released(qapp: QApplication) -> None:
+    """With every run released there is no inheriting target, so the rule refuses."""
+    dialog = _dialog(overridden=[1, 2], selected=2)
+    assert dialog._select_inheriting_run_before_profile_change() is False

@@ -59,6 +59,15 @@ step is needed. Switching which profile is active re-resolves every run of
 that instrument against the new profile the next time it is displayed or
 reduced.
 
+Because a run's instrument is a fact about its data rather than a user
+preference, a **stale persisted instrument identity self-heals on reload**: if a
+project saved the wrong instrument for a run (for example, a FLAME run stored as
+"GPS" by an older version), re-detection from the freshly loaded file overrides
+the stored value, the run is re-matched to the correct instrument's profile (or
+kept on the loader defaults if none exists), and the mismatched preset's group
+names are discarded. Saved profiles themselves are never altered — only runs
+heal.
+
 A run can be explicitly **released** from its profile, freezing its current
 grouping as a per-run override that further profile edits do not touch. The
 Data Browser marks a released run with a trailing **⊗** and the tooltip
@@ -147,16 +156,25 @@ draft is what gets applied to every run inheriting the profile.
   the window edits, listing every instrument present in the loaded datasets as
   "GPS — 3 runs". It is hidden when the project holds a single instrument, since
   there is then nothing to switch between. Picking another instrument swaps the
-  whole editor — its draft, preview run, scope panel, and preset list all follow
-  — after the same discard prompt the profile selector uses for unsaved edits.
-* **Preview run selector** ("Preview run") — chooses which run's per-run
-  facts (:math:`t_0`, good-bin window, file deadtime, period tables) seed the
-  preview and the status rows. For an *inheriting* run this is
-  **non-destructive**: changing it never edits the draft's shareable settings
-  and never changes which run is "active" elsewhere in the program — it only
-  changes which run's facts the window is currently looking at. Choosing an
-  *overridden* run instead switches the window into override-editing mode
-  (`Editing an override`_ below).
+  whole editor — its draft, selected run, scope panel, and preset list all
+  follow — after the same discard prompt the profile selector uses for unsaved
+  edits.
+* **Scope panel — the selector.** Headed "Runs of this instrument", it lists the
+  runs of the selected instrument, each tagged either **inherits <profile>** or
+  **override**, with **Release** and **Reattach** buttons to move a run between
+  the two. The run **selected** here is the one the form previews and edits:
+  selecting a run shows that run's effective settings in the form, drives the
+  live preview, and seeds the status rows with its per-run facts
+  (:math:`t_0`, good-bin window, file deadtime, period tables). What your edits
+  change follows the selected run's status (`Editing target follows selection`_
+  below). Apply is disabled only when every run has been released *and* no
+  override has pending edits, since there would then be nothing left to commit.
+* **Editing-target strip** — directly above the form, a persistent strip states
+  what your edits currently apply to: accent-tinted **"Editing profile '<name>'
+  — applies to N runs"** while an inheriting run is selected, or warning-tinted
+  **"Editing override for run N — this run only"** while an overridden run is
+  selected. The same tint highlights the selected row in the scope list, and a
+  run with uncommitted override edits gains an **"override *"** marker there.
 * **Preset dropdown and chip** — an instrument-aware preset dropdown seeds a
   sensible starting arrangement (see the per-instrument sections below), and
   a chip beside it reads either **"Preset: <name>"** when the draft's groups
@@ -165,15 +183,8 @@ draft is what gets applied to every run inheriting the profile.
   This comparison is re-made every time the draft changes rather than cached,
   so the chip never keeps showing a preset name the settings have since
   drifted away from.
-* **Scope panel** — headed "Runs of this instrument", it lists the runs of the
-  selected instrument, each tagged either **inherits <profile>** or
-  **override**, with **Release** and **Reattach** buttons to move a run between
-  the two. A third **Edit…** button opens the selected overridden run's own
-  grouping for editing (`Editing an override`_ below). Apply is disabled when
-  every run of the instrument has been released, since there would then be
-  nothing left for the profile to reach.
 * **Live asymmetry preview** — a debounced plot of the forward/backward
-  asymmetry the current draft would produce on the preview run, recomputed
+  asymmetry the current draft would produce on the selected run, recomputed
   automatically as groups, :math:`\alpha`, binning, deadtime, or background
   settings change. The recompute runs on a worker thread (never the GUI
   thread), so editing stays responsive even while a reduction is in flight;
@@ -184,16 +195,19 @@ draft is what gets applied to every run inheriting the profile.
   **Configure…** button that opens the corresponding dedicated dialog (see
   `Alpha calibration`_, `Deadtime Correction`_, and `Background Correction`_
   below).
-* **Load .grp / Save .grp** — read or write a grouping definition as a
-  ``.grp`` file, unchanged from before, so a calibration can be shared or
-  reused outside a project.
 
-Editing the draft never touches a saved profile until you press **Apply**;
-closing the window with unsaved changes prompts to discard them, so a
-half-finished edit cannot silently overwrite a working profile.
+Editing never touches a saved profile or run until you press **Apply**.
+**Apply commits everything you have changed in one pass** — the profile to
+every inheriting run, plus each edited override to its own run. When any
+override has pending edits the button names the blast radius, e.g. **"Apply
+(profile + 2 overrides)"**. Switching selection between runs never prompts:
+each target keeps its own draft, so you can move freely between the profile and
+several overrides and edit each in turn. The only guard is closing the window
+with uncommitted changes, which prompts and lists exactly what would be lost —
+e.g. "profile 'Default (GPS)' and overrides for runs 12, 15".
 
-Applying a profile reports, in the LOG, how many runs it reached and how
-many overridden runs were left untouched.
+Applying reports, in the LOG and the status bar, how many runs the profile
+reached and which overrides were updated.
 
 The grouping payload stores:
 
@@ -214,34 +228,46 @@ The grouping payload stores:
 * optional background metadata: ``background_correction``,
   ``background_ranges``, ``background_values``, and ``background_method``
 
-These settings are persisted in project files (as grouping profiles, schema
-v12) and in ``.grp`` files.
+These settings are persisted in project files, as grouping profiles (schema
+v12), and in instrument presets.
 
-.. _Editing an override:
+.. _Editing target follows selection:
 
-Editing an override
-~~~~~~~~~~~~~~~~~~~~
+Editing target follows selection
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-A released run keeps its own frozen grouping, which the profile no longer
-governs. To change that per-run grouping — rather than only creating it
-(Release) or dropping it (Reattach) — put the window into **override-editing
-mode**: either select the overridden run in the **Preview run** selector, or
-select its row in the scope panel and click **Edit…**.
+There is no separate "mode" for editing a per-run override: the editing target
+simply follows whichever run you select in the scope panel.
 
-In this mode a warning-styled banner reads "Editing override for run *N* —
-changes apply to this run only", and the form seeds from that run's own
-grouping. The profile selector and the Instrument switcher are disabled, since
-you are no longer editing a profile; the scope panel stays visible, so
-**Reattach** remains reachable if you would rather drop the override
-altogether. Your edits go to a separate override draft and never touch the
-profile draft. **Apply** writes the edited grouping back to that one run — every
-inheriting run is left untouched — and the run stays marked overridden; the
-status bar confirms "Updated override for run *N*".
+* **Select an inheriting run** and you are editing the **profile** — the strip
+  above the form reads "Editing profile '<name>' — applies to N runs" in the
+  accent colour, and your edits go to the profile draft.
+* **Select an overridden run** and you are editing **that run's own override** —
+  the strip reads "Editing override for run *N* — this run only" in the warning
+  colour, the form seeds from the run's own grouping, and your edits go to a
+  separate override draft that never touches the profile.
 
-Selecting an inheriting run in the preview selector leaves the mode and returns
-to editing the profile; if the override draft has unsaved edits you are prompted
-to discard them first, and the window's close guard covers a dirty override
-draft too.
+Nothing is disabled: the profile and Instrument switchers stay active while an
+overridden run is selected. Changing the profile (or instrument) is a
+profile-scope action, so if an overridden run is selected the window first
+switches the selection to an inheriting run of the current instrument (keeping
+your override draft intact); if every run has been released there is no profile
+to edit and the change is refused.
+
+Override drafts **accumulate** across a session: switching selection between the
+profile and one or more overridden runs never prompts, and each keeps its own
+in-progress edits. A run with uncommitted override edits shows an "override *"
+marker in the scope list. **Apply** commits everything at once — the profile to
+its inheriting runs and every edited override to its own run — and the status
+bar names both parts. Each edited run stays marked overridden (the edit *is* its
+new override).
+
+To create an override, **Release** a run; releasing the currently selected run
+immediately flips the editing target to a fresh override draft seeded from that
+run's current effective settings. To drop one, **Reattach** it; reattaching a
+run whose override draft has uncommitted edits prompts to discard them first.
+The window's close guard covers every uncommitted change — the profile draft and
+all dirty overrides — so nothing is lost silently.
 
 Period mode controls
 ---------------------
@@ -249,7 +275,7 @@ Period mode controls
 A two-period reference run (ISIS red/green period histograms) shows an
 additional **RG Mode** control in the Grouping window: red, green,
 green-minus-red, or green-plus-red. This row is hidden for every other run —
-it only appears once the currently selected preview run actually carries two
+it only appears once the currently selected run actually carries two
 period histograms — so it never clutters the window for ordinary
 single-period data.
 
@@ -266,7 +292,7 @@ and the manual controls are disabled; unticked, your own values apply.
   ``nt0``, MusrRoot ``DetectorInfo``, NeXus ``time_zero``), and the common t0
   is the maximum over the analysis groups, so per-detector values are
   preserved and each run is aligned by its own time-zero. The spinbox is
-  read-only and shows the preview run's resolved t0; switching the preview run
+  read-only and shows the selected run's resolved t0; switching the selected run
   updates it. Nothing is stored on the profile — resolution reads each run's
   file again.
 * **Manual** — type a common t0 override. It is applied to every run of the
@@ -275,11 +301,11 @@ and the manual controls are disabled; unticked, your own values apply.
   non-destructive — the run's loaded histograms keep their file-derived t0, and
   the shift lives only in the resolved grouping (so an override can be changed
   or cleared without re-loading the data). **Find t0** is the one-shot fill for
-  this mode: it runs the search on the preview run and drops the result into the
+  this mode: it runs the search on the selected run and drops the result into the
   spinbox for you to confirm.
 * **Auto-detect** — run the t0 search on *every* run at reduction time (the
   prompt-peak maximum at continuous sources, the pulse-edge midpoint at pulsed
-  sources). The spinbox is read-only and shows the preview run's detected value
+  sources). The spinbox is read-only and shows the selected run's detected value
   with its provenance (strategy and detector spread); each run resolves its own
   detected t0.
 
@@ -360,7 +386,7 @@ modes are available:
 * ``Off`` disables the correction.
 * ``File`` uses per-detector deadtime values already present in a run file.
   This stays the default starting point for raw histogram formats, matching
-  WiMDA's file-first assumption, even when the current preview run does not
+  WiMDA's file-first assumption, even when the currently selected run does not
   itself provide file deadtime values.
 * ``Manual`` shows a per-detector value table, editable directly, and is
   also where calibrated values are stored.
@@ -370,7 +396,7 @@ modes are available:
 
 The dialog includes a per-detector table and a **Cal** button that ports
 WiMDA's per-detector calibration routine: it fits each detector histogram in
-the preview run separately, produces a resolved per-detector deadtime table,
+the selected run separately, produces a resolved per-detector deadtime table,
 and populates the manual table with those calibrated values. The dialog also
 shows a **maximum correction at t=0** summary, the largest fractional
 correction any detector receives at the first good bin, so an unreasonable
@@ -380,7 +406,7 @@ distorted asymmetry later.
 When ``Off`` is selected, deadtime correction is disabled. When ``Estimate``
 is selected, the estimate is calculated from the currently selected preview
 run only, then applied to every run inheriting the profile. ``Cal`` also uses
-the selected preview run only, but calibrates one deadtime value per detector
+the selected run only, but calibrates one deadtime value per detector
 instead of a single shared value. The resolved deadtime values are stored on
 the profile's deadtime policy, so every run inheriting the profile shares the
 same manual, calibrated, or estimated deadtime values, just as they already

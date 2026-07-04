@@ -185,6 +185,7 @@ from asymmetry.core.project.profiles import (
     active_profile_for_run,
     effective_grouping_for_loaded_run,
     profile_fingerprint_for_run,
+    reconcile_instrument_for_payload,
     resolve_effective_grouping,
 )
 from asymmetry.core.representation import (
@@ -3161,6 +3162,15 @@ class MainWindow(QMainWindow):
                     if apply_choice == "yes_to_all":
                         apply_comment_field_to_all = True
 
+                    # A freshly loaded run is the ground truth for its own
+                    # instrument. Before any profile/auto-grouping payload is
+                    # re-applied, heal a stale carried identity against fresh
+                    # detection so the fingerprint below resolves to the real
+                    # instrument (a FLAME run stored as "GPS" must not inherit a
+                    # (GPS, 8) profile or keep the GPS group names).
+                    if dataset is not None and dataset.run is not None:
+                        self._heal_run_instrument(dataset.run)
+
                     # Profile inheritance takes precedence over ad-hoc
                     # auto-grouping propagation: a freshly loaded run whose
                     # fingerprint has an active profile inherits that profile's
@@ -3182,6 +3192,15 @@ class MainWindow(QMainWindow):
                     elif auto_grouping_payload is not None:
                         auto_grouping_attempts += 1
                         grouping_payload = dict(auto_grouping_payload)
+                        # Heal the template payload against the freshly loaded run
+                        # too: a template lifted from a mis-identified in-browser
+                        # dataset must not paste its instrument's structure onto a
+                        # run detection resolves differently.
+                        grouping_payload, heal_note = reconcile_instrument_for_payload(
+                            dataset.run, grouping_payload
+                        )
+                        if heal_note:
+                            self._log_panel.log(heal_note, tag="grouping")
                         # good_frames and its period companions are measured
                         # per-run normalisers; they must come from each dataset's
                         # own loader metadata, never be inherited from the
@@ -3624,11 +3643,11 @@ class MainWindow(QMainWindow):
         profile_result = (
             dialog.get_profile_result() if hasattr(dialog, "get_profile_result") else None
         )
-        override_updated_run: int | None = None
+        override_updated_runs: list[int] = []
         if profile_result is not None:
             self._store_grouping_profile(profile_result["profile"])
             self._reconcile_grouping_overrides(dialog_datasets, profile_result)
-            override_updated_run = self._apply_grouping_override_edits(
+            override_updated_runs = self._apply_grouping_override_edits(
                 dialog_datasets, profile_result
             )
 
@@ -3698,7 +3717,7 @@ class MainWindow(QMainWindow):
                     self._current_dataset = rebuilt_combined_dataset
                     self._fit_panel.set_dataset(self._get_fit_dataset(rebuilt_combined_dataset))
 
-        if updated > 0 or override_updated_run is not None:
+        if updated > 0 or override_updated_runs:
             self._mark_dirty()
             bunch_factor = max(1, int(grouping_result.get("bunching_factor", 1)))
             self._view_modes[self._active_view_mode_index]["bunch_factor"] = bunch_factor
@@ -3723,15 +3742,20 @@ class MainWindow(QMainWindow):
             f"deadtime={deadtime_msg}, background={background_msg}"
         )
 
-        if override_updated_run is not None:
-            self.statusBar().showMessage(f"Updated override for run {override_updated_run}", 8000)
-        elif profile_result is not None:
+        if profile_result is not None:
             profile_name = profile_result["profile"].name
             overridden = len(profile_result.get("released", set()))
-            message = f"Grouping profile '{profile_name}' applied to {updated} run(s)"
-            if overridden:
-                message += f" ({overridden} overridden run(s) unchanged)"
-            self.statusBar().showMessage(message, 8000)
+            parts = [f"Grouping profile '{profile_name}' applied to {updated} run(s)"]
+            if override_updated_runs:
+                runs = ", ".join(str(r) for r in override_updated_runs)
+                noun = "override" if len(override_updated_runs) == 1 else "overrides"
+                parts.append(f"updated {len(override_updated_runs)} {noun} (run(s) {runs})")
+            if overridden and not override_updated_runs:
+                parts[0] += f" ({overridden} overridden run(s) unchanged)"
+            self.statusBar().showMessage("; ".join(parts), 8000)
+        elif override_updated_runs:
+            runs = ", ".join(str(r) for r in override_updated_runs)
+            self.statusBar().showMessage(f"Updated override(s) for run(s) {runs}", 8000)
 
     def _dataset_has_grouping_override(self, dataset) -> bool:
         """Return whether *dataset* carries an explicit per-run grouping override.
@@ -3753,6 +3777,25 @@ class MainWindow(QMainWindow):
         if not has_profile:
             return False
         return active_profile_for_run(self._grouping_profiles, run) is None
+
+    def _heal_run_instrument(self, run) -> None:
+        """Self-heal a stale instrument identity carried on a freshly loaded run.
+
+        Reconciles the run's own ``grouping`` payload against fresh detection
+        (see :func:`reconcile_instrument_for_payload`). On a normal fresh load the
+        loader's grouping already names the right instrument, so this is a no-op;
+        it matters when the carried grouping (rebuilt from a persisted mapping, or
+        a loader that trusted a stale header) names the wrong one. Corrects
+        ``run.grouping``/``run.metadata`` in place and logs the heal.
+        """
+        if run is None:
+            return
+        grouping = run.grouping if isinstance(run.grouping, dict) else {}
+        reconciled, note = reconcile_instrument_for_payload(run, grouping)
+        if note is None:
+            return
+        run.grouping = reconciled
+        self._log_panel.log(note, tag="grouping")
 
     def _resolve_named_profile_for_run(self, name: str, run) -> dict | None:
         """Resolve the named profile (of the run's fingerprint) onto *run*.
@@ -3806,21 +3849,21 @@ class MainWindow(QMainWindow):
             if dataset is not None and isinstance(dataset.metadata, dict):
                 dataset.metadata.pop("grouping_overrides", None)
 
-    def _apply_grouping_override_edits(self, datasets, profile_result: dict) -> int | None:
-        """Apply an override-editing-mode edit to its run alone.
+    def _apply_grouping_override_edits(self, datasets, profile_result: dict) -> list[int]:
+        """Apply every edited per-run override to its own run.
 
-        When the grouping window was in override-editing mode, ``profile_result``
-        carries ``override_edits`` — a ``{run_number: grouping_payload}`` map for
-        the single overridden run whose own grouping was edited. The payload is
-        applied to that run only; the run stays marked overridden (the edit
-        *is* its new per-run override). Returns the edited run number, or
-        ``None`` when there was no override edit.
+        ``profile_result`` carries ``override_edits`` — a ``{run_number:
+        grouping_payload}`` map of every overridden run whose own grouping was
+        edited in the grouping window this session. Each payload is applied to
+        its run alone; the run stays marked overridden (the edit *is* its new
+        per-run override). Returns the sorted list of run numbers actually
+        updated (empty when there were no override edits).
         """
         override_edits = profile_result.get("override_edits") or {}
         if not override_edits:
-            return None
+            return []
         by_run = {int(ds.run_number): ds for ds in datasets}
-        applied_run: int | None = None
+        applied_runs: list[int] = []
         for run_number, payload in override_edits.items():
             dataset = by_run.get(int(run_number))
             if dataset is None or dataset.run is None:
@@ -3833,8 +3876,8 @@ class MainWindow(QMainWindow):
                 dataset.metadata["grouping_overrides"] = True
             if dataset is self._current_dataset:
                 self._fit_panel.set_dataset(self._get_fit_dataset(dataset))
-            applied_run = int(run_number)
-        return applied_run
+            applied_runs.append(int(run_number))
+        return sorted(applied_runs)
 
     def _resolve_grouping_dialog_context(
         self,
@@ -12652,6 +12695,15 @@ class MainWindow(QMainWindow):
                         if dataset.run:
                             dataset.run.metadata[key] = val
 
+                    # A freshly reloaded run is the ground truth for its own
+                    # instrument. Heal a stale carried identity against fresh
+                    # detection before any persisted grouping payload is
+                    # re-applied, so profile inheritance below resolves against the
+                    # corrected fingerprint (a FLAME run persisted as "GPS" must
+                    # not re-inherit a (GPS, 8) profile nor keep GPS group names).
+                    if dataset.run is not None:
+                        self._heal_run_instrument(dataset.run)
+
                     # v12: a dataset either names a ``profile`` (inherit its
                     # resolved effective grouping), carries ``grouping_overrides``
                     # (per-run override, as before), or neither (inherit the
@@ -12666,6 +12718,14 @@ class MainWindow(QMainWindow):
                             self._apply_grouping_settings_to_dataset(dataset, resolved)
                             dataset.metadata.pop("grouping_overrides", None)
                     elif isinstance(grouping_overrides, dict):
+                        # Heal the persisted per-run override against the fresh run
+                        # (its stored instrument may be stale); discard the wrong
+                        # instrument's structure before applying it.
+                        grouping_overrides, heal_note = reconcile_instrument_for_payload(
+                            dataset.run, grouping_overrides
+                        )
+                        if heal_note:
+                            self._log_panel.log(heal_note, tag="grouping")
                         self._apply_grouping_settings_to_dataset(dataset, grouping_overrides)
                         dataset.metadata["grouping_overrides"] = True
                     elif dataset.run is not None:

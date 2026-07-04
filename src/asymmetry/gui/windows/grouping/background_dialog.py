@@ -14,7 +14,8 @@ Modes (:data:`asymmetry.core.project.profiles.BACKGROUND_POLICY_MODES`):
 * ``range`` — musrfit's pre-t0 range average (continuous-source data only).
 * ``tail_fit`` — WiMDA's late-time exponential + flat fit (pulsed-source mode).
 * ``reference_run`` — subtract a designated background run, frame-scaled.
-* ``fixed`` — subtract stored per-group constants (from a loaded ``.grp``).
+* ``fixed`` — subtract stored per-group constants (user-entered forward/
+  backward values).
 """
 
 from __future__ import annotations
@@ -38,7 +39,7 @@ from PySide6.QtWidgets import (
 
 from asymmetry.core.project.profiles import BackgroundPolicy
 from asymmetry.core.transform import fit_tail_background
-from asymmetry.gui.windows.grouping.grp_io import (
+from asymmetry.gui.windows.grouping.format import (
     format_value_with_uncertainty as _format_value_with_uncertainty,
 )
 
