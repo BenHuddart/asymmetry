@@ -11,8 +11,21 @@ Compatibility policy
 * Migration functions are one-per-step and retained for at least one major schema revision.
 * Unknown top-level fields in a valid schema are preserved on load/save cycles.
 
-Current schema (version 11)
+Current schema (version 12)
 ---------------------------
+
+Version 12 adds project-level named **grouping profiles**. The project carries a
+top-level ``grouping_profiles`` list (serialized
+:class:`~asymmetry.core.project.profiles.GroupingProfile` dicts, each with
+``active: true`` for its fingerprint). Each dataset either names a ``profile``
+(inheriting that profile's settings), carries a per-run ``grouping_overrides``
+payload (released from any profile, as before), or has neither (inheriting the
+active profile for its fingerprint). See
+:func:`_migrate_v11_to_v12` for the v11->v12 collapse rules and
+:mod:`asymmetry.core.project.profiles` for resolution.
+
+Version 11 schema
+-----------------
 ::
 
     {
@@ -125,9 +138,9 @@ import json
 import math
 from pathlib import Path
 
-CURRENT_SCHEMA_VERSION: int = 11
+CURRENT_SCHEMA_VERSION: int = 12
 
-_SUPPORTED_VERSIONS: frozenset[int] = frozenset({1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11})
+_SUPPORTED_VERSIONS: frozenset[int] = frozenset({1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12})
 
 #: Fourier-state keys that describe the FFT generation recipe (recipe-only
 #: persistence carries these into each dataset's ``freq_fft`` representation).
@@ -222,6 +235,9 @@ def migrate_to_current(data: dict) -> dict:
         version = 10
     if version == 10:
         migrated = _migrate_v10_to_v11(migrated)
+        version = 11
+    if version == 11:
+        migrated = _migrate_v11_to_v12(migrated)
     return migrated
 
 
@@ -513,6 +529,206 @@ def _migrate_v9_to_v10(data: dict) -> dict:
         migrated["browser_state"] = browser_state
 
     return migrated
+
+
+def _migrate_v11_to_v12(data: dict) -> dict:
+    """Migrate schema v11 project state to v12.
+
+    v12 introduces project-level named grouping profiles
+    (:class:`~asymmetry.core.project.profiles.GroupingProfile`). The migration
+    groups datasets by *fingerprint* ``(instrument, histogram count)`` derived
+    from each dataset's stored ``grouping_overrides``, then:
+
+    * **Missing metadata** — if a dataset's ``grouping_overrides`` lacks the
+      instrument name or a usable histogram count, it is migrated conservatively:
+      the ``grouping_overrides`` payload is kept as-is and it joins no profile, so
+      resolution falls back to the per-run payload exactly as in v11.
+    * **All-identical collapse** — within a fingerprint, if every run's shareable
+      grouping fields are identical, one active profile ``"Default (<instrument>)"``
+      is created and each contributing dataset drops its ``grouping_overrides`` in
+      favour of ``profile: "<name>"``.
+    * **Divergence** — if the shareable fields differ, a profile is built from the
+      **majority** payload (ties resolved by first occurrence); datasets matching
+      the majority inherit it (``profile`` set, overrides dropped) while divergent
+      datasets keep their ``grouping_overrides``.
+
+    The migration is additive and lossless: nothing that could not be faithfully
+    lifted into a profile is dropped — divergent and metadata-poor datasets retain
+    their full per-run payload.
+    """
+    from asymmetry.core.project.profiles import (
+        ProfileFingerprint,
+        profile_from_payload,
+    )
+
+    migrated = dict(data)
+    migrated["schema_version"] = 12
+    migrated.setdefault("grouping_profiles", [])
+
+    datasets = migrated.get("datasets")
+    if not isinstance(datasets, list):
+        return migrated
+
+    # Bucket dataset indices by fingerprint. Datasets whose overrides lack the
+    # metadata needed to fingerprint them are left untouched (conservative path).
+    buckets: dict[tuple[str, int], list[int]] = {}
+    fingerprints: dict[tuple[str, int], ProfileFingerprint] = {}
+    for index, entry in enumerate(datasets):
+        if not isinstance(entry, dict):
+            continue
+        overrides = entry.get("grouping_overrides")
+        if not isinstance(overrides, dict):
+            continue
+        instrument = str(overrides.get("instrument", "") or "").strip()
+        histogram_count = _histogram_count_from_overrides(overrides)
+        if not instrument or histogram_count is None:
+            continue  # Conservative: keep grouping_overrides, no profile.
+        key = (instrument.lower(), int(histogram_count))
+        buckets.setdefault(key, []).append(index)
+        fingerprints.setdefault(key, ProfileFingerprint(instrument, int(histogram_count)))
+
+    updated = [dict(entry) if isinstance(entry, dict) else entry for entry in datasets]
+    profiles: list[dict] = list(migrated.get("grouping_profiles") or [])
+
+    for key, indices in buckets.items():
+        fingerprint = fingerprints[key]
+        payloads = [updated[i].get("grouping_overrides") for i in indices]
+        majority_payload = _majority_payload(payloads)
+        if majority_payload is None:
+            continue
+        profile_name = _unique_profile_name(
+            f"Default ({fingerprint.instrument})", {p.get("name") for p in profiles}
+        )
+        profile = profile_from_payload(majority_payload, profile_name, fingerprint, active=True)
+        profiles.append(profile.to_dict())
+
+        majority_signature = _shareable_signature(majority_payload)
+        for i in indices:
+            payload = updated[i].get("grouping_overrides")
+            if _shareable_signature(payload) == majority_signature:
+                # Inherits the profile: swap the per-run copy for a reference.
+                updated[i].pop("grouping_overrides", None)
+                updated[i]["profile"] = profile_name
+            # Divergent datasets keep their grouping_overrides unchanged.
+
+    migrated["datasets"] = updated
+    migrated["grouping_profiles"] = profiles
+    return migrated
+
+
+def _histogram_count_from_overrides(overrides: dict) -> int | None:
+    """Infer a run's histogram count from a stored grouping payload, or ``None``.
+
+    Prefers an explicit per-detector list length (``detector_t0_bins``,
+    ``detector_first_good_bins``, ``histogram_labels`` — stored by the PSI/ROOT
+    loaders); falls back to the largest 1-based detector id named across the
+    groups (a lower bound that still fingerprints NeXus payloads consistently).
+    Returns ``None`` when neither is available.
+    """
+    for key in ("detector_t0_bins", "detector_first_good_bins", "histogram_labels"):
+        value = overrides.get(key)
+        if isinstance(value, (list, tuple)) and value:
+            return len(value)
+    groups = overrides.get("groups")
+    if isinstance(groups, dict):
+        max_det = 0
+        for dets in groups.values():
+            if not isinstance(dets, (list, tuple)):
+                continue
+            for entry in dets:
+                raw = entry[0] if isinstance(entry, (list, tuple)) and entry else entry
+                try:
+                    max_det = max(max_det, int(raw))
+                except (TypeError, ValueError):
+                    continue
+        if max_det > 0:
+            return max_det
+    return None
+
+
+#: Shareable grouping payload keys that define a profile's identity for the
+#: v11->v12 collapse. Two payloads with the same signature over these keys yield
+#: the same profile; per-run/file-derived keys are deliberately excluded.
+_SHAREABLE_SIGNATURE_KEYS = (
+    "groups",
+    "group_names",
+    "included_groups",
+    "forward_group",
+    "backward_group",
+    "projections",
+    "vector_axis",
+    "excluded_detectors",
+    "alpha",
+    "alpha_x",
+    "alpha_y",
+    "alpha_z",
+    "alpha_method",
+    "grouping_preset",
+    "binning_mode",
+    "bin0_us",
+    "bin10_us",
+    "bunching_factor",
+    "period_mode",
+    "deadtime_correction",
+    "deadtime_mode",
+    "deadtime_manual_us",
+    "deadtime_estimated_us",
+    "dead_time_us",
+    "background_correction",
+    "background_mode",
+    "background_fixed_values",
+)
+
+
+def _shareable_signature(payload: object) -> str:
+    """Return a stable string signature over a payload's shareable keys.
+
+    Only the file-format-independent (shareable) keys participate, so two runs
+    that differ solely in per-run facts (t0, good-bin window, per-detector
+    tables) collapse to the same profile.
+    """
+    if not isinstance(payload, dict):
+        return ""
+    subset = {k: payload[k] for k in _SHAREABLE_SIGNATURE_KEYS if k in payload}
+    try:
+        return json.dumps(subset, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        return repr(sorted(subset.items(), key=lambda kv: kv[0]))
+
+
+def _majority_payload(payloads: list[object]) -> dict | None:
+    """Return the payload with the most common shareable signature.
+
+    Ties are resolved by first occurrence (the earliest run wins), matching the
+    migration spec. Returns ``None`` when no dict payloads are present.
+    """
+    dict_payloads = [p for p in payloads if isinstance(p, dict)]
+    if not dict_payloads:
+        return None
+    counts: dict[str, int] = {}
+    first_for_signature: dict[str, dict] = {}
+    order: list[str] = []
+    for payload in dict_payloads:
+        signature = _shareable_signature(payload)
+        if signature not in counts:
+            counts[signature] = 0
+            first_for_signature[signature] = payload
+            order.append(signature)
+        counts[signature] += 1
+    # Highest count, ties broken by first appearance (stable over ``order``).
+    best_signature = max(order, key=lambda sig: counts[sig])
+    return first_for_signature[best_signature]
+
+
+def _unique_profile_name(base: str, existing: set) -> str:
+    """Return *base*, suffixed with ``" (2)"``, ``" (3)"``… to stay unique."""
+    names = {str(n) for n in existing if n}
+    if base not in names:
+        return base
+    index = 2
+    while f"{base} ({index})" in names:
+        index += 1
+    return f"{base} ({index})"
 
 
 def _domain_fit_state(domain: str, source: object) -> dict:

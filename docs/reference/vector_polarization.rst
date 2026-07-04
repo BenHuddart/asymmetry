@@ -38,24 +38,29 @@ detector layout supports the same six-group naming convention.
 Setup
 -----
 
-1. Open Grouping.
+1. Open Grouping and choose (or create) a profile for EMU.
 2. Open Detector Layout...
 3. Select instrument ``EMU``.
 4. Apply the ``Vector Polarization`` preset.
-5. Return to Grouping and adjust alpha values.
+5. Return to Grouping and calibrate each axis's alpha (see below).
 
 Per-Axis Alpha
 --------------
 
-When vector mode is active, the Grouping dialog switches to a vector table with
-separate alpha values for each axis:
+When vector mode is active, the Grouping window switches to a vector table
+with separate alpha values for each axis:
 
 * ``alpha_x``
 * ``alpha_y``
 * ``alpha_z``
 
-You can estimate alpha per axis with row-level Estimate buttons, or use
-Estimate All alpha to calculate all three in one action.
+Each axis is its own asymmetry projection (see :doc:`detector_grouping`,
+"Per-projection alpha"), so each calibrates independently through the same
+alpha calibration dialog used for an ordinary two-group run — open it per
+axis with that row's **Calibrate…** button, or calibrate all three in one
+action with **Estimate All alpha**. Because each axis's alpha and provenance
+are stored on its own projection, switching between axes never mixes up
+which value came from which calibration run.
 
 Backwards compatibility:
 

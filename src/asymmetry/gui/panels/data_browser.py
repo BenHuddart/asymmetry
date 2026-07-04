@@ -1359,6 +1359,15 @@ class DataBrowserPanel(QWidget):
                 f"{provenance_tip}\n{period_tip}" if period_tip else provenance_tip
             )
 
+        # Custom-grouping marker: a run released from its fingerprint's grouping
+        # profile carries its own per-run override, flagged in metadata. Show a
+        # small ⊗ suffix + tooltip so it reads as diverging from the profile.
+        if meta.get("grouping_overrides"):
+            run_item.setText(f"{run_item.text()} ⊗")
+            override_tip = "Custom grouping — this run is released from its grouping profile."
+            existing_tip = run_item.toolTip()
+            run_item.setToolTip(f"{existing_tip}\n{override_tip}" if existing_tip else override_tip)
+
         temp = self._temperature_for_display(dataset)
         temp_item = NumericTableWidgetItem(f"{temp:.2f}")
         temp_item.setFlags(temp_item.flags() & ~Qt.ItemFlag.ItemIsEditable)

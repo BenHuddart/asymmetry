@@ -338,6 +338,61 @@ existing `_restore_selection_by_keys` helper), scrolling to the first matched
 row, and fires `selection_changed` through the normal pathway. It is used by
 the "Select members in browser" context-menu action and never alters the tint.
 
+### 3.6 Grouping Profiles
+
+Detector grouping used to be a full payload copied onto every `Run` —
+detector groups, `alpha`, deadtime/background modes, *and* per-run facts like
+`t0` and the good-bin window all in one dict — so recalibrating `alpha` after
+loading a fifth run of a series meant editing it a fifth time, with no
+guardrail against two runs of the same series silently drifting apart.
+
+**Model.** `asymmetry.core.project.profiles` splits the payload into
+*shareable* settings (detector groups, forward/backward assignment, and three
+policy objects — `AlphaPolicy`, `DeadtimePolicy`, `BackgroundPolicy`, each a
+mode plus whatever value the mode needs) and *per-run* facts (`t0`, good-bin
+window, per-detector file deadtime, period tables) that always come from the
+run itself. A `GroupingProfile` holds only the shareable half, is named, and
+belongs to the project rather than to any one run.
+
+**Resolution.** A profile applies to every run whose *fingerprint* —
+`(instrument, histogram_count)` — matches. Each fingerprint has exactly one
+*active* profile at a time (a project may hold several saved profiles per
+fingerprint); a run inherits its fingerprint's active profile automatically
+unless explicitly *released* into a per-run override.
+`resolve_effective_grouping(profile, run)` merges the two halves back into
+exactly the `run.grouping` payload shape used before profiles existed —
+computing a policy-derived value where needed (a `per_run_estimate` alpha, or
+`from_file` deadtime) — so nothing downstream of `run.grouping` (reduction,
+fitting, export) needed to change.
+
+**Schema v12.** The project file gained a top-level `grouping_profiles` list.
+Each dataset either names a `profile` (inherits), carries its own
+`grouping_overrides` (released), or has neither (inherits its fingerprint's
+active profile). `_migrate_v11_to_v12` (`core/project/schema.py`) migrates
+older projects automatically: datasets are bucketed by fingerprint, and
+within each bucket, identical shareable settings collapse to one active
+"Default (\<instrument\>)" profile while genuinely divergent runs keep their
+own `grouping_overrides` untouched — the migration is additive and never
+discards a setting it cannot faithfully represent as a profile.
+
+**Reduction chokepoint.** `asymmetry.core.transform.reduce.reduce_grouped_asymmetry`
+is the single function that turns a run's histograms into a forward/backward
+asymmetry curve: deadtime correction, forward/backward grouping onto a common
+`t0`, optional background subtraction, then the counts-then-ratio asymmetry.
+It was lifted out of `MainWindow._reduce_grouped_histograms_to_asymmetry` so
+that the GUI's live reduction and the Grouping window's live preview pane
+share one numerics implementation instead of two that could drift apart; a
+pinned test (`tests/gui/test_grouping_preview_pane.py`) keeps the preview
+bit-identical to the original `MainWindow` output.
+
+**GUI.** `gui/windows/grouping/` (`dialog.py` plus `alpha_calibration_dialog.py`,
+`deadtime_dialog.py`, `background_dialog.py`, `scope_panel.py`,
+`preview_pane.py`, `profile_bridge.py`) replaced the old single grouping
+dialog with a profile editor: a draft `GroupingProfile` edited in place,
+a scope panel for release/reattach, and a debounced live-preview pane whose
+reduction runs on a `TaskRunner` worker thread per the threading invariant in
+`AGENTS.md`.
+
 ---
 
 ## 4. Functional Requirements

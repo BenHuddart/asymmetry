@@ -1659,11 +1659,23 @@ def _metadata_labels(metadata: dict) -> list[str]:
 
 
 def _labels_match_flame(labels: list[str], n_histograms: int) -> bool:
-    """Return True when detector labels match the FLAME eight-counter layout."""
+    """Return True when detector labels match the FLAME eight-counter layout.
+
+    Matching requires *positive* FLAME-specific evidence — exactly eight
+    positron histograms *and* the four split-plate corner labels
+    (``R_F/R_B/L_F/L_B``) — so it can never be satisfied by the GPS
+    (F/B/U/D/R[/L]), DOLLY (F/B/L/R) or GPD (F/B/U/D) label sets, which have
+    no corner plates and fewer than eight histograms.
+    """
     if n_histograms != 8:
         return False
     compact = {re.sub(r"[^a-z0-9]+", "", label.lower()) for label in labels}
     if not compact:
+        return False
+    # The split-plate corners are the FLAME signature; without all four this is
+    # not FLAME regardless of what the main-axis labels say.
+    has_corners = {"rf", "rb", "lf", "lb"}.issubset(compact)
+    if not has_corners:
         return False
     has_main = (
         bool({"forw", "forward"} & compact)
@@ -1671,8 +1683,7 @@ def _labels_match_flame(labels: list[str], n_histograms: int) -> bool:
         and "left" in compact
         and bool({"right", "righ"} & compact)
     )
-    has_corners = {"rf", "rb", "lf", "lb"}.issubset(compact)
-    return has_main and has_corners
+    return has_main
 
 
 def _is_psi_hal(metadata: dict, source_file: str | None) -> bool:
@@ -1717,6 +1728,34 @@ def _labels_match_gps(labels: list[str], n_histograms: int) -> bool:
     )
 
 
+def _labels_match_gps_classic(labels: list[str], n_histograms: int) -> bool:
+    """Return True when detector labels match a classic GPS BIN counter set.
+
+    The canonical six-counter GPS BIN export is ``Forw, Back, Up, Down, Righ,
+    Left``, but older / partial GPS ``.bin`` files omit the ``Left`` counter and
+    ship only five histograms (``Forw, Back, Up, Down, Righ``). Both are
+    identified positively by the presence of the forward/backward *and*
+    up/down axes together with at least one transverse (right/left) counter,
+    across a 4–6 histogram run.
+
+    The up/down requirement excludes DOLLY (``Forw/Back/Left/Right`` — no
+    up/down), and the right/left requirement excludes GPD (``Back/Forw/Up/Down``
+    — no transverse counter), so neither can be misread as GPS.
+    """
+    if not 4 <= n_histograms <= 6:
+        return False
+    compact = {re.sub(r"[^a-z0-9]+", "", label.lower()) for label in labels}
+    if not compact:
+        return False
+    return (
+        bool({"forw", "forward"} & compact)
+        and bool({"back", "backward"} & compact)
+        and "up" in compact
+        and "down" in compact
+        and bool({"righ", "right", "left"} & compact)
+    )
+
+
 def _labels_match_gps_subdetectors(labels: list[str]) -> bool:
     """Return True when detector labels match the GPS ROOT sub-detector layout.
 
@@ -1754,7 +1793,11 @@ def _is_psi_gps(metadata: dict, source_file: str | None, n_histograms: int) -> b
     if "gps" in compact:
         return True
     labels = _metadata_labels(metadata)
-    return _labels_match_gps(labels, n_histograms) or _labels_match_gps_subdetectors(labels)
+    return (
+        _labels_match_gps(labels, n_histograms)
+        or _labels_match_gps_classic(labels, n_histograms)
+        or _labels_match_gps_subdetectors(labels)
+    )
 
 
 def _gps_variant(metadata: dict, n_histograms: int) -> str:

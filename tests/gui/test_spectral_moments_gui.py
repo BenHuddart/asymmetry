@@ -244,12 +244,11 @@ def test_spectral_moments_info_affordance():
 
 
 def test_no_schema_version_bump():
-    # Baseline guard: bumped to 11 for the representation-keyed ``fit_states``
-    # block (F21c) — per-domain single/global/UI fit state now persists
-    # symmetrically under ``fit_states.{time,frequency}`` instead of un-keyed
-    # top-level keys. A future accidental bump must consciously update this
-    # literal.
-    assert CURRENT_SCHEMA_VERSION == 11
+    # Baseline guard: bumped to 12 for project-level grouping profiles — the
+    # project now carries a top-level ``grouping_profiles`` list and datasets may
+    # reference a profile by name (v11->v12). A future accidental bump must
+    # consciously update this literal.
+    assert CURRENT_SCHEMA_VERSION == 12
 
 
 def test_restore_state_tolerates_absent_moments():

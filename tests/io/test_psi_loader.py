@@ -234,6 +234,42 @@ def test_load_psi_bin_marks_flame_from_filename(tmp_path) -> None:
     assert ds.time[0] == pytest.approx(0.02)
 
 
+def test_load_psi_bin_guesses_gps_from_digit_adjacent_filename(tmp_path) -> None:
+    # gps2923.bin: the GPS token abuts the run number with no separator. The
+    # loader must still stamp the instrument as GPS (regression: unmatched names
+    # previously fell through to the generic "PSI", which downstream could
+    # mis-resolve to a wrong layout).
+    labels = [b"Forw", b"Back", b"Up", b"Down", b"Righ"]
+    counts = np.vstack(
+        [np.arange(6, dtype=np.int32) + offset for offset in range(len(labels))]
+    ).astype("<i4")
+    path = tmp_path / "gps2923.bin"
+    _write_psi_bin(path, labels=labels, counts=counts)
+
+    ds = PsiLoader().load(str(path))
+
+    assert ds.metadata["instrument"] == "GPS"
+
+
+def test_load_psi_bin_classic_gps_five_counters_resolves_to_gps_layout(tmp_path) -> None:
+    # Classic GPS .bin with only five counters (no Left) and no instrument token
+    # in the filename must resolve to the GPS layout, never FLAME.
+    from asymmetry.core.instrument import detect_instrument
+
+    labels = [b"Forw", b"Back", b"Up", b"Down", b"Righ"]
+    counts = np.vstack(
+        [np.arange(6, dtype=np.int32) + offset for offset in range(len(labels))]
+    ).astype("<i4")
+    path = tmp_path / "run4931.bin"
+    _write_psi_bin(path, labels=labels, counts=counts)
+
+    ds = PsiLoader().load(str(path))
+    n_hist = len(ds.run.histograms)
+
+    resolved = detect_instrument(n_hist, metadata=ds.metadata, source_file=str(path))
+    assert resolved == "GPS"
+
+
 def test_load_psi_bin_reads_temperature_mon_file(tmp_path) -> None:
     path = tmp_path / "deltat_pta_gpd_4321.bin"
     mon_path = tmp_path / "run_4321_templs0.mon"

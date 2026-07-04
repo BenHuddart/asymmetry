@@ -21,8 +21,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QEvent, Qt
+from PySide6.QtGui import QColor, QFontMetrics
 from PySide6.QtWidgets import (
+    QApplication,
     QButtonGroup,
     QComboBox,
     QDialog,
@@ -35,6 +37,8 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizePolicy,
+    QStyle,
+    QStyleOptionButton,
     QVBoxLayout,
     QWidget,
 )
@@ -160,9 +164,12 @@ class DetectorLayoutDialog(QDialog):
         self._group_btn_group.setExclusive(True)
         self._group_buttons: dict[int, QPushButton] = {}
         self._group_name_edits: dict[int, QLineEdit] = {}
+        self._group_rows: dict[int, QWidget] = {}
 
         for gid in range(1, _MAX_GROUPS + 1):
-            row = QHBoxLayout()
+            row_widget = QWidget()
+            row = QHBoxLayout(row_widget)
+            row.setContentsMargins(0, 0, 0, 0)
             row.setSpacing(4)
 
             swatch = QLabel()
@@ -178,6 +185,9 @@ class DetectorLayoutDialog(QDialog):
             btn.setCheckable(True)
             btn.setAutoDefault(False)
             btn.setDefault(False)
+            # Preferred (not Fixed) horizontally so setMinimumWidth can grow the
+            # button to fit its label; height stays pinned via setFixedHeight.
+            btn.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
             self._group_btn_group.addButton(btn, gid)
             self._group_buttons[gid] = btn
 
@@ -190,7 +200,12 @@ class DetectorLayoutDialog(QDialog):
             row.addWidget(swatch)
             row.addWidget(btn)
             row.addWidget(name_edit)
-            group_layout.addLayout(row)
+            group_layout.addWidget(row_widget)
+
+            # Hovering a group's row temporarily highlights that group's
+            # detectors in the schematic (edge emphasis); purely visual.
+            row_widget.installEventFilter(self)
+            self._group_rows[gid] = row_widget
 
         group_layout.addStretch()
         self._group_btn_group.idClicked.connect(self._on_group_button_clicked)
@@ -214,6 +229,15 @@ class DetectorLayoutDialog(QDialog):
         )
         self._exclude_mode_btn.toggled.connect(self._schematic.set_exclude_mode)
         group_layout.addWidget(self._exclude_mode_btn)
+
+        self._clear_excluded_btn = QPushButton("Clear excluded")
+        self._clear_excluded_btn.setAutoDefault(False)
+        self._clear_excluded_btn.setDefault(False)
+        self._clear_excluded_btn.setToolTip(
+            "Remove every detector from the exclusion set (undo all exclude-mode edits)."
+        )
+        self._clear_excluded_btn.clicked.connect(self._on_clear_excluded)
+        group_layout.addWidget(self._clear_excluded_btn)
 
         root.addWidget(group_box, stretch=3)
 
@@ -307,6 +331,20 @@ class DetectorLayoutDialog(QDialog):
         super().showEvent(event)
         self._ensure_ui_scale_sync()
 
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802
+        """Highlight a group's detectors in the schematic while its row is hovered."""
+        if event.type() == QEvent.Type.Enter:
+            for gid, row_widget in self._group_rows.items():
+                if watched is row_widget:
+                    self._schematic.set_group_highlight(gid)
+                    break
+        elif event.type() == QEvent.Type.Leave:
+            for row_widget in self._group_rows.values():
+                if watched is row_widget:
+                    self._schematic.set_group_highlight(None)
+                    break
+        return super().eventFilter(watched, event)
+
     def _ensure_ui_scale_sync(self) -> None:
         if self._ui_scale_sync_connected:
             return
@@ -325,13 +363,37 @@ class DetectorLayoutDialog(QDialog):
         self._apply_group_button_metrics()
         self._apply_group_button_styles()
 
+    def _button_text_min_width(self, button: QPushButton) -> int:
+        """Return the narrowest width that shows *button*'s full text unclipped.
+
+        Uses the button's font-advance for its current text plus the style's
+        contents margins (the same inputs Qt's own ``sizeHint`` combines), so
+        this stays consistent whether the text or a UI-scale change is what
+        triggered the recompute.
+        """
+        fm = QFontMetrics(button.font())
+        text_width = fm.horizontalAdvance(button.text())
+        option = QStyleOptionButton()
+        option.initFrom(button)
+        option.text = button.text()
+        style = button.style() or QApplication.style()
+        # sizeFromContents adds the style's frame/padding around the raw text
+        # extent (mirrors what setFixedWidth previously ignored).
+        content_size = style.sizeFromContents(
+            QStyle.ContentsType.CT_PushButton,
+            option,
+            button.fontMetrics().boundingRect(button.text()).size(),
+            button,
+        )
+        return max(text_width + 16, content_size.width())
+
     def _apply_group_button_metrics(self) -> None:
         scale = max(0.8, float(self._group_button_scale))
-        button_width = max(68, round(76 * scale))
+        button_width_floor = max(68, round(76 * scale))
         button_height = max(28, round(28 * scale))
         edit_width = max(100, round(110 * scale))
         for button in self._group_buttons.values():
-            button.setFixedWidth(button_width)
+            button.setMinimumWidth(max(button_width_floor, self._button_text_min_width(button)))
             button.setFixedHeight(button_height)
         for edit in self._group_name_edits.values():
             edit.setFixedWidth(edit_width)
@@ -376,6 +438,40 @@ class DetectorLayoutDialog(QDialog):
             {gid: list(ids) for gid, ids in self._groups.items()},
             self._active_group,
         )
+        self._schematic.set_group_names(self._current_group_names_from_edits())
+        self._refresh_group_button_labels()
+
+    # Buttons wider than this are elided; pathologically long custom group
+    # names should not be allowed to blow out the centre panel's layout.
+    # Ordinary labels — including composite preset names like
+    # "Top-Bottom Top (18)" — must stay well under this so only genuinely
+    # excessive user-entered names ever get elided.
+    _MAX_GROUP_BUTTON_TEXT_WIDTH = 320
+
+    def _refresh_group_button_labels(self) -> None:
+        """Update each group button's text to show its member count, e.g. "Top (18)"."""
+        for gid, btn in self._group_buttons.items():
+            name = self._group_name_edits[gid].text().strip()
+            base = name if name else f"Group {gid}"
+            count = len(self._groups.get(gid, ()))
+            full_text = f"{base} ({count})" if count else base
+            btn.setToolTip(full_text)
+
+            fm = QFontMetrics(btn.font())
+            if fm.horizontalAdvance(full_text) > self._MAX_GROUP_BUTTON_TEXT_WIDTH:
+                display_text = fm.elidedText(
+                    full_text, Qt.TextElideMode.ElideRight, self._MAX_GROUP_BUTTON_TEXT_WIDTH
+                )
+            else:
+                display_text = full_text
+            btn.setText(display_text)
+
+            # Text changed independently of any UI-scale change, so the
+            # minimum width needs recomputing here too (not only from
+            # _apply_group_button_metrics).
+            scale = max(0.8, float(self._group_button_scale))
+            button_width_floor = max(68, round(76 * scale))
+            btn.setMinimumWidth(max(button_width_floor, self._button_text_min_width(btn)))
 
     def _current_group_names_from_edits(self) -> dict[int, str]:
         """Return normalized group-name mapping from the editable name fields."""
@@ -444,8 +540,10 @@ class DetectorLayoutDialog(QDialog):
         self._tf_hint_label.setVisible(True)
 
     def _on_group_definition_changed(self, *_args) -> None:
-        """Refresh preset status when detector or name assignments are edited."""
+        """Refresh preset status and button labels when detector/name assignments change."""
         self._update_preset_status_label()
+        self._refresh_group_button_labels()
+        self._schematic.set_group_names(self._current_group_names_from_edits())
 
     # ------------------------------------------------------------------
     # Slot: group button clicked
@@ -556,6 +654,14 @@ class DetectorLayoutDialog(QDialog):
             members.clear()
         self._sync_schematic()
         self._on_group_definition_changed()
+
+    # ------------------------------------------------------------------
+    # Slot: clear excluded
+    # ------------------------------------------------------------------
+
+    def _on_clear_excluded(self) -> None:
+        """Remove every detector from the exclusion set."""
+        self._schematic.set_excluded_detectors(set())
 
     # ------------------------------------------------------------------
     # Slot: OK

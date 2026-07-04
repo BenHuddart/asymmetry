@@ -4,9 +4,10 @@ Grouping and Calibration Walkthrough
 Before you fit anything, a raw run has to be *calibrated*: the time-zero and
 good-bin range set, the detectors combined into forward and backward groups, the
 calibration constant :math:`\alpha` fixed, and — for raw histogram formats — deadtime
-correction applied. In Asymmetry this is all done in one place, the **Grouping**
-window, with the detector arrangement edited visually in the **Detector Layout**
-editor.
+correction applied. In Asymmetry this is a **grouping profile** — one named,
+shareable calibration per instrument — edited in the **Grouping** window, with
+the detector arrangement built visually in the **Detector Layout** editor and
+:math:`\alpha`/deadtime/background each calibrated in its own dedicated dialog.
 
 .. note::
 
@@ -15,115 +16,151 @@ editor.
    build groups, seeded by instrument presets — is its replacement. See
    `The Detector Layout editor`_ below.
 
-This page is a practical walkthrough. For the stored grouping payload, the
-deadtime/background correction maths, and the per-format (PSI / ROOT) details,
-see the reference page :doc:`detector_grouping`.
+This page is a practical walkthrough. For the grouping-profile model, the
+stored payload, the deadtime/background correction maths, and the per-format
+(PSI / ROOT) details, see the reference page :doc:`detector_grouping`.
 
 The Grouping window
--------------------
+--------------------
 
 Open it with the **Grouping** button on the main toolbar (or
-**Analysis → Grouping…**). It operates on a *reference run* but can apply the
-result to many runs at once:
+**Analysis → Grouping…**). It edits one **profile** at a time — the named,
+shareable calibration for the loaded run's instrument — rather than pushing
+settings out to whichever runs happen to be checked:
 
+* **Profile selector** — which saved profile you are editing, with **New…**
+  and **Duplicate…** to start fresh or branch from the current settings.
+* **Preview run** — which run's own facts (:math:`t_0`, good-bin window, file
+  deadtime) feed the live preview and the status rows below. Changing it never
+  edits the profile itself, so it is safe to flip through several runs while
+  deciding on a calibration.
 * **Forward Group** / **Backward Group** — the two groups that enter the
   asymmetry. Pick them from the detector groups defined in the layout editor.
-* **Alpha** and **Estimate α** — the forward/backward calibration constant. Type a
-  value, or click **Estimate α** to fit it from the reference run so the
-  forward and backward precession signals balance about zero (see the worked
-  example below).
+* **Preset dropdown and chip** — an instrument-aware starting arrangement, with
+  a chip that reads "Preset: <name>" until you edit a group by hand, at which
+  point it switches to "Custom (edited from <name>)".
+* **Alpha status row** — the current :math:`\alpha` and its provenance (a
+  fixed value, or "diamagnetic · run 2923" for a calibrated one), with a
+  **Calibrate…** button that opens the alpha calibration dialog (see the
+  worked example below).
 * **t0 Bin**, **t_good Offset**, **Last Good Bin**, **Bunching Factor** — the
   time-zero bin, the first-good-bin offset after t\ :sub:`0`, the last good bin,
-  and the rebinning factor applied before analysis.
-* **Enable Deadtime Correction** — with three modes, **File** / **Manual** /
-  **Estimate**, a per-detector nanosecond table (shown as ``H1: … ns``,
-  ``H2: … ns`` …), and a **Cal** button that fits one deadtime value per
-  detector from the reference run. Deadtime correction is a normal, working part
-  of the pipeline; the maths is in :doc:`detector_grouping`.
-* **Enable Background Correction** — an optional count-background subtraction for
-  PSI-style raw histograms (off by default for ISIS/NeXus data).
+  and the rebinning factor applied before analysis. These are per-run facts
+  seeded from the preview run, not part of the profile.
+* **Deadtime status row** — the current mode (off / from file / manual /
+  estimated) with a **Configure…** button opening the deadtime dialog (mode,
+  per-detector table, **Cal** fit, and a maximum-correction-at-t=0 summary).
+* **Background status row** — the current mode with a **Configure…** button
+  opening the background dialog (range / tail-fit / reference-run / fixed,
+  with a shaded-window preview).
+* **Live asymmetry preview** — updates automatically as you edit groups,
+  :math:`\alpha`, binning, deadtime, or background, so the balancing effect of
+  a change is visible immediately rather than only after Apply.
+* **Scope panel** — every run of this instrument, tagged **inherits <profile>**
+  or **override**, with **Release** / **Reattach** to move a run between the
+  two (see `Scope: inheriting and releasing`_ below).
 * **Load .grp** / **Save .grp** — read or write a grouping definition as a
-  ``.grp`` file, so a calibration can be reused across sessions.
+  ``.grp`` file, so a calibration can be reused across sessions or shared
+  outside a project.
 
-Two controls govern *which* runs are affected:
+Press **Apply** to write the draft back to the profile. The **LOG** reports
+how many inheriting runs the profile reached and how many overridden runs
+were left untouched, for example::
 
-* the **Reference run** dropdown selects the run that **Estimate α**, **Cal**,
-  and the **Estimate** deadtime mode measure from;
-* only the **checked** datasets in the list are changed when you press
-  **Apply** — so you can calibrate on one run and push the result to a whole
-  checked series in one click.
+   Applied profile 'Silver TF' to 5 dataset(s); 1 override(s) untouched.
 
-After **Apply**, the **LOG** echoes exactly what was set, for example::
+Scope: inheriting and releasing
+--------------------------------
 
-   Applied grouping to 5 dataset(s); skipped 0. F=1, B=2, alpha=1.1,
-   deadtime=on (applied=5, missing=0), background=off
+Every run of a matching instrument either **inherits** the active profile
+(the default) or carries its own **override** — a per-run grouping frozen at
+the point it was released, which further profile edits do not touch. The
+Data Browser marks an overridden run with a trailing **⊗** and the tooltip
+"Custom grouping — this run is released from its grouping profile."
 
-so you can confirm the forward/backward groups, :math:`\alpha`, and the
-correction states that actually landed.
+Use the scope panel's **Release** button when one run in a series genuinely
+needs a different grouping — a masked detector, say, or a one-off background
+run — without pulling the rest of the series off the shared profile. Use
+**Reattach** to drop that override once the run should go back to following
+the profile.
 
 The Detector Layout editor
---------------------------
+---------------------------
 
 Click **Detector Layout…** in the Grouping window to open the visual editor.
 It draws the instrument's physical forward and backward detector arrays as
 **concentric rings**, and you build groups by clicking on them:
 
 * define up to **8** groups (**Group 1** … **Group 8**), each with its own name
-  and colour;
+  and colour, with a live member count shown on each group's button;
 * **click a detector segment to toggle** its membership in the active group. A
   single detector may belong to **more than one group** — which is exactly what
-  transverse-field and vector-polarisation arrangements need;
+  transverse-field and vector-polarisation arrangements need, and the
+  schematic draws every membership as its own thin slice so an overlapping
+  arrangement stays visible;
+* hover a detector for its id, physical label, group memberships, and
+  exclusion state;
 * the **Preset grouping** dropdown is instrument-aware and seeds a sensible
   starting arrangement. On EMU, for instance, the presets are **Longitudinal**
   (the usual two-group forward/backward split) and **Vector Polarization**;
 * **Apply Grouping** returns the arrangement to the Grouping window, where you
-  then choose the forward/backward groups and :math:`\alpha`.
+  then choose the forward/backward groups and calibrate :math:`\alpha`.
 
 Start from the preset that matches your measurement, refine it by clicking
-segments, and only then return to set :math:`\alpha`.
+segments, and only then calibrate :math:`\alpha`.
 
 Worked example: EMU silver calibration
---------------------------------------
+----------------------------------------
 
 The standard EMU calibration is a transverse-field run on a silver sample, used
 to fix :math:`\alpha` for the whole experiment.
 
 #. **Load the TF calibration run** (EMU silver, run **44989**) and select it in
    the Data Browser.
-#. **Open the Grouping window** from the toolbar. EMU's **Longitudinal** preset
-   already gives the two-group forward/backward split, so the detector layout is
-   ready.
-#. **Click Estimate α.** For this run it returns :math:`\alpha \approx 1.10` —
-   the value that balances the forward and backward TF precession signals about
-   zero. (The exact figure is run-specific; trust the fit, not a fixed number.)
-#. **Press Apply.** The LOG records the forward/backward groups and the fitted
-   :math:`\alpha`, and the F–B asymmetry view now oscillates symmetrically about
+#. **Open the Grouping window** from the toolbar and pick (or create) a
+   profile for EMU. Its **Longitudinal** preset already gives the two-group
+   forward/backward split, so the detector layout is ready.
+#. **Click Calibrate…** beside the alpha status row. Because this run's field
+   geometry is transverse and its field magnitude sits in the weak-TF window,
+   it is highlighted and pre-selected in the calibration dialog's run dropdown.
+   Choose the **Diamagnetic** method and accept: for this run it returns
+   :math:`\alpha \approx 1.10` — the value that balances the forward and
+   backward TF precession signals about zero. (The exact figure is
+   run-specific; trust the fit, not a fixed number.) The dialog's before/after
+   preview shows the precession becoming symmetric about zero as
+   :math:`\alpha` is applied.
+#. **Press Apply.** The LOG records the profile name and how many runs it
+   reached, and the F–B asymmetry view now oscillates symmetrically about
    zero — the sign that the calibration is good.
 
 To see calibration *propagate* across a series, load a partner run such as
-**34998** after applying the calibration above: it inherits the same grouping
-and :math:`\alpha` automatically (see the next section).
+**34998**: it inherits the same profile — grouping, forward/backward choice,
+and :math:`\alpha` — automatically (see the next section).
 
-Auto-propagation across a series
---------------------------------
+Inheritance across a series
+------------------------------
 
-Once a project has an active grouping, runs you load afterwards inherit it
-automatically — grouping, forward/backward choice, and :math:`\alpha` — and the
-LOG reports::
+Once a project has an active profile for an instrument, runs you load
+afterwards inherit it automatically — no per-run Apply step is needed — and
+the LOG reports::
 
    Auto-applied existing project grouping to 1 dataset(s); skipped 0.
 
-This is exactly what you want for a temperature or field series measured on one
-sample: calibrate once on the reference run, then load the rest of the series
-and have every run share the same definition.
+This is exactly what you want for a temperature or field series measured on
+one sample: calibrate once, then load the rest of the series and have every
+run share the same profile. If a later edit changes the profile — a
+recalibrated :math:`\alpha`, a different deadtime mode — every inheriting run
+picks up the change the next time it is displayed or reduced, with no
+broadcast step required.
 
 .. warning::
 
-   Auto-propagation carries :math:`\alpha` across **every** subsequently-loaded
-   run, including runs on a *different sample*. :math:`\alpha` is a property of
-   the sample-plus-geometry, not a universal constant, so when you switch to a
-   new sample you should **reset or re-Estimate α** on a calibration run for
-   that sample before trusting the asymmetry. The auto-applied value is a
+   A profile's :math:`\alpha` is carried onto **every** run of the same
+   instrument that inherits it, including runs on a *different sample*.
+   :math:`\alpha` is a property of the sample-plus-geometry, not a universal
+   constant, so when you switch to a new sample you should start (or switch
+   to) a **different profile** and **re-Calibrate α** on a reference run for
+   that sample before trusting the asymmetry. The inherited value is a
    convenience, not a measurement of the new sample.
 
 Recomputing asymmetry from the API (custom grouping and α)
@@ -138,7 +175,9 @@ pieces live in a few modules; this section is the map.
 
    **The default** :math:`\alpha = 1.0` **is wrong for most instruments.**
    Reading ``dataset.asymmetry`` straight off a freshly loaded run uses
-   :math:`\alpha = 1.0`, which only holds when the forward and backward groups
+   :math:`\alpha = 1.0` — every current loader (PSI-BIN, MusrRoot, and ISIS
+   NeXus) defaults its own reduction this way by design, leaving calibration
+   explicit — which only holds when the forward and backward groups
    are already perfectly balanced. On MUSR, EMU, and the PSI spectrometers it
    is not, so any *quantitative* asymmetry needs an explicit :math:`\alpha`
    estimate and a recompute. (For reference, the MUSR ``MUSR00044989``
@@ -171,6 +210,15 @@ Where each function lives
   asymmetry/error pair to the good-bin window.
 * ``prepare_histograms_with_deadtime`` (``asymmetry.core.fitting.grouped_time_domain``)
   — apply deadtime correction to the histograms before grouping.
+* :func:`~asymmetry.core.transform.reduce.reduce_grouped_asymmetry`
+  (``asymmetry.core.transform.reduce``) — the single reduction chokepoint the
+  GUI and the Grouping window's live preview both call: deadtime, grouping,
+  optional background, then the counts-then-ratio asymmetry, in one function.
+* :func:`~asymmetry.core.project.profiles.resolve_effective_grouping`
+  (``asymmetry.core.project.profiles``) — merge a
+  :class:`~asymmetry.core.project.profiles.GroupingProfile` with a run to
+  produce the same grouping payload shape the functions above consume; the
+  scriptable equivalent of a run inheriting a profile in the GUI.
 
 Minimal workflow
 ~~~~~~~~~~~~~~~~~
@@ -201,10 +249,10 @@ model, PSI background correction) see :doc:`data_processing`.
 See also
 --------
 
-* :doc:`detector_grouping` — the grouping payload, deadtime/background maths, and
-  per-format (PSI / ROOT) grouping details.
+* :doc:`detector_grouping` — the grouping-profile model, the stored payload,
+  deadtime/background maths, and per-format (PSI / ROOT) grouping details.
 * :doc:`loading_data` — getting runs into the session in the first place.
 * :doc:`data_processing` — the grouping and asymmetry APIs behind this window.
 * :doc:`vector_polarization` — building :math:`P_x` / :math:`P_y` / :math:`P_z`
   groups in the layout editor.
-* :doc:`project_files` — how a calibration is saved and restored with a project.
+* :doc:`project_files` — how a profile is saved and restored with a project.

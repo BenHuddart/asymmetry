@@ -4,6 +4,14 @@ This widget renders a 2D schematic of a muon spectrometer's detector
 arrangement using matplotlib wedge or rectangle patches.  Users can click
 individual detector segments to toggle their membership in the currently active
 group.
+
+A detector may legitimately belong to more than one group at once (e.g. HiFi's
+transverse preset shares boundary detectors between its Left-Right and
+Top-Bottom projections; EMU's vector preset puts every detector in a Pz group
+*and* a Py/Px group).  Multi-membership is rendered by splitting the segment
+into equal slices, one per member group (capped at three, with a small "+N"
+marker for anything beyond that) — see
+:meth:`DetectorSchematicWidget._paint_membership_slices`.
 """
 
 from __future__ import annotations
@@ -15,12 +23,20 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 from matplotlib.patches import Circle, FancyArrowPatch, Rectangle, Wedge
 from PySide6.QtCore import QSize, Signal
-from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtGui import QCursor
+from PySide6.QtWidgets import QSizePolicy, QToolTip, QVBoxLayout, QWidget
+
+from asymmetry.gui.styles import tokens
 
 if TYPE_CHECKING:
     from asymmetry.core.instrument import DetectorSegment, InstrumentLayout
 
 __all__ = ["DetectorSchematicWidget"]
+
+#: Maximum number of member-group slices actually drawn; a detector in more
+#: groups than this shows the first ``_MAX_RENDERED_MEMBERSHIPS`` slices plus a
+#: small "+N" ellipsis marker rather than slicing arbitrarily thin.
+_MAX_RENDERED_MEMBERSHIPS = 3
 
 # ---------------------------------------------------------------------------
 # Colour palette — one colour per group slot (up to 8)
@@ -97,6 +113,10 @@ class DetectorSchematicWidget(QWidget):
         # groups[gid] = set of included detector_ids (1-based)
         self._groups: dict[int, set[int]] = {}
         self._active_group: int = 1
+        # Optional gid -> display name, used only to make hover tooltips read
+        # "Forward" rather than "Group 1"; purely cosmetic, set by the caller
+        # (the layout dialog keeps the authoritative name mapping).
+        self._group_names: dict[int, str] = {}
 
         # Patch map: detector_id → clickable (active) matplotlib patch
         self._patches: dict[int, Wedge | Rectangle] = {}
@@ -104,11 +124,25 @@ class DetectorSchematicWidget(QWidget):
         # edited elsewhere); kept so exclusion hatching stays consistent across
         # both panels. Entries are (detector_id, patch).
         self._readonly_patches: list[tuple[int, Rectangle]] = []
+        # Extra membership-slice patches drawn on top of the primary patch when a
+        # detector belongs to more than one group (see `_paint_detector`).  Kept
+        # separate from `_patches` so hit-testing / hover highlighting still
+        # resolves through the single primary patch per detector.
+        self._membership_patches: dict[int, list[Wedge | Rectangle]] = {}
+        # "+N" ellipsis text artists for detectors in more than
+        # `_MAX_RENDERED_MEMBERSHIPS` groups at once.
+        self._overflow_labels: dict[int, object] = {}
         # Axis map: bank index → polar axes
         self._axes: list = []
 
         self._excluded: set[int] = set()
         self._exclude_mode = False
+        # Group IDs temporarily emphasised (e.g. hovering a group row in the
+        # layout dialog); purely visual, does not affect click behaviour.
+        self._highlighted_groups: set[int] = set()
+        # Detector id currently under the cursor, so hover doesn't re-issue the
+        # same tooltip text on every motion event within one segment.
+        self._hovered_detector: int | None = None
         self._setup_ui()
         self._build_schematic()
 
@@ -130,8 +164,11 @@ class DetectorSchematicWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self._canvas)
+        self._canvas.setMouseTracking(True)
 
         self._canvas.mpl_connect("button_press_event", self._on_click)
+        self._canvas.mpl_connect("motion_notify_event", self._on_hover)
+        self._canvas.mpl_connect("figure_leave_event", lambda _event: QToolTip.hideText())
 
     # ------------------------------------------------------------------
     # Schematic construction
@@ -142,6 +179,8 @@ class DetectorSchematicWidget(QWidget):
         self._fig.clear()
         self._patches.clear()
         self._readonly_patches.clear()
+        self._membership_patches.clear()
+        self._overflow_labels.clear()
         self._axes.clear()
 
         if self._instrument.view == "plan":
@@ -181,8 +220,10 @@ class DetectorSchematicWidget(QWidget):
                 )
                 ax.add_patch(hole)
 
+            self._add_bank_caption(ax, bank)
+
         self._fig.tight_layout(pad=0.4)
-        self._canvas.draw_idle()
+        self._refresh_colours()
 
     def _build_plan_schematic(self) -> None:
         """Draw one or more top-view (plan) detector panels side by side.
@@ -201,9 +242,35 @@ class DetectorSchematicWidget(QWidget):
             ax.set_title(bank.name, fontsize=10, fontweight="bold", pad=4)
             self._axes.append(ax)
             self._draw_plan_panel(ax, bank, multi=multi)
+            self._add_bank_caption(ax, bank)
 
         self._fig.tight_layout(pad=0.4)
-        self._canvas.draw_idle()
+        self._refresh_colours()
+
+    def _add_bank_caption(self, ax, bank) -> None:
+        """Draw an optional per-bank caption (e.g. "viewed looking upstream").
+
+        The caption text comes from an optional ``caption`` attribute on the
+        bank or instrument layout (looked up with ``getattr(..., "caption",
+        None)`` so this works whether or not that attribute has been added to
+        :class:`~asymmetry.core.instrument.BankLayout` /
+        :class:`~asymmetry.core.instrument.InstrumentLayout` yet).  Nothing is
+        drawn when neither object declares one.
+        """
+        caption = getattr(bank, "caption", None) or getattr(self._instrument, "caption", None)
+        if not caption:
+            return
+        ax.text(
+            0.5,
+            -0.06,
+            caption,
+            transform=ax.transAxes,
+            ha="center",
+            va="top",
+            fontsize=7.5,
+            style="italic",
+            color=tokens.TEXT_MUTED,
+        )
 
     def _draw_plan_panel(self, ax, bank, *, multi: bool) -> None:
         """Draw the detectors, sample and axis cues for one plan panel."""
@@ -472,13 +539,73 @@ class DetectorSchematicWidget(QWidget):
         )
         return patch
 
+    #: Abbreviations applied to plan-view rectangle names that would otherwise
+    #: overrun a narrow detector box (GPS-RD's split transverse plates: "Right_B"
+    #: / "Right_F" / "Down_B" / "Down_F" and the small "Mob-RL" bar). Falls back
+    #: to trimming the label at render time for anything not listed here.
+    _RECTANGLE_NAME_ABBREVIATIONS = {
+        "Forward": "Fwd",
+        "Backward": "Bwd",
+        "Right_B": "R_B",
+        "Right_F": "R_F",
+        "Left_B": "L_B",
+        "Left_F": "L_F",
+        "Up_B": "U_B",
+        "Up_F": "U_F",
+        "Down_B": "D_B",
+        "Down_F": "D_F",
+        "Mob-RL": "Mob",
+    }
+
+    def _rectangle_label_fontsize(self, seg: DetectorSegment) -> float:
+        """Return a label font size that fits inside *seg*'s rectangle.
+
+        Plan-view rectangles vary in both width and height (GPS-RD's split
+        transverse plates are under a third the width of its Forward/Backward
+        plates, and its "Mob-RL" bar is under a quarter their height), so a
+        single fixed size either overruns the small boxes or under-uses the
+        large ones. Approximates fit from the box dimensions in data (axes)
+        units, capped by whichever dimension is tighter.
+        """
+        width = seg.width if seg.width > 0 else 1.0
+        height = seg.height if seg.height > 0 else 1.0
+        # Empirically-tuned scales: ~7pt comfortably fits a 2-3 char
+        # abbreviation in a 0.85-wide box at this schematic's typical axes
+        # extent; wider boxes (Forward/Backward at 0.78-1.7 combined with a
+        # short "id\nname" label) can afford the 9pt cap. The two-line label
+        # ("id" + name) needs roughly a third of the box height per line.
+        by_width = width * 9.5
+        by_height = height * 13.0
+        return max(5.5, min(9.0, by_width, by_height))
+
+    #: Boxes narrower than this (data-units) can't comfortably fit a 6-8 char
+    #: name at a legible font size, regardless of height — GPS-RD's
+    #: Forward/Backward (0.78 wide) and Right/Left/Up/Down split plates (0.85
+    #: wide) both fall under it; only FLAME/HAL's wider single plates clear it.
+    _NARROW_BOX_WIDTH = 1.0
+
+    def _fit_rectangle_name(self, seg: DetectorSegment) -> str:
+        """Return *seg*'s physical label, abbreviated if it would overrun its box."""
+        name = seg.label
+        if not name:
+            return ""
+        if seg.width < self._NARROW_BOX_WIDTH and name in self._RECTANGLE_NAME_ABBREVIATIONS:
+            name = self._RECTANGLE_NAME_ABBREVIATIONS[name]
+        # Anything still too long for its box (unlisted names on narrow boxes)
+        # is hard-trimmed as a last resort, sized off width alone.
+        max_chars = max(3, round(seg.width * 6.5))
+        if len(name) > max_chars:
+            name = name[:max_chars]
+        return name
+
     def _add_label(self, ax, seg: DetectorSegment) -> None:
         """Draw the detector number at the segment centroid."""
         if seg.shape == "rectangle":
             # Plan-view banks (FLAME) show "id + name"; radial edge-bars (HAL)
             # show just the physical label to stay uncluttered.
             if self._instrument.view == "plan":
-                label = f"{seg.detector_id}\n{seg.label}" if seg.label else str(seg.detector_id)
+                name = self._fit_rectangle_name(seg)
+                label = f"{seg.detector_id}\n{name}" if name else str(seg.detector_id)
             else:
                 label = seg.label if seg.label else str(seg.detector_id)
             # Read-only context plates use a muted label so they read as
@@ -490,7 +617,7 @@ class DetectorSchematicWidget(QWidget):
                 label,
                 ha="center",
                 va="center",
-                fontsize=8,
+                fontsize=self._rectangle_label_fontsize(seg),
                 color=colour,
                 zorder=3,
             )
@@ -501,13 +628,21 @@ class DetectorSchematicWidget(QWidget):
         x = r_mid * math.cos(angle_rad)
         y = r_mid * math.sin(angle_rad)
 
-        # Determine font size based on segment density
+        # Determine font size based on segment density. The floor is raised to
+        # 5pt (was 3.5pt, illegible on 32-sector HiFi/MuSR rings) — dense rings
+        # instead shorten the label text below to stay legible at that size.
         n_sectors = max(len(set(s.sector_index for s in self._instrument.all_segments)), 1)
-        fontsize = max(3.5, min(6.5, 130.0 / n_sectors))
+        fontsize = max(5.0, min(6.5, 130.0 / n_sectors))
 
         # Prefer the physical detector label (e.g. "F1", "MV") when present;
         # fall back to the bare detector ID for label-free banks (HiFi/MuSR/EMU).
-        text = seg.label if seg.label else str(seg.detector_id)
+        # Dense rings (>24 sectors, e.g. HiFi/MuSR's 32) drop to the bare
+        # detector ID even when a physical label exists, since "id + label"
+        # would not fit at the raised font floor.
+        if n_sectors > 24:
+            text = str(seg.detector_id)
+        else:
+            text = seg.label if seg.label else str(seg.detector_id)
 
         ax.text(
             x,
@@ -579,6 +714,25 @@ class DetectorSchematicWidget(QWidget):
         """Return the current exclusion set (1-based ids)."""
         return set(self._excluded)
 
+    def set_group_names(self, group_names: dict[int, str]) -> None:
+        """Set the gid -> display-name mapping used to label hover tooltips.
+
+        Purely cosmetic (tooltip text only); does not affect group membership
+        or colour. The layout dialog calls this whenever its name-edit fields
+        change so hovering shows "Forward" rather than "Group 1".
+        """
+        self._group_names = dict(group_names)
+
+    def set_group_highlight(self, group_id: int | None) -> None:
+        """Temporarily emphasise *group_id*'s detectors (edge highlight).
+
+        Used by the layout dialog to highlight a group's detectors in the
+        schematic when the user hovers that group's row. Pass ``None`` to
+        clear the highlight.
+        """
+        self._highlighted_groups = {group_id} if group_id is not None else set()
+        self._refresh_colours()
+
     def get_filled_detectors(self) -> set[int]:
         """Return the set of detectors currently in the active group."""
         return set(self._groups.get(self._active_group, set()))
@@ -588,28 +742,47 @@ class DetectorSchematicWidget(QWidget):
     # ------------------------------------------------------------------
 
     def _detector_groups(self, det_id: int) -> list[int]:
-        """Return all group IDs that include *det_id*."""
-        return [gid for gid, members in self._groups.items() if det_id in members]
+        """Return all group IDs that include *det_id*, in ascending order."""
+        return sorted(gid for gid, members in self._groups.items() if det_id in members)
+
+    def _clear_membership_patches(self) -> None:
+        """Remove all previously-drawn membership-slice and overflow artists."""
+        for patch_list in self._membership_patches.values():
+            for patch in patch_list:
+                patch.remove()
+        self._membership_patches.clear()
+        for label in self._overflow_labels.values():
+            label.remove()
+        self._overflow_labels.clear()
 
     def _refresh_colours(self) -> None:
         """Recolour all patches to reflect the current group assignments."""
+        self._clear_membership_patches()
+
         for det_id, patch in self._patches.items():
+            highlighted = bool(self._highlighted_groups & set(self._detector_groups(det_id)))
             if det_id in self._excluded:
                 patch.set_facecolor((0.55, 0.55, 0.55, 0.45))
                 patch.set_hatch("xx")
                 patch.set_linewidth(0.6)
+                patch.set_edgecolor(_EDGE_COLOUR)
                 continue
             patch.set_hatch(None)
             gids = self._detector_groups(det_id)
             if gids:
-                # If a detector belongs to multiple groups, prioritise the active
-                # group colour so editing state remains obvious.
-                gid = self._active_group if self._active_group in gids else min(gids)
-                patch.set_facecolor(_group_colour(gid))
+                # Primary (base) fill uses the active group's colour when the
+                # detector belongs to it, else its lowest-numbered group — the
+                # membership slices (below) still show every other group.
+                primary_gid = self._active_group if self._active_group in gids else gids[0]
+                patch.set_facecolor(_group_colour(primary_gid))
                 patch.set_linewidth(1.5 if self._active_group in gids else 0.8)
+                self._paint_membership_slices(det_id, patch, gids, primary_gid)
             else:
                 patch.set_facecolor(_EMPTY_COLOUR)
                 patch.set_linewidth(0.6)
+            patch.set_edgecolor(_HOVER_EDGE_COLOUR if highlighted else _EDGE_COLOUR)
+            if highlighted:
+                patch.set_linewidth(max(patch.get_linewidth(), 2.0))
 
         # Read-only context plates (the same detector shown in another panel) keep
         # their dashed-grey style, but mirror the exclusion hatch so an excluded
@@ -621,28 +794,162 @@ class DetectorSchematicWidget(QWidget):
                 patch.set_hatch(None)
         self._canvas.draw_idle()
 
+    def _paint_membership_slices(
+        self,
+        det_id: int,
+        patch: Wedge | Rectangle,
+        gids: list[int],
+        primary_gid: int,
+    ) -> None:
+        """Draw one thin slice per *extra* group membership on top of *patch*.
+
+        The primary patch already carries ``primary_gid``'s colour as its base
+        fill; this draws the remaining member groups (up to
+        ``_MAX_RENDERED_MEMBERSHIPS - 1`` more) as equal slices along the
+        patch's natural axis — angular for a :class:`Wedge`, horizontal for a
+        :class:`Rectangle` — so dual/multi-group membership is visible without
+        losing the primary colour. Anything beyond the cap is summarised with
+        a small "+N" marker instead of slicing arbitrarily thin.
+        """
+        extra_gids = [g for g in gids if g != primary_gid]
+        if not extra_gids:
+            return
+
+        ax = patch.axes
+        if ax is None:
+            return
+
+        shown = extra_gids[: _MAX_RENDERED_MEMBERSHIPS - 1]
+        overflow = len(extra_gids) - len(shown)
+        slots = len(shown) + (1 if overflow else 0)
+
+        new_patches: list[Wedge | Rectangle] = []
+        if isinstance(patch, Wedge):
+            new_patches = self._slice_wedge_membership(ax, patch, shown, slots)
+        else:
+            new_patches = self._slice_rectangle_membership(ax, patch, shown, slots)
+
+        self._membership_patches[det_id] = new_patches
+
+        if overflow:
+            self._add_overflow_marker(ax, patch, overflow, det_id)
+
+    def _slice_wedge_membership(
+        self,
+        ax,
+        patch: Wedge,
+        shown_gids: list[int],
+        slots: int,
+    ) -> list[Wedge]:
+        """Split the outer edge of a wedge into angular slices for *shown_gids*."""
+        theta1, theta2 = patch.theta1, patch.theta2
+        span = theta2 - theta1
+        # Slices occupy the outer third of the radial extent so the base colour
+        # (and any detector-id label near the mid-radius) stays legible.
+        slice_width = patch.width * 0.34
+        slice_r_outer = patch.r
+
+        new_patches: list[Wedge] = []
+        step = span / slots
+        for i, gid in enumerate(shown_gids):
+            t1 = theta1 + i * step
+            t2 = theta1 + (i + 1) * step
+            slice_patch = Wedge(
+                center=patch.center,
+                r=slice_r_outer,
+                theta1=t1,
+                theta2=t2,
+                width=slice_width,
+                facecolor=_group_colour(gid),
+                edgecolor="none",
+                linewidth=0.0,
+                zorder=2.5,
+            )
+            ax.add_patch(slice_patch)
+            new_patches.append(slice_patch)
+        return new_patches
+
+    def _slice_rectangle_membership(
+        self,
+        ax,
+        patch: Rectangle,
+        shown_gids: list[int],
+        slots: int,
+    ) -> list[Rectangle]:
+        """Split a thin band along the bottom edge of a rectangle into slices."""
+        x0, y0 = patch.get_x(), patch.get_y()
+        width, height = patch.get_width(), patch.get_height()
+        centre = (x0 + width / 2.0, y0 + height / 2.0)
+        band_height = height * 0.28
+        slice_width = width / slots
+
+        new_patches: list[Rectangle] = []
+        for i, gid in enumerate(shown_gids):
+            slice_patch = Rectangle(
+                (x0 + i * slice_width, y0),
+                slice_width,
+                band_height,
+                angle=patch.angle,
+                rotation_point=centre,
+                facecolor=_group_colour(gid),
+                edgecolor="none",
+                linewidth=0.0,
+                zorder=2.5,
+            )
+            ax.add_patch(slice_patch)
+            new_patches.append(slice_patch)
+        return new_patches
+
+    def _add_overflow_marker(
+        self, ax, patch: Wedge | Rectangle, overflow_count: int, det_id: int
+    ) -> None:
+        """Draw a small "+N" marker for memberships beyond the rendered cap."""
+        if isinstance(patch, Wedge):
+            angle_rad = math.radians((patch.theta1 + patch.theta2) / 2.0)
+            r = patch.r - patch.width * 0.5
+            x, y = r * math.cos(angle_rad), r * math.sin(angle_rad)
+        else:
+            x = patch.get_x() + patch.get_width() / 2.0
+            y = patch.get_y() + patch.get_height() * 0.82
+        label = ax.text(
+            x,
+            y,
+            f"+{overflow_count}",
+            ha="center",
+            va="center",
+            fontsize=5.5,
+            fontweight="bold",
+            color="white",
+            zorder=4,
+            bbox={
+                "boxstyle": "circle,pad=0.15",
+                "facecolor": (0.2, 0.2, 0.2, 0.85),
+                "edgecolor": "none",
+            },
+        )
+        self._overflow_labels[det_id] = label
+
     # ------------------------------------------------------------------
     # Interaction
     # ------------------------------------------------------------------
 
-    def _on_click(self, event) -> None:
-        """Handle a mouse click on the figure canvas."""
-        if event.button != 1:  # left click only
-            return
-        if event.inaxes is None:
-            return
+    def _hit_test_event(self, event) -> DetectorSegment | None:
+        """Return the clickable segment under *event*, or ``None``.
 
+        Shared by :meth:`_on_click` and :meth:`_on_hover` so the two stay in
+        sync. Read-only context segments (dashed boxes, end-on ⊙/⊗ markers)
+        never match — they are edited in the panel where the detector lies
+        in-plane.
+        """
+        if event.inaxes is None:
+            return None
         ax = event.inaxes
         if ax not in self._axes:
-            return
+            return None
 
-        # Find which bank this axis belongs to
         bank_idx = self._axes.index(ax)
         bank = self._instrument.banks[bank_idx]
 
-        # Hit-test: find the topmost patch at click position. Read-only context
-        # segments (dashed boxes, end-on ⊙/⊗ markers) are not clickable here —
-        # they are edited in the panel where the detector lies in-plane.
         hit_seg: DetectorSegment | None = None
         for seg in bank.segments:
             if seg.read_only:
@@ -653,7 +960,14 @@ class DetectorSchematicWidget(QWidget):
                     (seg.r_outer - seg.r_inner) < (hit_seg.r_outer - hit_seg.r_inner)
                 ):
                     hit_seg = seg
+        return hit_seg
 
+    def _on_click(self, event) -> None:
+        """Handle a mouse click on the figure canvas."""
+        if event.button != 1:  # left click only
+            return
+
+        hit_seg = self._hit_test_event(event)
         if hit_seg is None:
             return
 
@@ -681,6 +995,42 @@ class DetectorSchematicWidget(QWidget):
 
         self._refresh_colours()
         self.detector_toggled.emit(det_id, included)
+
+    def _on_hover(self, event) -> None:
+        """Show a tooltip with detector id, label, group memberships, and
+        exclusion status while the mouse hovers a clickable segment."""
+        hit_seg = self._hit_test_event(event)
+        if hit_seg is None:
+            if self._hovered_detector is not None:
+                self._hovered_detector = None
+                QToolTip.hideText()
+            return
+
+        det_id = hit_seg.detector_id
+        if det_id == self._hovered_detector:
+            return
+        self._hovered_detector = det_id
+        QToolTip.showText(QCursor.pos(), self._tooltip_text(det_id, hit_seg), self._canvas)
+
+    def _tooltip_text(self, det_id: int, seg: DetectorSegment) -> str:
+        """Build the hover tooltip body: id, physical label, groups, exclusion."""
+        lines = [f"Detector {det_id}"]
+        if seg.label:
+            lines.append(seg.label)
+        gids = self._detector_groups(det_id)
+        if gids:
+            names = [self._group_display_name(gid) for gid in gids]
+            lines.append("Groups: " + ", ".join(names))
+        else:
+            lines.append("Groups: (none)")
+        if det_id in self._excluded:
+            lines.append("Excluded")
+        return "\n".join(lines)
+
+    def _group_display_name(self, gid: int) -> str:
+        """Return a human-readable name for *gid* (``group_names`` override, else "Group N")."""
+        name = self._group_names.get(gid)
+        return name if name else f"Group {gid}"
 
     @staticmethod
     def _point_in_segment(x: float, y: float, seg: DetectorSegment) -> bool:

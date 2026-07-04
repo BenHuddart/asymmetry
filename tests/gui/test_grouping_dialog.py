@@ -13,12 +13,37 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QLabel
+from PySide6.QtWidgets import QApplication, QDialog, QLabel
 
+import asymmetry.gui.windows.grouping.dialog as grouping_dialog_dialog_module
 import asymmetry.gui.windows.grouping_dialog as grouping_dialog_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.utils.constants import PeriodMode
+from asymmetry.gui.windows.grouping.alpha_calibration_dialog import AlphaCalibrationDialog
 from asymmetry.gui.windows.grouping_dialog import GroupingDialog
+
+
+def _autocalibrate(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the launched Alpha calibration dialog run headlessly.
+
+    The grouping dialog's ``Calibrate…`` (and the per-projection estimate
+    buttons) now open :class:`AlphaCalibrationDialog` modally. Tests that used to
+    call the old synchronous ``_estimate_alpha`` drive the *real* calibration
+    flow instead: this patches ``exec`` to run the dialog's own estimate + accept
+    path (so the estimator, provenance and returned policy are all exercised) and
+    never blocks. ``result_policy()`` then returns the genuine calibrated policy.
+    """
+
+    def _fake_exec(self: AlphaCalibrationDialog) -> int:
+        self._on_estimate()
+        if self._estimate is None:
+            # Estimate failed (e.g. the General method on flat data): behave like
+            # a user who cancels, so the caller leaves alpha untouched.
+            return QDialog.DialogCode.Rejected
+        self._on_accept()
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(AlphaCalibrationDialog, "exec", _fake_exec, raising=True)
 
 
 @pytest.fixture(scope="module")
@@ -231,7 +256,10 @@ def _two_period_dataset(run_number: int = 6001) -> MuonDataset:
     )
 
 
-def test_estimate_alpha_updates_spinbox(qapp: QApplication) -> None:
+def test_estimate_alpha_updates_spinbox(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _autocalibrate(monkeypatch)
     dialog = GroupingDialog([_dataset_with_histograms()])
     dialog._estimate_alpha()
     assert dialog._alpha_spin.value() == pytest.approx(2.0)
@@ -244,9 +272,8 @@ def test_get_grouping_result_contains_required_keys(qapp: QApplication) -> None:
     dataset.run.metadata["facility"] = "PSI"
     dataset.run.grouping["dead_time_us"] = [0.01, 0.01]
     dialog = GroupingDialog([dataset])
-    dialog._deadtime_checkbox.setChecked(True)
-    idx = dialog._background_mode_combo.findData("range")
-    dialog._background_mode_combo.setCurrentIndex(idx)
+    dialog._set_deadtime_mode("file")
+    dialog._background_mode = "range"
     dialog._bunch_spin.setValue(1234)
     result = dialog.get_grouping_result()
     assert result is not None
@@ -284,33 +311,27 @@ def test_grouping_dialog_does_not_show_bunching_rules(qapp: QApplication) -> Non
 
 
 def test_deadtime_modes_available_without_file_deadtime(qapp: QApplication) -> None:
+    """Deadtime state defaults to off; setting a mode does not require the
+    (now dedicated-dialog) file/manual/estimate widgets to exist inline."""
     dialog = GroupingDialog([_dataset_with_histograms()])
     payload = dialog._current_grouping_payload()
 
-    assert dialog._deadtime_checkbox.isEnabled()
-    assert dialog._deadtime_checkbox.isChecked() is False
-    assert dialog._deadtime_mode_buttons["file"].isChecked()
-    assert "load" not in dialog._deadtime_mode_buttons
+    assert dialog._deadtime_mode == "off"
     assert payload["deadtime_correction"] is False
-    dialog._deadtime_checkbox.setChecked(True)
-    assert dialog._deadtime_mode_buttons["file"].isEnabled()
-    assert dialog._deadtime_mode_buttons["file"].isChecked()
-    assert dialog._deadtime_mode_buttons["manual"].isEnabled()
-    assert dialog._deadtime_mode_buttons["estimate"].isEnabled()
+    dialog._set_deadtime_mode("file")
+    assert dialog._current_deadtime_mode() == "file"
+    dialog._set_deadtime_mode("manual")
+    assert dialog._current_deadtime_mode() == "manual"
+    dialog._set_deadtime_mode("estimate")
+    assert dialog._current_deadtime_mode() == "estimate"
 
 
 def test_manual_deadtime_payload_resolves_uniform_values(qapp: QApplication) -> None:
     dialog = GroupingDialog([_dataset_with_histograms()])
 
-    dialog._deadtime_checkbox.setChecked(True)
     dialog._set_deadtime_mode("manual")
-    dialog._update_deadtime_controls()
-    dialog._deadtime_value_combo.setCurrentIndex(0)
-    dialog._deadtime_value_combo.setEditText("25.0")
-    dialog._on_deadtime_value_edited()
-    dialog._deadtime_value_combo.setCurrentIndex(1)
-    dialog._deadtime_value_combo.setEditText("25.0")
-    dialog._on_deadtime_value_edited()
+    dialog._deadtime_manual_values_us = [0.025, 0.025]
+    dialog._deadtime_manual_method = "manual"
 
     payload = dialog.get_grouping_result()
 
@@ -321,19 +342,17 @@ def test_manual_deadtime_payload_resolves_uniform_values(qapp: QApplication) -> 
     assert payload["dead_time_us"] == pytest.approx([0.025, 0.025])
 
 
-def test_file_deadtime_updates_detector_value_combo(qapp: QApplication) -> None:
+def test_file_deadtime_status_reflects_reference_run(qapp: QApplication) -> None:
     dataset = _dataset_with_histograms()
     assert dataset.run is not None
     dataset.run.grouping["dead_time_us"] = [0.011, 0.022]
     dialog = GroupingDialog([dataset])
 
-    dialog._deadtime_checkbox.setChecked(True)
     dialog._set_deadtime_mode("file")
-    dialog._update_deadtime_controls()
+    dialog._update_deadtime_status()
 
-    assert dialog._deadtime_value_combo.count() == 2
-    assert dialog._deadtime_value_combo.itemText(0) == "H1: 11.000 ns"
-    assert dialog._deadtime_value_combo.itemText(1) == "H2: 22.000 ns"
+    assert dialog._reference_file_deadtime_values() == pytest.approx([0.011, 0.022])
+    assert dialog._deadtime_status_label.text() == "Deadtime: from file"
 
 
 def test_estimate_deadtime_uses_reference_run_only(qapp: QApplication) -> None:
@@ -345,7 +364,6 @@ def test_estimate_deadtime_uses_reference_run_only(qapp: QApplication) -> None:
         selected_run_numbers=[4101, 4102],
     )
 
-    dialog._deadtime_checkbox.setChecked(True)
     dialog._set_deadtime_mode("estimate")
 
     payload = dialog.get_grouping_result()
@@ -356,7 +374,6 @@ def test_estimate_deadtime_uses_reference_run_only(qapp: QApplication) -> None:
     assert payload["deadtime_reference_run"] == 4101
     assert payload["run_numbers"] == [4101, 4102]
     assert payload["dead_time_us"] == pytest.approx([0.02, 0.02, 0.02, 0.02], rel=1e-2, abs=5e-4)
-    assert dialog._deadtime_value_combo.itemText(0).startswith("H1: 20.000")
 
 
 def test_calibrate_deadtime_populates_explicit_table(
@@ -366,38 +383,31 @@ def test_calibrate_deadtime_populates_explicit_table(
     dialog = GroupingDialog([_dataset_with_histograms()])
 
     monkeypatch.setattr(
-        grouping_dialog_module,
+        grouping_dialog_dialog_module,
         "calibrate_deadtime_from_histograms",
         lambda *args, **kwargs: [0.011, 0.022],
     )
 
-    dialog._deadtime_checkbox.setChecked(True)
     dialog._set_deadtime_mode("manual")
-    dialog._update_deadtime_controls()
-    assert dialog._deadtime_calibrate_btn.isEnabled()
-    assert "Fit one deadtime value per detector" in dialog._deadtime_calibrate_btn.toolTip()
     dialog._calibrate_deadtime_from_reference()
     payload = dialog.get_grouping_result()
 
     assert payload is not None
-    assert dialog._deadtime_mode_buttons["manual"].isChecked()
+    assert dialog._current_deadtime_mode() == "manual"
     assert payload["deadtime_mode"] == "manual"
     assert payload["deadtime_method"] == "calibrate"
     assert payload["dead_time_us"] == pytest.approx([0.011, 0.022])
     assert payload["deadtime_reference_run"] == 4001
-    assert dialog._deadtime_value_combo.itemText(0) == "H1: 11.000 ns"
 
 
 def test_background_range_mode_disabled_for_non_psi_data(qapp: QApplication) -> None:
     dialog = GroupingDialog([_dataset_with_histograms()])
 
-    idx = dialog._background_mode_combo.findData("range")
-    item = dialog._background_mode_combo.model().item(idx)
-    assert item is not None and not item.isEnabled()
+    available = dialog._available_background_modes()
+    assert "range" not in available
     # Tail fit and background-run modes stay available on pulsed data.
-    for mode in ("tail_fit", "reference_run"):
-        idx = dialog._background_mode_combo.findData(mode)
-        assert dialog._background_mode_combo.model().item(idx).isEnabled()
+    assert "tail_fit" in available
+    assert "reference_run" in available
     assert dialog._current_grouping_payload()["background_correction"] is False
     assert dialog._current_grouping_payload()["background_mode"] == "none"
 
@@ -543,10 +553,11 @@ def test_per_projection_alpha_seeds_from_declared_projection_alpha(
 
 
 def test_per_projection_alpha_estimate_updates_and_persists(
-    qapp: QApplication,
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Estimating a non-canonical projection updates its spin and the estimated
     value persists into the projection payload."""
+    _autocalibrate(monkeypatch)
     dialog = GroupingDialog([_tf_dataset_with_histograms()])
     dialog._estimate_alpha_for_axis("Top-Bottom")
     estimated = dialog._vector_alpha_spins["Top-Bottom"].value()
@@ -556,10 +567,13 @@ def test_per_projection_alpha_estimate_updates_and_persists(
     assert by_label["Top-Bottom"]["alpha"] == pytest.approx(estimated)
 
 
-def test_per_projection_alpha_estimate_persists_provenance(qapp: QApplication) -> None:
+def test_per_projection_alpha_estimate_persists_provenance(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A non-canonical projection's estimate carries its reference-run provenance
     into the projection payload, and a manual edit invalidates it — mirroring the
     canonical per-axis provenance."""
+    _autocalibrate(monkeypatch)
     dialog = GroupingDialog([_tf_dataset_with_histograms()])
     dialog._estimate_alpha_for_axis("Top-Bottom")
     estimated = dialog._vector_alpha_spins["Top-Bottom"].value()
@@ -676,9 +690,12 @@ def test_vector_payload_contains_per_axis_alpha_values(qapp: QApplication) -> No
     assert payload["alpha"] == pytest.approx(1.33)
 
 
-def test_vector_payload_records_per_axis_alpha_provenance(qapp: QApplication) -> None:
+def test_vector_payload_records_per_axis_alpha_provenance(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """After estimating an axis, the payload carries that axis's error and
     reference run (per-axis provenance, skipped in Phase 1)."""
+    _autocalibrate(monkeypatch)
     dialog = GroupingDialog([_vector_dataset_with_histograms()])
     dialog._estimate_alpha_for_axis("P_x")
     estimated = dialog._vector_alpha_spins["P_x"].value()
@@ -695,14 +712,20 @@ def test_vector_payload_records_per_axis_alpha_provenance(qapp: QApplication) ->
     assert "alpha_x_reference_run" not in payload2
 
 
-def test_vector_estimate_alpha_for_axis_updates_axis_spin(qapp: QApplication) -> None:
+def test_vector_estimate_alpha_for_axis_updates_axis_spin(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _autocalibrate(monkeypatch)
     dialog = GroupingDialog([_vector_dataset_with_histograms()])
     dialog._estimate_alpha_for_axis("P_x")
 
     assert dialog._vector_alpha_spins["P_x"].value() == pytest.approx(2.0)
 
 
-def test_vector_estimate_alpha_uses_selected_reference_run(qapp: QApplication) -> None:
+def test_vector_estimate_alpha_uses_selected_reference_run(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _autocalibrate(monkeypatch)
     ds_a = _vector_dataset_with_ratio(5201, ratio=2.0)
     ds_b = _vector_dataset_with_ratio(5202, ratio=4.0)
 
@@ -713,7 +736,10 @@ def test_vector_estimate_alpha_uses_selected_reference_run(qapp: QApplication) -
     assert dialog._vector_alpha_spins["P_x"].value() == pytest.approx(4.0)
 
 
-def test_estimate_alpha_uses_reference_run_only(qapp: QApplication) -> None:
+def test_estimate_alpha_uses_reference_run_only(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _autocalibrate(monkeypatch)
     ds_a = _dataset_with_ratio(5001, ratio=2.0)
     ds_b = _dataset_with_ratio(5002, ratio=4.0)
 
@@ -724,17 +750,20 @@ def test_estimate_alpha_uses_reference_run_only(qapp: QApplication) -> None:
     assert dialog._alpha_spin.value() == pytest.approx(4.0)
 
 
-def test_preselected_run_numbers_set_dataset_tickboxes(qapp: QApplication) -> None:
+def test_selected_run_number_seeds_preview_run(qapp: QApplication) -> None:
+    """selected_run_number chooses the initial preview run (no broadcast list)."""
     ds_a = _dataset_with_ratio(5101, ratio=2.0)
     ds_b = _dataset_with_ratio(5102, ratio=3.0)
 
     dialog = GroupingDialog(
         [ds_a, ds_b],
-        selected_run_number=5101,
-        selected_run_numbers=[5102],
+        selected_run_number=5102,
     )
 
-    assert dialog._checked_run_numbers() == [5102]
+    assert int(dialog._reference_dataset.run_number) == 5102
+    # The scope panel lists every run of the fingerprint, inheriting by default.
+    assert dialog._scope_panel.inheriting_run_numbers() == {5101, 5102}
+    assert dialog._scope_panel.released_run_numbers() == set()
 
 
 def test_pressing_enter_on_bunch_factor_does_not_estimate_alpha(qapp: QApplication) -> None:
@@ -762,7 +791,7 @@ def test_pressing_enter_on_bunch_factor_does_not_trigger_save_grp(
         return "", ""
 
     monkeypatch.setattr(
-        "asymmetry.gui.windows.grouping_dialog.QFileDialog.getSaveFileName",
+        "asymmetry.gui.windows.grouping.dialog.QFileDialog.getSaveFileName",
         _stub_get_save_file_name,
     )
 
@@ -1054,11 +1083,11 @@ def test_detector_layout_prefers_saved_instrument(
             return 0
 
     monkeypatch.setattr(
-        "asymmetry.gui.windows.grouping_dialog.detect_instrument",
+        "asymmetry.gui.windows.grouping.dialog.detect_instrument",
         lambda *_args, **_kwargs: "EMU",
     )
     monkeypatch.setattr(
-        "asymmetry.gui.windows.grouping_dialog.get_instrument_layout",
+        "asymmetry.gui.windows.grouping.dialog.get_instrument_layout",
         lambda name: type("_Layout", (), {"name": name})(),
     )
     monkeypatch.setattr(
@@ -1221,7 +1250,11 @@ def test_detector_layout_resolves_psi_hifi_to_hal(
             return 1  # Accepted
 
         def get_result(self):
-            return {"instrument": captured["instrument"], "groups": {}, "group_names": {}}
+            return {
+                "instrument": captured["instrument"],
+                "groups": {1: [1], 2: [2]},
+                "group_names": {},
+            }
 
     monkeypatch.setattr(
         "asymmetry.gui.windows.detector_layout_dialog.DetectorLayoutDialog",
@@ -1312,6 +1345,119 @@ def test_psi_detector_layout_result_is_swapped_for_analysis_dropdowns(
 
     assert dialog._forward_combo.currentData() == 2
     assert dialog._backward_combo.currentData() == 1
+
+
+def test_detector_layout_custom_edit_refreshes_preset_chip_and_marks_dirty(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A drifted (custom) result from the detector-layout editor must refresh the
+    preset chip and arm the dialog's dirty/close-guard flag immediately, not just
+    update the internal state silently (regression: _on_detector_layout updated
+    ``_grouping_preset_name``/groups/combos but never called ``_mark_dirty`` or
+    ``_refresh_preset_chip``, so the chip kept showing the stale preset name)."""
+    dataset = _dataset_with_histograms()
+    assert dataset.run is not None
+    dataset.run.grouping["instrument"] = "GPS"
+    dataset.run.grouping["grouping_preset"] = "Longitudinal"
+    dataset.run.grouping["group_names"] = {1: "Forward", 2: "Backward"}
+    # GPS's Longitudinal preset declares forward=2 / backward=1.
+    dataset.run.grouping["forward_group"] = 2
+    dataset.run.grouping["backward_group"] = 1
+
+    dialog = GroupingDialog([dataset])
+    assert dialog._preset_chip.text() == "Preset: Longitudinal"
+    assert dialog._draft_dirty is False
+
+    # Drifted from the preset: the layout editor itself detects the state no
+    # longer matches any preset and reports grouping_preset=None (see
+    # DetectorLayoutDialog._update_preset_status_label).
+    result = {
+        "groups": {1: [1, 3], 2: [2]},
+        "group_names": {1: "Forward", 2: "Backward"},
+        "forward_group": 2,
+        "backward_group": 1,
+        "instrument": "GPS",
+        "grouping_preset": None,
+        "excluded_detectors": [],
+        "projections": [],
+    }
+
+    class _FakeDialog:
+        DialogCode = type("DialogCode", (), {"Accepted": 1})
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def exec(self):
+            return 1
+
+        def get_result(self):
+            return result
+
+    monkeypatch.setattr(
+        "asymmetry.gui.windows.detector_layout_dialog.DetectorLayoutDialog",
+        _FakeDialog,
+    )
+
+    dialog._on_detector_layout()
+
+    assert dialog._grouping_preset_name is None
+    assert dialog._preset_chip.text() == "Custom (edited from Longitudinal)"
+    assert dialog._draft_dirty is True
+
+
+def test_detector_layout_unchanged_preset_does_not_clear_chip(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the layout editor reconfirms the same preset (no drift), the chip
+    must keep reading "Preset: <name>" rather than being over-cleared to
+    Custom."""
+    dataset = _dataset_with_histograms()
+    assert dataset.run is not None
+    dataset.run.grouping["instrument"] = "GPS"
+    dataset.run.grouping["grouping_preset"] = "Longitudinal"
+    dataset.run.grouping["group_names"] = {1: "Forward", 2: "Backward"}
+    # GPS's Longitudinal preset declares forward=2 / backward=1.
+    dataset.run.grouping["forward_group"] = 2
+    dataset.run.grouping["backward_group"] = 1
+
+    dialog = GroupingDialog([dataset])
+    assert dialog._preset_chip.text() == "Preset: Longitudinal"
+
+    result = {
+        "groups": {1: [1], 2: [2]},
+        "group_names": {1: "Forward", 2: "Backward"},
+        "forward_group": 2,
+        "backward_group": 1,
+        "instrument": "GPS",
+        "grouping_preset": "Longitudinal",
+        "excluded_detectors": [],
+        "projections": [],
+    }
+
+    class _FakeDialog:
+        DialogCode = type("DialogCode", (), {"Accepted": 1})
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def exec(self):
+            return 1
+
+        def get_result(self):
+            return result
+
+    monkeypatch.setattr(
+        "asymmetry.gui.windows.detector_layout_dialog.DetectorLayoutDialog",
+        _FakeDialog,
+    )
+
+    dialog._on_detector_layout()
+
+    assert dialog._grouping_preset_name == "Longitudinal"
+    assert dialog._preset_chip.text() == "Preset: Longitudinal"
 
 
 # ---------------------------------------------------------------------------
@@ -1427,11 +1573,16 @@ def test_alpha_method_round_trips_through_payload_and_reload(qapp: QApplication)
     assert dialog2._current_alpha_method() == "general"
 
 
-def test_estimate_records_provenance_in_payload(qapp: QApplication) -> None:
+def test_estimate_records_provenance_in_payload(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _autocalibrate(monkeypatch)
     dialog = GroupingDialog([_dataset_with_histograms()])
     dialog._estimate_alpha()
     assert dialog._alpha_spin.value() == pytest.approx(2.0)
     assert dialog._alpha_result_label.text() != ""
+    # The single-alpha provenance status reflects the calibration, not "manual".
+    assert dialog._alpha_provenance_label.text() != "manual"
     result = dialog.get_grouping_result()
     assert result["alpha_method"] == "diamagnetic"
     assert result["alpha_reference_run"] == 4001
@@ -1439,7 +1590,10 @@ def test_estimate_records_provenance_in_payload(qapp: QApplication) -> None:
     assert result.get("alpha_error") is None or result["alpha_error"] >= 0.0
 
 
-def test_manual_alpha_edit_invalidates_estimate_provenance(qapp: QApplication) -> None:
+def test_manual_alpha_edit_invalidates_estimate_provenance(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _autocalibrate(monkeypatch)
     dialog = GroupingDialog([_dataset_with_histograms()])
     dialog._estimate_alpha()
     dialog._alpha_spin.setValue(dialog._alpha_spin.value() + 0.5)
@@ -1447,21 +1601,19 @@ def test_manual_alpha_edit_invalidates_estimate_provenance(qapp: QApplication) -
     assert "alpha_error" not in result
     assert "alpha_reference_run" not in result
     assert result["alpha_method"] == "diamagnetic"
+    # A hand-edit flips the provenance status to "manual".
+    assert dialog._alpha_provenance_label.text() == "manual"
 
 
-def test_estimate_failure_warns_and_leaves_alpha(qapp: QApplication, monkeypatch) -> None:
+def test_estimate_failure_leaves_alpha(qapp: QApplication, monkeypatch) -> None:
+    """A failed estimate inside the calibration dialog leaves the alpha untouched
+    (the dialog reports the failure; the caller does not write a value back)."""
+    _autocalibrate(monkeypatch)
     dataset = _dataset_with_histograms()
     dialog = GroupingDialog([dataset])
     dialog._set_alpha_method("general")  # flat 4-bin data: no relaxation contrast
-    warnings: list[str] = []
-    monkeypatch.setattr(
-        grouping_dialog_module.QMessageBox,
-        "warning",
-        lambda *args, **kwargs: warnings.append(str(args[2]) if len(args) > 2 else ""),
-    )
     before = dialog._alpha_spin.value()
     dialog._estimate_alpha()
-    assert warnings, "expected a warning dialog for the failed estimate"
     assert dialog._alpha_spin.value() == pytest.approx(before)
 
 
@@ -1484,8 +1636,8 @@ def test_tail_fit_mode_shows_preview_status(qapp: QApplication) -> None:
     ]
     dataset.run.grouping["last_good_bin"] = 399
     dialog = GroupingDialog([dataset])
-    idx = dialog._background_mode_combo.findData("tail_fit")
-    dialog._background_mode_combo.setCurrentIndex(idx)
+    dialog._background_mode = "tail_fit"
+    dialog._update_background_status()
     assert "Tail-fit background" in dialog._background_status_label.text()
     result = dialog.get_grouping_result()
     assert result["background_mode"] == "tail_fit"
@@ -1499,6 +1651,7 @@ def test_background_run_payload_round_trips(qapp: QApplication) -> None:
     dataset.run.grouping["background_run"] = {"run_number": 9001, "source_file": "/tmp/x.nxs"}
     dialog = GroupingDialog([dataset])
     assert dialog._current_background_mode() == "reference_run"
+    dialog._update_background_status()
     result = dialog.get_grouping_result()
     assert result["background_run"]["run_number"] == 9001
     assert "9001" in dialog._background_status_label.text()
@@ -1597,9 +1750,12 @@ def test_apply_blocks_when_exclusion_empties_a_group(qapp: QApplication, monkeyp
     assert any("no detectors left" in w for w in warnings)
 
 
-def test_estimate_alpha_respects_detector_exclusion(qapp: QApplication) -> None:
+def test_estimate_alpha_respects_detector_exclusion(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Review fix: the estimate is computed on the same detector set the
     reduction will use."""
+    _autocalibrate(monkeypatch)
     dataset = _dataset_with_histograms()
     dataset.run.histograms = [
         Histogram(counts=np.full(4, 100.0), bin_width=0.01),  # det 1 (forward)
@@ -1689,3 +1845,205 @@ def test_transverse_field_gps_run_shows_grouping_nudge(qapp) -> None:
 def test_gps_run_without_field_direction_does_not_nudge(qapp) -> None:
     dialog = GroupingDialog([_gps_dataset(None)])
     assert not dialog._tf_hint_label.isVisibleTo(dialog)
+
+
+# ---------------------------------------------------------------------------
+# M2 profile-editor semantics
+# ---------------------------------------------------------------------------
+
+
+from asymmetry.core.project.profiles import (  # noqa: E402
+    GroupingProfile,
+    profile_fingerprint_for_run,
+    profile_from_payload,
+)
+
+
+def _profile_for(dataset: MuonDataset, name: str, **overrides) -> GroupingProfile:
+    """Build a GroupingProfile from a dataset's payload, with field overrides."""
+    fingerprint = profile_fingerprint_for_run(dataset.run)
+    payload = dict(dataset.run.grouping or {})
+    payload.update(overrides)
+    return profile_from_payload(payload, name, fingerprint, active=True)
+
+
+def test_preview_run_change_preserves_draft_edits(qapp: QApplication) -> None:
+    """Changing the preview run must never discard in-progress draft edits."""
+    ds_a = _dataset_with_ratio(6201, ratio=2.0)
+    ds_b = _dataset_with_ratio(6202, ratio=3.0)
+    dialog = GroupingDialog([ds_a, ds_b], selected_run_number=6201)
+
+    dialog._alpha_spin.setValue(1.2345)
+    dialog._mark_dirty()
+    idx = dialog._reference_combo.findData(6202)
+    dialog._reference_combo.setCurrentIndex(idx)
+    dialog._on_reference_dataset_changed()
+
+    assert dialog._current_grouping_payload()["alpha"] == pytest.approx(1.2345)
+    assert int(dialog._reference_dataset.run_number) == 6202
+
+
+def test_draft_seeds_from_active_profile_when_present(qapp: QApplication) -> None:
+    """An active profile for the fingerprint seeds the draft (not the run payload)."""
+    dataset = _dataset_with_histograms()
+    profile = _profile_for(dataset, "My Profile", alpha=1.75)
+    dialog = GroupingDialog([dataset], profiles=[profile])
+
+    assert dialog._draft_name == "My Profile"
+    assert dialog._current_grouping_payload()["alpha"] == pytest.approx(1.75)
+
+
+def test_default_draft_synthesized_without_profile(qapp: QApplication) -> None:
+    """A fingerprint with no profile synthesizes a Default (<instrument>) draft."""
+    dialog = GroupingDialog([_gps_dataset(None)])
+    assert dialog._draft_name.startswith("Default (")
+
+
+def test_default_draft_name_is_neutral_without_positive_instrument(qapp: QApplication) -> None:
+    """A generic 'PSI' instrument token never names a profile after an instrument.
+
+    An unresolved PSI file (loader fallback instrument ``"PSI"``) must get the
+    neutral ``Default (<N> detectors)`` name rather than masquerading as a
+    specific spectrometer (the "Default (FLAME)" bug).
+    """
+    dataset = _gps_dataset(None)
+    dataset.run.metadata["instrument"] = "PSI"
+    dataset.metadata["instrument"] = "PSI"
+    dataset.run.grouping.pop("instrument", None)
+    dialog = GroupingDialog([dataset])
+    assert dialog._draft_name == "Default (6 detectors)"
+
+
+def test_payload_matches_preset_accepts_detector_t0_pair_entries(qapp: QApplication) -> None:
+    """Group entries stored as (detector_id, t0_bin) pairs still match a preset.
+
+    resolve_group_indices() accepts pair entries, so the drift check must
+    decode them the same way or a pair-carrying payload looks falsely
+    "drifted" (Copilot review, PR #174).
+    """
+    from asymmetry.core.instrument import get_instrument_layout
+    from asymmetry.gui.windows.grouping.profile_bridge import payload_matches_preset
+
+    layout = get_instrument_layout("GPS")
+    preset = layout.presets["Longitudinal"]
+    payload = {
+        "groups": {1: [[1, 100]], 2: [[2, 100]]},
+        "group_names": {1: "Forward", 2: "Backward"},
+        "forward_group": preset.forward_group,
+        "backward_group": preset.backward_group,
+    }
+    assert payload_matches_preset(payload, layout, "Longitudinal")
+
+
+def test_preset_chip_clears_stale_preset_on_drift(qapp: QApplication) -> None:
+    """Editing groups away from a preset clears the stored grouping_preset."""
+    dataset = _gps_dataset(None)
+    dialog = GroupingDialog([dataset])
+    # Apply a named preset via the dropdown.
+    dialog._preset_combo.setCurrentIndex(0)
+    dialog._on_preset_combo_activated(0)
+    assert dialog._grouping_preset_name is not None
+    assert dialog._preset_chip.text().startswith("Preset:")
+
+    # Drift the groups so they no longer match the preset.
+    dialog._groups = {1: [0], 2: [1, 2, 3, 4, 5]}
+    dialog._populate_group_table()
+    dialog._refresh_preset_chip(dialog._current_grouping_payload())
+    assert dialog._grouping_preset_name is None
+    assert "Custom (edited from" in dialog._preset_chip.text()
+    # The drifted draft must not carry the stale preset.
+    assert not dialog._current_grouping_payload().get("grouping_preset")
+
+
+def test_release_from_profile_excludes_run_from_apply(qapp: QApplication) -> None:
+    """A released run leaves the inheriting set (Apply targets only inheritors)."""
+    ds_a = _dataset_with_ratio(6301, ratio=2.0)
+    ds_b = _dataset_with_ratio(6302, ratio=3.0)
+    dialog = GroupingDialog([ds_a, ds_b], selected_run_number=6301)
+
+    assert dialog._scope_panel.inheriting_run_numbers() == {6301, 6302}
+    dialog._scope_panel._released[6302] = True
+
+    result = dialog.get_grouping_result()
+    assert set(result["run_numbers"]) == {6301}
+    profile_result = dialog.get_profile_result()
+    assert profile_result["inheriting"] == {6301}
+    assert profile_result["released"] == {6302}
+    assert profile_result["newly_released"] == {6302}
+
+
+def test_reattach_run_returns_it_to_inheriting(qapp: QApplication) -> None:
+    """Reattaching an initially-overridden run returns it to the profile."""
+    ds_a = _dataset_with_ratio(6401, ratio=2.0)
+    ds_b = _dataset_with_ratio(6402, ratio=3.0)
+    dialog = GroupingDialog(
+        [ds_a, ds_b],
+        selected_run_number=6401,
+        overridden_run_numbers=[6402],
+    )
+    assert dialog._scope_panel.released_run_numbers() == {6402}
+
+    dialog._scope_panel._released[6402] = False
+    profile_result = dialog.get_profile_result()
+    assert profile_result["inheriting"] == {6401, 6402}
+    assert profile_result["newly_reattached"] == {6402}
+
+
+def test_apply_disabled_when_no_run_inherits(qapp: QApplication) -> None:
+    """Apply is disabled (with a reason) when every run is released."""
+    dataset = _dataset_with_ratio(6501, ratio=2.0)
+    dialog = GroupingDialog([dataset])
+    assert dialog._apply_btn.isEnabled()
+
+    dialog._scope_panel._released[6501] = True
+    dialog._on_scope_changed()
+    assert not dialog._apply_btn.isEnabled()
+    assert "released" in dialog._apply_btn.toolTip().lower()
+
+
+def test_unsaved_draft_guard_blocks_reject_on_keep_editing(qapp: QApplication, monkeypatch) -> None:
+    """Cancelling a dirty draft prompts; Keep-editing aborts the close."""
+    from PySide6.QtWidgets import QMessageBox
+
+    dataset = _dataset_with_histograms()
+    dialog = GroupingDialog([dataset])
+    dialog._alpha_spin.setValue(2.5)
+    dialog._mark_dirty()
+
+    answers = iter([QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Discard])
+    monkeypatch.setattr(
+        grouping_dialog_dialog_module.QMessageBox,
+        "question",
+        lambda *args, **kwargs: next(answers),
+    )
+    results: list[int] = []
+    monkeypatch.setattr(GroupingDialog, "done", lambda self, code: results.append(code))
+
+    dialog.reject()  # first answer: Cancel -> no close
+    assert results == []
+    dialog.reject()  # second answer: Discard -> closes
+    assert results  # done() was called
+
+
+def test_apply_marks_draft_saved(qapp: QApplication, monkeypatch) -> None:
+    """Applying a dirty draft clears the dirty flag so close does not prompt."""
+    dataset = _dataset_with_histograms()
+    dialog = GroupingDialog([dataset])
+    dialog._alpha_spin.setValue(1.9)
+    dialog._mark_dirty()
+    monkeypatch.setattr(GroupingDialog, "accept", lambda self: None)
+
+    dialog._on_apply()
+    assert dialog._draft_dirty is False
+
+
+def test_multi_instrument_fingerprint_separation(qapp: QApplication) -> None:
+    """The scope panel and preview list only show the current fingerprint."""
+    gps = _gps_dataset(None)  # 6 histograms, GPS
+    other = _dataset_with_histograms()  # 2 histograms, no instrument
+    dialog = GroupingDialog([gps, other], selected_run_number=5001)
+
+    fingerprint_runs = {int(ds.run_number) for ds in dialog._fingerprint_datasets()}
+    assert 5001 in fingerprint_runs
+    assert 4001 not in fingerprint_runs
+    assert dialog._scope_panel.inheriting_run_numbers() == {5001}

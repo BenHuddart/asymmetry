@@ -14,8 +14,174 @@ supported instruments — ISIS HiFi, MuSR, EMU and the PSI FLAME, HAL-9500 and
 GPS spectrometers — the matching preset in the Detector Layout editor seeds
 sensible defaults that can then be refined graphically before being applied.
 
-Grouping is configured from the Grouping dialog and edited graphically
-with the Detector Layout editor.
+Grouping is configured from the **Grouping** window and edited graphically
+with the **Detector Layout** editor. This page covers both, together with the
+grouping-profile model that stores the settings, the per-format (PSI/ROOT)
+details, and the beam-vs-analysis naming conventions. For a hands-on
+walkthrough with a worked calibration, see :doc:`grouping_calibration`.
+
+Grouping profiles
+------------------
+
+A grouping profile is a **named, project-level record of the shareable
+grouping settings for one instrument** — the detector groups, which pair
+is forward/backward, the :math:`\alpha` policy, and the deadtime, background,
+binning and period settings. It excludes anything that is a fact about an
+individual run rather than a shared analysis choice: :math:`t_0`, the
+good-bin window, per-detector deadtime read from a file, and period tables
+stay with the run.
+
+This split solves a real problem. Every run used to carry its own complete
+grouping payload, so recalibrating :math:`\alpha` after loading a fifth run
+in a series meant editing it a fifth time — and nothing stopped two runs of
+the same series from silently drifting apart. A profile fixes the shareable
+choices in one place: edit it once, and every run that matches it is
+analysed the same way.
+
+Fingerprint and scope
+~~~~~~~~~~~~~~~~~~~~~~
+
+A profile applies to runs matching its **fingerprint** — the pair
+``(instrument, histogram count)``. The histogram count disambiguates layout
+variants of the same physical instrument, such as PSI GPS's six-detector
+PSI-BIN export and eleven-detector MusrRoot export (see `PSI GPS`_ below):
+they are shown to the user as one instrument but resolve against separate
+fingerprints, so a GPS PSI-BIN profile is never offered to an eleven-detector
+GPS ROOT run.
+
+A project may hold several saved profiles per fingerprint (a "silver
+calibration" profile and a "custom two-group" profile for the same
+instrument, say), but only one is **active** at a time. A newly loaded run
+inherits its fingerprint's active profile automatically — no per-run Apply
+step is needed. Switching which profile is active re-resolves every run of
+that fingerprint against the new profile the next time it is displayed or
+reduced.
+
+A run can be explicitly **released** from its profile, freezing its current
+grouping as a per-run override that further profile edits do not touch. The
+Data Browser marks a released run with a trailing **⊗** and the tooltip
+"Custom grouping — this run is released from its grouping profile." A
+released run can later be **reattached**, dropping the override so it
+inherits the active profile again. Release and reattach are both driven from
+the Grouping window's scope panel (`The Grouping window`_ below).
+
+Alpha, deadtime, and background policies
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A profile stores each of its three corrections as a **policy** — a mode plus
+whatever value the mode needs — rather than a bare value, so the provenance
+of the number survives:
+
+* **Alpha policy** — ``fixed`` applies the same value to every run;
+  ``calibrated`` applies a value measured once (with a recorded method and
+  source run, e.g. "diamagnetic · run 2923"); ``per_run_estimate`` computes
+  each run's own forward/backward integral ratio at resolution time (Mantid's
+  ``AlphaCalc``; the PSI ``.bin`` default), so a series with detector
+  sensitivities that drift run-to-run stays self-consistent without a shared
+  number.
+* **Deadtime policy** — ``off`` disables the correction; ``from_file`` reads
+  each run's own file deadtime values; ``manual`` applies a stored
+  per-detector table (hand-typed or fitted with **Cal**); ``estimate``
+  applies one fitted value to every detector.
+* **Background policy** — ``none``, ``range`` (a pre-:math:`t_0` window),
+  ``tail_fit`` (a late-time Poisson fit), ``reference_run`` (a dedicated
+  background run), or ``fixed`` (constant forward/backward values). See
+  `Background Correction`_ below for the maths each mode applies.
+
+Resolving a profile against a run merges these policies with the run's own
+file-derived facts to produce exactly the same grouping payload shape used
+before profiles existed, so nothing downstream — reduction, fitting, export —
+had to change to support them. The reduction itself funnels through one
+function, :func:`asymmetry.core.transform.reduce.reduce_grouped_asymmetry`,
+which applies deadtime correction, groups the histograms onto a common
+:math:`t_0`, optionally subtracts background, and forms the counts-then-ratio
+asymmetry — the same order the Grouping window's live preview and the main
+reduction path both use, so what you see while editing is what you get after
+Apply.
+
+Migration from older projects
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Projects saved before profiles existed (schema v11 and earlier) store a
+complete grouping payload on every dataset. Opening such a project migrates
+it to schema v12 automatically: datasets are grouped by fingerprint, and
+within each fingerprint
+
+* if every run's *shareable* settings already agree, one active profile named
+  "Default (<instrument>)" is created and every contributing run switches
+  from its own payload to a reference to that profile;
+* if the shareable settings disagree, a profile is built from the majority
+  payload; runs matching it inherit the profile, and the remaining,
+  genuinely divergent runs keep their per-run payload untouched, exactly as
+  a manually released run would.
+
+The migration is additive: nothing that could not be faithfully represented
+as a profile is discarded, and a run that cannot even be fingerprinted
+(missing instrument metadata) is left with its original payload and joins no
+profile. Saving the project afterwards writes schema v12.
+
+The Grouping window
+--------------------
+
+.. figure:: /_generated/screenshots/grouping_window_profile_editor.png
+   :width: 100%
+   :alt: Grouping window profile editor with its live asymmetry preview pane.
+
+   The Grouping window's profile editor, with the scope panel on the left and
+   the live forward/backward asymmetry preview along the bottom.
+
+Open it with the **Grouping** button on the main toolbar (or
+**Analysis → Grouping…**). Where the old dialog operated on a reference run
+and broadcast settings to whichever datasets were checked, the window is now
+a **profile editor**: it edits one profile's settings in a draft, and that
+draft is what gets applied to every run inheriting the profile.
+
+* **Profile selector** — switches which saved profile is being edited, and
+  offers **New…** and **Duplicate…** to start a fresh profile or branch one
+  from the current settings. Only profiles matching the loaded run's
+  fingerprint are listed. Renaming is available from the same control.
+  Switching away from a profile with unsaved edits prompts to discard them.
+* **Preview run selector** ("Preview run") — chooses which run's per-run
+  facts (:math:`t_0`, good-bin window, file deadtime, period tables) seed the
+  preview and the status rows. This is **non-destructive**: changing it never
+  edits the draft's shareable settings and never changes which run is
+  "active" elsewhere in the program — it only changes which run's facts the
+  window is currently looking at.
+* **Preset dropdown and chip** — an instrument-aware preset dropdown seeds a
+  sensible starting arrangement (see the per-instrument sections below), and
+  a chip beside it reads either **"Preset: <name>"** when the draft's groups
+  still match that preset exactly, or **"Custom (edited from <name>)"** the
+  moment any group, name, or forward/backward assignment is edited by hand.
+  This comparison is re-made every time the draft changes rather than cached,
+  so the chip never keeps showing a preset name the settings have since
+  drifted away from.
+* **Scope panel** — lists the runs of the current fingerprint, each tagged
+  either **inherits <profile>** or **override**, with **Release** and
+  **Reattach** buttons to move a run between the two. Apply is disabled when
+  every run of the fingerprint has been released, since there would then be
+  nothing left for the profile to reach.
+* **Live asymmetry preview** — a debounced plot of the forward/backward
+  asymmetry the current draft would produce on the preview run, recomputed
+  automatically as groups, :math:`\alpha`, binning, deadtime, or background
+  settings change. The recompute runs on a worker thread (never the GUI
+  thread), so editing stays responsive even while a reduction is in flight;
+  a superseded recompute is discarded in favour of the latest edit.
+* **Status rows and dialogs** — compact one-line summaries of the current
+  :math:`\alpha` (with provenance, e.g. "α = 1.2345(67) · diamagnetic · run
+  2923"), deadtime mode, and background mode, each with a **Calibrate…** /
+  **Configure…** button that opens the corresponding dedicated dialog (see
+  `Alpha calibration`_, `Deadtime Correction`_, and `Background Correction`_
+  below).
+* **Load .grp / Save .grp** — read or write a grouping definition as a
+  ``.grp`` file, unchanged from before, so a calibration can be shared or
+  reused outside a project.
+
+Editing the draft never touches a saved profile until you press **Apply**;
+closing the window with unsaved changes prompts to discard them, so a
+half-finished edit cannot silently overwrite a working profile.
+
+Applying a profile reports, in the LOG, how many runs it reached and how
+many overridden runs were left untouched.
 
 The grouping payload stores:
 
@@ -33,13 +199,184 @@ The grouping payload stores:
 * optional background metadata: ``background_correction``,
   ``background_ranges``, ``background_values``, and ``background_method``
 
-These settings are persisted in project files and in ``.grp`` files.
+These settings are persisted in project files (as grouping profiles, schema
+v12) and in ``.grp`` files.
+
+Period mode controls
+---------------------
+
+A two-period reference run (ISIS red/green period histograms) shows an
+additional **RG Mode** control in the Grouping window: red, green,
+green-minus-red, or green-plus-red. This row is hidden for every other run —
+it only appears once the currently selected preview run actually carries two
+period histograms — so it never clutters the window for ordinary
+single-period data.
+
+Alpha calibration
+------------------
+
+.. figure:: /_generated/screenshots/alpha_calibration_dialog.png
+   :width: 80%
+   :align: center
+   :alt: Alpha calibration dialog with a highlighted TF candidate run and a
+      before/after asymmetry preview.
+
+   The alpha calibration dialog. The calibration-run dropdown highlights a
+   likely weak-transverse-field run, and the before (α = 1) / after (fitted
+   α) preview shows the balancing effect.
+
+Click **Calibrate…** beside the alpha status row to open the alpha
+calibration dialog. It lists every run of the current fingerprint in a
+dropdown, with likely calibration candidates highlighted and auto-selected:
+a run is flagged when its metadata carries explicit transverse-field
+evidence (a structured ``Transverse`` field-geometry classification, or a
+``TF``/``wTF``/``transverse`` token in the title or comment) and, when a
+field magnitude is recorded, that magnitude sits in the weak-to-moderate
+window a diamagnetic calibration run conventionally occupies (roughly 5–500
+G). A run with an explicit transverse token but no recorded field magnitude
+is still flagged, since the token is the stronger signal; a field magnitude
+alone, with no textual evidence, is not — the value alone is ambiguous
+between a weak-TF calibration run and a run whose only relation to the
+window is coincidence. This heuristic only changes what is highlighted and
+pre-selected: any loaded run remains choosable from the dropdown.
+
+Three calibration methods are offered:
+
+* **Diamagnetic** — the standard balance method for a silver or other
+  non-relaxing transverse-field run: :math:`\alpha` is fitted so the forward
+  and backward precession signals oscillate symmetrically about zero.
+* **General** — a fit that also accommodates a genuinely relaxing or
+  multi-component transverse-field signal.
+* **Ratio** — the simple forward/backward integral ratio over the good-bin
+  window (Mantid's ``AlphaCalc``), with no oscillation model.
+
+The dialog shows a live **before/after** preview: the asymmetry at
+:math:`\alpha = 1` beside the asymmetry at the newly fitted :math:`\hat\alpha`,
+so the balancing effect is visible before it is accepted. Accepting a
+calibration sets the profile's alpha policy to ``calibrated`` and records its
+**provenance** — method, source run, and uncertainty — displayed in the
+status row as, for example, "α = 1.2345(67) · diamagnetic · run 2923". Typing
+a value into the alpha field directly instead switches the policy to
+``fixed`` and the provenance to plain "manual", since a hand-typed number no
+longer carries a measurement behind it.
+
+Per-projection alpha (WEP / vector)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A layout that exposes more than one asymmetry projection from the same
+groups — GPS's ``WEP`` **FB**/**UD** pair, EMU's :math:`P_x`/:math:`P_y`/
+:math:`P_z` vector axes, or the transverse ``Top-Bottom``/``Fwd-Back`` pairs
+on MuSR and HiFi — calibrates and stores :math:`\alpha` **per projection**
+rather than sharing one value. Each projection carries its own declared
+alpha (GPS ``WEP``'s ``FB`` pair defaults to musrfit's ``0.75``, its ``UD``
+pair to ``1.0``); reducing or fitting a projection always applies that
+projection's own alpha, falling back to the profile's base alpha only when a
+projection has none declared. See :doc:`vector_polarization` for the EMU
+per-axis alpha table and estimation buttons, which follow the same
+per-projection model.
+
+Deadtime Correction
+--------------------
+
+The Grouping window's deadtime status row summarises the profile's deadtime
+policy; click **Configure…** to open the deadtime dialog and change it. Four
+modes are available:
+
+* ``Off`` disables the correction.
+* ``File`` uses per-detector deadtime values already present in a run file.
+  This stays the default starting point for raw histogram formats, matching
+  WiMDA's file-first assumption, even when the current preview run does not
+  itself provide file deadtime values.
+* ``Manual`` shows a per-detector value table, editable directly, and is
+  also where calibrated values are stored.
+* ``Estimate`` fits the reference run's early-time average detector rate,
+  following WiMDA's uniform deadtime estimate workflow, then applies that one
+  estimated value to every detector.
+
+The dialog includes a per-detector table and a **Cal** button that ports
+WiMDA's per-detector calibration routine: it fits each detector histogram in
+the preview run separately, produces a resolved per-detector deadtime table,
+and populates the manual table with those calibrated values. The dialog also
+shows a **maximum correction at t=0** summary, the largest fractional
+correction any detector receives at the first good bin, so an unreasonable
+deadtime value is visible immediately rather than only showing up as a
+distorted asymmetry later.
+
+When ``Off`` is selected, deadtime correction is disabled. When ``Estimate``
+is selected, the estimate is calculated from the currently selected preview
+run only, then applied to every run inheriting the profile. ``Cal`` also uses
+the selected preview run only, but calibrates one deadtime value per detector
+instead of a single shared value. The resolved deadtime values are stored on
+the profile's deadtime policy, so every run inheriting the profile shares the
+same manual, calibrated, or estimated deadtime values, just as they already
+share alpha and grouping.
+
+All modes use the same non-paralysable correction form used by musrfit
+``PRunBase::DeadTimeCorrection`` and Mantid ``ApplyDeadTimeCorr``:
+
+.. math::
+
+   N_\mathrm{corr} =
+   \frac{N}{1 - N\,t_\mathrm{dead}/(\Delta t\,N_\mathrm{frames})}
+
+For ``File`` mode, ``t_dead`` comes from the run file when available. For
+``Manual``, ``Cal``, and ``Estimate`` workflows, Asymmetry resolves the
+deadtime values from the profile's policy before the correction is applied.
+``N_frames`` still comes from each dataset's own good-frame metadata when it
+is available.
+
+PSI BIN/MDU and MusrRoot/LEM ROOT data usually do not ship NeXus-style file
+deadtime constants, so ``File`` mode is commonly unavailable there. Those runs
+can still use ``Manual`` or ``Estimate`` deadtime correction, with ``Cal``
+available to populate per-detector manual values from the selected preview
+run. The background correction path remains separate and optional.
+
+Background Correction
+----------------------
+
+The background status row summarises the profile's background policy; click
+**Configure…** to open the background dialog for PSI-style raw histogram
+formats, including PSI BIN/MDU and PSI/LEM ROOT data. This is separate from
+fit-model background parameters such as ``A_bg``: it subtracts a count
+background from grouped raw forward/backward histograms before the asymmetry
+is calculated.
+
+This follows musrfit's ``PRunAsymmetry`` ordering. Histograms are first
+grouped into forward and backward sums, then background is subtracted, and
+then asymmetry is calculated. The dialog's modes are:
+
+* ``None`` — no correction.
+* ``Range`` — the background is estimated as the mean count in an inclusive
+  pre-:math:`t_0` bin range. If no range is given, it uses musrfit's fallback
+  range from ``0.1 * t0`` to ``0.6 * t0``. The dialog shades this window on a
+  preview plot so the range is visible before it is accepted.
+* ``Tail fit`` — a Poisson maximum-likelihood fit of the late-time count
+  level, for runs where a fixed pre-:math:`t_0` window is not representative.
+* ``Reference run`` — subtracts a dedicated background run's own grouped
+  counts (scaled by relative good-frame count), with the same shaded-window
+  preview showing which run and range are in use.
+* ``Fixed`` — fixed forward/backward count values are subtracted directly.
+
+For corrected histograms, Asymmetry propagates musrfit-style count
+uncertainties through its standard pair formula, with ``alpha`` multiplying
+the backward group.
+
+Background subtraction can make late-time corrected forward/backward sums
+very small or negative. Those bins may therefore produce asymmetries at or
+beyond ``+/-100%``. The plot keeps such low-confidence PSI points visible in
+grey, matching the low-count visual treatment used for raw grouped data, and
+excludes them from automatic Y-axis scaling.
+
+The correction is off by default and disabled for ISIS/NeXus data, where
+deadtime correction is the file-metadata correction path. When enabled for
+PSI data, the applied method, estimated values, and ranges are stored on the
+profile's background policy.
 
 PSI Grouping
 ------------
 
-PSI BIN/MDU files use the full Grouping dialog, matching the interaction model
-used for raw ISIS NeXus files. Initial group names and forward/backward
+PSI BIN/MDU files use the full Grouping window, matching the interaction
+model used for raw ISIS NeXus files. Initial group names and forward/backward
 defaults are derived from PSI detector labels where the file provides them
 (``Forw``/``Back`` in BIN files, and labels such as ``F1``/``B1`` in MDU
 files). For PSI FLAME BIN files, filenames, detector labels, or metadata
@@ -65,16 +402,16 @@ single global time-zero before grouping.
 PSI detector names use the PSI instrument convention: ``Forward`` and
 ``Backward`` are measured along the beam direction. Asymmetry's pair-asymmetry
 formula uses forward/backward relative to the initial muon spin direction.
-For PSI runs, the detector layout editor keeps the PSI detector convention,
-but the main Grouping dialog swaps the analysis dropdown defaults. For a
-longitudinal PSI/FLAME layout, **Forward Group** is set to ``Group 2:
-Backward`` and **Backward Group** is set to ``Group 1: Forward``. ISIS runs are
-not swapped.
+Every PSI Longitudinal preset (GPS, FLAME, HAL-9500) now declares this
+directly, in the preset itself: the ``Backward``-named group occupies the
+analysis-forward slot, so a preset used headless from the core API reduces
+correctly with no GUI compensation needed. See `Beam vs analysis convention`_
+below for the physics and `PSI GPS`_ for the full per-preset listing.
 
 ROOT Grouping
 -------------
 
-MusrRoot/LEM ROOT files also use the full Grouping dialog. The ROOT loader
+MusrRoot/LEM ROOT files also use the full Grouping window. The ROOT loader
 follows musrfit's ``PRunDataHandler::ReadRootFile`` and reads detector labels
 from ``DetectorInfo`` when available, falling back to the ROOT histogram title
 or ``hDecay`` name. As with PSI BIN/MDU files, repeated detector labels are
@@ -91,95 +428,14 @@ ROOT ``DetectorInfo`` entries can provide detector-specific ``Time Zero Bin``,
 grouping payload and aligns detector histograms by their own ``t0`` before
 constructing the initial asymmetry.
 
-Deadtime Correction
--------------------
-
-The Grouping dialog includes a deadtime correction toggle plus three deadtime
-modes for raw histogram formats. ``File`` stays selected by default so the
-deadtime workflow starts from the same file-first assumption WiMDA uses, even
-when the current reference run does not provide file deadtime values.
-
-* ``File`` uses per-detector deadtime values already present in a run file.
-* ``Manual`` exposes a detector-value combo box. It shows one deadtime value
-  per detector, allows direct editing, and is also where calibrated values are
-  stored.
-* ``Estimate`` fits the reference run's early-time average detector rate,
-   following WiMDA's uniform deadtime estimate workflow, then applies that one
-   estimated value to every detector.
-
-The deadtime panel also includes a ``Cal`` button that ports WiMDA's
-per-detector calibration routine. It fits each detector histogram in the
-reference run separately, produces a resolved per-detector deadtime table, and
-then populates the manual detector-value table with those calibrated values.
-
-When the checkbox is off, deadtime correction is disabled. When ``Estimate`` is
-selected, the estimate is calculated from the currently selected reference run
-only, then applied to every checked run in the dialog. ``Cal`` also uses the
-selected reference run only, but calibrates one deadtime value per detector
-instead of a single shared value. The resolved deadtime payload is also
-preserved in grouping metadata, so future datasets loaded into the same project
-inherit the same manual, calibrated, or estimated deadtime values just
-as they already inherit alpha and grouping settings.
-
-All modes use the same non-paralysable correction form used by musrfit
-``PRunBase::DeadTimeCorrection`` and Mantid ``ApplyDeadTimeCorr``:
-
-.. math::
-
-   N_\mathrm{corr} =
-   \frac{N}{1 - N\,t_\mathrm{dead}/(\Delta t\,N_\mathrm{frames})}
-
-For ``File`` mode, ``t_dead`` comes from the run file when available. For
-``Manual``, ``Cal``, and ``Estimate`` workflows, Asymmetry resolves the
-deadtime values in the Grouping dialog and stores them in grouping metadata
-before the correction is applied. ``N_frames`` still comes from each dataset's
-own good-frame metadata when it is available.
-
-PSI BIN/MDU and MusrRoot/LEM ROOT data usually do not ship NeXus-style file
-deadtime constants, so ``File`` mode is commonly unavailable there. Those runs
-can still use ``Manual`` or ``Estimate`` deadtime correction, with ``Cal``
-available to populate per-detector manual values from the selected reference
-run. The
-background correction path remains separate and optional.
-
-Background Correction
----------------------
-
-The full Grouping dialog also includes a background correction toggle for
-PSI-style raw histogram formats, including PSI BIN/MDU and PSI/LEM ROOT data.
-This is separate from fit-model background parameters such as ``A_bg``: it
-subtracts a count background from grouped raw forward/backward histograms
-before the asymmetry is calculated.
-
-This follows musrfit's ``PRunAsymmetry`` ordering. Histograms are first grouped
-into forward and backward sums, then background is subtracted, and then
-asymmetry is calculated. If grouping metadata provide fixed forward/backward
-background values, those values are subtracted. Otherwise Asymmetry estimates
-the background as the mean count in an inclusive bin range. If no range is
-provided, it uses musrfit's fallback range from ``0.1 * t0`` to ``0.6 * t0``.
-For corrected histograms, Asymmetry propagates musrfit-style count
-uncertainties through its standard pair formula, with ``alpha`` multiplying the
-backward group.
-
-Background subtraction can make late-time corrected forward/backward sums very
-small or negative. Those bins may therefore produce asymmetries at or beyond
-``+/-100%``. The plot keeps such low-confidence PSI points visible in grey,
-matching the low-count visual treatment used for raw grouped data, and excludes
-them from automatic Y-axis scaling.
-
-The correction is off by default and disabled for ISIS/NeXus data, where
-deadtime correction is the file-metadata correction path. When enabled for PSI
-data, the applied method, estimated values, and ranges are stored in the
-grouping payload.
-
 Detector Layout Editor Workflow
--------------------------------
+--------------------------------
 
 1. Open Grouping from the toolbar or menu.
 2. Click Detector Layout...
 3. Choose instrument and preset in the right-hand panel.
 4. Click detector sectors in the schematic to refine groups.
-5. Apply and return to the Grouping dialog.
+5. Apply and return to the Grouping window.
 
 A detector can belong to multiple groups. This is required for transverse and
 vector-polarisation workflows.
@@ -190,7 +446,29 @@ whether that group participates in the **Individual Groups** plot view and in
 grouped time-domain fitting.
 
 In-App Arrangement Schematics
------------------------------
+-------------------------------
+
+The schematic renders each detector's **full group membership**, not just its
+primary group: a detector that belongs to more than one group — the ordinary
+case for transverse and vector-polarisation layouts — is drawn as several thin
+slices around its own segment, one colour per group it belongs to, so an
+overlapping arrangement such as HiFi's manual transverse quadrants is visible
+directly on the schematic rather than only inferable from the group table.
+Hovering a detector shows its id, its physical label where the format
+provides one, the list of groups it belongs to (or "(none)" if ungrouped),
+and whether it is currently excluded. Each group's button in the Detector
+Layout editor carries its live member count, e.g. "Top (18)", and a
+**Clear excluded** button removes every detector from the exclusion set in
+one action, undoing exclude-mode edits without re-clicking each one.
+
+.. figure:: /_generated/screenshots/hifi_transverse_layout.png
+   :width: 100%
+   :alt: Detector Layout editor on HiFi's Transverse (Vector) preset, showing
+      overlapping group membership as schematic slices.
+
+   HiFi's ``Transverse (Vector)`` preset in the Detector Layout editor. The
+   boundary detectors between the Left-Right and Top-Bottom pairs belong to
+   two groups each, rendered as a second membership slice.
 
 HiFi
 ~~~~
@@ -287,28 +565,36 @@ PSI GPS
 GPS is recognised automatically from PSI data carrying a ``GPS`` instrument
 string or a ``deltat_tdc_gps_*`` run name. Two histogram conventions are
 supported and presented to the user as a single "GPS" layout, selected
-automatically from the histogram count:
+automatically from the histogram count — and, per `Grouping profiles`_ above,
+resolved against separate profile fingerprints:
 
 * the **PSI-BIN** export with six combined detectors (``Forw, Back, Up, Down,
   Righ, Left``); and
 * the **MusrRoot** export with eleven raw sub-detectors (``Forw, Back, Up_B,
   Up_F, Down_B, Down_F, Right_B, Right_F, Left_B, Left_F, Mob-RL``), where each
   transverse plate is split into an upstream (``_B``) and downstream (``_F``)
-  half and a Mobile detector is added.
+  half and a Mobile detector is added. Both variants are registered as one
+  physical GPS instrument (the eleven-detector variant is `GPS-RD` internally
+  — "ROOT sub-detectors" — but shown to the user simply as "GPS").
 
 Detector IDs match the histogram order in each format (detector *N* maps to
 histogram *N − 1*).
 
+.. _Beam vs analysis convention:
+
 .. note::
 
    **Beam vs analysis convention.** PSI names its detectors by *beam* direction
-   (Forward is downstream, Backward upstream). For surface muons the spin is
+   (Forward is downstream, Backward is upstream). For surface muons the spin is
    antiparallel to the momentum, so the initial polarisation points toward the
    **Backward** detector. Following the GPS instrument paper (Amato *et al.*,
    *Rev. Sci. Instrum.* **88**, 093301 (2017), Eq. 2) and musrfit, the analysis
    convention is :math:`A = (B - \alpha F)/(B + \alpha F)` — the *Backward*-named
-   group occupies the analysis-forward slot. Every GPS preset declares that
-   convention directly, while keeping the physical F/B/U/D group names.
+   group occupies the analysis-forward slot. Every GPS, FLAME, and HAL-9500
+   Longitudinal preset declares that convention directly, while keeping the
+   physical F/B/U/D group names, so a preset reduces correctly even when used
+   headlessly from the core API. See `Beam vs analysis convention (ISIS)`_
+   below for how this differs from the ISIS naming.
 
 Presets:
 
@@ -322,7 +608,11 @@ Presets:
   polarisation points toward Backward, so tipping it up leaves it along the
   **Backward–Up diagonal**; summing those detectors against Forward+Down
   realigns one asymmetry axis with the rotated spin and recovers the full
-  amplitude.
+  amplitude. (musrfit's own WEP phases — Backward at −45°, Up at +45° —
+  bisect exactly along this diagonal, confirming the assignment; the
+  ``{2,3}``/``{1,4}`` detector pairing, not ``{1,3}``/``{2,4}``, is the one
+  that carries the full initial asymmetry, and the verbatim PSI header labels
+  ``Forw``/``Back``/``Up``/``Down``/``Righ`` pin detector 3 as Up.)
 * **WEP (spin-rotated)** — the same rotated-spin mode following musrfit's
   convention. This preset **follows musrfit's GPS instrument
   definition** (``musredit_qt5/musrWiz/instrument_defs/instrument_def_psi.xml``,
@@ -331,16 +621,50 @@ Presets:
   asymmetry pairs. The FB projection declares musrfit's default ``alpha = 0.75``
   and UD ``alpha = 1.0``, and the reduction applies each projection's own
   declared alpha — reducing or fitting the FB pair uses 0.75 and the UD pair uses
-  1.0. The per-detector phase offsets musrfit uses to encode the rotation are a
+  1.0 (see `Per-projection alpha (WEP / vector)`_ above). The per-detector phase
+  offsets musrfit uses to encode the rotation are a
   fitting detail and are not stored in the layout.
 
 The Mobile sub-detector (``Mob-RL``) is left ungrouped by default: it is added
 to either the Right or Left detector depending on the cryostat port in use,
 which the data file does not record.
 
+.. _Beam vs analysis convention (ISIS):
+
+Beam vs analysis convention (ISIS)
+------------------------------------
+
+ISIS names its detector banks by the direction of the **muon spin**, not the
+beam: the bank the initial polarisation points toward is already named
+"Forward", so an ISIS Longitudinal preset needs no beam-to-analysis swap —
+group 1 (Forward) is the analysis-forward group directly. This is the
+opposite naming choice from PSI (`Beam vs analysis convention`_ above), where
+"Forward"/"Backward" name the beam axis and the polarisation points toward
+the *Backward*-named detector instead. Asymmetry's PSI presets absorb this
+difference at the preset level — declaring the Backward-named group as
+analysis-forward — so that the same pair-asymmetry formula,
+:math:`A = (F - \alpha B)/(F + \alpha B)` read with each instrument's own
+analysis-forward group, is correct for both naming conventions without a
+per-instrument special case anywhere downstream of the grouping payload.
+
+A classic PSI GPS PSI-BIN file stores only **five** histograms — Forward,
+Backward, Up, Down, and Right, with no Left counter recorded. The Transverse
+preset's Left group is then simply empty for that run; grouping, calibration,
+and reduction all handle an empty group gracefully (an empty forward or
+backward group falls back rather than dividing by zero), so an older GPS file
+loads and analyses normally, just without a usable Left-Right projection.
+
+FLAME, HAL-9500, and GPS-RD detector labels (``R_F``, ``L_B``, and similar)
+come from the data file's own metadata rather than a published facility
+table — the facility user guides document detector *numbering*, not these
+compact label strings — so Asymmetry's schematic and group names follow
+whatever the file itself records.
+
 Related Topics
 --------------
 
+* :doc:`grouping_calibration` for a practical, worked walkthrough of the
+  Grouping window and its calibration dialogs
 * :doc:`data_processing` for grouping and asymmetry APIs
 * :doc:`gui_usage` for UI workflows
 * :doc:`vector_polarization` for vector mode (P_x, P_y, P_z)
