@@ -27,6 +27,7 @@ New users should start with :doc:`calibration_grouping_emu`.
    knight_shift_angle
    superconductor_penetration_depth
    lf_decoupling_dynamics
+   qsl_spin_dynamics_ybzn2gao5
 
 Quick chooser
 -------------
@@ -68,6 +69,11 @@ Quick chooser
      - Measure the local-field width Δ in a nonmagnetic host and
        distinguish static from dynamic field distributions
      - LF-KT model, global fit with shared Δ, decoupling diagnostic
+   * - :doc:`qsl_spin_dynamics_ybzn2gao5`
+     - Resolve λ(B) into diffusion, Redfield, and level-crossing
+       terms across eight temperatures in a Dirac spin-liquid candidate
+     - Batch λ(B) fits, cross-group global fit with shared and local
+       roles, Suggest roles, AICc model selection
 
 Further workflows
 -----------------
