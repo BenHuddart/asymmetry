@@ -23,19 +23,38 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.fitting.composite import CompositeModel
+from asymmetry.core.fitting.composite import COMPONENTS, CompositeModel
+from asymmetry.core.fitting.engine import FitCancelledError
 from asymmetry.core.fitting.fit_wizard import (
     CandidateAssessment,
+    ConfidenceTier,
     FitWizardRecommendation,
+    RecommendationVerdict,
     SelectionMetric,
     build_fit_wizard_recommendation,
     rerank_fit_wizard_recommendation,
 )
 from asymmetry.core.fitting.parameters import get_param_info
+from asymmetry.core.fitting.wizard_scope import (
+    WizardScope,
+    estimate_screening_cost,
+    resolve_scope_for_dataset,
+)
 from asymmetry.core.fourier.fft import fft_asymmetry
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.widgets.screen_sizing import resize_to_available
+from asymmetry.gui.widgets.wizard_scope_selector import WizardScopeSelector
 from asymmetry.gui.windows.wizard_base import WizardWindowBase
+
+#: Short human-readable labels for multiplet-match kinds shown in the peaks table.
+_MULTIPLET_KIND_LABELS = {
+    "larmor": "Larmor line",
+    "muonium_low_tf": "muonium low-TF doublet",
+    "muonium_high_tf": "muonium high-TF doublet",
+    "muonium_zf": "muonium ZF triplet",
+    "fmuf_linear": "F-mu-F triplet",
+    "muf": "mu-F triplet",
+}
 
 
 class FitWizardWindow(WizardWindowBase):
@@ -76,24 +95,54 @@ class FitWizardWindow(WizardWindowBase):
         self._current_model: CompositeModel | None = None
         self._recommendation: FitWizardRecommendation | None = None
         self._selected_key: str | None = None
+        # Scope + peak-seed state and the FFT interaction plumbing. User peaks are
+        # GUI-side dicts ([{"freq_mhz": float, "source": "user"}]); the worker task
+        # converts them to the core's plain float list at submit time.
+        self._analysis_stale = False
+        self._user_peaks: list[dict] = []
+        self._fft_ax = None
+        self._user_peak_artists: list = []
+        self._peak_click_candidate: tuple[float, float, float] | None = None
 
         # The Start-analysis button sits before the base-owned progress widgets;
-        # a trailing stretch keeps the row left-aligned as before.
+        # a trailing Cancel button (base-driven cooperative cancel) and a stretch
+        # keep the row aligned as before.
         self._refresh_btn = QPushButton("Start Analysis")
         self._refresh_btn.clicked.connect(self._start_analysis)
         self._controls_row.insertWidget(0, self._refresh_btn)
         self._progress_label.setStyleSheet(f"color: {tokens.WARN};")
+        self._cancel_btn = QPushButton("Cancel")
+        self._cancel_btn.setVisible(False)
+        self._cancel_btn.clicked.connect(self._cancel_current_analysis)
+        self._controls_row.addWidget(self._cancel_btn)
         self._controls_row.addStretch()
 
+        # Stale banner sits between the controls row and the tabs: appended to the
+        # base's central layout (which currently holds heading/status/controls/tabs),
+        # then re-ordered above the tabs so it reads as a result-level warning.
+        self._stale_banner = QLabel(
+            "Scope or peak seeds changed since the last analysis — the results below "
+            "are stale. Re-run the analysis."
+        )
+        self._stale_banner.setWordWrap(True)
+        self._stale_banner.setStyleSheet(f"color: {tokens.ERROR}; font-weight: 600;")
+        self._stale_banner.setVisible(False)
+        # Insert directly above the tabs widget in the base's central layout.
+        tabs_index = self._central_layout.indexOf(self._tabs)
+        self._central_layout.insertWidget(tabs_index, self._stale_banner)
+
+        self._scope_tab = QWidget()
         self._fingerprint_tab = QWidget()
         self._portfolio_tab = QWidget()
         self._compare_tab = QWidget()
         self._apply_tab = QWidget()
-        self._tabs.addTab(self._fingerprint_tab, "1. Fingerprint")
-        self._tabs.addTab(self._portfolio_tab, "2. Candidate Portfolio")
-        self._tabs.addTab(self._compare_tab, "3. Compare Fits")
-        self._tabs.addTab(self._apply_tab, "4. Apply")
+        self._tabs.addTab(self._scope_tab, "1. Scope")
+        self._tabs.addTab(self._fingerprint_tab, "2. Fingerprint")
+        self._tabs.addTab(self._portfolio_tab, "3. Candidate Portfolio")
+        self._tabs.addTab(self._compare_tab, "4. Compare Fits")
+        self._tabs.addTab(self._apply_tab, "5. Apply")
 
+        self._build_scope_tab()
         self._build_fingerprint_tab()
         self._build_portfolio_tab()
         self._build_compare_tab()
@@ -122,12 +171,24 @@ class FitWizardWindow(WizardWindowBase):
         self._cached_log_text = ""
         self._cached_signature = None
         self._analysis_request_id += 1
+        self._user_peaks = []
+        self._analysis_stale = False
+        self._stale_banner.setVisible(False)
         self._heading_label.setText(f"Fit Wizard — Run {dataset.run_label}")
         self._recommendation = None
+        # Install the scope resolver and reset the selector to Auto (signal-silent).
+        self._scope_selector.set_resolver(self._resolve_scope)
+        self._scope_selector.set_scope(None)
+        self._scope_selector.refresh_from_context()
+        self._tabs.setCurrentIndex(0)
         self._metric_combo.blockSignals(True)
         self._metric_combo.setCurrentText(SelectionMetric.AICC.value)
         self._metric_combo.blockSignals(False)
         self._set_empty_state()
+        # Render the time/FFT plot and the (user-only) peaks table straight away
+        # so peak seeds can be added before the first analysis run.
+        self._populate_fingerprint_plot()
+        self._populate_peaks_table()
         if self._analysis_in_progress:
             self._status_label.setText(
                 "Context updated while a previous analysis is still finishing. That result will be ignored; start a new analysis once the wizard is ready."
@@ -145,6 +206,13 @@ class FitWizardWindow(WizardWindowBase):
             return
         if self._analysis_in_progress:
             return
+        if not self._scope_selector.is_valid():
+            self._status_label.setText(
+                "Select at least one candidate family on the Scope tab to enable analysis."
+            )
+            return
+        self._analysis_stale = False
+        self._stale_banner.setVisible(False)
         self._status_label.setText(
             "Running fit wizard analysis in the background. You can keep using the main window while recommendations are prepared."
         )
@@ -153,19 +221,32 @@ class FitWizardWindow(WizardWindowBase):
         self._run_analysis()
 
     def _create_worker_task(self, request_id: int):
-        # Capture the inputs now (submit time); the closure runs on the worker
-        # thread and must touch no widgets — it returns a plain recommendation.
+        # Snapshot the widget-derived inputs NOW (submit time, GUI thread): the
+        # scope payload → WizardScope and the user peaks → the core's plain float
+        # list. The returned closure runs on the worker thread and must touch no
+        # widgets, so it captures only these plain values plus worker.is_cancelled
+        # as the engine's cooperative cancel_callback.
         dataset = self._dataset
         current_model = self._current_model
+        scope = WizardScope.from_payload(self._scope_selector.current_scope())
+        user_frequencies_mhz = [float(peak["freq_mhz"]) for peak in self._user_peaks] or None
 
-        def task(_worker):
+        def task(worker):
             return build_fit_wizard_recommendation(
                 dataset,
                 current_model=current_model,
                 metric=SelectionMetric.AICC,
+                scope=scope,
+                user_frequencies_mhz=user_frequencies_mhz,
+                cancel_callback=worker.is_cancelled,
             )
 
         return task
+
+    def _cancel_exceptions(self) -> tuple[type[BaseException], ...]:
+        # The engine raises FitCancelledError when cancel_callback trips; the base
+        # routes it to the clean "Analysis cancelled." path (not the error path).
+        return (FitCancelledError,)
 
     def _reset_result_state(self) -> None:
         self._set_empty_state()
@@ -182,15 +263,58 @@ class FitWizardWindow(WizardWindowBase):
 
     def _update_action_enablement(self, busy: bool) -> None:
         self._progress_label.setText("Analysis in progress..." if busy else "")
-        self._refresh_btn.setEnabled(self._dataset is not None and not busy)
-        self._refresh_btn.setText(
-            "Refresh Analysis"
-            if (self._recommendation is not None and not busy)
-            else "Start Analysis"
-        )
+        self._cancel_btn.setVisible(busy)
+        self._update_start_button()
         self._metric_combo.setEnabled(not busy and self._recommendation is not None)
         self._previous_btn.setEnabled(not busy and self._tabs.currentIndex() > 0)
         self._next_btn.setEnabled(not busy and self._tabs.currentIndex() < self._tabs.count() - 1)
+
+    def _update_start_button(self) -> None:
+        """Refresh the Start/Refresh/Re-run button text and enabled state.
+
+        Enabled iff a dataset is present, no analysis is in flight, and the scope
+        selector reports at least one included component.
+        """
+        busy = self._analysis_in_progress
+        self._refresh_btn.setEnabled(
+            self._dataset is not None and not busy and self._scope_selector.is_valid()
+        )
+        if self._analysis_stale and not busy:
+            self._refresh_btn.setText("Re-run Analysis")
+        elif self._recommendation is not None and not busy:
+            self._refresh_btn.setText("Refresh Analysis")
+        else:
+            self._refresh_btn.setText("Start Analysis")
+
+    def _on_scope_changed(self, _scope: object) -> None:
+        self._mark_analysis_stale("Scope changed")
+
+    def _on_scope_validity_changed(self, is_valid: bool) -> None:
+        if not is_valid and not self._analysis_in_progress:
+            self._status_label.setText(
+                "Select at least one candidate family on the Scope tab to enable analysis."
+            )
+        self._update_start_button()
+
+    def _mark_analysis_stale(self, reason: str) -> None:
+        """Flag the displayed results as stale after a scope or peak-seed edit.
+
+        Follows the ignore-stale convention: an in-flight analysis is orphaned by
+        bumping the base's request id (its terminal signal is discarded on arrival
+        by the base staleness guard), never cancelled cooperatively — the cancelled
+        path would clash with the stale-status text.
+        """
+        if self._analysis_in_progress:
+            self._analysis_request_id += 1
+            self._set_busy(False)
+            self._status_label.setText(
+                f"{reason} while analysis was running; that result will be discarded. "
+                "Re-run the analysis."
+            )
+        if self._recommendation is not None:
+            self._analysis_stale = True
+            self._stale_banner.setVisible(True)
+        self._update_start_button()
 
     def _populate_results(self, result: object) -> None:
         recommendation = result
@@ -199,6 +323,8 @@ class FitWizardWindow(WizardWindowBase):
         if self._selected_key is None and recommendation.assessments:
             self._selected_key = recommendation.assessments[0].template.key
         self._status_label.setText(recommendation.summary)
+        self._analysis_stale = False
+        self._stale_banner.setVisible(False)
         self._metric_combo.blockSignals(True)
         self._metric_combo.setCurrentText(recommendation.metric.value)
         self._metric_combo.blockSignals(False)
@@ -227,6 +353,17 @@ class FitWizardWindow(WizardWindowBase):
         if self._selected_key is None and recommendation.assessments:
             self._selected_key = recommendation.assessments[0].template.key
         self._cached_log_text = str(log_text or "")
+        # Restore scope + peak seeds from the signature. Legacy signatures without
+        # these keys restore as Auto / no peaks. Cached state is never stale.
+        signature_dict = signature if isinstance(signature, dict) else {}
+        cached_scope = signature_dict.get("scope")
+        self._scope_selector.set_scope(cached_scope if isinstance(cached_scope, dict) else None)
+        cached_peaks = signature_dict.get("user_peaks")
+        self._user_peaks = (
+            [dict(peak) for peak in cached_peaks] if isinstance(cached_peaks, list) else []
+        )
+        self._analysis_stale = False
+        self._stale_banner.setVisible(False)
         self._metric_combo.blockSignals(True)
         self._metric_combo.setCurrentText(recommendation.metric.value)
         self._metric_combo.blockSignals(False)
@@ -243,10 +380,79 @@ class FitWizardWindow(WizardWindowBase):
                 else None
             ),
             "model": self._current_model.to_dict() if self._current_model is not None else None,
+            "scope": self._scope_selector.current_scope(),
+            "user_peaks": [dict(peak) for peak in self._user_peaks],
         }
 
     def current_recommendation(self) -> FitWizardRecommendation | None:
         return self._recommendation
+
+    def _build_scope_tab(self) -> None:
+        layout = QVBoxLayout(self._scope_tab)
+        intro = QLabel(
+            "Choose which candidate families the wizard screens. Start from a preset "
+            "(or Auto, inferred from run metadata) and include/exclude individual "
+            "components as needed."
+        )
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        self._scope_selector = WizardScopeSelector()
+        self._scope_selector.scope_changed.connect(self._on_scope_changed)
+        self._scope_selector.validity_changed.connect(self._on_scope_validity_changed)
+        layout.addWidget(self._scope_selector, 1)
+
+    def _resolve_scope(self, preset_id: str, overrides: dict) -> dict:
+        """Adapt the core scope resolver to the WizardScopeSelector dict contract.
+
+        Groups in-registry-order TIME-domain components by their display
+        ``category``; frequency-domain components are skipped entirely.
+        """
+        if self._dataset is None:
+            return {
+                "effective_preset": preset_id,
+                "note": "Load a dataset first",
+                "families": [],
+                "estimate": [0, 0],
+            }
+        scope = WizardScope.from_payload(
+            {
+                "version": 1,
+                "preset": preset_id,
+                "include": overrides.get("include", []),
+                "exclude": overrides.get("exclude", []),
+            }
+        )
+        resolution = resolve_scope_for_dataset(self._dataset, scope)
+        included = resolution.included_set
+        reasons = {exc.name: exc.reason for exc in resolution.excluded_components}
+
+        families: list[dict] = []
+        by_category: dict[str, dict] = {}
+        for name, definition in COMPONENTS.items():
+            if definition.domain != "time":
+                continue
+            category = definition.category
+            family = by_category.get(category)
+            if family is None:
+                family = {"key": category, "title": category, "components": []}
+                by_category[category] = family
+                families.append(family)
+            family["components"].append(
+                {
+                    "name": name,
+                    "included": name in included,
+                    "reason": reasons.get(name, ""),
+                    "cost": definition.cost.value,
+                }
+            )
+
+        return {
+            "effective_preset": resolution.effective_preset.value,
+            "note": resolution.inference_note,
+            "families": families,
+            "estimate": list(estimate_screening_cost(resolution)),
+        }
 
     def _build_fingerprint_tab(self) -> None:
         layout = QVBoxLayout(self._fingerprint_tab)
@@ -262,7 +468,36 @@ class FitWizardWindow(WizardWindowBase):
         self._fingerprint_table.setHorizontalHeaderLabels(["Feature", "Value"])
         self._fingerprint_table.horizontalHeader().setStretchLastSection(True)
         grid.addWidget(self._fingerprint_table, 0, 1)
+
+        self._peaks_table = QTableWidget(0, 5)
+        self._peaks_table.setHorizontalHeaderLabels(
+            ["Freq (MHz)", "SNR", "Width (MHz)", "Pattern", "Source"]
+        )
+        self._peaks_table.horizontalHeader().setStretchLastSection(True)
+        self._peaks_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._peaks_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._peaks_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._peaks_table.itemSelectionChanged.connect(self._on_peaks_selection_changed)
+        grid.addWidget(self._peaks_table, 1, 0, 1, 2)
         layout.addLayout(grid)
+
+        peak_controls = QHBoxLayout()
+        peak_hint = QLabel(
+            "Click on the FFT to add a peak seed; click an existing red marker to remove it."
+        )
+        peak_hint.setWordWrap(True)
+        peak_controls.addWidget(peak_hint, 1)
+        self._remove_peak_btn = QPushButton("Remove Selected Peak")
+        self._remove_peak_btn.setEnabled(False)
+        self._remove_peak_btn.clicked.connect(self._remove_selected_peak)
+        peak_controls.addWidget(self._remove_peak_btn)
+        layout.addLayout(peak_controls)
+
+        canvas = getattr(self._fingerprint_plot_widget, "_canvas", None)
+        if canvas is not None:
+            canvas.mpl_connect("button_press_event", self._on_fft_press)
+            canvas.mpl_connect("motion_notify_event", self._on_fft_motion)
+            canvas.mpl_connect("button_release_event", self._on_fft_release)
 
     def _build_portfolio_tab(self) -> None:
         layout = QVBoxLayout(self._portfolio_tab)
@@ -283,6 +518,15 @@ class FitWizardWindow(WizardWindowBase):
         self._compare_banner = QLabel("")
         self._compare_banner.setWordWrap(True)
         layout.addWidget(self._compare_banner)
+
+        # Confidence-tier / verdict / caveat banner. Styled per-tier in
+        # _update_confidence_banner: high = muted note, medium = amber caveat,
+        # no-significant-structure = unmissable amber statement. Hidden until the
+        # recommendation carries a non-default tier or a caveat.
+        self._confidence_banner = QLabel("")
+        self._confidence_banner.setWordWrap(True)
+        self._confidence_banner.setVisible(False)
+        layout.addWidget(self._confidence_banner)
 
         controls_row = QHBoxLayout()
         controls_row.addWidget(QLabel("Ranking Metric:"))
@@ -377,14 +621,18 @@ class FitWizardWindow(WizardWindowBase):
     def _set_empty_state(self) -> None:
         for table in (
             self._fingerprint_table,
+            self._peaks_table,
             self._portfolio_table,
             self._compare_table,
             self._apply_parameters_table,
         ):
             table.setRowCount(0)
+        self._remove_peak_btn.setEnabled(False)
         self._fingerprint_banner.setText("")
         self._portfolio_banner.setText("")
         self._compare_banner.setText("")
+        self._confidence_banner.setText("")
+        self._confidence_banner.setVisible(False)
         self._apply_banner.setText("")
         self._compare_warning_text.setPlainText("")
         self._apply_warning_text.setPlainText("")
@@ -404,6 +652,7 @@ class FitWizardWindow(WizardWindowBase):
         self._update_banners()
         self._populate_fingerprint_table()
         self._populate_fingerprint_plot()
+        self._populate_peaks_table()
         self._populate_portfolio_table()
         self._populate_compare_table()
         self._sync_selected_assessment()
@@ -448,9 +697,14 @@ class FitWizardWindow(WizardWindowBase):
         else:
             fingerprint_notes.append("Late-time recovery does not strongly favour a KT-like tail.")
 
+        if self._recommendation.multiplet_matches:
+            best_match = max(self._recommendation.multiplet_matches, key=lambda m: m.quality)
+            fingerprint_notes.append(f"Pattern match: {best_match.note}")
+
         self._fingerprint_banner.setText(" ".join(fingerprint_notes))
         self._portfolio_banner.setText(self._recommendation.summary)
         self._compare_banner.setText(self._recommendation.summary)
+        self._update_confidence_banner()
         if self._recommendation.recommended_assessment is None:
             self._apply_banner.setText(
                 "No candidate passed the automatic residual gate. You can still inspect and apply a manually selected fit."
@@ -460,6 +714,68 @@ class FitWizardWindow(WizardWindowBase):
             self._apply_banner.setText(
                 f"The wizard recommends {recommended}. Apply it directly or choose an alternative from the comparison step."
             )
+
+    def _update_confidence_banner(self) -> None:
+        """Render the confidence tier / verdict / caveat below the ranking summary.
+
+        Three visual registers, all from design tokens (no raw hex):
+
+        * ``NO_SIGNIFICANT_STRUCTURE`` — an unmissable amber statement that the
+          data show no significant structure, carrying any caveat text.
+        * ``MEDIUM`` confidence — a usable-but-caveated amber note (never styled
+          as an error), showing the residual-structure caveat.
+        * ``HIGH`` confidence — a muted "high confidence" note.
+        """
+        recommendation = self._recommendation
+        if recommendation is None:
+            self._confidence_banner.setText("")
+            self._confidence_banner.setVisible(False)
+            return
+
+        verdict = recommendation.verdict
+        confidence = recommendation.confidence
+        caveat = (recommendation.caveat or "").strip()
+
+        if verdict is RecommendationVerdict.NO_SIGNIFICANT_STRUCTURE:
+            text = "No significant structure: the data are consistent with the null baseline."
+            if caveat:
+                text = f"{text} {caveat}"
+            style = (
+                f"background-color: {tokens.WARN_BANNER_BG};"
+                f" color: {tokens.WARN_BANNER_TEXT}; font-weight: 600; padding: 4px;"
+            )
+        elif confidence is ConfidenceTier.MEDIUM:
+            text = "Medium confidence — usable, but read the caveat."
+            if caveat:
+                text = f"{text} {caveat}"
+            style = (
+                f"background-color: {tokens.WARN_BANNER_BG};"
+                f" color: {tokens.WARN_BANNER_TEXT}; padding: 4px;"
+            )
+        elif confidence is ConfidenceTier.HIGH:
+            text = "High confidence: the recommended fit passes every residual check."
+            style = f"color: {tokens.TEXT_MUTED};"
+        elif recommendation.recommended_assessment is None:
+            # Genuine no-recommendation (NONE tier, no structured/no-structure
+            # verdict, nothing recommended) — surface the caveat or a neutral note.
+            text = caveat or "No recommendation could be made — inspect the comparison table."
+            style = f"color: {tokens.TEXT_MUTED};"
+        else:
+            # A recommendation exists but the tier is the default NONE (e.g. an
+            # explicit-template path or a pre-confidence payload). Don't contradict
+            # the summary with a "no recommendation" claim: show the caveat if any,
+            # else hide the banner entirely.
+            caveat_text = caveat
+            if not caveat_text:
+                self._confidence_banner.setText("")
+                self._confidence_banner.setVisible(False)
+                return
+            text = caveat_text
+            style = f"color: {tokens.TEXT_MUTED};"
+
+        self._confidence_banner.setText(text)
+        self._confidence_banner.setStyleSheet(style)
+        self._confidence_banner.setVisible(True)
 
     def _populate_fingerprint_table(self) -> None:
         if self._recommendation is None:
@@ -486,6 +802,8 @@ class FitWizardWindow(WizardWindowBase):
 
     def _populate_fingerprint_plot(self) -> None:
         if self._dataset is None:
+            self._fft_ax = None
+            self._user_peak_artists = []
             self._draw_figure(self._fingerprint_plot_widget, None)
             return
         widget = self._fingerprint_plot_widget
@@ -522,7 +840,230 @@ class FitWizardWindow(WizardWindowBase):
         ax_fft.set_xlabel("Frequency (MHz)")
         ax_fft.set_ylabel("|FFT|")
         ax_fft.set_title("Windowed FFT")
+
+        self._fft_ax = ax_fft
+        self._user_peak_artists = []
+        # Auto-detected peaks (solid accent markers). User peaks — including any
+        # user peak merged into the analysis as source "user" — are drawn by
+        # _refresh_peak_overlays from self._user_peaks, so exclude them here.
+        analysis = self._recommendation.peak_analysis if self._recommendation else None
+        if analysis is not None:
+            for peak in analysis.peaks:
+                if peak.source in ("fft", "residual_fft"):
+                    ax_fft.axvline(
+                        peak.frequency_mhz,
+                        color=tokens.ACCENT,
+                        alpha=0.35,
+                        linewidth=1.2,
+                    )
+        self._refresh_peak_overlays()
         canvas.draw_idle()
+
+    def _refresh_peak_overlays(self) -> None:
+        """Redraw just the dashed user-peak markers on the FFT subplot.
+
+        Removes the artists tracked in ``self._user_peak_artists`` and redraws
+        one dashed danger-coloured ``axvline`` per entry in ``self._user_peaks``.
+        Never clears the figure, so the FFT trace and auto markers survive.
+        """
+        if self._fft_ax is None:
+            return
+        for artist in self._user_peak_artists:
+            try:
+                artist.remove()
+            except (ValueError, NotImplementedError):
+                pass
+        self._user_peak_artists = []
+        for peak in self._user_peaks:
+            line = self._fft_ax.axvline(
+                float(peak["freq_mhz"]),
+                color=tokens.ACCENT_RED,
+                alpha=0.9,
+                linewidth=1.2,
+                linestyle="--",
+            )
+            self._user_peak_artists.append(line)
+        canvas = getattr(self._fingerprint_plot_widget, "_canvas", None)
+        if canvas is not None:
+            canvas.draw_idle()
+
+    def _peaks_table_rows(self) -> list[dict]:
+        """Assemble the merged detected + user peak rows for the peaks table.
+
+        Detected peaks come from ``recommendation.peak_analysis`` (SNR-desc); each
+        user peak within one ``resolution_mhz`` of a listed peak is folded onto
+        that row rather than repeated. Remaining user peaks are appended.
+        """
+        analysis = self._recommendation.peak_analysis if self._recommendation else None
+        resolution = float(analysis.resolution_mhz) if analysis is not None else 0.0
+        matches = self._recommendation.multiplet_matches if self._recommendation else ()
+
+        rows: list[dict] = []
+        represented = [False] * len(self._user_peaks)
+        if analysis is not None:
+            for index, peak in enumerate(analysis.peaks):
+                is_user = peak.source == "user"
+                pattern = ""
+                for match in matches:  # quality-descending
+                    if index in match.peak_indices:
+                        label = _MULTIPLET_KIND_LABELS.get(match.kind, match.kind)
+                        pattern = f"{label} ({match.kind})"
+                        break
+                # Fold a matching user peak onto this row so it is not repeated.
+                for u_idx, user_peak in enumerate(self._user_peaks):
+                    if resolution > 0.0 and not represented[u_idx]:
+                        if abs(float(user_peak["freq_mhz"]) - peak.frequency_mhz) <= resolution:
+                            represented[u_idx] = True
+                            is_user = True
+                rows.append(
+                    {
+                        "freq_mhz": peak.frequency_mhz,
+                        "snr": None if is_user else peak.snr,
+                        "width_mhz": peak.width_mhz,
+                        "pattern": pattern,
+                        "source": "user" if is_user else peak.source,
+                    }
+                )
+        for u_idx, user_peak in enumerate(self._user_peaks):
+            if represented[u_idx]:
+                continue
+            rows.append(
+                {
+                    "freq_mhz": float(user_peak["freq_mhz"]),
+                    "snr": None,
+                    "width_mhz": None,
+                    "pattern": "",
+                    "source": "user",
+                }
+            )
+        return rows
+
+    def _populate_peaks_table(self) -> None:
+        rows = self._peaks_table_rows()
+        self._peaks_table.setRowCount(len(rows))
+        for row, entry in enumerate(rows):
+            freq_item = QTableWidgetItem()
+            freq_item.setData(Qt.ItemDataRole.DisplayRole, float(entry["freq_mhz"]))
+            # Store the exact frequency for nearest-match removal from the table.
+            freq_item.setData(Qt.ItemDataRole.UserRole, float(entry["freq_mhz"]))
+            self._peaks_table.setItem(row, 0, freq_item)
+            self._peaks_table.setItem(
+                row,
+                1,
+                QTableWidgetItem("—") if entry["snr"] is None else _numeric_item(entry["snr"]),
+            )
+            self._peaks_table.setItem(
+                row,
+                2,
+                QTableWidgetItem("—")
+                if entry["width_mhz"] is None
+                else _numeric_item(entry["width_mhz"]),
+            )
+            self._peaks_table.setItem(row, 3, QTableWidgetItem(entry["pattern"]))
+            self._peaks_table.setItem(row, 4, QTableWidgetItem(entry["source"]))
+        self._on_peaks_selection_changed()
+
+    def _on_peaks_selection_changed(self) -> None:
+        """Enable the remove button only when the selected row is a user peak."""
+        row = self._peaks_table.currentRow()
+        source_item = self._peaks_table.item(row, 4) if row >= 0 else None
+        is_user = source_item is not None and source_item.text() == "user"
+        self._remove_peak_btn.setEnabled(bool(is_user))
+
+    def _remove_selected_peak(self) -> None:
+        """Remove the user peak backing the selected row, then refresh state."""
+        row = self._peaks_table.currentRow()
+        if row < 0:
+            return
+        source_item = self._peaks_table.item(row, 4)
+        if source_item is None or source_item.text() != "user":
+            return
+        freq_item = self._peaks_table.item(row, 0)
+        if freq_item is None:
+            return
+        target = float(freq_item.data(Qt.ItemDataRole.UserRole))
+        if not self._remove_user_peak_nearest(target):
+            return
+        self._refresh_peak_overlays()
+        self._populate_peaks_table()
+        self._mark_analysis_stale("Peak seeds changed")
+
+    def _remove_user_peak_nearest(self, frequency_mhz: float) -> bool:
+        """Drop the ``self._user_peaks`` entry nearest ``frequency_mhz``."""
+        if not self._user_peaks:
+            return False
+        best_idx = min(
+            range(len(self._user_peaks)),
+            key=lambda i: abs(float(self._user_peaks[i]["freq_mhz"]) - frequency_mhz),
+        )
+        del self._user_peaks[best_idx]
+        return True
+
+    # --- interactive FFT peak editing (ALC press/motion/release convention) ---
+
+    def _on_fft_press(self, event: object) -> None:
+        if self._dataset is None or self._fft_ax is None:
+            return
+        if getattr(event, "inaxes", None) is not self._fft_ax:
+            return
+        if getattr(event, "button", None) != 1:
+            return
+        xdata = getattr(event, "xdata", None)
+        if xdata is None:
+            return
+        self._peak_click_candidate = (
+            float(xdata),
+            float(getattr(event, "x", 0.0)),
+            float(getattr(event, "y", 0.0)),
+        )
+
+    def _on_fft_motion(self, event: object) -> None:
+        if self._peak_click_candidate is None:
+            return
+        _xdata, x0, y0 = self._peak_click_candidate
+        # >3 device px of travel means this is a pan/drag, not a click.
+        if (
+            abs(float(getattr(event, "x", x0)) - x0) > 3.0
+            or abs(float(getattr(event, "y", y0)) - y0) > 3.0
+        ):
+            self._peak_click_candidate = None
+
+    def _on_fft_release(self, event: object) -> None:
+        candidate = self._peak_click_candidate
+        self._peak_click_candidate = None
+        if candidate is None or getattr(event, "button", None) != 1:
+            return
+        if self._dataset is None or self._fft_ax is None:
+            return
+        freq, x_press, _y_press = candidate
+        # Within ~12 device px of an existing user marker → remove it; else add.
+        removed = self._remove_user_peak_at_pixel(x_press)
+        if not removed:
+            self._user_peaks.append({"freq_mhz": float(freq), "source": "user"})
+        self._refresh_peak_overlays()
+        self._populate_peaks_table()
+        self._mark_analysis_stale("Peak seeds changed")
+
+    def _remove_user_peak_at_pixel(self, x_pixel: float) -> bool:
+        """Remove the user peak whose marker is within ~12 device px of ``x_pixel``.
+
+        Resolution-independent (works pre-analysis) — hit-tests the x device
+        coordinate of each user frequency through ``self._fft_ax.transData``.
+        """
+        if self._fft_ax is None or not self._user_peaks:
+            return False
+        best_idx: int | None = None
+        best_dist = 12.0
+        for idx, peak in enumerate(self._user_peaks):
+            px = float(self._fft_ax.transData.transform((float(peak["freq_mhz"]), 0.0))[0])
+            dist = abs(px - x_pixel)
+            if dist <= best_dist:
+                best_dist = dist
+                best_idx = idx
+        if best_idx is None:
+            return False
+        del self._user_peaks[best_idx]
+        return True
 
     def _populate_portfolio_table(self) -> None:
         if self._recommendation is None:
@@ -545,12 +1086,23 @@ class FitWizardWindow(WizardWindowBase):
         self._compare_table.setSortingEnabled(False)
         self._compare_table.setRowCount(len(assessments))
         for row, assessment in enumerate(assessments):
-            title_item = QTableWidgetItem(assessment.template.title)
+            # Null baselines read as baselines, not candidates; disqualified
+            # candidates carry their reasons as a tooltip and a "disqualified" tag.
+            title_text = assessment.template.title
+            if assessment.is_null_baseline:
+                title_text = f"{title_text} (baseline)"
+            elif assessment.is_disqualified:
+                title_text = f"{title_text} (disqualified)"
+            title_item = QTableWidgetItem(title_text)
             title_item.setData(Qt.ItemDataRole.UserRole, assessment.template.key)
             if assessment.template.key == self._recommendation.recommended_key:
                 title_item.setFont(_bold_font(title_item.font()))
             if not assessment.residual_gate_passed:
                 title_item.setForeground(QBrush(QColor("#9b2226")))
+            if assessment.disqualification_reasons:
+                title_item.setToolTip(
+                    "Disqualified: " + "; ".join(assessment.disqualification_reasons)
+                )
             self._compare_table.setItem(row, 0, title_item)
             self._compare_table.setItem(
                 row, 1, _numeric_item(assessment.metric_value(self._recommendation.metric))
