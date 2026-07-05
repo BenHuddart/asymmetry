@@ -189,12 +189,50 @@ def test_cross_group_dialog_shows_inherited_source_in_banner() -> None:
         parent=None,
     )
 
-    banner = dlg.layout().itemAt(0).widget() if dlg.layout() is not None else None
+    # The banner lives in the base dialog's named header slot (contract C6),
+    # not at a hardcoded top-level layout index.
+    assert dlg._header_slot.count() >= 1
+    banner = dlg._header_slot.itemAt(0).widget()
     assert banner is not None
     text = banner.text()
     assert "Inherited from" in text
     assert "G0" in text
     assert "chi2_r=" in text
+    assert app is not None
+
+
+def test_cross_group_dialog_footer_slot_holds_suggest_roles_above_buttons() -> None:
+    """The suggest-roles row + rationale panel sit in the footer slot, which the
+    base dialog places directly above the OK/Cancel button box (contract C6)."""
+    app = QApplication.instance() or QApplication([])
+    dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=_groups(),
+        parent=None,
+    )
+
+    footer_widgets = [dlg._footer_slot.itemAt(i).widget() for i in range(dlg._footer_slot.count())]
+    assert dlg._suggest_btn in footer_widgets or any(
+        widget is not None and dlg._suggest_btn in widget.findChildren(type(dlg._suggest_btn))
+        for widget in footer_widgets
+    )
+    assert dlg._rationale_panel in footer_widgets
+
+    main_layout = dlg.layout()
+    footer_index = None
+    buttons_index = None
+    for i in range(main_layout.count()):
+        item = main_layout.itemAt(i)
+        if item is None:
+            continue
+        if item.layout() is dlg._footer_slot:
+            footer_index = i
+        if item.widget() is dlg._buttons:
+            buttons_index = i
+    assert footer_index is not None
+    assert buttons_index is not None
+    assert footer_index < buttons_index
     assert app is not None
 
 

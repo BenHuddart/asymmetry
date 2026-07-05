@@ -3120,6 +3120,57 @@ def global_fit_parameter_model(
     )
 
 
+def sample_parameter_model(
+    model: ParameterCompositeModel,
+    parameters: ParameterSet,
+    x_min: float | None,
+    x_max: float | None,
+    windows: Sequence[tuple[float, float]] | None = None,
+    num_points: int = 200,
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Sample ``(xs, ys)`` of a model over its effective bounds.
+
+    Uses the CURRENT ``parameters`` (fitted or not), so a live GUI preview can
+    draw a candidate curve before any fit runs. Bounds follow
+    :func:`effective_range_bounds`'s envelope semantics: when ``windows`` is
+    given, the curve spans the union envelope ``(min lo, max hi)`` so it is
+    drawn continuously through excluded gaps; otherwise the plain
+    ``x_min``/``x_max`` bounds apply.
+
+    Returns empty float arrays (never raises) when the bounds are unusable
+    (``None``, non-finite, or ``x_max <= x_min``) or when ``windows`` is
+    invalid (e.g. an inverted window mid-edit) — this is a plotting-path
+    helper and must stay side-effect-free and exception-free.
+    """
+    empty = (np.array([], dtype=float), np.array([], dtype=float))
+
+    try:
+        windows_valid = validate_fit_windows(windows)
+    except ValueError:
+        return empty
+
+    if windows_valid is not None:
+        eff_min: float | None = min(lo for lo, _ in windows_valid)
+        eff_max: float | None = max(hi for _, hi in windows_valid)
+    else:
+        eff_min, eff_max = x_min, x_max
+
+    if eff_min is None or eff_max is None:
+        return empty
+    eff_min = float(eff_min)
+    eff_max = float(eff_max)
+    if not (np.isfinite(eff_min) and np.isfinite(eff_max)):
+        return empty
+    if eff_max <= eff_min:
+        return empty
+
+    xs = np.linspace(eff_min, eff_max, num=max(2, int(num_points)), dtype=float)
+    kwargs = {p.name: p.value for p in parameters}
+    ys = model.function(xs, **kwargs)
+    mask = np.isfinite(xs) & np.isfinite(ys)
+    return xs[mask], ys[mask]
+
+
 def evaluate_parameter_model_fit(
     fit: ParameterModelFit,
     num_points: int = 200,
@@ -3131,31 +3182,22 @@ def evaluate_parameter_model_fit(
         if fit_range.result is None or not fit_range.result.success:
             continue
 
-        try:
-            # One model across the window union: sample the full envelope so
-            # the curve is drawn continuously through the excluded gaps.
-            x_min, x_max = effective_range_bounds(fit_range)
-        except ValueError:
-            # Invalid windows (e.g. inverted mid-edit): skip the curve rather
-            # than raising inside a plotting path.
-            continue
-        if x_min is None or x_max is None:
-            continue
-        if x_max <= x_min:
-            continue
-
-        xs = np.linspace(float(x_min), float(x_max), num=max(2, int(num_points)), dtype=float)
-        kwargs = {p.name: p.value for p in fit_range.result.parameters}
-        ys = fit_range.model.function(xs, **kwargs)
-        mask = np.isfinite(xs) & np.isfinite(ys)
-        if not np.any(mask):
+        xs, ys = sample_parameter_model(
+            fit_range.model,
+            fit_range.result.parameters,
+            fit_range.x_min,
+            fit_range.x_max,
+            fit_range.windows,
+            num_points,
+        )
+        if xs.size == 0:
             continue
 
         curves.append(
             ParameterModelFitExecution(
                 range_index=idx,
-                x=xs[mask],
-                y=ys[mask],
+                x=xs,
+                y=ys,
                 result=fit_range.result,
             )
         )

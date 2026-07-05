@@ -957,3 +957,175 @@ def test_fresh_temperature_lambda_dialog_stays_linear(qapp: QApplication) -> Non
         y_errors=yerr,
     )
     assert dlg._fit.ranges[0].model.component_names == ["Linear"]
+
+
+# ── Work item 0.1: base/subclass share _select_range + _commit_param_table ──
+
+
+def test_select_range_shared_path() -> None:
+    """Both dialogs route through the *base* ``_select_range`` /
+    ``_commit_param_table`` — the subclass no longer re-implements them, it only
+    overrides the small template hooks."""
+    from asymmetry.gui.panels.cross_group_fit_dialog import CrossGroupFitDialog
+
+    # The shared table/status flow lives on the base only.
+    assert "_select_range" in vars(ModelFitDialog)
+    assert "_select_range" not in vars(CrossGroupFitDialog)
+    assert "_commit_param_table" in vars(ModelFitDialog)
+
+    # The subclass keeps a thin _commit_param_table override that must delegate
+    # to the base (role mapping is layered on top), not re-implement it.
+    import inspect
+
+    src = inspect.getsource(CrossGroupFitDialog._commit_param_table)
+    assert "super()._commit_param_table(" in src
+
+    # The four frozen hooks are overridden on the subclass.
+    for hook in (
+        "_make_param_row_control",
+        "_read_param_row_control",
+        "_result_for_range",
+        "_error_cell_for_param",
+    ):
+        assert hook in vars(ModelFitDialog), hook
+        assert hook in vars(CrossGroupFitDialog), hook
+
+
+def test_base_fixed_checkbox_commits_value_min_max_and_fixed(qapp: QApplication) -> None:
+    """The base Fixed-checkbox column commits value/min/max and the fixed flag
+    from the shared ``_commit_param_table``."""
+    x = np.linspace(1.0, 10.0, 12)
+    y = 0.01 * x + 0.2
+    yerr = np.full_like(x, 0.01)
+
+    fit = ParameterModelFit(
+        parameter_name="Lambda",
+        x_key="field",
+        ranges=[
+            ModelFitRange(
+                x_min=1.0,
+                x_max=10.0,
+                model=ParameterCompositeModel(["Linear"], []),
+                parameters=ParameterSet([Parameter("m", 0.01), Parameter("b", 0.2)]),
+            )
+        ],
+    )
+    dlg = ModelFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        x_values=x,
+        y_values=y,
+        y_errors=yerr,
+        existing_fit=fit,
+    )
+    dlg._select_range(0)
+
+    row_by_name = {
+        dlg._param_table.item(r, 0).data(Qt.ItemDataRole.UserRole): r
+        for r in range(dlg._param_table.rowCount())
+    }
+    # ``b`` is an unconstrained offset (no domain clamping), so value/min/max
+    # round-trip verbatim through the shared commit path.
+    b_row = row_by_name["b"]
+
+    # Column 4 holds the base Fixed checkbox (in a centered container).
+    container = dlg._param_table.cellWidget(b_row, 4)
+    checkboxes = container.findChildren(QCheckBox)
+    assert len(checkboxes) == 1
+
+    dlg._param_table.item(b_row, 1).setText("0.5")
+    dlg._param_table.item(b_row, 2).setText("-1.0")
+    dlg._param_table.item(b_row, 3).setText("2.0")
+    checkboxes[0].setChecked(True)
+
+    dlg._commit_param_table()
+
+    committed = {p.name: p for p in dlg.get_model_fit().ranges[0].parameters}
+    assert committed["b"].value == pytest.approx(0.5)
+    assert committed["b"].min == pytest.approx(-1.0)
+    assert committed["b"].max == pytest.approx(2.0)
+    assert committed["b"].fixed is True
+    # The unedited row is untouched and stays free.
+    assert committed["m"].fixed is False
+
+
+def test_cross_group_role_combo_persists_and_maps_fixed() -> None:
+    """The subclass role combo persists Global/Local/Fixed into ``_range_roles``
+    and maps a Fixed role onto the parameter's ``fixed`` flag, all through the
+    shared commit path plus the subclass override."""
+    from asymmetry.core.fitting.parameter_models import ParameterGroupData
+    from asymmetry.gui.panels.cross_group_fit_dialog import CrossGroupFitDialog
+
+    x = np.array([100.0, 200.0, 300.0], dtype=float)
+    groups = [
+        ParameterGroupData(
+            group_id="g0",
+            group_name="G0",
+            x=x,
+            y=np.array([0.1, 0.2, 0.3]),
+            yerr=np.array([0.01, 0.01, 0.01]),
+            group_variable_value=0.0,
+        ),
+        ParameterGroupData(
+            group_id="g1",
+            group_name="G1",
+            x=x,
+            y=np.array([0.12, 0.22, 0.32]),
+            yerr=np.array([0.01, 0.01, 0.01]),
+            group_variable_value=1.0,
+        ),
+    ]
+
+    dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=groups,
+        parent=None,
+    )
+
+    from PySide6.QtWidgets import QComboBox
+
+    row_by_name = {
+        dlg._param_table.item(r, 0).data(Qt.ItemDataRole.UserRole): r
+        for r in range(dlg._param_table.rowCount())
+    }
+    # Column 4 holds the Global/Local/Fixed combo (not a checkbox).
+    m_combo = dlg._param_table.cellWidget(row_by_name["m"], 4)
+    b_combo = dlg._param_table.cellWidget(row_by_name["b"], 4)
+    assert isinstance(m_combo, QComboBox)
+
+    m_combo.setCurrentText("Local")
+    b_combo.setCurrentText("Fixed")
+    dlg._commit_param_table()
+
+    roles = dlg._range_roles[0]
+    assert roles["m"] == "Local"
+    assert roles["b"] == "Fixed"
+    # A Fixed role maps onto the parameter's fixed flag; Local stays free.
+    params = {p.name: p for p in dlg._fit.ranges[0].parameters}
+    assert params["b"].fixed is True
+
+
+def test_layout_slots_present(qapp: QApplication) -> None:
+    """Contract C6: the base dialog exposes named header/footer layout slots
+    so subclasses (e.g. CrossGroupFitDialog) stop doing index-based
+    layout.insertWidget arithmetic."""
+    from PySide6.QtWidgets import QVBoxLayout
+
+    x = np.linspace(10.0, 100.0, 10)
+    y = np.linspace(0.1, 0.2, 10)
+    yerr = np.full_like(x, 0.01)
+
+    dlg = ModelFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        x_values=x,
+        y_values=y,
+        y_errors=yerr,
+    )
+
+    assert isinstance(dlg._header_slot, QVBoxLayout)
+    assert isinstance(dlg._footer_slot, QVBoxLayout)
+    # Empty by default on the base dialog.
+    assert dlg._header_slot.count() == 0
+    assert dlg._footer_slot.count() == 0

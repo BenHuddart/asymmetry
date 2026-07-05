@@ -486,6 +486,15 @@ class ModelFitDialog(QDialog):
         self._data_range_label = QLabel(f"Data range: {x_min_data:.6g} to {x_max_data:.6g}")
         layout.addWidget(self._data_range_label)
 
+        # Named insertion point (contract C6): directly under the summary/
+        # data-range labels, at the top of the dialog body. Subclasses (e.g.
+        # CrossGroupFitDialog's inherited-source banner) add widgets here
+        # instead of doing index-based layout.insertWidget arithmetic. Empty by
+        # default, so it must add no visual space.
+        self._header_slot = QVBoxLayout()
+        self._header_slot.setContentsMargins(0, 0, 0, 0)
+        layout.addLayout(self._header_slot)
+
         self._error_mode_combo: QComboBox | None = None
         self._error_value_label: QLabel | None = None
         self._error_value_spin: QDoubleSpinBox | None = None
@@ -585,6 +594,15 @@ class ModelFitDialog(QDialog):
         params_layout.addWidget(self._param_table)
 
         layout.addWidget(params_group)
+
+        # Named insertion point (contract C6): directly above the OK/Cancel
+        # button box. Subclasses (e.g. CrossGroupFitDialog's "Suggest roles…"
+        # controls + rationale panel) add widgets here instead of scanning the
+        # layout for ``self._buttons``. Empty by default, so it must add no
+        # visual space.
+        self._footer_slot = QVBoxLayout()
+        self._footer_slot.setContentsMargins(0, 0, 0, 0)
+        layout.addLayout(self._footer_slot)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -1133,6 +1151,116 @@ class ModelFitDialog(QDialog):
 
         self._start_fit_task(_task, _on_done)
 
+    # -- template-method hooks: per-row control, error cell, result source -----
+    #
+    # ``_select_range`` and ``_commit_param_table`` below are the single shared
+    # implementations for both this dialog and ``CrossGroupFitDialog``. The two
+    # dialogs differ only in a handful of small, well-scoped ways — the param
+    # table's editable "Type" column, where a range's fitted result is stored,
+    # and the surrounding status text. Those differences are isolated behind the
+    # hooks below so the ~150-line table/status flow lives here exactly once. The
+    # base implementations reproduce this dialog's own behaviour (a Fixed
+    # checkbox, a single-uncertainty error cell, ``fit_range.result`` as the
+    # result source); the subclass overrides the hooks, not the flow.
+
+    def _make_param_row_control(self, param: Parameter, row: int) -> QWidget:
+        """Build the editable control for the param table's Fixed/Type column.
+
+        Base: a "Fixed" checkbox in a centered container, wired to
+        ``_on_param_table_edited``. Subclasses that expose a richer per-row role
+        (e.g. Global/Local/Fixed) return their own widget instead. The returned
+        widget is installed as the cell widget of column 4; ``row`` is provided
+        for subclasses that need it.
+        """
+        fixed = QCheckBox()
+        fixed.setChecked(bool(param.fixed))
+        fixed_container = QWidget()
+        fixed_layout = QHBoxLayout(fixed_container)
+        fixed_layout.setContentsMargins(0, 0, 0, 0)
+        fixed_layout.addWidget(fixed)
+        fixed_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        fixed.stateChanged.connect(lambda _state: self._on_param_table_edited())
+        return fixed_container
+
+    def _read_param_row_control(self, widget: QWidget) -> dict[str, object]:
+        """Read the per-row control back into a plain dict for committing.
+
+        Base returns ``{"fixed": bool}`` from the checkbox. Subclasses return the
+        extra keys they carry (e.g. ``{"role": str, "fixed": bool}``). ``widget``
+        is whatever ``_make_param_row_control`` produced (the cell widget of
+        column 4); a mismatched/legacy widget yields ``fixed=False``.
+        """
+        fixed = False
+        if widget is not None and widget.layout() is not None and widget.layout().count() > 0:
+            inner = widget.layout().itemAt(0).widget()
+            if isinstance(inner, QCheckBox):
+                fixed = inner.isChecked()
+        return {"fixed": fixed}
+
+    def _result_for_range(self, idx: int) -> object | None:
+        """The fitted result to display for range *idx*, or None if not run.
+
+        Base reads the per-range ``fit_range.result``. Subclasses that cache
+        results elsewhere (e.g. the cross-group dialog's ``_range_results`` map)
+        override this so the shared status/error flow reads the right source.
+        """
+        return self._fit.ranges[idx].result
+
+    def _error_cell_for_param(
+        self, param_name: str, row_control: QWidget, result: object | None
+    ) -> QTableWidgetItem:
+        """The Error-column cell for one parameter row.
+
+        Base shows the single fitted uncertainty from ``result.uncertainties``.
+        Subclasses whose result carries per-group uncertainties (cross-group)
+        override this to summarise them. ``row_control`` is the column-4 widget
+        for rows whose error presentation depends on the role/type.
+        """
+        err = np.nan
+        if result is not None:
+            err = result.uncertainties.get(param_name, np.nan)
+        return QTableWidgetItem(f"{err:.4g}" if np.isfinite(err) else "")
+
+    def _set_formula_display(self, fit_range: ModelFitRange) -> None:
+        """Render the selected range's formula.
+
+        Base uses the pan/zoom formula box. The cross-group subclass currently
+        writes into a plain label instead; a later work item unifies this, so it
+        stays a hook for now rather than being inlined.
+        """
+        self._formula_box.set_formula(f"y(x) = {fit_range.model.formula_string()}")
+
+    def _range_hint_text(self, idx: int) -> str:
+        """Hint shown above the param table for the selected range."""
+        return (
+            f"Editing parameters for Range {idx + 1}. "
+            "Run Fit to update result values/uncertainties."
+        )
+
+    def _chi2_status_text(self, result: object | None) -> str:
+        """Rich-text χ² status line for the selected range's result."""
+        if result is None:
+            return (
+                f'<span style="color:{tokens.ACCENT};">'
+                "Fitting not yet run for selected range</span>"
+            )
+        if result.success:
+            return (
+                f'<span style="color:{tokens.OK};">'
+                f"Fit successful: chi2 = {result.chi_squared:.6g}, "
+                f"reduced chi2 = {result.reduced_chi_squared:.6g}"
+                "</span>"
+            )
+        return (
+            f'<span style="color:{tokens.ERROR};">'
+            f"Fit failed: {result.message or 'No convergence'}"
+            "</span>"
+        )
+
+    def _quality_status_text(self, fit_range: ModelFitRange, result: object | None) -> str:
+        """χ² quality-verdict line for the selected range (empty when none)."""
+        return self._quality_text_for_range(fit_range)
+
     def _select_range(self, idx: int) -> None:
         if idx < 0 or idx >= len(self._fit.ranges):
             return
@@ -1144,31 +1272,12 @@ class ModelFitDialog(QDialog):
             self._range_selector.setCurrentIndex(idx)
             self._range_selector.blockSignals(False)
 
-        self._formula_box.set_formula(f"y(x) = {fit_range.model.formula_string()}")
+        self._set_formula_display(fit_range)
+        self._range_hint_label.setText(self._range_hint_text(idx))
 
-        self._range_hint_label.setText(
-            f"Editing parameters for Range {idx + 1}. Run Fit to update result values/uncertainties."
-        )
-
-        if fit_range.result is not None:
-            if fit_range.result.success:
-                self._chi2_label.setText(
-                    f'<span style="color:{tokens.OK};">'
-                    f"Fit successful: chi2 = {fit_range.result.chi_squared:.6g}, "
-                    f"reduced chi2 = {fit_range.result.reduced_chi_squared:.6g}"
-                    "</span>"
-                )
-            else:
-                self._chi2_label.setText(
-                    f'<span style="color:{tokens.ERROR};">'
-                    f"Fit failed: {fit_range.result.message or 'No convergence'}"
-                    "</span>"
-                )
-        else:
-            self._chi2_label.setText(
-                f'<span style="color:{tokens.ACCENT};">Fitting not yet run for selected range</span>'
-            )
-        self._quality_label.setText(self._quality_text_for_range(fit_range))
+        result = self._result_for_range(idx)
+        self._chi2_label.setText(self._chi2_status_text(result))
+        self._quality_label.setText(self._quality_status_text(fit_range, result))
 
         self._param_table.blockSignals(True)
         self._param_table.setRowCount(0)
@@ -1188,25 +1297,21 @@ class ModelFitDialog(QDialog):
             self._param_table.setItem(row, 2, QTableWidgetItem(f"{param.min:.8g}"))
             self._param_table.setItem(row, 3, QTableWidgetItem(f"{param.max:.8g}"))
 
-            fixed = QCheckBox()
-            fixed.setChecked(bool(param.fixed))
-            fixed_container = QWidget()
-            fixed_layout = QHBoxLayout(fixed_container)
-            fixed_layout.setContentsMargins(0, 0, 0, 0)
-            fixed_layout.addWidget(fixed)
-            fixed_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self._param_table.setCellWidget(row, 4, fixed_container)
-            fixed.stateChanged.connect(lambda _state: self._on_param_table_edited())
+            row_control = self._make_param_row_control(param, row)
+            self._param_table.setCellWidget(row, 4, row_control)
 
-            err = np.nan
-            if fit_range.result is not None:
-                err = fit_range.result.uncertainties.get(param.name, np.nan)
-            self._param_table.setItem(
-                row, 5, QTableWidgetItem(f"{err:.4g}" if np.isfinite(err) else "")
-            )
+            err_item = self._error_cell_for_param(param.name, row_control, result)
+            self._param_table.setItem(row, 5, err_item)
 
         self._param_table.blockSignals(False)
         self._param_table.resizeColumnsToContents()
+        self._post_select_range(idx)
+
+    def _post_select_range(self, idx: int) -> None:
+        """Hook: called at the end of ``_select_range`` after the table is built.
+
+        Base does nothing. Subclasses use it for post-build cleanup (e.g.
+        removing stray legacy cell widgets)."""
 
     def _on_param_table_edited(self, *_args: object) -> None:
         """Persist parameter edits immediately and invalidate stale fit results."""
@@ -1287,15 +1392,8 @@ class ModelFitDialog(QDialog):
             if max_item is not None:
                 max_item.setText(f"{p_max:.8g}")
 
-            fixed = False
-            if (
-                fixed_widget is not None
-                and fixed_widget.layout() is not None
-                and fixed_widget.layout().count() > 0
-            ):
-                inner = fixed_widget.layout().itemAt(0).widget()
-                if isinstance(inner, QCheckBox):
-                    fixed = inner.isChecked()
+            control_state = self._read_param_row_control(fixed_widget)
+            fixed = bool(control_state.get("fixed", False))
 
             new_params.add(Parameter(name=name, value=value, min=p_min, max=p_max, fixed=fixed))
 

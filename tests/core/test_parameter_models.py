@@ -26,6 +26,7 @@ from asymmetry.core.fitting.parameter_models import (
     component_names_for_x,
     evaluate_parameter_model_fit,
     fit_parameter_model,
+    sample_parameter_model,
     suggest_trend_seeds,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
@@ -952,6 +953,111 @@ def test_evaluate_num_points_respected() -> None:
     for n in [10, 100, 300]:
         curves = evaluate_parameter_model_fit(fit, num_points=n)
         assert curves[0].x.size == n
+
+
+# ---------------------------------------------------------------------------
+# sample_parameter_model
+# ---------------------------------------------------------------------------
+
+
+def test_sample_parameter_model_uses_given_params() -> None:
+    model = ParameterCompositeModel(["Constant"])
+    params = ParameterSet([Parameter("c", value=3.25)])
+
+    xs, ys = sample_parameter_model(model, params, x_min=0.0, x_max=5.0, num_points=40)
+
+    assert xs.size == 40
+    assert ys.size == 40
+    assert np.all(np.isfinite(xs))
+    assert np.allclose(ys, 3.25)
+    assert xs[0] == pytest.approx(0.0)
+    assert xs[-1] == pytest.approx(5.0)
+
+
+def test_sample_parameter_model_window_envelope() -> None:
+    model = ParameterCompositeModel(["Constant"])
+    params = ParameterSet([Parameter("c", value=1.0)])
+
+    xs, ys = sample_parameter_model(
+        model,
+        params,
+        x_min=None,
+        x_max=None,
+        windows=[(0.0, 1.0), (3.0, 4.0)],
+        num_points=25,
+    )
+
+    assert xs.size == 25
+    assert xs.min() == pytest.approx(0.0)
+    assert xs.max() == pytest.approx(4.0)
+    assert np.all(np.isfinite(ys))
+
+
+def test_sample_parameter_model_invalid_windows_returns_empty() -> None:
+    model = ParameterCompositeModel(["Constant"])
+    params = ParameterSet([Parameter("c", value=1.0)])
+
+    xs, ys = sample_parameter_model(
+        model,
+        params,
+        x_min=0.0,
+        x_max=5.0,
+        windows=[(1.0, 0.0)],
+    )
+
+    assert xs.size == 0
+    assert ys.size == 0
+
+
+@pytest.mark.parametrize(
+    ("x_min", "x_max"),
+    [
+        (5.0, 0.0),
+        (None, 5.0),
+        (0.0, None),
+        (None, None),
+        (2.0, 2.0),
+    ],
+)
+def test_sample_parameter_model_unusable_bounds_returns_empty(
+    x_min: float | None, x_max: float | None
+) -> None:
+    model = ParameterCompositeModel(["Constant"])
+    params = ParameterSet([Parameter("c", value=1.0)])
+
+    xs, ys = sample_parameter_model(model, params, x_min=x_min, x_max=x_max)
+
+    assert xs.size == 0
+    assert ys.size == 0
+
+
+def test_sample_parameter_model_matches_evaluate_parameter_model_fit() -> None:
+    """Regression: evaluate_parameter_model_fit output is unchanged for a
+    fitted range now that it delegates to sample_parameter_model."""
+    model = ParameterCompositeModel(["Constant"])
+    params = ParameterSet([Parameter("c", value=2.5)])
+
+    x = np.linspace(0.0, 5.0, 40)
+    y = np.full_like(x, 2.5)
+    yerr = np.full_like(x, 0.05)
+    result = fit_parameter_model(x, y, yerr, model, params)
+    assert result.success
+
+    fit = ParameterModelFit(
+        parameter_name="Lambda",
+        x_key="field",
+        ranges=[ModelFitRange(x_min=0.0, x_max=5.0, model=model, parameters=params, result=result)],
+        active=True,
+    )
+
+    curves = evaluate_parameter_model_fit(fit, num_points=50)
+    assert len(curves) == 1
+
+    expected_xs, expected_ys = sample_parameter_model(
+        model, result.parameters, x_min=0.0, x_max=5.0, windows=None, num_points=50
+    )
+    np.testing.assert_array_equal(curves[0].x, expected_xs)
+    np.testing.assert_array_equal(curves[0].y, expected_ys)
 
 
 # ---------------------------------------------------------------------------
