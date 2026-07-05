@@ -75,6 +75,14 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
+    # A rare intermittent GUI-test deadlock (native Qt/iminuit C++ block holding
+    # the GIL) can wedge a shard indefinitely because the thread-method
+    # pytest-timeout cannot interrupt it. Cap the job so a hung shard is killed
+    # and can be rerun rather than sitting until the ~6h GitHub default. The
+    # faulthandler watchdog below (armed via ASYMMETRY_FAULTHANDLER_TIMEOUT) dumps
+    # the wedged stack to the logs before this cap fires, so the cap frees the
+    # runner while the diagnostic is still captured.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -104,6 +112,12 @@ jobs:
       - name: Run test suite
         env:
           QT_QPA_PLATFORM: offscreen
+          # Native-thread hang watchdog (see tests/conftest.py). Dumps every
+          # thread's stack every 600s so a wedged shard's culprit stack lands in
+          # the logs before the 20-min job cap kills the runner. 600s is above the
+          # healthy shard runtime (~5 min on a 2-core runner) so a passing run
+          # never dumps, and below timeout-minutes so a hang always does.
+          ASYMMETRY_FAULTHANDLER_TIMEOUT: "600"
         run: python tools/harness.py test --tier standard ${{ matrix.args }}
 
   # Single required status check that aggregates the checks + test jobs, so the
