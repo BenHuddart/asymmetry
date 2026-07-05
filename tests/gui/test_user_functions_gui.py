@@ -204,6 +204,44 @@ def test_user_functions_dialog_handles_no_report(qapp):
     assert "No user functions" in _report_html(None)
 
 
+def test_user_functions_dialog_lists_gui_authored_function(qapp, _registry_snapshot, tmp_path):
+    """A function created via ``create_user_function`` (the New User Function
+    dialog's core call) must show up in the Setup -> User Functions... report,
+    exactly like a hand-written plugin file discovered at startup."""
+    from PySide6.QtWidgets import QTextBrowser
+
+    from asymmetry.core.fitting.user_function_authoring import (
+        DraftParameter,
+        UserFunctionDraft,
+        create_user_function,
+    )
+    from asymmetry.core.plugins import last_load_report
+    from asymmetry.gui.windows.user_functions_dialog import UserFunctionsDialog, _report_html
+
+    draft = UserFunctionDraft(
+        kind="component",
+        name="UserAuthoredDecay",
+        description="GUI-authored test component",
+        formula="A*exp(-lam*x)",
+        parameters=[DraftParameter("A", 0.2), DraftParameter("lam", 0.5)],
+        domain="time",
+    )
+    created = create_user_function(draft, directory=tmp_path)
+    assert created.path.exists()
+    assert created.definition.name == "UserAuthoredDecay"
+
+    report = last_load_report()
+    assert report is not None
+    html_text = _report_html(report)
+    assert "UserAuthoredDecay" in html_text
+    assert created.path.name in html_text
+
+    dialog = UserFunctionsDialog()
+    browser = dialog.findChildren(QTextBrowser)[0]
+    assert "UserAuthoredDecay" in browser.toHtml()
+    dialog.deleteLater()
+
+
 def test_multi_group_simulate_seed_with_missing_component_falls_back(qapp):
     """A persisted simulate seed referencing an uninstalled user component
     must not crash the dialog; it falls back to the default model (simulating
