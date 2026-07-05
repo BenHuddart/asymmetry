@@ -433,10 +433,8 @@ def test_item_size_hint_width_covers_name_font_metrics() -> None:
 def test_long_name_elides_rather_than_clips_at_narrow_width(qapp: QApplication) -> None:
     """A genuinely-too-long name shrinks to fit with an ellipsis, not a hard clip."""
     panel = ComponentLibraryPanel(COMPONENTS)
-    panel.resize(220, 500)
+    panel.setMinimumWidth(0)
     panel.show()
-    QApplication.processEvents()
-    QApplication.processEvents()
 
     long_name = "StretchedExponential"
     assert long_name in COMPONENTS
@@ -449,8 +447,20 @@ def test_long_name_elides_rather_than_clips_at_narrow_width(qapp: QApplication) 
     assert row is not None
 
     fm = QFontMetrics(row.label.font())
-    assert fm.horizontalAdvance(long_name) > row.label.width(), (
-        "test assumes the name is wider than the label at this panel width"
+    text_width = fm.horizontalAdvance(long_name)
+
+    # How much of the panel's width survives as label width (after buttons,
+    # margins, tree indentation, and scrollbar chrome) varies by platform, so
+    # probe down from a generous starting width instead of assuming one fixed
+    # size narrows the label below the text on every font/platform combination.
+    for width in range(220, 39, -10):
+        panel.resize(width, 500)
+        QApplication.processEvents()
+        QApplication.processEvents()
+        if row.label.width() < text_width:
+            break
+    assert row.label.width() < text_width, (
+        "could not narrow the panel enough to force eliding on this platform"
     )
 
     # Rendered text must not equal the full, un-elided name...
