@@ -128,6 +128,48 @@ def test_global_constrains_shared_parameter_more_tightly_than_independent_fits()
     assert global_sigma < min(independent_sigmas)
 
 
+# --- profiled strategy parity (technique L) ---------------------------------
+
+
+def test_profiled_strategy_matches_joint_through_public_wrapper():
+    """The profiled strategy is reachable through fit_global and matches joint."""
+    datasets = _datasets(3)
+    joint = fit_global(
+        datasets,
+        _model,
+        global_params=["lambda"],
+        local_params=["amp"],
+        initial_params=_seed(),
+        strategy="joint",
+    )
+    profiled = fit_global(
+        datasets,
+        _model,
+        global_params=["lambda"],
+        local_params=["amp"],
+        initial_params=_seed(),
+        strategy="profiled",
+    )
+
+    assert profiled.success
+    assert profiled.global_parameters["lambda"].value == pytest.approx(
+        joint.global_parameters["lambda"].value, abs=1e-3
+    )
+    for key in (0, 1, 2):
+        assert profiled.dataset_results[key].parameters["amp"].value == pytest.approx(
+            joint.dataset_results[key].parameters["amp"].value, abs=1e-3
+        )
+    # IC parity: same partition (k identical), so the AIC delta is the χ² delta.
+    k = 1 + 1 * 3
+    joint_ic = joint.chi_squared + 2.0 * k
+    profiled_ic = profiled.chi_squared + 2.0 * k
+    assert abs(profiled_ic - joint_ic) < 0.5
+    # The shared-global HESSE error (profile curvature = marginal curvature).
+    assert profiled.global_uncertainties["lambda"] == pytest.approx(
+        joint.global_uncertainties["lambda"], rel=0.05
+    )
+
+
 # --- single dataset behaves like a normal fit -------------------------------
 
 
