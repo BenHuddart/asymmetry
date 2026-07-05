@@ -466,8 +466,8 @@ def fingerprint_spectrum(dataset: MuonDataset) -> SpectrumFingerprint:
     # establish precession, and flat noise is still rejected because it fails
     # those guards. Only apply the decay clause when the measurement is real.
     monotonic_decay_not_oscillatory = (
-        (not monotonic_decay_informative) or monotonic_decay_fraction <= 0.85
-    )
+        not monotonic_decay_informative
+    ) or monotonic_decay_fraction <= 0.85
     oscillatory_hint = bool(
         dominant_fft_snr >= 3.0
         and dominant_fft_cycles_in_window >= 1.5

@@ -508,17 +508,28 @@ def test_filtered_gate_reasons_drops_bound_hit_when_fit_is_good() -> None:
     """Fix C1: a parameter resting at its bound is the valid answer (e.g. a
     relaxation rate -> 0) when the fit is otherwise good, so it is not a gate
     failure; it only vetoes when the fit is also poor."""
-    result = FitResult(success=True, chi_squared=1.0, reduced_chi_squared=1.0,
-                        parameters=ParameterSet(), message="ok")
+    result = FitResult(
+        success=True,
+        chi_squared=1.0,
+        reduced_chi_squared=1.0,
+        parameters=ParameterSet(),
+        message="ok",
+    )
     good = global_fit_wizard_module._filtered_gate_reasons(
-        fit_result=result, residual_rms=1.0, runs_z_score=0.0,
-        max_abs_autocorrelation=0.0, residual_fft_peak_snr=0.0,
+        fit_result=result,
+        residual_rms=1.0,
+        runs_z_score=0.0,
+        max_abs_autocorrelation=0.0,
+        residual_fft_peak_snr=0.0,
         bound_hits=["Lambda at lower bound"],
     )
     assert good == []
     poor = global_fit_wizard_module._filtered_gate_reasons(
-        fit_result=result, residual_rms=2.0, runs_z_score=0.0,
-        max_abs_autocorrelation=0.0, residual_fft_peak_snr=0.0,
+        fit_result=result,
+        residual_rms=2.0,
+        runs_z_score=0.0,
+        max_abs_autocorrelation=0.0,
+        residual_fft_peak_snr=0.0,
         bound_hits=["Lambda at lower bound"],
     )
     assert "Lambda at lower bound" in poor
