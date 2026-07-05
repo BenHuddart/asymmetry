@@ -67,6 +67,8 @@ from asymmetry.core.fitting.peak_detection import (
 )
 from asymmetry.core.fitting.process_pool import open_spawn_pool
 from asymmetry.core.fitting.wizard_scope import (
+    DEFAULT_EFFORT_TIER,
+    EffortTier,
     ScopeResolution,
     WizardScope,
     resolve_scope_for_datasets,
@@ -171,6 +173,56 @@ _OSCILLATORY_RESCUE_MIN_RUNS = 3
 _OSCILLATORY_RESCUE_MIN_FRACTION = 0.25
 _OSCILLATORY_RESCUE_MIN_CLUSTER = 2
 _OSCILLATORY_RESCUE_MAX_SCOUTS = 3
+
+# --------------------------------------------------------------------------- #
+# Effort tier -> search-engine mapping (PR 5).
+#
+# ``EffortTier`` is the user-facing slider; ``search_engine`` (PR 4) remains the
+# lower-level enumerator selector so existing callers/tests that pass
+# ``search_engine=`` directly are unaffected. The mapping is 1:1 and reuses the
+# same string values, so ``EffortTier(x).value == SEARCH_ENGINE_*`` for every x.
+# --------------------------------------------------------------------------- #
+_EFFORT_TIER_SEARCH_ENGINE: dict[EffortTier, str] = {
+    EffortTier.LOW: SEARCH_ENGINE_LOW,
+    EffortTier.BALANCED: SEARCH_ENGINE_BALANCED,
+    EffortTier.THOROUGH: SEARCH_ENGINE_THOROUGH,
+    EffortTier.EXHAUSTIVE: SEARCH_ENGINE_EXHAUSTIVE,
+}
+
+#: Technique I (Low portfolio cap): Low shortlists at most this many templates
+#: (vs. ``_SHORTLIST_COUNT``/``_SHORTLIST_CAP`` for Balanced/Thorough/Exhaustive).
+_LOW_SHORTLIST_CAP = 3
+#: Technique I: Low skips any template whose parameter count exceeds this —
+#: a 3-4-additive-component model must earn its place at Balanced+ instead.
+_LOW_MAX_TEMPLATE_PARAM_COUNT = 5
+#: Technique I: extra IC penalty per additive component applied *only* at Low
+#: ranking time (never baked into the stored aic/aicc/bic fields other tiers and
+#: the harness baseline read) — a complexity prior so more additive terms must
+#: buy a proportionally larger fit improvement to be shortlisted/preferred.
+_LOW_COMPLEXITY_PRIOR_PER_ADDITIVE_TERM = 3.0
+
+#: Technique J (identifiability demotion): a template is demoted (sorted to the
+#: back of the Low shortlist ranking, never hard-dropped) when any pair of its
+#: free parameters is this correlated in the initial-screen fit's covariance.
+_IDENTIFIABILITY_CORRELATION_THRESHOLD = 0.98
+#: Technique J: a template is demoted when any parameter's relative uncertainty
+#: (sigma / |value|) spans at least this many decades from the tightest one —
+#: a proxy for "some parameters are essentially unconstrained by this template".
+_IDENTIFIABILITY_ERROR_DECADE_SPAN = 3.0
+
+#: Technique K (screening decimation): rebin factor applied to the *search*
+#: phase's datasets at Low/Balanced. The winner and its full flip-neighbourhood
+#: are always refitted at native resolution afterward (see
+#: ``_fill_winner_flip_neighbourhood``), so no decimated IC ever reaches the
+#: returned leaderboard.
+_DECIMATION_FACTOR_LOW = 4
+_DECIMATION_FACTOR_BALANCED = 2
+#: Technique K Nyquist gate: never decimate when the aggregate fingerprint's
+#: dominant FFT content would alias under the candidate rebin factor. Comparing
+#: the dominant frequency's period (in samples) against the rebin factor is a
+#: conservative proxy for a real Nyquist check without needing the raw dwell
+#: time here (``dominant_fft_cycles_in_window`` free of dt).
+_DECIMATION_MIN_CYCLES_MARGIN = 2.0
 
 
 @dataclass(frozen=True)
@@ -1485,15 +1537,25 @@ def build_global_fit_wizard_recommendation(
     selected_template_keys: tuple[str, ...] | None = None,
     scope: WizardScope | None = None,
     user_frequencies_mhz: Sequence[float] | None = None,
-    search_engine: str = _DEFAULT_SEARCH_ENGINE,
+    search_engine: str | None = None,
+    effort_tier: EffortTier = DEFAULT_EFFORT_TIER,
 ) -> GlobalFitWizardRecommendation:
     """Analyze one ordered dataset series and recommend a global-fit candidate.
 
-    ``search_engine`` selects the role-search enumerator: ``"exhaustive"``
-    (default) and ``"thorough"`` run the exact bounded wavefront; ``"low"`` and
-    ``"balanced"`` run the non-exhaustive heuristic engines (techniques E/F/G/H).
-    The exact engines resolve to the byte-for-byte current call, so the
-    exhaustive verdict path is untouched.
+    ``effort_tier`` is the user-facing effort slider (PR 5): ``LOW``,
+    ``BALANCED`` (default), ``THOROUGH``, ``EXHAUSTIVE``. It selects the
+    ``search_engine`` role-search enumerator 1:1 by value (see
+    ``_EFFORT_TIER_SEARCH_ENGINE``) plus the tier's extra knobs (portfolio cap +
+    complexity prior + identifiability demotion at Low; screening decimation at
+    Low/Balanced). ``search_engine`` remains available as a lower-level override
+    for existing callers/tests — when given explicitly it takes precedence over
+    ``effort_tier`` for *engine selection* (which enumerator runs), but the
+    extra PR 5 knobs are still driven by ``effort_tier``.
+
+    ``"exhaustive"`` and ``"thorough"`` engines run the exact bounded wavefront;
+    ``"low"`` and ``"balanced"`` run the non-exhaustive heuristic engines
+    (techniques E/F/G/H). The exact engines resolve to the byte-for-byte current
+    call, so the exhaustive verdict path is untouched.
     """
     _set_metric(instrumentation, "strategy", "consolidated")
     if instrumentation is not None:
@@ -1502,6 +1564,9 @@ def build_global_fit_wizard_recommendation(
         instrumentation.setdefault("relaxed_penalties", [])
         instrumentation.setdefault("curvature_hint_sizes", [])
         instrumentation.setdefault("minuit_edm", [])
+    resolved_engine = (
+        search_engine if search_engine is not None else _EFFORT_TIER_SEARCH_ENGINE[effort_tier]
+    )
     return _build_global_fit_wizard_recommendation_staged(
         datasets,
         current_model=current_model,
@@ -1515,7 +1580,8 @@ def build_global_fit_wizard_recommendation(
         selected_template_keys=selected_template_keys,
         scope=scope,
         user_frequencies_mhz=user_frequencies_mhz,
-        search_engine=search_engine,
+        search_engine=resolved_engine,
+        effort_tier=effort_tier,
     )
 
 
@@ -1534,6 +1600,7 @@ def _build_global_fit_wizard_recommendation_staged(
     scope: WizardScope | None = None,
     user_frequencies_mhz: Sequence[float] | None = None,
     search_engine: str = _DEFAULT_SEARCH_ENGINE,
+    effort_tier: EffortTier = DEFAULT_EFFORT_TIER,
 ) -> GlobalFitWizardRecommendation:
     if len(datasets) < 2:
         raise ValueError("Global fit wizard requires at least two datasets.")
@@ -1744,7 +1811,23 @@ def _build_global_fit_wizard_recommendation_staged(
                     template_contexts[key] = (base_by_run, fixed_param_names)
                     initial_assessments[key] = assessment
     if normalized_selected_template_keys:
-        shortlist_keys = set(normalized_selected_template_keys)
+        if effort_tier is EffortTier.LOW:
+            # Technique I/J still apply within an explicit user selection at Low:
+            # "screening-grade" means the cap/complexity-prior/demotion narrow
+            # *what gets the expensive coupled search*, not just the auto-shortlist
+            # path. Every other tier honours the user's selection verbatim.
+            selected_templates = tuple(
+                template_by_key[key] for key in normalized_selected_template_keys
+            )
+            shortlist_keys = _shortlist_template_keys(
+                selected_templates,
+                initial_assessments=initial_assessments,
+                metric=metric,
+                effort_tier=effort_tier,
+                progress_callback=progress_callback,
+            )
+        else:
+            shortlist_keys = set(normalized_selected_template_keys)
         _progress_log(
             progress_callback,
             "Running coupled global optimisation for the selected candidates: "
@@ -1774,6 +1857,8 @@ def _build_global_fit_wizard_recommendation_staged(
             initial_assessments=initial_assessments,
             metric=metric,
             forced_keys=tuple(dict.fromkeys((*forced_shortlist_keys, *pattern_template_keys))),
+            effort_tier=effort_tier,
+            progress_callback=progress_callback,
         )
     shortlisted_templates = [template for template in templates if template.key in shortlist_keys]
     if shortlisted_templates:
@@ -1808,6 +1893,8 @@ def _build_global_fit_wizard_recommendation_staged(
             instrumentation=instrumentation,
             single_run_prefit_cache_for=_single_run_prefit_cache_for,
             engine=search_engine,
+            effort_tier=effort_tier,
+            aggregate_fingerprint=aggregate_fingerprint,
         )
 
     prescreen_assessments = tuple(
@@ -2502,48 +2589,147 @@ def _initial_parameter_roles(
     return global_param_names, local_param_names
 
 
+#: A single relaxation envelope plus a background term (e.g. Exponential +
+#: Constant) is the simplest additive shape the portfolio offers, so it is the
+#: complexity prior's zero point — only additive terms *beyond* this baseline
+#: draw a penalty. Every built-in template includes a background term.
+_LOW_COMPLEXITY_PRIOR_BASELINE_ADDITIVE_TERMS = 2
+
+
+def _low_complexity_prior_penalty(template: CandidateTemplate) -> float:
+    """Technique I: extra Low-only ranking penalty per additive component.
+
+    Applied purely at shortlist-ranking time (never stored on the assessment's
+    ``aic``/``aicc``/``bic``, which the harness baseline and every other tier
+    read), so a 3-4-additive-component template must beat a simpler one by more
+    than this margin to be preferred at Low. Balanced/Thorough/Exhaustive see
+    zero penalty — this must never move their shortlist.
+    """
+    extra_terms = max(0, template.additive_terms - _LOW_COMPLEXITY_PRIOR_BASELINE_ADDITIVE_TERMS)
+    return _LOW_COMPLEXITY_PRIOR_PER_ADDITIVE_TERM * extra_terms
+
+
+def _initial_assessment_is_identifiability_degenerate(
+    assessment: GlobalCandidateAssessment,
+) -> bool:
+    """Technique J: does this template's initial fit look near-unidentifiable?
+
+    True when any pair of free parameters is highly correlated (|rho| above
+    :data:`_IDENTIFIABILITY_CORRELATION_THRESHOLD` in a per-run covariance) or
+    any parameter's relative uncertainty spans
+    :data:`_IDENTIFIABILITY_ERROR_DECADE_SPAN` decades from the tightest one —
+    both are proxies for "this template's free parameters are not jointly
+    constrained by the data", independent of which specific role split wins.
+    Demotion only ever reorders the Low shortlist ranking; it never hard-drops
+    a template (Balanced+ ignore this signal entirely).
+    """
+    relative_errors: list[float] = []
+    for result in assessment.fit_results_by_run.values():
+        covariance = result.covariance
+        cov_names = result.covariance_parameters
+        if covariance is not None and len(cov_names) >= 2:
+            diag = np.diag(covariance)
+            for i in range(len(cov_names)):
+                for j in range(i + 1, len(cov_names)):
+                    denom = diag[i] * diag[j]
+                    if denom <= 0 or not math.isfinite(denom):
+                        continue
+                    rho = covariance[i, j] / math.sqrt(denom)
+                    if abs(rho) >= _IDENTIFIABILITY_CORRELATION_THRESHOLD:
+                        return True
+        for name, sigma in result.uncertainties.items():
+            if name not in result.parameters or not math.isfinite(sigma) or sigma <= 0:
+                continue
+            magnitude = abs(result.parameters[name].value)
+            if magnitude <= 0:
+                continue
+            relative_errors.append(sigma / magnitude)
+    if len(relative_errors) >= 2:
+        finite = [error for error in relative_errors if error > 0 and math.isfinite(error)]
+        if len(finite) >= 2:
+            span = math.log10(max(finite)) - math.log10(min(finite))
+            if span >= _IDENTIFIABILITY_ERROR_DECADE_SPAN:
+                return True
+    return False
+
+
 def _shortlist_template_keys(
     templates: tuple[CandidateTemplate, ...],
     *,
     initial_assessments: dict[str, GlobalCandidateAssessment],
     metric: SelectionMetric,
     forced_keys: tuple[str, ...] = (),
+    effort_tier: EffortTier = DEFAULT_EFFORT_TIER,
+    progress_callback: Callable[[str], None] | None = None,
 ) -> set[str]:
-    ranked = sorted(
-        templates,
-        key=lambda template: _assessment_sort_key(
-            initial_assessments[template.key],
-            metric,
-        ),
-    )
+    is_low = effort_tier is EffortTier.LOW
+
+    def _rank_key(template: CandidateTemplate) -> tuple[float, int, tuple]:
+        assessment = initial_assessments[template.key]
+        base = _assessment_sort_key(assessment, metric)
+        if not is_low:
+            return (0.0, 0, base)
+        prior = _low_complexity_prior_penalty(template)
+        demoted = 1 if _initial_assessment_is_identifiability_degenerate(assessment) else 0
+        return (prior, demoted, base)
+
+    eligible = list(templates)
+    if is_low:
+        # Technique I (Low portfolio cap): skip templates whose parameter count
+        # exceeds the Low cap outright — a 3-4-additive-component model must earn
+        # its place at Balanced+ instead of ever reaching Low's shortlist.
+        capped = [
+            template
+            for template in eligible
+            if template.parameter_count <= _LOW_MAX_TEMPLATE_PARAM_COUNT
+        ]
+        over_budget = [template for template in eligible if template not in capped]
+        if over_budget and capped:
+            _progress_log(
+                progress_callback,
+                f"Low effort: skipped {len(over_budget)} template(s) over the "
+                f"P<={_LOW_MAX_TEMPLATE_PARAM_COUNT} cap ("
+                + ", ".join(template.title for template in over_budget)
+                + ") — they will not receive the coupled role search at this tier.",
+            )
+        # Never let the cap remove every candidate (a run with only "expensive"
+        # templates in scope still needs a shortlist).
+        eligible = capped or eligible
+
+    ranked = sorted(eligible, key=_rank_key)
     if not ranked:
         return set()
 
-    shortlist: list[str] = [template.key for template in ranked[:_SHORTLIST_COUNT]]
+    shortlist_count = _LOW_SHORTLIST_CAP if is_low else _SHORTLIST_COUNT
+    shortlist_cap = _LOW_SHORTLIST_CAP if is_low else _SHORTLIST_CAP
+    shortlist_window = _SHORTLIST_SCORE_WINDOW
 
-    for key in _template_anchor_keys(templates):
-        if key not in shortlist and len(shortlist) < _SHORTLIST_CAP:
-            shortlist.append(key)
+    shortlist: list[str] = [template.key for template in ranked[:shortlist_count]]
+
+    if not is_low:
+        for key in _template_anchor_keys(templates):
+            if key not in shortlist and len(shortlist) < shortlist_cap:
+                shortlist.append(key)
 
     for template in templates:
         if (
             template.is_current_model_baseline
             and template.key not in shortlist
-            and len(shortlist) < _SHORTLIST_CAP
+            and len(shortlist) < shortlist_cap
         ):
             shortlist.append(template.key)
 
-    cutoff_index = min(_SHORTLIST_COUNT, len(ranked)) - 1
+    cutoff_index = min(shortlist_count, len(ranked)) - 1
     cutoff_score = initial_assessments[ranked[cutoff_index].key].metric_value(metric)
-    for template in ranked[_SHORTLIST_COUNT:]:
-        if len(shortlist) >= _SHORTLIST_CAP:
+    for template in ranked[shortlist_count:]:
+        if len(shortlist) >= shortlist_cap:
             break
         score = initial_assessments[template.key].metric_value(metric)
-        if score - cutoff_score <= _SHORTLIST_SCORE_WINDOW:
+        if score - cutoff_score <= shortlist_window:
             shortlist.append(template.key)
 
     for key in forced_keys:
-        if key not in shortlist:
+        if key not in shortlist and (not is_low or len(shortlist) < shortlist_cap):
             shortlist.append(key)
 
     return set(shortlist)
@@ -6318,6 +6504,241 @@ def _fill_winner_flip_neighbourhood(
         )
 
 
+def _decimation_factor_for_engine(engine: str) -> int:
+    """Technique K's rebin factor for the search phase, by heuristic engine."""
+    if engine == SEARCH_ENGINE_LOW:
+        return _DECIMATION_FACTOR_LOW
+    if engine == SEARCH_ENGINE_BALANCED:
+        return _DECIMATION_FACTOR_BALANCED
+    return 1
+
+
+def _decimation_is_nyquist_safe(
+    datasets: list[MuonDataset],
+    aggregate_fingerprint: SpectrumFingerprint | None,
+    factor: int,
+) -> bool:
+    """Technique K's Nyquist gate: would rebinning alias the dominant content?
+
+    Compares the *decimated* sample rate's Nyquist frequency against the
+    aggregate fingerprint's dominant FFT frequency, with a conservative margin
+    (:data:`_DECIMATION_MIN_CYCLES_MARGIN`): decimation is refused whenever the
+    dominant oscillatory content sits within that margin of the coarser
+    Nyquist limit, so an oscillatory template is never searched against an
+    aliased spectrum. A fingerprint with no detected oscillatory content (or no
+    fingerprint at all) is always safe to decimate — there is nothing to alias.
+    """
+    if factor <= 1 or aggregate_fingerprint is None:
+        return True
+    if not aggregate_fingerprint.oscillatory_hint:
+        return True
+    dominant_mhz = float(aggregate_fingerprint.dominant_fft_frequency_mhz)
+    if dominant_mhz <= 0.0:
+        return True
+    for dataset in datasets:
+        time = np.asarray(dataset.time, dtype=float)
+        if time.size < 2 * factor:
+            return False
+        dt = float(np.mean(np.diff(time)))
+        if dt <= 0.0:
+            return False
+        decimated_dt = dt * factor
+        decimated_nyquist_mhz = 0.5 / decimated_dt
+        if dominant_mhz * _DECIMATION_MIN_CYCLES_MARGIN >= decimated_nyquist_mhz:
+            return False
+    return True
+
+
+def _decimated_datasets_for_search(
+    datasets: list[MuonDataset],
+    *,
+    engine: str,
+    aggregate_fingerprint: SpectrumFingerprint | None,
+    instrumentation: dict[str, object] | None,
+) -> tuple[list[MuonDataset], int]:
+    """Technique K: rebin the search-phase datasets, or return them unchanged.
+
+    Returns ``(search_datasets, factor)``; ``factor == 1`` means no decimation
+    happened (either the engine doesn't decimate, the factor is a no-op, or the
+    Nyquist gate refused it). The caller is responsible for refitting the
+    winner and its flip-neighbourhood at full resolution before any assessment
+    reaches the returned leaderboard — decimated ICs must never be compared
+    against full-resolution ones on the same leaderboard.
+    """
+    factor = _decimation_factor_for_engine(engine)
+    if factor <= 1:
+        return datasets, 1
+    if not _decimation_is_nyquist_safe(datasets, aggregate_fingerprint, factor):
+        _record_counter(instrumentation, "decimation_skipped_nyquist_gate")
+        return datasets, 1
+    try:
+        decimated = [dataset.rebin(factor) for dataset in datasets]
+    except ValueError:
+        return datasets, 1
+    _record_counter(instrumentation, "decimation_applied")
+    _append_metric(instrumentation, "decimation_factor", float(factor))
+    return decimated, factor
+
+
+def _new_heuristic_template_state(
+    template: CandidateTemplate,
+    *,
+    datasets: list[MuonDataset],
+    template_contexts: dict[str, tuple[dict[int, ParameterSet], tuple[str, ...]]],
+    single_run_prefit_cache_for: Callable[
+        [CandidateTemplate], dict[object, dict[int, ParameterSet]]
+    ],
+    progress_callback: Callable[[str], None] | None,
+    instrumentation: dict[str, object] | None,
+    prefit_cache_override: dict[object, dict[int, ParameterSet]] | None = None,
+) -> _HeuristicTemplateState:
+    """Build a fresh, empty-role-cache state for one template.
+
+    ``prefit_cache_override`` lets a caller isolate the per-run prefit cache
+    from ``single_run_prefit_cache_for``'s shared one — needed by technique K's
+    full-resolution refit pass (:func:`_refit_states_at_full_resolution`),
+    whose cache key (``fixed_param_names`` + the seed *values*, not resolution)
+    would otherwise collide with entries the decimated search phase already
+    populated and silently reuse decimated-data prefit seeds.
+    """
+    base_by_run, fixed_param_names = template_contexts[template.key]
+    prefit_base_by_run = _single_run_prefit_parameter_sets(
+        datasets,
+        template,
+        fit_engine=FitEngine(),
+        base_by_run=base_by_run,
+        fixed_param_names=fixed_param_names,
+        progress_callback=progress_callback,
+        instrumentation=instrumentation,
+        cache=(
+            prefit_cache_override
+            if prefit_cache_override is not None
+            else single_run_prefit_cache_for(template)
+        ),
+    )
+    free_param_names = tuple(
+        name for name in template.model.param_names if name not in fixed_param_names
+    )
+    return _HeuristicTemplateState(
+        template=template,
+        fixed_param_names=fixed_param_names,
+        prefit_base_by_run=prefit_base_by_run,
+        free_param_names=free_param_names,
+        exact_cache={},
+        converged_assessments={},
+    )
+
+
+def _refit_states_at_full_resolution(
+    datasets: list[MuonDataset],
+    decimated_states: list[_HeuristicTemplateState],
+    *,
+    template_contexts: dict[str, tuple[dict[int, ParameterSet], tuple[str, ...]]],
+    single_run_prefit_cache_for: Callable[
+        [CandidateTemplate], dict[object, dict[int, ParameterSet]]
+    ],
+    axis_key: str,
+    metric: SelectionMetric,
+    search_strategy: str,
+    progress_callback: Callable[[str], None] | None,
+    instrumentation: dict[str, object] | None,
+) -> list[_HeuristicTemplateState]:
+    """Technique K's correctness step: redo the winner at native resolution.
+
+    ``decimated_states`` carries each template's *winning role split* (picked
+    from decimated-resolution fits), but none of those fits belong on a
+    leaderboard alongside full-resolution ICs (mixed-n AICc/BIC is meaningless
+    per verification-plan item 5). This builds one fresh, empty-cache state per
+    template against the original ``datasets`` and refits exactly the winning
+    assignment plus its full single-flip neighbourhood — nothing decimated ever
+    reaches :func:`_finalise_heuristic_assessments`.
+
+    Uses a fresh per-template prefit-seed cache (``prefit_cache_override``)
+    rather than ``single_run_prefit_cache_for``'s shared one: that cache's key
+    is ``(fixed_param_names, base_by_run signature)`` with no resolution term,
+    so reusing it here would silently warm-start the full-resolution refit from
+    prefit seeds computed against the decimated data.
+    """
+
+    refit_states: list[_HeuristicTemplateState] = []
+    for decimated_state in decimated_states:
+        template = decimated_state.template
+        winner = decimated_state.best_assessment
+        full_state = _new_heuristic_template_state(
+            template,
+            datasets=datasets,
+            template_contexts=template_contexts,
+            single_run_prefit_cache_for=single_run_prefit_cache_for,
+            progress_callback=progress_callback,
+            instrumentation=instrumentation,
+            prefit_cache_override={},
+        )
+        refit_states.append(full_state)
+        if winner is None or not full_state.free_param_names:
+            if not full_state.free_param_names:
+                _fit_heuristic_assignment(
+                    datasets,
+                    full_state,
+                    (),
+                    axis_key=axis_key,
+                    metric=metric,
+                    search_strategy=search_strategy,
+                    progress_callback=progress_callback,
+                    instrumentation=instrumentation,
+                )
+            continue
+        _record_counter(instrumentation, "decimation_full_res_refits")
+        full_winner = _fit_heuristic_assignment(
+            datasets,
+            full_state,
+            winner.local_param_names,
+            axis_key=axis_key,
+            metric=metric,
+            search_strategy=search_strategy,
+            progress_callback=progress_callback,
+            instrumentation=instrumentation,
+        )
+        if full_winner.is_successful:
+            _fill_winner_flip_neighbourhood(
+                datasets,
+                full_state,
+                full_winner,
+                axis_key=axis_key,
+                metric=metric,
+                search_strategy=search_strategy,
+                progress_callback=progress_callback,
+                instrumentation=instrumentation,
+            )
+        else:
+            # The decimated winner failed to reproduce at full resolution — fall
+            # back to the all-local anchor so the template still contributes a
+            # (worse-ranked but real, full-resolution) assessment rather than
+            # silently dropping out of the leaderboard.
+            _record_counter(instrumentation, "decimation_full_res_refit_failed")
+            anchor = _fit_heuristic_assignment(
+                datasets,
+                full_state,
+                tuple(full_state.free_param_names),
+                axis_key=axis_key,
+                metric=metric,
+                search_strategy=search_strategy,
+                progress_callback=progress_callback,
+                instrumentation=instrumentation,
+            )
+            if anchor.is_successful:
+                _fill_winner_flip_neighbourhood(
+                    datasets,
+                    full_state,
+                    anchor,
+                    axis_key=axis_key,
+                    metric=metric,
+                    search_strategy=search_strategy,
+                    progress_callback=progress_callback,
+                    instrumentation=instrumentation,
+                )
+    return refit_states
+
+
 def _run_heuristic_search(
     datasets: list[MuonDataset],
     *,
@@ -6332,46 +6753,55 @@ def _run_heuristic_search(
         [CandidateTemplate], dict[object, dict[int, ParameterSet]]
     ],
     engine: str,
+    effort_tier: EffortTier = DEFAULT_EFFORT_TIER,
+    aggregate_fingerprint: SpectrumFingerprint | None = None,
 ) -> tuple[GlobalCandidateAssessment, ...]:
-    """Low/Balanced non-exhaustive role search (techniques E/F/G/H).
+    """Low/Balanced non-exhaustive role search (techniques E/F/G/H + K).
 
     Returns the same ``tuple[GlobalCandidateAssessment, ...]`` contract as
     :func:`_run_exhaustive_wavefront_search` — the winner plus its fully-fitted
     single-flip neighbourhood per template — so the downstream verdict/rerank
     layer is engine-agnostic. Serial by design: the entire point is far fewer
     real fits, so it stays off the process pool and avoids that lifecycle.
+
+    Technique K (screening decimation): the role search itself (anchor, Q
+    pre-tests, greedy/surrogate search, racing) runs on coarser-rebinned
+    datasets at Low/Balanced, gated on the Nyquist-safety check above. Once a
+    winning role split is picked per template, it — and its full single-flip
+    neighbourhood — is refitted from scratch on the *original* full-resolution
+    ``datasets`` into a fresh cache, so every assessment this function returns
+    sits on the same full-resolution footing as every other tier (no mixed-n
+    ICs ever reach the leaderboard).
     """
 
     if not shortlisted_templates:
         return ()
 
+    search_datasets, decimation_factor = _decimated_datasets_for_search(
+        datasets,
+        engine=engine,
+        aggregate_fingerprint=aggregate_fingerprint,
+        instrumentation=instrumentation,
+    )
+    if decimation_factor > 1:
+        _progress_log(
+            progress_callback,
+            f"Screening decimation: searching at {decimation_factor}x coarser binning; "
+            "the winner and its flip-neighbourhood will be refitted at full resolution.",
+        )
+
     q_bands = _Q_BANDS_LOW if engine == SEARCH_ENGINE_LOW else _Q_BANDS_BALANCED
-    states: list[_HeuristicTemplateState] = []
-    for template in shortlisted_templates:
-        base_by_run, fixed_param_names = template_contexts[template.key]
-        prefit_base_by_run = _single_run_prefit_parameter_sets(
-            datasets,
+    states: list[_HeuristicTemplateState] = [
+        _new_heuristic_template_state(
             template,
-            fit_engine=FitEngine(),
-            base_by_run=base_by_run,
-            fixed_param_names=fixed_param_names,
+            datasets=search_datasets,
+            template_contexts=template_contexts,
+            single_run_prefit_cache_for=single_run_prefit_cache_for,
             progress_callback=progress_callback,
             instrumentation=instrumentation,
-            cache=single_run_prefit_cache_for(template),
         )
-        free_param_names = tuple(
-            name for name in template.model.param_names if name not in fixed_param_names
-        )
-        states.append(
-            _HeuristicTemplateState(
-                template=template,
-                fixed_param_names=fixed_param_names,
-                prefit_base_by_run=prefit_base_by_run,
-                free_param_names=free_param_names,
-                exact_cache={},
-                converged_assessments={},
-            )
-        )
+        for template in shortlisted_templates
+    ]
 
     # --- All-local anchor + Q pre-tests + shallow race (layers 0-1) ---------
     for state in states:
@@ -6379,7 +6809,7 @@ def _run_heuristic_search(
             # No promotable params — the single all-global assessment is the
             # verdict; fit it so the tuple is non-empty.
             _fit_heuristic_assignment(
-                datasets,
+                search_datasets,
                 state,
                 (),
                 axis_key=axis_key,
@@ -6390,7 +6820,7 @@ def _run_heuristic_search(
             )
             continue
         anchor = _fit_heuristic_assignment(
-            datasets,
+            search_datasets,
             state,
             tuple(state.free_param_names),
             axis_key=axis_key,
@@ -6402,7 +6832,7 @@ def _run_heuristic_search(
         state.anchor_assessment = anchor
         if anchor.is_successful:
             state.estimates, state.estimate_errors, at_limit = _extract_anchor_estimates(
-                datasets, anchor, state.free_param_names
+                search_datasets, anchor, state.free_param_names
             )
             _homogeneity_pretests(
                 state,
@@ -6414,7 +6844,7 @@ def _run_heuristic_search(
         # All-global anchor (layer 0) too, so racing has a shallow score and the
         # search has a warm all-global start.
         _fit_heuristic_assignment(
-            datasets,
+            search_datasets,
             state,
             (),
             axis_key=axis_key,
@@ -6461,7 +6891,7 @@ def _run_heuristic_search(
                 and (state.homogeneity.get(n) is None or state.homogeneity[n].role != "global")
             )
             winner = _greedy_role_search(
-                datasets,
+                search_datasets,
                 state,
                 base_local=base_local,
                 searchable=searchable,
@@ -6473,7 +6903,7 @@ def _run_heuristic_search(
             )
         else:
             winner = _surrogate_ranked_search(
-                datasets,
+                search_datasets,
                 state,
                 base_local=base_local,
                 ambiguous=ambiguous,
@@ -6490,7 +6920,7 @@ def _run_heuristic_search(
         winner = state.best_assessment or winner
         if winner is not None and winner.is_successful:
             _fill_winner_flip_neighbourhood(
-                datasets,
+                search_datasets,
                 state,
                 winner,
                 axis_key=axis_key,
@@ -6499,6 +6929,19 @@ def _run_heuristic_search(
                 progress_callback=progress_callback,
                 instrumentation=instrumentation,
             )
+
+    if decimation_factor > 1:
+        states = _refit_states_at_full_resolution(
+            datasets,
+            states,
+            template_contexts=template_contexts,
+            single_run_prefit_cache_for=single_run_prefit_cache_for,
+            axis_key=axis_key,
+            metric=metric,
+            search_strategy=search_strategy,
+            progress_callback=progress_callback,
+            instrumentation=instrumentation,
+        )
 
     return _finalise_heuristic_assessments(
         datasets, states, metric=metric, progress_callback=progress_callback

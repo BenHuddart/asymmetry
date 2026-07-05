@@ -116,6 +116,76 @@ class WizardScopePreset(str, Enum):
     ALL = "all"
 
 
+class EffortTier(str, Enum):
+    """User-facing global-fit-wizard effort level (PR 5 of the efficiency plan).
+
+    Binds the search-engine/knob choices built in PRs 2-4 to one slider: each
+    tier maps to a ``search_engine`` value (see
+    :mod:`asymmetry.core.fitting.global_fit_wizard`) plus the extra knobs
+    (portfolio cap, identifiability demotion, screening decimation) tabulated in
+    ``docs/porting/global-fit-wizard-efficiency/implementation-options.md`` (PR 5
+    tier-policy table). ``BALANCED`` is the default: it matches Exhaustive
+    verdicts on >=95% of the harness cases at a fraction of the wall time.
+    """
+
+    LOW = "low"
+    BALANCED = "balanced"
+    THOROUGH = "thorough"
+    EXHAUSTIVE = "exhaustive"
+
+
+#: Default effort tier — Balanced, the harness-gated ≥95%-agreement default.
+DEFAULT_EFFORT_TIER = EffortTier.BALANCED
+
+#: Short human-readable labels for the effort slider. Low is explicitly framed
+#: as "screening-grade" so a user does not mistake its speed for full rigor.
+EFFORT_TIER_LABELS: dict[EffortTier, str] = {
+    EffortTier.LOW: "Low (screening-grade)",
+    EffortTier.BALANCED: "Balanced (recommended)",
+    EffortTier.THOROUGH: "Thorough",
+    EffortTier.EXHAUSTIVE: "Exhaustive",
+}
+
+#: One-line descriptions surfaced as tooltips next to the slider.
+EFFORT_TIER_DESCRIPTIONS: dict[EffortTier, str] = {
+    EffortTier.LOW: (
+        "Screening-grade: narrow template shortlist, coarser rebinning during "
+        "search, fastest turnaround. May miss multi-parameter interaction optima."
+    ),
+    EffortTier.BALANCED: (
+        "Recommended: heuristic search with exact safety bounds. Matches "
+        "Exhaustive verdicts on the large majority of cases, much faster."
+    ),
+    EffortTier.THOROUGH: (
+        "Full exact wavefront search with generous margins. Slower than "
+        "Balanced, reserved for verifying an ambiguous result."
+    ),
+    EffortTier.EXHAUSTIVE: (
+        "Full 2^P role search with no shortcuts — the referee tier. Slowest; "
+        "use to double-check a Balanced/Thorough recommendation."
+    ),
+}
+
+
+def effort_tier_to_payload(tier: EffortTier) -> str:
+    """Serialise an :class:`EffortTier` to its plain string value."""
+    return tier.value
+
+
+def effort_tier_from_payload(payload: object) -> EffortTier:
+    """Rebuild an :class:`EffortTier` from a payload, tolerant of garbage.
+
+    Mirrors :meth:`WizardScope.from_payload`'s tolerance: an unrecognised or
+    missing value degrades to :data:`DEFAULT_EFFORT_TIER` rather than raising.
+    """
+    if isinstance(payload, EffortTier):
+        return payload
+    try:
+        return EffortTier(payload)
+    except ValueError:
+        return DEFAULT_EFFORT_TIER
+
+
 @dataclass(frozen=True)
 class ScopeQuery:
     """A concrete geometry/physics/cost filter over the component registry."""
