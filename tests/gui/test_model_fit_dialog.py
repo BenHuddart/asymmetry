@@ -1399,6 +1399,65 @@ def test_narrow_screen_collapses_preview(qapp: QApplication) -> None:
     assert not wide._show_preview_toggle.isVisibleTo(wide)
 
 
+def test_preview_pane_gets_usable_width_on_show(qapp: QApplication) -> None:
+    """On a comfortable (default-sized) dialog, the preview pane opens at a
+    clearly usable width — not squashed to a sliver by the left pane's wide,
+    non-wrapping range-row content.
+
+    The left pane is wrapped in a QScrollArea (``_left_scroll``) precisely so
+    its content's large minimum width cannot dictate the splitter's
+    allocation; assert both the floor widths that guarantee this and the
+    actual proportional split computed for a realistic dialog width.
+    """
+    dlg = _make_split_dialog(qapp)
+    dlg.resize(1280, 700)
+    # An unshown top-level widget's children do not get real geometry from a
+    # bare resize() (the splitter reports a stale/placeholder width), so show
+    # it (offscreen platform plugin — no real window appears) to get the
+    # splitter's actual, layout-settled width before reading back its sizes.
+    dlg.show()
+    qapp.processEvents()
+
+    # The floors that make the preview un-squashable regardless of how wide
+    # the (now-scrollable) left content gets.
+    assert dlg._left_scroll.minimumWidth() == dlg._LEFT_PANE_MIN_WIDTH
+    assert dlg._splitter.widget(1).minimumWidth() == dlg._PREVIEW_PANE_MIN_WIDTH
+
+    # Drive the same first-show sizing path showEvent already triggered, to
+    # confirm the method is idempotent and lands on the same expanded state.
+    dlg._maybe_collapse_preview(first_show=True)
+    qapp.processEvents()
+
+    sizes = dlg._splitter.sizes()
+    assert dlg._preview_collapsed is False
+    # At least ~30% of the dialog width, and comfortably above the ~340px
+    # floor the bug report calls out.
+    assert sizes[1] >= 340
+    assert sizes[1] >= 0.3 * dlg._splitter.width()
+
+    # The proportional-sizing helper itself, exercised directly at a few
+    # widths, always respects both floors.
+    for width in (900, 1280, 1600):
+        left, right = dlg._expanded_split_sizes(width)
+        assert left >= dlg._LEFT_PANE_MIN_WIDTH
+        assert right >= dlg._PREVIEW_PANE_MIN_WIDTH
+
+
+def test_preview_host_survives_left_pane_scroll_wrapping(qapp: QApplication) -> None:
+    """The left pane's content lives inside a QScrollArea, but the preview
+    pane/host is untouched by that wrapping (it is the splitter's 2nd,
+    separate top-level child, not nested inside the scroll area)."""
+    from PySide6.QtWidgets import QScrollArea
+
+    dlg = _make_split_dialog(qapp)
+
+    assert isinstance(dlg._left_scroll, QScrollArea)
+    assert dlg._splitter.widget(0) is dlg._left_scroll
+    right_pane = dlg._splitter.widget(1)
+    assert right_pane is not dlg._left_scroll
+    assert right_pane.layout() is dlg._preview_host
+
+
 # --- Live preview (work item 1.3) --------------------------------------------
 
 

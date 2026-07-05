@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -580,13 +581,30 @@ class ModelFitDialog(QDialog):
         # footer-slot + button box stay directly on the dialog's top layout,
         # beneath the splitter, so both span the whole dialog and remain direct
         # items of self.layout() (contract C6 / the cross-group footer test).
+        #
+        # The left pane's content (in particular each non-wrapping range row —
+        # see _rebuild_ranges_ui) can force a minimum width well past 1000px.
+        # Wrapping it in a QScrollArea decouples that content minimum from the
+        # splitter's size negotiation: the scroll area itself only demands
+        # _LEFT_PANE_MIN_WIDTH, and any wider row scrolls horizontally instead
+        # of starving (or clipping) the preview pane on the right.
         top_layout = QVBoxLayout(self)
 
         left_pane = QWidget()
         left_layout = QVBoxLayout(left_pane)
         left_layout.setContentsMargins(0, 0, 0, 0)
 
+        left_scroll = QScrollArea()
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        left_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        left_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        left_scroll.setWidget(left_pane)
+        left_scroll.setMinimumWidth(self._LEFT_PANE_MIN_WIDTH)
+        self._left_scroll = left_scroll
+
         right_pane = QWidget()
+        right_pane.setMinimumWidth(self._PREVIEW_PANE_MIN_WIDTH)
         self._preview_host = QVBoxLayout(right_pane)
         self._preview_host.setContentsMargins(0, 0, 0, 0)
         # Live, off-thread candidate-curve preview (work item 1.3). Drag is
@@ -620,10 +638,14 @@ class ModelFitDialog(QDialog):
         self._preview_timer.timeout.connect(self._launch_preview_sample)
 
         self._splitter = QSplitter(Qt.Orientation.Horizontal)
-        self._splitter.addWidget(left_pane)
+        self._splitter.addWidget(left_scroll)
         self._splitter.addWidget(right_pane)
         self._splitter.setStretchFactor(0, 0)
         self._splitter.setStretchFactor(1, 1)
+        # Placeholder sizes; _maybe_collapse_preview (called from showEvent)
+        # replaces these with a proportional split computed from the dialog's
+        # real width once it is known, so the preview opens at a usable width
+        # instead of whatever this constructor-time guess happens to be.
         self._splitter.setSizes([560, 620])
         top_layout.addWidget(self._splitter)
 
@@ -842,6 +864,16 @@ class ModelFitDialog(QDialog):
     #: Below this usable width the right-hand preview pane auto-collapses and a
     #: "Show preview" toggle appears so it can be restored.
     _PREVIEW_NARROW_THRESHOLD = 900
+    #: Floor for the (scrollable) left pane so its controls stay usable even
+    #: when the splitter hands it less than its content's natural width.
+    _LEFT_PANE_MIN_WIDTH = 420
+    #: Floor for the preview pane so it can never be squashed below a usable
+    #: width — this is the number the bug report wants guaranteed on load.
+    _PREVIEW_PANE_MIN_WIDTH = 340
+    #: Share of the dialog's usable width given to the left pane when
+    #: computing the proportional initial/expanded split (see
+    #: ``_expanded_split_sizes``).
+    _LEFT_PANE_WIDTH_FRACTION = 0.55
 
     def showEvent(self, event) -> None:  # noqa: N802 (Qt API name)
         super().showEvent(event)
@@ -851,6 +883,19 @@ class ModelFitDialog(QDialog):
     def resizeEvent(self, event) -> None:  # noqa: N802 (Qt API name)
         super().resizeEvent(event)
         self._maybe_collapse_preview(first_show=False)
+
+    def _expanded_split_sizes(self, width: int) -> list[int]:
+        """Return ``[left, right]`` splitter sizes for an expanded preview.
+
+        Splits *width* proportionally (left pane gets
+        ``_LEFT_PANE_WIDTH_FRACTION``), then floors each side at its minimum
+        width so neither the scrollable controls pane nor the preview pane is
+        ever squashed below a usable size — even if that means the two floors
+        sum to more than *width* (the splitter/scroll area absorb the excess).
+        """
+        left = max(self._LEFT_PANE_MIN_WIDTH, round(width * self._LEFT_PANE_WIDTH_FRACTION))
+        right = max(self._PREVIEW_PANE_MIN_WIDTH, width - left)
+        return [left, right]
 
     def _maybe_collapse_preview(self, *, first_show: bool) -> None:
         """Collapse/expand the preview pane based on the dialog's usable width.
@@ -875,6 +920,12 @@ class ModelFitDialog(QDialog):
             # Already in the right state; nothing to do (avoids re-collapsing a
             # pane the user just expanded by dragging back above the threshold).
             return
+
+        if not narrow and width > 0:
+            # The real dialog width is now known — compute the proportional
+            # split from it so the preview opens at a usable width instead of
+            # the constructor-time placeholder sizes.
+            self._preview_expanded_sizes = self._expanded_split_sizes(width)
 
         if narrow:
             self._collapse_preview()
