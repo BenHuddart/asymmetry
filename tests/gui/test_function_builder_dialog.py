@@ -11,7 +11,8 @@ pytestmark = [pytest.mark.gui]
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QApplication, QDialogButtonBox
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication, QDialogButtonBox, QFrame, QPushButton, QSplitter
 
 from asymmetry.core.fitting.composite import (
     COMPONENTS,
@@ -217,3 +218,53 @@ def test_group_as_fractions_action(qapp: QApplication) -> None:
     dialog._group_selection_as_fractions()
     _n, _ops, _o, _c, fracs = dialog._rows.structure()
     assert fracs == [(0, 1)]
+
+
+# ------------------------------------------------ action-button enable states
+def test_action_buttons_disabled_at_construction_with_no_selection(qapp: QApplication) -> None:
+    dialog = _fit_dialog("Exponential + Constant")
+    assert dialog._rows.selected_spans() == []
+    assert dialog._group_button.isEnabled() is False
+    assert dialog._group_fraction_button.isEnabled() is False
+    assert dialog._ungroup_button.isEnabled() is False
+
+
+def test_action_buttons_enabled_after_selecting_both_rows(qapp: QApplication) -> None:
+    dialog = _fit_dialog("Exponential + Constant")
+    dialog._rows._selected_indices = {0, 1}
+    dialog._update_action_buttons()
+    assert dialog._group_button.isEnabled() is True
+    assert dialog._group_fraction_button.isEnabled() is True
+    assert dialog._ungroup_button.isEnabled() is False
+
+
+# ------------------------------------------------------------------ splitter
+def test_library_and_rows_live_in_a_splitter(qapp: QApplication) -> None:
+    dialog = _fit_dialog("Exponential + Constant")
+    splitters = [w for w in dialog.findChildren(QSplitter)]
+    assert len(splitters) == 1
+    splitter = splitters[0]
+    assert splitter.orientation() == Qt.Orientation.Horizontal
+    assert splitter.indexOf(dialog._library) == 0
+    assert splitter.childrenCollapsible() is False
+    assert dialog._library.minimumWidth() >= 180
+
+
+# ------------------------------------------------ fraction-group header button
+def test_fraction_group_header_offers_absolute_amplitude_toggle(qapp: QApplication) -> None:
+    dialog = _fit_dialog("( Exponential + Gaussian ){frac} + Constant")
+    frames = [w for w in dialog.findChildren(QFrame) if w.objectName() == "groupFrame"]
+    assert len(frames) == 1
+    button_texts = [b.text() for b in frames[0].findChildren(QPushButton)]
+    assert "Use absolute amplitudes" in button_texts
+    assert "Ungroup" in button_texts
+    assert "Use fractional amplitudes" not in button_texts
+
+
+def test_plain_group_header_offers_fractional_toggle_not_absolute(qapp: QApplication) -> None:
+    dialog = _fit_dialog("( Exponential + Gaussian ) + Constant")
+    frames = [w for w in dialog.findChildren(QFrame) if w.objectName() == "groupFrame"]
+    assert len(frames) == 1
+    button_texts = [b.text() for b in frames[0].findChildren(QPushButton)]
+    assert "Use fractional amplitudes" in button_texts
+    assert "Use absolute amplitudes" not in button_texts

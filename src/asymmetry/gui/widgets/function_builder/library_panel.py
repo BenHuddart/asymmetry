@@ -17,22 +17,27 @@ An empty query groups every component under category headers (canonical
 order from :func:`search_components`); a non-empty query flattens the list
 into ranked search hits, highlighting the matched span in the name and
 annotating non-name matches (alias/parameter/description/category/fuzzy)
-with a short muted reason. See module-level widgets below for the rest of
-the affordances (info button, user/missing badges, keyboard flow).
+with a short muted reason. Each row carries its own "+" (add) and info
+buttons. See module-level widgets below for the rest of the affordances
+(user/missing badges, keyboard flow).
 """
 
 from __future__ import annotations
 
 import html
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
-from PySide6.QtCore import QEvent, QObject, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, QSize, Qt, Signal
+from PySide6.QtGui import QFontMetrics, QResizeEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
-    QPushButton,
+    QSizePolicy,
+    QStyle,
+    QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -63,26 +68,181 @@ def _category_of(definition: object) -> str:
     return getattr(definition, "category", "General") or "General"
 
 
-class _RowLabel(QLabel):
-    """Rich-text row label used as the tree's per-item widget.
+class _RowSpec:
+    """Immutable render recipe for one component row's rich-text label."""
 
-    Using ``setItemWidget`` (rather than a delegate) keeps the highlight
-    styling in plain Qt rich text while the tree itself still drives keyboard
-    navigation, selection, and the standard selected-row background — the
-    label paints on top of (and does not intercept) that background because
-    it never sets an opaque one of its own.
+    __slots__ = ("name", "name_span", "annotation", "is_user", "is_missing")
+
+    def __init__(
+        self,
+        name: str,
+        *,
+        name_span: tuple[int, int] | None,
+        annotation: str | None,
+        is_user: bool,
+        is_missing: bool,
+    ) -> None:
+        self.name = name
+        self.name_span = name_span
+        self.annotation = annotation
+        self.is_user = is_user
+        self.is_missing = is_missing
+
+
+class _RowLabel(QLabel):
+    """Rich-text row label used inside the tree's per-item row widget.
+
+    This is the *sole* text-painting mechanism for a component row: the
+    owning ``QTreeWidgetItem`` keeps its own ``text(0)`` empty so Qt never
+    draws a second, unstyled copy of the name underneath this label. Using a
+    widget (rather than a delegate) keeps the highlight styling in plain Qt
+    rich text while the tree itself still drives keyboard navigation,
+    selection, and the standard selected-row background — the label paints
+    on top of (and does not intercept) that background because it never sets
+    an opaque one of its own, and it stays transparent to mouse events so
+    clicks fall through to row selection.
+
+    A genuinely-too-long name (wider than the row even with no annotation)
+    is elided with an ellipsis rather than silently clipped by the parent's
+    paint rect — the full name (and description) is always available in the
+    tooltip. ``_row_spec`` carries what's needed to re-elide on resize (e.g.
+    a splitter drag), since eliding rich text has to operate on the plain
+    name substring rather than the rendered HTML.
     """
 
-    def __init__(self, html_text: str, *, tooltip: str, parent: QWidget | None = None) -> None:
-        super().__init__(html_text, parent)
+    def __init__(self, row_spec: _RowSpec, *, tooltip: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._row_spec = row_spec
         self.setTextFormat(Qt.TextFormat.RichText)
         self.setToolTip(tooltip)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.setContentsMargins(2, 0, 2, 0)
+        self._apply_html(elide_width=None)
+
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._apply_html(elide_width=event.size().width())
+
+    def _apply_html(self, *, elide_width: int | None) -> None:
+        available = elide_width if elide_width is not None else self.width()
+        self.setText(_row_html(self._row_spec, available_width=available, font=self.font()))
+
+
+class _RowWidget(QWidget):
+    """Per-item row: rich-text label (stretch) + small add/info buttons.
+
+    The label is transparent to mouse events (see ``_RowLabel``), so clicks
+    anywhere in the label area fall through to the tree and select the row
+    as usual. The buttons are ordinary (non-transparent) ``QToolButton``s;
+    the ``on_add``/``on_info`` callbacks passed in by the panel select the
+    owning row before running their action, so the action always applies to
+    the row the user just clicked rather than whatever was previously
+    current.
+    """
+
+    def __init__(
+        self,
+        row_spec: _RowSpec,
+        *,
+        tooltip: str,
+        on_add: Callable[[], None],
+        on_info: Callable[[], None],
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setAutoFillBackground(False)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 4, 0)
+        layout.setSpacing(2)
+
+        self.label = _RowLabel(row_spec, tooltip=tooltip, parent=self)
+        layout.addWidget(self.label, 1)
+
+        self.add_button = QToolButton(self)
+        self.add_button.setText("+")
+        self.add_button.setToolTip("Add this function")
+        self.add_button.setAutoRaise(True)
+        self.add_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.add_button.setFixedSize(18, 18)
+        self.add_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.add_button.clicked.connect(on_add)
+        layout.addWidget(self.add_button, 0)
+
+        self.info_button = QToolButton(self)
+        self.info_button.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxInformation)
+        )
+        self.info_button.setToolTip("Show details for this function")
+        self.info_button.setAutoRaise(True)
+        self.info_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.info_button.setFixedSize(18, 18)
+        self.info_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.info_button.clicked.connect(on_info)
+        layout.addWidget(self.info_button, 0)
+
+        self._row_spec = row_spec
+
+    def natural_width(self) -> int:
+        """Un-elided width: full name text + badges + buttons + margins.
+
+        Used as the tree item's size hint. This is computed analytically
+        from the row spec rather than read back from the live label, since
+        the label may already have elided its text in response to an
+        earlier (narrower) layout pass by the time a size hint is queried.
+        """
+        spec = self._row_spec
+        fm = QFontMetrics(self.label.font())
+        name_width = fm.horizontalAdvance(spec.name)
+        badge_width = 0
+        if spec.is_user:
+            badge_width += fm.horizontalAdvance("  · user")
+        if spec.annotation:
+            badge_width += fm.horizontalAdvance(f"  · {spec.annotation}")
+        if spec.is_missing:
+            badge_width += fm.horizontalAdvance("  · missing")
+
+        margins = self.layout().contentsMargins()
+        spacing = self.layout().spacing()
+        buttons_width = self.add_button.width() + self.info_button.width()
+        return (
+            margins.left()
+            + margins.right()
+            + self.label.contentsMargins().left()
+            + self.label.contentsMargins().right()
+            + name_width
+            + badge_width
+            + spacing * 2
+            + buttons_width
+        )
 
 
 def _escape(text: str) -> str:
     return html.escape(text)
+
+
+def _elide_name(
+    name: str, name_span: tuple[int, int] | None, *, max_width: int, font
+) -> tuple[str, tuple[int, int] | None]:
+    """Elide ``name`` to fit ``max_width`` px, dropping the highlight span if cut.
+
+    Returns ``(name, name_span)`` unchanged when it already fits (the common
+    case) or there is no width budget to test against yet.
+    """
+    if max_width <= 0:
+        return name, name_span
+    fm = QFontMetrics(font)
+    if fm.horizontalAdvance(name) <= max_width:
+        return name, name_span
+    elided = fm.elidedText(name, Qt.TextElideMode.ElideRight, max_width)
+    if elided == name:
+        return name, name_span
+    # The matched span may no longer correspond to visible text once elided;
+    # rather than track its position through the ellipsis, drop the
+    # highlight for this (rare, only-when-too-long) case. The full name is
+    # still available in the tooltip.
+    return elided, None
 
 
 def _name_html(name: str, name_span: tuple[int, int] | None, *, muted: bool) -> str:
@@ -102,22 +262,29 @@ def _name_html(name: str, name_span: tuple[int, int] | None, *, muted: bool) -> 
     )
 
 
-def _row_html(
-    name: str,
-    *,
-    name_span: tuple[int, int] | None = None,
-    annotation: str | None = None,
-    is_user: bool = False,
-    is_missing: bool = False,
-) -> str:
-    parts = [_name_html(name, name_span, muted=is_missing)]
-    if is_user:
+#: Reserved pixel width for the "· user" / "· <annotation>" / "· missing"
+#: badges appended after the name — used to decide how much width the name
+#: itself gets before eliding. This is a deliberately generous estimate (the
+#: badges are short, muted words) rather than an exact font measurement, so
+#: eliding stays cheap on every resize/repaint.
+_BADGE_RESERVE_PX = 90
+
+
+def _row_html(spec: _RowSpec, *, available_width: int | None = None, font=None) -> str:
+    name, name_span = spec.name, spec.name_span
+    if available_width is not None and font is not None:
+        has_badge = spec.is_user or spec.annotation or spec.is_missing
+        name_budget = available_width - (_BADGE_RESERVE_PX if has_badge else 0)
+        name, name_span = _elide_name(name, name_span, max_width=name_budget, font=font)
+
+    parts = [_name_html(name, name_span, muted=spec.is_missing)]
+    if spec.is_user:
         parts.append(f"<span style='color:{tokens.TEXT_MUTED};'>&#8194;&middot; user</span>")
-    if annotation:
+    if spec.annotation:
         parts.append(
-            f"<span style='color:{tokens.TEXT_DIM};'>&#8194;&middot; {_escape(annotation)}</span>"
+            f"<span style='color:{tokens.TEXT_DIM};'>&#8194;&middot; {_escape(spec.annotation)}</span>"
         )
-    if is_missing:
+    if spec.is_missing:
         parts.append(f"<span style='color:{tokens.WARN};'>&#8194;&middot; missing</span>")
     return "".join(parts)
 
@@ -149,14 +316,15 @@ class ComponentLibraryPanel(QWidget):
 
         self._tree = QTreeWidget(self)
         self._tree.setHeaderHidden(True)
-        self._tree.setColumnCount(2)
+        self._tree.setColumnCount(1)
+        self._tree.header().setStretchLastSection(True)
+        self._tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self._tree.setRootIsDecorated(False)
         self._tree.setAlternatingRowColors(False)
         self._tree.setIndentation(14)
         self._tree.setUniformRowHeights(False)
         self._tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._tree.itemActivated.connect(self._on_item_activated)
-        self._tree.itemSelectionChanged.connect(self._update_info_button_state)
         self._tree.installEventFilter(self)
         layout.addWidget(self._tree, 1)
 
@@ -165,14 +333,6 @@ class ComponentLibraryPanel(QWidget):
         self._empty_label.setStyleSheet(f"color: {tokens.TEXT_MUTED}; padding: 8px;")
         self._empty_label.setVisible(False)
         layout.addWidget(self._empty_label)
-
-        info_row = QHBoxLayout()
-        info_row.addStretch(1)
-        self._info_button = QPushButton("ⓘ Info", self)
-        self._info_button.setToolTip("Show details for the selected function")
-        self._info_button.clicked.connect(self._show_current_info)
-        info_row.addWidget(self._info_button)
-        layout.addLayout(info_row)
 
         self._refresh()
 
@@ -209,7 +369,6 @@ class ComponentLibraryPanel(QWidget):
             self._populate_flat(stripped)
 
         self._select_first_component()
-        self._update_info_button_state()
 
     def _populate_grouped(self) -> None:
         self._empty_label.setVisible(False)
@@ -267,7 +426,11 @@ class ComponentLibraryPanel(QWidget):
         item = QTreeWidgetItem(parent, _COMPONENT_ITEM_TYPE)
         item.setData(0, _NAME_ROLE, result.name)
         description = getattr(definition, "description", "") or ""
-        item.setToolTip(0, description)
+        # Always lead with the full (un-elided) name, so a row whose visible
+        # label has been elided to fit a narrow panel still exposes its full
+        # name via hover — not just the description.
+        tooltip = f"{result.name}\n{description}" if description else result.name
+        item.setToolTip(0, tooltip)
 
         is_user = bool(getattr(definition, "user", False))
         is_missing = bool(getattr(definition, "missing", False))
@@ -275,18 +438,37 @@ class ComponentLibraryPanel(QWidget):
         if result.matched_field != "name" and result.matched_field in _FIELD_ANNOTATIONS:
             annotation = _FIELD_ANNOTATIONS[result.matched_field]
 
-        row_html = _row_html(
-            result.name,
+        name = result.name
+        row_spec = _RowSpec(
+            name,
             name_span=result.name_span,
             annotation=annotation,
             is_user=is_user,
             is_missing=is_missing,
         )
-        label = _RowLabel(row_html, tooltip=description or result.name, parent=self._tree)
-        self._tree.setItemWidget(item, 0, label)
-        # Keep a plain-text fallback in column 0 for accessibility/testing
-        # tools that read QTreeWidgetItem.text() rather than the item widget.
-        item.setText(0, result.name)
+        row = _RowWidget(
+            row_spec,
+            tooltip=tooltip,
+            on_add=lambda: self._activate_row(item, name),
+            on_info=lambda: self._show_info_for_row(item, name),
+            parent=self._tree,
+        )
+        self._tree.setItemWidget(item, 0, row)
+        # Column 0 has no painted text of its own: the row widget's _RowLabel
+        # is the sole text-painting mechanism, so Qt never draws a second,
+        # unstyled copy of the name underneath it (that double-draw produced
+        # smeared/bold-looking rows before this fix).
+        item.setText(0, "")
+
+        # Size hint reflects the row's *natural* (unelided) width so the
+        # column/tree can grow to fit most names; a name that genuinely
+        # doesn't fit the available column width still elides gracefully
+        # (see _RowLabel.resizeEvent) rather than being clipped, with the
+        # full name always available in the tooltip set above. Computed
+        # analytically (not read back from the live label) since the label
+        # may have already elided in response to an earlier layout pass.
+        height = max(row.sizeHint().height(), 22)
+        item.setSizeHint(0, QSize(row.natural_width(), height))
 
     def _select_first_component(self) -> None:
         iterator_item = self._first_component_item()
@@ -321,13 +503,14 @@ class ComponentLibraryPanel(QWidget):
         if isinstance(name, str):
             self.component_activated.emit(name)
 
-    def _update_info_button_state(self) -> None:
-        self._info_button.setEnabled(self.current_component_name() is not None)
+    def _activate_row(self, item: QTreeWidgetItem, name: str) -> None:
+        """Handle a per-row "+" click: select the row, then activate it."""
+        self._tree.setCurrentItem(item)
+        self.component_activated.emit(name)
 
-    def _show_current_info(self) -> None:
-        name = self.current_component_name()
-        if not name:
-            return
+    def _show_info_for_row(self, item: QTreeWidgetItem, name: str) -> None:
+        """Handle a per-row info click: select the row, then show its info."""
+        self._tree.setCurrentItem(item)
         definition = self._definitions.get(name)
         if definition is None:
             return

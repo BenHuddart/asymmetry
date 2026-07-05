@@ -110,7 +110,8 @@ class FitFunctionBuilderDialog(FunctionBuilderDialog):
             enable_fraction_groups=True,
             syntax_help_text=(
                 "Select two or more '+'-joined rows and press 'Group as fractions'; "
-                "the last term's weight is the remainder to 1."
+                "the last term's weight is the remainder to 1. "
+                "Del removes · Alt+↑/↓ moves · drag the grip to reorder."
             ),
             parent=parent,
         )

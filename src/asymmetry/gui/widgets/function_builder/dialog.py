@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QSplitter,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -129,13 +130,19 @@ class FunctionBuilderDialog(QDialog):
         root = QVBoxLayout(self)
 
         # -- top: library (left) + structured/text stack (right) ------------
-        top = QHBoxLayout()
-        self._library = ComponentLibraryPanel(self._component_definitions)
-        self._library.setFixedWidth(220)
-        self._library.component_activated.connect(self._on_component_activated)
-        top.addWidget(self._library)
+        # A splitter (rather than a fixed-width library pane) lets a user with a
+        # long search result list or a wide model give either side more room.
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(False)
 
-        right = QVBoxLayout()
+        self._library = ComponentLibraryPanel(self._component_definitions)
+        self._library.setMinimumWidth(180)
+        self._library.component_activated.connect(self._on_component_activated)
+        splitter.addWidget(self._library)
+
+        right_pane = QWidget()
+        right = QVBoxLayout(right_pane)
+        right.setContentsMargins(0, 0, 0, 0)
 
         self._action_row = QHBoxLayout()
         self._group_fraction_button = QPushButton("Group as fractions")
@@ -176,8 +183,12 @@ class FunctionBuilderDialog(QDialog):
         )
         self._stack.addWidget(self._text_edit)
         right.addWidget(self._stack, 1)
-        top.addLayout(right, 1)
-        root.addLayout(top, 1)
+
+        splitter.addWidget(right_pane)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([220, 720])
+        root.addWidget(splitter, 1)
 
         # -- syntax help / preview / status --------------------------------
         if syntax_help_text:

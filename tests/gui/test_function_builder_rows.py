@@ -11,9 +11,10 @@ pytestmark = [pytest.mark.gui]
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLabel
 
 from asymmetry.core.fitting.composite import COMPONENTS, CompositeModel, parse_composite_expression
+from asymmetry.gui.utils.formatting import format_param_label
 from asymmetry.gui.widgets.function_builder.model_rows import ModelRowList
 
 
@@ -298,6 +299,52 @@ def test_ungroup_removes_parens_and_fraction(qapp: QApplication) -> None:
     assert closes == [0, 0, 0]
 
 
+def test_set_fraction_false_keeps_parens_drops_flag(qapp: QApplication) -> None:
+    # "Use absolute amplitudes": disabling the fraction flag on an existing
+    # group must keep the parentheses (only ungroup_span removes them) so the
+    # plain grouped structure survives, per-component amplitudes return.
+    widget = _rows()
+    _seed(widget, "( Exponential + Gaussian ){frac} + Constant")
+    assert widget.set_fraction((0, 1), False) is True
+    names, ops, opens, closes, fracs = widget.structure()
+    assert fracs == []
+    assert names == ["Exponential", "Gaussian", "Constant"]
+    assert opens == [1, 0, 0]
+    assert closes == [0, 1, 0]
+    assert "{frac}" not in widget.expression()
+    assert "(Exponential + Gaussian)" in widget.expression()
+
+    model = CompositeModel.from_expression(widget.expression())
+    assert model.fraction_groups == []
+    assert "A_1" in model.param_names  # per-component amplitude, not f_Exponential
+    assert "A_2" in model.param_names
+
+
+def test_fraction_toggle_roundtrip_fractional_absolute_fractional(qapp: QApplication) -> None:
+    # Toggling fractional -> absolute -> fractional must round-trip the
+    # structure: parens survive both ways and {frac} disappears/reappears.
+    widget = _rows()
+    _seed(widget, "( Exponential + Gaussian ){frac} + Constant")
+    original_structure = widget.structure()
+    assert "{frac}" in widget.expression()
+
+    assert widget.set_fraction((0, 1), False) is True
+    assert "{frac}" not in widget.expression()
+    absolute_model = CompositeModel.from_expression(widget.expression())
+    assert absolute_model.fraction_groups == []
+    assert {"A_1", "A_2"}.issubset(set(absolute_model.param_names))
+
+    assert widget.set_fraction((0, 1), True) is True
+    assert "{frac}" in widget.expression()
+    assert widget.structure() == original_structure
+    fractional_model = CompositeModel.from_expression(widget.expression())
+    assert fractional_model.fraction_groups == [(0, 1)]
+    assert "f_Exponential" in fractional_model.param_names
+    # A_2 (Gaussian's own absolute amplitude) is replaced by the derived
+    # fraction weight; A_1 is the group's shared amplitude, present either way.
+    assert "A_2" not in fractional_model.param_names
+
+
 # ------------------------------------------------------------------ selection
 def test_selected_spans_contiguous_runs(qapp: QApplication) -> None:
     widget = _rows()
@@ -361,3 +408,25 @@ def test_empty_state(qapp: QApplication) -> None:
     widget.clear()
     assert widget.structure() == ([], [], [], [], [])
     assert widget.expression() == ""
+
+
+# ---------------------------------------------------------- pretty param labels
+def test_row_param_summary_uses_formatted_labels(qapp: QApplication) -> None:
+    # Raw internal names ("A, Lambda") must render through the shared
+    # format_param_label foundation ("A (%), λ (µs⁻¹)"), matching the fit table.
+    widget = _rows()
+    _seed(widget, "Exponential")
+    assert len(widget._row_widgets) == 1
+    row = widget._row_widgets[0]
+    # The summary label is the only plain (non-rich) QLabel with muted styling;
+    # locate it via its tooltip, which always holds the untruncated summary.
+    expected_full = ", ".join(format_param_label(p) for p in ["A", "Lambda"])
+    labels_with_tooltip = [
+        lbl for lbl in row.findChildren(QLabel) if lbl.toolTip() == expected_full
+    ]
+    assert len(labels_with_tooltip) == 1
+    label = labels_with_tooltip[0]
+    # Rendered text is the formatted label (possibly elided, but short names
+    # here fit comfortably within the elide budget so it round-trips exactly).
+    assert label.text() == expected_full
+    assert "λ" in expected_full  # lambda symbol present in the formatted label

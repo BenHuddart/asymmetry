@@ -27,7 +27,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 from PySide6.QtCore import QMimeData, Qt, Signal
-from PySide6.QtGui import QDrag
+from PySide6.QtGui import QDrag, QFontMetrics
 from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
@@ -41,6 +41,14 @@ from PySide6.QtWidgets import (
 
 from asymmetry.core.fitting.composite import build_component_expression
 from asymmetry.gui.styles import tokens
+from asymmetry.gui.utils.formatting import format_param_label
+
+#: Character budget for the elided parameter summary label. Rows are laid out
+#: before the dialog is fully sized, so eliding to a fixed character budget
+#: (rather than a measured pixel width) keeps the summary readable without a
+#: relayout dependency; :class:`QLabel` still elides further if the row is
+#: squeezed narrower than this budget by the layout.
+_PARAM_SUMMARY_CHAR_BUDGET = 60
 
 #: Accent palette cycled per fraction group (moved from the old fit builder).
 _FRACTION_GROUP_COLORS = ["#005A9C", "#A44A00", "#0B6E4F", "#8A1C1C", "#6B4F00"]
@@ -65,6 +73,15 @@ class _Node:
     end: int = 0
     is_fraction: bool = False
     children: list[_Node] = field(default_factory=list)
+
+
+def _pretty_param_name(name: str) -> str:
+    """Return the shared display label for *name*, falling back to the raw name."""
+    try:
+        label = format_param_label(name)
+    except Exception:
+        return name
+    return label or name
 
 
 def _build_forest(
@@ -139,9 +156,16 @@ class _RowWidget(QFrame):
         layout.setSpacing(6)
 
         grip = QLabel("☰")  # trigram-for-heaven "hamburger" grip glyph
+        grip.setObjectName("rowGrip")
         grip.setToolTip("Drag to reorder within this group")
-        grip.setStyleSheet(f"color: {tokens.TEXT_DIM};")
         grip.setCursor(Qt.CursorShape.OpenHandCursor)
+        # Subtle hover feedback makes the grip read as draggable rather than
+        # decorative; requires WA_Hover so QSS :hover fires on a plain QLabel.
+        grip.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+        grip.setStyleSheet(
+            f"#rowGrip {{ color: {tokens.TEXT_DIM}; padding: 1px 3px; border-radius: 3px; }}"
+            f"#rowGrip:hover {{ color: {tokens.TEXT}; background: {tokens.SURFACE_HI}; }}"
+        )
         self._grip = grip
         layout.addWidget(grip)
 
@@ -175,12 +199,20 @@ class _RowWidget(QFrame):
 
         if known:
             param_names = list(getattr(definition, "param_names", []) or [])
-            summary = ", ".join(param_names)
+            pretty_names = [_pretty_param_name(p) for p in param_names]
+            summary = ", ".join(pretty_names)
         else:
             summary = "unknown"
-        summary_label = QLabel(summary)
+        summary_label = QLabel()
         summary_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
         summary_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        summary_label.setToolTip(summary)
+        elided = QFontMetrics(summary_label.font()).elidedText(
+            summary,
+            Qt.TextElideMode.ElideRight,
+            QFontMetrics(summary_label.font()).averageCharWidth() * _PARAM_SUMMARY_CHAR_BUDGET,
+        )
+        summary_label.setText(elided)
         layout.addWidget(summary_label, 1)
 
         duplicate = QPushButton("Duplicate")
@@ -1092,8 +1124,15 @@ class ModelRowList(QWidget):
         header.addWidget(title)
         header.addStretch(1)
 
-        # Non-fraction plain groups can be promoted to fractional amplitudes.
-        if not node.is_fraction and self._enable_fraction_groups:
+        if node.is_fraction:
+            # A fraction group can be converted back to per-component absolute
+            # amplitudes: this keeps the parentheses but drops the {frac} flag.
+            if self._enable_fraction_groups:
+                toggle = QPushButton("Use absolute amplitudes")
+                toggle.clicked.connect(lambda _=False, s=span: self.set_fraction(s, False))
+                header.addWidget(toggle)
+        elif self._enable_fraction_groups:
+            # Non-fraction plain groups can be promoted to fractional amplitudes.
             terms = self._sibling_term_ranges(span)
             eligible = len(terms) >= 2 and all(
                 op == "+" for op in self._operators[node.start : node.end]
