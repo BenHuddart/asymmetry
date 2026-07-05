@@ -69,6 +69,17 @@ from asymmetry.core.fitting.wizard_scope import (
 
 _ROLE_DELTA_THRESHOLD = 2.0
 _COMPARABLE_SCORE_DELTA = 2.0
+#: Safety margin (metric units) for the exact layer-truncation bound (technique
+#: A). The bound halts enumeration of a template's remaining Hamming layers once
+#: the all-local χ² floor plus the layer's minimum-possible penalty exceeds the
+#: incumbent IC by more than this margin. It must dominate every downstream
+#: verdict threshold so a pruned assignment can never have altered the winner or
+#: its comparable tie-break: the winner selection tie-break is
+#: ``_COMPARABLE_SCORE_DELTA`` (2.0) and the per-parameter role recommendations
+#: use ``_role_delta_threshold`` (max ≈5.0 across all return paths). 6.0 clears
+#: both with headroom — the error is asymmetric (too-high only forfeits a little
+#: speedup; too-low silently prunes a verdict-relevant node), so we bias high.
+_LAYER_BOUND_MARGIN = 6.0
 _SHORTLIST_COUNT = 4
 _SHORTLIST_SCORE_WINDOW = 6.0
 _SHORTLIST_CAP = 6
@@ -365,6 +376,19 @@ class _WavefrontTemplateState:
         GlobalCandidateAssessment,
     ]
     best_assessment: GlobalCandidateAssessment | None = None
+    #: χ² of the converged all-local anchor (technique A). Every assignment for
+    #: this template is nested inside all-local, so its χ² is a lower bound;
+    #: ``None`` means the anchor did not converge and the bound is disabled.
+    chi2_floor: float | None = None
+    #: Best (lowest) IC metric value among this template's converged assignments
+    #: so far, used as the layer-bound incumbent. ``inf`` until the first
+    #: converged assignment (the anchor) lands.
+    incumbent_ic: float = float("inf")
+    #: Number of free (localisable) parameters — the maximum Hamming layer.
+    free_param_count: int = 0
+    #: True once the layer bound has fired and this template's remaining, higher
+    #: layers are being skipped.
+    layer_bound_fired: bool = False
 
 
 def _compact_assessment_for_cache(
@@ -5539,6 +5563,49 @@ def _metric_value(
     return aicc if aicc is not None else aic
 
 
+def _layer_parameter_count(
+    local_count: int,
+    *,
+    free_param_count: int,
+    n_datasets: int,
+) -> int:
+    """IC ``k`` for a Hamming layer with ``local_count`` localised free params.
+
+    ``parameter_count`` on an assessment is ``n_global + n_local * G`` (fixed
+    params excluded). In layer ``m`` there are ``free_param_count - m`` free
+    globals and ``m`` locals, so ``k(m) = (P - m) + m * G``. It is monotone
+    non-decreasing in ``m`` for ``G >= 2`` (every synthetic/real series), which
+    is what makes the layer bound admissible.
+    """
+
+    m = max(0, min(int(local_count), int(free_param_count)))
+    return (free_param_count - m) + m * int(n_datasets)
+
+
+def _metric_penalty(parameter_count: int, *, sample_count: int, metric: SelectionMetric) -> float:
+    """The additive IC penalty ``IC - chi2`` for ``k`` params over ``n`` points.
+
+    Mirrors :func:`compute_information_criteria` exactly so the layer bound uses
+    the same penalty the winning-assessment IC does. All three penalties are
+    monotone non-decreasing in ``k`` (hence in the layer index), so the bound
+    ``chi2_floor + penalty(k(m))`` lower-bounds every assignment at layer ``>= m``.
+    """
+
+    k = max(int(parameter_count), 0)
+    n = max(int(sample_count), 1)
+    if metric == SelectionMetric.AIC:
+        return 2.0 * k
+    if metric == SelectionMetric.BIC:
+        return k * math.log(n)
+    # AICc — fall back to AIC's penalty when the small-sample correction is
+    # undefined (n <= k + 1), matching compute_information_criteria which then
+    # reports aicc = None and metric_value() falls back to AIC.
+    aic_penalty = 2.0 * k
+    if n > k + 1:
+        return aic_penalty + 2.0 * k * (k + 1) / max(n - k - 1, 1)
+    return aic_penalty
+
+
 def _run_exhaustive_wavefront_search(
     datasets: list[MuonDataset],
     *,
@@ -5590,6 +5657,7 @@ def _run_exhaustive_wavefront_search(
             free_param_names=free_param_names,
             exact_cache={},
             converged_assessments={},
+            free_param_count=len(free_param_names),
         )
         states.append(state)
         state_by_key[template.key] = state
@@ -5599,6 +5667,60 @@ def _run_exhaustive_wavefront_search(
             f"{sum(len(layer) for layer in layers)} assignment(s) across "
             f"{len(layers)} Hamming layer(s).",
         )
+
+    # Technique A (exact layer truncation): fit the all-local anchor for each
+    # template up front. All-local is the most flexible assignment, so its χ² is
+    # a lower bound on every assignment of that template; combined with the
+    # penalty that grows monotonically with the Hamming layer, it lets us halt a
+    # template's enumeration once no remaining layer can beat the incumbent IC by
+    # more than _LAYER_BOUND_MARGIN. Only a *cleanly converged* anchor arms the
+    # bound — a mis-converged anchor floor could over-prune once a better low-layer
+    # incumbent exists, so we disable the bound for that template instead.
+    sample_count = int(sum(dataset.n_points for dataset in datasets))
+    for state in states:
+        if state.free_param_count == 0:
+            continue
+        anchor_local = tuple(state.free_param_names)
+        anchor_assessment = _fit_exact_assignment(
+            datasets,
+            state.template,
+            fit_engine=FitEngine(),
+            base_by_run=state.prefit_base_by_run,
+            global_param_names=(),
+            local_param_names=anchor_local,
+            fixed_param_names=state.fixed_param_names,
+            axis_key=axis_key,
+            metric=metric,
+            cache=state.exact_cache,
+            progress_callback=progress_callback,
+            search_strategy=search_strategy,
+            instrumentation=instrumentation,
+        )
+        anchor_key = ((), anchor_local)
+        state.exact_cache[anchor_key] = _compact_assessment_for_cache(anchor_assessment)
+        if anchor_assessment.is_successful:
+            state.converged_assessments[anchor_key] = anchor_assessment
+            anchor_chi2 = float(
+                sum(result.chi_squared for result in anchor_assessment.fit_results_by_run.values())
+            )
+            state.chi2_floor = anchor_chi2
+            state.incumbent_ic = float(anchor_assessment.metric_value(metric))
+            if state.best_assessment is None or _assessment_sort_key(
+                anchor_assessment, metric
+            ) < _assessment_sort_key(state.best_assessment, metric):
+                state.best_assessment = anchor_assessment
+            _progress_log(
+                progress_callback,
+                f"{state.template.title}: all-local anchor converged "
+                f"(χ²={anchor_chi2:.2f}, {metric.value}={state.incumbent_ic:.2f}); "
+                "layer bound armed.",
+            )
+        else:
+            _progress_log(
+                progress_callback,
+                f"{state.template.title}: all-local anchor did not converge; "
+                "layer bound disabled for this template (full enumeration).",
+            )
 
     worker_count = _wavefront_worker_count(total_assignments)
     if worker_count > 1 and total_assignments > 1:
@@ -5629,6 +5751,51 @@ def _run_exhaustive_wavefront_search(
                 layers = layers_by_key[state.template.key]
                 if round_index >= len(layers):
                     continue
+                if state.layer_bound_fired:
+                    # Bound already fired in an earlier round; every remaining
+                    # (higher) layer only adds penalty, so skip them all.
+                    continue
+                # The all-local anchor (top layer) was already fitted up front and
+                # lives in exact_cache/converged_assessments; do not re-fit it.
+                if (
+                    state.free_param_count > 0
+                    and round_index == state.free_param_count
+                ):
+                    continue
+                # Technique A: once χ²_floor + penalty(layer) exceeds the incumbent
+                # IC by more than the margin, no assignment in this or any higher
+                # layer can win — halt this template's enumeration. Guarded on a
+                # cleanly converged anchor (chi2_floor is not None).
+                if (
+                    state.chi2_floor is not None
+                    and math.isfinite(state.incumbent_ic)
+                    and round_index > 0
+                ):
+                    layer_k = _layer_parameter_count(
+                        round_index,
+                        free_param_count=state.free_param_count,
+                        n_datasets=len(datasets),
+                    )
+                    layer_ic_floor = state.chi2_floor + _metric_penalty(
+                        layer_k, sample_count=sample_count, metric=metric
+                    )
+                    if layer_ic_floor > state.incumbent_ic + _LAYER_BOUND_MARGIN:
+                        state.layer_bound_fired = True
+                        _record_counter(instrumentation, "layer_bound_templates_pruned")
+                        _record_counter(
+                            instrumentation,
+                            "layer_bound_layers_pruned",
+                            len(layers) - round_index,
+                        )
+                        _progress_log(
+                            progress_callback,
+                            f"{state.template.title}: layer bound fired at Hamming "
+                            f"layer {round_index}/{state.free_param_count} "
+                            f"(floor {layer_ic_floor:.2f} > incumbent "
+                            f"{state.incumbent_ic:.2f} + {_LAYER_BOUND_MARGIN:.1f}); "
+                            "skipping remaining layers.",
+                        )
+                        continue
                 assignment_group: list[_WavefrontAssignmentTask] = []
                 for local_param_names in layers[round_index]:
                     global_param_names = tuple(
@@ -5701,6 +5868,12 @@ def _run_exhaustive_wavefront_search(
                     state.converged_assessments[
                         (result.global_param_names, result.local_param_names)
                     ] = result.assessment
+                    # Tighten the layer-bound incumbent with any better IC. A
+                    # lower incumbent prunes more aggressively next round while
+                    # staying admissible (the margin still protects the winner).
+                    candidate_ic = float(result.assessment.metric_value(metric))
+                    if candidate_ic < state.incumbent_ic:
+                        state.incumbent_ic = candidate_ic
                 if state.best_assessment is None or _assessment_sort_key(
                     result.assessment,
                     metric,
