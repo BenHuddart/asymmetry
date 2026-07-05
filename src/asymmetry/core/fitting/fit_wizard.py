@@ -22,7 +22,6 @@ from asymmetry.core.fitting.composite import (
     COMPONENTS,
     CompositeModel,
     _legacy_fraction_rename_map,
-    has_legacy_fraction_values,
     migrate_legacy_fraction_parameter_set,
 )
 from asymmetry.core.fitting.engine import FitCancelledError, FitEngine, FitResult
@@ -2744,11 +2743,11 @@ def _migrate_fit_result_fractions(result: FitResult, model: CompositeModel) -> F
     the cached fit still applies after the model rows switch to ``f_<Component>``.
     A no-op when there are no legacy keys.
     """
-    value_map = {parameter.name: float(parameter.value) for parameter in result.parameters}
-    if not has_legacy_fraction_values(model, value_map):
+    migrated = migrate_legacy_fraction_parameter_set(model, result.parameters)
+    if migrated is result.parameters:
+        # No legacy fraction keys for this model — nothing to rename or re-key.
         return result
 
-    migrated = migrate_legacy_fraction_parameter_set(model, result.parameters)
     # Uncertainties keyed by the same legacy fraction names: keep only those that
     # map 1:1 to a surviving free parameter (the dropped last term has no key).
     rename = _legacy_fraction_rename_map(model)
