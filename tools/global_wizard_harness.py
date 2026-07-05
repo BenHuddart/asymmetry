@@ -25,13 +25,16 @@ Design notes (see ``docs/porting/global-fit-wizard-efficiency/test-data.md``):
   session/process-group leader and on timeout the *whole group* is reaped in one
   shot (``os.killpg`` on POSIX, ``taskkill /F /T`` on Windows) — the grandchild
   pool workers die with it, no orphans.
-* **Effort tiers.** ``--tier {low,balanced,thorough,exhaustive}`` selects a
-  wizard-configuration callable. As of PR 4 the *search engine* per tier is real:
-  ``low`` and ``balanced`` run the non-exhaustive heuristic engines (Q pre-tests
-  + greedy / surrogate-ranked + racing); ``thorough`` and ``exhaustive`` run the
-  exact bounded wavefront (byte-for-byte the frozen-baseline path). PR 5 layers
-  the per-tier V-policy, decimation, and GUI on top; the harness contract is
-  unchanged.
+* **Effort tiers.** ``--tier {low,balanced,thorough,exhaustive}`` drives the
+  user-facing ``EffortTier`` enum. As of the PR 5 rework **every tier resolves to
+  the exact bounded wavefront** (byte-for-byte the frozen-baseline path): PR 2's
+  exact bounds already made the exhaustive path near-minimal and 12-way parallel,
+  so the heuristic Low/Balanced engines were empirically dominated (serial,
+  slower, no fit-count headroom) and were removed from the user-facing slider.
+  All four tiers should therefore report 100% agreement with identical fit counts
+  — that identity is the evidence the collapsed slider is honest. The heuristic
+  engines are retained behind the low-level ``search_engine`` string (exercised
+  by the core test-suite), not by this ``--tier`` sweep.
 
 macOS uses the ``spawn`` start method, which re-imports this module in every
 child, so everything heavy lives behind ``if __name__ == "__main__"`` and the
@@ -283,13 +286,13 @@ def _build_case_datasets(case: SyntheticCase) -> list[Any]:
 #
 # A tier maps to a callable that runs the wizard with a particular configuration
 # and returns the ``GlobalFitWizardRecommendation`` plus its instrumentation
-# dict. As of PR 5 each harness tier drives the user-facing ``EffortTier`` enum
-# (not just the lower-level ``search_engine`` selector PR 4 added): Low/Balanced
-# route to the non-exhaustive heuristic engines (Q pre-tests + greedy /
-# surrogate-ranked + racing) *plus* the Low-only portfolio cap/complexity
-# prior/identifiability demotion (I/J) and the Low/Balanced screening
-# decimation (K); Thorough/Exhaustive run the exact bounded wavefront
-# (byte-for-byte the frozen-baseline path, no PR 5 knobs).
+# dict. Each harness tier drives the user-facing ``EffortTier`` enum. As of the
+# PR 5 rework **every tier resolves to the exact bounded wavefront** (byte-for-
+# byte the frozen-baseline path): the heuristic Low/Balanced engines were
+# empirically dominated by bounded-exhaustive and removed from the user-facing
+# slider, so all four tiers now produce identical verdicts and fit counts. The
+# retained heuristic engines (and the I/J/K knobs) live behind the low-level
+# ``search_engine`` string and are covered by the core test-suite, not this sweep.
 
 
 def _run_wizard_with_tier(
@@ -367,8 +370,8 @@ def _run_wizard_sleeper(
     raise AssertionError("sleeper should have been killed by the timeout guard")
 
 
-# Low/Balanced route to the non-exhaustive heuristic engines; Thorough and
-# Exhaustive run the exact wavefront. ``_timeout_probe`` is a test-only tier for
+# Every tier now runs the exact wavefront (the heuristic engines were retired
+# from the user-facing slider). ``_timeout_probe`` is a test-only tier for
 # exercising the real kill path.
 TIER_CONFIGS: dict[str, Callable[..., tuple[Any, dict[str, object]]]] = {
     "low": _run_wizard_low,
@@ -1002,8 +1005,9 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         choices=TIERS,
         default="exhaustive",
         help=(
-            "Effort tier: low/balanced run the heuristic engines, "
-            "thorough/exhaustive run the exact wavefront."
+            "Effort tier. As of the PR 5 rework every tier resolves to the exact "
+            "bounded wavefront, so all four report identical verdicts and fit "
+            "counts (the evidence the collapsed slider is honest)."
         ),
     )
     parser.add_argument(

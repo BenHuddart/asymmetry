@@ -874,10 +874,13 @@ def test_global_fit_wizard_window_cached_restore_legacy_signature_is_auto(
     assert window._stale_banner.isHidden() is True
 
 
-# ── Effort tier slider (PR 5) ────────────────────────────────────────────────
+# ── Single "Optimize" mode (PR 5 rework) ─────────────────────────────────────
+# The four-position effort slider collapsed to one honest exact mode: every
+# EffortTier now runs the exact engine, so the visible control is a single
+# disabled item and the payload always records the exact tier.
 
 
-def test_global_fit_wizard_window_effort_defaults_to_balanced(
+def test_global_fit_wizard_window_effort_defaults_to_exhaustive(
     qapp: QApplication,
     datasets: list[MuonDataset],
 ) -> None:
@@ -886,21 +889,23 @@ def test_global_fit_wizard_window_effort_defaults_to_balanced(
     window = GlobalFitWizardWindow()
     window.set_analysis_context(datasets)
 
-    assert window.current_effort_tier() is EffortTier.BALANCED
+    assert window.current_effort_tier() is EffortTier.EXHAUSTIVE
 
 
-def test_global_fit_wizard_window_low_effort_label_says_screening_grade(
+def test_global_fit_wizard_window_effort_control_is_single_disabled_optimize_item(
     qapp: QApplication,
     datasets: list[MuonDataset],
 ) -> None:
-    from asymmetry.core.fitting.wizard_scope import EffortTier
+    """A 4-way slider where every position did the same work would be misleading.
 
+    The visible control is one disabled item labelled as the exact optimize mode.
+    """
     window = GlobalFitWizardWindow()
     window.set_analysis_context(datasets)
 
-    index = window._effort_combo.findData(EffortTier.LOW.value)
-    assert index >= 0
-    assert "screening-grade" in window._effort_combo.itemText(index).lower()
+    assert window._effort_combo.count() == 1
+    assert window._effort_combo.isEnabled() is False
+    assert "optimize" in window._effort_combo.itemText(0).lower()
 
 
 def test_global_fit_wizard_window_forwards_effort_tier_to_optimize(
@@ -929,7 +934,6 @@ def test_global_fit_wizard_window_forwards_effort_tier_to_optimize(
     )
     window = GlobalFitWizardWindow()
     window.set_analysis_context(datasets)
-    window._set_effort_tier(EffortTier.LOW)
     window._start_analysis()
     wait_for(lambda: _analysis_complete(window), qapp)
 
@@ -938,57 +942,31 @@ def test_global_fit_wizard_window_forwards_effort_tier_to_optimize(
     window._start_selected_optimisation()
     wait_for(lambda: _analysis_complete(window) and window._optimized_table.rowCount() == 2, qapp)
 
-    assert captured.get("effort_tier") is EffortTier.LOW
+    # The single visible mode always forwards the exact tier.
+    assert captured.get("effort_tier") is EffortTier.EXHAUSTIVE
 
 
 def test_global_fit_wizard_window_effort_tier_in_analysis_signature(
     qapp: QApplication,
     datasets: list[MuonDataset],
 ) -> None:
-    """An effort-tier change invalidates the same-signature cache short-circuit."""
-    from asymmetry.core.fitting.wizard_scope import EffortTier
-
+    """The analysis signature records the exact tier (the single Optimize mode)."""
     window = GlobalFitWizardWindow()
     window.set_analysis_context(datasets)
 
-    baseline = window._analysis_signature()
-    assert baseline["effort_tier"] == "balanced"
-
-    window._set_effort_tier(EffortTier.LOW)
-    changed = window._analysis_signature()
-    assert changed["effort_tier"] == "low"
-    assert changed != baseline
+    assert window._analysis_signature()["effort_tier"] == "exhaustive"
 
 
-def test_global_fit_wizard_window_effort_tier_change_marks_stale(
-    qapp: QApplication,
-    datasets: list[MuonDataset],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from asymmetry.core.fitting.wizard_scope import EffortTier
-
-    monkeypatch.setattr(
-        wizard_window_module,
-        "build_global_fit_wizard_screening_recommendation",
-        lambda datasets_arg, **_kwargs: _fake_screening_recommendation(datasets_arg),
-    )
-    window = GlobalFitWizardWindow()
-    window.set_analysis_context(datasets)
-    window._start_analysis()
-    wait_for(lambda: _analysis_complete(window), qapp)
-    assert window._analysis_stale is False
-
-    window._set_effort_tier(EffortTier.LOW)
-    window._on_effort_tier_changed(window._effort_combo.currentIndex())
-
-    assert window._analysis_stale is True
-    assert window._stale_banner.isHidden() is False
-
-
-def test_global_fit_wizard_window_cached_restore_with_effort_tier(
+def test_global_fit_wizard_window_cached_restore_legacy_tier_stays_exact(
     qapp: QApplication,
     datasets: list[MuonDataset],
 ) -> None:
+    """Restoring a legacy Low/Balanced payload stays on the exact Optimize mode.
+
+    The one-item control cannot represent the retired heuristic tiers, and every
+    tier runs the exact engine anyway, so a legacy payload degrades to the exact
+    tier without being marked stale.
+    """
     from asymmetry.core.fitting.wizard_scope import EffortTier
 
     window = GlobalFitWizardWindow()
@@ -1004,12 +982,12 @@ def test_global_fit_wizard_window_cached_restore_with_effort_tier(
         log_text="cached",
     )
 
-    assert window.current_effort_tier() is EffortTier.LOW
+    assert window.current_effort_tier() is EffortTier.EXHAUSTIVE
     assert window._analysis_stale is False
     assert window._stale_banner.isHidden() is True
 
 
-def test_global_fit_wizard_window_cached_restore_legacy_signature_is_balanced(
+def test_global_fit_wizard_window_cached_restore_legacy_signature_is_exhaustive(
     qapp: QApplication,
     datasets: list[MuonDataset],
 ) -> None:
@@ -1018,8 +996,8 @@ def test_global_fit_wizard_window_cached_restore_legacy_signature_is_balanced(
     window = GlobalFitWizardWindow()
     window.set_cached_recommendation(_fake_recommendation(datasets))
 
-    # Legacy signature (no effort_tier key) restores Balanced and is not stale.
-    assert window.current_effort_tier() is EffortTier.BALANCED
+    # Legacy signature (no effort_tier key) restores the exact tier, not stale.
+    assert window.current_effort_tier() is EffortTier.EXHAUSTIVE
     assert window._analysis_stale is False
     assert window._stale_banner.isHidden() is True
 

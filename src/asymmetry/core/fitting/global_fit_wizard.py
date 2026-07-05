@@ -20,7 +20,7 @@ from asymmetry.core.fitting.composite import (
     _legacy_fraction_rename_map,
     migrate_legacy_fraction_parameter_set,
 )
-from asymmetry.core.fitting.engine import FitEngine, FitResult
+from asymmetry.core.fitting.engine import FitCancelledError, FitEngine, FitResult
 from asymmetry.core.fitting.fit_wizard import (
     CandidateAssessment,
     CandidateTemplate,
@@ -175,17 +175,28 @@ _OSCILLATORY_RESCUE_MIN_CLUSTER = 2
 _OSCILLATORY_RESCUE_MAX_SCOUTS = 3
 
 # --------------------------------------------------------------------------- #
-# Effort tier -> search-engine mapping (PR 5).
+# Effort tier -> search-engine mapping (PR 5, revised).
 #
 # ``EffortTier`` is the user-facing slider; ``search_engine`` (PR 4) remains the
 # lower-level enumerator selector so existing callers/tests that pass
-# ``search_engine=`` directly are unaffected. The mapping is 1:1 and reuses the
-# same string values, so ``EffortTier(x).value == SEARCH_ENGINE_*`` for every x.
+# ``search_engine=`` directly are unaffected.
+#
+# REVISION (PR 5 rework): every tier now resolves to the exact bounded-wavefront
+# engine. PR 2's exact bounds made Exhaustive near-minimal (~1000 fits) and
+# 12-way parallel, so empirically the heuristic Low/Balanced engines — serial by
+# construction — were *slower* (up to 15x) on real workloads with no fit-count
+# headroom left to reclaim. The user-facing slider therefore collapses to one
+# honest mode; the heuristic engines are retained only behind the low-level
+# ``search_engine`` string (the PR 4 seam) for future large-P use and regression
+# coverage. Because every tier maps to ``SEARCH_ENGINE_EXHAUSTIVE``, the extra
+# tier knobs (I portfolio cap / J identifiability demotion / K screening
+# decimation) — all gated on the *heuristic engine string*, never on
+# ``effort_tier`` — are inert for every user-facing tier by construction.
 # --------------------------------------------------------------------------- #
 _EFFORT_TIER_SEARCH_ENGINE: dict[EffortTier, str] = {
-    EffortTier.LOW: SEARCH_ENGINE_LOW,
-    EffortTier.BALANCED: SEARCH_ENGINE_BALANCED,
-    EffortTier.THOROUGH: SEARCH_ENGINE_THOROUGH,
+    EffortTier.LOW: SEARCH_ENGINE_EXHAUSTIVE,
+    EffortTier.BALANCED: SEARCH_ENGINE_EXHAUSTIVE,
+    EffortTier.THOROUGH: SEARCH_ENGINE_EXHAUSTIVE,
     EffortTier.EXHAUSTIVE: SEARCH_ENGINE_EXHAUSTIVE,
 }
 
@@ -908,8 +919,16 @@ def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
     progress_callback: Callable[[str], None] | None = None,
     scope: WizardScope | None = None,
     user_frequencies_mhz: Sequence[float] | None = None,
+    cancel_callback: Callable[[], bool] | None = None,
 ) -> tuple[GlobalFitWizardCandidatePortfolio, dict[int, FitWizardRecommendation], tuple[int, ...]]:
-    """Return a complete per-run single-fit table set for one global-wizard portfolio."""
+    """Return a complete per-run single-fit table set for one global-wizard portfolio.
+
+    ``cancel_callback`` is polled cooperatively between per-run single-fit tasks
+    on the serial path (the process-pool path cannot poll into in-flight
+    subprocess futures); a truthy callback raises :class:`FitCancelledError`.
+    """
+    if cancel_callback is not None and cancel_callback():
+        raise FitCancelledError("Global fit wizard analysis cancelled.")
     progress_callback = _threadsafe_progress_callback(progress_callback)
     portfolio = build_global_fit_wizard_candidate_portfolio(
         datasets,
@@ -962,6 +981,8 @@ def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
     worker_count = _single_fit_table_worker_count(len(missing_datasets))
     if worker_count <= 1:
         for dataset in missing_datasets:
+            if cancel_callback is not None and cancel_callback():
+                raise FitCancelledError("Global fit wizard analysis cancelled.")
             _progress_log(
                 progress_callback,
                 f"Single-fit table {dataset.run_label}: evaluating shared candidate portfolio.",
@@ -985,6 +1006,8 @@ def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
         )
         if executor is None:
             for dataset in missing_datasets:
+                if cancel_callback is not None and cancel_callback():
+                    raise FitCancelledError("Global fit wizard analysis cancelled.")
                 _progress_log(
                     progress_callback,
                     f"Single-fit table {dataset.run_label}: evaluating shared candidate portfolio.",
@@ -1038,11 +1061,14 @@ def build_global_fit_wizard_screening_recommendation(
     progress_callback: Callable[[str], None] | None = None,
     scope: WizardScope | None = None,
     user_frequencies_mhz: Sequence[float] | None = None,
+    cancel_callback: Callable[[], bool] | None = None,
 ) -> GlobalFitWizardRecommendation:
     """Build the ranking table from per-run single-fit wizard results only."""
     if len(datasets) < 2:
         raise ValueError("Global fit wizard requires at least two datasets.")
 
+    if cancel_callback is not None and cancel_callback():
+        raise FitCancelledError("Global fit wizard analysis cancelled.")
     progress_callback = _threadsafe_progress_callback(progress_callback)
     current_parameter_types = current_parameter_types or {}
     current_values = current_values or {}
@@ -1095,6 +1121,7 @@ def build_global_fit_wizard_screening_recommendation(
                 progress_callback=progress_callback,
                 scope=scope,
                 user_frequencies_mhz=user_frequencies_mhz,
+                cancel_callback=cancel_callback,
             )
         )
 
@@ -1539,23 +1566,27 @@ def build_global_fit_wizard_recommendation(
     user_frequencies_mhz: Sequence[float] | None = None,
     search_engine: str | None = None,
     effort_tier: EffortTier = DEFAULT_EFFORT_TIER,
+    cancel_callback: Callable[[], bool] | None = None,
 ) -> GlobalFitWizardRecommendation:
     """Analyze one ordered dataset series and recommend a global-fit candidate.
 
     ``effort_tier`` is the user-facing effort slider (PR 5): ``LOW``,
-    ``BALANCED`` (default), ``THOROUGH``, ``EXHAUSTIVE``. It selects the
-    ``search_engine`` role-search enumerator 1:1 by value (see
-    ``_EFFORT_TIER_SEARCH_ENGINE``) plus the tier's extra knobs (portfolio cap +
-    complexity prior + identifiability demotion at Low; screening decimation at
-    Low/Balanced). ``search_engine`` remains available as a lower-level override
-    for existing callers/tests — when given explicitly it takes precedence over
-    ``effort_tier`` for *engine selection* (which enumerator runs), but the
-    extra PR 5 knobs are still driven by ``effort_tier``.
+    ``BALANCED``, ``THOROUGH``, ``EXHAUSTIVE`` (default ``EXHAUSTIVE``). As of the
+    PR 5 rework, **every tier resolves to the exact bounded-wavefront engine**
+    (see ``_EFFORT_TIER_SEARCH_ENGINE``): PR 2's exact bounds already made the
+    exhaustive path near-minimal and 12-way parallel, so the heuristic Low/
+    Balanced engines were empirically slower with no fit-count headroom, and the
+    user-facing slider now collapses to one honest mode. The enum and payload are
+    retained so a future scope-based quick-look tier can be added without a
+    schema/UI change.
 
-    ``"exhaustive"`` and ``"thorough"`` engines run the exact bounded wavefront;
-    ``"low"`` and ``"balanced"`` run the non-exhaustive heuristic engines
-    (techniques E/F/G/H). The exact engines resolve to the byte-for-byte current
-    call, so the exhaustive verdict path is untouched.
+    ``search_engine`` remains available as a lower-level override for existing
+    callers/tests — when given explicitly it takes precedence over
+    ``effort_tier`` for engine selection. ``"exhaustive"`` and ``"thorough"`` run
+    the exact bounded wavefront (byte-for-byte the current call); ``"low"`` and
+    ``"balanced"`` run the retained non-exhaustive heuristic engines (techniques
+    E/F/G/H and the I/J/K knobs), reachable only through this seam for future
+    large-P use and regression coverage — never through ``effort_tier``.
     """
     _set_metric(instrumentation, "strategy", "consolidated")
     if instrumentation is not None:
@@ -1581,7 +1612,7 @@ def build_global_fit_wizard_recommendation(
         scope=scope,
         user_frequencies_mhz=user_frequencies_mhz,
         search_engine=resolved_engine,
-        effort_tier=effort_tier,
+        cancel_callback=cancel_callback,
     )
 
 
@@ -1600,11 +1631,13 @@ def _build_global_fit_wizard_recommendation_staged(
     scope: WizardScope | None = None,
     user_frequencies_mhz: Sequence[float] | None = None,
     search_engine: str = _DEFAULT_SEARCH_ENGINE,
-    effort_tier: EffortTier = DEFAULT_EFFORT_TIER,
+    cancel_callback: Callable[[], bool] | None = None,
 ) -> GlobalFitWizardRecommendation:
     if len(datasets) < 2:
         raise ValueError("Global fit wizard requires at least two datasets.")
 
+    if cancel_callback is not None and cancel_callback():
+        raise FitCancelledError("Global fit wizard analysis cancelled.")
     search_engine = search_engine or _DEFAULT_SEARCH_ENGINE
     if search_engine not in SEARCH_ENGINES:
         raise ValueError(
@@ -1811,11 +1844,13 @@ def _build_global_fit_wizard_recommendation_staged(
                     template_contexts[key] = (base_by_run, fixed_param_names)
                     initial_assessments[key] = assessment
     if normalized_selected_template_keys:
-        if effort_tier is EffortTier.LOW:
-            # Technique I/J still apply within an explicit user selection at Low:
-            # "screening-grade" means the cap/complexity-prior/demotion narrow
-            # *what gets the expensive coupled search*, not just the auto-shortlist
-            # path. Every other tier honours the user's selection verbatim.
+        if search_engine == SEARCH_ENGINE_LOW:
+            # Technique I/J still apply within an explicit user selection on the
+            # retained Low heuristic engine: "screening-grade" means the
+            # cap/complexity-prior/demotion narrow *what gets the expensive
+            # coupled search*, not just the auto-shortlist path. Every exact
+            # engine (which is what every user-facing tier now resolves to)
+            # honours the user's selection verbatim.
             selected_templates = tuple(
                 template_by_key[key] for key in normalized_selected_template_keys
             )
@@ -1823,7 +1858,7 @@ def _build_global_fit_wizard_recommendation_staged(
                 selected_templates,
                 initial_assessments=initial_assessments,
                 metric=metric,
-                effort_tier=effort_tier,
+                search_engine=search_engine,
                 progress_callback=progress_callback,
             )
         else:
@@ -1857,7 +1892,7 @@ def _build_global_fit_wizard_recommendation_staged(
             initial_assessments=initial_assessments,
             metric=metric,
             forced_keys=tuple(dict.fromkeys((*forced_shortlist_keys, *pattern_template_keys))),
-            effort_tier=effort_tier,
+            search_engine=search_engine,
             progress_callback=progress_callback,
         )
     shortlisted_templates = [template for template in templates if template.key in shortlist_keys]
@@ -1879,6 +1914,7 @@ def _build_global_fit_wizard_recommendation_staged(
             search_strategy=search_strategy,
             instrumentation=instrumentation,
             single_run_prefit_cache_for=_single_run_prefit_cache_for,
+            cancel_callback=cancel_callback,
         )
     else:
         _set_metric(instrumentation, "search_engine", search_engine)
@@ -1893,7 +1929,6 @@ def _build_global_fit_wizard_recommendation_staged(
             instrumentation=instrumentation,
             single_run_prefit_cache_for=_single_run_prefit_cache_for,
             engine=search_engine,
-            effort_tier=effort_tier,
             aggregate_fingerprint=aggregate_fingerprint,
         )
 
@@ -2659,10 +2694,15 @@ def _shortlist_template_keys(
     initial_assessments: dict[str, GlobalCandidateAssessment],
     metric: SelectionMetric,
     forced_keys: tuple[str, ...] = (),
-    effort_tier: EffortTier = DEFAULT_EFFORT_TIER,
+    search_engine: str = _DEFAULT_SEARCH_ENGINE,
     progress_callback: Callable[[str], None] | None = None,
 ) -> set[str]:
-    is_low = effort_tier is EffortTier.LOW
+    # Techniques I (portfolio cap), J (identifiability demotion) and the Low
+    # complexity prior are gated on the *heuristic Low engine string*, never on
+    # ``effort_tier``. Every user-facing tier now resolves to the exact engine
+    # (see ``_EFFORT_TIER_SEARCH_ENGINE``), so these knobs are inert unless a
+    # caller opts into the retained ``search_engine="low"`` seam directly.
+    is_low = search_engine == SEARCH_ENGINE_LOW
 
     def _rank_key(template: CandidateTemplate) -> tuple[float, int, tuple]:
         assessment = initial_assessments[template.key]
@@ -3871,7 +3911,10 @@ def _fit_exact_assignment(
     search_strategy: str = "legacy",
     instrumentation: dict[str, object] | None = None,
     initial_step_sizes: dict[str, float] | None = None,
+    cancel_callback: Callable[[], bool] | None = None,
 ) -> GlobalCandidateAssessment:
+    if cancel_callback is not None and cancel_callback():
+        raise FitCancelledError("Global fit wizard analysis cancelled.")
     cache_key = (tuple(global_param_names), tuple(local_param_names))
     cached = cache.get(cache_key)
     if cached is not None and cached.is_successful:
@@ -3971,6 +4014,7 @@ def _fit_exact_assignment(
                 minuit_tol=0.05 if difficult_assignment else None,
                 initial_step_sizes=local_step_hints or None,
                 screening=not difficult_assignment,
+                cancel_callback=cancel_callback,
             )
             _record_global_fit_diagnostics(instrumentation, results_by_run)
             results_by_run = _canonicalize_fit_results_by_run(
@@ -4185,6 +4229,7 @@ def _fit_exact_assignment(
             minuit_strategy=2 if free_count >= 20 else None,
             minuit_tol=0.05 if free_count >= 20 else None,
             initial_step_sizes=rescue_step_hints or None,
+            cancel_callback=cancel_callback,
         )
         _record_global_fit_diagnostics(instrumentation, rescue_results)
         rescue_results = _canonicalize_fit_results_by_run(
@@ -6753,7 +6798,6 @@ def _run_heuristic_search(
         [CandidateTemplate], dict[object, dict[int, ParameterSet]]
     ],
     engine: str,
-    effort_tier: EffortTier = DEFAULT_EFFORT_TIER,
     aggregate_fingerprint: SpectrumFingerprint | None = None,
 ) -> tuple[GlobalCandidateAssessment, ...]:
     """Low/Balanced non-exhaustive role search (techniques E/F/G/H + K).
@@ -7039,9 +7083,14 @@ def _run_exhaustive_wavefront_search(
     single_run_prefit_cache_for: Callable[
         [CandidateTemplate], dict[object, dict[int, ParameterSet]]
     ],
+    cancel_callback: Callable[[], bool] | None = None,
 ) -> tuple[GlobalCandidateAssessment, ...]:
     if not shortlisted_templates:
         return ()
+
+    def _check_cancelled() -> None:
+        if cancel_callback is not None and cancel_callback():
+            raise FitCancelledError("Global fit wizard analysis cancelled.")
 
     states: list[_WavefrontTemplateState] = []
     state_by_key: dict[str, _WavefrontTemplateState] = {}
@@ -7100,6 +7149,8 @@ def _run_exhaustive_wavefront_search(
     for state in states:
         if state.free_param_count == 0:
             continue
+        # Cooperative cancel between templates (in-process anchor fits).
+        _check_cancelled()
         anchor_local = tuple(state.free_param_names)
         anchor_assessment = _fit_exact_assignment(
             datasets,
@@ -7115,6 +7166,7 @@ def _run_exhaustive_wavefront_search(
             progress_callback=progress_callback,
             search_strategy=search_strategy,
             instrumentation=instrumentation,
+            cancel_callback=cancel_callback,
         )
         anchor_key = ((), anchor_local)
         state.exact_cache[anchor_key] = _compact_assessment_for_cache(anchor_assessment)
@@ -7176,6 +7228,10 @@ def _run_exhaustive_wavefront_search(
 
     try:
         for round_index in range(max_rounds):
+            # Cooperative cancel between Hamming layers. Under a process pool we
+            # cannot kill in-flight futures, so cancel stops scheduling further
+            # rounds/templates, then the finally-block shuts the pool down.
+            _check_cancelled()
             task_groups: list[list[_WavefrontAssignmentTask]] = []
             for state in states:
                 layers = layers_by_key[state.template.key]
@@ -7307,9 +7363,15 @@ def _run_exhaustive_wavefront_search(
                 "slots while surplus workers drain the wider layers.",
             )
 
+            # Cooperative cancel before dispatching this layer's assignment fits.
+            _check_cancelled()
+
             round_results: list[_WavefrontAssignmentResult] = []
             if executor is None:
-                round_results = [_run_wavefront_assignment_task(task) for task in ordered_tasks]
+                for task in ordered_tasks:
+                    # Serial (in-process) path: check between per-assignment fits.
+                    _check_cancelled()
+                    round_results.append(_run_wavefront_assignment_task(task))
             else:
                 future_to_task = {
                     executor.submit(_run_wavefront_assignment_task, task): task

@@ -436,8 +436,11 @@ def test_estimate_screening_cost_positive_and_ordered():
 # --- effort tier (PR 5) ---------------------------------------------------
 
 
-def test_effort_tier_default_is_balanced():
-    assert DEFAULT_EFFORT_TIER is EffortTier.BALANCED
+def test_effort_tier_default_is_exhaustive():
+    # PR 5 rework: every tier resolves to the exact engine, so the persisted/
+    # legacy-restore default is the exact (Exhaustive) tier — the single honest
+    # user-facing optimisation mode.
+    assert DEFAULT_EFFORT_TIER is EffortTier.EXHAUSTIVE
 
 
 def test_effort_tier_has_four_values():

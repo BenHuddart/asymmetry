@@ -119,13 +119,17 @@ class WizardScopePreset(str, Enum):
 class EffortTier(str, Enum):
     """User-facing global-fit-wizard effort level (PR 5 of the efficiency plan).
 
-    Binds the search-engine/knob choices built in PRs 2-4 to one slider: each
-    tier maps to a ``search_engine`` value (see
-    :mod:`asymmetry.core.fitting.global_fit_wizard`) plus the extra knobs
-    (portfolio cap, identifiability demotion, screening decimation) tabulated in
-    ``docs/porting/global-fit-wizard-efficiency/implementation-options.md`` (PR 5
-    tier-policy table). ``BALANCED`` is the default: it matches Exhaustive
-    verdicts on >=95% of the harness cases at a fraction of the wall time.
+    Originally bound the search-engine/knob choices from PRs 2-4 to a four-
+    position slider. As of the PR 5 rework, **every tier resolves to the exact
+    bounded-wavefront engine** (see :mod:`asymmetry.core.fitting.global_fit_wizard`
+    ``_EFFORT_TIER_SEARCH_ENGINE``): PR 2's exact bounds already made the
+    exhaustive path near-minimal and 12-way parallel, so the heuristic Low/
+    Balanced engines were empirically dominated (serial, slower, no fit-count
+    headroom). The user-facing control therefore collapses to a single honest
+    "Optimize" mode. The enum and its serialised payload are retained so a
+    future *scope-based* quick-look tier can be added without a schema/UI change;
+    the heuristic engines stay reachable behind the low-level ``search_engine``
+    string for future large-P use and regression coverage.
     """
 
     LOW = "low"
@@ -134,35 +138,33 @@ class EffortTier(str, Enum):
     EXHAUSTIVE = "exhaustive"
 
 
-#: Default effort tier — Balanced, the harness-gated ≥95%-agreement default.
-DEFAULT_EFFORT_TIER = EffortTier.BALANCED
+#: Default effort tier — the exact bounded-wavefront engine, now the only
+#: user-facing mode (see ``EffortTier``). Persisted/legacy payloads default here.
+DEFAULT_EFFORT_TIER = EffortTier.EXHAUSTIVE
 
-#: Short human-readable labels for the effort slider. Low is explicitly framed
-#: as "screening-grade" so a user does not mistake its speed for full rigor.
+#: Short human-readable labels for the effort control. Every tier now runs the
+#: exact engine, so the visible control surfaces one honest "Optimize" mode.
 EFFORT_TIER_LABELS: dict[EffortTier, str] = {
     EffortTier.LOW: "Low (screening-grade)",
     EffortTier.BALANCED: "Balanced (recommended)",
     EffortTier.THOROUGH: "Thorough",
-    EffortTier.EXHAUSTIVE: "Exhaustive",
+    EffortTier.EXHAUSTIVE: "Optimize — exhaustive (~30 s)",
 }
 
-#: One-line descriptions surfaced as tooltips next to the slider.
+#: One-line descriptions surfaced as tooltips next to the control.
 EFFORT_TIER_DESCRIPTIONS: dict[EffortTier, str] = {
     EffortTier.LOW: (
-        "Screening-grade: narrow template shortlist, coarser rebinning during "
-        "search, fastest turnaround. May miss multi-parameter interaction optima."
+        "Screening-grade heuristic engine (retained behind the search_engine "
+        "seam; not a user-facing tier)."
     ),
     EffortTier.BALANCED: (
-        "Recommended: heuristic search with exact safety bounds. Matches "
-        "Exhaustive verdicts on the large majority of cases, much faster."
+        "Heuristic search engine (retained behind the search_engine seam; not a user-facing tier)."
     ),
-    EffortTier.THOROUGH: (
-        "Full exact wavefront search with generous margins. Slower than "
-        "Balanced, reserved for verifying an ambiguous result."
-    ),
+    EffortTier.THOROUGH: ("Full exact wavefront search (same engine as Optimize)."),
     EffortTier.EXHAUSTIVE: (
-        "Full 2^P role search with no shortcuts — the referee tier. Slowest; "
-        "use to double-check a Balanced/Thorough recommendation."
+        "Exact bounded role search over all promotable parameters. PR 2's exact "
+        "bounds keep it near-minimal (~1000 fits, 12-way parallel), so it is the "
+        "single honest optimisation mode."
     ),
 }
 

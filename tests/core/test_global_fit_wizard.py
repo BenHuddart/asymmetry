@@ -2421,7 +2421,9 @@ def test_unknown_search_engine_raises_value_error(
 
 
 # --------------------------------------------------------------------------- #
-# Effort tiers (PR 5): EffortTier -> search_engine mapping + I/J/K knobs
+# Effort tiers (PR 5, revised): every EffortTier collapses to the exact engine.
+# The heuristic engines + I/J/K knobs are retained ONLY behind the low-level
+# ``search_engine`` string (the PR 4 seam), never via ``effort_tier``.
 # --------------------------------------------------------------------------- #
 
 
@@ -2436,18 +2438,17 @@ def _restrict_to_templates(
     )
 
 
-@pytest.mark.parametrize(
-    ("tier_value", "expected_engine"),
-    [
-        ("low", "low"),
-        ("balanced", "balanced"),
-        ("thorough", "thorough"),
-        ("exhaustive", "exhaustive"),
-    ],
-)
-def test_effort_tier_maps_to_search_engine(
-    monkeypatch: pytest.MonkeyPatch, tier_value: str, expected_engine: str
+@pytest.mark.parametrize("tier_value", ["low", "balanced", "thorough", "exhaustive"])
+def test_effort_tier_always_resolves_to_the_exact_engine(
+    monkeypatch: pytest.MonkeyPatch, tier_value: str
 ) -> None:
+    """Every user-facing EffortTier now runs the exact bounded wavefront.
+
+    The exact engines never set the ``search_engine`` instrumentation metric
+    (that metric is emitted only on the heuristic path), so its absence for
+    *every* tier is the observable signature that the slider collapsed to one
+    honest exact mode.
+    """
     from asymmetry.core.fitting.wizard_scope import EffortTier
 
     model = CompositeModel(["Exponential", "Constant"], operators=["+"])
@@ -2459,11 +2460,18 @@ def test_effort_tier_maps_to_search_engine(
         datasets, instrumentation=instrumentation, effort_tier=EffortTier(tier_value)
     )
 
-    if expected_engine in ("low", "balanced"):
-        assert instrumentation.get("search_engine") == expected_engine
-    else:
-        # Exact engines never set the search_engine metric (byte-identical path).
-        assert instrumentation.get("search_engine") is None
+    assert instrumentation.get("search_engine") is None
+
+
+def test_effort_tier_search_engine_map_collapses_to_exhaustive() -> None:
+    from asymmetry.core.fitting.global_fit_wizard import (
+        _EFFORT_TIER_SEARCH_ENGINE,
+        SEARCH_ENGINE_EXHAUSTIVE,
+    )
+    from asymmetry.core.fitting.wizard_scope import EffortTier
+
+    assert set(_EFFORT_TIER_SEARCH_ENGINE) == set(EffortTier)
+    assert all(engine == SEARCH_ENGINE_EXHAUSTIVE for engine in _EFFORT_TIER_SEARCH_ENGINE.values())
 
 
 def test_explicit_search_engine_overrides_effort_tier_engine_selection(
@@ -2520,14 +2528,48 @@ def _searched_role_split_count(recommendation, template_key: str) -> int:
     )
 
 
-def test_low_portfolio_cap_skips_over_budget_templates_via_public_entry_point(
+def test_low_portfolio_cap_skips_over_budget_templates_via_search_engine_seam(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Technique I is reachable through the real GUI-facing entry point.
+    """Technique I is retained behind the low-level ``search_engine="low"`` seam.
 
-    An explicit user selection at Low still narrows to the cap: a >5-parameter
-    template never reaches the expensive coupled role search, even though the
-    user selected it alongside a small template that fits inside the budget.
+    An explicit user selection on the retained Low heuristic engine still narrows
+    to the cap: a >5-parameter template never reaches the expensive coupled role
+    search, even though the user selected it alongside a small template that fits
+    inside the budget. This knob is NO LONGER reachable via ``effort_tier`` (which
+    always resolves to the exact engine) — only through the ``search_engine``
+    override.
+    """
+    small_model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    small_template = CandidateTemplate(
+        key="exp_constant",
+        title="Exponential + Constant",
+        category="General",
+        rationale="test",
+        model=small_model,
+    )
+    big_template = _triple_exp_template()
+    _restrict_to_templates(monkeypatch, (small_template, big_template))
+    datasets = _uniform_series(small_model)
+
+    recommendation = build_global_fit_wizard_recommendation(
+        datasets,
+        search_engine="low",
+        selected_template_keys=(small_template.key, big_template.key),
+    )
+
+    assert _searched_role_split_count(recommendation, small_template.key) > 0
+    assert _searched_role_split_count(recommendation, big_template.key) == 0
+
+
+def test_low_portfolio_cap_is_inert_via_effort_tier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Passing ``effort_tier=LOW`` no longer applies the cap.
+
+    Every user-facing tier resolves to the exact engine, so an over-budget
+    template still reaches the coupled search — the I/J/K knobs are only reachable
+    through the ``search_engine`` override now.
     """
     from asymmetry.core.fitting.wizard_scope import EffortTier
 
@@ -2549,35 +2591,8 @@ def test_low_portfolio_cap_skips_over_budget_templates_via_public_entry_point(
         selected_template_keys=(small_template.key, big_template.key),
     )
 
-    assert _searched_role_split_count(recommendation, small_template.key) > 0
-    assert _searched_role_split_count(recommendation, big_template.key) == 0
-
-
-def test_balanced_tier_ignores_portfolio_cap_on_explicit_selection(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Balanced (and every non-Low tier) honours the user's selection verbatim."""
-    from asymmetry.core.fitting.wizard_scope import EffortTier
-
-    small_model = CompositeModel(["Exponential", "Constant"], operators=["+"])
-    small_template = CandidateTemplate(
-        key="exp_constant",
-        title="Exponential + Constant",
-        category="General",
-        rationale="test",
-        model=small_model,
-    )
-    big_template = _triple_exp_template()
-    _restrict_to_templates(monkeypatch, (small_template, big_template))
-    datasets = _uniform_series(small_model)
-
-    recommendation = build_global_fit_wizard_recommendation(
-        datasets,
-        effort_tier=EffortTier.BALANCED,
-        selected_template_keys=(small_template.key, big_template.key),
-    )
-
-    # Balanced applies no cap: both explicitly selected templates reach search.
+    # Exact engine (what LOW now resolves to) applies no cap: both explicitly
+    # selected templates reach the coupled search.
     assert _searched_role_split_count(recommendation, small_template.key) > 0
     assert _searched_role_split_count(recommendation, big_template.key) > 0
 
@@ -2782,3 +2797,90 @@ def test_thorough_and_exhaustive_engines_stay_byte_identical() -> None:
 
     assert SEARCH_ENGINE_THOROUGH in _EXACT_SEARCH_ENGINES
     assert SEARCH_ENGINE_EXHAUSTIVE in _EXACT_SEARCH_ENGINES
+
+
+# --------------------------------------------------------------------------- #
+# Cooperative cancel (PR 5 rework): a cancel_callback aborts the exact search
+# promptly with FitCancelledError, before the full role search runs.
+# --------------------------------------------------------------------------- #
+
+
+def test_cancel_callback_aborts_before_running_full_search(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cancel_callback that returns True aborts quickly and runs no fits.
+
+    Cancel is checked at the top of the builder (before any screening/anchor
+    fit), so a callback that is already truthy raises ``FitCancelledError``
+    without dispatching the exhaustive role search — proven by the absence of any
+    ``exact_fit_invocations`` / ``global_fit_calls`` instrumentation.
+    """
+    from asymmetry.core.fitting import FitCancelledError
+
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    _restrict_to_exp_constant_template(monkeypatch, model)
+    datasets = _uniform_series(model)
+    instrumentation: dict[str, object] = {}
+
+    with pytest.raises(FitCancelledError):
+        build_global_fit_wizard_recommendation(
+            datasets,
+            instrumentation=instrumentation,
+            cancel_callback=lambda: True,
+        )
+
+    counters = instrumentation.get("counters")
+    if isinstance(counters, dict):
+        assert counters.get("exact_fit_invocations", 0) == 0
+        assert counters.get("global_fit_calls", 0) == 0
+
+
+def test_cancel_callback_aborts_mid_search_past_the_top_guard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancel is honoured *inside* the exact search, not only at the top guard.
+
+    A callback that returns False first (letting execution past the staged-top
+    guard) and True afterwards must still raise ``FitCancelledError`` — proving
+    the between-templates / between-layers / before-dispatch checks inside
+    ``_run_exhaustive_wavefront_search`` are wired, which is the whole point of
+    the cancel fix (a cancel that only fires before the search starts is
+    useless). We assert the callback advanced past its first poll, so the abort
+    came from a later internal check rather than the top guard.
+    """
+    from asymmetry.core.fitting import FitCancelledError
+
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    _restrict_to_exp_constant_template(monkeypatch, model)
+    datasets = _uniform_series(model)
+
+    state = {"calls": 0}
+
+    def _cancel_after_first_poll() -> bool:
+        state["calls"] += 1
+        # First poll (the staged-top guard) passes; every later poll cancels.
+        return state["calls"] > 1
+
+    with pytest.raises(FitCancelledError):
+        build_global_fit_wizard_recommendation(
+            datasets,
+            cancel_callback=_cancel_after_first_poll,
+        )
+
+    assert state["calls"] > 1
+
+
+def test_cancel_callback_false_completes_normally(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cancel_callback that never fires does not perturb the exact result."""
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    _restrict_to_exp_constant_template(monkeypatch, model)
+    datasets = _uniform_series(model)
+
+    recommendation = build_global_fit_wizard_recommendation(
+        datasets,
+        cancel_callback=lambda: False,
+    )
+
+    assert recommendation.recommended_key is not None
