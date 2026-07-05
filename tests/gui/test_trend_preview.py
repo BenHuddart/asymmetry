@@ -13,6 +13,7 @@ from asymmetry.gui.widgets.trend_preview import (
     PreviewRange,
     PreviewSeries,
     TrendPreviewCanvas,
+    range_span_color,
 )
 
 
@@ -37,11 +38,11 @@ def _series(mask_len: int = 5) -> PreviewSeries:
     )
 
 
-def _range(*, fitted: bool, mask: np.ndarray, windows=None) -> PreviewRange:
+def _range(*, fitted: bool, mask: np.ndarray, windows=None, idx: int = 0) -> PreviewRange:
     cx = np.linspace(0.0, 4.0, 20)
     cy = np.linspace(1.0, 2.0, 20)
     return PreviewRange(
-        idx=0,
+        idx=idx,
         x_min=0.5,
         x_max=3.5,
         windows=windows,
@@ -189,6 +190,63 @@ def test_window_gaps_shaded(qapp: QApplication) -> None:
     ax = _axes(canvas)
     # Range span (1) + at least the middle gap span (1) → >= 2 patches.
     assert len(ax.patches) >= 2
+
+
+def test_range_span_color_stable() -> None:
+    """range_span_color is deterministic, distinct per idx, and cycles."""
+    from asymmetry.gui.widgets.trend_preview import _RANGE_COLOR_CYCLE
+
+    color0 = range_span_color(0)
+    color1 = range_span_color(1)
+    assert isinstance(color0, str) and isinstance(color1, str)
+    assert color0 != color1
+    # Stable across repeated calls.
+    assert range_span_color(0) == color0
+    assert range_span_color(1) == color1
+    # Cyclic: wraps after the palette length.
+    n = len(_RANGE_COLOR_CYCLE)
+    assert range_span_color(n) == color0
+    assert range_span_color(n + 1) == color1
+
+
+def test_spans_use_range_span_color(qapp: QApplication) -> None:
+    """Each range's span face uses its own range_span_color; active is emphasized."""
+    import matplotlib.colors as mcolors
+
+    canvas = TrendPreviewCanvas()
+    mask = np.array([True, True, True, True, True])
+    canvas.set_series([_series()])
+    range0 = _range(fitted=False, mask=mask, idx=0)
+    range1 = _range(fitted=False, mask=mask, idx=1)
+    canvas.set_ranges([range0, range1])
+    canvas.set_active_range(0)
+    canvas.set_state("ready")
+
+    ax = _axes(canvas)
+    expected0 = mcolors.to_rgb(range_span_color(0))
+    expected1 = mcolors.to_rgb(range_span_color(1))
+
+    # Find the axvspan patches for each range by matching facecolor (ignoring
+    # alpha) to the expected per-range colour.
+    span_patches_0 = [p for p in ax.patches if mcolors.to_rgb(p.get_facecolor()) == expected0]
+    span_patches_1 = [p for p in ax.patches if mcolors.to_rgb(p.get_facecolor()) == expected1]
+    assert span_patches_0, "no span patch found using range_span_color(0)"
+    assert span_patches_1, "no span patch found using range_span_color(1)"
+
+    # Active range (idx 0) is more emphasized: higher alpha than the non-active
+    # range's span face.
+    active_alpha = max(p.get_alpha() or 0.0 for p in span_patches_0)
+    non_active_alpha = max(p.get_alpha() or 0.0 for p in span_patches_1)
+    assert active_alpha > non_active_alpha
+
+    # The active range also gets the dashed BENCH edge-line treatment; the
+    # non-active range does not get those accent-coloured edge lines.
+    accent_edges = [
+        ln
+        for ln in ax.get_lines()
+        if ln.get_linestyle() == "--" and ln.get_color() == tokens.PLOT_FIT_RANGE_EDGE
+    ]
+    assert accent_edges, "active range should still draw the BENCH dashed edges"
 
 
 def test_enable_drag_stores_flag_only(qapp: QApplication) -> None:

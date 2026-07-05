@@ -41,6 +41,32 @@ _DRAG_TOLERANCE_PX = 7.0
 #: rather than a bare click.
 _EXCLUDE_MIN_PX = 4.0
 
+#: Per-range span colour cycle: the Okabe-Ito colour-blind-safe qualitative set
+#: (same hues used for multi-run overlays elsewhere; see
+#: ``styles/plots.py::_OKABE_ITO``), so distinct fit ranges read as distinct
+#: colours without introducing a second unrelated palette.
+_RANGE_COLOR_CYCLE = (
+    tokens.TRACE_BLUE,
+    tokens.TRACE_ORANGE,
+    tokens.TRACE_SKY,
+    tokens.TRACE_YELLOW,
+    tokens.TRACE_GREEN,
+    tokens.TRACE_MAGENTA,
+    tokens.TRACE_BLACK,
+    tokens.TRACE_VERMILLION,
+)
+
+
+def range_span_color(idx: int) -> str:
+    """Stable, distinct hex colour for fit range *idx*.
+
+    Shared by the plot span (``TrendPreviewCanvas``) and the range-card swatch
+    so the two can never drift out of sync. Deterministic and cyclic (wraps
+    after the palette length, so ``range_span_color(len(cycle)) ==
+    range_span_color(0)``).
+    """
+    return _RANGE_COLOR_CYCLE[idx % len(_RANGE_COLOR_CYCLE)]
+
 
 @dataclass
 class PreviewSeries:
@@ -582,22 +608,27 @@ class TrendPreviewCanvas(QWidget):
             pass
 
     def _draw_span(self, ax: object, rng: PreviewRange, *, is_active: bool) -> None:
-        """Fit-range span: full BENCH treatment for active, dimmer for others."""
+        """Fit-range span: each range gets its own colour; active gets full
+        BENCH emphasis (dashed edges) layered on top so it still reads as the
+        one being edited.
+        """
         if rng.x_min is None or rng.x_max is None:
             return
+        color = range_span_color(rng.idx)
+        try:
+            ax.axvspan(  # type: ignore[union-attr]
+                rng.x_min,
+                rng.x_max,
+                color=color,
+                alpha=0.16 if is_active else 0.05,
+                zorder=1,
+            )
+        except Exception:
+            pass
         if is_active:
+            # Layer the dashed edge-line treatment (BENCH accent colour) on top
+            # of the per-range face so the active range stays unambiguous.
             plot_styles.draw_fit_range_span(ax, rng.x_min, rng.x_max)
-        else:
-            try:
-                ax.axvspan(  # type: ignore[union-attr]
-                    rng.x_min,
-                    rng.x_max,
-                    color=tokens.PLOT_FIT_RANGE_FACE,
-                    alpha=0.03,
-                    zorder=1,
-                )
-            except Exception:
-                pass
 
     def _draw_window_gaps(self, ax: object, rng: PreviewRange) -> None:
         """Shade+hatch the EXCLUDED sub-intervals between the active windows.

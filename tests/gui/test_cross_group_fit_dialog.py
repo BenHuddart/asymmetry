@@ -316,18 +316,38 @@ def test_cross_group_dialog_exposes_error_modes_and_windows() -> None:
 
     assert dlg._error_mode() is ErrorMode.COLUMN  # default
 
-    from PySide6.QtWidgets import QPushButton
-
-    buttons = [b.text() for b in dlg.findChildren(QPushButton)]
-    assert "Exclude region…" in buttons
+    # The "Exclude region…" path now lives in the range card's overflow menu
+    # (an action, not a standalone per-row button) — see the range-cards redesign.
+    card = dlg._range_cards[0]
+    overflow_actions = [a.text() for a in card._overflow_menu.actions()]
+    assert "Exclude region…" in overflow_actions
 
     # field is exact (no σ_x), so the effective-variance toggle is not offered.
     assert dlg._x_error_check is None
 
-    # The per-range 'active' checkboxes stay hidden across UI rebuilds, not
-    # just after the constructor's one-time pass.
+    # Cross-group's single pinned range renders as exactly one RangeCard; a
+    # rebuild keeps that invariant (Step 1 of the range-cards redesign — the
+    # old per-range 'active' checkbox no longer exists).
     dlg._rebuild_ranges_ui()
-    assert all(w.active.isHidden() for w in dlg._range_widgets)
+    assert len(dlg._range_cards) == 1
+
+
+def test_cross_group_card_no_status_chip() -> None:
+    """A cross-group card shows no single-fit verdict chip: CrossGroupFitResult
+    has no per-range χ²ᵣ/dof, so a "good/poor" chip would mislead (same reason
+    the quality line is suppressed)."""
+    dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=_groups(),
+        parent=None,
+    )
+    fit_range = dlg._fit.ranges[0]
+    # The chip helper is suppressed regardless of any result object.
+    assert dlg._range_status_chip_html(fit_range, object()) == ""
+    # And the assembled card view carries no chip html.
+    view = dlg._range_card_view(0, show_run=True)
+    assert view.status_chip_html == ""
 
 
 def test_cross_group_dialog_offers_x_uncertainty_for_param_axis() -> None:
@@ -968,8 +988,9 @@ def test_exclude_region_single_range_carves() -> None:
     los = sorted(lo for lo, _hi in fit_range.windows)
     assert 180.0 in his
     assert 220.0 in los
-    # The plain range spins disable once the range carries windows.
-    assert dlg._range_widgets[0].x_min.isEnabled() is False
+    # The details-pane bounds pair disables once the range carries windows.
+    dlg._select_range(0)
+    assert dlg._bounds_min_spin.isEnabled() is False
 
 
 def test_cross_group_success_no_modal(monkeypatch) -> None:

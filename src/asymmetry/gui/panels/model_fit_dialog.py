@@ -6,7 +6,6 @@ import os
 import re
 import traceback
 from collections.abc import Callable
-from dataclasses import dataclass
 
 import numpy as np
 from PySide6.QtCore import QSettings, QSignalBlocker, Qt, QTimer
@@ -57,26 +56,27 @@ from asymmetry.gui.styles.widgets import (
     RESULT_BOX_OBJECT_NAME,
     RESULT_BOX_SUCCESS_STYLE,
     apply_param_table_style,
-    build_primary_button_qss,
     clear_layout,
     error_html,
+    fit_quality_chip_html,
     info_html,
     make_formula_box,
     make_section,
     success_html,
     warning_html,
-    widest_button_width,
 )
 from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.widgets.function_builder.dialog import (
     FunctionBuilderDialog,
     make_component_expression_parser,
 )
+from asymmetry.gui.widgets.range_card import RangeCard, RangeCardView
 from asymmetry.gui.widgets.screen_sizing import resize_to_available
 from asymmetry.gui.widgets.trend_preview import (
     PreviewRange,
     PreviewSeries,
     TrendPreviewCanvas,
+    range_span_color,
 )
 from asymmetry.gui.windows.new_user_function_dialog import NewUserFunctionDialog
 
@@ -495,18 +495,6 @@ class ParameterModelBuilderDialog(FunctionBuilderDialog):
         return model if isinstance(model, ParameterCompositeModel) else None
 
 
-@dataclass
-class _RangeWidgets:
-    active: QCheckBox
-    x_min: QDoubleSpinBox
-    x_max: QDoubleSpinBox
-    model_label: QLabel
-    edit_button: QPushButton
-    fit_button: QPushButton
-    remove_button: QPushButton
-    status_label: QLabel
-
-
 class ModelFitDialog(QDialog):
     """Configure and run model fits for one Y parameter vs selected X variable."""
 
@@ -554,8 +542,11 @@ class ModelFitDialog(QDialog):
         self._yerr = np.asarray(y_errors, dtype=float)
         self._xerr = None if x_errors is None else np.asarray(x_errors, dtype=float)
         self._removed = False
-        self._range_widgets: list[_RangeWidgets] = []
-        self._window_spin_widgets: dict[tuple[int, int], tuple[QDoubleSpinBox, QDoubleSpinBox]] = {}
+        # One RangeCard per fit range (recreated each _rebuild_ranges_ui).
+        self._range_cards: list[RangeCard] = []
+        # Exclusion-window spinboxes for the ACTIVE range only, keyed by window
+        # index (the details pane only ever shows the active range's windows).
+        self._window_spin_widgets: dict[int, tuple[QDoubleSpinBox, QDoubleSpinBox]] = {}
         self._active_range_idx: int | None = None
         self._fit_in_progress = False
         # Own busy flag for the user-initiated "Guess seeds" data-aware seeder
@@ -773,6 +764,37 @@ class ModelFitDialog(QDialog):
 
         self._range_hint_label = QLabel("Select a range above to edit its model parameters.")
         params_layout.addWidget(self._range_hint_label)
+
+        # ── Fit range: numeric bounds for the ACTIVE range (contract C-BOUNDS) ──
+        # A SINGLE (x min, x max) pair — not one per range. _select_range
+        # repopulates it from the active range under a signal blocker; editing
+        # routes through _apply_range_bounds(source="spin"). The pair is disabled
+        # when the active range carries windows (the windows own the mask).
+        bounds_row = QHBoxLayout()
+        bounds_row.addWidget(QLabel("Fit range:"))
+        self._bounds_min_spin = QDoubleSpinBox()
+        self._bounds_min_spin.setRange(-1e12, 1e12)
+        self._bounds_min_spin.setDecimals(8)
+        self._bounds_min_spin.valueChanged.connect(self._on_bounds_spin_changed)
+        bounds_row.addWidget(self._bounds_min_spin)
+        bounds_row.addWidget(QLabel("–"))
+        self._bounds_max_spin = QDoubleSpinBox()
+        self._bounds_max_spin.setRange(-1e12, 1e12)
+        self._bounds_max_spin.setDecimals(8)
+        self._bounds_max_spin.valueChanged.connect(self._on_bounds_spin_changed)
+        bounds_row.addWidget(self._bounds_max_spin)
+        bounds_row.addStretch()
+        params_layout.addLayout(bounds_row)
+
+        # ── Exclusion windows sub-block: shown only when the active range has
+        # windows. Each window is a [min]–[max] spin pair + Remove Window button,
+        # rebuilt by _rebuild_active_window_rows on active-range/window change.
+        self._windows_block = QWidget()
+        self._windows_block_layout = QVBoxLayout(self._windows_block)
+        self._windows_block_layout.setContentsMargins(0, 0, 0, 0)
+        self._windows_block_layout.setSpacing(2)
+        params_layout.addWidget(self._windows_block)
+        self._windows_block.setVisible(False)
 
         # "Guess seeds" (item 3.3): user-initiated, off-thread data-aware seeding
         # of the ACTIVE range's free parameters. Never fires automatically — the
@@ -1322,147 +1344,108 @@ class ModelFitDialog(QDialog):
         previous_idx = self._active_range_idx if self._active_range_idx is not None else 0
 
         clear_layout(self._ranges_host)
+        self._range_cards = []
 
-        self._range_widgets = []
-        # (range_idx, window_idx) -> (min_spin, max_spin), so a canvas window
-        # drag can mirror the exact spinboxes without re-scanning the layout.
-        self._window_spin_widgets = {}
-
-        for idx, fit_range in enumerate(self._fit.ranges):
-            row_widget = QWidget()
-            row = QHBoxLayout(row_widget)
-
-            active = QCheckBox("active")
-            active.setChecked(True)
-            active.stateChanged.connect(lambda _state, i=idx: self._on_range_active_changed(i))
-            row.addWidget(active)
-
-            row.addWidget(QLabel(f"Range {idx + 1}"))
-
-            has_windows = bool(fit_range.windows)
-
-            xmin = QDoubleSpinBox()
-            xmin.setRange(-1e12, 1e12)
-            xmin.setDecimals(8)
-            xmin.setValue(float(fit_range.x_min if fit_range.x_min is not None else 0.0))
-            xmin.valueChanged.connect(lambda _v, i=idx: self._on_range_bounds_changed(i))
-            row.addWidget(QLabel("x min"))
-            row.addWidget(xmin)
-
-            xmax = QDoubleSpinBox()
-            xmax.setRange(-1e12, 1e12)
-            xmax.setDecimals(8)
-            xmax.setValue(float(fit_range.x_max if fit_range.x_max is not None else 0.0))
-            xmax.valueChanged.connect(lambda _v, i=idx: self._on_range_bounds_changed(i))
-            row.addWidget(QLabel("x max"))
-            row.addWidget(xmax)
-
-            if has_windows:
-                xmin.setEnabled(False)
-                xmax.setEnabled(False)
-                xmin.setToolTip("Fit windows below override the range bounds.")
-                xmax.setToolTip("Fit windows below override the range bounds.")
-
-            model_label = QLabel(fit_range.model.formula_string())
-            model_label.setMinimumWidth(220)
-            row.addWidget(model_label)
-
-            status_label = QLabel(self._status_text_for_range(fit_range))
-            status_label.setTextFormat(Qt.TextFormat.RichText)
-            row.addWidget(status_label)
-
-            # Role ordering (matches the OK/Cancel/Remove-Fit button box):
-            # PRIMARY (Run Fit) → SECONDARY (Edit Model / Edit Params / Exclude
-            # region…) → DESTRUCTIVE (Remove). Run Fit carries the accent primary
-            # QSS so the eye lands on the action that advances the workflow, and
-            # is width-locked so a future "Fitting…" relabel cannot clip it.
-            fit_btn = QPushButton("Run Fit")
-            fit_btn.setStyleSheet(build_primary_button_qss())
-            fit_btn.setMinimumWidth(widest_button_width(fit_btn, "Run Fit", "Fitting…"))
-            fit_btn.clicked.connect(lambda _checked=False, i=idx: self._run_fit(i))
-            row.addWidget(fit_btn)
-
-            edit_btn = QPushButton("Edit Model")
-            edit_btn.clicked.connect(lambda _checked=False, i=idx: self._edit_model(i))
-            row.addWidget(edit_btn)
-
-            select_btn = QPushButton("Edit Params")
-            select_btn.clicked.connect(lambda _checked=False, i=idx: self._select_range(i))
-            row.addWidget(select_btn)
-
-            if self._supports_windows:
-                add_window_btn = QPushButton("Exclude region…")
-                add_window_btn.setToolTip(
-                    "Exclude a region from this range: drag across it on the plot "
-                    "(right-button drag) to carve a gap, or click here to add a "
-                    "(min, max) window manually. The range becomes a union of "
-                    "windows with one model fitted across all of them — useful for "
-                    "excluding e.g. the critical region around a transition."
-                )
-                add_window_btn.clicked.connect(lambda _checked=False, i=idx: self._add_window(i))
-                row.addWidget(add_window_btn)
-
-            remove_btn = QPushButton("Remove")
-            remove_btn.clicked.connect(lambda _checked=False, i=idx: self._remove_range(i))
-            row.addWidget(remove_btn)
-
-            row.addStretch()
-            self._ranges_host.addWidget(row_widget)
-
-            windows = fit_range.windows if self._supports_windows else None
-            for widx, (w_lo, w_hi) in enumerate(windows or []):
-                window_widget = QWidget()
-                window_row = QHBoxLayout(window_widget)
-                window_row.addSpacing(36)
-                window_row.addWidget(QLabel(f"Window {widx + 1}"))
-
-                w_min = QDoubleSpinBox()
-                w_min.setRange(-1e12, 1e12)
-                w_min.setDecimals(8)
-                w_min.setValue(float(w_lo))
-                w_min.valueChanged.connect(
-                    lambda value, i=idx, w=widx: self._on_window_bounds_changed(i, w, 0, value)
-                )
-                window_row.addWidget(QLabel("min"))
-                window_row.addWidget(w_min)
-
-                w_max = QDoubleSpinBox()
-                w_max.setRange(-1e12, 1e12)
-                w_max.setDecimals(8)
-                w_max.setValue(float(w_hi))
-                w_max.valueChanged.connect(
-                    lambda value, i=idx, w=widx: self._on_window_bounds_changed(i, w, 1, value)
-                )
-                window_row.addWidget(QLabel("max"))
-                window_row.addWidget(w_max)
-
-                self._window_spin_widgets[(idx, widx)] = (w_min, w_max)
-
-                remove_window_btn = QPushButton("Remove Window")
-                remove_window_btn.clicked.connect(
-                    lambda _checked=False, i=idx, w=widx: self._remove_window(i, w)
-                )
-                window_row.addWidget(remove_window_btn)
-                window_row.addStretch()
-                self._ranges_host.addWidget(window_widget)
-
-            self._range_widgets.append(
-                _RangeWidgets(
-                    active=active,
-                    x_min=xmin,
-                    x_max=xmax,
-                    model_label=model_label,
-                    edit_button=edit_btn,
-                    fit_button=fit_btn,
-                    remove_button=remove_btn,
-                    status_label=status_label,
-                )
-            )
+        active_idx = min(previous_idx, len(self._fit.ranges) - 1) if self._fit.ranges else 0
+        for idx in range(len(self._fit.ranges)):
+            card = RangeCard(idx)
+            card.set_state(self._range_card_view(idx, show_run=(idx == active_idx)))
+            card.set_active(idx == active_idx)
+            card.selected.connect(self._select_range)
+            card.run_requested.connect(self._run_fit)
+            card.edit_model_requested.connect(self._edit_model)
+            card.edit_params_requested.connect(self._select_range)
+            card.exclude_requested.connect(self._add_window)
+            card.remove_requested.connect(self._remove_range)
+            self._ranges_host.addWidget(card)
+            self._range_cards.append(card)
 
         self._post_rebuild_ranges_ui()
         self._refresh_range_selector()
         if self._fit.ranges:
             self._select_range(max(0, min(previous_idx, len(self._fit.ranges) - 1)))
+
+    def _range_card_view(self, idx: int, *, show_run: bool) -> RangeCardView:
+        """Assemble the plain render payload for range *idx*'s card.
+
+        Bounds text reuses the ``∪`` union formatting from
+        ``_refresh_range_selector``; the status chip reuses the same verdict
+        path (``assess_fit_quality`` / ``fit_quality_chip_html``) the details
+        pane uses, so card and result box never disagree.
+        """
+        fit_range = self._fit.ranges[idx]
+        result = self._result_for_range(idx)
+
+        status: str
+        chip_html = ""
+        tooltip = ""
+        if result is None:
+            status = "not_run"
+        elif getattr(result, "success", False):
+            status = "success"
+            chip_html = self._range_status_chip_html(fit_range, result)
+            chi2 = getattr(result, "chi_squared", None)
+            rchi2 = getattr(result, "reduced_chi_squared", None)
+            if chi2 is not None and rchi2 is not None:
+                tooltip = f"chi2 = {float(chi2):.6g}, reduced chi2 = {float(rchi2):.6g}"
+        else:
+            status = "failed"
+            tooltip = getattr(result, "message", "") or "No convergence"
+
+        return RangeCardView(
+            idx=idx,
+            title=f"Range {idx + 1}",
+            swatch_color=range_span_color(idx),
+            bounds_text=self._range_bounds_text(fit_range),
+            formula=fit_range.model.formula_string(),
+            status=status,  # type: ignore[arg-type]
+            status_chip_html=chip_html,
+            status_tooltip=tooltip,
+            can_remove=len(self._fit.ranges) > 1,
+            show_run=show_run,
+        )
+
+    def _range_bounds_text(self, fit_range: ModelFitRange) -> str:
+        """Compact bounds string for a card, e.g. "[12–40] ∪ [55–88] K".
+
+        Mirrors the union formatting in ``_refresh_range_selector`` (which
+        drives the combo). Appends the x-unit when the abscissa has one.
+        """
+        unit = _x_unit(self._x_key)
+        suffix = f" {unit}" if unit else ""
+        if fit_range.windows:
+            union = " ∪ ".join(f"[{lo:.6g}–{hi:.6g}]" for lo, hi in fit_range.windows)
+            return f"{union}{suffix}"
+        x_min = fit_range.x_min if fit_range.x_min is not None else float("nan")
+        x_max = fit_range.x_max if fit_range.x_max is not None else float("nan")
+        return f"[{x_min:.6g}–{x_max:.6g}]{suffix}"
+
+    def _range_status_chip_html(self, fit_range: ModelFitRange, result: object) -> str:
+        """Verdict chip for a successful range, via the shared quality path.
+
+        Returns "" when no verdict applies (unit/scatter weights, ν < 1, or a
+        result without a point count — e.g. a cross-group/legacy bridge result).
+        """
+        if getattr(result, "error_mode", None) in (ErrorMode.NONE.value, ErrorMode.SCATTER.value):
+            return ""
+        n_points = getattr(result, "n_points", 0)
+        if not n_points or n_points <= 0:
+            return ""
+        n_free = len(fit_range.parameters.free_parameters)
+        quality = assess_fit_quality(
+            result.chi_squared, n_points - n_free, fit_quality_confidence()
+        )
+        if quality.verdict is None:
+            return ""
+        quality_dict = {
+            "verdict": quality.verdict,
+            "band_low": float(quality.band_low),
+            "band_high": float(quality.band_high),
+            "confidence": float(quality.confidence),
+            "dof": int(quality.dof),
+        }
+        params_at_bound = list(getattr(result, "params_at_bound", ()) or [])
+        return fit_quality_chip_html(quality_dict, params_at_bound)
 
     def _post_rebuild_ranges_ui(self) -> None:
         """Hook for subclasses to adjust freshly rebuilt range rows."""
@@ -1480,6 +1463,101 @@ class ModelFitDialog(QDialog):
                 text = f"Range {idx}: [{x_min:.6g}, {x_max:.6g}]"
             self._range_selector.addItem(text)
         self._range_selector.blockSignals(False)
+
+    # ── details-pane bounds + exclusion windows (contracts C-BOUNDS / C) ──────
+
+    def _populate_active_bounds(self, idx: int) -> None:
+        """Load the single (x min, x max) pair from the active range.
+
+        Written under a signal blocker so priming the spins does not re-fire
+        ``_on_bounds_spin_changed`` and loop back through ``_apply_range_bounds``.
+        The pair is disabled when the active range carries windows (the windows
+        own the mask), mirroring the old per-row ``has_windows`` rule.
+        """
+        fit_range = self._fit.ranges[idx]
+        has_windows = bool(fit_range.windows)
+        x_min = float(fit_range.x_min if fit_range.x_min is not None else self._x_min_data)
+        x_max = float(fit_range.x_max if fit_range.x_max is not None else self._x_max_data)
+        with QSignalBlocker(self._bounds_min_spin):
+            self._bounds_min_spin.setValue(x_min)
+        with QSignalBlocker(self._bounds_max_spin):
+            self._bounds_max_spin.setValue(x_max)
+        tooltip = "Fit windows below override the range bounds." if has_windows else ""
+        self._bounds_min_spin.setEnabled(not has_windows)
+        self._bounds_max_spin.setEnabled(not has_windows)
+        self._bounds_min_spin.setToolTip(tooltip)
+        self._bounds_max_spin.setToolTip(tooltip)
+
+    def _rebuild_active_window_rows(self, idx: int) -> None:
+        """Rebuild the exclusion-window sub-block for the ACTIVE range.
+
+        Re-keys ``self._window_spin_widgets`` by WINDOW INDEX only (the sub-block
+        only ever shows the active range's windows). The block is hidden when the
+        range has no windows or the subclass does not support them.
+        """
+        clear_layout(self._windows_block_layout)
+        self._window_spin_widgets = {}
+
+        fit_range = self._fit.ranges[idx]
+        windows = fit_range.windows if self._supports_windows else None
+        if not windows:
+            self._windows_block.setVisible(False)
+            return
+
+        self._windows_block_layout.addWidget(QLabel("Exclusion windows"))
+        for widx, (w_lo, w_hi) in enumerate(windows):
+            window_widget = QWidget()
+            window_row = QHBoxLayout(window_widget)
+            window_row.setContentsMargins(0, 0, 0, 0)
+            window_row.addWidget(QLabel(f"Window {widx + 1}"))
+
+            w_min = QDoubleSpinBox()
+            w_min.setRange(-1e12, 1e12)
+            w_min.setDecimals(8)
+            w_min.setValue(float(w_lo))
+            w_min.valueChanged.connect(
+                lambda value, w=widx: self._on_window_bounds_changed(
+                    self._active_range_idx, w, 0, value
+                )
+            )
+            window_row.addWidget(QLabel("min"))
+            window_row.addWidget(w_min)
+
+            w_max = QDoubleSpinBox()
+            w_max.setRange(-1e12, 1e12)
+            w_max.setDecimals(8)
+            w_max.setValue(float(w_hi))
+            w_max.valueChanged.connect(
+                lambda value, w=widx: self._on_window_bounds_changed(
+                    self._active_range_idx, w, 1, value
+                )
+            )
+            window_row.addWidget(QLabel("max"))
+            window_row.addWidget(w_max)
+
+            self._window_spin_widgets[widx] = (w_min, w_max)
+
+            remove_window_btn = QPushButton("Remove Window")
+            remove_window_btn.clicked.connect(
+                lambda _checked=False, w=widx: self._remove_window(self._active_range_idx, w)
+            )
+            window_row.addWidget(remove_window_btn)
+            window_row.addStretch()
+            self._windows_block_layout.addWidget(window_widget)
+
+        self._windows_block.setVisible(True)
+
+    def _on_bounds_spin_changed(self, _value: float) -> None:
+        """The details-pane (x min, x max) pair was edited: apply to active range."""
+        idx = self._active_range_idx
+        if idx is None or idx < 0 or idx >= len(self._fit.ranges):
+            return
+        self._apply_range_bounds(
+            idx,
+            float(self._bounds_min_spin.value()),
+            float(self._bounds_max_spin.value()),
+            source="spin",
+        )
 
     def _add_window(self, idx: int) -> None:
         if idx < 0 or idx >= len(self._fit.ranges):
@@ -1525,7 +1603,19 @@ class ModelFitDialog(QDialog):
         # The stored result no longer corresponds to the edited windows.
         self._invalidate_range_result(idx)
         self._refresh_range_selector()
+        self._refresh_range_card(idx)
         self._request_preview_update()
+
+    def _refresh_range_card(self, idx: int) -> None:
+        """Repaint range *idx*'s card from a freshly-rebuilt view (chip + bounds).
+
+        Preserves the card's current ``show_run`` (active-ness) so a status/bounds
+        refresh does not flip which card exposes the Run Fit action.
+        """
+        if idx < 0 or idx >= len(self._range_cards):
+            return
+        show_run = idx == self._active_range_idx
+        self._range_cards[idx].set_state(self._range_card_view(idx, show_run=show_run))
 
     def _invalidate_range_result(self, idx: int) -> None:
         """Drop a range's fit result after its mask changed; refresh labels."""
@@ -1533,8 +1623,7 @@ class ModelFitDialog(QDialog):
         if fit_range.result is None:
             return
         fit_range.result = None
-        if idx < len(self._range_widgets):
-            self._range_widgets[idx].status_label.setText(self._status_text_for_range(fit_range))
+        self._refresh_range_card(idx)
         if self._active_range_idx == idx:
             self._chi2_label.setText(info_html("Fitting not yet run for selected range"))
             self._quality_label.setText("")
@@ -1576,34 +1665,12 @@ class ModelFitDialog(QDialog):
             "Hover for what this means.</span>"
         )
 
-    def _status_text_for_range(self, fit_range: ModelFitRange) -> str:
-        if fit_range.result is None:
-            return info_html("Not run")
-        if fit_range.result.success:
-            return success_html("Success")
-        return error_html("Failed")
-
-    def _on_range_active_changed(self, idx: int) -> None:
-        if idx < 0 or idx >= len(self._fit.ranges):
-            return
-
-    def _on_range_bounds_changed(self, idx: int) -> None:
-        if idx < 0 or idx >= len(self._fit.ranges):
-            return
-        widgets = self._range_widgets[idx]
-        self._apply_range_bounds(
-            idx,
-            float(widgets.x_min.value()),
-            float(widgets.x_max.value()),
-            source="spinbox",
-        )
-
     def _apply_range_bounds(self, idx: int, x_min: float, x_max: float, *, source: str) -> None:
-        """Single funnel for every range-bound change (spinbox edit or drag).
+        """Single funnel for every range-bound change (details-pane edit or drag).
 
         Routing every entry point through here guarantees the invalidate +
-        spinbox-mirror + selector-refresh + preview-refresh sequence is never
-        skipped. ``source`` selects the preview-refresh strategy below.
+        details-pane mirror + selector/card-refresh + preview-refresh sequence is
+        never skipped. ``source`` selects the preview-refresh strategy below.
         """
         if idx < 0 or idx >= len(self._fit.ranges):
             return
@@ -1612,16 +1679,18 @@ class ModelFitDialog(QDialog):
         fit_range.x_max = float(x_max)
         self._invalidate_range_result(idx)
 
-        # Mirror into the row spinboxes under a signal blocker so writing them
-        # does not re-fire _on_range_bounds_changed and loop back through here.
-        if idx < len(self._range_widgets):
-            widgets = self._range_widgets[idx]
-            with QSignalBlocker(widgets.x_min):
-                widgets.x_min.setValue(float(x_min))
-            with QSignalBlocker(widgets.x_max):
-                widgets.x_max.setValue(float(x_max))
+        # Mirror into the details-pane bounds pair, but ONLY for the active range:
+        # the canvas only ever drags the active range, so a non-active idx here is
+        # a programmatic call and the details pane already shows another range.
+        # A non-active card's bounds_text refreshes below via _refresh_range_card.
+        if idx == self._active_range_idx:
+            with QSignalBlocker(self._bounds_min_spin):
+                self._bounds_min_spin.setValue(float(x_min))
+            with QSignalBlocker(self._bounds_max_spin):
+                self._bounds_max_spin.setValue(float(x_max))
 
         self._refresh_range_selector()
+        self._refresh_range_card(idx)
 
         # FEEDBACK-LOOP RULE (canvas vs spinbox): during a canvas drag the
         # TrendPreviewCanvas already mutates and redraws its own span artist
@@ -1663,9 +1732,10 @@ class ModelFitDialog(QDialog):
         self._invalidate_range_result(idx)
 
         # Mirror the corresponding window spinboxes under a signal blocker so
-        # they do not re-fire _on_window_bounds_changed and loop. The spinboxes
-        # are registered per (range, window) during _rebuild_ranges_ui.
-        spins = self._window_spin_widgets.get((idx, window_idx))
+        # they do not re-fire _on_window_bounds_changed and loop. The details
+        # pane only shows the active range's windows, so the spinboxes are keyed
+        # by window index alone (idx is the active range by construction here).
+        spins = self._window_spin_widgets.get(window_idx)
         if spins is not None:
             w_min, w_max = spins
             with QSignalBlocker(w_min):
@@ -1674,6 +1744,7 @@ class ModelFitDialog(QDialog):
                 w_max.setValue(float(hi))
 
         self._refresh_range_selector()
+        self._refresh_range_card(idx)
         # Canvas-source: curve resample only (see FEEDBACK-LOOP RULE above).
         self._preview_timer.start()
 
@@ -2167,6 +2238,15 @@ class ModelFitDialog(QDialog):
             self._range_selector.setCurrentIndex(idx)
             self._range_selector.blockSignals(False)
 
+        # Move the active highlight + the Run Fit action to the selected card,
+        # and repoint the details-pane bounds pair / window sub-block at it.
+        for card_idx, card in enumerate(self._range_cards):
+            is_active = card_idx == idx
+            card.set_active(is_active)
+            card.set_state(self._range_card_view(card_idx, show_run=is_active))
+        self._populate_active_bounds(idx)
+        self._rebuild_active_window_rows(idx)
+
         self._set_formula_display(fit_range)
         self._range_hint_label.setText(self._range_hint_text(idx))
 
@@ -2415,10 +2495,21 @@ class ModelFitDialog(QDialog):
         for button in self._buttons.buttons():
             button.setEnabled(not busy)
 
-        for widgets in self._range_widgets:
-            widgets.active.setEnabled(not busy)
-            widgets.x_min.setEnabled(not busy)
-            widgets.x_max.setEnabled(not busy)
-            widgets.edit_button.setEnabled(not busy)
-            widgets.fit_button.setEnabled(not busy)
-            widgets.remove_button.setEnabled(not busy)
+        # Cards: disable each card's Run Fit + overflow controls.
+        for card in self._range_cards:
+            card.set_enabled(not busy)
+
+        # Details-pane bounds pair: disabled while a fit runs, then restored to
+        # its window-aware enabled state (windowed active range keeps them off).
+        if busy:
+            self._bounds_min_spin.setEnabled(False)
+            self._bounds_max_spin.setEnabled(False)
+        elif self._active_range_idx is not None:
+            self._populate_active_bounds(self._active_range_idx)
+
+        # Active range's exclusion-window spins + Remove buttons.
+        for w_min, w_max in self._window_spin_widgets.values():
+            w_min.setEnabled(not busy)
+            w_max.setEnabled(not busy)
+        for btn in self._windows_block.findChildren(QPushButton):
+            btn.setEnabled(not busy)

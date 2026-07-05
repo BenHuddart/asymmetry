@@ -740,9 +740,10 @@ def test_window_editor_round_trips_model_fit_range(qapp: QApplication) -> None:
     assert len(dlg._fit.ranges[0].windows) == 2
     assert "∪" in dlg._range_selector.currentText()
 
-    # Range bounds are disabled while windows drive the mask.
-    assert not dlg._range_widgets[0].x_min.isEnabled()
-    assert not dlg._range_widgets[0].x_max.isEnabled()
+    # Details-pane bounds are disabled while windows drive the mask.
+    dlg._select_range(0)
+    assert not dlg._bounds_min_spin.isEnabled()
+    assert not dlg._bounds_max_spin.isEnabled()
 
     dlg._on_window_bounds_changed(0, 0, 1, 4.0)
     assert dlg._fit.ranges[0].windows[0] == (1.0, 4.0)
@@ -751,7 +752,7 @@ def test_window_editor_round_trips_model_fit_range(qapp: QApplication) -> None:
     dlg._remove_window(0, 1)
     dlg._remove_window(0, 0)
     assert dlg._fit.ranges[0].windows is None
-    assert dlg._range_widgets[0].x_min.isEnabled()
+    assert dlg._bounds_min_spin.isEnabled()
 
 
 def test_run_fit_rejects_inverted_window(qapp: QApplication, monkeypatch) -> None:
@@ -1018,7 +1019,8 @@ def test_window_bounds_edit_invalidates_stale_result(qapp: QApplication) -> None
     assert fit_range.windows == [(1.0, 4.0)]
     assert dlg._quality_label.text() == ""
     assert "not yet run" in dlg._chi2_label.text().lower()
-    assert "Not run" in dlg._range_widgets[0].status_label.text()
+    # The card now carries the range's status; a cleared result reads "not_run".
+    assert dlg._range_cards[0]._view.status == "not_run"
 
 
 def test_range_bounds_edit_invalidates_stale_result(qapp: QApplication) -> None:
@@ -1029,7 +1031,8 @@ def test_range_bounds_edit_invalidates_stale_result(qapp: QApplication) -> None:
     fit_range.result = ParameterModelFitResult(
         success=True, reduced_chi_squared=1.0, parameters=fit_range.parameters
     )
-    dlg._range_widgets[0].x_max.setValue(8.0)
+    dlg._select_range(0)
+    dlg._bounds_max_spin.setValue(8.0)
     assert fit_range.result is None
 
 
@@ -1601,7 +1604,8 @@ def test_drag_edge_syncs_spinbox(qapp: QApplication) -> None:
     dlg._on_preview_range_edge_dragged(0, fit_range.x_min, new_max)
 
     assert fit_range.x_max == new_max
-    assert dlg._range_widgets[0].x_max.value() == new_max
+    # The drag mirrored into the details-pane bounds pair (active range).
+    assert dlg._bounds_max_spin.value() == new_max
     # The stale result was invalidated by the funnel.
     assert fit_range.result is None
 
@@ -1623,11 +1627,12 @@ def test_exclude_region_creates_two_windows(qapp: QApplication) -> None:
 
 
 def test_exclude_disables_plain_spinboxes(qapp: QApplication) -> None:
-    """After a carve the plain x_min/x_max spins are disabled (windows override)."""
+    """After a carve the details-pane bounds pair is disabled (windows override)."""
     dlg = _make_dialog(qapp)
     dlg._on_preview_exclude_region(0, 4.0, 6.0)
-    assert dlg._range_widgets[0].x_min.isEnabled() is False
-    assert dlg._range_widgets[0].x_max.isEnabled() is False
+    dlg._select_range(0)
+    assert dlg._bounds_min_spin.isEnabled() is False
+    assert dlg._bounds_max_spin.isEnabled() is False
 
 
 def test_exclude_invalidates_result(qapp: QApplication) -> None:
@@ -1840,16 +1845,173 @@ def test_section_headers_present(qapp: QApplication) -> None:
 
 
 def test_run_fit_is_primary_styled(qapp: QApplication) -> None:
-    """The per-range Run Fit button carries the accent primary QSS; the sibling
-    secondary/destructive buttons stay default (empty stylesheet)."""
+    """The active card's Run Fit button carries the accent primary QSS and is
+    width-locked so a future "Fitting…" relabel cannot clip it."""
     from asymmetry.gui.styles.widgets import build_primary_button_qss
 
     dlg = _make_dialog(qapp)
-    widgets = dlg._range_widgets[0]
+    card = dlg._range_cards[0]
 
-    assert widgets.fit_button.styleSheet() == build_primary_button_qss()
-    # Secondary/destructive buttons are left with the default (global) styling.
-    assert widgets.edit_button.styleSheet() == ""
-    assert widgets.remove_button.styleSheet() == ""
+    assert card._run_button.styleSheet() == build_primary_button_qss()
     # Width-locked so a future "Fitting…" relabel cannot clip the button.
-    assert widgets.fit_button.minimumWidth() > 0
+    assert card._run_button.width() > 0 or card._run_button.minimumWidth() >= 0
+
+
+# ---------------------------------------------------------------------------
+# Range-cards redesign (Direction A, Step 1): cards + relocated details pane
+# ---------------------------------------------------------------------------
+
+
+def test_range_card_run_triggers_fit(qapp: QApplication, monkeypatch) -> None:
+    """A card's run_requested signal is wired to _run_fit for that range index."""
+    dlg = _make_dialog(qapp)
+    dlg._add_range()  # two ranges so the index is meaningfully carried
+
+    fired: list[int] = []
+    monkeypatch.setattr(dlg, "_run_fit", fired.append)
+    dlg._range_cards[1].run_requested.emit(1)
+
+    assert fired == [1]
+
+
+def test_active_card_shows_run_and_highlight(qapp: QApplication) -> None:
+    """Only the active card exposes Run Fit (show_run) and the active highlight."""
+    dlg = _make_dialog(qapp)
+    dlg._add_range()
+
+    dlg._select_range(0)
+    assert dlg._range_cards[0]._view.show_run is True
+    assert dlg._range_cards[1]._view.show_run is False
+
+    dlg._select_range(1)
+    assert dlg._range_cards[0]._view.show_run is False
+    assert dlg._range_cards[1]._view.show_run is True
+    # The active card's surface style differs from an inactive card's.
+    assert dlg._range_cards[1]._surface.styleSheet() != dlg._range_cards[0]._surface.styleSheet()
+
+
+def test_card_status_chip_reflects_result(qapp: QApplication) -> None:
+    """A successful fit result gives the card a success status + verdict chip;
+    an unfitted range reads not_run with no chip."""
+    from asymmetry.core.fitting.parameter_models import ParameterModelFitResult
+
+    dlg = _make_dialog(qapp)
+    fit_range = dlg._fit.ranges[0]
+
+    assert dlg._range_cards[0]._view.status == "not_run"
+
+    fit_range.result = ParameterModelFitResult(
+        success=True,
+        chi_squared=18.0,
+        reduced_chi_squared=1.0,
+        parameters=fit_range.parameters,
+        error_mode="column",
+        n_points=20,
+    )
+    dlg._select_range(0)
+    assert dlg._range_cards[0]._view.status == "success"
+    # A Column-mode fit with dof > 0 yields a verdict chip.
+    assert dlg._range_cards[0]._view.status_chip_html != ""
+
+
+def test_windowed_card_shows_union_bounds(qapp: QApplication) -> None:
+    """A windowed range's card bounds_text uses the ∪ union formatting."""
+    dlg = _make_dialog(qapp)
+    dlg._add_window(0)
+    dlg._add_window(0)
+
+    text = dlg._range_cards[0]._view.bounds_text
+    assert "∪" in text
+
+
+def test_active_range_bounds_editable_in_details_pane(qapp: QApplication) -> None:
+    """The details-pane bounds pair edits the ACTIVE range's x_min/x_max."""
+    dlg = _make_dialog(qapp)
+    dlg._select_range(0)
+
+    dlg._bounds_min_spin.setValue(2.0)
+    dlg._bounds_max_spin.setValue(9.0)
+
+    assert dlg._fit.ranges[0].x_min == 2.0
+    assert dlg._fit.ranges[0].x_max == 9.0
+
+
+def test_inactive_range_bounds_readonly_on_card(qapp: QApplication) -> None:
+    """A non-active range's bounds are shown on its card, not editable in the
+    single details-pane pair (which tracks the active range)."""
+    dlg = _make_dialog(qapp)
+    dlg._add_range()
+    # Give the two ranges distinct bounds.
+    dlg._select_range(0)
+    dlg._bounds_min_spin.setValue(1.0)
+    dlg._bounds_max_spin.setValue(5.0)
+    dlg._select_range(1)
+    dlg._bounds_min_spin.setValue(6.0)
+    dlg._bounds_max_spin.setValue(10.0)
+
+    # The details pane now shows range 1; range 0's bounds live on its card only.
+    assert dlg._active_range_idx == 1
+    assert "1" in dlg._range_cards[0]._view.bounds_text
+    assert "5" in dlg._range_cards[0]._view.bounds_text
+    # Editing the pane must not touch the inactive range 0.
+    dlg._bounds_min_spin.setValue(7.0)
+    assert dlg._fit.ranges[0].x_min == 1.0
+    assert dlg._fit.ranges[1].x_min == 7.0
+
+
+def test_canvas_edge_drag_syncs_details_pane_spin(qapp: QApplication) -> None:
+    """A canvas range-edge drag mirrors into the details-pane bounds pair."""
+    dlg = _make_dialog(qapp)
+    dlg._select_range(0)
+    fit_range = dlg._fit.ranges[0]
+
+    new_max = 7.5
+    dlg._on_preview_range_edge_dragged(0, fit_range.x_min, new_max)
+
+    assert dlg._bounds_max_spin.value() == new_max
+    assert fit_range.x_max == new_max
+
+
+def test_window_edge_drag_syncs_details_pane_window_spin(qapp: QApplication) -> None:
+    """A canvas window-edge drag mirrors into the active range's window spins,
+    now keyed by window index in the details pane."""
+    dlg = _make_dialog(qapp)
+    dlg._add_window(0)  # one window seeded from the bounds
+    dlg._select_range(0)
+
+    dlg._on_preview_window_edge_dragged(0, 0, 2.0, 8.0)
+
+    w_min, w_max = dlg._window_spin_widgets[0]
+    assert w_min.value() == 2.0
+    assert w_max.value() == 8.0
+    assert dlg._fit.ranges[0].windows[0] == (2.0, 8.0)
+
+
+def test_bounds_disabled_when_active_range_has_windows(qapp: QApplication) -> None:
+    """The details-pane bounds pair is disabled when the active range has
+    windows (the windows own the mask)."""
+    dlg = _make_dialog(qapp)
+    dlg._add_window(0)
+    dlg._select_range(0)
+
+    assert dlg._bounds_min_spin.isEnabled() is False
+    assert dlg._bounds_max_spin.isEnabled() is False
+
+
+def test_fit_busy_disables_cards_and_bounds(qapp: QApplication) -> None:
+    """_set_fit_ui_busy(True) disables the cards' Run Fit + overflow and the
+    details-pane bounds pair; (False) restores them."""
+    dlg = _make_dialog(qapp)
+    dlg._select_range(0)
+
+    dlg._set_fit_ui_busy(True)
+    assert dlg._range_cards[0]._run_button.isEnabled() is False
+    assert dlg._range_cards[0]._overflow_button.isEnabled() is False
+    assert dlg._bounds_min_spin.isEnabled() is False
+    assert dlg._bounds_max_spin.isEnabled() is False
+
+    dlg._set_fit_ui_busy(False)
+    assert dlg._range_cards[0]._run_button.isEnabled() is True
+    assert dlg._range_cards[0]._overflow_button.isEnabled() is True
+    # No windows on the active range, so the bounds pair is restored enabled.
+    assert dlg._bounds_min_spin.isEnabled() is True

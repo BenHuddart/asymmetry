@@ -169,10 +169,13 @@ class CrossGroupFitDialog(ModelFitDialog):
         self._build_suggest_roles_ui()
 
     def _post_rebuild_ranges_ui(self) -> None:
-        # Cross-group mode has no per-range activity concept; keep the
-        # checkboxes hidden across every rebuild, not just the first one.
-        for widgets in self._range_widgets:
-            widgets.active.setVisible(False)
+        # Cross-group mode uses a single pinned range, which now renders as one
+        # RangeCard (Step 1 of the range-cards redesign). The old per-range
+        # "active" checkbox this hook used to hide no longer exists — cards carry
+        # no such control — so there is nothing to hide here. Kept as a no-op
+        # override so the base rebuild flow stays unchanged; the cross-group
+        # card degradation is Step 2.3.
+        pass
 
     def _preview_series(self) -> list[PreviewSeries]:
         """One data trace per group (colour-cycled by draw order in the canvas).
@@ -641,15 +644,6 @@ class CrossGroupFitDialog(ModelFitDialog):
             "Cross-group fitting currently uses one shared fitting range.",
         )
 
-    def _status_text_for_range(self, fit_range) -> str:
-        idx = self._fit.ranges.index(fit_range) if fit_range in self._fit.ranges else -1
-        result = self._range_results.get(idx)
-        if result is None:
-            return info_html("Not run")
-        if result.success:
-            return success_html("Success")
-        return error_html("Failed")
-
     # ── template-method hook overrides (see ModelFitDialog) ───────────────────
     #
     # The shared table/status flow lives in ``ModelFitDialog._select_range`` /
@@ -681,6 +675,13 @@ class CrossGroupFitDialog(ModelFitDialog):
     def _quality_status_text(self, fit_range, result: object | None) -> str:
         # CrossGroupFitResult does not carry the per-range χ²/dof shape the
         # single-fit quality verdict needs, so cross-group mode shows none.
+        return ""
+
+    def _range_status_chip_html(self, fit_range, result: object) -> str:
+        # Same reason as _quality_status_text: the single-fit dof (free-parameter
+        # count) does not describe a cross-group fit whose local params multiply
+        # per group, so the card shows no verdict chip either (only success/fail
+        # state via the card's status).
         return ""
 
     def _current_range_roles(self) -> dict[str, str]:
