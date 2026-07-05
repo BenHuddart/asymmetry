@@ -1546,13 +1546,15 @@ def test_grouped_tab_fractionizes_additive_fit_function(
     tab.set_current_dataset(dataset)
     tab._set_composite_model(CompositeModel(["Exponential", "Constant"], operators=["+"]))
 
-    assert "fraction_1" in tab._formula_label.text()
+    assert "f_Exponential" in tab._formula_label.text()
     assert "A_1" not in tab._formula_label.text()
     row_by_name = {
         tab._group_model_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row
         for row in range(tab._group_model_table.rowCount())
     }
-    assert set(row_by_name) == {"Lambda", "fraction_1", "fraction_2"}
+    # n-1 scheme: one free fraction (f_Exponential) plus the display-only derived
+    # remainder row (f_Constant); the physics parameter Lambda stays.
+    assert set(row_by_name) == {"Lambda", "f_Exponential", "f_Constant"}
 
 
 def test_grouped_tab_synchronizes_fraction_rows(
@@ -1573,14 +1575,17 @@ def test_grouped_tab_synchronizes_fraction_rows(
         tab._group_model_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row
         for row in range(tab._group_model_table.rowCount())
     }
-    tab._group_model_table.item(row_by_name["fraction_1"], 1).setText("0.2")
-    final_type_combo = tab._group_model_table.cellWidget(row_by_name["fraction_2"], 2)
+    tab._group_model_table.item(row_by_name["f_Exponential"], 1).setText("0.2")
 
-    assert tab._group_model_table.item(row_by_name["fraction_1"], 1).text() == "0.2"
-    assert tab._group_model_table.item(row_by_name["fraction_2"], 1).text() == "0.8"
-    assert isinstance(final_type_combo, QComboBox)
-    assert final_type_combo.currentText() == "Fixed"
-    assert not final_type_combo.isEnabled()
+    # The free fraction stays editable; the derived remainder row auto-updates to
+    # 1 - 0.2 = 0.8 and carries no Type combo (it is display-only).
+    free_item = tab._group_model_table.item(row_by_name["f_Exponential"], 1)
+    assert free_item.text() == "0.2"
+    assert bool(free_item.flags() & Qt.ItemFlag.ItemIsEditable)
+    derived_item = tab._group_model_table.item(row_by_name["f_Constant"], 1)
+    assert derived_item.text() == "0.8"
+    assert not bool(derived_item.flags() & Qt.ItemFlag.ItemIsEditable)
+    assert tab._group_model_table.cellWidget(row_by_name["f_Constant"], 2) is None
 
 
 def test_grouped_fit_uses_per_group_seed_values_from_group_columns(
@@ -3111,14 +3116,66 @@ def test_single_fit_fraction_rows_auto_complete_final_fraction(qapp: QApplicatio
         tab._param_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row
         for row in range(tab._param_table.rowCount())
     }
-    final_item = tab._param_table.item(row_by_name["fraction_3"], 1)
-    assert final_item is not None
-    assert not bool(final_item.flags() & Qt.ItemFlag.ItemIsEditable)
+    # n-1 scheme: both free fractions are editable; the derived remainder is a
+    # display-only, non-editable row.
+    for free_name in ("f_Exponential", "f_Gaussian"):
+        item = tab._param_table.item(row_by_name[free_name], 1)
+        assert item is not None
+        assert bool(item.flags() & Qt.ItemFlag.ItemIsEditable)
+    derived_item = tab._param_table.item(row_by_name["f_Constant"], 1)
+    assert derived_item is not None
+    assert not bool(derived_item.flags() & Qt.ItemFlag.ItemIsEditable)
 
-    tab._param_table.item(row_by_name["fraction_1"], 1).setText("0.2")
-    tab._param_table.item(row_by_name["fraction_2"], 1).setText("0.3")
+    tab._param_table.item(row_by_name["f_Exponential"], 1).setText("0.2")
+    tab._param_table.item(row_by_name["f_Gaussian"], 1).setText("0.3")
 
-    assert tab._param_table.item(row_by_name["fraction_3"], 1).text() == "0.5"
+    assert tab._param_table.item(row_by_name["f_Constant"], 1).text() == "0.5"
+
+
+def test_single_fit_fraction_row_edit_caps_at_remainder(qapp: QApplication) -> None:
+    tab = SingleFitTab()
+    tab._set_composite_model(
+        CompositeModel.from_expression("( Exponential + Gaussian + Constant ){frac}")
+    )
+    row_by_name = {
+        tab._param_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row
+        for row in range(tab._param_table.rowCount())
+    }
+    # Bring the first free fraction down so there is known headroom, then push the
+    # second above it: editing caps at 1 - Σ(other free) = 1 - 0.2 = 0.8. No free
+    # row is ever locked, but a group's free fractions cannot exceed 1.
+    tab._param_table.item(row_by_name["f_Gaussian"], 1).setText("0.0")
+    tab._param_table.item(row_by_name["f_Exponential"], 1).setText("0.2")
+    tab._param_table.item(row_by_name["f_Gaussian"], 1).setText("0.9")
+    assert float(tab._param_table.item(row_by_name["f_Gaussian"], 1).text()) == pytest.approx(0.8)
+    assert float(tab._param_table.item(row_by_name["f_Constant"], 1).text()) == pytest.approx(0.0)
+
+
+def test_tie_candidates_exclude_derived_fraction_row(qapp: QApplication) -> None:
+    # Regression: the synthesized derived-fraction (remainder) row, e.g.
+    # f_Gaussian for (Exponential + Gaussian){frac}, has no fitted parameter and
+    # must never be offered as a tie target.
+    tab = SingleFitTab()
+    model = CompositeModel.from_expression("( Exponential + Gaussian ){frac}")
+    tab._set_composite_model(model)
+
+    table = tab._param_table
+    row_by_name = {
+        table.item(row, table.COL_NAME).data(Qt.ItemDataRole.UserRole): row
+        for row in range(table.rowCount())
+    }
+    derived_names = set(model.derived_fraction_names())
+    assert derived_names  # sanity: the group really does have a derived remainder
+    assert "f_Gaussian" in derived_names
+
+    some_row = row_by_name["A_1"]
+    candidates = table._tie_candidate_names(some_row)
+    for name in derived_names:
+        assert name not in candidates
+    # The free fraction and other real parameters remain valid tie targets.
+    assert "f_Exponential" in candidates
+    assert "Lambda" in candidates
+    assert "sigma" in candidates
 
 
 def test_global_fit_fraction_rows_auto_complete_final_fraction(qapp: QApplication) -> None:
@@ -3131,16 +3188,75 @@ def test_global_fit_fraction_rows_auto_complete_final_fraction(qapp: QApplicatio
         tab._param_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row
         for row in range(tab._param_table.rowCount())
     }
-    final_item = tab._param_table.item(row_by_name["fraction_3"], 1)
-    bounds_item = tab._param_table.item(row_by_name["fraction_3"], 3)
-    assert final_item is not None
-    assert not bool(final_item.flags() & Qt.ItemFlag.ItemIsEditable)
-    assert bounds_item is not None and bounds_item.text() == "0, 1"
+    for free_name in ("f_Exponential", "f_Gaussian"):
+        item = tab._param_table.item(row_by_name[free_name], 1)
+        assert item is not None
+        assert bool(item.flags() & Qt.ItemFlag.ItemIsEditable)
+        bounds_item = tab._param_table.item(row_by_name[free_name], 3)
+        assert bounds_item is not None and bounds_item.text() == "0, 1"
+    derived_item = tab._param_table.item(row_by_name["f_Constant"], 1)
+    assert derived_item is not None
+    assert not bool(derived_item.flags() & Qt.ItemFlag.ItemIsEditable)
 
-    tab._param_table.item(row_by_name["fraction_1"], 1).setText("0.25")
-    tab._param_table.item(row_by_name["fraction_2"], 1).setText("0.5")
+    tab._param_table.item(row_by_name["f_Exponential"], 1).setText("0.25")
+    tab._param_table.item(row_by_name["f_Gaussian"], 1).setText("0.5")
 
-    assert tab._param_table.item(row_by_name["fraction_3"], 1).text() == "0.25"
+    assert tab._param_table.item(row_by_name["f_Constant"], 1).text() == "0.25"
+
+
+def _legacy_single_fraction_state() -> dict:
+    """A pre-rework single-fit state blob with legacy fraction_<k> keys."""
+    model = CompositeModel.from_expression("( Exponential + Gaussian + Constant ){frac}")
+    return {
+        "composite_model": model.to_dict(),
+        "parameters": [
+            {"name": "A_1", "value": 20.0, "fixed": False, "min": "0", "max": "inf"},
+            {"name": "Lambda", "value": 0.5, "fixed": False, "min": "0", "max": "inf"},
+            {"name": "fraction_1", "value": 2.0, "fixed": False, "min": "0", "max": "1"},
+            {"name": "sigma", "value": 0.3, "fixed": False, "min": "0", "max": "inf"},
+            {"name": "fraction_2", "value": 1.0, "fixed": False, "min": "0", "max": "1"},
+            {"name": "fraction_3", "value": 1.0, "fixed": False, "min": "0", "max": "1"},
+        ],
+    }
+
+
+def test_single_fit_restore_migrates_legacy_fraction_state(qapp: QApplication) -> None:
+    tab = SingleFitTab()
+    tab.restore_state(_legacy_single_fraction_state())
+
+    by_name = {p["name"]: p for p in tab.get_state()["parameters"]}
+    # Legacy fraction_1/2 → new free names (normalised 2:1:1 → 0.5/0.25); the
+    # dropped fraction_3 term becomes the display-only derived remainder.
+    assert "f_Exponential" in by_name
+    assert "f_Gaussian" in by_name
+    assert not any(name.startswith("fraction_") for name in by_name)
+    assert float(by_name["f_Exponential"]["value"]) == pytest.approx(0.5)
+    assert float(by_name["f_Gaussian"]["value"]) == pytest.approx(0.25)
+
+    row_by_name = {
+        tab._param_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row
+        for row in range(tab._param_table.rowCount())
+    }
+    # The derived remainder display row is present and shows 1 - 0.5 - 0.25 = 0.25.
+    assert "f_Constant" in row_by_name
+    assert tab._param_table.item(row_by_name["f_Constant"], 1).text() == "0.25"
+
+
+def test_global_fit_restore_migrates_legacy_fraction_state(qapp: QApplication) -> None:
+    tab = GlobalFitTab()
+    tab.restore_state(_legacy_single_fraction_state())
+
+    by_name = {p["name"]: p for p in tab.get_state()["parameters"]}
+    assert "f_Exponential" in by_name
+    assert "f_Gaussian" in by_name
+    assert not any(name.startswith("fraction_") for name in by_name)
+
+    row_by_name = {
+        tab._param_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row
+        for row in range(tab._param_table.rowCount())
+    }
+    assert "f_Constant" in row_by_name
+    assert tab._param_table.item(row_by_name["f_Constant"], 1).text() == "0.25"
 
 
 def test_global_tab_reopens_cached_results_for_prior_run_set_after_switching_groups(

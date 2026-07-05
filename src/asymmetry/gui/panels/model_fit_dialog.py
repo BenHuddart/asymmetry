@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from asymmetry.core.fitting.composite import QUADRATURE_OPERATOR, UnknownComponentError
 from asymmetry.core.fitting.fit_quality import assess_fit_quality
 from asymmetry.core.fitting.parameter_models import (
     PARAMETER_MODEL_COMPONENTS,
@@ -46,13 +47,16 @@ from asymmetry.gui.fit_settings import fit_quality_confidence
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import apply_param_table_style, clear_layout, make_formula_box
 from asymmetry.gui.tasks import TaskRunner
-from asymmetry.gui.widgets.function_expression_builder import (
-    ComponentSelectorButton as _ComponentSelectorButton,  # noqa: F401
-)
-from asymmetry.gui.widgets.function_expression_builder import (
-    FunctionExpressionBuilderDialog,
+from asymmetry.gui.widgets.function_builder.dialog import (
+    FunctionBuilderDialog,
+    make_component_expression_parser,
 )
 from asymmetry.gui.widgets.screen_sizing import resize_to_available
+
+#: Operators offered by the parameter/trending builder — the base arithmetic
+#: set plus the quadrature combinator ``⊕`` (``f ⊕ g = sqrt(f**2 + g**2)``),
+#: e.g. ``PowerLaw ⊕ Constant`` reproduces ``PowerLawQuadBG``.
+_PARAMETER_MODEL_OPERATORS: tuple[str, ...] = ("+", "-", "*", "/", QUADRATURE_OPERATOR)
 
 _OPERATOR_OPTIONS = ["+", "-", "*", "/"]
 
@@ -125,15 +129,6 @@ _PARAM_UNITS = {
 _NON_NEGATIVE_PARAMS = {"D", "D_2D", "D_nD", "D_perp", "lambda_BG", "lambda_0D", "f"}
 _STRICTLY_POSITIVE_PARAMS = {"tau", "B0", "Bwid", "nu", "m"}
 _POSITIVE_EPS = 1e-12
-_SC_COMPONENT_MENU_TITLE = "Superconducting Gap Models"
-
-
-def _build_parameter_model_categories(component_pool: list[str]) -> dict[str, list[str]]:
-    grouped: dict[str, list[str]] = {"General": [], _SC_COMPONENT_MENU_TITLE: []}
-    for name in sorted(component_pool):
-        target = _SC_COMPONENT_MENU_TITLE if name.startswith("SC_") else "General"
-        grouped[target].append(name)
-    return {key: value for key, value in grouped.items() if value}
 
 
 def _base_param_name(name: str) -> str:
@@ -306,7 +301,34 @@ def _show_warning(parent: QWidget, title: str, text: str) -> None:
     QMessageBox.warning(parent, title, text)
 
 
-class ParameterModelBuilderDialog(FunctionExpressionBuilderDialog):
+def _pool_restricted_model_parser(
+    pool: frozenset[str],
+) -> Callable[[str], ParameterCompositeModel]:
+    """Wrap ``ParameterCompositeModel.from_expression`` to reject components
+    outside *pool*.
+
+    ``ParameterCompositeModel.from_expression`` parses against the full
+    ``PARAMETER_MODEL_COMPONENTS`` registry (and always allows ``⊕``), so a
+    registered component that is simply not offered in this context (e.g. a
+    field-only basis function while trending vs temperature) would otherwise
+    parse successfully if the user typed it in text mode. Re-validate the
+    parsed component names against the context pool and raise the same
+    ``UnknownComponentError``-style message the shared grammar uses elsewhere,
+    so a mis-typed/out-of-context name gets a helpful, suggestion-bearing
+    error instead of silently succeeding.
+    """
+
+    def _parse(expression: str) -> ParameterCompositeModel:
+        model = ParameterCompositeModel.from_expression(expression)
+        offending = [name for name in model.component_names if name not in pool]
+        if offending:
+            raise UnknownComponentError(offending[0], allowed=pool)
+        return model
+
+    return _parse
+
+
+class ParameterModelBuilderDialog(FunctionBuilderDialog):
     """Compose a parameter model from basis components."""
 
     def __init__(
@@ -316,6 +338,12 @@ class ParameterModelBuilderDialog(FunctionExpressionBuilderDialog):
         initial_model: ParameterCompositeModel | None = None,
     ) -> None:
         self._component_pool = sorted(component_pool)
+        pool = frozenset(self._component_pool)
+        component_definitions = {
+            name: PARAMETER_MODEL_COMPONENTS[name]
+            for name in self._component_pool
+            if name in PARAMETER_MODEL_COMPONENTS
+        }
         initial_expression = (
             initial_model.component_expression_string()
             if initial_model is not None
@@ -324,14 +352,15 @@ class ParameterModelBuilderDialog(FunctionExpressionBuilderDialog):
         super().__init__(
             title="Build Parameter Model",
             expression_prefix="y(x)",
-            components_by_category=_build_parameter_model_categories(self._component_pool),
-            component_definitions=PARAMETER_MODEL_COMPONENTS,
-            model_parser=ParameterCompositeModel.from_expression,
+            component_definitions=component_definitions,
+            model_parser=_pool_restricted_model_parser(pool),
+            expression_parser=make_component_expression_parser(
+                allowed_components=pool,
+                allowed_operators=set(_PARAMETER_MODEL_OPERATORS),
+            ),
             initial_expression=initial_expression,
-            expression_placeholder="e.g. Linear + ( Arrhenius * Constant ) or PowerLaw ⊕ Constant",
-            # Quadrature combinator √(f²+g²) — a parameter-grammar-only operator
-            # (e.g. PowerLaw ⊕ Constant == PowerLawQuadBG).
-            extra_token_buttons=[("⊕", " ⊕ ")],
+            operators=_PARAMETER_MODEL_OPERATORS,
+            enable_fraction_groups=False,
             parent=parent,
         )
 

@@ -1194,3 +1194,23 @@ def test_suggest_trend_seeds_suffixed_params_for_repeated_component() -> None:
     seeds = suggest_trend_seeds(model, x, y)
     assert "Tc_1" in seeds and "Tc_2" in seeds
     assert all(name in model.param_names for name in seeds)
+
+
+def test_parameter_model_categories_cover_registry() -> None:
+    # Every category-table key must name a registered component, so a rename
+    # or removal fails here instead of silently un-categorizing the entry.
+    from asymmetry.core.fitting.parameter_models import (
+        _PARAMETER_MODEL_CATEGORIES,
+        PARAMETER_MODEL_COMPONENTS,
+    )
+
+    missing = set(_PARAMETER_MODEL_CATEGORIES) - set(PARAMETER_MODEL_COMPONENTS)
+    assert not missing
+
+    # The taxonomy is applied to the definitions themselves.
+    assert PARAMETER_MODEL_COMPONENTS["SC_SWave"].category == "Superconducting gap"
+    assert PARAMETER_MODEL_COMPONENTS["Arrhenius"].category == "Scaling & activation"
+    assert PARAMETER_MODEL_COMPONENTS["Constant"].category == "General"
+    assert all(
+        (definition.category or "").strip() for definition in PARAMETER_MODEL_COMPONENTS.values()
+    )

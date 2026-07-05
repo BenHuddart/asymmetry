@@ -1,10 +1,13 @@
-"""Fit Function Builder dialog populated with a composite model.
+"""Build Fit Function dialog with a library search in progress.
 
-Drives the composite-model expression editor with
-``Oscillatory + Exponential + Constant`` (or the fraction-group variant
-``(Oscillatory + Exponential){frac} + Constant``) over the EuO critical-
-region dataset, illustrating the GUI's free-form expression syntax. The
-dialog is shown non-modally so ``widget.grab`` captures its contents.
+Drives the two-panel builder with an existing
+``Oscillatory + Exponential + Constant`` model on the right (structured
+rows), while the left-hand component library shows a live search for
+``"kt"`` — an alias that ranks the Kubo-Toyabe family (``StaticGKT_ZF``,
+``LongitudinalFieldKT``, ``DynamicGaussianKT``, ...) above unrelated
+components, illustrating the searchable library over calculator-keypad
+component entry. The dialog is shown non-modally so ``widget.grab``
+captures its contents.
 """
 
 from __future__ import annotations
@@ -21,7 +24,7 @@ from ._base import CaptureContext, Scenario, register
 
 class CompositeModelsBuilderScenario(Scenario):
     name = "composite_models_builder"
-    description = "Fit Function Builder dialog with an Oscillatory+Exponential+Constant model."
+    description = "Build Fit Function dialog with a library search ranking the KT family."
     size = (820, 720)
 
     def capture(self, ctx: CaptureContext) -> Path:  # noqa: D401
@@ -37,6 +40,12 @@ class CompositeModelsBuilderScenario(Scenario):
         dialog.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
         dialog.show()
         _pump_events(200)
+
+        # Type an alias into the component library search so the screenshot
+        # shows ranked results (ranked hits + muted "alias" annotations)
+        # rather than the empty-query category view.
+        dialog._library.set_search_text("kt")
+        _pump_events(100)
 
         pix = dialog.grab()
         out_path = ctx.output_dir / f"{self.name}.png"

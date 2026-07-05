@@ -5,7 +5,14 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from asymmetry.core.fitting.composite import COMPONENTS, CompositeModel
+from asymmetry.core.fitting.composite import (
+    COMPONENTS,
+    CompositeModel,
+    has_legacy_fraction_values,
+    migrate_legacy_fraction_parameter_entries,
+    migrate_legacy_fraction_state,
+    migrate_legacy_fraction_values,
+)
 from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
 
 
@@ -113,14 +120,16 @@ def test_fraction_group_accepts_sum_of_products() -> None:
         "( Exponential * Gaussian + Exponential * Gaussian ){frac}"
     )
 
-    assert model.fraction_parameter_groups() == [["fraction_1", "fraction_2"]]
+    # Two additive terms -> a single free fraction (n-1); the second term is the
+    # derived remainder with no parameter.
+    assert model.fraction_parameter_groups() == [["f_Exponential"]]
+    assert model.derived_fraction_names() == ["f_Exponential_2"]
     assert model.param_names == [
         "A_1",
         "Lambda_1",
-        "fraction_1",
+        "f_Exponential",
         "sigma_1",
         "Lambda_2",
-        "fraction_2",
         "sigma_2",
     ]
     assert "Lambda_1" in model.formula_string()
@@ -128,6 +137,7 @@ def test_fraction_group_accepts_sum_of_products() -> None:
     assert "Lambda_2" in model.formula_string()
     assert "sigma_2" in model.formula_string()
 
+    # Free fraction = 0.25 -> remainder weight 0.75, no normalization.
     out = model.function(
         t,
         A_1=2.0,
@@ -135,8 +145,7 @@ def test_fraction_group_accepts_sum_of_products() -> None:
         sigma_1=0.2,
         Lambda_2=0.6,
         sigma_2=0.4,
-        fraction_1=0.25,
-        fraction_2=0.75,
+        f_Exponential=0.25,
     )
     expected = 2.0 * (
         0.25 * np.exp(-0.3 * t) * np.exp(-((0.2 * t) ** 2))
@@ -146,29 +155,36 @@ def test_fraction_group_accepts_sum_of_products() -> None:
     assert np.allclose(out, expected)
 
 
-def test_fraction_weights_normalises_relative_fractions() -> None:
-    # Raw fractions need not sum to 1; fraction_weights returns the partition
-    # fraction_i / Σ (which does), matching the weighting used at evaluation.
+def test_fraction_weights_reports_free_and_derived_remainder() -> None:
+    # The n-1 free fractions carry their clamped values; the remainder carries
+    # 1 - Σ free under its derived display name. No sum-normalization.
     model = CompositeModel.from_expression("( Oscillatory + Oscillatory + Oscillatory ){frac}")
-    weights = model.fraction_weights(
-        {"fraction_1": 0.6895, "fraction_2": 0.4591, "fraction_3": 0.334}
-    )
-    total = 0.6895 + 0.4591 + 0.334
+    weights = model.fraction_weights({"f_Oscillatory": 0.5, "f_Oscillatory_2": 0.2})
     assert weights == pytest.approx(
         {
-            "fraction_1": 0.6895 / total,
-            "fraction_2": 0.4591 / total,
-            "fraction_3": 0.334 / total,
+            "f_Oscillatory": 0.5,
+            "f_Oscillatory_2": 0.2,
+            "f_Oscillatory_3": 0.3,
         }
     )
     assert sum(weights.values()) == pytest.approx(1.0)
 
 
-def test_fraction_weights_skips_group_with_missing_fraction() -> None:
-    # A group is skipped entirely (not reported with raw values) when any of its
-    # fractions is absent, so callers never mislabel un-normalised values.
+def test_fraction_weights_clamps_remainder_when_free_exceeds_one() -> None:
+    # Free fractions summing above 1 drive the remainder to its 0 floor; free
+    # values themselves are clamped into [0, 1].
     model = CompositeModel.from_expression("( Oscillatory + Oscillatory + Oscillatory ){frac}")
-    assert model.fraction_weights({"fraction_1": 0.5, "fraction_2": 0.3}) == {}
+    weights = model.fraction_weights({"f_Oscillatory": 0.7, "f_Oscillatory_2": 0.6})
+    assert weights == pytest.approx(
+        {"f_Oscillatory": 0.7, "f_Oscillatory_2": 0.6, "f_Oscillatory_3": 0.0}
+    )
+
+
+def test_fraction_weights_skips_group_with_missing_free_fraction() -> None:
+    # A group is skipped entirely when any of its free fractions is absent, so
+    # callers never receive a partial partition.
+    model = CompositeModel.from_expression("( Oscillatory + Oscillatory + Oscillatory ){frac}")
+    assert model.fraction_weights({"f_Oscillatory": 0.5}) == {}
 
 
 def test_with_default_fraction_groups_wraps_top_level_additive_expression() -> None:
@@ -179,7 +195,9 @@ def test_with_default_fraction_groups_wraps_top_level_additive_expression() -> N
     assert grouped_model is not model
     assert grouped_model.fraction_groups == [(0, 1)]
     assert grouped_model.component_expression_string() == "(Exponential + Constant){frac}"
-    assert grouped_model.param_names == ["A_1", "Lambda", "fraction_1", "fraction_2"]
+    # One free fraction (n-1); Constant remainder has no parameter.
+    assert grouped_model.param_names == ["A_1", "Lambda", "f_Exponential"]
+    assert grouped_model.derived_fraction_names() == ["f_Constant"]
 
 
 def test_to_model_definition_callable() -> None:
@@ -311,33 +329,241 @@ def test_fraction_group_serialization_round_trip() -> None:
     assert restored.component_expression_string() == "(Exponential + Gaussian){frac}"
 
 
-def test_fraction_group_uses_group_amplitude_and_fraction_parameters() -> None:
+def test_fraction_names_disambiguate_duplicate_components() -> None:
+    # Repeated component base names get bare then _2, _3 across the whole model;
+    # the derived remainder continues the same scheme.
+    model = CompositeModel.from_expression("( Gaussian + Gaussian + Gaussian ){frac}")
+    assert model.fraction_parameter_groups() == [["f_Gaussian", "f_Gaussian_2"]]
+    assert model.derived_fraction_names() == ["f_Gaussian_3"]
+    # The duplicated non-fraction params still get distinct names.
+    assert [p for p in model.param_names if p.startswith("sigma")] == [
+        "sigma_1",
+        "sigma_2",
+        "sigma_3",
+    ]
+
+
+def test_fraction_names_span_multiple_groups() -> None:
+    model = CompositeModel.from_expression(
+        "( Exponential + Gaussian ){frac} + ( Gaussian + Exponential ){frac}"
+    )
+    # f_Exponential (group 1 free) then f_Gaussian (group 2 free, bare because
+    # group 1's f_Gaussian is only a display-only remainder, not a real param).
+    assert model.fraction_parameter_groups() == [["f_Exponential"], ["f_Gaussian"]]
+    assert model.derived_fraction_names() == ["f_Gaussian_2", "f_Exponential_2"]
+    assert model.derived_fraction_terms() == [
+        ("f_Gaussian_2", (0, 1)),
+        ("f_Exponential_2", (2, 3)),
+    ]
+
+
+def test_formula_string_renders_remainder_weight_explicitly() -> None:
+    model = CompositeModel.from_expression("( Oscillatory + Oscillatory + Oscillatory ){frac}")
+    formula = model.formula_string()
+    # Free terms carry their parameter; the remainder shows (1-f_X-f_Y).
+    assert "f_Oscillatory*" in formula
+    assert "f_Oscillatory_2*" in formula
+    assert "(1-f_Oscillatory-f_Oscillatory_2)*" in formula
+    # The remainder is not exposed as a named parameter.
+    assert "f_Oscillatory_3" not in formula
+
+
+def test_normalized_parameter_values_clamps_free_fractions() -> None:
+    model = CompositeModel.from_expression("( Exponential + Gaussian ){frac}")
+    out = model.normalized_parameter_values(
+        {"A_1": 5.0, "Lambda": 0.4, "sigma": 0.3, "f_Exponential": 1.4}
+    )
+    # Free fraction clamped into [0, 1]; every other entry passes through.
+    assert out["f_Exponential"] == 1.0
+    assert out["A_1"] == 5.0
+    assert out["Lambda"] == 0.4
+    assert out["sigma"] == 0.3
+
+
+def test_migrate_legacy_fraction_values_round_trip() -> None:
+    model = CompositeModel.from_expression("( Exponential + Exponential + Constant ){frac}")
+    legacy = {
+        "A_1": 12.0,
+        "Lambda_1": 0.2,
+        "Lambda_2": 0.5,
+        "fraction_1": 1.0,
+        "fraction_2": 1.0,
+        "fraction_3": 2.0,
+    }
+    assert has_legacy_fraction_values(model, legacy)
+
+    migrated = migrate_legacy_fraction_values(model, legacy)
+    # Old normalized weights [0.25, 0.25, 0.5] -> first n-1 become the free
+    # parameters; the last is dropped (now the derived remainder).
+    assert migrated["f_Exponential"] == pytest.approx(0.25)
+    assert migrated["f_Exponential_2"] == pytest.approx(0.25)
+    assert "fraction_1" not in migrated
+    assert "fraction_2" not in migrated
+    assert "fraction_3" not in migrated
+    # Non-fraction keys pass through untouched.
+    assert migrated["A_1"] == 12.0
+    assert migrated["Lambda_1"] == 0.2
+
+    # The migrated free values reproduce the old evaluation exactly.
+    t = np.linspace(0.0, 1.0, 5)
+    out = model.function(t, **migrated)
+    expected = 12.0 * (0.25 * np.exp(-0.2 * t) + 0.25 * np.exp(-0.5 * t) + 0.5 * np.ones_like(t))
+    assert np.allclose(out, expected)
+
+
+def test_migrate_legacy_fraction_values_zero_sum_uses_equal_weights() -> None:
+    model = CompositeModel.from_expression("( Exponential + Exponential + Constant ){frac}")
+    migrated = migrate_legacy_fraction_values(
+        model, {"fraction_1": 0.0, "fraction_2": 0.0, "fraction_3": 0.0}
+    )
+    assert migrated["f_Exponential"] == pytest.approx(1.0 / 3.0)
+    assert migrated["f_Exponential_2"] == pytest.approx(1.0 / 3.0)
+
+
+def test_migrate_legacy_fraction_values_malformed_values_treated_as_zero() -> None:
+    # A corrupted legacy project can carry None or a non-numeric string for a
+    # fraction value; migration must never raise (TypeError/ValueError), and
+    # that weight is treated as 0.0 so the others normalize consistently.
+    model = CompositeModel.from_expression("( Exponential + Exponential + Constant ){frac}")
+    legacy = {
+        "fraction_1": None,
+        "fraction_2": "garbage",
+        "fraction_3": 2.0,
+    }
+    migrated = migrate_legacy_fraction_values(model, legacy)
+    # fraction_1 and fraction_2 both coerce to 0.0; only fraction_3 contributes,
+    # so the normalized weights are [0, 0, 1] and the first n-1 free params are 0.
+    assert migrated["f_Exponential"] == pytest.approx(0.0)
+    assert migrated["f_Exponential_2"] == pytest.approx(0.0)
+    assert "fraction_1" not in migrated
+    assert "fraction_2" not in migrated
+    assert "fraction_3" not in migrated
+
+
+def test_migrate_legacy_fraction_parameter_entries_malformed_value_does_not_raise() -> None:
+    model = CompositeModel.from_expression("( Exponential + Gaussian ){frac}")
+    entries = [
+        {"name": "A_1", "value": 20.0},
+        {"name": "fraction_1", "value": None, "fixed": False},
+        {"name": "fraction_2", "value": "garbage", "fixed": False},
+    ]
+    migrated = migrate_legacy_fraction_parameter_entries(model, entries)
+    names = [entry["name"] for entry in migrated]
+    assert names == ["A_1", "f_Exponential"]
+    by_name = {entry["name"]: entry for entry in migrated}
+    # Both legacy values coerce to 0.0 -> equal-weight fallback (sum <= 1e-30).
+    assert by_name["f_Exponential"]["value"] == pytest.approx(0.5)
+
+
+def test_has_legacy_fraction_values_false_for_new_scheme() -> None:
+    model = CompositeModel.from_expression("( Exponential + Gaussian ){frac}")
+    new_values = {"A_1": 1.0, "Lambda": 0.3, "sigma": 0.2, "f_Exponential": 0.4}
+    assert not has_legacy_fraction_values(model, new_values)
+    # A migration on new-scheme values is a no-op passthrough.
+    assert migrate_legacy_fraction_values(model, new_values) == new_values
+
+
+def test_migrate_legacy_fraction_parameter_entries_renames_and_drops() -> None:
+    model = CompositeModel.from_expression("( Exponential + Gaussian + Constant ){frac}")
+    entries = [
+        {"name": "A_1", "value": 20.0, "fixed": False, "min": "0", "max": "inf"},
+        {"name": "Lambda", "value": 0.5, "fixed": False},
+        {"name": "fraction_1", "value": 2.0, "fixed": False, "min": "0", "max": "1"},
+        {"name": "sigma", "value": 0.3, "fixed": False},
+        {"name": "fraction_2", "value": 1.0, "fixed": True, "min": "0", "max": "1"},
+        {"name": "fraction_3", "value": 1.0, "fixed": False},
+    ]
+    migrated = migrate_legacy_fraction_parameter_entries(model, entries)
+    names = [entry["name"] for entry in migrated]
+    # Legacy fraction_1/2 → free names (order preserved); fraction_3 dropped.
+    assert names == ["A_1", "Lambda", "f_Exponential", "sigma", "f_Gaussian"]
+    by_name = {entry["name"]: entry for entry in migrated}
+    # Raw [2, 1, 1] normalise to [0.5, 0.25, 0.25]; free params take the first n-1.
+    assert by_name["f_Exponential"]["value"] == pytest.approx(0.5)
+    assert by_name["f_Gaussian"]["value"] == pytest.approx(0.25)
+    # Renamed entries keep their metadata (the fixed flag / bounds).
+    assert by_name["f_Gaussian"]["fixed"] is True
+    assert by_name["f_Exponential"]["min"] == "0"
+    # No legacy keys survive.
+    assert not any(name.startswith("fraction_") for name in names)
+
+
+def test_migrate_legacy_fraction_parameter_entries_noop_for_new_scheme() -> None:
+    model = CompositeModel.from_expression("( Exponential + Gaussian ){frac}")
+    entries = [
+        {"name": "A_1", "value": 1.0},
+        {"name": "f_Exponential", "value": 0.4},
+    ]
+    migrated = migrate_legacy_fraction_parameter_entries(model, entries)
+    assert [e["name"] for e in migrated] == ["A_1", "f_Exponential"]
+    assert migrated == entries
+
+
+def test_migrate_legacy_fraction_state_round_trip() -> None:
+    model = CompositeModel.from_expression("( Exponential + Gaussian + Constant ){frac}")
+    state = {
+        "composite_model": model.to_dict(),
+        "parameters": [
+            {"name": "A_1", "value": 20.0},
+            {"name": "Lambda", "value": 0.5},
+            {"name": "fraction_1", "value": 2.0},
+            {"name": "sigma", "value": 0.3},
+            {"name": "fraction_2", "value": 1.0},
+            {"name": "fraction_3", "value": 1.0},
+        ],
+        "result_html": "kept",
+    }
+    migrated = migrate_legacy_fraction_state(state)
+    names = [entry["name"] for entry in migrated["parameters"]]
+    assert names == ["A_1", "Lambda", "f_Exponential", "sigma", "f_Gaussian"]
+    # Other keys untouched; the model payload is not rewritten.
+    assert migrated["result_html"] == "kept"
+    assert migrated["composite_model"] == model.to_dict()
+
+
+def test_migrate_legacy_fraction_state_skips_malformed_model() -> None:
+    state = {"composite_model": {"bogus": True}, "parameters": [{"name": "fraction_1"}]}
+    migrated = migrate_legacy_fraction_state(state)
+    # No usable model → state returned unchanged (parameters shallow-copied).
+    assert migrated["parameters"] == [{"name": "fraction_1"}]
+
+
+def test_fraction_group_uses_group_amplitude_and_free_fraction_parameters() -> None:
     model = CompositeModel.from_expression("( Exponential + Gaussian ){frac}")
 
     assert "A_1" in model.param_names
     assert "Lambda" in model.param_names
     assert "sigma" in model.param_names
-    assert "fraction_1" in model.param_names
-    assert "fraction_2" in model.param_names
+    # One free fraction for the first term; Gaussian remainder has no parameter.
+    assert "f_Exponential" in model.param_names
+    assert model.derived_fraction_names() == ["f_Gaussian"]
+    assert "f_Gaussian" not in model.param_names
     assert "A_2" not in model.param_names
 
 
-def test_fraction_group_evaluation_normalizes_component_weights() -> None:
+def test_fraction_group_evaluation_uses_derived_remainder_weight() -> None:
     t = np.linspace(0.0, 1.0, 5)
     model = CompositeModel.from_expression("( Exponential + Exponential + Constant ){frac}")
 
+    # Two free fractions 0.25, 0.25 -> Constant remainder weighs 1 - 0.5 = 0.5.
     out = model.function(
         t,
         A_1=12.0,
         Lambda_1=0.2,
         Lambda_2=0.5,
-        fraction_1=1.0,
-        fraction_2=1.0,
-        fraction_3=2.0,
+        f_Exponential=0.25,
+        f_Exponential_2=0.25,
     )
     expected = 12.0 * (0.25 * np.exp(-0.2 * t) + 0.25 * np.exp(-0.5 * t) + 0.5 * np.ones_like(t))
 
     assert np.allclose(out, expected)
+
+
+def test_fraction_group_default_free_fractions_are_one_over_n() -> None:
+    model = CompositeModel.from_expression("( Exponential + Exponential + Constant ){frac}")
+    # Three additive terms -> each free fraction defaults to 1/3.
+    assert model.param_defaults["f_Exponential"] == pytest.approx(1.0 / 3.0)
+    assert model.param_defaults["f_Exponential_2"] == pytest.approx(1.0 / 3.0)
 
 
 def test_fraction_group_preserves_outer_multiplicative_amplitude_suppression() -> None:
@@ -345,8 +571,8 @@ def test_fraction_group_preserves_outer_multiplicative_amplitude_suppression() -
 
     assert "A_1" not in model.param_names
     assert "A_2" in model.param_names
-    assert "fraction_1" in model.param_names
-    assert "fraction_2" in model.param_names
+    assert "f_Exponential" in model.param_names
+    assert model.derived_fraction_names() == ["f_Gaussian"]
 
 
 def test_parenthesized_product_suppresses_leading_amplitude() -> None:

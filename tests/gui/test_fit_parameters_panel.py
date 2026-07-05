@@ -2590,28 +2590,28 @@ def test_load_representation_series_reconstructs_global_params(panel: FitParamet
             "run_label": "R1658/G4",
             "field": 7800.0,
             "temperature": 150.0,
-            "values": {"fraction_1": 0.0604, "Lambda_1": 0.1418},
-            "errors": {"fraction_1": 0.0012, "Lambda_1": 0.111},
+            "values": {"f_Aa": 0.0604, "Lambda_1": 0.1418},
+            "errors": {"f_Aa": 0.0012, "Lambda_1": 0.111},
         },
         {
             "run_number": 1657,
             "run_label": "R1657/G4",
             "field": 7800.0,
             "temperature": 150.0,
-            "values": {"fraction_1": 0.0604, "Lambda_1": 0.4352},
-            "errors": {"fraction_1": 0.0012, "Lambda_1": 0.108},
+            "values": {"f_Aa": 0.0604, "Lambda_1": 0.4352},
+            "errors": {"f_Aa": 0.0012, "Lambda_1": 0.108},
         },
     ]
     panel.load_representation_series(
         [("batch-1", "Series 1", row_dicts)],
-        global_params_by_id={"batch-1": {"fraction_1": {"value": 0.0604, "error": 0.0012}}},
+        global_params_by_id={"batch-1": {"f_Aa": {"value": 0.0604, "error": 0.0012}}},
         select_id="batch-1",
     )
 
     assert panel._global_params is not None
     names = {p.name: p.value for p in panel._global_params}
-    assert names == pytest.approx({"fraction_1": 0.0604})
-    assert panel._global_param_uncertainties.get("fraction_1") == pytest.approx(0.0012)
+    assert names == pytest.approx({"f_Aa": 0.0604})
+    assert panel._global_param_uncertainties.get("f_Aa") == pytest.approx(0.0012)
     # A purely-local param is not promoted to the shared header.
     assert "Lambda_1" not in {p.name for p in panel._global_params}
 

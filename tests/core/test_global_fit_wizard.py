@@ -27,6 +27,7 @@ from asymmetry.core.fitting.global_fit_wizard import (
     RunResidualDiagnostic,
     _build_parameter_recommendations_from_exact_cache,
     _canonicalize_parameter_sets,
+    _deserialize_global_candidate_assessment,
     _fit_exact_assignment,
     _globalization_candidate_order,
     _localisation_penalty,
@@ -1289,6 +1290,82 @@ def test_global_fit_wizard_symbols_are_exported() -> None:
     assert fitting_api.GlobalFitWizardRecommendation is not None
     assert fitting_api.GlobalCandidateAssessment is not None
     assert fitting_api.GlobalParameterRecommendation is not None
+
+
+def test_deserialize_global_candidate_assessment_migrates_legacy_fraction_params() -> None:
+    """A global-wizard assessment cached before the fraction rework migrates on load.
+
+    The per-run fitted ``fraction_<k>`` params, the standalone ``global_parameters``
+    set, and the ``global_param_names``/``local_param_names``/``fixed_param_names``
+    role tuples all carry the legacy positional names in an old cache entry; all
+    four are renamed to the n-1 free scheme against the template's model, mirroring
+    fit_wizard._deserialize_candidate_assessment's single-fit treatment.
+    """
+    model = CompositeModel.from_expression("( Exponential + Gaussian + Constant ){frac}")
+    template_payload = {
+        "key": "cand",
+        "title": "",
+        "category": "",
+        "rationale": "",
+        "model": model.to_dict(),
+    }
+    fit_result_payload = {
+        "success": True,
+        "chi_squared": 1.0,
+        "reduced_chi_squared": 1.0,
+        "parameters": [
+            {"name": "A_1", "value": 20.0, "min": 0.0, "max": 1e9, "fixed": False},
+            {"name": "Lambda", "value": 0.5, "min": 0.0, "max": 1e9, "fixed": False},
+            {"name": "fraction_1", "value": 2.0, "min": 0.0, "max": 1.0, "fixed": False},
+            {"name": "sigma", "value": 0.3, "min": 0.0, "max": 1e9, "fixed": False},
+            {"name": "fraction_2", "value": 1.0, "min": 0.0, "max": 1.0, "fixed": False},
+            {"name": "fraction_3", "value": 1.0, "min": 0.0, "max": 1.0, "fixed": False},
+        ],
+        "uncertainties": {"fraction_1": 0.01, "fraction_2": 0.02, "fraction_3": 0.03},
+    }
+    payload = {
+        "template": template_payload,
+        "fit_results_by_run": {"1001": fit_result_payload},
+        "global_parameters": [
+            {"name": "A_1", "value": 20.0, "min": 0.0, "max": 1e9, "fixed": False},
+            {"name": "fraction_1", "value": 2.0, "min": 0.0, "max": 1.0, "fixed": False},
+            {"name": "fraction_2", "value": 1.0, "min": 0.0, "max": 1.0, "fixed": False},
+            {"name": "fraction_3", "value": 1.0, "min": 0.0, "max": 1.0, "fixed": False},
+        ],
+        "global_param_names": ["A_1", "fraction_1", "fraction_2", "fraction_3"],
+        "local_param_names": ["Lambda"],
+        "fixed_param_names": [],
+        "aic": 1.0,
+        "bic": 1.0,
+        "selected_score": 1.0,
+    }
+
+    assessment = _deserialize_global_candidate_assessment(payload)
+
+    assert assessment is not None
+
+    # Per-run fit result parameters migrated.
+    run_result = assessment.fit_results_by_run[1001]
+    run_names = {parameter.name for parameter in run_result.parameters}
+    assert "f_Exponential" in run_names
+    assert "f_Gaussian" in run_names
+    assert not any(name.startswith("fraction_") for name in run_names)
+    assert "f_Exponential" in run_result.uncertainties
+    assert "f_Gaussian" in run_result.uncertainties
+    assert not any(key.startswith("fraction_") for key in run_result.uncertainties)
+
+    # Standalone global_parameters ParameterSet migrated.
+    global_names = set(assessment.global_parameters.names)
+    assert "f_Exponential" in global_names
+    assert "f_Gaussian" in global_names
+    assert not any(name.startswith("fraction_") for name in global_names)
+
+    # Parameter-role tuples migrated (legacy names renamed/dropped in place).
+    assert "f_Exponential" in assessment.global_param_names
+    assert "f_Gaussian" in assessment.global_param_names
+    assert not any(name.startswith("fraction_") for name in assessment.global_param_names)
+    assert not any(name.startswith("fraction_") for name in assessment.local_param_names)
+    assert not any(name.startswith("fraction_") for name in assessment.fixed_param_names)
 
 
 def test_localisation_penalty_prefers_rate_parameters_over_amplitudes() -> None:

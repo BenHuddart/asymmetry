@@ -5468,12 +5468,14 @@ class FitParametersPanel(QWidget):
         return None
 
     def _fraction_weights_note(self) -> str:
-        """Footnote giving the normalised fraction weights for the active series.
+        """Footnote giving the fraction weights for the active series.
 
-        The raw fitted fractions shown in the header are un-normalised relative
-        weights (the model divides each by its group sum), so they need not add to
-        1; this line reports the physical partition fraction_i / Σ — including the
-        usually-hidden fixed last fraction — which does sum to 1 per group.
+        Under the n-1 free-fraction scheme the fitted free fractions ARE the group
+        weights (each in [0, 1]); the group's last term is the derived remainder,
+        ``1 − Σ free``, which is not a fitted parameter and so is usually absent
+        from the variable table. This line reports the full per-group partition
+        (the free fractions plus that derived remainder), which sums to 1 per
+        group.
         """
         weights = self._fraction_weights_by_id.get(self._active_group_id or "")
         if not weights:
@@ -5484,7 +5486,9 @@ class FitParametersPanel(QWidget):
             return (int(index) if index is not None else 0, name)
 
         parts = [f"{name} = {weights[name]:.3g}" for name in sorted(weights, key=_order)]
-        return "Normalised fraction weights (relative; each group sums to 1): " + ", ".join(parts)
+        return "Fraction weights (each group sums to 1, incl. derived remainder): " + ", ".join(
+            parts
+        )
 
     def _show_table_dialog(self) -> None:
         if self._table.rowCount() == 0 or self._table.columnCount() == 0:

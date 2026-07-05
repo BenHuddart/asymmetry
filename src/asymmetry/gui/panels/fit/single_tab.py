@@ -34,7 +34,10 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.fitting.composite import CompositeModel
+from asymmetry.core.fitting.composite import (
+    CompositeModel,
+    migrate_legacy_fraction_state,
+)
 from asymmetry.core.fitting.domain_library import coerce_domain
 from asymmetry.core.fitting.engine import FitEngine, FitResult
 from asymmetry.core.fitting.fit_wizard import (
@@ -1148,6 +1151,10 @@ class SingleFitTab(FitTabBase):
         self._cached_wizard_recommendation = None
         self._cached_wizard_signature = None
         self._cached_wizard_log_text = ""
+
+        # Migrate legacy ``fraction_<k>`` parameter entries (pre-rework projects)
+        # to the n-1 free-fraction scheme before restoring the table rows.
+        state = migrate_legacy_fraction_state(state)
 
         composite_data = state.get("composite_model")
         if isinstance(composite_data, dict):

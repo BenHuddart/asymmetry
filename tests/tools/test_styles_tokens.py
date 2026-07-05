@@ -46,7 +46,6 @@ CLEAN_FILES: list[str] = [
     "panels/cross_group_fit_dialog.py",
     "panels/model_fit_dialog.py",
     "panels/composite_parameter_dialog.py",
-    "widgets/function_expression_builder.py",
     "windows/detector_layout_dialog.py",
     # fit_wizard_window.py is excluded — its embedded matplotlib preview plots
     # use specialist non-BENCH hex colours for scientific visualisation.

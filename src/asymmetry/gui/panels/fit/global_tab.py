@@ -71,7 +71,10 @@ from asymmetry.core.data.combine import (
     runs_with_dataset_metadata,
 )
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.fitting.composite import CompositeModel
+from asymmetry.core.fitting.composite import (
+    CompositeModel,
+    migrate_legacy_fraction_state,
+)
 from asymmetry.core.fitting.count_domain import (
     COUNT_COSTS,
     RESERVED_COUNT_PARAMS,
@@ -165,6 +168,7 @@ from .tab_base import (
     _format_bounds_pair,
     _get_file_value_for_parameter,
     _grouped_formula_string,
+    _is_derived_fraction_row,
     _make_param_name_item,
     _normalized_model_param_values,
     _param_table_rows_by_name,
@@ -1183,6 +1187,8 @@ class GlobalFitTab(FitTabBase):
         """Capture current parameter-table edits before rebuilding rows."""
         state: dict[str, dict[str, str]] = {}
         for row in range(self._param_table.rowCount()):
+            if _is_derived_fraction_row(self._param_table, row):
+                continue
             name_item = self._param_table.item(row, 0)
             if name_item is None:
                 continue
@@ -1583,6 +1589,9 @@ class GlobalFitTab(FitTabBase):
         param_types: dict[str, str] = {}
 
         for i in range(self._param_table.rowCount()):
+            # Derived-fraction remainder rows are display-only — never a fit input.
+            if _is_derived_fraction_row(self._param_table, i):
+                continue
             name_item = self._param_table.item(i, 0)
             pname = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
             if not isinstance(pname, str):
@@ -3813,6 +3822,10 @@ class GlobalFitTab(FitTabBase):
                 )
         params = []
         for i in range(self._param_table.rowCount()):
+            # Skip display-only derived-fraction rows: they carry no fitted
+            # parameter and must not be serialised into the saved state.
+            if _is_derived_fraction_row(self._param_table, i):
+                continue
             name_item = self._param_table.item(i, 0)
             param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else f"param_{i}"
             if not isinstance(param_name, str) and name_item:
@@ -3884,6 +3897,10 @@ class GlobalFitTab(FitTabBase):
         """Restore global-fit tab state from a saved dict."""
         self._wizard_cache_by_run_set = {}
         self._set_active_wizard_cache(None, signature=None, log_text="")
+
+        # Migrate legacy ``fraction_<k>`` parameter entries (pre-rework projects)
+        # to the n-1 free-fraction scheme before restoring the table rows.
+        state = migrate_legacy_fraction_state(state)
 
         composite_data = state.get("composite_model")
         if isinstance(composite_data, dict):
@@ -4774,6 +4791,8 @@ class GlobalFitTab(FitTabBase):
                 bounds[pname] = (min_val, max_val)
         else:
             for row in range(self._group_model_table.rowCount()):
+                if _is_derived_fraction_row(self._group_model_table, row):
+                    continue
                 name_item = self._group_model_table.item(row, 0)
                 pname = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
                 if not isinstance(pname, str):
@@ -4862,6 +4881,8 @@ class GlobalFitTab(FitTabBase):
                 }
             return state
         for row in range(table.rowCount()):
+            if _is_derived_fraction_row(table, row):
+                continue
             name_item = table.item(row, 0)
             if name_item is None:
                 continue

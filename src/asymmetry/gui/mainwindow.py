@@ -8859,16 +8859,17 @@ class MainWindow(QMainWindow):
     def _fraction_weights_for_series(
         series: FitSeries, composite: CompositeModel | None
     ) -> dict[str, float]:
-        """Normalised fraction weights (fraction_i / Σ per group) for a series.
+        """Physical fraction weights per group for a series (each sums to 1).
 
-        Raw fitted fractions are un-normalised relative weights — the model divides
-        each by its group sum at evaluation, so they need not sum to 1 (and the
-        fixed last fraction is usually hidden from the variable table). This returns
-        the physical partition (via ``CompositeModel.fraction_weights``), but ONLY
-        when it is a single series-wide partition: if a group's raw fractions differ
-        across the successful members (a per-run/local fraction), it is omitted
-        rather than presenting one member's split as the whole series'. Returns
-        ``{}`` for a model-less series or one without fraction groups.
+        Under the n-1 free-fraction scheme a group's fitted free fractions ARE its
+        weights (each clamped to [0, 1]); the last term is the derived remainder
+        ``1 − Σ free``. This returns that partition (via
+        ``CompositeModel.fraction_weights`` — free names plus the derived remainder
+        label), but ONLY where it is a single series-wide partition: a group whose
+        free fractions differ across the successful members (a per-run/local
+        fraction) is omitted rather than presenting one member's split as the whole
+        series'. Returns ``{}`` for a model-less series or one without fraction
+        groups.
         """
         if composite is None:
             return {}
@@ -8880,17 +8881,41 @@ class MainWindow(QMainWindow):
         if not members:
             return {}
         weights = composite.fraction_weights(members[0])
-        # Keep only fractions that are identical across every member (global/fixed),
-        # so a per-run-varying fraction is not shown as a series-wide partition.
-        return {
-            name: weight
-            for name, weight in weights.items()
-            if all(
+        # A weight is series-wide only when every free fraction it depends on is
+        # identical across all members. The derived remainder name is not a fitted
+        # key, so its stability is judged by the whole group being stable.
+        derived_group = dict(composite.derived_fraction_terms())
+        free_by_group = {
+            tuple(group): names
+            for names, (_derived, group) in zip(
+                composite.fraction_parameter_groups(),
+                composite.derived_fraction_terms(),
+                strict=True,
+            )
+        }
+
+        def _stable(free_names: list[str]) -> bool:
+            return all(
+                name in member
+                and bool(np.isclose(member[name], members[0][name], rtol=1e-9, atol=1e-12))
+                for name in free_names
+                for member in members
+            )
+
+        stable: dict[str, float] = {}
+        for name, weight in weights.items():
+            group = derived_group.get(name)
+            if group is not None:
+                # Derived remainder: keep iff its whole group's free fractions are stable.
+                if _stable(free_by_group.get(tuple(group), [])):
+                    stable[name] = weight
+            elif all(
                 name in member
                 and bool(np.isclose(member[name], members[0][name], rtol=1e-9, atol=1e-12))
                 for member in members
-            )
-        }
+            ):
+                stable[name] = weight
+        return stable
 
     def _build_series_rows(self, series: FitSeries) -> list[dict]:
         """Build the row-dict list for one ``FitSeries`` to pass to the trend panel.

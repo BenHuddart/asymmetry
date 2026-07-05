@@ -233,15 +233,19 @@ Available Basis Components
 Build a Parameter Composite Model
 ---------------------------------
 
-In the GUI parameter-trending workflow, the **Edit Model...** action opens the
-same expression-oriented builder used for time-domain composite functions.
-Each basis model is inserted as a single function token, then combined with
-``+``, ``-``, ``*``, ``/``, the quadrature combinator ``⊕`` (below), and
-parentheses. The **Info** button reports the documentation for the currently
-selected basis model, including superconducting gap-model details when relevant.
+In the GUI parameter-trending workflow, the **Edit Model** action opens the
+same two-panel builder used for time-domain composite functions: a searchable
+basis-model library on the left and the model as structured, reorderable rows
+on the right. Each basis model becomes a single row, joined by ``+``, ``-``,
+``*``, ``/``, or the quadrature combinator ``⊕`` (below); parentheses group
+sub-expressions. The library's ⓘ **Info** button reports the documentation
+for the currently selected basis model, including superconducting gap-model
+details when relevant. Fraction groups are a time-domain-only concept and are
+not offered here — ``⊕`` is the parameter-grammar's dedicated combinator for
+sharing a width-like budget between terms.
 
-The builder validates the expression in real time and shows the expanded
-``y(x)`` preview before you accept it.
+The builder validates the expression in real time, and the Model Fit dialog
+shows the expanded ``y(x)`` preview above the parameter table as you edit.
 
 .. code-block:: python
 
