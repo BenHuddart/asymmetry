@@ -480,3 +480,128 @@ def test_extract_discrete_candidates_respects_frozen_shared_names() -> None:
     assert "Lambda" in global_names
     assert "Lambda" not in local_names
     assert "A_bg" in fixed_names
+
+
+# --------------------------------------------------------------------------- #
+# Homogeneity (Q) pre-tests + Wald surrogate — pure math (PR 4, technique E/G)
+# --------------------------------------------------------------------------- #
+
+
+def test_chi2_sf_matches_known_quantiles() -> None:
+    from asymmetry.core.fitting.global_search.homogeneity import chi2_sf
+
+    # χ²₁ 95th percentile ≈ 3.841; χ²₂ ≈ 5.991; χ²₃ ≈ 7.815.
+    assert chi2_sf(3.841, 1) == pytest.approx(0.05, abs=2e-4)
+    assert chi2_sf(5.991, 2) == pytest.approx(0.05, abs=2e-4)
+    assert chi2_sf(7.815, 3) == pytest.approx(0.05, abs=2e-4)
+    # Boundary behaviour.
+    assert chi2_sf(0.0, 2) == 1.0
+    assert chi2_sf(-1.0, 2) == 1.0
+    assert chi2_sf(10.0, 0) == 1.0  # untestable with no dof
+
+
+def test_homogeneity_statistic_zero_when_identical() -> None:
+    from asymmetry.core.fitting.global_search.homogeneity import homogeneity_statistic
+
+    q, dof = homogeneity_statistic([0.5, 0.5, 0.5], [0.1, 0.1, 0.1])
+    assert q == pytest.approx(0.0)
+    assert dof == 2
+
+
+def test_homogeneity_statistic_grows_with_spread() -> None:
+    from asymmetry.core.fitting.global_search.homogeneity import homogeneity_statistic
+
+    q_narrow, _ = homogeneity_statistic([0.50, 0.51, 0.49], [0.05, 0.05, 0.05])
+    q_wide, _ = homogeneity_statistic([0.20, 0.50, 0.90], [0.05, 0.05, 0.05])
+    assert q_wide > q_narrow
+
+
+def test_classify_homogeneity_global_local_and_ambiguous() -> None:
+    from asymmetry.core.fitting.global_search.homogeneity import (
+        classify_parameter_homogeneity,
+    )
+
+    # Identical estimates → clearly global (large p, exceeds the upper edge).
+    glob = classify_parameter_homogeneity(
+        "A",
+        [0.50, 0.50, 0.50],
+        [0.02, 0.02, 0.02],
+        p_local_threshold=0.02,
+        p_global_threshold=0.30,
+    )
+    assert glob.role == "global"
+    assert not glob.skipped
+
+    # Strongly varying → clearly local (tiny p, below the lower edge).
+    loc = classify_parameter_homogeneity(
+        "B",
+        [0.10, 0.50, 0.95],
+        [0.01, 0.01, 0.01],
+        p_local_threshold=0.02,
+        p_global_threshold=0.30,
+    )
+    assert loc.role == "local"
+
+    # Mildly varying → ambiguous (inside the band).
+    amb = classify_parameter_homogeneity(
+        "C",
+        [0.48, 0.50, 0.53],
+        [0.02, 0.02, 0.02],
+        p_local_threshold=0.02,
+        p_global_threshold=0.30,
+    )
+    assert amb.role == "ambiguous"
+
+
+def test_classify_homogeneity_never_prefixes_at_limit_or_invalid() -> None:
+    from asymmetry.core.fitting.global_search.homogeneity import (
+        classify_parameter_homogeneity,
+    )
+
+    # An at-limit estimate must be skipped → ambiguous, never pre-fixed.
+    at_limit = classify_parameter_homogeneity(
+        "A",
+        [0.50, 0.50, 0.50],
+        [0.02, 0.02, 0.02],
+        at_limit=True,
+        p_local_threshold=0.02,
+        p_global_threshold=0.30,
+    )
+    assert at_limit.role == "ambiguous"
+    assert at_limit.skipped
+
+    # A non-finite error must be skipped → ambiguous.
+    invalid = classify_parameter_homogeneity(
+        "B",
+        [0.50, 0.50, 0.50],
+        [0.02, float("nan"), 0.02],
+        p_local_threshold=0.02,
+        p_global_threshold=0.30,
+    )
+    assert invalid.role == "ambiguous"
+    assert invalid.skipped
+
+
+def test_wald_subset_delta_chi2_sums_globalisation_costs() -> None:
+    from asymmetry.core.fitting.global_search.homogeneity import (
+        wald_globalisation_cost,
+        wald_subset_delta_chi2,
+    )
+
+    estimates = {
+        "shared": (0.50, 0.50, 0.50),
+        "varying": (0.10, 0.50, 0.90),
+    }
+    errors = {
+        "shared": (0.02, 0.02, 0.02),
+        "varying": (0.02, 0.02, 0.02),
+    }
+    cost_shared = wald_globalisation_cost(estimates["shared"], errors["shared"])
+    cost_varying = wald_globalisation_cost(estimates["varying"], errors["varying"])
+    assert cost_shared == pytest.approx(0.0, abs=1e-9)
+    assert cost_varying > 100.0
+
+    total = wald_subset_delta_chi2(("shared", "varying"), estimates, errors)
+    assert total == pytest.approx(cost_shared + cost_varying)
+    # Unknown names contribute nothing.
+    assert wald_subset_delta_chi2(("missing",), estimates, errors) == pytest.approx(0.0)

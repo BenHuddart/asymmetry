@@ -26,10 +26,12 @@ Design notes (see ``docs/porting/global-fit-wizard-efficiency/test-data.md``):
   shot (``os.killpg`` on POSIX, ``taskkill /F /T`` on Windows) — the grandchild
   pool workers die with it, no orphans.
 * **Effort tiers.** ``--tier {low,balanced,thorough,exhaustive}`` selects a
-  wizard-configuration callable. The tiers do not exist in the wizard yet (they
-  arrive in PR 5); for now every tier aliases the current Exhaustive behaviour,
-  so the freeze/diff plumbing and case set are ready without blocking on the
-  tiers themselves.
+  wizard-configuration callable. As of PR 4 the *search engine* per tier is real:
+  ``low`` and ``balanced`` run the non-exhaustive heuristic engines (Q pre-tests
+  + greedy / surrogate-ranked + racing); ``thorough`` and ``exhaustive`` run the
+  exact bounded wavefront (byte-for-byte the frozen-baseline path). PR 5 layers
+  the per-tier V-policy, decimation, and GUI on top; the harness contract is
+  unchanged.
 
 macOS uses the ``spawn`` start method, which re-imports this module in every
 child, so everything heavy lives behind ``if __name__ == "__main__"`` and the
@@ -281,14 +283,18 @@ def _build_case_datasets(case: SyntheticCase) -> list[Any]:
 #
 # A tier maps to a callable that runs the wizard with a particular configuration
 # and returns the ``GlobalFitWizardRecommendation`` plus its instrumentation
-# dict. Today every tier aliases the current Exhaustive behaviour (PR 5 adds the
-# real tier policy); the seam is what PR 1 delivers.
+# dict. As of PR 4 the *search engine* is real: ``low`` and ``balanced`` route to
+# the non-exhaustive heuristic engines (Q pre-tests + greedy / surrogate-ranked
+# + racing), while ``thorough`` and ``exhaustive`` run the exact bounded
+# wavefront (byte-for-byte the frozen-baseline path). PR 5 layers the per-tier
+# V-policy / decimation / GUI on top; the harness contract does not change.
 
 
-def _run_wizard_exhaustive(
+def _run_wizard_with_engine(
     datasets: list[Any],
     *,
     template_keys: tuple[str, ...],
+    search_engine: str,
 ) -> tuple[Any, dict[str, object]]:
     from asymmetry.core.fitting.global_fit_wizard import (
         build_global_fit_wizard_recommendation,
@@ -299,8 +305,43 @@ def _run_wizard_exhaustive(
         datasets,
         instrumentation=instrumentation,
         selected_template_keys=template_keys or None,
+        search_engine=search_engine,
     )
     return recommendation, instrumentation
+
+
+def _run_wizard_exhaustive(
+    datasets: list[Any],
+    *,
+    template_keys: tuple[str, ...],
+) -> tuple[Any, dict[str, object]]:
+    return _run_wizard_with_engine(
+        datasets, template_keys=template_keys, search_engine="exhaustive"
+    )
+
+
+def _run_wizard_thorough(
+    datasets: list[Any],
+    *,
+    template_keys: tuple[str, ...],
+) -> tuple[Any, dict[str, object]]:
+    return _run_wizard_with_engine(datasets, template_keys=template_keys, search_engine="thorough")
+
+
+def _run_wizard_low(
+    datasets: list[Any],
+    *,
+    template_keys: tuple[str, ...],
+) -> tuple[Any, dict[str, object]]:
+    return _run_wizard_with_engine(datasets, template_keys=template_keys, search_engine="low")
+
+
+def _run_wizard_balanced(
+    datasets: list[Any],
+    *,
+    template_keys: tuple[str, ...],
+) -> tuple[Any, dict[str, object]]:
+    return _run_wizard_with_engine(datasets, template_keys=template_keys, search_engine="balanced")
 
 
 def _run_wizard_sleeper(
@@ -319,13 +360,13 @@ def _run_wizard_sleeper(
     raise AssertionError("sleeper should have been killed by the timeout guard")
 
 
-# Every user-facing tier currently aliases exhaustive. PR 5 replaces the aliases
-# with real tier-configuration callables; the harness contract does not change.
-# ``_timeout_probe`` is a test-only tier for exercising the real kill path.
+# Low/Balanced route to the non-exhaustive heuristic engines; Thorough and
+# Exhaustive run the exact wavefront. ``_timeout_probe`` is a test-only tier for
+# exercising the real kill path.
 TIER_CONFIGS: dict[str, Callable[..., tuple[Any, dict[str, object]]]] = {
-    "low": _run_wizard_exhaustive,
-    "balanced": _run_wizard_exhaustive,
-    "thorough": _run_wizard_exhaustive,
+    "low": _run_wizard_low,
+    "balanced": _run_wizard_balanced,
+    "thorough": _run_wizard_thorough,
     "exhaustive": _run_wizard_exhaustive,
     "_timeout_probe": _run_wizard_sleeper,
 }
@@ -953,7 +994,10 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--tier",
         choices=TIERS,
         default="exhaustive",
-        help="Effort tier to run (all currently alias exhaustive; PR 5 adds real tiers).",
+        help=(
+            "Effort tier: low/balanced run the heuristic engines, "
+            "thorough/exhaustive run the exact wavefront."
+        ),
     )
     parser.add_argument(
         "--compare-baseline",
