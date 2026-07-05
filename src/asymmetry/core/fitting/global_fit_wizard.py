@@ -132,6 +132,15 @@ SEARCH_ENGINE_BALANCED = "balanced"
 _DEFAULT_SEARCH_ENGINE = SEARCH_ENGINE_EXHAUSTIVE
 #: Engines that resolve to the exact wavefront (no heuristic pre-fixing/skipping).
 _EXACT_SEARCH_ENGINES = frozenset({SEARCH_ENGINE_EXHAUSTIVE, SEARCH_ENGINE_THOROUGH})
+#: Every supported ``search_engine`` value. An unrecognised value must raise
+#: rather than silently fall through to the heuristic path (a typo would
+#: otherwise change behaviour without warning).
+SEARCH_ENGINES = (
+    SEARCH_ENGINE_EXHAUSTIVE,
+    SEARCH_ENGINE_THOROUGH,
+    SEARCH_ENGINE_BALANCED,
+    SEARCH_ENGINE_LOW,
+)
 
 #: Homogeneity (Q) pre-test band edges per heuristic engine (technique E). A
 #: parameter is pre-fixed *local* when its Q upper-tail p-value falls below the
@@ -1530,6 +1539,11 @@ def _build_global_fit_wizard_recommendation_staged(
         raise ValueError("Global fit wizard requires at least two datasets.")
 
     search_engine = search_engine or _DEFAULT_SEARCH_ENGINE
+    if search_engine not in SEARCH_ENGINES:
+        raise ValueError(
+            f"Unknown search_engine {search_engine!r}; valid options are "
+            f"{', '.join(SEARCH_ENGINES)}."
+        )
     search_strategy = _CONSOLIDATED_SEARCH_VARIANT
     progress_callback = _threadsafe_progress_callback(progress_callback)
     current_parameter_types = current_parameter_types or {}
@@ -6194,15 +6208,16 @@ def _surrogate_ranked_search(
         # ranks first. Rank ascending by surrogate IC = χ²_floor proxy + penalty.
         scored: list[tuple[float, tuple[str, ...]]] = []
         for subset in subsets:
-            keep_global = tuple(n for n in ambiguous if n not in subset)
+            # ``subset`` is the set localised this layer; the surrogate cost is the
+            # residual Δχ² of globalising the *remaining* ambiguous params (those
+            # not in ``subset``) = penalty_all_local − Δχ²(subset).
             predicted_cost = penalty_all_local - wald_subset_delta_chi2(
                 subset, state.estimates, state.estimate_errors
             )
-            # Fewer localised params is cheaper in penalty; the surrogate cost is
-            # the extra χ² paid for globalising ``keep_global``. Lower is better.
+            # Fewer localised params is cheaper in penalty; the surrogate IC adds
+            # that penalty to the residual globalisation cost. Lower is better.
             surrogate_ic = predicted_cost + 2.0 * len(subset) * len(datasets)
             scored.append((surrogate_ic, subset))
-            _ = keep_global
         scored.sort(key=lambda item: item[0])
 
         verify = min(top_k, len(scored))

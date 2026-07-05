@@ -2407,3 +2407,14 @@ def test_exhaustive_engine_default_is_unchanged(
         default.recommended_assessment.local_param_names
         == explicit.recommended_assessment.local_param_names
     )
+
+
+def test_unknown_search_engine_raises_value_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    _restrict_to_exp_constant_template(monkeypatch, model)
+    datasets = _uniform_series(model)
+
+    with pytest.raises(ValueError, match="Unknown search_engine"):
+        build_global_fit_wizard_recommendation(datasets, search_engine="turbo")
