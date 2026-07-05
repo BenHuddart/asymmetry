@@ -393,3 +393,22 @@ def test_window_view_state_and_decorations_split(qapp: QApplication) -> None:
         batch_id="modelfit-bbbb",  # different batch → cleared
     )
     assert window._local_model_fits == {}
+
+
+def test_local_trend_model_memory_round_trips(qapp: QApplication) -> None:
+    """The trend Model Fit dialog's "remember last model" memory for the
+    Global Parameter Fit window's local fits is project-scoped: it round-trips
+    through get_state/restore_state (persisted as a decoration alongside
+    local_model_fits) rather than living in QSettings."""
+    from asymmetry.gui.windows.global_parameter_fit_window import GlobalParameterFitWindow
+
+    window = GlobalParameterFitWindow()
+    window._local_trend_model_memory = {"b|field": "Linear"}
+
+    state = window.get_state()
+    assert state["local_trend_model_memory"] == {"b|field": "Linear"}
+
+    restored = GlobalParameterFitWindow()
+    restored.restore_state(state)
+
+    assert restored._local_trend_model_memory == {"b|field": "Linear"}

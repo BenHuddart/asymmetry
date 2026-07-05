@@ -150,6 +150,56 @@ def test_cross_group_dialog_redfield_m_is_unitless() -> None:
     assert app is not None
 
 
+def test_single_card_no_add_no_remove() -> None:
+    app = QApplication.instance() or QApplication([])
+    dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=_groups(),
+        parent=None,
+    )
+
+    # Cross-group mode pins exactly one shared range: "Add Range" is hidden
+    # (adding a second range is meaningless here) and the single card's view
+    # reports can_remove=False (no Remove action available).
+    assert dlg._add_range_btn.isVisible() is False
+    assert len(dlg._range_cards) == 1
+    assert dlg._range_cards[0]._view.can_remove is False
+    assert app is not None
+
+
+def test_cross_group_card_always_active() -> None:
+    app = QApplication.instance() or QApplication([])
+    dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=_groups(),
+        parent=None,
+    )
+
+    assert len(dlg._range_cards) == 1
+    assert dlg.active_range_index() == 0
+    assert dlg._range_cards[0]._view.show_run is True
+    assert app is not None
+
+
+def test_cross_group_card_title() -> None:
+    app = QApplication.instance() or QApplication([])
+    dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=_groups(),
+        parent=None,
+    )
+
+    # Formula-only degradation: the title is not the base "Range 1" label.
+    # This dialog's chosen alternative is the trended parameter name.
+    title = dlg._range_cards[0]._view.title
+    assert title != "Range 1"
+    assert title == "Lambda"
+    assert app is not None
+
+
 def test_cross_group_dialog_sc_shape_factor_a_defaults_to_fixed() -> None:
     app = QApplication.instance() or QApplication([])
     dlg = CrossGroupFitDialog(
@@ -189,12 +239,50 @@ def test_cross_group_dialog_shows_inherited_source_in_banner() -> None:
         parent=None,
     )
 
-    banner = dlg.layout().itemAt(0).widget() if dlg.layout() is not None else None
+    # The banner lives in the base dialog's named header slot (contract C6),
+    # not at a hardcoded top-level layout index.
+    assert dlg._header_slot.count() >= 1
+    banner = dlg._header_slot.itemAt(0).widget()
     assert banner is not None
     text = banner.text()
     assert "Inherited from" in text
     assert "G0" in text
     assert "chi2_r=" in text
+    assert app is not None
+
+
+def test_cross_group_dialog_footer_slot_holds_suggest_roles_above_buttons() -> None:
+    """The suggest-roles row + rationale panel sit in the footer slot, which the
+    base dialog places directly above the OK/Cancel button box (contract C6)."""
+    app = QApplication.instance() or QApplication([])
+    dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=_groups(),
+        parent=None,
+    )
+
+    footer_widgets = [dlg._footer_slot.itemAt(i).widget() for i in range(dlg._footer_slot.count())]
+    assert dlg._suggest_btn in footer_widgets or any(
+        widget is not None and dlg._suggest_btn in widget.findChildren(type(dlg._suggest_btn))
+        for widget in footer_widgets
+    )
+    assert dlg._rationale_panel in footer_widgets
+
+    main_layout = dlg.layout()
+    footer_index = None
+    buttons_index = None
+    for i in range(main_layout.count()):
+        item = main_layout.itemAt(i)
+        if item is None:
+            continue
+        if item.layout() is dlg._footer_slot:
+            footer_index = i
+        if item.widget() is dlg._buttons:
+            buttons_index = i
+    assert footer_index is not None
+    assert buttons_index is not None
+    assert footer_index < buttons_index
     assert app is not None
 
 
@@ -261,7 +349,7 @@ def _param_groups_with_xerr() -> list[ParameterGroupData]:
 
 def test_cross_group_dialog_exposes_error_modes_and_windows() -> None:
     """global_fit_parameter_model now honours error modes and windows, so the
-    inherited selector and '+ Window' button are shown and wired. The
+    inherited selector and 'Exclude region…' button are shown and wired. The
     effective-variance toggle is hidden for a run-level axis (field has no
     x-uncertainty), not because cross-group lacks backend support."""
     QApplication.instance() or QApplication([])
@@ -278,18 +366,38 @@ def test_cross_group_dialog_exposes_error_modes_and_windows() -> None:
 
     assert dlg._error_mode() is ErrorMode.COLUMN  # default
 
-    from PySide6.QtWidgets import QPushButton
-
-    buttons = [b.text() for b in dlg.findChildren(QPushButton)]
-    assert "+ Window" in buttons
+    # The "Exclude region…" path is the details-pane button (the card's own
+    # duplicate copy was removed; the details pane is the single exclude
+    # action).
+    assert dlg._exclude_region_btn is not None
+    assert dlg._exclude_region_btn.text() == "Exclude region…"
 
     # field is exact (no σ_x), so the effective-variance toggle is not offered.
     assert dlg._x_error_check is None
 
-    # The per-range 'active' checkboxes stay hidden across UI rebuilds, not
-    # just after the constructor's one-time pass.
+    # Cross-group's single pinned range renders as exactly one RangeCard; a
+    # rebuild keeps that invariant (Step 1 of the range-cards redesign — the
+    # old per-range 'active' checkbox no longer exists).
     dlg._rebuild_ranges_ui()
-    assert all(w.active.isHidden() for w in dlg._range_widgets)
+    assert len(dlg._range_cards) == 1
+
+
+def test_cross_group_card_no_status_chip() -> None:
+    """A cross-group card shows no single-fit verdict chip: CrossGroupFitResult
+    has no per-range χ²ᵣ/dof, so a "good/poor" chip would mislead (same reason
+    the quality line is suppressed)."""
+    dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=_groups(),
+        parent=None,
+    )
+    fit_range = dlg._fit.ranges[0]
+    # The chip helper is suppressed regardless of any result object.
+    assert dlg._range_status_chip_html(fit_range, object()) == ""
+    # And the assembled card view carries no chip html.
+    view = dlg._range_card_view(0, show_run=True)
+    assert view.status_chip_html == ""
 
 
 def test_cross_group_dialog_offers_x_uncertainty_for_param_axis() -> None:
@@ -888,4 +996,203 @@ def test_edit_model_then_rerun_accepts_with_new_model_config(monkeypatch) -> Non
     assert set(output.config["model"]["component_names"]) == {"Arrhenius"}
     row_names = {row["name"] for row in output.config["parameter_rows"]}
     assert row_names == {"a", "Ea"}
+    assert app is not None
+
+
+def test_preview_series_per_group() -> None:
+    """The cross-group override returns one preview series per group."""
+    QApplication.instance() or QApplication([])
+    groups = _groups()
+    dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=groups,
+        parent=None,
+    )
+
+    series = dlg._preview_series()
+    assert len(series) == len(groups)
+    assert [s.label for s in series] == [g.group_name for g in groups]
+    # The primary series (index 0) mirrors the first group's data.
+    np.testing.assert_allclose(series[0].x, groups[0].x)
+    np.testing.assert_allclose(series[0].y, groups[0].y)
+
+
+def test_exclude_region_single_range_carves() -> None:
+    """A carve on the cross-group single pinned range yields a two-window union."""
+    QApplication.instance() or QApplication([])
+    dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=_groups(),
+        parent=None,
+    )
+
+    # Data x spans 100..300; carve out the interior [180, 220].
+    fit_range = dlg._fit.ranges[0]
+    dlg._on_preview_exclude_region(0, 180.0, 220.0)
+
+    assert fit_range.windows is not None
+    assert len(fit_range.windows) == 2
+    his = sorted(hi for _lo, hi in fit_range.windows)
+    los = sorted(lo for lo, _hi in fit_range.windows)
+    assert 180.0 in his
+    assert 220.0 in los
+    # The details-pane fit-region editor now shows two interval rows.
+    dlg._select_range(0)
+    assert len(dlg._region_row_spins) == 2
+
+
+def test_cross_group_single_fit_region_one_interval() -> None:
+    """The pinned single range renders one fit-region interval, Remove hidden,
+    and the 'Exclude region…' action is available (carve-only control)."""
+    QApplication.instance() or QApplication([])
+    dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=_groups(),
+        parent=None,
+    )
+
+    assert len(dlg._fit.ranges) == 1
+    dlg._select_range(0)
+    assert len(dlg._region_row_spins) == 1
+    # A single interval hides its Remove (can never drop below one).
+    assert len(dlg._region_remove_btns) == 1
+    assert dlg._region_remove_btns[0].isHidden()
+    # The carve action exists and is enabled.
+    assert dlg._exclude_region_btn is not None
+    assert dlg._exclude_region_btn.isEnabled()
+
+
+def test_cross_group_exclude_region_still_works() -> None:
+    """The 'Exclude region…' button carves a default gap on the pinned range,
+    splitting the fit region into two included intervals."""
+    QApplication.instance() or QApplication([])
+    dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=_groups(),
+        parent=None,
+    )
+    dlg._select_range(0)
+    assert dlg._fit.ranges[0].windows is None
+
+    dlg._on_exclude_region_clicked()
+
+    windows = dlg._fit.ranges[0].windows
+    assert windows is not None
+    assert len(windows) == 2
+    assert len(dlg._region_row_spins) == 2
+
+
+def test_cross_group_success_no_modal(monkeypatch) -> None:
+    """A successful cross-group fit tints the result box green with NO success modal."""
+    app = QApplication.instance() or QApplication([])
+    from asymmetry.gui.styles.widgets import RESULT_BOX_SUCCESS_STYLE
+
+    dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=_groups(),
+        parent=None,
+    )
+
+    info_calls: list[tuple] = []
+    monkeypatch.setattr(
+        "asymmetry.gui.panels.cross_group_fit_dialog._show_info",
+        lambda *a, **k: info_calls.append(a),
+    )
+
+    def _fake_global_fit(**_kwargs):
+        return CrossGroupFitResult(success=True, chi_squared=1.0, reduced_chi_squared=1.0)
+
+    monkeypatch.setattr(
+        "asymmetry.gui.panels.cross_group_fit_dialog.global_fit_parameter_model",
+        _fake_global_fit,
+    )
+
+    dlg._run_fit(0)
+
+    deadline = time.time() + 5.0
+    while dlg._fit_in_progress and time.time() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+
+    assert dlg._fit_in_progress is False
+    # No success modal fired.
+    assert info_calls == []
+    # Inline success text + green tint.
+    assert "successful" in dlg._chi2_label.text().lower()
+    assert dlg._result_box.styleSheet() == RESULT_BOX_SUCCESS_STYLE
+    assert app is not None
+
+
+def test_formula_uses_break_points() -> None:
+    """The cross-group formula renders through the shared pan/zoom FormulaBox
+    (set_formula -> insert_formula_break_points + re-measure), NOT the bare
+    label. Deleting the subclass _set_formula_display override (Phase 5.c) made
+    it inherit the base's box path."""
+    from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
+    from asymmetry.gui.styles.widgets import FormulaBox
+
+    app = QApplication.instance() or QApplication([])
+    dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=_groups(),
+        parent=None,
+    )
+
+    # The subclass override is gone -- it now inherits the base's box path.
+    assert CrossGroupFitDialog._set_formula_display is ModelFitDialog._set_formula_display
+
+    # A multi-term model whose formula carries top-level operators (m*x + b + c),
+    # i.e. exactly where insert_formula_break_points inserts break opportunities.
+    dlg._fit.ranges[0].model = ParameterCompositeModel(["Linear", "Constant"], ["+"])
+    dlg._rebuild_param_table()  # rebuilds params + re-selects range -> _set_formula_display
+    dlg._select_range(0)
+
+    # The formula box is the shared FormulaBox.
+    assert isinstance(dlg._formula_box, FormulaBox)
+
+    # The label carries the break-marked text (a zero-width-space break point was
+    # inserted at the top-level operator) and the raw formula lives in the
+    # tooltip -- the set_formula path, not a bare setText of the plain string.
+    label_text = dlg._formula_box.label.text()
+    assert "​" in label_text  # a top-level break opportunity was inserted
+    assert "m*x + b + c" in dlg._formula_box.label.toolTip()
+
+    assert app is not None
+
+
+def test_plot_add_select_inert_single_range() -> None:
+    """Cross-group pins one range: the plot's add/select gestures are left
+    unconnected (no phantom range, no selection change), but right-drag exclude
+    on the single range still carves a window (that signal stays wired)."""
+    app = QApplication.instance() or QApplication([])
+    dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=_groups(),
+        parent=None,
+    )
+
+    assert len(dlg._fit.ranges) == 1
+    assert dlg.active_range_index() == 0
+
+    # Drag-out a new span on empty canvas: no consumer -> no new range.
+    dlg._preview.range_add_requested.emit(120.0, 280.0)
+    assert len(dlg._fit.ranges) == 1
+
+    # Click a (notional) other range: no consumer -> selection unchanged.
+    dlg._preview.range_select_requested.emit(5)
+    assert dlg.active_range_index() == 0
+
+    # Right-drag exclude on the single range STILL carves a window: the base's
+    # exclude_region_requested wiring is untouched by the add/select override.
+    assert dlg._fit.ranges[0].windows in (None, [])
+    dlg._preview.exclude_region_requested.emit(0, 180.0, 220.0)
+    assert dlg._fit.ranges[0].windows  # a gap was carved -> windows now populated
+
     assert app is not None

@@ -146,6 +146,7 @@ class StudySidebarEntry:
 #: Everything else in the state dict is a view preference and stays in the key.
 _DECORATION_STATE_KEYS = (
     "local_model_fits",
+    "local_trend_model_memory",
     "plot_annotations",
     "local_plot_annotations",
     "suppressed_group_label_tags",
@@ -212,6 +213,12 @@ class GlobalParameterFitWindow(QMainWindow):
         self._suppressed_group_label_tags: set[str] = set()
         self._local_y_controls: dict[str, dict[str, object]] = {}
         self._local_model_fits: dict[str, ParameterModelFit] = {}
+        #: Project-scoped "remember last-used model per (parameter, x_key)"
+        #: memory for this window's trend Model Fit dialog (see
+        #: ``ModelFitDialog``'s ``model_memory`` kwarg). Owned here (not
+        #: QSettings) so it does not leak across unrelated projects/studies;
+        #: persisted alongside ``local_model_fits`` in get_state/restore_state.
+        self._local_trend_model_memory: dict[str, str] = {}
         self._local_param_log_y: dict[str, bool] = {}
         self._local_selected_y_names: list[str] = []
         self._restored_local_selected_y: list[str] = []
@@ -824,6 +831,7 @@ class GlobalParameterFitWindow(QMainWindow):
             "local_log_y": bool(self._local_log_y_check.isChecked()),
             "local_param_log_y": dict(self._local_param_log_y),
             "local_model_fits": self._serialize_local_model_fits(),
+            "local_trend_model_memory": dict(self._local_trend_model_memory),
             "local_selected_y": list(self._local_selected_y_names),
             "local_plot_mode": str(self._local_plot_mode_combo.currentText()),
             "plot_annotations": self._serialize_annotations(self._plot_annotations),
@@ -900,6 +908,17 @@ class GlobalParameterFitWindow(QMainWindow):
         self._local_model_fits = self._deserialize_local_model_fits(
             state.get("local_model_fits", {})
         )
+        # Project-scoped trend Model Fit "remember last model" memory (see
+        # ``_local_trend_model_memory``). Defensive: accept only a dict of
+        # str -> str, otherwise default to empty — a garbled/missing entry
+        # must never break project load.
+        raw_model_memory = state.get("local_trend_model_memory")
+        if isinstance(raw_model_memory, dict) and all(
+            isinstance(k, str) and isinstance(v, str) for k, v in raw_model_memory.items()
+        ):
+            self._local_trend_model_memory = dict(raw_model_memory)
+        else:
+            self._local_trend_model_memory = {}
         self._plot_annotations = self._deserialize_annotations(state.get("plot_annotations", []))
         self._local_plot_annotations = self._deserialize_annotations(
             state.get("local_plot_annotations", [])
@@ -1099,6 +1118,7 @@ class GlobalParameterFitWindow(QMainWindow):
             y_errors=e_arr,
             existing_fit=self._local_model_fits.get(param_name),
             parent=self,
+            model_memory=self._local_trend_model_memory,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return

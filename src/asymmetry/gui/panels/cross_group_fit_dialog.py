@@ -38,12 +38,13 @@ from asymmetry.core.fitting.parameter_models import (
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.model_fit_dialog import (
     ModelFitDialog,
-    _format_model_param_label,
     _should_reset_param_on_model_change,
     _show_info,
     _show_warning,
 )
 from asymmetry.gui.styles import tokens
+from asymmetry.gui.styles.widgets import error_html, info_html, success_html
+from asymmetry.gui.widgets.trend_preview import PreviewSeries
 
 
 @dataclass
@@ -141,9 +142,7 @@ class CrossGroupFitDialog(ModelFitDialog):
 
         banner = QLabel(banner_text)
         banner.setStyleSheet(f"color: {tokens.ACCENT};")
-        top_layout = self.layout()
-        if top_layout is not None:
-            top_layout.insertWidget(0, banner)
+        self._header_slot.addWidget(banner)
 
         self._param_table.setHorizontalHeaderLabels(
             ["Name", "Value", "Min", "Max", "Type", "Error"]
@@ -163,17 +162,49 @@ class CrossGroupFitDialog(ModelFitDialog):
         self._suggest_recommendation: CrossGroupRoleRecommendation | None = None
 
         self._apply_existing_config(existing_config)
-        self._refresh_range_selector()
         self._post_rebuild_ranges_ui()
         self._select_range(0)
+
+        # Cross-group mode pins exactly one shared range (see above), so "Add
+        # Range" has nothing meaningful to do — hide it rather than leave an
+        # affordance whose only behaviour is an info popup. The base
+        # ``_add_range``/``_remove_range`` stubs below remain as a defensive
+        # no-op in case anything else ever triggers them.
+        self._add_range_btn.setVisible(False)
 
         self._build_suggest_roles_ui()
 
     def _post_rebuild_ranges_ui(self) -> None:
-        # Cross-group mode has no per-range activity concept; keep the
-        # checkboxes hidden across every rebuild, not just the first one.
-        for widgets in self._range_widgets:
-            widgets.active.setVisible(False)
+        # Cross-group mode uses a single pinned range, which now renders as one
+        # RangeCard (Step 1 of the range-cards redesign). The old per-range
+        # "active" checkbox this hook used to hide no longer exists — cards carry
+        # no such control — so there is nothing to hide here. Kept as a no-op
+        # override so the base rebuild flow stays unchanged; the cross-group
+        # card degradation is Step 2.3.
+        pass
+
+    def _preview_series(self) -> list[PreviewSeries]:
+        """One data trace per group (colour-cycled by draw order in the canvas).
+
+        The base dialog draws a single series from the concatenated x/y; the
+        cross-group preview instead shows the N per-group traces plus the one
+        candidate curve sampled from the shared range's current params. The
+        primary series (index 0) — whose in-mask the active range greys — is the
+        first group, matching the base's "series[0].x" mask convention.
+        """
+        series: list[PreviewSeries] = []
+        for group in self._groups:
+            xerr = getattr(group, "xerr", None)
+            series.append(
+                PreviewSeries(
+                    label=group.group_name,
+                    x=np.asarray(group.x, dtype=float),
+                    y=np.asarray(group.y, dtype=float),
+                    yerr=np.asarray(group.yerr, dtype=float),
+                    xerr=None if xerr is None else np.asarray(xerr, dtype=float),
+                )
+            )
+        return series
 
     def _on_model_edited(self, idx: int) -> None:
         # The base class's per-range ``fit_range.result`` was already cleared
@@ -194,15 +225,12 @@ class CrossGroupFitDialog(ModelFitDialog):
     def _build_suggest_roles_ui(self) -> None:
         """Insert the "Suggest roles…" control row and rationale panel.
 
-        Placed just above the dialog's OK/Cancel button box. The button runs the
-        AICc/AIC/BIC role search off-thread; the criterion combo picks the
-        statistic; the rationale panel (hidden until first run) shows the
-        per-parameter recommendation and the candidate ranking.
+        Placed just above the dialog's OK/Cancel button box (the base
+        dialog's ``_footer_slot``). The button runs the AICc/AIC/BIC role
+        search off-thread; the criterion combo picks the statistic; the
+        rationale panel (hidden until first run) shows the per-parameter
+        recommendation and the candidate ranking.
         """
-        layout = self.layout()
-        if layout is None:
-            return
-
         controls = QHBoxLayout()
         self._suggest_btn = QPushButton("Suggest roles…")
         self._suggest_btn.setToolTip(
@@ -238,16 +266,8 @@ class CrossGroupFitDialog(ModelFitDialog):
         self._rationale_panel.setVisible(False)
         self._rationale_panel.setMaximumHeight(180)
 
-        # Insert above the OK/Cancel button box (the last item added in the base
-        # constructor); fall back to appending if the button box is not found.
-        insert_at = layout.count()
-        for i in range(layout.count()):
-            item = layout.itemAt(i)
-            if item is not None and item.widget() is getattr(self, "_buttons", None):
-                insert_at = i
-                break
-        layout.insertWidget(insert_at, controls_container)
-        layout.insertWidget(insert_at + 1, self._rationale_panel)
+        self._footer_slot.addWidget(controls_container)
+        self._footer_slot.addWidget(self._rationale_panel)
 
     def _selected_criterion(self) -> str:
         data = self._criterion_combo.currentData() if hasattr(self, "_criterion_combo") else None
@@ -521,7 +541,6 @@ class CrossGroupFitDialog(ModelFitDialog):
                     )
                 )
         fit_range.parameters = new_params
-        self._refresh_range_selector()
         self._select_range(0)
 
     def _apply_existing_config(self, config: dict[str, object] | None) -> None:
@@ -616,6 +635,13 @@ class CrossGroupFitDialog(ModelFitDialog):
             self._range_roles = [{} for _ in self._fit.ranges]
         self._range_roles[0] = roles
 
+    def _connect_plot_range_signals(self) -> None:
+        # Cross-group uses one pinned range: dragging out a new range or selecting a
+        # different one is meaningless, so the plot's add/select gestures are left
+        # unconnected (the canvas still emits them; nothing consumes them). Edge-drag
+        # and right-drag-exclude on the single range stay wired via the base.
+        return
+
     def _add_range(self) -> None:
         _show_info(
             self,
@@ -630,88 +656,82 @@ class CrossGroupFitDialog(ModelFitDialog):
             "Cross-group fitting currently uses one shared fitting range.",
         )
 
-    def _status_text_for_range(self, fit_range) -> str:
-        idx = self._fit.ranges.index(fit_range) if fit_range in self._fit.ranges else -1
-        result = self._range_results.get(idx)
+    # ── template-method hook overrides (see ModelFitDialog) ───────────────────
+    #
+    # The shared table/status flow lives in ``ModelFitDialog._select_range`` /
+    # ``_commit_param_table``. Cross-group mode differs only in: the per-row
+    # control is a Global/Local/Fixed combo (not a Fixed checkbox); results are
+    # cached in ``self._range_results`` (not ``fit_range.result``); the error
+    # cell summarises per-group uncertainties; and the formula/hint/status text
+    # is cross-group specific. Each of those is one small override below.
+
+    def _range_card_title(self, idx: int) -> str:
+        # Cross-group mode pins exactly one always-active range, so a "Range 1"
+        # label is redundant — the card's formula line already carries the
+        # range's identity. Use the trended parameter name instead of an empty
+        # title so the card still reads cleanly at a glance.
+        return self._parameter_name
+
+    def _range_hint_text(self, idx: int) -> str:
+        return f"Editing parameters for Range {idx + 1} (Cross-group mode: Global/Local/Fixed)."
+
+    def _result_for_range(self, idx: int) -> object | None:
+        return self._range_results.get(idx)
+
+    def _chi2_status_text(self, result: object | None) -> str:
         if result is None:
-            return f'<span style="color:{tokens.ACCENT};">Not run</span>'
+            return info_html("Fitting not yet run for selected range")
         if result.success:
-            return f'<span style="color:{tokens.OK};">Success</span>'
-        return f'<span style="color:{tokens.ERROR};">Failed</span>'
+            return success_html(
+                "Cross-group fit successful",
+                detail=(
+                    f"chi2 = {result.chi_squared:.6g}, "
+                    f"reduced chi2 = {result.reduced_chi_squared:.6g}"
+                ),
+            )
+        return error_html(f"Cross-group fit failed: {result.message or 'No convergence'}")
 
-    def _select_range(self, idx: int) -> None:
-        if idx < 0 or idx >= len(self._fit.ranges):
-            return
+    def _quality_status_text(self, fit_range, result: object | None) -> str:
+        # CrossGroupFitResult does not carry the per-range χ²/dof shape the
+        # single-fit quality verdict needs, so cross-group mode shows none.
+        return ""
 
-        self._active_range_idx = idx
-        fit_range = self._fit.ranges[idx]
+    def _range_status_chip_html(self, fit_range, result: object) -> str:
+        # Same reason as _quality_status_text: the single-fit dof (free-parameter
+        # count) does not describe a cross-group fit whose local params multiply
+        # per group, so the card shows no verdict chip either (only success/fail
+        # state via the card's status).
+        return ""
 
-        if self._range_selector.currentIndex() != idx:
-            self._range_selector.blockSignals(True)
-            self._range_selector.setCurrentIndex(idx)
-            self._range_selector.blockSignals(False)
-
-        self._formula_label.setText(f"y(x) = {fit_range.model.formula_string()}")
-        self._range_hint_label.setText(
-            f"Editing parameters for Range {idx + 1} (Cross-group mode: Global/Local/Fixed)."
-        )
-
+    def _current_range_roles(self) -> dict[str, str]:
+        """Roles dict for the active range, growing ``_range_roles`` as needed."""
         while len(self._range_roles) < len(self._fit.ranges):
             self._range_roles.append({})
-        roles = self._range_roles[idx]
+        idx = self._active_range_idx if self._active_range_idx is not None else 0
+        return self._range_roles[idx] if idx < len(self._range_roles) else {}
 
-        result = self._range_results.get(idx)
-        if result is not None:
-            if result.success:
-                self._chi2_label.setText(
-                    f'<span style="color:{tokens.OK};">'
-                    f"Cross-group fit successful: chi2 = {result.chi_squared:.6g}, "
-                    f"reduced chi2 = {result.reduced_chi_squared:.6g}"
-                    "</span>"
-                )
-            else:
-                self._chi2_label.setText(
-                    f'<span style="color:{tokens.ERROR};">'
-                    f"Cross-group fit failed: {result.message or 'No convergence'}"
-                    "</span>"
-                )
-        else:
-            self._chi2_label.setText(
-                f'<span style="color:{tokens.ACCENT};">Fitting not yet run for selected range</span>'
-            )
+    def _make_param_row_control(self, param, row: int) -> QWidget:
+        roles = self._current_range_roles()
+        type_combo = QComboBox()
+        type_combo.addItems(["Global", "Local", "Fixed"])
+        default_role = "Fixed" if param.fixed else "Global"
+        type_combo.setCurrentText(roles.get(param.name, default_role))
+        type_combo.currentTextChanged.connect(self._on_param_table_edited)
+        return type_combo
 
-        self._param_table.blockSignals(True)
-        self._param_table.setRowCount(0)
-        for row, param in enumerate(fit_range.parameters):
-            self._param_table.insertRow(row)
-            display_name = _format_model_param_label(
-                fit_range.model,
-                param.name,
-                self._x_key,
-                self._parameter_name,
-            )
-            name_item = QTableWidgetItem(display_name)
-            name_item.setData(Qt.ItemDataRole.UserRole, param.name)
-            name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self._param_table.setItem(row, 0, name_item)
+    def _read_param_row_control(self, widget: QWidget) -> dict[str, object]:
+        if isinstance(widget, QComboBox):
+            role = widget.currentText() or "Global"
+            return {"role": role, "fixed": role == "Fixed"}
+        return {"role": "Global", "fixed": False}
 
-            self._param_table.setItem(row, 1, QTableWidgetItem(f"{param.value:.8g}"))
-            self._param_table.setItem(row, 2, QTableWidgetItem(f"{param.min:.8g}"))
-            self._param_table.setItem(row, 3, QTableWidgetItem(f"{param.max:.8g}"))
+    def _error_cell_for_param(
+        self, param_name: str, row_control: QWidget, result: object | None
+    ) -> QTableWidgetItem:
+        role = row_control.currentText() if isinstance(row_control, QComboBox) else "Global"
+        return self._build_error_cell(param_name, role, result)
 
-            type_combo = QComboBox()
-            type_combo.addItems(["Global", "Local", "Fixed"])
-            default_role = "Fixed" if param.fixed else "Global"
-            type_combo.setCurrentText(roles.get(param.name, default_role))
-            type_combo.currentTextChanged.connect(self._on_param_table_edited)
-            self._param_table.setCellWidget(row, 4, type_combo)
-
-            err_item = self._build_error_cell(param.name, type_combo.currentText(), result)
-            self._param_table.setItem(row, 5, err_item)
-
-        self._param_table.blockSignals(False)
-        self._param_table.resizeColumnsToContents()
-
+    def _post_select_range(self, idx: int) -> None:
         # Ensure no legacy fixed-checkbox widgets survive in the viewport.
         for row in range(self._param_table.rowCount()):
             name_item = self._param_table.item(row, 0)
@@ -783,6 +803,11 @@ class CrossGroupFitDialog(ModelFitDialog):
             role = type_combo.currentText() or "Global"
             roles[pname] = role
             if pname in fit_range.parameters:
+                # The base _commit_param_table already set .fixed from
+                # _read_param_row_control's {"fixed"}; re-assert it here so the
+                # role map stays the single source of truth for Fixed. Redundant
+                # but harmless (same value); the roles-map write below is this
+                # override's real job.
                 fit_range.parameters[pname].fixed = role == "Fixed"
         self._range_roles[self._active_range_idx] = roles
 
@@ -926,14 +951,13 @@ class CrossGroupFitDialog(ModelFitDialog):
             self._range_results[idx] = fit_result
             self._last_config = self._collect_config()
 
+            # Item 4.3: no per-fit success MODAL. _select_range refreshes the
+            # shared χ² label (inline success/failure text) and tints the result
+            # box green on success. The failure case is surfaced inline too; the
+            # blocking pre-check modals above (invalid window/range, <2 groups)
+            # stay modal.
             self._select_range(idx)
-            if fit_result.success:
-                _show_info(
-                    self,
-                    "Cross-group fit complete",
-                    f"Reduced chi2 = {fit_result.reduced_chi_squared:.4g}",
-                )
-            else:
+            if not fit_result.success:
                 _show_warning(
                     self,
                     "Cross-group fit failed",

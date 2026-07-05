@@ -23,9 +23,15 @@ from asymmetry.core.fitting.parameter_models import (
     _order_parameter,
     _power_law,
     _redfield,
+    carve_window_gap,
     component_names_for_x,
     evaluate_parameter_model_fit,
     fit_parameter_model,
+    included_intervals,
+    range_mask,
+    sample_parameter_model,
+    set_included_intervals,
+    suggest_model_seeds,
     suggest_trend_seeds,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
@@ -955,6 +961,283 @@ def test_evaluate_num_points_respected() -> None:
 
 
 # ---------------------------------------------------------------------------
+# sample_parameter_model
+# ---------------------------------------------------------------------------
+
+
+def test_sample_parameter_model_uses_given_params() -> None:
+    model = ParameterCompositeModel(["Constant"])
+    params = ParameterSet([Parameter("c", value=3.25)])
+
+    xs, ys = sample_parameter_model(model, params, x_min=0.0, x_max=5.0, num_points=40)
+
+    assert xs.size == 40
+    assert ys.size == 40
+    assert np.all(np.isfinite(xs))
+    assert np.allclose(ys, 3.25)
+    assert xs[0] == pytest.approx(0.0)
+    assert xs[-1] == pytest.approx(5.0)
+
+
+def test_sample_parameter_model_window_envelope() -> None:
+    model = ParameterCompositeModel(["Constant"])
+    params = ParameterSet([Parameter("c", value=1.0)])
+
+    xs, ys = sample_parameter_model(
+        model,
+        params,
+        x_min=None,
+        x_max=None,
+        windows=[(0.0, 1.0), (3.0, 4.0)],
+        num_points=25,
+    )
+
+    assert xs.size == 25
+    assert xs.min() == pytest.approx(0.0)
+    assert xs.max() == pytest.approx(4.0)
+    assert np.all(np.isfinite(ys))
+
+
+def test_sample_parameter_model_invalid_windows_returns_empty() -> None:
+    model = ParameterCompositeModel(["Constant"])
+    params = ParameterSet([Parameter("c", value=1.0)])
+
+    xs, ys = sample_parameter_model(
+        model,
+        params,
+        x_min=0.0,
+        x_max=5.0,
+        windows=[(1.0, 0.0)],
+    )
+
+    assert xs.size == 0
+    assert ys.size == 0
+
+
+@pytest.mark.parametrize(
+    ("x_min", "x_max"),
+    [
+        (5.0, 0.0),
+        (None, 5.0),
+        (0.0, None),
+        (None, None),
+        (2.0, 2.0),
+    ],
+)
+def test_sample_parameter_model_unusable_bounds_returns_empty(
+    x_min: float | None, x_max: float | None
+) -> None:
+    model = ParameterCompositeModel(["Constant"])
+    params = ParameterSet([Parameter("c", value=1.0)])
+
+    xs, ys = sample_parameter_model(model, params, x_min=x_min, x_max=x_max)
+
+    assert xs.size == 0
+    assert ys.size == 0
+
+
+# ---------------------------------------------------------------------------
+# carve_window_gap
+# ---------------------------------------------------------------------------
+
+
+def test_carve_window_gap_interior_splits() -> None:
+    result = carve_window_gap([(0.0, 10.0)], x_min=0.0, x_max=10.0, lo=4.0, hi=6.0)
+
+    assert result == [(0.0, 4.0), (6.0, 10.0)]
+
+
+def test_carve_window_gap_covers_drops() -> None:
+    windows = [(0.0, 2.0), (5.0, 7.0)]
+
+    result = carve_window_gap(windows, x_min=0.0, x_max=10.0, lo=4.5, hi=7.5)
+
+    assert result == [(0.0, 2.0)]
+
+
+def test_carve_window_gap_overlaps_left() -> None:
+    result = carve_window_gap([(2.0, 8.0)], x_min=0.0, x_max=10.0, lo=0.0, hi=4.0)
+
+    assert result == [(4.0, 8.0)]
+
+
+def test_carve_window_gap_overlaps_right() -> None:
+    result = carve_window_gap([(2.0, 8.0)], x_min=0.0, x_max=10.0, lo=6.0, hi=10.0)
+
+    assert result == [(2.0, 6.0)]
+
+
+def test_carve_window_gap_outside_is_noop() -> None:
+    windows = [(2.0, 4.0), (6.0, 8.0)]
+
+    result = carve_window_gap(windows, x_min=0.0, x_max=10.0, lo=4.5, hi=5.5)
+
+    assert result == windows
+
+
+def test_carve_window_gap_seeds_from_bounds_when_none() -> None:
+    result = carve_window_gap(None, x_min=0.0, x_max=10.0, lo=4.0, hi=6.0)
+
+    assert result == [(0.0, 4.0), (6.0, 10.0)]
+
+
+def test_carve_window_gap_empty_result_is_noop_never_none() -> None:
+    windows = [(2.0, 8.0)]
+
+    result = carve_window_gap(windows, x_min=0.0, x_max=10.0, lo=0.0, hi=10.0)
+
+    assert result is not None
+    assert result != []
+    assert result == windows
+
+
+def test_carve_window_gap_inverted_interval_normalised() -> None:
+    forward = carve_window_gap([(0.0, 10.0)], x_min=0.0, x_max=10.0, lo=4.0, hi=6.0)
+    inverted = carve_window_gap([(0.0, 10.0)], x_min=0.0, x_max=10.0, lo=6.0, hi=4.0)
+
+    assert inverted == forward
+
+
+def test_carve_window_gap_degenerate_slivers_dropped() -> None:
+    result = carve_window_gap([(0.0, 10.0)], x_min=0.0, x_max=10.0, lo=0.0, hi=10.0 - 1e-12)
+
+    # The right-hand remainder would be a sub-epsilon sliver; it must not
+    # survive as a spurious near-zero-width window.
+    for _, b in result:
+        assert b <= 10.0
+    assert all((b - a) > 1e-9 for a, b in result)
+
+
+def test_carve_window_gap_returns_sorted_nonoverlapping() -> None:
+    windows = [(5.0, 7.0), (0.0, 2.0)]
+
+    result = carve_window_gap(windows, x_min=0.0, x_max=10.0, lo=1.5, hi=6.0)
+
+    los = [a for a, _ in result]
+    assert los == sorted(los)
+    for (_, prev_hi), (next_lo, _) in zip(result, result[1:]):
+        assert next_lo >= prev_hi
+
+
+# ---------------------------------------------------------------------------
+# included_intervals / set_included_intervals
+# ---------------------------------------------------------------------------
+
+
+def _make_fit_range(
+    x_min: float | None, x_max: float | None, windows: list[tuple[float, float]] | None = None
+) -> ModelFitRange:
+    model = ParameterCompositeModel(["Constant"])
+    params = ParameterSet([Parameter("c", value=1.0)])
+    return ModelFitRange(
+        x_min=x_min, x_max=x_max, model=model, parameters=params, result=None, windows=windows
+    )
+
+
+def test_included_intervals_plain() -> None:
+    fit_range = _make_fit_range(0.0, 5.0)
+
+    assert included_intervals(fit_range) == [(0.0, 5.0)]
+
+
+def test_included_intervals_windowed() -> None:
+    fit_range = _make_fit_range(0.0, 10.0, windows=[(0.0, 3.0), (6.0, 10.0)])
+
+    assert included_intervals(fit_range) == [(0.0, 3.0), (6.0, 10.0)]
+
+
+def test_set_included_intervals_one_collapses_to_plain() -> None:
+    fit_range = _make_fit_range(0.0, 10.0, windows=[(0.0, 3.0), (6.0, 10.0)])
+
+    set_included_intervals(fit_range, [(2.0, 4.0)])
+
+    assert fit_range.windows is None
+    assert fit_range.x_min == 2.0
+    assert fit_range.x_max == 4.0
+
+
+def test_set_included_intervals_two_stores_windows_and_envelope() -> None:
+    fit_range = _make_fit_range(0.0, 5.0)
+
+    set_included_intervals(fit_range, [(1.0, 2.0), (7.0, 9.0)])
+
+    assert fit_range.windows == [(1.0, 2.0), (7.0, 9.0)]
+    assert fit_range.x_min == 1.0
+    assert fit_range.x_max == 9.0
+
+
+def test_set_included_intervals_roundtrip_plain_add_remove_returns_plain() -> None:
+    fit_range = _make_fit_range(0.0, 5.0)
+
+    set_included_intervals(fit_range, [(0.0, 2.0), (3.0, 5.0)])
+    assert fit_range.windows == [(0.0, 2.0), (3.0, 5.0)]
+
+    set_included_intervals(fit_range, [(0.0, 5.0)])
+
+    assert fit_range.windows is None
+    assert fit_range.x_min == 0.0
+    assert fit_range.x_max == 5.0
+
+
+def test_set_included_intervals_empty_raises() -> None:
+    fit_range = _make_fit_range(0.0, 5.0)
+
+    with pytest.raises(ValueError):
+        set_included_intervals(fit_range, [])
+
+
+def test_set_included_intervals_sorts() -> None:
+    fit_range = _make_fit_range(0.0, 10.0)
+
+    set_included_intervals(fit_range, [(7.0, 9.0), (1.0, 2.0)])
+
+    assert fit_range.windows == [(1.0, 2.0), (7.0, 9.0)]
+
+
+def test_included_intervals_matches_range_mask() -> None:
+    x = np.linspace(0.0, 10.0, 101)
+
+    plain = _make_fit_range(2.0, 8.0)
+    windowed = _make_fit_range(0.0, 10.0, windows=[(1.0, 3.0), (6.0, 9.0)])
+
+    for fit_range in (plain, windowed):
+        intervals = included_intervals(fit_range)
+        mask = np.zeros(x.shape, dtype=bool)
+        for lo, hi in intervals:
+            mask |= (x >= lo) & (x <= hi)
+        np.testing.assert_array_equal(mask, range_mask(x, fit_range))
+
+
+def test_sample_parameter_model_matches_evaluate_parameter_model_fit() -> None:
+    """Regression: evaluate_parameter_model_fit output is unchanged for a
+    fitted range now that it delegates to sample_parameter_model."""
+    model = ParameterCompositeModel(["Constant"])
+    params = ParameterSet([Parameter("c", value=2.5)])
+
+    x = np.linspace(0.0, 5.0, 40)
+    y = np.full_like(x, 2.5)
+    yerr = np.full_like(x, 0.05)
+    result = fit_parameter_model(x, y, yerr, model, params)
+    assert result.success
+
+    fit = ParameterModelFit(
+        parameter_name="Lambda",
+        x_key="field",
+        ranges=[ModelFitRange(x_min=0.0, x_max=5.0, model=model, parameters=params, result=result)],
+        active=True,
+    )
+
+    curves = evaluate_parameter_model_fit(fit, num_points=50)
+    assert len(curves) == 1
+
+    expected_xs, expected_ys = sample_parameter_model(
+        model, result.parameters, x_min=0.0, x_max=5.0, windows=None, num_points=50
+    )
+    np.testing.assert_array_equal(curves[0].x, expected_xs)
+    np.testing.assert_array_equal(curves[0].y, expected_ys)
+
+
+# ---------------------------------------------------------------------------
 # OrderParameter integration: composite model, fitting, documentation
 # ---------------------------------------------------------------------------
 
@@ -1194,6 +1477,365 @@ def test_suggest_trend_seeds_suffixed_params_for_repeated_component() -> None:
     seeds = suggest_trend_seeds(model, x, y)
     assert "Tc_1" in seeds and "Tc_2" in seeds
     assert all(name in model.param_names for name in seeds)
+
+
+# ---------------------------------------------------------------------------
+# Generic data-aware seeds (suggest_model_seeds)
+# ---------------------------------------------------------------------------
+
+
+def _params_from_seeds(model: ParameterCompositeModel, seeds: dict[str, float]) -> ParameterSet:
+    params = ParameterSet()
+    for pname in model.param_names:
+        params.add(
+            Parameter(name=pname, value=float(seeds.get(pname, model.param_defaults[pname])))
+        )
+    return params
+
+
+def test_suggest_model_seeds_linear() -> None:
+    model = ParameterCompositeModel(["Linear"])
+    x = np.linspace(0.0, 10.0, 40)
+    y = 3.5 * x - 2.0
+    seeds = suggest_model_seeds(model, x, y)
+    assert seeds["m"] == pytest.approx(3.5, rel=1e-6)
+    assert seeds["b"] == pytest.approx(-2.0, abs=1e-6)
+
+
+def test_suggest_model_seeds_constant() -> None:
+    model = ParameterCompositeModel(["Constant"])
+    x = np.linspace(0.0, 5.0, 21)
+    y = np.full_like(x, 7.25)
+    seeds = suggest_model_seeds(model, x, y)
+    assert seeds["c"] == pytest.approx(7.25, rel=1e-6)
+
+
+def test_suggest_model_seeds_power_law() -> None:
+    model = ParameterCompositeModel(["PowerLaw"])
+    true_a, true_n, true_c = 2.0, 1.5, 0.3
+    x = np.linspace(0.5, 20.0, 40)
+    y = true_a * np.abs(x) ** true_n + true_c
+    seeds = suggest_model_seeds(model, x, y)
+    # Order-of-magnitude on the amplitude, close on the exponent.
+    assert 0.5 * true_a < seeds["a"] < 2.0 * true_a
+    assert seeds["n"] == pytest.approx(true_n, abs=0.3)
+
+
+def test_suggest_model_seeds_exp_decay() -> None:
+    model = ParameterCompositeModel(["ExponentialDecay"])
+    true_a, true_tau, true_c = 5.0, 4.0, 1.0
+    x = np.linspace(0.0, 20.0, 60)
+    y = true_a * np.exp(-x / true_tau) + true_c
+    seeds = suggest_model_seeds(model, x, y)
+    assert seeds["tau"] == pytest.approx(true_tau, rel=0.25)
+    assert 0.5 * true_a < seeds["a"] < 2.0 * true_a
+    assert seeds["c"] == pytest.approx(true_c, abs=0.5)
+
+
+def test_suggest_model_seeds_arrhenius() -> None:
+    from asymmetry.core.fitting.parameter_models import _arrhenius
+
+    model = ParameterCompositeModel(["Arrhenius"])
+    true_a, true_ea = 3.0, 25.0
+    x = np.linspace(50.0, 400.0, 40)
+    y = _arrhenius(x, a=true_a, Ea=true_ea)
+    seeds = suggest_model_seeds(model, x, y)
+    assert seeds["Ea"] == pytest.approx(true_ea, rel=0.1)
+    assert 0.5 * true_a < seeds["a"] < 2.0 * true_a
+
+
+def test_suggest_model_seeds_lcr_gaussian() -> None:
+    from asymmetry.core.fitting.parameter_models import _lcr_gaussian
+
+    model = ParameterCompositeModel(["GaussianLCR"])
+    true_f, true_b0, true_bwid = 0.8, 1200.0, 150.0
+    x = np.linspace(500.0, 2000.0, 80)
+    y = _lcr_gaussian(x, f=true_f, B0=true_b0, Bwid=true_bwid)
+    seeds = suggest_model_seeds(model, x, y)
+    # Centre within a width, amplitude the right order, width within 2x.
+    assert abs(seeds["B0"] - true_b0) < true_bwid
+    assert 0.5 * true_f < seeds["f"] < 2.0 * true_f
+    assert 0.5 * true_bwid < seeds["Bwid"] < 2.0 * true_bwid
+
+
+def test_suggest_model_seeds_lorentzian_b0_positive_and_in_range() -> None:
+    # The Lorentzian peak is pinned at the origin, so the B0 seed (a half-width)
+    # must be positive and within a sane fraction of the x-span, never negative
+    # or absurd from a pathological half-max crossing.
+    from asymmetry.core.fitting.parameter_models import _lorentzian
+
+    model = ParameterCompositeModel(["Lorentzian"])
+    x = np.linspace(-500.0, 500.0, 80)
+    y = _lorentzian(x, a=2.0, B0=120.0, c=0.1)
+    seeds = suggest_model_seeds(model, x, y)
+    span = float(np.max(x) - np.min(x))
+    if "B0" in seeds:
+        assert seeds["B0"] > 0.0
+        assert span / 10.0 <= seeds["B0"] <= 10.0 * span
+    assert seeds["a"] == pytest.approx(2.0, rel=0.5)
+    assert seeds["c"] == pytest.approx(0.1, abs=0.3)
+
+
+def test_suggest_model_seeds_lorentzian_pathological_drops_b0() -> None:
+    # A near-flat trace with no clean half-max crossing must not seed an absurd
+    # B0: the estimator drops it (or keeps it in range) rather than emitting a
+    # negative/huge width.
+    model = ParameterCompositeModel(["Lorentzian"])
+    x = np.linspace(0.0, 10.0, 5)
+    y = np.array([1.0, 1.0, 1.0001, 1.0, 1.0])
+    seeds = suggest_model_seeds(model, x, y)
+    span = float(np.max(x) - np.min(x))
+    if "B0" in seeds:
+        assert seeds["B0"] > 0.0
+        assert span / 10.0 <= seeds["B0"] <= 10.0 * span
+
+
+def test_suggest_model_seeds_unknown_component_returns_no_seed() -> None:
+    # Redfield has no registered estimator -> no seeds contributed.
+    model = ParameterCompositeModel(["Redfield"])
+    x = np.linspace(1.0, 100.0, 30)
+    y = np.linspace(1.0, 0.1, 30)
+    assert suggest_model_seeds(model, x, y) == {}
+
+
+def test_suggest_model_seeds_all_nan_returns_empty() -> None:
+    model = ParameterCompositeModel(["Linear"])
+    x = np.array([np.nan, np.nan, np.nan])
+    y = np.array([1.0, 2.0, 3.0])
+    assert suggest_model_seeds(model, x, y) == {}
+
+
+def test_suggest_model_seeds_delegates_critical_component() -> None:
+    # A composite of Linear + CriticalDivergence must seed both the generic
+    # linear terms and the delegated trend Tc/c.
+    model = ParameterCompositeModel(["CriticalDivergence"])
+    x = np.array([90.0, 91.0, 95.0, 120.0, 280.0])
+    y = np.array([0.59, 0.30, 0.14, 0.04, 0.017])
+    generic = suggest_model_seeds(model, x, y)
+    trend = suggest_trend_seeds(model, x, y)
+    for name, value in trend.items():
+        assert generic[name] == pytest.approx(value)
+
+
+def test_suggest_trend_seeds_still_public_and_unchanged() -> None:
+    # The public trend seeder must keep its exact behaviour: only the critical
+    # component's params, nothing else, for a Linear+CriticalDivergence model.
+    model = ParameterCompositeModel(["Linear", "CriticalDivergence"])
+    x = np.array([90.0, 120.0, 280.0])
+    y = np.array([0.5, 0.1, 0.02])
+    seeds = suggest_trend_seeds(model, x, y)
+    assert set(seeds) == {"Tc", "c"}
+    assert seeds["Tc"] < 90.0
+    assert seeds["c"] == pytest.approx(0.02)
+
+
+# ---------------------------------------------------------------------------
+# Multi-start robustness and new result fields
+# ---------------------------------------------------------------------------
+
+
+def test_fit_extra_starts_zero_is_identical() -> None:
+    # extra_starts=0 (the default) must reproduce the params/chi2 exactly.
+    model = ParameterCompositeModel(["Linear"])
+    x = np.linspace(0.0, 10.0, 25)
+    y = 2.0 * x + 1.0 + 0.01 * np.sin(x)
+    params = ParameterSet()
+    for pname in model.param_names:
+        params.add(Parameter(name=pname, value=model.param_defaults[pname]))
+
+    default = fit_parameter_model(x, y, None, model, params)
+    explicit = fit_parameter_model(x, y, None, model, params, extra_starts=0)
+
+    assert default.success == explicit.success
+    assert default.chi_squared == explicit.chi_squared
+    default_vals = {p.name: p.value for p in default.parameters}
+    explicit_vals = {p.name: p.value for p in explicit.parameters}
+    assert default_vals == explicit_vals
+
+
+def test_fit_multistart_escapes_bad_minimum() -> None:
+    # An exponential decay with a badly-placed user seed lands in a poor local
+    # minimum for a single start; extra_starts should find a better chi2.
+    model = ParameterCompositeModel(["ExponentialDecay"])
+    x = np.linspace(0.0, 20.0, 60)
+    y = 5.0 * np.exp(-x / 4.0) + 1.0
+
+    def bad_params() -> ParameterSet:
+        p = ParameterSet()
+        p.add(Parameter(name="a", value=0.01, min=-100.0, max=100.0))
+        p.add(Parameter(name="tau", value=1000.0, min=1e-3, max=1e5))
+        p.add(Parameter(name="c", value=0.0, min=-100.0, max=100.0))
+        return p
+
+    single = fit_parameter_model(x, y, None, model, bad_params())
+    multi = fit_parameter_model(x, y, None, model, bad_params(), extra_starts=8, seed=1)
+
+    assert multi.success
+    assert multi.reduced_chi_squared <= single.reduced_chi_squared + 1e-9
+    # The recovered decay is close to the truth.
+    fitted = {p.name: p.value for p in multi.parameters}
+    assert fitted["tau"] == pytest.approx(4.0, rel=0.3)
+
+
+def test_fit_multistart_deterministic() -> None:
+    # Same seed -> identical result; the RNG must be default_rng(seed) only.
+    model = ParameterCompositeModel(["ExponentialDecay"])
+    x = np.linspace(0.0, 20.0, 40)
+    y = 4.0 * np.exp(-x / 5.0) + 0.5
+
+    def params() -> ParameterSet:
+        p = ParameterSet()
+        p.add(Parameter(name="a", value=1.0, min=-100.0, max=100.0))
+        p.add(Parameter(name="tau", value=50.0, min=1e-3, max=1e5))
+        p.add(Parameter(name="c", value=0.0, min=-100.0, max=100.0))
+        return p
+
+    first = fit_parameter_model(x, y, None, model, params(), extra_starts=6, seed=42)
+    second = fit_parameter_model(x, y, None, model, params(), extra_starts=6, seed=42)
+    assert first.chi_squared == second.chi_squared
+    assert {p.name: p.value for p in first.parameters} == {
+        p.name: p.value for p in second.parameters
+    }
+
+
+def test_perturbed_starts_finite_with_infinite_bounds() -> None:
+    # An offset-like param (value 0) with infinite bounds must still get FINITE
+    # perturbed starts — the jitter falls back to the data-derived scale, never
+    # inf*0.25.
+    from asymmetry.core.fitting.parameter_models import _perturbed_start_candidates
+
+    params = ParameterSet()
+    params.add(Parameter(name="b", value=0.0))  # default bounds are ±inf
+    params.add(Parameter(name="m", value=2.0))
+    base = {"b": 0.0, "m": 2.0}
+    rng = np.random.default_rng(0)
+    candidates = _perturbed_start_candidates(base, params, 5, rng, default_scale=3.0)
+    assert len(candidates) == 5
+    for cand in candidates:
+        assert np.isfinite(cand["b"])
+        assert np.isfinite(cand["m"])
+        # The offset jitter stays within the data-derived fallback scale.
+        assert abs(cand["b"]) <= 3.0 + 1e-9
+
+
+def test_fit_infinite_bounds_multistart_runs() -> None:
+    # End-to-end: a Linear fit with default (infinite) bounds and extra_starts
+    # must not blow up on the offset-jitter fallback.
+    model = ParameterCompositeModel(["Linear"])
+    x = np.linspace(0.0, 10.0, 30)
+    y = 3.0 * x - 1.0
+    params = ParameterSet()
+    for pname in model.param_names:
+        params.add(Parameter(name=pname, value=0.0))  # ±inf bounds
+
+    result = fit_parameter_model(x, y, None, model, params, extra_starts=6, seed=7)
+    assert result.success
+    fitted = {p.name: p.value for p in result.parameters}
+    assert fitted["m"] == pytest.approx(3.0, rel=1e-3)
+    assert fitted["b"] == pytest.approx(-1.0, abs=1e-2)
+
+
+def test_fit_params_at_bound_flagged() -> None:
+    # A parameter whose true optimum lies outside a tight bound gets pinned.
+    model = ParameterCompositeModel(["Linear"])
+    x = np.linspace(0.0, 10.0, 30)
+    y = 5.0 * x + 1.0
+    params = ParameterSet()
+    # Slope wants 5 but is capped at 2 -> pinned at max.
+    params.add(Parameter(name="m", value=1.0, min=0.0, max=2.0))
+    params.add(Parameter(name="b", value=0.0, min=-100.0, max=100.0))
+
+    result = fit_parameter_model(x, y, None, model, params)
+    assert "m" in result.params_at_bound
+
+
+def test_fit_seed_beat_user_start_flag() -> None:
+    # A deliberately terrible user seed that a generic/perturbed start beats
+    # must set seed_beat_user_start (extra_starts > 0).
+    model = ParameterCompositeModel(["Linear"])
+    x = np.linspace(0.0, 10.0, 30)
+    y = 4.0 * x - 3.0
+    params = ParameterSet()
+    params.add(Parameter(name="m", value=-999.0, min=-1e4, max=1e4))
+    params.add(Parameter(name="b", value=999.0, min=-1e4, max=1e4))
+
+    result = fit_parameter_model(x, y, None, model, params, extra_starts=8, seed=3)
+    assert result.success
+    assert result.seed_beat_user_start
+    assert result.n_starts_tried > 1
+
+
+def test_fit_transport_heuristic_win_does_not_set_flag() -> None:
+    # The transport heuristic ALWAYS runs internally (even at extra_starts=0), so
+    # it beating the user's start is not news: the flag must stay False. A
+    # DiffusionLF model with a free amplitude and a bad user seed exercises this.
+    model = ParameterCompositeModel(["DiffusionLF_2D"])
+    x = np.linspace(10.0, 500.0, 40)
+    # A physically-shaped LF-diffusion curve from a known amplitude/rate.
+    from asymmetry.core.fitting.parameter_models import _diffusion_lf_2d
+
+    y = _diffusion_lf_2d(x, A=3.0, D_2D=50.0)
+    params = ParameterSet()
+    # Deliberately far-off user seed so the internal transport grid seed wins.
+    params.add(Parameter(name="A", value=1e-4, min=0.0, max=100.0))
+    params.add(Parameter(name="D_2D", value=1e-4, min=1e-6, max=1e6))
+    params.add(Parameter(name="D_perp", value=0.0, min=0.0, max=1e6, fixed=True))
+
+    result = fit_parameter_model(x, y, None, model, params)
+    # extra_starts defaults to 0: only user + transport candidates exist.
+    assert result.n_starts_tried >= 1
+    # Even if the transport seed produced the winning fit, the flag stays False.
+    assert result.seed_beat_user_start is False
+
+
+def test_result_fields_default_and_roundtrip() -> None:
+    # Benign defaults on a bare result, and a dict round-trip preserves them.
+    result = ParameterModelFitResult(success=True)
+    assert result.n_starts_tried == 0
+    assert result.seed_beat_user_start is False
+    assert result.params_at_bound == ()
+
+    populated = ParameterModelFitResult(
+        success=True,
+        chi_squared=1.0,
+        reduced_chi_squared=0.5,
+        n_points=10,
+        n_starts_tried=5,
+        seed_beat_user_start=True,
+        params_at_bound=("m", "tau"),
+    )
+    # Field-by-field round-trip through a plain dict (the panel serialization
+    # pattern: read known keys, benign defaults for the rest).
+    state = {
+        "success": populated.success,
+        "chi_squared": populated.chi_squared,
+        "reduced_chi_squared": populated.reduced_chi_squared,
+        "n_points": populated.n_points,
+        "n_starts_tried": populated.n_starts_tried,
+        "seed_beat_user_start": populated.seed_beat_user_start,
+        "params_at_bound": list(populated.params_at_bound),
+    }
+    restored = ParameterModelFitResult(
+        success=bool(state["success"]),
+        chi_squared=float(state["chi_squared"]),
+        reduced_chi_squared=float(state["reduced_chi_squared"]),
+        n_points=int(state["n_points"]),
+        n_starts_tried=int(state.get("n_starts_tried", 0)),
+        seed_beat_user_start=bool(state.get("seed_beat_user_start", False)),
+        params_at_bound=tuple(state.get("params_at_bound", ())),
+    )
+    assert restored.n_starts_tried == 5
+    assert restored.seed_beat_user_start is True
+    assert restored.params_at_bound == ("m", "tau")
+
+    # A legacy state missing the new keys still constructs with benign defaults.
+    legacy = ParameterModelFitResult(
+        success=True,
+        n_starts_tried=int({}.get("n_starts_tried", 0)),
+    )
+    assert legacy.n_starts_tried == 0
+    assert legacy.seed_beat_user_start is False
+    assert legacy.params_at_bound == ()
 
 
 def test_parameter_model_categories_cover_registry() -> None:
