@@ -570,6 +570,60 @@ def test_run_template_assessments_process_path_cancels_promptly(
     assert pool.shutdown_calls == [{"wait": False, "cancel_futures": True}]
 
 
+class _PendingProcessPool:
+    """A spawn-pool stand-in whose futures never complete.
+
+    Models the responsiveness bug being fixed: a real worker cannot be
+    interrupted mid-fit, so the driver must not block on completion. Here the
+    submitted futures are simply never resolved, so the *only* way
+    ``_run_template_assessments`` can return is by polling ``cancel_callback``
+    while waiting — an ``as_completed``/``next()`` driver would block forever.
+    """
+
+    def __init__(self) -> None:
+        self.shutdown_calls: list[dict] = []
+        self.futures: list[concurrent.futures.Future] = []
+
+    def submit(self, fn, *args):  # noqa: ARG002 - fn/args intentionally never run
+        future: concurrent.futures.Future = concurrent.futures.Future()
+        self.futures.append(future)
+        return future
+
+    def shutdown(self, wait: bool = True, cancel_futures: bool = False) -> None:
+        self.shutdown_calls.append({"wait": wait, "cancel_futures": cancel_futures})
+
+
+def test_run_template_assessments_polls_cancel_while_futures_pending(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancel is honoured *while* in-flight fits are still running.
+
+    With futures that never complete, the driver can only escape by polling
+    cancel between ``wait`` timeouts — this is the actual latency fix (return
+    within a poll interval, not one in-flight fit's duration).
+    """
+    _monkeypatch_dummy_worker(monkeypatch)
+    monkeypatch.setattr(fit_wizard_module, "_CANCEL_POLL_SECONDS", 0.01)
+    tasks, _keys = _order_preserving_tasks()
+    pool = _PendingProcessPool()
+    monkeypatch.setattr(fit_wizard_module, "open_spawn_pool", lambda workers: pool)
+
+    calls = {"n": 0}
+
+    def _cancel_after_a_few() -> bool:
+        # False on the first two polls (futures stay pending across them), then
+        # True — the loop must not block waiting on a completion that never comes.
+        calls["n"] += 1
+        return calls["n"] > 2
+
+    with pytest.raises(FitCancelledError):
+        _run_template_assessments(tasks, max_workers=4, cancel_callback=_cancel_after_a_few)
+
+    assert calls["n"] >= 3
+    # The pool this call opened is torn down non-blocking on abort.
+    assert pool.shutdown_calls == [{"wait": False, "cancel_futures": True}]
+
+
 def test_run_template_assessments_retries_failed_future_serially(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
