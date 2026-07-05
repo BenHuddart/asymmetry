@@ -2250,3 +2250,160 @@ def test_warm_certificate_failure_escalates_to_full_battery() -> None:
     esc_chi2 = sum(r.chi_squared for r in escalated.fit_results_by_run.values())
     # Escalation reached the same minimum the battery finds from cold start.
     assert esc_chi2 == pytest.approx(ref_chi2, rel=0.05)
+
+
+# --------------------------------------------------------------------------- #
+# Non-exhaustive search engines (PR 4, techniques E/F/G/H)
+# --------------------------------------------------------------------------- #
+
+
+def _uniform_series(model: CompositeModel) -> list[MuonDataset]:
+    return [
+        _dataset_for(
+            run_number=700 + idx,
+            field=50.0 * idx,
+            temperature=5.0,
+            model=model,
+            params={"A_1": 0.2, "Lambda": 0.35, "A_bg": 0.01},
+        )
+        for idx in range(1, 5)
+    ]
+
+
+def _varying_lambda_series(model: CompositeModel) -> list[MuonDataset]:
+    lambdas = [0.15, 0.25, 0.55, 0.9]
+    return [
+        _dataset_for(
+            run_number=750 + idx,
+            field=100.0 * idx,
+            temperature=10.0,
+            model=model,
+            params={"A_1": 0.2, "Lambda": lambdas[idx - 1], "A_bg": 0.01},
+        )
+        for idx in range(1, 5)
+    ]
+
+
+def _winner_flip_neighbours_present(recommendation) -> bool:
+    """Every single-role-flip of the winner exists as a returned assessment.
+
+    The verdict layer (``_build_parameter_recommendations_from_exact_cache`` +
+    rerank) compares the winner against its flip-neighbourhood; a sparse search
+    must have explicitly fitted those P neighbours, else the verdict is starved.
+    """
+
+    winner = recommendation.recommended_assessment
+    assert winner is not None
+    template_key = winner.template.key
+    free = tuple(
+        name for name in winner.template.model.param_names if name not in winner.fixed_param_names
+    )
+    present = {
+        (a.global_param_names, a.local_param_names)
+        for a in recommendation.assessments
+        if a.template.key == template_key and a.is_successful
+    }
+    winner_local = set(winner.local_param_names)
+    for name in free:
+        if name in winner_local:
+            flipped_local = tuple(sorted(winner_local - {name}))
+        else:
+            flipped_local = tuple(sorted(winner_local | {name}))
+        flipped_global = tuple(n for n in free if n not in set(flipped_local))
+        if (flipped_global, flipped_local) not in present:
+            return False
+    return True
+
+
+@pytest.mark.parametrize("engine", ["low", "balanced"])
+def test_heuristic_engines_share_uniform_series(
+    monkeypatch: pytest.MonkeyPatch, engine: str
+) -> None:
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    _restrict_to_exp_constant_template(monkeypatch, model)
+    datasets = _uniform_series(model)
+
+    recommendation = build_global_fit_wizard_recommendation(datasets, search_engine=engine)
+
+    assessment = recommendation.recommended_assessment
+    assert assessment is not None
+    assert assessment.template.key == "exp_constant"
+    assert assessment.local_param_names == ()
+
+
+@pytest.mark.parametrize("engine", ["low", "balanced"])
+def test_heuristic_engines_localize_varying_lambda(
+    monkeypatch: pytest.MonkeyPatch, engine: str
+) -> None:
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    _restrict_to_exp_constant_template(monkeypatch, model)
+    datasets = _varying_lambda_series(model)
+
+    recommendation = build_global_fit_wizard_recommendation(datasets, search_engine=engine)
+
+    assessment = recommendation.recommended_assessment
+    assert assessment is not None
+    assert assessment.template.key == "exp_constant"
+    assert "Lambda" in assessment.local_param_names
+    assert "A_1" not in assessment.local_param_names
+
+
+@pytest.mark.parametrize("engine", ["low", "balanced"])
+def test_heuristic_winner_flip_neighbourhood_is_fitted(
+    monkeypatch: pytest.MonkeyPatch, engine: str
+) -> None:
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    _restrict_to_exp_constant_template(monkeypatch, model)
+    # Mixed truth: one global amplitude/background, one local rate — the winner
+    # has a non-trivial flip-neighbourhood spanning all three free params.
+    datasets = _varying_lambda_series(model)
+
+    recommendation = build_global_fit_wizard_recommendation(datasets, search_engine=engine)
+
+    assert _winner_flip_neighbours_present(recommendation), (
+        "sparse search left the winner's flip-neighbourhood incomplete; the "
+        "verdict/robustness layer would be starved"
+    )
+
+
+def test_heuristic_engine_records_q_pretest_instrumentation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    _restrict_to_exp_constant_template(monkeypatch, model)
+    datasets = _varying_lambda_series(model)
+    instrumentation: dict[str, object] = {}
+
+    build_global_fit_wizard_recommendation(
+        datasets, search_engine="balanced", instrumentation=instrumentation
+    )
+
+    counters = instrumentation.get("counters")
+    assert isinstance(counters, dict)
+    # Q pre-tests ran (some params classified) and the flip-neighbourhood filled.
+    q_total = (
+        int(counters.get("q_pretest_fixed_local", 0))
+        + int(counters.get("q_pretest_fixed_global", 0))
+        + int(counters.get("q_pretest_ambiguous", 0))
+    )
+    assert q_total > 0
+    assert instrumentation.get("search_engine") == "balanced"
+
+
+def test_exhaustive_engine_default_is_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    _restrict_to_exp_constant_template(monkeypatch, model)
+    datasets = _varying_lambda_series(model)
+
+    default = build_global_fit_wizard_recommendation(datasets)
+    explicit = build_global_fit_wizard_recommendation(datasets, search_engine="exhaustive")
+
+    # The default engine is exhaustive; both reach the same verdict.
+    assert default.recommended_assessment is not None
+    assert explicit.recommended_assessment is not None
+    assert (
+        default.recommended_assessment.local_param_names
+        == explicit.recommended_assessment.local_param_names
+    )
