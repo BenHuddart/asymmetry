@@ -18,6 +18,63 @@ from asymmetry.core.fitting.parameters import ParamInfo, param_info_map
 from asymmetry.core.fitting.registration import insert_definition
 from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
 
+#: Groundwork for the deferred variable-projection (VarPro) follow-up. VarPro is
+#: not wired into a fit path yet (see the PR body: it is a constant-factor win
+#: once profiled locals already separate the per-dataset solves, and its marginal
+#: errors need a final full Hessian), so this metadata is presently consumed only
+#: by tests and the follow-up plan — but it is the generic, name-role marking the
+#: study asks for, kept here so the follow-up does not re-derive it.
+#:
+#: Parameter *role* names that enter a μSR model **linearly** — amplitudes and
+#: additive constant backgrounds. These are roles, not component names: an
+#: amplitude ``A`` scales its term and a constant baseline ``baseline`` adds to
+#: the model, so both appear to first order as ``model = a·term + ...``. Variable
+#: projection (VarPro) solves such parameters by linear least-squares inside the
+#: objective instead of by Minuit. The set is deliberately generic (matched by
+#: name, never by which component a parameter belongs to); an ``f_<Component>``
+#: fraction weight is *not* here because a normalised fraction group is not a free
+#: linear scale. VarPro always *verifies* affineness numerically at runtime and
+#: falls back to the nonlinear treatment when a flagged name is not actually
+#: affine in a given model, so this list only has to be a safe over-approximation
+#: of "usually linear".
+LINEAR_PARAM_ROLE_NAMES: frozenset[str] = frozenset(
+    {
+        "A",
+        "A0",
+        "A_bg",
+        "a_Dia",
+        "baseline",
+        "bg",
+        "BG",
+        "c0",
+        "c1",
+        "c2",
+        "c3",
+        "c4",
+        "c5",
+        "c6",
+    }
+)
+
+
+def default_linear_params(param_names: list[str]) -> list[str]:
+    """Role-based linear-parameter guess for a model's parameter list.
+
+    Returns the subset of ``param_names`` whose (index-stripped) base name is a
+    known linear role (:data:`LINEAR_PARAM_ROLE_NAMES`) — i.e. an amplitude or an
+    additive constant background. This is only a *candidate* set: VarPro verifies
+    affineness numerically before using it, so a false positive is corrected at
+    runtime, never silently trusted.
+    """
+    from asymmetry.core.fitting.parameters import split_parameter_name
+
+    out: list[str] = []
+    for name in param_names:
+        base, _ = split_parameter_name(name)
+        if base in LINEAR_PARAM_ROLE_NAMES:
+            out.append(name)
+    return out
+
 
 @dataclass
 class ModelDefinition:
@@ -30,6 +87,18 @@ class ModelDefinition:
     param_defaults: dict[str, float]
     param_info: dict[str, ParamInfo]
     domain: str = "time"
+    #: Names of parameters that enter the model linearly (amplitudes, constant
+    #: backgrounds). ``None`` means "derive from role names via
+    #: :func:`default_linear_params`". Variable projection solves these by linear
+    #: least-squares, but only after a numeric affineness check, so an entry here
+    #: is a hint, not a guarantee.
+    linear_params: list[str] | None = None
+
+    def resolved_linear_params(self) -> list[str]:
+        """The linear-parameter set for this model (explicit or role-derived)."""
+        if self.linear_params is not None:
+            return list(self.linear_params)
+        return default_linear_params(self.param_names)
 
 
 # ---------------------------------------------------------------------------

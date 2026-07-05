@@ -183,6 +183,8 @@ def fit_global(
     method: str = "migrad",
     max_calls: int = 10000,
     minos: bool = False,
+    strategy: str = "joint",
+    use_varpro: bool = False,
     fit_engine: FitEngine | None = None,
     cancel_callback: Callable[[], bool] | None = None,
 ) -> GlobalFitResult:
@@ -229,6 +231,23 @@ def fit_global(
         Maximum cost-function evaluations.
     minos
         Run MINOS for asymmetric intervals on top of the symmetric HESSE errors.
+    strategy
+        Minimiser architecture, forwarded to
+        :meth:`~asymmetry.core.fitting.engine.FitEngine.global_fit`. ``"joint"``
+        (default) is the historical single-Minuit solver; ``"profiled"`` runs an
+        outer Minuit over the shared globals only with per-dataset local solves,
+        so per-fit cost scales ~linearly in the number of datasets (technique L).
+        Both converge to the same minimum; profiled reports conditional local
+        errors (globals pinned) while its shared-global errors are marginal.
+    use_varpro
+        **Deferred — not implemented.** Forwarded to the engine, where
+        ``use_varpro=True`` currently raises :class:`NotImplementedError`; only the
+        default ``False`` is supported. Variable projection (solving linear
+        parameters — amplitudes, constant backgrounds — by least-squares inside the
+        objective) is a planned follow-up; see
+        :meth:`~asymmetry.core.fitting.engine.FitEngine.global_fit` for why it is
+        deferred (constant-factor-only once the profiled strategy separates the
+        per-dataset locals, and marginal-error matching needs a final full Hessian).
     fit_engine
         Optional :class:`FitEngine` to reuse; a fresh one is created otherwise.
     cancel_callback
@@ -289,6 +308,8 @@ def fit_global(
         method=method,
         max_calls=max_calls,
         minos=minos,
+        strategy=strategy,
+        use_varpro=use_varpro,
         cancel_callback=cancel_callback,
     )
 
