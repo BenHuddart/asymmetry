@@ -4,7 +4,7 @@ Replaces the wide row-of-buttons layout in the trend model-fit dialog with one
 small card per fit range: a colour swatch matching the range's plot span, a
 title, a fit-status chip, and its bounds. The card that is currently active
 additionally shows a primary "Run Fit" button and dedicated "Edit Model" /
-"Exclude region…" / "Remove" buttons.
+"Remove" buttons.
 
 The card is a pure view — it renders a plain :class:`RangeCardView` handed to
 it by the dialog and emits signals on user interaction. It owns no fit/range
@@ -17,8 +17,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFontMetrics, QMouseEvent
+from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtGui import QMouseEvent, QPainter
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -68,6 +68,43 @@ class _CardSurface(QFrame):
         super().mousePressEvent(event)
 
 
+class _ElidingLabel(QLabel):
+    """A QLabel that elides its text to the CURRENT width at paint time.
+
+    The card formula is long; a plain QLabel would force the card wide, and the
+    previous manual elide-on-set_state over-truncated before the freshly-rebuilt
+    card had a width. Eliding in paintEvent is always correct for the current
+    width and needs no layout-timing juggling."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._full_text = ""
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+
+    def set_full_text(self, text: str) -> None:
+        self._full_text = text or ""
+        self.setToolTip(self._full_text)
+        self.update()
+
+    def full_text(self) -> str:
+        return self._full_text
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 — Qt override
+        # Don't let the long formula dictate a large minimum width.
+        return QSize(0, self.fontMetrics().height())
+
+    def paintEvent(self, event) -> None:  # noqa: N802 — Qt override
+        painter = QPainter(self)
+        elided = self.fontMetrics().elidedText(
+            self._full_text, Qt.TextElideMode.ElideRight, self.width()
+        )
+        painter.drawText(
+            self.rect(),
+            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+            elided,
+        )
+
+
 @dataclass(frozen=True)
 class RangeCardView:
     """Plain render payload for one :class:`RangeCard`.
@@ -99,8 +136,6 @@ class RangeCard(QFrame):
     run_requested = Signal(int)
     #: "Edit Model" button pressed.
     edit_model_requested = Signal(int)
-    #: "Exclude region..." button pressed (numeric exclude/add-window path).
-    exclude_requested = Signal(int)
     #: "Remove" button pressed.
     remove_requested = Signal(int)
 
@@ -151,10 +186,7 @@ class RangeCard(QFrame):
         line2_layout.setContentsMargins(0, 0, 0, 0)
         line2_layout.setSpacing(6)
 
-        self._formula_label = QLabel("", self._line2)
-        self._formula_label.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
-        )
+        self._formula_label = _ElidingLabel(self._line2)
         line2_layout.addWidget(self._formula_label, 1)
 
         # Order: primary -> secondary -> destructive.
@@ -166,10 +198,6 @@ class RangeCard(QFrame):
         self._edit_model_button = QPushButton("Edit Model", self._line2)
         self._edit_model_button.clicked.connect(self._on_edit_model_triggered)
         line2_layout.addWidget(self._edit_model_button)
-
-        self._exclude_button = QPushButton("Exclude region…", self._line2)
-        self._exclude_button.clicked.connect(self._on_exclude_triggered)
-        line2_layout.addWidget(self._exclude_button)
 
         self._remove_button = QPushButton("Remove", self._line2)
         self._remove_button.clicked.connect(self._on_remove_triggered)
@@ -199,8 +227,7 @@ class RangeCard(QFrame):
         self._bounds_label.setText(view.bounds_text)
 
         self.setToolTip(view.formula)
-        self._formula_label.setToolTip(view.formula)
-        self._update_formula_elision()
+        self._formula_label.set_full_text(view.formula)
 
         self._remove_button.setVisible(view.can_remove)
 
@@ -227,8 +254,7 @@ class RangeCard(QFrame):
             )
 
     def set_enabled(self, enabled: bool) -> None:
-        """Enable/disable the card's action buttons (Run Fit / Edit Model /
-        Exclude region… / Remove).
+        """Enable/disable the card's action buttons (Run Fit / Edit Model / Remove).
 
         Used by the dialog's fit-busy bookkeeping to lock the active card's
         actions while a fit runs. Only the interactive controls are toggled —
@@ -237,24 +263,7 @@ class RangeCard(QFrame):
         """
         self._run_button.setEnabled(enabled)
         self._edit_model_button.setEnabled(enabled)
-        self._exclude_button.setEnabled(enabled)
         self._remove_button.setEnabled(enabled)
-
-    # ── Formula elision ──────────────────────────────────────────────────────
-
-    def _update_formula_elision(self) -> None:
-        if self._view is None:
-            return
-        metrics = QFontMetrics(self._formula_label.font())
-        available = max(0, self._formula_label.width())
-        if available <= 0:
-            available = max(0, self.width() - 160)
-        elided = metrics.elidedText(self._view.formula, Qt.TextElideMode.ElideRight, available)
-        self._formula_label.setText(elided)
-
-    def resizeEvent(self, event) -> None:  # noqa: N802 — Qt override
-        super().resizeEvent(event)
-        self._update_formula_elision()
 
     # ── Mouse handling: click-to-select on the card body ────────────────────
 
@@ -268,9 +277,6 @@ class RangeCard(QFrame):
 
     def _on_edit_model_triggered(self) -> None:
         self.edit_model_requested.emit(self._idx)
-
-    def _on_exclude_triggered(self) -> None:
-        self.exclude_requested.emit(self._idx)
 
     def _on_remove_triggered(self) -> None:
         self.remove_requested.emit(self._idx)

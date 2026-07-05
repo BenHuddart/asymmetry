@@ -129,7 +129,6 @@ def test_show_run_controls_visibility(qapp: QApplication) -> None:
     assert card._line2.isVisibleTo(card)
     assert card._run_button.isVisibleTo(card)
     assert card._edit_model_button.isVisibleTo(card)
-    assert card._exclude_button.isVisibleTo(card)
 
     card.set_state(_view(show_run=False))
     assert not card._line2.isVisibleTo(card)
@@ -151,18 +150,14 @@ def test_action_buttons_emit_signals(qapp: QApplication) -> None:
     card.set_state(_view(idx=2, show_run=True, can_remove=True))
 
     edit_model_received = []
-    exclude_received = []
     remove_received = []
     card.edit_model_requested.connect(edit_model_received.append)
-    card.exclude_requested.connect(exclude_received.append)
     card.remove_requested.connect(remove_received.append)
 
     card._edit_model_button.click()
-    card._exclude_button.click()
     card._remove_button.click()
 
     assert edit_model_received == [2]
-    assert exclude_received == [2]
     assert remove_received == [2]
 
 
@@ -191,14 +186,26 @@ def test_set_enabled_toggles_controls(qapp: QApplication) -> None:
     card.set_enabled(False)
     assert not card._run_button.isEnabled()
     assert not card._edit_model_button.isEnabled()
-    assert not card._exclude_button.isEnabled()
     assert not card._remove_button.isEnabled()
 
     card.set_enabled(True)
     assert card._run_button.isEnabled()
     assert card._edit_model_button.isEnabled()
-    assert card._exclude_button.isEnabled()
     assert card._remove_button.isEnabled()
+
+
+def test_formula_elides_at_paint_time(qapp: QApplication) -> None:
+    """The formula label stores the FULL formula regardless of the card's
+    current layout width — elision happens in ``_ElidingLabel.paintEvent``
+    against whatever width is current at paint time, so a freshly rebuilt card
+    (width not yet laid out) never over-truncates to e.g. "y…" the way the old
+    elide-on-set_state approach did."""
+    long_formula = "A_1*exp(-Lambda_1*t) + A_2*exp(-Lambda_2*t) + A_3*cos(2*pi*f*t + phi)"
+    card = RangeCard(0)
+    card.set_state(_view(formula=long_formula, show_run=True))
+
+    assert card._formula_label.full_text() == long_formula
+    assert card._formula_label.toolTip() == long_formula
 
 
 def test_card_click_emits_selected(qapp: QApplication) -> None:

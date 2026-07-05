@@ -366,10 +366,11 @@ def test_cross_group_dialog_exposes_error_modes_and_windows() -> None:
 
     assert dlg._error_mode() is ErrorMode.COLUMN  # default
 
-    # The "Exclude region…" path is a dedicated button on the range card (the
-    # overflow dropdown was replaced by visible action buttons).
-    card = dlg._range_cards[0]
-    assert card._exclude_button.text() == "Exclude region…"
+    # The "Exclude region…" path is the details-pane button (the card's own
+    # duplicate copy was removed; the details pane is the single exclude
+    # action).
+    assert dlg._exclude_region_btn is not None
+    assert dlg._exclude_region_btn.text() == "Exclude region…"
 
     # field is exact (no σ_x), so the effective-variance toggle is not offered.
     assert dlg._x_error_check is None

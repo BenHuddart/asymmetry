@@ -1402,7 +1402,6 @@ class ModelFitDialog(QDialog):
             card.selected.connect(self._select_range)
             card.run_requested.connect(self._run_fit)
             card.edit_model_requested.connect(self._edit_model)
-            card.exclude_requested.connect(self._on_card_exclude_requested)
             card.remove_requested.connect(self._remove_range)
             self._ranges_host.addWidget(card)
             self._range_cards.append(card)
@@ -1642,15 +1641,6 @@ class ModelFitDialog(QDialog):
         self._rebuild_fit_region_rows(idx)
         self._refresh_range_card(idx)
         self._request_preview_update()
-
-    def _on_card_exclude_requested(self, idx: int) -> None:
-        """A card's "Exclude region…" button: carve a default gap into that range.
-
-        The card gesture has no drag interval, so it routes through the same
-        default-gap logic as the details-pane button (see
-        ``_on_exclude_region_clicked``) but targets the card's range index.
-        """
-        self._exclude_default_gap(idx)
 
     def _on_exclude_region_clicked(self) -> None:
         """The details-pane "Exclude region…" button: carve a default gap."""

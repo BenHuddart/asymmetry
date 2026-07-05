@@ -2218,7 +2218,6 @@ def test_fit_busy_disables_region_rows_and_actions(qapp: QApplication) -> None:
     dlg._set_fit_ui_busy(True)
     assert dlg._range_cards[0]._run_button.isEnabled() is False
     assert dlg._range_cards[0]._edit_model_button.isEnabled() is False
-    assert dlg._range_cards[0]._exclude_button.isEnabled() is False
     assert dlg._region_row_spins[0][0].isEnabled() is False
     assert dlg._region_row_spins[0][1].isEnabled() is False
     assert dlg._exclude_region_btn.isEnabled() is False
