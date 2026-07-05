@@ -6,7 +6,8 @@ import math
 import os
 import re
 from collections.abc import Callable, Sequence
-from concurrent.futures import Executor, ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, Executor, ThreadPoolExecutor
+from concurrent.futures import wait as futures_wait
 from dataclasses import dataclass, replace
 from enum import Enum
 
@@ -46,7 +47,7 @@ from asymmetry.core.fitting.peak_detection import (
     serialize_multiplet_match,
     serialize_peak_analysis,
 )
-from asymmetry.core.fitting.process_pool import open_spawn_pool
+from asymmetry.core.fitting.process_pool import open_spawn_pool, terminate_spawn_pool
 from asymmetry.core.fitting.spectral import field_gauss_to_frequency_mhz
 from asymmetry.core.fitting.wizard_scope import (
     ScopeResolution,
@@ -1480,6 +1481,14 @@ def _decide_family_promotions(
 #: run at full precision with no cap.
 _SCREENING_MIGRAD_NCALL = 3000
 
+#: How long the process-pool driver blocks in a single ``wait`` before looping
+#: back to re-check ``cancel_callback``. A cancel cannot cross the process
+#: boundary to interrupt a fit already running in a worker, so this bounds how
+#: long a Cancel click waits before the driver notices — small enough to feel
+#: instant, large enough not to busy-spin. Read as a module global (not a
+#: default arg) so tests can shrink it.
+_CANCEL_POLL_SECONDS = 0.2
+
 #: Full parameter-variant budget for a Stage-2 member (the blind-seed ladder that
 #: rescues a bad initial guess).
 _STAGE2_FULL_VARIANT_BUDGET = 5
@@ -1614,13 +1623,18 @@ def _run_template_assessments(
     otherwise opens one via :func:`open_spawn_pool` and closes it in a
     ``finally`` — but only the pool this call opened; a caller-supplied
     ``executor`` remains the caller's to shut down. ``cancel_callback`` cannot
-    be forwarded across the process boundary, so cancellation is instead
-    polled between completions via an ``as_completed`` loop; on cancellation
-    the *locally opened* pool is shut down with
-    ``cancel_futures=True`` and :class:`FitCancelledError` is raised (never
-    swallowed). A pool that could not start (``open_spawn_pool`` returns
-    ``None``) falls back to the historical thread-pool path, which keeps
-    in-fit cancellation working.
+    be forwarded across the process boundary, so cancellation is instead polled
+    *while waiting*: the driver loops on :func:`concurrent.futures.wait` with a
+    ``_CANCEL_POLL_SECONDS`` timeout and re-checks ``cancel_callback`` each
+    iteration, so a cancel is noticed within one poll interval rather than one
+    in-flight fit's duration (the fit already running in a worker still cannot be
+    interrupted). On cancellation the *locally opened* pool is torn down via
+    :func:`terminate_spawn_pool` (non-blocking drop of queued work plus a
+    force-kill-and-reap of the workers, so nothing is orphaned) and
+    :class:`FitCancelledError` is raised (never swallowed); a caller-supplied
+    pool is left for the caller to terminate. A pool that could not start
+    (``open_spawn_pool`` returns ``None``) falls back to the historical
+    thread-pool path, which keeps in-fit cancellation working.
 
     Per-task resilience: if a submitted future raises (a pickling failure or a
     worker crash), that one task is retried serially in-parent with
@@ -1673,25 +1687,44 @@ def _run_template_assessments(
             # FitCancelledError cannot arise from submit, so a blanket except
             # is safe here.
             return [_execute_assessment_task(task, cancel_callback) for task in task_list]
-        remaining = len(task_list)
-        completed = as_completed(future_to_index)
-        while remaining:
+
+        def _abort_if_cancelled() -> None:
             if cancel_callback is not None and cancel_callback():
+                nonlocal shutdown_on_exit
                 if opened_here:
-                    pool.shutdown(wait=False, cancel_futures=True)
+                    # Only tear down the pool this call opened; a caller-supplied
+                    # (shared) pool is the caller's to terminate. Non-blocking +
+                    # kill so we return within a poll interval and leave no
+                    # orphaned spawn workers.
+                    terminate_spawn_pool(pool)
                     shutdown_on_exit = False
                 raise FitCancelledError("Fit wizard analysis cancelled.")
-            future = next(completed)
-            index = future_to_index[future]
-            try:
-                results[index] = future.result()
-            except FitCancelledError:
-                raise
-            except Exception:
-                # Pickling failure or worker crash: retry this one task
-                # serially in-parent before giving up on it.
-                results[index] = _execute_assessment_task(task_list[index], cancel_callback)
-            remaining -= 1
+
+        # A cancel_callback cannot cross the process boundary to interrupt a fit
+        # already running in a worker, so instead of blocking on the next
+        # completion we poll cancel while waiting: each ``wait`` returns after a
+        # completion *or* after ``_CANCEL_POLL_SECONDS``, so a Cancel click is
+        # noticed within one poll interval rather than one in-flight fit's
+        # duration. The second check inside the drain loop preserves the old
+        # between-completions cancel granularity (and matters for the synchronous
+        # test fake, whose futures all complete in the first ``wait`` batch).
+        pending = set(future_to_index)
+        while pending:
+            _abort_if_cancelled()
+            done, pending = futures_wait(
+                pending, timeout=_CANCEL_POLL_SECONDS, return_when=FIRST_COMPLETED
+            )
+            for future in done:
+                _abort_if_cancelled()
+                index = future_to_index[future]
+                try:
+                    results[index] = future.result()
+                except FitCancelledError:
+                    raise
+                except Exception:
+                    # Pickling failure or worker crash: retry this one task
+                    # serially in-parent before giving up on it.
+                    results[index] = _execute_assessment_task(task_list[index], cancel_callback)
         return [result for result in results if result is not None]
     finally:
         if shutdown_on_exit:
@@ -1803,6 +1836,7 @@ def build_fit_wizard_recommendation(
     )
     shared_pool = open_spawn_pool(resolved_workers) if resolved_workers > 1 else None
 
+    pool_terminated = False
     try:
         flat_stage1 = _run_template_assessments(
             [_stage1_task(template) for template in flat_stage1_templates],
@@ -2037,8 +2071,17 @@ def build_fit_wizard_recommendation(
             cancel_callback=cancel_callback,
             executor=shared_pool,
         )
-    finally:
+    except FitCancelledError:
+        # Cancellation of a *shared* pool is ours to tear down here (the fan-out
+        # helper only terminates a pool it opened itself). Kill-and-reap instead
+        # of a blocking ``shutdown(wait=True)``, which would stall the Cancel
+        # click for one in-flight fit's duration and could orphan spawn workers.
         if shared_pool is not None:
+            terminate_spawn_pool(shared_pool)
+            pool_terminated = True
+        raise
+    finally:
+        if shared_pool is not None and not pool_terminated:
             shared_pool.shutdown()
 
     family_reports = tuple(
