@@ -2010,6 +2010,114 @@ def effective_range_bounds(fit_range: ModelFitRange) -> tuple[float | None, floa
     return fit_range.x_min, fit_range.x_max
 
 
+def carve_window_gap(
+    windows: Sequence[tuple[float, float]] | None,
+    x_min: float,
+    x_max: float,
+    lo: float,
+    hi: float,
+) -> list[tuple[float, float]]:
+    """Subtract a user-dragged exclude interval ``[lo, hi]`` from a window union.
+
+    Used by the drag-to-exclude trend-fit interaction: dragging across a
+    plot region carves a gap into the (min, max) window union stored on a
+    :class:`ModelFitRange`.
+
+    Semantics:
+
+    1. **Seed then carve**: if ``windows`` is ``None``/empty, the input is
+       treated as a single implicit window ``[(x_min, x_max)]`` before
+       carving.
+    2. **Interval subtraction** of ``[lo, hi]`` from each existing window
+       ``(a, b)``: disjoint intervals are kept as-is, an interval that
+       covers a window drops it, an interval strictly interior to a window
+       splits it in two, and an interval overlapping just one edge trims
+       that edge. Cut points are clamped into ``[a, b]`` before forming
+       sub-windows.
+    3. ``lo``/``hi`` are normalised (swapped if ``lo > hi``). If the
+       normalised carve is disjoint from every window, the (seeded)
+       windows are returned unchanged — a no-op.
+    4. Sub-windows with width ``<= eps`` are dropped, where
+       ``eps = max(1e-9, 1e-9 * (x_max - x_min))`` (or just ``1e-9`` when
+       ``x_max <= x_min``), to avoid leaving degenerate slivers behind.
+    5. **Empty-result edge = no-op (load-bearing safety property)**: if the
+       carve would remove all coverage (nothing survives step 4), the
+       PRE-CARVE windows are returned unchanged instead. This function
+       must NEVER return ``None`` or ``[]`` — :func:`windows_mask` treats
+       an empty/``None`` window list as "no restriction", so an empty
+       result here would silently invert "exclude everything" into
+       "include everything".
+
+    Returns a non-empty list of sorted, non-overlapping ``(lo, hi)`` tuples.
+    Never raises for finite inputs; a degenerate ``x_max <= x_min`` range
+    falls back to returning a single-point-like seeded window (or the
+    input windows unchanged) rather than raising.
+    """
+    seeded = validate_fit_windows(windows)
+    if seeded is None:
+        seeded = [(float(x_min), float(x_max))]
+
+    if not (x_max > x_min):
+        # Degenerate/inverted range: nothing sensible to carve into, so
+        # just hand back a safe, non-empty result unchanged.
+        return seeded
+
+    eps = max(1e-9, 1e-9 * (x_max - x_min))
+
+    carve_lo, carve_hi = float(lo), float(hi)
+    if carve_lo > carve_hi:
+        carve_lo, carve_hi = carve_hi, carve_lo
+
+    carved: list[tuple[float, float]] = []
+    changed = False
+    for a, b in seeded:
+        if carve_hi <= a or carve_lo >= b:
+            # Disjoint from this window: keep unchanged.
+            carved.append((a, b))
+            continue
+
+        changed = True
+        if carve_lo <= a and carve_hi >= b:
+            # Carve covers the whole window: drop it.
+            continue
+
+        if a < carve_lo and carve_hi < b:
+            # Strictly interior: split into two.
+            cut_lo = min(max(carve_lo, a), b)
+            cut_hi = min(max(carve_hi, a), b)
+            carved.append((a, cut_lo))
+            carved.append((cut_hi, b))
+        elif carve_lo <= a < carve_hi < b:
+            # Overlaps the left edge: trim to the right remainder.
+            cut_hi = min(max(carve_hi, a), b)
+            carved.append((cut_hi, b))
+        elif a < carve_lo < b <= carve_hi:
+            # Overlaps the right edge: trim to the left remainder.
+            cut_lo = min(max(carve_lo, a), b)
+            carved.append((a, cut_lo))
+        else:  # pragma: no cover - defensive; all cases covered above
+            carved.append((a, b))
+
+    if not changed:
+        # Carve was disjoint from every window: no-op.
+        return seeded
+
+    pruned = [(a, b) for a, b in carved if (b - a) > eps]
+
+    if not pruned:
+        # Carving away all coverage is not allowed: no-op on the pre-carve
+        # (seeded) windows instead of ever returning [] or None.
+        return seeded
+
+    pruned.sort(key=lambda w: w[0])
+
+    # Assert-guard the post-conditions: sorted and non-overlapping.
+    for (_, prev_hi), (next_lo, _) in zip(pruned, pruned[1:]):
+        assert next_lo >= prev_hi, "carve_window_gap produced overlapping windows"
+
+    return pruned
+
+
 @dataclass
 class ParameterModelFit:
     """Model fits attached to a single parameter trace."""

@@ -1,11 +1,12 @@
 """Read-only matplotlib preview canvas for the trend model-fit dialogs.
 
 Shows the "parameter vs X" data points and a candidate model curve so the user
-can see their fit range, window gaps, and seeds *before* running a fit. In this
-phase the canvas is READ-ONLY: :meth:`TrendPreviewCanvas.enable_drag` merely
-stores the flag; the drag signals declared here (``range_edge_dragged``,
-``window_edge_dragged``, ``exclude_region_requested``) are wired to matplotlib
-events in a later phase.
+can see their fit range, window gaps, and seeds *before* running a fit. When
+:meth:`TrendPreviewCanvas.enable_drag` is on, the active range's edges (and its
+window edges) are draggable with the left button, and a right-button drag over
+the active range requests an exclusion; these emit ``range_edge_dragged``,
+``window_edge_dragged``, and ``exclude_region_requested`` respectively. With
+drag disabled (the default) the canvas is read-only.
 
 The canvas is built exclusively via
 :func:`asymmetry.gui.widgets.mpl_canvas.create_canvas` (a structural check
@@ -29,9 +30,16 @@ from numpy.typing import NDArray
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
+from asymmetry.gui.panels.draggable_handles import nearest_handle
 from asymmetry.gui.styles import plots as plot_styles
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.widgets.mpl_canvas import create_canvas
+
+#: Cursor-to-edge grab tolerance in device pixels (matches plot_panel's span).
+_DRAG_TOLERANCE_PX = 7.0
+#: Minimum right-drag extent (device pixels) that counts as an exclude gesture
+#: rather than a bare click.
+_EXCLUDE_MIN_PX = 4.0
 
 
 @dataclass
@@ -72,7 +80,7 @@ class TrendPreviewCanvas(QWidget):
     repaints from stored state.
     """
 
-    # Phase-2 drag signals (declared now so the seams exist; not yet emitted).
+    # Drag signals (emitted only while enable_drag(True); see _on_* handlers).
     range_edge_dragged = Signal(int, float, float)  # (range_idx, x_min, x_max)
     window_edge_dragged = Signal(int, int, float, float)  # (range_idx, window_idx, lo, hi)
     exclude_region_requested = Signal(int, float, float)  # (range_idx, lo, hi)
@@ -88,6 +96,15 @@ class TrendPreviewCanvas(QWidget):
         self._message: str = ""
         self._drag_enabled: bool = False
 
+        # ── Drag state (all None/idle until a grab; see _on_button_press) ─────
+        #: The grabbed edge key, one of ("range","min"/"max") or
+        #: ("window", window_idx, "lo"/"hi"); None when not dragging.
+        self._active_handle: tuple | None = None
+        #: Data-x where a right-button (exclude) gesture began; None otherwise.
+        self._exclude_start_x: float | None = None
+        #: Pixel-x where the right-button gesture began (click-vs-drag test).
+        self._exclude_start_px: float | None = None
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
@@ -99,6 +116,11 @@ class TrendPreviewCanvas(QWidget):
             layout.addWidget(self._canvas, 1)
             self._has_mpl = True
             plot_styles.style_figure(self._figure)
+            # Connect the drag events ONCE; the handler bodies early-return
+            # unless self._drag_enabled, so there is no connect/disconnect churn.
+            self._canvas.mpl_connect("button_press_event", self._on_button_press)
+            self._canvas.mpl_connect("motion_notify_event", self._on_motion_notify)
+            self._canvas.mpl_connect("button_release_event", self._on_button_release)
         except ImportError:
             layout.addWidget(QLabel("matplotlib not installed - preview disabled"), 1)
 
@@ -127,8 +149,149 @@ class TrendPreviewCanvas(QWidget):
         self._redraw()
 
     def enable_drag(self, enabled: bool) -> None:
-        """Store the drag flag. Phase 1: no behaviour; Phase 2 adds mpl events."""
+        """Toggle drag interaction.
+
+        The mpl events are connected once in ``__init__``; the handlers gate on
+        this flag. Disabling mid-session cleanly abandons any in-progress drag.
+        """
         self._drag_enabled = enabled
+        if not enabled:
+            self._active_handle = None
+            self._exclude_start_x = None
+            self._exclude_start_px = None
+
+    # ── Drag interaction (active range only) ──────────────────────────────────
+    def _active_axes(self):
+        """The current subplot, or None when nothing is drawn."""
+        if not self._has_mpl or self._figure is None:
+            return None
+        axes = self._figure.get_axes()
+        return axes[0] if axes else None
+
+    def _active_handles(self) -> list[tuple[float, tuple]]:
+        """``(data_x, key)`` handles for the ACTIVE range only.
+
+        Range edges give keys ``("range", "min"/"max")``; each window gives
+        ``("window", window_idx, "lo"/"hi")``. Non-active ranges are omitted, so
+        only the active range is draggable.
+        """
+        active = self._active_range()
+        if active is None:
+            return []
+        handles: list[tuple[float, tuple]] = []
+        if active.x_min is not None:
+            handles.append((float(active.x_min), ("range", "min")))
+        if active.x_max is not None:
+            handles.append((float(active.x_max), ("range", "max")))
+        for w_idx, (lo, hi) in enumerate(active.windows or []):
+            handles.append((float(lo), ("window", w_idx, "lo")))
+            handles.append((float(hi), ("window", w_idx, "hi")))
+        return handles
+
+    def _on_button_press(self, event) -> None:
+        """Grab the nearest active-range edge (left) or start an exclude (right)."""
+        if not self._drag_enabled:
+            return
+        ax = self._active_axes()
+        if ax is None or event.inaxes is not ax:
+            return
+        active = self._active_range()
+        if active is None:
+            return
+
+        if event.button == 3:
+            # Right-button: begin an exclude gesture from this data-x.
+            if event.xdata is not None:
+                self._exclude_start_x = float(event.xdata)
+                self._exclude_start_px = float(event.x)
+            return
+
+        if event.button != 1:
+            return
+
+        handle = nearest_handle(ax, self._active_handles(), event.x, _DRAG_TOLERANCE_PX)
+        if handle is not None:
+            self._active_handle = handle
+
+    def _on_motion_notify(self, event) -> None:
+        """Move the grabbed edge to the cursor and emit the matching signal."""
+        if not self._drag_enabled or self._active_handle is None:
+            return
+        # Ignore motion that leaves the axes (no data-x to snap to).
+        if event.xdata is None:
+            return
+        active = self._active_range()
+        if active is None:
+            return
+        new_x = float(event.xdata)
+        kind = self._active_handle[0]
+        if kind == "range":
+            self._drag_range_edge(active, self._active_handle[1], new_x)
+        elif kind == "window":
+            self._drag_window_edge(active, self._active_handle[1], self._active_handle[2], new_x)
+
+    def _drag_range_edge(self, active: PreviewRange, which: str, new_x: float) -> None:
+        """Update+clamp a range min/max edge and emit ``range_edge_dragged``."""
+        x_min = active.x_min if active.x_min is not None else new_x
+        x_max = active.x_max if active.x_max is not None else new_x
+        if which == "min":
+            # Clamp so min never crosses above max.
+            x_min = min(new_x, x_max)
+        else:
+            # Clamp so max never crosses below min.
+            x_max = max(new_x, x_min)
+        active.x_min = x_min
+        active.x_max = x_max
+        self._redraw()
+        self.range_edge_dragged.emit(active.idx, x_min, x_max)
+
+    def _drag_window_edge(self, active: PreviewRange, w_idx: int, which: str, new_x: float) -> None:
+        """Update+clamp one window's lo/hi edge and emit ``window_edge_dragged``."""
+        windows = active.windows or []
+        if not (0 <= w_idx < len(windows)):
+            return
+        lo, hi = windows[w_idx]
+        if which == "lo":
+            lo = min(new_x, hi)  # clamp: lo cannot pass hi
+        else:
+            hi = max(new_x, lo)  # clamp: hi cannot pass lo
+        windows[w_idx] = (lo, hi)
+        active.windows = windows
+        self._redraw()
+        self.window_edge_dragged.emit(active.idx, w_idx, lo, hi)
+
+    def _on_button_release(self, event) -> None:
+        """Settle a left-drag, or fire the exclude gesture on right-release."""
+        if not self._drag_enabled:
+            return
+
+        if event.button == 1 and self._active_handle is not None:
+            active = self._active_range()
+            if active is not None and event.xdata is not None:
+                kind = self._active_handle[0]
+                new_x = float(event.xdata)
+                if kind == "range":
+                    self._drag_range_edge(active, self._active_handle[1], new_x)
+                elif kind == "window":
+                    self._drag_window_edge(
+                        active, self._active_handle[1], self._active_handle[2], new_x
+                    )
+            self._active_handle = None
+            return
+
+        if event.button == 3 and self._exclude_start_x is not None:
+            start_x = self._exclude_start_x
+            start_px = self._exclude_start_px
+            self._exclude_start_x = None
+            self._exclude_start_px = None
+            active = self._active_range()
+            if active is None or event.xdata is None:
+                return
+            # Click-vs-drag: a negligible pixel move is a click, not an exclude.
+            if start_px is not None and abs(float(event.x) - start_px) < _EXCLUDE_MIN_PX:
+                return
+            lo, hi = sorted((start_x, float(event.xdata)))
+            self.exclude_region_requested.emit(active.idx, lo, hi)
 
     # ── Rendering ─────────────────────────────────────────────────────────────
     def _redraw(self) -> None:

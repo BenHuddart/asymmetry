@@ -1338,3 +1338,101 @@ def test_close_with_pending_preview_timer_starts_no_task(qapp: QApplication) -> 
     dlg._launch_preview_sample()
     qapp.processEvents()
     assert dlg._tasks.active_count == 0
+
+
+# ── Phase 2.2: consume the preview drag signals (carve / edge-sync) ────────────
+
+
+def test_drag_edge_syncs_spinbox(qapp: QApplication) -> None:
+    """A range-edge drag updates the model, mirrors the spinbox, and invalidates."""
+    from asymmetry.core.fitting.parameter_models import ParameterModelFitResult
+
+    dlg = _make_dialog(qapp)
+    dlg._select_range(0)
+    fit_range = dlg._fit.ranges[0]
+    fit_range.result = ParameterModelFitResult(
+        success=True, reduced_chi_squared=1.0, parameters=fit_range.parameters
+    )
+
+    new_max = 7.5
+    dlg._on_preview_range_edge_dragged(0, fit_range.x_min, new_max)
+
+    assert fit_range.x_max == new_max
+    assert dlg._range_widgets[0].x_max.value() == new_max
+    # The stale result was invalidated by the funnel.
+    assert fit_range.result is None
+
+
+def test_exclude_region_creates_two_windows(qapp: QApplication) -> None:
+    """A right-drag exclude interior to the range carves a two-window union."""
+    dlg = _make_dialog(qapp)
+    fit_range = dlg._fit.ranges[0]
+    # Data range is 1..10; carve out the interior [4, 6].
+    dlg._on_preview_exclude_region(0, 4.0, 6.0)
+
+    assert fit_range.windows is not None
+    assert len(fit_range.windows) == 2
+    los = sorted(lo for lo, _hi in fit_range.windows)
+    his = sorted(hi for _lo, hi in fit_range.windows)
+    # The gap [4, 6] separates the two surviving windows.
+    assert 4.0 in his
+    assert 6.0 in los
+
+
+def test_exclude_disables_plain_spinboxes(qapp: QApplication) -> None:
+    """After a carve the plain x_min/x_max spins are disabled (windows override)."""
+    dlg = _make_dialog(qapp)
+    dlg._on_preview_exclude_region(0, 4.0, 6.0)
+    assert dlg._range_widgets[0].x_min.isEnabled() is False
+    assert dlg._range_widgets[0].x_max.isEnabled() is False
+
+
+def test_exclude_invalidates_result(qapp: QApplication) -> None:
+    """A real carve clears the range's stored fit result."""
+    from asymmetry.core.fitting.parameter_models import ParameterModelFitResult
+
+    dlg = _make_dialog(qapp)
+    fit_range = dlg._fit.ranges[0]
+    fit_range.result = ParameterModelFitResult(
+        success=True,
+        chi_squared=9.0,
+        reduced_chi_squared=0.9,
+        parameters=fit_range.parameters,
+        error_mode="column",
+        n_points=12,
+    )
+    dlg._on_preview_exclude_region(0, 4.0, 6.0)
+    assert fit_range.result is None
+
+
+def test_exclude_outside_range_is_noop_keeps_result(qapp: QApplication) -> None:
+    """A stray exclude fully outside the range must not drop a good fit."""
+    from asymmetry.core.fitting.parameter_models import ParameterModelFitResult
+
+    dlg = _make_dialog(qapp)
+    fit_range = dlg._fit.ranges[0]
+    result = ParameterModelFitResult(
+        success=True,
+        chi_squared=9.0,
+        reduced_chi_squared=0.9,
+        parameters=fit_range.parameters,
+        error_mode="column",
+        n_points=12,
+    )
+    fit_range.result = result
+    windows_before = fit_range.windows
+
+    # Data range is 1..10; carve entirely to the right of it.
+    dlg._on_preview_exclude_region(0, 50.0, 60.0)
+
+    assert fit_range.result is result
+    assert fit_range.windows == windows_before
+
+
+def test_drag_disabled_while_fitting(qapp: QApplication) -> None:
+    """Dragging is suppressed while a fit runs and re-enabled when it settles."""
+    dlg = _make_dialog(qapp)
+    dlg._set_fit_ui_busy(True)
+    assert dlg._preview._drag_enabled is False
+    dlg._set_fit_ui_busy(False)
+    assert dlg._preview._drag_enabled is True

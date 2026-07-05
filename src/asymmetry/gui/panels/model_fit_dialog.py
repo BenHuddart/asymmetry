@@ -9,7 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QSignalBlocker, Qt, QTimer
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -37,6 +37,7 @@ from asymmetry.core.fitting.parameter_models import (
     ModelFitRange,
     ParameterCompositeModel,
     ParameterModelFit,
+    carve_window_gap,
     component_names_for_x,
     fit_parameter_model,
     is_order_parameter_observable,
@@ -469,6 +470,7 @@ class ModelFitDialog(QDialog):
         self._xerr = None if x_errors is None else np.asarray(x_errors, dtype=float)
         self._removed = False
         self._range_widgets: list[_RangeWidgets] = []
+        self._window_spin_widgets: dict[tuple[int, int], tuple[QDoubleSpinBox, QDoubleSpinBox]] = {}
         self._active_range_idx: int | None = None
         self._fit_in_progress = False
         # Background fits run on the shared TaskRunner (gui/tasks.py), which owns
@@ -497,10 +499,14 @@ class ModelFitDialog(QDialog):
         right_pane = QWidget()
         self._preview_host = QVBoxLayout(right_pane)
         self._preview_host.setContentsMargins(0, 0, 0, 0)
-        # Live, off-thread candidate-curve preview (work item 1.3). Drag is a
-        # Phase-2 concern, so it is created disabled here.
+        # Live, off-thread candidate-curve preview (work item 1.3). Drag is
+        # wired here (work item 2.2): dragging a range/window edge or right-drag
+        # excluding a region routes back through the handlers below.
         self._preview = TrendPreviewCanvas()
-        self._preview.enable_drag(False)
+        self._preview.enable_drag(True)
+        self._preview.range_edge_dragged.connect(self._on_preview_range_edge_dragged)
+        self._preview.window_edge_dragged.connect(self._on_preview_window_edge_dragged)
+        self._preview.exclude_region_requested.connect(self._on_preview_exclude_region)
         self._preview_host.addWidget(self._preview, 1)
 
         # ── Preview threading state (work item 1.3) ──────────────────────────
@@ -1108,6 +1114,9 @@ class ModelFitDialog(QDialog):
         clear_layout(self._ranges_host)
 
         self._range_widgets = []
+        # (range_idx, window_idx) -> (min_spin, max_spin), so a canvas window
+        # drag can mirror the exact spinboxes without re-scanning the layout.
+        self._window_spin_widgets = {}
 
         for idx, fit_range in enumerate(self._fit.ranges):
             row_widget = QWidget()
@@ -1169,11 +1178,13 @@ class ModelFitDialog(QDialog):
             row.addWidget(select_btn)
 
             if self._supports_windows:
-                add_window_btn = QPushButton("+ Window")
+                add_window_btn = QPushButton("Exclude region…")
                 add_window_btn.setToolTip(
-                    "Restrict this range to a union of (min, max) windows — one model "
-                    "fitted across all of them. Useful for excluding a region (e.g. "
-                    "the critical region around a transition) from the fit."
+                    "Exclude a region from this range: drag across it on the plot "
+                    "(right-button drag) to carve a gap, or click here to add a "
+                    "(min, max) window manually. The range becomes a union of "
+                    "windows with one model fitted across all of them — useful for "
+                    "excluding e.g. the critical region around a transition."
                 )
                 add_window_btn.clicked.connect(lambda _checked=False, i=idx: self._add_window(i))
                 row.addWidget(add_window_btn)
@@ -1207,6 +1218,8 @@ class ModelFitDialog(QDialog):
                 )
                 window_row.addWidget(QLabel("max"))
                 window_row.addWidget(w_max)
+
+                self._window_spin_widgets[(idx, widx)] = (w_min, w_max)
 
                 remove_window_btn = QPushButton("Remove Window")
                 remove_window_btn.clicked.connect(
@@ -1368,10 +1381,124 @@ class ModelFitDialog(QDialog):
         if idx < 0 or idx >= len(self._fit.ranges):
             return
         widgets = self._range_widgets[idx]
+        self._apply_range_bounds(
+            idx,
+            float(widgets.x_min.value()),
+            float(widgets.x_max.value()),
+            source="spinbox",
+        )
+
+    def _apply_range_bounds(self, idx: int, x_min: float, x_max: float, *, source: str) -> None:
+        """Single funnel for every range-bound change (spinbox edit or drag).
+
+        Routing every entry point through here guarantees the invalidate +
+        spinbox-mirror + selector-refresh + preview-refresh sequence is never
+        skipped. ``source`` selects the preview-refresh strategy below.
+        """
+        if idx < 0 or idx >= len(self._fit.ranges):
+            return
         fit_range = self._fit.ranges[idx]
+        fit_range.x_min = float(x_min)
+        fit_range.x_max = float(x_max)
         self._invalidate_range_result(idx)
-        fit_range.x_min = float(widgets.x_min.value())
-        fit_range.x_max = float(widgets.x_max.value())
+
+        # Mirror into the row spinboxes under a signal blocker so writing them
+        # does not re-fire _on_range_bounds_changed and loop back through here.
+        if idx < len(self._range_widgets):
+            widgets = self._range_widgets[idx]
+            with QSignalBlocker(widgets.x_min):
+                widgets.x_min.setValue(float(x_min))
+            with QSignalBlocker(widgets.x_max):
+                widgets.x_max.setValue(float(x_max))
+
+        self._refresh_range_selector()
+
+        # FEEDBACK-LOOP RULE (canvas vs spinbox): during a canvas drag the
+        # TrendPreviewCanvas already mutates and redraws its own span artist
+        # live, so a full _request_preview_update() here would synchronously
+        # set_ranges() and fight the in-progress drag. For a canvas source we
+        # therefore only kick the debounce so the OFF-THREAD curve resamples to
+        # catch up — the canvas owns its spans mid-drag. For a spinbox (numeric)
+        # edit there is no live span, so we call the full update to move the
+        # canvas spans to match the typed value.
+        if source == "canvas":
+            self._preview_timer.start()
+        else:
+            self._request_preview_update()
+
+    def _on_preview_range_edge_dragged(self, idx: int, x_min: float, x_max: float) -> None:
+        """Canvas dragged a range edge: mirror it into the model + spinboxes.
+
+        Only the active range's edges are draggable, so a signal for a
+        non-active index is defensively ignored.
+        """
+        if idx != self._active_range_idx:
+            return
+        self._apply_range_bounds(idx, float(x_min), float(x_max), source="canvas")
+
+    def _on_preview_window_edge_dragged(
+        self, idx: int, window_idx: int, lo: float, hi: float
+    ) -> None:
+        """Canvas dragged a window edge: mirror it into the model + spinboxes."""
+        if idx != self._active_range_idx:
+            return
+        if idx < 0 or idx >= len(self._fit.ranges):
+            return
+        fit_range = self._fit.ranges[idx]
+        windows = list(fit_range.windows or [])
+        if window_idx < 0 or window_idx >= len(windows):
+            return
+        windows[window_idx] = (float(lo), float(hi))
+        fit_range.windows = windows
+        self._invalidate_range_result(idx)
+
+        # Mirror the corresponding window spinboxes under a signal blocker so
+        # they do not re-fire _on_window_bounds_changed and loop. The spinboxes
+        # are registered per (range, window) during _rebuild_ranges_ui.
+        spins = self._window_spin_widgets.get((idx, window_idx))
+        if spins is not None:
+            w_min, w_max = spins
+            with QSignalBlocker(w_min):
+                w_min.setValue(float(lo))
+            with QSignalBlocker(w_max):
+                w_max.setValue(float(hi))
+
+        self._refresh_range_selector()
+        # Canvas-source: curve resample only (see FEEDBACK-LOOP RULE above).
+        self._preview_timer.start()
+
+    def _on_preview_exclude_region(self, idx: int, lo: float, hi: float) -> None:
+        """Right-drag exclude gesture: carve a gap into the range's windows.
+
+        Resolves the effective bounds (open bounds fall back to the data
+        extent), carves ``[lo, hi]`` out of the current window union, and — only
+        if that actually changed the coverage — invalidates the stale result and
+        rebuilds so the plain x_min/x_max spins disable and the per-window rows
+        appear (mirroring the manual _add_window post-state).
+        """
+        if idx < 0 or idx >= len(self._fit.ranges):
+            return
+        fit_range = self._fit.ranges[idx]
+        x_min = fit_range.x_min if fit_range.x_min is not None else self._x_min_data
+        x_max = fit_range.x_max if fit_range.x_max is not None else self._x_max_data
+
+        new_windows = carve_window_gap(fit_range.windows, x_min, x_max, lo, hi)
+
+        # NO-OP GUARD: normalise the current windows to what carve_window_gap
+        # would have seeded (None -> [(x_min, x_max)]) and compare. A carve that
+        # is disjoint from every window (a stray drag outside the fitted region)
+        # returns the seeded windows unchanged; dropping a good fit for that
+        # would be a nasty surprise, so early-return without invalidating.
+        current = list(fit_range.windows) if fit_range.windows else [(float(x_min), float(x_max))]
+        if new_windows == current:
+            return
+
+        fit_range.windows = new_windows
+        self._invalidate_range_result(idx)
+        # Rebuild disables the plain x_min/x_max spins via the has_windows branch
+        # and adds the per-window rows — do NOT hand-disable spins here.
+        self._rebuild_ranges_ui()
+        self._select_range(idx)
         self._request_preview_update()
 
     def _edit_model(self, idx: int) -> None:
@@ -1879,6 +2006,12 @@ class ModelFitDialog(QDialog):
         self._fit_progress_label.setVisible(busy)
         if not busy:
             self._fit_progress_label.setText("")
+
+        # Suppress plot dragging while a fit runs so the user cannot mutate the
+        # range/windows underneath an in-flight fit; re-enabled when it settles.
+        preview = getattr(self, "_preview", None)
+        if preview is not None:
+            preview.enable_drag(not busy)
 
         self._range_selector.setEnabled(not busy)
         self._param_table.setEnabled(not busy)

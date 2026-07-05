@@ -23,6 +23,7 @@ from asymmetry.core.fitting.parameter_models import (
     _order_parameter,
     _power_law,
     _redfield,
+    carve_window_gap,
     component_names_for_x,
     evaluate_parameter_model_fit,
     fit_parameter_model,
@@ -1029,6 +1030,89 @@ def test_sample_parameter_model_unusable_bounds_returns_empty(
 
     assert xs.size == 0
     assert ys.size == 0
+
+
+# ---------------------------------------------------------------------------
+# carve_window_gap
+# ---------------------------------------------------------------------------
+
+
+def test_carve_window_gap_interior_splits() -> None:
+    result = carve_window_gap([(0.0, 10.0)], x_min=0.0, x_max=10.0, lo=4.0, hi=6.0)
+
+    assert result == [(0.0, 4.0), (6.0, 10.0)]
+
+
+def test_carve_window_gap_covers_drops() -> None:
+    windows = [(0.0, 2.0), (5.0, 7.0)]
+
+    result = carve_window_gap(windows, x_min=0.0, x_max=10.0, lo=4.5, hi=7.5)
+
+    assert result == [(0.0, 2.0)]
+
+
+def test_carve_window_gap_overlaps_left() -> None:
+    result = carve_window_gap([(2.0, 8.0)], x_min=0.0, x_max=10.0, lo=0.0, hi=4.0)
+
+    assert result == [(4.0, 8.0)]
+
+
+def test_carve_window_gap_overlaps_right() -> None:
+    result = carve_window_gap([(2.0, 8.0)], x_min=0.0, x_max=10.0, lo=6.0, hi=10.0)
+
+    assert result == [(2.0, 6.0)]
+
+
+def test_carve_window_gap_outside_is_noop() -> None:
+    windows = [(2.0, 4.0), (6.0, 8.0)]
+
+    result = carve_window_gap(windows, x_min=0.0, x_max=10.0, lo=4.5, hi=5.5)
+
+    assert result == windows
+
+
+def test_carve_window_gap_seeds_from_bounds_when_none() -> None:
+    result = carve_window_gap(None, x_min=0.0, x_max=10.0, lo=4.0, hi=6.0)
+
+    assert result == [(0.0, 4.0), (6.0, 10.0)]
+
+
+def test_carve_window_gap_empty_result_is_noop_never_none() -> None:
+    windows = [(2.0, 8.0)]
+
+    result = carve_window_gap(windows, x_min=0.0, x_max=10.0, lo=0.0, hi=10.0)
+
+    assert result is not None
+    assert result != []
+    assert result == windows
+
+
+def test_carve_window_gap_inverted_interval_normalised() -> None:
+    forward = carve_window_gap([(0.0, 10.0)], x_min=0.0, x_max=10.0, lo=4.0, hi=6.0)
+    inverted = carve_window_gap([(0.0, 10.0)], x_min=0.0, x_max=10.0, lo=6.0, hi=4.0)
+
+    assert inverted == forward
+
+
+def test_carve_window_gap_degenerate_slivers_dropped() -> None:
+    result = carve_window_gap([(0.0, 10.0)], x_min=0.0, x_max=10.0, lo=0.0, hi=10.0 - 1e-12)
+
+    # The right-hand remainder would be a sub-epsilon sliver; it must not
+    # survive as a spurious near-zero-width window.
+    for _, b in result:
+        assert b <= 10.0
+    assert all((b - a) > 1e-9 for a, b in result)
+
+
+def test_carve_window_gap_returns_sorted_nonoverlapping() -> None:
+    windows = [(5.0, 7.0), (0.0, 2.0)]
+
+    result = carve_window_gap(windows, x_min=0.0, x_max=10.0, lo=1.5, hi=6.0)
+
+    los = [a for a, _ in result]
+    assert los == sorted(los)
+    for (_, prev_hi), (next_lo, _) in zip(result, result[1:]):
+        assert next_lo >= prev_hi
 
 
 def test_sample_parameter_model_matches_evaluate_parameter_model_fit() -> None:

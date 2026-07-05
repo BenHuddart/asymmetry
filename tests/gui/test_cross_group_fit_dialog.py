@@ -299,7 +299,7 @@ def _param_groups_with_xerr() -> list[ParameterGroupData]:
 
 def test_cross_group_dialog_exposes_error_modes_and_windows() -> None:
     """global_fit_parameter_model now honours error modes and windows, so the
-    inherited selector and '+ Window' button are shown and wired. The
+    inherited selector and 'Exclude region…' button are shown and wired. The
     effective-variance toggle is hidden for a run-level axis (field has no
     x-uncertainty), not because cross-group lacks backend support."""
     QApplication.instance() or QApplication([])
@@ -319,7 +319,7 @@ def test_cross_group_dialog_exposes_error_modes_and_windows() -> None:
     from PySide6.QtWidgets import QPushButton
 
     buttons = [b.text() for b in dlg.findChildren(QPushButton)]
-    assert "+ Window" in buttons
+    assert "Exclude region…" in buttons
 
     # field is exact (no σ_x), so the effective-variance toggle is not offered.
     assert dlg._x_error_check is None
@@ -946,3 +946,27 @@ def test_preview_series_per_group() -> None:
     # The primary series (index 0) mirrors the first group's data.
     np.testing.assert_allclose(series[0].x, groups[0].x)
     np.testing.assert_allclose(series[0].y, groups[0].y)
+
+
+def test_exclude_region_single_range_carves() -> None:
+    """A carve on the cross-group single pinned range yields a two-window union."""
+    QApplication.instance() or QApplication([])
+    dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=_groups(),
+        parent=None,
+    )
+
+    # Data x spans 100..300; carve out the interior [180, 220].
+    fit_range = dlg._fit.ranges[0]
+    dlg._on_preview_exclude_region(0, 180.0, 220.0)
+
+    assert fit_range.windows is not None
+    assert len(fit_range.windows) == 2
+    his = sorted(hi for _lo, hi in fit_range.windows)
+    los = sorted(lo for lo, _hi in fit_range.windows)
+    assert 180.0 in his
+    assert 220.0 in los
+    # The plain range spins disable once the range carries windows.
+    assert dlg._range_widgets[0].x_min.isEnabled() is False

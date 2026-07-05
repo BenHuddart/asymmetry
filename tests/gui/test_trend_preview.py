@@ -198,3 +198,176 @@ def test_enable_drag_stores_flag_only(qapp: QApplication) -> None:
     assert canvas._drag_enabled is True
     canvas.enable_drag(False)
     assert canvas._drag_enabled is False
+
+
+# ── Drag interaction ─────────────────────────────────────────────────────────
+def _fake_event(canvas, ax, data_x, *, button=1, inside=True):
+    """A minimal event exposing the attrs the drag handlers read.
+
+    ``x`` (device pixel) is projected from ``data_x`` through ``transData`` so
+    ``nearest_handle`` hit-tests correctly; ``xdata``/``inaxes`` mimic a cursor
+    inside (or outside) the axes.
+    """
+
+    class _E:
+        pass
+
+    e = _E()
+    e.button = button
+    e.x = float(ax.transData.transform((data_x, 0.0))[0])
+    e.y = float(ax.transData.transform((0.0, 0.0))[1])
+    e.xdata = float(data_x) if inside else None
+    e.ydata = 0.0 if inside else None
+    e.inaxes = ax if inside else None
+    return e
+
+
+def _drawn_canvas(*, windows=None):
+    canvas = TrendPreviewCanvas()
+    mask = np.array([True, True, True, True, True])
+    canvas.set_series([_series()])
+    canvas.set_ranges([_range(fitted=False, mask=mask, windows=windows)])
+    canvas.set_active_range(0)
+    canvas.set_state("ready")
+    # Ensure a draw has happened so transData is valid under offscreen.
+    canvas._canvas.draw()
+    return canvas
+
+
+def test_edge_drag_emits_signal(qapp: QApplication) -> None:
+    canvas = _drawn_canvas()
+    canvas.enable_drag(True)
+    ax = _axes(canvas)
+
+    events: list[tuple] = []
+    canvas.range_edge_dragged.connect(lambda i, lo, hi: events.append((i, lo, hi)))
+
+    # Grab the range-max edge (x_max = 3.5) and drag it to 3.0.
+    canvas._on_button_press(_fake_event(canvas, ax, 3.5, button=1))
+    assert canvas._active_handle == ("range", "max")
+    canvas._on_motion_notify(_fake_event(canvas, ax, 3.0, button=1))
+    canvas._on_button_release(_fake_event(canvas, ax, 3.0, button=1))
+
+    assert events, "range_edge_dragged never fired"
+    idx, x_min, x_max = events[-1]
+    assert idx == 0
+    assert x_min == pytest.approx(0.5)
+    assert x_max == pytest.approx(3.0)
+
+
+def test_window_edge_drag_emits_signal(qapp: QApplication) -> None:
+    windows = [(1.0, 1.5), (2.5, 3.0)]
+    canvas = _drawn_canvas(windows=windows)
+    canvas.enable_drag(True)
+    ax = _axes(canvas)
+
+    events: list[tuple] = []
+    canvas.window_edge_dragged.connect(lambda i, w, lo, hi: events.append((i, w, lo, hi)))
+
+    # Grab the second window's hi edge (3.0) and drag it to 3.2.
+    canvas._on_button_press(_fake_event(canvas, ax, 3.0, button=1))
+    assert canvas._active_handle == ("window", 1, "hi")
+    canvas._on_motion_notify(_fake_event(canvas, ax, 3.2, button=1))
+    canvas._on_button_release(_fake_event(canvas, ax, 3.2, button=1))
+
+    assert events, "window_edge_dragged never fired"
+    idx, w_idx, lo, hi = events[-1]
+    assert idx == 0
+    assert w_idx == 1
+    assert lo == pytest.approx(2.5)
+    assert hi == pytest.approx(3.2)
+
+
+def test_exclude_drag_emits_region(qapp: QApplication) -> None:
+    canvas = _drawn_canvas()
+    canvas.enable_drag(True)
+    ax = _axes(canvas)
+
+    events: list[tuple] = []
+    canvas.exclude_region_requested.connect(lambda i, lo, hi: events.append((i, lo, hi)))
+
+    # Right-drag from 2.5 back to 1.5 → emitted region is sorted (1.5, 2.5).
+    canvas._on_button_press(_fake_event(canvas, ax, 2.5, button=3))
+    canvas._on_button_release(_fake_event(canvas, ax, 1.5, button=3))
+
+    assert events, "exclude_region_requested never fired"
+    idx, lo, hi = events[-1]
+    assert idx == 0
+    assert lo == pytest.approx(1.5)
+    assert hi == pytest.approx(2.5)
+
+
+def test_drag_inert_when_disabled(qapp: QApplication) -> None:
+    canvas = _drawn_canvas(windows=[(1.0, 1.5)])
+    canvas.enable_drag(False)
+    ax = _axes(canvas)
+
+    fired: list[str] = []
+    canvas.range_edge_dragged.connect(lambda *a: fired.append("range"))
+    canvas.window_edge_dragged.connect(lambda *a: fired.append("window"))
+    canvas.exclude_region_requested.connect(lambda *a: fired.append("exclude"))
+
+    # Left-edge gesture.
+    canvas._on_button_press(_fake_event(canvas, ax, 3.5, button=1))
+    canvas._on_motion_notify(_fake_event(canvas, ax, 3.0, button=1))
+    canvas._on_button_release(_fake_event(canvas, ax, 3.0, button=1))
+    # Right-exclude gesture.
+    canvas._on_button_press(_fake_event(canvas, ax, 2.5, button=3))
+    canvas._on_button_release(_fake_event(canvas, ax, 1.5, button=3))
+
+    assert fired == []
+    assert canvas._active_handle is None
+
+
+def test_exclude_click_no_drag_is_ignored(qapp: QApplication) -> None:
+    """A right-click with no movement is a click, not an exclude gesture."""
+    canvas = _drawn_canvas()
+    canvas.enable_drag(True)
+    ax = _axes(canvas)
+
+    events: list[tuple] = []
+    canvas.exclude_region_requested.connect(lambda *a: events.append(a))
+
+    canvas._on_button_press(_fake_event(canvas, ax, 2.0, button=3))
+    canvas._on_button_release(_fake_event(canvas, ax, 2.0, button=3))
+
+    assert events == []
+
+
+def test_edge_clamps_at_partner(qapp: QApplication) -> None:
+    """Dragging min past max clamps: min stays <= max."""
+    canvas = _drawn_canvas()
+    canvas.enable_drag(True)
+    ax = _axes(canvas)
+
+    events: list[tuple] = []
+    canvas.range_edge_dragged.connect(lambda i, lo, hi: events.append((lo, hi)))
+
+    # Grab the min edge (0.5) and drag it well past max (3.5) to 5.0.
+    canvas._on_button_press(_fake_event(canvas, ax, 0.5, button=1))
+    assert canvas._active_handle == ("range", "min")
+    canvas._on_motion_notify(_fake_event(canvas, ax, 5.0, button=1))
+
+    assert events, "range_edge_dragged never fired"
+    x_min, x_max = events[-1]
+    assert x_min <= x_max
+    # Clamped at the partner (max stayed at 3.5).
+    assert x_min == pytest.approx(3.5)
+    assert x_max == pytest.approx(3.5)
+
+
+def test_disable_mid_drag_stops_cleanly(qapp: QApplication) -> None:
+    """enable_drag(False) mid-drag abandons the grab and blocks further emits."""
+    canvas = _drawn_canvas()
+    canvas.enable_drag(True)
+    ax = _axes(canvas)
+
+    events: list[tuple] = []
+    canvas.range_edge_dragged.connect(lambda *a: events.append(a))
+
+    canvas._on_button_press(_fake_event(canvas, ax, 3.5, button=1))
+    assert canvas._active_handle is not None
+    canvas.enable_drag(False)
+    assert canvas._active_handle is None
+    canvas._on_motion_notify(_fake_event(canvas, ax, 3.0, button=1))
+    assert events == []
