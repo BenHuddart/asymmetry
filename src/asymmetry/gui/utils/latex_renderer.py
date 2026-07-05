@@ -101,10 +101,9 @@ def render_colored_equation_pixmap(
         # cropped below, so this canvas size only needs to be large enough
         # that no fragment clips against its edge.
         fig = Figure(figsize=(14, 2), dpi=render_dpi)
-        canvas_cls = fig.canvas.__class__
         from matplotlib.backends.backend_agg import FigureCanvasAgg
 
-        canvas = FigureCanvasAgg(fig) if canvas_cls is not FigureCanvasAgg else fig.canvas
+        canvas = FigureCanvasAgg(fig)
         renderer = canvas.get_renderer()
 
         x_pos = 0.0
