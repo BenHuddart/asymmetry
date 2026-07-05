@@ -3,8 +3,10 @@
 See ``docs/audit/shared-foundations/wizard-base-design.md`` for the full
 contract this class implements. In short: the base owns the mechanism (one
 ``TaskRunner``, the progress UI, request-id staleness, error handling, the
-signature cache, and closeEvent/cancel); subclasses own the analysis (their
-tabs, their worker task, and how they populate their result tabs).
+signature cache, and closeEvent/cancel) plus the styled chrome (a header band
+with title/context chips/status line above a body of controls + content);
+subclasses own the analysis (their tabs, their worker task, and how they
+populate their result tabs).
 """
 
 from __future__ import annotations
@@ -13,7 +15,9 @@ import copy
 from collections.abc import Callable
 from functools import partial
 
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
+    QFrame,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -23,6 +27,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from asymmetry.gui.styles import tokens
+from asymmetry.gui.styles.widgets import make_context_chip
 from asymmetry.gui.tasks import TaskRunner, TaskWorker
 
 
@@ -31,13 +37,15 @@ class WizardWindowBase(QMainWindow):
 
     Subclasses supply their tabs, their worker task, and their result
     population. The base owns the TaskRunner, progress UI, request-id
-    staleness, error handling, the signature cache, and closeEvent/cancel.
+    staleness, error handling, the signature cache, and closeEvent/cancel —
+    and the chrome around it: a header band (title, context chips, status
+    line) above a body region of [controls row, content].
 
-    The content region beneath the heading/status/controls chrome comes from
-    the ``_build_central()`` hook. Its default creates ``self._tabs`` and
-    calls the ``_build_tabs()`` hook, exactly as before; a subclass may
-    instead override ``_build_central()`` to return its own content widget
-    (e.g. a QStackedWidget) — on that path ``self._tabs`` stays ``None``,
+    The content region beneath the header band comes from the
+    ``_build_central()`` hook. Its default creates ``self._tabs`` and calls
+    the ``_build_tabs()`` hook, exactly as before; a subclass may instead
+    override ``_build_central()`` to return its own content widget (e.g. a
+    QStackedWidget) — on that path ``self._tabs`` stays ``None``,
     ``_build_tabs()`` is never called and need not be implemented. The
     surrounding chrome stays base-owned on both paths.
     """
@@ -53,10 +61,14 @@ class WizardWindowBase(QMainWindow):
         self._current_worker: TaskWorker | None = None
 
         self._heading_label = QLabel()
-        self._heading_label.setStyleSheet("font-weight: bold;")
+        heading_font = QFont(self._heading_label.font())
+        heading_font.setPointSize(max(heading_font.pointSize() + 4, 14))
+        heading_font.setBold(True)
+        self._heading_label.setFont(heading_font)
 
         self._status_label = QLabel()
         self._status_label.setWordWrap(True)
+        self._status_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
 
         self._controls_row = QHBoxLayout()
 
@@ -71,15 +83,46 @@ class WizardWindowBase(QMainWindow):
         self._controls_row.addWidget(self._progress_label)
         self._controls_row.addWidget(self._progress_bar)
 
-        central = QWidget()
-        layout = QVBoxLayout(central)
-        layout.addWidget(self._heading_label)
-        layout.addWidget(self._status_label)
+        # --- Header band: title row (heading + context chips) + status line.
+        self._header_band = QFrame()
+        self._header_band.setObjectName("wizardHeaderBand")
+        self._header_band.setStyleSheet(
+            f"QFrame#wizardHeaderBand {{ background-color: {tokens.SURFACE};"
+            f" border: none; border-bottom: 1px solid {tokens.BORDER}; }}"
+        )
+        header_layout = QVBoxLayout(self._header_band)
+        header_layout.setContentsMargins(16, 12, 16, 10)
+        header_layout.setSpacing(4)
+
+        title_row = QHBoxLayout()
+        title_row.setSpacing(8)
+        title_row.addWidget(self._heading_label)
+        #: Row holding the header band's context chips (run / field /
+        #: temperature ...). Populated via set_context_chips().
+        self._chips_row = QHBoxLayout()
+        self._chips_row.setSpacing(6)
+        title_row.addLayout(self._chips_row)
+        title_row.addStretch()
+        header_layout.addLayout(title_row)
+        header_layout.addWidget(self._status_label)
+
+        # --- Body: controls row + content, beneath the header band.
+        body = QWidget()
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(12, 8, 12, 12)
+        layout.setSpacing(6)
         layout.addLayout(self._controls_row)
+
+        central = QWidget()
+        central_layout = QVBoxLayout(central)
+        central_layout.setContentsMargins(0, 0, 0, 0)
+        central_layout.setSpacing(0)
+        central_layout.addWidget(self._header_band)
+        central_layout.addWidget(body)
         self.setCentralWidget(central)
-        #: The central QVBoxLayout ([heading, status, controls, <content>]).
-        #: Exposed so a subclass can append trailing rows (e.g. a nav row)
-        #: beneath the content region from its _build_tabs() hook.
+        #: The body QVBoxLayout ([controls, <content>]). Exposed so a
+        #: subclass can append trailing rows (e.g. a nav row) beneath the
+        #: content region from its _build_tabs() hook.
         self._central_layout = layout
 
         #: The tab container. Assigned a QTabWidget only by the default
@@ -97,6 +140,23 @@ class WizardWindowBase(QMainWindow):
         content = self._build_central()
         if layout.indexOf(content) == -1:
             layout.addWidget(content)
+
+    def set_context_chips(self, labels) -> None:
+        """Replace the header band's context chips (run / field / temperature ...).
+
+        Clears any chips from a previous call, then adds one
+        :func:`~asymmetry.gui.styles.widgets.make_context_chip` per non-empty
+        label in ``labels`` (each coerced via ``str(label).strip()``).
+        """
+        while self._chips_row.count():
+            item = self._chips_row.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        for label in labels:
+            text = str(label).strip()
+            if text:
+                self._chips_row.addWidget(make_context_chip(text))
 
     # ------------------------------------------------------------------
     # Template-method hooks — abstract, subclasses must implement.
@@ -173,6 +233,10 @@ class WizardWindowBase(QMainWindow):
 
         self._analysis_request_id += 1
         request_id = self._analysis_request_id
+
+        # A prior failure may have parked its full error text on the status
+        # line's tooltip; a fresh run must not carry it forward.
+        self._status_label.setToolTip("")
 
         self._cached_signature = copy.deepcopy(self._analysis_signature())
         self._set_busy(True)

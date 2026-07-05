@@ -15,10 +15,13 @@ window.
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -38,9 +41,42 @@ from asymmetry.core.fitting.wizard_narrative import (
     template_display_name,
 )
 from asymmetry.gui.styles import tokens
+from asymmetry.gui.styles.widgets import (
+    RESULT_BOX_NEUTRAL_STYLE,
+    RESULT_BOX_OBJECT_NAME,
+    RESULT_BOX_SUCCESS_STYLE,
+    build_primary_button_qss,
+    build_segmented_button_qss,
+    make_confidence_chip,
+)
 
 #: Cap on how many alternative candidates the strip offers.
 _MAX_ALTERNATIVES = 3
+
+
+def _strip_trailing_gloss(title: str) -> str:
+    """Drop a trailing top-level parenthesised gloss from ``title``.
+
+    ``template_display_name`` appends " (<plain name>)" to a title, and
+    ``<plain name>`` can itself contain nested parens (e.g. "static nuclear
+    fields (Kubo-Toyabe)"). This walks back from the end to find the matching
+    top-level "(" for the final ")" and cuts from there, so only the last
+    balanced group is removed. If the string does not end with a balanced
+    parenthesised group, it is returned unchanged.
+    """
+    text = title.rstrip()
+    if not text.endswith(")"):
+        return title
+    depth = 0
+    for index in range(len(text) - 1, -1, -1):
+        char = text[index]
+        if char == ")":
+            depth += 1
+        elif char == "(":
+            depth -= 1
+            if depth == 0:
+                return text[:index].rstrip()
+    return title
 
 
 def _plain_verdict_headline(recommendation: FitWizardRecommendation) -> str:
@@ -96,20 +132,36 @@ class WizardAnswerCard(QWidget):
         self._asymmetry: np.ndarray | None = None
         self._error: np.ndarray | None = None
         self._alt_buttons: dict[str, QPushButton] = {}
+        self._confidence_chip: QLabel | None = None
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        self._card_frame = QFrame(self)
+        self._card_frame.setObjectName(RESULT_BOX_OBJECT_NAME)
+        self._card_frame.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
+        outer.addWidget(self._card_frame)
+
+        layout = QVBoxLayout(self._card_frame)
+        layout.setContentsMargins(14, 12, 14, 12)
         layout.setSpacing(8)
 
-        self._verdict_label = QLabel("", self)
+        header_row = QHBoxLayout()
+        self._verdict_label = QLabel("", self._card_frame)
         self._verdict_label.setWordWrap(True)
         verdict_font = self._verdict_label.font()
         verdict_font.setPointSize(max(verdict_font.pointSize() + 3, 14))
         verdict_font.setBold(True)
         self._verdict_label.setFont(verdict_font)
-        layout.addWidget(self._verdict_label)
+        # The verdict label's own stretch factor (1) absorbs all extra width,
+        # so the chip (inserted right after it, see _rebuild_confidence_chip)
+        # sits flush against the wrapped headline with no floating gap.
+        header_row.addWidget(self._verdict_label, 1)
+        self._header_row = header_row
+        layout.addLayout(header_row)
 
-        self._confidence_label = QLabel("", self)
+        self._confidence_label = QLabel("", self._card_frame)
         self._confidence_label.setWordWrap(True)
         layout.addWidget(self._confidence_label)
 
@@ -118,7 +170,7 @@ class WizardAnswerCard(QWidget):
         layout.addWidget(self._plot_widget, 1)
 
         toggle_row = QHBoxLayout()
-        self._residuals_toggle = QCheckBox("Show residuals", self)
+        self._residuals_toggle = QCheckBox("Show residuals", self._card_frame)
         self._residuals_toggle.toggled.connect(self._redraw_plot)
         toggle_row.addWidget(self._residuals_toggle)
         toggle_row.addStretch()
@@ -126,18 +178,19 @@ class WizardAnswerCard(QWidget):
 
         # Alternatives strip.
         self._alternatives_row = QHBoxLayout()
-        self._alternatives_label = QLabel("Alternatives:", self)
+        self._alternatives_label = QLabel("Alternatives:", self._card_frame)
         self._alternatives_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
         self._alternatives_row.addWidget(self._alternatives_label)
         self._alternatives_row.addStretch()
-        self._alternatives_container = QWidget(self)
+        self._alternatives_container = QWidget(self._card_frame)
         self._alternatives_container.setLayout(self._alternatives_row)
         self._alternatives_container.setVisible(False)
         layout.addWidget(self._alternatives_container)
 
         # Apply.
         apply_row = QHBoxLayout()
-        self._apply_btn = QPushButton("Apply this fit", self)
+        self._apply_btn = QPushButton("Apply this fit", self._card_frame)
+        self._apply_btn.setStyleSheet(build_primary_button_qss())
         self._apply_btn.clicked.connect(self._on_apply_clicked)
         apply_row.addWidget(self._apply_btn)
         apply_row.addStretch()
@@ -160,6 +213,8 @@ class WizardAnswerCard(QWidget):
     def set_recommendation(self, recommendation: FitWizardRecommendation | None) -> None:
         """Populate the card from a recommendation; select the recommended key."""
         self._recommendation = recommendation
+        self._sync_card_style()
+        self._rebuild_confidence_chip()
         if recommendation is None:
             self._selected_key = None
             self._verdict_label.setText("")
@@ -176,6 +231,59 @@ class WizardAnswerCard(QWidget):
         self._confidence_label.setVisible(bool(confidence_line))
         self._rebuild_alternatives()
         self._redraw_plot()
+
+    # ── Card chrome (frame tint + confidence chip) ─────────────────────────
+
+    def _is_high_confidence_winner(self) -> bool:
+        """True when the recommendation is a real, high-confidence winner."""
+        rec = self._recommendation
+        if rec is None:
+            return False
+        return (
+            rec.confidence is ConfidenceTier.HIGH
+            and rec.verdict is not RecommendationVerdict.NO_SIGNIFICANT_STRUCTURE
+            and rec.recommended_assessment is not None
+        )
+
+    def _sync_card_style(self) -> None:
+        """Tint the card frame green for a high-confidence winner, neutral otherwise."""
+        if self._is_high_confidence_winner():
+            style = RESULT_BOX_SUCCESS_STYLE
+        else:
+            style = RESULT_BOX_NEUTRAL_STYLE
+        self._card_frame.setStyleSheet(style)
+
+    def _confidence_chip_spec(self) -> tuple[str, str] | None:
+        """Return ``(text, tier)`` for the header chip, or ``None`` to hide it."""
+        rec = self._recommendation
+        if rec is None:
+            return None
+        if rec.verdict is RecommendationVerdict.NO_SIGNIFICANT_STRUCTURE:
+            return ("No structure to fit", "none")
+        if rec.confidence is ConfidenceTier.HIGH:
+            return ("High confidence", "high")
+        if rec.confidence is ConfidenceTier.MEDIUM:
+            return ("Medium confidence", "medium")
+        return None
+
+    def _rebuild_confidence_chip(self) -> None:
+        """Rebuild the confidence chip (colours are baked in at construction)."""
+        if self._confidence_chip is not None:
+            self._header_row.removeWidget(self._confidence_chip)
+            self._confidence_chip.setParent(None)
+            self._confidence_chip.deleteLater()
+            self._confidence_chip = None
+        spec = self._confidence_chip_spec()
+        if spec is None:
+            return
+        text, tier = spec
+        chip = make_confidence_chip(text, tier)
+        chip.setParent(self._card_frame)
+        chip.setAlignment(Qt.AlignmentFlag.AlignTop)
+        # Appended after the verdict label, which owns the row's only stretch
+        # factor — the chip sits flush against the headline, top-aligned.
+        self._header_row.addWidget(chip, 0, Qt.AlignmentFlag.AlignTop)
+        self._confidence_chip = chip
 
     def selected_assessment(self) -> CandidateAssessment | None:
         if self._recommendation is None:
@@ -226,22 +334,57 @@ class WizardAnswerCard(QWidget):
             ordered.append(key)
         return ordered[:_MAX_ALTERNATIVES]
 
-    def _alternative_label(self, assessment: CandidateAssessment) -> str:
-        """A plain descriptor for an alternative button.
+    def _alternative_title(self, assessment: CandidateAssessment) -> str:
+        """The plain-physics glossed template title for an alternative."""
+        rec = self._recommendation
+        family_map = _template_family_map(rec.family_reports) if rec is not None else {}
+        return template_display_name(
+            family_map.get(assessment.template.key), assessment.template.title
+        )
 
-        Prefers "similar quality, simpler model" when the alternative has fewer
-        parameters than the recommended one (derivable from parameter counts);
-        otherwise the plain-physics glossed template title.
+    def _metric_delta(self, assessment: CandidateAssessment) -> float | None:
+        """Return ``assessment`` minus the recommended candidate's metric value.
+
+        ``None`` when there is no recommended assessment, or either value is
+        non-finite (so the badge is simply omitted rather than showing NaN/inf).
         """
         rec = self._recommendation
         recommended = rec.recommended_assessment if rec is not None else None
-        family_map = _template_family_map(rec.family_reports) if rec is not None else {}
-        title = template_display_name(
-            family_map.get(assessment.template.key), assessment.template.title
-        )
+        if rec is None or recommended is None:
+            return None
+        value = assessment.metric_value(rec.metric)
+        reference = recommended.metric_value(rec.metric)
+        if not math.isfinite(value) or not math.isfinite(reference):
+            return None
+        return value - reference
+
+    def _alternative_label(self, assessment: CandidateAssessment) -> str:
+        """Button text: the plain title (gloss stripped) plus a metric-delta badge.
+
+        The tooltip (:meth:`_alternative_tooltip`) keeps the full glossed name;
+        only the button text is shortened, since the parenthesised family gloss
+        makes the chip far too wide.
+        """
+        title = _strip_trailing_gloss(self._alternative_title(assessment))
+        delta = self._metric_delta(assessment)
+        if delta is None:
+            return title
+        return f"{title}  ·  {delta:+.1f}"
+
+    def _alternative_tooltip(self, assessment: CandidateAssessment) -> str:
+        """Full tooltip: display name, simpler-model note, and badge explanation."""
+        rec = self._recommendation
+        recommended = rec.recommended_assessment if rec is not None else None
+        lines = [self._alternative_title(assessment)]
         if recommended is not None and assessment.parameter_count < recommended.parameter_count:
-            return f"{title} — similar quality, simpler model"
-        return title
+            lines.append("Similar quality with a simpler model (fewer parameters).")
+        delta = self._metric_delta(assessment)
+        if delta is not None and rec is not None:
+            lines.append(
+                f"{rec.metric.value} difference vs the recommendation: "
+                f"{delta:+.2f} (lower is better)."
+            )
+        return "\n".join(lines)
 
     def _rebuild_alternatives(self) -> None:
         self._clear_alternatives()
@@ -251,12 +394,15 @@ class WizardAnswerCard(QWidget):
         keys = self._alternative_keys()
         if not keys:
             return
+        segmented_qss = build_segmented_button_qss(padding_h=8)
         for key in keys:
             assessment = rec.assessment_for_key(key)
             if assessment is None:
                 continue
             button = QPushButton(self._alternative_label(assessment), self._alternatives_container)
             button.setCheckable(True)
+            button.setStyleSheet(segmented_qss)
+            button.setToolTip(self._alternative_tooltip(assessment))
             button.clicked.connect(lambda _checked=False, k=key: self.set_selected_key(k))
             # Insert before the trailing stretch.
             self._alternatives_row.insertWidget(self._alternatives_row.count() - 1, button)
@@ -344,7 +490,15 @@ class WizardAnswerCard(QWidget):
             )
         ax_fit.set_xlabel("Time (µs)")
         ax_fit.set_ylabel("Asymmetry")
-        if assessment is not None:
+        # Only show the axes title when the user picked an alternative (it then
+        # clarifies what is plotted); when the recommendation itself is
+        # selected, the card headline right above already says as much, and
+        # repeating it here is pure duplication.
+        if (
+            assessment is not None
+            and self._recommendation is not None
+            and assessment.template.key != self._recommendation.recommended_key
+        ):
             ax_fit.set_title(assessment.template.title)
         ax_fit.legend(loc="best")
 

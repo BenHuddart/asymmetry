@@ -37,7 +37,8 @@ from asymmetry.core.fitting.global_fit_wizard import (
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.windows.global_fit_wizard_window import (
-    GlobalFitWizardParameterSetupDialog,
+    _PAGE_RESULT,
+    _PAGE_SETUP,
     GlobalFitWizardWindow,
 )
 from tests._qt_helpers import wait_for
@@ -73,33 +74,6 @@ def datasets() -> list[MuonDataset]:
             )
         )
     return items
-
-
-@pytest.fixture(autouse=True)
-def auto_parameter_setup(monkeypatch: pytest.MonkeyPatch) -> None:
-    def _config(self: GlobalFitWizardWindow, portfolio) -> dict[str, object]:
-        names = []
-        seen = set()
-        for template in portfolio.templates:
-            for name in template.model.param_names:
-                if name in seen:
-                    continue
-                seen.add(name)
-                names.append(name)
-        return {
-            "types": {
-                name: (
-                    "Global" if name.startswith("A") else ("Local" if name != "A_bg" else "Global")
-                )
-                for name in names
-            },
-            "bounds": {
-                name: ((-float("inf"), float("inf")) if name == "A_bg" else (0.0, float("inf")))
-                for name in names
-            },
-        }
-
-    monkeypatch.setattr(GlobalFitWizardWindow, "_prompt_parameter_setup", _config)
 
 
 def _fake_recommendation(datasets: list[MuonDataset]) -> GlobalFitWizardRecommendation:
@@ -406,11 +380,10 @@ def test_global_fit_wizard_window_populates_tables(
     wait_for(lambda: _analysis_complete(window), qapp)
 
     assert "Field" in window._overview_banner.text()
-    assert window._tabs.count() == 7
-    assert window._tabs.tabText(0) == "1. Scope"
-    assert window._tabs.tabText(1) == "2. Series Overview"
-    assert window._tabs.tabText(2) == "3. Candidate Portfolio"
-    assert window._tabs.tabText(3) == "4. Single-Fit Screening"
+    # No tab scaffolding on the _build_central override path; screening lands
+    # the window on the Result page of the three-state stack.
+    assert window._tabs is None
+    assert window._stack.currentIndex() == _PAGE_RESULT
     assert window._overview_table.rowCount() == len(datasets)
     assert window._portfolio_table.rowCount() == 1
     assert window._compare_table.rowCount() == 1
@@ -463,12 +436,14 @@ def test_global_fit_wizard_window_shows_progress_log(
     window._start_analysis()
     wait_for(lambda: _analysis_complete(window), qapp)
 
-    assert window._log_window is not None
-    assert window._log_window.isVisible()
-    log_text = window._log_window.to_plain_text()
+    # Progress messages stream into the inline live-log panel and are mirrored
+    # into current_log_text() (the analysis_cached payload).
+    log_text = window.current_log_text()
     assert "Starting screening for 3 datasets." in log_text
     assert "Preparing missing single-fit wizard tables for global screening." in log_text
     assert "Single-fit table 701: evaluating shared candidate portfolio." in log_text
+    panel_text = window._log_panel.to_plain_text()
+    assert "Starting screening for 3 datasets." in panel_text
 
 
 def test_global_fit_wizard_window_optimizes_selected_candidates(
@@ -502,9 +477,6 @@ def test_global_fit_wizard_window_optimizes_selected_candidates(
     window.set_analysis_context(datasets)
     window._start_analysis()
     wait_for(lambda: _analysis_complete(window), qapp)
-    assert window._log_window is not None
-    window._log_window.hide()
-    qapp.processEvents()
 
     window._compare_table.selectRow(0)
     window._on_compare_selection_changed()
@@ -513,15 +485,14 @@ def test_global_fit_wizard_window_optimizes_selected_candidates(
 
     assert captured["datasets"] == datasets
     assert captured["selected_template_keys"] == ("exp_constant",)
+    assert window._stack.currentIndex() == _PAGE_RESULT
     assert window._compare_table.item(0, 5).text() == "Optimized"
     assert window._optimized_table.columnWidth(0) >= 420
     assert window._optimized_table.item(0, 6).text() == "A_1, A_bg"
     assert window._optimized_table.item(0, 7).text() == "Lambda"
     assert window._optimized_table.item(1, 6).text() == "A_1, Lambda, A_bg"
     assert window._optimized_table.item(1, 7).text() == "None"
-    assert window._log_window is not None
-    assert window._log_window.isVisible()
-    log_text = window._log_window.to_plain_text()
+    log_text = window.current_log_text()
     assert "Starting coupled global optimisation for: Exponential + Constant." in log_text
     assert "Coupled optimisation 1/1: Exponential + Constant." in log_text
     assert "Completed coupled optimisation for Exponential + Constant." in log_text
@@ -597,28 +568,28 @@ def test_global_fit_wizard_window_warning_info_dialog_contains_expected_text(
     assert "continuity diagnostics" in captured["text"]
 
 
-def test_global_fit_wizard_parameter_setup_dialog_defaults_amplitudes_global_rates_local(
+def _expectation_rows_by_name(window: GlobalFitWizardWindow) -> dict[str, int]:
+    table = window._expectations_table
+    return {table.item(row, 0).text(): row for row in range(table.rowCount())}
+
+
+def test_global_fit_wizard_expectations_default_amplitudes_global_rates_local(
     qapp: QApplication,
     datasets: list[MuonDataset],
 ) -> None:
-    portfolio = wizard_window_module.build_global_fit_wizard_candidate_portfolio(datasets)
-    dialog = GlobalFitWizardParameterSetupDialog(
-        portfolio,
-        current_parameter_types={},
-        current_parameter_bounds={},
-    )
+    """The embedded expectations table carries the old dialog's defaults."""
+    window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
 
-    row_by_name = {
-        dialog._table.item(row, 0).text(): row  # type: ignore[attr-defined]
-        for row in range(dialog._table.rowCount())  # type: ignore[attr-defined]
-    }
+    table = window._expectations_table
+    row_by_name = _expectation_rows_by_name(window)
     amplitude_row = row_by_name["A_1"]
     lambda_row = row_by_name["Lambda"]
     background_row = row_by_name["A_bg"]
 
-    amplitude_role = dialog._table.cellWidget(amplitude_row, 1)  # type: ignore[attr-defined]
-    lambda_role = dialog._table.cellWidget(lambda_row, 1)  # type: ignore[attr-defined]
-    background_role = dialog._table.cellWidget(background_row, 1)  # type: ignore[attr-defined]
+    amplitude_role = table.cellWidget(amplitude_row, 1)
+    lambda_role = table.cellWidget(lambda_row, 1)
+    background_role = table.cellWidget(background_row, 1)
 
     assert isinstance(amplitude_role, wizard_window_module.QComboBox)
     assert isinstance(lambda_role, wizard_window_module.QComboBox)
@@ -626,16 +597,17 @@ def test_global_fit_wizard_parameter_setup_dialog_defaults_amplitudes_global_rat
     assert amplitude_role.currentText() == "Global"
     assert lambda_role.currentText() == "Local"
     assert background_role.currentText() == "Global"
-    assert dialog._table.item(amplitude_row, 2).text() == "0, inf"  # type: ignore[attr-defined]
-    assert dialog._table.item(lambda_row, 2).text() == "0, inf"  # type: ignore[attr-defined]
-    assert dialog._table.item(background_row, 2).text() == "-inf, inf"  # type: ignore[attr-defined]
+    assert table.item(amplitude_row, 2).text() == "0, inf"
+    assert table.item(lambda_row, 2).text() == "0, inf"
+    assert table.item(background_row, 2).text() == "-inf, inf"
 
 
-def test_global_fit_wizard_window_passes_dialog_adjusted_types_and_bounds(
+def test_global_fit_wizard_window_passes_expectation_types_and_bounds(
     qapp: QApplication,
     datasets: list[MuonDataset],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Edits to the embedded table flow to the builder and the applied-config signal."""
     captured: dict[str, object] = {}
 
     def _fake_build(datasets_arg, **kwargs):
@@ -648,17 +620,15 @@ def test_global_fit_wizard_window_passes_dialog_adjusted_types_and_bounds(
         "build_global_fit_wizard_screening_recommendation",
         _fake_build,
     )
-    monkeypatch.setattr(
-        GlobalFitWizardWindow,
-        "_prompt_parameter_setup",
-        lambda self, _portfolio: {
-            "types": {"A_1": "Global", "Lambda": "Local", "A_bg": "Global"},
-            "bounds": {"A_1": (0.0, 1.0), "Lambda": (0.0, 5.0), "A_bg": (-0.5, 0.5)},
-        },
-    )
 
     window = GlobalFitWizardWindow()
+    emitted_config: dict[str, object] = {}
+    window.parameter_setup_applied.connect(lambda config: emitted_config.update(config))
     window.set_analysis_context(datasets)
+
+    row_by_name = _expectation_rows_by_name(window)
+    window._expectations_table.item(row_by_name["A_bg"], 2).setText("-0.5, 0.5")
+
     window._start_analysis()
     wait_for(lambda: _analysis_complete(window), qapp)
 
@@ -667,19 +637,48 @@ def test_global_fit_wizard_window_passes_dialog_adjusted_types_and_bounds(
     assert captured["types"]["A_1"] == "Global"
     assert captured["types"]["Lambda"] == "Local"
     assert captured["bounds"]["A_bg"] == (-0.5, 0.5)
+    assert emitted_config["types"]["Lambda"] == "Local"
+    assert emitted_config["bounds"]["A_bg"] == (-0.5, 0.5)
 
 
-# ── Scope tab: presence, ordering, and builder wiring ────────────────────────
+def test_global_fit_wizard_window_invalid_expectation_bounds_block_screening(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unparseable bounds stop the run inline instead of via a modal warning."""
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_global_fit_wizard_screening_recommendation",
+        lambda *_args, **_kwargs: pytest.fail("screening must not start with invalid bounds"),
+    )
+    window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
+
+    row_by_name = _expectation_rows_by_name(window)
+    window._expectations_table.item(row_by_name["Lambda"], 2).setText("nonsense")
+
+    window._start_analysis()
+
+    assert window._analysis_in_progress is False
+    assert window._tasks.active_count == 0
+    assert window._stack.currentIndex() == _PAGE_SETUP
+    # The section expands to surface the inline error naming the parameter.
+    assert window._expectations_section.isExpanded() is True
+    assert "Lambda" in window._expectations_error_label.text()
+    assert "parameter expectations" in window._status_label.text()
 
 
-def test_global_fit_wizard_window_scope_tab_is_first_and_selected(
+# ── Setup page: presence and builder wiring ──────────────────────────────────
+
+
+def test_global_fit_wizard_window_opens_on_setup_page(
     qapp: QApplication,
     datasets: list[MuonDataset],
 ) -> None:
     window = GlobalFitWizardWindow()
-    assert window._tabs.tabText(0) == "1. Scope"
     window.set_analysis_context(datasets)
-    assert window._tabs.currentIndex() == 0
+    assert window._stack.currentIndex() == _PAGE_SETUP
 
 
 def test_global_fit_wizard_window_forwards_scope_to_screening(
@@ -1273,3 +1272,89 @@ def test_global_fit_wizard_window_confidence_survives_cache_restore(
         if window._overview_table.item(row, 0).text() == datasets[0].run_label
     )
     assert window._overview_table.item(flagged_row, 7).text() == "No significant structure"
+
+
+# ── Series answer card + shortlist button (three-state rebuild) ──────────────
+
+
+def test_global_fit_wizard_window_series_card_reflects_recommendation(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+) -> None:
+    """The card adapter feeds one trace per run, the verdict, and the trend."""
+    window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
+    window.set_cached_recommendation(_fake_recommendation(datasets))
+
+    assert window._stack.currentIndex() == _PAGE_RESULT
+    card = window._series_card
+    # Verdict headline is the recommended assessment's template title; the
+    # confidence prose line is the recommendation summary, with no tier chip.
+    assert card._verdict_label.text() == "Exponential + Constant"
+    assert "Recommended" in card._confidence_label.text()
+    assert card._chip is None
+    # One overlay trace per run in dataset_order, each with its fitted curve.
+    assert len(card._runs) == len(datasets)
+    assert all(run.fitted_curve is not None for run in card._runs)
+    assert [run.axis_value for run in card._runs] == [100.0, 200.0, 300.0]
+    # First local parameter (Lambda) trends across the series axis.
+    assert card._trend is not None
+    assert card._trend.axis_values == (100.0, 200.0, 300.0)
+    assert card._trend.values == pytest.approx((0.2, 0.3, 0.4))
+    assert card._trend.axis_label == "Field (G)"
+    # A recommended optimized assessment exists, so the card apply is live.
+    assert card._apply_btn.isEnabled() is True
+
+
+def test_global_fit_wizard_window_screening_only_card_has_no_fit_or_trend(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Before optimisation the card shows data-only traces and no trend."""
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_global_fit_wizard_screening_recommendation",
+        lambda datasets_arg, **_kwargs: _fake_screening_recommendation(datasets_arg),
+    )
+    window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
+    window._start_analysis()
+    wait_for(lambda: _analysis_complete(window), qapp)
+
+    card = window._series_card
+    assert len(card._runs) == len(datasets)
+    assert all(run.fitted_curve is None for run in card._runs)
+    assert card._trend is None
+    assert card._apply_btn.isEnabled() is False
+
+
+def test_global_fit_wizard_window_optimize_button_label_tracks_selection(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_global_fit_wizard_screening_recommendation",
+        lambda datasets_arg, **_kwargs: _fake_screening_recommendation(datasets_arg),
+    )
+    window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
+    window._start_analysis()
+    wait_for(lambda: _analysis_complete(window), qapp)
+
+    assert window._optimize_btn.text() == "Optimize selected"
+    assert window._optimize_btn.isEnabled() is False
+
+    window._compare_table.selectRow(0)
+    window._on_compare_selection_changed()
+
+    assert window._optimize_btn.text() == "Optimize selected (1)"
+    assert window._optimize_btn.isEnabled() is True
+
+    window._compare_table.clearSelection()
+    window._on_compare_selection_changed()
+
+    assert window._optimize_btn.text() == "Optimize selected"
+    assert window._optimize_btn.isEnabled() is False

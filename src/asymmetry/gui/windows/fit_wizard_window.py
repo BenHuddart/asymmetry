@@ -34,11 +34,13 @@ from PySide6.QtGui import QBrush, QColor, QFont, QGuiApplication
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
+    QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -68,6 +70,7 @@ from asymmetry.core.fitting.wizard_scope import (
 )
 from asymmetry.core.fourier.fft import fft_asymmetry
 from asymmetry.gui.styles import tokens
+from asymmetry.gui.styles.widgets import build_primary_button_qss, make_warning_banner
 from asymmetry.gui.widgets.collapsible_section import CollapsibleSection
 from asymmetry.gui.widgets.decision_trail import DecisionTrail, TrailSeparator
 from asymmetry.gui.widgets.screen_sizing import resize_to_available
@@ -121,10 +124,6 @@ class FitWizardWindow(WizardWindowBase):
         # clipped above the menu bar on a 13-inch laptop (~800 px high).
         resize_to_available(self, 1180, 740)
 
-        heading_font = QFont(self._heading_label.font())
-        heading_font.setPointSize(max(heading_font.pointSize() + 4, 14))
-        heading_font.setBold(True)
-        self._heading_label.setFont(heading_font)
         self._heading_label.setText("Fit Wizard")
         self._status_label.setText(
             "Open the fit wizard on a single spectrum to fingerprint the data and "
@@ -174,12 +173,10 @@ class FitWizardWindow(WizardWindowBase):
         self._controls_row.addStretch()
 
         # --- Stale banner (result-level warning above the stack) ---
-        self._stale_banner = QLabel(
+        self._stale_banner = make_warning_banner(
             "Scope or peak seeds changed since the last analysis — the results below "
             "are stale. Re-run the analysis."
         )
-        self._stale_banner.setWordWrap(True)
-        self._stale_banner.setStyleSheet(f"color: {tokens.ERROR}; font-weight: 600;")
         self._stale_banner.setVisible(False)
         self._central_layout.addWidget(self._stale_banner)
 
@@ -197,6 +194,7 @@ class FitWizardWindow(WizardWindowBase):
     def _build_welcome_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
+        layout.setSpacing(10)
 
         intro = QLabel(
             "The fit wizard analyses this spectrum, fits a set of physics-motivated "
@@ -207,16 +205,9 @@ class FitWizardWindow(WizardWindowBase):
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
-        self._welcome_context_label = QLabel("")
-        self._welcome_context_label.setWordWrap(True)
-        self._welcome_context_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
-        layout.addWidget(self._welcome_context_label)
-
         analyze_row = QHBoxLayout()
         self._analyze_btn = QPushButton("Analyze")
-        analyze_font = QFont(self._analyze_btn.font())
-        analyze_font.setBold(True)
-        self._analyze_btn.setFont(analyze_font)
+        self._analyze_btn.setStyleSheet(build_primary_button_qss())
         self._analyze_btn.clicked.connect(self._start_analysis)
         analyze_row.addWidget(self._analyze_btn)
         analyze_row.addStretch()
@@ -251,9 +242,7 @@ class FitWizardWindow(WizardWindowBase):
         page = QWidget()
         layout = QVBoxLayout(page)
         header = QLabel("Analysing this spectrum…")
-        header_font = QFont(header.font())
-        header_font.setBold(True)
-        header.setFont(header_font)
+        header.setStyleSheet("font-weight: 600;")
         layout.addWidget(header)
         self._running_trail = DecisionTrail()
         layout.addWidget(self._running_trail)
@@ -261,8 +250,12 @@ class FitWizardWindow(WizardWindowBase):
         return page
 
     def _build_result_page(self) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
+        # The result page is a QScrollArea: an expanded trail step (scope
+        # selector, FFT panel, compare table) can push content past the window
+        # with no other way to reach it. The scroll area itself is the stacked
+        # page; the inner content widget keeps the layout below unchanged.
+        content = QWidget()
+        layout = QVBoxLayout(content)
 
         # Answer card at the top.
         self._answer_card = WizardAnswerCard()
@@ -291,7 +284,18 @@ class FitWizardWindow(WizardWindowBase):
         # The decision trail below the card.
         self._result_trail = DecisionTrail()
         layout.addWidget(self._result_trail, 1)
-        return page
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet(
+            "QScrollArea { background: transparent; }"
+            " QScrollArea > QWidget > QWidget { background: transparent; }"
+        )
+        scroll.setWidget(content)
+        self._result_scroll = scroll
+        return scroll
 
     # ------------------------------------------------------------------
     # Deep panels (built once; re-parented between states)
@@ -445,14 +449,15 @@ class FitWizardWindow(WizardWindowBase):
         self._user_peaks = []
         self._analysis_stale = False
         self._stale_banner.setVisible(False)
-        self._heading_label.setText(f"Fit Wizard — Run {dataset.run_label}")
+        self._heading_label.setText("Fit Wizard")
+        self._status_label.setToolTip("")
+        self.set_context_chips(self._context_chip_labels())
         self._recommendation = None
         self._selected_key = None
         # Install the scope resolver and reset the selector to Auto (signal-silent).
         self._scope_selector.set_resolver(self._resolve_scope)
         self._scope_selector.set_scope(None)
         self._scope_selector.refresh_from_context()
-        self._welcome_context_label.setText(self._run_context_line())
         # Render the time/FFT plot and the (user-only) peaks table straight away
         # so peak seeds can be added before the first analysis run.
         self._fingerprint_banner.setText("")
@@ -472,7 +477,7 @@ class FitWizardWindow(WizardWindowBase):
             "Click Analyze to fingerprint this spectrum without blocking the main window."
         )
         self._status_label.setText(
-            "Ready to fingerprint this spectrum. Click Start Analysis to run the wizard "
+            "Ready to fingerprint this spectrum. Click Analyze to run the wizard "
             "without blocking the main window."
         )
         self._set_busy(False)
@@ -538,7 +543,11 @@ class FitWizardWindow(WizardWindowBase):
         # keeps it too — the two wizards must match) and return to Welcome so the
         # metric combo cannot resurrect a stale success.
         self._recommendation = None
-        self._status_label.setText(f"Fit wizard analysis failed: {message}")
+        # First line only in the header status — a multi-line exception message
+        # would balloon the header band; the full text goes in the tooltip.
+        failure_text = str(message).strip() or "unknown error"
+        self._status_label.setText(f"Fit wizard analysis failed: {failure_text.splitlines()[0]}")
+        self._status_label.setToolTip(failure_text)
         self._welcome_hint_label.setText(
             "The analysis failed. Adjust the guidance if needed and click Analyze again."
         )
@@ -678,10 +687,10 @@ class FitWizardWindow(WizardWindowBase):
     # Welcome helpers
     # ------------------------------------------------------------------
 
-    def _run_context_line(self) -> str:
-        """Plain run-context line — run / field / temperature / sample, empty parts omitted."""
+    def _context_chip_labels(self) -> list[str]:
+        """Header-band chip labels — run / field / temperature / sample, empty parts omitted."""
         if self._dataset is None:
-            return ""
+            return []
         parts: list[str] = [f"Run {self._dataset.run_label}"]
         field = self._dataset.field
         if field is not None:
@@ -692,7 +701,7 @@ class FitWizardWindow(WizardWindowBase):
         sample = self._dataset.metadata.get("sample")
         if sample:
             parts.append(str(sample))
-        return "  ·  ".join(parts)
+        return parts
 
     def _reanalyze(self) -> None:
         """Return to the Welcome state so the user can steer, then Analyze again."""

@@ -484,8 +484,38 @@ def test_fit_wizard_window_accepts_cached_recommendation(
     # Legacy signature (no scope/user_peaks keys) restores Auto and is not stale.
     assert window._scope_selector.current_scope()["preset"] == "auto"
     assert window._user_peaks == []
+    # The result page is a scroll area (see test_fit_wizard_window_result_page_is_scrollable)
+    # so an expanded trail step can never push content past the window unreachably.
+    assert window._stack.widget(_PAGE_RESULT) is window._result_scroll
     assert window._analysis_stale is False
     assert window._stale_banner.isHidden() is True
+
+
+def test_fit_wizard_window_result_page_is_scrollable(
+    qapp: QApplication,
+    dataset: MuonDataset,
+) -> None:
+    """The Result page is a QScrollArea so an expanded trail step (scope
+    selector, FFT panel, compare table) can always be reached even if it pushes
+    content past the window's height."""
+    from PySide6.QtWidgets import QFrame, QScrollArea
+
+    window = FitWizardWindow()
+    recommendation = _fake_recommendation(dataset)
+    window.set_analysis_context(dataset)
+    window.set_cached_recommendation(recommendation)
+
+    scroll = window._stack.widget(_PAGE_RESULT)
+    assert isinstance(scroll, QScrollArea)
+    assert scroll is window._result_scroll
+    assert scroll.widgetResizable() is True
+    assert scroll.frameShape() == QFrame.Shape.NoFrame
+    assert scroll.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    # The answer card and trail live inside the scroll area's content widget.
+    content = scroll.widget()
+    assert content is not None
+    assert content.isAncestorOf(window._answer_card)
+    assert content.isAncestorOf(window._result_trail)
 
 
 # ── Resolver adapter shape ───────────────────────────────────────────────────
