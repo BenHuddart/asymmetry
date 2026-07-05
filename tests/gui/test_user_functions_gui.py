@@ -204,6 +204,36 @@ def test_user_functions_dialog_handles_no_report(qapp):
     assert "No user functions" in _report_html(None)
 
 
+def test_user_functions_dialog_open_folder_button(qapp, tmp_path, monkeypatch):
+    """The Open folder… button creates the user-functions dir and opens it.
+
+    ``QDesktopServices.openUrl`` is monkeypatched so no real file browser
+    window opens; the directory is monkeypatched to ``tmp_path`` and must be
+    created on demand so the button works on a fresh install.
+    """
+    from pathlib import Path
+
+    from PySide6.QtGui import QDesktopServices
+
+    from asymmetry.core import plugins
+    from asymmetry.gui.windows.user_functions_dialog import UserFunctionsDialog
+
+    target = tmp_path / "user_functions"
+    monkeypatch.setattr(plugins, "USER_FUNCTIONS_DIR", target)
+    opened: list = []
+    monkeypatch.setattr(QDesktopServices, "openUrl", lambda url: opened.append(url) or True)
+
+    dialog = UserFunctionsDialog()
+    assert dialog._open_folder_button is not None
+    assert not target.exists()
+    dialog._open_folder_button.click()
+
+    assert target.is_dir()  # created so the file browser has somewhere to land
+    assert len(opened) == 1
+    assert Path(opened[0].toLocalFile()) == target
+    dialog.deleteLater()
+
+
 def test_user_functions_dialog_lists_gui_authored_function(qapp, _registry_snapshot, tmp_path):
     """A function created via ``create_user_function`` (the New User Function
     dialog's core call) must show up in the Setup -> User Functions... report,

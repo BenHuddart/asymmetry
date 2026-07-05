@@ -188,6 +188,59 @@ def test_empty_formula_shows_preview_placeholder(qapp, _registry_snapshot, tmp_p
         dialog.deleteLater()
 
 
+# ── preview navigation ──────────────────────────────────────────────────────
+
+
+def test_preview_nav_buttons_exist_and_are_mutually_exclusive(qapp, _registry_snapshot, tmp_path):
+    dialog = NewUserFunctionDialog("component", domain="time", directory=tmp_path)
+    try:
+        assert dialog._pan_btn is not None
+        assert dialog._zoom_btn is not None
+        assert dialog._reset_btn is not None
+
+        dialog._pan_btn.click()
+        assert dialog._pan_btn.isChecked()
+        assert not dialog._zoom_btn.isChecked()
+
+        # Checking Zoom unchecks Pan…
+        dialog._zoom_btn.click()
+        assert dialog._zoom_btn.isChecked()
+        assert not dialog._pan_btn.isChecked()
+
+        # …and vice versa.
+        dialog._pan_btn.click()
+        assert dialog._pan_btn.isChecked()
+        assert not dialog._zoom_btn.isChecked()
+
+        # Clicking the active mode again turns navigation off entirely.
+        dialog._pan_btn.click()
+        assert not dialog._pan_btn.isChecked()
+        assert not dialog._zoom_btn.isChecked()
+    finally:
+        dialog.deleteLater()
+
+
+def test_preview_view_persists_across_redraws_until_reset(qapp, _registry_snapshot, tmp_path):
+    dialog = NewUserFunctionDialog("component", domain="time", directory=tmp_path)
+    try:
+        _fill_valid_component(dialog, name="UserViewKeep")
+        dialog._run_validation()
+
+        # Simulate a user pan/zoom: mark the view user-owned and move it.
+        dialog._user_view = True
+        dialog._axes.set_xlim(2.0, 5.0)
+
+        dialog._run_validation()
+        assert dialog._axes.get_xlim() == pytest.approx((2.0, 5.0))
+
+        # Reset returns to autoscale over the full preview grid (0-32 µs).
+        dialog._on_reset_view()
+        assert dialog._user_view is False
+        assert dialog._axes.get_xlim()[1] > 5.0
+    finally:
+        dialog.deleteLater()
+
+
 # ── error surfacing ─────────────────────────────────────────────────────────
 
 

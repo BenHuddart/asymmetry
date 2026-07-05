@@ -17,8 +17,8 @@ Design notes worth keeping in view of the invariants:
   and never blocks long enough to need the worker machinery. Do not grow this
   into a long-running evaluation without moving it off the GUI thread.
 * The generated function is an ordinary Asymmetry plugin — nothing here is a
-  private on-disk format. The trust note echoes the wording in
-  :mod:`asymmetry.gui.windows.user_functions_dialog`.
+  private on-disk format. The dialog carries the same trust note as the load
+  report in :mod:`asymmetry.gui.windows.user_functions_dialog`.
 """
 
 from __future__ import annotations
@@ -237,12 +237,12 @@ class NewUserFunctionDialog(QDialog):
         self._status_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(self._status_label)
 
-        # 9. Trust + persistence note (echoes user_functions_dialog wording).
+        # 9. Trust + persistence note.
         trust = self._muted_label(
-            "User functions are ordinary Python run with full privileges — the "
-            "same trust model as WiMDA's plugin DLLs. The file is saved to your "
-            "user-functions folder and reloads every time Asymmetry starts, so "
-            "you can edit it freely afterwards."
+            "User functions are ordinary Python run with full interpreter "
+            "privileges — only create functions from code you trust. The file "
+            "is saved to your user-functions folder and reloads every time "
+            "Asymmetry starts, so you can edit it freely afterwards."
         )
         layout.addWidget(trust)
 
@@ -253,20 +253,67 @@ class NewUserFunctionDialog(QDialog):
         layout.addWidget(self._buttons)
 
     def _build_preview(self, layout: QVBoxLayout) -> None:
-        """Add the preview canvas, degrading to a label without matplotlib."""
+        """Add the preview canvas + nav row, degrading to a label without matplotlib."""
         self._figure = None
         self._canvas = None
         self._axes = None
+        self._nav_toolbar = None
+        self._pan_btn: QPushButton | None = None
+        self._zoom_btn: QPushButton | None = None
+        self._reset_btn: QPushButton | None = None
+        #: True once the user has panned/zoomed the preview: redraws then keep
+        #: the current limits instead of autoscaling them away on every edit.
+        self._user_view = False
         try:
             from asymmetry.gui.widgets.mpl_canvas import create_canvas
 
-            self._figure, self._canvas = create_canvas(layout="tight", figsize=(4.0, 2.2))
+            # The hidden toolbar drives pan/zoom exactly as PlotPanel does —
+            # the checkable buttons below are its only visible surface.
+            self._figure, self._canvas, self._nav_toolbar = create_canvas(
+                layout="tight", toolbar=True, parent=self, figsize=(4.0, 2.2)
+            )
+            self._nav_toolbar.hide()
             self._axes = self._figure.add_subplot(111)
             self._canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
             self._canvas.setMinimumHeight(150)
+            layout.addLayout(self._build_preview_nav_row())
             layout.addWidget(self._canvas, stretch=1)
+            # A completed drag while a nav mode is active marks the view as
+            # user-owned, so subsequent validation redraws preserve it.
+            self._canvas.mpl_connect("button_release_event", self._on_preview_mouse_release)
         except ImportError:
             layout.addWidget(self._muted_label("matplotlib is not installed — no preview."))
+
+    def _build_preview_nav_row(self) -> QHBoxLayout:
+        """The compact Pan/Zoom/Reset row that sits directly above the canvas."""
+        from asymmetry.gui.styles.widgets import build_nav_button_qss
+
+        nav_qss = build_nav_button_qss()
+        row = QHBoxLayout()
+        row.setSpacing(4)
+        row.addWidget(self._muted_label("Preview", bold=True))
+        row.addStretch(1)
+
+        self._pan_btn = QPushButton("Pan")
+        self._pan_btn.setCheckable(True)
+        self._pan_btn.setMaximumWidth(60)
+        self._pan_btn.setStyleSheet(nav_qss)
+        self._pan_btn.clicked.connect(self._on_pan_clicked)
+        row.addWidget(self._pan_btn)
+
+        self._zoom_btn = QPushButton("Zoom")
+        self._zoom_btn.setCheckable(True)
+        self._zoom_btn.setMaximumWidth(60)
+        self._zoom_btn.setStyleSheet(nav_qss)
+        self._zoom_btn.clicked.connect(self._on_zoom_clicked)
+        row.addWidget(self._zoom_btn)
+
+        self._reset_btn = QPushButton("Reset")
+        self._reset_btn.setMaximumWidth(60)
+        self._reset_btn.setStyleSheet(nav_qss)
+        self._reset_btn.clicked.connect(self._on_reset_view)
+        row.addWidget(self._reset_btn)
+        return row
 
     def _wire_signals(self) -> None:
         # Debounced live validation: restart the timer on any edit.
@@ -520,6 +567,67 @@ class NewUserFunctionDialog(QDialog):
         self._status_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
         self._status_label.setText(text)
 
+    # ── preview navigation (pan/zoom via the hidden toolbar) ────────────────
+
+    def _nav_mode(self) -> str:
+        """The toolbar's current mode as "pan" | "zoom" | "none"."""
+        mode = str(getattr(self._nav_toolbar, "mode", "") or "").lower()
+        if "pan" in mode:
+            return "pan"
+        if "zoom" in mode:
+            return "zoom"
+        return "none"
+
+    def _set_nav_mode(self, target: str) -> None:
+        """Drive the hidden toolbar to *target* mode; pan/zoom are exclusive."""
+        toolbar = self._nav_toolbar
+        if toolbar is None:
+            return
+        current = self._nav_mode()
+        if target == "pan":
+            if current == "zoom":
+                toolbar.zoom()
+            if self._nav_mode() != "pan":
+                toolbar.pan()
+        elif target == "zoom":
+            if current == "pan":
+                toolbar.pan()
+            if self._nav_mode() != "zoom":
+                toolbar.zoom()
+        else:
+            if current == "pan":
+                toolbar.pan()
+            elif current == "zoom":
+                toolbar.zoom()
+        self._sync_nav_buttons()
+
+    def _sync_nav_buttons(self) -> None:
+        """Mirror the toolbar mode on the checkable Pan/Zoom buttons."""
+        if self._pan_btn is None or self._zoom_btn is None:
+            return
+        mode = self._nav_mode()
+        for button, name in ((self._pan_btn, "pan"), (self._zoom_btn, "zoom")):
+            button.blockSignals(True)
+            button.setChecked(mode == name)
+            button.blockSignals(False)
+
+    def _on_pan_clicked(self, checked: bool) -> None:
+        self._set_nav_mode("pan" if checked else "none")
+
+    def _on_zoom_clicked(self, checked: bool) -> None:
+        self._set_nav_mode("zoom" if checked else "none")
+
+    def _on_preview_mouse_release(self, _event: object) -> None:
+        # A drag completed while pan/zoom was active: the view now belongs to
+        # the user, and validation redraws must preserve it.
+        if self._nav_mode() != "none":
+            self._user_view = True
+
+    def _on_reset_view(self) -> None:
+        """Return the preview to autoscale and redraw from the current draft."""
+        self._user_view = False
+        self._refresh_preview(self._current_draft())
+
     # ── preview ─────────────────────────────────────────────────────────────
 
     def _refresh_preview(self, draft: UserFunctionDraft) -> None:
@@ -548,9 +656,19 @@ class NewUserFunctionDialog(QDialog):
             self._clear_preview()
             return
         xlabel, ylabel = _AXIS_LABELS[self._preview_kind]
+        # Preserve a user-owned pan/zoom view across the clear+replot; the
+        # kind/domain (and hence the grid) are constructor-fixed, so there is
+        # no grid-change path that would need to force _user_view back off.
+        keep_view = self._user_view
+        if keep_view:
+            xlim = self._axes.get_xlim()
+            ylim = self._axes.get_ylim()
         self._axes.clear()
         self._axes.plot(grid, values, color=tokens.PLOT_FIT_PREVIEW, linewidth=1.5)
         self._axes.axhline(0.0, color=tokens.PLOT_ZERO_LINE, linewidth=0.5)
+        if keep_view:
+            self._axes.set_xlim(xlim)
+            self._axes.set_ylim(ylim)
         self._axes.set_xlabel(xlabel, fontsize=8)
         self._axes.set_ylabel(ylabel, fontsize=8)
         self._axes.tick_params(labelsize=7)

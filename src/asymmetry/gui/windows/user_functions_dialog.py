@@ -9,8 +9,10 @@ one place to look, any time after startup.
 from __future__ import annotations
 
 import html
+from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -40,9 +42,8 @@ def _report_html(report: UserFunctionLoadReport | None) -> str:
         "Files are loaded once at startup; restart Asymmetry after adding or "
         "editing plugins. Packaged plugins register through the "
         "<code>asymmetry.user_functions</code> entry-point group.</p>",
-        "<p><i>User functions are ordinary Python run with full privileges — "
-        "the same trust model as WiMDA's plugin DLLs. Only install files you "
-        "trust.</i></p>",
+        "<p><i>User functions are ordinary Python run with full interpreter "
+        "privileges. Only install files you trust.</i></p>",
     ]
 
     if report is None or not report.sources:
@@ -94,11 +95,31 @@ class UserFunctionsDialog(QDialog):
         hint = QLabel(
             "Write plugins with asymmetry.register_component / "
             "register_parameter_component — see the user guide chapter "
-            '"User functions".'
+            '"User functions". Deleting a function\'s file removes it at the '
+            "next start; projects that reference it still open, with the "
+            "function shown as missing until the file returns."
         )
         hint.setWordWrap(True)
         layout.addWidget(hint)
 
         button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        self._open_folder_button = button_box.addButton(
+            "Open folder…", QDialogButtonBox.ButtonRole.ActionRole
+        )
+        self._open_folder_button.clicked.connect(self._open_user_functions_folder)
         button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)
+
+    def _open_user_functions_folder(self) -> None:
+        """Open the user-functions directory in the system file browser.
+
+        The directory is created first so the button works on a fresh install,
+        and ``USER_FUNCTIONS_DIR`` is resolved at click time so tests (and any
+        future relocation) see the current value rather than an import-time
+        snapshot.
+        """
+        from asymmetry.core import plugins
+
+        directory = Path(plugins.USER_FUNCTIONS_DIR)
+        directory.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(directory)))

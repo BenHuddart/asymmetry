@@ -6,9 +6,8 @@ component and parameter-trend model is backed by an ordinary Python file
 under ``~/.asymmetry/user_functions/`` — at the next start it appears in the
 fit-function builder (under *User*, badged ``· user``), fits like any
 built-in component, exports through GLE plot labels, and survives project
-save/load. No rebuild, no packaging, no changes to Asymmetry itself. This
-replaces both of WiMDA's plugin DLL mechanisms (``musrfunctions.dll``
-picker entries and ``*fit.dll`` model libraries) with plain Python.
+save/load. No rebuild, no packaging, no changes to Asymmetry itself —
+extending the fitting library is plain Python.
 
 You write that file yourself only if you want to; the usual route is to let
 the GUI write it for you.
@@ -63,9 +62,9 @@ moment on.
 
 .. note::
    Whichever route creates it, a user function is ordinary Python executed
-   with full interpreter privileges — the same trust model as WiMDA's plugin
-   DLLs. Only create or install functions you trust, and be as careful
-   sharing a generated plugin file as you would sharing a hand-written one.
+   with full interpreter privileges. Only create or install functions you
+   trust, and be as careful sharing a generated plugin file as you would
+   sharing a hand-written one.
 
 Writing the file yourself
 --------------------------
@@ -157,7 +156,13 @@ the model intact: the missing component is shown by name, plots as zero,
 and fitting is blocked with a message saying which function to restore.
 Saving the project preserves the original model unchanged.
 
-User functions are ordinary Python executed with full privileges — the
-same trust model as WiMDA's plugin DLLs. Only install files you trust.
+Removing a function is the reverse of installing one: delete its file
+from the plugin folder — **Setup → User Functions…** → **Open folder…**
+takes you straight there — and restart. Saved projects that referenced it
+degrade exactly as above, to the named placeholder, and the function goes
+live again if the file is ever restored.
+
+User functions are ordinary Python executed with full interpreter
+privileges — only install files you trust.
 
 .. [1] A. Keren, Phys. Rev. B **50**, 10039 (1994).
