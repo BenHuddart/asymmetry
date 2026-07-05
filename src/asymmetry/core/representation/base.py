@@ -116,8 +116,13 @@ class FitSlot:
         model = data.get("model")
         # Migrate legacy ``fraction_<k>`` parameter entries to the n-1 free-fraction
         # scheme so pre-rework projects load, display, and refit. Guarded: a
-        # missing/malformed model payload simply skips migration.
-        if isinstance(model, dict) and parameters:
+        # missing/malformed model payload simply skips migration. Only pay for the
+        # model rebuild when a legacy ``fraction_<k>`` name is actually present —
+        # every migratable key has this prefix, so its absence guarantees a no-op.
+        has_legacy_fraction_name = any(
+            isinstance(p.get("name"), str) and p["name"].startswith("fraction_") for p in parameters
+        )
+        if isinstance(model, dict) and parameters and has_legacy_fraction_name:
             from asymmetry.core.fitting.composite import (
                 CompositeModel,
                 migrate_legacy_fraction_parameter_entries,

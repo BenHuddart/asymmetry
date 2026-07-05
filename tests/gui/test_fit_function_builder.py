@@ -13,11 +13,9 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtWidgets import QApplication, QDialog, QDialogButtonBox
 
-from asymmetry.core.fitting.composite import CompositeModel
-from asymmetry.gui.panels.fit_function_builder import (
-    FitFunctionBuilderDialog,
-    _build_components_by_category,
-)
+from asymmetry.core.fitting.component_search import search_components
+from asymmetry.core.fitting.composite import COMPONENTS, CompositeModel
+from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
 
 
 @pytest.fixture(scope="module")
@@ -392,12 +390,20 @@ def test_library_activation_appends_component(qapp: QApplication) -> None:
     assert names == ["Exponential", "Constant", "Gaussian"]
 
 
-# ------------------------------------------------------------- category helper
-def test_build_components_by_category_time_and_frequency() -> None:
-    time_grouped = _build_components_by_category("time")
-    assert "Muonium" in time_grouped
-    assert "GaussianPeak" not in time_grouped.get("Background", [])
+# ------------------------------------------------------ library category order
+def test_library_empty_query_groups_by_domain_and_category() -> None:
+    # The library panel renders ``search_components("")`` grouped by category,
+    # so exercising that surface directly is what a user sees in the tree.
+    time_names = [
+        result.name for result in search_components("", components=COMPONENTS, domain="time")
+    ]
+    time_categories = {COMPONENTS[name].category for name in time_names}
+    assert "Muonium" in time_categories
+    # A frequency-domain component never leaks into the time catalogue.
+    assert "GaussianPeak" not in time_names
 
-    freq_grouped = _build_components_by_category("frequency")
-    assert set(freq_grouped) == {"General"}
-    assert "GaussianPeak" in freq_grouped["General"]
+    freq_names = [
+        result.name for result in search_components("", components=COMPONENTS, domain="frequency")
+    ]
+    assert all(COMPONENTS[name].category == "Frequency Domain" for name in freq_names)
+    assert "GaussianPeak" in freq_names

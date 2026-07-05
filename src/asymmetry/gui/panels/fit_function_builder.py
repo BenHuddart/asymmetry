@@ -10,13 +10,11 @@ mode that speaks the canonical ``{frac}`` syntax.
 from __future__ import annotations
 
 import contextlib
-from collections import defaultdict
 from collections.abc import Iterator
 
 from PySide6.QtWidgets import QWidget
 
 from asymmetry.core.fitting.composite import (
-    CATEGORY_REGISTRY,
     COMPONENTS,
     CompositeModel,
     UnknownComponentError,
@@ -28,41 +26,7 @@ from asymmetry.core.fitting.domain_library import (
     components_for_domain,
     default_model_for_domain,
 )
-from asymmetry.gui.widgets.function_builder.dialog import (
-    FunctionBuilderDialog,
-    make_fit_expression_parser,
-)
-
-# Display order of the component-picker submenus comes from the canonical
-# category registry in core; categories not registered (e.g. from future
-# additions that bypass the registry) are appended alphabetically.
-_CATEGORY_ORDER = list(CATEGORY_REGISTRY)
-
-
-def _build_components_by_category(domain: str = "time") -> dict[str, list[str]]:
-    domain_components = components_for_domain(domain)
-
-    if domain == "frequency":
-        # The frequency catalogue is short (and expected to stay so): present it
-        # as a flat list ("General" renders at the top level of the picker)
-        # rather than a single redundant submenu.
-        return {"General": sorted(domain_components)}
-
-    grouped: dict[str, list[str]] = defaultdict(list)
-    for name, definition in domain_components.items():
-        category = (definition.category or "General").strip() or "General"
-        grouped[category].append(name)
-
-    for names in grouped.values():
-        names.sort()
-
-    def _order(item: tuple[str, list[str]]) -> tuple[int, str]:
-        try:
-            return (_CATEGORY_ORDER.index(item[0]), item[0])
-        except ValueError:
-            return (len(_CATEGORY_ORDER), item[0])
-
-    return dict(sorted(grouped.items(), key=_order))
+from asymmetry.gui.widgets.function_builder.dialog import FunctionBuilderDialog
 
 
 class FitFunctionBuilderDialog(FunctionBuilderDialog):
@@ -176,9 +140,7 @@ class FitFunctionBuilderDialog(FunctionBuilderDialog):
         """Parse *expression*, rejecting components outside the domain pool."""
         try:
             with self._placeholders_registered():
-                names, operators, opens, closes, fractions = make_fit_expression_parser()(
-                    expression
-                )
+                names, operators, opens, closes, fractions = parse_composite_expression(expression)
         except UnknownComponentError as exc:
             raise self._domain_hint_error(exc) from exc
         self._check_domain(names)
@@ -187,17 +149,14 @@ class FitFunctionBuilderDialog(FunctionBuilderDialog):
     def _parse_model(self, expression: str) -> CompositeModel:
         """Build a :class:`CompositeModel`, enforcing the domain pool.
 
-        Structure is parsed with placeholder names temporarily registered so a
-        missing-user-function model still round-trips, but the model itself is
-        built with ``allow_missing`` so its ``missing_component_names``
-        provenance survives (a placeholder is never persisted into COMPONENTS).
+        Structure comes from :meth:`_expression_parser` (which registers
+        placeholder names for the parse, upgrades domain-hint errors, and
+        rejects out-of-pool names) so a missing-user-function model still
+        round-trips; the model itself is built with ``allow_missing`` so its
+        ``missing_component_names`` provenance survives (a placeholder is never
+        persisted into COMPONENTS).
         """
-        try:
-            with self._placeholders_registered():
-                names, operators, opens, closes, fractions = parse_composite_expression(expression)
-        except UnknownComponentError as exc:
-            raise self._domain_hint_error(exc) from exc
-        self._check_domain(names)
+        names, operators, opens, closes, fractions = self._expression_parser(expression)
         return CompositeModel(
             names,
             operators=operators,

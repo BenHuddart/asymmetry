@@ -208,15 +208,39 @@ _DERIVED_FRACTION_ROLE = int(Qt.ItemDataRole.UserRole) + 1
 _DERIVED_FRACTION_TOOLTIP = "Remainder: 1 − the other fractions in this group"
 
 
-def _derived_fraction_row_names(model: CompositeModel) -> set[str]:
-    """Return the display-only remainder names the model synthesises, if any."""
-    return set(model.derived_fraction_names()) if model is not None else set()
-
-
 def _is_derived_fraction_row(table: QTableWidget, row: int, name_column: int = 0) -> bool:
     """Return True when ``row`` is a synthesized derived-fraction (remainder) row."""
     item = table.item(row, name_column)
     return item is not None and item.data(_DERIVED_FRACTION_ROLE) is not None
+
+
+def _iter_named_parameter_rows(
+    table: QTableWidget,
+    *,
+    name_column: int = 0,
+    placeholder: str = "param",
+    skip_unnamed: bool = False,
+) -> Iterator[tuple[int, str]]:
+    """Yield ``(row, name)`` for rows that back a real fitted parameter.
+
+    Skips synthesized derived-fraction (remainder) rows, which are display-only
+    and must never be treated as a parameter (never a fit input, tie target, or
+    serialised entry). A row's name is its ``UserRole`` data, falling back to the
+    name cell's text and then ``f"{placeholder}_{row}"``. When ``skip_unnamed``
+    is set, a row whose name item is missing or carries no ``UserRole`` string is
+    skipped entirely instead of taking that fallback — matching the read paths
+    that only capture explicitly-named rows.
+    """
+    for row in range(table.rowCount()):
+        if _is_derived_fraction_row(table, row, name_column):
+            continue
+        name_item = table.item(row, name_column)
+        name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
+        if not isinstance(name, str):
+            if skip_unnamed:
+                continue
+            name = name_item.text() if name_item else f"{placeholder}_{row}"
+        yield row, name
 
 
 def _ensure_derived_fraction_rows_in_table(
@@ -293,13 +317,8 @@ def _synchronize_fraction_group_values_in_table(
     (if present) is then written with ``max(0, 1 − Σ free)`` for its group.
     """
     row_by_name = _param_table_rows_by_name(table)
-    derived_by_name = {
-        display_name: group for display_name, group in model.derived_fraction_terms()
-    }
-    # Map each group to its derived display name for the remainder write-back.
-    derived_name_by_group = {group: name for name, group in derived_by_name.items()}
 
-    for free_names, (derived_name, group) in zip(
+    for free_names, (derived_name, _group) in zip(
         model.fraction_parameter_groups(), model.derived_fraction_terms(), strict=True
     ):
         if edited_param_name is not None and edited_param_name not in free_names:
@@ -327,7 +346,7 @@ def _synchronize_fraction_group_values_in_table(
                 _set_param_table_value(table, row, value)
 
         remainder = max(0.0, 1.0 - sum(values.get(name, 0.0) for name in free_names))
-        derived_row = row_by_name.get(derived_name_by_group.get(group))
+        derived_row = row_by_name.get(derived_name)
         if derived_row is not None:
             item = table.item(derived_row, value_column)
             if item is not None:
@@ -1428,14 +1447,7 @@ class FitParameterTable(QTableWidget):
         back to the cell's plain text (or a positional placeholder), matching
         the historical defensive behavior of the read/serialize paths.
         """
-        for row in range(self.rowCount()):
-            if _is_derived_fraction_row(self, row, self.COL_NAME):
-                continue
-            name_item = self.item(row, self.COL_NAME)
-            name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
-            if not isinstance(name, str):
-                name = name_item.text() if name_item else f"param_{row}"
-            yield row, name
+        yield from _iter_named_parameter_rows(self, name_column=self.COL_NAME)
 
     def _tie_candidate_names(self, row: int) -> list[str]:
         """Names a row may reference in a tie: other, *untied* rows + auxiliaries."""
