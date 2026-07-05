@@ -2498,6 +2498,60 @@ def carve_window_gap(
     return pruned
 
 
+def included_intervals(fit_range: ModelFitRange) -> list[tuple[float, float]]:
+    """The range's fit region as an explicit list of included intervals.
+
+    Returns the ``windows`` list if present, else a single ``[(x_min,
+    x_max)]`` interval. Never empty for a valid range. Mirrors
+    :func:`windows_mask`/:func:`effective_range_bounds` semantics so the
+    displayed intervals are exactly what the fit uses. Pure (no I/O).
+
+    ``x_min``/``x_max`` of ``None`` are reported here as ``-inf``/``+inf``
+    respectively; the GUI is responsible for resolving an open bound to the
+    data extent before display, not this function.
+    """
+    windows = validate_fit_windows(fit_range.windows)
+    if windows is not None:
+        return list(windows)
+    lo = fit_range.x_min if fit_range.x_min is not None else -np.inf
+    hi = fit_range.x_max if fit_range.x_max is not None else np.inf
+    return [(float(lo), float(hi))]
+
+
+def set_included_intervals(
+    fit_range: ModelFitRange, intervals: Sequence[tuple[float, float]]
+) -> None:
+    """Write an included-interval list back to a :class:`ModelFitRange`.
+
+    Applies the collapse rule:
+
+    * Exactly 1 interval -> ``windows`` is set to ``None`` and
+      ``x_min``/``x_max`` become that interval (a plain range).
+    * 2+ intervals -> ``windows`` is set to the sorted interval list and
+      ``x_min``/``x_max`` are set to the union envelope (``min`` of the
+      lows, ``max`` of the highs) so :func:`effective_range_bounds` or a
+      legacy reader still sees a sane envelope.
+
+    Intervals are validated like :func:`validate_fit_windows` (finite
+    bounds, ``lo < hi``) and stored sorted by ``lo``. An empty ``intervals``
+    is rejected with ``ValueError`` -- a fit region can never be emptied.
+    """
+    normalised = validate_fit_windows(list(intervals))
+    if not normalised:
+        raise ValueError("included intervals cannot be empty")
+
+    normalised.sort(key=lambda interval: interval[0])
+
+    if len(normalised) == 1:
+        fit_range.windows = None
+        fit_range.x_min, fit_range.x_max = normalised[0]
+        return
+
+    fit_range.windows = normalised
+    fit_range.x_min = min(lo for lo, _ in normalised)
+    fit_range.x_max = max(hi for _, hi in normalised)
+
+
 @dataclass
 class ParameterModelFit:
     """Model fits attached to a single parameter trace."""

@@ -485,7 +485,10 @@ def test_cross_group_dialog_config_round_trips_error_mode_and_windows(qapp) -> N
     assert dlg._error_mode_combo is not None
     dlg._error_mode_combo.setCurrentIndex(dlg._error_mode_combo.findData("percent"))
     dlg._error_value_spin.setValue(7.0)
-    dlg._add_window(0)
+    # Carve a gap out of the [0, 100] fit region -> two included windows
+    # (the range-cards redesign replaced add-window with exclude-region; a single
+    # interval collapses to a plain range, so windows only exist with 2+).
+    dlg._exclude_region(0, 30.0, 60.0)
     cfg = dlg._collect_config()
     assert cfg["error_mode"] == "percent"
     assert cfg["error_value"] == pytest.approx(7.0)

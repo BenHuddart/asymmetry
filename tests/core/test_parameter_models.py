@@ -27,7 +27,10 @@ from asymmetry.core.fitting.parameter_models import (
     component_names_for_x,
     evaluate_parameter_model_fit,
     fit_parameter_model,
+    included_intervals,
+    range_mask,
     sample_parameter_model,
+    set_included_intervals,
     suggest_model_seeds,
     suggest_trend_seeds,
 )
@@ -1114,6 +1117,95 @@ def test_carve_window_gap_returns_sorted_nonoverlapping() -> None:
     assert los == sorted(los)
     for (_, prev_hi), (next_lo, _) in zip(result, result[1:]):
         assert next_lo >= prev_hi
+
+
+# ---------------------------------------------------------------------------
+# included_intervals / set_included_intervals
+# ---------------------------------------------------------------------------
+
+
+def _make_fit_range(
+    x_min: float | None, x_max: float | None, windows: list[tuple[float, float]] | None = None
+) -> ModelFitRange:
+    model = ParameterCompositeModel(["Constant"])
+    params = ParameterSet([Parameter("c", value=1.0)])
+    return ModelFitRange(
+        x_min=x_min, x_max=x_max, model=model, parameters=params, result=None, windows=windows
+    )
+
+
+def test_included_intervals_plain() -> None:
+    fit_range = _make_fit_range(0.0, 5.0)
+
+    assert included_intervals(fit_range) == [(0.0, 5.0)]
+
+
+def test_included_intervals_windowed() -> None:
+    fit_range = _make_fit_range(0.0, 10.0, windows=[(0.0, 3.0), (6.0, 10.0)])
+
+    assert included_intervals(fit_range) == [(0.0, 3.0), (6.0, 10.0)]
+
+
+def test_set_included_intervals_one_collapses_to_plain() -> None:
+    fit_range = _make_fit_range(0.0, 10.0, windows=[(0.0, 3.0), (6.0, 10.0)])
+
+    set_included_intervals(fit_range, [(2.0, 4.0)])
+
+    assert fit_range.windows is None
+    assert fit_range.x_min == 2.0
+    assert fit_range.x_max == 4.0
+
+
+def test_set_included_intervals_two_stores_windows_and_envelope() -> None:
+    fit_range = _make_fit_range(0.0, 5.0)
+
+    set_included_intervals(fit_range, [(1.0, 2.0), (7.0, 9.0)])
+
+    assert fit_range.windows == [(1.0, 2.0), (7.0, 9.0)]
+    assert fit_range.x_min == 1.0
+    assert fit_range.x_max == 9.0
+
+
+def test_set_included_intervals_roundtrip_plain_add_remove_returns_plain() -> None:
+    fit_range = _make_fit_range(0.0, 5.0)
+
+    set_included_intervals(fit_range, [(0.0, 2.0), (3.0, 5.0)])
+    assert fit_range.windows == [(0.0, 2.0), (3.0, 5.0)]
+
+    set_included_intervals(fit_range, [(0.0, 5.0)])
+
+    assert fit_range.windows is None
+    assert fit_range.x_min == 0.0
+    assert fit_range.x_max == 5.0
+
+
+def test_set_included_intervals_empty_raises() -> None:
+    fit_range = _make_fit_range(0.0, 5.0)
+
+    with pytest.raises(ValueError):
+        set_included_intervals(fit_range, [])
+
+
+def test_set_included_intervals_sorts() -> None:
+    fit_range = _make_fit_range(0.0, 10.0)
+
+    set_included_intervals(fit_range, [(7.0, 9.0), (1.0, 2.0)])
+
+    assert fit_range.windows == [(1.0, 2.0), (7.0, 9.0)]
+
+
+def test_included_intervals_matches_range_mask() -> None:
+    x = np.linspace(0.0, 10.0, 101)
+
+    plain = _make_fit_range(2.0, 8.0)
+    windowed = _make_fit_range(0.0, 10.0, windows=[(1.0, 3.0), (6.0, 9.0)])
+
+    for fit_range in (plain, windowed):
+        intervals = included_intervals(fit_range)
+        mask = np.zeros(x.shape, dtype=bool)
+        for lo, hi in intervals:
+            mask |= (x >= lo) & (x <= hi)
+        np.testing.assert_array_equal(mask, range_mask(x, fit_range))
 
 
 def test_sample_parameter_model_matches_evaluate_parameter_model_fit() -> None:

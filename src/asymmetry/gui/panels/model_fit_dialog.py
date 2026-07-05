@@ -40,8 +40,10 @@ from asymmetry.core.fitting.parameter_models import (
     carve_window_gap,
     component_names_for_x,
     fit_parameter_model,
+    included_intervals,
     is_order_parameter_observable,
     sample_parameter_model,
+    set_included_intervals,
     suggest_model_seeds,
     suggest_trend_seeds,
     validate_fit_windows,
@@ -547,9 +549,14 @@ class ModelFitDialog(QDialog):
         self._removed = False
         # One RangeCard per fit range (recreated each _rebuild_ranges_ui).
         self._range_cards: list[RangeCard] = []
-        # Exclusion-window spinboxes for the ACTIVE range only, keyed by window
-        # index (the details pane only ever shows the active range's windows).
-        self._window_spin_widgets: dict[int, tuple[QDoubleSpinBox, QDoubleSpinBox]] = {}
+        # (min, max) spin pair per INCLUDED INTERVAL of the ACTIVE range, keyed by
+        # interval index. The details pane only ever shows the active range's
+        # fit-region intervals; rebuilt by ``_rebuild_fit_region_rows``.
+        self._region_row_spins: dict[int, tuple[QDoubleSpinBox, QDoubleSpinBox]] = {}
+        # Per-interval "Remove" buttons + the "Exclude region…" button, tracked
+        # so ``_set_fit_ui_busy`` can disable them during a fit.
+        self._region_remove_btns: list[QPushButton] = []
+        self._exclude_region_btn: QPushButton | None = None
         self._active_range_idx: int | None = None
         self._fit_in_progress = False
         # Own busy flag for the user-initiated "Guess seeds" data-aware seeder
@@ -747,10 +754,11 @@ class ModelFitDialog(QDialog):
         # ``_rebuild_ranges_ui`` clear_layout of ``_ranges_host`` never destroys it.
         #
         # ONE merged "Fit ranges" section (Step 2): the RangeCard stack + "Add
-        # Range" button sit on top, then the details content (bounds pair,
-        # exclusion-window sub-block, Guess row, formula/result boxes, param
-        # table) directly below. The card IS the range selector — clicking a card
-        # activates it and the details pane below follows via ``_set_active_range``.
+        # Range" button sit on top, then the "Selected range" fit-region editor
+        # (the included-interval rows + "Exclude region…"), Guess row,
+        # formula/result boxes, param table) directly below. The card IS the
+        # range selector — clicking a card activates it and the details pane
+        # below follows via ``_set_active_range``.
         params_group, params_layout = make_section("Fit ranges")
 
         self._ranges_host = QVBoxLayout()
@@ -767,36 +775,43 @@ class ModelFitDialog(QDialog):
         self._range_hint_label = QLabel("Editing the highlighted range.")
         params_layout.addWidget(self._range_hint_label)
 
-        # ── Fit range: numeric bounds for the ACTIVE range (contract C-BOUNDS) ──
-        # A SINGLE (x min, x max) pair — not one per range. _select_range
-        # repopulates it from the active range under a signal blocker; editing
-        # routes through _apply_range_bounds(source="spin"). The pair is disabled
-        # when the active range carries windows (the windows own the mask).
-        bounds_row = QHBoxLayout()
-        bounds_row.addWidget(QLabel("Fit range:"))
-        self._bounds_min_spin = QDoubleSpinBox()
-        self._bounds_min_spin.setRange(-1e12, 1e12)
-        self._bounds_min_spin.setDecimals(8)
-        self._bounds_min_spin.valueChanged.connect(self._on_bounds_spin_changed)
-        bounds_row.addWidget(self._bounds_min_spin)
-        bounds_row.addWidget(QLabel("–"))
-        self._bounds_max_spin = QDoubleSpinBox()
-        self._bounds_max_spin.setRange(-1e12, 1e12)
-        self._bounds_max_spin.setDecimals(8)
-        self._bounds_max_spin.valueChanged.connect(self._on_bounds_spin_changed)
-        bounds_row.addWidget(self._bounds_max_spin)
-        bounds_row.addStretch()
-        params_layout.addLayout(bounds_row)
+        # ── Fit region for the ACTIVE range (contract C-REGIONROW) ────────────
+        # A flat "Selected range" BENCH sub-header separates the card stack /
+        # Add-Range controls ABOVE from the fit-region editor BELOW (P1
+        # grouping). The fit region is ONE region the user sculpts by carving
+        # gaps out of it: it is shown as a list of the included intervals it is
+        # made of. Editing a spin, removing an interval, or "Exclude region…"
+        # all funnel through set_included_intervals (the single storage source
+        # of truth) so a down-to-1 result collapses back to a plain range.
+        region_section, region_layout = make_section("Selected range")
+        params_layout.addWidget(region_section)
 
-        # ── Exclusion windows sub-block: shown only when the active range has
-        # windows. Each window is a [min]–[max] spin pair + Remove Window button,
-        # rebuilt by _rebuild_active_window_rows on active-range/window change.
-        self._windows_block = QWidget()
-        self._windows_block_layout = QVBoxLayout(self._windows_block)
-        self._windows_block_layout.setContentsMargins(0, 0, 0, 0)
-        self._windows_block_layout.setSpacing(2)
-        params_layout.addWidget(self._windows_block)
-        self._windows_block.setVisible(False)
+        region_label = QLabel("Fit region")
+        region_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+        region_layout.addWidget(region_label)
+
+        # The interval rows are rebuilt in place by _rebuild_fit_region_rows on
+        # every active-range / interval change; each row is [Interval N] [min]
+        # – [max] [Remove] (Remove hidden when there is only one interval).
+        self._region_rows_block = QWidget()
+        self._region_rows_layout = QVBoxLayout(self._region_rows_block)
+        self._region_rows_layout.setContentsMargins(0, 0, 0, 0)
+        self._region_rows_layout.setSpacing(2)
+        region_layout.addWidget(self._region_rows_block)
+
+        # "Exclude region…" is the ONLY region action — there is deliberately no
+        # "+ Add interval". Carving is what splits the one region into multiple
+        # included intervals.
+        exclude_row = QHBoxLayout()
+        self._exclude_region_btn = QPushButton("Exclude region…")
+        self._exclude_region_btn.setToolTip(
+            "Carve a gap out of the fit region (or drag across a region on the "
+            "plot). The remaining included intervals are listed above."
+        )
+        self._exclude_region_btn.clicked.connect(self._on_exclude_region_clicked)
+        exclude_row.addWidget(self._exclude_region_btn)
+        exclude_row.addStretch()
+        region_layout.addLayout(exclude_row)
 
         # "Guess seeds" (item 3.3): user-initiated, off-thread data-aware seeding
         # of the ACTIVE range's free parameters. Never fires automatically — the
@@ -1367,7 +1382,7 @@ class ModelFitDialog(QDialog):
             card.selected.connect(self._select_range)
             card.run_requested.connect(self._run_fit)
             card.edit_model_requested.connect(self._edit_model)
-            card.exclude_requested.connect(self._add_window)
+            card.exclude_requested.connect(self._on_card_exclude_requested)
             card.remove_requested.connect(self._remove_range)
             self._ranges_host.addWidget(card)
             self._range_cards.append(card)
@@ -1468,144 +1483,213 @@ class ModelFitDialog(QDialog):
     def _post_rebuild_ranges_ui(self) -> None:
         """Hook for subclasses to adjust freshly rebuilt range rows."""
 
-    # ── details-pane bounds + exclusion windows (contracts C-BOUNDS / C) ──────
+    # ── details-pane fit-region editor (contract C-REGIONROW / C-REGION) ──────
 
-    def _populate_active_bounds(self, idx: int) -> None:
-        """Load the single (x min, x max) pair from the active range.
+    def _resolved_intervals(self, fit_range: ModelFitRange) -> list[tuple[float, float]]:
+        """``included_intervals`` with open (``None``) bounds resolved to data.
 
-        Written under a signal blocker so priming the spins does not re-fire
-        ``_on_bounds_spin_changed`` and loop back through ``_apply_range_bounds``.
-        The pair is disabled when the active range carries windows (the windows
-        own the mask), mirroring the old per-row ``has_windows`` rule.
+        ``included_intervals`` reports an unbounded plain range as
+        ``(-inf, +inf)``; the GUI resolves those to the data extent
+        (``_x_min_data`` / ``_x_max_data``) before display, mirroring how the
+        old window seeding resolved missing bounds.
         """
-        fit_range = self._fit.ranges[idx]
-        has_windows = bool(fit_range.windows)
-        x_min = float(fit_range.x_min if fit_range.x_min is not None else self._x_min_data)
-        x_max = float(fit_range.x_max if fit_range.x_max is not None else self._x_max_data)
-        with QSignalBlocker(self._bounds_min_spin):
-            self._bounds_min_spin.setValue(x_min)
-        with QSignalBlocker(self._bounds_max_spin):
-            self._bounds_max_spin.setValue(x_max)
-        tooltip = "Fit windows below override the range bounds." if has_windows else ""
-        self._bounds_min_spin.setEnabled(not has_windows)
-        self._bounds_max_spin.setEnabled(not has_windows)
-        self._bounds_min_spin.setToolTip(tooltip)
-        self._bounds_max_spin.setToolTip(tooltip)
+        resolved: list[tuple[float, float]] = []
+        for lo, hi in included_intervals(fit_range):
+            r_lo = self._x_min_data if not np.isfinite(lo) else float(lo)
+            r_hi = self._x_max_data if not np.isfinite(hi) else float(hi)
+            resolved.append((float(r_lo), float(r_hi)))
+        return resolved
 
-    def _rebuild_active_window_rows(self, idx: int) -> None:
-        """Rebuild the exclusion-window sub-block for the ACTIVE range.
+    def _rebuild_fit_region_rows(self, idx: int) -> None:
+        """Rebuild the fit-region interval rows for the ACTIVE range.
 
-        Re-keys ``self._window_spin_widgets`` by WINDOW INDEX only (the sub-block
-        only ever shows the active range's windows). The block is hidden when the
-        range has no windows or the subclass does not support them.
+        Replaces the old plain-bounds pair AND the exclusion-window sub-block:
+        one row per included interval of the active range, keyed in
+        ``self._region_row_spins`` by INTERVAL INDEX. The per-row Remove button
+        is hidden when there is exactly one interval (a plain range can never be
+        emptied below one interval).
         """
-        clear_layout(self._windows_block_layout)
-        self._window_spin_widgets = {}
+        clear_layout(self._region_rows_layout)
+        self._region_row_spins = {}
+        self._region_remove_btns = []
 
         fit_range = self._fit.ranges[idx]
-        windows = fit_range.windows if self._supports_windows else None
-        if not windows:
-            self._windows_block.setVisible(False)
-            return
+        intervals = self._resolved_intervals(fit_range)
+        show_remove = len(intervals) > 1
 
-        self._windows_block_layout.addWidget(QLabel("Exclusion windows"))
-        for widx, (w_lo, w_hi) in enumerate(windows):
-            window_widget = QWidget()
-            window_row = QHBoxLayout(window_widget)
-            window_row.setContentsMargins(0, 0, 0, 0)
-            window_row.addWidget(QLabel(f"Window {widx + 1}"))
+        for iidx, (lo, hi) in enumerate(intervals):
+            row_widget = QWidget()
+            row = QHBoxLayout(row_widget)
+            row.setContentsMargins(0, 0, 0, 0)
+            row.addWidget(QLabel(f"Interval {iidx + 1}"))
 
-            w_min = QDoubleSpinBox()
-            w_min.setRange(-1e12, 1e12)
-            w_min.setDecimals(8)
-            w_min.setValue(float(w_lo))
-            w_min.valueChanged.connect(
-                lambda value, w=widx: self._on_window_bounds_changed(
-                    self._active_range_idx, w, 0, value
-                )
+            i_min = QDoubleSpinBox()
+            i_min.setRange(-1e12, 1e12)
+            i_min.setDecimals(8)
+            i_min.setValue(float(lo))
+            i_min.valueChanged.connect(
+                lambda value, i=iidx: self._on_region_interval_edited(i, 0, value)
             )
-            window_row.addWidget(QLabel("min"))
-            window_row.addWidget(w_min)
+            row.addWidget(i_min)
 
-            w_max = QDoubleSpinBox()
-            w_max.setRange(-1e12, 1e12)
-            w_max.setDecimals(8)
-            w_max.setValue(float(w_hi))
-            w_max.valueChanged.connect(
-                lambda value, w=widx: self._on_window_bounds_changed(
-                    self._active_range_idx, w, 1, value
-                )
+            row.addWidget(QLabel("–"))
+
+            i_max = QDoubleSpinBox()
+            i_max.setRange(-1e12, 1e12)
+            i_max.setDecimals(8)
+            i_max.setValue(float(hi))
+            i_max.valueChanged.connect(
+                lambda value, i=iidx: self._on_region_interval_edited(i, 1, value)
             )
-            window_row.addWidget(QLabel("max"))
-            window_row.addWidget(w_max)
+            row.addWidget(i_max)
 
-            self._window_spin_widgets[widx] = (w_min, w_max)
+            self._region_row_spins[iidx] = (i_min, i_max)
 
-            remove_window_btn = QPushButton("Remove Window")
-            remove_window_btn.clicked.connect(
-                lambda _checked=False, w=widx: self._remove_window(self._active_range_idx, w)
+            remove_btn = QPushButton("Remove")
+            remove_btn.setToolTip("Drop this included interval from the fit region.")
+            remove_btn.clicked.connect(
+                lambda _checked=False, i=iidx: self._remove_interval(self._active_range_idx, i)
             )
-            window_row.addWidget(remove_window_btn)
-            window_row.addStretch()
-            self._windows_block_layout.addWidget(window_widget)
+            remove_btn.setVisible(show_remove)
+            row.addWidget(remove_btn)
+            self._region_remove_btns.append(remove_btn)
 
-        self._windows_block.setVisible(True)
+            row.addStretch()
+            self._region_rows_layout.addWidget(row_widget)
 
-    def _on_bounds_spin_changed(self, _value: float) -> None:
-        """The details-pane (x min, x max) pair was edited: apply to active range."""
+    def _current_region_intervals(self) -> list[tuple[float, float]]:
+        """Read the current interval list straight off the visible spin rows."""
+        intervals: list[tuple[float, float]] = []
+        for iidx in sorted(self._region_row_spins):
+            i_min, i_max = self._region_row_spins[iidx]
+            intervals.append((float(i_min.value()), float(i_max.value())))
+        return intervals
+
+    def _on_region_interval_edited(self, interval_idx: int, bound: int, value: float) -> None:
+        """A fit-region interval's min/max spin was edited (numeric path).
+
+        Builds the new interval list from the current rows, clamps the edited
+        interval so ``min <= max``, writes it back through
+        ``set_included_intervals`` (the collapse rule auto-plains a down-to-1
+        result), invalidates the stale result, refreshes the card, and — per the
+        FEEDBACK-LOOP RULE — a numeric edit does a full preview update.
+        """
         idx = self._active_range_idx
         if idx is None or idx < 0 or idx >= len(self._fit.ranges):
             return
-        self._apply_range_bounds(
-            idx,
-            float(self._bounds_min_spin.value()),
-            float(self._bounds_max_spin.value()),
-            source="spin",
-        )
-
-    def _add_window(self, idx: int) -> None:
-        if idx < 0 or idx >= len(self._fit.ranges):
+        intervals = self._current_region_intervals()
+        if interval_idx < 0 or interval_idx >= len(intervals):
             return
-        fit_range = self._fit.ranges[idx]
-        if not fit_range.windows:
-            # First window inherits the current range bounds so the fitted
-            # span is unchanged until the user edits or adds windows.
-            lo = float(fit_range.x_min if fit_range.x_min is not None else self._x_min_data)
-            hi = float(fit_range.x_max if fit_range.x_max is not None else self._x_max_data)
-            fit_range.windows = [(lo, hi)]
+        lo, hi = intervals[interval_idx]
+        # Clamp so the edited bound never inverts its partner.
+        if bound == 0:
+            lo = float(value)
+            if lo > hi:
+                hi = lo
         else:
-            fit_range.windows = list(fit_range.windows) + [(self._x_min_data, self._x_max_data)]
-        fit_range.result = None
-        self._rebuild_ranges_ui()
-        self._select_range(idx)
+            hi = float(value)
+            if hi < lo:
+                lo = hi
+        intervals[interval_idx] = (lo, hi)
 
-    def _remove_window(self, idx: int, window_idx: int) -> None:
-        if idx < 0 or idx >= len(self._fit.ranges):
-            return
         fit_range = self._fit.ranges[idx]
-        windows = list(fit_range.windows or [])
-        if window_idx < 0 or window_idx >= len(windows):
-            return
-        del windows[window_idx]
-        fit_range.windows = windows or None
-        fit_range.result = None
-        self._rebuild_ranges_ui()
-        self._select_range(idx)
-
-    def _on_window_bounds_changed(
-        self, idx: int, window_idx: int, bound: int, value: float
-    ) -> None:
-        if idx < 0 or idx >= len(self._fit.ranges):
-            return
-        fit_range = self._fit.ranges[idx]
-        windows = list(fit_range.windows or [])
-        if window_idx < 0 or window_idx >= len(windows):
-            return
-        lo, hi = windows[window_idx]
-        windows[window_idx] = (float(value), hi) if bound == 0 else (lo, float(value))
-        fit_range.windows = windows
-        # The stored result no longer corresponds to the edited windows.
+        set_included_intervals(fit_range, intervals)
         self._invalidate_range_result(idx)
+        self._refresh_range_card(idx)
+        # Numeric edit: full preview update (canvas has no live span to fight).
+        self._request_preview_update()
+
+    def _remove_interval(self, idx: int, interval_idx: int) -> None:
+        """Drop one included interval from the fit region.
+
+        NEVER-EMPTY guard: removing the last interval is a no-op (a fit region
+        can never be emptied). Otherwise the survivors are written through
+        ``set_included_intervals`` — its collapse rule plains a down-to-1 result
+        back to ``windows is None`` — then the rows/card/preview refresh.
+        """
+        if idx is None or idx < 0 or idx >= len(self._fit.ranges):
+            return
+        fit_range = self._fit.ranges[idx]
+        intervals = self._resolved_intervals(fit_range)
+        if interval_idx < 0 or interval_idx >= len(intervals):
+            return
+        if len(intervals) <= 1:
+            # Never empty: refuse to drop the last interval.
+            return
+        del intervals[interval_idx]
+        set_included_intervals(fit_range, intervals)
+        self._invalidate_range_result(idx)
+        self._rebuild_fit_region_rows(idx)
+        self._refresh_range_card(idx)
+        self._request_preview_update()
+
+    def _on_card_exclude_requested(self, idx: int) -> None:
+        """A card's "Exclude region…" button: carve a default gap into that range.
+
+        The card gesture has no drag interval, so it routes through the same
+        default-gap logic as the details-pane button (see
+        ``_on_exclude_region_clicked``) but targets the card's range index.
+        """
+        self._exclude_default_gap(idx)
+
+    def _on_exclude_region_clicked(self) -> None:
+        """The details-pane "Exclude region…" button: carve a default gap."""
+        self._exclude_default_gap(self._active_range_idx)
+
+    def _exclude_default_gap(self, idx: int | None) -> None:
+        """Carve a sensible default gap when there is no drag interval.
+
+        The button has no drag interval, so carve the MIDDLE THIRD of the widest
+        current included interval, giving the user two intervals to then
+        fine-tune via the spins or by dragging on the plot. Routes through the
+        shared ``_exclude_region``.
+        """
+        if idx is None or idx < 0 or idx >= len(self._fit.ranges):
+            return
+        fit_range = self._fit.ranges[idx]
+        intervals = self._resolved_intervals(fit_range)
+        # Widest current interval — the one with the most room to carve.
+        lo, hi = max(intervals, key=lambda interval: interval[1] - interval[0])
+        span = hi - lo
+        if span <= 0:
+            return
+        gap_lo = lo + span / 3.0
+        gap_hi = lo + 2.0 * span / 3.0
+        self._exclude_region(idx, gap_lo, gap_hi)
+
+    def _exclude_region(self, idx: int, lo: float, hi: float) -> None:
+        """Carve ``[lo, hi]`` out of the fit region (shared button + canvas path).
+
+        Resolves the range's effective bounds (open bounds fall back to the data
+        extent), carves the gap out of the current window union, and — only if
+        that actually changed the coverage — writes the survivors through
+        ``set_included_intervals``, invalidates the stale result, rebuilds the
+        interval rows, and refreshes the card + preview.
+
+        NEVER-EMPTY: ``carve_window_gap`` no-ops an all-excluding carve, so the
+        result is always non-empty; ``set_included_intervals`` would reject an
+        empty list as a second guard.
+        """
+        if idx < 0 or idx >= len(self._fit.ranges):
+            return
+        fit_range = self._fit.ranges[idx]
+        x_min = fit_range.x_min if fit_range.x_min is not None else self._x_min_data
+        x_max = fit_range.x_max if fit_range.x_max is not None else self._x_max_data
+
+        new_windows = carve_window_gap(fit_range.windows, x_min, x_max, lo, hi)
+
+        # NO-OP GUARD: normalise the current windows to what carve_window_gap
+        # would have seeded (None -> [(x_min, x_max)]) and compare. A carve that
+        # is disjoint from every window (a stray drag/click outside the fitted
+        # region) returns the seeded windows unchanged; dropping a good fit for
+        # that would be a nasty surprise, so early-return without invalidating.
+        current = list(fit_range.windows) if fit_range.windows else [(float(x_min), float(x_max))]
+        if new_windows == current:
+            return
+
+        set_included_intervals(fit_range, new_windows)
+        self._invalidate_range_result(idx)
+        self._rebuild_fit_region_rows(idx)
         self._refresh_range_card(idx)
         self._request_preview_update()
 
@@ -1664,28 +1748,34 @@ class ModelFitDialog(QDialog):
         )
 
     def _apply_range_bounds(self, idx: int, x_min: float, x_max: float, *, source: str) -> None:
-        """Single funnel for every range-bound change (details-pane edit or drag).
+        """Funnel for a range-edge change (details-pane or plot drag of a PLAIN range).
 
-        Routing every entry point through here guarantees the invalidate +
-        details-pane mirror + selector/card-refresh + preview-refresh sequence is
-        never skipped. ``source`` selects the preview-refresh strategy below.
+        A plain range's edges ARE interval 0 of its fit region, so this writes
+        the single interval ``(x_min, x_max)`` through ``set_included_intervals``
+        (which keeps ``windows is None`` for a 1-interval range) and mirrors it
+        into the interval-0 spin pair. Only fires for plain ranges — a windowed
+        range shows no whole-range edges (only window edges are draggable).
         """
         if idx < 0 or idx >= len(self._fit.ranges):
             return
         fit_range = self._fit.ranges[idx]
-        fit_range.x_min = float(x_min)
-        fit_range.x_max = float(x_max)
+        # A plain-range edge move writes interval 0; the collapse rule keeps
+        # windows None for the single-interval case.
+        set_included_intervals(fit_range, [(float(x_min), float(x_max))])
         self._invalidate_range_result(idx)
 
-        # Mirror into the details-pane bounds pair, but ONLY for the active range:
-        # the canvas only ever drags the active range, so a non-active idx here is
-        # a programmatic call and the details pane already shows another range.
-        # A non-active card's bounds_text refreshes below via _refresh_range_card.
+        # Mirror into the details-pane interval-0 spin pair, but ONLY for the
+        # active range: the canvas only ever drags the active range, so a
+        # non-active idx here is a programmatic call and the details pane already
+        # shows another range. A non-active card's bounds_text refreshes below.
         if idx == self._active_range_idx:
-            with QSignalBlocker(self._bounds_min_spin):
-                self._bounds_min_spin.setValue(float(x_min))
-            with QSignalBlocker(self._bounds_max_spin):
-                self._bounds_max_spin.setValue(float(x_max))
+            spins = self._region_row_spins.get(0)
+            if spins is not None:
+                i_min, i_max = spins
+                with QSignalBlocker(i_min):
+                    i_min.setValue(float(x_min))
+                with QSignalBlocker(i_max):
+                    i_max.setValue(float(x_max))
 
         self._refresh_range_card(idx)
 
@@ -1733,68 +1823,48 @@ class ModelFitDialog(QDialog):
     def _on_preview_window_edge_dragged(
         self, idx: int, window_idx: int, lo: float, hi: float
     ) -> None:
-        """Canvas dragged a window edge: mirror it into the model + spinboxes."""
+        """Canvas dragged a window edge: mirror it into the model + interval spins.
+
+        The window index equals the fit-region interval index by construction,
+        so this updates interval ``window_idx`` and writes the whole list back
+        through ``set_included_intervals`` (keeping the envelope / collapse rule
+        consistent), then mirrors the interval spin pair.
+        """
         if idx != self._active_range_idx:
             return
         if idx < 0 or idx >= len(self._fit.ranges):
             return
         fit_range = self._fit.ranges[idx]
-        windows = list(fit_range.windows or [])
-        if window_idx < 0 or window_idx >= len(windows):
+        intervals = self._resolved_intervals(fit_range)
+        if window_idx < 0 or window_idx >= len(intervals):
             return
-        windows[window_idx] = (float(lo), float(hi))
-        fit_range.windows = windows
+        intervals[window_idx] = (float(lo), float(hi))
+        set_included_intervals(fit_range, intervals)
         self._invalidate_range_result(idx)
 
-        # Mirror the corresponding window spinboxes under a signal blocker so
-        # they do not re-fire _on_window_bounds_changed and loop. The details
-        # pane only shows the active range's windows, so the spinboxes are keyed
-        # by window index alone (idx is the active range by construction here).
-        spins = self._window_spin_widgets.get(window_idx)
+        # Mirror the corresponding interval spinboxes under a signal blocker so
+        # they do not re-fire _on_region_interval_edited and loop. The interval
+        # index == window index by construction (idx is the active range here).
+        spins = self._region_row_spins.get(window_idx)
         if spins is not None:
-            w_min, w_max = spins
-            with QSignalBlocker(w_min):
-                w_min.setValue(float(lo))
-            with QSignalBlocker(w_max):
-                w_max.setValue(float(hi))
+            i_min, i_max = spins
+            with QSignalBlocker(i_min):
+                i_min.setValue(float(lo))
+            with QSignalBlocker(i_max):
+                i_max.setValue(float(hi))
 
         self._refresh_range_card(idx)
         # Canvas-source: curve resample only (see FEEDBACK-LOOP RULE above).
         self._preview_timer.start()
 
     def _on_preview_exclude_region(self, idx: int, lo: float, hi: float) -> None:
-        """Right-drag exclude gesture: carve a gap into the range's windows.
+        """Right-drag exclude gesture: carve ``[lo, hi]`` out of the fit region.
 
-        Resolves the effective bounds (open bounds fall back to the data
-        extent), carves ``[lo, hi]`` out of the current window union, and — only
-        if that actually changed the coverage — invalidates the stale result and
-        rebuilds so the plain x_min/x_max spins disable and the per-window rows
-        appear (mirroring the manual _add_window post-state).
+        The plot drag supplies a real interval, so it routes straight through
+        the shared ``_exclude_region`` (the button's default-gap path is the
+        other caller).
         """
-        if idx < 0 or idx >= len(self._fit.ranges):
-            return
-        fit_range = self._fit.ranges[idx]
-        x_min = fit_range.x_min if fit_range.x_min is not None else self._x_min_data
-        x_max = fit_range.x_max if fit_range.x_max is not None else self._x_max_data
-
-        new_windows = carve_window_gap(fit_range.windows, x_min, x_max, lo, hi)
-
-        # NO-OP GUARD: normalise the current windows to what carve_window_gap
-        # would have seeded (None -> [(x_min, x_max)]) and compare. A carve that
-        # is disjoint from every window (a stray drag outside the fitted region)
-        # returns the seeded windows unchanged; dropping a good fit for that
-        # would be a nasty surprise, so early-return without invalidating.
-        current = list(fit_range.windows) if fit_range.windows else [(float(x_min), float(x_max))]
-        if new_windows == current:
-            return
-
-        fit_range.windows = new_windows
-        self._invalidate_range_result(idx)
-        # Rebuild disables the plain x_min/x_max spins via the has_windows branch
-        # and adds the per-window rows — do NOT hand-disable spins here.
-        self._rebuild_ranges_ui()
-        self._select_range(idx)
-        self._request_preview_update()
+        self._exclude_region(idx, lo, hi)
 
     def _edit_model(self, idx: int) -> None:
         if idx < 0 or idx >= len(self._fit.ranges):
@@ -2264,13 +2334,12 @@ class ModelFitDialog(QDialog):
         fit_range = self._fit.ranges[idx]
 
         # Move the active highlight + the Run Fit action to the selected card,
-        # and repoint the details-pane bounds pair / window sub-block at it.
+        # and repoint the details-pane fit-region editor at it.
         for card_idx, card in enumerate(self._range_cards):
             is_active = card_idx == idx
             card.set_active(is_active)
             card.set_state(self._range_card_view(card_idx, show_run=is_active))
-        self._populate_active_bounds(idx)
-        self._rebuild_active_window_rows(idx)
+        self._rebuild_fit_region_rows(idx)
 
         self._set_formula_display(fit_range)
         self._range_hint_label.setText(self._range_hint_text(idx))
@@ -2531,17 +2600,13 @@ class ModelFitDialog(QDialog):
         for card in self._range_cards:
             card.set_enabled(not busy)
 
-        # Details-pane bounds pair: disabled while a fit runs, then restored to
-        # its window-aware enabled state (windowed active range keeps them off).
-        if busy:
-            self._bounds_min_spin.setEnabled(False)
-            self._bounds_max_spin.setEnabled(False)
-        elif self._active_range_idx is not None:
-            self._populate_active_bounds(self._active_range_idx)
-
-        # Active range's exclusion-window spins + Remove buttons.
-        for w_min, w_max in self._window_spin_widgets.values():
-            w_min.setEnabled(not busy)
-            w_max.setEnabled(not busy)
-        for btn in self._windows_block.findChildren(QPushButton):
+        # Details-pane fit-region editor: every interval spin pair, each
+        # per-interval Remove button, and the "Exclude region…" button are
+        # disabled while a fit runs and re-enabled when it settles.
+        for i_min, i_max in self._region_row_spins.values():
+            i_min.setEnabled(not busy)
+            i_max.setEnabled(not busy)
+        for btn in self._region_remove_btns:
             btn.setEnabled(not busy)
+        if self._exclude_region_btn is not None:
+            self._exclude_region_btn.setEnabled(not busy)

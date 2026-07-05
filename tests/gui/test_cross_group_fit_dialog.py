@@ -1037,9 +1037,52 @@ def test_exclude_region_single_range_carves() -> None:
     los = sorted(lo for lo, _hi in fit_range.windows)
     assert 180.0 in his
     assert 220.0 in los
-    # The details-pane bounds pair disables once the range carries windows.
+    # The details-pane fit-region editor now shows two interval rows.
     dlg._select_range(0)
-    assert dlg._bounds_min_spin.isEnabled() is False
+    assert len(dlg._region_row_spins) == 2
+
+
+def test_cross_group_single_fit_region_one_interval() -> None:
+    """The pinned single range renders one fit-region interval, Remove hidden,
+    and the 'Exclude region…' action is available (carve-only control)."""
+    QApplication.instance() or QApplication([])
+    dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=_groups(),
+        parent=None,
+    )
+
+    assert len(dlg._fit.ranges) == 1
+    dlg._select_range(0)
+    assert len(dlg._region_row_spins) == 1
+    # A single interval hides its Remove (can never drop below one).
+    assert len(dlg._region_remove_btns) == 1
+    assert dlg._region_remove_btns[0].isHidden()
+    # The carve action exists and is enabled.
+    assert dlg._exclude_region_btn is not None
+    assert dlg._exclude_region_btn.isEnabled()
+
+
+def test_cross_group_exclude_region_still_works() -> None:
+    """The 'Exclude region…' button carves a default gap on the pinned range,
+    splitting the fit region into two included intervals."""
+    QApplication.instance() or QApplication([])
+    dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=_groups(),
+        parent=None,
+    )
+    dlg._select_range(0)
+    assert dlg._fit.ranges[0].windows is None
+
+    dlg._on_exclude_region_clicked()
+
+    windows = dlg._fit.ranges[0].windows
+    assert windows is not None
+    assert len(windows) == 2
+    assert len(dlg._region_row_spins) == 2
 
 
 def test_cross_group_success_no_modal(monkeypatch) -> None:

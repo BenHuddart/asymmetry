@@ -733,27 +733,25 @@ def test_window_editor_round_trips_model_fit_range(qapp: QApplication) -> None:
     fit_range = dlg._fit.ranges[0]
     assert fit_range.windows is None
 
-    # First click seeds one window from the current bounds; second appends.
-    dlg._add_window(0)
-    assert dlg._fit.ranges[0].windows == [(1.0, 10.0)]
-    dlg._add_window(0)
+    # A carve splits the one region into two included intervals (windows).
+    dlg._select_range(0)
+    dlg._exclude_region(0, 4.0, 6.0)
     assert len(dlg._fit.ranges[0].windows) == 2
     # The card (now the range selector) shows the windowed union bounds.
     assert "∪" in dlg._range_cards[0]._bounds_label.text()
 
-    # Details-pane bounds are disabled while windows drive the mask.
+    # Two intervals now edit through the interval spins.
     dlg._select_range(0)
-    assert not dlg._bounds_min_spin.isEnabled()
-    assert not dlg._bounds_max_spin.isEnabled()
+    assert len(dlg._region_row_spins) == 2
 
-    dlg._on_window_bounds_changed(0, 0, 1, 4.0)
-    assert dlg._fit.ranges[0].windows[0] == (1.0, 4.0)
+    # Editing interval 0's max carves it down; the union stays two intervals.
+    dlg._on_region_interval_edited(0, 1, 3.0)
+    assert dlg._fit.ranges[0].windows[0] == (1.0, 3.0)
 
-    # Removing all windows restores plain min/max behaviour.
-    dlg._remove_window(0, 1)
-    dlg._remove_window(0, 0)
+    # Removing one interval collapses back to a plain range (windows is None).
+    dlg._remove_interval(0, 1)
     assert dlg._fit.ranges[0].windows is None
-    assert dlg._bounds_min_spin.isEnabled()
+    assert len(dlg._region_row_spins) == 1
 
 
 def test_run_fit_rejects_inverted_window(qapp: QApplication, monkeypatch) -> None:
@@ -1014,10 +1012,12 @@ def test_window_bounds_edit_invalidates_stale_result(qapp: QApplication) -> None
     dlg._select_range(0)
     assert "Quality of fit" in dlg._quality_label.text()
 
-    dlg._on_window_bounds_changed(0, 0, 1, 4.0)
+    # Editing an interval's max (single-window range collapses to a plain range).
+    dlg._on_region_interval_edited(0, 1, 4.0)
 
     assert fit_range.result is None
-    assert fit_range.windows == [(1.0, 4.0)]
+    assert fit_range.x_min == 1.0
+    assert fit_range.x_max == 4.0
     assert dlg._quality_label.text() == ""
     assert "not yet run" in dlg._chi2_label.text().lower()
     # The card now carries the range's status; a cleared result reads "not_run".
@@ -1033,7 +1033,8 @@ def test_range_bounds_edit_invalidates_stale_result(qapp: QApplication) -> None:
         success=True, reduced_chi_squared=1.0, parameters=fit_range.parameters
     )
     dlg._select_range(0)
-    dlg._bounds_max_spin.setValue(8.0)
+    _, i_max = dlg._region_row_spins[0]
+    i_max.setValue(8.0)
     assert fit_range.result is None
 
 
@@ -1605,8 +1606,11 @@ def test_drag_edge_syncs_spinbox(qapp: QApplication) -> None:
     dlg._on_preview_range_edge_dragged(0, fit_range.x_min, new_max)
 
     assert fit_range.x_max == new_max
-    # The drag mirrored into the details-pane bounds pair (active range).
-    assert dlg._bounds_max_spin.value() == new_max
+    # A plain range's range-edge drag is an interval-0 edit: it mirrors into the
+    # interval-0 spin pair and keeps the range plain (windows None).
+    _, i_max = dlg._region_row_spins[0]
+    assert i_max.value() == new_max
+    assert fit_range.windows is None
     # The stale result was invalidated by the funnel.
     assert fit_range.result is None
 
@@ -1627,13 +1631,14 @@ def test_exclude_region_creates_two_windows(qapp: QApplication) -> None:
     assert 6.0 in los
 
 
-def test_exclude_disables_plain_spinboxes(qapp: QApplication) -> None:
-    """After a carve the details-pane bounds pair is disabled (windows override)."""
+def test_exclude_shows_two_interval_rows(qapp: QApplication) -> None:
+    """After a carve the details-pane shows two interval rows, each with Remove."""
     dlg = _make_dialog(qapp)
     dlg._on_preview_exclude_region(0, 4.0, 6.0)
     dlg._select_range(0)
-    assert dlg._bounds_min_spin.isEnabled() is False
-    assert dlg._bounds_max_spin.isEnabled() is False
+    assert len(dlg._region_row_spins) == 2
+    # With more than one interval, every Remove button is shown (not hidden).
+    assert all(not btn.isHidden() for btn in dlg._region_remove_btns)
 
 
 def test_exclude_invalidates_result(qapp: QApplication) -> None:
@@ -1900,44 +1905,46 @@ def test_card_status_chip_reflects_result(qapp: QApplication) -> None:
 def test_windowed_card_shows_union_bounds(qapp: QApplication) -> None:
     """A windowed range's card bounds_text uses the ∪ union formatting."""
     dlg = _make_dialog(qapp)
-    dlg._add_window(0)
-    dlg._add_window(0)
+    dlg._exclude_region(0, 4.0, 6.0)
 
     text = dlg._range_cards[0]._view.bounds_text
     assert "∪" in text
 
 
 def test_active_range_bounds_editable_in_details_pane(qapp: QApplication) -> None:
-    """The details-pane bounds pair edits the ACTIVE range's x_min/x_max."""
+    """The details-pane interval-0 spins edit the ACTIVE range's x_min/x_max."""
     dlg = _make_dialog(qapp)
     dlg._select_range(0)
 
-    dlg._bounds_min_spin.setValue(2.0)
-    dlg._bounds_max_spin.setValue(9.0)
+    i_min, i_max = dlg._region_row_spins[0]
+    i_min.setValue(2.0)
+    i_max.setValue(9.0)
 
     assert dlg._fit.ranges[0].x_min == 2.0
     assert dlg._fit.ranges[0].x_max == 9.0
+    # A single-interval edit keeps the range plain.
+    assert dlg._fit.ranges[0].windows is None
 
 
 def test_inactive_range_bounds_readonly_on_card(qapp: QApplication) -> None:
     """A non-active range's bounds are shown on its card, not editable in the
-    single details-pane pair (which tracks the active range)."""
+    details-pane interval rows (which track the active range)."""
     dlg = _make_dialog(qapp)
     dlg._add_range()
     # Give the two ranges distinct bounds.
     dlg._select_range(0)
-    dlg._bounds_min_spin.setValue(1.0)
-    dlg._bounds_max_spin.setValue(5.0)
+    dlg._region_row_spins[0][0].setValue(1.0)
+    dlg._region_row_spins[0][1].setValue(5.0)
     dlg._select_range(1)
-    dlg._bounds_min_spin.setValue(6.0)
-    dlg._bounds_max_spin.setValue(10.0)
+    dlg._region_row_spins[0][0].setValue(6.0)
+    dlg._region_row_spins[0][1].setValue(10.0)
 
     # The details pane now shows range 1; range 0's bounds live on its card only.
     assert dlg._active_range_idx == 1
     assert "1" in dlg._range_cards[0]._view.bounds_text
     assert "5" in dlg._range_cards[0]._view.bounds_text
     # Editing the pane must not touch the inactive range 0.
-    dlg._bounds_min_spin.setValue(7.0)
+    dlg._region_row_spins[0][0].setValue(7.0)
     assert dlg._fit.ranges[0].x_min == 1.0
     assert dlg._fit.ranges[1].x_min == 7.0
 
@@ -2000,23 +2007,23 @@ def test_clicking_card_updates_details_pane(qapp: QApplication) -> None:
     dlg._add_range()
 
     dlg._select_range(0)
-    dlg._bounds_min_spin.setValue(1.0)
-    dlg._bounds_max_spin.setValue(5.0)
+    dlg._region_row_spins[0][0].setValue(1.0)
+    dlg._region_row_spins[0][1].setValue(5.0)
     dlg._select_range(1)
-    dlg._bounds_min_spin.setValue(6.0)
-    dlg._bounds_max_spin.setValue(9.0)
+    dlg._region_row_spins[0][0].setValue(6.0)
+    dlg._region_row_spins[0][1].setValue(9.0)
 
     # Click range 0's card: the details pane must follow to range 0's bounds.
     dlg._range_cards[0].selected.emit(0)
     assert dlg._active_range_idx == 0
-    assert dlg._bounds_min_spin.value() == 1.0
-    assert dlg._bounds_max_spin.value() == 5.0
+    assert dlg._region_row_spins[0][0].value() == 1.0
+    assert dlg._region_row_spins[0][1].value() == 5.0
 
     # And back to range 1's card.
     dlg._range_cards[1].selected.emit(1)
     assert dlg._active_range_idx == 1
-    assert dlg._bounds_min_spin.value() == 6.0
-    assert dlg._bounds_max_spin.value() == 9.0
+    assert dlg._region_row_spins[0][0].value() == 6.0
+    assert dlg._region_row_spins[0][1].value() == 9.0
 
 
 def test_single_fit_ranges_section(qapp: QApplication) -> None:
@@ -2034,8 +2041,11 @@ def test_single_fit_ranges_section(qapp: QApplication) -> None:
     assert "RANGE PARAMETERS" not in headers
 
 
-def test_canvas_edge_drag_syncs_details_pane_spin(qapp: QApplication) -> None:
-    """A canvas range-edge drag mirrors into the details-pane bounds pair."""
+def test_canvas_range_edge_drag_syncs_interval0_spin_and_stays_plain(
+    qapp: QApplication,
+) -> None:
+    """A canvas range-edge drag mirrors into the interval-0 spin and keeps the
+    range plain (windows None — a range edge IS interval 0)."""
     dlg = _make_dialog(qapp)
     dlg._select_range(0)
     fit_range = dlg._fit.ranges[0]
@@ -2043,39 +2053,118 @@ def test_canvas_edge_drag_syncs_details_pane_spin(qapp: QApplication) -> None:
     new_max = 7.5
     dlg._on_preview_range_edge_dragged(0, fit_range.x_min, new_max)
 
-    assert dlg._bounds_max_spin.value() == new_max
+    _, i_max = dlg._region_row_spins[0]
+    assert i_max.value() == new_max
     assert fit_range.x_max == new_max
+    assert fit_range.windows is None
 
 
-def test_window_edge_drag_syncs_details_pane_window_spin(qapp: QApplication) -> None:
-    """A canvas window-edge drag mirrors into the active range's window spins,
-    now keyed by window index in the details pane."""
+def test_canvas_window_edge_drag_syncs_interval_spin(qapp: QApplication) -> None:
+    """A canvas window-edge drag mirrors into the active range's interval spins,
+    keyed by interval index in the details pane."""
     dlg = _make_dialog(qapp)
-    dlg._add_window(0)  # one window seeded from the bounds
+    # Carve to get a two-interval (windowed) range, then drag interval 0's edges.
+    dlg._exclude_region(0, 4.0, 6.0)
     dlg._select_range(0)
 
-    dlg._on_preview_window_edge_dragged(0, 0, 2.0, 8.0)
+    dlg._on_preview_window_edge_dragged(0, 0, 2.0, 3.5)
 
-    w_min, w_max = dlg._window_spin_widgets[0]
-    assert w_min.value() == 2.0
-    assert w_max.value() == 8.0
-    assert dlg._fit.ranges[0].windows[0] == (2.0, 8.0)
+    i_min, i_max = dlg._region_row_spins[0]
+    assert i_min.value() == 2.0
+    assert i_max.value() == 3.5
+    assert dlg._fit.ranges[0].windows[0] == (2.0, 3.5)
 
 
-def test_bounds_disabled_when_active_range_has_windows(qapp: QApplication) -> None:
-    """The details-pane bounds pair is disabled when the active range has
-    windows (the windows own the mask)."""
+def test_plain_range_shows_one_interval_no_remove(qapp: QApplication) -> None:
+    """A fresh plain range shows exactly one interval row with Remove hidden."""
     dlg = _make_dialog(qapp)
-    dlg._add_window(0)
     dlg._select_range(0)
 
-    assert dlg._bounds_min_spin.isEnabled() is False
-    assert dlg._bounds_max_spin.isEnabled() is False
+    assert len(dlg._region_row_spins) == 1
+    assert len(dlg._region_remove_btns) == 1
+    # The sole interval's Remove is hidden (a region can never drop below one).
+    assert dlg._region_remove_btns[0].isHidden()
 
 
-def test_fit_busy_disables_cards_and_bounds(qapp: QApplication) -> None:
-    """_set_fit_ui_busy(True) disables the cards' action buttons and the
-    details-pane bounds pair; (False) restores them."""
+def test_exclude_region_splits_into_two_intervals(qapp: QApplication) -> None:
+    """The 'Exclude region…' button carves a default gap -> two intervals."""
+    dlg = _make_dialog(qapp)
+    dlg._select_range(0)
+    assert dlg._fit.ranges[0].windows is None
+
+    dlg._on_exclude_region_clicked()
+
+    windows = dlg._fit.ranges[0].windows
+    assert windows is not None
+    assert len(windows) == 2
+    assert len(dlg._region_row_spins) == 2
+
+
+def test_remove_interval_down_to_one_collapses_to_plain(qapp: QApplication) -> None:
+    """Removing an interval down to one leaves windows None (collapse rule)."""
+    dlg = _make_dialog(qapp)
+    dlg._exclude_region(0, 4.0, 6.0)
+    dlg._select_range(0)
+    assert dlg._fit.ranges[0].windows is not None
+
+    dlg._remove_interval(0, 1)
+
+    assert dlg._fit.ranges[0].windows is None
+    assert len(dlg._region_row_spins) == 1
+
+
+def test_remove_last_interval_refused(qapp: QApplication) -> None:
+    """Removing the sole interval of a plain range is a no-op (never empty)."""
+    dlg = _make_dialog(qapp)
+    dlg._select_range(0)
+    before = (dlg._fit.ranges[0].x_min, dlg._fit.ranges[0].x_max)
+
+    dlg._remove_interval(0, 0)
+
+    assert dlg._fit.ranges[0].windows is None
+    assert (dlg._fit.ranges[0].x_min, dlg._fit.ranges[0].x_max) == before
+    assert len(dlg._region_row_spins) == 1
+
+
+def test_edge_carve_collapses_to_plain(qapp: QApplication) -> None:
+    """Excluding an END chunk leaves a single surviving interval, which the
+    collapse rule plains back to windows=None (not a stuck 1-window list)."""
+    dlg = _make_dialog(qapp)
+    dlg._select_range(0)
+    (lo, hi) = dlg._resolved_intervals(dlg._fit.ranges[0])[0]
+    cut = lo + (hi - lo) * 0.25
+
+    # Carve out the LOW end [lo, cut] -> only [cut, hi] survives -> plain range.
+    dlg._exclude_region(0, lo, cut)
+
+    assert dlg._fit.ranges[0].windows is None
+    assert dlg._fit.ranges[0].x_min == pytest.approx(cut)
+    assert len(dlg._region_row_spins) == 1
+
+
+def test_edge_carve_then_plain_edge_drag_syncs(qapp: QApplication) -> None:
+    """After an edge-carve collapses to plain, the range is once again a plain
+    single interval: a plot range-edge drag routes through the plain path
+    (_on_preview_range_edge_dragged), stays windows=None, and syncs interval 0."""
+    dlg = _make_dialog(qapp)
+    dlg._select_range(0)
+    (lo, hi) = dlg._resolved_intervals(dlg._fit.ranges[0])[0]
+    dlg._exclude_region(0, lo, lo + (hi - lo) * 0.25)
+    assert dlg._fit.ranges[0].windows is None
+
+    new_lo, new_hi = dlg._fit.ranges[0].x_min, dlg._fit.ranges[0].x_max
+    dragged_lo = new_lo + (new_hi - new_lo) * 0.1
+    dlg._on_preview_range_edge_dragged(0, dragged_lo, new_hi)
+
+    assert dlg._fit.ranges[0].windows is None
+    assert dlg._fit.ranges[0].x_min == pytest.approx(dragged_lo)
+    i_min, _i_max = dlg._region_row_spins[0]
+    assert i_min.value() == pytest.approx(dragged_lo)
+
+
+def test_fit_busy_disables_region_rows_and_actions(qapp: QApplication) -> None:
+    """_set_fit_ui_busy(True) disables the cards' action buttons, the interval
+    spins, and the 'Exclude region…' button; (False) restores them."""
     dlg = _make_dialog(qapp)
     dlg._select_range(0)
 
@@ -2083,14 +2172,33 @@ def test_fit_busy_disables_cards_and_bounds(qapp: QApplication) -> None:
     assert dlg._range_cards[0]._run_button.isEnabled() is False
     assert dlg._range_cards[0]._edit_model_button.isEnabled() is False
     assert dlg._range_cards[0]._exclude_button.isEnabled() is False
-    assert dlg._bounds_min_spin.isEnabled() is False
-    assert dlg._bounds_max_spin.isEnabled() is False
+    assert dlg._region_row_spins[0][0].isEnabled() is False
+    assert dlg._region_row_spins[0][1].isEnabled() is False
+    assert dlg._exclude_region_btn.isEnabled() is False
 
     dlg._set_fit_ui_busy(False)
     assert dlg._range_cards[0]._run_button.isEnabled() is True
     assert dlg._range_cards[0]._edit_model_button.isEnabled() is True
-    # No windows on the active range, so the bounds pair is restored enabled.
-    assert dlg._bounds_min_spin.isEnabled() is True
+    assert dlg._region_row_spins[0][0].isEnabled() is True
+    assert dlg._exclude_region_btn.isEnabled() is True
+
+
+def test_no_exclusion_window_wording(qapp: QApplication) -> None:
+    """No 'Exclusion'/'Window N' wording; the fit-region wording is present."""
+    from PySide6.QtWidgets import QLabel, QPushButton
+
+    dlg = _make_dialog(qapp)
+    # Carve so the multi-interval rows are built too.
+    dlg._exclude_region(0, 4.0, 6.0)
+    dlg._select_range(0)
+
+    texts = [w.text() for w in dlg.findChildren(QLabel)]
+    texts += [w.text() for w in dlg.findChildren(QPushButton)]
+    joined = " ".join(texts)
+    assert "Exclusion" not in joined
+    assert "Window" not in joined
+    assert "Fit region" in joined
+    assert any(t.startswith("Interval ") for t in texts)
 
 
 def test_plot_drag_creates_range(qapp: QApplication) -> None:
