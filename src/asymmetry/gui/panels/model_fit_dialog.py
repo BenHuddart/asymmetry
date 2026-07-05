@@ -6,10 +6,9 @@ import os
 import re
 import traceback
 from collections.abc import Callable
-from dataclasses import dataclass
 
 import numpy as np
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSignalBlocker, Qt, QTimer
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -17,11 +16,13 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
-    QGroupBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QMessageBox,
     QPushButton,
+    QScrollArea,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -36,22 +37,49 @@ from asymmetry.core.fitting.parameter_models import (
     ModelFitRange,
     ParameterCompositeModel,
     ParameterModelFit,
+    carve_window_gap,
     component_names_for_x,
     fit_parameter_model,
+    included_intervals,
     is_order_parameter_observable,
+    sample_parameter_model,
+    set_included_intervals,
+    suggest_model_seeds,
     suggest_trend_seeds,
     validate_fit_windows,
+    windows_mask,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.fit_settings import fit_quality_confidence
 from asymmetry.gui.styles import tokens
-from asymmetry.gui.styles.widgets import apply_param_table_style, clear_layout, make_formula_box
+from asymmetry.gui.styles.widgets import (
+    _FIT_VERDICT_COLOURS,
+    RESULT_BOX_NEUTRAL_STYLE,
+    RESULT_BOX_OBJECT_NAME,
+    RESULT_BOX_SUCCESS_STYLE,
+    apply_param_table_style,
+    clear_layout,
+    error_html,
+    fit_quality_chip_html,
+    info_html,
+    make_formula_box,
+    make_section,
+    success_html,
+    warning_html,
+)
 from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.widgets.function_builder.dialog import (
     FunctionBuilderDialog,
     make_component_expression_parser,
 )
+from asymmetry.gui.widgets.range_card import RangeCard, RangeCardView
 from asymmetry.gui.widgets.screen_sizing import resize_to_available
+from asymmetry.gui.widgets.trend_preview import (
+    PreviewRange,
+    PreviewSeries,
+    TrendPreviewCanvas,
+    range_span_color,
+)
 from asymmetry.gui.windows.new_user_function_dialog import NewUserFunctionDialog
 
 #: Operators offered by the parameter/trending builder — the base arithmetic
@@ -302,6 +330,69 @@ def _show_warning(parent: QWidget, title: str, text: str) -> None:
     QMessageBox.warning(parent, title, text)
 
 
+def _last_model_memory_key(parameter_name: str, x_key: str) -> str:
+    """Memory-dict key for the remembered model of ``(base_param_name, x_key)``.
+
+    The parameter name is reduced to its base (``Lambda_2`` → ``Lambda``) so a
+    per-group index does not fragment the memory across otherwise-identical
+    trends.
+    """
+    return f"{_base_param_name(parameter_name)}|{x_key}"
+
+
+def _store_last_model_expression(
+    parameter_name: str,
+    x_key: str,
+    expression: str,
+    memory: dict[str, str],
+) -> None:
+    """Persist *expression* as the last-used model for ``(parameter, x_key)``.
+
+    Entirely best-effort: it confirms the string round-trips through
+    ``ParameterCompositeModel.from_expression`` before storing, and swallows any
+    failure — a broken store must never disrupt the fit UI. *memory* is a
+    plain ``dict[str, str]`` owned by the caller (e.g. ``FitParametersPanel`` /
+    ``GlobalParameterFitWindow``), which persists it into project state — so
+    the memory is project-scoped rather than a global per-user setting.
+    """
+    if not expression:
+        return
+    try:
+        # Only remember expressions that parse back, so restore never trips on
+        # something we wrote.
+        ParameterCompositeModel.from_expression(expression)
+    except Exception:
+        return
+    try:
+        memory[_last_model_memory_key(parameter_name, x_key)] = expression
+    except Exception:
+        pass
+
+
+def _load_last_model(
+    parameter_name: str,
+    x_key: str,
+    component_pool: set[str] | frozenset[str] | list[str],
+    memory: dict[str, str],
+) -> ParameterCompositeModel | None:
+    """Return the remembered model for ``(parameter, x_key)``, or None.
+
+    Restricts the parse to *component_pool* (so a component valid in another
+    context but not offered here falls back), and returns None on any failure —
+    a missing key, an unparseable string, or an out-of-pool component.
+    """
+    try:
+        raw = memory.get(_last_model_memory_key(parameter_name, x_key))
+    except Exception:
+        return None
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        return _pool_restricted_model_parser(set(component_pool))(raw)
+    except Exception:
+        return None
+
+
 def _pool_restricted_model_parser(
     pool: set[str] | frozenset[str],
 ) -> Callable[[str], ParameterCompositeModel]:
@@ -401,18 +492,6 @@ class ParameterModelBuilderDialog(FunctionBuilderDialog):
         return model if isinstance(model, ParameterCompositeModel) else None
 
 
-@dataclass
-class _RangeWidgets:
-    active: QCheckBox
-    x_min: QDoubleSpinBox
-    x_max: QDoubleSpinBox
-    model_label: QLabel
-    edit_button: QPushButton
-    fit_button: QPushButton
-    remove_button: QPushButton
-    status_label: QLabel
-
-
 class ModelFitDialog(QDialog):
     """Configure and run model fits for one Y parameter vs selected X variable."""
 
@@ -437,8 +516,16 @@ class ModelFitDialog(QDialog):
         parent: QWidget | None = None,
         x_errors: np.ndarray | None = None,
         x_label: str | None = None,
+        model_memory: dict[str, str] | None = None,
     ) -> None:
         super().__init__(parent)
+
+        # Caller-owned "remember last-used model per (parameter, x_key)" store
+        # (item 4.2). A None caller (e.g. CrossGroupFitDialog, which does not
+        # participate) gets a session-local dict that is never persisted, so
+        # it simply never remembers across dialogs. Assigned EARLY — before
+        # ``_create_default_range`` (below) reads it.
+        self._model_memory: dict[str, str] = model_memory if model_memory is not None else {}
 
         # ``x_key`` is the internal abscissa id (e.g. ``custom:84576a7e``) used
         # by the fit backend / persistence; ``x_label`` is the friendly column
@@ -446,10 +533,10 @@ class ModelFitDialog(QDialog):
         # label is supplied so older callers keep working.
         x_display = x_label or x_key
         self.setWindowTitle(f"Model Fit: {parameter_name} vs {x_display}")
-        # Cap the default to the available screen — the preferred 950×650 nearly
-        # fills a 960×640 work area, so on a small display it would open with no
-        # margin; the smaller floor keeps it usable (P2-3).
-        resize_to_available(self, 950, 650, min_width=560, min_height=420)
+        # Cap the default to the available screen — the wider default leaves room
+        # for the preview pane on the right; the smaller floor keeps it usable on
+        # a small display (P2-3).
+        resize_to_available(self, 1280, 700, min_width=560, min_height=420)
 
         self._parameter_name = parameter_name
         self._x_key = x_key
@@ -460,9 +547,24 @@ class ModelFitDialog(QDialog):
         self._yerr = np.asarray(y_errors, dtype=float)
         self._xerr = None if x_errors is None else np.asarray(x_errors, dtype=float)
         self._removed = False
-        self._range_widgets: list[_RangeWidgets] = []
+        # One RangeCard per fit range (recreated each _rebuild_ranges_ui).
+        self._range_cards: list[RangeCard] = []
+        # (min, max) spin pair per INCLUDED INTERVAL of the ACTIVE range, keyed by
+        # interval index. The details pane only ever shows the active range's
+        # fit-region intervals; rebuilt by ``_rebuild_fit_region_rows``.
+        self._region_row_spins: dict[int, tuple[QDoubleSpinBox, QDoubleSpinBox]] = {}
+        # Per-interval "Remove" buttons + the "Exclude region…" button, tracked
+        # so ``_set_fit_ui_busy`` can disable them during a fit.
+        self._region_remove_btns: list[QPushButton] = []
+        self._exclude_region_btn: QPushButton | None = None
         self._active_range_idx: int | None = None
         self._fit_in_progress = False
+        # Own busy flag for the user-initiated "Guess seeds" data-aware seeder
+        # (item 3.3). Deliberately SEPARATE from ``_fit_in_progress`` so the
+        # lightweight off-thread seed suggestion never drives ``_set_fit_ui_busy``
+        # / locks the whole dialog the way a real fit does.
+        self._guess_in_progress = False
+        self._guess_target_idx: int | None = None
         # Background fits run on the shared TaskRunner (gui/tasks.py), which owns
         # the QThread/worker lifecycle and a bounded, Windows-safe shutdown.
         self._tasks = TaskRunner(self)
@@ -474,17 +576,142 @@ class ModelFitDialog(QDialog):
             self._fit = ParameterModelFit(parameter_name=parameter_name, x_key=x_key, ranges=[])
             self._fit.ranges.append(self._create_default_range())
 
-        layout = QVBoxLayout(self)
+        # The dialog body is a horizontal splitter: the LEFT pane carries every
+        # existing control (unchanged order) while the RIGHT pane is a preview
+        # host that a later work item fills with a plot canvas. Full-width
+        # footer-slot + button box stay directly on the dialog's top layout,
+        # beneath the splitter, so both span the whole dialog and remain direct
+        # items of self.layout() (contract C6 / the cross-group footer test).
+        #
+        # The left pane's content (in particular each non-wrapping range row —
+        # see _rebuild_ranges_ui) can force a minimum width well past 1000px.
+        # Wrapping it in a QScrollArea decouples that content minimum from the
+        # splitter's size negotiation: the scroll area itself only demands
+        # _LEFT_PANE_MIN_WIDTH, and any wider row scrolls horizontally instead
+        # of starving (or clipping) the preview pane on the right.
+        top_layout = QVBoxLayout(self)
+
+        left_pane = QWidget()
+        left_layout = QVBoxLayout(left_pane)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+
+        left_scroll = QScrollArea()
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        left_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        left_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        left_scroll.setWidget(left_pane)
+        left_scroll.setMinimumWidth(self._LEFT_PANE_MIN_WIDTH)
+        self._left_scroll = left_scroll
+
+        right_pane = QWidget()
+        right_pane.setMinimumWidth(self._PREVIEW_PANE_MIN_WIDTH)
+        self._preview_host = QVBoxLayout(right_pane)
+        self._preview_host.setContentsMargins(0, 0, 0, 0)
+        # Live, off-thread candidate-curve preview (work item 1.3). Drag is
+        # wired here (work item 2.2): dragging a range/window edge or right-drag
+        # excluding a region routes back through the handlers below.
+        self._preview = TrendPreviewCanvas()
+        self._preview.enable_drag(True)
+        self._preview.range_edge_dragged.connect(self._on_preview_range_edge_dragged)
+        self._preview.window_edge_dragged.connect(self._on_preview_window_edge_dragged)
+        self._preview.exclude_region_requested.connect(self._on_preview_exclude_region)
+        # Add/select gestures go through an overridable hook so single-range
+        # subclasses (cross-group) can leave them inert (item 3.2/3.3).
+        self._connect_plot_range_signals()
+
+        # "Show residuals" (item 4.1, relocated by P2): opt-in residual strip
+        # beneath the preview plot. Lives in the preview pane itself — right
+        # above the canvas it controls — rather than in the top-of-dialog
+        # toggle row, so it reads as attached to the plot instead of orphaned.
+        # Default UNCHECKED — the user opts in; keeping it off by default also
+        # matches the narrow-screen "don't crowd the pane" stance. When the
+        # preview pane auto-collapses on a narrow screen this checkbox rides
+        # with it (hidden), which is correct — residuals are meaningless with
+        # no visible preview.
+        self._show_residuals_check = QCheckBox("Show residuals")
+        self._show_residuals_check.setChecked(False)
+        self._show_residuals_check.setToolTip(
+            "Show a residual strip below the preview plot: (data − model) / σ for "
+            "the selected range's in-fit points, with a ±1σ guide band. Uses the "
+            "seed curve before a fit and the fitted curve after."
+        )
+        self._show_residuals_check.toggled.connect(self._on_show_residuals_toggled)
+        residuals_row = QHBoxLayout()
+        residuals_row.addWidget(self._show_residuals_check)
+        residuals_row.addStretch()
+        self._preview_host.addLayout(residuals_row)
+
+        self._preview_host.addWidget(self._preview, 1)
+
+        # ── Preview threading state (work item 1.3) ──────────────────────────
+        # A dedicated generation token guards against stale worker results;
+        # it is deliberately SEPARATE from ``_fit_in_progress`` so a preview
+        # tick never drives ``_set_fit_ui_busy`` (which would lock the dialog).
+        # ``_preview_active``/``_preview_pending`` enforce "at most one sample
+        # in flight plus one coalesced request".
+        self._preview_generation = 0
+        self._preview_active = False
+        self._preview_pending = False
+        # Set in closeEvent before the TaskRunner is shut down, so a debounce
+        # timer that fires during teardown cannot start a fresh worker on a
+        # runner the dialog is done with (TaskRunner.shutdown has no re-entry
+        # guard against a later start()).
+        self._shutting_down = False
+        self._last_preview_curves: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setSingleShot(True)
+        self._preview_timer.setInterval(120)
+        self._preview_timer.timeout.connect(self._launch_preview_sample)
+
+        self._splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._splitter.addWidget(left_scroll)
+        self._splitter.addWidget(right_pane)
+        self._splitter.setStretchFactor(0, 0)
+        self._splitter.setStretchFactor(1, 1)
+        # Placeholder sizes; _maybe_collapse_preview (called from showEvent)
+        # replaces these with a proportional split computed from the dialog's
+        # real width once it is known, so the preview opens at a usable width
+        # instead of whatever this constructor-time guess happens to be.
+        self._splitter.setSizes([560, 620])
+        top_layout.addWidget(self._splitter)
+
+        # First-show auto-collapse bookkeeping (see _maybe_collapse_preview).
+        self._preview_collapsed = False
+        self._preview_auto_managed = True
+        self._preview_expanded_sizes = [560, 620]
 
         summary = QLabel(f"Y parameter: <b>{parameter_name}</b> | X variable: <b>{x_display}</b>")
-        layout.addWidget(summary)
+        left_layout.addWidget(summary)
 
         x_min_data = float(np.nanmin(self._x)) if np.any(np.isfinite(self._x)) else 0.0
         x_max_data = float(np.nanmax(self._x)) if np.any(np.isfinite(self._x)) else 1.0
         self._x_min_data = x_min_data
         self._x_max_data = x_max_data
-        self._data_range_label = QLabel(f"Data range: {x_min_data:.6g} to {x_max_data:.6g}")
-        layout.addWidget(self._data_range_label)
+        self._data_range_label = QLabel(f"Data range: {x_min_data:.6g} – {x_max_data:.6g}")
+        left_layout.addWidget(self._data_range_label)
+
+        # "Show preview" toggle, hidden until a narrow width auto-collapses the
+        # preview pane (see _maybe_collapse_preview). Checking it restores the
+        # pane; unchecking re-collapses it.
+        self._show_preview_toggle = QPushButton("Show preview")
+        self._show_preview_toggle.setCheckable(True)
+        self._show_preview_toggle.setChecked(True)
+        self._show_preview_toggle.setVisible(False)
+        self._show_preview_toggle.toggled.connect(self._on_show_preview_toggled)
+        toggle_row = QHBoxLayout()
+        toggle_row.addWidget(self._show_preview_toggle)
+        toggle_row.addStretch()
+        left_layout.addLayout(toggle_row)
+
+        # Named insertion point (contract C6): directly under the summary/
+        # data-range labels, at the top of the dialog body. Subclasses (e.g.
+        # CrossGroupFitDialog's inherited-source banner) add widgets here
+        # instead of doing index-based layout.insertWidget arithmetic. Empty by
+        # default, so it must add no visual space.
+        self._header_slot = QVBoxLayout()
+        self._header_slot.setContentsMargins(0, 0, 0, 0)
+        left_layout.addLayout(self._header_slot)
 
         self._error_mode_combo: QComboBox | None = None
         self._error_value_label: QLabel | None = None
@@ -509,7 +736,7 @@ class ModelFitDialog(QDialog):
             )
             error_row.addWidget(self._error_value_spin)
             error_row.addStretch()
-            layout.addLayout(error_row)
+            left_layout.addLayout(error_row)
             self._on_error_mode_changed(0)
 
         # Effective-variance x-uncertainty toggle (item 1): only meaningful when
@@ -530,46 +757,124 @@ class ModelFitDialog(QDialog):
             self._x_error_check.setChecked(bool(getattr(self._fit, "use_x_errors", False)))
             xerr_row.addWidget(self._x_error_check)
             xerr_row.addStretch()
-            layout.addLayout(xerr_row)
+            left_layout.addLayout(xerr_row)
 
-        ranges_group = QGroupBox("Model ranges")
-        ranges_layout = QVBoxLayout(ranges_group)
+        # Flat BENCH section (make_section) instead of a QGroupBox — the app
+        # deliberately avoids QGroupBox chrome in inspector panels. The uppercase
+        # header lives INSIDE the section container (above ``_ranges_host``), so a
+        # ``_rebuild_ranges_ui`` clear_layout of ``_ranges_host`` never destroys it.
+        #
+        # ONE merged "Fit ranges" section (Step 2): the RangeCard stack + "Add
+        # Range" button sit on top, then the "Selected range" fit-region editor
+        # (the included-interval rows + "Exclude region…"), Guess row,
+        # formula/result boxes, param table) directly below. The card IS the
+        # range selector — clicking a card activates it and the details pane
+        # below follows via ``_set_active_range``.
+        params_group, params_layout = make_section("Fit ranges")
+
         self._ranges_host = QVBoxLayout()
-        ranges_layout.addLayout(self._ranges_host)
+        self._ranges_host.setSpacing(4)
+        params_layout.addLayout(self._ranges_host)
 
         add_row = QHBoxLayout()
         add_btn = QPushButton("Add Range")
         add_btn.clicked.connect(self._add_range)
         add_row.addWidget(add_btn)
         add_row.addStretch()
-        ranges_layout.addLayout(add_row)
+        params_layout.addLayout(add_row)
 
-        layout.addWidget(ranges_group)
-
-        params_group = QGroupBox("Range parameters")
-        params_layout = QVBoxLayout(params_group)
-
-        selector_row = QHBoxLayout()
-        selector_row.addWidget(QLabel("Editing range:"))
-        self._range_selector = QComboBox()
-        self._range_selector.currentIndexChanged.connect(self._on_range_selector_changed)
-        selector_row.addWidget(self._range_selector, 1)
-        params_layout.addLayout(selector_row)
-
-        self._range_hint_label = QLabel("Select a range above to edit its model parameters.")
+        self._range_hint_label = QLabel("Editing the highlighted range.")
         params_layout.addWidget(self._range_hint_label)
+
+        # P6: the plot's drag-to-add / click-to-select gestures are the least
+        # discoverable part of this dialog, so spell them out in a muted,
+        # always-visible hint beside the range controls they affect.
+        self._empty_state_hint_label = QLabel(
+            "Drag on the plot to add a fit range, or click a range to edit it."
+        )
+        self._empty_state_hint_label.setStyleSheet(f"color: {tokens.TEXT_MUTED}; font-size: 11px;")
+        params_layout.addWidget(self._empty_state_hint_label)
+
+        # ── Fit region for the ACTIVE range (contract C-REGIONROW) ────────────
+        # A flat "Selected range" BENCH sub-header separates the card stack /
+        # Add-Range controls ABOVE from the fit-region editor BELOW (P1
+        # grouping). The fit region is ONE region the user sculpts by carving
+        # gaps out of it: it is shown as a list of the included intervals it is
+        # made of. Editing a spin, removing an interval, or "Exclude region…"
+        # all funnel through set_included_intervals (the single storage source
+        # of truth) so a down-to-1 result collapses back to a plain range.
+        region_section, region_layout = make_section("Selected range")
+        params_layout.addWidget(region_section)
+
+        region_label = QLabel("Fit region")
+        region_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+        region_layout.addWidget(region_label)
+
+        # The interval rows are rebuilt in place by _rebuild_fit_region_rows on
+        # every active-range / interval change; each row is [Interval N] [min]
+        # – [max] [Remove] (Remove hidden when there is only one interval).
+        self._region_rows_block = QWidget()
+        self._region_rows_layout = QVBoxLayout(self._region_rows_block)
+        self._region_rows_layout.setContentsMargins(0, 0, 0, 0)
+        self._region_rows_layout.setSpacing(2)
+        region_layout.addWidget(self._region_rows_block)
+
+        # "Exclude region…" is the ONLY region action — there is deliberately no
+        # "+ Add interval". Carving is what splits the one region into multiple
+        # included intervals.
+        exclude_row = QHBoxLayout()
+        self._exclude_region_btn = QPushButton("Exclude region…")
+        self._exclude_region_btn.setToolTip(
+            "Carve a gap out of the fit region (or drag across a region on the "
+            "plot). The remaining included intervals are listed above."
+        )
+        self._exclude_region_btn.clicked.connect(self._on_exclude_region_clicked)
+        exclude_row.addWidget(self._exclude_region_btn)
+        exclude_row.addStretch()
+        region_layout.addLayout(exclude_row)
+
+        # "Guess seeds" (item 3.3): user-initiated, off-thread data-aware seeding
+        # of the ACTIVE range's free parameters. Never fires automatically — the
+        # seed-preserve behaviour is pinned by test_model_fit_seed_preserve.py.
+        guess_row = QHBoxLayout()
+        self._guess_seeds_btn = QPushButton("Guess seeds")
+        self._guess_seeds_btn.setToolTip(
+            "Derive data-aware starting values for the selected range's free "
+            "parameters from the fitted region's x/y data. Fixed parameters are "
+            "never changed. Runs off the GUI thread."
+        )
+        self._guess_seeds_btn.clicked.connect(self._on_guess_seeds_clicked)
+        guess_row.addWidget(self._guess_seeds_btn)
+        self._guess_status_label = QLabel("")
+        self._guess_status_label.setTextFormat(Qt.TextFormat.RichText)
+        guess_row.addWidget(self._guess_status_label)
+        guess_row.addStretch()
+        params_layout.addLayout(guess_row)
 
         self._formula_box, self._formula_label = make_formula_box()
         params_layout.addWidget(self._formula_box)
 
+        # Result box (item 4.3): the χ² + quality lines live inside a BENCH
+        # result frame so a successful fit tints green inline — replacing the
+        # per-fit "Fit complete" modal. The tint is swapped in _select_range
+        # based on the active range's result state.
+        self._result_box = QFrame()
+        self._result_box.setObjectName(RESULT_BOX_OBJECT_NAME)
+        self._result_box.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
+        result_box_layout = QVBoxLayout(self._result_box)
+        result_box_layout.setContentsMargins(8, 6, 8, 6)
+        result_box_layout.setSpacing(2)
+
         self._chi2_label = QLabel("")
         self._chi2_label.setTextFormat(Qt.TextFormat.RichText)
-        params_layout.addWidget(self._chi2_label)
+        result_box_layout.addWidget(self._chi2_label)
 
         self._quality_label = QLabel("")
         self._quality_label.setTextFormat(Qt.TextFormat.RichText)
         self._quality_label.setToolTip(_QUALITY_TOOLTIP)
-        params_layout.addWidget(self._quality_label)
+        result_box_layout.addWidget(self._quality_label)
+
+        params_layout.addWidget(self._result_box)
 
         self._fit_progress_label = QLabel("")
         self._fit_progress_label.setStyleSheet(f"color: {tokens.WARN};")
@@ -584,7 +889,16 @@ class ModelFitDialog(QDialog):
         self._param_table.itemChanged.connect(self._on_param_table_edited)
         params_layout.addWidget(self._param_table)
 
-        layout.addWidget(params_group)
+        left_layout.addWidget(params_group)
+
+        # Named insertion point (contract C6): directly above the OK/Cancel
+        # button box. Subclasses (e.g. CrossGroupFitDialog's "Suggest roles…"
+        # controls + rationale panel) add widgets here instead of scanning the
+        # layout for ``self._buttons``. Empty by default, so it must add no
+        # visual space.
+        self._footer_slot = QVBoxLayout()
+        self._footer_slot.setContentsMargins(0, 0, 0, 0)
+        top_layout.addLayout(self._footer_slot)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -597,10 +911,345 @@ class ModelFitDialog(QDialog):
         self._buttons = buttons
         self._remove_fit_btn = remove_fit_btn
         self._add_range_btn = add_btn
-        layout.addWidget(buttons)
+        top_layout.addWidget(buttons)
 
         self._rebuild_ranges_ui()
         self._select_range(0)
+
+        # Initial preview paint (cheap synchronous spans + a debounced sample).
+        self._request_preview_update()
+
+    # -- preview-pane auto-collapse -------------------------------------------
+    #: Below this usable width the right-hand preview pane auto-collapses and a
+    #: "Show preview" toggle appears so it can be restored.
+    _PREVIEW_NARROW_THRESHOLD = 900
+    #: Floor for the (scrollable) left pane so its controls stay usable even
+    #: when the splitter hands it less than its content's natural width.
+    _LEFT_PANE_MIN_WIDTH = 420
+    #: Floor for the preview pane so it can never be squashed below a usable
+    #: width — this is the number the bug report wants guaranteed on load.
+    _PREVIEW_PANE_MIN_WIDTH = 340
+    #: Share of the dialog's usable width given to the left pane when
+    #: computing the proportional initial/expanded split (see
+    #: ``_expanded_split_sizes``).
+    _LEFT_PANE_WIDTH_FRACTION = 0.55
+
+    def showEvent(self, event) -> None:  # noqa: N802 (Qt API name)
+        super().showEvent(event)
+        # Decide once on first show, then let the user resize the splitter freely.
+        self._maybe_collapse_preview(first_show=True)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 (Qt API name)
+        super().resizeEvent(event)
+        self._maybe_collapse_preview(first_show=False)
+
+    def _expanded_split_sizes(self, width: int) -> list[int]:
+        """Return ``[left, right]`` splitter sizes for an expanded preview.
+
+        Splits *width* proportionally (left pane gets
+        ``_LEFT_PANE_WIDTH_FRACTION``), then floors each side at its minimum
+        width so neither the scrollable controls pane nor the preview pane is
+        ever squashed below a usable size — even if that means the two floors
+        sum to more than *width* (the splitter/scroll area absorb the excess).
+        """
+        left = max(self._LEFT_PANE_MIN_WIDTH, round(width * self._LEFT_PANE_WIDTH_FRACTION))
+        right = max(self._PREVIEW_PANE_MIN_WIDTH, width - left)
+        return [left, right]
+
+    def _maybe_collapse_preview(self, *, first_show: bool) -> None:
+        """Collapse/expand the preview pane based on the dialog's usable width.
+
+        The pane is auto-managed only until the user drives it manually
+        (``_on_show_preview_toggled``). Guarded so it fires once on first show
+        and only when the width actually *crosses* the threshold thereafter,
+        never fighting a manual splitter drag on every resize tick. A tiny or
+        unknown reported width (e.g. offscreen) is treated as "not narrow" so
+        the pane is not spuriously collapsed.
+        """
+        splitter = getattr(self, "_splitter", None)
+        if splitter is None or not getattr(self, "_preview_auto_managed", False):
+            return
+
+        width = self.width()
+        # A zero/tiny width is what offscreen/unrealized windows report; don't
+        # collapse on that — mirror resize_to_available's screen-unknown guard.
+        narrow = 0 < width < self._PREVIEW_NARROW_THRESHOLD
+
+        if not first_show and narrow == self._preview_collapsed:
+            # Already in the right state; nothing to do (avoids re-collapsing a
+            # pane the user just expanded by dragging back above the threshold).
+            return
+
+        if not narrow and width > 0:
+            # The real dialog width is now known — compute the proportional
+            # split from it so the preview opens at a usable width instead of
+            # the constructor-time placeholder sizes.
+            self._preview_expanded_sizes = self._expanded_split_sizes(width)
+
+        if narrow:
+            self._collapse_preview()
+        else:
+            self._expand_preview()
+
+    def _collapse_preview(self) -> None:
+        self._preview_collapsed = True
+        self._splitter.setSizes([1, 0])
+        self._show_preview_toggle.setVisible(True)
+        self._show_preview_toggle.blockSignals(True)
+        self._show_preview_toggle.setChecked(False)
+        self._show_preview_toggle.blockSignals(False)
+
+    def _expand_preview(self) -> None:
+        self._preview_collapsed = False
+        self._splitter.setSizes(list(self._preview_expanded_sizes))
+        self._show_preview_toggle.setVisible(False)
+        self._show_preview_toggle.blockSignals(True)
+        self._show_preview_toggle.setChecked(True)
+        self._show_preview_toggle.blockSignals(False)
+
+    def _on_show_preview_toggled(self, checked: bool) -> None:
+        """User drove the preview toggle — honour it and stop auto-managing.
+
+        Once the user makes an explicit choice we leave the pane under their
+        control (a later narrowing does not override it), matching the
+        "don't fight manual resizing" invariant.
+        """
+        self._preview_auto_managed = False
+        if checked:
+            self._preview_collapsed = False
+            self._splitter.setSizes(list(self._preview_expanded_sizes))
+            self._show_preview_toggle.setVisible(True)
+        else:
+            self._preview_collapsed = True
+            self._splitter.setSizes([1, 0])
+            self._show_preview_toggle.setVisible(True)
+
+    def _on_show_residuals_toggled(self, checked: bool) -> None:
+        """User toggled the residual strip: forward it to the preview canvas."""
+        preview = getattr(self, "_preview", None)
+        if preview is not None:
+            preview.set_show_residuals(bool(checked))
+
+    # -- live preview (work item 1.3) -----------------------------------------
+    #
+    # Lifecycle: a trigger calls _request_preview_update(), which (a) updates the
+    # cheap visuals (series + spans + active range) SYNCHRONOUSLY so the plot
+    # tracks an edit/drag instantly, and (b) (re)starts a ~120 ms debounce timer.
+    # On timeout _launch_preview_sample() snapshots every input as plain data on
+    # the GUI thread, bumps _preview_generation, and starts an off-thread worker
+    # that samples the candidate curve(s). Results marshal back through
+    # _on_preview_ready / _on_preview_error, which drop any result whose
+    # generation no longer matches (a late/stale sample) and drain a single
+    # coalesced pending request. The worker reads ONLY its snapshots — never
+    # self, never a widget, never self._fit.
+
+    def _preview_series(self) -> list[PreviewSeries]:
+        """Data traces to draw. Base: ONE series from the dialog's x/y/err.
+
+        Subclasses (cross-group) override to draw one series per group.
+        """
+        xerr = None if self._xerr is None else np.asarray(self._xerr, dtype=float)
+        return [
+            PreviewSeries(
+                label="data",
+                x=np.asarray(self._x, dtype=float),
+                y=np.asarray(self._y, dtype=float),
+                yerr=np.asarray(self._yerr, dtype=float),
+                xerr=xerr,
+            )
+        ]
+
+    def _request_preview_update(self) -> None:
+        """Single entry point for every preview trigger.
+
+        Updates the cheap visuals (series, spans, active range) immediately and
+        restarts the debounce that launches the off-thread curve sample. Keep
+        this cheap: no fitting, no heavy sampling.
+        """
+        if self._shutting_down:
+            return
+        preview = getattr(self, "_preview", None)
+        if preview is None:
+            return
+
+        preview.set_series(self._preview_series())
+        preview.set_active_range(self._active_range_idx)
+        # Spans track instantly; the curve for each range reuses the last sampled
+        # curve (empty until the first sample completes) so we never fit here.
+        preview.set_ranges(self._current_preview_ranges())
+
+        self._preview_timer.start()
+
+    def _current_preview_ranges(self) -> list[PreviewRange]:
+        """PreviewRange list for the CURRENT spans, reusing the last curves.
+
+        Cheap: reads the range spans/windows off ``self._fit`` and reuses the
+        last off-thread-sampled curve (empty arrays before the first sample).
+        The in-mask is left empty here (recomputed on the sampling pass); the
+        canvas falls back to "all in" on a length mismatch.
+        """
+        empty = np.array([], dtype=float)
+        ranges: list[PreviewRange] = []
+        for idx, fit_range in enumerate(self._fit.ranges):
+            curve = self._last_preview_curves.get(idx, (empty, empty))
+            windows = list(fit_range.windows) if fit_range.windows else None
+            ranges.append(
+                PreviewRange(
+                    idx=idx,
+                    x_min=fit_range.x_min,
+                    x_max=fit_range.x_max,
+                    windows=windows,
+                    in_mask=empty.astype(bool),
+                    curve_x=curve[0],
+                    curve_y=curve[1],
+                    fitted=False,
+                )
+            )
+        return ranges
+
+    def _launch_preview_sample(self) -> None:
+        """Snapshot inputs on the GUI thread and start the off-thread sampler.
+
+        Coalescing: if a sample is already in flight, mark one pending request
+        and return; the ready/error handler drains it. Otherwise snapshot every
+        input as plain data, bump the generation token, and launch the worker.
+        """
+        # A timer event already dequeued before closeEvent stopped the timer
+        # must not spin up a worker on the shut-down runner.
+        if self._shutting_down:
+            return
+        if self._preview_active:
+            self._preview_pending = True
+            return
+
+        preview = getattr(self, "_preview", None)
+        if preview is None:
+            return
+
+        series = self._preview_series()
+        # Empty when the primary series carries no finite point — nothing to
+        # sample; show the empty state and skip the worker entirely.
+        primary = series[0] if series else None
+        if primary is None or not np.any(np.isfinite(np.asarray(primary.x, dtype=float))):
+            preview.set_state("empty")
+            return
+
+        # Snapshot each range as plain data: a fresh model, a copy of its params,
+        # bounds, and windows. Nothing here is read again off-thread.
+        range_snapshots: list[dict[str, object]] = []
+        for idx, fit_range in enumerate(self._fit.ranges):
+            model_snapshot = ParameterCompositeModel(
+                component_names=list(fit_range.model.component_names),
+                operators=list(fit_range.model.operators),
+            )
+            params_snapshot = ParameterSet(
+                [
+                    Parameter(
+                        name=p.name,
+                        value=float(p.value),
+                        min=float(p.min),
+                        max=float(p.max),
+                        fixed=bool(p.fixed),
+                    )
+                    for p in fit_range.parameters
+                ]
+            )
+            range_snapshots.append(
+                {
+                    "idx": idx,
+                    "model": model_snapshot,
+                    "params": params_snapshot,
+                    "x_min": fit_range.x_min,
+                    "x_max": fit_range.x_max,
+                    "windows": list(fit_range.windows) if fit_range.windows else None,
+                }
+            )
+
+        primary_x = np.asarray(primary.x, dtype=float).copy()
+        active_idx = self._active_range_idx
+        self._preview_generation += 1
+        gen = self._preview_generation
+
+        def _worker(_worker: object) -> object:
+            # OFF-THREAD: touches only the plain snapshots captured above.
+            out_ranges: list[PreviewRange] = []
+            for snap in range_snapshots:
+                idx = int(snap["idx"])
+                curve_x, curve_y = sample_parameter_model(
+                    snap["model"],
+                    snap["params"],
+                    snap["x_min"],
+                    snap["x_max"],
+                    snap["windows"],
+                )
+                # The in-mask is computed over the PRIMARY series' x for the
+                # active range only; other ranges leave it empty (canvas draws
+                # their span/curve without per-point greying).
+                if idx == active_idx:
+                    in_mask = windows_mask(primary_x, snap["windows"], snap["x_min"], snap["x_max"])
+                else:
+                    in_mask = np.array([], dtype=bool)
+                out_ranges.append(
+                    PreviewRange(
+                        idx=idx,
+                        x_min=snap["x_min"],
+                        x_max=snap["x_max"],
+                        windows=snap["windows"],
+                        in_mask=in_mask,
+                        curve_x=curve_x,
+                        curve_y=curve_y,
+                        fitted=False,
+                    )
+                )
+            return (gen, out_ranges)
+
+        self._preview_active = True
+        preview.set_state("loading")
+        self._tasks.start(
+            _worker,
+            on_finished=self._on_preview_ready,
+            on_error=self._on_preview_error,
+        )
+
+    def _on_preview_ready(self, payload: object) -> None:
+        """GUI thread: apply a fresh sample, or drop it if a newer one exists."""
+        gen = -1
+        out_ranges: list[PreviewRange] = []
+        if isinstance(payload, tuple) and len(payload) == 2:
+            gen, out_ranges = payload  # type: ignore[assignment]
+
+        if gen != self._preview_generation:
+            # A newer sample was launched after this one started — this result is
+            # stale. Do not draw it; still release the in-flight slot and drain.
+            self._finish_preview_sample()
+            return
+
+        preview = getattr(self, "_preview", None)
+        if preview is not None:
+            # Cache the sampled curve per range so the next SYNCHRONOUS span
+            # update can reuse it (spans move instantly; curve lags one sample).
+            self._last_preview_curves = {rng.idx: (rng.curve_x, rng.curve_y) for rng in out_ranges}
+            preview.set_series(self._preview_series())
+            preview.set_ranges(out_ranges)
+            preview.set_active_range(self._active_range_idx)
+            has_curve = any(np.asarray(rng.curve_y).size > 0 for rng in out_ranges)
+            preview.set_state("ready" if has_curve else "empty")
+
+        self._finish_preview_sample()
+
+    def _on_preview_error(self, message: str) -> None:
+        """GUI thread: surface the failure and drain any coalesced request."""
+        preview = getattr(self, "_preview", None)
+        if preview is not None:
+            preview.set_state("error", message)
+        self._finish_preview_sample()
+
+    def _finish_preview_sample(self) -> None:
+        """Release the in-flight slot; launch the coalesced request if any."""
+        self._preview_active = False
+        if self._preview_pending:
+            self._preview_pending = False
+            self._launch_preview_sample()
 
     def get_model_fit(self) -> ParameterModelFit | None:
         if self._removed:
@@ -650,16 +1299,23 @@ class ModelFitDialog(QDialog):
         self._error_value_label.setVisible(needs_value)
         self._error_value_spin.setVisible(needs_value)
         self._error_value_spin.setEnabled(needs_value)
+        self._request_preview_update()
 
     def _create_default_range(self) -> ModelFitRange:
         x_min = float(np.nanmin(self._x)) if np.any(np.isfinite(self._x)) else 0.0
         x_max = float(np.nanmax(self._x)) if np.any(np.isfinite(self._x)) else 1.0
 
         available = self._component_pool
-        default_component = _default_component_for_context(
-            self._x_key, self._parameter_name, available
-        )
-        model = ParameterCompositeModel([default_component], [])
+        # RESTORE (item 4.2): prefer the user's last-used model for this
+        # (base_param, x_key) if one was remembered and still parses within this
+        # context's pool; otherwise fall back to the context default. Purely
+        # non-load-bearing — any failure yields the default.
+        model = _load_last_model(self._parameter_name, self._x_key, available, self._model_memory)
+        if model is None:
+            default_component = _default_component_for_context(
+                self._x_key, self._parameter_name, available
+            )
+            model = ParameterCompositeModel([default_component], [])
 
         params = ParameterSet()
         y_mean = float(np.nanmean(self._y)) if np.any(np.isfinite(self._y)) else 0.0
@@ -695,10 +1351,32 @@ class ModelFitDialog(QDialog):
 
         return ModelFitRange(x_min=x_min, x_max=x_max, model=model, parameters=params)
 
-    def _add_range(self) -> None:
-        self._fit.ranges.append(self._create_default_range())
+    def _add_range_with_bounds(self, x_min: float | None, x_max: float | None) -> None:
+        """Append a new range (default model/params) with the given bounds — or the
+        data-extent default when None — then rebuild, activate it, and refresh the
+        preview.
+
+        The "Add Range" button and the plot's drag-out gesture both converge here,
+        so a drag-created range gets the SAME ``_create_default_range`` model/param
+        seeding as the button. Degenerate drag bounds (inverted or zero-width) fall
+        back to the default data-extent bounds rather than creating a bad range.
+        """
+        new_range = self._create_default_range()
+        if x_min is not None and x_max is not None:
+            lo = float(x_min)
+            hi = float(x_max)
+            if hi > lo:
+                new_range.x_min = lo
+                new_range.x_max = hi
+            # else: inverted/degenerate span — keep the default data-extent bounds.
+        self._fit.ranges.append(new_range)
         self._rebuild_ranges_ui()
-        self._select_range(len(self._fit.ranges) - 1)
+        new_idx = len(self._fit.ranges) - 1
+        self._set_active_range(new_idx)
+        self._request_preview_update()
+
+    def _add_range(self) -> None:
+        self._add_range_with_bounds(None, None)
 
     def _remove_range(self, idx: int) -> None:
         if idx < 0 or idx >= len(self._fit.ranges):
@@ -714,195 +1392,327 @@ class ModelFitDialog(QDialog):
         previous_idx = self._active_range_idx if self._active_range_idx is not None else 0
 
         clear_layout(self._ranges_host)
+        self._range_cards = []
 
-        self._range_widgets = []
-
-        for idx, fit_range in enumerate(self._fit.ranges):
-            row_widget = QWidget()
-            row = QHBoxLayout(row_widget)
-
-            active = QCheckBox("active")
-            active.setChecked(True)
-            active.stateChanged.connect(lambda _state, i=idx: self._on_range_active_changed(i))
-            row.addWidget(active)
-
-            row.addWidget(QLabel(f"Range {idx + 1}"))
-
-            has_windows = bool(fit_range.windows)
-
-            xmin = QDoubleSpinBox()
-            xmin.setRange(-1e12, 1e12)
-            xmin.setDecimals(8)
-            xmin.setValue(float(fit_range.x_min if fit_range.x_min is not None else 0.0))
-            xmin.valueChanged.connect(lambda _v, i=idx: self._on_range_bounds_changed(i))
-            row.addWidget(QLabel("x min"))
-            row.addWidget(xmin)
-
-            xmax = QDoubleSpinBox()
-            xmax.setRange(-1e12, 1e12)
-            xmax.setDecimals(8)
-            xmax.setValue(float(fit_range.x_max if fit_range.x_max is not None else 0.0))
-            xmax.valueChanged.connect(lambda _v, i=idx: self._on_range_bounds_changed(i))
-            row.addWidget(QLabel("x max"))
-            row.addWidget(xmax)
-
-            if has_windows:
-                xmin.setEnabled(False)
-                xmax.setEnabled(False)
-                xmin.setToolTip("Fit windows below override the range bounds.")
-                xmax.setToolTip("Fit windows below override the range bounds.")
-
-            model_label = QLabel(fit_range.model.formula_string())
-            model_label.setMinimumWidth(220)
-            row.addWidget(model_label)
-
-            status_label = QLabel(self._status_text_for_range(fit_range))
-            status_label.setTextFormat(Qt.TextFormat.RichText)
-            row.addWidget(status_label)
-
-            edit_btn = QPushButton("Edit Model")
-            edit_btn.clicked.connect(lambda _checked=False, i=idx: self._edit_model(i))
-            row.addWidget(edit_btn)
-
-            fit_btn = QPushButton("Run Fit")
-            fit_btn.clicked.connect(lambda _checked=False, i=idx: self._run_fit(i))
-            row.addWidget(fit_btn)
-
-            remove_btn = QPushButton("Remove")
-            remove_btn.clicked.connect(lambda _checked=False, i=idx: self._remove_range(i))
-            row.addWidget(remove_btn)
-
-            select_btn = QPushButton("Edit Params")
-            select_btn.clicked.connect(lambda _checked=False, i=idx: self._select_range(i))
-            row.addWidget(select_btn)
-
-            if self._supports_windows:
-                add_window_btn = QPushButton("+ Window")
-                add_window_btn.setToolTip(
-                    "Restrict this range to a union of (min, max) windows — one model "
-                    "fitted across all of them. Useful for excluding a region (e.g. "
-                    "the critical region around a transition) from the fit."
-                )
-                add_window_btn.clicked.connect(lambda _checked=False, i=idx: self._add_window(i))
-                row.addWidget(add_window_btn)
-
-            row.addStretch()
-            self._ranges_host.addWidget(row_widget)
-
-            windows = fit_range.windows if self._supports_windows else None
-            for widx, (w_lo, w_hi) in enumerate(windows or []):
-                window_widget = QWidget()
-                window_row = QHBoxLayout(window_widget)
-                window_row.addSpacing(36)
-                window_row.addWidget(QLabel(f"Window {widx + 1}"))
-
-                w_min = QDoubleSpinBox()
-                w_min.setRange(-1e12, 1e12)
-                w_min.setDecimals(8)
-                w_min.setValue(float(w_lo))
-                w_min.valueChanged.connect(
-                    lambda value, i=idx, w=widx: self._on_window_bounds_changed(i, w, 0, value)
-                )
-                window_row.addWidget(QLabel("min"))
-                window_row.addWidget(w_min)
-
-                w_max = QDoubleSpinBox()
-                w_max.setRange(-1e12, 1e12)
-                w_max.setDecimals(8)
-                w_max.setValue(float(w_hi))
-                w_max.valueChanged.connect(
-                    lambda value, i=idx, w=widx: self._on_window_bounds_changed(i, w, 1, value)
-                )
-                window_row.addWidget(QLabel("max"))
-                window_row.addWidget(w_max)
-
-                remove_window_btn = QPushButton("Remove Window")
-                remove_window_btn.clicked.connect(
-                    lambda _checked=False, i=idx, w=widx: self._remove_window(i, w)
-                )
-                window_row.addWidget(remove_window_btn)
-                window_row.addStretch()
-                self._ranges_host.addWidget(window_widget)
-
-            self._range_widgets.append(
-                _RangeWidgets(
-                    active=active,
-                    x_min=xmin,
-                    x_max=xmax,
-                    model_label=model_label,
-                    edit_button=edit_btn,
-                    fit_button=fit_btn,
-                    remove_button=remove_btn,
-                    status_label=status_label,
-                )
-            )
+        active_idx = min(previous_idx, len(self._fit.ranges) - 1) if self._fit.ranges else 0
+        for idx in range(len(self._fit.ranges)):
+            card = RangeCard(idx)
+            card.set_state(self._range_card_view(idx, show_run=(idx == active_idx)))
+            card.set_active(idx == active_idx)
+            card.selected.connect(self._select_range)
+            card.run_requested.connect(self._run_fit)
+            card.edit_model_requested.connect(self._edit_model)
+            card.remove_requested.connect(self._remove_range)
+            self._ranges_host.addWidget(card)
+            self._range_cards.append(card)
 
         self._post_rebuild_ranges_ui()
-        self._refresh_range_selector()
         if self._fit.ranges:
             self._select_range(max(0, min(previous_idx, len(self._fit.ranges) - 1)))
+
+    def _range_card_view(self, idx: int, *, show_run: bool) -> RangeCardView:
+        """Assemble the plain render payload for range *idx*'s card.
+
+        Bounds text uses the ``∪`` union formatting from ``_range_bounds_text``;
+        the status chip reuses the same verdict path (``assess_fit_quality`` /
+        ``fit_quality_chip_html``) the details pane uses, so card and result box
+        never disagree.
+        """
+        fit_range = self._fit.ranges[idx]
+        result = self._result_for_range(idx)
+
+        status: str
+        chip_html = ""
+        tooltip = ""
+        if result is None:
+            status = "not_run"
+        elif getattr(result, "success", False):
+            status = "success"
+            chip_html = self._range_status_chip_html(fit_range, result)
+            chi2 = getattr(result, "chi_squared", None)
+            rchi2 = getattr(result, "reduced_chi_squared", None)
+            if chi2 is not None and rchi2 is not None:
+                tooltip = f"chi2 = {float(chi2):.6g}, reduced chi2 = {float(rchi2):.6g}"
+        else:
+            status = "failed"
+            tooltip = getattr(result, "message", "") or "No convergence"
+
+        return RangeCardView(
+            idx=idx,
+            title=self._range_card_title(idx),
+            swatch_color=range_span_color(idx),
+            bounds_text=self._range_bounds_text(fit_range),
+            formula=fit_range.model.formula_string(),
+            status=status,  # type: ignore[arg-type]
+            status_chip_html=chip_html,
+            status_tooltip=tooltip,
+            can_remove=len(self._fit.ranges) > 1,
+            show_run=show_run,
+        )
+
+    def _range_card_title(self, idx: int) -> str:
+        """Card title for range *idx*. Overridable so a subclass with a single,
+        always-active range (cross-group mode) can drop the redundant "Range 1"
+        label; the base numbering is unchanged for the standard multi-range case.
+        """
+        return f"Range {idx + 1}"
+
+    def _range_bounds_text(self, fit_range: ModelFitRange) -> str:
+        """Compact bounds string for a card, e.g. "[12–40] ∪ [55–88] K".
+
+        The card is now the range selector, so this is the sole authority for a
+        range's rendered bounds. Appends the x-unit when the abscissa has one.
+        """
+        unit = _x_unit(self._x_key)
+        suffix = f" {unit}" if unit else ""
+        if fit_range.windows:
+            union = " ∪ ".join(f"[{lo:.6g}–{hi:.6g}]" for lo, hi in fit_range.windows)
+            return f"{union}{suffix}"
+        x_min = fit_range.x_min if fit_range.x_min is not None else float("nan")
+        x_max = fit_range.x_max if fit_range.x_max is not None else float("nan")
+        return f"[{x_min:.6g}–{x_max:.6g}]{suffix}"
+
+    def _range_status_chip_html(self, fit_range: ModelFitRange, result: object) -> str:
+        """Verdict chip for a successful range, via the shared quality path.
+
+        Returns "" when no verdict applies (unit/scatter weights, ν < 1, or a
+        result without a point count — e.g. a cross-group/legacy bridge result).
+        """
+        if getattr(result, "error_mode", None) in (ErrorMode.NONE.value, ErrorMode.SCATTER.value):
+            return ""
+        n_points = getattr(result, "n_points", 0)
+        if not n_points or n_points <= 0:
+            return ""
+        n_free = len(fit_range.parameters.free_parameters)
+        quality = assess_fit_quality(
+            result.chi_squared, n_points - n_free, fit_quality_confidence()
+        )
+        if quality.verdict is None:
+            return ""
+        quality_dict = {
+            "verdict": quality.verdict,
+            "band_low": float(quality.band_low),
+            "band_high": float(quality.band_high),
+            "confidence": float(quality.confidence),
+            "dof": int(quality.dof),
+        }
+        params_at_bound = list(getattr(result, "params_at_bound", ()) or [])
+        return fit_quality_chip_html(quality_dict, params_at_bound)
 
     def _post_rebuild_ranges_ui(self) -> None:
         """Hook for subclasses to adjust freshly rebuilt range rows."""
 
-    def _refresh_range_selector(self) -> None:
-        self._range_selector.blockSignals(True)
-        self._range_selector.clear()
-        for idx, fit_range in enumerate(self._fit.ranges, start=1):
-            if fit_range.windows:
-                union = " ∪ ".join(f"[{lo:.6g}, {hi:.6g}]" for lo, hi in fit_range.windows)
-                text = f"Range {idx}: {union}"
-            else:
-                x_min = fit_range.x_min if fit_range.x_min is not None else float("nan")
-                x_max = fit_range.x_max if fit_range.x_max is not None else float("nan")
-                text = f"Range {idx}: [{x_min:.6g}, {x_max:.6g}]"
-            self._range_selector.addItem(text)
-        self._range_selector.blockSignals(False)
+    # ── details-pane fit-region editor (contract C-REGIONROW / C-REGION) ──────
 
-    def _add_window(self, idx: int) -> None:
-        if idx < 0 or idx >= len(self._fit.ranges):
-            return
+    def _resolved_intervals(self, fit_range: ModelFitRange) -> list[tuple[float, float]]:
+        """``included_intervals`` with open (``None``) bounds resolved to data.
+
+        ``included_intervals`` reports an unbounded plain range as
+        ``(-inf, +inf)``; the GUI resolves those to the data extent
+        (``_x_min_data`` / ``_x_max_data``) before display, mirroring how the
+        old window seeding resolved missing bounds.
+        """
+        resolved: list[tuple[float, float]] = []
+        for lo, hi in included_intervals(fit_range):
+            r_lo = self._x_min_data if not np.isfinite(lo) else float(lo)
+            r_hi = self._x_max_data if not np.isfinite(hi) else float(hi)
+            resolved.append((float(r_lo), float(r_hi)))
+        return resolved
+
+    def _rebuild_fit_region_rows(self, idx: int) -> None:
+        """Rebuild the fit-region interval rows for the ACTIVE range.
+
+        Replaces the old plain-bounds pair AND the exclusion-window sub-block:
+        one row per included interval of the active range, keyed in
+        ``self._region_row_spins`` by INTERVAL INDEX. The per-row Remove button
+        is hidden when there is exactly one interval (a plain range can never be
+        emptied below one interval).
+        """
+        clear_layout(self._region_rows_layout)
+        self._region_row_spins = {}
+        self._region_remove_btns = []
+
         fit_range = self._fit.ranges[idx]
-        if not fit_range.windows:
-            # First window inherits the current range bounds so the fitted
-            # span is unchanged until the user edits or adds windows.
-            lo = float(fit_range.x_min if fit_range.x_min is not None else self._x_min_data)
-            hi = float(fit_range.x_max if fit_range.x_max is not None else self._x_max_data)
-            fit_range.windows = [(lo, hi)]
+        intervals = self._resolved_intervals(fit_range)
+        show_remove = len(intervals) > 1
+
+        for iidx, (lo, hi) in enumerate(intervals):
+            row_widget = QWidget()
+            row = QHBoxLayout(row_widget)
+            row.setContentsMargins(0, 0, 0, 0)
+            row.addWidget(QLabel(f"Interval {iidx + 1}"))
+
+            i_min = QDoubleSpinBox()
+            i_min.setRange(-1e12, 1e12)
+            i_min.setDecimals(8)
+            i_min.setValue(float(lo))
+            i_min.valueChanged.connect(
+                lambda value, i=iidx: self._on_region_interval_edited(i, 0, value)
+            )
+            row.addWidget(i_min)
+
+            row.addWidget(QLabel("–"))
+
+            i_max = QDoubleSpinBox()
+            i_max.setRange(-1e12, 1e12)
+            i_max.setDecimals(8)
+            i_max.setValue(float(hi))
+            i_max.valueChanged.connect(
+                lambda value, i=iidx: self._on_region_interval_edited(i, 1, value)
+            )
+            row.addWidget(i_max)
+
+            self._region_row_spins[iidx] = (i_min, i_max)
+
+            remove_btn = QPushButton("Remove")
+            remove_btn.setToolTip("Drop this included interval from the fit region.")
+            remove_btn.clicked.connect(
+                lambda _checked=False, i=iidx: self._remove_interval(self._active_range_idx, i)
+            )
+            remove_btn.setVisible(show_remove)
+            row.addWidget(remove_btn)
+            self._region_remove_btns.append(remove_btn)
+
+            row.addStretch()
+            self._region_rows_layout.addWidget(row_widget)
+
+    def _current_region_intervals(self) -> list[tuple[float, float]]:
+        """Read the current interval list straight off the visible spin rows."""
+        intervals: list[tuple[float, float]] = []
+        for iidx in sorted(self._region_row_spins):
+            i_min, i_max = self._region_row_spins[iidx]
+            intervals.append((float(i_min.value()), float(i_max.value())))
+        return intervals
+
+    def _on_region_interval_edited(self, interval_idx: int, bound: int, value: float) -> None:
+        """A fit-region interval's min/max spin was edited (numeric path).
+
+        Builds the new interval list from the current rows, clamps the edited
+        interval so ``min <= max``, writes it back through
+        ``set_included_intervals`` (the collapse rule auto-plains a down-to-1
+        result), invalidates the stale result, refreshes the card, and — per the
+        FEEDBACK-LOOP RULE — a numeric edit does a full preview update.
+        """
+        idx = self._active_range_idx
+        if idx is None or idx < 0 or idx >= len(self._fit.ranges):
+            return
+        intervals = self._current_region_intervals()
+        if interval_idx < 0 or interval_idx >= len(intervals):
+            return
+        lo, hi = intervals[interval_idx]
+        # Clamp so the edited bound never inverts its partner.
+        if bound == 0:
+            lo = float(value)
+            if lo > hi:
+                hi = lo
         else:
-            fit_range.windows = list(fit_range.windows) + [(self._x_min_data, self._x_max_data)]
-        fit_range.result = None
-        self._rebuild_ranges_ui()
-        self._select_range(idx)
+            hi = float(value)
+            if hi < lo:
+                lo = hi
+        intervals[interval_idx] = (lo, hi)
 
-    def _remove_window(self, idx: int, window_idx: int) -> None:
-        if idx < 0 or idx >= len(self._fit.ranges):
-            return
         fit_range = self._fit.ranges[idx]
-        windows = list(fit_range.windows or [])
-        if window_idx < 0 or window_idx >= len(windows):
-            return
-        del windows[window_idx]
-        fit_range.windows = windows or None
-        fit_range.result = None
-        self._rebuild_ranges_ui()
-        self._select_range(idx)
-
-    def _on_window_bounds_changed(
-        self, idx: int, window_idx: int, bound: int, value: float
-    ) -> None:
-        if idx < 0 or idx >= len(self._fit.ranges):
-            return
-        fit_range = self._fit.ranges[idx]
-        windows = list(fit_range.windows or [])
-        if window_idx < 0 or window_idx >= len(windows):
-            return
-        lo, hi = windows[window_idx]
-        windows[window_idx] = (float(value), hi) if bound == 0 else (lo, float(value))
-        fit_range.windows = windows
-        # The stored result no longer corresponds to the edited windows.
+        set_included_intervals(fit_range, intervals)
         self._invalidate_range_result(idx)
-        self._refresh_range_selector()
+        self._refresh_range_card(idx)
+        # Numeric edit: full preview update (canvas has no live span to fight).
+        self._request_preview_update()
+
+    def _remove_interval(self, idx: int, interval_idx: int) -> None:
+        """Drop one included interval from the fit region.
+
+        NEVER-EMPTY guard: removing the last interval is a no-op (a fit region
+        can never be emptied). Otherwise the survivors are written through
+        ``set_included_intervals`` — its collapse rule plains a down-to-1 result
+        back to ``windows is None`` — then the rows/card/preview refresh.
+        """
+        if idx is None or idx < 0 or idx >= len(self._fit.ranges):
+            return
+        fit_range = self._fit.ranges[idx]
+        intervals = self._resolved_intervals(fit_range)
+        if interval_idx < 0 or interval_idx >= len(intervals):
+            return
+        if len(intervals) <= 1:
+            # Never empty: refuse to drop the last interval.
+            return
+        del intervals[interval_idx]
+        set_included_intervals(fit_range, intervals)
+        self._invalidate_range_result(idx)
+        self._rebuild_fit_region_rows(idx)
+        self._refresh_range_card(idx)
+        self._request_preview_update()
+
+    def _on_exclude_region_clicked(self) -> None:
+        """The details-pane "Exclude region…" button: carve a default gap."""
+        self._exclude_default_gap(self._active_range_idx)
+
+    def _exclude_default_gap(self, idx: int | None) -> None:
+        """Carve a sensible default gap when there is no drag interval.
+
+        The button has no drag interval, so carve the MIDDLE THIRD of the widest
+        current included interval, giving the user two intervals to then
+        fine-tune via the spins or by dragging on the plot. Routes through the
+        shared ``_exclude_region``.
+        """
+        if idx is None or idx < 0 or idx >= len(self._fit.ranges):
+            return
+        fit_range = self._fit.ranges[idx]
+        intervals = self._resolved_intervals(fit_range)
+        # Widest current interval — the one with the most room to carve.
+        lo, hi = max(intervals, key=lambda interval: interval[1] - interval[0])
+        span = hi - lo
+        if span <= 0:
+            return
+        gap_lo = lo + span / 3.0
+        gap_hi = lo + 2.0 * span / 3.0
+        self._exclude_region(idx, gap_lo, gap_hi)
+
+    def _exclude_region(self, idx: int, lo: float, hi: float) -> None:
+        """Carve ``[lo, hi]`` out of the fit region (shared button + canvas path).
+
+        Resolves the range's effective bounds (open bounds fall back to the data
+        extent), carves the gap out of the current window union, and — only if
+        that actually changed the coverage — writes the survivors through
+        ``set_included_intervals``, invalidates the stale result, rebuilds the
+        interval rows, and refreshes the card + preview.
+
+        NEVER-EMPTY: ``carve_window_gap`` no-ops an all-excluding carve, so the
+        result is always non-empty; ``set_included_intervals`` would reject an
+        empty list as a second guard.
+        """
+        if idx < 0 or idx >= len(self._fit.ranges):
+            return
+        fit_range = self._fit.ranges[idx]
+        x_min = fit_range.x_min if fit_range.x_min is not None else self._x_min_data
+        x_max = fit_range.x_max if fit_range.x_max is not None else self._x_max_data
+
+        new_windows = carve_window_gap(fit_range.windows, x_min, x_max, lo, hi)
+
+        # NO-OP GUARD: normalise the current windows to what carve_window_gap
+        # would have seeded (None -> [(x_min, x_max)]) and compare. A carve that
+        # is disjoint from every window (a stray drag/click outside the fitted
+        # region) returns the seeded windows unchanged; dropping a good fit for
+        # that would be a nasty surprise, so early-return without invalidating.
+        current = list(fit_range.windows) if fit_range.windows else [(float(x_min), float(x_max))]
+        if new_windows == current:
+            return
+
+        set_included_intervals(fit_range, new_windows)
+        self._invalidate_range_result(idx)
+        self._rebuild_fit_region_rows(idx)
+        self._refresh_range_card(idx)
+        self._request_preview_update()
+
+    def _refresh_range_card(self, idx: int) -> None:
+        """Repaint range *idx*'s card from a freshly-rebuilt view (chip + bounds).
+
+        Preserves the card's current ``show_run`` (active-ness) so a status/bounds
+        refresh does not flip which card exposes the Run Fit action.
+        """
+        if idx < 0 or idx >= len(self._range_cards):
+            return
+        show_run = idx == self._active_range_idx
+        self._range_cards[idx].set_state(self._range_card_view(idx, show_run=show_run))
 
     def _invalidate_range_result(self, idx: int) -> None:
         """Drop a range's fit result after its mask changed; refresh labels."""
@@ -910,18 +1720,11 @@ class ModelFitDialog(QDialog):
         if fit_range.result is None:
             return
         fit_range.result = None
-        if idx < len(self._range_widgets):
-            self._range_widgets[idx].status_label.setText(self._status_text_for_range(fit_range))
+        self._refresh_range_card(idx)
         if self._active_range_idx == idx:
-            self._chi2_label.setText(
-                f'<span style="color:{tokens.ACCENT};">Fitting not yet run for selected range</span>'
-            )
+            self._chi2_label.setText(info_html("Fitting not yet run for selected range"))
             self._quality_label.setText("")
-
-    def _on_range_selector_changed(self, idx: int) -> None:
-        if idx < 0:
-            return
-        self._select_range(idx)
+            self._apply_result_box_style(None)
 
     def _quality_text_for_range(self, fit_range: ModelFitRange) -> str:
         """χ² quality verdict line for a fitted range (empty when not fitted)."""
@@ -929,10 +1732,9 @@ class ModelFitDialog(QDialog):
         if result is None or not result.success:
             return ""
         if result.error_mode in (ErrorMode.NONE.value, ErrorMode.SCATTER.value):
-            return (
-                f'<span style="color:{tokens.ACCENT};">No χ² quality verdict: with '
-                "unit-weight or scatter-estimated errors χ²ᵣ carries no goodness "
-                "information.</span>"
+            return info_html(
+                "No χ² quality verdict: with unit-weight or scatter-estimated "
+                "errors χ²ᵣ carries no goodness information."
             )
         if result.n_points <= 0:
             # Results built outside fit_parameter_model (cross-group bridge,
@@ -944,15 +1746,10 @@ class ModelFitDialog(QDialog):
             result.chi_squared, result.n_points - n_free, fit_quality_confidence()
         )
         if quality.verdict is None:
-            return (
-                f'<span style="color:{tokens.ACCENT};">No χ² quality verdict '
-                "(no degrees of freedom).</span>"
-            )
-        color = {
-            "good": tokens.OK,
-            "poor": tokens.WARN,
-            "overdone": tokens.ACCENT,
-        }[quality.verdict]
+            return info_html("No χ² quality verdict (no degrees of freedom).")
+        # Reuse the shared verdict→colour map (good=green, poor=error,
+        # overdone=accent) instead of re-rolling one here.
+        color = _FIT_VERDICT_COLOURS.get(quality.verdict, tokens.TEXT_MUTED)
         return (
             f'<span style="color:{color};">Quality of fit: <b>{quality.verdict}</b> '
             f"— χ²ᵣ target band {quality.band_low:.3f} to {quality.band_high:.3f} "
@@ -960,25 +1757,124 @@ class ModelFitDialog(QDialog):
             "Hover for what this means.</span>"
         )
 
-    def _status_text_for_range(self, fit_range: ModelFitRange) -> str:
-        if fit_range.result is None:
-            return f'<span style="color:{tokens.ACCENT};">Not run</span>'
-        if fit_range.result.success:
-            return f'<span style="color:{tokens.OK};">Success</span>'
-        return f'<span style="color:{tokens.ERROR};">Failed</span>'
+    def _apply_range_bounds(self, idx: int, x_min: float, x_max: float, *, source: str) -> None:
+        """Funnel for a range-edge change (details-pane or plot drag of a PLAIN range).
 
-    def _on_range_active_changed(self, idx: int) -> None:
+        A plain range's edges ARE interval 0 of its fit region, so this writes
+        the single interval ``(x_min, x_max)`` through ``set_included_intervals``
+        (which keeps ``windows is None`` for a 1-interval range) and mirrors it
+        into the interval-0 spin pair. Only fires for plain ranges — a windowed
+        range shows no whole-range edges (only window edges are draggable).
+        """
         if idx < 0 or idx >= len(self._fit.ranges):
             return
-
-    def _on_range_bounds_changed(self, idx: int) -> None:
-        if idx < 0 or idx >= len(self._fit.ranges):
-            return
-        widgets = self._range_widgets[idx]
         fit_range = self._fit.ranges[idx]
+        # A plain-range edge move writes interval 0; the collapse rule keeps
+        # windows None for the single-interval case.
+        set_included_intervals(fit_range, [(float(x_min), float(x_max))])
         self._invalidate_range_result(idx)
-        fit_range.x_min = float(widgets.x_min.value())
-        fit_range.x_max = float(widgets.x_max.value())
+
+        # Mirror into the details-pane interval-0 spin pair, but ONLY for the
+        # active range: the canvas only ever drags the active range, so a
+        # non-active idx here is a programmatic call and the details pane already
+        # shows another range. A non-active card's bounds_text refreshes below.
+        if idx == self._active_range_idx:
+            spins = self._region_row_spins.get(0)
+            if spins is not None:
+                i_min, i_max = spins
+                with QSignalBlocker(i_min):
+                    i_min.setValue(float(x_min))
+                with QSignalBlocker(i_max):
+                    i_max.setValue(float(x_max))
+
+        self._refresh_range_card(idx)
+
+        # FEEDBACK-LOOP RULE (canvas vs spinbox): during a canvas drag the
+        # TrendPreviewCanvas already mutates and redraws its own span artist
+        # live, so a full _request_preview_update() here would synchronously
+        # set_ranges() and fight the in-progress drag. For a canvas source we
+        # therefore only kick the debounce so the OFF-THREAD curve resamples to
+        # catch up — the canvas owns its spans mid-drag. For a spinbox (numeric)
+        # edit there is no live span, so we call the full update to move the
+        # canvas spans to match the typed value.
+        if source == "canvas":
+            self._preview_timer.start()
+        else:
+            self._request_preview_update()
+
+    def _connect_plot_range_signals(self) -> None:
+        """Connect the plot's add/select gestures. Overridable so single-range
+        subclasses (cross-group) can leave them inert."""
+        self._preview.range_select_requested.connect(self._on_preview_range_select)
+        self._preview.range_add_requested.connect(self._on_preview_range_add)
+
+    def _on_preview_range_select(self, idx: int) -> None:
+        """Canvas clicked a non-active range's span: make it the active range.
+
+        The bounds-guard lives inside ``_set_active_range``; ``from_plot=True``
+        marks the plot as the selection source (contract C-ACTIVE).
+        """
+        self._set_active_range(idx, from_plot=True)
+
+    def _on_preview_range_add(self, x_min: float, x_max: float) -> None:
+        """Canvas dragged out a new span on empty area: append a seeded range."""
+        self._add_range_with_bounds(x_min, x_max)
+
+    def _on_preview_range_edge_dragged(self, idx: int, x_min: float, x_max: float) -> None:
+        """Canvas dragged a range edge: mirror it into the model + spinboxes.
+
+        Only the active range's edges are draggable, so a signal for a
+        non-active index is defensively ignored.
+        """
+        if idx != self._active_range_idx:
+            return
+        self._apply_range_bounds(idx, float(x_min), float(x_max), source="canvas")
+
+    def _on_preview_window_edge_dragged(
+        self, idx: int, window_idx: int, lo: float, hi: float
+    ) -> None:
+        """Canvas dragged a window edge: mirror it into the model + interval spins.
+
+        The window index equals the fit-region interval index by construction,
+        so this updates interval ``window_idx`` and writes the whole list back
+        through ``set_included_intervals`` (keeping the envelope / collapse rule
+        consistent), then mirrors the interval spin pair.
+        """
+        if idx != self._active_range_idx:
+            return
+        if idx < 0 or idx >= len(self._fit.ranges):
+            return
+        fit_range = self._fit.ranges[idx]
+        intervals = self._resolved_intervals(fit_range)
+        if window_idx < 0 or window_idx >= len(intervals):
+            return
+        intervals[window_idx] = (float(lo), float(hi))
+        set_included_intervals(fit_range, intervals)
+        self._invalidate_range_result(idx)
+
+        # Mirror the corresponding interval spinboxes under a signal blocker so
+        # they do not re-fire _on_region_interval_edited and loop. The interval
+        # index == window index by construction (idx is the active range here).
+        spins = self._region_row_spins.get(window_idx)
+        if spins is not None:
+            i_min, i_max = spins
+            with QSignalBlocker(i_min):
+                i_min.setValue(float(lo))
+            with QSignalBlocker(i_max):
+                i_max.setValue(float(hi))
+
+        self._refresh_range_card(idx)
+        # Canvas-source: curve resample only (see FEEDBACK-LOOP RULE above).
+        self._preview_timer.start()
+
+    def _on_preview_exclude_region(self, idx: int, lo: float, hi: float) -> None:
+        """Right-drag exclude gesture: carve ``[lo, hi]`` out of the fit region.
+
+        The plot drag supplies a real interval, so it routes straight through
+        the shared ``_exclude_region`` (the button's default-gap path is the
+        other caller).
+        """
+        self._exclude_region(idx, lo, hi)
 
     def _edit_model(self, idx: int) -> None:
         if idx < 0 or idx >= len(self._fit.ranges):
@@ -998,6 +1894,14 @@ class ModelFitDialog(QDialog):
             return
 
         fit_range.model = model
+        # Remember this model for the (base_param, x_key) so the next fresh
+        # dialog seeds it as the default (item 4.2). Best-effort / silent.
+        _store_last_model_expression(
+            self._parameter_name,
+            self._x_key,
+            model.component_expression_string(),
+            self._model_memory,
+        )
 
         # Critical-temperature trend components (CriticalDivergence,
         # OrderParameter) default to an unphysical Tc=10; seed Tc (and a cheap
@@ -1028,8 +1932,14 @@ class ModelFitDialog(QDialog):
         fit_range.parameters = new_params
         fit_range.result = None
         self._on_model_edited(idx)
+        # The old model's sampled curve no longer applies — drop it so the
+        # synchronous span pass does not reuse a stale line until the next
+        # off-thread sample lands.
+        self._last_preview_curves.pop(idx, None)
 
         self._rebuild_ranges_ui()
+        # _select_range already re-requests the preview; the stale-curve pop
+        # above is the only extra work the model edit needs here.
         self._select_range(idx)
 
     def _on_model_edited(self, idx: int) -> None:
@@ -1042,6 +1952,123 @@ class ModelFitDialog(QDialog):
         ``self._last_config``, which span the single shared range) override
         this to drop that cache too.
         """
+
+    # -- data-aware "Guess seeds" (item 3.3) ----------------------------------
+    #
+    # USER-INITIATED ONLY. This must never fire on a model edit or a range
+    # selection — the seed-preserve invariant is pinned by
+    # tests/gui/test_model_fit_seed_preserve.py. It mirrors the cross-group
+    # "Suggest roles…" off-thread pattern: snapshot plain data on the GUI thread,
+    # run core off-thread on ``self._tasks`` under its own ``_guess_in_progress``
+    # flag (NOT ``_fit_in_progress``), then write the returned values back through
+    # the shared commit path so they are normalised/persisted like any edit.
+
+    def _set_guess_busy(self, busy: bool) -> None:
+        self._guess_in_progress = busy
+        self._guess_seeds_btn.setEnabled(not busy)
+
+    def _on_guess_seeds_clicked(self) -> None:
+        """Suggest data-aware seeds for the ACTIVE range, off-thread."""
+        if self._guess_in_progress or self._fit_in_progress:
+            return
+        idx = self._active_range_idx
+        if idx is None or idx < 0 or idx >= len(self._fit.ranges):
+            return
+
+        # Persist any pending table edit first so the snapshot reflects the
+        # current bounds/fixed flags, then snapshot as plain data.
+        self._commit_param_table(notify_adjustments=False)
+        fit_range = self._fit.ranges[idx]
+
+        model_snapshot = ParameterCompositeModel(
+            component_names=list(fit_range.model.component_names),
+            operators=list(fit_range.model.operators),
+        )
+
+        # Mask x/y/yerr to the active range (same idiom as the preview sampler)
+        # so seeds reflect the fitted region. Fall back to full data if the mask
+        # leaves fewer than two points to estimate from.
+        x_full = np.asarray(self._x, dtype=float).copy()
+        y_full = np.asarray(self._y, dtype=float).copy()
+        yerr_full = np.asarray(self._yerr, dtype=float).copy()
+        windows = list(fit_range.windows) if fit_range.windows else None
+        mask = windows_mask(x_full, windows, fit_range.x_min, fit_range.x_max)
+        if mask.size == x_full.size and int(np.count_nonzero(mask)) >= 2:
+            x_masked = x_full[mask]
+            y_masked = y_full[mask]
+            yerr_masked = yerr_full[mask]
+        else:
+            x_masked, y_masked, yerr_masked = x_full, y_full, yerr_full
+
+        self._set_guess_busy(True)
+        self._guess_status_label.setText(info_html("Guessing seeds…"))
+
+        def _worker(_worker: object) -> object:
+            # OFF-THREAD: reads only the plain snapshots captured above.
+            return suggest_model_seeds(model_snapshot, x_masked, y_masked, yerr_masked)
+
+        self._guess_target_idx = idx
+        self._tasks.start(
+            _worker,
+            on_finished=self._on_guess_seeds_done,
+            on_error=self._on_guess_seeds_error,
+        )
+
+    def _on_guess_seeds_done(self, payload: object) -> None:
+        """GUI thread: write returned seeds into the active range's param table."""
+        self._set_guess_busy(False)
+        seeds = payload if isinstance(payload, dict) else {}
+        if not seeds:
+            self._guess_status_label.setText(
+                info_html("No data-aware seed available for this model")
+            )
+            return
+
+        # Only touch the range that was active when Guess was launched, and only
+        # if it is still the active range (a selection change mid-run makes the
+        # result stale for the table currently shown).
+        target_idx = getattr(self, "_guess_target_idx", None)
+        if target_idx is None or target_idx != self._active_range_idx:
+            self._guess_status_label.setText("")
+            return
+
+        changed = False
+        self._param_table.blockSignals(True)
+        for row in range(self._param_table.rowCount()):
+            name_item = self._param_table.item(row, 0)
+            value_item = self._param_table.item(row, 1)
+            if name_item is None or value_item is None:
+                continue
+            name_data = name_item.data(Qt.ItemDataRole.UserRole)
+            name = name_data.strip() if isinstance(name_data, str) else name_item.text().strip()
+            if name not in seeds:
+                continue
+            # NEVER overwrite a fixed parameter (fixed row or shape_factor_a).
+            control = self._param_table.cellWidget(row, 4)
+            if bool(self._read_param_row_control(control).get("fixed", False)):
+                continue
+            if name == "shape_factor_a":
+                continue
+            value_item.setText(f"{float(seeds[name]):.8g}")
+            changed = True
+        self._param_table.blockSignals(False)
+
+        if not changed:
+            self._guess_status_label.setText(
+                info_html("Data-aware seeds apply only to fixed parameters here")
+            )
+            return
+
+        # Route through the shared commit path so the written values are
+        # normalised (via _normalize_parameter_limits) and persisted, then
+        # refresh the preview so the dashed seed curve follows.
+        self._commit_param_table(notify_adjustments=False)
+        self._guess_status_label.setText("")
+        self._request_preview_update()
+
+    def _on_guess_seeds_error(self, message: str) -> None:
+        self._set_guess_busy(False)
+        self._guess_status_label.setText(warning_html("Seed guess failed"))
 
     def _run_fit(self, idx: int) -> None:
         if self._fit_in_progress:
@@ -1112,6 +2139,10 @@ class ModelFitDialog(QDialog):
                 error_value=error_value,
                 windows=windows,
                 xerr=x_errs,
+                # Multi-start robustness (item 3.4): 4 extra deterministic starts
+                # plus the user's own start; seed fixed so the run is reproducible.
+                extra_starts=4,
+                seed=0,
             )
 
         def _on_done(result: object) -> None:
@@ -1120,55 +2151,213 @@ class ModelFitDialog(QDialog):
             if fit_result.success:
                 fit_range.parameters = fit_result.parameters
 
+            # Item 4.3: no per-fit success/failure MODAL. _select_range refreshes
+            # the χ² label (inline "Fit successful …" / "Fit failed: …") and tints
+            # the result box green on success, so both outcomes read inline.
             self._select_range(idx)
 
             if fit_result.success:
-                _show_info(
-                    self,
-                    "Fit complete",
-                    f"Range {idx + 1} fit succeeded. Reduced chi2 = {fit_result.reduced_chi_squared:.4g}",
+                # Item 4.2: remember the converged model as the default for the
+                # next fresh dialog of this (base_param, x_key).
+                _store_last_model_expression(
+                    self._parameter_name,
+                    self._x_key,
+                    fit_range.model.component_expression_string(),
+                    self._model_memory,
                 )
-            else:
-                _show_warning(self, "Fit failed", fit_result.message or "Model fit failed")
 
         self._start_fit_task(_task, _on_done)
 
-    def _select_range(self, idx: int) -> None:
-        if idx < 0 or idx >= len(self._fit.ranges):
+    # -- template-method hooks: per-row control, error cell, result source -----
+    #
+    # ``_select_range`` and ``_commit_param_table`` below are the single shared
+    # implementations for both this dialog and ``CrossGroupFitDialog``. The two
+    # dialogs differ only in a handful of small, well-scoped ways — the param
+    # table's editable "Type" column, where a range's fitted result is stored,
+    # and the surrounding status text. Those differences are isolated behind the
+    # hooks below so the ~150-line table/status flow lives here exactly once. The
+    # base implementations reproduce this dialog's own behaviour (a Fixed
+    # checkbox, a single-uncertainty error cell, ``fit_range.result`` as the
+    # result source); the subclass overrides the hooks, not the flow.
+
+    def _make_param_row_control(self, param: Parameter, row: int) -> QWidget:
+        """Build the editable control for the param table's Fixed/Type column.
+
+        Base: a "Fixed" checkbox in a centered container, wired to
+        ``_on_param_table_edited``. Subclasses that expose a richer per-row role
+        (e.g. Global/Local/Fixed) return their own widget instead. The returned
+        widget is installed as the cell widget of column 4; ``row`` is provided
+        for subclasses that need it.
+        """
+        fixed = QCheckBox()
+        fixed.setChecked(bool(param.fixed))
+        fixed_container = QWidget()
+        fixed_layout = QHBoxLayout(fixed_container)
+        fixed_layout.setContentsMargins(0, 0, 0, 0)
+        fixed_layout.addWidget(fixed)
+        fixed_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        fixed.stateChanged.connect(lambda _state: self._on_param_table_edited())
+        return fixed_container
+
+    def _read_param_row_control(self, widget: QWidget) -> dict[str, object]:
+        """Read the per-row control back into a plain dict for committing.
+
+        Base returns ``{"fixed": bool}`` from the checkbox. Subclasses return the
+        extra keys they carry (e.g. ``{"role": str, "fixed": bool}``). ``widget``
+        is whatever ``_make_param_row_control`` produced (the cell widget of
+        column 4); a mismatched/legacy widget yields ``fixed=False``.
+        """
+        fixed = False
+        if widget is not None and widget.layout() is not None and widget.layout().count() > 0:
+            inner = widget.layout().itemAt(0).widget()
+            if isinstance(inner, QCheckBox):
+                fixed = inner.isChecked()
+        return {"fixed": fixed}
+
+    def _result_for_range(self, idx: int) -> object | None:
+        """The fitted result to display for range *idx*, or None if not run.
+
+        Base reads the per-range ``fit_range.result``. Subclasses that cache
+        results elsewhere (e.g. the cross-group dialog's ``_range_results`` map)
+        override this so the shared status/error flow reads the right source.
+        """
+        return self._fit.ranges[idx].result
+
+    def _error_cell_for_param(
+        self, param_name: str, row_control: QWidget, result: object | None
+    ) -> QTableWidgetItem:
+        """The Error-column cell for one parameter row.
+
+        Base shows the single fitted uncertainty from ``result.uncertainties``.
+        Subclasses whose result carries per-group uncertainties (cross-group)
+        override this to summarise them. ``row_control`` is the column-4 widget
+        for rows whose error presentation depends on the role/type.
+        """
+        err = np.nan
+        if result is not None:
+            err = result.uncertainties.get(param_name, np.nan)
+        return QTableWidgetItem(f"{err:.4g}" if np.isfinite(err) else "")
+
+    def _set_formula_display(self, fit_range: ModelFitRange) -> None:
+        """Render the selected range's formula through the shared pan/zoom box.
+
+        Uses ``FormulaBox.set_formula`` so the expression picks up
+        ``insert_formula_break_points`` + a height re-measure. Both this dialog
+        and the cross-group subclass inherit this — the subclass no longer writes
+        into the bare label, so long global expressions wrap/scroll like the rest.
+        """
+        self._formula_box.set_formula(f"y(x) = {fit_range.model.formula_string()}")
+
+    def _range_hint_text(self, idx: int) -> str:
+        """Hint shown above the param table for the selected range."""
+        return (
+            f"Editing parameters for Range {idx + 1}. "
+            "Run Fit to update result values/uncertainties."
+        )
+
+    def _chi2_status_text(self, result: object | None) -> str:
+        """Rich-text χ² status line for the selected range's result."""
+        if result is None:
+            return info_html("Fitting not yet run for selected range")
+        if result.success:
+            return success_html(
+                "Fit successful",
+                detail=(
+                    f"chi2 = {result.chi_squared:.6g}, "
+                    f"reduced chi2 = {result.reduced_chi_squared:.6g}"
+                ),
+            )
+        return error_html(f"Fit failed: {result.message or 'No convergence'}")
+
+    def _quality_status_text(self, fit_range: ModelFitRange, result: object | None) -> str:
+        """χ² quality-verdict line for the selected range (empty when none).
+
+        Also appends the item-3.4 bad-minimum signals (parameters pinned at a
+        bound; a data-aware start beating the user's start) INLINE beneath the
+        χ² verdict. Both are guarded on ``getattr`` of fields that only the
+        single-fit ``ParameterModelFitResult`` carries, so the cross-group path
+        (whose ``CrossGroupFitResult`` lacks them, and which overrides this hook
+        anyway) is unaffected.
+        """
+        lines = [self._quality_text_for_range(fit_range)]
+        lines.extend(self._bad_minimum_status_lines(result))
+        return "<br>".join(line for line in lines if line)
+
+    def _bad_minimum_status_lines(self, result: object | None) -> list[str]:
+        """Inline warning/info lines for multi-start bad-minimum signals (3.4).
+
+        Returns an empty list when *result* is None, unsuccessful, or lacks the
+        new multi-start fields — so a cross-group / legacy result adds nothing.
+        """
+        if result is None or not getattr(result, "success", False):
+            return []
+        lines: list[str] = []
+        params_at_bound = getattr(result, "params_at_bound", ())
+        if params_at_bound:
+            names = ", ".join(str(name) for name in params_at_bound)
+            lines.append(
+                warning_html(
+                    f"Parameters at their limits: {names} — the fit may be "
+                    "constrained; widen bounds or re-seed."
+                )
+            )
+        if getattr(result, "seed_beat_user_start", False):
+            lines.append(
+                info_html(
+                    "A data-aware start improved the fit — seeds were re-derived from the data."
+                )
+            )
+        return lines
+
+    def _apply_result_box_style(self, result: object | None) -> None:
+        """Tint the result box green on a successful result, neutral otherwise.
+
+        Replaces the per-fit "Fit complete" modal (item 4.3): a converged fit
+        reads inline via the same green success surface the rest of the app uses.
+        """
+        box = getattr(self, "_result_box", None)
+        if box is None:
+            return
+        success = result is not None and bool(getattr(result, "success", False))
+        box.setStyleSheet(RESULT_BOX_SUCCESS_STYLE if success else RESULT_BOX_NEUTRAL_STYLE)
+
+    def active_range_index(self) -> int | None:
+        """Read-only accessor for the current active range (contract C-ACTIVE)."""
+        return self._active_range_idx
+
+    def _set_active_range(self, idx: int | None, *, from_plot: bool = False) -> None:
+        """The single source of truth for the active range (contract C-ACTIVE).
+
+        The ONLY writer of ``self._active_range_idx``. Idempotent; bounds-guards
+        ``idx``; fans out to every mirror — each card's ``set_active(idx == i)``,
+        the details pane (formula/result box/Guess/param table + the C-BOUNDS
+        bounds pair + window sub-block), and the canvas ``set_active_range(idx)``
+        (via ``_request_preview_update``). No mirror is ever the source.
+
+        ``from_plot`` is reserved for Step 3 (plot-driven selection); both paths
+        currently perform the same fan-out, but the parameter freezes the
+        signature now.
+        """
+        if idx is None or idx < 0 or idx >= len(self._fit.ranges):
             return
         self._active_range_idx = idx
         fit_range = self._fit.ranges[idx]
 
-        if self._range_selector.currentIndex() != idx:
-            self._range_selector.blockSignals(True)
-            self._range_selector.setCurrentIndex(idx)
-            self._range_selector.blockSignals(False)
+        # Move the active highlight + the Run Fit action to the selected card,
+        # and repoint the details-pane fit-region editor at it.
+        for card_idx, card in enumerate(self._range_cards):
+            is_active = card_idx == idx
+            card.set_active(is_active)
+            card.set_state(self._range_card_view(card_idx, show_run=is_active))
+        self._rebuild_fit_region_rows(idx)
 
-        self._formula_box.set_formula(f"y(x) = {fit_range.model.formula_string()}")
+        self._set_formula_display(fit_range)
+        self._range_hint_label.setText(self._range_hint_text(idx))
 
-        self._range_hint_label.setText(
-            f"Editing parameters for Range {idx + 1}. Run Fit to update result values/uncertainties."
-        )
-
-        if fit_range.result is not None:
-            if fit_range.result.success:
-                self._chi2_label.setText(
-                    f'<span style="color:{tokens.OK};">'
-                    f"Fit successful: chi2 = {fit_range.result.chi_squared:.6g}, "
-                    f"reduced chi2 = {fit_range.result.reduced_chi_squared:.6g}"
-                    "</span>"
-                )
-            else:
-                self._chi2_label.setText(
-                    f'<span style="color:{tokens.ERROR};">'
-                    f"Fit failed: {fit_range.result.message or 'No convergence'}"
-                    "</span>"
-                )
-        else:
-            self._chi2_label.setText(
-                f'<span style="color:{tokens.ACCENT};">Fitting not yet run for selected range</span>'
-            )
-        self._quality_label.setText(self._quality_text_for_range(fit_range))
+        result = self._result_for_range(idx)
+        self._chi2_label.setText(self._chi2_status_text(result))
+        self._quality_label.setText(self._quality_status_text(fit_range, result))
+        self._apply_result_box_style(result)
 
         self._param_table.blockSignals(True)
         self._param_table.setRowCount(0)
@@ -1188,25 +2377,30 @@ class ModelFitDialog(QDialog):
             self._param_table.setItem(row, 2, QTableWidgetItem(f"{param.min:.8g}"))
             self._param_table.setItem(row, 3, QTableWidgetItem(f"{param.max:.8g}"))
 
-            fixed = QCheckBox()
-            fixed.setChecked(bool(param.fixed))
-            fixed_container = QWidget()
-            fixed_layout = QHBoxLayout(fixed_container)
-            fixed_layout.setContentsMargins(0, 0, 0, 0)
-            fixed_layout.addWidget(fixed)
-            fixed_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self._param_table.setCellWidget(row, 4, fixed_container)
-            fixed.stateChanged.connect(lambda _state: self._on_param_table_edited())
+            row_control = self._make_param_row_control(param, row)
+            self._param_table.setCellWidget(row, 4, row_control)
 
-            err = np.nan
-            if fit_range.result is not None:
-                err = fit_range.result.uncertainties.get(param.name, np.nan)
-            self._param_table.setItem(
-                row, 5, QTableWidgetItem(f"{err:.4g}" if np.isfinite(err) else "")
-            )
+            err_item = self._error_cell_for_param(param.name, row_control, result)
+            self._param_table.setItem(row, 5, err_item)
 
         self._param_table.blockSignals(False)
         self._param_table.resizeColumnsToContents()
+        self._post_select_range(idx)
+        self._request_preview_update()
+
+    def _select_range(self, idx: int) -> None:
+        """Thin alias for :meth:`_set_active_range` (contract C-ACTIVE).
+
+        Kept so existing callers/tests keep the ``_select_range`` name; all
+        active-range writes funnel through the single source of truth.
+        """
+        self._set_active_range(idx)
+
+    def _post_select_range(self, idx: int) -> None:
+        """Hook: called at the end of ``_select_range`` after the table is built.
+
+        Base does nothing. Subclasses use it for post-build cleanup (e.g.
+        removing stray legacy cell widgets)."""
 
     def _on_param_table_edited(self, *_args: object) -> None:
         """Persist parameter edits immediately and invalidate stale fit results."""
@@ -1220,6 +2414,8 @@ class ModelFitDialog(QDialog):
             f'<span style="color:{tokens.ACCENT};">Fitting not yet run for selected range</span>'
         )
         self._quality_label.setText("")
+        self._apply_result_box_style(None)
+        self._request_preview_update()
 
     def _commit_param_table(self, *, notify_adjustments: bool = False) -> None:
         if self._active_range_idx is None:
@@ -1287,15 +2483,8 @@ class ModelFitDialog(QDialog):
             if max_item is not None:
                 max_item.setText(f"{p_max:.8g}")
 
-            fixed = False
-            if (
-                fixed_widget is not None
-                and fixed_widget.layout() is not None
-                and fixed_widget.layout().count() > 0
-            ):
-                inner = fixed_widget.layout().itemAt(0).widget()
-                if isinstance(inner, QCheckBox):
-                    fixed = inner.isChecked()
+            control_state = self._read_param_row_control(fixed_widget)
+            fixed = bool(control_state.get("fixed", False))
 
             new_params.add(Parameter(name=name, value=value, min=p_min, max=p_max, fixed=fixed))
 
@@ -1334,6 +2523,11 @@ class ModelFitDialog(QDialog):
         if self._refuse_close_while_fitting():
             event.ignore()
             return
+        # Stop the debounce and flag teardown BEFORE shutting the runner down,
+        # so a pending preview timer cannot start a fresh worker on the
+        # shut-down runner (TaskRunner.shutdown has no re-entry guard).
+        self._shutting_down = True
+        self._preview_timer.stop()
         self._tasks.shutdown()
         super().closeEvent(event)
 
@@ -1393,8 +2587,17 @@ class ModelFitDialog(QDialog):
         if not busy:
             self._fit_progress_label.setText("")
 
-        self._range_selector.setEnabled(not busy)
+        # Suppress plot dragging while a fit runs so the user cannot mutate the
+        # range/windows underneath an in-flight fit; re-enabled when it settles.
+        preview = getattr(self, "_preview", None)
+        if preview is not None:
+            preview.enable_drag(not busy)
+
         self._param_table.setEnabled(not busy)
+        if hasattr(self, "_guess_seeds_btn"):
+            # Don't let a Guess launch race a real fit; leave it disabled while
+            # its own guess is in flight too.
+            self._guess_seeds_btn.setEnabled(not busy and not self._guess_in_progress)
         if hasattr(self, "_add_range_btn"):
             self._add_range_btn.setEnabled(not busy)
         if hasattr(self, "_remove_fit_btn"):
@@ -1403,10 +2606,17 @@ class ModelFitDialog(QDialog):
         for button in self._buttons.buttons():
             button.setEnabled(not busy)
 
-        for widgets in self._range_widgets:
-            widgets.active.setEnabled(not busy)
-            widgets.x_min.setEnabled(not busy)
-            widgets.x_max.setEnabled(not busy)
-            widgets.edit_button.setEnabled(not busy)
-            widgets.fit_button.setEnabled(not busy)
-            widgets.remove_button.setEnabled(not busy)
+        # Cards: disable each card's Run Fit + overflow controls.
+        for card in self._range_cards:
+            card.set_enabled(not busy)
+
+        # Details-pane fit-region editor: every interval spin pair, each
+        # per-interval Remove button, and the "Exclude region…" button are
+        # disabled while a fit runs and re-enabled when it settles.
+        for i_min, i_max in self._region_row_spins.values():
+            i_min.setEnabled(not busy)
+            i_max.setEnabled(not busy)
+        for btn in self._region_remove_btns:
+            btn.setEnabled(not busy)
+        if self._exclude_region_btn is not None:
+            self._exclude_region_btn.setEnabled(not busy)

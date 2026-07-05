@@ -1266,6 +1266,20 @@ def test_panel_state_roundtrip_preserves_grouped_parameter_model(panel: FitParam
     assert restored_model.close_parentheses == grouped_model.close_parentheses
 
 
+def test_trend_model_memory_round_trips(panel: FitParametersPanel) -> None:
+    """The trend Model Fit dialog's "remember last model" memory is
+    project-scoped: it round-trips through get_state/restore_state (persisted
+    with the project) rather than living in QSettings."""
+    panel._trend_model_memory = {"Lambda|field": "Linear"}
+
+    state = panel.get_state()
+
+    restored = FitParametersPanel()
+    restored.restore_state(state)
+
+    assert restored._trend_model_memory == {"Lambda|field": "Linear"}
+
+
 def test_new_asymmetry_fit_overwrites_existing_group_model_fits(panel: FitParametersPanel) -> None:
     existing_fit = ParameterModelFit(parameter_name="Lambda", x_key="field", ranges=[], active=True)
     panel._group_fit_results = {

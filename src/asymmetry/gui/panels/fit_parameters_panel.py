@@ -485,6 +485,12 @@ class FitParametersPanel(QWidget):
         self._active_group_id: str | None = None
         self._last_cross_group_fit: dict[str, object] | None = None
         self._cross_group_fit_configs: dict[str, dict[str, object]] = {}
+        #: Project-scoped "remember last-used model per (parameter, x_key)"
+        #: memory for the trend Model Fit dialog (see ``ModelFitDialog``'s
+        #: ``model_memory`` kwarg). Owned here (not QSettings) so the memory
+        #: does not leak across unrelated projects; persisted via
+        #: get_state/restore_state below.
+        self._trend_model_memory: dict[str, str] = {}
         self._group_button_style_scale = 1.0
         self._ui_scale_sync_connected = False
         #: Run numbers to highlight in the browser for the active series (used by
@@ -831,6 +837,7 @@ class FitParametersPanel(QWidget):
         self._active_group_id = None
         self._last_cross_group_fit = None
         self._cross_group_fit_configs = {}
+        self._trend_model_memory = {}
         self._selected_y_param_names = []
         self._series_run_numbers = {}
         self._rebuild_group_buttons()
@@ -905,6 +912,11 @@ class FitParametersPanel(QWidget):
             # cross_group_fit`` and the ``last_cross_group_fit`` property are kept
             # for that legacy path, and the per-config seeds still round-trip.
             "cross_group_fit_configs": self._serialize_cross_group_fit_configs(),
+            # Project-scoped memory of the last-used trend Model Fit model per
+            # (base_param, x_key) — see ``_trend_model_memory`` / ModelFitDialog's
+            # ``model_memory`` kwarg. Kept here (not QSettings) so it does not
+            # leak across unrelated projects.
+            "trend_model_memory": dict(self._trend_model_memory),
         }
 
     @classmethod
@@ -1113,6 +1125,17 @@ class FitParametersPanel(QWidget):
         self._cross_group_fit_configs = self._deserialize_cross_group_fit_configs(
             state.get("cross_group_fit_configs", {})
         )
+        # Project-scoped trend Model Fit "remember last model" memory (see
+        # ``_trend_model_memory``). Defensive: accept only a dict of str -> str,
+        # otherwise default to an empty memory — a garbled/missing entry must
+        # never break project load, it just means nothing is remembered yet.
+        raw_model_memory = state.get("trend_model_memory")
+        if isinstance(raw_model_memory, dict) and all(
+            isinstance(k, str) and isinstance(v, str) for k, v in raw_model_memory.items()
+        ):
+            self._trend_model_memory = dict(raw_model_memory)
+        else:
+            self._trend_model_memory = {}
         self._rebuild_group_buttons()
 
         selected_group_ids = state.get("selected_group_ids", [])
@@ -3922,6 +3945,7 @@ class FitParametersPanel(QWidget):
             parent=self,
             x_errors=x_err,
             x_label=self._x_axis_display_label(x_key),
+            model_memory=self._trend_model_memory,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
