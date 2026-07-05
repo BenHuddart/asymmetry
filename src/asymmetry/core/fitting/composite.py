@@ -66,7 +66,7 @@ from asymmetry.core.fitting.nuclear_dipole import (
     electron_dipole,
     proton_dipole,
 )
-from asymmetry.core.fitting.parameters import ParamInfo, get_param_info
+from asymmetry.core.fitting.parameters import Parameter, ParameterSet, ParamInfo, get_param_info
 from asymmetry.core.fitting.sc.lineshape import (
     vortex_lattice_component,
     vortex_lattice_powder_component,
@@ -1726,6 +1726,9 @@ class CompositeModel:
           synthesized ``f_<Component>`` name guaranteed not to collide with any
           real parameter name (free fractions or otherwise).
         """
+        if not self.fraction_groups:
+            return {}, {}
+
         reserved = self._non_fraction_param_names()
         used = set(reserved)
         free_names: dict[int, str] = {}
@@ -1748,19 +1751,12 @@ class CompositeModel:
                 free_names[idx] = disambiguate(base)
 
         # Remainder display names are chosen after every free name is fixed, so
-        # they only need to avoid the real parameter set (reserved + free).
-        remainder_used = set(reserved) | set(free_names.values())
+        # they only need to avoid the real parameter set (reserved + free) — which
+        # is exactly what ``used`` already tracks, so the same disambiguator applies.
         derived_names: dict[tuple[int, int], str] = {}
         for group in self.fraction_groups:
             last_start = self._fraction_group_term_starts(group)[-1]
-            base = f"f_{self.component_names[last_start]}"
-            candidate = base
-            suffix = 2
-            while candidate in remainder_used:
-                candidate = f"{base}_{suffix}"
-                suffix += 1
-            remainder_used.add(candidate)
-            derived_names[group] = candidate
+            derived_names[group] = disambiguate(f"f_{self.component_names[last_start]}")
 
         return free_names, derived_names
 
@@ -2948,6 +2944,51 @@ def migrate_legacy_fraction_parameter_entries(
             migrated.append(new_entry)
         else:
             migrated.append(dict(entry))
+    return migrated
+
+
+def migrate_legacy_fraction_parameter_set(
+    model: CompositeModel, parameter_set: ParameterSet
+) -> ParameterSet:
+    """Migrate a :class:`ParameterSet` off the legacy ``fraction_<k>`` scheme.
+
+    The :class:`ParameterSet` analogue of
+    :func:`migrate_legacy_fraction_parameter_entries`: for each group the first
+    n-1 legacy ``fraction_<k>`` parameters are renamed to their new
+    free-parameter name and take the normalised migrated weight as their value
+    (all other metadata — bounds, ``fixed``, ``expr``, links, ties — preserved);
+    the derived last-term parameter is dropped. Every other parameter passes
+    through untouched, preserving order. Returns the input unchanged when it
+    carries no legacy fraction keys for this model.
+    """
+    value_map = {parameter.name: float(parameter.value) for parameter in parameter_set}
+    if not has_legacy_fraction_values(model, value_map):
+        return parameter_set
+
+    migrated_values = migrate_legacy_fraction_values(model, value_map)
+    rename = _legacy_fraction_rename_map(model)
+
+    migrated = ParameterSet()
+    for parameter in parameter_set:
+        if parameter.name in rename:
+            new_name = rename[parameter.name]
+            if new_name is None:
+                # Dropped derived-remainder term: no parameter under the new scheme.
+                continue
+            migrated.add(
+                Parameter(
+                    name=new_name,
+                    value=migrated_values.get(new_name, parameter.value),
+                    min=parameter.min,
+                    max=parameter.max,
+                    fixed=parameter.fixed,
+                    expr=parameter.expr,
+                    link_group=parameter.link_group,
+                    tie=parameter.tie,
+                )
+            )
+        else:
+            migrated.add(parameter)
     return migrated
 
 

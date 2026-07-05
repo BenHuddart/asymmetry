@@ -123,10 +123,8 @@ def _register_badged_component():
 
 
 def test_builder_picker_badges_user_components(qapp, _registry_snapshot):
-    from asymmetry.gui.panels.fit_function_builder import (
-        FitFunctionBuilderDialog,
-        _build_components_by_category,
-    )
+    from asymmetry.core.fitting.component_search import search_components
+    from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
 
     definition = _register_badged_component()
     dialog = FitFunctionBuilderDialog(domain="time")
@@ -145,8 +143,13 @@ def test_builder_picker_badges_user_components(qapp, _registry_snapshot):
     library._activate_current()
     assert inserted == ["UserBadgeDecay"]
 
-    # The user component lands in its own "User" category of the picker map.
-    assert "UserBadgeDecay" in _build_components_by_category("time")["User"]
+    # The user component lands in its own "User" category of the library — the
+    # grouping the panel renders from ``search_components("")``.
+    names_by_category: dict[str, list[str]] = {}
+    for result in search_components("", components=library._definitions):
+        component = library._definitions[result.name]
+        names_by_category.setdefault(component.category, []).append(result.name)
+    assert "UserBadgeDecay" in names_by_category["User"]
     dialog.deleteLater()
 
 

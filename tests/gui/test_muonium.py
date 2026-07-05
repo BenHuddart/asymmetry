@@ -137,13 +137,13 @@ def test_components_registered_with_expected_parameters() -> None:
         assert COMPONENTS[name].category == "Muonium"
 
 
-def test_components_appear_in_builder_category_map() -> None:
-    pytest.importorskip("PySide6")
-    from asymmetry.gui.panels.fit_function_builder import _build_components_by_category
+def test_components_appear_in_builder_library() -> None:
+    # The searchable library renders ``search_components("")``; the muonium
+    # family must surface in the time-domain pool it feeds.
+    from asymmetry.core.fitting.component_search import search_components
 
-    grouped = _build_components_by_category()
-    assert "Muonium" in grouped
-    assert {"MuoniumTF", "MuoniumLowTF", "MuoniumZF"} <= set(grouped["Muonium"])
+    names = {result.name for result in search_components("", components=COMPONENTS, domain="time")}
+    assert {"MuoniumTF", "MuoniumLowTF", "MuoniumZF"} <= names
 
 
 def test_cds_style_model_builds_with_hyperfine_param() -> None:

@@ -389,8 +389,13 @@ def _score_token(
     token: str,
     name: str,
     component: ComponentDefinition,
+    alias_targets: tuple[str, ...] | None,
 ) -> tuple[float, str, tuple[int, int] | None] | None:
-    """Return ``(score, matched_field, name_span)`` for one token, or ``None``."""
+    """Return ``(score, matched_field, name_span)`` for one token, or ``None``.
+
+    ``alias_targets`` is the token's merged alias targets (or ``None``),
+    precomputed once per query by the caller since it depends only on the token.
+    """
     best: tuple[float, str, tuple[int, int] | None] | None = None
 
     def consider(score: float, field: str, span: tuple[int, int] | None) -> None:
@@ -404,7 +409,6 @@ def _score_token(
         field = "fuzzy" if span is None else "name"
         consider(score, field, span)
 
-    alias_targets = _alias_targets_for_token(token.lower())
     if alias_targets is not None and name in alias_targets:
         consider(70.0, "alias", None)
 
@@ -471,13 +475,16 @@ def search_components(
         return results[:limit] if limit is not None else results
 
     tokens = stripped.split()
+    # Alias targets depend only on the token, so resolve them once per query
+    # rather than re-deriving them for every component in the inner loop.
+    alias_targets_by_token = {token: _alias_targets_for_token(token.lower()) for token in tokens}
 
     scored: list[tuple[SearchResult, tuple[int, str]]] = []
     for name, component in candidates.items():
         per_token_hits: list[tuple[float, str, tuple[int, int] | None]] = []
         matched_all = True
         for token in tokens:
-            hit = _score_token(token, name, component)
+            hit = _score_token(token, name, component, alias_targets_by_token[token])
             if hit is None:
                 matched_all = False
                 break
