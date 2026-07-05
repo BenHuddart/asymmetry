@@ -437,6 +437,92 @@ def build_nav_button_qss() -> str:
     )
 
 
+# ── Context chips, confidence chips & warning banners ────────────────────────
+
+#: objectName used to scope context-chip QSS without touching other labels.
+CONTEXT_CHIP_OBJECT_NAME = "benchContextChip"
+
+
+def make_context_chip(text: str) -> QLabel:
+    """Return a small pill-shaped context chip (run number, field, temperature).
+
+    Used by the wizard header band (:class:`WizardWindowBase`) to surface the
+    analysis context at a glance next to the window title.
+    """
+    label = QLabel(str(text))
+    label.setObjectName(CONTEXT_CHIP_OBJECT_NAME)
+    label.setStyleSheet(
+        f"QLabel#{CONTEXT_CHIP_OBJECT_NAME} {{"
+        f" background-color: {tokens.SURFACE_ALT};"
+        f" color: {tokens.TEXT_MUTED};"
+        f" border: 1px solid {tokens.BORDER};"
+        " border-radius: 9px;"
+        " padding: 1px 8px;"
+        " }"
+    )
+    return label
+
+
+#: objectName used to scope confidence-chip QSS per tier.
+CONFIDENCE_CHIP_OBJECT_NAME = "benchConfidenceChip"
+
+#: Per-tier (background, border, text) colours for :func:`make_confidence_chip`.
+_CONFIDENCE_CHIP_COLOURS = {
+    "high": (tokens.SUCCESS_BG, tokens.SUCCESS_BORDER, tokens.OK),
+    "medium": (tokens.WARN_BANNER_BG, tokens.WARN, tokens.WARN_BANNER_TEXT),
+    "none": (tokens.SURFACE_ALT, tokens.BORDER, tokens.TEXT_MUTED),
+}
+
+
+def make_confidence_chip(text: str, tier: Literal["high", "medium", "none"]) -> QLabel:
+    """Return a coloured confidence chip for a wizard answer card.
+
+    ``tier`` picks the colour treatment (green / amber / muted); ``text`` is the
+    caller-supplied label (e.g. "High confidence"). The prose sentence stays a
+    separate label — the chip is the at-a-glance grade only.
+    """
+    bg, border, fg = _CONFIDENCE_CHIP_COLOURS.get(tier, _CONFIDENCE_CHIP_COLOURS["none"])
+    label = QLabel(str(text))
+    label.setObjectName(CONFIDENCE_CHIP_OBJECT_NAME)
+    label.setStyleSheet(
+        f"QLabel#{CONFIDENCE_CHIP_OBJECT_NAME} {{"
+        f" background-color: {bg};"
+        f" color: {fg};"
+        f" border: 1px solid {border};"
+        " border-radius: 9px;"
+        " padding: 1px 10px;"
+        " font-weight: 600;"
+        " }"
+    )
+    return label
+
+
+#: objectName used to scope warning-banner QSS without touching other labels.
+WARNING_BANNER_OBJECT_NAME = "benchWarningBanner"
+
+
+def make_warning_banner(text: str = "") -> QLabel:
+    """Return an amber, word-wrapped warning-banner strip.
+
+    The non-blocking "out of date" convention (``tokens.WARN_BANNER_*``, first
+    used by the Global Parameter Fit window): wizards show one when a scope or
+    seed edit makes the displayed results stale. Callers control visibility.
+    """
+    label = QLabel(str(text))
+    label.setObjectName(WARNING_BANNER_OBJECT_NAME)
+    label.setWordWrap(True)
+    label.setStyleSheet(
+        f"QLabel#{WARNING_BANNER_OBJECT_NAME} {{"
+        f" background-color: {tokens.WARN_BANNER_BG};"
+        f" color: {tokens.WARN_BANNER_TEXT};"
+        " border-radius: 4px;"
+        " padding: 6px 10px;"
+        " font-weight: 600;"
+        " }"
+    )
+    return label
+
+
 # ── HTML snippets ─────────────────────────────────────────────────────────────
 
 
