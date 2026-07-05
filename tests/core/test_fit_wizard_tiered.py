@@ -352,6 +352,7 @@ def _recommendation_with_extras() -> FitWizardRecommendation:
         peak_analysis=analysis,
         multiplet_matches=(match,),
         family_reports=(report,),
+        scope_note="run geometry: zero field — screening ZF families",
     )
 
 
@@ -374,18 +375,21 @@ def test_recommendation_round_trip_with_new_fields() -> None:
     assert restored.family_reports[0].family_key == "oscillatory"
     assert math.isinf(restored.family_reports[0].stage1_metric_value)
 
+    assert restored.scope_note == "run geometry: zero field — screening ZF families"
+
 
 def test_recommendation_legacy_payload_defaults_new_fields() -> None:
     recommendation = _recommendation_with_extras()
     payload = serialize_fit_wizard_recommendation(recommendation)
     # Simulate an older persisted payload predating the tiered fields.
-    for key in ("peak_analysis", "multiplet_matches", "family_reports"):
+    for key in ("peak_analysis", "multiplet_matches", "family_reports", "scope_note"):
         payload.pop(key, None)
     restored = deserialize_fit_wizard_recommendation(payload)
     assert restored is not None
     assert restored.peak_analysis is None
     assert restored.multiplet_matches == ()
     assert restored.family_reports == ()
+    assert restored.scope_note == ""
 
 
 def test_candidate_assessment_stage_default_on_legacy_payload() -> None:

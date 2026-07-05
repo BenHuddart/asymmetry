@@ -326,6 +326,12 @@ class FitWizardRecommendation:
     #: gate reasons for the recommended template) or when the null-baseline
     #: verdict fires. Empty for a clean High recommendation. GUI-facing.
     caveat: str = ""
+    #: Human-readable note on how the candidate scope was resolved (run
+    #: geometry, near-zero-field widening, a fluorine sample-name prior — see
+    #: ``wizard_scope.ScopeResolution.inference_note``). Empty when no scope was
+    #: resolved (``scope=None`` in :func:`build_fit_wizard_recommendation`).
+    #: Additive — old payloads default to ``""``. GUI-facing.
+    scope_note: str = ""
 
     @property
     def recommended_assessment(self) -> CandidateAssessment | None:
@@ -1718,6 +1724,10 @@ def build_fit_wizard_recommendation(
     resolution: ScopeResolution | None = None
     if scope is not None:
         resolution = resolve_scope_for_dataset(dataset, scope)
+    # ``inference_note`` is already a single, "; "-joined human-readable string
+    # (see ``wizard_scope.infer_auto_query``); a scope of ``None`` means no
+    # resolution ran at all, so the note stays empty rather than guessing.
+    scope_note = resolution.inference_note if resolution is not None else ""
     families = build_wizard_families(fingerprint, current_model, scope_resolution=resolution)
 
     def _progress(message: str) -> None:
@@ -1740,6 +1750,7 @@ def build_fit_wizard_recommendation(
                 "No candidate families are in scope — widen the scope selection "
                 "to run the analysis."
             ),
+            scope_note=scope_note,
         )
 
     field_gauss = dataset.field
@@ -1877,6 +1888,11 @@ def build_fit_wizard_recommendation(
             if match.family_key in in_scope_family_keys
         )
 
+        _progress(
+            f"Spectral search: {len(peak_analysis.peaks)} line(s), "
+            f"{len(multiplet_matches)} pattern match(es)"
+        )
+
         # Fluorine sniff: a chemical-formula fluorine in the sample/title name is a
         # physics-scope prior for the fmuf family. It previously only annotated the
         # scope note; here it *promotes* fmuf (exempt from the Stage-2 family cap, the
@@ -1908,6 +1924,8 @@ def build_fit_wizard_recommendation(
             hint_family_keys=hint_family_keys,
             sniff_family_keys=sniff_family_keys,
         )
+        promoted_count = sum(1 for _family, _assessment, promoted, _reason in decisions if promoted)
+        _progress(f"Expanding {promoted_count} of {len(decisions)} families for detailed fitting")
 
         stage2_context = TemplateSeedContext(
             peak_analysis=peak_analysis,
@@ -2053,6 +2071,7 @@ def build_fit_wizard_recommendation(
             peak_analysis=peak_analysis,
             multiplet_matches=multiplet_matches,
             family_reports=family_reports,
+            scope_note=scope_note,
         ),
         metric,
     )
@@ -2432,6 +2451,7 @@ def serialize_fit_wizard_recommendation(
         "confidence": recommendation.confidence.value,
         "verdict": recommendation.verdict.value,
         "caveat": recommendation.caveat,
+        "scope_note": recommendation.scope_note,
     }
 
 
@@ -2488,6 +2508,7 @@ def deserialize_fit_wizard_recommendation(
         confidence=ConfidenceTier.from_value(payload.get("confidence")),
         verdict=RecommendationVerdict.from_value(payload.get("verdict")),
         caveat=str(payload.get("caveat", "")),
+        scope_note=str(payload.get("scope_note", "")),
     )
 
 
