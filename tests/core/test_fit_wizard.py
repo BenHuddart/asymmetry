@@ -14,6 +14,7 @@ from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.fit_wizard import (
+    _monotonic_decay_fraction,
     build_candidate_templates,
     build_fit_wizard_recommendation,
     build_fit_wizard_recommendation_for_templates,
@@ -289,6 +290,100 @@ def test_monotonic_low_frequency_spectrum_prefers_multi_rate_over_oscillation(
     assert fingerprint.multi_rate_hint is True
     assert fingerprint.dominant_fft_cycles_in_window < 1.5
     assert recommendation.recommended_key == "biexp_constant"
+
+
+def _early_time_damped_precession(
+    *,
+    frequency_mhz: float = 15.0,
+    amplitude: float = 3.0,
+    damping: float = 8.0,
+    offset: float = 0.2,
+    noise: float = 0.3,
+    seed: int = 7,
+) -> MuonDataset:
+    """A strongly-damped zero-field precession seen ONLY at early times.
+
+    Mirrors an ordered magnet at zero field (e.g. EuO): the spontaneous
+    precession lives in the first ~0.3 µs and is analysed on the project's tight
+    fit window at native ~1.25 ns binning. Percent-scale amplitude and error bars
+    match real µSR asymmetry so ``initial_amplitude_estimate`` (early−tail)
+    collapses toward zero — the degenerate case that broke the old gate.
+    """
+    t = np.arange(0.006, 0.5, 0.00125)
+    rng = np.random.default_rng(seed)
+    y = (
+        amplitude * np.exp(-damping * t) * np.cos(2.0 * np.pi * frequency_mhz * t)
+        + offset
+        + rng.normal(0.0, noise, t.size)
+    )
+    error = np.full_like(t, 2.3)
+    return MuonDataset(time=t, asymmetry=y, error=error, metadata={"run_number": 42})
+
+
+def test_early_time_precession_hints_oscillatory_despite_degenerate_decay_measure() -> None:
+    """Fix B: a genuine damped ZF precession on a tight early-time window is
+    hinted oscillatory even though the monotonic-decay measure degenerates.
+
+    On this window early−tail ≈ 0, so ``_monotonic_decay_fraction`` cannot clear
+    its signal threshold and returns its ``1.0`` default with ``informative=False``.
+    The OLD gate ANDed in ``monotonic_decay_fraction <= 0.85`` and therefore
+    vetoed the hint; the fix skips that clause when the measurement is
+    uninformative, so the clean FFT peak (SNR/cycles) plus turning points carry
+    the decision.
+    """
+    dataset = _early_time_damped_precession()
+    fingerprint = fingerprint_spectrum(dataset)
+
+    # The FFT decisively sees the precession.
+    assert fingerprint.dominant_fft_snr >= 3.0
+    assert fingerprint.dominant_fft_cycles_in_window >= 1.5
+    assert fingerprint.smoothed_turning_points >= 2
+
+    # The decay measure is degenerate (uninformative → 1.0 default), so the OLD
+    # gate (which required <= 0.85) would have vetoed the hint.
+    assert fingerprint.monotonic_decay_fraction > 0.85
+    old_gate = bool(
+        fingerprint.dominant_fft_snr >= 3.0
+        and fingerprint.dominant_fft_cycles_in_window >= 1.5
+        and fingerprint.smoothed_turning_points >= 2
+        and fingerprint.monotonic_decay_fraction <= 0.85
+    )
+    assert old_gate is False
+
+    # The fixed gate admits the precession.
+    assert fingerprint.oscillatory_hint is True
+
+
+def test_monotonic_decay_fraction_flags_uninformative_measurement() -> None:
+    """The degenerate default (``1.0``) is reported as ``informative=False`` so
+    callers can distinguish "genuinely monotonic" from "could not measure"."""
+    values = np.full(64, 0.001)  # no significant step clears the threshold
+    errors = np.full(64, 2.3)
+    fraction, informative = _monotonic_decay_fraction(values, errors, 0.0)
+    assert fraction == 1.0
+    assert informative is False
+
+    # A real decaying envelope is measured and reported informative.
+    t = np.linspace(0.0, 4.0, 64)
+    decaying = 5.0 * np.exp(-1.5 * t)
+    fraction2, informative2 = _monotonic_decay_fraction(decaying, np.full(64, 0.01), 5.0)
+    assert informative2 is True
+    assert fraction2 >= 0.85
+
+
+def test_early_time_precession_control_non_oscillatory_decay_not_hinted() -> None:
+    """Control: a non-oscillatory decay on the same tight window is NOT hinted
+    oscillatory — the SNR/cycles/turns guards still reject non-precessing data,
+    so Fix B only ADDS correct precession detection."""
+    t = np.arange(0.006, 0.5, 0.00125)
+    rng = np.random.default_rng(3)
+    y = 3.0 * np.exp(-4.0 * t) + 0.2 + rng.normal(0.0, 0.5, t.size)
+    dataset = MuonDataset(
+        time=t, asymmetry=y, error=np.full_like(t, 2.3), metadata={"run_number": 43}
+    )
+    fingerprint = fingerprint_spectrum(dataset)
+    assert fingerprint.dominant_fft_cycles_in_window < 1.5
+    assert fingerprint.oscillatory_hint is False
 
 
 def test_fit_wizard_recommends_three_exponentials_for_three_rate_spectrum(

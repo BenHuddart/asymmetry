@@ -436,7 +436,7 @@ def fingerprint_spectrum(dataset: MuonDataset) -> SpectrumFingerprint:
 
     curvature_count = min(n_points, max(8, n_points // 6))
     early_time_curvature = _quadratic_curvature(t[:curvature_count], centered[:curvature_count])
-    monotonic_decay_fraction = _monotonic_decay_fraction(
+    monotonic_decay_fraction, monotonic_decay_informative = _monotonic_decay_fraction(
         smoothed_win,
         error_win,
         initial_amplitude_estimate,
@@ -457,11 +457,22 @@ def fingerprint_spectrum(dataset: MuonDataset) -> SpectrumFingerprint:
     signal_scale = max(abs(initial_amplitude_estimate), np.ptp(y), _EPS)
     late_time_dip_recovery_score = max(0.0, tail_estimate - dip_minimum) / signal_scale
 
+    # A genuine damped precession seen in a tight early-time window (e.g. an
+    # ordered magnet at zero field: EuO's ZF signal lives only in the first
+    # ~0.5 µs) drives ``initial_amplitude_estimate`` (early−tail) toward zero, so
+    # ``_monotonic_decay_fraction`` cannot measure the envelope and returns its
+    # ``1.0`` default with ``informative=False``. That default must NOT veto the
+    # oscillatory hint — the FFT (SNR/cycles) and turning-point guards already
+    # establish precession, and flat noise is still rejected because it fails
+    # those guards. Only apply the decay clause when the measurement is real.
+    monotonic_decay_not_oscillatory = (
+        not monotonic_decay_informative
+    ) or monotonic_decay_fraction <= 0.85
     oscillatory_hint = bool(
         dominant_fft_snr >= 3.0
         and dominant_fft_cycles_in_window >= 1.5
         and smoothed_turning_points >= 2
-        and monotonic_decay_fraction <= 0.85
+        and monotonic_decay_not_oscillatory
     )
     kt_like_hint = bool(late_time_dip_recovery_score >= 0.05 and initial_amplitude_estimate > 0.0)
     multi_rate_hint = bool(
@@ -3120,9 +3131,22 @@ def _monotonic_decay_fraction(
     values: NDArray[np.float64],
     errors: NDArray[np.float64],
     initial_amplitude_estimate: float,
-) -> float:
+) -> tuple[float, bool]:
+    """Return ``(fraction, informative)``.
+
+    ``fraction`` is the share of significant steps whose sign matches a decaying
+    envelope; it falls back to ``1.0`` when the measurement is *uninformative*
+    (fewer than three samples, or no step clears the signal/step thresholds).
+    ``informative`` is ``False`` in exactly those degenerate cases. Callers must
+    NOT treat an uninformative ``1.0`` as "monotonic": that default fires for a
+    damped oscillation observed in a tight early-time window, where
+    ``initial_amplitude_estimate`` (early−tail) collapses toward zero because
+    early and late samples straddle the same oscillation mean, pushing the signal
+    threshold into the noise floor so no step is counted. Reporting the flag lets
+    the oscillatory gate skip this clause instead of vetoing genuine precession.
+    """
     if values.size < 3:
-        return 1.0
+        return 1.0, False
     initial_sign = 1.0 if initial_amplitude_estimate >= 0.0 else -1.0
     segment = np.asarray(values, dtype=float)
     diffs = np.diff(segment)
@@ -3135,9 +3159,9 @@ def _monotonic_decay_fraction(
     local_signal = np.maximum(np.abs(segment[:-1]), np.abs(segment[1:])) >= threshold
     informative = local_signal & (np.abs(diffs) >= tol)
     if not np.any(informative):
-        return 1.0
+        return 1.0, False
     aligned = expected_sign * diffs[informative] >= 0.0
-    return float(np.mean(aligned))
+    return float(np.mean(aligned)), True
 
 
 def _semilog_slope_ratio(
