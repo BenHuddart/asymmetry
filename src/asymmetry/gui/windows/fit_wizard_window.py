@@ -68,6 +68,7 @@ from asymmetry.core.fitting.wizard_scope import (
 )
 from asymmetry.core.fourier.fft import fft_asymmetry
 from asymmetry.gui.styles import tokens
+from asymmetry.gui.styles.widgets import make_warning_banner
 from asymmetry.gui.widgets.collapsible_section import CollapsibleSection
 from asymmetry.gui.widgets.decision_trail import DecisionTrail, TrailSeparator
 from asymmetry.gui.widgets.screen_sizing import resize_to_available
@@ -121,10 +122,6 @@ class FitWizardWindow(WizardWindowBase):
         # clipped above the menu bar on a 13-inch laptop (~800 px high).
         resize_to_available(self, 1180, 740)
 
-        heading_font = QFont(self._heading_label.font())
-        heading_font.setPointSize(max(heading_font.pointSize() + 4, 14))
-        heading_font.setBold(True)
-        self._heading_label.setFont(heading_font)
         self._heading_label.setText("Fit Wizard")
         self._status_label.setText(
             "Open the fit wizard on a single spectrum to fingerprint the data and "
@@ -174,12 +171,10 @@ class FitWizardWindow(WizardWindowBase):
         self._controls_row.addStretch()
 
         # --- Stale banner (result-level warning above the stack) ---
-        self._stale_banner = QLabel(
+        self._stale_banner = make_warning_banner(
             "Scope or peak seeds changed since the last analysis — the results below "
             "are stale. Re-run the analysis."
         )
-        self._stale_banner.setWordWrap(True)
-        self._stale_banner.setStyleSheet(f"color: {tokens.ERROR}; font-weight: 600;")
         self._stale_banner.setVisible(False)
         self._central_layout.addWidget(self._stale_banner)
 
@@ -206,11 +201,6 @@ class FitWizardWindow(WizardWindowBase):
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)
-
-        self._welcome_context_label = QLabel("")
-        self._welcome_context_label.setWordWrap(True)
-        self._welcome_context_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
-        layout.addWidget(self._welcome_context_label)
 
         analyze_row = QHBoxLayout()
         self._analyze_btn = QPushButton("Analyze")
@@ -445,14 +435,14 @@ class FitWizardWindow(WizardWindowBase):
         self._user_peaks = []
         self._analysis_stale = False
         self._stale_banner.setVisible(False)
-        self._heading_label.setText(f"Fit Wizard — Run {dataset.run_label}")
+        self._heading_label.setText("Fit Wizard")
+        self.set_context_chips(self._context_chip_labels())
         self._recommendation = None
         self._selected_key = None
         # Install the scope resolver and reset the selector to Auto (signal-silent).
         self._scope_selector.set_resolver(self._resolve_scope)
         self._scope_selector.set_scope(None)
         self._scope_selector.refresh_from_context()
-        self._welcome_context_label.setText(self._run_context_line())
         # Render the time/FFT plot and the (user-only) peaks table straight away
         # so peak seeds can be added before the first analysis run.
         self._fingerprint_banner.setText("")
@@ -678,10 +668,10 @@ class FitWizardWindow(WizardWindowBase):
     # Welcome helpers
     # ------------------------------------------------------------------
 
-    def _run_context_line(self) -> str:
-        """Plain run-context line — run / field / temperature / sample, empty parts omitted."""
+    def _context_chip_labels(self) -> list[str]:
+        """Header-band chip labels — run / field / temperature / sample, empty parts omitted."""
         if self._dataset is None:
-            return ""
+            return []
         parts: list[str] = [f"Run {self._dataset.run_label}"]
         field = self._dataset.field
         if field is not None:
@@ -692,7 +682,7 @@ class FitWizardWindow(WizardWindowBase):
         sample = self._dataset.metadata.get("sample")
         if sample:
             parts.append(str(sample))
-        return "  ·  ".join(parts)
+        return parts
 
     def _reanalyze(self) -> None:
         """Return to the Welcome state so the user can steer, then Analyze again."""

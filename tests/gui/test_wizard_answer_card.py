@@ -26,6 +26,7 @@ from asymmetry.core.fitting.fit_wizard import (
     SpectrumFingerprint,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.gui.styles import tokens
 from asymmetry.gui.widgets.wizard_answer_card import WizardAnswerCard
 
 
@@ -57,7 +58,16 @@ def _fingerprint() -> SpectrumFingerprint:
     )
 
 
-def _assessment(key: str, title: str, *, params: int, curve: np.ndarray) -> CandidateAssessment:
+def _assessment(
+    key: str,
+    title: str,
+    *,
+    params: int,
+    curve: np.ndarray,
+    aic: float = 8.0,
+    aicc: float = 8.2,
+    bic: float = 10.0,
+) -> CandidateAssessment:
     names = ["A_1", "Lambda", "A_bg", "sigma"][:params]
     pset = ParameterSet([Parameter(n, value=0.1, min=0.0, max=5.0) for n in names])
     model = CompositeModel(["Exponential", "Constant"], operators=["+"])
@@ -76,10 +86,10 @@ def _assessment(key: str, title: str, *, params: int, curve: np.ndarray) -> Cand
     return CandidateAssessment(
         template=template,
         fit_result=result,
-        aic=8.0,
-        aicc=8.2,
-        bic=10.0,
-        selected_score=8.2,
+        aic=aic,
+        aicc=aicc,
+        bic=bic,
+        selected_score=aicc,
         residual_rms=0.9,
         runs_z_score=0.2,
         max_abs_autocorrelation=0.1,
@@ -99,12 +109,19 @@ def _recommendation(
     confidence=ConfidenceTier.HIGH,
     comparable=(),
     caveat="",
+    gauss_aicc: float = 8.2,
 ) -> FitWizardRecommendation:
     t = np.linspace(0, 8, 60)
     exp_curve = 0.2 * np.exp(-0.4 * t) + 0.01
     gauss_curve = 0.18 * np.exp(-0.5 * t * t) + 0.02
     exp = _assessment("exp_constant", "Exponential + Constant", params=3, curve=exp_curve)
-    gauss = _assessment("gaussian_constant", "Gaussian + Constant", params=2, curve=gauss_curve)
+    gauss = _assessment(
+        "gaussian_constant",
+        "Gaussian + Constant",
+        params=2,
+        curve=gauss_curve,
+        aicc=gauss_aicc,
+    )
     return FitWizardRecommendation(
         fingerprint=_fingerprint(),
         templates=(exp.template, gauss.template),
@@ -180,8 +197,11 @@ def test_alternatives_swap_changes_applied_key(qapp: QApplication) -> None:
     card = WizardAnswerCard()
     card.set_recommendation(_recommendation())
     assert "gaussian_constant" in card._alt_buttons
-    # The simpler-model descriptor is derived from parameter counts.
-    assert "simpler model" in card._alt_buttons["gaussian_constant"].text()
+    button = card._alt_buttons["gaussian_constant"]
+    # The simpler-model descriptor moved to the tooltip; the button label is
+    # the plain display name (plus an optional delta badge).
+    assert "simpler model" not in button.text()
+    assert "simpler model" in button.toolTip()
 
     card.set_selected_key("gaussian_constant")
     assert card.selected_key() == "gaussian_constant"
@@ -208,3 +228,67 @@ def test_residuals_toggle_redraws_without_error(qapp: QApplication) -> None:
     # No exception is success; the figure has at least one axis after a draw.
     figure = card._plot_widget._figure
     assert figure is not None
+
+
+def test_high_confidence_winner_gets_success_frame(qapp: QApplication) -> None:
+    card = WizardAnswerCard()
+    card.set_recommendation(_recommendation(confidence=ConfidenceTier.HIGH))
+    assert tokens.SUCCESS_BG in card._card_frame.styleSheet()
+
+
+def test_non_high_confidence_gets_neutral_frame(qapp: QApplication) -> None:
+    card = WizardAnswerCard()
+    card.set_recommendation(_recommendation(confidence=ConfidenceTier.MEDIUM))
+    style = card._card_frame.styleSheet()
+    assert tokens.SUCCESS_BG not in style
+    assert tokens.SURFACE in style
+
+
+def test_no_recommendation_gets_neutral_frame(qapp: QApplication) -> None:
+    card = WizardAnswerCard()
+    card.set_recommendation(None)
+    style = card._card_frame.styleSheet()
+    assert tokens.SUCCESS_BG not in style
+    assert tokens.SURFACE in style
+
+
+def test_confidence_chip_text_per_tier(qapp: QApplication) -> None:
+    card = WizardAnswerCard()
+
+    card.set_recommendation(_recommendation(confidence=ConfidenceTier.HIGH))
+    assert card._confidence_chip is not None
+    assert card._confidence_chip.text() == "High confidence"
+
+    card.set_recommendation(_recommendation(confidence=ConfidenceTier.MEDIUM))
+    assert card._confidence_chip is not None
+    assert card._confidence_chip.text() == "Medium confidence"
+
+    card.set_recommendation(
+        _recommendation(
+            verdict=RecommendationVerdict.NO_SIGNIFICANT_STRUCTURE,
+            confidence=ConfidenceTier.NONE,
+        )
+    )
+    assert card._confidence_chip is not None
+    assert card._confidence_chip.text() == "No structure to fit"
+
+
+def test_confidence_chip_hidden_for_none_tier_with_winner(qapp: QApplication) -> None:
+    card = WizardAnswerCard()
+    card.set_recommendation(_recommendation(confidence=ConfidenceTier.NONE))
+    assert card._confidence_chip is None
+
+
+def test_alternative_delta_badge_formatting(qapp: QApplication) -> None:
+    # exp (recommended) has aicc=8.2; gauss set to 10.3 -> delta = +2.1.
+    card = WizardAnswerCard()
+    card.set_recommendation(_recommendation(gauss_aicc=10.3))
+    button = card._alt_buttons["gaussian_constant"]
+    assert "+2.1" in button.text()
+    assert "+2.10" in button.toolTip()
+    assert "AICc" in button.toolTip()
+
+
+def test_apply_button_uses_primary_qss(qapp: QApplication) -> None:
+    card = WizardAnswerCard()
+    assert tokens.ACCENT_SOFT in card._apply_btn.styleSheet()

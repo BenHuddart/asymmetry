@@ -64,6 +64,7 @@ from asymmetry.core.fitting.wizard_scope import (
 )
 from asymmetry.gui.panels.log_panel import LogPanel
 from asymmetry.gui.styles import tokens
+from asymmetry.gui.styles.widgets import make_warning_banner
 from asymmetry.gui.widgets.screen_sizing import resize_to_available
 from asymmetry.gui.widgets.wizard_scope_selector import WizardScopeSelector
 from asymmetry.gui.windows.wizard_base import WizardWindowBase
@@ -353,10 +354,6 @@ class GlobalFitWizardWindow(WizardWindowBase):
         # (P1-5).
         resize_to_available(self, 1180, 740)
 
-        heading_font = QFont(self._heading_label.font())
-        heading_font.setPointSize(max(heading_font.pointSize() + 4, 14))
-        heading_font.setBold(True)
-        self._heading_label.setFont(heading_font)
         self._heading_label.setText("Global Fit Wizard")
         self._status_label.setText(
             "Open the global fit wizard on a field or temperature series "
@@ -364,17 +361,15 @@ class GlobalFitWizardWindow(WizardWindowBase):
             "Global/Local parameter roles."
         )
 
-        # Stale banner sits under the status label (heading/status/controls/tabs
-        # is the base's central layout order, so index 2 lands it just above the
-        # controls row). Shown after a Scope edit invalidates the shown results.
-        self._stale_banner = QLabel(
+        # Stale banner sits above the tabs (the body layout is now
+        # [controls(0), tabs(1)], so index 1 puts the banner just above the
+        # tabs). Shown after a Scope edit invalidates the shown results.
+        self._stale_banner = make_warning_banner(
             "Scope changed since the last analysis — the results below are stale. "
             "Re-run the screening."
         )
-        self._stale_banner.setWordWrap(True)
-        self._stale_banner.setStyleSheet(f"color: {tokens.ERROR}; font-weight: 600;")
         self._stale_banner.setVisible(False)
-        self._central_layout.insertWidget(2, self._stale_banner)
+        self._central_layout.insertWidget(1, self._stale_banner)
 
         self._refresh_btn.setEnabled(False)
         self._metric_combo.setEnabled(False)
@@ -503,10 +498,12 @@ class GlobalFitWizardWindow(WizardWindowBase):
         self._scope_selector.set_scope(None)
         self._scope_selector.refresh_from_context()
         self._tabs.setCurrentIndex(0)
-        run_labels = ", ".join(dataset.run_label for dataset in self._datasets[:4])
+        run_label_chips = [dataset.run_label for dataset in self._datasets[:4]]
         if len(self._datasets) > 4:
-            run_labels += ", …"
-        self._heading_label.setText(f"Global Fit Wizard — {len(self._datasets)} datasets")
+            run_label_chips.append("…")
+        run_labels = ", ".join(run_label_chips)
+        self._heading_label.setText("Global Fit Wizard")
+        self.set_context_chips([f"{len(self._datasets)} datasets", *run_label_chips])
         self._status_label.setText(
             f"Ready to analyze the selected series ({run_labels}). "
             "Review the candidate portfolio, then build the screening table before choosing which candidates to optimize globally."
