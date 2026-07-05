@@ -2418,3 +2418,367 @@ def test_unknown_search_engine_raises_value_error(
 
     with pytest.raises(ValueError, match="Unknown search_engine"):
         build_global_fit_wizard_recommendation(datasets, search_engine="turbo")
+
+
+# --------------------------------------------------------------------------- #
+# Effort tiers (PR 5): EffortTier -> search_engine mapping + I/J/K knobs
+# --------------------------------------------------------------------------- #
+
+
+def _restrict_to_templates(
+    monkeypatch: pytest.MonkeyPatch,
+    templates: tuple[CandidateTemplate, ...],
+) -> None:
+    monkeypatch.setattr(
+        global_fit_wizard_module,
+        "build_candidate_templates",
+        lambda fingerprint, current_model=None: templates,
+    )
+
+
+@pytest.mark.parametrize(
+    ("tier_value", "expected_engine"),
+    [
+        ("low", "low"),
+        ("balanced", "balanced"),
+        ("thorough", "thorough"),
+        ("exhaustive", "exhaustive"),
+    ],
+)
+def test_effort_tier_maps_to_search_engine(
+    monkeypatch: pytest.MonkeyPatch, tier_value: str, expected_engine: str
+) -> None:
+    from asymmetry.core.fitting.wizard_scope import EffortTier
+
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    _restrict_to_exp_constant_template(monkeypatch, model)
+    datasets = _uniform_series(model)
+    instrumentation: dict[str, object] = {}
+
+    build_global_fit_wizard_recommendation(
+        datasets, instrumentation=instrumentation, effort_tier=EffortTier(tier_value)
+    )
+
+    if expected_engine in ("low", "balanced"):
+        assert instrumentation.get("search_engine") == expected_engine
+    else:
+        # Exact engines never set the search_engine metric (byte-identical path).
+        assert instrumentation.get("search_engine") is None
+
+
+def test_explicit_search_engine_overrides_effort_tier_engine_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from asymmetry.core.fitting.wizard_scope import EffortTier
+
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    _restrict_to_exp_constant_template(monkeypatch, model)
+    datasets = _uniform_series(model)
+    instrumentation: dict[str, object] = {}
+
+    # effort_tier says Balanced, but an explicit search_engine="low" must win for
+    # *engine selection* (backward compatibility with PR 4 callers/tests).
+    build_global_fit_wizard_recommendation(
+        datasets,
+        instrumentation=instrumentation,
+        effort_tier=EffortTier.BALANCED,
+        search_engine="low",
+    )
+
+    assert instrumentation.get("search_engine") == "low"
+
+
+def _triple_exp_template() -> CandidateTemplate:
+    model = CompositeModel(
+        ["Exponential", "Exponential", "Exponential", "Constant"],
+        operators=["+", "+", "+"],
+    )
+    return CandidateTemplate(
+        key="triple_exp_constant",
+        title="Exponential + Exponential + Exponential + Constant",
+        category="General",
+        rationale="test",
+        model=model,
+    )
+
+
+def _searched_role_split_count(recommendation, template_key: str) -> int:
+    """How many distinct role-split assessments a template earned.
+
+    Every template gets one cheap initial-screen assessment (``assessment_key
+    is None``) regardless of tier; a template that reached the expensive
+    coupled role search additionally earns assessments with a real
+    ``assessment_key`` (its all-global fit, flip-neighbourhood, etc.). Zero
+    extra role splits is the observable signature of "never reached the
+    search" — this is what technique I's cap must produce for an over-budget
+    template.
+    """
+    return sum(
+        1
+        for assessment in recommendation.optimized_assessments()
+        if assessment.template.key == template_key and assessment.assessment_key is not None
+    )
+
+
+def test_low_portfolio_cap_skips_over_budget_templates_via_public_entry_point(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Technique I is reachable through the real GUI-facing entry point.
+
+    An explicit user selection at Low still narrows to the cap: a >5-parameter
+    template never reaches the expensive coupled role search, even though the
+    user selected it alongside a small template that fits inside the budget.
+    """
+    from asymmetry.core.fitting.wizard_scope import EffortTier
+
+    small_model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    small_template = CandidateTemplate(
+        key="exp_constant",
+        title="Exponential + Constant",
+        category="General",
+        rationale="test",
+        model=small_model,
+    )
+    big_template = _triple_exp_template()
+    _restrict_to_templates(monkeypatch, (small_template, big_template))
+    datasets = _uniform_series(small_model)
+
+    recommendation = build_global_fit_wizard_recommendation(
+        datasets,
+        effort_tier=EffortTier.LOW,
+        selected_template_keys=(small_template.key, big_template.key),
+    )
+
+    assert _searched_role_split_count(recommendation, small_template.key) > 0
+    assert _searched_role_split_count(recommendation, big_template.key) == 0
+
+
+def test_balanced_tier_ignores_portfolio_cap_on_explicit_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Balanced (and every non-Low tier) honours the user's selection verbatim."""
+    from asymmetry.core.fitting.wizard_scope import EffortTier
+
+    small_model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    small_template = CandidateTemplate(
+        key="exp_constant",
+        title="Exponential + Constant",
+        category="General",
+        rationale="test",
+        model=small_model,
+    )
+    big_template = _triple_exp_template()
+    _restrict_to_templates(monkeypatch, (small_template, big_template))
+    datasets = _uniform_series(small_model)
+
+    recommendation = build_global_fit_wizard_recommendation(
+        datasets,
+        effort_tier=EffortTier.BALANCED,
+        selected_template_keys=(small_template.key, big_template.key),
+    )
+
+    # Balanced applies no cap: both explicitly selected templates reach search.
+    assert _searched_role_split_count(recommendation, small_template.key) > 0
+    assert _searched_role_split_count(recommendation, big_template.key) > 0
+
+
+def test_low_complexity_prior_prefers_fewer_additive_terms() -> None:
+    from asymmetry.core.fitting.global_fit_wizard import _low_complexity_prior_penalty
+
+    exp_constant = CandidateTemplate(
+        key="exp_constant",
+        title="Exponential + Constant",
+        category="General",
+        rationale="test",
+        model=CompositeModel(["Exponential", "Constant"], operators=["+"]),
+    )
+    triple_exp = _triple_exp_template()
+
+    assert _low_complexity_prior_penalty(exp_constant) == 0.0
+    assert _low_complexity_prior_penalty(triple_exp) > _low_complexity_prior_penalty(exp_constant)
+
+
+def test_identifiability_demotion_flags_highly_correlated_covariance() -> None:
+    from asymmetry.core.fitting.global_fit_wizard import (
+        _initial_assessment_is_identifiability_degenerate,
+    )
+
+    template = CandidateTemplate(
+        key="exp_constant",
+        title="Exponential + Constant",
+        category="General",
+        rationale="test",
+        model=CompositeModel(["Exponential", "Constant"], operators=["+"]),
+    )
+    covariance = np.array([[1.0, 0.999], [0.999, 1.0]])
+    result = FitResult(
+        success=True,
+        chi_squared=1.0,
+        parameters=ParameterSet(
+            [Parameter(name="A_1", value=0.2), Parameter(name="Lambda", value=0.3)]
+        ),
+        uncertainties={"A_1": 0.01, "Lambda": 0.02},
+        covariance=covariance,
+        covariance_parameters=["A_1", "Lambda"],
+    )
+    assessment = GlobalCandidateAssessment(
+        template=template,
+        fit_results_by_run={1: result},
+        global_parameters=ParameterSet(),
+        global_param_names=(),
+        local_param_names=(),
+        fixed_param_names=(),
+        parameter_recommendations=(),
+        run_diagnostics=(),
+        series_warnings=(),
+        aic=10.0,
+        aicc=10.0,
+        bic=12.0,
+        selected_score=10.0,
+        fitted_curves_by_run={},
+        component_curves_by_run={},
+    )
+
+    assert _initial_assessment_is_identifiability_degenerate(assessment)
+
+
+def test_identifiability_demotion_ignores_well_conditioned_covariance() -> None:
+    from asymmetry.core.fitting.global_fit_wizard import (
+        _initial_assessment_is_identifiability_degenerate,
+    )
+
+    template = CandidateTemplate(
+        key="exp_constant",
+        title="Exponential + Constant",
+        category="General",
+        rationale="test",
+        model=CompositeModel(["Exponential", "Constant"], operators=["+"]),
+    )
+    covariance = np.array([[1.0, 0.05], [0.05, 1.0]])
+    result = FitResult(
+        success=True,
+        chi_squared=1.0,
+        parameters=ParameterSet(
+            [Parameter(name="A_1", value=0.2), Parameter(name="Lambda", value=0.3)]
+        ),
+        uncertainties={"A_1": 0.01, "Lambda": 0.02},
+        covariance=covariance,
+        covariance_parameters=["A_1", "Lambda"],
+    )
+    assessment = GlobalCandidateAssessment(
+        template=template,
+        fit_results_by_run={1: result},
+        global_parameters=ParameterSet(),
+        global_param_names=(),
+        local_param_names=(),
+        fixed_param_names=(),
+        parameter_recommendations=(),
+        run_diagnostics=(),
+        series_warnings=(),
+        aic=10.0,
+        aicc=10.0,
+        bic=12.0,
+        selected_score=10.0,
+        fitted_curves_by_run={},
+        component_curves_by_run={},
+    )
+
+    assert not _initial_assessment_is_identifiability_degenerate(assessment)
+
+
+@pytest.mark.parametrize("engine", ["low", "balanced"])
+def test_screening_decimation_fires_and_leaves_full_resolution_leaderboard(
+    monkeypatch: pytest.MonkeyPatch, engine: str
+) -> None:
+    """Technique K: decimation applies during search but never on the returned ICs.
+
+    Every returned assessment's per-run fit results carry the full dataset
+    point count (``dof`` reflects it), proving the winner + flip-neighbourhood
+    were refitted at native resolution and no decimated assessment leaked into
+    the leaderboard the verdict layer reranks over.
+    """
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    _restrict_to_exp_constant_template(monkeypatch, model)
+    datasets = _varying_lambda_series(model)
+    full_n_points = datasets[0].n_points
+    instrumentation: dict[str, object] = {}
+
+    recommendation = build_global_fit_wizard_recommendation(
+        datasets, search_engine=engine, instrumentation=instrumentation
+    )
+
+    counters = instrumentation.get("counters")
+    assert isinstance(counters, dict)
+    assert counters.get("decimation_applied", 0) >= 1
+
+    for assessment in recommendation.optimized_assessments():
+        for run_number, result in assessment.fit_results_by_run.items():
+            dataset = next(d for d in datasets if int(d.run_number) == run_number)
+            assert dataset.n_points == full_n_points
+            n_free = len(assessment.global_param_names) + len(assessment.local_param_names)
+            # dof = N_data - N_free (per-run free count); a decimated leftover
+            # would show a much smaller dof for the same free-parameter count.
+            assert result.dof == pytest.approx(full_n_points - n_free, abs=2)
+
+
+def test_screening_decimation_skips_when_nyquist_gate_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from asymmetry.core.fitting.fit_wizard import SpectrumFingerprint
+    from asymmetry.core.fitting.global_fit_wizard import (
+        _DECIMATION_FACTOR_BALANCED,
+        _decimated_datasets_for_search,
+    )
+
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    datasets = _uniform_series(model)
+    # A high dominant frequency relative to the coarse-binned Nyquist limit —
+    # decimating would alias this content, so the gate must refuse.
+    dt = float(np.mean(np.diff(datasets[0].time)))
+    aliasing_fingerprint = SpectrumFingerprint(
+        tail_estimate=0.0,
+        initial_amplitude_estimate=0.2,
+        zero_crossings=10,
+        smoothed_zero_crossings=10,
+        smoothed_turning_points=10,
+        dominant_fft_frequency_mhz=0.5 / (dt * _DECIMATION_FACTOR_BALANCED),
+        dominant_fft_snr=10.0,
+        dominant_fft_cycles_in_window=5.0,
+        monotonic_decay_fraction=0.1,
+        early_time_curvature=0.0,
+        semilog_slope_ratio=0.0,
+        late_time_dip_recovery_score=0.0,
+        oscillatory_hint=True,
+        kt_like_hint=False,
+        multi_rate_hint=False,
+    )
+
+    search_datasets, factor = _decimated_datasets_for_search(
+        datasets,
+        engine="balanced",
+        aggregate_fingerprint=aliasing_fingerprint,
+        instrumentation=None,
+    )
+
+    assert factor == 1
+    assert search_datasets is datasets
+
+
+def test_thorough_and_exhaustive_engines_stay_byte_identical() -> None:
+    """PR 5 tier policy: Thorough is a faithful alias of the exact wavefront.
+
+    The tier table calls for "full wavefront, exact bounds A/B only, generous
+    margins" at Thorough — but there is no independent acceptance bar for it
+    (only Exhaustive is the referee), and building a third hybrid enumerator
+    would risk the one path that must stay byte-identical. Thorough therefore
+    resolves to exactly the same ``SEARCH_ENGINE_THOROUGH`` string as before,
+    which ``_EXACT_SEARCH_ENGINES`` already routes to the untouched wavefront.
+    """
+    from asymmetry.core.fitting.global_fit_wizard import (
+        _EXACT_SEARCH_ENGINES,
+        SEARCH_ENGINE_EXHAUSTIVE,
+        SEARCH_ENGINE_THOROUGH,
+    )
+
+    assert SEARCH_ENGINE_THOROUGH in _EXACT_SEARCH_ENGINES
+    assert SEARCH_ENGINE_EXHAUSTIVE in _EXACT_SEARCH_ENGINES

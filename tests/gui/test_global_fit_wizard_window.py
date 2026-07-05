@@ -874,6 +874,156 @@ def test_global_fit_wizard_window_cached_restore_legacy_signature_is_auto(
     assert window._stale_banner.isHidden() is True
 
 
+# ── Effort tier slider (PR 5) ────────────────────────────────────────────────
+
+
+def test_global_fit_wizard_window_effort_defaults_to_balanced(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+) -> None:
+    from asymmetry.core.fitting.wizard_scope import EffortTier
+
+    window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
+
+    assert window.current_effort_tier() is EffortTier.BALANCED
+
+
+def test_global_fit_wizard_window_low_effort_label_says_screening_grade(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+) -> None:
+    from asymmetry.core.fitting.wizard_scope import EffortTier
+
+    window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
+
+    index = window._effort_combo.findData(EffortTier.LOW.value)
+    assert index >= 0
+    assert "screening-grade" in window._effort_combo.itemText(index).lower()
+
+
+def test_global_fit_wizard_window_forwards_effort_tier_to_optimize(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from asymmetry.core.fitting.wizard_scope import EffortTier
+
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_global_fit_wizard_screening_recommendation",
+        lambda datasets_arg, **_kwargs: _fake_screening_recommendation(datasets_arg),
+    )
+
+    def _fake_build(datasets_arg, **kwargs):
+        captured.update(kwargs)
+        return _fake_multi_variant_recommendation(datasets_arg)
+
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_global_fit_wizard_recommendation",
+        _fake_build,
+    )
+    window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
+    window._set_effort_tier(EffortTier.LOW)
+    window._start_analysis()
+    wait_for(lambda: _analysis_complete(window), qapp)
+
+    window._compare_table.selectRow(0)
+    window._on_compare_selection_changed()
+    window._start_selected_optimisation()
+    wait_for(lambda: _analysis_complete(window) and window._optimized_table.rowCount() == 2, qapp)
+
+    assert captured.get("effort_tier") is EffortTier.LOW
+
+
+def test_global_fit_wizard_window_effort_tier_in_analysis_signature(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+) -> None:
+    """An effort-tier change invalidates the same-signature cache short-circuit."""
+    from asymmetry.core.fitting.wizard_scope import EffortTier
+
+    window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
+
+    baseline = window._analysis_signature()
+    assert baseline["effort_tier"] == "balanced"
+
+    window._set_effort_tier(EffortTier.LOW)
+    changed = window._analysis_signature()
+    assert changed["effort_tier"] == "low"
+    assert changed != baseline
+
+
+def test_global_fit_wizard_window_effort_tier_change_marks_stale(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from asymmetry.core.fitting.wizard_scope import EffortTier
+
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_global_fit_wizard_screening_recommendation",
+        lambda datasets_arg, **_kwargs: _fake_screening_recommendation(datasets_arg),
+    )
+    window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
+    window._start_analysis()
+    wait_for(lambda: _analysis_complete(window), qapp)
+    assert window._analysis_stale is False
+
+    window._set_effort_tier(EffortTier.LOW)
+    window._on_effort_tier_changed(window._effort_combo.currentIndex())
+
+    assert window._analysis_stale is True
+    assert window._stale_banner.isHidden() is False
+
+
+def test_global_fit_wizard_window_cached_restore_with_effort_tier(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+) -> None:
+    from asymmetry.core.fitting.wizard_scope import EffortTier
+
+    window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
+
+    window.set_cached_recommendation(
+        _fake_recommendation(datasets),
+        signature={
+            "run_numbers": [int(dataset.run_number) for dataset in datasets],
+            "model": None,
+            "effort_tier": "low",
+        },
+        log_text="cached",
+    )
+
+    assert window.current_effort_tier() is EffortTier.LOW
+    assert window._analysis_stale is False
+    assert window._stale_banner.isHidden() is True
+
+
+def test_global_fit_wizard_window_cached_restore_legacy_signature_is_balanced(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+) -> None:
+    from asymmetry.core.fitting.wizard_scope import EffortTier
+
+    window = GlobalFitWizardWindow()
+    window.set_cached_recommendation(_fake_recommendation(datasets))
+
+    # Legacy signature (no effort_tier key) restores Balanced and is not stale.
+    assert window.current_effort_tier() is EffortTier.BALANCED
+    assert window._analysis_stale is False
+    assert window._stale_banner.isHidden() is True
+
+
 # ── Cooperative cancel ───────────────────────────────────────────────────────
 
 
