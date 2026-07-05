@@ -6,6 +6,14 @@ from asymmetry.core.fitting.global_search.adapters import (
     compile_structure_to_legacy_roles,
 )
 from asymmetry.core.fitting.global_search.exact import ExactCandidateFit, ExactStructureFitter
+from asymmetry.core.fitting.global_search.homogeneity import (
+    ParameterHomogeneity,
+    chi2_sf,
+    classify_parameter_homogeneity,
+    homogeneity_statistic,
+    wald_globalisation_cost,
+    wald_subset_delta_chi2,
+)
 from asymmetry.core.fitting.global_search.orchestrator import (
     GlobalSearchConfig,
     GlobalSearchOrchestrator,
@@ -37,6 +45,7 @@ __all__ = [
     "GlobalSearchOrchestrator",
     "ModelScore",
     "ModelStructure",
+    "ParameterHomogeneity",
     "ParameterSpec",
     "ParameterTieMode",
     "ParameterTieSpec",
@@ -48,8 +57,13 @@ __all__ = [
     "SearchMoveType",
     "SearchState",
     "build_parameter_sets_for_structure",
+    "chi2_sf",
+    "classify_parameter_homogeneity",
     "compile_legacy_structure",
     "compile_structure_to_legacy_roles",
     "extract_discrete_candidates",
+    "homogeneity_statistic",
     "score_exact_candidate",
+    "wald_globalisation_cost",
+    "wald_subset_delta_chi2",
 ]
