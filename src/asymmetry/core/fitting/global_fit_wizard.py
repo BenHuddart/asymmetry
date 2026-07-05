@@ -7,7 +7,7 @@ import os
 import threading
 from collections.abc import Callable, Sequence
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from itertools import combinations
 
 import numpy as np
@@ -53,6 +53,11 @@ from asymmetry.core.fitting.global_search import (
 from asymmetry.core.fitting.global_search.heuristics import (
     localisation_threshold_scale,
     parameter_localisation_priority,
+)
+from asymmetry.core.fitting.global_search.homogeneity import (
+    ParameterHomogeneity,
+    classify_parameter_homogeneity,
+    wald_subset_delta_chi2,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.peak_detection import (
@@ -107,6 +112,51 @@ _STAGED_V2_EXACT_CANDIDATES_PER_TIER = 2
 _STAGED_GLOBALIZATION_CANDIDATES_PER_STEP = 3
 _CONSOLIDATED_SEARCH_VARIANT = "staged_v2"
 _MAX_ROLE_CANDIDATES_PER_TIER = 3
+
+# --------------------------------------------------------------------------- #
+# Non-exhaustive search engine selector (PR 4).
+#
+# The *engine* axis chooses which enumerator runs the role search. It is
+# deliberately distinct from ``search_strategy`` (which drives per-fit local
+# search settings via ``_staged_local_search_settings``): a heuristic engine
+# still fits every real assignment with the same fidelity as exhaustive, so its
+# ICs sit on exactly the same footing as the frozen baseline — the only moving
+# variable is *which* assignments get fit. ``"exhaustive"`` and ``"thorough"``
+# both resolve to the byte-for-byte current wavefront call, so the exact path is
+# untouched by definition. PR 5 maps its ``EffortTier`` enum onto these strings.
+# --------------------------------------------------------------------------- #
+SEARCH_ENGINE_EXHAUSTIVE = "exhaustive"
+SEARCH_ENGINE_THOROUGH = "thorough"
+SEARCH_ENGINE_LOW = "low"
+SEARCH_ENGINE_BALANCED = "balanced"
+_DEFAULT_SEARCH_ENGINE = SEARCH_ENGINE_EXHAUSTIVE
+#: Engines that resolve to the exact wavefront (no heuristic pre-fixing/skipping).
+_EXACT_SEARCH_ENGINES = frozenset({SEARCH_ENGINE_EXHAUSTIVE, SEARCH_ENGINE_THOROUGH})
+#: Every supported ``search_engine`` value. An unrecognised value must raise
+#: rather than silently fall through to the heuristic path (a typo would
+#: otherwise change behaviour without warning).
+SEARCH_ENGINES = (
+    SEARCH_ENGINE_EXHAUSTIVE,
+    SEARCH_ENGINE_THOROUGH,
+    SEARCH_ENGINE_BALANCED,
+    SEARCH_ENGINE_LOW,
+)
+
+#: Homogeneity (Q) pre-test band edges per heuristic engine (technique E). A
+#: parameter is pre-fixed *local* when its Q upper-tail p-value falls below the
+#: local edge (strong evidence it varies) and *global* when it exceeds the global
+#: edge (no evidence it varies). Low uses wide bands (pre-fix aggressively);
+#: Balanced uses conservative bands (pre-fix only the clear tails). PR 5 owns the
+#: final per-tier numbers; these are sensible defaults.
+_Q_BANDS_LOW = (0.02, 0.80)
+_Q_BANDS_BALANCED = (0.002, 0.98)
+#: Balanced surrogate verify budget: real-fit the top-K surrogate-ranked subsets
+#: per Hamming layer of the ambiguous middle, growing K when the realised order
+#: disagrees near the top (technique G). Low skips the surrogate and runs greedy.
+_SURROGATE_TOP_K = 3
+#: Template racing (technique H): how many templates advance past the shallow
+#: (layer 0–1) race into the deeper heuristic search.
+_RACING_ADVANCE_COUNT = 2
 _HIGH_DIMENSION_FREE_COUNT = 40
 _EXTREME_DIMENSION_FREE_COUNT = 70
 _MAX_TEMPLATE_WORKERS = 4
@@ -1435,8 +1485,16 @@ def build_global_fit_wizard_recommendation(
     selected_template_keys: tuple[str, ...] | None = None,
     scope: WizardScope | None = None,
     user_frequencies_mhz: Sequence[float] | None = None,
+    search_engine: str = _DEFAULT_SEARCH_ENGINE,
 ) -> GlobalFitWizardRecommendation:
-    """Analyze one ordered dataset series and recommend a global-fit candidate."""
+    """Analyze one ordered dataset series and recommend a global-fit candidate.
+
+    ``search_engine`` selects the role-search enumerator: ``"exhaustive"``
+    (default) and ``"thorough"`` run the exact bounded wavefront; ``"low"`` and
+    ``"balanced"`` run the non-exhaustive heuristic engines (techniques E/F/G/H).
+    The exact engines resolve to the byte-for-byte current call, so the
+    exhaustive verdict path is untouched.
+    """
     _set_metric(instrumentation, "strategy", "consolidated")
     if instrumentation is not None:
         instrumentation.setdefault("counters", {})
@@ -1457,6 +1515,7 @@ def build_global_fit_wizard_recommendation(
         selected_template_keys=selected_template_keys,
         scope=scope,
         user_frequencies_mhz=user_frequencies_mhz,
+        search_engine=search_engine,
     )
 
 
@@ -1474,10 +1533,17 @@ def _build_global_fit_wizard_recommendation_staged(
     selected_template_keys: tuple[str, ...] | None = None,
     scope: WizardScope | None = None,
     user_frequencies_mhz: Sequence[float] | None = None,
+    search_engine: str = _DEFAULT_SEARCH_ENGINE,
 ) -> GlobalFitWizardRecommendation:
     if len(datasets) < 2:
         raise ValueError("Global fit wizard requires at least two datasets.")
 
+    search_engine = search_engine or _DEFAULT_SEARCH_ENGINE
+    if search_engine not in SEARCH_ENGINES:
+        raise ValueError(
+            f"Unknown search_engine {search_engine!r}; valid options are "
+            f"{', '.join(SEARCH_ENGINES)}."
+        )
     search_strategy = _CONSOLIDATED_SEARCH_VARIANT
     progress_callback = _threadsafe_progress_callback(progress_callback)
     current_parameter_types = current_parameter_types or {}
@@ -1717,17 +1783,32 @@ def _build_global_fit_wizard_recommendation_staged(
             f"{len(shortlisted_templates)} candidate(s) "
             "via exhaustive global/local enumeration.",
         )
-    optimized_assessments = _run_exhaustive_wavefront_search(
-        ordered_datasets,
-        shortlisted_templates=shortlisted_templates,
-        template_contexts=template_contexts,
-        axis_key=axis_key,
-        metric=metric,
-        progress_callback=progress_callback,
-        search_strategy=search_strategy,
-        instrumentation=instrumentation,
-        single_run_prefit_cache_for=_single_run_prefit_cache_for,
-    )
+    if search_engine in _EXACT_SEARCH_ENGINES:
+        optimized_assessments = _run_exhaustive_wavefront_search(
+            ordered_datasets,
+            shortlisted_templates=shortlisted_templates,
+            template_contexts=template_contexts,
+            axis_key=axis_key,
+            metric=metric,
+            progress_callback=progress_callback,
+            search_strategy=search_strategy,
+            instrumentation=instrumentation,
+            single_run_prefit_cache_for=_single_run_prefit_cache_for,
+        )
+    else:
+        _set_metric(instrumentation, "search_engine", search_engine)
+        optimized_assessments = _run_heuristic_search(
+            ordered_datasets,
+            shortlisted_templates=shortlisted_templates,
+            template_contexts=template_contexts,
+            axis_key=axis_key,
+            metric=metric,
+            progress_callback=progress_callback,
+            search_strategy=search_strategy,
+            instrumentation=instrumentation,
+            single_run_prefit_cache_for=_single_run_prefit_cache_for,
+            engine=search_engine,
+        )
 
     prescreen_assessments = tuple(
         initial_assessments[template.key]
@@ -5753,6 +5834,753 @@ def _metric_penalty(parameter_count: int, *, sample_count: int, metric: Selectio
     if n > k + 1:
         return aic_penalty + 2.0 * k * (k + 1) / max(n - k - 1, 1)
     return aic_penalty
+
+
+@dataclass
+class _HeuristicTemplateState:
+    """Per-template working state for the heuristic (Low/Balanced) search.
+
+    Mirrors the fields the exhaustive wavefront threads through, but the search
+    populates ``exact_cache``/``converged_assessments`` sparsely (only the
+    assignments the heuristic actually fits) — with one hard guarantee: after
+    :func:`_fill_winner_flip_neighbourhood` runs, the cache contains the winner
+    plus *all* single-flip neighbours over the full free-param set, so the
+    downstream ``_build_parameter_recommendations_from_exact_cache`` (which reads
+    the winner's flip-neighbourhood to justify each role) is never starved.
+    """
+
+    template: CandidateTemplate
+    fixed_param_names: tuple[str, ...]
+    prefit_base_by_run: dict[int, ParameterSet]
+    free_param_names: tuple[str, ...]
+    exact_cache: dict[tuple[tuple[str, ...], tuple[str, ...]], GlobalCandidateAssessment]
+    converged_assessments: dict[
+        tuple[tuple[str, ...], tuple[str, ...]],
+        GlobalCandidateAssessment,
+    ]
+    anchor_assessment: GlobalCandidateAssessment | None = None
+    best_assessment: GlobalCandidateAssessment | None = None
+    #: Q pre-test outcome per free parameter (technique E), for progress/logging.
+    homogeneity: dict[str, ParameterHomogeneity] = field(default_factory=dict)
+    #: Per-parameter all-local estimates / errors (technique E + G source).
+    estimates: dict[str, tuple[float, ...]] = field(default_factory=dict)
+    estimate_errors: dict[str, tuple[float, ...]] = field(default_factory=dict)
+
+
+def _local_names_for(
+    free_param_names: tuple[str, ...],
+    local_set: set[str],
+) -> tuple[str, ...]:
+    """Canonical sorted local-name tuple over the free params of a template."""
+
+    return tuple(sorted(name for name in free_param_names if name in local_set))
+
+
+def _global_names_for(
+    free_param_names: tuple[str, ...],
+    local_names: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Free globals = free params not in ``local_names`` (order preserved)."""
+
+    local_set = set(local_names)
+    return tuple(name for name in free_param_names if name not in local_set)
+
+
+def _fit_heuristic_assignment(
+    datasets: list[MuonDataset],
+    state: _HeuristicTemplateState,
+    local_names: tuple[str, ...],
+    *,
+    axis_key: str,
+    metric: SelectionMetric,
+    search_strategy: str,
+    progress_callback: Callable[[str], None] | None,
+    instrumentation: dict[str, object] | None,
+    warm_start_source: GlobalCandidateAssessment | None = None,
+) -> GlobalCandidateAssessment:
+    """Fit one role assignment for a heuristic template and cache it.
+
+    Reuses :func:`_fit_exact_assignment` verbatim (same fidelity, same
+    instrumentation counters the harness reads) so every heuristic-fit IC is on
+    the same footing as the exhaustive baseline. Warm-starts from a neighbour
+    assessment when one is supplied.
+    """
+
+    global_names = _global_names_for(state.free_param_names, local_names)
+    warm_start_by_run: dict[int, ParameterSet] | None = None
+    warm_start_chi2: float | None = None
+    initial_step_sizes: dict[str, float] = {}
+    if warm_start_source is not None and warm_start_source.is_successful:
+        warm_start_by_run = _warm_start_parameter_sets(
+            datasets,
+            assessment=warm_start_source,
+            base_by_run=state.prefit_base_by_run,
+            target_global_names=global_names,
+            target_local_names=local_names,
+            fit_engine=FitEngine(),
+            template=state.template,
+            progress_callback=progress_callback,
+        )
+        initial_step_sizes = _step_hints_from_assessment(
+            datasets,
+            warm_start_source,
+            target_global_names=global_names,
+            target_local_names=local_names,
+        )
+        # Technique D certificate: only arm it when the warm source is a strictly
+        # *simpler* parent (its locals are a subset of the child's) — then the
+        # child, being strictly more flexible, cannot honestly exceed the parent's
+        # χ², so a warm child landing at χ² <= parent + ε skips the multi-start
+        # battery. A backward-prune trial (fewer locals than its warm incumbent)
+        # is the reverse and must NOT arm the certificate; it simply escalates.
+        source_local = set(warm_start_source.local_param_names)
+        if source_local < set(local_names):
+            warm_start_chi2 = float(
+                sum(result.chi_squared for result in warm_start_source.fit_results_by_run.values())
+            )
+    assessment = _fit_exact_assignment(
+        datasets,
+        state.template,
+        fit_engine=FitEngine(),
+        base_by_run=state.prefit_base_by_run,
+        global_param_names=global_names,
+        local_param_names=local_names,
+        fixed_param_names=state.fixed_param_names,
+        axis_key=axis_key,
+        metric=metric,
+        cache=state.exact_cache,
+        warm_start_by_run=warm_start_by_run,
+        warm_start_chi2=warm_start_chi2,
+        progress_callback=progress_callback,
+        search_strategy=search_strategy,
+        instrumentation=instrumentation,
+        initial_step_sizes=initial_step_sizes,
+    )
+    key = (global_names, local_names)
+    state.exact_cache[key] = assessment
+    if assessment.is_successful:
+        state.converged_assessments[key] = assessment
+        if state.best_assessment is None or _assessment_sort_key(
+            assessment, metric
+        ) < _assessment_sort_key(state.best_assessment, metric):
+            state.best_assessment = assessment
+    return assessment
+
+
+def _extract_anchor_estimates(
+    datasets: list[MuonDataset],
+    anchor: GlobalCandidateAssessment,
+    free_param_names: tuple[str, ...],
+) -> tuple[dict[str, tuple[float, ...]], dict[str, tuple[float, ...]], set[str]]:
+    """Per-parameter (θ_g, σ_g) and the at-limit set from the all-local anchor.
+
+    The all-local joint fit is equivalent to G independent per-dataset fits (no
+    shared params → block-diagonal covariance), so each per-run ``FitResult``
+    carries the local estimate ``θ_g`` and its 1σ ``σ_g`` for every free
+    parameter — exactly the source technique E (Q-test) and technique G (Wald
+    surrogate) both need. Returns ``(estimates, errors, at_limit_params)`` where
+    ``at_limit_params`` names any parameter that pinned a bound in *any* dataset
+    (the Q-test must never pre-fix such a parameter).
+    """
+
+    estimates: dict[str, list[float]] = {name: [] for name in free_param_names}
+    errors: dict[str, list[float]] = {name: [] for name in free_param_names}
+    at_limit: set[str] = set()
+
+    for diagnostic in anchor.run_diagnostics:
+        for reason in diagnostic.gate_reasons:
+            for edge in (" at lower bound", " at upper bound"):
+                if edge in reason:
+                    at_limit.add(reason.split(edge, 1)[0])
+
+    for dataset in datasets:
+        result = anchor.fit_results_by_run.get(int(dataset.run_number))
+        if result is None:
+            continue
+        for name in free_param_names:
+            parameter = result.parameters[name] if name in result.parameters else None
+            if parameter is None:
+                estimates[name].append(float("nan"))
+                errors[name].append(float("nan"))
+                continue
+            estimates[name].append(float(parameter.value))
+            sigma = _positive_uncertainty(result.uncertainties.get(name))
+            errors[name].append(sigma if sigma is not None else float("nan"))
+
+    return (
+        {name: tuple(values) for name, values in estimates.items()},
+        {name: tuple(values) for name, values in errors.items()},
+        at_limit,
+    )
+
+
+def _homogeneity_pretests(
+    state: _HeuristicTemplateState,
+    at_limit: set[str],
+    *,
+    q_bands: tuple[float, float],
+    progress_callback: Callable[[str], None] | None,
+    instrumentation: dict[str, object] | None,
+) -> tuple[set[str], set[str], list[str]]:
+    """Technique E: partition free params into fixed-local / fixed-global / middle.
+
+    Returns ``(fixed_local, fixed_global, ambiguous)``. A parameter is only
+    pre-fixed when its Q classification is unambiguous *and* its single fits were
+    clean (finite errors, not at a limit); everything else stays ambiguous and
+    is enumerated. The ambiguous middle preserves the template's free-param
+    order so downstream enumeration is deterministic.
+    """
+
+    p_local, p_global = q_bands
+    fixed_local: set[str] = set()
+    fixed_global: set[str] = set()
+    ambiguous: list[str] = []
+    for name in state.free_param_names:
+        outcome = classify_parameter_homogeneity(
+            name,
+            state.estimates.get(name, ()),
+            state.estimate_errors.get(name, ()),
+            at_limit=name in at_limit,
+            p_local_threshold=p_local,
+            p_global_threshold=p_global,
+        )
+        state.homogeneity[name] = outcome
+        if outcome.role == "local":
+            fixed_local.add(name)
+            _record_counter(instrumentation, "q_pretest_fixed_local")
+        elif outcome.role == "global":
+            fixed_global.add(name)
+            _record_counter(instrumentation, "q_pretest_fixed_global")
+        else:
+            ambiguous.append(name)
+            _record_counter(instrumentation, "q_pretest_ambiguous")
+    _progress_log(
+        progress_callback,
+        f"{state.template.title}: Q pre-tests fixed "
+        f"{len(fixed_local)} local, {len(fixed_global)} global; "
+        f"{len(ambiguous)} ambiguous → enumerate.",
+    )
+    return fixed_local, fixed_global, ambiguous
+
+
+def _greedy_role_search(
+    datasets: list[MuonDataset],
+    state: _HeuristicTemplateState,
+    *,
+    base_local: set[str],
+    searchable: tuple[str, ...],
+    axis_key: str,
+    metric: SelectionMetric,
+    search_strategy: str,
+    progress_callback: Callable[[str], None] | None,
+    instrumentation: dict[str, object] | None,
+) -> GlobalCandidateAssessment:
+    """Technique F: forward-select from all-global, then backward-prune. O(P²).
+
+    Starts from the Q-fixed-local set (``base_local``) with every ``searchable``
+    param global, greedily flips the single best global→local move while it
+    improves the penalised score beyond the role-delta threshold, then prunes any
+    local flip that no longer earns its complexity. Only ``searchable`` params
+    ever change role; Q-fixed-local stay local, Q-fixed-global stay global.
+    """
+
+    incumbent = _fit_heuristic_assignment(
+        datasets,
+        state,
+        _local_names_for(state.free_param_names, base_local),
+        axis_key=axis_key,
+        metric=metric,
+        search_strategy=search_strategy,
+        progress_callback=progress_callback,
+        instrumentation=instrumentation,
+    )
+    if not incumbent.is_successful:
+        return incumbent
+
+    current_local = set(base_local)
+    remaining = [name for name in searchable if name not in current_local]
+
+    # Forward selection.
+    while remaining:
+        best_candidate: GlobalCandidateAssessment | None = None
+        best_name: str | None = None
+        for name in remaining:
+            trial_local = _local_names_for(state.free_param_names, current_local | {name})
+            candidate = _fit_heuristic_assignment(
+                datasets,
+                state,
+                trial_local,
+                axis_key=axis_key,
+                metric=metric,
+                search_strategy=search_strategy,
+                progress_callback=progress_callback,
+                instrumentation=instrumentation,
+                warm_start_source=incumbent,
+            )
+            if not candidate.is_successful:
+                continue
+            if best_candidate is None or _assessment_sort_key(
+                candidate, metric
+            ) < _assessment_sort_key(best_candidate, metric):
+                best_candidate = candidate
+                best_name = name
+        if best_candidate is None or best_name is None:
+            break
+        if not _prefer_role_change(best_candidate, incumbent, metric=metric):
+            break
+        incumbent = best_candidate
+        current_local.add(best_name)
+        remaining = [name for name in searchable if name not in current_local]
+        localized = ", ".join(sorted(current_local)) or "none"
+        _progress_log(
+            progress_callback,
+            f"{state.template.title}: greedy localised {best_name} (Local set [{localized}]).",
+        )
+
+    # Backward pruning: drop a searchable local that no longer earns its keep.
+    for name in [n for n in searchable if n in current_local]:
+        trial_local = _local_names_for(state.free_param_names, current_local - {name})
+        candidate = _fit_heuristic_assignment(
+            datasets,
+            state,
+            trial_local,
+            axis_key=axis_key,
+            metric=metric,
+            search_strategy=search_strategy,
+            progress_callback=progress_callback,
+            instrumentation=instrumentation,
+            warm_start_source=incumbent,
+        )
+        if candidate.is_successful and _prefer_simpler_assignment(
+            candidate, incumbent, metric=metric
+        ):
+            incumbent = candidate
+            current_local.discard(name)
+            _progress_log(
+                progress_callback,
+                f"{state.template.title}: greedy pruned {name} back to Global.",
+            )
+    return incumbent
+
+
+def _surrogate_ranked_search(
+    datasets: list[MuonDataset],
+    state: _HeuristicTemplateState,
+    *,
+    base_local: set[str],
+    ambiguous: tuple[str, ...],
+    top_k: int,
+    axis_key: str,
+    metric: SelectionMetric,
+    search_strategy: str,
+    progress_callback: Callable[[str], None] | None,
+    instrumentation: dict[str, object] | None,
+) -> GlobalCandidateAssessment:
+    """Technique G: Wald-rank the ambiguous subsets, real-fit only the top-K/layer.
+
+    For each Hamming layer of the ambiguous middle (how many ambiguous params to
+    localise) the Wald surrogate predicts the Δχ² of *not* globalising each
+    subset; the caller ranks by surrogate IC and real-fits the ``top_k`` per
+    layer. K grows by one whenever the realised best of a layer lands at the K-th
+    rank (the surrogate order disagreed near the top), so a mis-ranked winner is
+    still fitted. Q-fixed-local (``base_local``) params are always local.
+    """
+
+    incumbent = _fit_heuristic_assignment(
+        datasets,
+        state,
+        _local_names_for(state.free_param_names, base_local),
+        axis_key=axis_key,
+        metric=metric,
+        search_strategy=search_strategy,
+        progress_callback=progress_callback,
+        instrumentation=instrumentation,
+    )
+    if not incumbent.is_successful:
+        return incumbent
+
+    penalty_all_local = wald_subset_delta_chi2(ambiguous, state.estimates, state.estimate_errors)
+    for layer_size in range(1, len(ambiguous) + 1):
+        subsets = list(combinations(ambiguous, layer_size))
+        # Surrogate IC ordering: globalising the *complement* of ``subset`` costs
+        # the sum of its members' collapse penalties, so a subset whose localised
+        # members carry the most globalisation cost (i.e. best to keep local)
+        # ranks first. Rank ascending by surrogate IC = χ²_floor proxy + penalty.
+        scored: list[tuple[float, tuple[str, ...]]] = []
+        for subset in subsets:
+            # ``subset`` is the set localised this layer; the surrogate cost is the
+            # residual Δχ² of globalising the *remaining* ambiguous params (those
+            # not in ``subset``) = penalty_all_local − Δχ²(subset).
+            predicted_cost = penalty_all_local - wald_subset_delta_chi2(
+                subset, state.estimates, state.estimate_errors
+            )
+            # Fewer localised params is cheaper in penalty; the surrogate IC adds
+            # that penalty to the residual globalisation cost. Lower is better.
+            surrogate_ic = predicted_cost + 2.0 * len(subset) * len(datasets)
+            scored.append((surrogate_ic, subset))
+        scored.sort(key=lambda item: item[0])
+
+        verify = min(top_k, len(scored))
+        rank = 0
+        realised_best_rank: int | None = None
+        layer_best: GlobalCandidateAssessment | None = None
+        while rank < len(scored) and rank < verify:
+            _surrogate_ic, subset = scored[rank]
+            trial_local = _local_names_for(state.free_param_names, base_local | set(subset))
+            candidate = _fit_heuristic_assignment(
+                datasets,
+                state,
+                trial_local,
+                axis_key=axis_key,
+                metric=metric,
+                search_strategy=search_strategy,
+                progress_callback=progress_callback,
+                instrumentation=instrumentation,
+                warm_start_source=incumbent,
+            )
+            _record_counter(instrumentation, "surrogate_real_fits")
+            if candidate.is_successful:
+                if layer_best is None or _assessment_sort_key(
+                    candidate, metric
+                ) < _assessment_sort_key(layer_best, metric):
+                    layer_best = candidate
+                    realised_best_rank = rank
+                if _assessment_sort_key(candidate, metric) < _assessment_sort_key(
+                    incumbent, metric
+                ):
+                    incumbent = candidate
+            # Grow K when the realised best sits at the current verify frontier —
+            # the surrogate mis-ranked and a better subset may lurk just past K.
+            if realised_best_rank is not None and realised_best_rank == verify - 1:
+                verify = min(verify + 1, len(scored))
+                _record_counter(instrumentation, "surrogate_k_grown")
+            rank += 1
+        _record_metric_max(instrumentation, "surrogate_rank_of_winner", realised_best_rank)
+    return incumbent
+
+
+def _record_metric_max(
+    instrumentation: dict[str, object] | None,
+    name: str,
+    value: int | None,
+) -> None:
+    """Track the running max of a metric in instrumentation (0-based rank)."""
+
+    if instrumentation is None or value is None:
+        return
+    counters = instrumentation.setdefault("counters", {})
+    if isinstance(counters, dict):
+        counters[name] = max(int(counters.get(name, 0)), int(value))
+
+
+def _fill_winner_flip_neighbourhood(
+    datasets: list[MuonDataset],
+    state: _HeuristicTemplateState,
+    winner: GlobalCandidateAssessment,
+    *,
+    axis_key: str,
+    metric: SelectionMetric,
+    search_strategy: str,
+    progress_callback: Callable[[str], None] | None,
+    instrumentation: dict[str, object] | None,
+) -> None:
+    """Fit every single-flip neighbour of ``winner`` over the FULL free set.
+
+    This is the correctness linchpin of the heuristic path (verification-plan
+    item 1 / item 6): a sparse search leaves the exact cache missing the winner's
+    single-role-flip neighbours, and ``_build_parameter_recommendations_from_
+    exact_cache`` reads exactly those neighbours to justify each parameter's role.
+    Critically the neighbourhood spans *all* free params — including any Q
+    pre-fixed as clearly-global — so a wrong pre-fix is still caught by the
+    flip-recheck rather than silently trusted.
+    """
+
+    winner_local = set(winner.local_param_names)
+    for name in state.free_param_names:
+        if name in winner_local:
+            flipped = _local_names_for(state.free_param_names, winner_local - {name})
+        else:
+            flipped = _local_names_for(state.free_param_names, winner_local | {name})
+        global_names = _global_names_for(state.free_param_names, flipped)
+        if (global_names, flipped) in state.exact_cache:
+            continue
+        _record_counter(instrumentation, "flip_neighbourhood_fits")
+        _fit_heuristic_assignment(
+            datasets,
+            state,
+            flipped,
+            axis_key=axis_key,
+            metric=metric,
+            search_strategy=search_strategy,
+            progress_callback=progress_callback,
+            instrumentation=instrumentation,
+            warm_start_source=winner,
+        )
+
+
+def _run_heuristic_search(
+    datasets: list[MuonDataset],
+    *,
+    shortlisted_templates: list[CandidateTemplate],
+    template_contexts: dict[str, tuple[dict[int, ParameterSet], tuple[str, ...]]],
+    axis_key: str,
+    metric: SelectionMetric,
+    progress_callback: Callable[[str], None] | None,
+    search_strategy: str,
+    instrumentation: dict[str, object] | None,
+    single_run_prefit_cache_for: Callable[
+        [CandidateTemplate], dict[object, dict[int, ParameterSet]]
+    ],
+    engine: str,
+) -> tuple[GlobalCandidateAssessment, ...]:
+    """Low/Balanced non-exhaustive role search (techniques E/F/G/H).
+
+    Returns the same ``tuple[GlobalCandidateAssessment, ...]`` contract as
+    :func:`_run_exhaustive_wavefront_search` — the winner plus its fully-fitted
+    single-flip neighbourhood per template — so the downstream verdict/rerank
+    layer is engine-agnostic. Serial by design: the entire point is far fewer
+    real fits, so it stays off the process pool and avoids that lifecycle.
+    """
+
+    if not shortlisted_templates:
+        return ()
+
+    q_bands = _Q_BANDS_LOW if engine == SEARCH_ENGINE_LOW else _Q_BANDS_BALANCED
+    states: list[_HeuristicTemplateState] = []
+    for template in shortlisted_templates:
+        base_by_run, fixed_param_names = template_contexts[template.key]
+        prefit_base_by_run = _single_run_prefit_parameter_sets(
+            datasets,
+            template,
+            fit_engine=FitEngine(),
+            base_by_run=base_by_run,
+            fixed_param_names=fixed_param_names,
+            progress_callback=progress_callback,
+            instrumentation=instrumentation,
+            cache=single_run_prefit_cache_for(template),
+        )
+        free_param_names = tuple(
+            name for name in template.model.param_names if name not in fixed_param_names
+        )
+        states.append(
+            _HeuristicTemplateState(
+                template=template,
+                fixed_param_names=fixed_param_names,
+                prefit_base_by_run=prefit_base_by_run,
+                free_param_names=free_param_names,
+                exact_cache={},
+                converged_assessments={},
+            )
+        )
+
+    # --- All-local anchor + Q pre-tests + shallow race (layers 0-1) ---------
+    for state in states:
+        if not state.free_param_names:
+            # No promotable params — the single all-global assessment is the
+            # verdict; fit it so the tuple is non-empty.
+            _fit_heuristic_assignment(
+                datasets,
+                state,
+                (),
+                axis_key=axis_key,
+                metric=metric,
+                search_strategy=search_strategy,
+                progress_callback=progress_callback,
+                instrumentation=instrumentation,
+            )
+            continue
+        anchor = _fit_heuristic_assignment(
+            datasets,
+            state,
+            tuple(state.free_param_names),
+            axis_key=axis_key,
+            metric=metric,
+            search_strategy=search_strategy,
+            progress_callback=progress_callback,
+            instrumentation=instrumentation,
+        )
+        state.anchor_assessment = anchor
+        if anchor.is_successful:
+            state.estimates, state.estimate_errors, at_limit = _extract_anchor_estimates(
+                datasets, anchor, state.free_param_names
+            )
+            _homogeneity_pretests(
+                state,
+                at_limit,
+                q_bands=q_bands,
+                progress_callback=progress_callback,
+                instrumentation=instrumentation,
+            )
+        # All-global anchor (layer 0) too, so racing has a shallow score and the
+        # search has a warm all-global start.
+        _fit_heuristic_assignment(
+            datasets,
+            state,
+            (),
+            axis_key=axis_key,
+            metric=metric,
+            search_strategy=search_strategy,
+            progress_callback=progress_callback,
+            instrumentation=instrumentation,
+        )
+
+    # --- Template racing (technique H): advance only the top templates -------
+    ranked = sorted(
+        (state for state in states if state.best_assessment is not None),
+        key=lambda s: _assessment_sort_key(s.best_assessment, metric),
+    )
+    advance = ranked[:_RACING_ADVANCE_COUNT] if engine == SEARCH_ENGINE_BALANCED else ranked
+    if engine == SEARCH_ENGINE_BALANCED and len(ranked) > len(advance):
+        _record_counter(instrumentation, "raced_templates_dropped", len(ranked) - len(advance))
+        _progress_log(
+            progress_callback,
+            f"Template racing advanced {len(advance)}/{len(ranked)} template(s) "
+            "past the shallow layer-0/1 race.",
+        )
+
+    # --- Deep search on the advanced templates -------------------------------
+    for state in advance:
+        if not state.free_param_names:
+            continue
+        # Read the Q pre-test outcomes computed during the anchor phase. A param
+        # with no stored outcome (anchor failed) or an "ambiguous" outcome stays
+        # searchable; only clear tails were pre-fixed. Any at-limit / invalid
+        # param was already forced to "ambiguous" (skipped) inside the pre-test.
+        base_local = {n for n, o in state.homogeneity.items() if o.role == "local"}
+        ambiguous = tuple(
+            n
+            for n in state.free_param_names
+            if state.homogeneity.get(n) is None or state.homogeneity[n].role == "ambiguous"
+        )
+
+        if engine == SEARCH_ENGINE_LOW:
+            searchable = tuple(
+                n
+                for n in state.free_param_names
+                if n not in base_local
+                and (state.homogeneity.get(n) is None or state.homogeneity[n].role != "global")
+            )
+            winner = _greedy_role_search(
+                datasets,
+                state,
+                base_local=base_local,
+                searchable=searchable,
+                axis_key=axis_key,
+                metric=metric,
+                search_strategy=search_strategy,
+                progress_callback=progress_callback,
+                instrumentation=instrumentation,
+            )
+        else:
+            winner = _surrogate_ranked_search(
+                datasets,
+                state,
+                base_local=base_local,
+                ambiguous=ambiguous,
+                top_k=_SURROGATE_TOP_K,
+                axis_key=axis_key,
+                metric=metric,
+                search_strategy=search_strategy,
+                progress_callback=progress_callback,
+                instrumentation=instrumentation,
+            )
+
+        # The winner is whatever converged best across the whole cache (greedy /
+        # surrogate incumbent may have been beaten by a shallow-race assignment).
+        winner = state.best_assessment or winner
+        if winner is not None and winner.is_successful:
+            _fill_winner_flip_neighbourhood(
+                datasets,
+                state,
+                winner,
+                axis_key=axis_key,
+                metric=metric,
+                search_strategy=search_strategy,
+                progress_callback=progress_callback,
+                instrumentation=instrumentation,
+            )
+
+    return _finalise_heuristic_assessments(
+        datasets, states, metric=metric, progress_callback=progress_callback
+    )
+
+
+def _finalise_heuristic_assessments(
+    datasets: list[MuonDataset],
+    states: list[_HeuristicTemplateState],
+    *,
+    metric: SelectionMetric,
+    progress_callback: Callable[[str], None] | None,
+) -> tuple[GlobalCandidateAssessment, ...]:
+    """Build the returned assessments exactly like the exhaustive wavefront.
+
+    Each template contributes its converged assignments with per-parameter role
+    recommendations resolved from the (now flip-complete) exact cache, so the
+    verdict layer treats a heuristic winner identically to an exhaustive one.
+    """
+
+    optimized_assessments: list[GlobalCandidateAssessment] = []
+    for state in states:
+        if not state.converged_assessments and state.best_assessment is None:
+            continue
+        exact_cache = dict(state.exact_cache)
+        successful = sorted(
+            state.converged_assessments.values(),
+            key=lambda assessment: _assessment_sort_key(assessment, metric),
+        )
+        for assessment in successful:
+            exact_cache[(assessment.global_param_names, assessment.local_param_names)] = assessment
+
+        if successful:
+            for assessment in successful:
+                optimized_assessments.append(
+                    replace(
+                        assessment,
+                        fixed_param_names=state.fixed_param_names,
+                        parameter_recommendations=_build_parameter_recommendations_from_exact_cache(
+                            datasets,
+                            assessment,
+                            template=state.template,
+                            fixed_param_names=state.fixed_param_names,
+                            metric=metric,
+                            cache=exact_cache,
+                            names_to_test=set(state.free_param_names),
+                        ),
+                        assessment_key=_global_candidate_assessment_key(
+                            state.template.key,
+                            global_param_names=assessment.global_param_names,
+                            local_param_names=assessment.local_param_names,
+                        ),
+                    )
+                )
+            best = successful[0]
+            _progress_log(
+                progress_callback,
+                f"Completed heuristic coupled optimisation for {state.template.title}. "
+                f"{len(successful)} converged assignment(s); best {metric.value} = "
+                f"{best.metric_value(metric):.3f} with "
+                f"Global[{', '.join(best.global_param_names) or 'none'}], "
+                f"Local[{', '.join(best.local_param_names) or 'none'}].",
+            )
+            continue
+
+        failed = state.best_assessment
+        if failed is None:
+            continue
+        optimized_assessments.append(
+            replace(
+                failed,
+                fixed_param_names=state.fixed_param_names,
+                parameter_recommendations=(),
+                assessment_key=_global_candidate_assessment_key(
+                    state.template.key,
+                    global_param_names=failed.global_param_names,
+                    local_param_names=failed.local_param_names,
+                ),
+            )
+        )
+
+    return tuple(optimized_assessments)
 
 
 def _run_exhaustive_wavefront_search(
