@@ -3567,6 +3567,7 @@ def _warm_certificate_fit(
         minuit_strategy=2 if difficult_assignment else None,
         minuit_tol=0.05 if difficult_assignment else None,
         initial_step_sizes=initial_step_sizes or None,
+        screening=not difficult_assignment,
     )
     _record_global_fit_diagnostics(instrumentation, results_by_run)
     results_by_run = _canonicalize_fit_results_by_run(
@@ -3705,6 +3706,7 @@ def _fit_exact_assignment(
                 minuit_strategy=2 if difficult_assignment else None,
                 minuit_tol=0.05 if difficult_assignment else None,
                 initial_step_sizes=local_step_hints or None,
+                screening=not difficult_assignment,
             )
             _record_global_fit_diagnostics(instrumentation, results_by_run)
             results_by_run = _canonicalize_fit_results_by_run(
@@ -4789,6 +4791,7 @@ def _staged_assignment_seed(
             use_simplex_rescue=True,
             minuit_strategy=2 if len(free_local_names) >= 2 else None,
             minuit_tol=0.05 if len(free_local_names) >= 2 else None,
+            screening=len(free_local_names) < 2,
             initial_step_sizes=step_hints or None,
         )
         _record_global_fit_diagnostics(instrumentation, local_results)
@@ -4839,6 +4842,7 @@ def _staged_assignment_seed(
             minuit_strategy=2 if len(free_global_names) >= 4 else None,
             minuit_tol=0.05 if len(free_global_names) >= 4 else None,
             initial_step_sizes=step_hints or None,
+            screening=len(free_global_names) < 4,
         )
         _record_global_fit_diagnostics(instrumentation, global_results)
         global_results = _canonicalize_fit_results_by_run(
@@ -4890,6 +4894,7 @@ def _staged_assignment_seed(
                 migrad_iterations=4,
                 use_simplex_rescue=False,
                 initial_step_sizes=step_hints or None,
+                screening=True,
             )
             _record_global_fit_diagnostics(instrumentation, mixed_results)
             mixed_results = _canonicalize_fit_results_by_run(
