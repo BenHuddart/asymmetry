@@ -1,10 +1,50 @@
 from __future__ import annotations
 
+import faulthandler
+import os
+import sys
 import zlib
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Arm a native-thread watchdog that dumps every thread's stack on a hang.
+
+    A rare intermittent GUI-test deadlock (a native Qt event loop / iminuit C++
+    block that holds the GIL) wedges a CI shard for up to ~60 min. Our per-test
+    ``pytest-timeout`` uses ``--timeout-method=thread`` — a *Python* timer thread
+    that cannot run while C code holds the GIL, so it never fires and the shard
+    hangs until the job-level ``timeout-minutes`` kills the runner.
+
+    ``faulthandler.dump_traceback_later`` runs in a dedicated *C* thread that does
+    not need the GIL, so it fires and dumps all thread stacks even mid-native
+    block — capturing the culprit test/stack in the logs before the job dies.
+
+    Opt-in via ``ASYMMETRY_FAULTHANDLER_TIMEOUT`` (seconds) so local runs stay
+    quiet; CI sets it below the job timeout and above the healthy shard runtime.
+    Runs in every process, including each xdist worker (where the hang lives).
+    """
+    faulthandler.enable()
+    raw = os.environ.get("ASYMMETRY_FAULTHANDLER_TIMEOUT")
+    if not raw:
+        return
+    try:
+        seconds = float(raw)
+    except ValueError:
+        return
+    if seconds > 0:
+        # repeat=True keeps dumping every ``seconds`` so a long wedge yields
+        # more than one stack; exit=False leaves process teardown to the
+        # job-level timeout (we only want the diagnostic dump, not a kill here).
+        faulthandler.dump_traceback_later(seconds, repeat=True, exit=False, file=sys.stderr)
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    """Cancel the hang watchdog armed in :func:`pytest_configure`."""
+    faulthandler.cancel_dump_traceback_later()
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
