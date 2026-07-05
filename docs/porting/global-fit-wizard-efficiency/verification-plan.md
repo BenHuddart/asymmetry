@@ -48,3 +48,40 @@ validate *before trusting* each technique.
   harness pass" — a drop in agreement is the signal the harness exists to catch.
 - Fit-count is a first-class assertion: an unexplained change in
   `minuit_fits`/`minuit_fevals` is a regression even if verdicts still agree.
+
+## PR 5 rework outcome (slider collapse + cancel fix)
+
+The PR 5 four-position effort slider (Low/Balanced/Thorough/Exhaustive) was
+reworked after a design review. **Keep the plumbing, drop the approximation.**
+
+- **Heuristic Low/Balanced were empirically dominated by bounded-exhaustive.**
+  PR 2's exact bounds already made Exhaustive near-minimal (~1000 fits on the
+  harness corpus) and 12-way parallel, while the heuristic driver is serial by
+  construction. On real workloads the heuristic tiers were *slower* (up to ~15×)
+  with no fit-count headroom left to reclaim. They were therefore removed from
+  the user-facing slider, which now surfaces a single honest "Optimize —
+  exhaustive" mode.
+- **Every `EffortTier` now resolves to the exact bounded-wavefront engine**
+  (`_EFFORT_TIER_SEARCH_ENGINE` maps all four values to `SEARCH_ENGINE_EXHAUSTIVE`),
+  and the extra tier knobs (I portfolio cap, J identifiability demotion, K
+  screening decimation) are gated on the *heuristic engine string*, never on
+  `effort_tier` — so they are inert for every user-facing tier by construction.
+  Evidence: `global_wizard_harness.py --tier {low,balanced,thorough,exhaustive}
+  --compare-baseline` reports **100% agreement with the frozen baseline and
+  identical fit counts (1262 fits, 205069 fevals) for all four tiers**; the only
+  variation is process-pool scheduling noise in the wall time.
+- **Heuristics retained behind the `search_engine` seam.** `_run_heuristic_search`,
+  the Q/greedy/surrogate/decimation code, and `global_search/homogeneity.py` are
+  kept reachable only via the low-level `search_engine="low"/"balanced"` string
+  (the PR 4 seam) for future large-P use and regression coverage. The core
+  test-suite still exercises them through that string, decoupled from `EffortTier`.
+- **Cancel fix.** A cooperative `cancel_callback` was threaded through the core
+  builders (`build_global_fit_wizard_recommendation`, the staged builder,
+  `build_global_fit_wizard_screening_recommendation`, the phase-1 single-fit
+  helper) and into `_run_exhaustive_wavefront_search`, which now checks it between
+  templates, between Hamming layers, and before dispatching each layer's
+  assignment fits. Under the process pool in-flight futures cannot be killed, so
+  cancel stops scheduling further layers/templates and the `finally` block shuts
+  the pool down. In-process serial calls also forward the callback into
+  `engine.global_fit` for mid-fit abort. A focused test proves a truthy callback
+  raises `FitCancelledError` promptly and runs zero fits.

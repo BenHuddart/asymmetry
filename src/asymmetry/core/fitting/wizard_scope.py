@@ -116,6 +116,78 @@ class WizardScopePreset(str, Enum):
     ALL = "all"
 
 
+class EffortTier(str, Enum):
+    """User-facing global-fit-wizard effort level (PR 5 of the efficiency plan).
+
+    Originally bound the search-engine/knob choices from PRs 2-4 to a four-
+    position slider. As of the PR 5 rework, **every tier resolves to the exact
+    bounded-wavefront engine** (see :mod:`asymmetry.core.fitting.global_fit_wizard`
+    ``_EFFORT_TIER_SEARCH_ENGINE``): PR 2's exact bounds already made the
+    exhaustive path near-minimal and 12-way parallel, so the heuristic Low/
+    Balanced engines were empirically dominated (serial, slower, no fit-count
+    headroom). The user-facing control therefore collapses to a single honest
+    "Optimize" mode. The enum and its serialised payload are retained so a
+    future *scope-based* quick-look tier can be added without a schema/UI change;
+    the heuristic engines stay reachable behind the low-level ``search_engine``
+    string for future large-P use and regression coverage.
+    """
+
+    LOW = "low"
+    BALANCED = "balanced"
+    THOROUGH = "thorough"
+    EXHAUSTIVE = "exhaustive"
+
+
+#: Default effort tier — the exact bounded-wavefront engine, now the only
+#: user-facing mode (see ``EffortTier``). Persisted/legacy payloads default here.
+DEFAULT_EFFORT_TIER = EffortTier.EXHAUSTIVE
+
+#: Short human-readable labels for the effort control. Every tier now runs the
+#: exact engine, so the visible control surfaces one honest "Optimize" mode.
+EFFORT_TIER_LABELS: dict[EffortTier, str] = {
+    EffortTier.LOW: "Low (screening-grade)",
+    EffortTier.BALANCED: "Balanced (recommended)",
+    EffortTier.THOROUGH: "Thorough",
+    EffortTier.EXHAUSTIVE: "Optimize — exhaustive (~30 s)",
+}
+
+#: One-line descriptions surfaced as tooltips next to the control.
+EFFORT_TIER_DESCRIPTIONS: dict[EffortTier, str] = {
+    EffortTier.LOW: (
+        "Screening-grade heuristic engine (retained behind the search_engine "
+        "seam; not a user-facing tier)."
+    ),
+    EffortTier.BALANCED: (
+        "Heuristic search engine (retained behind the search_engine seam; not a user-facing tier)."
+    ),
+    EffortTier.THOROUGH: ("Full exact wavefront search (same engine as Optimize)."),
+    EffortTier.EXHAUSTIVE: (
+        "Exact bounded role search over all promotable parameters. PR 2's exact "
+        "bounds keep it near-minimal (~1000 fits, 12-way parallel), so it is the "
+        "single honest optimisation mode."
+    ),
+}
+
+
+def effort_tier_to_payload(tier: EffortTier) -> str:
+    """Serialise an :class:`EffortTier` to its plain string value."""
+    return tier.value
+
+
+def effort_tier_from_payload(payload: object) -> EffortTier:
+    """Rebuild an :class:`EffortTier` from a payload, tolerant of garbage.
+
+    Mirrors :meth:`WizardScope.from_payload`'s tolerance: an unrecognised or
+    missing value degrades to :data:`DEFAULT_EFFORT_TIER` rather than raising.
+    """
+    if isinstance(payload, EffortTier):
+        return payload
+    try:
+        return EffortTier(payload)
+    except ValueError:
+        return DEFAULT_EFFORT_TIER
+
+
 @dataclass(frozen=True)
 class ScopeQuery:
     """A concrete geometry/physics/cost filter over the component registry."""
