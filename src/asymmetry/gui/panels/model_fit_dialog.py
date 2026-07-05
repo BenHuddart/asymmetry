@@ -18,7 +18,6 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QDoubleSpinBox,
     QFrame,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QMessageBox,
@@ -52,14 +51,20 @@ from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.fit_settings import fit_quality_confidence
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import (
+    _FIT_VERDICT_COLOURS,
     RESULT_BOX_NEUTRAL_STYLE,
     RESULT_BOX_OBJECT_NAME,
     RESULT_BOX_SUCCESS_STYLE,
     apply_param_table_style,
+    build_primary_button_qss,
     clear_layout,
+    error_html,
     info_html,
     make_formula_box,
+    make_section,
+    success_html,
     warning_html,
+    widest_button_width,
 )
 from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.widgets.function_builder.dialog import (
@@ -717,9 +722,13 @@ class ModelFitDialog(QDialog):
             xerr_row.addStretch()
             left_layout.addLayout(xerr_row)
 
-        ranges_group = QGroupBox("Model ranges")
-        ranges_layout = QVBoxLayout(ranges_group)
+        # Flat BENCH section (make_section) instead of a QGroupBox — the app
+        # deliberately avoids QGroupBox chrome in inspector panels. The uppercase
+        # header lives INSIDE the section container (above ``_ranges_host``), so a
+        # ``_rebuild_ranges_ui`` clear_layout of ``_ranges_host`` never destroys it.
+        ranges_group, ranges_layout = make_section("Model ranges")
         self._ranges_host = QVBoxLayout()
+        self._ranges_host.setSpacing(4)
         ranges_layout.addLayout(self._ranges_host)
 
         add_row = QHBoxLayout()
@@ -731,8 +740,7 @@ class ModelFitDialog(QDialog):
 
         left_layout.addWidget(ranges_group)
 
-        params_group = QGroupBox("Range parameters")
-        params_layout = QVBoxLayout(params_group)
+        params_group, params_layout = make_section("Range parameters")
 
         selector_row = QHBoxLayout()
         selector_row.addWidget(QLabel("Editing range:"))
@@ -1312,17 +1320,20 @@ class ModelFitDialog(QDialog):
             status_label.setTextFormat(Qt.TextFormat.RichText)
             row.addWidget(status_label)
 
-            edit_btn = QPushButton("Edit Model")
-            edit_btn.clicked.connect(lambda _checked=False, i=idx: self._edit_model(i))
-            row.addWidget(edit_btn)
-
+            # Role ordering (matches the OK/Cancel/Remove-Fit button box):
+            # PRIMARY (Run Fit) → SECONDARY (Edit Model / Edit Params / Exclude
+            # region…) → DESTRUCTIVE (Remove). Run Fit carries the accent primary
+            # QSS so the eye lands on the action that advances the workflow, and
+            # is width-locked so a future "Fitting…" relabel cannot clip it.
             fit_btn = QPushButton("Run Fit")
+            fit_btn.setStyleSheet(build_primary_button_qss())
+            fit_btn.setMinimumWidth(widest_button_width(fit_btn, "Run Fit", "Fitting…"))
             fit_btn.clicked.connect(lambda _checked=False, i=idx: self._run_fit(i))
             row.addWidget(fit_btn)
 
-            remove_btn = QPushButton("Remove")
-            remove_btn.clicked.connect(lambda _checked=False, i=idx: self._remove_range(i))
-            row.addWidget(remove_btn)
+            edit_btn = QPushButton("Edit Model")
+            edit_btn.clicked.connect(lambda _checked=False, i=idx: self._edit_model(i))
+            row.addWidget(edit_btn)
 
             select_btn = QPushButton("Edit Params")
             select_btn.clicked.connect(lambda _checked=False, i=idx: self._select_range(i))
@@ -1339,6 +1350,10 @@ class ModelFitDialog(QDialog):
                 )
                 add_window_btn.clicked.connect(lambda _checked=False, i=idx: self._add_window(i))
                 row.addWidget(add_window_btn)
+
+            remove_btn = QPushButton("Remove")
+            remove_btn.clicked.connect(lambda _checked=False, i=idx: self._remove_range(i))
+            row.addWidget(remove_btn)
 
             row.addStretch()
             self._ranges_host.addWidget(row_widget)
@@ -1470,9 +1485,7 @@ class ModelFitDialog(QDialog):
         if idx < len(self._range_widgets):
             self._range_widgets[idx].status_label.setText(self._status_text_for_range(fit_range))
         if self._active_range_idx == idx:
-            self._chi2_label.setText(
-                f'<span style="color:{tokens.ACCENT};">Fitting not yet run for selected range</span>'
-            )
+            self._chi2_label.setText(info_html("Fitting not yet run for selected range"))
             self._quality_label.setText("")
             self._apply_result_box_style(None)
 
@@ -1487,10 +1500,9 @@ class ModelFitDialog(QDialog):
         if result is None or not result.success:
             return ""
         if result.error_mode in (ErrorMode.NONE.value, ErrorMode.SCATTER.value):
-            return (
-                f'<span style="color:{tokens.ACCENT};">No χ² quality verdict: with '
-                "unit-weight or scatter-estimated errors χ²ᵣ carries no goodness "
-                "information.</span>"
+            return info_html(
+                "No χ² quality verdict: with unit-weight or scatter-estimated "
+                "errors χ²ᵣ carries no goodness information."
             )
         if result.n_points <= 0:
             # Results built outside fit_parameter_model (cross-group bridge,
@@ -1502,15 +1514,10 @@ class ModelFitDialog(QDialog):
             result.chi_squared, result.n_points - n_free, fit_quality_confidence()
         )
         if quality.verdict is None:
-            return (
-                f'<span style="color:{tokens.ACCENT};">No χ² quality verdict '
-                "(no degrees of freedom).</span>"
-            )
-        color = {
-            "good": tokens.OK,
-            "poor": tokens.WARN,
-            "overdone": tokens.ACCENT,
-        }[quality.verdict]
+            return info_html("No χ² quality verdict (no degrees of freedom).")
+        # Reuse the shared verdict→colour map (good=green, poor=error,
+        # overdone=accent) instead of re-rolling one here.
+        color = _FIT_VERDICT_COLOURS.get(quality.verdict, tokens.TEXT_MUTED)
         return (
             f'<span style="color:{color};">Quality of fit: <b>{quality.verdict}</b> '
             f"— χ²ᵣ target band {quality.band_low:.3f} to {quality.band_high:.3f} "
@@ -1520,10 +1527,10 @@ class ModelFitDialog(QDialog):
 
     def _status_text_for_range(self, fit_range: ModelFitRange) -> str:
         if fit_range.result is None:
-            return f'<span style="color:{tokens.ACCENT};">Not run</span>'
+            return info_html("Not run")
         if fit_range.result.success:
-            return f'<span style="color:{tokens.OK};">Success</span>'
-        return f'<span style="color:{tokens.ERROR};">Failed</span>'
+            return success_html("Success")
+        return error_html("Failed")
 
     def _on_range_active_changed(self, idx: int) -> None:
         if idx < 0 or idx >= len(self._fit.ranges):
@@ -2016,11 +2023,12 @@ class ModelFitDialog(QDialog):
         return QTableWidgetItem(f"{err:.4g}" if np.isfinite(err) else "")
 
     def _set_formula_display(self, fit_range: ModelFitRange) -> None:
-        """Render the selected range's formula.
+        """Render the selected range's formula through the shared pan/zoom box.
 
-        Base uses the pan/zoom formula box. The cross-group subclass currently
-        writes into a plain label instead; a later work item unifies this, so it
-        stays a hook for now rather than being inlined.
+        Uses ``FormulaBox.set_formula`` so the expression picks up
+        ``insert_formula_break_points`` + a height re-measure. Both this dialog
+        and the cross-group subclass inherit this — the subclass no longer writes
+        into the bare label, so long global expressions wrap/scroll like the rest.
         """
         self._formula_box.set_formula(f"y(x) = {fit_range.model.formula_string()}")
 
@@ -2034,22 +2042,16 @@ class ModelFitDialog(QDialog):
     def _chi2_status_text(self, result: object | None) -> str:
         """Rich-text χ² status line for the selected range's result."""
         if result is None:
-            return (
-                f'<span style="color:{tokens.ACCENT};">'
-                "Fitting not yet run for selected range</span>"
-            )
+            return info_html("Fitting not yet run for selected range")
         if result.success:
-            return (
-                f'<span style="color:{tokens.OK};">'
-                f"Fit successful: chi2 = {result.chi_squared:.6g}, "
-                f"reduced chi2 = {result.reduced_chi_squared:.6g}"
-                "</span>"
+            return success_html(
+                "Fit successful",
+                detail=(
+                    f"chi2 = {result.chi_squared:.6g}, "
+                    f"reduced chi2 = {result.reduced_chi_squared:.6g}"
+                ),
             )
-        return (
-            f'<span style="color:{tokens.ERROR};">'
-            f"Fit failed: {result.message or 'No convergence'}"
-            "</span>"
-        )
+        return error_html(f"Fit failed: {result.message or 'No convergence'}")
 
     def _quality_status_text(self, fit_range: ModelFitRange, result: object | None) -> str:
         """χ² quality-verdict line for the selected range (empty when none).

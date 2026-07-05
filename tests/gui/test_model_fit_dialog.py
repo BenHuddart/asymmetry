@@ -1747,3 +1747,50 @@ def test_fit_success_no_modal_shows_result_box(qapp: QApplication, tmp_path, mon
     assert "successful" in dlg._chi2_label.text().lower()
     # Result box tinted with the success style.
     assert dlg._result_box.styleSheet() == RESULT_BOX_SUCCESS_STYLE
+
+
+# ── Phase 5 branding polish ────────────────────────────────────────────────
+
+
+def test_section_headers_present(qapp: QApplication) -> None:
+    """The "Model ranges" / "Range parameters" blocks use flat BENCH section
+    headers (make_section) rather than a QGroupBox, and rebuilding the range
+    rows (which clear_layouts ``_ranges_host``) does not destroy them."""
+    from asymmetry.gui.styles.widgets import SECTION_HEADER_OBJECT_NAME
+
+    dlg = _make_dialog(qapp)
+
+    def header_texts() -> list[str]:
+        return [
+            label.text()
+            for label in dlg.findChildren(type(dlg._data_range_label))
+            if label.objectName() == SECTION_HEADER_OBJECT_NAME
+        ]
+
+    texts = header_texts()
+    # make_section_header uppercases the title in Python.
+    assert "MODEL RANGES" in texts
+    assert "RANGE PARAMETERS" in texts
+
+    # Rebuilding the range rows clears ``_ranges_host`` — the headers live in the
+    # section container ABOVE it, so they must survive.
+    dlg._rebuild_ranges_ui()
+    texts_after = header_texts()
+    assert "MODEL RANGES" in texts_after
+    assert "RANGE PARAMETERS" in texts_after
+
+
+def test_run_fit_is_primary_styled(qapp: QApplication) -> None:
+    """The per-range Run Fit button carries the accent primary QSS; the sibling
+    secondary/destructive buttons stay default (empty stylesheet)."""
+    from asymmetry.gui.styles.widgets import build_primary_button_qss
+
+    dlg = _make_dialog(qapp)
+    widgets = dlg._range_widgets[0]
+
+    assert widgets.fit_button.styleSheet() == build_primary_button_qss()
+    # Secondary/destructive buttons are left with the default (global) styling.
+    assert widgets.edit_button.styleSheet() == ""
+    assert widgets.remove_button.styleSheet() == ""
+    # Width-locked so a future "Fitting…" relabel cannot clip the button.
+    assert widgets.fit_button.minimumWidth() > 0

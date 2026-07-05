@@ -1012,3 +1012,41 @@ def test_cross_group_success_no_modal(monkeypatch) -> None:
     assert "successful" in dlg._chi2_label.text().lower()
     assert dlg._result_box.styleSheet() == RESULT_BOX_SUCCESS_STYLE
     assert app is not None
+
+
+def test_formula_uses_break_points() -> None:
+    """The cross-group formula renders through the shared pan/zoom FormulaBox
+    (set_formula -> insert_formula_break_points + re-measure), NOT the bare
+    label. Deleting the subclass _set_formula_display override (Phase 5.c) made
+    it inherit the base's box path."""
+    from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
+    from asymmetry.gui.styles.widgets import FormulaBox
+
+    app = QApplication.instance() or QApplication([])
+    dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=_groups(),
+        parent=None,
+    )
+
+    # The subclass override is gone -- it now inherits the base's box path.
+    assert CrossGroupFitDialog._set_formula_display is ModelFitDialog._set_formula_display
+
+    # A multi-term model whose formula carries top-level operators (m*x + b + c),
+    # i.e. exactly where insert_formula_break_points inserts break opportunities.
+    dlg._fit.ranges[0].model = ParameterCompositeModel(["Linear", "Constant"], ["+"])
+    dlg._rebuild_param_table()  # rebuilds params + re-selects range -> _set_formula_display
+    dlg._select_range(0)
+
+    # The formula box is the shared FormulaBox.
+    assert isinstance(dlg._formula_box, FormulaBox)
+
+    # The label carries the break-marked text (a zero-width-space break point was
+    # inserted at the top-level operator) and the raw formula lives in the
+    # tooltip -- the set_formula path, not a bare setText of the plain string.
+    label_text = dlg._formula_box.label.text()
+    assert "​" in label_text  # a top-level break opportunity was inserted
+    assert "m*x + b + c" in dlg._formula_box.label.toolTip()
+
+    assert app is not None

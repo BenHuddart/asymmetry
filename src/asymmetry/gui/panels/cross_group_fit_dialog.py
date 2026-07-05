@@ -43,6 +43,7 @@ from asymmetry.gui.panels.model_fit_dialog import (
     _show_warning,
 )
 from asymmetry.gui.styles import tokens
+from asymmetry.gui.styles.widgets import error_html, info_html, success_html
 from asymmetry.gui.widgets.trend_preview import PreviewSeries
 
 
@@ -644,10 +645,10 @@ class CrossGroupFitDialog(ModelFitDialog):
         idx = self._fit.ranges.index(fit_range) if fit_range in self._fit.ranges else -1
         result = self._range_results.get(idx)
         if result is None:
-            return f'<span style="color:{tokens.ACCENT};">Not run</span>'
+            return info_html("Not run")
         if result.success:
-            return f'<span style="color:{tokens.OK};">Success</span>'
-        return f'<span style="color:{tokens.ERROR};">Failed</span>'
+            return success_html("Success")
+        return error_html("Failed")
 
     # ── template-method hook overrides (see ModelFitDialog) ───────────────────
     #
@@ -658,11 +659,6 @@ class CrossGroupFitDialog(ModelFitDialog):
     # cell summarises per-group uncertainties; and the formula/hint/status text
     # is cross-group specific. Each of those is one small override below.
 
-    def _set_formula_display(self, fit_range) -> None:
-        # Cross-group mode still writes the formula into a plain label rather
-        # than the base's pan/zoom box; a later work item unifies this.
-        self._formula_label.setText(f"y(x) = {fit_range.model.formula_string()}")
-
     def _range_hint_text(self, idx: int) -> str:
         return f"Editing parameters for Range {idx + 1} (Cross-group mode: Global/Local/Fixed)."
 
@@ -671,22 +667,16 @@ class CrossGroupFitDialog(ModelFitDialog):
 
     def _chi2_status_text(self, result: object | None) -> str:
         if result is None:
-            return (
-                f'<span style="color:{tokens.ACCENT};">'
-                "Fitting not yet run for selected range</span>"
-            )
+            return info_html("Fitting not yet run for selected range")
         if result.success:
-            return (
-                f'<span style="color:{tokens.OK};">'
-                f"Cross-group fit successful: chi2 = {result.chi_squared:.6g}, "
-                f"reduced chi2 = {result.reduced_chi_squared:.6g}"
-                "</span>"
+            return success_html(
+                "Cross-group fit successful",
+                detail=(
+                    f"chi2 = {result.chi_squared:.6g}, "
+                    f"reduced chi2 = {result.reduced_chi_squared:.6g}"
+                ),
             )
-        return (
-            f'<span style="color:{tokens.ERROR};">'
-            f"Cross-group fit failed: {result.message or 'No convergence'}"
-            "</span>"
-        )
+        return error_html(f"Cross-group fit failed: {result.message or 'No convergence'}")
 
     def _quality_status_text(self, fit_range, result: object | None) -> str:
         # CrossGroupFitResult does not carry the per-range χ²/dof shape the
