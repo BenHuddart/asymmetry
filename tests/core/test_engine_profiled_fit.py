@@ -163,6 +163,68 @@ def test_profiled_no_free_global_falls_back_to_separable():
         )
 
 
+def _biexp(t, **p):
+    """A1 exp(-L1 t) + A2 exp(-L2 t): two correlated relaxing components."""
+    tt = np.asarray(t, dtype=float)
+    return p["A1"] * np.exp(-p["L1"] * tt) + p["A2"] * np.exp(-p["L2"] * tt)
+
+
+def test_profiled_matches_joint_biexponential_multiple_free_locals():
+    """The hard case: a biexponential with 3 free local params per dataset.
+
+    This stresses the profiled inner solve where the earlier single-Lambda
+    exponential cases could not: a 3-parameter, correlated inner fit (A2, L1, L2)
+    per dataset, with only the leading amplitude A1 shared. If the warm-started
+    inner solves ever drifted between outer iterations the profiled objective
+    would be noisy and the two paths would diverge — so matching values, χ², and
+    IC here is the real parity evidence.
+    """
+    rng = np.random.default_rng(11)
+    t = np.linspace(0.02, 10.0, 400)
+    a1_true = 15.0  # shared
+    # Per-dataset local truths: (A2, L1, L2).
+    truths = [(8.0, 0.25, 1.6), (9.0, 0.35, 2.1), (7.0, 0.20, 1.2)]
+    sigma = 0.3
+    datasets: list[MuonDataset] = []
+    inits: dict[int, ParameterSet] = {}
+    for i, (a2, l1, l2) in enumerate(truths):
+        clean = _biexp(t, A1=a1_true, A2=a2, L1=l1, L2=l2)
+        y = clean + rng.normal(0.0, sigma, t.size)
+        datasets.append(
+            MuonDataset(
+                time=t, asymmetry=y, error=np.full_like(t, sigma), metadata={"run_number": i}
+            )
+        )
+        ps = ParameterSet()
+        ps.add(Parameter("A1", 14.0, min=0.0))
+        ps.add(Parameter("A2", 7.5, min=0.0))
+        ps.add(Parameter("L1", 0.3, min=0.0))
+        ps.add(Parameter("L2", 1.5, min=0.0))
+        inits[i] = ps
+
+    engine = FitEngine()
+    joint, gj = engine.global_fit(
+        datasets, _biexp, ["A1"], ["A2", "L1", "L2"], inits, strategy="joint"
+    )
+    prof, gp = engine.global_fit(
+        datasets, _biexp, ["A1"], ["A2", "L1", "L2"], inits, strategy="profiled"
+    )
+
+    # Shared global agrees within fit tolerance.
+    assert gp["A1"].value == pytest.approx(gj["A1"].value, rel=2e-3)
+    # Every per-dataset local (all three) agrees within fit tolerance.
+    for i in range(len(truths)):
+        for name in ("A2", "L1", "L2"):
+            assert prof[i].parameters[name].value == pytest.approx(
+                joint[i].parameters[name].value, rel=5e-3, abs=5e-3
+            )
+        assert prof[i].chi_squared == pytest.approx(joint[i].chi_squared, rel=1e-3)
+
+    # IC gate: same partition (1 global + 3 locals * 3 datasets).
+    k = 1 + 3 * len(truths)
+    assert abs(_total_ic(prof, k) - _total_ic(joint, k)) < 0.5
+
+
 def test_use_varpro_is_deferred_and_fails_loudly():
     """Variable projection is not wired in yet; requesting it raises explicitly."""
     model = MODELS["ExponentialRelaxation"].function

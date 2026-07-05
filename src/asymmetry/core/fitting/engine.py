@@ -1444,6 +1444,15 @@ class FitEngine:
         Hessians are ``n_global²`` + ``G`` small per-dataset blocks rather than one
         ``(n_global + n_local·G)²`` — the source of the ~linear (not super-linear)
         G-scaling.
+
+        The shared-global HESSE errors come from the outer profile curvature
+        (which equals the marginal curvature, so they match the joint solver);
+        the per-dataset local errors are *conditional* on the fitted globals
+        (each inner solve holds the globals fixed), which is structurally correct
+        for a profiled fit but differs from the joint solver's marginal local
+        errors. MINOS is not supported on the profiled path — asymmetric local
+        intervals would need the coupled joint problem — so ``minos`` is accepted
+        for signature parity with the joint path but ignored here.
         """
         try:
             from iminuit import Minuit
