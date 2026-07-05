@@ -240,9 +240,14 @@ def fit_global(
         Both converge to the same minimum; profiled reports conditional local
         errors (globals pinned) while its shared-global errors are marginal.
     use_varpro
-        Solve linear parameters (amplitudes, constant backgrounds) by linear
-        least-squares inside the objective rather than by Minuit (variable
-        projection), forwarded to the engine. Off by default; accuracy-preserving.
+        **Deferred — not implemented.** Forwarded to the engine, where
+        ``use_varpro=True`` currently raises :class:`NotImplementedError`; only the
+        default ``False`` is supported. Variable projection (solving linear
+        parameters — amplitudes, constant backgrounds — by least-squares inside the
+        objective) is a planned follow-up; see
+        :meth:`~asymmetry.core.fitting.engine.FitEngine.global_fit` for why it is
+        deferred (constant-factor-only once the profiled strategy separates the
+        per-dataset locals, and marginal-error matching needs a final full Hessian).
     fit_engine
         Optional :class:`FitEngine` to reuse; a fresh one is created otherwise.
     cancel_callback

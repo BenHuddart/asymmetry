@@ -919,15 +919,20 @@ class FitEngine:
             least one free global (with none, the joint problem is already
             block-separable and the fast path below handles it).
         use_varpro
-            Variable projection. When ``True``, parameters flagged linear in the
-            model metadata (amplitudes, constant backgrounds) are solved by
-            weighted linear least-squares *inside* each residual evaluation and
-            removed from the nonlinear Minuit vector, then reinstated in the
-            returned :class:`FitResult` (they still count toward ``dof`` and the
-            IC ``k``). Falls back to the nonlinear treatment for any candidate
-            model that is not actually affine in a flagged parameter, or whose
-            linear solution violates a bound. Off by default; the fitted values,
-            errors, and IC are preserved.
+            **Deferred — not implemented.** Passing ``use_varpro=True`` currently
+            raises :class:`NotImplementedError`; the default ``False`` is the only
+            supported value. Variable projection (technique M) is planned as a
+            follow-up: it would solve the parameters flagged linear in the model
+            metadata (amplitudes, constant backgrounds; see
+            :func:`asymmetry.core.fitting.models.default_linear_params`) by
+            weighted linear least-squares inside each residual and remove them from
+            the nonlinear Minuit vector, still counting them in ``dof`` / the IC
+            ``k``. It is deferred because, once the ``"profiled"`` strategy has
+            already separated the per-dataset locals, VarPro is only a
+            constant-factor per-fit win (it does not change the G-exponent), and
+            reproducing the current engine's *marginal* parameter errors needs a
+            final full Hessian over all parameters. The role-based linear-parameter
+            metadata is in place for that follow-up.
 
         Returns
         -------
@@ -1473,6 +1478,22 @@ class FitEngine:
                 name: params[name].value for name in local_params if not params[name].fixed
             }
 
+        # The runtime minimiser controls the joint path honours (max_calls,
+        # migrad_iterations, use_simplex_rescue) must reach the inner solves too —
+        # otherwise a caller who caps max_calls on a large global fit would not
+        # actually cap the per-dataset inner work. Each inner solve is its own
+        # minimisation, so max_calls is applied as the per-inner-fit ncall cap
+        # (the joint path likewise applies it as one problem's ncall), and
+        # iterate / use_simplex mirror the joint migrad settings.
+        if method == "simplex":
+            inner_migrad_kwargs: dict = {"ncall": max_calls}
+        else:
+            inner_migrad_kwargs = {
+                "ncall": max_calls,
+                "iterate": max(1, int(migrad_iterations)),
+                "use_simplex": bool(use_simplex_rescue),
+            }
+
         # Inner solve for one dataset with the globals pinned. Reuses the proven
         # single-fit path (self.fit) rather than a bespoke inner Minuit.
         def _inner_fit(ds: MuonDataset, global_values: dict[str, float]) -> FitResult:
@@ -1516,6 +1537,7 @@ class FitEngine:
                 method=method,
                 cancel_callback=cancel_callback,
                 cost_factory=cost_factory,
+                migrad_kwargs=inner_migrad_kwargs,
             )
 
         # Counters accumulated across every inner solve (the profiled fit's cost
@@ -1640,7 +1662,12 @@ class FitEngine:
                 if p.fixed and p.name not in result_params:
                     result_params.add(Parameter(name=p.name, value=p.value, fixed=True))
 
-            ndata = len(ds.time_range(t_min, t_max).time) if (t_min or t_max) else len(ds.time)
+            # Explicit None checks: t_min=0.0 is a legitimate lower bound, so a
+            # truthiness test would silently skip the clip and miscount ndata/dof.
+            if t_min is not None or t_max is not None:
+                ndata = len(ds.time_range(t_min, t_max).time)
+            else:
+                ndata = len(ds.time)
             nfree_local = sum(1 for pname in local_params if not params[pname].fixed)
             nfree = n_free_global + nfree_local
             dataset_chi2 = float(inner.chi_squared)

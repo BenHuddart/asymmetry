@@ -225,6 +225,71 @@ def test_profiled_matches_joint_biexponential_multiple_free_locals():
     assert abs(_total_ic(prof, k) - _total_ic(joint, k)) < 0.5
 
 
+def test_profiled_max_calls_cap_reaches_inner_solves():
+    """A tight max_calls must cap the per-dataset inner solves, not just the outer.
+
+    With max_calls=1 the inner locals cannot converge (they stay near their seed
+    and the fit reports failure), whereas a generous cap converges — proving the
+    runtime control is actually threaded into the inner fits.
+    """
+    model = MODELS["ExponentialRelaxation"].function
+    datasets, inits = _make_series(n_datasets=3, a0_true=22.0, lambdas=[0.3, 0.6, 1.0], seed=2)
+    engine = FitEngine()
+
+    converged, _ = engine.global_fit(
+        datasets, model, ["A0"], ["Lambda"], inits, strategy="profiled", max_calls=10000
+    )
+    capped, _ = engine.global_fit(
+        datasets, model, ["A0"], ["Lambda"], inits, strategy="profiled", max_calls=1
+    )
+
+    # The generous run converges the per-dataset local away from its 0.5 seed.
+    assert converged[0].parameters["Lambda"].value == pytest.approx(0.3, abs=0.05)
+    assert converged[0].success
+    # The max_calls=1 run cannot: the inner solve is starved, so the local stays
+    # pinned at its seed and the result reports failure. If the cap were not
+    # threaded into the inner solve this would converge just like the generous run.
+    assert capped[0].parameters["Lambda"].value == pytest.approx(0.5, abs=1e-6)
+    assert not capped[0].success
+
+
+def test_profiled_respects_t_min_zero_in_dof():
+    """t_min=0.0 as the *only* bound is a real lower clip, not 'unset'.
+
+    Data spanning negative time makes the bug observable: a truthiness guard
+    (``if t_min or t_max`` with t_max=None) evaluates ``0.0 or None`` → None →
+    falsy, so it would skip the clip and count the negative-time points in
+    ndata/dof. An explicit ``is not None`` check clips at t≥0.
+    """
+    model = MODELS["ExponentialRelaxation"].function
+    rng = np.random.default_rng(8)
+    # Time axis extends below zero so a t_min=0.0 clip actually removes points.
+    t = np.linspace(-1.0, 8.0, 300)
+    datasets: list[MuonDataset] = []
+    inits: dict[int, ParameterSet] = {}
+    for i, lam in enumerate([0.4, 0.9]):
+        y = model(t, A0=20.0, Lambda=lam, baseline=0.0) + rng.normal(0.0, 0.4, t.size)
+        datasets.append(
+            MuonDataset(time=t, asymmetry=y, error=np.full_like(t, 0.4), metadata={"run_number": i})
+        )
+        ps = ParameterSet()
+        ps.add(Parameter("A0", 20.0, min=0.0))
+        ps.add(Parameter("Lambda", 0.5, min=0.0))
+        ps.add(Parameter("baseline", 0.0, fixed=True))
+        inits[i] = ps
+
+    engine = FitEngine()
+    prof, _ = engine.global_fit(
+        datasets, model, ["A0"], ["Lambda"], inits, strategy="profiled", t_min=0.0, t_max=None
+    )
+    for i, ds in enumerate(datasets):
+        n_clipped = len(ds.time_range(0.0, None).time)
+        assert n_clipped < len(ds.time)  # the t_min=0.0 clip really removed points
+        # dof = n_clipped − (1 global + 1 local). A truthiness bug would use the
+        # full (unclipped) length here and overcount dof.
+        assert prof[i].dof == n_clipped - 2
+
+
 def test_use_varpro_is_deferred_and_fails_loudly():
     """Variable projection is not wired in yet; requesting it raises explicitly."""
     model = MODELS["ExponentialRelaxation"].function
