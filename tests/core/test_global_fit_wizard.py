@@ -30,7 +30,9 @@ from asymmetry.core.fitting.global_fit_wizard import (
     _deserialize_global_candidate_assessment,
     _fit_exact_assignment,
     _globalization_candidate_order,
+    _layer_parameter_count,
     _localisation_penalty,
+    _metric_penalty,
     _single_run_prefit_parameter_sets,
     _staged_globalization_assignment,
     _staged_multi_local_assignment,
@@ -2103,3 +2105,148 @@ def test_staged_multi_local_assignment_succeeds_for_large_exp_double_gaussian_se
     assert assessment is not None
     assert assessment.is_successful
     assert assessment.local_param_names == ("Lambda", "sigma_2", "sigma_3")
+
+
+@pytest.mark.parametrize(
+    "metric",
+    [SelectionMetric.AIC, SelectionMetric.AICC, SelectionMetric.BIC],
+)
+def test_metric_penalty_matches_information_criteria(metric) -> None:
+    """The layer-bound penalty (technique A/B) must equal IC - chi2 exactly.
+
+    The bound's admissibility rests on penalty(k) being the *same* additive term
+    the winning assessment's IC uses. Verify _metric_penalty reproduces
+    compute_information_criteria's penalty for a range of (k, n), including the
+    AICc small-sample-correction boundary (n <= k + 1 falls back to AIC).
+    """
+    from asymmetry.core.fitting.fit_wizard import compute_information_criteria
+
+    for k in (1, 2, 5, 12, 40):
+        for n in (3, 6, 50, 500):
+            aic, aicc, bic = compute_information_criteria(0.0, k, n)
+            expected = {
+                SelectionMetric.AIC: aic,
+                SelectionMetric.BIC: bic,
+                SelectionMetric.AICC: aicc if aicc is not None else aic,
+            }[metric]
+            assert _metric_penalty(k, sample_count=n, metric=metric) == pytest.approx(expected)
+
+
+def test_metric_penalty_is_monotone_in_layer() -> None:
+    """penalty(k(m)) must be non-decreasing in the Hamming layer m.
+
+    This monotonicity is what makes the layer bound admissible: the anchor floor
+    plus penalty(m) lower-bounds every assignment at layer >= m. k(m) grows with
+    m for G >= 2, so the penalty must too, for all three metrics.
+    """
+    free_param_count = 5
+    n_datasets = 3
+    sample_count = 360
+    for metric in (SelectionMetric.AIC, SelectionMetric.AICC, SelectionMetric.BIC):
+        penalties = [
+            _metric_penalty(
+                _layer_parameter_count(m, free_param_count=free_param_count, n_datasets=n_datasets),
+                sample_count=sample_count,
+                metric=metric,
+            )
+            for m in range(free_param_count + 1)
+        ]
+        assert penalties == sorted(penalties)
+        # k(m) = (P - m) + m*G, so k(0) = P and k(P) = P*G.
+        assert (
+            _layer_parameter_count(0, free_param_count=free_param_count, n_datasets=n_datasets)
+            == free_param_count
+        )
+        assert (
+            _layer_parameter_count(
+                free_param_count, free_param_count=free_param_count, n_datasets=n_datasets
+            )
+            == free_param_count * n_datasets
+        )
+
+
+def test_warm_certificate_failure_escalates_to_full_battery() -> None:
+    """A failed monotonicity certificate (technique D) must escalate, not accept.
+
+    Force the certificate to fail by passing an impossibly-low parent chi2
+    (warm_start_chi2 = -1e9): no converged child can satisfy
+    child <= parent + epsilon, so _fit_exact_assignment must fall through to the
+    full multi-start battery and still return a valid, well-converged fit whose
+    chi2 matches the battery-only run. This proves the certificate branch is not
+    dead code and that escalation, not silent acceptance, guards a bad warm fit.
+    """
+    import copy
+
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    template = CandidateTemplate(
+        key="exp_constant",
+        title="Exponential + Constant",
+        category="General",
+        rationale="test",
+        model=model,
+    )
+    datasets = [
+        _dense_dataset_for(
+            run_number=9200 + index,
+            field=25.0 * (index + 1),
+            temperature=5.0,
+            model=model,
+            params={"A_1": 0.20, "Lambda": 0.20 + 0.25 * index, "A_bg": 0.010},
+            error_level=0.004,
+        )
+        for index in range(3)
+    ]
+    base_by_run = {
+        int(dataset.run_number): ParameterSet(
+            [
+                Parameter("A_1", value=0.18, min=0.0, max=1.0),
+                Parameter("Lambda", value=0.30, min=0.0, max=3.0),
+                Parameter("A_bg", value=0.012, min=-0.2, max=0.2),
+            ]
+        )
+        for dataset in datasets
+    }
+    # Two locals so the fast path (len(local_param_names) >= 2) is active.
+    global_names: tuple[str, ...] = ("A_bg",)
+    local_names = ("A_1", "Lambda")
+
+    warm_start_by_run = {
+        int(dataset.run_number): copy.deepcopy(base_by_run[int(dataset.run_number)])
+        for dataset in datasets
+    }
+
+    # Battery-only reference (no warm start at all).
+    reference = _fit_exact_assignment(
+        datasets,
+        template,
+        fit_engine=FitEngine(),
+        base_by_run=base_by_run,
+        global_param_names=global_names,
+        local_param_names=local_names,
+        fixed_param_names=(),
+        axis_key="field",
+        metric=SelectionMetric.AICC,
+        cache={},
+    )
+    assert reference.is_successful
+
+    # Impossible certificate → must escalate to the battery and still converge.
+    escalated = _fit_exact_assignment(
+        datasets,
+        template,
+        fit_engine=FitEngine(),
+        base_by_run=base_by_run,
+        global_param_names=global_names,
+        local_param_names=local_names,
+        fixed_param_names=(),
+        axis_key="field",
+        metric=SelectionMetric.AICC,
+        cache={},
+        warm_start_by_run=warm_start_by_run,
+        warm_start_chi2=-1.0e9,
+    )
+    assert escalated.is_successful
+    ref_chi2 = sum(r.chi_squared for r in reference.fit_results_by_run.values())
+    esc_chi2 = sum(r.chi_squared for r in escalated.fit_results_by_run.values())
+    # Escalation reached the same minimum the battery finds from cold start.
+    assert esc_chi2 == pytest.approx(ref_chi2, rel=0.05)

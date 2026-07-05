@@ -69,6 +69,25 @@ from asymmetry.core.fitting.wizard_scope import (
 
 _ROLE_DELTA_THRESHOLD = 2.0
 _COMPARABLE_SCORE_DELTA = 2.0
+#: Safety margin (metric units) for the exact layer-truncation bound (technique
+#: A). The bound halts enumeration of a template's remaining Hamming layers once
+#: the all-local χ² floor plus the layer's minimum-possible penalty exceeds the
+#: incumbent IC by more than this margin. It must dominate every downstream
+#: verdict threshold so a pruned assignment can never have altered the winner or
+#: its comparable tie-break: the winner selection tie-break is
+#: ``_COMPARABLE_SCORE_DELTA`` (2.0) and the per-parameter role recommendations
+#: use ``_role_delta_threshold`` (max ≈5.0 across all return paths). 6.0 clears
+#: both with headroom — the error is asymmetric (too-high only forfeits a little
+#: speedup; too-low silently prunes a verdict-relevant node), so we bias high.
+_LAYER_BOUND_MARGIN = 6.0
+#: Tolerance (χ² units) on the technique-D monotonicity certificate. A warm child
+#: fit is accepted without escalation when its χ² does not exceed the parent's by
+#: more than this. The parent is strictly less flexible, so a correct child fit is
+#: expected to land at χ² <= χ²(parent); ε only absorbs Minuit's EDM-scale
+#: convergence slop (default EDM tolerance ~1e-3·errordef). 1.0 is loose enough to
+#: not fire on genuinely-converged children yet tight enough that a truly stuck
+#: child (which would be a different, worse minimum) escalates to the full battery.
+_WARM_CERTIFICATE_EPSILON = 1.0
 _SHORTLIST_COUNT = 4
 _SHORTLIST_SCORE_WINDOW = 6.0
 _SHORTLIST_CAP = 6
@@ -365,6 +384,19 @@ class _WavefrontTemplateState:
         GlobalCandidateAssessment,
     ]
     best_assessment: GlobalCandidateAssessment | None = None
+    #: χ² of the converged all-local anchor (technique A). Every assignment for
+    #: this template is nested inside all-local, so its χ² is a lower bound;
+    #: ``None`` means the anchor did not converge and the bound is disabled.
+    chi2_floor: float | None = None
+    #: Best (lowest) IC metric value among this template's converged assignments
+    #: so far, used as the layer-bound incumbent. ``inf`` until the first
+    #: converged assignment (the anchor) lands.
+    incumbent_ic: float = float("inf")
+    #: Number of free (localisable) parameters — the maximum Hamming layer.
+    free_param_count: int = 0
+    #: True once the layer bound has fired and this template's remaining, higher
+    #: layers are being skipped.
+    layer_bound_fired: bool = False
 
 
 def _compact_assessment_for_cache(
@@ -535,6 +567,7 @@ def _run_wavefront_assignment_task(
     }
     fit_engine = FitEngine()
     warm_start_by_run: dict[int, ParameterSet] | None = None
+    warm_start_chi2: float | None = None
     initial_step_sizes: dict[str, float] = {}
 
     if task.warm_start_source is not None and task.warm_start_source.is_successful:
@@ -555,6 +588,12 @@ def _run_wavefront_assignment_task(
             target_global_names=task.global_param_names,
             target_local_names=task.local_param_names,
         )
+        # Parent χ² for technique D's monotonicity certificate: the predecessor is
+        # a strict single-flip-simpler assignment (one fewer local), so the warm
+        # child should not exceed it.
+        warm_start_chi2 = float(
+            sum(result.chi_squared for result in task.warm_start_source.fit_results_by_run.values())
+        )
     elif task.initial_seed_by_run is not None:
         warm_start_by_run = _clone_parameter_sets(task.initial_seed_by_run)
 
@@ -570,6 +609,7 @@ def _run_wavefront_assignment_task(
         metric=task.metric,
         cache={},
         warm_start_by_run=warm_start_by_run,
+        warm_start_chi2=warm_start_chi2,
         progress_callback=None,
         search_strategy=task.search_strategy,
         instrumentation=task_instrumentation,
@@ -3477,6 +3517,75 @@ def _prefer_globalization_change(
     return False
 
 
+def _warm_certificate_fit(
+    datasets: list[MuonDataset],
+    template: CandidateTemplate,
+    *,
+    fit_engine: FitEngine,
+    global_param_names: tuple[str, ...],
+    local_param_names: tuple[str, ...],
+    fixed_param_names: tuple[str, ...],
+    warm_start_by_run: dict[int, ParameterSet],
+    initial_step_sizes: dict[str, float],
+    difficult_assignment: bool,
+    instrumentation: dict[str, object] | None,
+) -> tuple[dict[int, FitResult] | None, ParameterSet, float, dict[str, float]]:
+    """One warm single-cycle global fit for technique D's monotonicity certificate.
+
+    A single migrad from the warm-start seed, with no staged multi-cycle
+    re-seeding and no multi-start variants — the cheapest converging step. The
+    caller decides whether the result clears the certificate; on failure the
+    caller escalates to the full battery. Returns
+    ``(results_by_run | None, fitted_global, total_chi2, step_hints)``.
+    """
+
+    warm_seed = _clone_parameter_sets(warm_start_by_run)
+    call_budget = _global_fit_call_budget(
+        datasets,
+        warm_seed,
+        global_param_names=global_param_names,
+        local_param_names=local_param_names,
+        phase="full",
+    )
+    _record_counter(instrumentation, "global_fit_calls")
+    _record_counter(instrumentation, "warm_certificate_fits")
+    if initial_step_sizes:
+        _record_counter(instrumentation, "curvature_hint_applications")
+        _append_metric(instrumentation, "curvature_hint_sizes", len(initial_step_sizes))
+    results_by_run, fitted_global = fit_engine.global_fit(
+        datasets,
+        template.model.function,
+        list(global_param_names),
+        list(local_param_names),
+        warm_seed,
+        max_calls=call_budget,
+        migrad_iterations=7 if difficult_assignment else 5,
+        use_simplex_rescue=difficult_assignment,
+        minuit_strategy=2 if difficult_assignment else None,
+        minuit_tol=0.05 if difficult_assignment else None,
+        initial_step_sizes=initial_step_sizes or None,
+        screening=not difficult_assignment,
+    )
+    _record_global_fit_diagnostics(instrumentation, results_by_run)
+    results_by_run = _canonicalize_fit_results_by_run(
+        results_by_run,
+        template=template,
+        global_param_names=global_param_names,
+        local_param_names=local_param_names,
+        fixed_param_names=fixed_param_names,
+    )
+    if not all(result.success for result in results_by_run.values()):
+        return None, ParameterSet(), float("inf"), dict(initial_step_sizes)
+    total_chi2 = float(sum(result.chi_squared for result in results_by_run.values()))
+    step_hints = _step_hints_from_fit_results(
+        datasets,
+        results_by_run,
+        target_global_names=global_param_names,
+        target_local_names=local_param_names,
+    )
+    return results_by_run, fitted_global, total_chi2, step_hints
+
+
 def _fit_exact_assignment(
     datasets: list[MuonDataset],
     template: CandidateTemplate,
@@ -3490,6 +3599,7 @@ def _fit_exact_assignment(
     metric: SelectionMetric,
     cache: dict[tuple[tuple[str, ...], tuple[str, ...]], GlobalCandidateAssessment],
     warm_start_by_run: dict[int, ParameterSet] | None = None,
+    warm_start_chi2: float | None = None,
     progress_callback: Callable[[str], None] | None = None,
     search_strategy: str = "legacy",
     instrumentation: dict[str, object] | None = None,
@@ -3593,6 +3703,7 @@ def _fit_exact_assignment(
                 minuit_strategy=2 if difficult_assignment else None,
                 minuit_tol=0.05 if difficult_assignment else None,
                 initial_step_sizes=local_step_hints or None,
+                screening=not difficult_assignment,
             )
             _record_global_fit_diagnostics(instrumentation, results_by_run)
             results_by_run = _canonicalize_fit_results_by_run(
@@ -3630,12 +3741,71 @@ def _fit_exact_assignment(
             local_step_hints,
         )
 
-    best_results, best_global, best_score, best_failure_message, step_hints = (
-        _evaluate_attempt_variants(
-            attempt_variants,
-            initial_hints=dict(initial_step_sizes or {}),
+    # Technique D (escalation-on-anomaly): a warm-started child node (from its
+    # best Hamming-neighbour predecessor) is strictly more flexible than that
+    # predecessor, so a good fit lands at χ² <= χ²(parent) + ε. If ONE warm
+    # single-cycle migrad clears that monotonicity certificate and Minuit reports
+    # a valid minimum, accept it and skip the full multi-start / staged / fallback
+    # / simplex battery. Escalate to the battery only when the certificate fails.
+    # Anchor nodes (all-global round 0 has no warm start; all-local is fitted
+    # separately; layer-1 is the first coupled step) keep the full battery, so the
+    # fast path is gated on a warm start plus >= 2 localised params.
+    best_results = None
+    best_global = ParameterSet()
+    best_score = float("inf")
+    best_failure_message = "No fit attempts were created."
+    step_hints = dict(initial_step_sizes or {})
+    certificate_passed = False
+    if (
+        warm_start_by_run is not None
+        and warm_start_chi2 is not None
+        and math.isfinite(warm_start_chi2)
+        and len(local_param_names) >= 2
+    ):
+        (
+            warm_results,
+            warm_global,
+            warm_score,
+            warm_step_hints,
+        ) = _warm_certificate_fit(
+            datasets,
+            template,
+            fit_engine=fit_engine,
+            global_param_names=global_param_names,
+            local_param_names=local_param_names,
+            fixed_param_names=fixed_param_names,
+            warm_start_by_run=warm_start_by_run,
+            initial_step_sizes=step_hints,
+            difficult_assignment=difficult_assignment,
+            instrumentation=instrumentation,
         )
-    )
+        if warm_results is not None and all(r.success for r in warm_results.values()):
+            # Certificate: the child (more free params) must not do worse than its
+            # parent by more than ε. ε absorbs Minuit's EDM-scale numerical slop.
+            certificate_ok = warm_score <= warm_start_chi2 + _WARM_CERTIFICATE_EPSILON
+            if certificate_ok:
+                best_results = warm_results
+                best_global = warm_global
+                best_score = warm_score
+                step_hints = warm_step_hints
+                certificate_passed = True
+                _record_counter(instrumentation, "warm_certificate_accepts")
+            else:
+                _record_counter(instrumentation, "warm_certificate_escalations")
+        else:
+            # The warm single-cycle fit itself failed to converge; we still fall
+            # through to the full battery below, so count it as an escalation too
+            # (otherwise the counter only sees certificate failures, not warm-fit
+            # failures, and undercounts how often the fast path falls through).
+            _record_counter(instrumentation, "warm_certificate_escalations")
+
+    if not certificate_passed:
+        best_results, best_global, best_score, best_failure_message, step_hints = (
+            _evaluate_attempt_variants(
+                attempt_variants,
+                initial_hints=dict(initial_step_sizes or {}),
+            )
+        )
 
     fallback_attempt_variants: tuple[dict[int, ParameterSet], ...] = ()
     fit_success = best_results is not None and all(
@@ -4624,6 +4794,7 @@ def _staged_assignment_seed(
             use_simplex_rescue=True,
             minuit_strategy=2 if len(free_local_names) >= 2 else None,
             minuit_tol=0.05 if len(free_local_names) >= 2 else None,
+            screening=len(free_local_names) < 2,
             initial_step_sizes=step_hints or None,
         )
         _record_global_fit_diagnostics(instrumentation, local_results)
@@ -4674,6 +4845,7 @@ def _staged_assignment_seed(
             minuit_strategy=2 if len(free_global_names) >= 4 else None,
             minuit_tol=0.05 if len(free_global_names) >= 4 else None,
             initial_step_sizes=step_hints or None,
+            screening=len(free_global_names) < 4,
         )
         _record_global_fit_diagnostics(instrumentation, global_results)
         global_results = _canonicalize_fit_results_by_run(
@@ -4725,6 +4897,7 @@ def _staged_assignment_seed(
                 migrad_iterations=4,
                 use_simplex_rescue=False,
                 initial_step_sizes=step_hints or None,
+                screening=True,
             )
             _record_global_fit_diagnostics(instrumentation, mixed_results)
             mixed_results = _canonicalize_fit_results_by_run(
@@ -5539,6 +5712,49 @@ def _metric_value(
     return aicc if aicc is not None else aic
 
 
+def _layer_parameter_count(
+    local_count: int,
+    *,
+    free_param_count: int,
+    n_datasets: int,
+) -> int:
+    """IC ``k`` for a Hamming layer with ``local_count`` localised free params.
+
+    ``parameter_count`` on an assessment is ``n_global + n_local * G`` (fixed
+    params excluded). In layer ``m`` there are ``free_param_count - m`` free
+    globals and ``m`` locals, so ``k(m) = (P - m) + m * G``. It is monotone
+    non-decreasing in ``m`` for ``G >= 2`` (every synthetic/real series), which
+    is what makes the layer bound admissible.
+    """
+
+    m = max(0, min(int(local_count), int(free_param_count)))
+    return (free_param_count - m) + m * int(n_datasets)
+
+
+def _metric_penalty(parameter_count: int, *, sample_count: int, metric: SelectionMetric) -> float:
+    """The additive IC penalty ``IC - chi2`` for ``k`` params over ``n`` points.
+
+    Mirrors :func:`compute_information_criteria` exactly so the layer bound uses
+    the same penalty the winning-assessment IC does. All three penalties are
+    monotone non-decreasing in ``k`` (hence in the layer index), so the bound
+    ``chi2_floor + penalty(k(m))`` lower-bounds every assignment at layer ``>= m``.
+    """
+
+    k = max(int(parameter_count), 0)
+    n = max(int(sample_count), 1)
+    if metric == SelectionMetric.AIC:
+        return 2.0 * k
+    if metric == SelectionMetric.BIC:
+        return k * math.log(n)
+    # AICc — fall back to AIC's penalty when the small-sample correction is
+    # undefined (n <= k + 1), matching compute_information_criteria which then
+    # reports aicc = None and metric_value() falls back to AIC.
+    aic_penalty = 2.0 * k
+    if n > k + 1:
+        return aic_penalty + 2.0 * k * (k + 1) / max(n - k - 1, 1)
+    return aic_penalty
+
+
 def _run_exhaustive_wavefront_search(
     datasets: list[MuonDataset],
     *,
@@ -5590,6 +5806,7 @@ def _run_exhaustive_wavefront_search(
             free_param_names=free_param_names,
             exact_cache={},
             converged_assessments={},
+            free_param_count=len(free_param_names),
         )
         states.append(state)
         state_by_key[template.key] = state
@@ -5599,6 +5816,70 @@ def _run_exhaustive_wavefront_search(
             f"{sum(len(layer) for layer in layers)} assignment(s) across "
             f"{len(layers)} Hamming layer(s).",
         )
+
+    # Technique A (exact layer truncation): fit the all-local anchor for each
+    # template up front. All-local is the most flexible assignment, so its χ² is
+    # a lower bound on every assignment of that template; combined with the
+    # penalty that grows monotonically with the Hamming layer, it lets us halt a
+    # template's enumeration once no remaining layer can beat the incumbent IC by
+    # more than _LAYER_BOUND_MARGIN. Only a *cleanly converged* anchor arms the
+    # bound — a mis-converged anchor floor could over-prune once a better low-layer
+    # incumbent exists, so we disable the bound for that template instead.
+    sample_count = int(sum(dataset.n_points for dataset in datasets))
+    for state in states:
+        if state.free_param_count == 0:
+            continue
+        anchor_local = tuple(state.free_param_names)
+        anchor_assessment = _fit_exact_assignment(
+            datasets,
+            state.template,
+            fit_engine=FitEngine(),
+            base_by_run=state.prefit_base_by_run,
+            global_param_names=(),
+            local_param_names=anchor_local,
+            fixed_param_names=state.fixed_param_names,
+            axis_key=axis_key,
+            metric=metric,
+            cache=state.exact_cache,
+            progress_callback=progress_callback,
+            search_strategy=search_strategy,
+            instrumentation=instrumentation,
+        )
+        anchor_key = ((), anchor_local)
+        state.exact_cache[anchor_key] = _compact_assessment_for_cache(anchor_assessment)
+        if anchor_assessment.is_successful:
+            state.converged_assessments[anchor_key] = anchor_assessment
+            anchor_chi2 = float(
+                sum(result.chi_squared for result in anchor_assessment.fit_results_by_run.values())
+            )
+            state.chi2_floor = anchor_chi2
+            state.incumbent_ic = float(anchor_assessment.metric_value(metric))
+            if state.best_assessment is None or _assessment_sort_key(
+                anchor_assessment, metric
+            ) < _assessment_sort_key(state.best_assessment, metric):
+                state.best_assessment = anchor_assessment
+            _progress_log(
+                progress_callback,
+                f"{state.template.title}: all-local anchor converged "
+                f"(χ²={anchor_chi2:.2f}, {metric.value}={state.incumbent_ic:.2f}); "
+                "layer bound armed.",
+            )
+        else:
+            _progress_log(
+                progress_callback,
+                f"{state.template.title}: all-local anchor did not converge; "
+                "layer bound disabled for this template (full enumeration).",
+            )
+
+    # Technique B (cross-template incumbent bound): the best IC found across ALL
+    # templates so far. A template whose χ²_floor + minimum-possible penalty
+    # (penalty at layer 0, the fewest params) can't beat this by more than the
+    # margin cannot produce a winner and is skipped wholesale. Seeded and updated
+    # ONLY from real converged metric_value()s — never from a floor+penalty
+    # estimate (a bound-vs-bound comparison is unsound). A mis-converged anchor
+    # never contributes (chi2_floor is None), so it cannot corrupt this incumbent.
+    converged_incumbents = [s.incumbent_ic for s in states if s.chi2_floor is not None]
+    cross_incumbent = min(converged_incumbents) if converged_incumbents else float("inf")
 
     worker_count = _wavefront_worker_count(total_assignments)
     if worker_count > 1 and total_assignments > 1:
@@ -5629,6 +5910,83 @@ def _run_exhaustive_wavefront_search(
                 layers = layers_by_key[state.template.key]
                 if round_index >= len(layers):
                     continue
+                if state.layer_bound_fired:
+                    # Bound already fired in an earlier round; every remaining
+                    # (higher) layer only adds penalty, so skip them all.
+                    continue
+                # Technique B: skip a whole template that cannot beat the best IC
+                # found across ANY template. Unlike A this may fire at round 0
+                # (its value is skipping a dominated template's all-global fit and
+                # everything above it). χ²_floor + penalty(layer 0) is the
+                # template's best achievable IC; the winning template's own bound
+                # is <= its anchor IC <= cross_incumbent, so it can never trip this.
+                if (
+                    not state.layer_bound_fired
+                    and state.chi2_floor is not None
+                    and math.isfinite(cross_incumbent)
+                ):
+                    best_possible_k = _layer_parameter_count(
+                        0,
+                        free_param_count=state.free_param_count,
+                        n_datasets=len(datasets),
+                    )
+                    best_possible_ic = state.chi2_floor + _metric_penalty(
+                        best_possible_k, sample_count=sample_count, metric=metric
+                    )
+                    if best_possible_ic > cross_incumbent + _LAYER_BOUND_MARGIN:
+                        state.layer_bound_fired = True
+                        _record_counter(instrumentation, "cross_template_templates_pruned")
+                        _record_counter(
+                            instrumentation,
+                            "cross_template_layers_pruned",
+                            len(layers) - round_index,
+                        )
+                        _progress_log(
+                            progress_callback,
+                            f"{state.template.title}: cross-template bound fired "
+                            f"(best possible {best_possible_ic:.2f} > cross-incumbent "
+                            f"{cross_incumbent:.2f} + {_LAYER_BOUND_MARGIN:.1f}); "
+                            "skipping this template entirely.",
+                        )
+                        continue
+                # The all-local anchor (top layer) was already fitted up front and
+                # lives in exact_cache/converged_assessments; do not re-fit it.
+                if state.free_param_count > 0 and round_index == state.free_param_count:
+                    continue
+                # Technique A: once χ²_floor + penalty(layer) exceeds the incumbent
+                # IC by more than the margin, no assignment in this or any higher
+                # layer can win — halt this template's enumeration. Guarded on a
+                # cleanly converged anchor (chi2_floor is not None).
+                if (
+                    state.chi2_floor is not None
+                    and math.isfinite(state.incumbent_ic)
+                    and round_index > 0
+                ):
+                    layer_k = _layer_parameter_count(
+                        round_index,
+                        free_param_count=state.free_param_count,
+                        n_datasets=len(datasets),
+                    )
+                    layer_ic_floor = state.chi2_floor + _metric_penalty(
+                        layer_k, sample_count=sample_count, metric=metric
+                    )
+                    if layer_ic_floor > state.incumbent_ic + _LAYER_BOUND_MARGIN:
+                        state.layer_bound_fired = True
+                        _record_counter(instrumentation, "layer_bound_templates_pruned")
+                        _record_counter(
+                            instrumentation,
+                            "layer_bound_layers_pruned",
+                            len(layers) - round_index,
+                        )
+                        _progress_log(
+                            progress_callback,
+                            f"{state.template.title}: layer bound fired at Hamming "
+                            f"layer {round_index}/{state.free_param_count} "
+                            f"(floor {layer_ic_floor:.2f} > incumbent "
+                            f"{state.incumbent_ic:.2f} + {_LAYER_BOUND_MARGIN:.1f}); "
+                            "skipping remaining layers.",
+                        )
+                        continue
                 assignment_group: list[_WavefrontAssignmentTask] = []
                 for local_param_names in layers[round_index]:
                     global_param_names = tuple(
@@ -5701,6 +6059,14 @@ def _run_exhaustive_wavefront_search(
                     state.converged_assessments[
                         (result.global_param_names, result.local_param_names)
                     ] = result.assessment
+                    # Tighten the layer-bound incumbent with any better IC. A
+                    # lower incumbent prunes more aggressively next round while
+                    # staying admissible (the margin still protects the winner).
+                    candidate_ic = float(result.assessment.metric_value(metric))
+                    if candidate_ic < state.incumbent_ic:
+                        state.incumbent_ic = candidate_ic
+                    if candidate_ic < cross_incumbent:
+                        cross_incumbent = candidate_ic
                 if state.best_assessment is None or _assessment_sort_key(
                     result.assessment,
                     metric,
