@@ -5,7 +5,11 @@ The global fit wizard is the analogue of :doc:`fit_wizard` for an ordered
 series of runs — a longitudinal-field decoupling series, a temperature
 scan, a fallback run-order sweep — where the experiment is set up so that
 one common composite model should describe every dataset, with parameters
-either shared globally or free per run. The textbook use is an LF
+either shared globally or free per run. (The single-spectrum wizard has
+since been redesigned around an answer-card-first flow with a decision
+trail; this wizard keeps its page-by-page layout, since it drives a
+multi-stage screening-then-optimisation workflow rather than a single
+recommendation.) The textbook use is an LF
 decoupling series where :math:`\Delta` is shared across runs and
 :math:`B_L` is fixed per run (:doc:`/workflows/lf_decoupling_dynamics`),
 but the same workflow applies whenever you expect a single model family
