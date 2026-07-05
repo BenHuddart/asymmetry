@@ -131,6 +131,14 @@ _SHORTLIST_CAP = 6
 _GLOBAL_FIT_MAX_CALLS = 1200
 _GLOBAL_FIT_MAX_CALLS_CAP = 4200
 _LOW_RESIDUAL_RMS_FOR_STRUCTURE_WARNINGS = 0.25
+#: Standardized residual RMS at or below which a parameter resting at its bound
+#: is accepted as the valid answer rather than a gate failure. A bound-hit only
+#: signals a fit pathology when the fit is *also* poor; with a good fit the bound
+#: is simply the physical value (e.g. a relaxation/damping rate -> 0, i.e.
+#: negligible damping, as in an ordered magnet's low-temperature ZF precession).
+#: Matches the ``residual_rms > 1.25`` "high RMS" threshold in
+#: :func:`fit_wizard._residual_gate_reasons`.
+_GOOD_FIT_RESIDUAL_RMS_FOR_BOUND_HITS = 1.25
 _GLOBAL_FIT_SIMPLEX_RESCUE_CALLS = 1800
 _GLOBAL_FIT_SIMPLEX_RESCUE_CALLS_CAP = 5600
 _HIGH_DIMENSION_GLOBAL_FIT_SIMPLEX_RESCUE_CALLS = 9000
@@ -2022,6 +2030,25 @@ def rerank_global_fit_wizard_recommendation(
         for assessment in recommendation.assessments
         if assessment.is_successful and assessment.residual_gate_passed
     ]
+    tentative = False
+    if not passing:
+        # Recommend-with-caveat: when no candidate passes strictly but the fit is
+        # demonstrably excellent -- every run clears its per-run residual gate --
+        # a heuristic *series-consistency* warning (a fingerprint jump across a
+        # transition, a rough local-parameter trace) should not hard-veto to None.
+        # Surface the best such candidate as a tentative recommendation with the
+        # series_warnings as a caveat instead. (Per-run gate failures still block:
+        # those mean the model genuinely does not fit some runs.)
+        run_gated = [
+            assessment
+            for assessment in recommendation.assessments
+            if assessment.is_successful
+            and assessment.run_diagnostics
+            and all(diagnostic.gate_passed for diagnostic in assessment.run_diagnostics)
+        ]
+        if run_gated:
+            passing = run_gated
+            tentative = True
     if not passing:
         optimized_assessments = recommendation.optimized_assessments()
         if not optimized_assessments:
@@ -2076,15 +2103,24 @@ def rerank_global_fit_wizard_recommendation(
     compare_summary = (
         ", with a similarly scoring alternative to inspect." if comparable_keys else "."
     )
+    if tentative and primary.series_warnings:
+        summary = (
+            f"Recommended (tentative): {primary.template.title} by {metric.value}"
+            f"{compare_summary} The coupled fit is strong (every run passes the residual "
+            f"gate), but a series-consistency check flagged: "
+            f"{' '.join(primary.series_warnings)} Review before applying."
+        )
+    else:
+        summary = (
+            f"Recommended globally optimized candidate: {primary.template.title} "
+            f"by {metric.value}{compare_summary}"
+        )
     return replace(
         recommendation,
         metric=metric,
         recommended_key=primary.selection_key,
         comparable_keys=comparable_keys,
-        summary=(
-            f"Recommended globally optimized candidate: {primary.template.title} "
-            f"by {metric.value}{compare_summary}"
-        ),
+        summary=summary,
     )
 
 
@@ -5921,6 +5957,18 @@ def _filtered_gate_reasons(
                 or reason.startswith("low-lag residual autocorrelation is high")
                 or reason.startswith("residual FFT shows a strong peak")
             )
+        ]
+    if fit_result.success and residual_rms <= _GOOD_FIT_RESIDUAL_RMS_FOR_BOUND_HITS:
+        # A parameter resting at its bound is the valid answer when the fit is
+        # otherwise good -- e.g. a relaxation/damping rate driven to 0 (negligible
+        # damping, as deep in an ordered magnet's ZF precession). A bound-hit
+        # should only veto the recommendation when the fit is *also* poor, so drop
+        # bound-hit reasons here and let the ranking's persistent-lower-bound
+        # penalty handle any residual preference between passing candidates.
+        reasons = [
+            reason
+            for reason in reasons
+            if not (reason.endswith(" at lower bound") or reason.endswith(" at upper bound"))
         ]
     return reasons
 
