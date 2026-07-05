@@ -27,6 +27,7 @@ from asymmetry.core.fitting.domain_library import (
     default_model_for_domain,
 )
 from asymmetry.gui.widgets.function_builder.dialog import FunctionBuilderDialog
+from asymmetry.gui.windows.new_user_function_dialog import NewUserFunctionDialog
 
 
 class FitFunctionBuilderDialog(FunctionBuilderDialog):
@@ -77,8 +78,25 @@ class FitFunctionBuilderDialog(FunctionBuilderDialog):
                 "the last term's weight is the remainder to 1. "
                 "Del removes · Alt+↑/↓ moves · drag the grip to reorder."
             ),
+            on_create_user_function=self._create_user_function,
             parent=parent,
         )
+
+    # ------------------------------------------------------------ authoring
+    def _create_user_function(self) -> object | None:
+        """Open the authoring dialog for a new component in this domain.
+
+        Returns the created definition on accept (already registered in
+        ``COMPONENTS`` by the dialog itself), or ``None`` on cancel.
+        """
+        dialog = NewUserFunctionDialog("component", domain=self._domain, parent=self)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return None
+        created = dialog.created()
+        if created is None:
+            return None
+        self._allowed_components.add(created.definition.name)
+        return created.definition
 
     # ---------------------------------------------------------- domain guard
     @contextlib.contextmanager

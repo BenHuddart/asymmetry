@@ -352,6 +352,18 @@ class ModelRowList(QWidget):
         self._render()
 
     # ------------------------------------------------------------------ API
+    def set_component_definitions(self, component_definitions: Mapping[str, object]) -> None:
+        """Replace the known component-definition pool and re-render.
+
+        Used when a new user function is authored mid-session (see
+        :mod:`asymmetry.gui.widgets.function_builder.dialog`): existing rows
+        referencing the newly registered name switch from the "unknown
+        component" warning tint to a normal row without discarding the
+        current structure.
+        """
+        self._component_definitions = dict(component_definitions)
+        self._render()
+
     def set_structure(
         self,
         component_names: Sequence[str],

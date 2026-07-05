@@ -42,7 +42,11 @@ def qapp() -> QApplication:
     return app
 
 
-def _fit_dialog(initial_expression: str = "Exponential + Constant") -> FunctionBuilderDialog:
+def _fit_dialog(
+    initial_expression: str = "Exponential + Constant",
+    *,
+    on_create_user_function=None,
+) -> FunctionBuilderDialog:
     return FunctionBuilderDialog(
         title="Build Fit Function",
         expression_prefix="A(t)",
@@ -51,6 +55,7 @@ def _fit_dialog(initial_expression: str = "Exponential + Constant") -> FunctionB
         expression_parser=make_fit_expression_parser(),
         initial_expression=initial_expression,
         enable_fraction_groups=True,
+        on_create_user_function=on_create_user_function,
     )
 
 
@@ -405,3 +410,113 @@ def test_prefix_to_mathtext_handles_greek_and_plain_prefixes() -> None:
     assert _prefix_to_mathtext("A(t)").startswith(r"\mathrm{A}(")
     assert r"\nu" in _prefix_to_mathtext("S(ν)")
     assert _prefix_to_mathtext("A(t)").endswith(" = ")
+
+
+# --------------------------------------------------------- user-function creation
+class _StubDefinition:
+    """Minimal stand-in for a registered component definition."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.description = "Stub user function"
+        self.category = "General"
+        self.param_names: list[str] = ["A"]
+        self.user = True
+        self.missing = False
+
+
+def test_creation_affordance_hidden_by_default(qapp: QApplication) -> None:
+    # The dialog is never shown in these offscreen tests, so isVisible() is
+    # always False regardless of the widget's own flag (it depends on the
+    # whole ancestor chain being shown); check the explicit hidden flag
+    # instead, as test_new_user_function_dialog.py does for the same reason.
+    dialog = _fit_dialog()
+    assert dialog._library._creation_enabled is False
+    assert dialog._library._footer_create_button.isHidden() is True
+
+
+def test_creation_affordance_visible_when_hook_provided(qapp: QApplication) -> None:
+    dialog = _fit_dialog(on_create_user_function=lambda: None)
+    assert dialog._library._creation_enabled is True
+    assert dialog._library._footer_create_button.isHidden() is False
+
+
+def test_create_requested_with_no_hook_is_a_noop(qapp: QApplication) -> None:
+    # A dialog built without the hook never wires create_requested; emitting it
+    # directly (as a defensive belt-and-braces check) must not raise.
+    dialog = _fit_dialog()
+    dialog._library.create_requested.emit()
+
+
+def test_create_requested_cancelled_leaves_dialog_unchanged(qapp: QApplication) -> None:
+    dialog = _fit_dialog(on_create_user_function=lambda: None)
+    names_before, *_rest = dialog._rows.structure()
+
+    dialog._library.create_requested.emit()
+
+    names_after, *_rest = dialog._rows.structure()
+    assert names_after == names_before
+
+
+def test_create_requested_adds_component_refreshes_and_auto_appends(
+    qapp: QApplication,
+) -> None:
+    created = _StubDefinition("UserStubComponent")
+    dialog = _fit_dialog(on_create_user_function=lambda: created)
+
+    dialog._library.create_requested.emit()
+
+    # 1. Added to the dialog's own definitions mapping.
+    assert dialog._component_definitions["UserStubComponent"] is created
+    # 2. Library pool refreshed (library keeps its own copy).
+    assert dialog._library._definitions["UserStubComponent"] is created
+    # 3. Row list's definitions refreshed too.
+    assert dialog._rows._component_definitions["UserStubComponent"] is created
+    # 4. Auto-appended to the structured expression.
+    names, *_rest = dialog._rows.structure()
+    assert names[-1] == "UserStubComponent"
+    # (A stub definition is not registered in the real COMPONENTS registry, so
+    # the built model itself will not validate here; see
+    # test_create_requested_with_real_component_stays_valid below for the
+    # end-to-end "stays valid" assertion against a real registration.)
+
+
+def test_create_requested_inserts_into_text_edit_when_in_text_mode(
+    qapp: QApplication,
+) -> None:
+    created = _StubDefinition("UserStubTextMode")
+    dialog = _fit_dialog(on_create_user_function=lambda: created)
+    dialog._toggle_text_mode()
+    dialog._text_edit.setPlainText("Exponential + Constant")
+
+    dialog._library.create_requested.emit()
+
+    assert "UserStubTextMode" in dialog._text_edit.toPlainText()
+
+
+def test_create_requested_with_real_component_stays_valid(qapp: QApplication) -> None:
+    """End-to-end with a real COMPONENTS entry: expression stays valid/OK."""
+    import asymmetry
+
+    def _register_and_return():
+        asymmetry.register_component(
+            "UserBuilderShellFn",
+            lambda t, A: A * (t * 0.0 + 1.0),
+            ["A"],
+            domain="time",
+            description="Test-only constant-ish stub",
+            formula_template="{A}",
+        )
+        return COMPONENTS["UserBuilderShellFn"]
+
+    try:
+        dialog = _fit_dialog(on_create_user_function=_register_and_return)
+        dialog._library.create_requested.emit()
+
+        names, *_rest = dialog._rows.structure()
+        assert "UserBuilderShellFn" in names
+        ok = _ok(dialog)
+        assert ok is not None
+        assert ok.isEnabled() is True
+    finally:
+        COMPONENTS.pop("UserBuilderShellFn", None)

@@ -177,6 +177,7 @@ class FunctionBuilderDialog(QDialog):
         operators: Sequence[str] = ("+", "-", "*", "/"),
         enable_fraction_groups: bool = False,
         syntax_help_text: str | None = None,
+        on_create_user_function: Callable[[], object | None] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -187,6 +188,7 @@ class FunctionBuilderDialog(QDialog):
         self._model_parser = model_parser
         self._expression_parser = expression_parser
         self._enable_fraction_groups = enable_fraction_groups
+        self._on_create_user_function = on_create_user_function
         self._model: object | None = None
 
         root = QVBoxLayout(self)
@@ -200,6 +202,9 @@ class FunctionBuilderDialog(QDialog):
         self._library = ComponentLibraryPanel(self._component_definitions)
         self._library.setMinimumWidth(180)
         self._library.component_activated.connect(self._on_component_activated)
+        if on_create_user_function is not None:
+            self._library.set_creation_enabled(True)
+            self._library.create_requested.connect(self._on_create_user_function_requested)
         splitter.addWidget(self._library)
 
         right_pane = QWidget()
@@ -412,6 +417,31 @@ class FunctionBuilderDialog(QDialog):
             self._text_edit.insertPlainText(name)
             return
         self._rows.append_component(name)
+
+    def _on_create_user_function_requested(self) -> None:
+        """Run the caller-supplied authoring hook and adopt the result.
+
+        The hook (implemented by a subclass, e.g.
+        :class:`~asymmetry.gui.panels.fit_function_builder.FitFunctionBuilderDialog`)
+        shows the authoring dialog and returns the created definition (with a
+        ``.name`` attribute) on success, or ``None`` on cancel/failure. On
+        success the new component is folded into the library and row list and
+        immediately inserted into the expression being edited, so the newly
+        authored function is usable without reopening this dialog.
+        """
+        if self._on_create_user_function is None:
+            return
+        definition = self._on_create_user_function()
+        if definition is None:
+            return
+        name = getattr(definition, "name", None)
+        if not name:
+            return
+
+        self._component_definitions[name] = definition
+        self._library.set_components(self._component_definitions)
+        self._rows.set_component_definitions(self._component_definitions)
+        self._on_component_activated(name)
 
     def _on_structure_changed(self) -> None:
         self._update_action_buttons()

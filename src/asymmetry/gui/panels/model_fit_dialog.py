@@ -52,6 +52,7 @@ from asymmetry.gui.widgets.function_builder.dialog import (
     make_component_expression_parser,
 )
 from asymmetry.gui.widgets.screen_sizing import resize_to_available
+from asymmetry.gui.windows.new_user_function_dialog import NewUserFunctionDialog
 
 #: Operators offered by the parameter/trending builder — the base arithmetic
 #: set plus the quadrature combinator ``⊕`` (``f ⊕ g = sqrt(f**2 + g**2)``),
@@ -302,7 +303,7 @@ def _show_warning(parent: QWidget, title: str, text: str) -> None:
 
 
 def _pool_restricted_model_parser(
-    pool: frozenset[str],
+    pool: set[str] | frozenset[str],
 ) -> Callable[[str], ParameterCompositeModel]:
     """Wrap ``ParameterCompositeModel.from_expression`` to reject components
     outside *pool*.
@@ -316,6 +317,11 @@ def _pool_restricted_model_parser(
     ``UnknownComponentError``-style message the shared grammar uses elsewhere,
     so a mis-typed/out-of-context name gets a helpful, suggestion-bearing
     error instead of silently succeeding.
+
+    *pool* is read at call time (not snapshotted), so passing the dialog's
+    live ``set`` (rather than a ``frozenset`` copy) lets a component created
+    mid-session (see :meth:`ParameterModelBuilderDialog._create_user_function`)
+    become acceptable to this parser without rebuilding it.
     """
 
     def _parse(expression: str) -> ParameterCompositeModel:
@@ -338,7 +344,14 @@ class ParameterModelBuilderDialog(FunctionBuilderDialog):
         initial_model: ParameterCompositeModel | None = None,
     ) -> None:
         self._component_pool = sorted(component_pool)
-        pool = frozenset(self._component_pool)
+        # A live set (not a frozen snapshot): both the model parser and the
+        # expression parser below capture *this same object*, so a component
+        # authored mid-session via _create_user_function (which does
+        # self._pool.add(name)) becomes acceptable to both without rebuilding
+        # either closure. parse_component_expression / the model parser only
+        # ever do membership checks against it, so mutating it in place is
+        # safe — see _pool_restricted_model_parser / make_component_expression_parser.
+        self._pool: set[str] = set(self._component_pool)
         component_definitions = {
             name: PARAMETER_MODEL_COMPONENTS[name]
             for name in self._component_pool
@@ -353,16 +366,35 @@ class ParameterModelBuilderDialog(FunctionBuilderDialog):
             title="Build Parameter Model",
             expression_prefix="y(x)",
             component_definitions=component_definitions,
-            model_parser=_pool_restricted_model_parser(pool),
+            model_parser=_pool_restricted_model_parser(self._pool),
             expression_parser=make_component_expression_parser(
-                allowed_components=pool,
+                allowed_components=self._pool,
                 allowed_operators=set(_PARAMETER_MODEL_OPERATORS),
             ),
             initial_expression=initial_expression,
             operators=_PARAMETER_MODEL_OPERATORS,
             enable_fraction_groups=False,
+            on_create_user_function=self._create_user_function,
             parent=parent,
         )
+
+    # ------------------------------------------------------------ authoring
+    def _create_user_function(self) -> object | None:
+        """Open the authoring dialog for a new parameter-trend component.
+
+        The created component always registers with ``scopes=("common",)``
+        (see ``NewUserFunctionDialog``/``create_user_function``), so it is
+        valid in every trending context; add it to the live pool so both the
+        model parser and the expression parser accept it immediately.
+        """
+        dialog = NewUserFunctionDialog("parameter", parent=self)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return None
+        created = dialog.created()
+        if created is None:
+            return None
+        self._pool.add(created.definition.name)
+        return created.definition
 
     def get_model(self) -> ParameterCompositeModel | None:
         model = self.built_model()

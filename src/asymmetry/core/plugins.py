@@ -10,6 +10,11 @@ Two discovery channels, mirroring WiMDA's plugin DLLs at far lower friction:
   ``asymmetry.user_functions`` entry-point group; each is invoked once and
   performs its registrations.
 
+A single file authored in-app (via the function builder) is loaded through
+:func:`load_plugin_file`, which imports one file exactly like the directory
+scan and appends its outcome to the standing load report so the "User
+functions…" dialog lists it alongside the startup-discovered files.
+
 Discovery is **explicit**: nothing is imported as a side effect of
 ``import asymmetry``. The GUI calls :func:`load_user_functions` once at
 startup (before the main window is built); scripts call it themselves when
@@ -189,3 +194,26 @@ def load_user_functions(directory: str | Path | None = None) -> UserFunctionLoad
 
     _last_report = report
     return report
+
+
+def load_plugin_file(path: str | Path) -> UserFunctionSource:
+    """Import one plugin *path* and record it in the standing load report.
+
+    Loads a single file exactly as :func:`load_user_functions` loads each file
+    it scans (same synthetic-module import, same blanket error capture), and
+    appends the resulting :class:`UserFunctionSource` to the most recent load
+    report — creating a fresh report anchored on the file's parent directory if
+    none exists yet — so an in-app-authored function appears in the "User
+    functions…" dialog. Returns the source; the caller inspects ``.ok`` /
+    ``.error`` (this never raises for a plugin failure).
+    """
+    global _last_report
+
+    file_path = Path(path)
+    source = UserFunctionSource(name=file_path.name, kind="file", location=str(file_path))
+    _load_one(source, lambda: _import_plugin_file(file_path))
+
+    if _last_report is None:
+        _last_report = UserFunctionLoadReport(directory=str(file_path.parent))
+    _last_report.sources.append(source)
+    return source

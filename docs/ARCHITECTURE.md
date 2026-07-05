@@ -585,6 +585,14 @@ kind-aware documentation lookup. User-registered definitions carry a `user`
 flag — provenance badges and docs-test exemptions key off the flag, never
 name lists.
 
+Authoring is not limited to hand-written files: `core/fitting/
+user_function_authoring.py` turns a name/description/formula draft into the
+same generated plugin-file shape and registers it through this facade, and
+`gui/windows/new_user_function_dialog.py::NewUserFunctionDialog` is the
+in-GUI front end both function builders launch, so a function created in the
+GUI is indistinguishable from one dropped in `~/.asymmetry/user_functions/`
+by hand.
+
 ### 4.3.1 Grouped Time-Domain Boundary
 
 The grouped time-domain feature follows the same core/GUI split as all other
