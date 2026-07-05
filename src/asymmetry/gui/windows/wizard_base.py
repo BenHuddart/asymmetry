@@ -234,6 +234,10 @@ class WizardWindowBase(QMainWindow):
         self._analysis_request_id += 1
         request_id = self._analysis_request_id
 
+        # A prior failure may have parked its full error text on the status
+        # line's tooltip; a fresh run must not carry it forward.
+        self._status_label.setToolTip("")
+
         self._cached_signature = copy.deepcopy(self._analysis_signature())
         self._set_busy(True)
         self._reset_result_state()

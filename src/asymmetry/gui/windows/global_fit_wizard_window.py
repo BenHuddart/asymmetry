@@ -739,6 +739,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
             run_label_chips.append("…")
         run_labels = ", ".join(run_label_chips)
         self._heading_label.setText("Global Fit Wizard")
+        self._status_label.setToolTip("")
         self.set_context_chips([f"{len(self._datasets)} datasets", *run_label_chips])
         self._status_label.setText(
             f"Ready to analyze the selected series ({run_labels}). "
@@ -751,13 +752,22 @@ class GlobalFitWizardWindow(WizardWindowBase):
         # Run / Field / Temperature are known now, so show the series immediately
         # rather than an empty table until screening. The classification columns
         # stay "—" until a recommendation is built (see _populate_overview_table).
+        self._populate_series_preview()
+        self._set_busy(False)
+
+    def _populate_series_preview(self) -> None:
+        """List the loaded runs in the SERIES section before any screening.
+
+        Shared by ``set_analysis_context`` and the screening-failure path: the
+        series stays loaded either way, so the Setup page must keep listing the
+        runs rather than showing a blank table.
+        """
         self._populate_overview_table()
         if self._datasets:
             self._overview_banner.setText(
                 f"{len(self._datasets)} runs selected. "
                 "Run screening to classify each run (Osc. / KT-like / Multi-rate)."
             )
-        self._set_busy(False)
 
     def _resolve_scope(self, preset_id: str, overrides: dict) -> dict:
         """Adapt the core scope resolver to the WizardScopeSelector dict contract.
@@ -1090,10 +1100,19 @@ class GlobalFitWizardWindow(WizardWindowBase):
         self._running_template_keys = set()
         if self._analysis_mode == "screening":
             self._recommendation = None
-        self._status_label.setText(f"Global fit wizard analysis failed: {message}")
+        # Keep the header's status line to the failure's first line — a
+        # multi-line exception message (e.g. a multiprocessing bootstrap error)
+        # would otherwise balloon the header band. The full text stays in the
+        # log and in the status line's tooltip.
+        failure_text = str(message).strip() or "unknown error"
+        self._status_label.setText(
+            f"Global fit wizard analysis failed: {failure_text.splitlines()[0]}"
+        )
+        self._status_label.setToolTip(failure_text)
         self._append_log(f"Analysis failed: {message}")
         if self._recommendation is None:
             self._set_empty_state()
+            self._populate_series_preview()
             self._stack.setCurrentIndex(_PAGE_SETUP)
         else:
             self._populate_from_recommendation()

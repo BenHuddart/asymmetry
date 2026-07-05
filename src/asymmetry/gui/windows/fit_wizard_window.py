@@ -450,6 +450,7 @@ class FitWizardWindow(WizardWindowBase):
         self._analysis_stale = False
         self._stale_banner.setVisible(False)
         self._heading_label.setText("Fit Wizard")
+        self._status_label.setToolTip("")
         self.set_context_chips(self._context_chip_labels())
         self._recommendation = None
         self._selected_key = None
@@ -476,7 +477,7 @@ class FitWizardWindow(WizardWindowBase):
             "Click Analyze to fingerprint this spectrum without blocking the main window."
         )
         self._status_label.setText(
-            "Ready to fingerprint this spectrum. Click Start Analysis to run the wizard "
+            "Ready to fingerprint this spectrum. Click Analyze to run the wizard "
             "without blocking the main window."
         )
         self._set_busy(False)
@@ -542,7 +543,13 @@ class FitWizardWindow(WizardWindowBase):
         # keeps it too — the two wizards must match) and return to Welcome so the
         # metric combo cannot resurrect a stale success.
         self._recommendation = None
-        self._status_label.setText(f"Fit wizard analysis failed: {message}")
+        # First line only in the header status — a multi-line exception message
+        # would balloon the header band; the full text goes in the tooltip.
+        failure_text = str(message).strip() or "unknown error"
+        self._status_label.setText(
+            f"Fit wizard analysis failed: {failure_text.splitlines()[0]}"
+        )
+        self._status_label.setToolTip(failure_text)
         self._welcome_hint_label.setText(
             "The analysis failed. Adjust the guidance if needed and click Analyze again."
         )
