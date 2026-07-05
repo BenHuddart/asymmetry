@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from functools import partial
 from itertools import product
@@ -20,6 +20,13 @@ from asymmetry.core.fitting.composite import (
     parse_component_expression,
 )
 from asymmetry.core.fitting.diffusion import lambda_total as diffusion_lambda_total
+from asymmetry.core.fitting.latex_preview import (
+    LatexTerm,
+    fallback_function_latex,
+    param_symbol_latex,
+    transform_template,
+    wrap_if_compound,
+)
 from asymmetry.core.fitting.muon_proton import rf_resonance_mup
 from asymmetry.core.fitting.muonium import (
     G_E_MHZ_PER_G,
@@ -60,6 +67,10 @@ class ParameterModelComponentDefinition:
     #: (:mod:`asymmetry.core.fitting.user_functions`); see
     #: ``ComponentDefinition.user``.
     user: bool = False
+    #: Library-panel grouping (mirrors ``ComponentDefinition.category``).
+    #: Assigned in bulk via ``_PARAMETER_MODEL_CATEGORIES`` below rather than
+    #: per-definition, so the taxonomy is reviewable in one place.
+    category: str = "General"
 
 
 #: Recognised scope tokens for :attr:`ParameterModelComponentDefinition.scopes`
@@ -546,7 +557,7 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         param_info={
             "a": get_param_info("a"),
             "Tc": get_param_info("Tc"),
-            "nu": ParamInfo("nu", "nu", "ν", r"$\\nu$", r"\\nu"),
+            "nu": ParamInfo("nu", "nu", "ν", r"$\nu$", r"\nu"),
             "c": get_param_info("c"),
         },
         formula_template="{a}*|x-{Tc}|^(-{nu}) + {c}",
@@ -660,7 +671,7 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         param_names=["A", "D_2D", "D_perp"],
         param_defaults={"A": 1.0, "D_2D": 1.0, "D_perp": 0.0},
         param_info={
-            "A": ParamInfo("A", "A", "A", r"$A$", r"{\\it A}", "MHz"),
+            "A": ParamInfo("A", "A", "A", r"$A$", r"{\it A}", "MHz"),
             "D_2D": get_param_info("D_2D"),
             "D_perp": get_param_info("D_perp"),
         },
@@ -675,7 +686,7 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         param_names=["A", "D_2D", "D_perp"],
         param_defaults={"A": 1.0, "D_2D": 1.0, "D_perp": 0.0},
         param_info={
-            "A": ParamInfo("A", "A", "A", r"$A$", r"{\\it A}", "MHz"),
+            "A": ParamInfo("A", "A", "A", r"$A$", r"{\it A}", "MHz"),
             "D_2D": get_param_info("D_2D"),
             "D_perp": get_param_info("D_perp"),
         },
@@ -690,7 +701,7 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         param_names=["A", "D_2D", "D_perp"],
         param_defaults={"A": 1.0, "D_2D": 1.0, "D_perp": 0.0},
         param_info={
-            "A": ParamInfo("A", "A", "A", r"$A$", r"{\\it A}", "MHz"),
+            "A": ParamInfo("A", "A", "A", r"$A$", r"{\it A}", "MHz"),
             "D_2D": get_param_info("D_2D"),
             "D_perp": get_param_info("D_perp"),
         },
@@ -1179,6 +1190,53 @@ def _register_superconducting_components() -> None:
 
 _register_superconducting_components()
 
+#: Library-panel category per component. Names absent from this table keep the
+#: "General" default (Constant, Linear, and user-registered functions). Every
+#: key must exist in the registry — pinned by
+#: ``test_parameter_model_categories_cover_registry``.
+_PARAMETER_MODEL_CATEGORIES: dict[str, str] = {
+    **dict.fromkeys(["Polynomial", "Cubic", "Quartic", "Quintic", "Sextic"], "Polynomial"),
+    **dict.fromkeys(
+        ["PowerLaw", "PowerLawQuadBG", "ExponentialDecay", "Arrhenius"],
+        "Scaling & activation",
+    ),
+    **dict.fromkeys(["CriticalDivergence", "OrderParameter"], "Critical behaviour"),
+    **dict.fromkeys(
+        [
+            "Redfield",
+            "Lorentzian",
+            "MuRepolarisation",
+            "GaussianLCR",
+            "LorentzianLCR",
+            "RFResonanceMuP",
+        ],
+        "Field scan",
+    ),
+    **dict.fromkeys(
+        [
+            "DiffusionLF_1D",
+            "DiffusionLF_2D",
+            "DiffusionLF_3D",
+            "BallisticLF_1D",
+            "BallisticLF_2D",
+            "BallisticLF_3D",
+        ],
+        "Spin dynamics",
+    ),
+    "Lambda_bg": "Background",
+    **dict.fromkeys(["KnightAnisotropy", "AngularCos2"], "Angular"),
+    **dict.fromkeys(
+        [name for name in PARAMETER_MODEL_COMPONENTS if name.startswith("SC_")],
+        "Superconducting gap",
+    ),
+}
+
+for _name, _category in _PARAMETER_MODEL_CATEGORIES.items():
+    if _name in PARAMETER_MODEL_COMPONENTS:
+        PARAMETER_MODEL_COMPONENTS[_name] = replace(
+            PARAMETER_MODEL_COMPONENTS[_name], category=_category
+        )
+
 _ALLOWED_OPERATORS: frozenset[str] = frozenset({"+", "-", "*", "/"})
 #: The parameter-vs-x grammar additionally supports the quadrature combinator
 #: ``f ⊕ g = √(f² + g²)`` (binary, same precedence as ``+``/``-``, associative),
@@ -1349,6 +1407,127 @@ class ParameterCompositeModel:
         for op, term in zip(self.operators, terms[1:], strict=True):
             expression = f"{expression} {op} {term}"
         return expression
+
+    # --- typeset (mathtext) preview -----------------------------------------
+
+    def _latex_component_body(self, index: int) -> str | None:
+        """Return the mathtext body for one component, or ``None`` if not simple.
+
+        Flat model (no amplitude suppression, no fraction groups): every
+        parameter surfaces as a mathtext symbol. When the template is outside
+        the transformable subset, returns ``None`` so the caller renders a
+        function-name fallback for the containing term.
+        """
+        component = self.components[index]
+        mapping = self._param_mappings[index]
+        symbols: dict[str, str] = {}
+        fmt_values: dict[str, str] = {}
+        for order, pname in enumerate(component.param_names):
+            unique = mapping[pname]
+            sentinel = f"\x00{order}\x00"
+            symbols[sentinel] = param_symbol_latex(component.param_info[pname].latex, unique)
+            fmt_values[pname] = sentinel
+        try:
+            substituted = component.formula_template.format(**fmt_values)
+        except (KeyError, IndexError, ValueError):
+            return None
+        return transform_template(substituted, symbols)
+
+    def _latex_component_symbols(self, index: int) -> list[str]:
+        """Return one component's surfaced mathtext parameter symbols, in order."""
+        component = self.components[index]
+        mapping = self._param_mappings[index]
+        return [
+            param_symbol_latex(component.param_info[pname].latex, mapping[pname])
+            for pname in component.param_names
+        ]
+
+    def _latex_component_fragment(self, index: int) -> str:
+        """Mathtext for one component, falling back to a function-name form."""
+        body = self._latex_component_body(index)
+        if body is not None:
+            return body
+        return fallback_function_latex(
+            self.components[index].name, self._latex_component_symbols(index)
+        )
+
+    def latex_terms(self) -> list[LatexTerm]:
+        """Return the trend model as typeset (mathtext) additive terms.
+
+        ``group`` is always ``None`` (parameter-vs-x models have no fraction
+        groups). The quadrature operator ``⊕`` renders a flat chain as
+        ``\\sqrt{a^{2} + b^{2}}``. Parenthesised or ``⊕``-mixed expressions that
+        are ambiguous to lay out fall back to a single ``\\mathrm{...}`` term.
+        Never raises and never returns an empty list for a valid model.
+        """
+        try:
+            return self._build_latex_terms()
+        except Exception:  # noqa: BLE001 - preview must never raise
+            names = "+".join(self.component_names) or "model"
+            return [
+                LatexTerm(
+                    latex=fallback_function_latex(names, []),
+                    separator="",
+                    group=None,
+                )
+            ]
+
+    def _build_latex_terms(self) -> list[LatexTerm]:
+        n = len(self.component_names)
+        if n == 0:
+            return [LatexTerm(latex=fallback_function_latex("model", []), separator="", group=None)]
+
+        uses_parens = any(self.open_parentheses) or any(self.close_parentheses)
+        has_quadrature = QUADRATURE_OPERATOR in self.operators
+
+        # A flat quadrature chain (all top-level ops are ⊕, no parentheses)
+        # renders as a single sqrt-of-squares term.
+        if (
+            has_quadrature
+            and not uses_parens
+            and all(op == QUADRATURE_OPERATOR for op in self.operators)
+        ):
+            squared = [
+                f"{wrap_if_compound(self._latex_component_fragment(i))}^{{2}}" for i in range(n)
+            ]
+            latex = rf"\sqrt{{{' + '.join(squared)}}}"
+            return [LatexTerm(latex=latex, separator="", group=None)]
+
+        # Any parentheses or a mixed ⊕ chain: single readable fallback term.
+        if uses_parens or has_quadrature:
+            names = self.component_expression_string() or "model"
+            return [LatexTerm(latex=fallback_function_latex(names, []), separator="", group=None)]
+
+        # Flat + - * / expression: split at top-level +/-, render each additive
+        # term as a multiplicative mathtext chain.
+        terms: list[LatexTerm] = []
+        chain_start = 0
+        separator = ""
+        for idx in range(n):
+            join_op = self.operators[idx] if idx < len(self.operators) else None
+            if join_op in {"+", "-", None}:
+                latex = self._latex_multiplicative_chain(chain_start, idx)
+                terms.append(LatexTerm(latex=latex, separator=separator, group=None))
+                if join_op is not None:
+                    separator = f" {join_op} "
+                    chain_start = idx + 1
+        return terms
+
+    def _latex_multiplicative_chain(self, start: int, end: int) -> str:
+        """Render components ``[start, end]`` joined by ``*``/``/`` in mathtext."""
+        fragment = self._latex_component_fragment(start)
+        for idx in range(start, end):
+            op = self.operators[idx]
+            rhs = self._latex_component_fragment(idx + 1)
+            if op == "*":
+                fragment = f"{fragment}\\,{rhs}"
+            else:  # "/"
+                fragment = f"{fragment}/{rhs}"
+        return fragment
+
+    def latex_string(self) -> str:
+        """Return the whole trend model as one mathtext string."""
+        return "".join(term.separator + term.latex for term in self.latex_terms())
 
     def function(self, x: NDArray, **kwargs: float) -> NDArray[np.float64]:
         """Evaluate the composite model with arithmetic precedence."""

@@ -18,7 +18,12 @@ from asymmetry.core.fitting.component_tags import (
     ComputationalCost,
     geometry_from_field_direction,
 )
-from asymmetry.core.fitting.composite import COMPONENTS, CompositeModel
+from asymmetry.core.fitting.composite import (
+    COMPONENTS,
+    CompositeModel,
+    has_legacy_fraction_values,
+    migrate_legacy_fraction_parameter_entries,
+)
 from asymmetry.core.fitting.engine import FitCancelledError, FitEngine, FitResult
 from asymmetry.core.fitting.envelope_match import match_envelope_banks
 from asymmetry.core.fitting.muonium import VACUUM_MUONIUM_A_HF_MHZ
@@ -2727,6 +2732,65 @@ def _deserialize_fit_result(payload: object) -> FitResult | None:
     )
 
 
+def _migrate_fit_result_fractions(result: FitResult, model: CompositeModel) -> FitResult:
+    """Rename a cached result's legacy ``fraction_<k>`` params to the new scheme.
+
+    A wizard recommendation cached before the fraction rework carries fitted
+    ``fraction_<k>`` parameters and matching uncertainty keys. When the candidate
+    template's model has fraction groups and the result carries legacy keys, the
+    :class:`ParameterSet` is rebuilt with the n-1 free-parameter names (normalised
+    weights, last-term entry dropped) and the uncertainty keys are re-mapped so
+    the cached fit still applies after the model rows switch to ``f_<Component>``.
+    A no-op when there are no legacy keys.
+    """
+    value_map = {parameter.name: float(parameter.value) for parameter in result.parameters}
+    if not has_legacy_fraction_values(model, value_map):
+        return result
+
+    entries = [
+        {
+            "name": parameter.name,
+            "value": float(parameter.value),
+            "min": float(parameter.min),
+            "max": float(parameter.max),
+            "fixed": bool(parameter.fixed),
+            "expr": parameter.expr,
+        }
+        for parameter in result.parameters
+    ]
+    migrated_entries = migrate_legacy_fraction_parameter_entries(model, entries)
+    migrated = ParameterSet()
+    for entry in migrated_entries:
+        migrated.add(
+            Parameter(
+                name=str(entry["name"]),
+                value=float(entry.get("value", 0.0)),
+                min=float(entry.get("min", -float("inf"))),
+                max=float(entry.get("max", float("inf"))),
+                fixed=bool(entry.get("fixed", False)),
+                expr=entry.get("expr"),
+            )
+        )
+    # Uncertainties keyed by the same legacy fraction names: keep only those that
+    # map 1:1 to a surviving free parameter (the dropped last term has no key).
+    from asymmetry.core.fitting.composite import _legacy_fraction_rename_map
+
+    rename = _legacy_fraction_rename_map(model)
+    uncertainties: dict[str, float] = {}
+    for name, value in result.uncertainties.items():
+        if name in rename:
+            new_name = rename[name]
+            if new_name is not None:
+                uncertainties[new_name] = value
+        else:
+            uncertainties[name] = value
+
+    # Mutate in place so covariance/MINOS/dof and every other cached field survive.
+    result.parameters = migrated
+    result.uncertainties = uncertainties
+    return result
+
+
 def _serialize_component_curves(
     curves: tuple[tuple[str, NDArray[np.float64]], ...],
 ) -> list[dict[str, object]]:
@@ -2793,6 +2857,10 @@ def _deserialize_candidate_assessment(
     fit_result = _deserialize_fit_result(payload.get("fit_result"))
     if template is None or fit_result is None:
         return None
+    # A recommendation cached before the fraction rework carries legacy
+    # ``fraction_<k>`` fitted params; rename them to the n-1 scheme against the
+    # template's model so applying the cached fit still lands on the new rows.
+    fit_result = _migrate_fit_result_fractions(fit_result, template.model)
     try:
         return CandidateAssessment(
             template=template,

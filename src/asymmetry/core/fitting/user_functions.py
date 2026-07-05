@@ -365,6 +365,7 @@ def register_parameter_component(
         scopes=scope_tokens,
         fwhm_factor=fwhm_factor,
         user=True,
+        category="User",
     )
     insert_definition(
         PARAMETER_MODEL_COMPONENTS,

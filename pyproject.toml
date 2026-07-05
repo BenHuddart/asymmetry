@@ -139,6 +139,8 @@ ignore = ["E501"]  # Ruff format handles normal wrapping; long prose/UI strings 
 "tests/gui/test_integral_scan_gui.py" = ["E402"]  # pytest.importorskip before optional Qt imports
 "tests/gui/test_alpha_calibration_dialog.py" = ["E402"]  # pytest.importorskip before optional Qt imports
 "tests/gui/test_rf_scan_panel_gui.py" = ["E402"]  # pytest.importorskip before optional Qt imports
+"tests/gui/test_function_builder_rows.py" = ["E402"]  # pytest.importorskip before optional Qt imports
+"tests/gui/test_function_builder_dialog.py" = ["E402"]  # pytest.importorskip before optional Qt imports
 "tests/core/test_fitting_engine.py" = ["N803"]  # Physics-style model parameter names
 "tests/core/test_grouped_time_domain_fitting.py" = ["N803"]  # Physics parameter names (Lambda)
 "tests/gui/test_wimda_parity_components.py" = ["N803", "N806"]  # Physics parameter names (J, A, B)
@@ -147,6 +149,7 @@ ignore = ["E501"]  # Ruff format handles normal wrapping; long prose/UI strings 
 # E402: pytest.importorskip / pytestmark before optional-dependency imports is intentional in all GUI and IO test files
 "tests/gui/test_background_dialog.py" = ["E402"]
 "tests/gui/test_batch_partial_failure.py" = ["E402"]
+"tests/gui/test_component_library_panel.py" = ["E402"]  # pytest.importorskip before optional Qt imports
 "tests/gui/test_composite_parameter_dialog.py" = ["E402"]
 "tests/gui/test_cross_group_fit_dialog.py" = ["E402"]
 "tests/gui/test_data_browser_custom_columns.py" = ["E402"]

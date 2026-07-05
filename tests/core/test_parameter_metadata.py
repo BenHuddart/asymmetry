@@ -28,6 +28,49 @@ def test_get_param_info_shape_factor_a_has_expected_defaults() -> None:
     assert info.description is not None
 
 
+def test_get_param_info_registry_entries_not_shadowed_by_fraction_pattern() -> None:
+    # f_cut, f_dip, f_quad are real registered muonium parameters that happen to
+    # match the f_<Component> fraction-weight naming pattern. The registry
+    # lookup must win so these keep their own description/unit rather than
+    # being shadowed by fabricated fraction-weight metadata.
+    f_cut = get_param_info("f_cut")
+    assert f_cut.description == (
+        "Lorentzian cutoff frequency damping high-frequency muonium lines (0 disables it)."
+    )
+    assert f_cut.unit == "MHz"
+
+    f_dip = get_param_info("f_dip")
+    assert f_dip.description == (
+        "Dipolar coupling frequency between the muon and the spin-J nucleus."
+    )
+    assert f_dip.unit == "MHz"
+
+    f_quad = get_param_info("f_quad")
+    assert (
+        f_quad.description
+        == "Quadrupolar splitting frequency of the spin-J nucleus (sign-sensitive)."
+    )
+    assert f_quad.unit == "MHz"
+
+
+def test_get_param_info_fraction_weight_name() -> None:
+    # f_<Component> fraction weights are synthesized (not registered): a
+    # component-labelled symbol, a [0, 1] floor, and a description.
+    info = get_param_info("f_Oscillatory")
+    assert info.plain == "f_Oscillatory"
+    assert info.latex == r"$f_{\mathrm{Oscillatory}}$"
+    assert info.default_min == 0.0
+    assert info.description == "Fractional weight of the Oscillatory term."
+
+
+def test_get_param_info_fraction_weight_disambiguated_name() -> None:
+    # A _<n> suffix merges into the subscript rather than double-subscripting.
+    info = get_param_info("f_Gaussian_2")
+    assert info.plain == "f_Gaussian_2"
+    assert info.latex == r"$f_{\mathrm{Gaussian},2}$"
+    assert info.default_min == 0.0
+
+
 def test_signed_baseline_params_have_no_lower_bound() -> None:
     # A_bg is a signed DC baseline of the asymmetry: a 2-group F–B transverse-
     # field asymmetry sits on a large negative offset, so a 0 lower bound would

@@ -1,11 +1,13 @@
-"""Fit Function Builder showing a fraction-group expression.
+"""Build Fit Function dialog showing a fraction-group container.
 
-Drives the composite-model expression editor with
+Drives the structured row editor with
 ``(Oscillatory + Exponential){frac} + Constant`` — the canonical
 "two-component shared-amplitude budget" pattern useful for
 muonium-pair populations, magnetic-volume-fraction analyses, and
-critical-region composites. Companion to
-:doc:`/reference/composite_models`.
+critical-region composites. The two grouped rows render inside a single
+accented container (as if built by selecting both '+'-joined rows and
+pressing "Group as fractions"), with the ungrouped ``Constant`` row
+alongside it. Companion to :doc:`/reference/composite_models`.
 """
 
 from __future__ import annotations
@@ -22,7 +24,7 @@ from ._base import CaptureContext, Scenario, register
 
 class CompositeFractionsDialogScenario(Scenario):
     name = "composite_fractions_dialog"
-    description = "Fit Function Builder with a fraction-group expression set."
+    description = "Build Fit Function dialog with a fraction-group container rendered."
     size = (840, 720)
 
     def capture(self, ctx: CaptureContext) -> Path:  # noqa: D401

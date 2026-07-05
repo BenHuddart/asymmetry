@@ -103,10 +103,12 @@ def test_single_grouped_fraction_bounds_survive_restore(qapp):
         table.item(r, FitParameterTable.COL_NAME).data(Qt.ItemDataRole.UserRole): r
         for r in range(table.rowCount())
     }
-    for fraction in ("fraction_1", "fraction_2"):
-        assert fraction in rows
-        assert table.item(rows[fraction], FitParameterTable.COL_MIN).text() == "0.0"
-        assert table.item(rows[fraction], FitParameterTable.COL_MAX).text() == "1.0"
+    # n-1 scheme: the single free fraction carries the 0–1 bounds in the separate
+    # MIN/MAX columns; the derived remainder row (f_Constant) is display-only.
+    assert "f_OscillatoryField" in rows
+    assert table.item(rows["f_OscillatoryField"], FitParameterTable.COL_MIN).text() == "0.0"
+    assert table.item(rows["f_OscillatoryField"], FitParameterTable.COL_MAX).text() == "1.0"
+    assert "f_Constant" in rows
 
 
 def test_single_grouped_physics_state_round_trips(qapp):
