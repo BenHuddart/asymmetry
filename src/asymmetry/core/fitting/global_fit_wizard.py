@@ -5722,6 +5722,16 @@ def _run_exhaustive_wavefront_search(
                 "layer bound disabled for this template (full enumeration).",
             )
 
+    # Technique B (cross-template incumbent bound): the best IC found across ALL
+    # templates so far. A template whose χ²_floor + minimum-possible penalty
+    # (penalty at layer 0, the fewest params) can't beat this by more than the
+    # margin cannot produce a winner and is skipped wholesale. Seeded and updated
+    # ONLY from real converged metric_value()s — never from a floor+penalty
+    # estimate (a bound-vs-bound comparison is unsound). A mis-converged anchor
+    # never contributes (chi2_floor is None), so it cannot corrupt this incumbent.
+    converged_incumbents = [s.incumbent_ic for s in states if s.chi2_floor is not None]
+    cross_incumbent = min(converged_incumbents) if converged_incumbents else float("inf")
+
     worker_count = _wavefront_worker_count(total_assignments)
     if worker_count > 1 and total_assignments > 1:
         _progress_log(
@@ -5755,6 +5765,41 @@ def _run_exhaustive_wavefront_search(
                     # Bound already fired in an earlier round; every remaining
                     # (higher) layer only adds penalty, so skip them all.
                     continue
+                # Technique B: skip a whole template that cannot beat the best IC
+                # found across ANY template. Unlike A this may fire at round 0
+                # (its value is skipping a dominated template's all-global fit and
+                # everything above it). χ²_floor + penalty(layer 0) is the
+                # template's best achievable IC; the winning template's own bound
+                # is <= its anchor IC <= cross_incumbent, so it can never trip this.
+                if (
+                    not state.layer_bound_fired
+                    and state.chi2_floor is not None
+                    and math.isfinite(cross_incumbent)
+                ):
+                    best_possible_k = _layer_parameter_count(
+                        0,
+                        free_param_count=state.free_param_count,
+                        n_datasets=len(datasets),
+                    )
+                    best_possible_ic = state.chi2_floor + _metric_penalty(
+                        best_possible_k, sample_count=sample_count, metric=metric
+                    )
+                    if best_possible_ic > cross_incumbent + _LAYER_BOUND_MARGIN:
+                        state.layer_bound_fired = True
+                        _record_counter(instrumentation, "cross_template_templates_pruned")
+                        _record_counter(
+                            instrumentation,
+                            "cross_template_layers_pruned",
+                            len(layers) - round_index,
+                        )
+                        _progress_log(
+                            progress_callback,
+                            f"{state.template.title}: cross-template bound fired "
+                            f"(best possible {best_possible_ic:.2f} > cross-incumbent "
+                            f"{cross_incumbent:.2f} + {_LAYER_BOUND_MARGIN:.1f}); "
+                            "skipping this template entirely.",
+                        )
+                        continue
                 # The all-local anchor (top layer) was already fitted up front and
                 # lives in exact_cache/converged_assessments; do not re-fit it.
                 if (
@@ -5874,6 +5919,8 @@ def _run_exhaustive_wavefront_search(
                     candidate_ic = float(result.assessment.metric_value(metric))
                     if candidate_ic < state.incumbent_ic:
                         state.incumbent_ic = candidate_ic
+                    if candidate_ic < cross_incumbent:
+                        cross_incumbent = candidate_ic
                 if state.best_assessment is None or _assessment_sort_key(
                     result.assessment,
                     metric,
