@@ -60,17 +60,18 @@ from asymmetry.core.fitting.spectral import (
 )
 from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
 from asymmetry.gui.styles import tokens
+from asymmetry.gui.styles.metrics import char_width
 from asymmetry.gui.styles.widgets import (
     RESULT_BOX_NEUTRAL_STYLE,
     RESULT_BOX_OBJECT_NAME,
     RESULT_BOX_SUCCESS_STYLE,
     build_primary_button_qss,
     fit_quality_tooltip,
-    make_section,
     make_section_header,
     success_html,
 )
 from asymmetry.gui.tasks import TaskRunner
+from asymmetry.gui.widgets.panel_section import PanelSection
 from asymmetry.gui.windows.fit_wizard_window import FitWizardWindow
 
 from .seeding import _field_value_overrides
@@ -159,10 +160,10 @@ class SingleFitTab(FitTabBase):
         self._model_generation = 0
 
         # Model selection
-        model_group, model_box = make_section("Model")
+        model_group = PanelSection("Model")
         model_layout = QFormLayout()
         model_layout.setContentsMargins(0, 0, 0, 0)
-        model_box.addLayout(model_layout)
+        model_group.addLayout(model_layout)
         self._build_formula_box()
         self._fit_wizard_btn = QPushButton("Fit Wizard...")
         self._fit_wizard_btn.clicked.connect(self._open_fit_wizard)
@@ -225,11 +226,11 @@ class SingleFitTab(FitTabBase):
         layout.addWidget(model_group)
 
         # Fit range section
-        fit_range_group, _fit_range_box = make_section("Fit range")
+        fit_range_group = PanelSection("Fit range")
         fit_range_layout = QHBoxLayout()
         fit_range_layout.setContentsMargins(0, 0, 0, 0)
         fit_range_layout.setSpacing(4)
-        _fit_range_box.addLayout(fit_range_layout)
+        fit_range_group.addLayout(fit_range_layout)
 
         self._build_fit_range_fields()
 
@@ -248,9 +249,9 @@ class SingleFitTab(FitTabBase):
         # Parameter table — the shared Name·Value·Fix·Min·Max·Batch·Link·Tie
         # widget (columns/delegates/Fix-Link-Tie wiring/fraction sync live in
         # FitParameterTable). It self-connects itemChanged for fraction sync.
-        param_group, param_layout = make_section("Parameters")
+        param_group = PanelSection("Parameters")
         self._param_table = FitParameterTable()
-        param_layout.addWidget(self._param_table)
+        param_group.addWidget(self._param_table)
         layout.addWidget(param_group)
 
         # Buttons
@@ -309,7 +310,7 @@ class SingleFitTab(FitTabBase):
         badge_layout.addWidget(self._carry_forward_badge_label, 1)
         self._carry_forward_badge_dismiss_btn = QPushButton("✕")
         self._carry_forward_badge_dismiss_btn.setToolTip("Dismiss")
-        self._carry_forward_badge_dismiss_btn.setFixedWidth(20)
+        self._carry_forward_badge_dismiss_btn.setFixedWidth(char_width(3))
         # Match the flat, muted "✕" chrome used elsewhere (see dock_header.py's
         # close button) instead of the default Qt bezel.
         self._carry_forward_badge_dismiss_btn.setStyleSheet(

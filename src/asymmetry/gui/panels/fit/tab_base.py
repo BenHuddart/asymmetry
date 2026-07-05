@@ -98,6 +98,7 @@ from asymmetry.core.utils.constants import (
 )
 from asymmetry.gui.fit_settings import fit_quality_confidence
 from asymmetry.gui.styles import tokens
+from asymmetry.gui.styles.metrics import char_width
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.widgets import (
     apply_param_table_style,
@@ -556,11 +557,22 @@ _SINGLE_PARAM_TIE_COLUMN = 7
 
 _PARAM_ROLE_LABELS = {"global": "Global", "local": "Local", "fixed": "Fixed", "file": "File"}
 
-#: Width (px) of the "Name"/"Parameter" column shared by every parameter table.
-#: Kept narrow so the Batch tab does not outgrow the Single tab; "name (unit)"
-#: labels that overflow it are still readable via the per-cell tooltip
-#: (:func:`_make_param_name_item`). One constant so the tables stay aligned.
-PARAM_NAME_COL_WIDTH = 92
+#: Character budget for the "Name"/"Parameter" column shared by every parameter
+#: table. Kept narrow so the Batch tab does not outgrow the Single tab; "name
+#: (unit)" labels that overflow it are still readable via the per-cell tooltip
+#: (:func:`_make_param_name_item`). One budget so the tables stay aligned.
+_PARAM_NAME_COL_CHARS = 13
+
+
+def param_name_col_width() -> int:
+    """Return the shared "Name"/"Parameter" column width at the current UI scale.
+
+    Derived from the live application font (via :func:`metrics.char_width`) so
+    the column tracks the font-driven UI zoom instead of freezing at the old
+    fixed 92 px. Computed on demand — never at import time, so importing this
+    module before a ``QGuiApplication`` exists stays safe.
+    """
+    return char_width(_PARAM_NAME_COL_CHARS)
 
 
 def _format_tie_formula(name: str, tie: AffineTie | None) -> str:
@@ -695,7 +707,7 @@ def _make_tie_button() -> QPushButton:
     """
     button = QPushButton("—")
     button.setFlat(True)
-    button.setMaximumWidth(36)
+    button.setMaximumWidth(char_width(5))
     button._affine_tie = None  # type: ignore[attr-defined]
     button.setToolTip("Affine tie: derive this parameter from others (offset / equal spacing).")
     return button
@@ -1261,20 +1273,21 @@ class FitParameterTable(QTableWidget):
             ["Name", "Value", "Fix", "Min", "Max", "Batch", "Link", "Tie"]
         )
         self.horizontalHeader().setStretchLastSection(False)
-        # Name (col 0) holds formatted "name (unit)" labels; the old 72 px clipped
-        # common cases like "f (MHz)" / "A_bg (%)" (tooltip backs the rest).
-        name_w = PARAM_NAME_COL_WIDTH
-        for col, width in (
-            (0, name_w),
-            (1, 88),
-            (2, 30),
-            (3, 52),
-            (4, 52),
-            (5, 50),
-            (6, 40),
-            (7, 40),
+        # Name (col 0) holds formatted "name (unit)" labels; a too-narrow column
+        # clips common cases like "f (MHz)" / "A_bg (%)" (tooltip backs the rest).
+        # Widths are char-based (metrics.char_width) so they track the UI font
+        # scale instead of freezing at their old design pixels.
+        for col, chars in (
+            (0, _PARAM_NAME_COL_CHARS),  # Name, 92 px at design font
+            (1, 12),  # Value, 88 px
+            (2, 4),  # Fix, 30 px
+            (3, 7),  # Min, 52 px
+            (4, 7),  # Max, 52 px
+            (5, 7),  # Batch, 50 px
+            (6, 5),  # Link, 40 px
+            (7, 5),  # Tie, 40 px
         ):
-            self.setColumnWidth(col, width)
+            self.setColumnWidth(col, char_width(chars))
         _apply_param_table_style(self)
         # Tab commits the open editor on every editable column; the Value column
         # additionally paints the ±σ overlay.
