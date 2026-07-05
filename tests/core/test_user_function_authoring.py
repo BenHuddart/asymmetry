@@ -23,6 +23,7 @@ from asymmetry.core.fitting.user_function_authoring import (
     create_user_function,
     detect_parameter_names,
     evaluate_draft,
+    generate_function_body,
     generate_plugin_source,
     validate_draft,
 )
@@ -216,6 +217,37 @@ def test_generated_parameter_kind_registers_with_common_scope(tmp_path):
     assert definition.scopes == ("common",)
     x = np.linspace(1.0, 10.0, 7)
     np.testing.assert_allclose(definition.function(x, a=1.0, b=0.0), x)
+
+
+# ── generate_function_body ──────────────────────────────────────────────────
+
+
+def test_generate_function_body_is_unindented_and_rewrites_math():
+    body = generate_function_body(_stretched_draft())
+    lines = body.splitlines()
+    # Un-indented (the Advanced editor pre-fills raw source it then re-indents).
+    assert all(line == line.lstrip() for line in lines)
+    assert lines[0] == "x = np.asarray(x, dtype=float)"
+    assert lines[-1].startswith("return np.broadcast_to(")
+    # Bare math name rewritten to its numpy attribute.
+    assert "np.exp(" in body
+
+
+def test_advanced_prefill_from_generate_function_body_round_trips():
+    # The Advanced editor pre-fill is the formula body verbatim, so a draft
+    # whose advanced_body is that text must validate and evaluate identically
+    # to the formula draft it came from.
+    formula_draft = _stretched_draft()
+    advanced_draft = _stretched_draft(
+        name="UserAdvancedPrefill",
+        advanced_body=generate_function_body(formula_draft),
+    )
+
+    validate_draft(formula_draft)
+    validate_draft(advanced_draft)
+
+    x = np.linspace(0.0, 12.0, 41)
+    np.testing.assert_allclose(evaluate_draft(advanced_draft, x), evaluate_draft(formula_draft, x))
 
 
 # ── build_draft_callable / evaluate_draft ───────────────────────────────────

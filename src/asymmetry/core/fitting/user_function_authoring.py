@@ -62,6 +62,7 @@ __all__ = [
     "create_user_function",
     "detect_parameter_names",
     "evaluate_draft",
+    "generate_function_body",
     "generate_plugin_source",
     "validate_draft",
 ]
@@ -306,6 +307,28 @@ def _signature(draft: UserFunctionDraft) -> str:
     return f"x, *, {kwargs}"
 
 
+def generate_function_body(draft: UserFunctionDraft) -> str:
+    """Return the UN-indented formula-mode function body for *draft*.
+
+    These are the three lines the generated function would contain in formula
+    mode — ``x = np.asarray(...)``, ``result = <rewritten formula>``, and the
+    broadcast ``return`` — with no leading ``def``-body indent. The builder's
+    Advanced editor pre-fills its editor with this text, so an author who
+    switches to advanced mode starts from the exact code the formula would have
+    produced (and a draft with ``advanced_body`` set to this text validates and
+    evaluates identically to the formula draft).
+
+    The broadcast keeps a constant formula returning an array of ``x``'s shape,
+    which the load-time probe requires.
+    """
+    expr = _rewrite_math_names(draft.formula)
+    return (
+        "x = np.asarray(x, dtype=float)\n"
+        f"result = {expr}\n"
+        "return np.broadcast_to(np.asarray(result, dtype=float), x.shape).copy()"
+    )
+
+
 def generate_plugin_source(draft: UserFunctionDraft) -> str:
     """Return the complete text of a readable, hand-editable plugin file.
 
@@ -321,14 +344,9 @@ def generate_plugin_source(draft: UserFunctionDraft) -> str:
         body = _indent_body(draft.advanced_body)
         func_doc = f'"""{draft.name}: user-authored function (advanced body)."""'
     else:
-        expr = _rewrite_math_names(draft.formula)
-        # Broadcast to x's shape so a constant formula still returns an array
-        # of the probe's shape (the load-time probe requires it).
-        body = (
-            "    x = np.asarray(x, dtype=float)\n"
-            f"    result = {expr}\n"
-            "    return np.broadcast_to(np.asarray(result, dtype=float), x.shape).copy()"
-        )
+        # Indent the shared formula body under the def; generate_function_body
+        # is the un-indented source the Advanced editor pre-fills with.
+        body = _indent_body(generate_function_body(draft))
         func_doc = f'"""{draft.name}: {_safe_docstring_text(draft.formula)}"""'
 
     if draft.kind == "component":
