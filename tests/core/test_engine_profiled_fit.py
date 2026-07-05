@@ -161,3 +161,31 @@ def test_profiled_no_free_global_falls_back_to_separable():
         assert prof[i].parameters["Lambda"].value == pytest.approx(
             joint[i].parameters["Lambda"].value, abs=5e-3
         )
+
+
+def test_use_varpro_is_deferred_and_fails_loudly():
+    """Variable projection is not wired in yet; requesting it raises explicitly."""
+    model = MODELS["ExponentialRelaxation"].function
+    datasets, inits = _make_series(n_datasets=2, a0_true=20.0, lambdas=[0.4, 0.9], seed=5)
+    engine = FitEngine()
+    with pytest.raises(NotImplementedError, match="varpro"):
+        engine.global_fit(datasets, model, ["A0"], ["Lambda"], inits, use_varpro=True)
+
+
+def test_default_linear_params_marks_amplitudes_and_backgrounds():
+    """Linear-param detection is role-based (amplitudes, constant backgrounds)."""
+    from asymmetry.core.fitting.models import default_linear_params
+
+    # Amplitudes and additive backgrounds are linear; rates/frequencies are not.
+    assert default_linear_params(["A0", "Lambda", "baseline"]) == ["A0", "baseline"]
+    assert default_linear_params(["A", "frequency", "phase", "A_bg"]) == ["A", "A_bg"]
+    # Indexed variants (A_2, baseline_3) resolve through the base role name.
+    assert default_linear_params(["A_2", "Lambda_2"]) == ["A_2"]
+    # A normalised fraction weight is not a free linear scale.
+    assert default_linear_params(["f_Exponential", "Lambda"]) == []
+
+
+def test_model_definition_resolved_linear_params():
+    """ModelDefinition derives linear params from roles unless overridden."""
+    defn = MODELS["ExponentialRelaxation"]
+    assert set(defn.resolved_linear_params()) == {"A0", "baseline"}

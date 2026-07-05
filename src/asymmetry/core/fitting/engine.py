@@ -952,6 +952,20 @@ class FitEngine:
             raise ValueError(
                 f"Unknown global-fit strategy {strategy!r}; expected 'joint' or 'profiled'"
             )
+        if use_varpro:
+            # Variable projection (technique M) is deferred: once the profiled
+            # strategy has separated the per-dataset locals it is only a
+            # constant-factor per-fit win (it does not change the G-exponent),
+            # and matching the current engine's *marginal* parameter errors needs
+            # a final full Hessian over all parameters — the same O((n_local·G)²)
+            # cost the joint path already pays. The linear-parameter metadata is
+            # in place (models.default_linear_params) for the follow-up. Fail
+            # loudly rather than silently ignoring the request.
+            raise NotImplementedError(
+                "use_varpro (variable projection) is not yet wired into global_fit; "
+                "use the profiled strategy for the G-scaling win. VarPro is a "
+                "deferred constant-factor follow-up."
+            )
         _reject_affine_ties(initial_params.values(), "Global fitting")
 
         def _local_group_key(pname: str, run_number: int) -> Hashable:

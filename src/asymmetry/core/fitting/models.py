@@ -18,6 +18,13 @@ from asymmetry.core.fitting.parameters import ParamInfo, param_info_map
 from asymmetry.core.fitting.registration import insert_definition
 from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
 
+#: Groundwork for the deferred variable-projection (VarPro) follow-up. VarPro is
+#: not wired into a fit path yet (see the PR body: it is a constant-factor win
+#: once profiled locals already separate the per-dataset solves, and its marginal
+#: errors need a final full Hessian), so this metadata is presently consumed only
+#: by tests and the follow-up plan — but it is the generic, name-role marking the
+#: study asks for, kept here so the follow-up does not re-derive it.
+#:
 #: Parameter *role* names that enter a μSR model **linearly** — amplitudes and
 #: additive constant backgrounds. These are roles, not component names: an
 #: amplitude ``A`` scales its term and a constant baseline ``baseline`` adds to
