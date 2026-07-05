@@ -123,7 +123,7 @@ def parse_icp_log_text(text: str) -> IcpFieldReading | None:
         if not channel:
             continue
 
-        if channel == "a_selected_magnet":
+        if channel.lower() == "a_selected_magnet":
             if value_text:
                 last_magnet = value_text
             continue

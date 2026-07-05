@@ -107,6 +107,7 @@ class _TrailRow(QWidget):
         if self._detail_widget is widget:
             return
         if self._detail_widget is not None:
+            self._detail_layout.removeWidget(self._detail_widget)
             self._detail_widget.setParent(None)
         self._detail_widget = widget
         if widget is not None:
