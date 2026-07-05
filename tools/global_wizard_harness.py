@@ -283,29 +283,32 @@ def _build_case_datasets(case: SyntheticCase) -> list[Any]:
 #
 # A tier maps to a callable that runs the wizard with a particular configuration
 # and returns the ``GlobalFitWizardRecommendation`` plus its instrumentation
-# dict. As of PR 4 the *search engine* is real: ``low`` and ``balanced`` route to
-# the non-exhaustive heuristic engines (Q pre-tests + greedy / surrogate-ranked
-# + racing), while ``thorough`` and ``exhaustive`` run the exact bounded
-# wavefront (byte-for-byte the frozen-baseline path). PR 5 layers the per-tier
-# V-policy / decimation / GUI on top; the harness contract does not change.
+# dict. As of PR 5 each harness tier drives the user-facing ``EffortTier`` enum
+# (not just the lower-level ``search_engine`` selector PR 4 added): Low/Balanced
+# route to the non-exhaustive heuristic engines (Q pre-tests + greedy /
+# surrogate-ranked + racing) *plus* the Low-only portfolio cap/complexity
+# prior/identifiability demotion (I/J) and the Low/Balanced screening
+# decimation (K); Thorough/Exhaustive run the exact bounded wavefront
+# (byte-for-byte the frozen-baseline path, no PR 5 knobs).
 
 
-def _run_wizard_with_engine(
+def _run_wizard_with_tier(
     datasets: list[Any],
     *,
     template_keys: tuple[str, ...],
-    search_engine: str,
+    effort_tier_value: str,
 ) -> tuple[Any, dict[str, object]]:
     from asymmetry.core.fitting.global_fit_wizard import (
         build_global_fit_wizard_recommendation,
     )
+    from asymmetry.core.fitting.wizard_scope import EffortTier
 
     instrumentation: dict[str, object] = {}
     recommendation = build_global_fit_wizard_recommendation(
         datasets,
         instrumentation=instrumentation,
         selected_template_keys=template_keys or None,
-        search_engine=search_engine,
+        effort_tier=EffortTier(effort_tier_value),
     )
     return recommendation, instrumentation
 
@@ -315,8 +318,8 @@ def _run_wizard_exhaustive(
     *,
     template_keys: tuple[str, ...],
 ) -> tuple[Any, dict[str, object]]:
-    return _run_wizard_with_engine(
-        datasets, template_keys=template_keys, search_engine="exhaustive"
+    return _run_wizard_with_tier(
+        datasets, template_keys=template_keys, effort_tier_value="exhaustive"
     )
 
 
@@ -325,7 +328,9 @@ def _run_wizard_thorough(
     *,
     template_keys: tuple[str, ...],
 ) -> tuple[Any, dict[str, object]]:
-    return _run_wizard_with_engine(datasets, template_keys=template_keys, search_engine="thorough")
+    return _run_wizard_with_tier(
+        datasets, template_keys=template_keys, effort_tier_value="thorough"
+    )
 
 
 def _run_wizard_low(
@@ -333,7 +338,7 @@ def _run_wizard_low(
     *,
     template_keys: tuple[str, ...],
 ) -> tuple[Any, dict[str, object]]:
-    return _run_wizard_with_engine(datasets, template_keys=template_keys, search_engine="low")
+    return _run_wizard_with_tier(datasets, template_keys=template_keys, effort_tier_value="low")
 
 
 def _run_wizard_balanced(
@@ -341,7 +346,9 @@ def _run_wizard_balanced(
     *,
     template_keys: tuple[str, ...],
 ) -> tuple[Any, dict[str, object]]:
-    return _run_wizard_with_engine(datasets, template_keys=template_keys, search_engine="balanced")
+    return _run_wizard_with_tier(
+        datasets, template_keys=template_keys, effort_tier_value="balanced"
+    )
 
 
 def _run_wizard_sleeper(
