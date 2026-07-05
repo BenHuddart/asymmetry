@@ -130,6 +130,7 @@ class RangeCard(QFrame):
         line1.addWidget(self._swatch)
 
         self._title_label = QLabel("", self._surface)
+        self._title_label.setStyleSheet(f"color: {tokens.TEXT}; font-weight: 600;")
         line1.addWidget(self._title_label)
 
         self._chip_label = QLabel("", self._surface)

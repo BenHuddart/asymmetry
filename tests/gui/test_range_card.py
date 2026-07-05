@@ -71,6 +71,25 @@ def test_set_state_renders_title_bounds_chip(qapp: QApplication) -> None:
     assert card._chip_label.toolTip() == "chi2/nu = 1.02"
 
 
+def test_title_uses_primary_emphasis(qapp: QApplication) -> None:
+    """Line 1's title should read as the card's primary label: an explicit
+    TEXT-token colour + heavier weight, distinct from the muted bounds label
+    (which stays TEXT_MUTED, unweighted) — the status chip remains the only
+    other strong colour on the line."""
+    from asymmetry.gui.styles import tokens
+
+    card = RangeCard(0)
+    card.set_state(_view(title="Range 2"))
+
+    title_style = card._title_label.styleSheet()
+    bounds_style = card._bounds_label.styleSheet()
+
+    assert title_style != ""
+    assert tokens.TEXT in title_style
+    assert "font-weight" in title_style
+    assert title_style != bounds_style
+
+
 def test_active_toggles_style(qapp: QApplication) -> None:
     card = RangeCard(0)
     card.set_active(True)
