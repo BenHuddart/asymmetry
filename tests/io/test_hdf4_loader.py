@@ -227,7 +227,19 @@ def test_hdf4_load_does_not_lock_file(loader: NexusLoader, tmp_path) -> None:
 
 
 def _assert_reduced_parity(ds4, ds5) -> None:
-    """Assert two reduced datasets (HDF4-v1 vs HDF5-v2 twin) match."""
+    """Assert two reduced datasets (HDF4-v1 vs HDF5-v2 twin) match.
+
+    One deliberate exception: ``field``/``field_state``/``field_direction`` may
+    legitimately diverge when exactly one side filled a gap from a sidecar ICP
+    ``.log`` (``metadata["field_source"] == "icp_log"``, see
+    :meth:`NexusLoader._fill_field_from_sidecar_log`). The HDF4 original and its
+    converted ``*_hdf5`` twin live in different directories
+    (``data/`` vs ``data_hdf5/``); the ``.log`` sidecar sits beside the
+    original and the conversion tooling does not necessarily copy it beside the
+    twin, so only one side may find it. That is an artifact of this corpus's
+    directory layout, not a loader bug, so it is excluded from the strict
+    equality check below rather than silently loosened for every field.
+    """
     assert ds4.time.shape == ds5.time.shape, (ds4.time.shape, ds5.time.shape)
     assert np.allclose(ds4.time, ds5.time, rtol=1e-6, atol=1e-6)
     assert np.allclose(ds4.asymmetry, ds5.asymmetry, rtol=1e-6, atol=1e-6)
@@ -236,11 +248,26 @@ def _assert_reduced_parity(ds4, ds5) -> None:
     assert int(ds4.metadata["run_number"]) == int(ds5.metadata["run_number"])
     assert ds4.metadata.get("instrument") == ds5.metadata.get("instrument")
     assert ds4.metadata.get("title") == ds5.metadata.get("title")
-    assert ds4.metadata.get("field_state") == ds5.metadata.get("field_state")
+
+    def _log_sources(ds) -> tuple[object, object]:
+        return (
+            ds.metadata.get("field_source"),
+            ds.metadata.get("field_direction_source"),
+        )
+
+    log_filled = "icp_log" in (*_log_sources(ds4), *_log_sources(ds5))
+    if log_filled:
+        # Only a sidecar-.log fill on exactly one side may cause a mismatch;
+        # confirm that is actually the shape of the divergence rather than
+        # masking an unrelated regression.
+        assert _log_sources(ds4) != _log_sources(ds5)
+    else:
+        assert ds4.metadata.get("field_state") == ds5.metadata.get("field_state")
+        assert pytest.approx(float(ds5.metadata["field"]), abs=1e-6) == float(ds4.metadata["field"])
+
     assert pytest.approx(float(ds5.metadata["temperature"]), rel=1e-5) == float(
         ds4.metadata["temperature"]
     )
-    assert pytest.approx(float(ds5.metadata["field"]), abs=1e-6) == float(ds4.metadata["field"])
 
     # Logged sample temperature must agree across containers — the native-HDF4
     # logged-T gap (a Temp_Sample NXlog whose Vgroup is generically named and

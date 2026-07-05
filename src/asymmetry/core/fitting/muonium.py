@@ -131,6 +131,64 @@ def high_tf_muonium(
     return 0.5 * (np.cos(_TWO_PI * w12 * t + phase) + np.cos(_TWO_PI * w34 * t + phase))
 
 
+def low_tf_pair_frequencies(field: float, A_hf: float) -> tuple[float, float]:
+    """Return the low-TF muonium pair ``(nu_12, nu_23)`` in MHz.
+
+    The two lines rendered by :func:`low_tf_muonium`, sorted low/high by the
+    level structure (``nu_12 <= nu_23`` for positive ``field`` and ``A_hf``).
+    """
+    _delta, e1, e2, e3, _e4 = _tf_levels(field, A_hf)
+    return abs(e1 - e2), abs(e2 - e3)
+
+
+def high_tf_pair_frequencies(field: float, A_hf: float) -> tuple[float, float]:
+    """Return the high-TF muonium pair ``(nu_12, nu_34)`` in MHz.
+
+    The two lines rendered by :func:`high_tf_muonium`; they satisfy
+    ``nu_12 + nu_34 == A_hf`` exactly in the Paschen–Back regime.
+    """
+    _delta, e1, e2, e3, e4 = _tf_levels(field, A_hf)
+    return abs(e1 - e2), abs(e3 - e4)
+
+
+def a_hf_from_low_tf_pair(
+    field_gauss: float,
+    f_lo_mhz: float,
+    f_hi_mhz: float,
+    *,
+    a_hf_range_mhz: tuple[float, float] = (10.0, 4700.0),
+) -> float | None:
+    """Invert the Breit–Rabi map: hyperfine constant from a low-TF line pair.
+
+    The low-TF pair splitting ``nu_23 - nu_12 = A_hf*(sqrt(1+x^2) - 1)`` with
+    ``x = (g_e+g_mu)*B/A_hf`` decreases monotonically in ``A_hf`` (from
+    ``(g_e+g_mu)*B`` towards zero), so the root is bracketed and unique when it
+    exists. Returns ``None`` when the observed splitting is outside the range
+    reachable within ``a_hf_range_mhz`` (wrong-pair guard rather than an error:
+    callers probe candidate peak pairs speculatively).
+    """
+    splitting = float(f_hi_mhz) - float(f_lo_mhz)
+    if field_gauss <= 0.0 or splitting <= 0.0:
+        return None
+
+    def _mismatch(a_hf: float) -> float:
+        lo, hi = low_tf_pair_frequencies(field_gauss, a_hf)
+        return (hi - lo) - splitting
+
+    a_min, a_max = a_hf_range_mhz
+    g_min, g_max = _mismatch(a_min), _mismatch(a_max)
+    if g_min == 0.0:
+        return a_min
+    if g_max == 0.0:
+        return a_max
+    if g_min * g_max > 0.0:
+        return None
+
+    from scipy.optimize import brentq
+
+    return float(brentq(_mismatch, a_min, a_max, xtol=1e-6, rtol=1e-10))
+
+
 #: Gauss-Legendre nodes for the anisotropic powder average, computed once at
 #: import (WiMDA uses a 15-point midpoint rule; 32-node Gauss-Legendre keeps
 #: the average converged for any D/A_hf the fit will visit).
