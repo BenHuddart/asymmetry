@@ -504,6 +504,105 @@ def test_global_fit_wizard_selected_candidate_optimisation_merges_into_screening
     )
 
 
+def test_filtered_gate_reasons_drops_bound_hit_when_fit_is_good() -> None:
+    """Fix C1: a parameter resting at its bound is the valid answer (e.g. a
+    relaxation rate -> 0) when the fit is otherwise good, so it is not a gate
+    failure; it only vetoes when the fit is also poor."""
+    result = FitResult(
+        success=True,
+        chi_squared=1.0,
+        reduced_chi_squared=1.0,
+        parameters=ParameterSet(),
+        message="ok",
+    )
+    good = global_fit_wizard_module._filtered_gate_reasons(
+        fit_result=result,
+        residual_rms=1.0,
+        runs_z_score=0.0,
+        max_abs_autocorrelation=0.0,
+        residual_fft_peak_snr=0.0,
+        bound_hits=["Lambda at lower bound"],
+    )
+    assert good == []
+    poor = global_fit_wizard_module._filtered_gate_reasons(
+        fit_result=result,
+        residual_rms=2.0,
+        runs_z_score=0.0,
+        max_abs_autocorrelation=0.0,
+        residual_fft_peak_snr=0.0,
+        bound_hits=["Lambda at lower bound"],
+    )
+    assert "Lambda at lower bound" in poor
+
+
+def test_rerank_recommends_tentatively_when_only_series_warnings_block() -> None:
+    """Fix C2: when every run clears its per-run residual gate (a demonstrably
+    strong coupled fit) but a heuristic series-consistency warning fires, the
+    wizard recommends the candidate tentatively with a caveat rather than
+    returning None. A per-run gate failure still blocks the recommendation."""
+    datasets = [
+        _dataset_for(
+            run_number=700 + idx,
+            field=30.0 * idx,
+            temperature=6.0,
+            model=CompositeModel(["Exponential", "Constant"], operators=["+"]),
+            params={"A_1": 0.2, "Lambda": 0.3 + (0.05 * idx), "A_bg": 0.01},
+        )
+        for idx in range(1, 4)
+    ]
+    diagnostics = [
+        RunResidualDiagnostic(
+            run_number=int(dataset.run_number),
+            run_label=dataset.run_label,
+            axis_value=float(dataset.metadata["field"]),
+            residual_rms=0.1,
+            runs_z_score=0.0,
+            max_abs_autocorrelation=0.0,
+            residual_fft_peak_snr=0.0,
+            gate_passed=True,
+            gate_reasons=(),
+        )
+        for dataset in datasets
+    ]
+    assessment = replace(
+        _assessment_with_diagnostics(datasets, diagnostics),
+        global_param_names=("A_1", "A_bg"),
+        local_param_names=("Lambda",),
+        series_warnings=("Fingerprint features change abruptly between 2 and 3.",),
+    )
+
+    def _recommendation(assessments):
+        return GlobalFitWizardRecommendation(
+            series_axis_key="field",
+            series_axis_label="Field (G)",
+            mixed_axes_warning=None,
+            fingerprints_by_run={},
+            dataset_order=tuple(int(d.run_number) for d in datasets),
+            templates=(assessment.template,),
+            assessments=assessments,
+            metric=SelectionMetric.AICC,
+            recommended_key=None,
+            comparable_keys=(),
+            summary="",
+        )
+
+    reranked = rerank_global_fit_wizard_recommendation(
+        _recommendation((assessment,)), SelectionMetric.AICC
+    )
+    assert reranked.recommended_key == assessment.selection_key
+    assert "tentative" in reranked.summary.lower()
+    assert "Fingerprint features change abruptly" in reranked.summary
+
+    # A genuine per-run gate failure must still block (stays None).
+    failed = list(diagnostics)
+    failed[0] = replace(failed[0], gate_passed=False, gate_reasons=("bad fit",))
+    blocked = replace(assessment, run_diagnostics=tuple(failed))
+    reranked_blocked = rerank_global_fit_wizard_recommendation(
+        _recommendation((blocked,)), SelectionMetric.AICC
+    )
+    assert reranked_blocked.recommended_key is None
+
+
 def test_merge_global_fit_wizard_recommendations_keeps_all_optimized_variants() -> None:
     datasets = [
         _dataset_for(
