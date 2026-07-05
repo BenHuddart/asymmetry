@@ -174,12 +174,12 @@ from .tab_base import (
     _normalized_model_param_values,
     _param_table_rows_by_name,
     _refresh_field_defaults_in_table,
-    param_name_col_width,
     _set_formula_label_text,
     _size_param_table_to_content,
     _start_fit_call,
     _synchronize_fraction_group_values_in_table,
     _wait_for_fit_thread,
+    param_name_col_width,
 )
 
 #: (label, mode) for the batch-series seeding selector, shared by the Batch-tab
@@ -2424,8 +2424,8 @@ class GlobalFitTab(FitTabBase):
         rows = [self._count_param_row(result, name) for name in result.parameters.names]
         summary = _fit_summary(result)
         chip = fit_quality_chip_html(summary.get("quality"), summary.get("params_at_bound"))
-        detail = (
-            f"χ²/ν = {result.reduced_chi_squared:.4f}{chip} (cost: {cost})<br>" + "<br>".join(rows)
+        detail = f"χ²/ν = {result.reduced_chi_squared:.4f}{chip} (cost: {cost})<br>" + "<br>".join(
+            rows
         )
         self._results_group.setStyleSheet(RESULT_BOX_SUCCESS_STYLE)
         self._result_text.setHtml(

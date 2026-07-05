@@ -98,8 +98,8 @@ from asymmetry.core.utils.constants import (
 )
 from asymmetry.gui.fit_settings import fit_quality_confidence
 from asymmetry.gui.styles import tokens
-from asymmetry.gui.styles.metrics import char_width
 from asymmetry.gui.styles.fonts import mono_font
+from asymmetry.gui.styles.metrics import char_width
 from asymmetry.gui.styles.widgets import (
     apply_param_table_style,
     configure_formula_label,
