@@ -53,7 +53,12 @@ from asymmetry.core.fitting.global_search.heuristics import (
 )
 from asymmetry.core.fitting.parameters import get_param_info
 from asymmetry.core.fitting.wizard_scope import (
+    DEFAULT_EFFORT_TIER,
+    EFFORT_TIER_DESCRIPTIONS,
+    EFFORT_TIER_LABELS,
+    EffortTier,
     WizardScope,
+    effort_tier_from_payload,
     estimate_screening_cost,
     resolve_scope_for_datasets,
 )
@@ -118,6 +123,7 @@ def _run_global_fit_wizard_analysis(
     metric: SelectionMetric,
     selected_template_keys: tuple[str, ...] = (),
     scope: dict | None = None,
+    effort_tier: EffortTier = DEFAULT_EFFORT_TIER,
 ) -> _GlobalAnalysisResult:
     """Run the global-fit wizard analysis off the GUI thread.
 
@@ -129,6 +135,9 @@ def _run_global_fit_wizard_analysis(
     it as a cancellation rather than a failure. ``scope`` is the serialised
     ``WizardScope`` payload from the Scope tab (``None`` → whole time domain);
     it is converted here (worker thread) and forwarded to every builder.
+    ``effort_tier`` is the user-facing effort slider (PR 5); it only affects the
+    coupled-optimisation builder (``mode == "optimize"``) — the independent
+    per-run screening pass has no tier concept.
     """
     resolved_scope = WizardScope.from_payload(scope) if scope is not None else None
 
@@ -166,6 +175,7 @@ def _run_global_fit_wizard_analysis(
                 existing_recommendations_by_run=existing,
                 progress_callback=lambda message: worker.progress.emit(0, 0, message),
                 scope=resolved_scope,
+                cancel_callback=worker.is_cancelled,
             )
         )
 
@@ -184,6 +194,7 @@ def _run_global_fit_wizard_analysis(
             metric=metric,
             progress_callback=progress_callback,
             scope=resolved_scope,
+            cancel_callback=worker.is_cancelled,
         )
     else:
         recommendation = build_global_fit_wizard_recommendation(
@@ -197,6 +208,8 @@ def _run_global_fit_wizard_analysis(
             progress_callback=progress_callback,
             selected_template_keys=selected_template_keys,
             scope=resolved_scope,
+            effort_tier=effort_tier,
+            cancel_callback=worker.is_cancelled,
         )
     updated_single_fit_recommendations = {
         int(run_number): rec
@@ -404,13 +417,32 @@ class GlobalFitWizardWindow(WizardWindowBase):
         warning_info_btn = QPushButton("Warning Info")
         warning_info_btn.clicked.connect(self._show_warning_info)
         self._controls_row.insertWidget(5, warning_info_btn)
+        # Single honest optimisation mode. Every EffortTier now resolves to the
+        # exact bounded-wavefront engine (see EffortTier / _EFFORT_TIER_SEARCH_ENGINE):
+        # PR 2's exact bounds made it near-minimal and 12-way parallel, so the
+        # former heuristic Low/Balanced tiers were empirically slower with no
+        # fit-count headroom. A four-position slider where every position did the
+        # same work would be misleading, so the visible control is a single
+        # disabled item. The 1-item combo (rather than a bare QLabel) keeps
+        # current_effort_tier()/_set_effort_tier() and the payload round-trip
+        # working unchanged, so a future scope-based quick-look tier can be added
+        # without reworking persistence.
+        self._controls_row.insertWidget(6, QLabel("Search:"))
+        self._effort_combo = QComboBox()
+        self._effort_combo.addItem(
+            EFFORT_TIER_LABELS[EffortTier.EXHAUSTIVE], userData=EffortTier.EXHAUSTIVE.value
+        )
+        self._effort_combo.setCurrentIndex(0)
+        self._effort_combo.setEnabled(False)
+        self._effort_combo.setToolTip(EFFORT_TIER_DESCRIPTIONS[EffortTier.EXHAUSTIVE])
+        self._controls_row.insertWidget(7, self._effort_combo)
         # Cancel button lives in the controls row; visible only while busy (see
         # _update_action_enablement). It routes through the base's single cancel
         # entry point, which cancels the live TaskWorker cooperatively.
         self._cancel_btn = QPushButton("Cancel")
         self._cancel_btn.setVisible(False)
         self._cancel_btn.clicked.connect(self._cancel_current_analysis)
-        self._controls_row.insertWidget(6, self._cancel_btn)
+        self._controls_row.insertWidget(8, self._cancel_btn)
         self._controls_row.addStretch()
 
         self._scope_tab = QWidget()
@@ -874,6 +906,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
         metric = SelectionMetric.from_value(self._metric_combo.currentText())
         selected_keys = tuple(sorted(self._screening_selected_keys)) if mode == "optimize" else ()
         scope_payload = copy.deepcopy(self._scope_selector.current_scope())
+        effort_tier = self.current_effort_tier()
 
         def task(worker):
             return _run_global_fit_wizard_analysis(
@@ -888,6 +921,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
                 metric=metric,
                 selected_template_keys=selected_keys,
                 scope=scope_payload,
+                effort_tier=effort_tier,
             )
 
         return task
@@ -987,6 +1021,12 @@ class GlobalFitWizardWindow(WizardWindowBase):
         signature_dict = signature if isinstance(signature, dict) else {}
         cached_scope = signature_dict.get("scope")
         self._scope_selector.set_scope(cached_scope if isinstance(cached_scope, dict) else None)
+        # The effort tier is retained in the payload for forward-compatibility,
+        # but every tier now runs the exact engine and the visible control is a
+        # single "Optimize" mode. Restoring a legacy Low/Balanced payload is a
+        # no-op on the one-item control (it stays on the exact mode), which is the
+        # correct behaviour since all tiers resolve to the same exact search.
+        self._set_effort_tier(effort_tier_from_payload(signature_dict.get("effort_tier")))
         self._analysis_stale = False
         self._stale_banner.setVisible(False)
         self._metric_combo.blockSignals(True)
@@ -995,6 +1035,27 @@ class GlobalFitWizardWindow(WizardWindowBase):
         self._status_label.setText(status_text or recommendation.summary)
         self._set_busy(False)
         self._populate_from_recommendation()
+
+    def current_effort_tier(self) -> EffortTier:
+        """The effort tier the wizard will run.
+
+        The visible control is a single disabled "Optimize" item, so this always
+        returns the exact tier. The method (and the payload it feeds) is retained
+        so a future scope-based quick-look tier can be surfaced without reworking
+        persistence.
+        """
+        return effort_tier_from_payload(self._effort_combo.currentData())
+
+    def _set_effort_tier(self, tier: EffortTier) -> None:
+        # The one-item control only carries the exact (Optimize) tier; a legacy
+        # Low/Balanced payload finds no matching item and is left on the exact
+        # mode, which is correct now that every tier runs the exact engine.
+        index = self._effort_combo.findData(tier.value)
+        if index < 0:
+            return
+        self._effort_combo.blockSignals(True)
+        self._effort_combo.setCurrentIndex(index)
+        self._effort_combo.blockSignals(False)
 
     def _analysis_signature(self) -> dict[str, object]:
         return {
@@ -1007,6 +1068,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
                 for key, bounds in self._parameter_bounds.items()
             },
             "scope": self._scope_selector.current_scope(),
+            "effort_tier": self.current_effort_tier().value,
         }
 
     def _prompt_parameter_setup(

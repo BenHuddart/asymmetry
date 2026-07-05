@@ -2418,3 +2418,469 @@ def test_unknown_search_engine_raises_value_error(
 
     with pytest.raises(ValueError, match="Unknown search_engine"):
         build_global_fit_wizard_recommendation(datasets, search_engine="turbo")
+
+
+# --------------------------------------------------------------------------- #
+# Effort tiers (PR 5, revised): every EffortTier collapses to the exact engine.
+# The heuristic engines + I/J/K knobs are retained ONLY behind the low-level
+# ``search_engine`` string (the PR 4 seam), never via ``effort_tier``.
+# --------------------------------------------------------------------------- #
+
+
+def _restrict_to_templates(
+    monkeypatch: pytest.MonkeyPatch,
+    templates: tuple[CandidateTemplate, ...],
+) -> None:
+    monkeypatch.setattr(
+        global_fit_wizard_module,
+        "build_candidate_templates",
+        lambda fingerprint, current_model=None: templates,
+    )
+
+
+@pytest.mark.parametrize("tier_value", ["low", "balanced", "thorough", "exhaustive"])
+def test_effort_tier_always_resolves_to_the_exact_engine(
+    monkeypatch: pytest.MonkeyPatch, tier_value: str
+) -> None:
+    """Every user-facing EffortTier now runs the exact bounded wavefront.
+
+    The exact engines never set the ``search_engine`` instrumentation metric
+    (that metric is emitted only on the heuristic path), so its absence for
+    *every* tier is the observable signature that the slider collapsed to one
+    honest exact mode.
+    """
+    from asymmetry.core.fitting.wizard_scope import EffortTier
+
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    _restrict_to_exp_constant_template(monkeypatch, model)
+    datasets = _uniform_series(model)
+    instrumentation: dict[str, object] = {}
+
+    build_global_fit_wizard_recommendation(
+        datasets, instrumentation=instrumentation, effort_tier=EffortTier(tier_value)
+    )
+
+    assert instrumentation.get("search_engine") is None
+
+
+def test_effort_tier_search_engine_map_collapses_to_exhaustive() -> None:
+    from asymmetry.core.fitting.global_fit_wizard import (
+        _EFFORT_TIER_SEARCH_ENGINE,
+        SEARCH_ENGINE_EXHAUSTIVE,
+    )
+    from asymmetry.core.fitting.wizard_scope import EffortTier
+
+    assert set(_EFFORT_TIER_SEARCH_ENGINE) == set(EffortTier)
+    assert all(engine == SEARCH_ENGINE_EXHAUSTIVE for engine in _EFFORT_TIER_SEARCH_ENGINE.values())
+
+
+def test_explicit_search_engine_overrides_effort_tier_engine_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from asymmetry.core.fitting.wizard_scope import EffortTier
+
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    _restrict_to_exp_constant_template(monkeypatch, model)
+    datasets = _uniform_series(model)
+    instrumentation: dict[str, object] = {}
+
+    # effort_tier says Balanced, but an explicit search_engine="low" must win for
+    # *engine selection* (backward compatibility with PR 4 callers/tests).
+    build_global_fit_wizard_recommendation(
+        datasets,
+        instrumentation=instrumentation,
+        effort_tier=EffortTier.BALANCED,
+        search_engine="low",
+    )
+
+    assert instrumentation.get("search_engine") == "low"
+
+
+def _triple_exp_template() -> CandidateTemplate:
+    model = CompositeModel(
+        ["Exponential", "Exponential", "Exponential", "Constant"],
+        operators=["+", "+", "+"],
+    )
+    return CandidateTemplate(
+        key="triple_exp_constant",
+        title="Exponential + Exponential + Exponential + Constant",
+        category="General",
+        rationale="test",
+        model=model,
+    )
+
+
+def _searched_role_split_count(recommendation, template_key: str) -> int:
+    """How many distinct role-split assessments a template earned.
+
+    Every template gets one cheap initial-screen assessment (``assessment_key
+    is None``) regardless of tier; a template that reached the expensive
+    coupled role search additionally earns assessments with a real
+    ``assessment_key`` (its all-global fit, flip-neighbourhood, etc.). Zero
+    extra role splits is the observable signature of "never reached the
+    search" — this is what technique I's cap must produce for an over-budget
+    template.
+    """
+    return sum(
+        1
+        for assessment in recommendation.optimized_assessments()
+        if assessment.template.key == template_key and assessment.assessment_key is not None
+    )
+
+
+def test_low_portfolio_cap_skips_over_budget_templates_via_search_engine_seam(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Technique I is retained behind the low-level ``search_engine="low"`` seam.
+
+    An explicit user selection on the retained Low heuristic engine still narrows
+    to the cap: a >5-parameter template never reaches the expensive coupled role
+    search, even though the user selected it alongside a small template that fits
+    inside the budget. This knob is NO LONGER reachable via ``effort_tier`` (which
+    always resolves to the exact engine) — only through the ``search_engine``
+    override.
+    """
+    small_model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    small_template = CandidateTemplate(
+        key="exp_constant",
+        title="Exponential + Constant",
+        category="General",
+        rationale="test",
+        model=small_model,
+    )
+    big_template = _triple_exp_template()
+    _restrict_to_templates(monkeypatch, (small_template, big_template))
+    datasets = _uniform_series(small_model)
+
+    recommendation = build_global_fit_wizard_recommendation(
+        datasets,
+        search_engine="low",
+        selected_template_keys=(small_template.key, big_template.key),
+    )
+
+    assert _searched_role_split_count(recommendation, small_template.key) > 0
+    assert _searched_role_split_count(recommendation, big_template.key) == 0
+
+
+def test_low_portfolio_cap_is_inert_via_effort_tier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Passing ``effort_tier=LOW`` no longer applies the cap.
+
+    Every user-facing tier resolves to the exact engine, so an over-budget
+    template still reaches the coupled search — the I/J/K knobs are only reachable
+    through the ``search_engine`` override now.
+    """
+    from asymmetry.core.fitting.wizard_scope import EffortTier
+
+    small_model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    small_template = CandidateTemplate(
+        key="exp_constant",
+        title="Exponential + Constant",
+        category="General",
+        rationale="test",
+        model=small_model,
+    )
+    big_template = _triple_exp_template()
+    _restrict_to_templates(monkeypatch, (small_template, big_template))
+    datasets = _uniform_series(small_model)
+
+    recommendation = build_global_fit_wizard_recommendation(
+        datasets,
+        effort_tier=EffortTier.LOW,
+        selected_template_keys=(small_template.key, big_template.key),
+    )
+
+    # Exact engine (what LOW now resolves to) applies no cap: both explicitly
+    # selected templates reach the coupled search.
+    assert _searched_role_split_count(recommendation, small_template.key) > 0
+    assert _searched_role_split_count(recommendation, big_template.key) > 0
+
+
+def test_low_complexity_prior_prefers_fewer_additive_terms() -> None:
+    from asymmetry.core.fitting.global_fit_wizard import _low_complexity_prior_penalty
+
+    exp_constant = CandidateTemplate(
+        key="exp_constant",
+        title="Exponential + Constant",
+        category="General",
+        rationale="test",
+        model=CompositeModel(["Exponential", "Constant"], operators=["+"]),
+    )
+    triple_exp = _triple_exp_template()
+
+    assert _low_complexity_prior_penalty(exp_constant) == 0.0
+    assert _low_complexity_prior_penalty(triple_exp) > _low_complexity_prior_penalty(exp_constant)
+
+
+def test_identifiability_demotion_flags_highly_correlated_covariance() -> None:
+    from asymmetry.core.fitting.global_fit_wizard import (
+        _initial_assessment_is_identifiability_degenerate,
+    )
+
+    template = CandidateTemplate(
+        key="exp_constant",
+        title="Exponential + Constant",
+        category="General",
+        rationale="test",
+        model=CompositeModel(["Exponential", "Constant"], operators=["+"]),
+    )
+    covariance = np.array([[1.0, 0.999], [0.999, 1.0]])
+    result = FitResult(
+        success=True,
+        chi_squared=1.0,
+        parameters=ParameterSet(
+            [Parameter(name="A_1", value=0.2), Parameter(name="Lambda", value=0.3)]
+        ),
+        uncertainties={"A_1": 0.01, "Lambda": 0.02},
+        covariance=covariance,
+        covariance_parameters=["A_1", "Lambda"],
+    )
+    assessment = GlobalCandidateAssessment(
+        template=template,
+        fit_results_by_run={1: result},
+        global_parameters=ParameterSet(),
+        global_param_names=(),
+        local_param_names=(),
+        fixed_param_names=(),
+        parameter_recommendations=(),
+        run_diagnostics=(),
+        series_warnings=(),
+        aic=10.0,
+        aicc=10.0,
+        bic=12.0,
+        selected_score=10.0,
+        fitted_curves_by_run={},
+        component_curves_by_run={},
+    )
+
+    assert _initial_assessment_is_identifiability_degenerate(assessment)
+
+
+def test_identifiability_demotion_ignores_well_conditioned_covariance() -> None:
+    from asymmetry.core.fitting.global_fit_wizard import (
+        _initial_assessment_is_identifiability_degenerate,
+    )
+
+    template = CandidateTemplate(
+        key="exp_constant",
+        title="Exponential + Constant",
+        category="General",
+        rationale="test",
+        model=CompositeModel(["Exponential", "Constant"], operators=["+"]),
+    )
+    covariance = np.array([[1.0, 0.05], [0.05, 1.0]])
+    result = FitResult(
+        success=True,
+        chi_squared=1.0,
+        parameters=ParameterSet(
+            [Parameter(name="A_1", value=0.2), Parameter(name="Lambda", value=0.3)]
+        ),
+        uncertainties={"A_1": 0.01, "Lambda": 0.02},
+        covariance=covariance,
+        covariance_parameters=["A_1", "Lambda"],
+    )
+    assessment = GlobalCandidateAssessment(
+        template=template,
+        fit_results_by_run={1: result},
+        global_parameters=ParameterSet(),
+        global_param_names=(),
+        local_param_names=(),
+        fixed_param_names=(),
+        parameter_recommendations=(),
+        run_diagnostics=(),
+        series_warnings=(),
+        aic=10.0,
+        aicc=10.0,
+        bic=12.0,
+        selected_score=10.0,
+        fitted_curves_by_run={},
+        component_curves_by_run={},
+    )
+
+    assert not _initial_assessment_is_identifiability_degenerate(assessment)
+
+
+@pytest.mark.parametrize("engine", ["low", "balanced"])
+def test_screening_decimation_fires_and_leaves_full_resolution_leaderboard(
+    monkeypatch: pytest.MonkeyPatch, engine: str
+) -> None:
+    """Technique K: decimation applies during search but never on the returned ICs.
+
+    Every returned assessment's per-run fit results carry the full dataset
+    point count (``dof`` reflects it), proving the winner + flip-neighbourhood
+    were refitted at native resolution and no decimated assessment leaked into
+    the leaderboard the verdict layer reranks over.
+    """
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    _restrict_to_exp_constant_template(monkeypatch, model)
+    datasets = _varying_lambda_series(model)
+    full_n_points = datasets[0].n_points
+    instrumentation: dict[str, object] = {}
+
+    recommendation = build_global_fit_wizard_recommendation(
+        datasets, search_engine=engine, instrumentation=instrumentation
+    )
+
+    counters = instrumentation.get("counters")
+    assert isinstance(counters, dict)
+    assert counters.get("decimation_applied", 0) >= 1
+
+    for assessment in recommendation.optimized_assessments():
+        for run_number, result in assessment.fit_results_by_run.items():
+            dataset = next(d for d in datasets if int(d.run_number) == run_number)
+            assert dataset.n_points == full_n_points
+            n_free = len(assessment.global_param_names) + len(assessment.local_param_names)
+            # dof = N_data - N_free (per-run free count); a decimated leftover
+            # would show a much smaller dof for the same free-parameter count.
+            assert result.dof == pytest.approx(full_n_points - n_free, abs=2)
+
+
+def test_screening_decimation_skips_when_nyquist_gate_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from asymmetry.core.fitting.fit_wizard import SpectrumFingerprint
+    from asymmetry.core.fitting.global_fit_wizard import (
+        _DECIMATION_FACTOR_BALANCED,
+        _decimated_datasets_for_search,
+    )
+
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    datasets = _uniform_series(model)
+    # A high dominant frequency relative to the coarse-binned Nyquist limit —
+    # decimating would alias this content, so the gate must refuse.
+    dt = float(np.mean(np.diff(datasets[0].time)))
+    aliasing_fingerprint = SpectrumFingerprint(
+        tail_estimate=0.0,
+        initial_amplitude_estimate=0.2,
+        zero_crossings=10,
+        smoothed_zero_crossings=10,
+        smoothed_turning_points=10,
+        dominant_fft_frequency_mhz=0.5 / (dt * _DECIMATION_FACTOR_BALANCED),
+        dominant_fft_snr=10.0,
+        dominant_fft_cycles_in_window=5.0,
+        monotonic_decay_fraction=0.1,
+        early_time_curvature=0.0,
+        semilog_slope_ratio=0.0,
+        late_time_dip_recovery_score=0.0,
+        oscillatory_hint=True,
+        kt_like_hint=False,
+        multi_rate_hint=False,
+    )
+
+    search_datasets, factor = _decimated_datasets_for_search(
+        datasets,
+        engine="balanced",
+        aggregate_fingerprint=aliasing_fingerprint,
+        instrumentation=None,
+    )
+
+    assert factor == 1
+    assert search_datasets is datasets
+
+
+def test_thorough_and_exhaustive_engines_stay_byte_identical() -> None:
+    """PR 5 tier policy: Thorough is a faithful alias of the exact wavefront.
+
+    The tier table calls for "full wavefront, exact bounds A/B only, generous
+    margins" at Thorough — but there is no independent acceptance bar for it
+    (only Exhaustive is the referee), and building a third hybrid enumerator
+    would risk the one path that must stay byte-identical. Thorough therefore
+    resolves to exactly the same ``SEARCH_ENGINE_THOROUGH`` string as before,
+    which ``_EXACT_SEARCH_ENGINES`` already routes to the untouched wavefront.
+    """
+    from asymmetry.core.fitting.global_fit_wizard import (
+        _EXACT_SEARCH_ENGINES,
+        SEARCH_ENGINE_EXHAUSTIVE,
+        SEARCH_ENGINE_THOROUGH,
+    )
+
+    assert SEARCH_ENGINE_THOROUGH in _EXACT_SEARCH_ENGINES
+    assert SEARCH_ENGINE_EXHAUSTIVE in _EXACT_SEARCH_ENGINES
+
+
+# --------------------------------------------------------------------------- #
+# Cooperative cancel (PR 5 rework): a cancel_callback aborts the exact search
+# promptly with FitCancelledError, before the full role search runs.
+# --------------------------------------------------------------------------- #
+
+
+def test_cancel_callback_aborts_before_running_full_search(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cancel_callback that returns True aborts quickly and runs no fits.
+
+    Cancel is checked at the top of the builder (before any screening/anchor
+    fit), so a callback that is already truthy raises ``FitCancelledError``
+    without dispatching the exhaustive role search — proven by the absence of any
+    ``exact_fit_invocations`` / ``global_fit_calls`` instrumentation.
+    """
+    from asymmetry.core.fitting import FitCancelledError
+
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    _restrict_to_exp_constant_template(monkeypatch, model)
+    datasets = _uniform_series(model)
+    instrumentation: dict[str, object] = {}
+
+    with pytest.raises(FitCancelledError):
+        build_global_fit_wizard_recommendation(
+            datasets,
+            instrumentation=instrumentation,
+            cancel_callback=lambda: True,
+        )
+
+    counters = instrumentation.get("counters")
+    if isinstance(counters, dict):
+        assert counters.get("exact_fit_invocations", 0) == 0
+        assert counters.get("global_fit_calls", 0) == 0
+
+
+def test_cancel_callback_aborts_mid_search_past_the_top_guard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancel is honoured *inside* the exact search, not only at the top guard.
+
+    A callback that returns False first (letting execution past the staged-top
+    guard) and True afterwards must still raise ``FitCancelledError`` — proving
+    the between-templates / between-layers / before-dispatch checks inside
+    ``_run_exhaustive_wavefront_search`` are wired, which is the whole point of
+    the cancel fix (a cancel that only fires before the search starts is
+    useless). We assert the callback advanced past its first poll, so the abort
+    came from a later internal check rather than the top guard.
+    """
+    from asymmetry.core.fitting import FitCancelledError
+
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    _restrict_to_exp_constant_template(monkeypatch, model)
+    datasets = _uniform_series(model)
+
+    state = {"calls": 0}
+
+    def _cancel_after_first_poll() -> bool:
+        state["calls"] += 1
+        # First poll (the staged-top guard) passes; every later poll cancels.
+        return state["calls"] > 1
+
+    with pytest.raises(FitCancelledError):
+        build_global_fit_wizard_recommendation(
+            datasets,
+            cancel_callback=_cancel_after_first_poll,
+        )
+
+    assert state["calls"] > 1
+
+
+def test_cancel_callback_false_completes_normally(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cancel_callback that never fires does not perturb the exact result."""
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    _restrict_to_exp_constant_template(monkeypatch, model)
+    datasets = _uniform_series(model)
+
+    recommendation = build_global_fit_wizard_recommendation(
+        datasets,
+        cancel_callback=lambda: False,
+    )
+
+    assert recommendation.recommended_key is not None

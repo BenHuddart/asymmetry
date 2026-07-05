@@ -874,6 +874,134 @@ def test_global_fit_wizard_window_cached_restore_legacy_signature_is_auto(
     assert window._stale_banner.isHidden() is True
 
 
+# ── Single "Optimize" mode (PR 5 rework) ─────────────────────────────────────
+# The four-position effort slider collapsed to one honest exact mode: every
+# EffortTier now runs the exact engine, so the visible control is a single
+# disabled item and the payload always records the exact tier.
+
+
+def test_global_fit_wizard_window_effort_defaults_to_exhaustive(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+) -> None:
+    from asymmetry.core.fitting.wizard_scope import EffortTier
+
+    window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
+
+    assert window.current_effort_tier() is EffortTier.EXHAUSTIVE
+
+
+def test_global_fit_wizard_window_effort_control_is_single_disabled_optimize_item(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+) -> None:
+    """A 4-way slider where every position did the same work would be misleading.
+
+    The visible control is one disabled item labelled as the exact optimize mode.
+    """
+    window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
+
+    assert window._effort_combo.count() == 1
+    assert window._effort_combo.isEnabled() is False
+    assert "optimize" in window._effort_combo.itemText(0).lower()
+
+
+def test_global_fit_wizard_window_forwards_effort_tier_to_optimize(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from asymmetry.core.fitting.wizard_scope import EffortTier
+
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_global_fit_wizard_screening_recommendation",
+        lambda datasets_arg, **_kwargs: _fake_screening_recommendation(datasets_arg),
+    )
+
+    def _fake_build(datasets_arg, **kwargs):
+        captured.update(kwargs)
+        return _fake_multi_variant_recommendation(datasets_arg)
+
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_global_fit_wizard_recommendation",
+        _fake_build,
+    )
+    window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
+    window._start_analysis()
+    wait_for(lambda: _analysis_complete(window), qapp)
+
+    window._compare_table.selectRow(0)
+    window._on_compare_selection_changed()
+    window._start_selected_optimisation()
+    wait_for(lambda: _analysis_complete(window) and window._optimized_table.rowCount() == 2, qapp)
+
+    # The single visible mode always forwards the exact tier.
+    assert captured.get("effort_tier") is EffortTier.EXHAUSTIVE
+
+
+def test_global_fit_wizard_window_effort_tier_in_analysis_signature(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+) -> None:
+    """The analysis signature records the exact tier (the single Optimize mode)."""
+    window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
+
+    assert window._analysis_signature()["effort_tier"] == "exhaustive"
+
+
+def test_global_fit_wizard_window_cached_restore_legacy_tier_stays_exact(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+) -> None:
+    """Restoring a legacy Low/Balanced payload stays on the exact Optimize mode.
+
+    The one-item control cannot represent the retired heuristic tiers, and every
+    tier runs the exact engine anyway, so a legacy payload degrades to the exact
+    tier without being marked stale.
+    """
+    from asymmetry.core.fitting.wizard_scope import EffortTier
+
+    window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
+
+    window.set_cached_recommendation(
+        _fake_recommendation(datasets),
+        signature={
+            "run_numbers": [int(dataset.run_number) for dataset in datasets],
+            "model": None,
+            "effort_tier": "low",
+        },
+        log_text="cached",
+    )
+
+    assert window.current_effort_tier() is EffortTier.EXHAUSTIVE
+    assert window._analysis_stale is False
+    assert window._stale_banner.isHidden() is True
+
+
+def test_global_fit_wizard_window_cached_restore_legacy_signature_is_exhaustive(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+) -> None:
+    from asymmetry.core.fitting.wizard_scope import EffortTier
+
+    window = GlobalFitWizardWindow()
+    window.set_cached_recommendation(_fake_recommendation(datasets))
+
+    # Legacy signature (no effort_tier key) restores the exact tier, not stale.
+    assert window.current_effort_tier() is EffortTier.EXHAUSTIVE
+    assert window._analysis_stale is False
+    assert window._stale_banner.isHidden() is True
+
+
 # ── Cooperative cancel ───────────────────────────────────────────────────────
 
 

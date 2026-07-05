@@ -11,13 +11,19 @@ from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import COMPONENTS
 from asymmetry.core.fitting.user_functions import register_component
 from asymmetry.core.fitting.wizard_scope import (
+    DEFAULT_EFFORT_TIER,
+    EFFORT_TIER_DESCRIPTIONS,
+    EFFORT_TIER_LABELS,
     MUONIUM_HIGH_TF_MIN_GAUSS,
     MUONIUM_LOW_TF_MAX_GAUSS,
     ZERO_FIELD_MAX_GAUSS,
+    EffortTier,
     ExcludedComponent,
     ScopeResolution,
     WizardScope,
     WizardScopePreset,
+    effort_tier_from_payload,
+    effort_tier_to_payload,
     estimate_screening_cost,
     infer_auto_query,
     resolve_scope,
@@ -425,3 +431,45 @@ def test_estimate_screening_cost_positive_and_ordered():
     assert zf_candidates > 0 and zf_fits > 0
     assert all_candidates > zf_candidates
     assert all_fits > zf_fits
+
+
+# --- effort tier (PR 5) ---------------------------------------------------
+
+
+def test_effort_tier_default_is_exhaustive():
+    # PR 5 rework: every tier resolves to the exact engine, so the persisted/
+    # legacy-restore default is the exact (Exhaustive) tier — the single honest
+    # user-facing optimisation mode.
+    assert DEFAULT_EFFORT_TIER is EffortTier.EXHAUSTIVE
+
+
+def test_effort_tier_has_four_values():
+    assert {tier.value for tier in EffortTier} == {"low", "balanced", "thorough", "exhaustive"}
+
+
+def test_effort_tier_every_value_has_a_label_and_description():
+    for tier in EffortTier:
+        assert EFFORT_TIER_LABELS[tier]
+        assert EFFORT_TIER_DESCRIPTIONS[tier]
+
+
+def test_low_label_says_screening_grade():
+    assert "screening-grade" in EFFORT_TIER_LABELS[EffortTier.LOW].lower()
+
+
+@pytest.mark.parametrize("tier", list(EffortTier))
+def test_effort_tier_payload_round_trips(tier: EffortTier):
+    payload = effort_tier_to_payload(tier)
+    assert isinstance(payload, str)
+    assert effort_tier_from_payload(payload) is tier
+
+
+def test_effort_tier_from_payload_tolerates_garbage():
+    assert effort_tier_from_payload(None) is DEFAULT_EFFORT_TIER
+    assert effort_tier_from_payload("not-a-tier") is DEFAULT_EFFORT_TIER
+    assert effort_tier_from_payload(123) is DEFAULT_EFFORT_TIER
+    assert effort_tier_from_payload({}) is DEFAULT_EFFORT_TIER
+
+
+def test_effort_tier_from_payload_accepts_enum_member_directly():
+    assert effort_tier_from_payload(EffortTier.LOW) is EffortTier.LOW
