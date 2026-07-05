@@ -32,6 +32,14 @@ class WizardWindowBase(QMainWindow):
     Subclasses supply their tabs, their worker task, and their result
     population. The base owns the TaskRunner, progress UI, request-id
     staleness, error handling, the signature cache, and closeEvent/cancel.
+
+    The content region beneath the heading/status/controls chrome comes from
+    the ``_build_central()`` hook. Its default creates ``self._tabs`` and
+    calls the ``_build_tabs()`` hook, exactly as before; a subclass may
+    instead override ``_build_central()`` to return its own content widget
+    (e.g. a QStackedWidget) — on that path ``self._tabs`` stays ``None``,
+    ``_build_tabs()`` is never called and need not be implemented. The
+    surrounding chrome stays base-owned on both paths.
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -63,29 +71,41 @@ class WizardWindowBase(QMainWindow):
         self._controls_row.addWidget(self._progress_label)
         self._controls_row.addWidget(self._progress_bar)
 
-        self._tabs = QTabWidget()
-
         central = QWidget()
         layout = QVBoxLayout(central)
         layout.addWidget(self._heading_label)
         layout.addWidget(self._status_label)
         layout.addLayout(self._controls_row)
-        layout.addWidget(self._tabs)
         self.setCentralWidget(central)
-        #: The central QVBoxLayout ([heading, status, controls, tabs]). Exposed
-        #: so a subclass can append trailing rows (e.g. a nav row) beneath the
-        #: tabs from its _build_tabs() hook.
+        #: The central QVBoxLayout ([heading, status, controls, <content>]).
+        #: Exposed so a subclass can append trailing rows (e.g. a nav row)
+        #: beneath the content region from its _build_tabs() hook.
         self._central_layout = layout
 
-        # Subclass tab construction runs after _tabs and _controls_row exist,
-        # so a subclass may append its own controls/tabs safely.
-        self._build_tabs()
+        #: The tab container. Assigned a QTabWidget only by the default
+        #: _build_central(); stays None when a subclass overrides the content
+        #: region, so base and subclass code must not assume it exists.
+        self._tabs: QTabWidget | None = None
+
+        # Content-region construction runs after _controls_row and
+        # _central_layout exist, so the hook may append its own
+        # controls/tabs/rows safely. The default _build_central attaches the
+        # tab widget itself (it must be in the layout before _build_tabs runs,
+        # so _build_tabs can insert widgets relative to it and append trailing
+        # rows beneath it); an override that merely returns its widget is
+        # attached here.
+        content = self._build_central()
+        if layout.indexOf(content) == -1:
+            layout.addWidget(content)
 
     # ------------------------------------------------------------------
     # Template-method hooks — abstract, subclasses must implement.
     # ------------------------------------------------------------------
 
     def _build_tabs(self) -> None:
+        # Required only on the default _build_central() path; a subclass that
+        # overrides _build_central() supplies its own content widget and is
+        # not required to implement this hook.
         raise NotImplementedError
 
     def _create_worker_task(self, request_id: int) -> Callable[[TaskWorker], object]:
@@ -103,6 +123,22 @@ class WizardWindowBase(QMainWindow):
     # ------------------------------------------------------------------
     # Template-method hooks — optional, with sensible defaults.
     # ------------------------------------------------------------------
+
+    def _build_central(self) -> QWidget:
+        """Build and return the content region beneath the base chrome.
+
+        Default: create ``self._tabs``, attach it to ``self._central_layout``
+        (so ``_build_tabs()`` can insert widgets relative to it and append
+        trailing rows beneath it), run the ``_build_tabs()`` hook, and return
+        the tab widget. An override returns its own content widget instead;
+        ``__init__`` attaches the returned widget to the central layout if
+        the hook did not attach it already. On the override path
+        ``self._tabs`` stays ``None`` and ``_build_tabs()`` is never called.
+        """
+        self._tabs = QTabWidget()
+        self._central_layout.addWidget(self._tabs)
+        self._build_tabs()
+        return self._tabs
 
     def _on_analysis_failed(self, message: str) -> None:
         self._status_label.setText(message)
