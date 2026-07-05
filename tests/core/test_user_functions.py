@@ -16,6 +16,12 @@ from asymmetry.core.fitting.component_docs import (
     get_component_applicability,
     get_component_references,
 )
+from asymmetry.core.fitting.component_tags import (
+    ALL_GEOMETRIES,
+    ComputationalCost,
+    FieldGeometry,
+    PhysicsClass,
+)
 from asymmetry.core.fitting.composite import COMPONENTS, CompositeModel
 from asymmetry.core.fitting.models import MODELS
 from asymmetry.core.fitting.parameter_models import (
@@ -103,6 +109,45 @@ def test_register_parameter_component_appears_in_scope_filter():
 def test_param_defaults_fill_with_unity_when_omitted():
     definition = _register_stretched(param_defaults={"A": 25.0})
     assert definition.param_defaults == {"A": 25.0, "tau": 1.0, "alpha": 1.0}
+
+
+# ── scoping tags ────────────────────────────────────────────────────────────
+
+
+def test_register_component_tags_land_on_definition():
+    definition = _register_stretched(
+        field_geometries=("ZF", "LF"),
+        physics_classes=("magnetism", "dynamics"),
+        cost="expensive",
+    )
+    assert definition.field_geometries == frozenset({FieldGeometry.ZF, FieldGeometry.LF})
+    assert definition.physics_classes == frozenset({PhysicsClass.MAGNETISM, PhysicsClass.DYNAMICS})
+    assert definition.cost is ComputationalCost.EXPENSIVE
+
+
+def test_register_component_tag_defaults_when_omitted():
+    definition = _register_stretched()
+    assert definition.field_geometries == ALL_GEOMETRIES
+    assert definition.physics_classes == frozenset({PhysicsClass.CUSTOM})
+    assert definition.cost is ComputationalCost.MODERATE
+
+
+def test_register_component_bad_geometry_rejected():
+    with pytest.raises(UserFunctionError, match="XF"):
+        _register_stretched(field_geometries=("ZF", "XF"))
+    assert "UserStretched" not in COMPONENTS
+
+
+def test_register_component_bad_physics_class_rejected():
+    with pytest.raises(UserFunctionError, match="not-a-class"):
+        _register_stretched(physics_classes=("not-a-class",))
+    assert "UserStretched" not in COMPONENTS
+
+
+def test_register_component_bad_cost_rejected():
+    with pytest.raises(UserFunctionError, match="ludicrous"):
+        _register_stretched(cost="ludicrous")
+    assert "UserStretched" not in COMPONENTS
 
 
 # ── designed load-time failures ────────────────────────────────────────────

@@ -32,6 +32,9 @@ def _write_v2_file(
     last_good_time_us: float | None = None,
     orientation: str = "L",
     field_state: str | None = None,
+    field_vector: tuple[float, float, float] | None = None,
+    field_vector_available: int | None = None,
+    magnetic_field: float | None = 150.0,
     temp_setpoint: float = 12.5,
     temp_setpoint_units: str | None = None,
     temp_log_values: tuple[float, ...] = (12.0, 12.5, 13.0),
@@ -115,9 +118,18 @@ def _write_v2_file(
         temperature_ds = sample.create_dataset("temperature", data=temp_setpoint)
         if temp_setpoint_units is not None:
             temperature_ds.attrs["units"] = np.bytes_(temp_setpoint_units)
-        sample.create_dataset("magnetic_field", data=150.0)
+        if magnetic_field is not None:
+            sample.create_dataset("magnetic_field", data=magnetic_field)
         if field_state is not None:
             sample.create_dataset("magnetic_field_state", data=np.bytes_(field_state))
+        if field_vector is not None:
+            vector_ds = sample.create_dataset(
+                "magnetic_field_vector", data=np.asarray(field_vector, dtype=np.float32)
+            )
+            vector_ds.attrs["coordinate_system"] = np.bytes_("cartesian")
+            vector_ds.attrs["units"] = np.bytes_("Gauss")
+            if field_vector_available is not None:
+                vector_ds.attrs["available"] = np.int32(field_vector_available)
 
         log_values = np.asarray(temp_log_values, dtype=np.float64)
         if temp_log_times is not None:
@@ -148,7 +160,13 @@ def _write_v2_file(
             periods.create_dataset("number", data=2)
 
 
-def _write_v1_file(path, *, orientation: str = "T", field_state: str | None = None) -> None:
+def _write_v1_file(
+    path,
+    *,
+    orientation: str = "T",
+    field_state: str | None = None,
+    magnetic_field: float | None = 20.0,
+) -> None:
     with h5py.File(path, "w") as f:
         run = f.create_group("run")
         run.create_dataset("analysis", data=np.bytes_("muonTD"))
@@ -165,7 +183,8 @@ def _write_v1_file(path, *, orientation: str = "T", field_state: str | None = No
 
         sample = run.create_group("sample")
         sample.create_dataset("temperature", data=5.0)
-        sample.create_dataset("magnetic_field", data=20.0)
+        if magnetic_field is not None:
+            sample.create_dataset("magnetic_field", data=magnetic_field)
         if field_state is not None:
             sample.create_dataset("magnetic_field_state", data=np.bytes_(field_state))
 
@@ -799,3 +818,142 @@ def test_v1_field_state_absent_geometry_is_blank(tmp_path, loader: NexusLoader) 
     assert ds.metadata["field_state"] == ""
     assert ds.metadata["field_direction"] == ""
     assert ds.metadata["detector_orientation"] == "Transverse"
+
+
+# --- sample/magnetic_field_vector extraction --------------------------------
+#
+# ISIS NeXus files carry a magnetic_field_vector dataset with an ``available``
+# attribute; a real-corpus survey found every "unavailable" file held the same
+# placeholder ([1, 1, 1], available=0). It is surfaced as raw provenance only —
+# never used to infer TF/LF geometry (see NexusLoader._read_field_vector).
+
+
+def test_v2_field_vector_available_is_surfaced(tmp_path, loader: NexusLoader) -> None:
+    path = tmp_path / "run_v2_vector.nxs"
+    _write_v2_file(
+        path,
+        field_state="TF",
+        field_vector=(0.0, 0.0, 1.0),
+        field_vector_available=1,
+    )
+
+    ds = loader.load(str(path))
+    assert ds.metadata["field_vector"] == pytest.approx([0.0, 0.0, 1.0])
+
+
+def test_v2_field_vector_unavailable_placeholder_is_not_surfaced(
+    tmp_path, loader: NexusLoader
+) -> None:
+    """available=0 marks the [1,1,1] vector a placeholder; it must not appear."""
+    path = tmp_path / "run_v2_vector_unavailable.nxs"
+    _write_v2_file(
+        path,
+        field_state="TF",
+        field_vector=(1.0, 1.0, 1.0),
+        field_vector_available=0,
+    )
+
+    ds = loader.load(str(path))
+    assert "field_vector" not in ds.metadata
+
+
+def test_v2_field_vector_absent_is_not_surfaced(tmp_path, loader: NexusLoader) -> None:
+    path = tmp_path / "run_v2_no_vector.nxs"
+    _write_v2_file(path, field_state="TF", field_vector=None)
+
+    ds = loader.load(str(path))
+    assert "field_vector" not in ds.metadata
+
+
+def test_v2_field_vector_never_overrides_field_direction(tmp_path, loader: NexusLoader) -> None:
+    """A [0,0,1] TF vector must not make LF/ZF-labelled runs read differently."""
+    path = tmp_path / "run_v2_vector_lf.nxs"
+    _write_v2_file(
+        path,
+        field_state="LF",
+        field_vector=(0.0, 0.0, 1.0),
+        field_vector_available=1,
+    )
+
+    ds = loader.load(str(path))
+    assert ds.metadata["field_direction"] == "Longitudinal"
+    assert ds.metadata["field_vector"] == pytest.approx([0.0, 0.0, 1.0])
+
+
+# --- ICP .log sidecar fill (only when NeXus metadata is missing) ------------
+#
+# See asymmetry.core.io.icp_log. The loader only fills field/field_direction
+# from a sibling .log when the NeXus file itself carries no usable value —
+# it must never override metadata the NeXus file actually recorded.
+
+_ZF_LOG_TEXT = (
+    "2012-03-10T09:14:33\tField_ZF_Magnitude\t0.00010\n"
+    "2012-03-10T09:14:33\tField_Danfysik\t0\n"
+    "2012-03-10T09:19:37\ta_selected_magnet\tActive ZF\n"
+    "2012-03-10T09:19:37\tField_ZF_Magnitude\t0.00015\n"
+)
+
+_DANFYSIK_LOG_TEXT = (
+    "2012-03-10T09:14:33\tField_Danfysik\t99.5\n"
+    "2012-03-10T09:19:37\ta_selected_magnet\tDanfysik\n"
+    "2012-03-10T09:19:40\tField_Danfysik\t100.0\n"
+)
+
+
+def test_v2_missing_field_metadata_filled_from_sidecar_log(tmp_path, loader: NexusLoader) -> None:
+    path = tmp_path / "run_v2_no_state.nxs"
+    _write_v2_file(path, field_state=None, magnetic_field=None)
+    path.with_suffix(".log").write_text(_ZF_LOG_TEXT)
+
+    ds = loader.load(str(path))
+    assert ds.metadata["field_direction"] == "Zero field"
+    assert ds.metadata["field_state"] == "ZF"
+    assert ds.metadata["field"] == pytest.approx(0.00015)
+    assert ds.metadata["field_source"] == "icp_log"
+
+
+def test_v2_missing_field_metadata_filled_from_sidecar_log_nonzero(
+    tmp_path, loader: NexusLoader
+) -> None:
+    path = tmp_path / "run_v2_no_state_nonzero.nxs"
+    _write_v2_file(path, field_state=None, magnetic_field=None)
+    path.with_suffix(".log").write_text(_DANFYSIK_LOG_TEXT)
+
+    ds = loader.load(str(path))
+    # Danfysik does not name a TF/LF direction; only magnitude is filled.
+    assert ds.metadata["field_direction"] == ""
+    assert ds.metadata["field"] == pytest.approx(100.0)
+    assert ds.metadata["field_source"] == "icp_log"
+
+
+def test_v2_present_field_state_is_never_overridden_by_log(tmp_path, loader: NexusLoader) -> None:
+    """A NeXus file that already records TF must not be relabelled ZF by a log."""
+    path = tmp_path / "run_v2_tf_with_log.nxs"
+    _write_v2_file(path, field_state="TF", magnetic_field=0.0)
+    path.with_suffix(".log").write_text(_ZF_LOG_TEXT)
+
+    ds = loader.load(str(path))
+    assert ds.metadata["field_state"] == "TF"
+    assert ds.metadata["field_direction"] == "Transverse"
+    assert ds.metadata["field"] == pytest.approx(0.0)
+    assert "field_source" not in ds.metadata
+
+
+def test_v2_no_sidecar_log_leaves_metadata_unchanged(tmp_path, loader: NexusLoader) -> None:
+    path = tmp_path / "run_v2_no_state_no_log.nxs"
+    _write_v2_file(path, field_state=None, magnetic_field=None)
+
+    ds = loader.load(str(path))
+    assert ds.metadata["field_direction"] == ""
+    assert ds.metadata["field"] == 0.0  # _safe_float default, unchanged
+    assert "field_source" not in ds.metadata
+
+
+def test_v2_malformed_sidecar_log_does_not_raise(tmp_path, loader: NexusLoader) -> None:
+    path = tmp_path / "run_v2_bad_log.nxs"
+    _write_v2_file(path, field_state=None, magnetic_field=None)
+    path.with_suffix(".log").write_text("this is not a valid ICP log\n\x00\xff garbage")
+
+    ds = loader.load(str(path))  # must not raise
+    assert ds.metadata["field_direction"] == ""
+    assert "field_source" not in ds.metadata

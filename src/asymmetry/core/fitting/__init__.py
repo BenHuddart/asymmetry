@@ -2,6 +2,11 @@
 
 from asymmetry.core.fitting import muon_fluorine, sc
 from asymmetry.core.fitting.asymmetry_global import GlobalFitResult, fit_global
+from asymmetry.core.fitting.component_tags import (
+    ComputationalCost,
+    FieldGeometry,
+    PhysicsClass,
+)
 from asymmetry.core.fitting.composite import COMPONENTS, ComponentDefinition, CompositeModel
 from asymmetry.core.fitting.composite_parameters import (
     CompositeEvaluation,
@@ -142,6 +147,18 @@ from asymmetry.core.fitting.spectral import (
     frequency_mhz_to_field_gauss,
     seed_peak_parameters_from_dataset,
 )
+from asymmetry.core.fitting.wizard_scope import (
+    ExcludedComponent,
+    ScopeQuery,
+    ScopeResolution,
+    WizardScope,
+    WizardScopePreset,
+    estimate_screening_cost,
+    infer_auto_query,
+    resolve_scope,
+    resolve_scope_for_dataset,
+    resolve_scope_for_datasets,
+)
 
 __all__ = [
     "FitEngine",
@@ -266,4 +283,17 @@ __all__ = [
     "field_gauss_to_frequency_mhz",
     "frequency_mhz_to_field_gauss",
     "seed_peak_parameters_from_dataset",
+    "FieldGeometry",
+    "PhysicsClass",
+    "ComputationalCost",
+    "WizardScope",
+    "WizardScopePreset",
+    "ScopeQuery",
+    "ScopeResolution",
+    "ExcludedComponent",
+    "resolve_scope",
+    "resolve_scope_for_dataset",
+    "resolve_scope_for_datasets",
+    "estimate_screening_cost",
+    "infer_auto_query",
 ]

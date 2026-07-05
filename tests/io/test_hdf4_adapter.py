@@ -121,7 +121,9 @@ def test_to_str_strips_trailing_nul_and_whitespace() -> None:
 # --- v1 reduction over the adapter (the counts-attr fix) --------------------
 
 
-def _v1_handle(*, with_bin_attrs: bool) -> _Hdf4Group:
+def _v1_handle(
+    *, with_bin_attrs: bool, field_vector: tuple[float, float, float] | None = None
+) -> _Hdf4Group:
     """A minimal but representative v1 ``/run`` tree, as the HDF4 reader yields.
 
     Eight bins, two detectors, two groups. ``corrected_time`` is centred so the
@@ -150,6 +152,12 @@ def _v1_handle(*, with_bin_attrs: bool) -> _Hdf4Group:
     )
     sample.children["magnetic_field"] = Dataset("magnetic_field", np.array([100.0], np.float32))
     sample.children["magnetic_field_state"] = _char("magnetic_field_state", "TF")
+    if field_vector is not None:
+        sample.children["magnetic_field_vector"] = Dataset(
+            "magnetic_field_vector",
+            np.asarray(field_vector, dtype=np.float32),
+            attrs={"coordinate_system": "cartesian", "available": 1},
+        )
     run.children["sample"] = sample
 
     hist = Group("histogram_data_1", "NXdata")
@@ -191,6 +199,70 @@ def test_v1_reads_good_bin_window_and_t0_from_counts_attrs() -> None:
     assert ds.run.histograms[0].t0_bin == 2
     # Window [3..7] inclusive -> 5 points (would be 8 if attrs were ignored).
     assert ds.n_points == 5
+
+
+def test_v1_field_vector_available_is_surfaced_as_provenance() -> None:
+    """An HDF4 v1 sample/magnetic_field_vector with available=1 is exposed."""
+    loader = NexusLoader()
+    handle = _v1_handle(with_bin_attrs=True, field_vector=(0.0, 0.0, 1.0))
+    result = loader._reduce_handle(handle, "synthetic")
+    ds = result[0] if isinstance(result, list) else result
+    assert ds.metadata["field_vector"] == pytest.approx([0.0, 0.0, 1.0])
+
+
+def test_v1_field_vector_unavailable_placeholder_not_surfaced() -> None:
+    """available=0 marks the vector a placeholder (real-corpus [1,1,1] case)."""
+    loader = NexusLoader()
+    handle = _v1_handle(with_bin_attrs=True)
+    # Patch in the real-corpus placeholder shape directly on the tree.
+    sample = handle._group.children["run"].children["sample"]
+    sample.children["magnetic_field_vector"] = Dataset(
+        "magnetic_field_vector",
+        np.array([1.0, 1.0, 1.0], dtype=np.float32),
+        attrs={"coordinate_system": "cartesian", "available": 0},
+    )
+    result = loader._reduce_handle(handle, "synthetic")
+    ds = result[0] if isinstance(result, list) else result
+    assert "field_vector" not in ds.metadata
+
+
+def test_v1_no_field_vector_node_is_not_surfaced() -> None:
+    loader = NexusLoader()
+    result = loader._reduce_handle(_v1_handle(with_bin_attrs=True), "synthetic")
+    ds = result[0] if isinstance(result, list) else result
+    assert "field_vector" not in ds.metadata
+
+
+def test_v1_sidecar_log_fills_missing_field_state(tmp_path) -> None:
+    """The HDF4 v1 path also honours the ICP .log fill-when-missing behaviour."""
+    root = Group("/", "NXroot")
+    run = Group("run", "NXentry")
+    run.children["analysis"] = _char("analysis", "muonTD")
+    run.children["number"] = Dataset("number", np.array([38241], dtype=np.int32))
+    sample = Group("sample", "NXsample")
+    run.children["sample"] = sample  # no magnetic_field / magnetic_field_state at all
+    hist = Group("histogram_data_1", "NXdata")
+    hist.children["counts"] = Dataset("counts", np.arange(8, dtype=np.int32).reshape(2, 4))
+    hist.children["corrected_time"] = Dataset(
+        "corrected_time", ((np.arange(4) - 1) * 0.1).astype(np.float32)
+    )
+    run.children["histogram_data_1"] = hist
+    root.children["run"] = run
+
+    source = tmp_path / "MUSR00038241.nxs"
+    source.write_bytes(b"")  # loader only needs the path to exist for the sidecar lookup
+    (tmp_path / "MUSR00038241.log").write_text(
+        "2012-03-10T09:19:37\ta_selected_magnet\tActive ZF\n"
+        "2012-03-10T09:19:41\tField_ZF_Magnitude\t0.0002\n"
+    )
+
+    loader = NexusLoader()
+    result = loader._reduce_handle(_Hdf4Group(root), str(source))
+    ds = result[0] if isinstance(result, list) else result
+    assert ds.metadata["field_direction"] == "Zero field"
+    assert ds.metadata["field_state"] == "ZF"
+    assert ds.metadata["field"] == pytest.approx(0.0002)
+    assert ds.metadata["field_source"] == "icp_log"
 
 
 def test_v1_multiperiod_flat_counts_split_by_switching_states() -> None:
