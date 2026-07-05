@@ -42,6 +42,7 @@ from asymmetry.core.fitting.parameter_models import (
     fit_parameter_model,
     is_order_parameter_observable,
     sample_parameter_model,
+    suggest_model_seeds,
     suggest_trend_seeds,
     validate_fit_windows,
     windows_mask,
@@ -49,7 +50,13 @@ from asymmetry.core.fitting.parameter_models import (
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.fit_settings import fit_quality_confidence
 from asymmetry.gui.styles import tokens
-from asymmetry.gui.styles.widgets import apply_param_table_style, clear_layout, make_formula_box
+from asymmetry.gui.styles.widgets import (
+    apply_param_table_style,
+    clear_layout,
+    info_html,
+    make_formula_box,
+    warning_html,
+)
 from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.widgets.function_builder.dialog import (
     FunctionBuilderDialog,
@@ -473,6 +480,12 @@ class ModelFitDialog(QDialog):
         self._window_spin_widgets: dict[tuple[int, int], tuple[QDoubleSpinBox, QDoubleSpinBox]] = {}
         self._active_range_idx: int | None = None
         self._fit_in_progress = False
+        # Own busy flag for the user-initiated "Guess seeds" data-aware seeder
+        # (item 3.3). Deliberately SEPARATE from ``_fit_in_progress`` so the
+        # lightweight off-thread seed suggestion never drives ``_set_fit_ui_busy``
+        # / locks the whole dialog the way a real fit does.
+        self._guess_in_progress = False
+        self._guess_target_idx: int | None = None
         # Background fits run on the shared TaskRunner (gui/tasks.py), which owns
         # the QThread/worker lifecycle and a bounded, Windows-safe shutdown.
         self._tasks = TaskRunner(self)
@@ -646,6 +659,24 @@ class ModelFitDialog(QDialog):
 
         self._range_hint_label = QLabel("Select a range above to edit its model parameters.")
         params_layout.addWidget(self._range_hint_label)
+
+        # "Guess seeds" (item 3.3): user-initiated, off-thread data-aware seeding
+        # of the ACTIVE range's free parameters. Never fires automatically — the
+        # seed-preserve behaviour is pinned by test_model_fit_seed_preserve.py.
+        guess_row = QHBoxLayout()
+        self._guess_seeds_btn = QPushButton("Guess seeds")
+        self._guess_seeds_btn.setToolTip(
+            "Derive data-aware starting values for the selected range's free "
+            "parameters from the fitted region's x/y data. Fixed parameters are "
+            "never changed. Runs off the GUI thread."
+        )
+        self._guess_seeds_btn.clicked.connect(self._on_guess_seeds_clicked)
+        guess_row.addWidget(self._guess_seeds_btn)
+        self._guess_status_label = QLabel("")
+        self._guess_status_label.setTextFormat(Qt.TextFormat.RichText)
+        guess_row.addWidget(self._guess_status_label)
+        guess_row.addStretch()
+        params_layout.addLayout(guess_row)
 
         self._formula_box, self._formula_label = make_formula_box()
         params_layout.addWidget(self._formula_box)
@@ -1570,6 +1601,123 @@ class ModelFitDialog(QDialog):
         this to drop that cache too.
         """
 
+    # -- data-aware "Guess seeds" (item 3.3) ----------------------------------
+    #
+    # USER-INITIATED ONLY. This must never fire on a model edit or a range
+    # selection — the seed-preserve invariant is pinned by
+    # tests/gui/test_model_fit_seed_preserve.py. It mirrors the cross-group
+    # "Suggest roles…" off-thread pattern: snapshot plain data on the GUI thread,
+    # run core off-thread on ``self._tasks`` under its own ``_guess_in_progress``
+    # flag (NOT ``_fit_in_progress``), then write the returned values back through
+    # the shared commit path so they are normalised/persisted like any edit.
+
+    def _set_guess_busy(self, busy: bool) -> None:
+        self._guess_in_progress = busy
+        self._guess_seeds_btn.setEnabled(not busy)
+
+    def _on_guess_seeds_clicked(self) -> None:
+        """Suggest data-aware seeds for the ACTIVE range, off-thread."""
+        if self._guess_in_progress or self._fit_in_progress:
+            return
+        idx = self._active_range_idx
+        if idx is None or idx < 0 or idx >= len(self._fit.ranges):
+            return
+
+        # Persist any pending table edit first so the snapshot reflects the
+        # current bounds/fixed flags, then snapshot as plain data.
+        self._commit_param_table(notify_adjustments=False)
+        fit_range = self._fit.ranges[idx]
+
+        model_snapshot = ParameterCompositeModel(
+            component_names=list(fit_range.model.component_names),
+            operators=list(fit_range.model.operators),
+        )
+
+        # Mask x/y/yerr to the active range (same idiom as the preview sampler)
+        # so seeds reflect the fitted region. Fall back to full data if the mask
+        # leaves fewer than two points to estimate from.
+        x_full = np.asarray(self._x, dtype=float).copy()
+        y_full = np.asarray(self._y, dtype=float).copy()
+        yerr_full = np.asarray(self._yerr, dtype=float).copy()
+        windows = list(fit_range.windows) if fit_range.windows else None
+        mask = windows_mask(x_full, windows, fit_range.x_min, fit_range.x_max)
+        if mask.size == x_full.size and int(np.count_nonzero(mask)) >= 2:
+            x_masked = x_full[mask]
+            y_masked = y_full[mask]
+            yerr_masked = yerr_full[mask]
+        else:
+            x_masked, y_masked, yerr_masked = x_full, y_full, yerr_full
+
+        self._set_guess_busy(True)
+        self._guess_status_label.setText(info_html("Guessing seeds…"))
+
+        def _worker(_worker: object) -> object:
+            # OFF-THREAD: reads only the plain snapshots captured above.
+            return suggest_model_seeds(model_snapshot, x_masked, y_masked, yerr_masked)
+
+        self._guess_target_idx = idx
+        self._tasks.start(
+            _worker,
+            on_finished=self._on_guess_seeds_done,
+            on_error=self._on_guess_seeds_error,
+        )
+
+    def _on_guess_seeds_done(self, payload: object) -> None:
+        """GUI thread: write returned seeds into the active range's param table."""
+        self._set_guess_busy(False)
+        seeds = payload if isinstance(payload, dict) else {}
+        if not seeds:
+            self._guess_status_label.setText(
+                info_html("No data-aware seed available for this model")
+            )
+            return
+
+        # Only touch the range that was active when Guess was launched, and only
+        # if it is still the active range (a selection change mid-run makes the
+        # result stale for the table currently shown).
+        target_idx = getattr(self, "_guess_target_idx", None)
+        if target_idx is None or target_idx != self._active_range_idx:
+            self._guess_status_label.setText("")
+            return
+
+        changed = False
+        self._param_table.blockSignals(True)
+        for row in range(self._param_table.rowCount()):
+            name_item = self._param_table.item(row, 0)
+            value_item = self._param_table.item(row, 1)
+            if name_item is None or value_item is None:
+                continue
+            name_data = name_item.data(Qt.ItemDataRole.UserRole)
+            name = name_data.strip() if isinstance(name_data, str) else name_item.text().strip()
+            if name not in seeds:
+                continue
+            # NEVER overwrite a fixed parameter (fixed row or shape_factor_a).
+            control = self._param_table.cellWidget(row, 4)
+            if bool(self._read_param_row_control(control).get("fixed", False)):
+                continue
+            if name == "shape_factor_a":
+                continue
+            value_item.setText(f"{float(seeds[name]):.8g}")
+            changed = True
+        self._param_table.blockSignals(False)
+
+        if not changed:
+            self._guess_status_label.setText(
+                info_html("Data-aware seeds apply only to fixed parameters here")
+            )
+            return
+
+        # Route through the shared commit path so the written values are
+        # normalised (via _normalize_parameter_limits) and persisted, then
+        # refresh the preview so the dashed seed curve follows.
+        self._commit_param_table(notify_adjustments=False)
+        self._guess_status_label.setText("")
+        self._request_preview_update()
+
+    def _on_guess_seeds_error(self, message: str) -> None:
+        self._set_guess_busy(False)
+        self._guess_status_label.setText(warning_html("Seed guess failed"))
+
     def _run_fit(self, idx: int) -> None:
         if self._fit_in_progress:
             _show_info(self, "Fit in progress", "Please wait for the current fit to finish.")
@@ -1639,6 +1787,10 @@ class ModelFitDialog(QDialog):
                 error_value=error_value,
                 windows=windows,
                 xerr=x_errs,
+                # Multi-start robustness (item 3.4): 4 extra deterministic starts
+                # plus the user's own start; seed fixed so the run is reproducible.
+                extra_starts=4,
+                seed=0,
             )
 
         def _on_done(result: object) -> None:
@@ -1767,8 +1919,44 @@ class ModelFitDialog(QDialog):
         )
 
     def _quality_status_text(self, fit_range: ModelFitRange, result: object | None) -> str:
-        """χ² quality-verdict line for the selected range (empty when none)."""
-        return self._quality_text_for_range(fit_range)
+        """χ² quality-verdict line for the selected range (empty when none).
+
+        Also appends the item-3.4 bad-minimum signals (parameters pinned at a
+        bound; a data-aware start beating the user's start) INLINE beneath the
+        χ² verdict. Both are guarded on ``getattr`` of fields that only the
+        single-fit ``ParameterModelFitResult`` carries, so the cross-group path
+        (whose ``CrossGroupFitResult`` lacks them, and which overrides this hook
+        anyway) is unaffected.
+        """
+        lines = [self._quality_text_for_range(fit_range)]
+        lines.extend(self._bad_minimum_status_lines(result))
+        return "<br>".join(line for line in lines if line)
+
+    def _bad_minimum_status_lines(self, result: object | None) -> list[str]:
+        """Inline warning/info lines for multi-start bad-minimum signals (3.4).
+
+        Returns an empty list when *result* is None, unsuccessful, or lacks the
+        new multi-start fields — so a cross-group / legacy result adds nothing.
+        """
+        if result is None or not getattr(result, "success", False):
+            return []
+        lines: list[str] = []
+        params_at_bound = getattr(result, "params_at_bound", ())
+        if params_at_bound:
+            names = ", ".join(str(name) for name in params_at_bound)
+            lines.append(
+                warning_html(
+                    f"Parameters at their limits: {names} — the fit may be "
+                    "constrained; widen bounds or re-seed."
+                )
+            )
+        if getattr(result, "seed_beat_user_start", False):
+            lines.append(
+                info_html(
+                    "A data-aware start improved the fit — seeds were re-derived from the data."
+                )
+            )
+        return lines
 
     def _select_range(self, idx: int) -> None:
         if idx < 0 or idx >= len(self._fit.ranges):
@@ -2015,6 +2203,10 @@ class ModelFitDialog(QDialog):
 
         self._range_selector.setEnabled(not busy)
         self._param_table.setEnabled(not busy)
+        if hasattr(self, "_guess_seeds_btn"):
+            # Don't let a Guess launch race a real fit; leave it disabled while
+            # its own guess is in flight too.
+            self._guess_seeds_btn.setEnabled(not busy and not self._guess_in_progress)
         if hasattr(self, "_add_range_btn"):
             self._add_range_btn.setEnabled(not busy)
         if hasattr(self, "_remove_fit_btn"):

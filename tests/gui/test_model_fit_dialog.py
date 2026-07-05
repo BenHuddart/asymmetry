@@ -767,6 +767,190 @@ def test_run_fit_rejects_inverted_window(qapp: QApplication, monkeypatch) -> Non
     assert not dlg._fit_in_progress
 
 
+# ---------------------------------------------------------------------------
+# Phase 3 (seeding robustness): "Guess seeds" + multi-start bad-minimum messages
+# ---------------------------------------------------------------------------
+
+
+def _make_linear_dialog(qapp: QApplication) -> ModelFitDialog:
+    """A Linear-model dialog over clearly sloped data (slope 2, intercept 1)."""
+    x = np.linspace(1.0, 10.0, 20)
+    y = 2.0 * x + 1.0
+    yerr = np.full_like(x, 0.1)
+    model = ParameterCompositeModel(["Linear"], [])
+    params = ParameterSet([Parameter("m", 0.0), Parameter("b", 0.0)])
+    fit = ParameterModelFit(
+        parameter_name="Lambda",
+        x_key="field",
+        ranges=[ModelFitRange(x_min=1.0, x_max=10.0, model=model, parameters=params)],
+    )
+    return ModelFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        x_values=x,
+        y_values=y,
+        y_errors=yerr,
+        existing_fit=fit,
+    )
+
+
+def _drain_guess(dlg: ModelFitDialog, timeout_s: float = 5.0) -> None:
+    """Pump the event loop until the off-thread seed guess completes."""
+    app = QApplication.instance()
+    deadline = time.time() + timeout_s
+    while dlg._guess_in_progress and time.time() < deadline:
+        app.processEvents()
+        time.sleep(0.005)
+    app.processEvents()
+
+
+def _param_value(dlg: ModelFitDialog, name: str) -> float:
+    return dlg.get_model_fit().ranges[0].parameters[name].value
+
+
+def test_guess_button_populates_seeds(qapp: QApplication) -> None:
+    """Clicking Guess moves Linear slope/intercept off their defaults."""
+    dlg = _make_linear_dialog(qapp)
+    dlg._select_range(0)
+    before_m = _param_value(dlg, "m")
+    before_b = _param_value(dlg, "b")
+
+    dlg._on_guess_seeds_clicked()
+    _drain_guess(dlg)
+
+    after_m = _param_value(dlg, "m")
+    after_b = _param_value(dlg, "b")
+    assert after_m != before_m or after_b != before_b
+    # Data-aware seeds should land near the true slope/intercept.
+    assert after_m == pytest.approx(2.0, abs=0.5)
+    assert after_b == pytest.approx(1.0, abs=1.0)
+
+
+def test_guess_does_not_touch_fixed(qapp: QApplication) -> None:
+    """A fixed parameter's value is unchanged by Guess."""
+    dlg = _make_linear_dialog(qapp)
+    dlg._fit.ranges[0].parameters["m"].fixed = True
+    dlg._fit.ranges[0].parameters["m"].value = 99.0
+    dlg._select_range(0)
+
+    dlg._on_guess_seeds_clicked()
+    _drain_guess(dlg)
+
+    assert _param_value(dlg, "m") == pytest.approx(99.0)
+    # The free parameter still gets seeded.
+    assert _param_value(dlg, "b") != 0.0
+
+
+def test_guess_respects_domain_limits(qapp: QApplication) -> None:
+    """Guessed values pass through _normalize_parameter_limits (in-domain)."""
+    # tau is a strictly-positive param; seed the model so any guessed value is
+    # clamped/normalised rather than committed out of domain.
+    x = np.linspace(1.0, 10.0, 20)
+    y = np.linspace(0.5, 0.05, 20)
+    yerr = np.full_like(x, 0.01)
+    model = ParameterCompositeModel(["ExponentialDecay"], [])
+    params = ParameterSet(
+        [Parameter(name, model.param_defaults[name]) for name in model.param_names]
+    )
+    fit = ParameterModelFit(
+        parameter_name="Lambda",
+        x_key="field",
+        ranges=[ModelFitRange(x_min=1.0, x_max=10.0, model=model, parameters=params)],
+    )
+    dlg = ModelFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        x_values=x,
+        y_values=y,
+        y_errors=yerr,
+        existing_fit=fit,
+    )
+    dlg._select_range(0)
+
+    dlg._on_guess_seeds_clicked()
+    _drain_guess(dlg)
+
+    # Every committed parameter must satisfy its normalised bounds.
+    for p in dlg.get_model_fit().ranges[0].parameters:
+        assert p.min <= p.value <= p.max
+
+
+def test_guess_is_not_automatic(qapp: QApplication) -> None:
+    """Editing the model / selecting a range must NOT run a seed guess."""
+    dlg = _make_linear_dialog(qapp)
+    dlg._select_range(0)
+    before_m = _param_value(dlg, "m")
+    before_b = _param_value(dlg, "b")
+
+    # Re-selecting the range and touching the table must not change seeds.
+    dlg._select_range(0)
+    dlg._on_param_table_edited()
+    qapp.processEvents()
+
+    assert dlg._guess_in_progress is False
+    assert _param_value(dlg, "m") == pytest.approx(before_m)
+    assert _param_value(dlg, "b") == pytest.approx(before_b)
+
+
+def test_run_fit_uses_multistart(qapp: QApplication, monkeypatch) -> None:
+    """_run_fit passes extra_starts >= 1 to fit_parameter_model."""
+    from asymmetry.core.fitting.parameter_models import ParameterModelFitResult
+
+    dlg = _make_dialog(qapp)
+    captured: dict[str, object] = {}
+
+    def _fake_fit(**kwargs):
+        captured.update(kwargs)
+        return ParameterModelFitResult(success=True, reduced_chi_squared=1.0)
+
+    monkeypatch.setattr("asymmetry.gui.panels.model_fit_dialog.fit_parameter_model", _fake_fit)
+    dlg._run_fit(0)
+    _wait_for_fit(dlg)
+
+    assert int(captured.get("extra_starts", 0)) >= 1
+
+
+def test_params_at_bound_message_shown(qapp: QApplication) -> None:
+    """A result with params_at_bound renders the inline warning line."""
+    from asymmetry.core.fitting.parameter_models import ParameterModelFitResult
+
+    dlg = _make_dialog(qapp)
+    fit_range = dlg._fit.ranges[0]
+    fit_range.result = ParameterModelFitResult(
+        success=True,
+        chi_squared=9.0,
+        reduced_chi_squared=0.9,
+        parameters=fit_range.parameters,
+        error_mode="column",
+        n_points=12,
+        params_at_bound=("m",),
+    )
+    dlg._select_range(0)
+    text = dlg._quality_label.text()
+    assert "Parameters at their limits" in text
+    assert "m" in text
+
+
+def test_seed_beat_user_start_message_shown(qapp: QApplication) -> None:
+    """A successful result with seed_beat_user_start renders the info line."""
+    from asymmetry.core.fitting.parameter_models import ParameterModelFitResult
+
+    dlg = _make_dialog(qapp)
+    fit_range = dlg._fit.ranges[0]
+    fit_range.result = ParameterModelFitResult(
+        success=True,
+        chi_squared=9.0,
+        reduced_chi_squared=0.9,
+        parameters=fit_range.parameters,
+        error_mode="column",
+        n_points=12,
+        seed_beat_user_start=True,
+    )
+    dlg._select_range(0)
+    text = dlg._quality_label.text()
+    assert "data-aware start improved the fit" in text
+
+
 def test_quality_verdict_shown_for_column_mode_fit(qapp: QApplication) -> None:
     from asymmetry.core.fitting.parameter_models import ParameterModelFitResult
 

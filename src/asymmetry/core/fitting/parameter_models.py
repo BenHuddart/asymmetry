@@ -27,6 +27,7 @@ from asymmetry.core.fitting.latex_preview import (
     transform_template,
     wrap_if_compound,
 )
+from asymmetry.core.fitting.member_quality import parameters_at_bound
 from asymmetry.core.fitting.muon_proton import rf_resonance_mup
 from asymmetry.core.fitting.muonium import (
     G_E_MHZ_PER_G,
@@ -1840,6 +1841,376 @@ def suggest_trend_seeds(
     return seeds
 
 
+def _finite_xy(
+    x: NDArray, y: NDArray, yerr: NDArray | None
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64] | None]:
+    """Return the finite-in-(x,y) subset, sorted by x, with aligned weights.
+
+    ``yerr`` is carried along (finite/positive entries only); a missing or
+    all-unusable error column returns ``None`` so estimators fall back to unit
+    weights. Empty/degenerate input yields empty arrays.
+    """
+    xf = np.asarray(x, dtype=float)
+    yf = np.asarray(y, dtype=float)
+    finite = np.isfinite(xf) & np.isfinite(yf)
+    xf = xf[finite]
+    yf = yf[finite]
+    order = np.argsort(xf, kind="stable")
+    xf = xf[order]
+    yf = yf[order]
+    ef: NDArray[np.float64] | None = None
+    if yerr is not None:
+        ee = np.asarray(yerr, dtype=float)
+        if ee.shape == np.asarray(y, dtype=float).shape:
+            ee = ee[finite][order]
+            if np.any(np.isfinite(ee) & (ee > 0.0)):
+                ef = ee
+    return xf, yf, ef
+
+
+def _point_weights(y: NDArray[np.float64], yerr: NDArray[np.float64] | None) -> NDArray[np.float64]:
+    """Inverse-variance weights (1/σ²) where σ is finite and positive, else unit.
+
+    A partially-usable error column keeps 1/σ² for the good points and a unit
+    weight for the rest, so a stray non-finite σ never zeroes out a point.
+    """
+    if yerr is None:
+        return np.ones_like(y)
+    w = np.ones_like(y)
+    good = np.isfinite(yerr) & (yerr > 0.0)
+    w[good] = 1.0 / np.square(yerr[good])
+    return w
+
+
+def _weighted_median(values: NDArray[np.float64], weights: NDArray[np.float64]) -> float:
+    """Weighted median — robust central estimate for the Constant seed."""
+    v = np.asarray(values, dtype=float)
+    w = np.asarray(weights, dtype=float)
+    order = np.argsort(v, kind="stable")
+    v = v[order]
+    w = w[order]
+    total = float(np.sum(w))
+    if total <= 0.0:
+        return float(np.median(v))
+    cumulative = np.cumsum(w) - 0.5 * w
+    return float(np.interp(0.5 * total, cumulative / total, v))
+
+
+def _wls_line(
+    x: NDArray[np.float64], y: NDArray[np.float64], weights: NDArray[np.float64]
+) -> tuple[float, float] | None:
+    """Weighted least-squares slope/intercept of ``y ≈ m·x + b``; None if singular."""
+    w = np.asarray(weights, dtype=float)
+    sw = float(np.sum(w))
+    sx = float(np.sum(w * x))
+    sxx = float(np.sum(w * x * x))
+    sy = float(np.sum(w * y))
+    sxy = float(np.sum(w * x * y))
+    denom = sw * sxx - sx * sx
+    if not np.isfinite(denom) or abs(denom) < 1e-300:
+        return None
+    m = (sw * sxy - sx * sy) / denom
+    b = (sxx * sy - sx * sxy) / denom
+    if not (np.isfinite(m) and np.isfinite(b)):
+        return None
+    return float(m), float(b)
+
+
+def _estimate_constant(
+    x: NDArray[np.float64], y: NDArray[np.float64], yerr: NDArray[np.float64] | None
+) -> dict[str, float]:
+    return {"c": _weighted_median(y, _point_weights(y, yerr))}
+
+
+def _estimate_linear(
+    x: NDArray[np.float64], y: NDArray[np.float64], yerr: NDArray[np.float64] | None
+) -> dict[str, float]:
+    line = _wls_line(x, y, _point_weights(y, yerr))
+    if line is None:
+        return {}
+    m, b = line
+    return {"m": m, "b": b}
+
+
+def _estimate_polynomial(
+    x: NDArray[np.float64], y: NDArray[np.float64], yerr: NDArray[np.float64] | None
+) -> dict[str, float]:
+    """Seed only the constant + linear terms of a polynomial baseline.
+
+    Higher orders are left at their defaults — a full high-degree least-squares
+    on raw data is ill-conditioned and easily worse than the defaults. The
+    linear slope/intercept alone gets the baseline into the right neighbourhood.
+    """
+    line = _wls_line(x, y, _point_weights(y, yerr))
+    if line is None:
+        return {"c0": _weighted_median(y, _point_weights(y, yerr))}
+    m, b = line
+    return {"c0": b, "c1": m}
+
+
+def _estimate_power_law(
+    x: NDArray[np.float64], y: NDArray[np.float64], yerr: NDArray[np.float64] | None
+) -> dict[str, float]:
+    """Seed ``a·|x|^n + c`` via a log-log line on the positive-x subset.
+
+    ``c`` is a small baseline taken from the minimum of ``y`` (nudged so the
+    remaining ``y − c`` is strictly positive for the log); ``n`` is the slope of
+    ``log|y − c|`` vs ``log|x|`` and ``a`` its intercept. Points with x ≈ 0 or a
+    non-positive residual are dropped from the regression.
+    """
+    c0 = float(np.min(y))
+    # Nudge the baseline just below min(y) so every residual is strictly > 0.
+    span = float(np.max(y) - np.min(y))
+    baseline = c0 - max(span, abs(c0), 1.0) * 1e-3
+    resid = y - baseline
+    mask = (np.abs(x) > 1e-12) & (resid > 0.0)
+    if int(np.count_nonzero(mask)) < 2:
+        return {"c": c0}
+    logx = np.log(np.abs(x[mask]))
+    logr = np.log(resid[mask])
+    line = _wls_line(logx, logr, np.ones_like(logx))
+    if line is None:
+        return {"c": c0}
+    n, log_a = line
+    a = float(np.exp(log_a))
+    out: dict[str, float] = {"n": float(n), "c": float(baseline)}
+    if np.isfinite(a):
+        out["a"] = a
+    return out
+
+
+def _estimate_exp_decay(
+    x: NDArray[np.float64], y: NDArray[np.float64], yerr: NDArray[np.float64] | None
+) -> dict[str, float]:
+    """Seed ``a·exp(−x/τ) + c`` from a semi-log line on the baseline-subtracted trace.
+
+    The far-x end sets the offset ``c``; ``log(y − c)`` vs ``x`` is linear with
+    slope ``−1/τ`` and intercept ``log a``. The sign of the decay is inferred
+    from the first-vs-last comparison so a rising exponential (τ < 0) is seeded
+    with the right sign. Falls back to seeding only ``c`` when the log is
+    ill-defined.
+
+    Assumes ``x`` is ascending (so ``y[-1]`` is the far-x value): the sole caller
+    :func:`suggest_model_seeds` feeds the x-sorted subset from
+    :func:`_finite_xy`, which sorts by x.
+    """
+    if x.size < 2:
+        return {}
+    # Offset: value at the far-x end (curve has flattened toward c there).
+    c = float(y[-1])
+    resid = y - c
+    # A tiny margin keeps the point at the far end off log(0).
+    scale = max(float(np.max(np.abs(resid))), 1.0)
+    # Regress on points where the residual keeps a consistent sign; use the
+    # dominant sign (that of the largest-magnitude residual, at the near end).
+    sign = 1.0 if resid[0] >= 0.0 else -1.0
+    adj = sign * resid
+    mask = adj > scale * 1e-6
+    if int(np.count_nonzero(mask)) < 2:
+        return {"c": c}
+    line = _wls_line(x[mask], np.log(adj[mask]), np.ones_like(x[mask]))
+    if line is None:
+        return {"c": c}
+    slope, intercept = line
+    # A near-flat slope means the decay is unresolvable over this x-range: 1/slope
+    # would blow up to an absurd τ. Floor the slope relative to the x-span (the
+    # only length scale here) so a smaller excursion drops the τ/a seed entirely
+    # and only the offset c is seeded.
+    span = float(np.max(x) - np.min(x))
+    slope_floor = 1.0 / (max(span, 1e-12) * 1e6)
+    if not np.isfinite(slope) or abs(slope) < slope_floor:
+        return {"c": c}
+    tau = -1.0 / slope
+    a = sign * float(np.exp(intercept))
+    out: dict[str, float] = {"c": c, "tau": float(tau)}
+    if np.isfinite(a):
+        out["a"] = a
+    return out
+
+
+def _estimate_arrhenius(
+    x: NDArray[np.float64], y: NDArray[np.float64], yerr: NDArray[np.float64] | None
+) -> dict[str, float]:
+    """Seed ``a·exp(−Ea/(k_B·T))`` from a ln y vs 1/T line.
+
+    Matches ``_arrhenius``' parameterisation (k_B in meV/K): taking logs,
+    ``ln y = ln a − (Ea/k_B)·(1/T)``, so the slope of ``ln y`` against ``1/T`` is
+    ``−Ea/k_B`` ⇒ ``Ea = −slope·k_B`` and the intercept is ``ln a``. Only
+    positive-y, positive-T points enter the regression.
+    """
+    kb_mev = 8.617333262e-2
+    mask = (x > 0.0) & (y > 0.0)
+    if int(np.count_nonzero(mask)) < 2:
+        return {}
+    inv_t = 1.0 / x[mask]
+    line = _wls_line(inv_t, np.log(y[mask]), np.ones_like(inv_t))
+    if line is None:
+        return {}
+    slope, intercept = line
+    ea = -float(slope) * kb_mev
+    a = float(np.exp(intercept))
+    out: dict[str, float] = {}
+    if np.isfinite(ea):
+        out["Ea"] = ea
+    if np.isfinite(a):
+        out["a"] = a
+    return out
+
+
+def _peak_seed(
+    x: NDArray[np.float64], y: NDArray[np.float64]
+) -> tuple[float, float, float, float] | None:
+    """Shared peak descriptor: (baseline, centre, signed amplitude, half-width).
+
+    The baseline is the median of the flanking (outer-quartile) points; the peak
+    is the point of largest excursion from it; the half-width is the |x − centre|
+    where the excursion first falls to half its peak value (falling back to a
+    fraction of the x-span when no half-crossing is bracketed).
+    """
+    if x.size < 3:
+        return None
+    n = x.size
+    edge = max(1, n // 4)
+    baseline = float(np.median(np.concatenate([y[:edge], y[-edge:]])))
+    excursion = y - baseline
+    peak_idx = int(np.argmax(np.abs(excursion)))
+    amplitude = float(excursion[peak_idx])
+    if amplitude == 0.0:
+        return None
+    centre = float(x[peak_idx])
+    half = 0.5 * abs(amplitude)
+    width: float | None = None
+    for i in range(n):
+        if abs(excursion[i]) <= half and i != peak_idx:
+            candidate = abs(x[i] - centre)
+            if candidate > 0.0 and (width is None or candidate < width):
+                width = candidate
+    if width is None or not np.isfinite(width) or width <= 0.0:
+        span = float(np.max(x) - np.min(x))
+        width = span / 4.0 if span > 0.0 else max(abs(centre), 1.0)
+    return baseline, centre, amplitude, float(width)
+
+
+def _estimate_lorentzian(
+    x: NDArray[np.float64], y: NDArray[np.float64], yerr: NDArray[np.float64] | None
+) -> dict[str, float]:
+    """Seed ``a/(1 + (B/B0)^2) + c`` — a peak *centred at the origin*.
+
+    Unlike the LCR peaks this component has no free centre; the resonance sits at
+    B = 0. So ``c`` is the far-field baseline, ``a`` the height above it at the
+    origin, and ``B0`` the |B| where the excursion falls to half (the HWHM).
+    """
+    seed = _peak_seed(x, y)
+    if seed is None:
+        return {}
+    baseline, _centre, amplitude, width = seed
+    # This peak is fixed at the origin, so the estimated centre is discarded;
+    # the baseline is the offset c, the excursion height the amplitude a, and the
+    # half-width the |B| scale B0.
+    out: dict[str, float] = {"c": baseline, "a": amplitude}
+    # The half-width was measured about the *detected* peak, not the origin where
+    # this component's peak actually sits, so a pathological crossing can hand
+    # back a negative or absurd width. Only seed B0 when it is positive and within
+    # a sane fraction of the x-span; otherwise leave B0 to its default.
+    span = float(np.max(x) - np.min(x))
+    if span > 0.0 and span / 10.0 <= width <= 10.0 * span:
+        out["B0"] = width
+    return out
+
+
+def _estimate_lcr_peak(
+    x: NDArray[np.float64], y: NDArray[np.float64], yerr: NDArray[np.float64] | None
+) -> dict[str, float]:
+    """Seed an LCR peak ``f·shape(B; B0, Bwid)`` (Gaussian or Lorentzian).
+
+    ``B0`` is the centre of the largest excursion, ``f`` its signed height, and
+    ``Bwid`` the half-width at half-maximum. Both LCR shapes share the
+    (f, B0, Bwid) parameter set so one estimator seeds either.
+    """
+    seed = _peak_seed(x, y)
+    if seed is None:
+        return {}
+    _baseline, centre, amplitude, width = seed
+    return {"f": amplitude, "B0": centre, "Bwid": width}
+
+
+#: Registry mapping a *component* name to a closed-form seed estimator. Each
+#: estimator takes the finite, x-sorted ``(x, y, yerr)`` subset and returns a
+#: mapping of that component's *base* parameter names (e.g. ``"m"``, not the
+#: uniquified ``"m_2"``) to suggested values. Components without an entry keep
+#: their static defaults. Estimators return only the parameters they are
+#: confident about — a partial dict is fine, an empty dict leaves everything to
+#: defaults. ``CriticalDivergence``/``OrderParameter`` are handled by
+#: :func:`suggest_trend_seeds` (they need the whole-model x-range margin) and are
+#: intentionally absent here.
+_MODEL_SEED_ESTIMATORS: dict[
+    str,
+    Callable[
+        [NDArray[np.float64], NDArray[np.float64], NDArray[np.float64] | None], dict[str, float]
+    ],
+] = {
+    "Constant": _estimate_constant,
+    "Linear": _estimate_linear,
+    "Polynomial": _estimate_polynomial,
+    "Quintic": _estimate_polynomial,
+    "Cubic": _estimate_polynomial,
+    "Quartic": _estimate_polynomial,
+    "Sextic": _estimate_polynomial,
+    "PowerLaw": _estimate_power_law,
+    "ExponentialDecay": _estimate_exp_decay,
+    "Arrhenius": _estimate_arrhenius,
+    "Lorentzian": _estimate_lorentzian,
+    "GaussianLCR": _estimate_lcr_peak,
+    "LorentzianLCR": _estimate_lcr_peak,
+}
+
+
+def suggest_model_seeds(
+    model: ParameterCompositeModel,
+    x: NDArray,
+    y: NDArray,
+    yerr: NDArray | None = None,
+) -> dict[str, float]:
+    """Data-aware seed overrides keyed by *unique* param name (``model.param_names``).
+
+    A generic, per-component extension of :func:`suggest_trend_seeds`: for every
+    component with a registered closed-form estimator (see
+    :data:`_MODEL_SEED_ESTIMATORS`) the estimator runs on the finite ``(x, y)``
+    subset and its *base*-name results are mapped to the model's unique names via
+    the same component/mapping idiom the trend seeder uses. The
+    critical-temperature components (``CriticalDivergence``/``OrderParameter``)
+    are delegated to :func:`suggest_trend_seeds` and merged in, so its behaviour
+    is preserved exactly.
+
+    Only parameters the estimators are confident about are returned; the caller
+    merges these over :attr:`ParameterCompositeModel.param_defaults` and leaves
+    everything else untouched. Returns an empty mapping when the data is unusable
+    (fewer than two finite points). Pure and Qt-free.
+    """
+    xf, yf, ef = _finite_xy(x, y, yerr)
+    if xf.size < 2:
+        return {}
+
+    seeds: dict[str, float] = {}
+    for component, mapping in zip(model.components, model._param_mappings, strict=True):
+        estimator = _MODEL_SEED_ESTIMATORS.get(component.name)
+        if estimator is None:
+            continue
+        try:
+            base_seeds = estimator(xf, yf, ef)
+        except (ValueError, FloatingPointError, ZeroDivisionError):
+            continue
+        for base_name, value in base_seeds.items():
+            unique = mapping.get(base_name)
+            if unique is None or not np.isfinite(value):
+                continue
+            seeds[unique] = float(value)
+
+    # Preserve the existing critical-temperature seeding exactly.
+    seeds.update(suggest_trend_seeds(model, x, y))
+    return seeds
+
+
 class ErrorMode(str, Enum):
     """How per-point σ values are assigned when weighting a model fit.
 
@@ -1909,6 +2280,15 @@ class ParameterModelFitResult:
     error_mode: str = ErrorMode.COLUMN.value
     #: Number of points that entered the fit (0 when unknown/legacy).
     n_points: int = 0
+    #: How many initial-value candidates the multi-start machinery actually
+    #: tried (1 for the default single-start path; more with ``extra_starts``).
+    n_starts_tried: int = 0
+    #: ``True`` iff the winning fit came from a *non-user* start (a data-aware or
+    #: perturbed seed beat the user's provided parameters). Advisory only.
+    seed_beat_user_start: bool = False
+    #: Names of free parameters whose fitted value sits within tolerance of a
+    #: finite ``min``/``max`` bound — a sign the data did not determine them.
+    params_at_bound: tuple[str, ...] = ()
 
 
 @dataclass
@@ -2741,6 +3121,52 @@ def _run_parameter_model_minuit(
     )
 
 
+def _perturbed_start_candidates(
+    base_values: dict[str, float],
+    parameters: ParameterSet,
+    n: int,
+    rng: np.random.Generator,
+    default_scale: float = 1.0,
+) -> list[dict[str, float]]:
+    """Generate ``n`` deterministic perturbed starts around ``base_values``.
+
+    Each free parameter is jittered independently: a scale-like value (nonzero,
+    finite) is multiplied by a factor drawn *log-uniformly* in ``[1/3, 3]`` so
+    the perturbation spans an order of magnitude symmetrically in log space; an
+    offset-like value (≈ 0) is shifted *additively* by a jitter whose scale is a
+    quarter of the *finite* bound span, or — when either bound is infinite (as
+    for a free ``c``/``b``) — the data-derived ``default_scale`` so the jitter
+    stays finite. Every perturbed value is clipped back into the parameter's
+    ``[min, max]`` box. Fixed parameters are left at their base value.
+    Determinism comes entirely from ``rng`` — the caller passes a
+    ``default_rng(seed)`` so results are reproducible.
+    """
+    free = parameters.free_parameters
+    fallback = default_scale if np.isfinite(default_scale) and default_scale > 0.0 else 1.0
+    candidates: list[dict[str, float]] = []
+    log_factor = float(np.log(3.0))
+    for _ in range(n):
+        candidate = dict(base_values)
+        for p in free:
+            base = float(candidate.get(p.name, p.value))
+            lo, hi = float(p.min), float(p.max)
+            if np.isfinite(base) and abs(base) > 1e-12:
+                # Scale-like: multiplicative jitter, log-uniform in [1/3, 3].
+                factor = float(np.exp(rng.uniform(-log_factor, log_factor)))
+                value = base * factor
+            else:
+                # Offset-like: additive jitter on the finite bound span, or the
+                # data-derived fallback when a bound is infinite (never inf*0.25).
+                if np.isfinite(lo) and np.isfinite(hi) and hi > lo:
+                    scale = 0.25 * (hi - lo)
+                else:
+                    scale = fallback
+                value = base + float(rng.uniform(-scale, scale))
+            candidate[p.name] = float(min(max(value, lo), hi))
+        candidates.append(candidate)
+    return candidates
+
+
 def fit_parameter_model(
     x: NDArray,
     y: NDArray,
@@ -2754,6 +3180,8 @@ def fit_parameter_model(
     error_value: float | None = None,
     windows: Sequence[tuple[float, float]] | None = None,
     xerr: NDArray | None = None,
+    extra_starts: int = 0,
+    seed: int = 0,
 ) -> ParameterModelFitResult:
     """Fit a parameter-vs-x model using iminuit.
 
@@ -2768,6 +3196,16 @@ def fit_parameter_model(
     ordinary least squares (the abscissa is treated as exact). It is ignored
     under the ``NONE``/``SCATTER`` error modes, whose unit y-weights have no
     physical scale to combine with the x-variance term.
+
+    ``extra_starts`` adds multi-start robustness: with ``extra_starts > 0`` the
+    fit additionally tries the generic data-aware seed
+    (:func:`suggest_model_seeds`) and ``extra_starts`` deterministic perturbed
+    starts around the user's parameters, keeping the best converged candidate by
+    the existing success-then-χ² rule. The perturbation is driven solely by
+    ``numpy.random.default_rng(seed)``, so a given ``seed`` is fully
+    reproducible. ``extra_starts = 0`` (the default) is byte-identical to the
+    single-start behaviour — no RNG is constructed and the candidate list is
+    unchanged.
     """
     error_mode = ErrorMode(error_mode)
     xx = np.asarray(x, dtype=float)
@@ -2818,15 +3256,45 @@ def fit_parameter_model(
         if np.any(xe_fit > 0.0):
             xerr_fit = xe_fit
 
-    initial_candidates: list[dict[str, float] | None] = [None]
+    # Each candidate carries a provenance tag so ``seed_beat_user_start`` can
+    # distinguish a *new-robustness* win from the always-present internals:
+    #   "user"      — the user's provided parameters used as-is (the None start)
+    #   "transport" — the transport heuristic, which has ALWAYS run internally
+    #   "generic"   — the generic data-aware seed (suggest_model_seeds)
+    #   "perturb"   — a deterministic perturbed start
+    # The flag fires only when a "generic"/"perturb" candidate wins; the
+    # transport heuristic winning is not news and must NOT set it.
+    initial_candidates: list[tuple[str, dict[str, float] | None]] = [("user", None)]
     heuristic_seed = _transport_seed_initial_values(x_fit, y_fit, e_fit, model, parameters)
     if heuristic_seed is not None:
-        initial_candidates.append(heuristic_seed)
+        initial_candidates.append(("transport", heuristic_seed))
+
+    if extra_starts > 0:
+        base_values = _parameter_values_by_name(parameters)
+        # A generic data-aware seed, merged over the user's current values.
+        data_seed = suggest_model_seeds(model, x_fit, y_fit, e_fit)
+        if data_seed:
+            merged = dict(base_values)
+            merged.update(data_seed)
+            initial_candidates.append(("generic", merged))
+        # Deterministic perturbed starts (RNG constructed only when requested,
+        # so the extra_starts == 0 path never touches the RNG). The y-span is a
+        # finite fallback jitter scale for params with infinite bounds.
+        rng = np.random.default_rng(seed)
+        y_span = float(np.max(y_fit) - np.min(y_fit))
+        default_scale = y_span if np.isfinite(y_span) and y_span > 0.0 else 1.0
+        initial_candidates.extend(
+            ("perturb", candidate)
+            for candidate in _perturbed_start_candidates(
+                base_values, parameters, int(extra_starts), rng, default_scale
+            )
+        )
 
     best_result: ParameterModelFitResult | None = None
     best_fval = float("inf")
+    best_provenance = "user"
 
-    for initial_values in initial_candidates:
+    for provenance, initial_values in initial_candidates:
         result, fval = _run_parameter_model_minuit(
             x_fit=x_fit,
             y_fit=y_fit,
@@ -2840,14 +3308,17 @@ def fit_parameter_model(
         if best_result is None:
             best_result = result
             best_fval = fval
+            best_provenance = provenance
             continue
         if result.success and not best_result.success:
             best_result = result
             best_fval = fval
+            best_provenance = provenance
             continue
         if result.success == best_result.success and fval < best_fval:
             best_result = result
             best_fval = fval
+            best_provenance = provenance
 
     if best_result is None:
         return ParameterModelFitResult(
@@ -2856,6 +3327,11 @@ def fit_parameter_model(
 
     best_result.error_mode = error_mode.value
     best_result.n_points = int(len(x_fit))
+    best_result.n_starts_tried = len(initial_candidates)
+    # Only a candidate that exists because of the new robustness work counts as
+    # "beating the user start"; the transport heuristic always ran internally.
+    best_result.seed_beat_user_start = best_provenance not in {"user", "transport"}
+    best_result.params_at_bound = tuple(parameters_at_bound(best_result.parameters))
     if error_mode is ErrorMode.SCATTER and best_result.success:
         # Estimate errors from the scatter of the points: the unit-weight fit
         # location is independent of a uniform σ rescale, so multiplying the
