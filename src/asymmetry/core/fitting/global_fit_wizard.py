@@ -80,6 +80,14 @@ _COMPARABLE_SCORE_DELTA = 2.0
 #: both with headroom — the error is asymmetric (too-high only forfeits a little
 #: speedup; too-low silently prunes a verdict-relevant node), so we bias high.
 _LAYER_BOUND_MARGIN = 6.0
+#: Tolerance (χ² units) on the technique-D monotonicity certificate. A warm child
+#: fit is accepted without escalation when its χ² does not exceed the parent's by
+#: more than this. The parent is strictly less flexible, so a correct child fit is
+#: expected to land at χ² <= χ²(parent); ε only absorbs Minuit's EDM-scale
+#: convergence slop (default EDM tolerance ~1e-3·errordef). 1.0 is loose enough to
+#: not fire on genuinely-converged children yet tight enough that a truly stuck
+#: child (which would be a different, worse minimum) escalates to the full battery.
+_WARM_CERTIFICATE_EPSILON = 1.0
 _SHORTLIST_COUNT = 4
 _SHORTLIST_SCORE_WINDOW = 6.0
 _SHORTLIST_CAP = 6
@@ -559,6 +567,7 @@ def _run_wavefront_assignment_task(
     }
     fit_engine = FitEngine()
     warm_start_by_run: dict[int, ParameterSet] | None = None
+    warm_start_chi2: float | None = None
     initial_step_sizes: dict[str, float] = {}
 
     if task.warm_start_source is not None and task.warm_start_source.is_successful:
@@ -579,6 +588,15 @@ def _run_wavefront_assignment_task(
             target_global_names=task.global_param_names,
             target_local_names=task.local_param_names,
         )
+        # Parent χ² for technique D's monotonicity certificate: the predecessor is
+        # a strict single-flip-simpler assignment (one fewer local), so the warm
+        # child should not exceed it.
+        warm_start_chi2 = float(
+            sum(
+                result.chi_squared
+                for result in task.warm_start_source.fit_results_by_run.values()
+            )
+        )
     elif task.initial_seed_by_run is not None:
         warm_start_by_run = _clone_parameter_sets(task.initial_seed_by_run)
 
@@ -594,6 +612,7 @@ def _run_wavefront_assignment_task(
         metric=task.metric,
         cache={},
         warm_start_by_run=warm_start_by_run,
+        warm_start_chi2=warm_start_chi2,
         progress_callback=None,
         search_strategy=task.search_strategy,
         instrumentation=task_instrumentation,
@@ -3501,6 +3520,74 @@ def _prefer_globalization_change(
     return False
 
 
+def _warm_certificate_fit(
+    datasets: list[MuonDataset],
+    template: CandidateTemplate,
+    *,
+    fit_engine: FitEngine,
+    global_param_names: tuple[str, ...],
+    local_param_names: tuple[str, ...],
+    fixed_param_names: tuple[str, ...],
+    warm_start_by_run: dict[int, ParameterSet],
+    initial_step_sizes: dict[str, float],
+    difficult_assignment: bool,
+    instrumentation: dict[str, object] | None,
+) -> tuple[dict[int, FitResult] | None, ParameterSet, float, dict[str, float]]:
+    """One warm single-cycle global fit for technique D's monotonicity certificate.
+
+    A single migrad from the warm-start seed, with no staged multi-cycle
+    re-seeding and no multi-start variants — the cheapest converging step. The
+    caller decides whether the result clears the certificate; on failure the
+    caller escalates to the full battery. Returns
+    ``(results_by_run | None, fitted_global, total_chi2, step_hints)``.
+    """
+
+    warm_seed = _clone_parameter_sets(warm_start_by_run)
+    call_budget = _global_fit_call_budget(
+        datasets,
+        warm_seed,
+        global_param_names=global_param_names,
+        local_param_names=local_param_names,
+        phase="full",
+    )
+    _record_counter(instrumentation, "global_fit_calls")
+    _record_counter(instrumentation, "warm_certificate_fits")
+    if initial_step_sizes:
+        _record_counter(instrumentation, "curvature_hint_applications")
+        _append_metric(instrumentation, "curvature_hint_sizes", len(initial_step_sizes))
+    results_by_run, fitted_global = fit_engine.global_fit(
+        datasets,
+        template.model.function,
+        list(global_param_names),
+        list(local_param_names),
+        warm_seed,
+        max_calls=call_budget,
+        migrad_iterations=7 if difficult_assignment else 5,
+        use_simplex_rescue=difficult_assignment,
+        minuit_strategy=2 if difficult_assignment else None,
+        minuit_tol=0.05 if difficult_assignment else None,
+        initial_step_sizes=initial_step_sizes or None,
+    )
+    _record_global_fit_diagnostics(instrumentation, results_by_run)
+    results_by_run = _canonicalize_fit_results_by_run(
+        results_by_run,
+        template=template,
+        global_param_names=global_param_names,
+        local_param_names=local_param_names,
+        fixed_param_names=fixed_param_names,
+    )
+    if not all(result.success for result in results_by_run.values()):
+        return None, ParameterSet(), float("inf"), dict(initial_step_sizes)
+    total_chi2 = float(sum(result.chi_squared for result in results_by_run.values()))
+    step_hints = _step_hints_from_fit_results(
+        datasets,
+        results_by_run,
+        target_global_names=global_param_names,
+        target_local_names=local_param_names,
+    )
+    return results_by_run, fitted_global, total_chi2, step_hints
+
+
 def _fit_exact_assignment(
     datasets: list[MuonDataset],
     template: CandidateTemplate,
@@ -3514,6 +3601,7 @@ def _fit_exact_assignment(
     metric: SelectionMetric,
     cache: dict[tuple[tuple[str, ...], tuple[str, ...]], GlobalCandidateAssessment],
     warm_start_by_run: dict[int, ParameterSet] | None = None,
+    warm_start_chi2: float | None = None,
     progress_callback: Callable[[str], None] | None = None,
     search_strategy: str = "legacy",
     instrumentation: dict[str, object] | None = None,
@@ -3654,12 +3742,65 @@ def _fit_exact_assignment(
             local_step_hints,
         )
 
-    best_results, best_global, best_score, best_failure_message, step_hints = (
-        _evaluate_attempt_variants(
-            attempt_variants,
-            initial_hints=dict(initial_step_sizes or {}),
+    # Technique D (escalation-on-anomaly): a warm-started child node (from its
+    # best Hamming-neighbour predecessor) is strictly more flexible than that
+    # predecessor, so a good fit lands at χ² <= χ²(parent) + ε. If ONE warm
+    # single-cycle migrad clears that monotonicity certificate and Minuit reports
+    # a valid minimum, accept it and skip the full multi-start / staged / fallback
+    # / simplex battery. Escalate to the battery only when the certificate fails.
+    # Anchor nodes (all-global round 0 has no warm start; all-local is fitted
+    # separately; layer-1 is the first coupled step) keep the full battery, so the
+    # fast path is gated on a warm start plus >= 2 localised params.
+    best_results = None
+    best_global = ParameterSet()
+    best_score = float("inf")
+    best_failure_message = "No fit attempts were created."
+    step_hints = dict(initial_step_sizes or {})
+    certificate_passed = False
+    if (
+        warm_start_by_run is not None
+        and warm_start_chi2 is not None
+        and math.isfinite(warm_start_chi2)
+        and len(local_param_names) >= 2
+    ):
+        (
+            warm_results,
+            warm_global,
+            warm_score,
+            warm_step_hints,
+        ) = _warm_certificate_fit(
+            datasets,
+            template,
+            fit_engine=fit_engine,
+            global_param_names=global_param_names,
+            local_param_names=local_param_names,
+            fixed_param_names=fixed_param_names,
+            warm_start_by_run=warm_start_by_run,
+            initial_step_sizes=step_hints,
+            difficult_assignment=difficult_assignment,
+            instrumentation=instrumentation,
         )
-    )
+        if warm_results is not None and all(r.success for r in warm_results.values()):
+            # Certificate: the child (more free params) must not do worse than its
+            # parent by more than ε. ε absorbs Minuit's EDM-scale numerical slop.
+            certificate_ok = warm_score <= warm_start_chi2 + _WARM_CERTIFICATE_EPSILON
+            if certificate_ok:
+                best_results = warm_results
+                best_global = warm_global
+                best_score = warm_score
+                step_hints = warm_step_hints
+                certificate_passed = True
+                _record_counter(instrumentation, "warm_certificate_accepts")
+            else:
+                _record_counter(instrumentation, "warm_certificate_escalations")
+
+    if not certificate_passed:
+        best_results, best_global, best_score, best_failure_message, step_hints = (
+            _evaluate_attempt_variants(
+                attempt_variants,
+                initial_hints=dict(initial_step_sizes or {}),
+            )
+        )
 
     fallback_attempt_variants: tuple[dict[int, ParameterSet], ...] = ()
     fit_success = best_results is not None and all(
