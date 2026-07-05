@@ -340,6 +340,11 @@ class DecisionTrail(QWidget):
         self._rows_layout.setContentsMargins(0, 0, 0, 0)
         self._rows_layout.setSpacing(0)
         self._layout.addWidget(self._rows_container)
+        # Absorb any extra height the host layout hands the trail: with every
+        # sibling at stretch 0, Qt otherwise shares surplus space between a
+        # Preferred-policy trail and the host's trailing spacer, inflating the
+        # gaps between rows (observed ~85px per row on the running pages).
+        self._layout.addStretch(1)
 
     # ── Status line ────────────────────────────────────────────────────────
 

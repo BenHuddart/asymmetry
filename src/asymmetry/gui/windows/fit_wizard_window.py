@@ -546,9 +546,7 @@ class FitWizardWindow(WizardWindowBase):
         # First line only in the header status — a multi-line exception message
         # would balloon the header band; the full text goes in the tooltip.
         failure_text = str(message).strip() or "unknown error"
-        self._status_label.setText(
-            f"Fit wizard analysis failed: {failure_text.splitlines()[0]}"
-        )
+        self._status_label.setText(f"Fit wizard analysis failed: {failure_text.splitlines()[0]}")
         self._status_label.setToolTip(failure_text)
         self._welcome_hint_label.setText(
             "The analysis failed. Adjust the guidance if needed and click Analyze again."

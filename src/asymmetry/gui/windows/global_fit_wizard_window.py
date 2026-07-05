@@ -581,7 +581,10 @@ class GlobalFitWizardWindow(WizardWindowBase):
         layout.addWidget(self._compare_table)
         self._compare_warning_text = QTextEdit()
         self._compare_warning_text.setReadOnly(True)
-        self._compare_warning_text.setMinimumHeight(150)
+        # Bounded height: a one-line hint must not open a 200px blank box, and
+        # the details never need more than a few lines (the page scrolls).
+        self._compare_warning_text.setMinimumHeight(70)
+        self._compare_warning_text.setMaximumHeight(160)
         layout.addWidget(self._compare_warning_text)
         optimize_row = QHBoxLayout()
         self._optimize_btn = QPushButton("Optimize selected")
@@ -601,7 +604,8 @@ class GlobalFitWizardWindow(WizardWindowBase):
         self._result_trail.set_step_detail_widget("apply", self._apply_panel)
 
         layout.addStretch()
-        return self._make_scroll_page(content)
+        self._result_page = self._make_scroll_page(content)
+        return self._result_page
 
     # ------------------------------------------------------------------
     # Deep panels (built once; injected into the result trail)
@@ -1412,6 +1416,10 @@ class GlobalFitWizardWindow(WizardWindowBase):
         self._populate_series_card()
         self._populate_result_trail()
         self._stack.setCurrentIndex(_PAGE_RESULT)
+        # Land at the top of the result page: a prior scroll position (or focus
+        # handoff from the shortlist's Optimize button) would otherwise open the
+        # page mid-card, cutting the verdict off above the viewport.
+        self._result_page.verticalScrollBar().setValue(0)
 
     def _populate_result_trail(self) -> None:
         """Re-derive the finished trail's headlines from the recommendation.
@@ -1555,24 +1563,50 @@ class GlobalFitWizardWindow(WizardWindowBase):
         )
         self._series_card.set_trend(self._series_trend(recommendation, assessment))
         recommended = recommendation.recommended_assessment
-        headline = recommended.template.title if recommended is not None else recommendation.summary
         # The recommendation carries no confidence tier, so no chip is shown
         # (tier=None) — the summary line carries the confidence prose instead.
-        self._series_card.set_verdict(headline, recommendation.summary, None)
-        alternatives: list[tuple[str, str, str]] = []
+        # Before any optimisation there is no recommended assessment; lead with
+        # the top screening candidate as a plain fact rather than repeating the
+        # summary as both headline and prose.
+        if recommended is not None:
+            self._series_card.set_verdict(recommended.template.title, recommendation.summary, None)
+        else:
+            prescreen = recommendation.sorted_prescreen_assessments()
+            if prescreen:
+                self._series_card.set_verdict(
+                    f"Leading candidate: {prescreen[0].template.title}",
+                    recommendation.summary,
+                    None,
+                )
+            else:
+                self._series_card.set_verdict(recommendation.summary, "", None)
+        candidates = []
         for candidate in recommendation.sorted_optimized_assessments():
             if (
                 recommendation.recommended_key is not None
                 and candidate.selection_key == recommendation.recommended_key
             ):
                 continue
+            candidates.append(candidate)
+            if len(candidates) == 3:
+                break
+        # Several optimized assignments of the SAME template differ only in
+        # their Global/Local split, so a bare title cannot tell them apart —
+        # append the local-parameter signature whenever the title collides with
+        # the recommendation or another alternative.
+        titles = [candidate.template.title for candidate in candidates]
+        if recommended is not None:
+            titles.append(recommended.template.title)
+        alternatives: list[tuple[str, str, str]] = []
+        for candidate in candidates:
+            label = candidate.template.title
+            if titles.count(label) > 1:
+                label = f"{label} · local: {', '.join(candidate.local_param_names) or 'none'}"
             tooltip = (
                 f"Global: {', '.join(candidate.global_param_names) or 'None'}\n"
                 f"Local: {', '.join(candidate.local_param_names) or 'None'}"
             )
-            alternatives.append((candidate.selection_key, candidate.template.title, tooltip))
-            if len(alternatives) == 3:
-                break
+            alternatives.append((candidate.selection_key, label, tooltip))
         self._series_card.set_alternatives(alternatives)
         self._series_card.set_selected_key(self._selected_key)
 

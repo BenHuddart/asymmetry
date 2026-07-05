@@ -285,6 +285,10 @@ class WizardSeriesCard(QWidget):
             from asymmetry.gui.widgets.mpl_canvas import create_canvas
 
             figure, canvas = create_canvas(layout="tight")
+            # The card lives inside a scroll page, where the canvas would
+            # otherwise collapse to its tiny sizeHint; the hero figure needs
+            # real height to read.
+            canvas.setMinimumHeight(340)
             self._figure = figure
             self._canvas = canvas
             inner.addWidget(canvas)
@@ -362,7 +366,7 @@ class WizardSeriesCard(QWidget):
         ax.set_xlabel("Time (µs)")
         ax.set_ylabel("Asymmetry")
         if self._runs and len(self._runs) <= _MAX_LEGEND_RUNS:
-            ax.legend(loc="best")
+            ax.legend(loc="upper right", fontsize=8, framealpha=0.9)
 
     def _draw_trend(self, ax) -> None:
         trend = self._trend
