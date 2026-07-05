@@ -1620,3 +1620,130 @@ def test_drag_disabled_while_fitting(qapp: QApplication) -> None:
     assert dlg._preview._drag_enabled is False
     dlg._set_fit_ui_busy(False)
     assert dlg._preview._drag_enabled is True
+
+
+# ── Item 4.1: residual toggle wiring ─────────────────────────────────────────
+
+
+def test_residual_toggle_wired(qapp: QApplication) -> None:
+    """Toggling the dialog's 'Show residuals' checkbox flips the preview state."""
+    dlg = _make_dialog(qapp)
+    assert dlg._preview._show_residuals is False
+    assert dlg._show_residuals_check.isChecked() is False
+
+    dlg._show_residuals_check.setChecked(True)
+    assert dlg._preview._show_residuals is True
+
+    dlg._show_residuals_check.setChecked(False)
+    assert dlg._preview._show_residuals is False
+
+
+# ── Item 4.2: remember last-used model per (parameter, x_key) ─────────────────
+
+
+def _isolated_settings(tmp_path):
+    """An IniFormat QSettings rooted at *tmp_path* so tests never touch the real
+    per-user store."""
+    from PySide6.QtCore import QSettings
+
+    QSettings.setPath(
+        QSettings.Format.IniFormat,
+        QSettings.Scope.UserScope,
+        str(tmp_path),
+    )
+    return QSettings(
+        QSettings.Format.IniFormat,
+        QSettings.Scope.UserScope,
+        "AsymmetryTest",
+        "AsymmetryTest",
+    )
+
+
+def test_last_model_remembered(qapp: QApplication, tmp_path, monkeypatch) -> None:
+    """A model stored for (Lambda, field) becomes the default of a fresh dialog."""
+    settings = _isolated_settings(tmp_path)
+    monkeypatch.setattr(ModelFitDialog, "_last_model_settings", lambda self: settings)
+
+    x = np.linspace(1.0, 10.0, 20)
+    y = 2.0 * x + 1.0
+    yerr = np.full_like(x, 0.1)
+
+    # First dialog: edit the model to something non-default and confirm stored.
+    dlg1 = ModelFitDialog("Lambda", "field", x, y, yerr, existing_fit=None)
+    fit_range = dlg1._fit.ranges[0]
+    fit_range.model = ParameterCompositeModel(["PowerLaw"], [])
+    from asymmetry.gui.panels.model_fit_dialog import _store_last_model_expression
+
+    _store_last_model_expression(
+        "Lambda", "field", fit_range.model.component_expression_string(), settings
+    )
+
+    # Fresh dialog for the same (param, x_key): its default range uses the model.
+    dlg2 = ModelFitDialog("Lambda", "field", x, y, yerr, existing_fit=None)
+    assert dlg2._fit.ranges[0].model.component_names == ["PowerLaw"]
+
+
+def test_last_model_unknown_component_falls_back(qapp: QApplication, tmp_path, monkeypatch) -> None:
+    """A stored model whose component isn't in the pool falls back to the default."""
+    settings = _isolated_settings(tmp_path)
+    monkeypatch.setattr(ModelFitDialog, "_last_model_settings", lambda self: settings)
+
+    from asymmetry.gui.panels.model_fit_dialog import _last_model_settings_key
+
+    # Store a bogus expression directly (a name valid nowhere in the field pool).
+    settings.setValue(_last_model_settings_key("Lambda", "field"), "NotARealComponent")
+
+    x = np.linspace(1.0, 10.0, 20)
+    y = 2.0 * x + 1.0
+    yerr = np.full_like(x, 0.1)
+    dlg = ModelFitDialog("Lambda", "field", x, y, yerr, existing_fit=None)
+    # Falls back to the context default (Linear for a plain Lambda-vs-field trend)
+    # without raising.
+    default_component = _default_component_for_context("field", "Lambda", dlg._component_pool)
+    assert dlg._fit.ranges[0].model.component_names == [default_component]
+
+
+# ── Item 4.3: per-fit success modal removed → inline result box ──────────────
+
+
+def test_fit_success_no_modal_shows_result_box(qapp: QApplication, tmp_path, monkeypatch) -> None:
+    """A successful fit tints the result box green and shows inline success text —
+    with NO _show_info modal fired."""
+    from asymmetry.core.fitting.parameter_models import ParameterModelFitResult
+    from asymmetry.gui.styles.widgets import RESULT_BOX_SUCCESS_STYLE
+
+    # Isolate the last-model store so the fit's store-on-success is a no-op here.
+    settings = _isolated_settings(tmp_path)
+    monkeypatch.setattr(ModelFitDialog, "_last_model_settings", lambda self: settings)
+
+    info_calls: list[tuple] = []
+    monkeypatch.setattr(
+        "asymmetry.gui.panels.model_fit_dialog._show_info",
+        lambda *a, **k: info_calls.append(a),
+    )
+
+    dlg = _make_dialog(qapp)
+
+    def _fake_fit(**_kwargs):
+        return ParameterModelFitResult(
+            success=True,
+            chi_squared=9.0,
+            reduced_chi_squared=0.9,
+            parameters=dlg._fit.ranges[0].parameters,
+            error_mode="column",
+            n_points=12,
+        )
+
+    monkeypatch.setattr("asymmetry.gui.panels.model_fit_dialog.fit_parameter_model", _fake_fit)
+
+    dlg._run_fit(0)
+    _wait_for_fit(dlg)
+
+    # No "Fit complete" success modal fired (item 4.3). Other unrelated info
+    # popups — e.g. a "Parameter limits adjusted" note from committing the
+    # table — may still occur and are not what this test guards.
+    assert not any("Fit complete" in str(a) for a in info_calls)
+    # Inline success text on the χ² label.
+    assert "successful" in dlg._chi2_label.text().lower()
+    # Result box tinted with the success style.
+    assert dlg._result_box.styleSheet() == RESULT_BOX_SUCCESS_STYLE

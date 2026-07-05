@@ -970,3 +970,45 @@ def test_exclude_region_single_range_carves() -> None:
     assert 220.0 in los
     # The plain range spins disable once the range carries windows.
     assert dlg._range_widgets[0].x_min.isEnabled() is False
+
+
+def test_cross_group_success_no_modal(monkeypatch) -> None:
+    """A successful cross-group fit tints the result box green with NO success modal."""
+    app = QApplication.instance() or QApplication([])
+    from asymmetry.gui.styles.widgets import RESULT_BOX_SUCCESS_STYLE
+
+    dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=_groups(),
+        parent=None,
+    )
+
+    info_calls: list[tuple] = []
+    monkeypatch.setattr(
+        "asymmetry.gui.panels.cross_group_fit_dialog._show_info",
+        lambda *a, **k: info_calls.append(a),
+    )
+
+    def _fake_global_fit(**_kwargs):
+        return CrossGroupFitResult(success=True, chi_squared=1.0, reduced_chi_squared=1.0)
+
+    monkeypatch.setattr(
+        "asymmetry.gui.panels.cross_group_fit_dialog.global_fit_parameter_model",
+        _fake_global_fit,
+    )
+
+    dlg._run_fit(0)
+
+    deadline = time.time() + 5.0
+    while dlg._fit_in_progress and time.time() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+
+    assert dlg._fit_in_progress is False
+    # No success modal fired.
+    assert info_calls == []
+    # Inline success text + green tint.
+    assert "successful" in dlg._chi2_label.text().lower()
+    assert dlg._result_box.styleSheet() == RESULT_BOX_SUCCESS_STYLE
+    assert app is not None

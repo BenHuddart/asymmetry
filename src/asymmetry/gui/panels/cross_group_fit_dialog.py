@@ -941,14 +941,13 @@ class CrossGroupFitDialog(ModelFitDialog):
             self._range_results[idx] = fit_result
             self._last_config = self._collect_config()
 
+            # Item 4.3: no per-fit success MODAL. _select_range refreshes the
+            # shared χ² label (inline success/failure text) and tints the result
+            # box green on success. The failure case is surfaced inline too; the
+            # blocking pre-check modals above (invalid window/range, <2 groups)
+            # stay modal.
             self._select_range(idx)
-            if fit_result.success:
-                _show_info(
-                    self,
-                    "Cross-group fit complete",
-                    f"Reduced chi2 = {fit_result.reduced_chi_squared:.4g}",
-                )
-            else:
+            if not fit_result.success:
                 _show_warning(
                     self,
                     "Cross-group fit failed",

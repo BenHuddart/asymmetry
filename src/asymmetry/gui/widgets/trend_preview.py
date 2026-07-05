@@ -95,6 +95,9 @@ class TrendPreviewCanvas(QWidget):
         self._state: _State = "empty"
         self._message: str = ""
         self._drag_enabled: bool = False
+        #: Optional residual strip below the main plot (item 4.1). Default OFF;
+        #: the dialog opts in via set_show_residuals.
+        self._show_residuals: bool = False
 
         # ── Drag state (all None/idle until a grab; see _on_button_press) ─────
         #: The grabbed edge key, one of ("range","min"/"max") or
@@ -146,6 +149,20 @@ class TrendPreviewCanvas(QWidget):
         """Set the render state (``ready``/``empty``/``loading``/``error``)."""
         self._state = state
         self._message = message
+        self._redraw()
+
+    def set_show_residuals(self, enabled: bool) -> None:
+        """Toggle the residual strip below the main plot, then redraw.
+
+        When ON, the figure lays out as a 2-row gridspec (main plot ~4×, a
+        residual strip ~1× below) sharing the x-axis; when OFF, a single axis.
+        The layout is rebuilt from scratch inside ``_redraw`` on each repaint,
+        so this only needs to flip the flag and trigger one redraw.
+        """
+        enabled = bool(enabled)
+        if enabled == self._show_residuals:
+            return
+        self._show_residuals = enabled
         self._redraw()
 
     def enable_drag(self, enabled: bool) -> None:
@@ -307,10 +324,12 @@ class TrendPreviewCanvas(QWidget):
             return
 
         self._figure.clear()
-        ax = self._figure.add_subplot(111)
+        ax, resid_ax = self._add_axes()
 
         if self._state == "empty" or not self._series:
             self._draw_empty(ax)
+            if resid_ax is not None:
+                self._style_residual_axis(resid_ax)
             self._canvas.draw_idle()
             return
 
@@ -328,7 +347,108 @@ class TrendPreviewCanvas(QWidget):
         if self._state == "error" and self._message:
             self._draw_message_banner(ax, self._message, tokens.ERROR)
 
+        # Residual strip (item 4.1): standardized residuals of the active range's
+        # primary series against its candidate curve. Empty axis when there is no
+        # curve to residual against.
+        if resid_ax is not None:
+            self._draw_residuals(resid_ax, ax)
+
         self._canvas.draw_idle()
+
+    def _add_axes(self) -> tuple[object, object | None]:
+        """Add the main axis (and, when enabled, a shared-x residual strip below).
+
+        Returns ``(main_ax, residual_ax_or_None)``. The main axis is always the
+        FIRST axis on the figure so ``_active_axes`` (which drives dragging)
+        keeps returning it. With residuals off this is just ``add_subplot(111)``;
+        with them on we build a 2-row height-ratio gridspec (4:1) sharing x.
+        """
+        if not self._show_residuals:
+            return self._figure.add_subplot(111), None
+        try:
+            gs = self._figure.add_gridspec(2, 1, height_ratios=[4, 1], hspace=0.05)
+            ax = self._figure.add_subplot(gs[0])
+            resid_ax = self._figure.add_subplot(gs[1], sharex=ax)
+            # Hide the main axis's x tick labels; the residual strip carries them.
+            try:
+                ax.tick_params(labelbottom=False)  # type: ignore[union-attr]
+            except Exception:
+                pass
+            return ax, resid_ax
+        except Exception:
+            # Any layout failure degrades to a single axis rather than crashing.
+            return self._figure.add_subplot(111), None
+
+    def _style_residual_axis(self, resid_ax: object) -> None:
+        """Apply BENCH axis styling + the small "resid/σ" label to the strip."""
+        plot_styles.style_axes(resid_ax)
+        try:
+            resid_ax.set_ylabel("resid/σ", fontsize=8)  # type: ignore[union-attr]
+        except Exception:
+            pass
+
+    def _draw_residuals(self, resid_ax: object, main_ax: object) -> None:
+        """Draw standardized residuals for the active range's primary series.
+
+        For each in-mask primary-series point, plot ``(y - f(x)) / σ`` where
+        ``f(x)`` is the active range's candidate curve interpolated to the data x
+        (``np.interp(series_x, curve_x, curve_y)``) and ``σ`` is the series yerr
+        (falling back to 1 where yerr is missing/non-positive). A ±1 band and a
+        zero line give scale. With no active-range curve the axis is left empty.
+        """
+        self._style_residual_axis(resid_ax)
+        # Zero line + ±1 guide band, always drawn so the strip reads as a residual
+        # plot even before a curve exists.
+        try:
+            resid_ax.axhspan(-1.0, 1.0, color=tokens.PLOT_ZERO_LINE, alpha=0.12, zorder=0)  # type: ignore[union-attr]
+            resid_ax.axhline(0.0, color=tokens.PLOT_ZERO_LINE, linewidth=0.8, zorder=1)  # type: ignore[union-attr]
+        except Exception:
+            pass
+
+        active = self._active_range()
+        if active is None or not self._series:
+            return
+        curve_x = np.asarray(active.curve_x, dtype=float)
+        curve_y = np.asarray(active.curve_y, dtype=float)
+        if curve_x.size == 0 or curve_y.size == 0:
+            return
+
+        primary = self._series[0]
+        x = np.asarray(primary.x, dtype=float)
+        y = np.asarray(primary.y, dtype=float)
+        if x.size == 0 or y.size == 0:
+            return
+
+        mask = self._primary_mask(x.size)
+        xs = x[mask]
+        ys = y[mask]
+        if xs.size == 0:
+            return
+
+        yerr = None if primary.yerr is None else np.asarray(primary.yerr, dtype=float)
+        if yerr is not None and yerr.size == x.size:
+            sigma = yerr[mask]
+        else:
+            sigma = np.ones(xs.size, dtype=float)
+        # Guard: a missing / non-positive σ would blow up the standardized
+        # residual — fall back to unit weight for those points.
+        sigma = np.where(np.isfinite(sigma) & (sigma > 0.0), sigma, 1.0)
+
+        fitted_y = np.interp(xs, curve_x, curve_y)
+        residuals = (ys - fitted_y) / sigma
+        try:
+            resid_ax.axhline(0.0, color=tokens.PLOT_ZERO_LINE, linewidth=0.8, zorder=1)  # type: ignore[union-attr]
+            resid_ax.plot(  # type: ignore[union-attr]
+                xs,
+                residuals,
+                marker="o",
+                markersize=3,
+                linestyle="none",
+                color=tokens.PLOT_DATA,
+                zorder=3,
+            )
+        except Exception:
+            pass
 
     def _draw_empty(self, ax: object) -> None:
         """Clear to a titled, muted centred placeholder (no blank white box)."""

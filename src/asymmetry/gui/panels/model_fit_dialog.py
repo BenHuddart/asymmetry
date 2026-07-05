@@ -9,7 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
-from PySide6.QtCore import QSignalBlocker, Qt, QTimer
+from PySide6.QtCore import QSettings, QSignalBlocker, Qt, QTimer
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -51,6 +52,9 @@ from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.fit_settings import fit_quality_confidence
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import (
+    RESULT_BOX_NEUTRAL_STYLE,
+    RESULT_BOX_OBJECT_NAME,
+    RESULT_BOX_SUCCESS_STYLE,
     apply_param_table_style,
     clear_layout,
     info_html,
@@ -318,6 +322,74 @@ def _show_warning(parent: QWidget, title: str, text: str) -> None:
     QMessageBox.warning(parent, title, text)
 
 
+#: QSettings group for the per-(parameter, x_key) last-used trend model (item
+#: 4.2). Non-load-bearing: a missing/parse-broken/out-of-pool value falls back
+#: silently to the context default, so it never touches the .asymp schema.
+_LAST_MODEL_SETTINGS_GROUP = "trend_model_fit/last_model"
+
+
+def _last_model_settings_key(parameter_name: str, x_key: str) -> str:
+    """QSettings key for the remembered model of ``(base_param_name, x_key)``.
+
+    The parameter name is reduced to its base (``Lambda_2`` → ``Lambda``) so a
+    per-group index does not fragment the memory across otherwise-identical
+    trends.
+    """
+    return f"{_LAST_MODEL_SETTINGS_GROUP}/{_base_param_name(parameter_name)}|{x_key}"
+
+
+def _store_last_model_expression(
+    parameter_name: str,
+    x_key: str,
+    expression: str,
+    settings: QSettings | None = None,
+) -> None:
+    """Persist *expression* as the last-used model for ``(parameter, x_key)``.
+
+    Entirely best-effort: it confirms the string round-trips through
+    ``ParameterCompositeModel.from_expression`` before storing, and swallows any
+    QSettings/parse failure — a broken store must never disrupt the fit UI.
+    """
+    if not expression:
+        return
+    try:
+        # Only remember expressions that parse back, so restore never trips on
+        # something we wrote.
+        ParameterCompositeModel.from_expression(expression)
+    except Exception:
+        return
+    try:
+        settings = settings or QSettings()
+        settings.setValue(_last_model_settings_key(parameter_name, x_key), expression)
+    except Exception:
+        pass
+
+
+def _load_last_model(
+    parameter_name: str,
+    x_key: str,
+    component_pool: set[str] | frozenset[str] | list[str],
+    settings: QSettings | None = None,
+) -> ParameterCompositeModel | None:
+    """Return the remembered model for ``(parameter, x_key)``, or None.
+
+    Restricts the parse to *component_pool* (so a component valid in another
+    context but not offered here falls back), and returns None on any failure —
+    a missing key, an unparseable string, or an out-of-pool component.
+    """
+    try:
+        settings = settings or QSettings()
+        raw = settings.value(_last_model_settings_key(parameter_name, x_key))
+    except Exception:
+        return None
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        return _pool_restricted_model_parser(set(component_pool))(raw)
+    except Exception:
+        return None
+
+
 def _pool_restricted_model_parser(
     pool: set[str] | frozenset[str],
 ) -> Callable[[str], ParameterCompositeModel]:
@@ -573,8 +645,20 @@ class ModelFitDialog(QDialog):
         self._show_preview_toggle.setChecked(True)
         self._show_preview_toggle.setVisible(False)
         self._show_preview_toggle.toggled.connect(self._on_show_preview_toggled)
+        # "Show residuals" (item 4.1): opt-in residual strip beneath the preview
+        # plot. Default UNCHECKED — the user opts in; keeping it off by default
+        # also matches the narrow-screen "don't crowd the pane" stance.
+        self._show_residuals_check = QCheckBox("Show residuals")
+        self._show_residuals_check.setChecked(False)
+        self._show_residuals_check.setToolTip(
+            "Show a residual strip below the preview plot: (data − model) / σ for "
+            "the selected range's in-fit points, with a ±1σ guide band. Uses the "
+            "seed curve before a fit and the fitted curve after."
+        )
+        self._show_residuals_check.toggled.connect(self._on_show_residuals_toggled)
         toggle_row = QHBoxLayout()
         toggle_row.addWidget(self._show_preview_toggle)
+        toggle_row.addWidget(self._show_residuals_check)
         toggle_row.addStretch()
         left_layout.addLayout(toggle_row)
 
@@ -681,14 +765,27 @@ class ModelFitDialog(QDialog):
         self._formula_box, self._formula_label = make_formula_box()
         params_layout.addWidget(self._formula_box)
 
+        # Result box (item 4.3): the χ² + quality lines live inside a BENCH
+        # result frame so a successful fit tints green inline — replacing the
+        # per-fit "Fit complete" modal. The tint is swapped in _select_range
+        # based on the active range's result state.
+        self._result_box = QFrame()
+        self._result_box.setObjectName(RESULT_BOX_OBJECT_NAME)
+        self._result_box.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
+        result_box_layout = QVBoxLayout(self._result_box)
+        result_box_layout.setContentsMargins(8, 6, 8, 6)
+        result_box_layout.setSpacing(2)
+
         self._chi2_label = QLabel("")
         self._chi2_label.setTextFormat(Qt.TextFormat.RichText)
-        params_layout.addWidget(self._chi2_label)
+        result_box_layout.addWidget(self._chi2_label)
 
         self._quality_label = QLabel("")
         self._quality_label.setTextFormat(Qt.TextFormat.RichText)
         self._quality_label.setToolTip(_QUALITY_TOOLTIP)
-        params_layout.addWidget(self._quality_label)
+        result_box_layout.addWidget(self._quality_label)
+
+        params_layout.addWidget(self._result_box)
 
         self._fit_progress_label = QLabel("")
         self._fit_progress_label.setStyleSheet(f"color: {tokens.WARN};")
@@ -808,6 +905,12 @@ class ModelFitDialog(QDialog):
             self._preview_collapsed = True
             self._splitter.setSizes([1, 0])
             self._show_preview_toggle.setVisible(True)
+
+    def _on_show_residuals_toggled(self, checked: bool) -> None:
+        """User toggled the residual strip: forward it to the preview canvas."""
+        preview = getattr(self, "_preview", None)
+        if preview is not None:
+            preview.set_show_residuals(bool(checked))
 
     # -- live preview (work item 1.3) -----------------------------------------
     #
@@ -1080,15 +1183,32 @@ class ModelFitDialog(QDialog):
         self._error_value_spin.setEnabled(needs_value)
         self._request_preview_update()
 
+    def _last_model_settings(self) -> QSettings:
+        """QSettings store for the remembered last-used model (item 4.2).
+
+        A thin seam so tests can isolate it to a tmp path (see
+        ``test_last_model_remembered``) instead of touching the real per-user
+        store. Uses the app-wide org/app pair set in ``gui/app.py``.
+        """
+        return QSettings()
+
     def _create_default_range(self) -> ModelFitRange:
         x_min = float(np.nanmin(self._x)) if np.any(np.isfinite(self._x)) else 0.0
         x_max = float(np.nanmax(self._x)) if np.any(np.isfinite(self._x)) else 1.0
 
         available = self._component_pool
-        default_component = _default_component_for_context(
-            self._x_key, self._parameter_name, available
+        # RESTORE (item 4.2): prefer the user's last-used model for this
+        # (base_param, x_key) if one was remembered and still parses within this
+        # context's pool; otherwise fall back to the context default. Purely
+        # non-load-bearing — any failure yields the default.
+        model = _load_last_model(
+            self._parameter_name, self._x_key, available, self._last_model_settings()
         )
-        model = ParameterCompositeModel([default_component], [])
+        if model is None:
+            default_component = _default_component_for_context(
+                self._x_key, self._parameter_name, available
+            )
+            model = ParameterCompositeModel([default_component], [])
 
         params = ParameterSet()
         y_mean = float(np.nanmean(self._y)) if np.any(np.isfinite(self._y)) else 0.0
@@ -1354,6 +1474,7 @@ class ModelFitDialog(QDialog):
                 f'<span style="color:{tokens.ACCENT};">Fitting not yet run for selected range</span>'
             )
             self._quality_label.setText("")
+            self._apply_result_box_style(None)
 
     def _on_range_selector_changed(self, idx: int) -> None:
         if idx < 0:
@@ -1550,6 +1671,14 @@ class ModelFitDialog(QDialog):
             return
 
         fit_range.model = model
+        # Remember this model for the (base_param, x_key) so the next fresh
+        # dialog seeds it as the default (item 4.2). Best-effort / silent.
+        _store_last_model_expression(
+            self._parameter_name,
+            self._x_key,
+            model.component_expression_string(),
+            self._last_model_settings(),
+        )
 
         # Critical-temperature trend components (CriticalDivergence,
         # OrderParameter) default to an unphysical Tc=10; seed Tc (and a cheap
@@ -1799,16 +1928,20 @@ class ModelFitDialog(QDialog):
             if fit_result.success:
                 fit_range.parameters = fit_result.parameters
 
+            # Item 4.3: no per-fit success/failure MODAL. _select_range refreshes
+            # the χ² label (inline "Fit successful …" / "Fit failed: …") and tints
+            # the result box green on success, so both outcomes read inline.
             self._select_range(idx)
 
             if fit_result.success:
-                _show_info(
-                    self,
-                    "Fit complete",
-                    f"Range {idx + 1} fit succeeded. Reduced chi2 = {fit_result.reduced_chi_squared:.4g}",
+                # Item 4.2: remember the converged model as the default for the
+                # next fresh dialog of this (base_param, x_key).
+                _store_last_model_expression(
+                    self._parameter_name,
+                    self._x_key,
+                    fit_range.model.component_expression_string(),
+                    self._last_model_settings(),
                 )
-            else:
-                _show_warning(self, "Fit failed", fit_result.message or "Model fit failed")
 
         self._start_fit_task(_task, _on_done)
 
@@ -1958,6 +2091,18 @@ class ModelFitDialog(QDialog):
             )
         return lines
 
+    def _apply_result_box_style(self, result: object | None) -> None:
+        """Tint the result box green on a successful result, neutral otherwise.
+
+        Replaces the per-fit "Fit complete" modal (item 4.3): a converged fit
+        reads inline via the same green success surface the rest of the app uses.
+        """
+        box = getattr(self, "_result_box", None)
+        if box is None:
+            return
+        success = result is not None and bool(getattr(result, "success", False))
+        box.setStyleSheet(RESULT_BOX_SUCCESS_STYLE if success else RESULT_BOX_NEUTRAL_STYLE)
+
     def _select_range(self, idx: int) -> None:
         if idx < 0 or idx >= len(self._fit.ranges):
             return
@@ -1975,6 +2120,7 @@ class ModelFitDialog(QDialog):
         result = self._result_for_range(idx)
         self._chi2_label.setText(self._chi2_status_text(result))
         self._quality_label.setText(self._quality_status_text(fit_range, result))
+        self._apply_result_box_style(result)
 
         self._param_table.blockSignals(True)
         self._param_table.setRowCount(0)
@@ -2023,6 +2169,7 @@ class ModelFitDialog(QDialog):
             f'<span style="color:{tokens.ACCENT};">Fitting not yet run for selected range</span>'
         )
         self._quality_label.setText("")
+        self._apply_result_box_style(None)
         self._request_preview_update()
 
     def _commit_param_table(self, *, notify_adjustments: bool = False) -> None:

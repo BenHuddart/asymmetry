@@ -371,3 +371,60 @@ def test_disable_mid_drag_stops_cleanly(qapp: QApplication) -> None:
     assert canvas._active_handle is None
     canvas._on_motion_notify(_fake_event(canvas, ax, 3.0, button=1))
     assert events == []
+
+
+def test_residual_axis_toggles(qapp: QApplication) -> None:
+    """set_show_residuals(True) adds a residual axis with points; (False) removes it."""
+    canvas = TrendPreviewCanvas()
+    mask = np.array([True, True, True, True, True])
+    canvas.set_series([_series()])
+    canvas.set_ranges([_range(fitted=False, mask=mask)])
+    canvas.set_active_range(0)
+    canvas.set_state("ready")
+
+    # Single axis by default.
+    assert len(canvas._figure.get_axes()) == 1
+
+    canvas.set_show_residuals(True)
+    axes = canvas._figure.get_axes()
+    assert len(axes) == 2
+    # Main axis is still axes[0] so dragging keeps working (axes[0]); the
+    # residual strip is axes[1].
+    resid_ax = axes[1]
+    assert resid_ax.get_ylabel() == "resid/σ"
+    # The residual strip drew standardized-residual points (a marker line).
+    resid_point_lines = [line for line in resid_ax.get_lines() if line.get_linestyle() == "None"]
+    assert resid_point_lines
+    xs = resid_point_lines[0].get_xdata()
+    assert len(xs) == mask.sum()
+
+    canvas.set_show_residuals(False)
+    assert len(canvas._figure.get_axes()) == 1
+
+
+def test_residuals_no_curve_no_crash(qapp: QApplication) -> None:
+    """With residuals on but no active-range curve, the strip is empty (no crash)."""
+    canvas = TrendPreviewCanvas()
+    canvas.set_show_residuals(True)
+    canvas.set_series([_series()])
+    # A range whose curve is empty.
+    empty_range = PreviewRange(
+        idx=0,
+        x_min=0.5,
+        x_max=3.5,
+        windows=None,
+        in_mask=np.array([True, True, True, True, True]),
+        curve_x=np.array([], dtype=float),
+        curve_y=np.array([], dtype=float),
+        fitted=False,
+    )
+    canvas.set_ranges([empty_range])
+    canvas.set_active_range(0)
+    canvas.set_state("ready")
+
+    axes = canvas._figure.get_axes()
+    assert len(axes) == 2
+    resid_ax = axes[1]
+    # No residual point markers (curve was empty), but no exception either.
+    resid_point_lines = [line for line in resid_ax.get_lines() if line.get_linestyle() == "None"]
+    assert resid_point_lines == []
