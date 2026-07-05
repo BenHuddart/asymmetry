@@ -43,6 +43,7 @@ from asymmetry.gui.panels.model_fit_dialog import (
     _show_warning,
 )
 from asymmetry.gui.styles import tokens
+from asymmetry.gui.widgets.trend_preview import PreviewSeries
 
 
 @dataclass
@@ -171,6 +172,29 @@ class CrossGroupFitDialog(ModelFitDialog):
         # checkboxes hidden across every rebuild, not just the first one.
         for widgets in self._range_widgets:
             widgets.active.setVisible(False)
+
+    def _preview_series(self) -> list[PreviewSeries]:
+        """One data trace per group (colour-cycled by draw order in the canvas).
+
+        The base dialog draws a single series from the concatenated x/y; the
+        cross-group preview instead shows the N per-group traces plus the one
+        candidate curve sampled from the shared range's current params. The
+        primary series (index 0) — whose in-mask the active range greys — is the
+        first group, matching the base's "series[0].x" mask convention.
+        """
+        series: list[PreviewSeries] = []
+        for group in self._groups:
+            xerr = getattr(group, "xerr", None)
+            series.append(
+                PreviewSeries(
+                    label=group.group_name,
+                    x=np.asarray(group.x, dtype=float),
+                    y=np.asarray(group.y, dtype=float),
+                    yerr=np.asarray(group.yerr, dtype=float),
+                    xerr=None if xerr is None else np.asarray(xerr, dtype=float),
+                )
+            )
+        return series
 
     def _on_model_edited(self, idx: int) -> None:
         # The base class's per-range ``fit_range.result`` was already cleared

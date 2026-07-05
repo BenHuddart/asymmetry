@@ -9,7 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -39,8 +40,10 @@ from asymmetry.core.fitting.parameter_models import (
     component_names_for_x,
     fit_parameter_model,
     is_order_parameter_observable,
+    sample_parameter_model,
     suggest_trend_seeds,
     validate_fit_windows,
+    windows_mask,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.fit_settings import fit_quality_confidence
@@ -52,6 +55,11 @@ from asymmetry.gui.widgets.function_builder.dialog import (
     make_component_expression_parser,
 )
 from asymmetry.gui.widgets.screen_sizing import resize_to_available
+from asymmetry.gui.widgets.trend_preview import (
+    PreviewRange,
+    PreviewSeries,
+    TrendPreviewCanvas,
+)
 from asymmetry.gui.windows.new_user_function_dialog import NewUserFunctionDialog
 
 #: Operators offered by the parameter/trending builder — the base arithmetic
@@ -446,10 +454,10 @@ class ModelFitDialog(QDialog):
         # label is supplied so older callers keep working.
         x_display = x_label or x_key
         self.setWindowTitle(f"Model Fit: {parameter_name} vs {x_display}")
-        # Cap the default to the available screen — the preferred 950×650 nearly
-        # fills a 960×640 work area, so on a small display it would open with no
-        # margin; the smaller floor keeps it usable (P2-3).
-        resize_to_available(self, 950, 650, min_width=560, min_height=420)
+        # Cap the default to the available screen — the wider default leaves room
+        # for the preview pane on the right; the smaller floor keeps it usable on
+        # a small display (P2-3).
+        resize_to_available(self, 1280, 700, min_width=560, min_height=420)
 
         self._parameter_name = parameter_name
         self._x_key = x_key
@@ -474,17 +482,82 @@ class ModelFitDialog(QDialog):
             self._fit = ParameterModelFit(parameter_name=parameter_name, x_key=x_key, ranges=[])
             self._fit.ranges.append(self._create_default_range())
 
-        layout = QVBoxLayout(self)
+        # The dialog body is a horizontal splitter: the LEFT pane carries every
+        # existing control (unchanged order) while the RIGHT pane is a preview
+        # host that a later work item fills with a plot canvas. Full-width
+        # footer-slot + button box stay directly on the dialog's top layout,
+        # beneath the splitter, so both span the whole dialog and remain direct
+        # items of self.layout() (contract C6 / the cross-group footer test).
+        top_layout = QVBoxLayout(self)
+
+        left_pane = QWidget()
+        left_layout = QVBoxLayout(left_pane)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+
+        right_pane = QWidget()
+        self._preview_host = QVBoxLayout(right_pane)
+        self._preview_host.setContentsMargins(0, 0, 0, 0)
+        # Live, off-thread candidate-curve preview (work item 1.3). Drag is a
+        # Phase-2 concern, so it is created disabled here.
+        self._preview = TrendPreviewCanvas()
+        self._preview.enable_drag(False)
+        self._preview_host.addWidget(self._preview, 1)
+
+        # ── Preview threading state (work item 1.3) ──────────────────────────
+        # A dedicated generation token guards against stale worker results;
+        # it is deliberately SEPARATE from ``_fit_in_progress`` so a preview
+        # tick never drives ``_set_fit_ui_busy`` (which would lock the dialog).
+        # ``_preview_active``/``_preview_pending`` enforce "at most one sample
+        # in flight plus one coalesced request".
+        self._preview_generation = 0
+        self._preview_active = False
+        self._preview_pending = False
+        # Set in closeEvent before the TaskRunner is shut down, so a debounce
+        # timer that fires during teardown cannot start a fresh worker on a
+        # runner the dialog is done with (TaskRunner.shutdown has no re-entry
+        # guard against a later start()).
+        self._shutting_down = False
+        self._last_preview_curves: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setSingleShot(True)
+        self._preview_timer.setInterval(120)
+        self._preview_timer.timeout.connect(self._launch_preview_sample)
+
+        self._splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._splitter.addWidget(left_pane)
+        self._splitter.addWidget(right_pane)
+        self._splitter.setStretchFactor(0, 0)
+        self._splitter.setStretchFactor(1, 1)
+        self._splitter.setSizes([560, 620])
+        top_layout.addWidget(self._splitter)
+
+        # First-show auto-collapse bookkeeping (see _maybe_collapse_preview).
+        self._preview_collapsed = False
+        self._preview_auto_managed = True
+        self._preview_expanded_sizes = [560, 620]
 
         summary = QLabel(f"Y parameter: <b>{parameter_name}</b> | X variable: <b>{x_display}</b>")
-        layout.addWidget(summary)
+        left_layout.addWidget(summary)
 
         x_min_data = float(np.nanmin(self._x)) if np.any(np.isfinite(self._x)) else 0.0
         x_max_data = float(np.nanmax(self._x)) if np.any(np.isfinite(self._x)) else 1.0
         self._x_min_data = x_min_data
         self._x_max_data = x_max_data
         self._data_range_label = QLabel(f"Data range: {x_min_data:.6g} to {x_max_data:.6g}")
-        layout.addWidget(self._data_range_label)
+        left_layout.addWidget(self._data_range_label)
+
+        # "Show preview" toggle, hidden until a narrow width auto-collapses the
+        # preview pane (see _maybe_collapse_preview). Checking it restores the
+        # pane; unchecking re-collapses it.
+        self._show_preview_toggle = QPushButton("Show preview")
+        self._show_preview_toggle.setCheckable(True)
+        self._show_preview_toggle.setChecked(True)
+        self._show_preview_toggle.setVisible(False)
+        self._show_preview_toggle.toggled.connect(self._on_show_preview_toggled)
+        toggle_row = QHBoxLayout()
+        toggle_row.addWidget(self._show_preview_toggle)
+        toggle_row.addStretch()
+        left_layout.addLayout(toggle_row)
 
         # Named insertion point (contract C6): directly under the summary/
         # data-range labels, at the top of the dialog body. Subclasses (e.g.
@@ -493,7 +566,7 @@ class ModelFitDialog(QDialog):
         # default, so it must add no visual space.
         self._header_slot = QVBoxLayout()
         self._header_slot.setContentsMargins(0, 0, 0, 0)
-        layout.addLayout(self._header_slot)
+        left_layout.addLayout(self._header_slot)
 
         self._error_mode_combo: QComboBox | None = None
         self._error_value_label: QLabel | None = None
@@ -518,7 +591,7 @@ class ModelFitDialog(QDialog):
             )
             error_row.addWidget(self._error_value_spin)
             error_row.addStretch()
-            layout.addLayout(error_row)
+            left_layout.addLayout(error_row)
             self._on_error_mode_changed(0)
 
         # Effective-variance x-uncertainty toggle (item 1): only meaningful when
@@ -539,7 +612,7 @@ class ModelFitDialog(QDialog):
             self._x_error_check.setChecked(bool(getattr(self._fit, "use_x_errors", False)))
             xerr_row.addWidget(self._x_error_check)
             xerr_row.addStretch()
-            layout.addLayout(xerr_row)
+            left_layout.addLayout(xerr_row)
 
         ranges_group = QGroupBox("Model ranges")
         ranges_layout = QVBoxLayout(ranges_group)
@@ -553,7 +626,7 @@ class ModelFitDialog(QDialog):
         add_row.addStretch()
         ranges_layout.addLayout(add_row)
 
-        layout.addWidget(ranges_group)
+        left_layout.addWidget(ranges_group)
 
         params_group = QGroupBox("Range parameters")
         params_layout = QVBoxLayout(params_group)
@@ -593,7 +666,7 @@ class ModelFitDialog(QDialog):
         self._param_table.itemChanged.connect(self._on_param_table_edited)
         params_layout.addWidget(self._param_table)
 
-        layout.addWidget(params_group)
+        left_layout.addWidget(params_group)
 
         # Named insertion point (contract C6): directly above the OK/Cancel
         # button box. Subclasses (e.g. CrossGroupFitDialog's "Suggest roles…"
@@ -602,7 +675,7 @@ class ModelFitDialog(QDialog):
         # visual space.
         self._footer_slot = QVBoxLayout()
         self._footer_slot.setContentsMargins(0, 0, 0, 0)
-        layout.addLayout(self._footer_slot)
+        top_layout.addLayout(self._footer_slot)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -615,10 +688,310 @@ class ModelFitDialog(QDialog):
         self._buttons = buttons
         self._remove_fit_btn = remove_fit_btn
         self._add_range_btn = add_btn
-        layout.addWidget(buttons)
+        top_layout.addWidget(buttons)
 
         self._rebuild_ranges_ui()
         self._select_range(0)
+
+        # Initial preview paint (cheap synchronous spans + a debounced sample).
+        self._request_preview_update()
+
+    # -- preview-pane auto-collapse -------------------------------------------
+    #: Below this usable width the right-hand preview pane auto-collapses and a
+    #: "Show preview" toggle appears so it can be restored.
+    _PREVIEW_NARROW_THRESHOLD = 900
+
+    def showEvent(self, event) -> None:  # noqa: N802 (Qt API name)
+        super().showEvent(event)
+        # Decide once on first show, then let the user resize the splitter freely.
+        self._maybe_collapse_preview(first_show=True)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 (Qt API name)
+        super().resizeEvent(event)
+        self._maybe_collapse_preview(first_show=False)
+
+    def _maybe_collapse_preview(self, *, first_show: bool) -> None:
+        """Collapse/expand the preview pane based on the dialog's usable width.
+
+        The pane is auto-managed only until the user drives it manually
+        (``_on_show_preview_toggled``). Guarded so it fires once on first show
+        and only when the width actually *crosses* the threshold thereafter,
+        never fighting a manual splitter drag on every resize tick. A tiny or
+        unknown reported width (e.g. offscreen) is treated as "not narrow" so
+        the pane is not spuriously collapsed.
+        """
+        splitter = getattr(self, "_splitter", None)
+        if splitter is None or not getattr(self, "_preview_auto_managed", False):
+            return
+
+        width = self.width()
+        # A zero/tiny width is what offscreen/unrealized windows report; don't
+        # collapse on that — mirror resize_to_available's screen-unknown guard.
+        narrow = 0 < width < self._PREVIEW_NARROW_THRESHOLD
+
+        if not first_show and narrow == self._preview_collapsed:
+            # Already in the right state; nothing to do (avoids re-collapsing a
+            # pane the user just expanded by dragging back above the threshold).
+            return
+
+        if narrow:
+            self._collapse_preview()
+        else:
+            self._expand_preview()
+
+    def _collapse_preview(self) -> None:
+        self._preview_collapsed = True
+        self._splitter.setSizes([1, 0])
+        self._show_preview_toggle.setVisible(True)
+        self._show_preview_toggle.blockSignals(True)
+        self._show_preview_toggle.setChecked(False)
+        self._show_preview_toggle.blockSignals(False)
+
+    def _expand_preview(self) -> None:
+        self._preview_collapsed = False
+        self._splitter.setSizes(list(self._preview_expanded_sizes))
+        self._show_preview_toggle.setVisible(False)
+        self._show_preview_toggle.blockSignals(True)
+        self._show_preview_toggle.setChecked(True)
+        self._show_preview_toggle.blockSignals(False)
+
+    def _on_show_preview_toggled(self, checked: bool) -> None:
+        """User drove the preview toggle — honour it and stop auto-managing.
+
+        Once the user makes an explicit choice we leave the pane under their
+        control (a later narrowing does not override it), matching the
+        "don't fight manual resizing" invariant.
+        """
+        self._preview_auto_managed = False
+        if checked:
+            self._preview_collapsed = False
+            self._splitter.setSizes(list(self._preview_expanded_sizes))
+            self._show_preview_toggle.setVisible(True)
+        else:
+            self._preview_collapsed = True
+            self._splitter.setSizes([1, 0])
+            self._show_preview_toggle.setVisible(True)
+
+    # -- live preview (work item 1.3) -----------------------------------------
+    #
+    # Lifecycle: a trigger calls _request_preview_update(), which (a) updates the
+    # cheap visuals (series + spans + active range) SYNCHRONOUSLY so the plot
+    # tracks an edit/drag instantly, and (b) (re)starts a ~120 ms debounce timer.
+    # On timeout _launch_preview_sample() snapshots every input as plain data on
+    # the GUI thread, bumps _preview_generation, and starts an off-thread worker
+    # that samples the candidate curve(s). Results marshal back through
+    # _on_preview_ready / _on_preview_error, which drop any result whose
+    # generation no longer matches (a late/stale sample) and drain a single
+    # coalesced pending request. The worker reads ONLY its snapshots — never
+    # self, never a widget, never self._fit.
+
+    def _preview_series(self) -> list[PreviewSeries]:
+        """Data traces to draw. Base: ONE series from the dialog's x/y/err.
+
+        Subclasses (cross-group) override to draw one series per group.
+        """
+        xerr = None if self._xerr is None else np.asarray(self._xerr, dtype=float)
+        return [
+            PreviewSeries(
+                label="data",
+                x=np.asarray(self._x, dtype=float),
+                y=np.asarray(self._y, dtype=float),
+                yerr=np.asarray(self._yerr, dtype=float),
+                xerr=xerr,
+            )
+        ]
+
+    def _request_preview_update(self) -> None:
+        """Single entry point for every preview trigger.
+
+        Updates the cheap visuals (series, spans, active range) immediately and
+        restarts the debounce that launches the off-thread curve sample. Keep
+        this cheap: no fitting, no heavy sampling.
+        """
+        if self._shutting_down:
+            return
+        preview = getattr(self, "_preview", None)
+        if preview is None:
+            return
+
+        preview.set_series(self._preview_series())
+        preview.set_active_range(self._active_range_idx)
+        # Spans track instantly; the curve for each range reuses the last sampled
+        # curve (empty until the first sample completes) so we never fit here.
+        preview.set_ranges(self._current_preview_ranges())
+
+        self._preview_timer.start()
+
+    def _current_preview_ranges(self) -> list[PreviewRange]:
+        """PreviewRange list for the CURRENT spans, reusing the last curves.
+
+        Cheap: reads the range spans/windows off ``self._fit`` and reuses the
+        last off-thread-sampled curve (empty arrays before the first sample).
+        The in-mask is left empty here (recomputed on the sampling pass); the
+        canvas falls back to "all in" on a length mismatch.
+        """
+        empty = np.array([], dtype=float)
+        ranges: list[PreviewRange] = []
+        for idx, fit_range in enumerate(self._fit.ranges):
+            curve = self._last_preview_curves.get(idx, (empty, empty))
+            windows = list(fit_range.windows) if fit_range.windows else None
+            ranges.append(
+                PreviewRange(
+                    idx=idx,
+                    x_min=fit_range.x_min,
+                    x_max=fit_range.x_max,
+                    windows=windows,
+                    in_mask=empty.astype(bool),
+                    curve_x=curve[0],
+                    curve_y=curve[1],
+                    fitted=False,
+                )
+            )
+        return ranges
+
+    def _launch_preview_sample(self) -> None:
+        """Snapshot inputs on the GUI thread and start the off-thread sampler.
+
+        Coalescing: if a sample is already in flight, mark one pending request
+        and return; the ready/error handler drains it. Otherwise snapshot every
+        input as plain data, bump the generation token, and launch the worker.
+        """
+        # A timer event already dequeued before closeEvent stopped the timer
+        # must not spin up a worker on the shut-down runner.
+        if self._shutting_down:
+            return
+        if self._preview_active:
+            self._preview_pending = True
+            return
+
+        preview = getattr(self, "_preview", None)
+        if preview is None:
+            return
+
+        series = self._preview_series()
+        # Empty when the primary series carries no finite point — nothing to
+        # sample; show the empty state and skip the worker entirely.
+        primary = series[0] if series else None
+        if primary is None or not np.any(np.isfinite(np.asarray(primary.x, dtype=float))):
+            preview.set_state("empty")
+            return
+
+        # Snapshot each range as plain data: a fresh model, a copy of its params,
+        # bounds, and windows. Nothing here is read again off-thread.
+        range_snapshots: list[dict[str, object]] = []
+        for idx, fit_range in enumerate(self._fit.ranges):
+            model_snapshot = ParameterCompositeModel(
+                component_names=list(fit_range.model.component_names),
+                operators=list(fit_range.model.operators),
+            )
+            params_snapshot = ParameterSet(
+                [
+                    Parameter(
+                        name=p.name,
+                        value=float(p.value),
+                        min=float(p.min),
+                        max=float(p.max),
+                        fixed=bool(p.fixed),
+                    )
+                    for p in fit_range.parameters
+                ]
+            )
+            range_snapshots.append(
+                {
+                    "idx": idx,
+                    "model": model_snapshot,
+                    "params": params_snapshot,
+                    "x_min": fit_range.x_min,
+                    "x_max": fit_range.x_max,
+                    "windows": list(fit_range.windows) if fit_range.windows else None,
+                }
+            )
+
+        primary_x = np.asarray(primary.x, dtype=float).copy()
+        active_idx = self._active_range_idx
+        self._preview_generation += 1
+        gen = self._preview_generation
+
+        def _worker(_worker: object) -> object:
+            # OFF-THREAD: touches only the plain snapshots captured above.
+            out_ranges: list[PreviewRange] = []
+            for snap in range_snapshots:
+                idx = int(snap["idx"])
+                curve_x, curve_y = sample_parameter_model(
+                    snap["model"],
+                    snap["params"],
+                    snap["x_min"],
+                    snap["x_max"],
+                    snap["windows"],
+                )
+                # The in-mask is computed over the PRIMARY series' x for the
+                # active range only; other ranges leave it empty (canvas draws
+                # their span/curve without per-point greying).
+                if idx == active_idx:
+                    in_mask = windows_mask(primary_x, snap["windows"], snap["x_min"], snap["x_max"])
+                else:
+                    in_mask = np.array([], dtype=bool)
+                out_ranges.append(
+                    PreviewRange(
+                        idx=idx,
+                        x_min=snap["x_min"],
+                        x_max=snap["x_max"],
+                        windows=snap["windows"],
+                        in_mask=in_mask,
+                        curve_x=curve_x,
+                        curve_y=curve_y,
+                        fitted=False,
+                    )
+                )
+            return (gen, out_ranges)
+
+        self._preview_active = True
+        preview.set_state("loading")
+        self._tasks.start(
+            _worker,
+            on_finished=self._on_preview_ready,
+            on_error=self._on_preview_error,
+        )
+
+    def _on_preview_ready(self, payload: object) -> None:
+        """GUI thread: apply a fresh sample, or drop it if a newer one exists."""
+        gen = -1
+        out_ranges: list[PreviewRange] = []
+        if isinstance(payload, tuple) and len(payload) == 2:
+            gen, out_ranges = payload  # type: ignore[assignment]
+
+        if gen != self._preview_generation:
+            # A newer sample was launched after this one started — this result is
+            # stale. Do not draw it; still release the in-flight slot and drain.
+            self._finish_preview_sample()
+            return
+
+        preview = getattr(self, "_preview", None)
+        if preview is not None:
+            # Cache the sampled curve per range so the next SYNCHRONOUS span
+            # update can reuse it (spans move instantly; curve lags one sample).
+            self._last_preview_curves = {rng.idx: (rng.curve_x, rng.curve_y) for rng in out_ranges}
+            preview.set_series(self._preview_series())
+            preview.set_ranges(out_ranges)
+            preview.set_active_range(self._active_range_idx)
+            has_curve = any(np.asarray(rng.curve_y).size > 0 for rng in out_ranges)
+            preview.set_state("ready" if has_curve else "empty")
+
+        self._finish_preview_sample()
+
+    def _on_preview_error(self, message: str) -> None:
+        """GUI thread: surface the failure and drain any coalesced request."""
+        preview = getattr(self, "_preview", None)
+        if preview is not None:
+            preview.set_state("error", message)
+        self._finish_preview_sample()
+
+    def _finish_preview_sample(self) -> None:
+        """Release the in-flight slot; launch the coalesced request if any."""
+        self._preview_active = False
+        if self._preview_pending:
+            self._preview_pending = False
+            self._launch_preview_sample()
 
     def get_model_fit(self) -> ParameterModelFit | None:
         if self._removed:
@@ -668,6 +1041,7 @@ class ModelFitDialog(QDialog):
         self._error_value_label.setVisible(needs_value)
         self._error_value_spin.setVisible(needs_value)
         self._error_value_spin.setEnabled(needs_value)
+        self._request_preview_update()
 
     def _create_default_range(self) -> ModelFitRange:
         x_min = float(np.nanmin(self._x)) if np.any(np.isfinite(self._x)) else 0.0
@@ -921,6 +1295,7 @@ class ModelFitDialog(QDialog):
         # The stored result no longer corresponds to the edited windows.
         self._invalidate_range_result(idx)
         self._refresh_range_selector()
+        self._request_preview_update()
 
     def _invalidate_range_result(self, idx: int) -> None:
         """Drop a range's fit result after its mask changed; refresh labels."""
@@ -997,6 +1372,7 @@ class ModelFitDialog(QDialog):
         self._invalidate_range_result(idx)
         fit_range.x_min = float(widgets.x_min.value())
         fit_range.x_max = float(widgets.x_max.value())
+        self._request_preview_update()
 
     def _edit_model(self, idx: int) -> None:
         if idx < 0 or idx >= len(self._fit.ranges):
@@ -1046,8 +1422,14 @@ class ModelFitDialog(QDialog):
         fit_range.parameters = new_params
         fit_range.result = None
         self._on_model_edited(idx)
+        # The old model's sampled curve no longer applies — drop it so the
+        # synchronous span pass does not reuse a stale line until the next
+        # off-thread sample lands.
+        self._last_preview_curves.pop(idx, None)
 
         self._rebuild_ranges_ui()
+        # _select_range already re-requests the preview; the stale-curve pop
+        # above is the only extra work the model edit needs here.
         self._select_range(idx)
 
     def _on_model_edited(self, idx: int) -> None:
@@ -1306,6 +1688,7 @@ class ModelFitDialog(QDialog):
         self._param_table.blockSignals(False)
         self._param_table.resizeColumnsToContents()
         self._post_select_range(idx)
+        self._request_preview_update()
 
     def _post_select_range(self, idx: int) -> None:
         """Hook: called at the end of ``_select_range`` after the table is built.
@@ -1325,6 +1708,7 @@ class ModelFitDialog(QDialog):
             f'<span style="color:{tokens.ACCENT};">Fitting not yet run for selected range</span>'
         )
         self._quality_label.setText("")
+        self._request_preview_update()
 
     def _commit_param_table(self, *, notify_adjustments: bool = False) -> None:
         if self._active_range_idx is None:
@@ -1432,6 +1816,11 @@ class ModelFitDialog(QDialog):
         if self._refuse_close_while_fitting():
             event.ignore()
             return
+        # Stop the debounce and flag teardown BEFORE shutting the runner down,
+        # so a pending preview timer cannot start a fresh worker on the
+        # shut-down runner (TaskRunner.shutdown has no re-entry guard).
+        self._shutting_down = True
+        self._preview_timer.stop()
         self._tasks.shutdown()
         super().closeEvent(event)
 

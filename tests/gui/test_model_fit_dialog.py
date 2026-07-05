@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import threading
+import time
 
 import numpy as np
 import pytest
@@ -1129,3 +1130,211 @@ def test_layout_slots_present(qapp: QApplication) -> None:
     # Empty by default on the base dialog.
     assert dlg._header_slot.count() == 0
     assert dlg._footer_slot.count() == 0
+
+
+# ── Work item 1.1: horizontal splitter + preview pane ──────────────────────
+
+
+def _make_split_dialog(qapp: QApplication) -> ModelFitDialog:
+    x = np.linspace(1.0, 10.0, 12)
+    y = 0.01 * x + 0.2
+    yerr = np.full_like(x, 0.01)
+    return ModelFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        x_values=x,
+        y_values=y,
+        y_errors=yerr,
+    )
+
+
+def test_preview_pane_present(qapp: QApplication) -> None:
+    """The dialog body is a horizontal splitter with a left (controls) pane and
+    a right (preview) pane; the preview host is an empty-ish VBox on the right."""
+    from PySide6.QtWidgets import QSplitter, QVBoxLayout
+
+    dlg = _make_split_dialog(qapp)
+
+    assert isinstance(dlg._splitter, QSplitter)
+    assert dlg._splitter.count() == 2
+    assert isinstance(dlg._preview_host, QVBoxLayout)
+    # The preview host lives on the right pane, which is the splitter's 2nd child.
+    right_pane = dlg._splitter.widget(1)
+    assert right_pane is not None
+    assert right_pane.layout() is dlg._preview_host
+
+
+def test_preview_host_outside_ranges_host(qapp: QApplication) -> None:
+    """Rebuilding the range rows (which clears ``_ranges_host``) must not clear
+    or destroy the separate preview host / canvas on the right pane."""
+    dlg = _make_split_dialog(qapp)
+
+    host_before = dlg._preview_host
+    count_before = dlg._preview_host.count()
+    canvas = dlg._preview
+
+    dlg._rebuild_ranges_ui()
+
+    assert dlg._preview_host is host_before
+    assert dlg._preview_host.count() == count_before
+    # The preview canvas survives the range rebuild intact.
+    assert dlg._preview is canvas
+    import shiboken6
+
+    assert shiboken6.isValid(canvas)
+
+
+def test_narrow_screen_collapses_preview(qapp: QApplication) -> None:
+    """A narrow usable width collapses the preview pane (second size ~0) and
+    surfaces the "Show preview" toggle; toggling it back restores the pane."""
+    dlg = _make_split_dialog(qapp)
+
+    # Drive the collapse decision directly with a synthetic narrow width so the
+    # test does not depend on real (offscreen) screen geometry.
+    dlg.resize(700, 600)
+    dlg._maybe_collapse_preview(first_show=True)
+
+    sizes = dlg._splitter.sizes()
+    assert sizes[1] == 0
+    assert dlg._preview_collapsed is True
+    # isVisibleTo (not isVisible) because the dialog itself is never shown here.
+    assert dlg._show_preview_toggle.isVisibleTo(dlg)
+    assert dlg._show_preview_toggle.isChecked() is False
+
+    # Toggling "Show preview" on restores a non-zero preview pane.
+    dlg._show_preview_toggle.setChecked(True)
+    assert dlg._splitter.sizes()[1] > 0
+    assert dlg._preview_collapsed is False
+
+    # A comfortable width expands the pane and hides the toggle (auto-managed).
+    wide = _make_split_dialog(qapp)
+    wide.resize(1280, 700)
+    wide._maybe_collapse_preview(first_show=True)
+    assert wide._splitter.sizes()[1] > 0
+    assert wide._preview_collapsed is False
+    assert not wide._show_preview_toggle.isVisibleTo(wide)
+
+
+# --- Live preview (work item 1.3) --------------------------------------------
+
+
+def _drain_preview(dlg: ModelFitDialog, timeout_s: float = 5.0) -> None:
+    """Launch the debounced sample immediately and wait for it to complete.
+
+    Fires ``_launch_preview_sample`` directly (bypassing the 120 ms debounce)
+    then pumps the event loop until the off-thread sample marshals its result
+    back and ``_preview_active`` (plus any coalesced ``_preview_pending``) clears.
+    """
+    app = QApplication.instance()
+    dlg._launch_preview_sample()
+    deadline = time.time() + timeout_s
+    while (dlg._preview_active or dlg._preview_pending) and time.time() < deadline:
+        app.processEvents()
+        time.sleep(0.005)
+    # A final pump so the queued on_finished slot runs even if the flag cleared
+    # on the same tick it was posted.
+    app.processEvents()
+
+
+def test_preview_series_single(qapp: QApplication) -> None:
+    """The base ``_preview_series`` returns exactly one data trace."""
+    dlg = _make_dialog(qapp)
+    series = dlg._preview_series()
+    assert len(series) == 1
+    assert series[0].label == "data"
+    np.testing.assert_allclose(series[0].x, dlg._x)
+    np.testing.assert_allclose(series[0].y, dlg._y)
+
+
+def test_preview_updates_on_param_edit(qapp: QApplication) -> None:
+    """Editing a seed value drives a fresh off-thread curve onto the canvas."""
+    dlg = _make_dialog(qapp)
+    dlg._select_range(0)
+
+    # Bump a parameter value through the table, exactly as a user edit does.
+    dlg._param_table.item(0, 1).setText("3.5")
+    dlg._on_param_table_edited()
+    _drain_preview(dlg)
+
+    ranges = dlg._preview._ranges
+    active = next((r for r in ranges if r.idx == dlg._active_range_idx), None)
+    assert active is not None
+    assert np.asarray(active.curve_x).size > 0
+    assert np.asarray(active.curve_y).size > 0
+
+
+def test_preview_curve_uses_current_unfitted_params(qapp: QApplication) -> None:
+    """With no fit run, the previewed curve reflects the current seed params.
+
+    A Linear seed of m=2, b=1 must produce a sloped (non-flat, non-empty) curve,
+    proving the preview samples the live params rather than a fitted/empty line.
+    """
+    dlg = _make_dialog(qapp)
+    dlg._select_range(0)
+    # No fit has run.
+    assert dlg._fit.ranges[0].result is None
+
+    _drain_preview(dlg)
+
+    active = next((r for r in dlg._preview._ranges if r.idx == dlg._active_range_idx), None)
+    assert active is not None
+    cy = np.asarray(active.curve_y, dtype=float)
+    assert cy.size > 0
+    # Sloped, not flat: the seed m=2 gives a clearly varying curve.
+    assert float(np.nanmax(cy) - np.nanmin(cy)) > 1.0
+    assert active.fitted is False
+
+
+def test_preview_stale_result_ignored(qapp: QApplication) -> None:
+    """A ready payload carrying an out-of-date generation token is dropped."""
+    from asymmetry.gui.widgets.trend_preview import PreviewRange
+
+    dlg = _make_dialog(qapp)
+    _drain_preview(dlg)
+
+    # Snapshot the canvas's current ranges, then hand it a stale payload whose
+    # generation predates the live token.
+    before = list(dlg._preview._ranges)
+    dlg._preview_active = True  # pretend a sample is in flight
+    stale_gen = dlg._preview_generation - 1
+    poison = [
+        PreviewRange(
+            idx=0,
+            x_min=0.0,
+            x_max=1.0,
+            windows=None,
+            in_mask=np.array([], dtype=bool),
+            curve_x=np.array([0.0, 1.0]),
+            curve_y=np.array([999.0, 999.0]),
+            fitted=False,
+        )
+    ]
+    dlg._on_preview_ready((stale_gen, poison))
+
+    # The poisoned curve must NOT have been drawn; ranges are unchanged.
+    assert dlg._preview._ranges == before
+    # The in-flight slot was still released.
+    assert dlg._preview_active is False
+
+
+def test_close_with_pending_preview_timer_starts_no_task(qapp: QApplication) -> None:
+    """A debounce timer still pending at closeEvent must not launch a worker on
+    the shut-down TaskRunner (post-shutdown-start teardown hazard)."""
+    dlg = _make_dialog(qapp)
+    # Arrange a pending debounce (as a live edit/drag would) without draining it.
+    dlg._request_preview_update()
+    assert dlg._preview_timer.isActive()
+    assert dlg._tasks.active_count == 0
+
+    dlg.close()
+
+    # Teardown stopped the timer and flagged shutdown; no worker was started.
+    assert dlg._shutting_down is True
+    assert not dlg._preview_timer.isActive()
+    assert dlg._tasks.active_count == 0
+
+    # Belt-and-braces: even if a timer event had already been dequeued, firing
+    # the handler after shutdown must be a no-op (guards short-circuit).
+    dlg._launch_preview_sample()
+    qapp.processEvents()
+    assert dlg._tasks.active_count == 0

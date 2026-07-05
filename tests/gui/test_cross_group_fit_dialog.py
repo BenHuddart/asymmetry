@@ -927,3 +927,22 @@ def test_edit_model_then_rerun_accepts_with_new_model_config(monkeypatch) -> Non
     row_names = {row["name"] for row in output.config["parameter_rows"]}
     assert row_names == {"a", "Ea"}
     assert app is not None
+
+
+def test_preview_series_per_group() -> None:
+    """The cross-group override returns one preview series per group."""
+    QApplication.instance() or QApplication([])
+    groups = _groups()
+    dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=groups,
+        parent=None,
+    )
+
+    series = dlg._preview_series()
+    assert len(series) == len(groups)
+    assert [s.label for s in series] == [g.group_name for g in groups]
+    # The primary series (index 0) mirrors the first group's data.
+    np.testing.assert_allclose(series[0].x, groups[0].x)
+    np.testing.assert_allclose(series[0].y, groups[0].y)
