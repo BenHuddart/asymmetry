@@ -54,6 +54,31 @@ from asymmetry.gui.styles.widgets import (
 _MAX_ALTERNATIVES = 3
 
 
+def _strip_trailing_gloss(title: str) -> str:
+    """Drop a trailing top-level parenthesised gloss from ``title``.
+
+    ``template_display_name`` appends " (<plain name>)" to a title, and
+    ``<plain name>`` can itself contain nested parens (e.g. "static nuclear
+    fields (Kubo-Toyabe)"). This walks back from the end to find the matching
+    top-level "(" for the final ")" and cuts from there, so only the last
+    balanced group is removed. If the string does not end with a balanced
+    parenthesised group, it is returned unchanged.
+    """
+    text = title.rstrip()
+    if not text.endswith(")"):
+        return title
+    depth = 0
+    for index in range(len(text) - 1, -1, -1):
+        char = text[index]
+        if char == ")":
+            depth += 1
+        elif char == "(":
+            depth -= 1
+            if depth == 0:
+                return text[:index].rstrip()
+    return title
+
+
 def _plain_verdict_headline(recommendation: FitWizardRecommendation) -> str:
     """Return the card's verdict headline (plain physics, never re-worded).
 
@@ -334,8 +359,13 @@ class WizardAnswerCard(QWidget):
         return value - reference
 
     def _alternative_label(self, assessment: CandidateAssessment) -> str:
-        """Button text: the plain title plus a compact metric-delta badge."""
-        title = self._alternative_title(assessment)
+        """Button text: the plain title (gloss stripped) plus a metric-delta badge.
+
+        The tooltip (:meth:`_alternative_tooltip`) keeps the full glossed name;
+        only the button text is shortened, since the parenthesised family gloss
+        makes the chip far too wide.
+        """
+        title = _strip_trailing_gloss(self._alternative_title(assessment))
         delta = self._metric_delta(assessment)
         if delta is None:
             return title
@@ -460,7 +490,15 @@ class WizardAnswerCard(QWidget):
             )
         ax_fit.set_xlabel("Time (µs)")
         ax_fit.set_ylabel("Asymmetry")
-        if assessment is not None:
+        # Only show the axes title when the user picked an alternative (it then
+        # clarifies what is plotted); when the recommendation itself is
+        # selected, the card headline right above already says as much, and
+        # repeating it here is pure duplication.
+        if (
+            assessment is not None
+            and self._recommendation is not None
+            and assessment.template.key != self._recommendation.recommended_key
+        ):
             ax_fit.set_title(assessment.template.title)
         ax_fit.legend(loc="best")
 

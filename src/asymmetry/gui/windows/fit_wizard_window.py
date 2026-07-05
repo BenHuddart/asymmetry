@@ -34,11 +34,13 @@ from PySide6.QtGui import QBrush, QColor, QFont, QGuiApplication
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
+    QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -68,7 +70,7 @@ from asymmetry.core.fitting.wizard_scope import (
 )
 from asymmetry.core.fourier.fft import fft_asymmetry
 from asymmetry.gui.styles import tokens
-from asymmetry.gui.styles.widgets import make_warning_banner
+from asymmetry.gui.styles.widgets import build_primary_button_qss, make_warning_banner
 from asymmetry.gui.widgets.collapsible_section import CollapsibleSection
 from asymmetry.gui.widgets.decision_trail import DecisionTrail, TrailSeparator
 from asymmetry.gui.widgets.screen_sizing import resize_to_available
@@ -192,6 +194,7 @@ class FitWizardWindow(WizardWindowBase):
     def _build_welcome_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
+        layout.setSpacing(10)
 
         intro = QLabel(
             "The fit wizard analyses this spectrum, fits a set of physics-motivated "
@@ -204,9 +207,7 @@ class FitWizardWindow(WizardWindowBase):
 
         analyze_row = QHBoxLayout()
         self._analyze_btn = QPushButton("Analyze")
-        analyze_font = QFont(self._analyze_btn.font())
-        analyze_font.setBold(True)
-        self._analyze_btn.setFont(analyze_font)
+        self._analyze_btn.setStyleSheet(build_primary_button_qss())
         self._analyze_btn.clicked.connect(self._start_analysis)
         analyze_row.addWidget(self._analyze_btn)
         analyze_row.addStretch()
@@ -241,9 +242,7 @@ class FitWizardWindow(WizardWindowBase):
         page = QWidget()
         layout = QVBoxLayout(page)
         header = QLabel("Analysing this spectrum…")
-        header_font = QFont(header.font())
-        header_font.setBold(True)
-        header.setFont(header_font)
+        header.setStyleSheet("font-weight: 600;")
         layout.addWidget(header)
         self._running_trail = DecisionTrail()
         layout.addWidget(self._running_trail)
@@ -251,8 +250,12 @@ class FitWizardWindow(WizardWindowBase):
         return page
 
     def _build_result_page(self) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
+        # The result page is a QScrollArea: an expanded trail step (scope
+        # selector, FFT panel, compare table) can push content past the window
+        # with no other way to reach it. The scroll area itself is the stacked
+        # page; the inner content widget keeps the layout below unchanged.
+        content = QWidget()
+        layout = QVBoxLayout(content)
 
         # Answer card at the top.
         self._answer_card = WizardAnswerCard()
@@ -281,7 +284,18 @@ class FitWizardWindow(WizardWindowBase):
         # The decision trail below the card.
         self._result_trail = DecisionTrail()
         layout.addWidget(self._result_trail, 1)
-        return page
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet(
+            "QScrollArea { background: transparent; }"
+            " QScrollArea > QWidget > QWidget { background: transparent; }"
+        )
+        scroll.setWidget(content)
+        self._result_scroll = scroll
+        return scroll
 
     # ------------------------------------------------------------------
     # Deep panels (built once; re-parented between states)

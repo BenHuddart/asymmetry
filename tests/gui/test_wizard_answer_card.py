@@ -27,7 +27,7 @@ from asymmetry.core.fitting.fit_wizard import (
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.styles import tokens
-from asymmetry.gui.widgets.wizard_answer_card import WizardAnswerCard
+from asymmetry.gui.widgets.wizard_answer_card import WizardAnswerCard, _strip_trailing_gloss
 
 
 @pytest.fixture(scope="module")
@@ -292,3 +292,85 @@ def test_alternative_delta_badge_formatting(qapp: QApplication) -> None:
 def test_apply_button_uses_primary_qss(qapp: QApplication) -> None:
     card = WizardAnswerCard()
     assert tokens.ACCENT_SOFT in card._apply_btn.styleSheet()
+
+
+# ── _strip_trailing_gloss ────────────────────────────────────────────────────
+
+
+def test_strip_trailing_gloss_removes_last_balanced_group() -> None:
+    assert (
+        _strip_trailing_gloss(
+            "Longitudinal-field KT + Constant (static nuclear fields (Kubo-Toyabe))"
+        )
+        == "Longitudinal-field KT + Constant"
+    )
+
+
+def test_strip_trailing_gloss_no_trailing_parens_unchanged() -> None:
+    assert _strip_trailing_gloss("Exponential + Constant") == "Exponential + Constant"
+
+
+def test_strip_trailing_gloss_unbalanced_unchanged() -> None:
+    # A stray ")" with no matching top-level "(" is left alone rather than
+    # mis-truncated.
+    text = "Weird title)"
+    assert _strip_trailing_gloss(text) == text
+
+
+def test_strip_trailing_gloss_simple_single_group() -> None:
+    assert _strip_trailing_gloss("Title (gloss)") == "Title"
+
+
+def test_alternative_chip_text_drops_gloss_tooltip_keeps_it(qapp: QApplication) -> None:
+    # Give the gaussian alternative a glossed title directly (no FAMILY_GLOSSES
+    # wiring needed — template_display_name returns raw titles when no family
+    # report resolves the key, which is exactly this test's fixture shape).
+    t = np.linspace(0, 8, 60)
+    exp_curve = 0.2 * np.exp(-0.4 * t) + 0.01
+    gauss_curve = 0.18 * np.exp(-0.5 * t * t) + 0.02
+    exp = _assessment("exp_constant", "Exponential + Constant", params=3, curve=exp_curve)
+    gauss = _assessment(
+        "gaussian_constant",
+        "Gaussian + Constant (static nuclear fields (Kubo-Toyabe))",
+        params=2,
+        curve=gauss_curve,
+    )
+    rec = FitWizardRecommendation(
+        fingerprint=_fingerprint(),
+        templates=(exp.template, gauss.template),
+        assessments=(exp, gauss),
+        metric=SelectionMetric.AICC,
+        recommended_key="exp_constant",
+        comparable_keys=(),
+        summary="Recommended: Exponential + Constant by AICc.",
+        confidence=ConfidenceTier.HIGH,
+        verdict=RecommendationVerdict.STRUCTURED,
+        caveat="",
+    )
+
+    card = WizardAnswerCard()
+    card.set_recommendation(rec)
+    button = card._alt_buttons["gaussian_constant"]
+    assert "(static nuclear fields" not in button.text()
+    assert button.text().startswith("Gaussian + Constant")
+    assert "(static nuclear fields (Kubo-Toyabe))" in button.toolTip()
+
+
+# ── Overlay plot title (recommended vs alternative selection) ───────────────
+
+
+def test_plot_title_hidden_when_recommended_selected(qapp: QApplication) -> None:
+    card = WizardAnswerCard()
+    card.set_plot_data(*_plot_arrays())
+    card.set_recommendation(_recommendation())
+    figure = card._plot_widget._figure
+    assert figure.axes[0].get_title() == ""
+
+
+def test_plot_title_shown_when_alternative_selected(qapp: QApplication) -> None:
+    card = WizardAnswerCard()
+    card.set_plot_data(*_plot_arrays())
+    card.set_recommendation(_recommendation())
+    card.set_selected_key("gaussian_constant")
+    figure = card._plot_widget._figure
+    assert figure.axes[0].get_title() == "Gaussian + Constant"
