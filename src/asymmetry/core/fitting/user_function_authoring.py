@@ -435,20 +435,13 @@ def build_draft_callable(draft: UserFunctionDraft) -> Callable[..., np.ndarray]:
     Only the ``def`` is executed — never the registration call — so building a
     callable for the preview curve has no registry side effects. Raises
     :class:`UserFunctionError` with an actionable message for unknown names, a
-    missing ``return`` in an advanced body, or a syntax error.
+    syntax error, or an advanced body without a return statement (a syntax
+    error is reported as such even when the body also lacks a return).
     """
-    declared = set(draft.param_names)
-
-    if draft.advanced_body is not None:
-        if "return" not in draft.advanced_body:
-            raise UserFunctionError(
-                "The advanced function body must contain a return statement that "
-                "yields an array the same shape as x."
-            )
-    else:
+    if draft.advanced_body is None:
         # Beat a bare NameError with a message that names the culprit and lists
         # what the user actually declared.
-        unknown = _unknown_formula_names(draft.formula, declared)
+        unknown = _unknown_formula_names(draft.formula, set(draft.param_names))
         if unknown:
             declared_list = draft.param_names or ["(none)"]
             raise UserFunctionError(
@@ -459,33 +452,63 @@ def build_draft_callable(draft: UserFunctionDraft) -> Callable[..., np.ndarray]:
             )
 
     source = generate_plugin_source(draft)
-    # Compile only the function definition (the first def in the generated
-    # module), so exec has no registration side effect and no asymmetry import
-    # requirement for the preview path.
     func_name = f"_{_snake_case(draft.name)}"
-    func_def = _extract_function_def(source, func_name)
 
-    namespace: dict[str, object] = {"np": np}
+    # Parse before the return check so a syntax error is reported as one, and
+    # so the check sees real Return statements — not the word "return" inside
+    # a comment or string literal.
     try:
-        exec(compile(func_def, filename="<user-function>", mode="exec"), namespace)
+        module = ast.parse(source)
     except SyntaxError as exc:
         raise UserFunctionError(f"Function body is not valid Python: {exc.msg}.") from exc
+    func_node = next(
+        (
+            node
+            for node in module.body
+            if isinstance(node, ast.FunctionDef) and node.name == func_name
+        ),
+        None,
+    )
+    if func_node is None:
+        # Should never happen for generated source; guard defensively.
+        raise UserFunctionError("Could not locate the generated function definition.")
+
+    if draft.advanced_body is not None and not _has_own_return(func_node):
+        raise UserFunctionError(
+            "The advanced function body must contain a return statement that "
+            "yields an array the same shape as x."
+        )
+
+    # Compile only the function definition (never the registration call), so
+    # exec has no registry side effect and no asymmetry import requirement for
+    # the preview path.
+    func_def = ast.get_source_segment(source, func_node)
+    if func_def is None:
+        raise UserFunctionError("Could not locate the generated function definition.")
+    namespace: dict[str, object] = {"np": np}
+    exec(compile(func_def, filename="<user-function>", mode="exec"), namespace)
     callable_obj = namespace.get(func_name)
     if not callable(callable_obj):
         raise UserFunctionError("The generated function could not be compiled.")
     return callable_obj  # type: ignore[return-value]
 
 
-def _extract_function_def(source: str, func_name: str) -> str:
-    """Return the source of the ``def func_name`` block from *source* alone."""
-    module = ast.parse(source)
-    for node in module.body:
-        if isinstance(node, ast.FunctionDef) and node.name == func_name:
-            segment = ast.get_source_segment(source, node)
-            if segment is not None:
-                return segment
-    # Should never happen for generated source; guard defensively.
-    raise UserFunctionError("Could not locate the generated function definition.")
+def _has_own_return(func: ast.FunctionDef) -> bool:
+    """Whether *func* itself contains a ``return`` statement.
+
+    Returns inside nested ``def``/``async def``/``lambda`` bodies belong to the
+    inner function, so they do not count — a helper closure's return does not
+    make the outer body return anything.
+    """
+    stack: list[ast.AST] = list(func.body)
+    while stack:
+        node = stack.pop()
+        if isinstance(node, ast.Return):
+            return True
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
+            continue
+        stack.extend(ast.iter_child_nodes(node))
+    return False
 
 
 def evaluate_draft(draft: UserFunctionDraft, x: np.ndarray) -> np.ndarray:

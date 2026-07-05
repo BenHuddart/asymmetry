@@ -372,6 +372,75 @@ def test_validate_draft_advanced_body_without_return_rejected():
         validate_draft(draft)
 
 
+def test_advanced_body_return_only_in_comment_gets_friendly_error():
+    # The word "return" in a comment is not a return statement; the friendly
+    # early check must still fire (not a downstream probe error).
+    draft = _stretched_draft(
+        name="UserCommentReturn",
+        parameters=[DraftParameter("A", 1.0)],
+        advanced_body="# return the scaled array\nA * np.asarray(x, dtype=float)",
+    )
+    with pytest.raises(UserFunctionError, match="return statement"):
+        validate_draft(draft)
+
+
+def test_advanced_body_return_only_in_string_literal_gets_friendly_error():
+    draft = _stretched_draft(
+        name="UserStringReturn",
+        parameters=[DraftParameter("A", 1.0)],
+        advanced_body=(
+            '"""This helper should return an array eventually."""\n'
+            "y = A * np.asarray(x, dtype=float)"
+        ),
+    )
+    with pytest.raises(UserFunctionError, match="return statement"):
+        validate_draft(draft)
+
+
+def test_advanced_body_return_only_in_nested_def_gets_friendly_error():
+    # A helper closure's return belongs to the helper, not the outer body —
+    # the outer function still falls off the end returning None.
+    draft = _stretched_draft(
+        name="UserNestedReturn",
+        parameters=[DraftParameter("A", 1.0)],
+        advanced_body=(
+            "def helper(v):\n    return v * 2\ny = helper(A * np.asarray(x, dtype=float))"
+        ),
+    )
+    with pytest.raises(UserFunctionError, match="return statement"):
+        validate_draft(draft)
+
+
+def test_advanced_body_return_inside_branches_validates():
+    draft = _stretched_draft(
+        name="UserBranchReturn",
+        parameters=[DraftParameter("A", 1.0)],
+        advanced_body=(
+            "x = np.asarray(x, dtype=float)\n"
+            "if A >= 0:\n"
+            "    return A * np.exp(-x)\n"
+            "else:\n"
+            "    return -A * np.exp(-x)"
+        ),
+    )
+    func = validate_draft(draft)
+    x = np.linspace(0.0, 4.0, 9)
+    np.testing.assert_allclose(func(x, A=1.0), np.exp(-x))
+
+
+def test_advanced_body_syntax_error_reported_as_syntax_not_missing_return():
+    # A body that is both syntactically broken AND lacks a return must get the
+    # syntax-error message — reporting "missing return" for unparsable code
+    # would send the author chasing the wrong problem.
+    draft = _stretched_draft(
+        name="UserBodySyntax",
+        parameters=[DraftParameter("A", 1.0)],
+        advanced_body="y = A * (np.asarray(x, dtype=float)",
+    )
+    with pytest.raises(UserFunctionError, match="not valid Python"):
+        validate_draft(draft)
+
+
 def test_validate_draft_empty_description_rejected():
     with pytest.raises(UserFunctionError, match="description"):
         validate_draft(_stretched_draft(description="   "))
