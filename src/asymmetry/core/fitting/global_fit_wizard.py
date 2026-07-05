@@ -592,10 +592,7 @@ def _run_wavefront_assignment_task(
         # a strict single-flip-simpler assignment (one fewer local), so the warm
         # child should not exceed it.
         warm_start_chi2 = float(
-            sum(
-                result.chi_squared
-                for result in task.warm_start_source.fit_results_by_run.values()
-            )
+            sum(result.chi_squared for result in task.warm_start_source.fit_results_by_run.values())
         )
     elif task.initial_seed_by_run is not None:
         warm_start_by_run = _clone_parameter_sets(task.initial_seed_by_run)
@@ -5948,10 +5945,7 @@ def _run_exhaustive_wavefront_search(
                         continue
                 # The all-local anchor (top layer) was already fitted up front and
                 # lives in exact_cache/converged_assessments; do not re-fit it.
-                if (
-                    state.free_param_count > 0
-                    and round_index == state.free_param_count
-                ):
+                if state.free_param_count > 0 and round_index == state.free_param_count:
                     continue
                 # Technique A: once χ²_floor + penalty(layer) exceeds the incumbent
                 # IC by more than the margin, no assignment in this or any higher
