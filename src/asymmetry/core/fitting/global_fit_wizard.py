@@ -5,8 +5,15 @@ from __future__ import annotations
 import math
 import os
 import threading
+import time
 from collections.abc import Callable, Sequence
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures import (
+    FIRST_COMPLETED,
+    ProcessPoolExecutor,
+    ThreadPoolExecutor,
+    as_completed,
+    wait,
+)
 from dataclasses import dataclass, field, replace
 from itertools import combinations
 
@@ -87,6 +94,29 @@ _COMPARABLE_SCORE_DELTA = 2.0
 #: both with headroom — the error is asymmetric (too-high only forfeits a little
 #: speedup; too-low silently prunes a verdict-relevant node), so we bias high.
 _LAYER_BOUND_MARGIN = 6.0
+#: Wall-clock budget (seconds) for the exhaustive wavefront role search. The loop
+#: polls a monotonic deadline between Hamming rounds and between per-assignment
+#: fits; on expiry it stops scheduling further work and returns the best-so-far
+#: assessments (never hangs, never crashes) with a truncation note. The default
+#: sits comfortably below any external watchdog (the GUI's is 240 s), and is a
+#: BACKSTOP only — a healthy search finishes on its merits well within it. ``None``
+#: disables the budget (unlimited). Kept high so it never trips on the small
+#: golden-verdict harness cases.
+_WAVEFRONT_TIME_BUDGET_SECONDS: float | None = 180.0
+#: Interval (seconds) at which the pooled wavefront loop wakes to re-check the
+#: cancel callback and the wall-clock deadline while futures are in flight.
+_WAVEFRONT_POLL_INTERVAL_SECONDS = 0.25
+#: When the all-local anchor for a template fails to converge, its layer bound is
+#: unarmed and it would otherwise enumerate every Hamming layer (2^P assignments).
+#: For high-dimensional templates that explosion is the dominant cost of a hung
+#: search, so we cap the number of Hamming layers explored for an anchor-failed
+#: template with more than ``_ANCHOR_FAILED_CAP_FREE_PARAMS`` free parameters.
+#: Low layers (mostly-global assignments) are the physically-plausible role
+#: splits for a series, so keeping the first few layers is conservative — it
+#: prunes the combinatorially-worst upper layers, not the likely winners. Small
+#: templates are unaffected and still enumerate fully (golden-harness parity).
+_ANCHOR_FAILED_CAP_FREE_PARAMS = 4
+_ANCHOR_FAILED_MAX_LAYERS = 3
 #: Tolerance (χ² units) on the technique-D monotonicity certificate. A warm child
 #: fit is accepted without escalation when its χ² does not exceed the parent's by
 #: more than this. The parent is strictly less flexible, so a correct child fit is
@@ -510,6 +540,14 @@ class _WavefrontTemplateState:
     #: True once the layer bound has fired and this template's remaining, higher
     #: layers are being skipped.
     layer_bound_fired: bool = False
+    #: Hard cap on the highest Hamming layer this template may enumerate. ``None``
+    #: means no cap (the admissible layer bound governs pruning). It is set only
+    #: when the all-local anchor did NOT converge for a high-dimensional template:
+    #: with no ``chi2_floor`` the admissible bound cannot arm, so without a cap the
+    #: template would enumerate all 2^P assignments — the dominant cost of a hung
+    #: search. Capping to the first few (mostly-global) layers keeps pruning
+    #: conservative instead of removing it entirely.
+    layer_cap: int | None = None
 
 
 def _compact_assessment_for_cache(
@@ -588,10 +626,19 @@ def _try_open_process_pool(
     return executor
 
 
-def _shutdown_process_pool(executor: ProcessPoolExecutor) -> None:
+def _shutdown_process_pool(
+    executor: ProcessPoolExecutor,
+    *,
+    wait: bool = True,
+    cancel_futures: bool = False,
+) -> None:
     shutdown = getattr(executor, "shutdown", None)
     if callable(shutdown):
-        shutdown()
+        try:
+            shutdown(wait=wait, cancel_futures=cancel_futures)
+        except TypeError:
+            # Executor wrappers that predate cancel_futures (Python <3.9 signature).
+            shutdown(wait=wait)
 
 
 def _layer_assignments(
@@ -7084,9 +7131,17 @@ def _run_exhaustive_wavefront_search(
         [CandidateTemplate], dict[object, dict[int, ParameterSet]]
     ],
     cancel_callback: Callable[[], bool] | None = None,
+    time_budget_seconds: float | None = _WAVEFRONT_TIME_BUDGET_SECONDS,
 ) -> tuple[GlobalCandidateAssessment, ...]:
     if not shortlisted_templates:
         return ()
+
+    deadline: float | None = None
+    if time_budget_seconds is not None and time_budget_seconds > 0.0:
+        deadline = time.monotonic() + float(time_budget_seconds)
+
+    def _budget_exceeded() -> bool:
+        return deadline is not None and time.monotonic() >= deadline
 
     def _check_cancelled() -> None:
         if cancel_callback is not None and cancel_callback():
@@ -7188,11 +7243,29 @@ def _run_exhaustive_wavefront_search(
                 "layer bound armed.",
             )
         else:
-            _progress_log(
-                progress_callback,
-                f"{state.template.title}: all-local anchor did not converge; "
-                "layer bound disabled for this template (full enumeration).",
-            )
+            # The admissible layer bound cannot arm without a converged anchor
+            # (no chi2_floor). Rather than let this template enumerate every
+            # Hamming layer (2^P assignments) — the dominant cost of the hang on
+            # hard oscillatory/KT families — impose a conservative layer cap for
+            # high-dimensional templates: keep the low, mostly-global layers (the
+            # physically-plausible role splits for a series) and drop the
+            # combinatorially-worst upper layers. Small templates are left
+            # uncapped and still enumerate fully.
+            if state.free_param_count > _ANCHOR_FAILED_CAP_FREE_PARAMS:
+                state.layer_cap = _ANCHOR_FAILED_MAX_LAYERS
+                _progress_log(
+                    progress_callback,
+                    f"{state.template.title}: all-local anchor did not converge; "
+                    "no admissible layer bound, so capping enumeration to Hamming "
+                    f"layer {state.layer_cap}/{state.free_param_count} "
+                    "(conservative pruning instead of full 2^P enumeration).",
+                )
+            else:
+                _progress_log(
+                    progress_callback,
+                    f"{state.template.title}: all-local anchor did not converge; "
+                    "layer bound disabled for this template (full enumeration).",
+                )
 
     # Technique B (cross-template incumbent bound): the best IC found across ALL
     # templates so far. A template whose χ²_floor + minimum-possible penalty
@@ -7226,12 +7299,26 @@ def _run_exhaustive_wavefront_search(
             activity="Exhaustive global/local role search",
         )
 
+    #: Set when the wall-clock budget expires. On truncation we stop scheduling
+    #: further work and return the best-so-far assessments; the pool is torn down
+    #: NON-blocking (cancel_futures) so teardown does not re-block on the in-flight
+    #: fits that the budget was meant to bound.
+    budget_truncated = False
     try:
         for round_index in range(max_rounds):
             # Cooperative cancel between Hamming layers. Under a process pool we
             # cannot kill in-flight futures, so cancel stops scheduling further
             # rounds/templates, then the finally-block shuts the pool down.
             _check_cancelled()
+            if _budget_exceeded():
+                budget_truncated = True
+                _progress_log(
+                    progress_callback,
+                    "Wavefront role search hit its wall-clock budget "
+                    f"({time_budget_seconds:.0f} s) before round {round_index + 1}"
+                    f"/{max_rounds}; returning the best assignments found so far.",
+                )
+                break
             task_groups: list[list[_WavefrontAssignmentTask]] = []
             for state in states:
                 layers = layers_by_key[state.template.key]
@@ -7240,6 +7327,21 @@ def _run_exhaustive_wavefront_search(
                 if state.layer_bound_fired:
                     # Bound already fired in an earlier round; every remaining
                     # (higher) layer only adds penalty, so skip them all.
+                    continue
+                if state.layer_cap is not None and round_index > state.layer_cap:
+                    # Conservative cap for an anchor-failed high-dimensional
+                    # template: the admissible bound could not arm, so cap the
+                    # enumeration at the low (mostly-global) layers instead of
+                    # exploring all 2^P assignments.
+                    if not state.layer_bound_fired:
+                        state.layer_bound_fired = True
+                        _progress_log(
+                            progress_callback,
+                            f"{state.template.title}: enumeration cap reached at "
+                            f"Hamming layer {round_index}/{state.free_param_count}; "
+                            "skipping remaining layers (anchor-failed conservative "
+                            "pruning).",
+                        )
                     continue
                 # Technique B: skip a whole template that cannot beat the best IC
                 # found across ANY template. Unlike A this may fire at round 0
@@ -7369,16 +7471,55 @@ def _run_exhaustive_wavefront_search(
             round_results: list[_WavefrontAssignmentResult] = []
             if executor is None:
                 for task in ordered_tasks:
-                    # Serial (in-process) path: check between per-assignment fits.
+                    # Serial (in-process) path: check cancel and the wall-clock
+                    # budget between per-assignment fits, keeping whatever has
+                    # already been fitted so best-so-far includes it.
                     _check_cancelled()
+                    if _budget_exceeded():
+                        budget_truncated = True
+                        _progress_log(
+                            progress_callback,
+                            "Wavefront role search hit its wall-clock budget "
+                            f"({time_budget_seconds:.0f} s) mid-round "
+                            f"{round_index + 1}/{max_rounds}; keeping "
+                            f"{len(round_results)} completed assignment(s) and "
+                            "stopping.",
+                        )
+                        break
                     round_results.append(_run_wavefront_assignment_task(task))
             else:
                 future_to_task = {
                     executor.submit(_run_wavefront_assignment_task, task): task
                     for task in ordered_tasks
                 }
-                for future in as_completed(future_to_task):
-                    round_results.append(future.result())
+                # Poll cancel and the wall-clock deadline WHILE the pool works,
+                # rather than blocking in ``as_completed`` with no deadline. On
+                # budget expiry we stop collecting and let the (non-blocking)
+                # teardown cancel the still-pending futures — otherwise a single
+                # slow, non-convergent oscillatory fit could keep the loop alive
+                # past the budget indefinitely.
+                pending = set(future_to_task)
+                while pending:
+                    _check_cancelled()
+                    if _budget_exceeded():
+                        budget_truncated = True
+                        _progress_log(
+                            progress_callback,
+                            "Wavefront role search hit its wall-clock budget "
+                            f"({time_budget_seconds:.0f} s) mid-round "
+                            f"{round_index + 1}/{max_rounds} with "
+                            f"{len(pending)} assignment(s) still in flight; "
+                            f"keeping {len(round_results)} completed assignment(s) "
+                            "and stopping.",
+                        )
+                        break
+                    done, pending = wait(
+                        pending,
+                        timeout=_WAVEFRONT_POLL_INTERVAL_SECONDS,
+                        return_when=FIRST_COMPLETED,
+                    )
+                    for future in done:
+                        round_results.append(future.result())
 
             successful_assignments = 0
             for result in round_results:
@@ -7411,9 +7552,21 @@ def _run_exhaustive_wavefront_search(
                 f"Wavefront round {round_index + 1}/{max_rounds} complete: "
                 f"{successful_assignments}/{len(round_results)} assignment(s) converged.",
             )
+
+            if budget_truncated:
+                # Best-so-far has been merged from the completed results above;
+                # stop scheduling further rounds.
+                break
     finally:
         if executor is not None:
-            _shutdown_process_pool(executor)
+            if budget_truncated:
+                # NON-blocking teardown: a bare shutdown() waits on every
+                # in-flight fit, which would just relocate the wall we were
+                # trying to bound. cancel_futures drops the not-yet-started
+                # tasks; the running ones are abandoned.
+                _shutdown_process_pool(executor, wait=False, cancel_futures=True)
+            else:
+                _shutdown_process_pool(executor)
 
     optimized_assessments: list[GlobalCandidateAssessment] = []
     for state in states:
