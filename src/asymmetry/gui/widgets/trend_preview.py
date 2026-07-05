@@ -40,6 +40,9 @@ _DRAG_TOLERANCE_PX = 7.0
 #: Minimum right-drag extent (device pixels) that counts as an exclude gesture
 #: rather than a bare click.
 _EXCLUDE_MIN_PX = 4.0
+#: Minimum left-drag extent (device pixels) on empty space that counts as a
+#: create gesture rather than a bare click (same spirit as ``_EXCLUDE_MIN_PX``).
+_ADD_MIN_PX = 8.0
 
 #: Per-range span colour cycle: the Okabe-Ito colour-blind-safe qualitative set
 #: (same hues used for multi-run overlays elsewhere; see
@@ -110,6 +113,9 @@ class TrendPreviewCanvas(QWidget):
     range_edge_dragged = Signal(int, float, float)  # (range_idx, x_min, x_max)
     window_edge_dragged = Signal(int, int, float, float)  # (range_idx, window_idx, lo, hi)
     exclude_region_requested = Signal(int, float, float)  # (range_idx, lo, hi)
+    # Canvas add/select gestures (contract C-CANVAS-ADD); see _on_button_press.
+    range_add_requested = Signal(float, float)  # (x_min, x_max) of a dragged-out new span
+    range_select_requested = Signal(int)  # (range_idx) click on a non-active range's span
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -133,6 +139,21 @@ class TrendPreviewCanvas(QWidget):
         self._exclude_start_x: float | None = None
         #: Pixel-x where the right-button gesture began (click-vs-drag test).
         self._exclude_start_px: float | None = None
+        #: Non-active range idx a left-press landed inside (SELECT gesture); None
+        #: otherwise. On release with a negligible move we emit range_select.
+        self._select_idx: int | None = None
+        #: Pixel-x where a SELECT press began (click-vs-drag test on release).
+        self._select_start_px: float | None = None
+        #: Data-x / pixel-x where a CREATE_PENDING left-press began on empty
+        #: space; both None unless a create gesture is in progress.
+        self._create_start_x: float | None = None
+        self._create_start_px: float | None = None
+        #: Transient dashed "rubber-band" axvspan drawn during a CREATE drag. It
+        #: is TRANSIENT CHROME: never stored in self._ranges, always .remove()d
+        #: and reset to None on every release path (normal, no-op, leave-axes,
+        #: drag-off). The real range only appears after the dialog reacts to
+        #: range_add_requested and pushes a fresh set_ranges.
+        self._rubberband = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -202,6 +223,13 @@ class TrendPreviewCanvas(QWidget):
             self._active_handle = None
             self._exclude_start_x = None
             self._exclude_start_px = None
+            # Abort any in-progress SELECT/CREATE and remove the rubber-band so
+            # disabling mid-gesture cannot strand transient chrome on the axes.
+            self._select_idx = None
+            self._select_start_px = None
+            self._create_start_x = None
+            self._create_start_px = None
+            self._clear_rubberband()
 
     # ── Drag interaction (active range only) ──────────────────────────────────
     def _active_axes(self):
@@ -231,19 +259,55 @@ class TrendPreviewCanvas(QWidget):
             handles.append((float(hi), ("window", w_idx, "hi")))
         return handles
 
+    def _span_hit(self, data_x: float, *, ignore_active: bool) -> int | None:
+        """Idx of the first range whose ``[x_min, x_max]`` envelope holds *data_x*.
+
+        Used by the SELECT classification: hit-tests every range's drawn span,
+        optionally ignoring the active one (which owns edge-drag/exclude). Ranges
+        with an open (None) bound on the tested side do not contain the point.
+        """
+        for rng in self._ranges:
+            if ignore_active and rng.idx == self._active_idx:
+                continue
+            if rng.x_min is None or rng.x_max is None:
+                continue
+            lo, hi = sorted((float(rng.x_min), float(rng.x_max)))
+            if lo <= data_x <= hi:
+                return rng.idx
+        return None
+
     def _on_button_press(self, event) -> None:
-        """Grab the nearest active-range edge (left) or start an exclude (right)."""
+        """Classify a press into MOVE_EDGE / SELECT / CREATE (left) or exclude (right).
+
+        Gesture precedence is FROZEN (contract C-GESTURE) and evaluated here,
+        BEFORE any state is grabbed, so no downstream handler can reorder it:
+
+          * Right-button ALWAYS starts an exclude on the active range — it never
+            selects or creates.
+          * Left-button, in STRICT ORDER:
+              1. EDGE grab (nearest active-range/window handle within
+                 _DRAG_TOLERANCE_PX). Edges are the smallest, most precise target
+                 so they win first.
+              2. SELECT — else if the press falls inside a NON-active range's
+                 span envelope. Selecting an existing range beats creating over
+                 it, so a press that STARTS on existing coverage resolves to
+                 SELECT even if the user then drags (can't accidentally nest).
+              3. CREATE — else the press is on genuinely EMPTY canvas (near no
+                 edge, inside no span); begin a pending create. Creation only
+                 ever happens on empty space, so the three gestures never contend
+                 for the same pixel.
+        """
         if not self._drag_enabled:
             return
         ax = self._active_axes()
         if ax is None or event.inaxes is not ax:
             return
-        active = self._active_range()
-        if active is None:
-            return
 
         if event.button == 3:
-            # Right-button: begin an exclude gesture from this data-x.
+            # Right-button: begin an exclude gesture on the active range. Needs an
+            # active range (exclude targets it); with none, do nothing.
+            if self._active_range() is None:
+                return
             if event.xdata is not None:
                 self._exclude_start_x = float(event.xdata)
                 self._exclude_start_px = float(event.x)
@@ -252,13 +316,50 @@ class TrendPreviewCanvas(QWidget):
         if event.button != 1:
             return
 
+        # 1. EDGE grab (active range's edges + window edges only). Highest
+        #    precedence: smallest, most precise target.
         handle = nearest_handle(ax, self._active_handles(), event.x, _DRAG_TOLERANCE_PX)
         if handle is not None:
             self._active_handle = handle
+            return
+
+        # Beyond this point we need a data-x to classify against range spans.
+        if event.xdata is None:
+            return
+        data_x = float(event.xdata)
+
+        # 2. SELECT — press inside a NON-active range's span. Starting on existing
+        #    coverage is always a select (even if the user then drags), so we can
+        #    never create-over-existing.
+        hit = self._span_hit(data_x, ignore_active=True)
+        if hit is not None:
+            self._select_idx = hit
+            self._select_start_px = float(event.x)
+            return
+
+        # 3. CREATE — genuinely empty canvas (not near an edge, inside no span,
+        #    including the active one). Begin a pending create; the rubber-band is
+        #    drawn lazily once the cursor actually moves.
+        if self._span_hit(data_x, ignore_active=False) is not None:
+            return
+        self._create_start_x = data_x
+        self._create_start_px = float(event.x)
 
     def _on_motion_notify(self, event) -> None:
-        """Move the grabbed edge to the cursor and emit the matching signal."""
-        if not self._drag_enabled or self._active_handle is None:
+        """Move the grabbed edge, or extend the CREATE rubber-band, on cursor move."""
+        if not self._drag_enabled:
+            return
+
+        # CREATE_PENDING: draw/update the transient rubber-band from the press-x to
+        # the current cursor. Motion that leaves the axes (no data-x) must NOT
+        # extend to a garbage coordinate — freeze at the last band and wait.
+        if self._active_handle is None and self._create_start_x is not None:
+            if event.xdata is None:
+                return
+            self._update_rubberband(self._create_start_x, float(event.xdata))
+            return
+
+        if self._active_handle is None:
             return
         # Ignore motion that leaves the axes (no data-x to snap to).
         if event.xdata is None:
@@ -303,9 +404,65 @@ class TrendPreviewCanvas(QWidget):
         self._redraw()
         self.window_edge_dragged.emit(active.idx, w_idx, lo, hi)
 
+    # ── CREATE rubber-band (transient chrome, never in self._ranges) ──────────
+    def _update_rubberband(self, x0: float, x1: float) -> None:
+        """Draw/refresh the transient dashed span between *x0* and *x1*.
+
+        The rubber-band is deliberately distinct from a real range span (dashed
+        outline, muted accent fill) so the user reads it as a candidate, not a
+        committed range. It is redrawn (remove + re-add) each motion so it tracks
+        the cursor, and it lives ONLY as ``self._rubberband`` — never in
+        ``self._ranges`` — so no code path can mistake it for real state.
+        """
+        ax = self._active_axes()
+        if ax is None:
+            return
+        lo, hi = sorted((float(x0), float(x1)))
+        self._clear_rubberband()
+        try:
+            self._rubberband = ax.axvspan(  # type: ignore[union-attr]
+                lo,
+                hi,
+                facecolor=tokens.ACCENT,
+                edgecolor=tokens.ACCENT,
+                alpha=0.14,
+                linestyle="--",
+                linewidth=1.2,
+                zorder=6,
+            )
+            self._canvas.draw_idle()
+        except Exception:
+            self._rubberband = None
+
+    def _clear_rubberband(self) -> None:
+        """Remove the rubber-band artist if present and reset the reference.
+
+        Called on EVERY release path (normal create, no-op click, leave-axes)
+        and by ``enable_drag(False)`` so the transient span can never be
+        stranded on the axes.
+        """
+        band = self._rubberband
+        self._rubberband = None
+        if band is None:
+            return
+        try:
+            band.remove()
+            if self._canvas is not None:
+                self._canvas.draw_idle()
+        except Exception:
+            pass
+
     def _on_button_release(self, event) -> None:
-        """Settle a left-drag, or fire the exclude gesture on right-release."""
+        """Settle a left-drag, resolve SELECT/CREATE, or fire the exclude gesture."""
         if not self._drag_enabled:
+            # A gesture that survived to release with drag turned off (rare):
+            # the rubber-band was already cleared by enable_drag(False), but be
+            # defensive and reset any leftover pending state.
+            self._clear_rubberband()
+            self._select_idx = None
+            self._select_start_px = None
+            self._create_start_x = None
+            self._create_start_px = None
             return
 
         if event.button == 1 and self._active_handle is not None:
@@ -320,6 +477,42 @@ class TrendPreviewCanvas(QWidget):
                         active, self._active_handle[1], self._active_handle[2], new_x
                     )
             self._active_handle = None
+            return
+
+        # SELECT release: a press that started inside a non-active span. Emit
+        # UNCONDITIONALLY — a press that starts on range N's coverage
+        # unambiguously means "select range N", so (unlike CREATE/EXCLUDE) there
+        # is no rival gesture to fence off with a drag-distance threshold. A drag
+        # that started inside the span still selects (never creates: creation is
+        # empty-space only); a release with the cursor off the axes still selects
+        # (the target was fixed at press time from a valid in-span x — the
+        # release position is irrelevant to which range was chosen).
+        if event.button == 1 and self._select_idx is not None:
+            idx = self._select_idx
+            self._select_idx = None
+            self._select_start_px = None
+            self.range_select_requested.emit(idx)
+            return
+
+        # CREATE release: a press that started on empty canvas. The rubber-band is
+        # transient chrome and must be removed on EVERY path — normal, no-op
+        # (negligible move), and leave-axes. Emit range_add_requested only when
+        # the pixel move exceeded _ADD_MIN_PX; a bare click is a NO-OP (no
+        # deselect, no range).
+        if event.button == 1 and self._create_start_x is not None:
+            start_x = self._create_start_x
+            start_px = self._create_start_px
+            self._create_start_x = None
+            self._create_start_px = None
+            self._clear_rubberband()
+            if (
+                start_px is not None
+                and event.x is not None
+                and abs(float(event.x) - start_px) >= _ADD_MIN_PX
+                and event.xdata is not None
+            ):
+                lo, hi = sorted((start_x, float(event.xdata)))
+                self.range_add_requested.emit(lo, hi)
             return
 
         if event.button == 3 and self._exclude_start_x is not None:

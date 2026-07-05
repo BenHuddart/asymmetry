@@ -1121,3 +1121,35 @@ def test_formula_uses_break_points() -> None:
     assert "m*x + b + c" in dlg._formula_box.label.toolTip()
 
     assert app is not None
+
+
+def test_plot_add_select_inert_single_range() -> None:
+    """Cross-group pins one range: the plot's add/select gestures are left
+    unconnected (no phantom range, no selection change), but right-drag exclude
+    on the single range still carves a window (that signal stays wired)."""
+    app = QApplication.instance() or QApplication([])
+    dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=_groups(),
+        parent=None,
+    )
+
+    assert len(dlg._fit.ranges) == 1
+    assert dlg.active_range_index() == 0
+
+    # Drag-out a new span on empty canvas: no consumer -> no new range.
+    dlg._preview.range_add_requested.emit(120.0, 280.0)
+    assert len(dlg._fit.ranges) == 1
+
+    # Click a (notional) other range: no consumer -> selection unchanged.
+    dlg._preview.range_select_requested.emit(5)
+    assert dlg.active_range_index() == 0
+
+    # Right-drag exclude on the single range STILL carves a window: the base's
+    # exclude_region_requested wiring is untouched by the add/select override.
+    assert dlg._fit.ranges[0].windows in (None, [])
+    dlg._preview.exclude_region_requested.emit(0, 180.0, 220.0)
+    assert dlg._fit.ranges[0].windows  # a gap was carved -> windows now populated
+
+    assert app is not None

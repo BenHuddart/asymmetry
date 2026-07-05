@@ -635,6 +635,13 @@ class CrossGroupFitDialog(ModelFitDialog):
             self._range_roles = [{} for _ in self._fit.ranges]
         self._range_roles[0] = roles
 
+    def _connect_plot_range_signals(self) -> None:
+        # Cross-group uses one pinned range: dragging out a new range or selecting a
+        # different one is meaningless, so the plot's add/select gestures are left
+        # unconnected (the canvas still emits them; nothing consumes them). Edge-drag
+        # and right-drag-exclude on the single range stay wired via the base.
+        return
+
     def _add_range(self) -> None:
         _show_info(
             self,

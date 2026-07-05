@@ -2109,3 +2109,85 @@ def test_fit_busy_disables_cards_and_bounds(qapp: QApplication) -> None:
     assert dlg._range_cards[0]._overflow_button.isEnabled() is True
     # No windows on the active range, so the bounds pair is restored enabled.
     assert dlg._bounds_min_spin.isEnabled() is True
+
+
+def test_plot_drag_creates_range(qapp: QApplication) -> None:
+    """A drag-out on empty canvas (range_add_requested) appends a new range with
+    the dragged bounds, makes it active, and gives its card the idx-keyed swatch."""
+    from asymmetry.gui.panels.model_fit_dialog import range_span_color
+
+    dlg = _make_dialog(qapp)
+    before = len(dlg._fit.ranges)
+
+    lo, hi = 3.5, 6.5
+    dlg._preview.range_add_requested.emit(lo, hi)
+
+    new_idx = len(dlg._fit.ranges) - 1
+    assert len(dlg._fit.ranges) == before + 1
+    assert dlg._fit.ranges[new_idx].x_min == lo
+    assert dlg._fit.ranges[new_idx].x_max == hi
+    # The new range is now active.
+    assert dlg.active_range_index() == new_idx
+    # A card exists for it carrying the idx-keyed span colour.
+    assert len(dlg._range_cards) == before + 1
+    assert dlg._range_cards[new_idx]._view is not None
+    assert dlg._range_cards[new_idx]._view.swatch_color == range_span_color(new_idx)
+
+
+def test_plot_click_selects_range(qapp: QApplication) -> None:
+    """A click on a non-active range's span (range_select_requested) activates it
+    and the details pane follows (from_plot select path)."""
+    dlg = _make_dialog(qapp)
+    dlg._add_range()  # now two ranges, indices 0 and 1
+    dlg._select_range(0)
+    assert dlg.active_range_index() == 0
+
+    dlg._preview.range_select_requested.emit(1)
+
+    assert dlg.active_range_index() == 1
+    assert dlg._preview._active_idx == 1  # canvas mirror followed
+    # The details pane repointed at range 1.
+    assert dlg._range_cards[1]._view is not None
+    assert dlg._range_cards[1]._view.show_run
+
+
+def test_add_button_and_drag_share_path(qapp: QApplication) -> None:
+    """The "Add Range" button and a drag-created range both go through
+    _create_default_range, so each new range is seeded with default params."""
+    dlg = _make_dialog(qapp)
+
+    # Button path.
+    dlg._add_range()
+    button_range = dlg._fit.ranges[-1]
+    assert len(list(button_range.parameters)) > 0
+    assert all(np.isfinite(p.value) for p in button_range.parameters)
+
+    # Drag path (explicit bounds) — same seeding.
+    dlg._add_range_with_bounds(2.0, 8.0)
+    drag_range = dlg._fit.ranges[-1]
+    assert drag_range.x_min == 2.0
+    assert drag_range.x_max == 8.0
+    assert list(drag_range.model.param_names) == list(button_range.model.param_names)
+    assert len(list(drag_range.parameters)) == len(list(button_range.parameters))
+    assert all(np.isfinite(p.value) for p in drag_range.parameters)
+
+
+def test_add_range_with_bounds_ignores_degenerate(qapp: QApplication) -> None:
+    """An inverted/zero-width dragged span falls back to the default data-extent
+    bounds rather than creating a degenerate range (no crash)."""
+    dlg = _make_dialog(qapp)
+    default = dlg._create_default_range()
+
+    # Inverted span (hi <= lo): falls back to defaults.
+    dlg._add_range_with_bounds(8.0, 2.0)
+    inverted = dlg._fit.ranges[-1]
+    assert inverted.x_min == default.x_min
+    assert inverted.x_max == default.x_max
+    assert inverted.x_max > inverted.x_min
+
+    # Zero-width span: also falls back to defaults.
+    dlg._add_range_with_bounds(5.0, 5.0)
+    zero = dlg._fit.ranges[-1]
+    assert zero.x_min == default.x_min
+    assert zero.x_max == default.x_max
+    assert zero.x_max > zero.x_min

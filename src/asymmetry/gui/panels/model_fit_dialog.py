@@ -606,6 +606,9 @@ class ModelFitDialog(QDialog):
         self._preview.range_edge_dragged.connect(self._on_preview_range_edge_dragged)
         self._preview.window_edge_dragged.connect(self._on_preview_window_edge_dragged)
         self._preview.exclude_region_requested.connect(self._on_preview_exclude_region)
+        # Add/select gestures go through an overridable hook so single-range
+        # subclasses (cross-group) can leave them inert (item 3.2/3.3).
+        self._connect_plot_range_signals()
         self._preview_host.addWidget(self._preview, 1)
 
         # ── Preview threading state (work item 1.3) ──────────────────────────
@@ -1321,10 +1324,32 @@ class ModelFitDialog(QDialog):
 
         return ModelFitRange(x_min=x_min, x_max=x_max, model=model, parameters=params)
 
-    def _add_range(self) -> None:
-        self._fit.ranges.append(self._create_default_range())
+    def _add_range_with_bounds(self, x_min: float | None, x_max: float | None) -> None:
+        """Append a new range (default model/params) with the given bounds — or the
+        data-extent default when None — then rebuild, activate it, and refresh the
+        preview.
+
+        The "Add Range" button and the plot's drag-out gesture both converge here,
+        so a drag-created range gets the SAME ``_create_default_range`` model/param
+        seeding as the button. Degenerate drag bounds (inverted or zero-width) fall
+        back to the default data-extent bounds rather than creating a bad range.
+        """
+        new_range = self._create_default_range()
+        if x_min is not None and x_max is not None:
+            lo = float(x_min)
+            hi = float(x_max)
+            if hi > lo:
+                new_range.x_min = lo
+                new_range.x_max = hi
+            # else: inverted/degenerate span — keep the default data-extent bounds.
+        self._fit.ranges.append(new_range)
         self._rebuild_ranges_ui()
-        self._select_range(len(self._fit.ranges) - 1)
+        new_idx = len(self._fit.ranges) - 1
+        self._set_active_range(new_idx)
+        self._request_preview_update()
+
+    def _add_range(self) -> None:
+        self._add_range_with_bounds(None, None)
 
     def _remove_range(self, idx: int) -> None:
         if idx < 0 or idx >= len(self._fit.ranges):
@@ -1684,6 +1709,24 @@ class ModelFitDialog(QDialog):
             self._preview_timer.start()
         else:
             self._request_preview_update()
+
+    def _connect_plot_range_signals(self) -> None:
+        """Connect the plot's add/select gestures. Overridable so single-range
+        subclasses (cross-group) can leave them inert."""
+        self._preview.range_select_requested.connect(self._on_preview_range_select)
+        self._preview.range_add_requested.connect(self._on_preview_range_add)
+
+    def _on_preview_range_select(self, idx: int) -> None:
+        """Canvas clicked a non-active range's span: make it the active range.
+
+        The bounds-guard lives inside ``_set_active_range``; ``from_plot=True``
+        marks the plot as the selection source (contract C-ACTIVE).
+        """
+        self._set_active_range(idx, from_plot=True)
+
+    def _on_preview_range_add(self, x_min: float, x_max: float) -> None:
+        """Canvas dragged out a new span on empty area: append a seeded range."""
+        self._add_range_with_bounds(x_min, x_max)
 
     def _on_preview_range_edge_dragged(self, idx: int, x_min: float, x_max: float) -> None:
         """Canvas dragged a range edge: mirror it into the model + spinboxes.

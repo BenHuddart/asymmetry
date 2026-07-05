@@ -431,6 +431,243 @@ def test_disable_mid_drag_stops_cleanly(qapp: QApplication) -> None:
     assert events == []
 
 
+# ── Canvas add/select gestures (contract C-CANVAS-ADD / C-GESTURE) ───────────
+def _two_range_canvas():
+    """Two ranges: idx 0 active at [0.5, 3.5], idx 1 non-active at [5.0, 7.0]."""
+    canvas = TrendPreviewCanvas()
+    mask = np.array([True, True, True, True, True])
+    # Widen the data so both spans (and empty space beyond) are on-axes.
+    x = np.linspace(0.0, 10.0, 5)
+    y = np.linspace(1.0, 2.0, 5)
+    canvas.set_series([PreviewSeries(label="run 1", x=x, y=y, yerr=np.full(5, 0.1), xerr=None)])
+    range0 = _range(fitted=False, mask=mask, idx=0)  # [0.5, 3.5]
+    range1 = _range(fitted=False, mask=mask, idx=1)
+    range1.x_min = 5.0
+    range1.x_max = 7.0
+    canvas.set_ranges([range0, range1])
+    canvas.set_active_range(0)
+    canvas.set_state("ready")
+    canvas._canvas.draw()
+    return canvas
+
+
+def _rubberband_present(canvas) -> bool:
+    """True if the tracked rubber-band artist is still attached to the axes."""
+    if canvas._rubberband is None:
+        return False
+    ax = _axes(canvas)
+    return canvas._rubberband in ax.patches
+
+
+def test_press_on_edge_moves_not_creates(qapp: QApplication) -> None:
+    """Press near the active range's edge → MOVE_EDGE, never a create."""
+    canvas = _two_range_canvas()
+    canvas.enable_drag(True)
+    ax = _axes(canvas)
+
+    added: list[tuple] = []
+    edged: list[tuple] = []
+    canvas.range_add_requested.connect(lambda lo, hi: added.append((lo, hi)))
+    canvas.range_edge_dragged.connect(lambda *a: edged.append(a))
+
+    # Press exactly on the active range's max edge (3.5).
+    canvas._on_button_press(_fake_event(canvas, ax, 3.5, button=1))
+    assert canvas._active_handle == ("range", "max")
+    assert canvas._create_start_x is None
+    canvas._on_motion_notify(_fake_event(canvas, ax, 3.0, button=1))
+    canvas._on_button_release(_fake_event(canvas, ax, 3.0, button=1))
+
+    assert edged, "edge drag should have fired"
+    assert added == []
+
+
+def test_press_in_other_span_selects(qapp: QApplication) -> None:
+    """Press inside the NON-active range's span, negligible move → select."""
+    canvas = _two_range_canvas()
+    canvas.enable_drag(True)
+    ax = _axes(canvas)
+
+    selected: list[int] = []
+    added: list[tuple] = []
+    canvas.range_select_requested.connect(lambda i: selected.append(i))
+    canvas.range_add_requested.connect(lambda lo, hi: added.append((lo, hi)))
+
+    # 6.0 is inside range 1's span [5.0, 7.0].
+    canvas._on_button_press(_fake_event(canvas, ax, 6.0, button=1))
+    assert canvas._select_idx == 1
+    canvas._on_button_release(_fake_event(canvas, ax, 6.0, button=1))
+
+    assert selected == [1]
+    assert added == []
+
+
+def test_drag_starting_in_other_span_selects_not_creates(qapp: QApplication) -> None:
+    """A drag that STARTS inside a non-active span resolves to SELECT (emitted
+    unconditionally, regardless of drag distance) and NEVER creates."""
+    canvas = _two_range_canvas()
+    canvas.enable_drag(True)
+    ax = _axes(canvas)
+
+    selected: list[int] = []
+    added: list[tuple] = []
+    canvas.range_select_requested.connect(lambda i: selected.append(i))
+    canvas.range_add_requested.connect(lambda lo, hi: added.append((lo, hi)))
+
+    # Press inside range 1 [5.0, 7.0], then drag well beyond it.
+    canvas._on_button_press(_fake_event(canvas, ax, 5.5, button=1))
+    assert canvas._select_idx == 1
+    assert canvas._create_start_x is None
+    canvas._on_motion_notify(_fake_event(canvas, ax, 9.5, button=1))
+    canvas._on_button_release(_fake_event(canvas, ax, 9.5, button=1))
+
+    # A press that starts on range 1's coverage means "select range 1" — the
+    # drag distance is irrelevant (no rival gesture to fence off). It selects and
+    # crucially never creates.
+    assert selected == [1]
+    assert added == []
+
+
+def test_drag_empty_space_emits_range_add(qapp: QApplication) -> None:
+    """Press on empty space, drag > _ADD_MIN_PX → range_add_requested (sorted)."""
+    from asymmetry.gui.widgets.trend_preview import _ADD_MIN_PX
+
+    canvas = _two_range_canvas()
+    canvas.enable_drag(True)
+    ax = _axes(canvas)
+
+    added: list[tuple] = []
+    canvas.range_add_requested.connect(lambda lo, hi: added.append((lo, hi)))
+
+    # 8.5 → 9.5 is empty (beyond range 1's max of 7.0). Drag right-to-left to
+    # confirm the emitted bounds come out sorted.
+    canvas._on_button_press(_fake_event(canvas, ax, 9.5, button=1))
+    assert canvas._create_start_x == pytest.approx(9.5)
+    # Motion draws a rubber-band.
+    canvas._on_motion_notify(_fake_event(canvas, ax, 8.5, button=1))
+    band_shown = canvas._rubberband is not None
+    # Verify the pixel span exceeds the threshold for this axes scaling.
+    px0 = _fake_event(canvas, ax, 9.5).x
+    px1 = _fake_event(canvas, ax, 8.5).x
+    assert abs(px1 - px0) >= _ADD_MIN_PX
+    canvas._on_button_release(_fake_event(canvas, ax, 8.5, button=1))
+
+    assert band_shown, "a rubber-band should have been drawn during motion"
+    assert added, "range_add_requested never fired"
+    lo, hi = added[-1]
+    assert lo == pytest.approx(8.5)
+    assert hi == pytest.approx(9.5)
+    assert not _rubberband_present(canvas)
+
+
+def test_bare_click_empty_is_noop(qapp: QApplication) -> None:
+    """Press+release on empty with negligible move → no signal, no rubber-band."""
+    canvas = _two_range_canvas()
+    canvas.enable_drag(True)
+    ax = _axes(canvas)
+
+    added: list[tuple] = []
+    selected: list[int] = []
+    canvas.range_add_requested.connect(lambda lo, hi: added.append((lo, hi)))
+    canvas.range_select_requested.connect(lambda i: selected.append(i))
+
+    n_patches_before = len(ax.patches)
+    canvas._on_button_press(_fake_event(canvas, ax, 9.0, button=1))
+    assert canvas._create_start_x == pytest.approx(9.0)
+    canvas._on_button_release(_fake_event(canvas, ax, 9.0, button=1))
+
+    assert added == []
+    assert selected == []
+    assert not _rubberband_present(canvas)
+    assert len(ax.patches) == n_patches_before
+
+
+def test_right_drag_still_excludes(qapp: QApplication) -> None:
+    """Regression: right-drag on the active range still emits exclude."""
+    canvas = _two_range_canvas()
+    canvas.enable_drag(True)
+    ax = _axes(canvas)
+
+    events: list[tuple] = []
+    canvas.exclude_region_requested.connect(lambda i, lo, hi: events.append((i, lo, hi)))
+
+    canvas._on_button_press(_fake_event(canvas, ax, 2.5, button=3))
+    canvas._on_button_release(_fake_event(canvas, ax, 1.5, button=3))
+
+    assert events, "exclude_region_requested never fired"
+    idx, lo, hi = events[-1]
+    assert idx == 0
+    assert lo == pytest.approx(1.5)
+    assert hi == pytest.approx(2.5)
+
+
+def test_create_and_select_disabled_when_drag_off(qapp: QApplication) -> None:
+    """With drag off, empty-drag and span-click emit nothing."""
+    canvas = _two_range_canvas()
+    canvas.enable_drag(False)
+    ax = _axes(canvas)
+
+    fired: list[str] = []
+    canvas.range_add_requested.connect(lambda *a: fired.append("add"))
+    canvas.range_select_requested.connect(lambda *a: fired.append("select"))
+
+    # Empty-space drag.
+    canvas._on_button_press(_fake_event(canvas, ax, 9.5, button=1))
+    canvas._on_motion_notify(_fake_event(canvas, ax, 8.5, button=1))
+    canvas._on_button_release(_fake_event(canvas, ax, 8.5, button=1))
+    # Span click on the non-active range.
+    canvas._on_button_press(_fake_event(canvas, ax, 6.0, button=1))
+    canvas._on_button_release(_fake_event(canvas, ax, 6.0, button=1))
+
+    assert fired == []
+    assert canvas._create_start_x is None
+    assert canvas._select_idx is None
+    assert not _rubberband_present(canvas)
+
+
+def test_rubberband_cleared_on_release(qapp: QApplication) -> None:
+    """No rubber-band artist survives: create drag, no-op click, or leave-axes."""
+    canvas = _two_range_canvas()
+    canvas.enable_drag(True)
+    ax = _axes(canvas)
+
+    # 1. Normal create drag.
+    canvas._on_button_press(_fake_event(canvas, ax, 9.5, button=1))
+    canvas._on_motion_notify(_fake_event(canvas, ax, 8.5, button=1))
+    assert canvas._rubberband is not None
+    canvas._on_button_release(_fake_event(canvas, ax, 8.5, button=1))
+    assert not _rubberband_present(canvas)
+
+    # 2. No-op bare click.
+    canvas._on_button_press(_fake_event(canvas, ax, 9.0, button=1))
+    canvas._on_button_release(_fake_event(canvas, ax, 9.0, button=1))
+    assert not _rubberband_present(canvas)
+
+    # 3. Drag that leaves the axes mid-gesture, then releases outside.
+    canvas._on_button_press(_fake_event(canvas, ax, 8.5, button=1))
+    canvas._on_motion_notify(_fake_event(canvas, ax, 9.0, button=1))
+    assert canvas._rubberband is not None
+    # Cursor leaves the axes: motion with inside=False must not extend/crash.
+    canvas._on_motion_notify(_fake_event(canvas, ax, 9.0, button=1, inside=False))
+    # Release outside the axes still clears the band.
+    canvas._on_button_release(_fake_event(canvas, ax, 9.0, button=1, inside=False))
+    assert not _rubberband_present(canvas)
+
+
+def test_drag_off_mid_create_clears_rubberband(qapp: QApplication) -> None:
+    """enable_drag(False) mid-create aborts and removes the rubber-band."""
+    canvas = _two_range_canvas()
+    canvas.enable_drag(True)
+    ax = _axes(canvas)
+
+    canvas._on_button_press(_fake_event(canvas, ax, 9.5, button=1))
+    canvas._on_motion_notify(_fake_event(canvas, ax, 8.5, button=1))
+    assert canvas._rubberband is not None
+
+    canvas.enable_drag(False)
+    assert canvas._create_start_x is None
+    assert not _rubberband_present(canvas)
+
+
 def test_residual_axis_toggles(qapp: QApplication) -> None:
     """set_show_residuals(True) adds a residual axis with points; (False) removes it."""
     canvas = TrendPreviewCanvas()
