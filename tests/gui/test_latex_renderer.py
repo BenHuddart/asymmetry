@@ -14,6 +14,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication
 
 from asymmetry.gui.utils.latex_renderer import (
+    render_colored_equation_pixmap,
     render_latex_png_bytes,
     render_latex_to_html_image,
     render_latex_to_pixmap,
@@ -55,3 +56,60 @@ def test_render_latex_to_html_image_contains_data_uri() -> None:
 
     assert html_img is not None
     assert "data:image/png;base64," in html_img
+
+
+# --------------------------------------------------- composed colored equation
+def _distinct_colors(pixmap) -> set[tuple[int, int, int]]:
+    image = pixmap.toImage()
+    colors: set[tuple[int, int, int]] = set()
+    for y in range(image.height()):
+        for x in range(image.width()):
+            color = image.pixelColor(x, y)
+            if color.alpha() > 50:
+                colors.add((color.red(), color.green(), color.blue()))
+    return colors
+
+
+def test_render_colored_equation_pixmap_two_fragments(qapp: QApplication) -> None:
+    fragments = (
+        (r"A_1 e^{-\lambda t}", "#005a9c"),
+        (r"+ A_2", "#a44a00"),
+    )
+    pixmap = render_colored_equation_pixmap(fragments)
+
+    assert pixmap is not None
+    assert not pixmap.isNull()
+    assert pixmap.width() > 0
+    assert pixmap.height() > 0
+
+    colors = _distinct_colors(pixmap)
+    # Each fragment's glyphs render in its own color, so at least two
+    # visually-distinct non-transparent colors should appear (antialiasing
+    # adds many near-duplicates, hence a coarse bucket rather than an exact
+    # count).
+    buckets = {(r // 32, g // 32, b // 32) for r, g, b in colors}
+    assert len(buckets) >= 2
+
+
+def test_render_colored_equation_pixmap_garbage_fragment_returns_none(
+    qapp: QApplication,
+) -> None:
+    render_colored_equation_pixmap.cache_clear()
+    result = render_colored_equation_pixmap((("\\frac{", "#000000"),))
+
+    assert result is None
+
+
+def test_render_colored_equation_pixmap_empty_returns_none(qapp: QApplication) -> None:
+    assert render_colored_equation_pixmap(()) is None
+
+
+def test_render_colored_equation_pixmap_cache_hit_same_object(qapp: QApplication) -> None:
+    render_colored_equation_pixmap.cache_clear()
+    fragments = ((r"A_1", "#005a9c"),)
+
+    first = render_colored_equation_pixmap(fragments)
+    second = render_colored_equation_pixmap(fragments)
+
+    assert first is not None
+    assert second is first

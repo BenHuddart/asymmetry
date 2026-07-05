@@ -12,7 +12,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QDialogButtonBox, QFrame, QPushButton, QSplitter
+from PySide6.QtWidgets import (
+    QApplication,
+    QDialogButtonBox,
+    QFrame,
+    QPushButton,
+    QSplitter,
+    QToolButton,
+)
 
 from asymmetry.core.fitting.composite import (
     COMPONENTS,
@@ -21,6 +28,7 @@ from asymmetry.core.fitting.composite import (
 )
 from asymmetry.gui.widgets.function_builder.dialog import (
     FunctionBuilderDialog,
+    _prefix_to_mathtext,
     make_component_expression_parser,
     make_fit_expression_parser,
 )
@@ -268,3 +276,132 @@ def test_plain_group_header_offers_fractional_toggle_not_absolute(qapp: QApplica
     button_texts = [b.text() for b in frames[0].findChildren(QPushButton)]
     assert "Use fractional amplitudes" in button_texts
     assert "Use absolute amplitudes" not in button_texts
+
+
+# ------------------------------------------------------------ preview card
+def test_preview_card_exists_between_editor_and_status(qapp: QApplication) -> None:
+    dialog = _fit_dialog("Exponential + Constant")
+    root_layout = dialog.layout()
+    widgets_in_order = [root_layout.itemAt(i).widget() for i in range(root_layout.count())]
+    widgets_in_order = [w for w in widgets_in_order if w is not None]
+    assert dialog._preview_card in widgets_in_order
+    assert dialog._status_label in widgets_in_order
+    assert widgets_in_order.index(dialog._preview_card) < widgets_in_order.index(
+        dialog._status_label
+    )
+
+
+def test_preview_card_shows_composed_equation_for_real_model(qapp: QApplication) -> None:
+    # CompositeModel now provides latex_terms()/latex_string(); a valid model
+    # should render a real pixmap in the equation area (the composed-render
+    # path), not fall back to plain text.
+    dialog = _fit_dialog("Exponential + Constant")
+    pixmap = dialog._equation_label.pixmap()
+    assert pixmap is not None
+    assert not pixmap.isNull()
+    assert dialog._equation_label.text() == ""
+
+
+def test_preview_card_fraction_weights_subline_preserved(qapp: QApplication) -> None:
+    dialog = _fit_dialog("( Exponential + Gaussian ){frac} + Constant")
+    assert "Fraction group" in dialog._preview_label.text()
+    # The sub-line lives inside the card.
+    assert dialog._preview_label.parent() is not None
+
+
+def test_preview_card_disabled_when_expression_invalid(qapp: QApplication) -> None:
+    dialog = _fit_dialog("Exponential + Constant")
+    assert dialog._preview_card.isEnabled() is True
+    # Drive the same path _on_structure_changed uses: a syntactically-parseable
+    # expression that the model parser rejects (unknown component name), so
+    # _validate_and_update reaches its "invalid model" branch directly.
+    dialog._validate_and_update("NotAComponent")
+    assert dialog._preview_card.isEnabled() is False
+    assert dialog._status_label.text()  # error still surfaced below the card
+
+
+def test_preview_card_empty_expression_clears_equation(qapp: QApplication) -> None:
+    dialog = _fit_dialog("")
+    assert dialog._preview_card.isEnabled() is False
+    assert dialog._equation_label.pixmap().isNull()
+    assert dialog._equation_label.text() == ""
+
+
+def test_copy_button_copies_plain_formula(qapp: QApplication) -> None:
+    dialog = _fit_dialog("Exponential + Constant")
+    buttons = [b for b in dialog.findChildren(QToolButton) if b is dialog._copy_button]
+    assert len(buttons) == 1
+    dialog._copy_formula_to_clipboard()
+    clipboard_text = QApplication.clipboard().text()
+    assert clipboard_text == dialog._model.formula_string()
+    assert clipboard_text  # non-empty for a valid model
+
+
+def test_fallback_to_single_string_render_when_latex_terms_missing(qapp: QApplication) -> None:
+    # Exercise the fallback chain's second rung: a model exposing
+    # latex_string() but not latex_terms() (or latex_terms() returning
+    # nothing usable) should render via the single-string mathtext path
+    # rather than the composed-color path.
+    dialog = _fit_dialog("Exponential + Constant")
+
+    class _StubModel:
+        def formula_string(self) -> str:
+            return "stub formula"
+
+        def latex_string(self) -> str:
+            return r"\mathrm{stub}"
+
+    dialog._set_equation_content(_StubModel())
+    pixmap = dialog._equation_label.pixmap()
+    assert pixmap is not None
+    assert not pixmap.isNull()
+    assert dialog._equation_label.text() == ""
+
+
+def test_fallback_to_plain_text_when_no_latex_api_at_all(qapp: QApplication) -> None:
+    # A model lacking both latex_terms() and latex_string() (e.g. the
+    # trending ParameterCompositeModel before core support lands) falls all
+    # the way back to the plain formula_string() text label.
+    dialog = _fit_dialog("Exponential + Constant")
+
+    class _PlainStubModel:
+        def formula_string(self) -> str:
+            return "plain stub formula"
+
+    dialog._set_equation_content(_PlainStubModel())
+    assert dialog._equation_label.pixmap().isNull()
+    assert "plain stub formula" in dialog._equation_label.text()
+
+
+def test_composed_render_colors_fraction_group_terms(qapp: QApplication) -> None:
+    # A stubbed latex_terms() with a grouped term should reach the composed
+    # colored-equation path (render_colored_equation_pixmap), producing a
+    # non-null pixmap distinct from the ungrouped case. This exercises the
+    # dialog's fragment-building/coloring logic independent of the real
+    # CompositeModel.latex_terms() implementation.
+    from asymmetry.core.fitting.composite import LatexTerm
+
+    dialog = _fit_dialog("Exponential + Constant")
+
+    class _StubGroupedModel:
+        fraction_groups = [(0, 1)]
+
+        def formula_string(self) -> str:
+            return "stub"
+
+        def latex_terms(self):
+            return [
+                LatexTerm(latex=r"A_1 f e^{-\lambda t}", separator="", group=(0, 1)),
+                LatexTerm(latex=r"A_{bg}", separator=" + ", group=None),
+            ]
+
+    dialog._set_equation_content(_StubGroupedModel())
+    pixmap = dialog._equation_label.pixmap()
+    assert pixmap is not None
+    assert not pixmap.isNull()
+
+
+def test_prefix_to_mathtext_handles_greek_and_plain_prefixes() -> None:
+    assert _prefix_to_mathtext("A(t)").startswith(r"\mathrm{A}(")
+    assert r"\nu" in _prefix_to_mathtext("S(ν)")
+    assert _prefix_to_mathtext("A(t)").endswith(" = ")

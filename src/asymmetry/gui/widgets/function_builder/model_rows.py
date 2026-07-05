@@ -51,7 +51,12 @@ from asymmetry.gui.utils.formatting import format_param_label
 _PARAM_SUMMARY_CHAR_BUDGET = 60
 
 #: Accent palette cycled per fraction group (moved from the old fit builder).
+#: Public alias ``FRACTION_GROUP_COLORS`` is the sanctioned import for other
+#: modules (e.g. the preview card in ``function_builder/dialog.py``) that
+#: need to match a fraction group's row-container accent color; index by the
+#: group's position in ``sorted(model.fraction_groups)``, same as here.
 _FRACTION_GROUP_COLORS = ["#005A9C", "#A44A00", "#0B6E4F", "#8A1C1C", "#6B4F00"]
+FRACTION_GROUP_COLORS = _FRACTION_GROUP_COLORS
 
 #: Internal drag mime type: a row reorder carries its component index.
 _ROW_MIME_TYPE = "application/x-asymmetry-model-row"

@@ -16,6 +16,12 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
+from asymmetry.core.fitting.latex_preview import (
+    LatexTerm,
+    fallback_function_latex,
+    param_symbol_latex,
+    transform_template,
+)
 from asymmetry.core.fitting.models import (
     MODELS,
     ModelDefinition,
@@ -2343,6 +2349,261 @@ class CompositeModel:
         if expression.startswith("(") and expression.endswith(")"):
             expression = expression[1:-1]
         return expression
+
+    # --- typeset (mathtext) preview -----------------------------------------
+
+    def _top_level_terms(self) -> list[tuple[int, int, str]]:
+        """Return ``(start, end, separator)`` for each top-level additive term.
+
+        Mirrors :meth:`_term_ranges` at the top level (``inside_group=False``)
+        but records the operator that *joins* each term to the running
+        expression: ``""`` for the first term, ``" + "``/``" - "`` for the rest.
+        Never raises for a valid model; on any structural surprise it falls back
+        to a single term spanning the whole model so callers always get output.
+        """
+        n = len(self.component_names)
+        if n == 0:
+            return []
+        try:
+            depth = int(self.open_parentheses[0])
+            terms: list[tuple[int, int, str]] = []
+            term_start = 0
+            separator = ""
+            for idx in range(n - 1):
+                depth_after = depth - int(self.close_parentheses[idx])
+                operator = self.operators[idx]
+                if depth_after == 0 and operator in {"+", "-"}:
+                    terms.append((term_start, idx, separator))
+                    separator = f" {operator} "
+                    term_start = idx + 1
+                depth = depth_after + int(self.open_parentheses[idx + 1])
+            terms.append((term_start, n - 1, separator))
+            return terms
+        except (IndexError, ValueError):
+            return [(0, n - 1, "")]
+
+    def _latex_component_body(
+        self,
+        component_index: int,
+        component: ComponentDefinition,
+        mapping: dict[str, str],
+    ) -> str:
+        """Return the mathtext body for one component, matching formula_string.
+
+        Mirrors :meth:`_component_formula_term`: the same amplitude symbol is
+        emitted, suppressed (``__UNIT_AMPLITUDE__``) or chain-shared amplitudes
+        collapse to ``1`` and drop a leading ``1\\,`` factor, and the same
+        parameter symbols appear — only rendered as mathtext. When the template
+        cannot be transformed confidently, a ``\\mathrm{Name}(t; ...)`` fallback
+        is returned instead (the designed output for gnarly components).
+        """
+        # Resolve, per local param, whether it renders as the literal ``1`` (a
+        # suppressed/shared amplitude) or as a mathtext symbol.
+        symbol_for_param: dict[str, str] = {}
+        is_unit: dict[str, bool] = {}
+        for pname in component.param_names:
+            unique = mapping[pname]
+            if unique == _UNIT_AMPLITUDE_SENTINEL:
+                is_unit[pname] = True
+                symbol_for_param[pname] = "1"
+                continue
+            is_unit[pname] = False
+            symbol_for_param[pname] = param_symbol_latex(get_param_info(unique).latex, unique)
+        if (
+            self._share_chain_amplitude
+            and "A" in symbol_for_param
+            and component_index > 0
+            and self.operators[component_index - 1] in {"*", "/"}
+        ):
+            is_unit["A"] = True
+            symbol_for_param["A"] = "1"
+
+        # Parameter symbols that actually surface (unit amplitudes excluded),
+        # in template order — used for the function-name fallback.
+        surfaced_symbols = [
+            symbol_for_param[pname] for pname in component.param_names if not is_unit[pname]
+        ]
+
+        transformed = self._transform_component_template(component, symbol_for_param, is_unit)
+        if transformed is None:
+            return fallback_function_latex(component.name, surfaced_symbols)
+        return transformed
+
+    def _transform_component_template(
+        self,
+        component: ComponentDefinition,
+        symbol_for_param: dict[str, str],
+        is_unit: dict[str, bool],
+    ) -> str | None:
+        """Substitute sentinels into the template and transform to mathtext.
+
+        Returns ``None`` when the template is outside the transformable subset.
+        Unit-amplitude params are substituted with the literal ``1`` (matching
+        ``formula_string``); every other param becomes an opaque sentinel that
+        the transformer resolves back to its mathtext symbol.
+        """
+        template = component.formula_template
+        symbols: dict[str, str] = {}
+        fmt_values: dict[str, str] = {}
+        for order, pname in enumerate(component.param_names):
+            if is_unit.get(pname, False):
+                fmt_values[pname] = "1"
+                continue
+            sentinel = f"\x00{order}\x00"
+            symbols[sentinel] = symbol_for_param[pname]
+            fmt_values[pname] = sentinel
+        try:
+            substituted = template.format(**fmt_values)
+        except (KeyError, IndexError, ValueError):
+            return None
+        # Drop a leading ``1*`` factor exactly as _component_formula_term does,
+        # so a shared/suppressed amplitude never leaves a dangling 1.
+        if fmt_values.get("A") == "1" and substituted.startswith("1*"):
+            substituted = substituted[2:]
+        return transform_template(substituted, symbols)
+
+    def _latex_span_fragment(self, start: int, end: int) -> str:
+        """Render the component span ``[start, end]`` as one mathtext fragment.
+
+        Reuses the same shunting-yard as
+        :meth:`_formula_string_with_fraction_groups` — including the fraction
+        weight prefixes and per-group amplitude factor — but emits mathtext.
+        The span is a single top-level additive term, so parentheses within it
+        are balanced and it walks cleanly.
+        """
+        weight_prefix_by_start = self._latex_weight_prefixes()
+        fraction_group_set = set(self.fraction_groups)
+
+        value_stack: list[str] = []
+        op_stack: list[str] = []
+        paren_start_stack: list[int] = []
+
+        def precedence(op: str) -> int:
+            return 2 if op in {"*", "/"} else 1
+
+        def apply_top_operator() -> None:
+            op = op_stack.pop()
+            rhs = value_stack.pop()
+            lhs = value_stack.pop()
+            if op == "*":
+                value_stack.append(f"({lhs}\\,{rhs})")
+            elif op == "/":
+                value_stack.append(f"({lhs}/{rhs})")
+            else:
+                value_stack.append(f"({lhs} {op} {rhs})")
+
+        for idx in range(start, end + 1):
+            component = self.components[idx]
+            mapping = self._param_mappings[idx]
+            body = self._latex_component_body(idx, component, mapping)
+            if idx in weight_prefix_by_start:
+                prefix = weight_prefix_by_start[idx]
+                body = prefix if body == "1" else f"{prefix}\\,{body}"
+
+            for _ in range(self.open_parentheses[idx]):
+                op_stack.append("(")
+                paren_start_stack.append(idx)
+
+            value_stack.append(body)
+
+            for _ in range(self.close_parentheses[idx]):
+                while op_stack and op_stack[-1] != "(":
+                    apply_top_operator()
+                if op_stack and op_stack[-1] == "(":
+                    op_stack.pop()
+                if paren_start_stack:
+                    group = (paren_start_stack.pop(), idx)
+                    if group in fraction_group_set:
+                        amplitude_name = self._fraction_group_amplitude_name(group)
+                        amp = param_symbol_latex(
+                            get_param_info(amplitude_name).latex, amplitude_name
+                        )
+                        grouped = value_stack.pop()
+                        value_stack.append(f"{amp}\\,({grouped})")
+
+            if idx < end:
+                op = self.operators[idx]
+                while (
+                    op_stack and op_stack[-1] != "(" and precedence(op_stack[-1]) >= precedence(op)
+                ):
+                    apply_top_operator()
+                op_stack.append(op)
+
+        while op_stack:
+            if op_stack[-1] == "(":
+                op_stack.pop()
+                continue
+            apply_top_operator()
+
+        fragment = value_stack[-1] if value_stack else ""
+        if fragment.startswith("(") and fragment.endswith(")"):
+            fragment = fragment[1:-1]
+        return fragment
+
+    def _latex_weight_prefixes(self) -> dict[int, str]:
+        """Return per-term-start mathtext fraction weight prefixes.
+
+        Mirrors the ``weight_prefix_by_start`` map in
+        :meth:`_formula_string_with_fraction_groups`, rendering the free
+        fraction symbols and the ``(1 - f_X - f_Y)`` remainder in mathtext.
+        """
+        prefixes: dict[int, str] = {}
+        for group in self.fraction_groups:
+            term_starts = self._fraction_group_term_starts(group)
+            free_symbols: list[str] = []
+            for idx in term_starts[:-1]:
+                name = self._fraction_param_name(idx)
+                symbol = param_symbol_latex(get_param_info(name).latex, name)
+                prefixes[idx] = symbol
+                free_symbols.append(symbol)
+            remainder = "(1" + "".join(f" - {sym}" for sym in free_symbols) + ")"
+            prefixes[term_starts[-1]] = remainder
+        return prefixes
+
+    def _group_within_span(self, start: int, end: int) -> tuple[int, int] | None:
+        """Return the sole fraction group intersecting ``[start, end]``, else None.
+
+        ``group`` on a :class:`LatexTerm` is set only when exactly one fraction
+        group's component range intersects the term's range; when a term
+        contains two (or zero) groups the accent is ambiguous, so ``None``.
+        """
+        hits = [group for group in self.fraction_groups if not (group[1] < start or group[0] > end)]
+        return hits[0] if len(hits) == 1 else None
+
+    def latex_terms(self) -> list[LatexTerm]:
+        """Return the model as a list of typeset (mathtext) additive terms.
+
+        Splits at top-level ``+``/``-`` operators; each term carries its
+        ``separator`` ("" for the first, " + "/" - " otherwise) and the sole
+        fraction ``group`` its component range intersects (or ``None``). Never
+        raises and never returns an empty list for a valid model — a single
+        multiplicative chain yields one term.
+        """
+        terms: list[LatexTerm] = []
+        for start, end, separator in self._top_level_terms():
+            try:
+                latex = self._latex_span_fragment(start, end)
+            except Exception:  # noqa: BLE001 - preview must never raise
+                names = self.component_names[start : end + 1]
+                latex = fallback_function_latex("+".join(names) or "model", [])
+            group = self._group_within_span(start, end)
+            terms.append(LatexTerm(latex=latex, separator=separator, group=group))
+        if not terms:
+            terms.append(
+                LatexTerm(
+                    latex=fallback_function_latex("model", []),
+                    separator="",
+                    group=None,
+                )
+            )
+        return terms
+
+    def latex_string(self) -> str:
+        """Return the whole model as one mathtext string.
+
+        The concatenation ``"".join(sep + latex)`` over :meth:`latex_terms`.
+        """
+        return "".join(term.separator + term.latex for term in self.latex_terms())
 
     def to_model_definition(self, name: str = "Composite") -> ModelDefinition:
         """Create a ModelDefinition-compatible wrapper for the fit engine."""
