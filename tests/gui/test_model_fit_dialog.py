@@ -1708,6 +1708,53 @@ def test_residual_toggle_wired(qapp: QApplication) -> None:
     assert dlg._preview._show_residuals is False
 
 
+def test_residuals_toggle_in_preview_pane(qapp: QApplication) -> None:
+    """P2: the residuals checkbox lives beside the preview it controls, not in
+    the top-of-dialog toggle row alongside the narrow-collapse 'Show preview'
+    button."""
+    dlg = _make_dialog(qapp)
+
+    # The checkbox is a descendant of the preview (right) pane, not the "Show
+    # preview" narrow-collapse toggle's row.
+    parent = dlg._show_residuals_check.parent()
+    ancestors = []
+    node = parent
+    while node is not None:
+        ancestors.append(node)
+        node = node.parent()
+    assert dlg._preview in ancestors or dlg._preview.parent() in ancestors
+
+    # It must not share a parent with the "Show preview" narrow-collapse toggle.
+    assert dlg._show_residuals_check.parent() is not dlg._show_preview_toggle.parent()
+
+    # Wiring/behaviour is unchanged by the move.
+    assert dlg._preview._show_residuals is False
+    dlg._show_residuals_check.setChecked(True)
+    assert dlg._preview._show_residuals is True
+    dlg._show_residuals_check.setChecked(False)
+    assert dlg._preview._show_residuals is False
+
+
+def test_data_range_uses_en_dash(qapp: QApplication) -> None:
+    """P8: bounds notation is consistent — the data-range label uses an
+    en-dash like the range-card bounds, not the word 'to'."""
+    dlg = _make_dialog(qapp)
+    text = dlg._data_range_label.text()
+    assert "–" in text
+    assert " to " not in text
+
+
+def test_empty_state_hint_present(qapp: QApplication) -> None:
+    """P6: a muted discoverability hint tells a first-time user that dragging
+    on the plot adds a range and clicking a range edits it."""
+    dlg = _make_dialog(qapp)
+    assert (
+        dlg._empty_state_hint_label.text()
+        == "Drag on the plot to add a fit range, or click a range to edit it."
+    )
+    assert dlg._empty_state_hint_label.isVisibleTo(dlg)
+
+
 # ── Item 4.2: remember last-used model per (parameter, x_key) ─────────────────
 
 

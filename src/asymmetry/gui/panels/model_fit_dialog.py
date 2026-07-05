@@ -619,6 +619,29 @@ class ModelFitDialog(QDialog):
         # Add/select gestures go through an overridable hook so single-range
         # subclasses (cross-group) can leave them inert (item 3.2/3.3).
         self._connect_plot_range_signals()
+
+        # "Show residuals" (item 4.1, relocated by P2): opt-in residual strip
+        # beneath the preview plot. Lives in the preview pane itself — right
+        # above the canvas it controls — rather than in the top-of-dialog
+        # toggle row, so it reads as attached to the plot instead of orphaned.
+        # Default UNCHECKED — the user opts in; keeping it off by default also
+        # matches the narrow-screen "don't crowd the pane" stance. When the
+        # preview pane auto-collapses on a narrow screen this checkbox rides
+        # with it (hidden), which is correct — residuals are meaningless with
+        # no visible preview.
+        self._show_residuals_check = QCheckBox("Show residuals")
+        self._show_residuals_check.setChecked(False)
+        self._show_residuals_check.setToolTip(
+            "Show a residual strip below the preview plot: (data − model) / σ for "
+            "the selected range's in-fit points, with a ±1σ guide band. Uses the "
+            "seed curve before a fit and the fitted curve after."
+        )
+        self._show_residuals_check.toggled.connect(self._on_show_residuals_toggled)
+        residuals_row = QHBoxLayout()
+        residuals_row.addWidget(self._show_residuals_check)
+        residuals_row.addStretch()
+        self._preview_host.addLayout(residuals_row)
+
         self._preview_host.addWidget(self._preview, 1)
 
         # ── Preview threading state (work item 1.3) ──────────────────────────
@@ -665,7 +688,7 @@ class ModelFitDialog(QDialog):
         x_max_data = float(np.nanmax(self._x)) if np.any(np.isfinite(self._x)) else 1.0
         self._x_min_data = x_min_data
         self._x_max_data = x_max_data
-        self._data_range_label = QLabel(f"Data range: {x_min_data:.6g} to {x_max_data:.6g}")
+        self._data_range_label = QLabel(f"Data range: {x_min_data:.6g} – {x_max_data:.6g}")
         left_layout.addWidget(self._data_range_label)
 
         # "Show preview" toggle, hidden until a narrow width auto-collapses the
@@ -676,20 +699,8 @@ class ModelFitDialog(QDialog):
         self._show_preview_toggle.setChecked(True)
         self._show_preview_toggle.setVisible(False)
         self._show_preview_toggle.toggled.connect(self._on_show_preview_toggled)
-        # "Show residuals" (item 4.1): opt-in residual strip beneath the preview
-        # plot. Default UNCHECKED — the user opts in; keeping it off by default
-        # also matches the narrow-screen "don't crowd the pane" stance.
-        self._show_residuals_check = QCheckBox("Show residuals")
-        self._show_residuals_check.setChecked(False)
-        self._show_residuals_check.setToolTip(
-            "Show a residual strip below the preview plot: (data − model) / σ for "
-            "the selected range's in-fit points, with a ±1σ guide band. Uses the "
-            "seed curve before a fit and the fitted curve after."
-        )
-        self._show_residuals_check.toggled.connect(self._on_show_residuals_toggled)
         toggle_row = QHBoxLayout()
         toggle_row.addWidget(self._show_preview_toggle)
-        toggle_row.addWidget(self._show_residuals_check)
         toggle_row.addStretch()
         left_layout.addLayout(toggle_row)
 
@@ -774,6 +785,15 @@ class ModelFitDialog(QDialog):
 
         self._range_hint_label = QLabel("Editing the highlighted range.")
         params_layout.addWidget(self._range_hint_label)
+
+        # P6: the plot's drag-to-add / click-to-select gestures are the least
+        # discoverable part of this dialog, so spell them out in a muted,
+        # always-visible hint beside the range controls they affect.
+        self._empty_state_hint_label = QLabel(
+            "Drag on the plot to add a fit range, or click a range to edit it."
+        )
+        self._empty_state_hint_label.setStyleSheet(f"color: {tokens.TEXT_MUTED}; font-size: 11px;")
+        params_layout.addWidget(self._empty_state_hint_label)
 
         # ── Fit region for the ACTIVE range (contract C-REGIONROW) ────────────
         # A flat "Selected range" BENCH sub-header separates the card stack /
