@@ -11,7 +11,7 @@ pytestmark = [pytest.mark.gui]
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
-from PySide6.QtWidgets import QApplication, QLabel
+from PySide6.QtWidgets import QApplication, QFrame, QLabel
 
 from asymmetry.core.fitting.wizard_narrative import TrailStep
 from asymmetry.gui.widgets.decision_trail import DecisionTrail
@@ -43,17 +43,40 @@ def test_set_steps_renders_expandable_rows(qapp: QApplication) -> None:
     assert trail.is_step_expanded("conditions") is True
 
 
+def test_set_steps_marks_every_row_done(qapp: QApplication) -> None:
+    trail = DecisionTrail()
+    trail.set_steps(_steps())
+    for key in trail.step_keys():
+        assert trail._rows[key].state == "done"
+
+
 def test_streaming_placeholders_and_activation(qapp: QApplication) -> None:
     trail = DecisionTrail()
     trail.stream_placeholders(_steps())
     assert trail.step_keys() == ("conditions", "families", "spectrum")
-    # Placeholder rows are not expandable.
+    # Placeholder rows start pending and are not expandable.
+    for key in trail.step_keys():
+        assert trail._rows[key].state == "pending"
     assert trail.is_step_expanded("conditions") is False
     trail.set_step_expanded("conditions", True)
     assert trail.is_step_expanded("conditions") is False
     # Activating an unknown key is a no-op (no raise).
     trail.activate_step("nonexistent")
     trail.activate_step("families")
+
+
+def test_activate_step_marks_earlier_rows_done_and_later_pending(qapp: QApplication) -> None:
+    trail = DecisionTrail()
+    trail.stream_placeholders(_steps())
+    trail.activate_step("families")
+    assert trail._rows["conditions"].state == "done"
+    assert trail._rows["families"].state == "active"
+    assert trail._rows["spectrum"].state == "pending"
+    # Advancing to the final step marks everything before it done.
+    trail.activate_step("spectrum")
+    assert trail._rows["conditions"].state == "done"
+    assert trail._rows["families"].state == "done"
+    assert trail._rows["spectrum"].state == "active"
 
 
 def test_status_line_shows_and_hides(qapp: QApplication) -> None:
@@ -76,6 +99,17 @@ def test_injected_detail_widget_revealed_on_expand(qapp: QApplication) -> None:
     assert panel.isVisibleTo(trail) is True
     # Panel is re-parented under the trail.
     assert panel.parent() is not None
+
+
+def test_expanded_row_detail_area_uses_trail_detail_panel_frame(qapp: QApplication) -> None:
+    """The expanded detail area is wrapped in the styled ``trailDetailPanel`` frame."""
+    trail = DecisionTrail()
+    trail.set_steps(_steps())
+    trail.set_step_expanded("conditions", True)
+    row = trail._rows["conditions"]
+    panel = row.findChild(QFrame, "trailDetailPanel")
+    assert panel is not None
+    assert panel.isVisibleTo(trail) is True
 
 
 def test_registered_panel_survives_set_steps_rebuild(qapp: QApplication) -> None:

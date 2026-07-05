@@ -4,6 +4,16 @@
 **Deliverable of the next step:** `src/asymmetry/gui/windows/wizard_base.py`, implemented by a Sonnet agent from this contract.
 **Scope of this note:** the shared base that unifies the two fit-wizard windows. It is design only — no source was modified.
 
+> **2026-07-05 update (wizard-ui-refresh):** the base now also owns the styled
+> chrome — a `wizardHeaderBand` QFrame (title + context chips via
+> `set_context_chips()` + muted status line) above a body layout of
+> `[controls_row, content]`; `self._central_layout` refers to that body layout,
+> so content sits at index 1. The global wizard no longer uses the default
+> tab path: it overrides `_build_central()` with a Setup → Running → Result
+> `QStackedWidget` (mirroring the single wizard), its parameter-setup modal is
+> an embedded setup-page section, and its separate log window is an inline
+> `LogPanel`. The driver/lifecycle contract below is unchanged.
+
 ## Orchestrator decisions (BINDING — resolve the two open behavior choices)
 
 The implementer MUST follow these; they resolve the "open behavior choice" notes below.

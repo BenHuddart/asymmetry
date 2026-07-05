@@ -19,7 +19,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 from PySide6.QtCore import QEventLoop, QTimer
-from PySide6.QtWidgets import QTabWidget, QWidget
+from PySide6.QtWidgets import QFrame, QLabel, QTabWidget, QWidget
 
 from asymmetry.gui.tasks import TaskWorker
 from asymmetry.gui.windows.wizard_base import WizardWindowBase
@@ -58,9 +58,10 @@ class _FakeWizard(WizardWindowBase):
 
     def _build_tabs(self) -> None:
         # Self-contained: must not touch state set after super().__init__().
-        # Record where the tab widget sits in the central layout at hook time:
-        # the real subclasses insert banners relative to it and append nav rows
-        # beneath it, so it must already be attached when this hook runs.
+        # Record where the tab widget sits in the central (body) layout at
+        # hook time: the real subclasses insert banners relative to it and
+        # append nav rows beneath it, so it must already be attached when
+        # this hook runs.
         self.tabs_index_during_build = self._central_layout.indexOf(self._tabs)
         self._tabs.addTab(QWidget(), "Only")
 
@@ -84,11 +85,12 @@ def test_construction_builds_expected_members():
         assert window._tasks.active_count == 0
         assert isinstance(window._tabs, QTabWidget)
         assert window._tabs.count() == 1
-        # Default _build_central attaches the tabs beneath the chrome
-        # ([heading, status, controls, tabs] -> index 3) BEFORE _build_tabs
-        # runs, so subclass hooks can position widgets relative to it.
-        assert window.tabs_index_during_build == 3
-        assert window._central_layout.indexOf(window._tabs) == 3
+        # Default _build_central attaches the tabs beneath the body's controls
+        # row ([controls, tabs] -> index 1) BEFORE _build_tabs runs, so
+        # subclass hooks can position widgets relative to it. The header band
+        # (title/chips/status) lives above the body, outside this layout.
+        assert window.tabs_index_during_build == 1
+        assert window._central_layout.indexOf(window._tabs) == 1
         assert window._analysis_request_id == 0
         assert window._analysis_in_progress is False
         assert window._cached_signature is None
@@ -248,10 +250,12 @@ def test_build_central_override_constructs_without_tabs():
     try:
         assert window._tabs is None
         assert window.findChildren(QTabWidget) == []
-        # __init__ attached the returned content widget beneath the chrome
-        # ([heading, status, controls, content] -> index 3).
-        assert window._central_layout.indexOf(window._content) == 3
-        assert window._content.parentWidget() is window.centralWidget()
+        # __init__ attached the returned content widget beneath the body's
+        # controls row ([controls, content] -> index 1). The body widget (not
+        # centralWidget() itself) is its direct parent now that the header
+        # band sits alongside the body under centralWidget().
+        assert window._central_layout.indexOf(window._content) == 1
+        assert window.centralWidget().isAncestorOf(window._content)
     finally:
         window.close()
 
@@ -293,3 +297,32 @@ def test_default_path_still_requires_build_tabs():
 
     with pytest.raises(NotImplementedError):
         _NoBuildTabs()
+
+
+def test_set_context_chips_populates_and_clears():
+    """set_context_chips replaces the header band's chips; [] clears them."""
+    window = _FakeWizard()
+    try:
+        window.set_context_chips(["Run 1", "", "5 K"])
+        chip_labels = [
+            window._chips_row.itemAt(i).widget() for i in range(window._chips_row.count())
+        ]
+        assert len(chip_labels) == 2
+        assert [label.text() for label in chip_labels] == ["Run 1", "5 K"]
+
+        window.set_context_chips([])
+        assert window._chips_row.count() == 0
+    finally:
+        window.close()
+
+
+def test_header_band_exists_and_contains_heading():
+    """The header band is a QFrame#wizardHeaderBand containing the heading label."""
+    window = _FakeWizard()
+    try:
+        band = window.findChild(QFrame, "wizardHeaderBand")
+        assert band is not None
+        assert isinstance(window._heading_label, QLabel)
+        assert band.isAncestorOf(window._heading_label)
+    finally:
+        window.close()
