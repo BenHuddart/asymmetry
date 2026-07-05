@@ -83,6 +83,26 @@ def test_active_toggles_style(qapp: QApplication) -> None:
     assert unselected_style != ""
 
 
+def test_surface_is_frame_not_button(qapp: QApplication) -> None:
+    """Regression: the card surface must be a QFrame, not a QPushButton — a
+    button sizes to its own text hint and collapses the two content rows into a
+    squashed ~single-line card."""
+    from PySide6.QtWidgets import QFrame, QPushButton
+
+    card = RangeCard(0)
+    assert isinstance(card._surface, QFrame)
+    assert not isinstance(card._surface, QPushButton)
+
+
+def test_active_card_not_squashed(qapp: QApplication) -> None:
+    """An active card (two content rows visible) reports a height tall enough for
+    both lines — guards against the QPushButton-container squash regression."""
+    card = RangeCard(0)
+    card.set_state(_view(show_run=True))
+    # Two stacked rows + margins: comfortably taller than a single-line control.
+    assert card.sizeHint().height() >= 44
+
+
 def test_show_run_controls_visibility(qapp: QApplication) -> None:
     card = RangeCard(0)
 

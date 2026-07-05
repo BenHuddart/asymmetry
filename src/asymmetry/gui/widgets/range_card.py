@@ -33,32 +33,34 @@ from PySide6.QtWidgets import (
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import (
     build_primary_button_qss,
-    style_group_state_button,
     widest_button_width,
 )
 
 #: Fixed size (px) of the colour-swatch square on line 1.
 _SWATCH_SIZE = 12
 
+#: objectName so the active/unselected stylesheet targets only the surface frame
+#: (not its child labels/buttons, which a bare ``QFrame { … }`` rule would also
+#: hit through descendant inheritance of the background).
+_SURFACE_OBJECT_NAME = "rangeCardSurface"
 
-class _CardSurface(QPushButton):
-    """Flat, non-focusable QPushButton used purely as the card's styled background.
 
-    ``style_group_state_button`` (gui/styles/widgets.py) paints via a
-    ``QPushButton { ... }`` QSS selector, so the widget it is applied to must
-    actually be a QPushButton for the rule to take effect — a QFrame's
-    stylesheet would silently no-op against that selector. This surface is
-    never meaningfully "clicked" as a button: Qt still delivers a mouse press
-    on empty card background to this widget (real child buttons — Run Fit,
-    the overflow button — sit on top and consume their own presses first), so
-    its ``mousePressEvent`` is repurposed to emit the card's ``selected``
-    signal instead of a button click.
+class _CardSurface(QFrame):
+    """The card's styled background surface.
+
+    A ``QFrame`` (not a ``QPushButton``): a frame sizes to its child layout, so
+    the two content rows lay out at their natural height. A ``QPushButton`` sizes
+    to its own (empty) text hint and collapses the rows into a ~single-line
+    button, which squashed the card. The active/unselected highlight is applied
+    as a ``QFrame#rangeCardSurface`` stylesheet (see :meth:`RangeCard.set_active`)
+    rather than via ``style_group_state_button`` (which targets a ``QPushButton``
+    selector). Mouse presses on the card background (child labels do not consume
+    them) are repurposed to emit the card's ``selected`` signal.
     """
 
     def __init__(self, on_pressed, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setFlat(True)
-        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setObjectName(_SURFACE_OBJECT_NAME)
         self._on_pressed = on_pressed
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802 — Qt override
@@ -205,14 +207,23 @@ class RangeCard(QFrame):
         self._run_button.setFixedWidth(widest_button_width(self._run_button, "Run Fit", "Fitting…"))
 
     def set_active(self, active: bool) -> None:
-        """Apply the shared active/unselected treatment to the card surface.
+        """Apply the active/unselected highlight to the card surface.
 
-        Purely visual — the dialog is responsible for setting ``show_run`` on
-        the view so line 2 appears/disappears; this method never touches
-        line-2 visibility itself.
+        Mirrors the BENCH group-state treatment (ACCENT_SOFT fill + 2px ACCENT
+        border when active) but as a ``QFrame#rangeCardSurface`` rule so it works
+        on the frame surface. Purely visual — the dialog sets ``show_run`` on the
+        view to appear/disappear line 2; this never touches line-2 visibility.
         """
-        state: Literal["active", "unselected"] = "active" if active else "unselected"
-        style_group_state_button(self._surface, state)
+        if active:
+            self._surface.setStyleSheet(
+                f"QFrame#{_SURFACE_OBJECT_NAME} {{ border: 2px solid {tokens.ACCENT};"
+                f" background: {tokens.ACCENT_SOFT}; border-radius: 4px; }}"
+            )
+        else:
+            self._surface.setStyleSheet(
+                f"QFrame#{_SURFACE_OBJECT_NAME} {{ border: 1px solid {tokens.BORDER};"
+                f" background: {tokens.SURFACE}; border-radius: 4px; }}"
+            )
 
     def set_enabled(self, enabled: bool) -> None:
         """Enable/disable the card's action controls (Run Fit + overflow).
