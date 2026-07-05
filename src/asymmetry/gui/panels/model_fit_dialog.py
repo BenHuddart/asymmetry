@@ -8,7 +8,7 @@ import traceback
 from collections.abc import Callable
 
 import numpy as np
-from PySide6.QtCore import QSettings, QSignalBlocker, Qt, QTimer
+from PySide6.QtCore import QSignalBlocker, Qt, QTimer
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -328,33 +328,30 @@ def _show_warning(parent: QWidget, title: str, text: str) -> None:
     QMessageBox.warning(parent, title, text)
 
 
-#: QSettings group for the per-(parameter, x_key) last-used trend model (item
-#: 4.2). Non-load-bearing: a missing/parse-broken/out-of-pool value falls back
-#: silently to the context default, so it never touches the .asymp schema.
-_LAST_MODEL_SETTINGS_GROUP = "trend_model_fit/last_model"
-
-
-def _last_model_settings_key(parameter_name: str, x_key: str) -> str:
-    """QSettings key for the remembered model of ``(base_param_name, x_key)``.
+def _last_model_memory_key(parameter_name: str, x_key: str) -> str:
+    """Memory-dict key for the remembered model of ``(base_param_name, x_key)``.
 
     The parameter name is reduced to its base (``Lambda_2`` → ``Lambda``) so a
     per-group index does not fragment the memory across otherwise-identical
     trends.
     """
-    return f"{_LAST_MODEL_SETTINGS_GROUP}/{_base_param_name(parameter_name)}|{x_key}"
+    return f"{_base_param_name(parameter_name)}|{x_key}"
 
 
 def _store_last_model_expression(
     parameter_name: str,
     x_key: str,
     expression: str,
-    settings: QSettings | None = None,
+    memory: dict[str, str],
 ) -> None:
     """Persist *expression* as the last-used model for ``(parameter, x_key)``.
 
     Entirely best-effort: it confirms the string round-trips through
     ``ParameterCompositeModel.from_expression`` before storing, and swallows any
-    QSettings/parse failure — a broken store must never disrupt the fit UI.
+    failure — a broken store must never disrupt the fit UI. *memory* is a
+    plain ``dict[str, str]`` owned by the caller (e.g. ``FitParametersPanel`` /
+    ``GlobalParameterFitWindow``), which persists it into project state — so
+    the memory is project-scoped rather than a global per-user setting.
     """
     if not expression:
         return
@@ -365,8 +362,7 @@ def _store_last_model_expression(
     except Exception:
         return
     try:
-        settings = settings or QSettings()
-        settings.setValue(_last_model_settings_key(parameter_name, x_key), expression)
+        memory[_last_model_memory_key(parameter_name, x_key)] = expression
     except Exception:
         pass
 
@@ -375,7 +371,7 @@ def _load_last_model(
     parameter_name: str,
     x_key: str,
     component_pool: set[str] | frozenset[str] | list[str],
-    settings: QSettings | None = None,
+    memory: dict[str, str],
 ) -> ParameterCompositeModel | None:
     """Return the remembered model for ``(parameter, x_key)``, or None.
 
@@ -384,8 +380,7 @@ def _load_last_model(
     a missing key, an unparseable string, or an out-of-pool component.
     """
     try:
-        settings = settings or QSettings()
-        raw = settings.value(_last_model_settings_key(parameter_name, x_key))
+        raw = memory.get(_last_model_memory_key(parameter_name, x_key))
     except Exception:
         return None
     if not isinstance(raw, str) or not raw.strip():
@@ -519,8 +514,16 @@ class ModelFitDialog(QDialog):
         parent: QWidget | None = None,
         x_errors: np.ndarray | None = None,
         x_label: str | None = None,
+        model_memory: dict[str, str] | None = None,
     ) -> None:
         super().__init__(parent)
+
+        # Caller-owned "remember last-used model per (parameter, x_key)" store
+        # (item 4.2). A None caller (e.g. CrossGroupFitDialog, which does not
+        # participate) gets a session-local dict that is never persisted, so
+        # it simply never remembers across dialogs. Assigned EARLY — before
+        # ``_create_default_range`` (below) reads it.
+        self._model_memory: dict[str, str] = model_memory if model_memory is not None else {}
 
         # ``x_key`` is the internal abscissa id (e.g. ``custom:84576a7e``) used
         # by the fit backend / persistence; ``x_label`` is the friendly column
@@ -1263,15 +1266,6 @@ class ModelFitDialog(QDialog):
         self._error_value_spin.setEnabled(needs_value)
         self._request_preview_update()
 
-    def _last_model_settings(self) -> QSettings:
-        """QSettings store for the remembered last-used model (item 4.2).
-
-        A thin seam so tests can isolate it to a tmp path (see
-        ``test_last_model_remembered``) instead of touching the real per-user
-        store. Uses the app-wide org/app pair set in ``gui/app.py``.
-        """
-        return QSettings()
-
     def _create_default_range(self) -> ModelFitRange:
         x_min = float(np.nanmin(self._x)) if np.any(np.isfinite(self._x)) else 0.0
         x_max = float(np.nanmax(self._x)) if np.any(np.isfinite(self._x)) else 1.0
@@ -1281,9 +1275,7 @@ class ModelFitDialog(QDialog):
         # (base_param, x_key) if one was remembered and still parses within this
         # context's pool; otherwise fall back to the context default. Purely
         # non-load-bearing — any failure yields the default.
-        model = _load_last_model(
-            self._parameter_name, self._x_key, available, self._last_model_settings()
-        )
+        model = _load_last_model(self._parameter_name, self._x_key, available, self._model_memory)
         if model is None:
             default_component = _default_component_for_context(
                 self._x_key, self._parameter_name, available
@@ -1828,7 +1820,7 @@ class ModelFitDialog(QDialog):
             self._parameter_name,
             self._x_key,
             model.component_expression_string(),
-            self._last_model_settings(),
+            self._model_memory,
         )
 
         # Critical-temperature trend components (CriticalDivergence,
@@ -2091,7 +2083,7 @@ class ModelFitDialog(QDialog):
                     self._parameter_name,
                     self._x_key,
                     fit_range.model.component_expression_string(),
-                    self._last_model_settings(),
+                    self._model_memory,
                 )
 
         self._start_fit_task(_task, _on_done)

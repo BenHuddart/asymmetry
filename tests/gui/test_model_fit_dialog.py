@@ -1706,62 +1706,47 @@ def test_residual_toggle_wired(qapp: QApplication) -> None:
 # ── Item 4.2: remember last-used model per (parameter, x_key) ─────────────────
 
 
-def _isolated_settings(tmp_path):
-    """An IniFormat QSettings rooted at *tmp_path* so tests never touch the real
-    per-user store."""
-    from PySide6.QtCore import QSettings
-
-    QSettings.setPath(
-        QSettings.Format.IniFormat,
-        QSettings.Scope.UserScope,
-        str(tmp_path),
-    )
-    return QSettings(
-        QSettings.Format.IniFormat,
-        QSettings.Scope.UserScope,
-        "AsymmetryTest",
-        "AsymmetryTest",
-    )
-
-
-def test_last_model_remembered(qapp: QApplication, tmp_path, monkeypatch) -> None:
-    """A model stored for (Lambda, field) becomes the default of a fresh dialog."""
-    settings = _isolated_settings(tmp_path)
-    monkeypatch.setattr(ModelFitDialog, "_last_model_settings", lambda self: settings)
+def test_last_model_remembered(qapp: QApplication) -> None:
+    """A model stored for (Lambda, field) becomes the default of a fresh dialog
+    that shares the same caller-owned memory dict (project-scoped memory)."""
+    memory: dict[str, str] = {}
 
     x = np.linspace(1.0, 10.0, 20)
     y = 2.0 * x + 1.0
     yerr = np.full_like(x, 0.1)
 
     # First dialog: edit the model to something non-default and confirm stored.
-    dlg1 = ModelFitDialog("Lambda", "field", x, y, yerr, existing_fit=None)
+    dlg1 = ModelFitDialog("Lambda", "field", x, y, yerr, existing_fit=None, model_memory=memory)
     fit_range = dlg1._fit.ranges[0]
     fit_range.model = ParameterCompositeModel(["PowerLaw"], [])
     from asymmetry.gui.panels.model_fit_dialog import _store_last_model_expression
 
     _store_last_model_expression(
-        "Lambda", "field", fit_range.model.component_expression_string(), settings
+        "Lambda", "field", fit_range.model.component_expression_string(), memory
     )
 
-    # Fresh dialog for the same (param, x_key): its default range uses the model.
-    dlg2 = ModelFitDialog("Lambda", "field", x, y, yerr, existing_fit=None)
+    # A second dialog sharing the SAME memory dict (same panel/project): its
+    # default range uses the remembered model.
+    dlg2 = ModelFitDialog("Lambda", "field", x, y, yerr, existing_fit=None, model_memory=memory)
     assert dlg2._fit.ranges[0].model.component_names == ["PowerLaw"]
 
+    # A dialog with a FRESH empty dict (e.g. a different project) does NOT
+    # inherit the remembered model.
+    dlg3 = ModelFitDialog("Lambda", "field", x, y, yerr, existing_fit=None, model_memory={})
+    assert dlg3._fit.ranges[0].model.component_names != ["PowerLaw"]
 
-def test_last_model_unknown_component_falls_back(qapp: QApplication, tmp_path, monkeypatch) -> None:
+
+def test_last_model_unknown_component_falls_back(qapp: QApplication) -> None:
     """A stored model whose component isn't in the pool falls back to the default."""
-    settings = _isolated_settings(tmp_path)
-    monkeypatch.setattr(ModelFitDialog, "_last_model_settings", lambda self: settings)
-
-    from asymmetry.gui.panels.model_fit_dialog import _last_model_settings_key
+    from asymmetry.gui.panels.model_fit_dialog import _last_model_memory_key
 
     # Store a bogus expression directly (a name valid nowhere in the field pool).
-    settings.setValue(_last_model_settings_key("Lambda", "field"), "NotARealComponent")
+    memory = {_last_model_memory_key("Lambda", "field"): "NotARealComponent"}
 
     x = np.linspace(1.0, 10.0, 20)
     y = 2.0 * x + 1.0
     yerr = np.full_like(x, 0.1)
-    dlg = ModelFitDialog("Lambda", "field", x, y, yerr, existing_fit=None)
+    dlg = ModelFitDialog("Lambda", "field", x, y, yerr, existing_fit=None, model_memory=memory)
     # Falls back to the context default (Linear for a plain Lambda-vs-field trend)
     # without raising.
     default_component = _default_component_for_context("field", "Lambda", dlg._component_pool)
@@ -1771,15 +1756,11 @@ def test_last_model_unknown_component_falls_back(qapp: QApplication, tmp_path, m
 # ── Item 4.3: per-fit success modal removed → inline result box ──────────────
 
 
-def test_fit_success_no_modal_shows_result_box(qapp: QApplication, tmp_path, monkeypatch) -> None:
+def test_fit_success_no_modal_shows_result_box(qapp: QApplication, monkeypatch) -> None:
     """A successful fit tints the result box green and shows inline success text —
     with NO _show_info modal fired."""
     from asymmetry.core.fitting.parameter_models import ParameterModelFitResult
     from asymmetry.gui.styles.widgets import RESULT_BOX_SUCCESS_STYLE
-
-    # Isolate the last-model store so the fit's store-on-success is a no-op here.
-    settings = _isolated_settings(tmp_path)
-    monkeypatch.setattr(ModelFitDialog, "_last_model_settings", lambda self: settings)
 
     info_calls: list[tuple] = []
     monkeypatch.setattr(
