@@ -496,6 +496,66 @@ def test_parameter_model_builder_get_model_returns_none_when_invalid(
     assert dialog.get_model() is None
 
 
+# --------------------------------------------------------- create-user-function
+def test_parameter_model_builder_creation_affordance_enabled(qapp: QApplication) -> None:
+    dialog = ParameterModelBuilderDialog(component_pool=["Linear", "Constant"])
+    assert dialog._library._creation_enabled is True
+
+
+def test_parameter_model_builder_creates_component_accepted_by_both_parsers(
+    qapp: QApplication, registry_snapshot, tmp_path, monkeypatch
+) -> None:
+    """A component created mid-session is usable in text mode AND the model parser.
+
+    Exercises the "live pool" fix directly: ``_pool_restricted_model_parser``
+    and ``make_component_expression_parser`` both close over
+    ``dialog._pool`` (the same ``set`` object), so ``_create_user_function``'s
+    ``self._pool.add(name)`` must make the new name valid to both without
+    reconstructing either parser.
+    """
+    from asymmetry.gui.windows.new_user_function_dialog import NewUserFunctionDialog
+
+    class _AutoAcceptDialog(NewUserFunctionDialog):
+        def exec(self):  # noqa: A003 - Qt API name
+            self._name_edit.setText("UserTrendLive")
+            self._description_edit.setText("Live-pool test trend")
+            self._formula_edit.setText("a*x+b")
+            self._append_param_row("a", 1.0)
+            self._append_param_row("b", 0.0)
+            self._run_validation()
+            self._on_accept()
+            return self.result()
+
+    def _factory(kind, *, domain="time", directory=None, parent=None):
+        return _AutoAcceptDialog(kind, domain=domain, directory=tmp_path, parent=parent)
+
+    monkeypatch.setattr("asymmetry.gui.panels.model_fit_dialog.NewUserFunctionDialog", _factory)
+
+    dialog = ParameterModelBuilderDialog(component_pool=["Linear", "Constant"])
+    dialog._library.create_requested.emit()
+
+    # Registered with common scope, so valid in every trending context.
+    from asymmetry.core.fitting.parameter_models import PARAMETER_MODEL_COMPONENTS
+
+    assert PARAMETER_MODEL_COMPONENTS["UserTrendLive"].scopes == ("common",)
+
+    # 1. Added to the dialog's live pool.
+    assert "UserTrendLive" in dialog._pool
+    # 2. Auto-appended into the structured expression and accepted by the
+    #    (pool-restricted) model parser via _on_accept -> _validate_and_update.
+    names, *_rest = dialog._rows.structure()
+    assert "UserTrendLive" in names
+    dialog._on_accept()
+    model = dialog.get_model()
+    assert model is not None
+    assert "UserTrendLive" in model.component_names
+
+    # 3. Accepted by the expression parser in text mode too (same live pool).
+    dialog._toggle_text_mode()
+    dialog._text_edit.setPlainText("UserTrendLive + Constant")
+    assert dialog._apply_text() is True
+
+
 def test_component_info_html_contains_equation_and_parameters() -> None:
     from asymmetry.core.fitting.parameter_models import PARAMETER_MODEL_COMPONENTS
 
