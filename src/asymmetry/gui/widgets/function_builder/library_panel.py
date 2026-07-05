@@ -27,8 +27,16 @@ from __future__ import annotations
 import html
 from collections.abc import Callable, Mapping
 
-from PySide6.QtCore import QEvent, QObject, QSize, Qt, Signal
-from PySide6.QtGui import QFontMetrics, QResizeEvent
+from PySide6.QtCore import QEvent, QObject, QPointF, QSize, Qt, Signal
+from PySide6.QtGui import (
+    QColor,
+    QFontMetrics,
+    QIcon,
+    QPainter,
+    QPen,
+    QPixmap,
+    QResizeEvent,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
@@ -36,7 +44,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QSizePolicy,
-    QStyle,
     QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
@@ -66,6 +73,54 @@ _FIELD_ANNOTATIONS: dict[str, str] = {
 
 def _category_of(definition: object) -> str:
     return getattr(definition, "category", "General") or "General"
+
+
+def _glyph_icon(kind: str, color: str, *, size: int = 14, dpr: float = 2.0) -> QIcon:
+    """Paint a crisp '+' or info glyph icon, independent of platform style.
+
+    The per-row buttons must render identically under every QStyle and the
+    app stylesheet: theme standard icons and bare text glyphs both proved
+    style-dependent (blank chips on Windows), so the two glyphs are drawn
+    directly at ``dpr``x resolution.
+    """
+    pixmap = QPixmap(int(size * dpr), int(size * dpr))
+    pixmap.setDevicePixelRatio(dpr)
+    pixmap.fill(Qt.GlobalColor.transparent)
+
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    pen = QPen(QColor(color))
+    pen.setWidthF(1.5)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    painter.setPen(pen)
+
+    center = size / 2.0
+    if kind == "plus":
+        arm = size * 0.30
+        painter.drawLine(QPointF(center - arm, center), QPointF(center + arm, center))
+        painter.drawLine(QPointF(center, center - arm), QPointF(center, center + arm))
+    elif kind == "info":
+        radius = size * 0.40
+        painter.drawEllipse(QPointF(center, center), radius, radius)
+        painter.drawLine(
+            QPointF(center, center - radius * 0.05),
+            QPointF(center, center + radius * 0.55),
+        )
+        painter.drawPoint(QPointF(center, center - radius * 0.5))
+    else:  # pragma: no cover - defensive
+        raise ValueError(f"Unknown glyph kind: {kind!r}")
+    painter.end()
+    return QIcon(pixmap)
+
+
+#: Local button style: the global app stylesheet gives buttons padding and a
+#: filled background that leave no content area at row-button sizes, so the
+#: row buttons opt out explicitly and draw only their glyph icon.
+_ROW_BUTTON_QSS = (
+    "QToolButton { border: none; background: transparent; padding: 0px; margin: 0px; }"
+    "QToolButton:hover { background: rgba(0, 0, 0, 28); border-radius: 4px; }"
+    "QToolButton:pressed { background: rgba(0, 0, 0, 48); border-radius: 4px; }"
+)
 
 
 class _RowSpec:
@@ -160,29 +215,41 @@ class _RowWidget(QWidget):
         self.label = _RowLabel(row_spec, tooltip=tooltip, parent=self)
         layout.addWidget(self.label, 1)
 
-        self.add_button = QToolButton(self)
-        self.add_button.setText("+")
-        self.add_button.setToolTip("Add this function")
-        self.add_button.setAutoRaise(True)
-        self.add_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.add_button.setFixedSize(18, 18)
-        self.add_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        self.add_button.clicked.connect(on_add)
+        self.add_button = self._glyph_button(
+            _glyph_icon("plus", tokens.TEXT),
+            tooltip="Add this function",
+            on_click=on_add,
+        )
         layout.addWidget(self.add_button, 0)
 
-        self.info_button = QToolButton(self)
-        self.info_button.setIcon(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxInformation)
+        self.info_button = self._glyph_button(
+            _glyph_icon("info", tokens.ACCENT),
+            tooltip="Show details for this function",
+            on_click=on_info,
         )
-        self.info_button.setToolTip("Show details for this function")
-        self.info_button.setAutoRaise(True)
-        self.info_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.info_button.setFixedSize(18, 18)
-        self.info_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        self.info_button.clicked.connect(on_info)
         layout.addWidget(self.info_button, 0)
 
         self._row_spec = row_spec
+
+    def _glyph_button(
+        self,
+        icon: QIcon,
+        *,
+        tooltip: str,
+        on_click: Callable[[], None],
+    ) -> QToolButton:
+        button = QToolButton(self)
+        button.setIcon(icon)
+        button.setIconSize(QSize(14, 14))
+        button.setToolTip(tooltip)
+        button.setAutoRaise(True)
+        button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        button.setFixedSize(20, 20)
+        button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        button.setStyleSheet(_ROW_BUTTON_QSS)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.clicked.connect(on_click)
+        return button
 
     def natural_width(self) -> int:
         """Un-elided width: full name text + badges + buttons + margins.

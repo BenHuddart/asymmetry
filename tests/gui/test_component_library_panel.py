@@ -330,6 +330,29 @@ def test_component_row_has_add_and_info_buttons(qapp: QApplication) -> None:
     panel.close()
 
 
+def test_row_buttons_render_painted_icons(qapp: QApplication) -> None:
+    # Regression: text glyphs / theme standard icons rendered as blank chips
+    # under the app stylesheet on Windows. The buttons must carry their own
+    # painted, non-empty icons and opt out of global button padding.
+    panel = ComponentLibraryPanel(COMPONENTS)
+    item = panel._component_items_in_display_order()[0]
+    row = _row_widget(panel, item)
+    assert row is not None
+    for button in (row.add_button, row.info_button):
+        assert not button.icon().isNull()
+        pixmap = button.icon().pixmap(14, 14)
+        image = pixmap.toImage()
+        assert not image.isNull()
+        # At least one non-transparent pixel: the glyph actually painted.
+        has_ink = any(
+            image.pixelColor(x, y).alpha() > 0
+            for x in range(image.width())
+            for y in range(image.height())
+        )
+        assert has_ink
+        assert "padding: 0px" in button.styleSheet()
+
+
 def test_add_button_click_emits_component_activated_and_selects_row(qapp: QApplication) -> None:
     panel = ComponentLibraryPanel(COMPONENTS)
     panel.show()
