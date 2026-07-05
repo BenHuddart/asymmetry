@@ -3792,6 +3792,12 @@ def _fit_exact_assignment(
                 _record_counter(instrumentation, "warm_certificate_accepts")
             else:
                 _record_counter(instrumentation, "warm_certificate_escalations")
+        else:
+            # The warm single-cycle fit itself failed to converge; we still fall
+            # through to the full battery below, so count it as an escalation too
+            # (otherwise the counter only sees certificate failures, not warm-fit
+            # failures, and undercounts how often the fast path falls through).
+            _record_counter(instrumentation, "warm_certificate_escalations")
 
     if not certificate_passed:
         best_results, best_global, best_score, best_failure_message, step_hints = (
