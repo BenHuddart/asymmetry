@@ -121,7 +121,7 @@ def _import_scenarios() -> None:
         data_processing_rebin,
         euo_fit_oscillatory,
         fit_wizard_gkt,
-        fit_wizard_portfolio,
+        fit_wizard_result,
         fourier_tf,
         # TODO: re-enable global_fit_lfkt and lf_kt_global_results once the global
         # fit wizard has been further developed.  Both scenarios are temporarily

@@ -27,6 +27,15 @@ screening table for ordered-series analysis. Reopening the wizard on a run it
 has already analysed (with nothing changed) skips straight to the result — no
 need to click Analyze again.
 
+.. image:: /_generated/screenshots/fit_wizard_result.png
+   :alt: Fit Wizard result page — answer card with the recommended fit above the decision trail
+   :width: 100%
+
+*The wizard's result page on a synthetic ZF Ag polycrystal dataset: the answer*
+*card gives the plain-language verdict, a confidence grade, and the data with*
+*the recommended fit overlaid, above a decision trail whose steps expand to*
+*show the reasoning behind the recommendation.*
+
 The two-click path
 -------------------
 

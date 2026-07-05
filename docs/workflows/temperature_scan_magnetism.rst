@@ -106,15 +106,18 @@ reducing per-bin noise.
 Step 3 — Choose a fit model per regime
 --------------------------------------
 
-.. image:: /_generated/screenshots/fit_wizard_portfolio.png
-   :alt: Fit Wizard portfolio rankings (Ag dataset shown as a reference)
+.. image:: /_generated/screenshots/fit_wizard_result.png
+   :alt: Fit Wizard result page — answer card and decision trail (Ag dataset shown as a reference)
    :width: 100%
 
 For the :math:`T = 65\;\mathrm{K}` run (mid-:math:`T_c`) the
 **Fit Wizard** (toolbar → ``Fit`` → ``Fit Wizard...``) fingerprints
-the data and ranks a curated portfolio of around a dozen candidate
-composite models. The screenshot shows the candidate-portfolio page
-on a static-field reference dataset (Ag); for the EuO mid-:math:`T_c`
+the data, fits a curated set of around a dozen candidate composite
+models, and recommends one with a confidence grade. The screenshot
+shows the wizard's result page on a static-field reference dataset
+(Ag): an answer card with the recommended model, its confidence, and
+the data-with-fit overlay, above a decision trail whose steps expand to
+the underlying candidate rankings. For the EuO mid-:math:`T_c`
 run the top candidates are ``Oscillatory + Exponential + Constant``
 and ``StaticGKT × Exponential``, the former being the natural choice
 inside the ordered phase. For runs well below :math:`T_c`,
