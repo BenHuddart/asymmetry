@@ -38,7 +38,12 @@ from asymmetry.core.fitting.peak_detection import (
     MultipletMatch,
     PeakAnalysis,
 )
-from asymmetry.gui.windows.fit_wizard_window import FitWizardWindow
+from asymmetry.gui.windows.fit_wizard_window import (
+    _PAGE_RESULT,
+    _PAGE_RUNNING,
+    _PAGE_WELCOME,
+    FitWizardWindow,
+)
 from tests._qt_helpers import wait_for
 
 
@@ -251,19 +256,27 @@ def test_fit_wizard_window_populates_banners_and_tables(
     window = FitWizardWindow()
 
     window.set_analysis_context(dataset)
-    assert "Click Start Analysis" in window._status_label.text()
-    assert window._portfolio_table.rowCount() == 0
+    # Welcome state: no result populated yet.
+    assert window._stack.currentIndex() == _PAGE_WELCOME
+    assert window._compare_table.rowCount() == 0
 
     window._start_analysis()
     wait_for(lambda: _analysis_complete(window), qapp)
 
+    # Result state: card + deep panels populated.
+    assert window._stack.currentIndex() == _PAGE_RESULT
+    assert window._answer_card._verdict_label.text()
     assert window._fingerprint_banner.text()
-    assert window._portfolio_banner.text()
-    assert window._compare_banner.text()
-    assert window._apply_banner.text()
-    assert window._portfolio_table.rowCount() == 2
     assert window._compare_table.rowCount() == 2
-    assert window._apply_parameters_table.rowCount() == 3
+    # The six-step decision trail is rendered below the card.
+    assert window._result_trail.step_keys() == (
+        "conditions",
+        "families",
+        "spectrum",
+        "candidates",
+        "verdict",
+        "confidence",
+    )
 
 
 def test_fit_wizard_window_failed_refresh_clears_recommendation(
@@ -344,8 +357,11 @@ def test_fit_wizard_window_selection_updates_apply_page(
     window._compare_table.selectRow(1)
     qapp.processEvents()
 
-    assert "Gaussian + Constant" in window._apply_selection_label.text()
-    assert "Residual warnings" in window._apply_warning_text.toPlainText()
+    # Selecting a candidate in the compare table swaps the card's selection and
+    # updates the residual-warning panel for that candidate.
+    assert window._selected_key == "gaussian_constant"
+    assert window._answer_card.selected_key() == "gaussian_constant"
+    assert "Residual gate warning" in window._compare_warning_text.toPlainText()
 
 
 def test_fit_wizard_window_apply_recommended_emits_assessment(
@@ -372,7 +388,9 @@ def test_fit_wizard_window_apply_recommended_emits_assessment(
         )
     )
 
-    window._apply_recommended_fit()
+    # The answer card's "Apply this fit" applies the selected (default =
+    # recommended) assessment; the window relays it with the recommendation.
+    window._answer_card._on_apply_clicked()
 
     assert emitted["assessment"].template.key == "exp_constant"
     assert emitted["recommendation"].recommended_key == "exp_constant"
@@ -459,8 +477,10 @@ def test_fit_wizard_window_accepts_cached_recommendation(
 
     assert window.current_recommendation() is recommendation
     assert window.current_log_text() == "cached log"
+    # Cached reopen goes straight to the Result state.
+    assert window._stack.currentIndex() == _PAGE_RESULT
     assert window._compare_table.rowCount() == 2
-    assert window._apply_parameters_table.rowCount() == 3
+    assert window._answer_card.selected_key() == "exp_constant"
     # Legacy signature (no scope/user_peaks keys) restores Auto and is not stale.
     assert window._scope_selector.current_scope()["preset"] == "auto"
     assert window._user_peaks == []
@@ -506,14 +526,19 @@ def test_fit_wizard_window_resolver_guards_without_dataset(qapp: QApplication) -
 # ── Scope tab: ordering + selection ──────────────────────────────────────────
 
 
-def test_fit_wizard_window_scope_tab_is_first_and_selected(
+def test_fit_wizard_window_opens_on_welcome_with_collapsed_guidance(
     qapp: QApplication,
     dataset: MuonDataset,
 ) -> None:
     window = FitWizardWindow()
-    assert window._tabs.tabText(0) == "1. Scope"
+    # No tabs on the new window: the base tab scaffolding is not built.
+    assert window._tabs is None
     window.set_analysis_context(dataset)
-    assert window._tabs.currentIndex() == 0
+    # Opens on the Welcome state with the guidance section collapsed by default.
+    assert window._stack.currentIndex() == _PAGE_WELCOME
+    assert window._guidance_section.isExpanded() is False
+    # The scope selector lives inside the (collapsed) guidance section.
+    assert window._scope_panel.parent() is window._guidance_scope_slot
 
 
 # ── Scope + user peaks forwarded to the builder ──────────────────────────────
@@ -948,8 +973,10 @@ def test_fit_wizard_window_high_confidence_reads_as_confident(
     window._start_analysis()
     wait_for(lambda: _analysis_complete(window), qapp)
 
-    assert window._confidence_banner.isHidden() is False
-    assert "High confidence" in window._confidence_banner.text()
+    # Confidence lives on the answer card, in words, never buried.
+    assert "High confidence" in window._answer_card._confidence_label.text()
+    # The verdict reads as a plain-physics result, not a failure.
+    assert "failed" not in window._answer_card._verdict_label.text().lower()
 
 
 def test_fit_wizard_window_medium_confidence_shows_caveat_not_error(
@@ -957,8 +984,6 @@ def test_fit_wizard_window_medium_confidence_shows_caveat_not_error(
     dataset: MuonDataset,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from asymmetry.gui.styles import tokens
-
     monkeypatch.setattr(
         wizard_window_module,
         "build_fit_wizard_recommendation",
@@ -976,12 +1001,12 @@ def test_fit_wizard_window_medium_confidence_shows_caveat_not_error(
     window._start_analysis()
     wait_for(lambda: _analysis_complete(window), qapp)
 
-    text = window._confidence_banner.text()
+    # The medium-confidence caveat is on the card, in plain words, never buried.
+    text = window._answer_card._confidence_label.text()
     assert "Medium confidence" in text
     assert "Structured residuals remain" in text
-    # Caveated, not an error: uses the warn idiom, never the error token.
-    style = window._confidence_banner.styleSheet()
-    assert tokens.ERROR not in style
+    # Framed as usable-with-caveat, not a failure.
+    assert "failed" not in text.lower()
 
 
 def test_fit_wizard_window_no_significant_structure_is_unmissable(
@@ -1006,10 +1031,14 @@ def test_fit_wizard_window_no_significant_structure_is_unmissable(
     window._start_analysis()
     wait_for(lambda: _analysis_complete(window), qapp)
 
-    text = window._confidence_banner.text()
-    assert window._confidence_banner.isHidden() is False
-    assert "no significant structure" in text.lower()
-    assert "beyond the null" in text
+    # The null verdict is presented as a RESULT on the card, not a failure.
+    verdict = window._answer_card._verdict_label.text().lower()
+    confidence = window._answer_card._confidence_label.text().lower()
+    assert "simple decay" in verdict
+    assert "no oscillation" in verdict
+    assert "failed" not in verdict
+    assert "failed" not in confidence
+    assert "simple decay" in confidence
 
 
 def test_fit_wizard_window_marks_disqualified_and_null_in_compare_table(
@@ -1046,13 +1075,14 @@ def test_fit_wizard_window_marks_disqualified_and_null_in_compare_table(
     assert window._compare_table.item(null_row, 0).text().endswith("(baseline)")
 
 
-def test_fit_wizard_window_default_tier_hides_confidence_banner(
+def test_fit_wizard_window_default_tier_shows_model_not_no_recommendation(
     qapp: QApplication,
     dataset: MuonDataset,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A recommendation with the default NONE tier + no caveat must NOT contradict
-    the summary with a spurious 'no recommendation' banner — it hides instead."""
+    """A recommendation with the default NONE tier + a set key must NOT contradict
+    itself with a spurious 'no confident recommendation' confidence line — the
+    card shows the best model and leaves the confidence line empty instead."""
     monkeypatch.setattr(
         wizard_window_module,
         "build_fit_wizard_recommendation",
@@ -1065,7 +1095,241 @@ def test_fit_wizard_window_default_tier_hides_confidence_banner(
     window._start_analysis()
     wait_for(lambda: _analysis_complete(window), qapp)
 
-    # A recommendation exists (recommended_key set), so the banner stays hidden
-    # rather than claiming no recommendation could be made.
-    assert window._confidence_banner.isHidden() is True
-    assert "Recommended" in window._compare_banner.text()
+    # The card names the best model rather than claiming no recommendation.
+    assert "Exponential + Constant" in window._answer_card._verdict_label.text()
+    # The bare NONE-fallback line is suppressed (empty + hidden).
+    assert window._answer_card._confidence_label.text() == ""
+    assert window._answer_card._confidence_label.isHidden() is True
+
+
+# ── New-structure behaviours (welcome / running / result states) ─────────────
+
+
+def test_fit_wizard_window_two_click_path_analyze_then_apply(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The core two-click novice path: Analyze on Welcome → Apply on Result.
+
+    Expanding the optional guidance is never required to reach a recommendation.
+    """
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_fit_wizard_recommendation",
+        lambda dataset, current_model=None, metric=SelectionMetric.AICC, **kwargs: (
+            _fake_recommendation(dataset)
+        ),
+    )
+    window = FitWizardWindow()
+    window.set_analysis_context(dataset)
+
+    # Click 1: Analyze (from the Welcome page, guidance still collapsed).
+    assert window._guidance_section.isExpanded() is False
+    window._analyze_btn.click()
+    wait_for(lambda: _analysis_complete(window), qapp)
+
+    assert window._stack.currentIndex() == _PAGE_RESULT
+
+    # Click 2: Apply this fit.
+    emitted: list[object] = []
+    window.apply_assessment_requested.connect(lambda a, r: emitted.append(a))
+    window._answer_card._apply_btn.click()
+    assert emitted and emitted[0].template.key == "exp_constant"
+
+
+def test_fit_wizard_window_running_state_streams_trail(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fake progress messages light the mapped trail steps; unknown text only
+    updates the status line."""
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_fit_wizard_recommendation",
+        lambda dataset, current_model=None, metric=SelectionMetric.AICC, **kwargs: (
+            _fake_recommendation(dataset)
+        ),
+    )
+    window = FitWizardWindow()
+    window.set_analysis_context(dataset)
+    window._show_running()
+    assert window._stack.currentIndex() == _PAGE_RUNNING
+
+    # Placeholder trail is shown immediately with the six known keys.
+    assert window._running_trail.step_keys() == (
+        "conditions",
+        "families",
+        "spectrum",
+        "candidates",
+        "verdict",
+        "confidence",
+    )
+
+    # Recognised progress prefixes advance the mapped step (these are the real
+    # strings the core's build_fit_wizard_recommendation emits).
+    window._on_progress(0, 0, "Stage 1: screening 5 candidate families")
+    assert window._running_trail.active_step_key() == "families"
+    window._on_progress(0, 0, "Spectral search: 3 line(s), 1 pattern match(es)")
+    assert window._running_trail.active_step_key() == "spectrum"
+    assert "Spectral search" in window._running_trail._status_label.text()
+    window._on_progress(0, 0, "Stage 2: fitting 4 expanded candidates")
+    assert window._running_trail.active_step_key() == "candidates"
+
+    # An unrecognised message only updates the status line, leaving the active
+    # step unchanged (no raise).
+    window._on_progress(0, 0, "some novel stage nobody mapped")
+    assert window._running_trail.active_step_key() == "candidates"
+    assert "novel stage" in window._running_trail._status_label.text()
+
+
+def test_fit_wizard_window_alternatives_swap_changes_applied_key(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_fit_wizard_recommendation",
+        lambda dataset, current_model=None, metric=SelectionMetric.AICC, **kwargs: (
+            _fake_recommendation(dataset)
+        ),
+    )
+    window = FitWizardWindow()
+    window.set_analysis_context(dataset)
+    window._start_analysis()
+    wait_for(lambda: _analysis_complete(window), qapp)
+
+    # gauss is offered as an alternative on the card.
+    assert "gaussian_constant" in window._answer_card._alt_buttons
+    window._answer_card._alt_buttons["gaussian_constant"].click()
+    qapp.processEvents()
+
+    # Selecting the alternative retargets Apply and syncs the compare table.
+    assert window._answer_card.selected_key() == "gaussian_constant"
+    assert window._selected_key == "gaussian_constant"
+    emitted: list[object] = []
+    window.apply_assessment_requested.connect(lambda a, r: emitted.append(a))
+    window._answer_card._apply_btn.click()
+    assert emitted[0].template.key == "gaussian_constant"
+
+
+def test_fit_wizard_window_copy_log_uses_render_log_text(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from PySide6.QtGui import QGuiApplication
+
+    from asymmetry.core.fitting.wizard_narrative import render_log_text
+
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_fit_wizard_recommendation",
+        lambda dataset, current_model=None, metric=SelectionMetric.AICC, **kwargs: (
+            _fake_recommendation(dataset)
+        ),
+    )
+    window = FitWizardWindow()
+    window.set_analysis_context(dataset)
+    window._start_analysis()
+    wait_for(lambda: _analysis_complete(window), qapp)
+
+    window._copy_log_btn.click()
+    clipboard = QGuiApplication.clipboard()
+    expected = render_log_text(window.current_recommendation())
+    assert clipboard.text() == expected
+
+
+def test_fit_wizard_window_trail_expansion_reveals_reparented_panels(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Result trail embeds the existing deep panels, re-parented in place."""
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_fit_wizard_recommendation",
+        lambda dataset, current_model=None, metric=SelectionMetric.AICC, **kwargs: (
+            _recommendation_with_peaks(dataset)
+        ),
+    )
+    window = FitWizardWindow()
+    window.set_analysis_context(dataset)
+    window._start_analysis()
+    wait_for(lambda: _analysis_complete(window), qapp)
+
+    # The scope, fingerprint (FFT+peaks) and compare panels are re-parented into
+    # the trail's conditions / spectrum / candidates expansions.
+    assert window._scope_panel.parent() is not window._guidance_scope_slot
+    trail = window._result_trail
+    trail.set_step_expanded("spectrum", True)
+    qapp.processEvents()
+    assert window._fingerprint_panel.isVisibleTo(window) is True
+    # The re-parented compare table keeps its baseline/disqualified marks intact.
+    trail.set_step_expanded("candidates", True)
+    qapp.processEvents()
+    assert window._compare_table.rowCount() == 2
+
+
+def test_fit_wizard_window_reanalyze_returns_to_welcome(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_fit_wizard_recommendation",
+        lambda dataset, current_model=None, metric=SelectionMetric.AICC, **kwargs: (
+            _fake_recommendation(dataset)
+        ),
+    )
+    window = FitWizardWindow()
+    window.set_analysis_context(dataset)
+    window._start_analysis()
+    wait_for(lambda: _analysis_complete(window), qapp)
+    assert window._stack.currentIndex() == _PAGE_RESULT
+
+    window._reanalyze_btn.click()
+    assert window._stack.currentIndex() == _PAGE_WELCOME
+    # The guidance panels are back in the Welcome expander for steering.
+    assert window._scope_panel.parent() is window._guidance_scope_slot
+
+
+def test_fit_wizard_window_progress_callback_is_wired_through(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The worker task must hand the core a progress_callback that reaches the
+    trail — a mock builder that emits a stage message lights the mapped step."""
+    seen: list[str] = []
+
+    def _builder_with_progress(dataset, current_model=None, metric=SelectionMetric.AICC, **kwargs):
+        progress = kwargs.get("progress_callback")
+        assert callable(progress), "the task closure must pass a progress_callback"
+        progress("Stage 1: screening 5 candidate families")
+        progress("Stage 2: fitting 4 expanded candidates")
+        seen.append("emitted")
+        return _fake_recommendation(dataset)
+
+    monkeypatch.setattr(
+        wizard_window_module, "build_fit_wizard_recommendation", _builder_with_progress
+    )
+    window = FitWizardWindow()
+    window.set_analysis_context(dataset)
+    window._start_analysis()
+    wait_for(lambda: _analysis_complete(window), qapp)
+
+    # The core emitted progress and it reached the running trail before Result.
+    assert seen == ["emitted"]
+    # On completion the trail is rebuilt from the recommendation (six steps).
+    assert window._result_trail.step_keys() == (
+        "conditions",
+        "families",
+        "spectrum",
+        "candidates",
+        "verdict",
+        "confidence",
+    )
