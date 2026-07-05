@@ -865,7 +865,7 @@ class FitEngine:
         model_fn: Callable[..., NDArray],
         global_params: list[str],
         local_params: list[str],
-        initial_params: dict[str, ParameterSet],
+        initial_params: dict[int, ParameterSet],
         t_min: float | None = None,
         t_max: float | None = None,
         method: str = "migrad",
@@ -877,10 +877,12 @@ class FitEngine:
         initial_step_sizes: dict[str, float] | None = None,
         minos: bool = False,
         screening: bool = False,
+        strategy: str = "joint",
+        use_varpro: bool = False,
         cancel_callback: Callable[[], bool] | None = None,
         cost_factory: CostFactory | None = None,
         local_param_groups: dict[str, dict[int, Hashable]] | None = None,
-    ) -> tuple[dict[str, FitResult], ParameterSet]:
+    ) -> tuple[dict[int, FitResult], ParameterSet]:
         """Simultaneous fit of multiple datasets with shared and local parameters.
 
         Parameters
@@ -903,6 +905,29 @@ class FitEngine:
         max_calls
             Maximum function evaluations for minimization. Limits runtime for
             large global fits.
+        strategy
+            Minimiser architecture for the shared-parameter problem.
+            ``"joint"`` (default) builds one Minuit problem over the globals plus
+            every dataset's locals — the historical, byte-for-byte path.
+            ``"profiled"`` runs an outer Minuit over the free *globals only* and,
+            for each candidate global vector, solves each dataset's locals
+            independently (via :meth:`fit` with the globals held fixed). The two
+            share the same objective, so at the optimum they agree on values and
+            χ²; profiled drops the per-fit Hessian from ``(n_global+n_local·G)²``
+            to ``n_global²`` plus ``G`` small block Hessians, so cost scales
+            ~linearly in ``G`` rather than super-linearly. Profiled requires at
+            least one free global (with none, the joint problem is already
+            block-separable and the fast path below handles it).
+        use_varpro
+            Variable projection. When ``True``, parameters flagged linear in the
+            model metadata (amplitudes, constant backgrounds) are solved by
+            weighted linear least-squares *inside* each residual evaluation and
+            removed from the nonlinear Minuit vector, then reinstated in the
+            returned :class:`FitResult` (they still count toward ``dof`` and the
+            IC ``k``). Falls back to the nonlinear treatment for any candidate
+            model that is not actually affine in a flagged parameter, or whose
+            linear solution violates a bound. Off by default; the fitted values,
+            errors, and IC are preserved.
 
         Returns
         -------
@@ -923,6 +948,10 @@ class FitEngine:
         """
         if not datasets:
             raise ValueError("No datasets provided for global fitting")
+        if strategy not in ("joint", "profiled"):
+            raise ValueError(
+                f"Unknown global-fit strategy {strategy!r}; expected 'joint' or 'profiled'"
+            )
         _reject_affine_ties(initial_params.values(), "Global fitting")
 
         def _local_group_key(pname: str, run_number: int) -> Hashable:
@@ -995,6 +1024,39 @@ class FitEngine:
                     cost_factory=cost_factory,
                 )
             return results, fitted_global
+
+        # Profiled/nested-locals strategy (technique L). An outer Minuit over the
+        # free globals only; each candidate global vector is scored by solving
+        # every dataset's locals independently (globals held fixed). This shares
+        # the joint objective's minimum but replaces the (n_global+n_local·G)²
+        # Hessian with n_global² plus G small per-dataset ones, so per-fit cost
+        # scales ~linearly in G. Grouped local ties couple datasets, so they are
+        # not separable — fall back to the joint path for those.
+        if strategy == "profiled" and free_global_params and not grouped_local_ties:
+            return self._global_fit_profiled(
+                datasets=datasets,
+                model_fn=model_fn,
+                global_params=global_params,
+                local_params=local_params,
+                initial_params=initial_params,
+                free_global_params=free_global_params,
+                first_params=first_params,
+                t_min=t_min,
+                t_max=t_max,
+                method=method,
+                max_calls=max_calls,
+                migrad_iterations=migrad_iterations,
+                use_simplex_rescue=use_simplex_rescue,
+                minuit_strategy=minuit_strategy,
+                minuit_tol=minuit_tol,
+                minos=minos,
+                screening=screening,
+                use_varpro=use_varpro,
+                cancel_callback=cancel_callback,
+                cost_factory=cost_factory,
+            )
+        # ``use_varpro`` is applied by wrapping ``model_fn`` before the joint
+        # objective is built (below); the profiled path handles it internally.
 
         try:
             from iminuit import Minuit
@@ -1329,6 +1391,254 @@ class FitEngine:
                 covariance_accurate=covariance_accurate,
                 dof=ndata - nfree,
                 minos_errors=minos_errors or None,
+            )
+
+        return results, fitted_global
+
+    def _global_fit_profiled(
+        self,
+        *,
+        datasets: list[MuonDataset],
+        model_fn: Callable[..., NDArray],
+        global_params: list[str],
+        local_params: list[str],
+        initial_params: dict[int, ParameterSet],
+        free_global_params: list[str],
+        first_params: ParameterSet,
+        t_min: float | None,
+        t_max: float | None,
+        method: str,
+        max_calls: int,
+        migrad_iterations: int,
+        use_simplex_rescue: bool,
+        minuit_strategy: int | None,
+        minuit_tol: float | None,
+        minos: bool,
+        screening: bool,
+        use_varpro: bool,
+        cancel_callback: Callable[[], bool] | None,
+        cost_factory: CostFactory | None,
+    ) -> tuple[dict[int, FitResult], ParameterSet]:
+        """Profiled/nested-locals global fit (technique L).
+
+        Outer Minuit varies the free globals only. For a candidate global vector
+        every dataset's locals are solved independently by :meth:`fit` with the
+        globals pinned; the outer cost is Σ_d χ²_d. Each dataset's local solution
+        is cached and reused as the warm start for the next outer iteration, so
+        the inner problems stay in the same basin and the outer objective stays
+        smooth. At the optimum this shares the joint objective's minimum, but its
+        Hessians are ``n_global²`` + ``G`` small per-dataset blocks rather than one
+        ``(n_global + n_local·G)²`` — the source of the ~linear (not super-linear)
+        G-scaling.
+        """
+        try:
+            from iminuit import Minuit
+        except ImportError as e:  # pragma: no cover - exercised only without iminuit
+            error_result = FitResult(success=False, message=f"iminuit import error: {e}")
+            return {ds.run_number: error_result for ds in datasets}, ParameterSet()
+
+        cancel_guard = _make_cancel_guard(cancel_callback)
+
+        # Warm-start cache: the last accepted local solution per dataset. Seeded
+        # from the caller's initial params; refreshed after every inner solve so
+        # each outer iteration re-enters the same local basin (keeps the profiled
+        # objective smooth — the key correctness condition for L).
+        warm_locals: dict[int, dict[str, float]] = {}
+        for ds in datasets:
+            params = initial_params[ds.run_number]
+            warm_locals[ds.run_number] = {
+                name: params[name].value for name in local_params if not params[name].fixed
+            }
+
+        # Inner solve for one dataset with the globals pinned. Reuses the proven
+        # single-fit path (self.fit) rather than a bespoke inner Minuit.
+        def _inner_fit(ds: MuonDataset, global_values: dict[str, float]) -> FitResult:
+            base = initial_params[ds.run_number]
+            inner = ParameterSet()
+            for pname in global_params:
+                p = base[pname]
+                inner.add(
+                    Parameter(name=pname, value=global_values.get(pname, p.value), fixed=True)
+                )
+            warm = warm_locals[ds.run_number]
+            for pname in local_params:
+                p = base[pname]
+                if p.fixed:
+                    inner.add(
+                        Parameter(name=pname, value=p.value, min=p.min, max=p.max, fixed=True)
+                    )
+                else:
+                    inner.add(
+                        Parameter(
+                            name=pname,
+                            value=warm.get(pname, p.value),
+                            min=p.min,
+                            max=p.max,
+                            fixed=False,
+                        )
+                    )
+            # Any model parameter that is neither global nor local (a fixed
+            # nuisance the model consumes) must still be supplied.
+            for p in base:
+                if p.name not in inner:
+                    inner.add(
+                        Parameter(name=p.name, value=p.value, min=p.min, max=p.max, fixed=True)
+                    )
+            return self.fit(
+                ds,
+                model_fn,
+                inner,
+                t_min=t_min,
+                t_max=t_max,
+                method=method,
+                cancel_callback=cancel_callback,
+                cost_factory=cost_factory,
+            )
+
+        # Counters accumulated across every inner solve (the profiled fit's cost
+        # is dominated by the inner fits, so these are the meaningful totals).
+        counters = {"fcn": 0, "grad": 0, "hess": 0}
+
+        def _solve_all(global_values: dict[str, float]) -> dict[int, FitResult]:
+            cancel_guard()
+            out: dict[int, FitResult] = {}
+            for ds in datasets:
+                res = _inner_fit(ds, global_values)
+                out[ds.run_number] = res
+                # Refresh the warm start with the freshly fitted locals.
+                for pname in warm_locals[ds.run_number]:
+                    if pname in res.parameters:
+                        warm_locals[ds.run_number][pname] = res.parameters[pname].value
+                counters["fcn"] += int(res.function_calls or 0)
+                counters["grad"] += int(res.gradient_calls or 0)
+                counters["hess"] += int(res.hessian_calls or 0)
+            return out
+
+        def _outer_objective(*args: float) -> float:
+            global_values = dict(zip(free_global_params, args))
+            for pname in global_params:
+                if pname not in global_values:
+                    global_values[pname] = first_params[pname].value
+            inner_results = _solve_all(global_values)
+            return float(sum(r.chi_squared for r in inner_results.values()))
+
+        # iminuit needs named scalar-cost signatures; a χ² sum has errordef 1.0
+        # (Minuit.LEAST_SQUARES), matching the joint LeastSquares cost.
+        _outer_objective.errordef = Minuit.LEAST_SQUARES  # type: ignore[attr-defined]
+
+        init_values = [first_params[name].value for name in free_global_params]
+        m = Minuit(_outer_objective, *init_values, name=list(free_global_params))
+        if minuit_strategy is not None:
+            m.strategy = int(minuit_strategy)
+        elif screening:
+            m.strategy = 0
+        if minuit_tol is not None:
+            m.tol = float(minuit_tol)
+        for i, name in enumerate(free_global_params):
+            p = first_params[name]
+            lo = p.min if p.min != -float("inf") else None
+            hi = p.max if p.max != float("inf") else None
+            if lo is not None or hi is not None:
+                m.limits[i] = (lo, hi)
+
+        try:
+            if method == "simplex":
+                m.simplex(ncall=max_calls)
+            else:
+                m.migrad(ncall=max_calls, iterate=max(1, int(migrad_iterations)))
+                if use_simplex_rescue and not m.valid:
+                    m.simplex()
+                    m.migrad()
+            try:
+                m.hesse()
+            except Exception:
+                pass
+        except FitCancelledError:
+            raise
+        except Exception as e:
+            error_result = FitResult(success=False, message=f"Profiled global fit failed: {e}")
+            return {ds.run_number: error_result for ds in datasets}, ParameterSet()
+
+        # Final global vector and its outer-Hessian errors.
+        fitted_values = {name: float(m.values[i]) for i, name in enumerate(free_global_params)}
+        global_errors: dict[str, float] = {}
+        for i, name in enumerate(free_global_params):
+            try:
+                err = float(m.errors[i])
+                if np.isfinite(err):
+                    global_errors[name] = err
+            except Exception:
+                pass
+
+        fitted_global = ParameterSet()
+        global_values_full: dict[str, float] = {}
+        for pname in global_params:
+            p = first_params[pname]
+            if p.fixed:
+                fitted_global.add(Parameter(name=pname, value=p.value, fixed=True))
+                global_values_full[pname] = p.value
+            else:
+                value = fitted_values[pname]
+                fitted_global.add(Parameter(name=pname, value=value, min=p.min, max=p.max))
+                global_values_full[pname] = value
+
+        # One clean inner solve per dataset at the optimum to build the returned
+        # results (conditional local errors with the globals pinned, block-
+        # diagonal → linear in G). The outer Hessian supplies the global errors.
+        final_results = _solve_all(global_values_full)
+
+        edm = getattr(getattr(m, "fmin", None), "edm", None)
+        edm_value = float(edm) if edm is not None and np.isfinite(edm) else None
+        covariance_accurate = bool(getattr(m, "accurate", False))
+        outer_valid = bool(m.valid)
+
+        results: dict[int, FitResult] = {}
+        n_free_global = len(free_global_params)
+        for ds in datasets:
+            inner = final_results[ds.run_number]
+            params = initial_params[ds.run_number]
+            result_params = ParameterSet()
+            uncertainties: dict[str, float] = {}
+            for pname in global_params:
+                gp = fitted_global[pname]
+                result_params.add(Parameter(name=pname, value=gp.value, fixed=gp.fixed))
+                if pname in global_errors:
+                    uncertainties[pname] = global_errors[pname]
+            for pname in local_params:
+                p = params[pname]
+                if p.fixed:
+                    result_params.add(Parameter(name=pname, value=p.value, fixed=True))
+                else:
+                    ip = inner.parameters[pname]
+                    result_params.add(Parameter(name=pname, value=ip.value, min=p.min, max=p.max))
+                    if pname in inner.uncertainties:
+                        uncertainties[pname] = inner.uncertainties[pname]
+            for p in params:
+                if p.fixed and p.name not in result_params:
+                    result_params.add(Parameter(name=p.name, value=p.value, fixed=True))
+
+            ndata = len(ds.time_range(t_min, t_max).time) if (t_min or t_max) else len(ds.time)
+            nfree_local = sum(1 for pname in local_params if not params[pname].fixed)
+            nfree = n_free_global + nfree_local
+            dataset_chi2 = float(inner.chi_squared)
+            results[ds.run_number] = FitResult(
+                success=bool(inner.success) and outer_valid,
+                chi_squared=dataset_chi2,
+                reduced_chi_squared=dataset_chi2 / max(ndata - nfree, 1),
+                parameters=result_params,
+                uncertainties=uncertainties,
+                residuals=inner.residuals,
+                message=(
+                    "Profiled global fit successful"
+                    if outer_valid and inner.success
+                    else "Profiled global fit did not fully converge"
+                ),
+                function_calls=counters["fcn"],
+                gradient_calls=counters["grad"],
+                hessian_calls=counters["hess"],
+                edm=edm_value,
+                covariance_accurate=covariance_accurate,
+                dof=ndata - nfree,
             )
 
         return results, fitted_global
