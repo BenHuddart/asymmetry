@@ -2093,20 +2093,21 @@ def test_bounds_disabled_when_active_range_has_windows(qapp: QApplication) -> No
 
 
 def test_fit_busy_disables_cards_and_bounds(qapp: QApplication) -> None:
-    """_set_fit_ui_busy(True) disables the cards' Run Fit + overflow and the
+    """_set_fit_ui_busy(True) disables the cards' action buttons and the
     details-pane bounds pair; (False) restores them."""
     dlg = _make_dialog(qapp)
     dlg._select_range(0)
 
     dlg._set_fit_ui_busy(True)
     assert dlg._range_cards[0]._run_button.isEnabled() is False
-    assert dlg._range_cards[0]._overflow_button.isEnabled() is False
+    assert dlg._range_cards[0]._edit_model_button.isEnabled() is False
+    assert dlg._range_cards[0]._exclude_button.isEnabled() is False
     assert dlg._bounds_min_spin.isEnabled() is False
     assert dlg._bounds_max_spin.isEnabled() is False
 
     dlg._set_fit_ui_busy(False)
     assert dlg._range_cards[0]._run_button.isEnabled() is True
-    assert dlg._range_cards[0]._overflow_button.isEnabled() is True
+    assert dlg._range_cards[0]._edit_model_button.isEnabled() is True
     # No windows on the active range, so the bounds pair is restored enabled.
     assert dlg._bounds_min_spin.isEnabled() is True
 

@@ -366,11 +366,10 @@ def test_cross_group_dialog_exposes_error_modes_and_windows() -> None:
 
     assert dlg._error_mode() is ErrorMode.COLUMN  # default
 
-    # The "Exclude region…" path now lives in the range card's overflow menu
-    # (an action, not a standalone per-row button) — see the range-cards redesign.
+    # The "Exclude region…" path is a dedicated button on the range card (the
+    # overflow dropdown was replaced by visible action buttons).
     card = dlg._range_cards[0]
-    overflow_actions = [a.text() for a in card._overflow_menu.actions()]
-    assert "Exclude region…" in overflow_actions
+    assert card._exclude_button.text() == "Exclude region…"
 
     # field is exact (no σ_x), so the effective-variance toggle is not offered.
     assert dlg._x_error_check is None

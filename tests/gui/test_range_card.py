@@ -109,7 +109,8 @@ def test_show_run_controls_visibility(qapp: QApplication) -> None:
     card.set_state(_view(show_run=True))
     assert card._line2.isVisibleTo(card)
     assert card._run_button.isVisibleTo(card)
-    assert card._overflow_button.isVisibleTo(card)
+    assert card._edit_model_button.isVisibleTo(card)
+    assert card._exclude_button.isVisibleTo(card)
 
     card.set_state(_view(show_run=False))
     assert not card._line2.isVisibleTo(card)
@@ -126,7 +127,7 @@ def test_run_button_emits_run_requested(qapp: QApplication) -> None:
     assert received == [3]
 
 
-def test_menu_actions_emit_signals(qapp: QApplication) -> None:
+def test_action_buttons_emit_signals(qapp: QApplication) -> None:
     card = RangeCard(2)
     card.set_state(_view(idx=2, show_run=True, can_remove=True))
 
@@ -137,9 +138,9 @@ def test_menu_actions_emit_signals(qapp: QApplication) -> None:
     card.exclude_requested.connect(exclude_received.append)
     card.remove_requested.connect(remove_received.append)
 
-    card._act_edit_model.trigger()
-    card._act_exclude.trigger()
-    card._act_remove.trigger()
+    card._edit_model_button.click()
+    card._exclude_button.click()
+    card._remove_button.click()
 
     assert edit_model_received == [2]
     assert exclude_received == [2]
@@ -158,10 +159,10 @@ def test_remove_hidden_when_cannot_remove(qapp: QApplication) -> None:
     card = RangeCard(0)
 
     card.set_state(_view(can_remove=False, show_run=True))
-    assert not card._act_remove.isVisible()
+    assert not card._remove_button.isVisibleTo(card)
 
     card.set_state(_view(can_remove=True, show_run=True))
-    assert card._act_remove.isVisible()
+    assert card._remove_button.isVisibleTo(card)
 
 
 def test_set_enabled_toggles_controls(qapp: QApplication) -> None:
@@ -170,11 +171,15 @@ def test_set_enabled_toggles_controls(qapp: QApplication) -> None:
 
     card.set_enabled(False)
     assert not card._run_button.isEnabled()
-    assert not card._overflow_button.isEnabled()
+    assert not card._edit_model_button.isEnabled()
+    assert not card._exclude_button.isEnabled()
+    assert not card._remove_button.isEnabled()
 
     card.set_enabled(True)
     assert card._run_button.isEnabled()
-    assert card._overflow_button.isEnabled()
+    assert card._edit_model_button.isEnabled()
+    assert card._exclude_button.isEnabled()
+    assert card._remove_button.isEnabled()
 
 
 def test_card_click_emits_selected(qapp: QApplication) -> None:

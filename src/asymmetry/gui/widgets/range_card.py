@@ -3,8 +3,8 @@
 Replaces the wide row-of-buttons layout in the trend model-fit dialog with one
 small card per fit range: a colour swatch matching the range's plot span, a
 title, a fit-status chip, and its bounds. The card that is currently active
-additionally shows a primary "Run Fit" button and a "..." overflow menu
-(Edit Model / Exclude region.../Remove).
+additionally shows a primary "Run Fit" button and dedicated "Edit Model" /
+"Exclude region…" / "Remove" buttons.
 
 The card is a pure view — it renders a plain :class:`RangeCardView` handed to
 it by the dialog and emits signals on user interaction. It owns no fit/range
@@ -23,7 +23,6 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
-    QMenu,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
@@ -98,11 +97,11 @@ class RangeCard(QFrame):
     selected = Signal(int)
     #: Primary "Run Fit" button pressed (active card only).
     run_requested = Signal(int)
-    #: Overflow menu -> "Edit Model".
+    #: "Edit Model" button pressed.
     edit_model_requested = Signal(int)
-    #: Overflow menu -> "Exclude region..." (numeric exclude/add-window path).
+    #: "Exclude region..." button pressed (numeric exclude/add-window path).
     exclude_requested = Signal(int)
-    #: Overflow menu -> "Remove".
+    #: "Remove" button pressed.
     remove_requested = Signal(int)
 
     def __init__(self, idx: int, parent: QWidget | None = None) -> None:
@@ -145,7 +144,7 @@ class RangeCard(QFrame):
 
         surface_layout.addLayout(line1)
 
-        # ── Line 2: formula + Run Fit + overflow (active card only) ────────
+        # ── Line 2: formula + action buttons (active card only) ────────────
         self._line2 = QWidget(self._surface)
         line2_layout = QHBoxLayout(self._line2)
         line2_layout.setContentsMargins(0, 0, 0, 0)
@@ -157,22 +156,23 @@ class RangeCard(QFrame):
         )
         line2_layout.addWidget(self._formula_label, 1)
 
+        # Order: primary -> secondary -> destructive.
         self._run_button = QPushButton("Run Fit", self._line2)
         self._run_button.setStyleSheet(build_primary_button_qss())
         self._run_button.clicked.connect(self._on_run_clicked)
         line2_layout.addWidget(self._run_button)
 
-        self._overflow_button = QPushButton("⋯", self._line2)  # midline horizontal ellipsis
-        self._overflow_button.setFixedWidth(28)
-        self._overflow_menu = QMenu(self._overflow_button)
-        self._act_edit_model = self._overflow_menu.addAction("Edit Model")
-        self._act_edit_model.triggered.connect(self._on_edit_model_triggered)
-        self._act_exclude = self._overflow_menu.addAction("Exclude region…")
-        self._act_exclude.triggered.connect(self._on_exclude_triggered)
-        self._act_remove = self._overflow_menu.addAction("Remove")
-        self._act_remove.triggered.connect(self._on_remove_triggered)
-        self._overflow_button.setMenu(self._overflow_menu)
-        line2_layout.addWidget(self._overflow_button)
+        self._edit_model_button = QPushButton("Edit Model", self._line2)
+        self._edit_model_button.clicked.connect(self._on_edit_model_triggered)
+        line2_layout.addWidget(self._edit_model_button)
+
+        self._exclude_button = QPushButton("Exclude region…", self._line2)
+        self._exclude_button.clicked.connect(self._on_exclude_triggered)
+        line2_layout.addWidget(self._exclude_button)
+
+        self._remove_button = QPushButton("Remove", self._line2)
+        self._remove_button.clicked.connect(self._on_remove_triggered)
+        line2_layout.addWidget(self._remove_button)
 
         surface_layout.addWidget(self._line2)
         self._line2.setVisible(False)
@@ -201,7 +201,7 @@ class RangeCard(QFrame):
         self._formula_label.setToolTip(view.formula)
         self._update_formula_elision()
 
-        self._act_remove.setVisible(view.can_remove)
+        self._remove_button.setVisible(view.can_remove)
 
         self._line2.setVisible(view.show_run)
         self._run_button.setFixedWidth(widest_button_width(self._run_button, "Run Fit", "Fitting…"))
@@ -226,15 +226,18 @@ class RangeCard(QFrame):
             )
 
     def set_enabled(self, enabled: bool) -> None:
-        """Enable/disable the card's action controls (Run Fit + overflow).
+        """Enable/disable the card's action buttons (Run Fit / Edit Model /
+        Exclude region… / Remove).
 
         Used by the dialog's fit-busy bookkeeping to lock the active card's
         actions while a fit runs. Only the interactive controls are toggled —
         the surface stays clickable so the user can still see/select the card;
-        the disabled Run Fit + overflow are what actually prevent a second run.
+        the disabled action buttons are what actually prevent a second run.
         """
         self._run_button.setEnabled(enabled)
-        self._overflow_button.setEnabled(enabled)
+        self._edit_model_button.setEnabled(enabled)
+        self._exclude_button.setEnabled(enabled)
+        self._remove_button.setEnabled(enabled)
 
     # ── Formula elision ──────────────────────────────────────────────────────
 
