@@ -10,6 +10,10 @@ Contract consumed by :mod:`asymmetry.gui.widgets.function_builder.dialog`:
   (e.g. on domain switch), preserving the current search text.
 - ``current_component_name() -> str | None`` — the highlighted entry.
 - ``set_search_text(text)`` / ``search_text()`` — programmatic search access.
+- ``create_requested = Signal()`` — emitted when the user asks to author a new
+  user function (footer button, or the empty-search-results invitation).
+  Opt-in: disabled by default via ``set_creation_enabled(False)``; a caller
+  that wants the affordance calls ``set_creation_enabled(True)``.
 
 Behavior
 --------
@@ -43,6 +47,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QPushButton,
     QSizePolicy,
     QToolButton,
     QTreeWidget,
@@ -360,6 +365,7 @@ class ComponentLibraryPanel(QWidget):
     """Search box over a ranked, category-grouped component tree."""
 
     component_activated = Signal(str)  # noqa: N815
+    create_requested = Signal()  # noqa: N815
 
     def __init__(
         self,
@@ -368,6 +374,7 @@ class ComponentLibraryPanel(QWidget):
     ) -> None:
         super().__init__(parent)
         self._definitions: dict[str, object] = dict(component_definitions)
+        self._creation_enabled = False
         self.setMinimumWidth(200)
 
         layout = QVBoxLayout(self)
@@ -401,6 +408,21 @@ class ComponentLibraryPanel(QWidget):
         self._empty_label.setVisible(False)
         layout.addWidget(self._empty_label)
 
+        # A second invitation shown only in the no-matches empty state, so a
+        # search that comes up empty still offers a one-click way to author
+        # the missing function rather than a dead end.
+        self._empty_create_button = QPushButton("New user function…", self)
+        self._empty_create_button.setVisible(False)
+        self._empty_create_button.clicked.connect(self.create_requested.emit)
+        layout.addWidget(self._empty_create_button)
+
+        # Footer button: always visible (once creation is enabled), independent
+        # of search state.
+        self._footer_create_button = QPushButton("New user function…", self)
+        self._footer_create_button.setVisible(False)
+        self._footer_create_button.clicked.connect(self.create_requested.emit)
+        layout.addWidget(self._footer_create_button)
+
         self._refresh()
 
     # -- Public contract ---------------------------------------------------
@@ -408,6 +430,19 @@ class ComponentLibraryPanel(QWidget):
     def set_components(self, component_definitions: Mapping[str, object]) -> None:
         """Replace the searchable pool, keeping the current query text."""
         self._definitions = dict(component_definitions)
+        self._refresh()
+
+    def set_creation_enabled(self, enabled: bool) -> None:
+        """Show/hide the "New user function…" affordances (default: hidden).
+
+        When enabled, the footer button is always visible and the no-matches
+        empty state additionally offers the same action.
+        """
+        self._creation_enabled = enabled
+        self._footer_create_button.setVisible(enabled)
+        # The empty-state button is only shown alongside the "no matches"
+        # label, which _refresh already tracks — re-run it so the two stay
+        # in sync with the current search state.
         self._refresh()
 
     def current_component_name(self) -> str | None:
@@ -439,6 +474,7 @@ class ComponentLibraryPanel(QWidget):
 
     def _populate_grouped(self) -> None:
         self._empty_label.setVisible(False)
+        self._empty_create_button.setVisible(False)
         self._tree.setRootIsDecorated(False)
         results = search_components("", components=self._definitions)
 
@@ -475,11 +511,16 @@ class ComponentLibraryPanel(QWidget):
         results = search_components(query, components=self._definitions)
 
         if not results:
-            self._empty_label.setText("No matches — try 'KT', 'muonium', 'background'…")
+            message = "No matches — try 'KT', 'muonium', 'background'…"
+            if self._creation_enabled:
+                message += " Or author a new one below."
+            self._empty_label.setText(message)
             self._empty_label.setVisible(True)
+            self._empty_create_button.setVisible(self._creation_enabled)
             return
 
         self._empty_label.setVisible(False)
+        self._empty_create_button.setVisible(False)
         for result in results:
             definition = self._definitions.get(result.name)
             self._add_component_item(self._tree, result, definition)

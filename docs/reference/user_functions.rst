@@ -1,18 +1,80 @@
 User Functions
 ==============
 
-A fit function Asymmetry doesn't ship is one Python file away. You write a
-vectorised function, register it with
-:func:`asymmetry.register_component`, and drop the file in
-``~/.asymmetry/user_functions/`` — at the next start it appears in the
+A fit function Asymmetry doesn't ship is one function away. Every fit
+component and parameter-trend model is backed by an ordinary Python file
+under ``~/.asymmetry/user_functions/`` — at the next start it appears in the
 fit-function builder (under *User*, badged ``· user``), fits like any
 built-in component, exports through GLE plot labels, and survives project
-save/load. No rebuild, no packaging, no changes to Asymmetry itself. This
-replaces both of WiMDA's plugin DLL mechanisms (``musrfunctions.dll``
-picker entries and ``*fit.dll`` model libraries) with plain Python.
+save/load. No rebuild, no packaging, no changes to Asymmetry itself —
+extending the fitting library is plain Python.
 
-Zero to fitted
---------------
+You write that file yourself only if you want to; the usual route is to let
+the GUI write it for you.
+
+Building a function in the GUI
+-------------------------------
+
+Both function builders — the fit builder (Fit panel → **Build…**) and the
+parameter-model builder (the parameter-trending window's model editor) —
+have a **New user function…** button. It sits in the library footer, and a
+second copy appears as an invitation whenever a search comes up with no
+matches, so typing the name of a function that doesn't exist yet is itself a
+route to creating it. Either button opens the same dialog.
+
+The dialog asks for:
+
+* **Name** — the identifier the function is registered and inserted under
+  (e.g. ``StretchedOsc``); it must be unique across every built-in and
+  user-defined component.
+* **Description** — the one-line summary shown in the library and the
+  component info dialog.
+* **Formula** — a maths expression in ``x`` (time in µs, frequency in MHz,
+  or the trend variable, depending on where you opened the dialog from) and
+  your parameter names. Bare maths names (``exp``, ``sin``, ``cos``,
+  ``sqrt``, ``pi``, …) and ``np.*`` both work, so ``A*exp(-lam*x)`` and
+  ``A*np.exp(-lam*x)`` are equivalent.
+* **Parameters** — a small table of parameter names and start values. Click
+  **Detect parameters** to populate it automatically from every name in the
+  formula that isn't ``x``, ``np``, or a recognised maths function; by
+  convention the first parameter of a fit component is its amplitude.
+* **Edit as Python (advanced)** — a toggle that replaces the single-line
+  formula with a full editor, pre-filled with the exact code your formula
+  would have generated. Use it for anything a one-line expression can't
+  express — conditionals, piecewise definitions, a helper computation before
+  the ``return``.
+
+As you type, a preview curve redraws at the parameter start values, so a
+typo or a domain mismatch shows up as a wrong-looking curve (or a validation
+message) before you commit to anything. The same checks a hand-written
+plugin faces at load time — a finite result on a probe grid, a legal
+identifier, no name collision — run live, and **OK** stays disabled until
+they pass.
+
+Press **OK** and Asymmetry writes an ordinary, readable plugin file into
+``~/.asymmetry/user_functions/`` (the same folder and format described
+below — hand-editable, and it reloads at every subsequent startup exactly
+like a plugin you wrote yourself), registers the function immediately, and
+inserts it into the model you were building. There is no extra "install"
+step and no restart needed for the function you just created; **Setup →
+User Functions…** lists it alongside every other loaded plugin from that
+moment on.
+
+.. note::
+   Whichever route creates it, a user function is ordinary Python executed
+   with full interpreter privileges. Only create or install functions you
+   trust, and be as careful sharing a generated plugin file as you would
+   sharing a hand-written one.
+
+Writing the file yourself
+--------------------------
+
+The GUI dialog covers a single formula in ``x``. For anything that benefits
+from being scripted, versioned, or shared as a package — a model with
+helper functions, one you want under source control, or one you want to
+distribute to a group — write the plugin file directly. This is the same
+mechanism the GUI uses under the bonnet, so a function created either way is
+indistinguishable to the rest of Asymmetry.
 
 The worked example re-implements the shipped ``Keren`` component — the
 analytic dynamic Gaussian relaxation in a longitudinal field [1]_ — and is
@@ -94,7 +156,13 @@ the model intact: the missing component is shown by name, plots as zero,
 and fitting is blocked with a message saying which function to restore.
 Saving the project preserves the original model unchanged.
 
-User functions are ordinary Python executed with full privileges — the
-same trust model as WiMDA's plugin DLLs. Only install files you trust.
+Removing a function is the reverse of installing one: delete its file
+from the plugin folder — **Setup → User Functions…** → **Open folder…**
+takes you straight there — and restart. Saved projects that referenced it
+degrade exactly as above, to the named placeholder, and the function goes
+live again if the file is ever restored.
+
+User functions are ordinary Python executed with full interpreter
+privileges — only install files you trust.
 
 .. [1] A. Keren, Phys. Rev. B **50**, 10039 (1994).

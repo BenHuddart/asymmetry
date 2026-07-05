@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QDialogButtonBox
 from asymmetry.core.fitting.component_search import search_components
 from asymmetry.core.fitting.composite import COMPONENTS, CompositeModel
 from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
+from asymmetry.gui.windows.new_user_function_dialog import NewUserFunctionDialog
 
 
 @pytest.fixture(scope="module")
@@ -407,3 +408,57 @@ def test_library_empty_query_groups_by_domain_and_category() -> None:
     ]
     assert all(COMPONENTS[name].category == "Frequency Domain" for name in freq_names)
     assert "GaussianPeak" in freq_names
+
+
+# --------------------------------------------------------- create-user-function
+def test_creation_affordance_wired_for_this_dialog(qapp: QApplication) -> None:
+    # FitFunctionBuilderDialog always supplies its own handler, so the library
+    # panel's creation affordance is enabled unconditionally for every caller
+    # (single_tab, global_tab, and simulate_dialog alike).
+    dialog = FitFunctionBuilderDialog()
+    assert dialog._library._creation_enabled is True
+
+
+def test_create_user_function_hook_end_to_end_via_dialog_handler(
+    qapp: QApplication, registry_snapshot, tmp_path, monkeypatch
+) -> None:
+    """Exercise FitFunctionBuilderDialog._create_user_function itself.
+
+    Patches the module-level NewUserFunctionDialog symbol the handler actually
+    calls, with a fake ``exec``/``result``/``created`` so the real handler code
+    path (construct dialog, exec, check Accepted, read created()) runs, not a
+    hand-rolled substitute.
+    """
+
+    class _AutoAcceptDialog(NewUserFunctionDialog):
+        """Same authoring dialog, but exec() fills+accepts instead of blocking."""
+
+        def exec(self):  # noqa: A003 - Qt API name
+            self._name_edit.setText("UserBuilderHandlerFn")
+            self._description_edit.setText("Handler end-to-end test")
+            self._formula_edit.setText("A*x")
+            self._param_table.item(0, 0).setText("A")
+            spin = self._param_table.cellWidget(0, 1)
+            spin.setValue(2.0)
+            self._run_validation()
+            self._on_accept()
+            return self.result()
+
+    def _factory(kind, *, domain="time", directory=None, parent=None):
+        return _AutoAcceptDialog(kind, domain=domain, directory=tmp_path, parent=parent)
+
+    monkeypatch.setattr("asymmetry.gui.panels.fit_function_builder.NewUserFunctionDialog", _factory)
+
+    dialog = FitFunctionBuilderDialog(domain="time")
+    dialog._library.create_requested.emit()
+
+    assert "UserBuilderHandlerFn" in COMPONENTS
+    assert "UserBuilderHandlerFn" in dialog._allowed_components
+    assert "UserBuilderHandlerFn" in dialog._component_definitions
+    names, *_rest = dialog._rows.structure()
+    assert "UserBuilderHandlerFn" in names
+
+    dialog._on_accept()
+    model = dialog.get_composite_model()
+    assert model is not None
+    assert "UserBuilderHandlerFn" in model.component_names
