@@ -876,6 +876,7 @@ class FitEngine:
         minuit_tol: float | None = None,
         initial_step_sizes: dict[str, float] | None = None,
         minos: bool = False,
+        screening: bool = False,
         cancel_callback: Callable[[], bool] | None = None,
         cost_factory: CostFactory | None = None,
         local_param_groups: dict[str, dict[int, Hashable]] | None = None,
@@ -1135,8 +1136,17 @@ class FitEngine:
         except Exception as e:
             raise RuntimeError(f"Failed to create Minuit cost function: {str(e)}")
 
+        # Screening mode (wizard IC pre-selection): IC ranking needs only χ², not
+        # accurate parameter errors, so drop to Minuit strategy 0 — no accurate
+        # post-fit Hessian refinement. The migrad EDM convergence criterion is
+        # unchanged (it is governed by ``m.tol``, not the strategy), so the fitted
+        # values and χ² are the same; only the covariance quality (``m.accurate``)
+        # is relaxed. m.errors are still populated for warm-start step hints. An
+        # explicit minuit_strategy (the difficult-assignment path) always wins.
         if minuit_strategy is not None:
             m.strategy = int(minuit_strategy)
+        elif screening:
+            m.strategy = 0
         if minuit_tol is not None:
             m.tol = float(minuit_tol)
 
