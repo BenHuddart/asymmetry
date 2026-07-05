@@ -13,6 +13,7 @@ pytestmark = [pytest.mark.gui, pytest.mark.slow, pytest.mark.integration]
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 import asymmetry.gui.windows.global_fit_wizard_window as wizard_window_module
@@ -22,7 +23,9 @@ from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.fit_wizard import (
     CandidateAssessment,
     CandidateTemplate,
+    ConfidenceTier,
     FitWizardRecommendation,
+    RecommendationVerdict,
     SelectionMetric,
     SpectrumFingerprint,
 )
@@ -403,9 +406,11 @@ def test_global_fit_wizard_window_populates_tables(
     wait_for(lambda: _analysis_complete(window), qapp)
 
     assert "Field" in window._overview_banner.text()
-    assert window._tabs.count() == 6
-    assert window._tabs.tabText(1) == "2. Candidate Portfolio"
-    assert window._tabs.tabText(2) == "3. Single-Fit Screening"
+    assert window._tabs.count() == 7
+    assert window._tabs.tabText(0) == "1. Scope"
+    assert window._tabs.tabText(1) == "2. Series Overview"
+    assert window._tabs.tabText(2) == "3. Candidate Portfolio"
+    assert window._tabs.tabText(3) == "4. Single-Fit Screening"
     assert window._overview_table.rowCount() == len(datasets)
     assert window._portfolio_table.rowCount() == 1
     assert window._compare_table.rowCount() == 1
@@ -662,3 +667,481 @@ def test_global_fit_wizard_window_passes_dialog_adjusted_types_and_bounds(
     assert captured["types"]["A_1"] == "Global"
     assert captured["types"]["Lambda"] == "Local"
     assert captured["bounds"]["A_bg"] == (-0.5, 0.5)
+
+
+# ── Scope tab: presence, ordering, and builder wiring ────────────────────────
+
+
+def test_global_fit_wizard_window_scope_tab_is_first_and_selected(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+) -> None:
+    window = GlobalFitWizardWindow()
+    assert window._tabs.tabText(0) == "1. Scope"
+    window.set_analysis_context(datasets)
+    assert window._tabs.currentIndex() == 0
+
+
+def test_global_fit_wizard_window_forwards_scope_to_screening(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from asymmetry.core.fitting.wizard_scope import WizardScope, WizardScopePreset
+
+    captured: dict[str, object] = {}
+
+    def _fake_build(datasets_arg, **kwargs):
+        captured.update(kwargs)
+        return _fake_screening_recommendation(datasets_arg)
+
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_global_fit_wizard_screening_recommendation",
+        _fake_build,
+    )
+    window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
+    window._scope_selector.set_scope(
+        {"version": 1, "preset": "lf-dynamics", "include": [], "exclude": []}
+    )
+
+    window._start_analysis()
+    wait_for(lambda: _analysis_complete(window), qapp)
+
+    scope = captured.get("scope")
+    assert isinstance(scope, WizardScope)
+    assert scope.preset is WizardScopePreset.LF_DYNAMICS
+
+
+def test_global_fit_wizard_window_forwards_scope_to_optimize(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from asymmetry.core.fitting.wizard_scope import WizardScope, WizardScopePreset
+
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_global_fit_wizard_screening_recommendation",
+        lambda datasets_arg, **_kwargs: _fake_screening_recommendation(datasets_arg),
+    )
+
+    def _fake_build(datasets_arg, **kwargs):
+        captured.update(kwargs)
+        return _fake_multi_variant_recommendation(datasets_arg)
+
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_global_fit_wizard_recommendation",
+        _fake_build,
+    )
+    window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
+    window._scope_selector.set_scope(
+        {"version": 1, "preset": "lf-dynamics", "include": [], "exclude": []}
+    )
+    window._start_analysis()
+    wait_for(lambda: _analysis_complete(window), qapp)
+
+    window._compare_table.selectRow(0)
+    window._on_compare_selection_changed()
+    window._start_selected_optimisation()
+    wait_for(lambda: _analysis_complete(window) and window._optimized_table.rowCount() == 2, qapp)
+
+    scope = captured.get("scope")
+    assert isinstance(scope, WizardScope)
+    assert scope.preset is WizardScopePreset.LF_DYNAMICS
+
+
+def test_global_fit_wizard_window_scope_in_analysis_signature(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+) -> None:
+    """A scope change invalidates the same-signature cache short-circuit."""
+    window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
+
+    baseline = window._analysis_signature()
+    assert baseline["scope"]["preset"] == "auto"
+
+    window._scope_selector.set_scope(
+        {"version": 1, "preset": "lf-dynamics", "include": [], "exclude": []}
+    )
+    changed = window._analysis_signature()
+    assert changed["scope"]["preset"] == "lf-dynamics"
+    assert changed != baseline
+
+
+# ── Staleness after a scope change ───────────────────────────────────────────
+
+
+def test_global_fit_wizard_window_scope_change_marks_stale_and_clears_selection(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_global_fit_wizard_screening_recommendation",
+        lambda datasets_arg, **_kwargs: _fake_screening_recommendation(datasets_arg),
+    )
+    window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
+    window._start_analysis()
+    wait_for(lambda: _analysis_complete(window), qapp)
+
+    # Select a screening row so "Optimize Selected" is enabled.
+    window._compare_table.selectRow(0)
+    window._on_compare_selection_changed()
+    assert window._screening_selected_keys
+    assert window._optimize_btn.isEnabled() is True
+    assert window._stale_banner.isHidden() is True
+
+    previous = window.current_recommendation()
+
+    # Toggle scope via the selector's scope_changed emission.
+    window._scope_selector._preset_combo.setCurrentIndex(
+        window._scope_selector._preset_combo.findData("lf-dynamics")
+    )
+    qapp.processEvents()
+
+    assert window._analysis_stale is True
+    assert window._stale_banner.isHidden() is False
+    # Stale screening selection is cleared and Optimize Selected disabled.
+    assert window._screening_selected_keys == set()
+    assert window._optimize_btn.isEnabled() is False
+    # Old recommendation still displayed.
+    assert window.current_recommendation() is previous
+
+
+# ── Build Screening disabled when scope is invalid ───────────────────────────
+
+
+def test_global_fit_wizard_window_build_disabled_when_scope_invalid(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
+    assert window._refresh_btn.isEnabled() is True
+
+    monkeypatch.setattr(window._scope_selector, "is_valid", lambda: False)
+    window._on_scope_validity_changed(False)
+
+    assert window._refresh_btn.isEnabled() is False
+    assert "at least one candidate family" in window._status_label.text()
+
+
+# ── Cached restore with scope + legacy fallback ──────────────────────────────
+
+
+def test_global_fit_wizard_window_cached_restore_with_scope(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+) -> None:
+    window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
+
+    window.set_cached_recommendation(
+        _fake_recommendation(datasets),
+        signature={
+            "run_numbers": [int(dataset.run_number) for dataset in datasets],
+            "model": None,
+            "scope": {"version": 1, "preset": "lf-dynamics", "include": [], "exclude": []},
+        },
+        log_text="cached",
+    )
+
+    assert window._scope_selector.current_scope()["preset"] == "lf-dynamics"
+    assert window._analysis_stale is False
+    assert window._stale_banner.isHidden() is True
+
+
+def test_global_fit_wizard_window_cached_restore_legacy_signature_is_auto(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+) -> None:
+    window = GlobalFitWizardWindow()
+    window.set_cached_recommendation(_fake_recommendation(datasets))
+
+    # Legacy signature (no scope key) restores Auto and is not stale.
+    assert window._scope_selector.current_scope()["preset"] == "auto"
+    assert window._analysis_stale is False
+    assert window._stale_banner.isHidden() is True
+
+
+# ── Cooperative cancel ───────────────────────────────────────────────────────
+
+
+def test_cancel_current_analysis_cancels_worker_and_hides_button(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Cancel button, visible while busy, cooperatively cancels the run.
+
+    Phase-one blocks on a threading.Event so the GUI thread can confirm the
+    worker is live, click Cancel, then release phase-one. The worker's next
+    cancel checkpoint raises FitCancelledError (declared in _cancel_exceptions);
+    the base's cancelled slot clears busy and hides the Cancel button. The
+    screening builder must never run.
+    """
+    import threading
+
+    released = threading.Event()
+
+    def _blocking_build(datasets_arg, **kwargs):
+        raise AssertionError("builder must observe cancellation first")
+
+    def _phase_one(datasets_arg, **kwargs):
+        # Block on the worker thread until the GUI thread has clicked Cancel.
+        released.wait(timeout=5.0)
+        return (None, {}, ())
+
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_or_complete_single_fit_wizard_recommendations_for_global_portfolio",
+        _phase_one,
+    )
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_global_fit_wizard_screening_recommendation",
+        _blocking_build,
+    )
+
+    window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
+    assert window._cancel_btn.isVisibleTo(window) is False
+
+    window._start_analysis()
+    # Busy + Cancel button visible while phase-one blocks.
+    wait_for(lambda: window._tasks.active_count == 1, qapp)
+    assert window._cancel_btn.isVisibleTo(window) is True
+
+    window._cancel_current_analysis()
+    released.set()
+    wait_for(lambda: window._tasks.active_count == 0, qapp)
+
+    assert window._analysis_in_progress is False
+    assert window._cancel_btn.isVisibleTo(window) is False
+    assert "cancelled" in window._status_label.text().lower()
+    window.close()
+
+
+def test_worker_task_cancel_between_phases_raises_and_skips_builder(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cancel before the phase-one boundary skips the builders entirely.
+
+    Drives the worker task closure through a real TaskWorker.run() (no thread):
+    a pre-cancelled worker makes _run_global_fit_wizard_analysis raise
+    FitCancelledError at its first checkpoint, so TaskWorker emits cancelled and
+    the screening builder is never called.
+    """
+    from asymmetry.core.fitting.engine import FitCancelledError
+    from asymmetry.gui.tasks import TaskWorker
+
+    def _fail_if_called(*_args, **_kwargs):
+        raise AssertionError("builder must not run after cancellation")
+
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_global_fit_wizard_screening_recommendation",
+        _fail_if_called,
+    )
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_or_complete_single_fit_wizard_recommendations_for_global_portfolio",
+        _fail_if_called,
+    )
+
+    window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
+    task = window._create_worker_task(window._analysis_request_id)
+
+    worker = TaskWorker(task, cancel_exceptions=(FitCancelledError,))
+    cancelled: list[bool] = []
+    errored: list[str] = []
+    worker.cancelled.connect(lambda: cancelled.append(True))
+    worker.error.connect(lambda message: errored.append(message))
+    worker.cancel()
+    worker.run()
+
+    assert cancelled == [True]
+    assert errored == []
+
+
+# ── Confidence / verdict display ─────────────────────────────────────────────
+
+
+def _single_fit_with(
+    dataset: MuonDataset,
+    *,
+    confidence: ConfidenceTier,
+    verdict: RecommendationVerdict,
+    caveat: str = "",
+) -> FitWizardRecommendation:
+    base = _fake_single_fit_recommendation(dataset)
+    return replace(base, confidence=confidence, verdict=verdict, caveat=caveat)
+
+
+def test_global_fit_wizard_window_overview_shows_confidence_and_caveat(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    per_run = {
+        int(dataset.run_number): _single_fit_with(
+            dataset,
+            confidence=ConfidenceTier.MEDIUM,
+            verdict=RecommendationVerdict.STRUCTURED,
+            caveat="Residuals fail the whiteness gate.",
+        )
+        for dataset in datasets
+    }
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_or_complete_single_fit_wizard_recommendations_for_global_portfolio",
+        lambda datasets_arg, **_kwargs: (
+            wizard_window_module.build_global_fit_wizard_candidate_portfolio(datasets_arg),
+            per_run,
+            tuple(int(dataset.run_number) for dataset in datasets_arg),
+        ),
+    )
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_global_fit_wizard_screening_recommendation",
+        lambda datasets_arg, **_kwargs: _fake_screening_recommendation(datasets_arg),
+    )
+
+    window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
+    window._start_analysis()
+    wait_for(lambda: _analysis_complete(window), qapp)
+
+    assert window._overview_table.columnCount() == 8
+    assert window._overview_table.horizontalHeaderItem(6).text() == "Confidence"
+    confidence_cell = window._overview_table.item(0, 6)
+    assert confidence_cell.text() == "Medium"
+    assert "whiteness" in confidence_cell.toolTip()
+    # No null-structure runs → the series verdict banner stays hidden.
+    assert window._verdict_banner.isHidden() is True
+
+
+def test_global_fit_wizard_window_marks_no_significant_structure_run(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    flagged_run = int(datasets[0].run_number)
+    per_run = {}
+    for dataset in datasets:
+        run_number = int(dataset.run_number)
+        if run_number == flagged_run:
+            per_run[run_number] = _single_fit_with(
+                dataset,
+                confidence=ConfidenceTier.NONE,
+                verdict=RecommendationVerdict.NO_SIGNIFICANT_STRUCTURE,
+                caveat="Best template does not beat a flat baseline.",
+            )
+        else:
+            per_run[run_number] = _single_fit_with(
+                dataset,
+                confidence=ConfidenceTier.HIGH,
+                verdict=RecommendationVerdict.STRUCTURED,
+            )
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_or_complete_single_fit_wizard_recommendations_for_global_portfolio",
+        lambda datasets_arg, **_kwargs: (
+            wizard_window_module.build_global_fit_wizard_candidate_portfolio(datasets_arg),
+            per_run,
+            tuple(int(dataset.run_number) for dataset in datasets_arg),
+        ),
+    )
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_global_fit_wizard_screening_recommendation",
+        lambda datasets_arg, **_kwargs: _fake_screening_recommendation(datasets_arg),
+    )
+
+    window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
+    window._start_analysis()
+    wait_for(lambda: _analysis_complete(window), qapp)
+
+    # Series-level banner is unmissable and names the flagged run.
+    assert window._verdict_banner.isHidden() is False
+    banner_text = window._verdict_banner.text()
+    assert "No significant structure" in banner_text
+    assert datasets[0].run_label in banner_text
+
+    # The flagged run's row is marked (rows follow dataset_order == input order).
+    flagged_row = next(
+        row
+        for row in range(window._overview_table.rowCount())
+        if window._overview_table.item(row, 0).text() == datasets[0].run_label
+    )
+    recommendation_cell = window._overview_table.item(flagged_row, 7)
+    assert recommendation_cell.text() == "No significant structure"
+    from asymmetry.gui.styles import tokens
+
+    assert recommendation_cell.foreground().color().name() == QColor(tokens.ERROR).name()
+
+
+def test_global_fit_wizard_window_confidence_survives_cache_restore(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+) -> None:
+    """On a cached reopen, the overview confidence/verdict cells still render.
+
+    Confidence/verdict live only on the per-run single-fit recommendations. The
+    tab feeds those into set_analysis_context (existing_single_fit_recommendations_by_run)
+    before set_cached_recommendation, so a restored recommendation still shows
+    per-run confidence and the null-structure banner.
+    """
+    per_run = {
+        int(datasets[0].run_number): _single_fit_with(
+            datasets[0],
+            confidence=ConfidenceTier.NONE,
+            verdict=RecommendationVerdict.NO_SIGNIFICANT_STRUCTURE,
+            caveat="Flat baseline wins.",
+        ),
+    }
+    for dataset in datasets[1:]:
+        per_run[int(dataset.run_number)] = _single_fit_with(
+            dataset,
+            confidence=ConfidenceTier.HIGH,
+            verdict=RecommendationVerdict.STRUCTURED,
+        )
+
+    window = GlobalFitWizardWindow()
+    window.set_analysis_context(
+        datasets,
+        existing_single_fit_recommendations_by_run=per_run,
+    )
+    window.set_cached_recommendation(
+        _fake_recommendation(datasets),
+        signature={
+            "run_numbers": [int(dataset.run_number) for dataset in datasets],
+            "model": None,
+            "scope": {"version": 1, "preset": "auto", "include": [], "exclude": []},
+        },
+        log_text="cached",
+    )
+
+    # Null-structure banner fires and the flagged run's confidence cell renders.
+    assert window._verdict_banner.isHidden() is False
+    assert datasets[0].run_label in window._verdict_banner.text()
+    flagged_row = next(
+        row
+        for row in range(window._overview_table.rowCount())
+        if window._overview_table.item(row, 0).text() == datasets[0].run_label
+    )
+    assert window._overview_table.item(flagged_row, 7).text() == "No significant structure"

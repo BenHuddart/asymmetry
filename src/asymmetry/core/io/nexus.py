@@ -25,6 +25,7 @@ import numpy as np
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.io.base import BaseLoader, LoadResult
 from asymmetry.core.io.hdf4 import is_hdf4, open_hdf4
+from asymmetry.core.io.icp_log import parse_icp_log_file, sibling_icp_log_path
 from asymmetry.core.io.periods import combine_mapped_periods
 from asymmetry.core.transform import apply_grouping, compute_asymmetry
 
@@ -305,9 +306,8 @@ class NexusLoader(BaseLoader):
         sample = self._read_optional(entry, "sample")
         temperature = self._read_temperature_kelvin(sample)
         temperature_units = self._sample_temperature_units(sample)
-        magnetic_field = self._safe_float(
-            self._read_optional(sample, "magnetic_field"), default=0.0
-        )
+        magnetic_field_node = self._read_optional(sample, "magnetic_field")
+        magnetic_field = self._safe_float(magnetic_field_node, default=0.0)
 
         orientation_raw = self._safe_str(
             self._read_optional(self._read_optional(entry, "instrument"), "detector/orientation")
@@ -317,6 +317,7 @@ class NexusLoader(BaseLoader):
             self._safe_str(self._read_optional(sample, "magnetic_field_state"))
         )
         field_direction = self._field_direction_from_state(field_state)
+        field_vector = self._read_field_vector(sample)
 
         metadata_base = {
             "run_number": run_number,
@@ -333,6 +334,13 @@ class NexusLoader(BaseLoader):
             "source_file": source_file,
             "nexus_version": "v1",
         }
+        if field_vector is not None:
+            metadata_base["field_vector"] = field_vector
+        self._fill_field_from_sidecar_log(
+            metadata_base,
+            source_file=source_file,
+            field_present=magnetic_field_node is not None,
+        )
 
         nexus_fields = self._extract_tree(entry)
         time_series = self._extract_time_series(entry)
@@ -483,9 +491,8 @@ class NexusLoader(BaseLoader):
         sample = self._read_optional(entry, "sample")
         temperature = self._read_temperature_kelvin(sample)
         temperature_units = self._sample_temperature_units(sample)
-        magnetic_field = self._safe_float(
-            self._read_optional(sample, "magnetic_field"), default=0.0
-        )
+        magnetic_field_node = self._read_optional(sample, "magnetic_field")
+        magnetic_field = self._safe_float(magnetic_field_node, default=0.0)
 
         orientation_raw = self._safe_str(self._read_optional(detector, "orientation"))
         detector_orientation = self._normalise_orientation(orientation_raw)
@@ -493,6 +500,7 @@ class NexusLoader(BaseLoader):
             self._safe_str(self._read_optional(sample, "magnetic_field_state"))
         )
         field_direction = self._field_direction_from_state(field_state)
+        field_vector = self._read_field_vector(sample)
 
         counts_ds = detector.get("counts")
         n_bins = int(counts_periods[0].shape[-1])
@@ -543,6 +551,13 @@ class NexusLoader(BaseLoader):
             "source_file": source_file,
             "nexus_version": "v2",
         }
+        if field_vector is not None:
+            metadata_base["field_vector"] = field_vector
+        self._fill_field_from_sidecar_log(
+            metadata_base,
+            source_file=source_file,
+            field_present=magnetic_field_node is not None,
+        )
 
         periods_group = self._read_optional(entry, "periods")
         if periods_group is not None:
@@ -1361,6 +1376,46 @@ class NexusLoader(BaseLoader):
             "ZF": "Zero field",
         }.get(state, "")
 
+    def _fill_field_from_sidecar_log(
+        self, metadata: dict[str, Any], *, source_file: str, field_present: bool
+    ) -> None:
+        """Fill missing ``field``/``field_direction``/``field_state`` from a ``.log``.
+
+        Many ISIS NeXus files carry no ``sample/magnetic_field_state`` at all
+        (and, more rarely, no readable ``magnetic_field`` either), which sends
+        the fit wizard's Auto scope to the metadata-poor "screen everything"
+        fallback (see :mod:`asymmetry.core.fitting.wizard_scope`). The ICP
+        ``.log`` sidecar that ISIS writes beside every run
+        (:mod:`asymmetry.core.io.icp_log`) often has the same information from
+        the instrument control system's own record of the selected magnet.
+
+        This only ever *fills gaps* — a ``field_direction``/``field_state``
+        already read from the NeXus file is never overwritten, and neither is
+        a genuinely-present (even if zero) ``magnetic_field`` value. Best
+        effort throughout: a missing/malformed log leaves the metadata
+        unchanged (mutates *metadata* in place).
+        """
+        if field_present and metadata.get("field_direction"):
+            return  # nothing to fill
+
+        log_path = sibling_icp_log_path(source_file)
+        if not log_path.is_file():
+            return
+
+        reading = parse_icp_log_file(log_path)
+        if reading is None:
+            return
+
+        if not field_present and reading.field_gauss is not None:
+            metadata["field"] = reading.field_gauss
+            metadata["field_source"] = "icp_log"
+
+        if not metadata.get("field_direction") and reading.field_direction:
+            metadata["field_direction"] = reading.field_direction
+            metadata["field_direction_source"] = "icp_log"
+            if not metadata.get("field_state"):
+                metadata["field_state"] = "ZF"
+
     def _read_temperature_kelvin(
         self, sample: Any, name: str = "temperature", default: float = 0.0
     ) -> float:
@@ -1394,6 +1449,44 @@ class NexusLoader(BaseLoader):
         if node is None or not hasattr(node, "attrs"):
             return ""
         return self._safe_str(node.attrs.get("units", ""))
+
+    def _read_field_vector(self, sample: Any) -> list[float] | None:
+        """Read ``sample/magnetic_field_vector`` when the file marks it usable.
+
+        ISIS NeXus files carry a ``magnetic_field_vector`` dataset with an
+        ``available`` attribute (0/1). In this loader's corpus survey every
+        unavailable vector held the same uninformative placeholder
+        (``[1, 1, 1]``, ``available=0``); a few real TF calibration runs do set
+        ``available=1``, but even then the vector only encodes a unit *axis*
+        (e.g. ``[0, 0, 1]``) rather than a genuinely per-run direction reading,
+        and combining it with magnitude would not add information beyond
+        ``sample/magnetic_field``/``magnetic_field_state`` already used above.
+
+        This is exposed as raw provenance (``metadata["field_vector"]``) for
+        advanced/debug display only. It is deliberately **not** used to infer
+        TF/LF geometry anywhere in this loader or in
+        :mod:`asymmetry.core.fitting.wizard_scope` — deriving a field
+        direction from a hardware axis vector is the same forbidden
+        orientation-based guess that ``docs/porting/field-geometry/`` rejected
+        for detector orientation. Returns ``None`` when the node is absent,
+        unreadable, or marked unavailable.
+        """
+        if sample is None or not hasattr(sample, "get"):
+            return None
+        node = sample.get("magnetic_field_vector")
+        if node is None:
+            return None
+        attrs = getattr(node, "attrs", {}) or {}
+        available = self._safe_int(attrs.get("available"), default=1)
+        if available == 0:
+            return None
+        try:
+            data = np.asarray(node[()], dtype=np.float64).ravel()
+        except (TypeError, ValueError):
+            return None
+        if data.size != 3 or not np.all(np.isfinite(data)):
+            return None
+        return [float(v) for v in data]
 
     def _temperature_unit_suspect(
         self,

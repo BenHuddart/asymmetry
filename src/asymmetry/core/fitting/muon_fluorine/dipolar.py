@@ -113,6 +113,17 @@ def omega_d_f_f_rad_per_us(distance_angstrom: float) -> float:
     )
 
 
+def r_mu_f_from_omega_d(omega_d_rad_per_us: float) -> float:
+    """Invert :func:`omega_d_mu_f_rad_per_us`: mu-F distance in angstrom.
+
+    ``omega_d`` scales as ``r^-3``, so ``r = (omega_d(1 A) / omega_d)^(1/3)``.
+    """
+    omega = float(omega_d_rad_per_us)
+    if omega <= 0.0:
+        raise ValueError("omega_d_rad_per_us must be positive")
+    return (omega_d_mu_f_rad_per_us(1.0) / omega) ** (1.0 / 3.0)
+
+
 def pair_dipolar_hamiltonian_three_spin(
     coupling_rad_per_us: float,
     unit_vector: NDArray[np.float64],
@@ -180,5 +191,6 @@ __all__ = [
     "omega_d_mu_f_rad_per_us",
     "omega_d_f_f_rad_per_us",
     "omega_dipolar_rad_per_us",
+    "r_mu_f_from_omega_d",
     "three_spin_hamiltonian_rad_per_us",
 ]

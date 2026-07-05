@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import math
 import os
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 from itertools import combinations
@@ -13,6 +14,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.component_tags import geometry_from_field_direction
 from asymmetry.core.fitting.composite import (
     CompositeModel,
     _legacy_fraction_rename_map,
@@ -39,6 +41,7 @@ from asymmetry.core.fitting.fit_wizard import (
     _scipy_fit_fallback,
     build_candidate_templates,
     build_fit_wizard_recommendation_for_templates,
+    build_wizard_families,
     candidate_template_keys,
     compute_information_criteria,
     fingerprint_spectrum,
@@ -53,7 +56,17 @@ from asymmetry.core.fitting.global_search.heuristics import (
     parameter_localisation_priority,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.fitting.peak_detection import (
+    analyze_dataset_peaks,
+    match_multiplets,
+    merge_user_peaks,
+)
 from asymmetry.core.fitting.process_pool import open_spawn_pool
+from asymmetry.core.fitting.wizard_scope import (
+    ScopeResolution,
+    WizardScope,
+    resolve_scope_for_datasets,
+)
 
 _ROLE_DELTA_THRESHOLD = 2.0
 _COMPARABLE_SCORE_DELTA = 2.0
@@ -596,15 +609,124 @@ class GlobalFitWizardCandidatePortfolio:
     mixed_axes_warning: str | None
     fingerprints_by_run: dict[int, SpectrumFingerprint]
     templates: tuple[CandidateTemplate, ...]
+    #: Template keys of families supported by the cross-run multiplet pattern
+    #: vote; the staged shortlist force-includes them.
+    pattern_template_keys: tuple[str, ...] = ()
 
     @property
     def dataset_order(self) -> tuple[int, ...]:
         return tuple(int(dataset.run_number) for dataset in self.ordered_datasets)
 
 
+def _series_multiplet_pattern_family_keys(
+    ordered_datasets: Sequence[MuonDataset],
+    user_frequencies_mhz: Sequence[float] | None = None,
+) -> frozenset[str]:
+    """Cross-run majority vote on multiplet pattern matches.
+
+    Each run's detected (tail-subtracted) peak set is pattern-matched against
+    the known physical multiplets; a candidate family is pattern-supported for
+    the series when at least half of the runs (and no fewer than two) show a
+    match naming it.
+    """
+    votes: dict[str, int] = {}
+    for dataset in ordered_datasets:
+        analysis = analyze_dataset_peaks(dataset)
+        if user_frequencies_mhz:
+            analysis = merge_user_peaks(analysis, tuple(user_frequencies_mhz))
+        direction_text = str(
+            dataset.metadata.get("field_direction") or dataset.metadata.get("field_state") or ""
+        )
+        geometry = geometry_from_field_direction(direction_text)
+        matches = match_multiplets(
+            analysis,
+            field_gauss=dataset.field,
+            geometry=geometry.value if geometry is not None else None,
+        )
+        for family_key in {match.family_key for match in matches}:
+            votes[family_key] = votes.get(family_key, 0) + 1
+    quorum = max(2, math.ceil(len(ordered_datasets) / 2))
+    return frozenset(key for key, count in votes.items() if count >= quorum)
+
+
+def _scoped_series_templates(
+    ordered_datasets: Sequence[MuonDataset],
+    aggregate_fingerprint: SpectrumFingerprint,
+    current_model: CompositeModel | None,
+    *,
+    scope: WizardScope | None = None,
+    user_frequencies_mhz: Sequence[float] | None = None,
+) -> tuple[tuple[CandidateTemplate, ...], tuple[str, ...]]:
+    """Return the series candidate templates and pattern-forced template keys.
+
+    With ``scope is None`` the legacy hint-gated portfolio is kept (plus the
+    templates of any pattern-supported family, appended additively). With a
+    scope, the portfolio is family-based: every in-scope family contributes its
+    Stage-1 shapes; full member sets are included for families the aggregate
+    fingerprint hints at, the cross-run pattern vote names, or the baseline.
+    The returned keys mark pattern-supported families' templates so the staged
+    shortlist can never drop them.
+    """
+    pattern_family_keys = _series_multiplet_pattern_family_keys(
+        ordered_datasets, user_frequencies_mhz
+    )
+
+    resolution: ScopeResolution | None = None
+    if scope is not None:
+        resolution = resolve_scope_for_datasets(list(ordered_datasets), scope)
+    families = build_wizard_families(
+        aggregate_fingerprint, current_model, scope_resolution=resolution
+    )
+
+    def _family_templates(family: object, *, members: bool) -> list[CandidateTemplate]:
+        chosen = [family.stage1_rep, *family.stage1_extras]
+        if members:
+            chosen.extend(family.stage2_members)
+        return chosen
+
+    pattern_template_keys: list[str] = []
+    for family in families:
+        if family.key in pattern_family_keys:
+            pattern_template_keys.extend(
+                template.key for template in _family_templates(family, members=True)
+            )
+
+    if scope is None:
+        templates = list(
+            build_candidate_templates(aggregate_fingerprint, current_model=current_model)
+        )
+        known_keys = {template.key for template in templates}
+        for family in families:
+            if family.key not in pattern_family_keys:
+                continue
+            for template in _family_templates(family, members=True):
+                if template.key not in known_keys:
+                    templates.append(template)
+                    known_keys.add(template.key)
+    else:
+        templates = []
+        known_keys = set()
+        for family in families:
+            expand = (
+                family.priority > 0.0
+                or family.key in pattern_family_keys
+                or family.key == "baseline"
+            )
+            for template in _family_templates(family, members=expand):
+                if template.key not in known_keys:
+                    templates.append(template)
+                    known_keys.add(template.key)
+
+    forced = tuple(key for key in dict.fromkeys(pattern_template_keys) if key in known_keys)
+    return tuple(templates), forced
+
+
 def build_global_fit_wizard_candidate_portfolio(
     datasets: list[MuonDataset],
     current_model: CompositeModel | None = None,
+    *,
+    scope: WizardScope | None = None,
+    user_frequencies_mhz: Sequence[float] | None = None,
 ) -> GlobalFitWizardCandidatePortfolio:
     """Return the ordered datasets, fingerprints, and candidate families for one series."""
     if len(datasets) < 2:
@@ -619,11 +741,12 @@ def build_global_fit_wizard_candidate_portfolio(
     aggregate_fingerprint = _aggregate_fingerprints(
         [fingerprints_by_run[int(dataset.run_number)] for dataset in ordered_datasets]
     )
-    templates = tuple(
-        build_candidate_templates(
-            aggregate_fingerprint,
-            current_model=current_model,
-        )
+    templates, pattern_template_keys = _scoped_series_templates(
+        ordered_datasets,
+        aggregate_fingerprint,
+        current_model,
+        scope=scope,
+        user_frequencies_mhz=user_frequencies_mhz,
     )
     return GlobalFitWizardCandidatePortfolio(
         ordered_datasets=tuple(ordered_datasets),
@@ -632,6 +755,7 @@ def build_global_fit_wizard_candidate_portfolio(
         mixed_axes_warning=mixed_axes_warning,
         fingerprints_by_run=fingerprints_by_run,
         templates=templates,
+        pattern_template_keys=pattern_template_keys,
     )
 
 
@@ -641,12 +765,16 @@ def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
     *,
     existing_recommendations_by_run: dict[int, FitWizardRecommendation] | None = None,
     progress_callback: Callable[[str], None] | None = None,
+    scope: WizardScope | None = None,
+    user_frequencies_mhz: Sequence[float] | None = None,
 ) -> tuple[GlobalFitWizardCandidatePortfolio, dict[int, FitWizardRecommendation], tuple[int, ...]]:
     """Return a complete per-run single-fit table set for one global-wizard portfolio."""
     progress_callback = _threadsafe_progress_callback(progress_callback)
     portfolio = build_global_fit_wizard_candidate_portfolio(
         datasets,
         current_model=current_model,
+        scope=scope,
+        user_frequencies_mhz=user_frequencies_mhz,
     )
     expected_template_keys = candidate_template_keys(portfolio.templates)
     existing = (
@@ -767,6 +895,8 @@ def build_global_fit_wizard_screening_recommendation(
     single_fit_recommendations_by_run: dict[int, FitWizardRecommendation] | None = None,
     metric: SelectionMetric = SelectionMetric.AICC,
     progress_callback: Callable[[str], None] | None = None,
+    scope: WizardScope | None = None,
+    user_frequencies_mhz: Sequence[float] | None = None,
 ) -> GlobalFitWizardRecommendation:
     """Build the ranking table from per-run single-fit wizard results only."""
     if len(datasets) < 2:
@@ -780,6 +910,8 @@ def build_global_fit_wizard_screening_recommendation(
     portfolio = build_global_fit_wizard_candidate_portfolio(
         datasets,
         current_model=current_model,
+        scope=scope,
+        user_frequencies_mhz=user_frequencies_mhz,
     )
     templates = list(portfolio.templates)
     if portfolio.mixed_axes_warning:
@@ -820,6 +952,8 @@ def build_global_fit_wizard_screening_recommendation(
                 current_model=current_model,
                 existing_recommendations_by_run=recommendations_by_run,
                 progress_callback=progress_callback,
+                scope=scope,
+                user_frequencies_mhz=user_frequencies_mhz,
             )
         )
 
@@ -1260,6 +1394,8 @@ def build_global_fit_wizard_recommendation(
     progress_callback: Callable[[str], None] | None = None,
     instrumentation: dict[str, object] | None = None,
     selected_template_keys: tuple[str, ...] | None = None,
+    scope: WizardScope | None = None,
+    user_frequencies_mhz: Sequence[float] | None = None,
 ) -> GlobalFitWizardRecommendation:
     """Analyze one ordered dataset series and recommend a global-fit candidate."""
     _set_metric(instrumentation, "strategy", "consolidated")
@@ -1280,6 +1416,8 @@ def build_global_fit_wizard_recommendation(
         progress_callback=progress_callback,
         instrumentation=instrumentation,
         selected_template_keys=selected_template_keys,
+        scope=scope,
+        user_frequencies_mhz=user_frequencies_mhz,
     )
 
 
@@ -1295,6 +1433,8 @@ def _build_global_fit_wizard_recommendation_staged(
     progress_callback: Callable[[str], None] | None = None,
     instrumentation: dict[str, object] | None = None,
     selected_template_keys: tuple[str, ...] | None = None,
+    scope: WizardScope | None = None,
+    user_frequencies_mhz: Sequence[float] | None = None,
 ) -> GlobalFitWizardRecommendation:
     if len(datasets) < 2:
         raise ValueError("Global fit wizard requires at least two datasets.")
@@ -1324,12 +1464,14 @@ def _build_global_fit_wizard_recommendation_staged(
     aggregate_fingerprint = _aggregate_fingerprints(
         [fingerprints_by_run[int(dataset.run_number)] for dataset in ordered_datasets]
     )
-    templates = list(
-        build_candidate_templates(
-            aggregate_fingerprint,
-            current_model=current_model,
-        )
+    scoped_templates, pattern_template_keys = _scoped_series_templates(
+        ordered_datasets,
+        aggregate_fingerprint,
+        current_model,
+        scope=scope,
+        user_frequencies_mhz=user_frequencies_mhz,
     )
+    templates = list(scoped_templates)
     template_by_key = {template.key: template for template in templates}
     if mixed_axes_warning:
         return replace(
@@ -1526,7 +1668,7 @@ def _build_global_fit_wizard_recommendation_staged(
             tuple(templates),
             initial_assessments=initial_assessments,
             metric=metric,
-            forced_keys=forced_shortlist_keys,
+            forced_keys=tuple(dict.fromkeys((*forced_shortlist_keys, *pattern_template_keys))),
         )
     shortlisted_templates = [template for template in templates if template.key in shortlist_keys]
     if shortlisted_templates:

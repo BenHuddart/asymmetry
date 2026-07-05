@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 import numpy as np
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -27,8 +27,14 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.fitting.composite import CompositeModel
-from asymmetry.core.fitting.fit_wizard import CandidateTemplate, SelectionMetric
+from asymmetry.core.fitting.composite import COMPONENTS, CompositeModel
+from asymmetry.core.fitting.engine import FitCancelledError
+from asymmetry.core.fitting.fit_wizard import (
+    CandidateTemplate,
+    ConfidenceTier,
+    RecommendationVerdict,
+    SelectionMetric,
+)
 from asymmetry.core.fitting.global_fit_wizard import (
     GlobalCandidateAssessment,
     GlobalFitWizardCandidatePortfolio,
@@ -46,8 +52,15 @@ from asymmetry.core.fitting.global_search.heuristics import (
     is_rate_like_parameter,
 )
 from asymmetry.core.fitting.parameters import get_param_info
+from asymmetry.core.fitting.wizard_scope import (
+    WizardScope,
+    estimate_screening_cost,
+    resolve_scope_for_datasets,
+)
 from asymmetry.gui.panels.log_panel import LogPanel
+from asymmetry.gui.styles import tokens
 from asymmetry.gui.widgets.screen_sizing import resize_to_available
+from asymmetry.gui.widgets.wizard_scope_selector import WizardScopeSelector
 from asymmetry.gui.windows.wizard_base import WizardWindowBase
 
 _DEFAULT_PHASE_ONE_SINGLE_FIT_HELPER = (
@@ -104,13 +117,25 @@ def _run_global_fit_wizard_analysis(
     existing_single_fit_recommendations_by_run: dict[int, object] | None,
     metric: SelectionMetric,
     selected_template_keys: tuple[str, ...] = (),
+    scope: dict | None = None,
 ) -> _GlobalAnalysisResult:
     """Run the global-fit wizard analysis off the GUI thread.
 
-    Moved verbatim from the former ``GlobalFitWizardWorker.run`` body; exceptions
-    now propagate to ``TaskWorker.run`` (→ the base error slot) instead of being
+    Moved from the former ``GlobalFitWizardWorker.run`` body; exceptions now
+    propagate to ``TaskWorker.run`` (→ the base error slot) instead of being
     caught and re-emitted, and progress goes through ``worker.progress.emit``.
+    Cooperative cancel is honoured between builder phases: the base passes a
+    ``FitCancelledError`` in ``_cancel_exceptions()`` so ``TaskWorker`` reports
+    it as a cancellation rather than a failure. ``scope`` is the serialised
+    ``WizardScope`` payload from the Scope tab (``None`` → whole time domain);
+    it is converted here (worker thread) and forwarded to every builder.
     """
+    resolved_scope = WizardScope.from_payload(scope) if scope is not None else None
+
+    def _raise_if_cancelled() -> None:
+        if worker.is_cancelled():
+            raise FitCancelledError("Analysis cancelled.")
+
     existing = dict(existing_single_fit_recommendations_by_run or {})
     selected_template_keys = tuple(key for key in selected_template_keys if isinstance(key, str))
 
@@ -130,6 +155,7 @@ def _run_global_fit_wizard_analysis(
         is _DEFAULT_PHASE_ONE_SINGLE_FIT_HELPER
         and not existing
     )
+    _raise_if_cancelled()
     if skip_implicit_phase_one:
         single_fit_recommendations_by_run = dict(existing)
     else:
@@ -139,12 +165,14 @@ def _run_global_fit_wizard_analysis(
                 current_model=current_model,
                 existing_recommendations_by_run=existing,
                 progress_callback=lambda message: worker.progress.emit(0, 0, message),
+                scope=resolved_scope,
             )
         )
 
     def progress_callback(message):
         return worker.progress.emit(0, 0, message)
 
+    _raise_if_cancelled()
     if mode == "screening":
         recommendation = build_global_fit_wizard_screening_recommendation(
             datasets,
@@ -155,6 +183,7 @@ def _run_global_fit_wizard_analysis(
             single_fit_recommendations_by_run=single_fit_recommendations_by_run,
             metric=metric,
             progress_callback=progress_callback,
+            scope=resolved_scope,
         )
     else:
         recommendation = build_global_fit_wizard_recommendation(
@@ -167,6 +196,7 @@ def _run_global_fit_wizard_analysis(
             metric=metric,
             progress_callback=progress_callback,
             selected_template_keys=selected_template_keys,
+            scope=resolved_scope,
         )
     updated_single_fit_recommendations = {
         int(run_number): rec
@@ -321,6 +351,18 @@ class GlobalFitWizardWindow(WizardWindowBase):
             "Global/Local parameter roles."
         )
 
+        # Stale banner sits under the status label (heading/status/controls/tabs
+        # is the base's central layout order, so index 2 lands it just above the
+        # controls row). Shown after a Scope edit invalidates the shown results.
+        self._stale_banner = QLabel(
+            "Scope changed since the last analysis — the results below are stale. "
+            "Re-run the screening."
+        )
+        self._stale_banner.setWordWrap(True)
+        self._stale_banner.setStyleSheet(f"color: {tokens.ERROR}; font-weight: 600;")
+        self._stale_banner.setVisible(False)
+        self._central_layout.insertWidget(2, self._stale_banner)
+
         self._refresh_btn.setEnabled(False)
         self._metric_combo.setEnabled(False)
         self._optimize_btn.setEnabled(False)
@@ -340,9 +382,11 @@ class GlobalFitWizardWindow(WizardWindowBase):
         self._analysis_mode = "screening"
         self._log_window: AnalysisLogWindow | None = None
         self._single_fit_recommendations_by_run: dict[int, object] = {}
+        # A Scope edit invalidates the shown results; screening must be re-run.
+        self._analysis_stale = False
 
         # Insert the window's controls before the base-owned progress widgets
-        # (index 0..5), then a trailing stretch keeps the row left-aligned.
+        # (index 0..6), then a trailing stretch keeps the row left-aligned.
         self._refresh_btn = QPushButton("Build Screening Table")
         self._refresh_btn.clicked.connect(self._start_analysis)
         self._controls_row.insertWidget(0, self._refresh_btn)
@@ -360,21 +404,31 @@ class GlobalFitWizardWindow(WizardWindowBase):
         warning_info_btn = QPushButton("Warning Info")
         warning_info_btn.clicked.connect(self._show_warning_info)
         self._controls_row.insertWidget(5, warning_info_btn)
+        # Cancel button lives in the controls row; visible only while busy (see
+        # _update_action_enablement). It routes through the base's single cancel
+        # entry point, which cancels the live TaskWorker cooperatively.
+        self._cancel_btn = QPushButton("Cancel")
+        self._cancel_btn.setVisible(False)
+        self._cancel_btn.clicked.connect(self._cancel_current_analysis)
+        self._controls_row.insertWidget(6, self._cancel_btn)
         self._controls_row.addStretch()
 
+        self._scope_tab = QWidget()
         self._overview_tab = QWidget()
         self._portfolio_tab = QWidget()
         self._compare_tab = QWidget()
         self._optimized_tab = QWidget()
         self._roles_tab = QWidget()
         self._apply_tab = QWidget()
-        self._tabs.addTab(self._overview_tab, "1. Series Overview")
-        self._tabs.addTab(self._portfolio_tab, "2. Candidate Portfolio")
-        self._tabs.addTab(self._compare_tab, "3. Single-Fit Screening")
-        self._tabs.addTab(self._optimized_tab, "4. Global Optimized Fits")
-        self._tabs.addTab(self._roles_tab, "5. Parameter Sharing")
-        self._tabs.addTab(self._apply_tab, "6. Apply")
+        self._tabs.addTab(self._scope_tab, "1. Scope")
+        self._tabs.addTab(self._overview_tab, "2. Series Overview")
+        self._tabs.addTab(self._portfolio_tab, "3. Candidate Portfolio")
+        self._tabs.addTab(self._compare_tab, "4. Single-Fit Screening")
+        self._tabs.addTab(self._optimized_tab, "5. Global Optimized Fits")
+        self._tabs.addTab(self._roles_tab, "6. Parameter Sharing")
+        self._tabs.addTab(self._apply_tab, "7. Apply")
 
+        self._build_scope_tab()
         self._build_overview_tab()
         self._build_portfolio_tab()
         self._build_compare_tab()
@@ -405,9 +459,18 @@ class GlobalFitWizardWindow(WizardWindowBase):
         self._selected_key = None
         self._screening_selected_keys = set()
         self._running_template_keys = set()
+        self._analysis_stale = False
+        self._stale_banner.setVisible(False)
         self._cached_log_text = ""
         self._cached_signature = None
         self._analysis_request_id += 1
+        # Install the scope resolver and reset the selector to Auto (signal-silent),
+        # then refresh so is_valid() sees a populated tree before the final
+        # _set_busy(False) below evaluates the button states.
+        self._scope_selector.set_resolver(self._resolve_scope)
+        self._scope_selector.set_scope(None)
+        self._scope_selector.refresh_from_context()
+        self._tabs.setCurrentIndex(0)
         run_labels = ", ".join(dataset.run_label for dataset in self._datasets[:4])
         if len(self._datasets) > 4:
             run_labels += ", …"
@@ -431,16 +494,136 @@ class GlobalFitWizardWindow(WizardWindowBase):
             )
         self._set_busy(False)
 
+    def _build_scope_tab(self) -> None:
+        layout = QVBoxLayout(self._scope_tab)
+        intro = QLabel(
+            "Choose which candidate families the wizard screens across the series. Start "
+            "from a preset (or Auto, inferred from run metadata) and include/exclude "
+            "individual components as needed."
+        )
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        self._scope_selector = WizardScopeSelector()
+        self._scope_selector.scope_changed.connect(self._on_scope_changed)
+        self._scope_selector.validity_changed.connect(self._on_scope_validity_changed)
+        layout.addWidget(self._scope_selector, 1)
+
+    def _resolve_scope(self, preset_id: str, overrides: dict) -> dict:
+        """Adapt the core scope resolver to the WizardScopeSelector dict contract.
+
+        Groups in-registry-order TIME-domain components by their display
+        ``category``; frequency-domain components are skipped entirely. The scope
+        is resolved across the whole selected series (union of in-scope sets).
+        """
+        if not self._datasets:
+            return {
+                "effective_preset": preset_id,
+                "note": "Load a series first",
+                "families": [],
+                "estimate": [0, 0],
+            }
+        scope = WizardScope.from_payload(
+            {
+                "version": 1,
+                "preset": preset_id,
+                "include": overrides.get("include", []),
+                "exclude": overrides.get("exclude", []),
+            }
+        )
+        resolution = resolve_scope_for_datasets(list(self._datasets), scope)
+        included = resolution.included_set
+        reasons = {exc.name: exc.reason for exc in resolution.excluded_components}
+
+        families: list[dict] = []
+        by_category: dict[str, dict] = {}
+        for name, definition in COMPONENTS.items():
+            if definition.domain != "time":
+                continue
+            category = definition.category
+            family = by_category.get(category)
+            if family is None:
+                family = {"key": category, "title": category, "components": []}
+                by_category[category] = family
+                families.append(family)
+            family["components"].append(
+                {
+                    "name": name,
+                    "included": name in included,
+                    "reason": reasons.get(name, ""),
+                    "cost": definition.cost.value,
+                }
+            )
+
+        return {
+            "effective_preset": resolution.effective_preset.value,
+            "note": resolution.inference_note,
+            "families": families,
+            "estimate": list(estimate_screening_cost(resolution)),
+        }
+
+    def _on_scope_changed(self, _scope: object) -> None:
+        # A stale screening table's selection no longer corresponds to the new
+        # scope, so clear it before disabling "Optimize Selected" via _set_busy.
+        self._screening_selected_keys = set()
+        self._mark_analysis_stale("Scope changed")
+
+    def _on_scope_validity_changed(self, is_valid: bool) -> None:
+        if not is_valid and not self._analysis_in_progress:
+            self._status_label.setText(
+                "Select at least one candidate family on the Scope tab to enable screening."
+            )
+        self._set_busy(self._analysis_in_progress)
+
+    def _mark_analysis_stale(self, reason: str) -> None:
+        """Flag the displayed results as stale after a scope edit.
+
+        Follows the ignore-stale convention: an in-flight analysis is orphaned by
+        bumping the request id (its terminal signal is discarded by the base's
+        staleness guard on arrival). We also cancel the live worker cooperatively
+        so it stops wasting cycles, then clear busy.
+        """
+        if self._analysis_in_progress:
+            self._cancel_current_analysis()
+            self._analysis_request_id += 1
+            self._set_busy(False)
+            self._status_label.setText(
+                f"{reason} while analysis was running; that result will be discarded. "
+                "Re-run the screening."
+            )
+        if self._recommendation is not None:
+            self._analysis_stale = True
+            self._stale_banner.setVisible(True)
+        self._set_busy(self._analysis_in_progress)
+
+    def _cancel_exceptions(self) -> tuple[type[BaseException], ...]:
+        return (FitCancelledError,)
+
     def _build_overview_tab(self) -> None:
         layout = QVBoxLayout(self._overview_tab)
         self._overview_banner = QLabel("")
         self._overview_banner.setWordWrap(True)
         layout.addWidget(self._overview_banner)
-        self._overview_table = QTableWidget(0, 6)
+        # Unmissable, series-level flag when any run's single-fit shows no
+        # significant structure. Hidden until screening surfaces such a run.
+        self._verdict_banner = QLabel("")
+        self._verdict_banner.setWordWrap(True)
+        self._verdict_banner.setVisible(False)
+        layout.addWidget(self._verdict_banner)
+        self._overview_table = QTableWidget(0, 8)
         self._overview_table.setHorizontalHeaderLabels(
-            ["Run", "Field (G)", "Temperature (K)", "Osc.", "KT-like", "Multi-rate"]
+            [
+                "Run",
+                "Field (G)",
+                "Temperature (K)",
+                "Osc.",
+                "KT-like",
+                "Multi-rate",
+                "Confidence",
+                "Recommendation",
+            ]
         )
-        self._overview_table.horizontalHeader().setStretchLastSection(False)
+        self._overview_table.horizontalHeader().setStretchLastSection(True)
         self._overview_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         layout.addWidget(self._overview_table)
 
@@ -554,15 +737,23 @@ class GlobalFitWizardWindow(WizardWindowBase):
 
     def _update_action_enablement(self, busy: bool) -> None:
         self._progress_label.setText("Working..." if busy else "")
-        self._refresh_btn.setEnabled(bool(self._datasets) and not busy)
+        self._cancel_btn.setVisible(busy)
+        self._refresh_btn.setEnabled(
+            bool(self._datasets) and not busy and self._scope_selector.is_valid()
+        )
         self._metric_combo.setEnabled(self._recommendation is not None and not busy)
         has_screening_selection = bool(self._screening_selected_keys)
         self._optimize_btn.setEnabled(
-            self._recommendation is not None and has_screening_selection and not busy
+            self._recommendation is not None
+            and has_screening_selection
+            and not busy
+            and not self._analysis_stale
         )
 
     def _set_empty_state(self) -> None:
         self._overview_banner.setText("")
+        self._verdict_banner.setText("")
+        self._verdict_banner.setVisible(False)
         self._portfolio_banner.setText("")
         self._compare_banner.setText("")
         self._optimized_banner.setText("")
@@ -593,10 +784,18 @@ class GlobalFitWizardWindow(WizardWindowBase):
         if self._analysis_in_progress:
             return
 
+        if not self._scope_selector.is_valid():
+            self._status_label.setText(
+                "Select at least one candidate family on the Scope tab to enable screening."
+            )
+            return
+
+        scope_payload = copy.deepcopy(self._scope_selector.current_scope())
         try:
             portfolio = build_global_fit_wizard_candidate_portfolio(
                 self._datasets,
                 current_model=self._current_model,
+                scope=WizardScope.from_payload(scope_payload),
             )
         except Exception as exc:
             self._status_label.setText(f"Global fit wizard setup failed: {exc}")
@@ -613,16 +812,22 @@ class GlobalFitWizardWindow(WizardWindowBase):
             self._apply_parameter_setup(setup_config)
 
         # Same-signature short-circuit: serve the cached recommendation without
-        # recomputing. The base bumps/caches on _run_analysis(), so this stays a
-        # subclass decision (the single-fit window always recomputes).
+        # recomputing. Scope is in the signature, so a change-then-revert to the
+        # cached scope makes any stale flag obsolete — clear it. The base
+        # bumps/caches on _run_analysis(), so this stays a subclass decision (the
+        # single-fit window always recomputes).
         if (
             self._cached_signature == self._analysis_signature()
             and self._recommendation is not None
         ):
+            self._analysis_stale = False
+            self._stale_banner.setVisible(False)
             self._status_label.setText(self._recommendation.summary)
             self._populate_from_recommendation()
             return
 
+        self._analysis_stale = False
+        self._stale_banner.setVisible(False)
         self._analysis_mode = "screening"
         self._show_log_window()
         self._status_label.setText(
@@ -668,6 +873,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
         existing = dict(self._single_fit_recommendations_by_run)
         metric = SelectionMetric.from_value(self._metric_combo.currentText())
         selected_keys = tuple(sorted(self._screening_selected_keys)) if mode == "optimize" else ()
+        scope_payload = copy.deepcopy(self._scope_selector.current_scope())
 
         def task(worker):
             return _run_global_fit_wizard_analysis(
@@ -681,6 +887,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
                 existing_single_fit_recommendations_by_run=existing,
                 metric=metric,
                 selected_template_keys=selected_keys,
+                scope=scope_payload,
             )
 
         return task
@@ -774,6 +981,14 @@ class GlobalFitWizardWindow(WizardWindowBase):
         self._cached_signature = copy.deepcopy(signature) if isinstance(signature, dict) else None
         self._selected_key = self._recommended_or_first_optimized_key(recommendation)
         self._cached_log_text = str(log_text or "")
+        # Restore scope from the signature. Legacy signatures without a scope key
+        # restore as Auto. Cached state is never stale. set_scope is a no-op on
+        # the tree when no resolver is installed (no prior set_analysis_context).
+        signature_dict = signature if isinstance(signature, dict) else {}
+        cached_scope = signature_dict.get("scope")
+        self._scope_selector.set_scope(cached_scope if isinstance(cached_scope, dict) else None)
+        self._analysis_stale = False
+        self._stale_banner.setVisible(False)
         self._metric_combo.blockSignals(True)
         self._metric_combo.setCurrentText(recommendation.metric.value)
         self._metric_combo.blockSignals(False)
@@ -791,6 +1006,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
                 str(key): [float(bounds[0]), float(bounds[1])]
                 for key, bounds in self._parameter_bounds.items()
             },
+            "scope": self._scope_selector.current_scope(),
         }
 
     def _prompt_parameter_setup(
@@ -944,6 +1160,77 @@ class GlobalFitWizardWindow(WizardWindowBase):
             self._overview_table.setItem(row, 3, QTableWidgetItem(osc_text))
             self._overview_table.setItem(row, 4, QTableWidgetItem(kt_text))
             self._overview_table.setItem(row, 5, QTableWidgetItem(multi_text))
+            confidence_item, recommendation_item = self._overview_confidence_items(int(run_number))
+            self._overview_table.setItem(row, 6, confidence_item)
+            self._overview_table.setItem(row, 7, recommendation_item)
+        self._update_verdict_banner(run_order)
+
+    def _overview_confidence_items(
+        self, run_number: int
+    ) -> tuple[QTableWidgetItem, QTableWidgetItem]:
+        """Build the Confidence / Recommendation cells for one run.
+
+        Both come from that run's single-fit recommendation, which carries the
+        confidence tier, verdict, and caveat. A run whose best single fit shows
+        no significant structure (a null baseline) is marked in red so a
+        pure-noise run is never silently presented as a good fit; a
+        medium-confidence run carries its caveat as an amber tooltip. When no
+        single-fit recommendation exists yet (before screening) both cells show
+        ``"—"``.
+        """
+        rec = self._single_fit_recommendations_by_run.get(int(run_number))
+        confidence = getattr(rec, "confidence", None)
+        verdict = getattr(rec, "verdict", None)
+        caveat = str(getattr(rec, "caveat", "") or "")
+        if rec is None or confidence is None:
+            return QTableWidgetItem("—"), QTableWidgetItem("—")
+
+        confidence_item = QTableWidgetItem(_confidence_label(confidence))
+        if verdict is RecommendationVerdict.NO_SIGNIFICANT_STRUCTURE:
+            recommendation_item = QTableWidgetItem("No significant structure")
+            for item in (confidence_item, recommendation_item):
+                item.setForeground(QColor(tokens.ERROR))
+                item.setFont(_bold_font(item.font()))
+            if caveat:
+                recommendation_item.setToolTip(caveat)
+        else:
+            recommended = getattr(rec, "recommended_assessment", None)
+            title = getattr(getattr(recommended, "template", None), "title", "")
+            recommendation_item = QTableWidgetItem(str(title) or "—")
+            if confidence is ConfidenceTier.MEDIUM:
+                confidence_item.setForeground(QColor(tokens.WARN))
+                if caveat:
+                    confidence_item.setToolTip(caveat)
+                    recommendation_item.setToolTip(caveat)
+            elif confidence is ConfidenceTier.HIGH:
+                confidence_item.setForeground(QColor(tokens.OK))
+        return confidence_item, recommendation_item
+
+    def _update_verdict_banner(self, run_order: list[int]) -> None:
+        """Raise an unmissable series-level banner for null-structure runs.
+
+        Any run whose single-fit verdict is NO_SIGNIFICANT_STRUCTURE means the
+        data on that run carry no structure worth a richer model. A single red
+        table cell is easy to miss, so this surfaces the count at series level.
+        """
+        flagged: list[str] = []
+        by_run = {int(dataset.run_number): dataset for dataset in self._datasets}
+        for run_number in run_order:
+            rec = self._single_fit_recommendations_by_run.get(int(run_number))
+            if getattr(rec, "verdict", None) is RecommendationVerdict.NO_SIGNIFICANT_STRUCTURE:
+                dataset = by_run.get(int(run_number))
+                flagged.append(dataset.run_label if dataset else str(run_number))
+        if not flagged:
+            self._verdict_banner.setVisible(False)
+            self._verdict_banner.setText("")
+            return
+        labels = ", ".join(flagged)
+        self._verdict_banner.setText(
+            f"No significant structure on {len(flagged)} run(s): {labels}. "
+            "The data there do not support a richer model than a flat/exponential baseline."
+        )
+        self._verdict_banner.setStyleSheet(f"color: {tokens.ERROR}; font-weight: 600;")
+        self._verdict_banner.setVisible(True)
 
     def _populate_portfolio_table(self) -> None:
         if self._recommendation is None:
@@ -1347,6 +1634,17 @@ def _bold_font(font: QFont) -> QFont:
     updated = QFont(font)
     updated.setBold(True)
     return updated
+
+
+_CONFIDENCE_LABELS = {
+    ConfidenceTier.HIGH: "High",
+    ConfidenceTier.MEDIUM: "Medium",
+    ConfidenceTier.NONE: "—",
+}
+
+
+def _confidence_label(confidence: ConfidenceTier) -> str:
+    return _CONFIDENCE_LABELS.get(confidence, "—")
 
 
 def _portfolio_parameter_usage(
