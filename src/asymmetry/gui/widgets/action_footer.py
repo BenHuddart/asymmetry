@@ -127,12 +127,33 @@ class ActionFooter(QWidget):
 
     # ── Progress ──────────────────────────────────────────────────────────────
 
-    def show_progress(self, text: str = "") -> None:
-        """Show the progress row with an indeterminate bar and optional *text*."""
+    def show_progress(
+        self,
+        text: str = "",
+        *,
+        current: int | None = None,
+        total: int | None = None,
+    ) -> None:
+        """Show the progress row with optional *text*.
+
+        With no *current*/*total*, the bar is indeterminate (busy) — the
+        original behaviour. Passing both switches it to a determinate 0..total
+        bar at *current* (e.g. MaxEnt's per-cycle progress), clamped to
+        ``[0, total]``; passing only one of the two is treated as "not given"
+        and falls back to indeterminate.
+        """
         self._progress_label.setText(str(text))
+        if current is not None and total is not None:
+            resolved_total = max(1, int(total))
+            resolved_current = max(0, min(int(current), resolved_total))
+            self._progress_bar.setRange(0, resolved_total)
+            self._progress_bar.setValue(resolved_current)
+        else:
+            self._progress_bar.setRange(0, 0)
         self._progress_row.show()
 
     def hide_progress(self) -> None:
-        """Hide the progress row."""
+        """Hide the progress row and reset it back to indeterminate."""
         self._progress_row.hide()
         self._progress_label.clear()
+        self._progress_bar.setRange(0, 0)
