@@ -111,23 +111,27 @@ def test_menu_actions_emit_signals(qapp: QApplication) -> None:
     card.set_state(_view(idx=2, show_run=True, can_remove=True))
 
     edit_model_received = []
-    edit_params_received = []
     exclude_received = []
     remove_received = []
     card.edit_model_requested.connect(edit_model_received.append)
-    card.edit_params_requested.connect(edit_params_received.append)
     card.exclude_requested.connect(exclude_received.append)
     card.remove_requested.connect(remove_received.append)
 
     card._act_edit_model.trigger()
-    card._act_edit_params.trigger()
     card._act_exclude.trigger()
     card._act_remove.trigger()
 
     assert edit_model_received == [2]
-    assert edit_params_received == [2]
     assert exclude_received == [2]
     assert remove_received == [2]
+
+
+def test_no_edit_params_action(qapp: QApplication) -> None:
+    """The redundant "Edit Params" overflow action + signal were dropped: the
+    card IS the selector, so "select this card" replaces it."""
+    card = RangeCard(0)
+    assert not hasattr(card, "_act_edit_params")
+    assert not hasattr(card, "edit_params_requested")
 
 
 def test_remove_hidden_when_cannot_remove(qapp: QApplication) -> None:

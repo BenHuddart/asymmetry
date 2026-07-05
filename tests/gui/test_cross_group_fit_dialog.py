@@ -150,6 +150,56 @@ def test_cross_group_dialog_redfield_m_is_unitless() -> None:
     assert app is not None
 
 
+def test_single_card_no_add_no_remove() -> None:
+    app = QApplication.instance() or QApplication([])
+    dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=_groups(),
+        parent=None,
+    )
+
+    # Cross-group mode pins exactly one shared range: "Add Range" is hidden
+    # (adding a second range is meaningless here) and the single card's view
+    # reports can_remove=False (no Remove action available).
+    assert dlg._add_range_btn.isVisible() is False
+    assert len(dlg._range_cards) == 1
+    assert dlg._range_cards[0]._view.can_remove is False
+    assert app is not None
+
+
+def test_cross_group_card_always_active() -> None:
+    app = QApplication.instance() or QApplication([])
+    dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=_groups(),
+        parent=None,
+    )
+
+    assert len(dlg._range_cards) == 1
+    assert dlg.active_range_index() == 0
+    assert dlg._range_cards[0]._view.show_run is True
+    assert app is not None
+
+
+def test_cross_group_card_title() -> None:
+    app = QApplication.instance() or QApplication([])
+    dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=_groups(),
+        parent=None,
+    )
+
+    # Formula-only degradation: the title is not the base "Range 1" label.
+    # This dialog's chosen alternative is the trended parameter name.
+    title = dlg._range_cards[0]._view.title
+    assert title != "Range 1"
+    assert title == "Lambda"
+    assert app is not None
+
+
 def test_cross_group_dialog_sc_shape_factor_a_defaults_to_fixed() -> None:
     app = QApplication.instance() or QApplication([])
     dlg = CrossGroupFitDialog(

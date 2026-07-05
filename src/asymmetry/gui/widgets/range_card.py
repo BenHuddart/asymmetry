@@ -4,7 +4,7 @@ Replaces the wide row-of-buttons layout in the trend model-fit dialog with one
 small card per fit range: a colour swatch matching the range's plot span, a
 title, a fit-status chip, and its bounds. The card that is currently active
 additionally shows a primary "Run Fit" button and a "..." overflow menu
-(Edit Model / Edit Params / Exclude region.../Remove).
+(Edit Model / Exclude region.../Remove).
 
 The card is a pure view — it renders a plain :class:`RangeCardView` handed to
 it by the dialog and emits signals on user interaction. It owns no fit/range
@@ -98,8 +98,6 @@ class RangeCard(QFrame):
     run_requested = Signal(int)
     #: Overflow menu -> "Edit Model".
     edit_model_requested = Signal(int)
-    #: Overflow menu -> "Edit Params".
-    edit_params_requested = Signal(int)
     #: Overflow menu -> "Exclude region..." (numeric exclude/add-window path).
     exclude_requested = Signal(int)
     #: Overflow menu -> "Remove".
@@ -167,8 +165,6 @@ class RangeCard(QFrame):
         self._overflow_menu = QMenu(self._overflow_button)
         self._act_edit_model = self._overflow_menu.addAction("Edit Model")
         self._act_edit_model.triggered.connect(self._on_edit_model_triggered)
-        self._act_edit_params = self._overflow_menu.addAction("Edit Params")
-        self._act_edit_params.triggered.connect(self._on_edit_params_triggered)
         self._act_exclude = self._overflow_menu.addAction("Exclude region…")
         self._act_exclude.triggered.connect(self._on_exclude_triggered)
         self._act_remove = self._overflow_menu.addAction("Remove")
@@ -257,9 +253,6 @@ class RangeCard(QFrame):
 
     def _on_edit_model_triggered(self) -> None:
         self.edit_model_requested.emit(self._idx)
-
-    def _on_edit_params_triggered(self) -> None:
-        self.edit_params_requested.emit(self._idx)
 
     def _on_exclude_triggered(self) -> None:
         self.exclude_requested.emit(self._idx)

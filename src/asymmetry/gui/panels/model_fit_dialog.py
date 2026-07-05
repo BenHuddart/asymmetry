@@ -739,30 +739,26 @@ class ModelFitDialog(QDialog):
         # deliberately avoids QGroupBox chrome in inspector panels. The uppercase
         # header lives INSIDE the section container (above ``_ranges_host``), so a
         # ``_rebuild_ranges_ui`` clear_layout of ``_ranges_host`` never destroys it.
-        ranges_group, ranges_layout = make_section("Model ranges")
+        #
+        # ONE merged "Fit ranges" section (Step 2): the RangeCard stack + "Add
+        # Range" button sit on top, then the details content (bounds pair,
+        # exclusion-window sub-block, Guess row, formula/result boxes, param
+        # table) directly below. The card IS the range selector — clicking a card
+        # activates it and the details pane below follows via ``_set_active_range``.
+        params_group, params_layout = make_section("Fit ranges")
+
         self._ranges_host = QVBoxLayout()
         self._ranges_host.setSpacing(4)
-        ranges_layout.addLayout(self._ranges_host)
+        params_layout.addLayout(self._ranges_host)
 
         add_row = QHBoxLayout()
         add_btn = QPushButton("Add Range")
         add_btn.clicked.connect(self._add_range)
         add_row.addWidget(add_btn)
         add_row.addStretch()
-        ranges_layout.addLayout(add_row)
+        params_layout.addLayout(add_row)
 
-        left_layout.addWidget(ranges_group)
-
-        params_group, params_layout = make_section("Range parameters")
-
-        selector_row = QHBoxLayout()
-        selector_row.addWidget(QLabel("Editing range:"))
-        self._range_selector = QComboBox()
-        self._range_selector.currentIndexChanged.connect(self._on_range_selector_changed)
-        selector_row.addWidget(self._range_selector, 1)
-        params_layout.addLayout(selector_row)
-
-        self._range_hint_label = QLabel("Select a range above to edit its model parameters.")
+        self._range_hint_label = QLabel("Editing the highlighted range.")
         params_layout.addWidget(self._range_hint_label)
 
         # ── Fit range: numeric bounds for the ACTIVE range (contract C-BOUNDS) ──
@@ -1354,24 +1350,22 @@ class ModelFitDialog(QDialog):
             card.selected.connect(self._select_range)
             card.run_requested.connect(self._run_fit)
             card.edit_model_requested.connect(self._edit_model)
-            card.edit_params_requested.connect(self._select_range)
             card.exclude_requested.connect(self._add_window)
             card.remove_requested.connect(self._remove_range)
             self._ranges_host.addWidget(card)
             self._range_cards.append(card)
 
         self._post_rebuild_ranges_ui()
-        self._refresh_range_selector()
         if self._fit.ranges:
             self._select_range(max(0, min(previous_idx, len(self._fit.ranges) - 1)))
 
     def _range_card_view(self, idx: int, *, show_run: bool) -> RangeCardView:
         """Assemble the plain render payload for range *idx*'s card.
 
-        Bounds text reuses the ``∪`` union formatting from
-        ``_refresh_range_selector``; the status chip reuses the same verdict
-        path (``assess_fit_quality`` / ``fit_quality_chip_html``) the details
-        pane uses, so card and result box never disagree.
+        Bounds text uses the ``∪`` union formatting from ``_range_bounds_text``;
+        the status chip reuses the same verdict path (``assess_fit_quality`` /
+        ``fit_quality_chip_html``) the details pane uses, so card and result box
+        never disagree.
         """
         fit_range = self._fit.ranges[idx]
         result = self._result_for_range(idx)
@@ -1394,7 +1388,7 @@ class ModelFitDialog(QDialog):
 
         return RangeCardView(
             idx=idx,
-            title=f"Range {idx + 1}",
+            title=self._range_card_title(idx),
             swatch_color=range_span_color(idx),
             bounds_text=self._range_bounds_text(fit_range),
             formula=fit_range.model.formula_string(),
@@ -1405,11 +1399,18 @@ class ModelFitDialog(QDialog):
             show_run=show_run,
         )
 
+    def _range_card_title(self, idx: int) -> str:
+        """Card title for range *idx*. Overridable so a subclass with a single,
+        always-active range (cross-group mode) can drop the redundant "Range 1"
+        label; the base numbering is unchanged for the standard multi-range case.
+        """
+        return f"Range {idx + 1}"
+
     def _range_bounds_text(self, fit_range: ModelFitRange) -> str:
         """Compact bounds string for a card, e.g. "[12–40] ∪ [55–88] K".
 
-        Mirrors the union formatting in ``_refresh_range_selector`` (which
-        drives the combo). Appends the x-unit when the abscissa has one.
+        The card is now the range selector, so this is the sole authority for a
+        range's rendered bounds. Appends the x-unit when the abscissa has one.
         """
         unit = _x_unit(self._x_key)
         suffix = f" {unit}" if unit else ""
@@ -1449,20 +1450,6 @@ class ModelFitDialog(QDialog):
 
     def _post_rebuild_ranges_ui(self) -> None:
         """Hook for subclasses to adjust freshly rebuilt range rows."""
-
-    def _refresh_range_selector(self) -> None:
-        self._range_selector.blockSignals(True)
-        self._range_selector.clear()
-        for idx, fit_range in enumerate(self._fit.ranges, start=1):
-            if fit_range.windows:
-                union = " ∪ ".join(f"[{lo:.6g}, {hi:.6g}]" for lo, hi in fit_range.windows)
-                text = f"Range {idx}: {union}"
-            else:
-                x_min = fit_range.x_min if fit_range.x_min is not None else float("nan")
-                x_max = fit_range.x_max if fit_range.x_max is not None else float("nan")
-                text = f"Range {idx}: [{x_min:.6g}, {x_max:.6g}]"
-            self._range_selector.addItem(text)
-        self._range_selector.blockSignals(False)
 
     # ── details-pane bounds + exclusion windows (contracts C-BOUNDS / C) ──────
 
@@ -1602,7 +1589,6 @@ class ModelFitDialog(QDialog):
         fit_range.windows = windows
         # The stored result no longer corresponds to the edited windows.
         self._invalidate_range_result(idx)
-        self._refresh_range_selector()
         self._refresh_range_card(idx)
         self._request_preview_update()
 
@@ -1628,11 +1614,6 @@ class ModelFitDialog(QDialog):
             self._chi2_label.setText(info_html("Fitting not yet run for selected range"))
             self._quality_label.setText("")
             self._apply_result_box_style(None)
-
-    def _on_range_selector_changed(self, idx: int) -> None:
-        if idx < 0:
-            return
-        self._select_range(idx)
 
     def _quality_text_for_range(self, fit_range: ModelFitRange) -> str:
         """χ² quality verdict line for a fitted range (empty when not fitted)."""
@@ -1689,7 +1670,6 @@ class ModelFitDialog(QDialog):
             with QSignalBlocker(self._bounds_max_spin):
                 self._bounds_max_spin.setValue(float(x_max))
 
-        self._refresh_range_selector()
         self._refresh_range_card(idx)
 
         # FEEDBACK-LOOP RULE (canvas vs spinbox): during a canvas drag the
@@ -1743,7 +1723,6 @@ class ModelFitDialog(QDialog):
             with QSignalBlocker(w_max):
                 w_max.setValue(float(hi))
 
-        self._refresh_range_selector()
         self._refresh_range_card(idx)
         # Canvas-source: curve resample only (see FEEDBACK-LOOP RULE above).
         self._preview_timer.start()
@@ -2227,16 +2206,27 @@ class ModelFitDialog(QDialog):
         success = result is not None and bool(getattr(result, "success", False))
         box.setStyleSheet(RESULT_BOX_SUCCESS_STYLE if success else RESULT_BOX_NEUTRAL_STYLE)
 
-    def _select_range(self, idx: int) -> None:
-        if idx < 0 or idx >= len(self._fit.ranges):
+    def active_range_index(self) -> int | None:
+        """Read-only accessor for the current active range (contract C-ACTIVE)."""
+        return self._active_range_idx
+
+    def _set_active_range(self, idx: int | None, *, from_plot: bool = False) -> None:
+        """The single source of truth for the active range (contract C-ACTIVE).
+
+        The ONLY writer of ``self._active_range_idx``. Idempotent; bounds-guards
+        ``idx``; fans out to every mirror — each card's ``set_active(idx == i)``,
+        the details pane (formula/result box/Guess/param table + the C-BOUNDS
+        bounds pair + window sub-block), and the canvas ``set_active_range(idx)``
+        (via ``_request_preview_update``). No mirror is ever the source.
+
+        ``from_plot`` is reserved for Step 3 (plot-driven selection); both paths
+        currently perform the same fan-out, but the parameter freezes the
+        signature now.
+        """
+        if idx is None or idx < 0 or idx >= len(self._fit.ranges):
             return
         self._active_range_idx = idx
         fit_range = self._fit.ranges[idx]
-
-        if self._range_selector.currentIndex() != idx:
-            self._range_selector.blockSignals(True)
-            self._range_selector.setCurrentIndex(idx)
-            self._range_selector.blockSignals(False)
 
         # Move the active highlight + the Run Fit action to the selected card,
         # and repoint the details-pane bounds pair / window sub-block at it.
@@ -2283,6 +2273,14 @@ class ModelFitDialog(QDialog):
         self._param_table.resizeColumnsToContents()
         self._post_select_range(idx)
         self._request_preview_update()
+
+    def _select_range(self, idx: int) -> None:
+        """Thin alias for :meth:`_set_active_range` (contract C-ACTIVE).
+
+        Kept so existing callers/tests keep the ``_select_range`` name; all
+        active-range writes funnel through the single source of truth.
+        """
+        self._set_active_range(idx)
 
     def _post_select_range(self, idx: int) -> None:
         """Hook: called at the end of ``_select_range`` after the table is built.
@@ -2481,7 +2479,6 @@ class ModelFitDialog(QDialog):
         if preview is not None:
             preview.enable_drag(not busy)
 
-        self._range_selector.setEnabled(not busy)
         self._param_table.setEnabled(not busy)
         if hasattr(self, "_guess_seeds_btn"):
             # Don't let a Guess launch race a real fit; leave it disabled while

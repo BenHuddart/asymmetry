@@ -738,7 +738,8 @@ def test_window_editor_round_trips_model_fit_range(qapp: QApplication) -> None:
     assert dlg._fit.ranges[0].windows == [(1.0, 10.0)]
     dlg._add_window(0)
     assert len(dlg._fit.ranges[0].windows) == 2
-    assert "∪" in dlg._range_selector.currentText()
+    # The card (now the range selector) shows the windowed union bounds.
+    assert "∪" in dlg._range_cards[0]._bounds_label.text()
 
     # Details-pane bounds are disabled while windows drive the mask.
     dlg._select_range(0)
@@ -1817,9 +1818,9 @@ def test_fit_success_no_modal_shows_result_box(qapp: QApplication, tmp_path, mon
 
 
 def test_section_headers_present(qapp: QApplication) -> None:
-    """The "Model ranges" / "Range parameters" blocks use flat BENCH section
-    headers (make_section) rather than a QGroupBox, and rebuilding the range
-    rows (which clear_layouts ``_ranges_host``) does not destroy them."""
+    """The merged "Fit ranges" block uses a flat BENCH section header
+    (make_section) rather than a QGroupBox, and rebuilding the range rows
+    (which clear_layouts ``_ranges_host``) does not destroy it."""
     from asymmetry.gui.styles.widgets import SECTION_HEADER_OBJECT_NAME
 
     dlg = _make_dialog(qapp)
@@ -1832,16 +1833,17 @@ def test_section_headers_present(qapp: QApplication) -> None:
         ]
 
     texts = header_texts()
-    # make_section_header uppercases the title in Python.
-    assert "MODEL RANGES" in texts
-    assert "RANGE PARAMETERS" in texts
+    # make_section_header uppercases the title in Python. The two old sections
+    # ("Model ranges" / "Range parameters") are now one merged "Fit ranges".
+    assert "FIT RANGES" in texts
+    assert "MODEL RANGES" not in texts
+    assert "RANGE PARAMETERS" not in texts
 
-    # Rebuilding the range rows clears ``_ranges_host`` — the headers live in the
-    # section container ABOVE it, so they must survive.
+    # Rebuilding the range rows clears ``_ranges_host`` — the header lives in the
+    # section container ABOVE it, so it must survive.
     dlg._rebuild_ranges_ui()
     texts_after = header_texts()
-    assert "MODEL RANGES" in texts_after
-    assert "RANGE PARAMETERS" in texts_after
+    assert "FIT RANGES" in texts_after
 
 
 def test_run_fit_is_primary_styled(qapp: QApplication) -> None:
@@ -1957,6 +1959,98 @@ def test_inactive_range_bounds_readonly_on_card(qapp: QApplication) -> None:
     dlg._bounds_min_spin.setValue(7.0)
     assert dlg._fit.ranges[0].x_min == 1.0
     assert dlg._fit.ranges[1].x_min == 7.0
+
+
+def _active_card_count(dlg: ModelFitDialog) -> int:
+    """Number of cards whose view reports ``show_run`` (the active card)."""
+    return sum(1 for card in dlg._range_cards if card._view is not None and card._view.show_run)
+
+
+def test_set_active_range_single_source(qapp: QApplication) -> None:
+    """Activating via a card's ``selected`` signal, via ``_set_active_range``,
+    and observing the canvas mirror all converge on the same ``_active_range_idx``
+    (contract C-ACTIVE). ``active_range_index()`` returns it and exactly one card
+    is active."""
+    dlg = _make_dialog(qapp)
+    dlg._add_range()  # now two ranges, indices 0 and 1
+
+    # 1) via a card's `selected` signal.
+    dlg._range_cards[1].selected.emit(1)
+    assert dlg._active_range_idx == 1
+    assert dlg.active_range_index() == 1
+    assert dlg._preview._active_idx == 1  # canvas mirror followed
+    assert _active_card_count(dlg) == 1
+    assert dlg._range_cards[1]._view.show_run
+
+    # 2) via _set_active_range directly.
+    dlg._set_active_range(0)
+    assert dlg._active_range_idx == 0
+    assert dlg.active_range_index() == 0
+    assert dlg._preview._active_idx == 0
+    assert _active_card_count(dlg) == 1
+    assert dlg._range_cards[0]._view.show_run
+
+    # 3) the from_plot path (frozen signature, same fan-out today).
+    dlg._set_active_range(1, from_plot=True)
+    assert dlg._active_range_idx == 1
+    assert dlg.active_range_index() == 1
+    assert dlg._preview._active_idx == 1
+    assert _active_card_count(dlg) == 1
+
+    # Out-of-range / None are guarded no-ops (still the single writer).
+    dlg._set_active_range(None)
+    assert dlg._active_range_idx == 1
+    dlg._set_active_range(99)
+    assert dlg._active_range_idx == 1
+
+
+def test_no_range_selector_combo(qapp: QApplication) -> None:
+    """The "Editing range" combo was deleted; the card is now the selector."""
+    dlg = _make_dialog(qapp)
+    assert not hasattr(dlg, "_range_selector")
+    assert not hasattr(dlg, "_on_range_selector_changed")
+    assert not hasattr(dlg, "_refresh_range_selector")
+
+
+def test_clicking_card_updates_details_pane(qapp: QApplication) -> None:
+    """Activating range 2 (index 1) via its card repopulates the details-pane
+    bounds pair from that range."""
+    dlg = _make_dialog(qapp)
+    dlg._add_range()
+
+    dlg._select_range(0)
+    dlg._bounds_min_spin.setValue(1.0)
+    dlg._bounds_max_spin.setValue(5.0)
+    dlg._select_range(1)
+    dlg._bounds_min_spin.setValue(6.0)
+    dlg._bounds_max_spin.setValue(9.0)
+
+    # Click range 0's card: the details pane must follow to range 0's bounds.
+    dlg._range_cards[0].selected.emit(0)
+    assert dlg._active_range_idx == 0
+    assert dlg._bounds_min_spin.value() == 1.0
+    assert dlg._bounds_max_spin.value() == 5.0
+
+    # And back to range 1's card.
+    dlg._range_cards[1].selected.emit(1)
+    assert dlg._active_range_idx == 1
+    assert dlg._bounds_min_spin.value() == 6.0
+    assert dlg._bounds_max_spin.value() == 9.0
+
+
+def test_single_fit_ranges_section(qapp: QApplication) -> None:
+    """The two old sections are merged into one "Fit ranges" BENCH section."""
+    from asymmetry.gui.styles.widgets import SECTION_HEADER_OBJECT_NAME
+
+    dlg = _make_dialog(qapp)
+    headers = [
+        label.text()
+        for label in dlg.findChildren(type(dlg._data_range_label))
+        if label.objectName() == SECTION_HEADER_OBJECT_NAME
+    ]
+    assert headers.count("FIT RANGES") == 1
+    assert "MODEL RANGES" not in headers
+    assert "RANGE PARAMETERS" not in headers
 
 
 def test_canvas_edge_drag_syncs_details_pane_spin(qapp: QApplication) -> None:

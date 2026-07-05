@@ -162,9 +162,15 @@ class CrossGroupFitDialog(ModelFitDialog):
         self._suggest_recommendation: CrossGroupRoleRecommendation | None = None
 
         self._apply_existing_config(existing_config)
-        self._refresh_range_selector()
         self._post_rebuild_ranges_ui()
         self._select_range(0)
+
+        # Cross-group mode pins exactly one shared range (see above), so "Add
+        # Range" has nothing meaningful to do — hide it rather than leave an
+        # affordance whose only behaviour is an info popup. The base
+        # ``_add_range``/``_remove_range`` stubs below remain as a defensive
+        # no-op in case anything else ever triggers them.
+        self._add_range_btn.setVisible(False)
 
         self._build_suggest_roles_ui()
 
@@ -535,7 +541,6 @@ class CrossGroupFitDialog(ModelFitDialog):
                     )
                 )
         fit_range.parameters = new_params
-        self._refresh_range_selector()
         self._select_range(0)
 
     def _apply_existing_config(self, config: dict[str, object] | None) -> None:
@@ -652,6 +657,13 @@ class CrossGroupFitDialog(ModelFitDialog):
     # cached in ``self._range_results`` (not ``fit_range.result``); the error
     # cell summarises per-group uncertainties; and the formula/hint/status text
     # is cross-group specific. Each of those is one small override below.
+
+    def _range_card_title(self, idx: int) -> str:
+        # Cross-group mode pins exactly one always-active range, so a "Range 1"
+        # label is redundant — the card's formula line already carries the
+        # range's identity. Use the trended parameter name instead of an empty
+        # title so the card still reads cleanly at a glance.
+        return self._parameter_name
 
     def _range_hint_text(self, idx: int) -> str:
         return f"Editing parameters for Range {idx + 1} (Cross-group mode: Global/Local/Fixed)."
