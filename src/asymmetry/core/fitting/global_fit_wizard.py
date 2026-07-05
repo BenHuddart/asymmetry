@@ -18,8 +18,7 @@ from asymmetry.core.fitting.component_tags import geometry_from_field_direction
 from asymmetry.core.fitting.composite import (
     CompositeModel,
     _legacy_fraction_rename_map,
-    has_legacy_fraction_values,
-    migrate_legacy_fraction_values,
+    migrate_legacy_fraction_parameter_set,
 )
 from asymmetry.core.fitting.engine import FitEngine, FitResult
 from asymmetry.core.fitting.fit_wizard import (
@@ -2247,51 +2246,13 @@ def _serialize_global_candidate_assessment(
     }
 
 
-def _migrate_global_parameter_set_fractions(
-    parameters: ParameterSet, model: CompositeModel
-) -> ParameterSet:
-    """Rename a cached ``global_parameters`` set's legacy ``fraction_<k>`` params.
-
-    Mirrors :func:`asymmetry.core.fitting.fit_wizard._migrate_fit_result_fractions`
-    for the global-fit wizard's standalone ``global_parameters`` :class:`ParameterSet`
-    (recommendation payloads carry this separately from any per-run
-    :class:`~asymmetry.core.fitting.engine.FitResult`). A no-op when there are no
-    legacy keys for this model.
-    """
-    value_map = {parameter.name: float(parameter.value) for parameter in parameters}
-    if not has_legacy_fraction_values(model, value_map):
-        return parameters
-
-    migrated_values = migrate_legacy_fraction_values(model, value_map)
-    rename = _legacy_fraction_rename_map(model)
-
-    migrated = ParameterSet()
-    for parameter in parameters:
-        if parameter.name in rename:
-            new_name = rename[parameter.name]
-            if new_name is None:
-                continue
-            migrated.add(
-                Parameter(
-                    name=new_name,
-                    value=migrated_values.get(new_name, parameter.value),
-                    min=parameter.min,
-                    max=parameter.max,
-                    fixed=parameter.fixed,
-                    expr=parameter.expr,
-                )
-            )
-        else:
-            migrated.add(parameter)
-    return migrated
-
-
 def _migrate_global_param_name_tuple(
     names: tuple[str, ...], model: CompositeModel
 ) -> tuple[str, ...]:
     """Rename/drop legacy ``fraction_<k>`` entries in a cached parameter-role tuple.
 
-    Applies the same rename map as :func:`_migrate_global_parameter_set_fractions`
+    Applies the same rename map as
+    :func:`asymmetry.core.fitting.composite.migrate_legacy_fraction_parameter_set`
     to a ``global_param_names``/``local_param_names``/``fixed_param_names`` tuple,
     preserving order and dropping names that map to ``None`` (the derived last
     term of a fraction group, which never has a free-parameter name of its own).
@@ -2349,8 +2310,8 @@ def _deserialize_global_candidate_assessment(
         for run_number, entry in (payload.get("component_curves_by_run", {}) or {}).items()
     }
 
-    global_parameters = _migrate_global_parameter_set_fractions(
-        _deserialize_parameter_set(payload.get("global_parameters", [])), template.model
+    global_parameters = migrate_legacy_fraction_parameter_set(
+        template.model, _deserialize_parameter_set(payload.get("global_parameters", []))
     )
     global_param_names = _migrate_global_param_name_tuple(
         tuple(name for name in payload.get("global_param_names", []) if isinstance(name, str)),

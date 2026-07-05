@@ -168,7 +168,7 @@ from .tab_base import (
     _format_bounds_pair,
     _get_file_value_for_parameter,
     _grouped_formula_string,
-    _is_derived_fraction_row,
+    _iter_named_parameter_rows,
     _make_param_name_item,
     _normalized_model_param_values,
     _param_table_rows_by_name,
@@ -1186,15 +1186,7 @@ class GlobalFitTab(FitTabBase):
     def _current_parameter_row_state(self) -> dict[str, dict[str, str]]:
         """Capture current parameter-table edits before rebuilding rows."""
         state: dict[str, dict[str, str]] = {}
-        for row in range(self._param_table.rowCount()):
-            if _is_derived_fraction_row(self._param_table, row):
-                continue
-            name_item = self._param_table.item(row, 0)
-            if name_item is None:
-                continue
-            param_name = name_item.data(Qt.ItemDataRole.UserRole)
-            if not isinstance(param_name, str):
-                continue
+        for row, param_name in _iter_named_parameter_rows(self._param_table, skip_unnamed=True):
             value_item = self._param_table.item(row, 1)
             bounds_item = self._param_table.item(row, 3)
             type_combo = self._param_table.cellWidget(row, 2)
@@ -1588,15 +1580,8 @@ class GlobalFitTab(FitTabBase):
         param_bounds: dict[str, tuple[float, float]] = {}
         param_types: dict[str, str] = {}
 
-        for i in range(self._param_table.rowCount()):
-            # Derived-fraction remainder rows are display-only — never a fit input.
-            if _is_derived_fraction_row(self._param_table, i):
-                continue
-            name_item = self._param_table.item(i, 0)
-            pname = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
-            if not isinstance(pname, str):
-                pname = name_item.text() if name_item else f"param_{i}"
-
+        # Derived-fraction remainder rows are display-only — never a fit input.
+        for i, pname in _iter_named_parameter_rows(self._param_table):
             try:
                 value = float(self._param_table.item(i, 1).text())
             except (ValueError, AttributeError):
@@ -3821,16 +3806,9 @@ class GlobalFitTab(FitTabBase):
                     log_text=self._fit_wizard_window.current_log_text(),
                 )
         params = []
-        for i in range(self._param_table.rowCount()):
-            # Skip display-only derived-fraction rows: they carry no fitted
-            # parameter and must not be serialised into the saved state.
-            if _is_derived_fraction_row(self._param_table, i):
-                continue
-            name_item = self._param_table.item(i, 0)
-            param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else f"param_{i}"
-            if not isinstance(param_name, str) and name_item:
-                param_name = name_item.text()
-
+        # Skip display-only derived-fraction rows: they carry no fitted parameter
+        # and must not be serialised into the saved state.
+        for i, param_name in _iter_named_parameter_rows(self._param_table):
             value_item = self._param_table.item(i, 1)
             try:
                 value = float(value_item.text()) if value_item else 0.0
@@ -4790,14 +4768,9 @@ class GlobalFitTab(FitTabBase):
                 model_values[pname] = value
                 bounds[pname] = (min_val, max_val)
         else:
-            for row in range(self._group_model_table.rowCount()):
-                if _is_derived_fraction_row(self._group_model_table, row):
-                    continue
-                name_item = self._group_model_table.item(row, 0)
-                pname = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
-                if not isinstance(pname, str):
-                    pname = name_item.text() if name_item else f"model_param_{row}"
-
+            for row, pname in _iter_named_parameter_rows(
+                self._group_model_table, placeholder="model_param"
+            ):
                 try:
                     value = float(self._group_model_table.item(row, 1).text())
                 except (TypeError, ValueError, AttributeError):
@@ -4880,15 +4853,7 @@ class GlobalFitTab(FitTabBase):
                     "bounds": f"{entry.get('min', '-inf')}, {entry.get('max', 'inf')}",
                 }
             return state
-        for row in range(table.rowCount()):
-            if _is_derived_fraction_row(table, row):
-                continue
-            name_item = table.item(row, 0)
-            if name_item is None:
-                continue
-            param_name = name_item.data(Qt.ItemDataRole.UserRole)
-            if not isinstance(param_name, str):
-                continue
+        for row, param_name in _iter_named_parameter_rows(table, skip_unnamed=True):
             value_item = table.item(row, 1)
             bounds_item = table.item(row, 3)
             type_combo = table.cellWidget(row, 2)
