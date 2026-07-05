@@ -154,6 +154,40 @@ def test_valid_draft_enables_ok_and_plots_preview(qapp, _registry_snapshot, tmp_
         dialog.deleteLater()
 
 
+# ── preview independence from metadata ──────────────────────────────────────
+
+
+def test_preview_draws_even_with_description_still_empty(qapp, _registry_snapshot, tmp_path):
+    """The preview depends only on the maths evaluating, not on metadata
+    completeness — an empty description must not blank a computable curve."""
+    dialog = NewUserFunctionDialog("component", domain="time", directory=tmp_path)
+    try:
+        dialog._name_edit.setText("UserPreviewNoDesc")
+        dialog._formula_edit.setText("A*exp(-x)")
+        _set_param_row(dialog, 0, "A", 1.0)
+        # Description deliberately left empty.
+        dialog._run_validation()
+
+        assert not _ok_enabled(dialog)
+        assert "a description" in dialog._status_label.text()
+        # The curve is drawn regardless.
+        assert dialog._axes is not None
+        assert len(dialog._axes.lines) >= 1
+    finally:
+        dialog.deleteLater()
+
+
+def test_empty_formula_shows_preview_placeholder(qapp, _registry_snapshot, tmp_path):
+    dialog = NewUserFunctionDialog("component", domain="time", directory=tmp_path)
+    try:
+        # Initial state: nothing to evaluate — no curve, a muted placeholder.
+        assert dialog._axes is not None
+        assert len(dialog._axes.lines) == 0
+        assert any("Preview appears" in t.get_text() for t in dialog._axes.texts)
+    finally:
+        dialog.deleteLater()
+
+
 # ── error surfacing ─────────────────────────────────────────────────────────
 
 

@@ -472,6 +472,11 @@ class NewUserFunctionDialog(QDialog):
         Runs user code (via ``validate_draft``) on the GUI thread — acceptable
         because the probe grids are tiny and this is debounced, never
         per-keystroke. Any failure is shown inline; the dialog never crashes.
+
+        The preview is refreshed independently of the status/OK outcome: a
+        curve is drawn whenever the formula (or advanced body) evaluates, even
+        while metadata is still incomplete (missing description, name
+        collision), so the user sees their maths as soon as it makes sense.
         """
         draft = self._current_draft()
 
@@ -481,29 +486,26 @@ class NewUserFunctionDialog(QDialog):
         if missing:
             self._set_valid(False)
             self._show_hint(f"To create a function, fill in: {', '.join(missing)}.")
-            self._clear_preview()
-            return
+        else:
+            try:
+                validate_draft(draft)
+            except UserFunctionError as exc:
+                self._set_valid(False)
+                self._show_status(str(exc), ok=False)
+            except Exception as exc:  # noqa: BLE001 — defensive: never crash the dialog.
+                self._set_valid(False)
+                self._show_status(f"Unexpected error: {type(exc).__name__}: {exc}", ok=False)
+            else:
+                self._set_valid(True)
+                target = (
+                    self._directory if self._directory is not None else "your user-functions folder"
+                )
+                self._show_status(
+                    f"Function is valid — it will be saved to {target} and available immediately.",
+                    ok=True,
+                )
 
-        try:
-            validate_draft(draft)
-        except UserFunctionError as exc:
-            self._set_valid(False)
-            self._show_status(str(exc), ok=False)
-            self._clear_preview()
-            return
-        except Exception as exc:  # noqa: BLE001 — defensive: never crash the dialog.
-            self._set_valid(False)
-            self._show_status(f"Unexpected error: {type(exc).__name__}: {exc}", ok=False)
-            self._clear_preview()
-            return
-
-        self._set_valid(True)
-        target = self._directory if self._directory is not None else "your user-functions folder"
-        self._show_status(
-            f"Function is valid — it will be saved to {target} and available immediately.",
-            ok=True,
-        )
-        self._update_preview(draft)
+        self._refresh_preview(draft)
 
     def _set_valid(self, valid: bool) -> None:
         self._buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(valid)
@@ -520,8 +522,21 @@ class NewUserFunctionDialog(QDialog):
 
     # ── preview ─────────────────────────────────────────────────────────────
 
-    def _update_preview(self, draft: UserFunctionDraft) -> None:
+    def _refresh_preview(self, draft: UserFunctionDraft) -> None:
+        """Draw the preview curve whenever the maths evaluates; clear otherwise.
+
+        Deliberately independent of full validation: ``evaluate_draft`` copes
+        with an empty name/description, so the curve appears as soon as the
+        formula (or advanced body) and parameter table make sense — even while
+        the only remaining problems are metadata (missing description, name
+        collision). Evaluation failures of any kind just clear the preview; a
+        half-typed formula must never crash the dialog.
+        """
         if self._axes is None or self._canvas is None:
+            return
+        source = draft.advanced_body if draft.advanced_body is not None else draft.formula
+        if not source.strip():
+            self._clear_preview()
             return
         import numpy as np
 
@@ -529,7 +544,7 @@ class NewUserFunctionDialog(QDialog):
         grid = np.linspace(low, high, _PREVIEW_POINTS)
         try:
             values = evaluate_draft(draft, grid)
-        except UserFunctionError:
+        except Exception:  # noqa: BLE001 — any evaluation failure means no curve yet.
             self._clear_preview()
             return
         xlabel, ylabel = _AXIS_LABELS[self._preview_kind]
@@ -542,9 +557,20 @@ class NewUserFunctionDialog(QDialog):
         self._canvas.draw_idle()
 
     def _clear_preview(self) -> None:
+        """Empty preview state: a muted placeholder so the box reads as intentional."""
         if self._axes is None or self._canvas is None:
             return
         self._axes.clear()
+        self._axes.text(
+            0.5,
+            0.5,
+            "Preview appears once the formula evaluates",
+            transform=self._axes.transAxes,
+            color=tokens.TEXT_MUTED,
+            fontsize=8,
+            ha="center",
+            va="center",
+        )
         self._axes.tick_params(labelsize=7)
         self._canvas.draw_idle()
 
