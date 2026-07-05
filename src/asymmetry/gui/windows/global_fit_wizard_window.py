@@ -53,7 +53,12 @@ from asymmetry.core.fitting.global_search.heuristics import (
 )
 from asymmetry.core.fitting.parameters import get_param_info
 from asymmetry.core.fitting.wizard_scope import (
+    DEFAULT_EFFORT_TIER,
+    EFFORT_TIER_DESCRIPTIONS,
+    EFFORT_TIER_LABELS,
+    EffortTier,
     WizardScope,
+    effort_tier_from_payload,
     estimate_screening_cost,
     resolve_scope_for_datasets,
 )
@@ -118,6 +123,7 @@ def _run_global_fit_wizard_analysis(
     metric: SelectionMetric,
     selected_template_keys: tuple[str, ...] = (),
     scope: dict | None = None,
+    effort_tier: EffortTier = DEFAULT_EFFORT_TIER,
 ) -> _GlobalAnalysisResult:
     """Run the global-fit wizard analysis off the GUI thread.
 
@@ -129,6 +135,9 @@ def _run_global_fit_wizard_analysis(
     it as a cancellation rather than a failure. ``scope`` is the serialised
     ``WizardScope`` payload from the Scope tab (``None`` → whole time domain);
     it is converted here (worker thread) and forwarded to every builder.
+    ``effort_tier`` is the user-facing effort slider (PR 5); it only affects the
+    coupled-optimisation builder (``mode == "optimize"``) — the independent
+    per-run screening pass has no tier concept.
     """
     resolved_scope = WizardScope.from_payload(scope) if scope is not None else None
 
@@ -197,6 +206,7 @@ def _run_global_fit_wizard_analysis(
             progress_callback=progress_callback,
             selected_template_keys=selected_template_keys,
             scope=resolved_scope,
+            effort_tier=effort_tier,
         )
     updated_single_fit_recommendations = {
         int(run_number): rec
@@ -404,13 +414,26 @@ class GlobalFitWizardWindow(WizardWindowBase):
         warning_info_btn = QPushButton("Warning Info")
         warning_info_btn.clicked.connect(self._show_warning_info)
         self._controls_row.insertWidget(5, warning_info_btn)
+        self._controls_row.insertWidget(6, QLabel("Effort:"))
+        self._effort_combo = QComboBox()
+        for tier in EffortTier:
+            self._effort_combo.addItem(EFFORT_TIER_LABELS[tier], userData=tier.value)
+            self._effort_combo.setItemData(
+                self._effort_combo.count() - 1,
+                EFFORT_TIER_DESCRIPTIONS[tier],
+                Qt.ItemDataRole.ToolTipRole,
+            )
+        self._effort_combo.setCurrentIndex(self._effort_combo.findData(DEFAULT_EFFORT_TIER.value))
+        self._effort_combo.setToolTip(EFFORT_TIER_DESCRIPTIONS[DEFAULT_EFFORT_TIER])
+        self._effort_combo.currentIndexChanged.connect(self._on_effort_tier_changed)
+        self._controls_row.insertWidget(7, self._effort_combo)
         # Cancel button lives in the controls row; visible only while busy (see
         # _update_action_enablement). It routes through the base's single cancel
         # entry point, which cancels the live TaskWorker cooperatively.
         self._cancel_btn = QPushButton("Cancel")
         self._cancel_btn.setVisible(False)
         self._cancel_btn.clicked.connect(self._cancel_current_analysis)
-        self._controls_row.insertWidget(6, self._cancel_btn)
+        self._controls_row.insertWidget(8, self._cancel_btn)
         self._controls_row.addStretch()
 
         self._scope_tab = QWidget()
@@ -874,6 +897,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
         metric = SelectionMetric.from_value(self._metric_combo.currentText())
         selected_keys = tuple(sorted(self._screening_selected_keys)) if mode == "optimize" else ()
         scope_payload = copy.deepcopy(self._scope_selector.current_scope())
+        effort_tier = self.current_effort_tier()
 
         def task(worker):
             return _run_global_fit_wizard_analysis(
@@ -888,6 +912,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
                 metric=metric,
                 selected_template_keys=selected_keys,
                 scope=scope_payload,
+                effort_tier=effort_tier,
             )
 
         return task
@@ -987,6 +1012,8 @@ class GlobalFitWizardWindow(WizardWindowBase):
         signature_dict = signature if isinstance(signature, dict) else {}
         cached_scope = signature_dict.get("scope")
         self._scope_selector.set_scope(cached_scope if isinstance(cached_scope, dict) else None)
+        # Legacy signatures without an "effort_tier" key restore as Balanced.
+        self._set_effort_tier(effort_tier_from_payload(signature_dict.get("effort_tier")))
         self._analysis_stale = False
         self._stale_banner.setVisible(False)
         self._metric_combo.blockSignals(True)
@@ -995,6 +1022,26 @@ class GlobalFitWizardWindow(WizardWindowBase):
         self._status_label.setText(status_text or recommendation.summary)
         self._set_busy(False)
         self._populate_from_recommendation()
+
+    def current_effort_tier(self) -> EffortTier:
+        """The effort tier currently selected on the slider (default Balanced)."""
+        return effort_tier_from_payload(self._effort_combo.currentData())
+
+    def _set_effort_tier(self, tier: EffortTier) -> None:
+        index = self._effort_combo.findData(tier.value)
+        if index < 0:
+            return
+        self._effort_combo.blockSignals(True)
+        self._effort_combo.setCurrentIndex(index)
+        self._effort_combo.blockSignals(False)
+        self._effort_combo.setToolTip(EFFORT_TIER_DESCRIPTIONS[tier])
+
+    def _on_effort_tier_changed(self, _index: int) -> None:
+        tier = self.current_effort_tier()
+        self._effort_combo.setToolTip(EFFORT_TIER_DESCRIPTIONS[tier])
+        # A different effort tier changes which fits the next analysis run would
+        # perform, so any already-shown results are stale — mirrors _on_scope_changed.
+        self._mark_analysis_stale("Effort level changed")
 
     def _analysis_signature(self) -> dict[str, object]:
         return {
@@ -1007,6 +1054,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
                 for key, bounds in self._parameter_bounds.items()
             },
             "scope": self._scope_selector.current_scope(),
+            "effort_tier": self.current_effort_tier().value,
         }
 
     def _prompt_parameter_setup(
