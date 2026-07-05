@@ -15,12 +15,18 @@ invocation, and (c) stay under **~10 minutes wall** with a hard timeout guard.
 ## Keeping it under 10 minutes — the design
 
 1. **Freeze the baseline once, cache it.** Run full Exhaustive on the case set a
-   single time, serialise verdicts + ICs + fit counts to `baseline/*.json`
-   (reuse `serialize_global_fit_wizard_recommendation`), commit them. Every
-   later run loads the frozen baseline and runs **only the candidate config**,
-   diffing against the cached verdicts. Re-freeze only when the winning-model
-   physics changes — guard with a git-SHA + case-hash check that *warns on
-   drift* rather than silently re-running Exhaustive.
+   single time, serialise a **compact extracted-verdict snapshot** — the
+   per-parameter global/local role map, the winning template key, the ICs, and
+   the Minuit fit/feval counts — to `baseline/*.json`, commit them. (This is a
+   compact extractor, **not** `serialize_global_fit_wizard_recommendation`: the
+   full serializer embeds `fitted_curves_by_run` / `component_curves_by_run`,
+   large per-run float arrays that do not diff stably across BLAS/platforms, so
+   the baseline would be huge and fragile. Storing only the diffable fields
+   keeps the frozen artifact small and cross-platform stable.) Every later run
+   loads the frozen baseline and runs **only the candidate config**, diffing
+   against the cached verdicts. Re-freeze only when the winning-model physics
+   changes — guard with a git-SHA + case-hash check that *warns on drift* rather
+   than silently re-running Exhaustive.
 
 2. **Small cases only — the matrix, not realism.** Target the code paths, not
    corpus fidelity:
@@ -52,9 +58,11 @@ invocation, and (c) stay under **~10 minutes wall** with a hard timeout guard.
 ## Synthetic generator
 
 Plant ground-truth roles by construction: pick globals (identical value across
-all G members) and locals (values drawn along a smooth scan), add Poisson-
-appropriate noise at a realistic count level, and record the intended verdict
-per parameter. This gives the harness a *second* correctness signal beyond
+all G members) and locals (values drawn along a smooth scan), add **additive
+Gaussian noise in asymmetry space at a fixed per-point sigma** (matching the
+uniform `error` array the datasets carry), with **pinned per-group RNG seeds**
+so every draw is reproducible, and record the intended verdict per parameter.
+This gives the harness a *second* correctness signal beyond
 "agrees with frozen Exhaustive": "recovers planted truth". Keep the generator in
 the harness module, not in `core` (study scaffolding, not shipped behaviour).
 

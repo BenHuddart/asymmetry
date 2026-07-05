@@ -16,10 +16,13 @@ after PR 1 reports its `test-data.md` harness numbers in its description.
   later technique is measured against.
 - **Files/functions.** New harness entrypoint under `tools/` (or
   `tests/tools/`), a cached `baseline/` of frozen Exhaustive verdicts, a small
-  synthetic generator with known ground-truth roles. Reuses
-  `serialize_/deserialize_global_fit_wizard_recommendation`
-  (global_fit_wizard.py ~1843) for stable snapshots and
-  `build_global_fit_wizard_recommendation` (~1379) as the entry.
+  synthetic generator with known ground-truth roles. Uses
+  `build_global_fit_wizard_recommendation` (~1379) as the entry, and stores a
+  **compact extracted-verdict snapshot** (role map + winning template key + ICs
+  + fit counts) rather than `serialize_global_fit_wizard_recommendation`: the
+  full serializer embeds per-run curve float arrays (`fitted_curves_by_run` /
+  `component_curves_by_run`) that don't diff stably across BLAS/platforms, so
+  the compact form keeps the baseline small and cross-platform stable.
 - **Full harness spec is in `test-data.md`** (including the under-10-min design).
 - **Acceptance for PR 1 itself:** running it on *current main Exhaustive*
   reproduces the frozen baseline at 100 % agreement (the harness agrees with

@@ -391,6 +391,91 @@ def test_overall_wall_guard_stops_launching_further_cases(
 
 
 # --------------------------------------------------------------------------- #
+# CLI guards: schema-version validation + freeze exit code
+# --------------------------------------------------------------------------- #
+
+
+def test_compare_baseline_rejects_schema_version_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A baseline whose schema_version differs from the harness fails fast with
+    a clear error rather than silently emitting empty agreement fields."""
+
+    stale = {
+        "schema_version": harness.BASELINE_SCHEMA_VERSION + 99,
+        "git_sha": "deadbeef",
+        "generation_date": "2026-01-01",
+        "tier": "exhaustive",
+        "cases": {},
+    }
+    # The committed baseline file exists, so the exists() guard passes; inject a
+    # stale-versioned payload via load_baseline.
+    assert harness._BASELINE_PATH.exists()
+    monkeypatch.setattr(harness, "load_baseline", lambda *a, **k: stale)
+    # If validation is skipped this would spawn real wizards; fail loudly instead.
+    monkeypatch.setattr(
+        harness,
+        "run_harness",
+        lambda *a, **k: pytest.fail("run_harness must not run on a schema mismatch"),
+    )
+
+    rc = harness.main(["--tier", "exhaustive", "--compare-baseline"])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "schema_version" in err
+
+
+def test_freeze_returns_nonzero_when_a_case_is_not_ok(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--freeze with any TIMEOUT/ERROR case writes the (incomplete) baseline but
+    exits non-zero so it is not committed by accident."""
+
+    written: dict[str, object] = {}
+
+    def _fake_isolated(case, tier, *, timeout_s):  # noqa: ANN001, ARG001
+        # First case OK, the rest TIMEOUT, to prove the failure signal.
+        if case.case_id.startswith("pure_global"):
+            return {
+                "status": "OK",
+                "verdict": {"template_key": "exp_constant", "roles": {}, "aicc": 1.0},
+                "wall_s": 0.1,
+                "minuit_fits": 1,
+                "minuit_fevals": 1,
+            }
+        return {"status": "TIMEOUT", "wall_s": timeout_s}
+
+    monkeypatch.setattr(harness, "run_case_isolated", _fake_isolated)
+    monkeypatch.setattr(harness, "write_baseline", lambda payload, *a, **k: written.update(payload))
+
+    rc = harness.main(["--freeze"])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "INCOMPLETE" in err
+    # The baseline was still written for inspection.
+    assert written.get("cases")
+
+
+def test_freeze_returns_zero_when_all_cases_ok(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _fake_isolated(case, tier, *, timeout_s):  # noqa: ANN001, ARG001
+        return {
+            "status": "OK",
+            "verdict": {"template_key": "exp_constant", "roles": {}, "aicc": 1.0},
+            "wall_s": 0.1,
+            "minuit_fits": 1,
+            "minuit_fevals": 1,
+        }
+
+    monkeypatch.setattr(harness, "run_case_isolated", _fake_isolated)
+    monkeypatch.setattr(harness, "write_baseline", lambda *a, **k: None)
+    assert harness.main(["--freeze"]) == 0
+
+
+# --------------------------------------------------------------------------- #
 # Slow: the real Exhaustive-vs-baseline self-check (full tier / opt-in only)
 # --------------------------------------------------------------------------- #
 

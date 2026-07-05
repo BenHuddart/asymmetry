@@ -21,9 +21,10 @@ Design notes (see ``docs/porting/global-fit-wizard-efficiency/test-data.md``):
 * **Under-10-min guard.** Each case runs in its *own* subprocess with a per-case
   timeout and a hard overall wall guard. On a per-case breach the case reports
   ``TIMEOUT`` and the harness continues — it never blocks. The wizard opens its
-  own ``ProcessPoolExecutor`` internally, so on timeout the case subprocess's
-  whole process tree is walked (``pgrep -P``) and signalled to reap the
-  grandchild pool workers.
+  own ``ProcessPoolExecutor`` internally, so the case subprocess makes itself a
+  session/process-group leader and on timeout the *whole group* is reaped in one
+  shot (``os.killpg`` on POSIX, ``taskkill /F /T`` on Windows) — the grandchild
+  pool workers die with it, no orphans.
 * **Effort tiers.** ``--tier {low,balanced,thorough,exhaustive}`` selects a
   wizard-configuration callable. The tiers do not exist in the wizard yet (they
   arrive in PR 5); for now every tier aliases the current Exhaustive behaviour,
@@ -401,8 +402,15 @@ def _case_worker(case: SyntheticCase, tier: str, out_queue: mp.Queue[dict[str, o
 
     Runs in a *child* process so a hung fit can be killed without taking the
     harness down. Only picklable primitives cross the boundary.
+
+    On POSIX the child makes itself a new **session/process-group leader**
+    (``os.setsid``) *before* the wizard spawns its ``ProcessPoolExecutor``, so
+    every grandchild pool worker inherits this group and the parent can reap the
+    whole group with a single ``os.killpg`` on timeout. (``mp.Process`` has no
+    ``start_new_session`` flag, so the child sets the group itself.)
     """
 
+    _become_group_leader()
     try:
         datasets = _build_case_datasets(case)
         config = TIER_CONFIGS[tier]
@@ -441,13 +449,15 @@ def run_case_isolated(
     *,
     timeout_s: float,
 ) -> dict[str, object]:
-    """Run one case in its own process group; kill the group on timeout.
+    """Run one case in its own session/process group; kill the group on timeout.
 
     The wizard opens its own ``ProcessPoolExecutor`` inside the child, so a bare
-    ``child.terminate()`` would orphan the grandchild pool workers. On timeout we
-    walk the process tree (``pgrep -P``) and signal every descendant so the pool
-    workers are reaped too. Returns a report dict; on breach
-    ``status == "TIMEOUT"`` and the harness continues.
+    ``child.terminate()`` would orphan the grandchild pool workers. The child
+    makes itself a session/group leader (:func:`_become_group_leader`), so on
+    timeout the *whole group* is reaped in one shot — ``os.killpg`` on POSIX,
+    ``taskkill /F /T`` on Windows (which has no process groups / ``pgrep``).
+    Returns a report dict; on breach ``status == "TIMEOUT"`` and the harness
+    continues.
     """
 
     ctx = mp.get_context("spawn")
@@ -457,75 +467,84 @@ def run_case_isolated(
 
     proc.join(timeout_s)
     if proc.is_alive():
-        _kill_process_tree(proc.pid)
+        _kill_process_group(proc.pid)
         proc.join(10.0)
         if proc.is_alive():
             proc.kill()
             proc.join(5.0)
+        _drain_queue(out_queue)
         return {"status": "TIMEOUT", "wall_s": timeout_s}
 
+    # The child has exited, but its queue-feeder thread may still be flushing the
+    # payload: use a short blocking get rather than get_nowait so a slow delivery
+    # is not mis-reported as "no result".
     try:
-        result = out_queue.get_nowait()
-    except Exception:  # noqa: BLE001
-        return {
-            "status": "ERROR",
-            "error": "case subprocess produced no result",
-        }
+        result = out_queue.get(timeout=30.0)
+    except Exception:  # noqa: BLE001 — empty/broken queue after a clean exit
+        result = {"status": "ERROR", "error": "case subprocess produced no result"}
+    _drain_queue(out_queue)
     return result
 
 
-def _kill_process_tree(pid: int) -> None:
-    """Kill *pid* and all its descendants (the wizard's pool workers)."""
+def _drain_queue(out_queue: mp.Queue[dict[str, object]]) -> None:
+    """Best-effort close the queue and join its feeder so no threads linger."""
 
-    pids = _descendant_pids(pid) + [pid]
-    for target in pids:
-        _signal_pid(target, "SIGTERM")
-    time.sleep(0.5)
-    for target in pids:
-        _signal_pid(target, "SIGKILL")
-
-
-def _descendant_pids(pid: int) -> list[int]:
-    """Return descendant PIDs of *pid* via ``pgrep -P`` (POSIX)."""
-
-    found: list[int] = []
-    frontier = [pid]
-    seen: set[int] = set()
-    while frontier:
-        parent = frontier.pop()
-        if parent in seen:
-            continue
-        seen.add(parent)
-        try:
-            out = subprocess.run(
-                ["pgrep", "-P", str(parent)],
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=5.0,
-            )
-        except (OSError, subprocess.SubprocessError):
-            continue
-        for line in out.stdout.split():
-            try:
-                child = int(line)
-            except ValueError:
-                continue
-            found.append(child)
-            frontier.append(child)
-    return found
+    try:
+        out_queue.close()
+        out_queue.join_thread()
+    except Exception:  # noqa: BLE001
+        pass
 
 
-def _signal_pid(pid: int, signal_name: str) -> None:
-    import signal as signal_module
+def _become_group_leader() -> None:
+    """Make the current process a new session/process-group leader (POSIX).
 
-    sig = getattr(signal_module, signal_name, None)
-    if sig is None:
+    Called at the top of the child worker so the wizard's pool workers inherit
+    the group and can be reaped group-wide. No-op on Windows (no ``setsid``).
+    """
+
+    setsid = getattr(os, "setsid", None)
+    if setsid is None:
         return
     try:
-        os.kill(pid, sig)
-    except (OSError, ProcessLookupError):
+        setsid()
+    except OSError:
         pass
+
+
+def _kill_process_group(pid: int) -> None:
+    """Kill *pid* and every process in its group / tree, cross-platform."""
+
+    if sys.platform == "win32":
+        # Windows has no process groups or pgrep; taskkill /T kills the tree.
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(pid)],
+                capture_output=True,
+                check=False,
+                timeout=10.0,
+            )
+        except (OSError, subprocess.SubprocessError):
+            pass
+        return
+
+    import signal as signal_module
+
+    # The child called setsid(), so its pgid == its pid; signal the whole group.
+    for sig_name in ("SIGTERM", "SIGKILL"):
+        sig = getattr(signal_module, sig_name, None)
+        if sig is None:
+            continue
+        try:
+            os.killpg(os.getpgid(pid), sig)
+        except (OSError, ProcessLookupError):
+            # Fall back to signalling the single pid if the group is already gone.
+            try:
+                os.kill(pid, sig)
+            except (OSError, ProcessLookupError):
+                pass
+        if sig_name == "SIGTERM":
+            time.sleep(0.5)
 
 
 # --------------------------------------------------------------------------- #
@@ -989,15 +1008,27 @@ def main(argv: Sequence[str] | None = None) -> int:
             generation_date=generation_date,
         )
         write_baseline(payload)
-        n_ok = sum(
-            1
-            for entry in payload["cases"].values()  # type: ignore[union-attr]
-            if isinstance(entry, dict) and entry.get("status") == "OK"
-        )
+        case_entries = [entry for entry in payload["cases"].values() if isinstance(entry, dict)]
+        non_ok = [entry for entry in case_entries if entry.get("status") != "OK"]
+        n_ok = len(case_entries) - len(non_ok)
         print(
             f"Wrote baseline to {_BASELINE_PATH} "
             f"({n_ok}/{len(cases)} cases OK, git {payload['git_sha'][:8]})."
         )
+        if non_ok:
+            # A non-OK case means the baseline is incomplete: signal failure so
+            # an incomplete baseline is not committed by accident (it is still
+            # written for inspection).
+            statuses = ", ".join(
+                f"{entry.get('provenance', {}).get('case_id', '?')}={entry.get('status')}"
+                for entry in non_ok
+            )
+            print(
+                f"error: {len(non_ok)} case(s) did not complete cleanly ({statuses}); "
+                "the frozen baseline is INCOMPLETE — do not commit it.",
+                file=sys.stderr,
+            )
+            return 1
         return 0
 
     baseline: dict[str, object] | None = None
@@ -1009,6 +1040,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return 2
         baseline = load_baseline()
+        version = baseline.get("schema_version")
+        if version != BASELINE_SCHEMA_VERSION:
+            print(
+                f"error: frozen baseline schema_version={version!r} does not match "
+                f"the harness (expected {BASELINE_SCHEMA_VERSION}); re-freeze with "
+                "--freeze before comparing.",
+                file=sys.stderr,
+            )
+            return 2
 
     report = run_harness(
         cases,
