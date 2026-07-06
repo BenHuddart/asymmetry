@@ -2009,9 +2009,16 @@ class TestMainWindowFourier:
 class TestMainWindowBasic:
     def test_initialization(self, mainwindow: MainWindow) -> None:
         """Test mainwindow initializes correctly."""
+        from asymmetry.gui.mainwindow import _INSPECTOR_DOCK_MIN_CHARS
+        from asymmetry.gui.styles import metrics
+
         assert mainwindow is not None
         assert mainwindow.windowTitle() != ""
-        assert mainwindow._dock_fourier.minimumWidth() == 236
+        # Dock minimum widths are font-metric-derived (char-based), not a fixed
+        # pixel literal, so they track the UI-scale setting.
+        assert mainwindow._dock_fourier.minimumWidth() == metrics.char_width(
+            _INSPECTOR_DOCK_MIN_CHARS
+        )
 
     def test_perf_logging_reports_selection_and_fourier_when_enabled(
         self,

@@ -1,30 +1,44 @@
-"""Centralized UI policy for layout density, scaling, and panel visibility."""
+"""Centralized UI policy for font-driven zoom and panel visibility.
+
+The UI-scale mechanism is deliberately *font-driven* rather than per-widget
+tracked. A scale change is exactly three publish steps:
+
+1. Publish the scale to the font builders (:func:`set_ui_font_scale`) so any
+   widget *built after* the change (dialogs, wizards, rebuilt sections) is born
+   at the active scale.
+2. Set the ``QApplication`` font to ``base × scale`` so every widget inheriting
+   the application font re-scales live (the baseline font is cached on a
+   QApplication dynamic property so repeated MainWindow construction never
+   compounds the multiplier).
+3. Regenerate one scale-derived QSS block appended to the cached base
+   stylesheet. The block carries the scaled *chrome* font sizes
+   (``#benchSectionHeader``, ``QHeaderView::section``, ``QGroupBox::title``,
+   ``QDockWidget::title``) so existing chrome widgets — which set an explicit
+   font that ignores the application font — re-scale live too. A size-only QSS
+   ``font-size`` rule is merged onto the widget's existing font, so the
+   builders' weight/letter-spacing/family survive and the two agree.
+
+Widgets whose fonts QSS cannot reach — per-item ``QTableWidgetItem.setFont``
+cells and explicit-mono panel fonts — re-derive their fonts from the builders on
+the :attr:`UIManager.ui_scale_changed` signal, in the *owning* widget. There is
+no central per-widget tracking layer.
+"""
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
 
 from PySide6.QtCore import QObject, QSettings, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QFont
+from PySide6.QtGui import QAction, QFont, QFontMetrics
 from PySide6.QtWidgets import (
     QApplication,
     QDockWidget,
-    QLayout,
     QMainWindow,
-    QTableWidget,
-    QToolBar,
-    QWidget,
 )
 
 from asymmetry.gui.styles import tokens, typography
 from asymmetry.gui.styles.fonts import set_ui_font_scale
-
-#: QFont resolve-mask bit set when a font's point size is assigned explicitly
-#: (Qt's ``QFont::SizeResolved``). Used to re-scale only the chrome/value fonts
-#: that opted out of the inherited (already-scaled) application font.
-_FONT_SIZE_RESOLVE_BIT = 0x2
+from asymmetry.gui.styles.widgets import SECTION_HEADER_OBJECT_NAME
 
 COMPACT_MODE_SETTINGS_KEY = "ui/compact_mode"
 UI_SCALE_SETTINGS_KEY = "ui/scale"
@@ -40,7 +54,6 @@ _APP_BASE_STYLESHEET_PROP = "_asymmetry_base_stylesheet"
 _APP_BASE_FONT_PROP = "_asymmetry_base_font"
 
 _DEFAULT_UI_SCALE = 0.9
-_DEFAULT_TOOLBAR_ICON_SIZE = QSize(16, 16)
 _RESOURCE_DIR = Path(__file__).resolve().parents[1] / "resources"
 _SPIN_UP_ARROW_ICON = (_RESOURCE_DIR / "spin_up_arrow.svg").as_posix()
 _SPIN_DOWN_ARROW_ICON = (_RESOURCE_DIR / "spin_down_arrow.svg").as_posix()
@@ -48,7 +61,7 @@ _CHECKMARK_ICON = (_RESOURCE_DIR / "checkmark.svg").as_posix()
 
 
 class UIManager(QObject):
-    """Own UI density, scaling, and visibility behavior for the main window."""
+    """Own UI scaling and panel visibility behavior for the main window."""
 
     ui_scale_changed = Signal(float, float)
 
@@ -65,13 +78,6 @@ class UIManager(QObject):
         self._dock_fourier = getattr(main_window, "_dock_fourier")
         self._dock_fit_parameters = getattr(main_window, "_dock_fit_parameters")
         self._dock_log = getattr(main_window, "_dock_log")
-
-        self._data_browser = getattr(main_window, "_data_browser")
-        self._fit_panel = getattr(main_window, "_fit_panel")
-        self._fourier_panel = getattr(main_window, "_fourier_panel")
-        self._fit_parameters_panel = getattr(main_window, "_fit_parameters_panel")
-        self._log_panel = getattr(main_window, "_log_panel")
-        self._plot_panel = getattr(main_window, "_plot_panel")
 
         self._main_toolbar = getattr(main_window, "_main_toolbar")
         self._ui_scale_actions: dict[float, QAction] = dict(
@@ -94,14 +100,6 @@ class UIManager(QObject):
             self._base_stylesheet = ""
         self._base_font_size = self._resolve_font_point_size(self._base_font)
 
-        self._tracked_layouts = self._collect_layout_metrics()
-        self._tracked_tables = self._collect_table_metrics()
-        self._tracked_minimum_sizes = self._collect_minimum_size_metrics()
-        self._tracked_toolbars = self._collect_toolbar_metrics()
-        # Captured before any scale is applied (font builders are at design size),
-        # so the recorded base sizes are the canonical 1.0-scale type scale.
-        self._tracked_fonts = self._collect_font_metrics()
-
     def restore_settings(self) -> None:
         """Restore persisted UI scale preferences and clear legacy compact-mode state."""
         self.ui_scale = _coerce_scale(
@@ -117,7 +115,7 @@ class UIManager(QObject):
             action.triggered.connect(lambda checked=False, s=scale: self.set_ui_scale(s))
 
     def set_ui_scale(self, scale: float) -> None:
-        """Set the persisted base UI scale and reapply effective metrics."""
+        """Set the persisted base UI scale and reapply the effective font/stylesheet."""
         next_scale = _coerce_scale(scale, default=self.ui_scale)
         if abs(next_scale - self.ui_scale) < 1e-9:
             self.apply_ui_scale()
@@ -136,9 +134,17 @@ class UIManager(QObject):
         self.set_ui_scale(self._adjacent_scale(step=-1))
 
     def apply_ui_scale(self) -> None:
-        """Apply effective font, stylesheet, layout, and widget metrics."""
-        # Publish the scale so font builders (chrome + value fonts) size newly
-        # built widgets at the active scale; existing ones are re-scaled below.
+        """Apply the effective UI scale via the three font-driven publish steps.
+
+        1. Publish to the font builders so newly built widgets are born at scale.
+        2. Set the application font to ``base × scale`` (existing inherited fonts
+           re-scale live). The app font is set *before* the signal is emitted so
+           owner hooks that read ``styles.metrics`` (which measures the live app
+           font) see the new size.
+        3. Regenerate the scale QSS block appended to the cached base stylesheet
+           so explicit-font chrome (dock/section headers, table headers,
+           group-box titles) re-scales live.
+        """
         set_ui_font_scale(self.effective_scale)
         if self._app is not None:
             font = QFont(self._base_font)
@@ -153,14 +159,23 @@ class UIManager(QObject):
             if self._app.styleSheet() != stylesheet:
                 self._app.setStyleSheet(stylesheet)
 
-        self._apply_toolbar_metrics(self.effective_scale)
-        self._apply_layout_metrics(self.effective_scale)
-        self._apply_table_metrics(self.effective_scale)
-        self._apply_minimum_size_metrics(self.effective_scale)
-        self._apply_font_metrics(self.effective_scale)
-
+        self._apply_toolbar_icon_size()
         self._sync_scale_controls()
         self.ui_scale_changed.emit(self.ui_scale, self.effective_scale)
+
+    def _apply_toolbar_icon_size(self) -> None:
+        """Size the main toolbar's icons from the live application font.
+
+        Derived once from the current font's line height (no per-widget capture
+        list): icons that read as ~one text line tall track the UI scale for
+        free, so a bigger zoom yields proportionally bigger tool icons.
+        """
+        toolbar = self._main_toolbar
+        if toolbar is None:
+            return
+        line = QFontMetrics(self._app.font() if self._app is not None else QFont()).height()
+        side = max(12, round(line * 0.9))
+        toolbar.setIconSize(QSize(side, side))
 
     @property
     def effective_scale(self) -> float:
@@ -212,7 +227,15 @@ class UIManager(QObject):
         QTimer.singleShot(0, self._window, self._window._apply_default_dock_widths)
 
     def build_stylesheet(self, scale: float) -> str:
-        """Return the global stylesheet block for the requested scale."""
+        """Return the global stylesheet block for the requested scale.
+
+        Carries the scaled chrome font sizes so explicit-font chrome widgets —
+        which set a font that ignores the application font — re-scale live. Only
+        ``font-size`` is set on those selectors so the builders' weight,
+        letter-spacing, and (mono) family survive Qt's per-property merge; the
+        size is single-sourced from the typography type scale, so the QSS and the
+        Python builders can never drift.
+        """
         button_padding_v = max(2, round(4 * scale))
         button_padding_h = max(4, round(8 * scale))
         input_padding_v = max(2, round(3 * scale))
@@ -225,8 +248,8 @@ class UIManager(QObject):
         indicator_size = max(14, round(15 * scale))
         indicator_radius = max(2, round(3 * scale))
         # Chrome font-size single-sourced from the typography type scale (rather
-        # than the px/pt literals that used to live in bench.qss) and scaled so
-        # dock titles, table headers, and group-box titles track the UI scale.
+        # than px/pt literals) and scaled so section/table/group/dock headers
+        # track the UI scale on already-built widgets.
         header_pt = round(typography.SIZE_HEADER * scale, 2)
         t = tokens
         return f"""
@@ -293,6 +316,9 @@ QComboBox::down-arrow {{
 QTableWidget::item {{
     padding: {table_padding_v}px {table_padding_h}px;
 }}
+QLabel#{SECTION_HEADER_OBJECT_NAME} {{
+    font-size: {header_pt}pt;
+}}
 QDockWidget::title {{
     font-size: {header_pt}pt;
 }}
@@ -358,8 +384,6 @@ QAbstractItemView::indicator:disabled {{
         }
 
     def _sync_scale_controls(self) -> None:
-        if not self._ui_scale_actions:
-            pass
         for scale, action in self._ui_scale_actions.items():
             action.blockSignals(True)
             action.setChecked(abs(scale - self.ui_scale) < 1e-9)
@@ -382,206 +406,6 @@ QAbstractItemView::indicator:disabled {{
         if point_size_int > 0:
             return float(point_size_int)
         return 12.0
-
-    def _collect_layout_metrics(self) -> list[tuple[QLayout, int, tuple[int, int, int, int]]]:
-        tracked: list[tuple[QLayout, int, tuple[int, int, int, int]]] = []
-        seen: set[int] = set()
-        for widget in self._widgets_for_metric_scan():
-            if widget is None:
-                continue
-            if widget.layout() is not None:
-                self._append_layout_metric(widget.layout(), tracked, seen)
-            for layout in widget.findChildren(QLayout):
-                self._append_layout_metric(layout, tracked, seen)
-        return tracked
-
-    def _append_layout_metric(
-        self,
-        layout: QLayout,
-        tracked: list[tuple[QLayout, int, tuple[int, int, int, int]]],
-        seen: set[int],
-    ) -> None:
-        key = id(layout)
-        if key in seen:
-            return
-        seen.add(key)
-        margins = layout.contentsMargins()
-        tracked.append(
-            (
-                layout,
-                layout.spacing(),
-                (margins.left(), margins.top(), margins.right(), margins.bottom()),
-            )
-        )
-
-    def _collect_table_metrics(self) -> list[tuple[QTableWidget, int]]:
-        tables: list[tuple[QTableWidget, int]] = []
-        for table in self._tables_for_metric_scan():
-            if table is None:
-                continue
-            base_height = table.verticalHeader().defaultSectionSize()
-            tables.append((table, max(22, base_height)))
-        return tables
-
-    def _collect_minimum_size_metrics(self) -> list[tuple[Any, int, int]]:
-        tracked: list[tuple[Any, int, int]] = []
-        widgets = [
-            self._dock_data_browser,
-            self._dock_fit,
-            self._dock_fourier,
-            self._dock_fit_parameters,
-            self._dock_log,
-            self._data_browser,
-            getattr(self._plot_panel, "_projection_bar", None),
-            getattr(self._fit_parameters_panel, "_y_selector_table", None),
-        ]
-        for widget in widgets:
-            if widget is None:
-                continue
-            tracked.append((widget, widget.minimumWidth(), widget.minimumHeight()))
-        return tracked
-
-    def _collect_toolbar_metrics(self) -> list[tuple[QToolBar, QSize]]:
-        tracked: list[tuple[QToolBar, QSize]] = []
-        for toolbar in (self._main_toolbar,):
-            icon_size = toolbar.iconSize()
-            if not icon_size.isValid() or icon_size.isEmpty():
-                icon_size = QSize(_DEFAULT_TOOLBAR_ICON_SIZE)
-            tracked.append((toolbar, icon_size))
-        return tracked
-
-    def _collect_font_metrics(self) -> list[tuple[QWidget, float]]:
-        """Record widgets with an explicitly-sized font and their design base size.
-
-        Chrome and value fonts (headers, dock titles, status bar, table cells,
-        formula boxes) opt out of the inherited application font by setting an
-        explicit point size, so the app-font scaling alone leaves them fixed
-        while the body scales. Capturing them here lets _apply_font_metrics
-        re-scale them from their canonical (1.0-scale) base on every scale
-        change, keeping chrome and body consistent (P1-4). Widgets whose size is
-        inherited (resolve-mask size bit clear) are skipped — those already
-        scale via the application font.
-        """
-        tracked: list[tuple[QWidget, float]] = []
-        seen: set[int] = set()
-        for root in self._widgets_for_metric_scan():
-            if root is None:
-                continue
-            candidates = [root, *root.findChildren(QWidget)]
-            for widget in candidates:
-                key = id(widget)
-                if key in seen:
-                    continue
-                seen.add(key)
-                font = widget.font()
-                size = font.pointSizeF()
-                if size > 0 and (font.resolveMask() & _FONT_SIZE_RESOLVE_BIT):
-                    tracked.append((widget, size))
-        return tracked
-
-    def _apply_font_metrics(self, scale: float) -> None:
-        valid: list[tuple[QWidget, float]] = []
-        for widget, base_size in self._tracked_fonts:
-            try:
-                font = widget.font()
-                font.setPointSizeF(max(6.0, base_size * scale))
-                widget.setFont(font)
-            except RuntimeError:
-                continue
-            valid.append((widget, base_size))
-        self._tracked_fonts = valid
-
-    def _apply_layout_metrics(self, scale: float) -> None:
-        valid_layouts: list[tuple[QLayout, int, tuple[int, int, int, int]]] = []
-        for layout, spacing, margins in self._tracked_layouts:
-            try:
-                if spacing >= 0:
-                    layout.setSpacing(max(0, round(spacing * scale)))
-                layout.setContentsMargins(
-                    max(0, round(margins[0] * scale)),
-                    max(0, round(margins[1] * scale)),
-                    max(0, round(margins[2] * scale)),
-                    max(0, round(margins[3] * scale)),
-                )
-            except RuntimeError:
-                continue
-            valid_layouts.append((layout, spacing, margins))
-        self._tracked_layouts = valid_layouts
-
-    def _apply_table_metrics(self, scale: float) -> None:
-        row_height = max(22, round(26 * scale))
-        valid_tables: list[tuple[QTableWidget, int]] = []
-        for table, base_height in self._tracked_tables:
-            try:
-                table.verticalHeader().setDefaultSectionSize(
-                    max(row_height, round(base_height * scale))
-                )
-            except RuntimeError:
-                continue
-            valid_tables.append((table, base_height))
-        self._tracked_tables = valid_tables
-
-    def _apply_minimum_size_metrics(self, scale: float) -> None:
-        valid_widgets: list[tuple[Any, int, int]] = []
-        for widget, min_width, min_height in self._tracked_minimum_sizes:
-            try:
-                if min_width > 0:
-                    widget.setMinimumWidth(max(1, round(min_width * scale)))
-                if min_height > 0:
-                    widget.setMinimumHeight(max(1, round(min_height * scale)))
-            except RuntimeError:
-                continue
-            valid_widgets.append((widget, min_width, min_height))
-        self._tracked_minimum_sizes = valid_widgets
-
-    def _apply_toolbar_metrics(self, scale: float) -> None:
-        valid_toolbars: list[tuple[QToolBar, QSize]] = []
-        for toolbar, base_icon_size in self._tracked_toolbars:
-            try:
-                toolbar.setIconSize(
-                    QSize(
-                        max(12, round(base_icon_size.width() * scale)),
-                        max(12, round(base_icon_size.height() * scale)),
-                    )
-                )
-            except RuntimeError:
-                continue
-            valid_toolbars.append((toolbar, base_icon_size))
-        self._tracked_toolbars = valid_toolbars
-
-    def _widgets_for_metric_scan(self) -> Sequence[Any]:
-        return (
-            self._window,
-            self._plot_panel,
-            self._data_browser,
-            self._fit_panel,
-            self._fit_parameters_panel,
-            self._fourier_panel,
-            self._log_panel,
-        )
-
-    def _tables_for_metric_scan(self) -> Sequence[QTableWidget | None]:
-        return (
-            getattr(self._data_browser, "_table", None),
-            getattr(getattr(self._fit_panel, "_single_tab", None), "_param_table", None),
-            getattr(getattr(self._fit_panel, "_global_tab", None), "_param_table", None),
-            getattr(self._fit_parameters_panel, "_y_selector_table", None),
-            getattr(self._fit_parameters_panel, "_table", None),
-        )
-
-
-def _coerce_bool(value: object, default: bool = False) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        token = value.strip().lower()
-        if token in {"1", "true", "yes", "on"}:
-            return True
-        if token in {"0", "false", "no", "off"}:
-            return False
-    if value is None:
-        return default
-    return bool(value)
 
 
 def _coerce_scale(value: object, default: float = 1.0) -> float:
