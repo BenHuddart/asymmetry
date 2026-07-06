@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Grouping Apply no longer skips a run without saying why.** Applying a
+  full-instrument preset to a file that exports only some of the instrument's
+  detectors — e.g. a HAL-9500 **Longitudinal** or **Per-octant** preset on a
+  forward-ring-only PSI `.mdu` run (`MV, F1…F8`, no backward ring) — used to
+  report "Applied grouping to 0 dataset(s); skipped 1" with no explanation,
+  leaving the run's grouping unchangeable. The Apply report now names the
+  missing detectors, the group that referenced them, and the run's detector
+  count, in both the LOG and the status bar, and points to a matching preset.
+  The forward-ring **Transverse (opposed pairs)** preset applies to these files
+  as before.
+
 ## [0.7.0] - 2026-07-06
 
 ### Changed
