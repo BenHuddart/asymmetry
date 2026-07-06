@@ -372,13 +372,35 @@ def main(argv: list[str] | None = None) -> int:
     ctx = CaptureContext(output_dir=args.out, device_pixel_ratio=args.dpr)
 
     captured_paths: list[Path] = []
+    failed: list[str] = []
     for name, scenario in selected.items():
         print(f"[screenshots] capturing {name}...", flush=True)
         _t0 = time.monotonic()
-        path = scenario.capture(ctx)
+        # One broken scenario must not blank out every scenario after it: a
+        # raised exception here used to abort the whole run, and with
+        # `continue-on-error: true` on the CI step the deploy then silently
+        # published a mostly-imageless site. Capture the traceback, carry on,
+        # and fail the run at the end instead.
+        try:
+            path = scenario.capture(ctx)
+        except Exception:
+            import traceback
+
+            traceback.print_exc()
+            print(f"[screenshots] FAILED {name}", file=sys.stderr, flush=True)
+            failed.append(name)
+            continue
         _elapsed = time.monotonic() - _t0
         print(f"[screenshots] wrote {path} ({_elapsed:.1f}s)", flush=True)
         captured_paths.append(path)
+
+    if failed:
+        print(
+            f"[screenshots] {len(failed)} scenario(s) failed: {', '.join(failed)}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 1
 
     oversized = _oversized_paths(captured_paths, SCREENSHOT_SIZE_BUDGET_BYTES)
     if oversized:

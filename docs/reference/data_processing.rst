@@ -171,7 +171,7 @@ errors: fixed-background subtraction keeps Poisson errors from the raw counts,
 while estimated-background subtraction adds the uncertainty of the estimated
 constant background before propagating through the pair formula.
 
-In vector polarization mode, axis-specific alpha values (``alpha_x``,
+In vector-polarisation mode, axis-specific alpha values (``alpha_x``,
 ``alpha_y``, ``alpha_z``) are used for ``P_x``, ``P_y``, and ``P_z``
 respectively. See :doc:`vector_polarization` for setup and UI behaviour.
 

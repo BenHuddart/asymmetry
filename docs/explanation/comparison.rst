@@ -256,7 +256,7 @@ reconstruction and Burg pole-scan (:doc:`/reference/fourier_analysis`,
 :doc:`/reference/frequency_finishers`), the rotating-reference-frame
 transform (:doc:`/reference/rotating_frame`), spectral moments
 (:doc:`/reference/spectral_moments`), synthetic-data simulation
-(:doc:`/reference/simulation`), period arithmetic and RF-µSR
+(:doc:`/reference/simulation`), period arithmetic and RF-μSR
 resonance (:doc:`/reference/alc_mode`), Python user-function plugins
 (:doc:`/reference/user_functions`), and negative-muon analysis
 (:doc:`/reference/negative_muon_analysis`).

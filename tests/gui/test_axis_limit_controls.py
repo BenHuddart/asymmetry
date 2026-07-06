@@ -70,6 +70,16 @@ def test_field_width_and_value_range_are_applied(qapp: object) -> None:
     assert controls.x_max.value() == 5000.0
 
 
+def test_y_value_range_widens_only_the_y_pair(qapp: object) -> None:
+    # The frequency plot panel passes a wide Y range so a count-scale FFT
+    # magnitude is never clamped, while X (MHz) keeps the ±1e6 guard.
+    controls = AxisLimitControls(value_range=(-1e6, 1e6), y_value_range=(-1e12, 1e12))
+    controls.y_max.setValue(1.2e7)
+    assert controls.y_max.value() == 1.2e7
+    controls.x_max.setValue(1.2e7)
+    assert controls.x_max.value() == 1e6
+
+
 def test_is_a_holder_wiring_none_by_default(qapp: object) -> None:
     # The widget exposes the buttons/fields but wires no external handlers of
     # its own; each panel connects its own slots. Constructing it must not

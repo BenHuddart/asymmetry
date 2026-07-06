@@ -377,10 +377,7 @@ def make_ybco_vortex_lattice(seed: int = 103, n0: float = 1.2e6) -> MuonDataset:
     """YBa₂Cu₃O₇₋δ in the vortex state — TF μSR with asymmetric P(B).
 
     ``n0`` scales the per-detector event count (and hence the magnitude of
-    the grouped FFT, which is linear in it). The ``fourier_tf`` scenario
-    passes a reduced value because the frequency view's axis-limit fields
-    clamp at ±1e6, below the FFT magnitude of a full-statistics run — a
-    display limitation tracked as a product fix; MaxEnt uses the default.
+    the grouped FFT, which grows with it).
 
     T = 10 K (below Tc=90 K), TF = 200 mT (mixed state). The synthesised
     time-domain polarization is the inverse-cosine-transform of a target

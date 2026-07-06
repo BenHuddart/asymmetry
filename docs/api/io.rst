@@ -29,7 +29,7 @@ Main Interface
 Period Selection
 ----------------
 
-Period-mode (multi-period) runs — photo-µSR light-OFF/ON, RF on/off, ALC —
+Period-mode (multi-period) runs — photo-μSR light-OFF/ON, RF on/off, ALC —
 expose a scriptable selection API in :mod:`asymmetry.core.io.periods`. The same
 helpers back the GUI red/green ("RG") selector, so scripts and the desktop app
 share one implementation. See :ref:`selecting-periods` for a worked example.

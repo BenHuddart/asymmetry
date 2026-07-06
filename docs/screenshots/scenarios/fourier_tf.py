@@ -41,13 +41,7 @@ class FourierTfScenario(Scenario):
             [window._dock_data_browser], [320], Qt.Orientation.Horizontal
         )
 
-        # Reduced statistics (n0) keep the FFT magnitude inside the frequency
-        # view's displayable range: the axis-limit fields clamp at ±1e6, and a
-        # full-statistics run peaks near 1.1e7 — set_view_limits silently
-        # truncates there and the spectrum sits above the top of the axis
-        # (tracked as a product fix; revert to the default n0 once the
-        # frequency view can frame it).
-        dataset = make_ybco_vortex_lattice(n0=3.0e4)
+        dataset = make_ybco_vortex_lattice()
         window._data_browser.add_dataset(dataset)
         window._on_dataset_selected(dataset.run_number)
         _process_events_for(milliseconds=120)

@@ -1,6 +1,6 @@
 .. _run-arithmetic:
 
-Run Arithmetic: Co-add and Co-subtract
+Run arithmetic: co-add and co-subtract
 ======================================
 
 Two runs of the same measurement add to one run with twice the statistics; a
@@ -80,13 +80,12 @@ errors untouched; Asymmetry propagates them (see the porting study). WiMDA also
 keeps the master run's temperature and field on a co-add, where Asymmetry
 event-weights them and records the spread.
 
-When to use which
------------------
+*When to use which.*
 
 - **Co-add** — the same physical measurement repeated for more statistics. The
   result is one higher-statistics run; reduce, fit or transform it normally.
 - **Co-subtract (reference run)** — remove a signal carried by a separate
-  exposure: laser-OFF from laser-ON in photo-µSR, or a known reference run.
+  exposure: laser-OFF from laser-ON in photo-μSR, or a known reference run.
   Frame-scaled, errors add in quadrature.
 - **Background-run correction** (a reduction step, not a combined row; see
   :ref:`backgrounds <background-correction>`) — subtract a scaled background
@@ -108,5 +107,5 @@ recompute to the statistically correct values on load.
 References
 ----------
 
-- S. J. Blundell, R. De Renzi, T. Lancaster and F. L. Pratt, *Muon
+- S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
   Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022).

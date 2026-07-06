@@ -16,7 +16,7 @@ packages do.
 
 If you are loading a new dataset for the first time, the subsections
 below document the metadata each loader extracts and the common failure
-modes. Period-mode files (e.g. photo-µSR light-OFF/ON, RF on/off,
+modes. Period-mode files (e.g. photo-μSR light-OFF/ON, RF on/off,
 avoided-level-crossing) can
 be navigated with the scriptable period-selection API — see
 :ref:`selecting-periods` below.
@@ -312,7 +312,7 @@ Selecting Periods (Red / Green)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Period-mode runs record several period histograms in one file — for example
-**light-OFF** and **light-ON** in a photo-µSR experiment, RF on/off, or ALC
+**light-OFF** and **light-ON** in a photo-μSR experiment, RF on/off, or ALC
 steps. Use the period-selection API to pull out a single period as an ordinary
 ``MuonDataset`` with its own provenance (``t0``, good-bin window, grouping,
 temperature, field, per-period ``good_frames`` and deadtime):
@@ -334,7 +334,7 @@ temperature, field, per-period ``good_frames`` and deadtime):
 For the common two-period case the first period is labelled ``"red"`` and the
 second ``"green"`` (the same convention as the GUI "RG box"). You can also pass
 a 1-based integer period number, which is the way to address files with three
-or more periods. In a photo-µSR experiment the convention is **light-OFF =
+or more periods. In a photo-μSR experiment the convention is **light-OFF =
 Green** (period 2) and **light-ON = Red** (period 1); confirm this against the
 relaxation for your instrument. Out-of-range numbers and unknown labels raise a
 clear error at the boundary. The GUI red/green selector calls this same core

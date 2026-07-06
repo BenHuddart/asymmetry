@@ -435,7 +435,7 @@ Preset highlights:
 
 .. note::
 
-   Vector polarization mode is not exclusive to EMU.  Any dataset whose six
+   Vector-polarisation mode is not exclusive to EMU. Any dataset whose six
    group names follow the canonical pattern
    (``Pz Forward`` / ``Pz Backward``, ``Py Top`` / ``Py Bottom``,
    ``Px Left`` / ``Px Right``) will activate vector-mode features in the main

@@ -39,7 +39,7 @@ The dialog asks for:
   user-defined component.
 * **Description** — the one-line summary shown in the library and the
   component info dialog.
-* **Formula** — a maths expression in ``x`` (time in µs, frequency in MHz,
+* **Formula** — a maths expression in ``x`` (time in μs, frequency in MHz,
   or the trend variable, depending on where you opened the dialog from) and
   your parameter names. Bare maths names (``exp``, ``sin``, ``cos``,
   ``sqrt``, ``pi``, …) and ``np.*`` both work, so ``A*exp(-lam*x)`` and
@@ -107,7 +107,7 @@ Three steps:
    full load report at any time.
 3. Open the fit-function builder — ``KerenUser`` is in the *User* submenu.
    Build ``KerenUser + Constant``, press Fit, and read off Δ and ν as
-   usual, e.g. Δ = 0.51(2) µs⁻¹ at 20 G.
+   usual, e.g. Δ = 0.51(2) μs⁻¹ at 20 G.
 
 The function contract
 ---------------------
@@ -117,7 +117,7 @@ formula_template, ...)`` validates everything **at load time** — a broken
 file can never crash a fit (or the application) later:
 
 * ``function(x, **params)`` must be vectorised: ``x`` is an ndarray (time
-  in µs for ``domain="time"``, frequency in MHz for ``"frequency"``), one
+  in μs for ``domain="time"``, frequency in MHz for ``"frequency"``), one
   keyword argument per entry of ``param_names``, ndarray of the same shape
   back.
 * The output must be finite on a probe grid at the default parameter

@@ -354,7 +354,7 @@ The panel groups its controls as follows:
 * **Window** — ``Auto window from field`` (derive the frequency window from the
   applied field), ``Half width (G)``, or an explicit ``Min`` and ``Max``
   frequency.
-* **Time** — ``Start`` / ``End`` (µs) of the fitted window and a ``Binning``
+* **Time** — ``Start`` / ``End`` (μs) of the fitted window and a ``Binning``
   factor.
 * **Cycle Refinement** — ``Inner iterations``; ``χ² target / N``; toggles to
   ``Fit phases`` / ``amplitudes`` / ``backgrounds`` / ``constant background``;
@@ -457,13 +457,13 @@ model, where it belongs — MaxEnt then reconstructs the *true* spectral weight
 rather than the attenuated one. Choose:
 
 * **Ignore** — no pulse shaping (continuous-source data).
-* **Single pulse** — one proton pulse of the given **Half-width** (µs).
+* **Single pulse** — one proton pulse of the given **Half-width** (μs).
 * **Double pulse** — the ISIS double-pulse structure, with the **Separation**
-  (µs) between the two pulses.
+  (μs) between the two pulses.
 
 The response is a parabolic proton-pulse transform rolled off by the pion
 lifetime; the half-width and separation default to the ISIS values (about 50 ns
-and 0.324 µs) because the loaders do not yet record them per run. The effect is
+and 0.324 μs) because the loaders do not yet record them per run. The effect is
 dramatic: on synthetic pulsed data with equal-amplitude lines at 1 and 7 MHz,
 the recovered 7 MHz weight is suppressed by a factor of ~4 with the response off
 and restored to roughly the 1 MHz weight with it on.
@@ -472,7 +472,7 @@ Excluding a time window
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
 A laser flash, an RF burst, or a detector glitch can corrupt an interior stretch
-of the histogram. Set **De-weight from / to** (µs) to down-weight that window in
+of the histogram. Set **De-weight from / to** (μs) to down-weight that window in
 the reconstruction. The points are *de-weighted* (their error bars are inflated
 so they carry essentially no weight), not removed, so the time grid — and any
 frequency resolution derived from it — is unchanged. This is why the control is

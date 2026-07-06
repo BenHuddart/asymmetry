@@ -11,16 +11,16 @@ fitted parameters, and saving complete analysis sessions for later reuse.
    **Verify the physics in this documentation against trusted sources.**
 
    Asymmetry is in an early, **alpha phase** of development, and this
-   documentation is written alongside it. These pages describe µSR data,
+   documentation is written alongside it. These pages describe μSR data,
    fitting-function forms, and analysis workflows to help you use the
    software — but they are **not a substitute for the primary literature or
-   established analysis tools**. Statements about µSR data, the meaning and
+   established analysis tools**. Statements about μSR data, the meaning and
    parameterisation of fitting models, and the correctness of a given
    workflow may be incomplete, simplified, or in error.
 
    Before relying on any physical interpretation, model definition, or
    procedure described here, **confirm it against peer-reviewed references
-   and an established µSR tool** (for example WiMDA, Musrfit, or Mantid).
+   and an established μSR tool** (for example WiMDA, Musrfit, or Mantid).
    Please report anything you find to be inaccurate.
 
 Where to start

@@ -330,10 +330,10 @@ To split a multi-period *file* into its periods first, select each period
 upstream with :func:`asymmetry.core.io.periods.select_period`
 (period extraction lives in ``io``; the scan transform stays free of it).
 
-RF-µSR resonance (Green − Red): GUI and API
+RF-μSR resonance (Green − Red): GUI and API
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-RF-µSR resonance is the **(Green − Red)** integral-asymmetry observable of a
+RF-μSR resonance is the **(Green − Red)** integral-asymmetry observable of a
 muoniated radical (Green = RF-off, Red = RF-on, recorded as two periods of each
 run): a W-shaped double dip whose two resonance fields give the muon
 (:math:`A_\mu`) and proton (:math:`A_p`) hyperfine couplings from one field scan.

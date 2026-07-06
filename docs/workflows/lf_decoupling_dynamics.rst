@@ -189,7 +189,7 @@ What the analysis tells you:
   distribution divided by :math:`\gamma_\mu`. For nuclear-dipolar
   fields it sets the effective spread of dipolar couplings — useful
   for confirming the muon stopping site against a calculated dipolar
-  tensor (e.g. via MuFinder or µ-LFC).
+  tensor (e.g. via MuFinder or μ-LFC).
 - **Static vs dynamic**: a clean LF decoupling rules out motional
   narrowing within the muon's observation window. If dynamics are
   present, :math:`\tau_f` has been measured indirectly.

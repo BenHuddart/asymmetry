@@ -29,7 +29,7 @@ The six at a glance
      - time bins
      - **hard drop** from the fit — the bins inside are removed (endpoints
        inclusive) and contribute nothing to the cost
-     - :math:`(t_1, t_2)` µs
+     - :math:`(t_1, t_2)` μs
      - *(persisted from reconciliation Phase 2; see note)*
    * - **MaxEnt exclude window**
        (:doc:`fourier_analysis` — "De-weight from / to (μs)")
@@ -37,7 +37,7 @@ The six at a glance
      - **σ-inflate ×10⁸** — the points are de-weighted (error bars blown up)
        but kept, so the time grid and any derived frequency resolution are
        unchanged
-     - :math:`(t_1, t_2)` µs
+     - :math:`(t_1, t_2)` μs
      - ``exclude_t_min_us`` /
        ``exclude_t_max_us``
    * - **Fourier exclusion ranges**
@@ -93,7 +93,7 @@ changes the result:
 .. warning::
 
    **The two time-window controls share a label but mean opposite things.**
-   Both the count-fit and MaxEnt windows are labelled in µs with a
+   Both the count-fit and MaxEnt windows are labelled in μs with a
    :math:`(t_1, t_2)` start/end, but the count fit **drops** its bins while
    MaxEnt **de-weights** its points and keeps the grid. Setting "the same"
    window in both panels does not do the same thing: the count fit loses those

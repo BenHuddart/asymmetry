@@ -112,7 +112,7 @@ Fit the recovered rates against concentration:
    print(rate.lambda0, rate.lambda0_error)  # intercept: solvent background
 
 Because the supplied data give **relative** concentrations only, ``k_mu`` is in
-units of µs⁻¹ per relative-concentration unit; converting to an absolute
+units of μs⁻¹ per relative-concentration unit; converting to an absolute
 :math:`\mathrm{M^{-1}s^{-1}}` value needs the stock molarity (an external input).
 
 Step 3 — the activation energy

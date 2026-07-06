@@ -230,7 +230,7 @@ The analysis exposes four physical quantities:
   2D Ising. EuO sits close to the 3D Heisenberg universality class.
 - :math:`\nu_0` is the muon-site local field at :math:`T = 0`.
   Combined with a calculated dipolar tensor (e.g. from MuFinder or
-  µ-LFC) it pins down which crystallographic site the muon occupies.
+  μ-LFC) it pins down which crystallographic site the muon occupies.
 - The :math:`\lambda` peak at :math:`T_c` is the critical-fluctuation
   signature; its width in temperature is set by the correlation
   length divergence.

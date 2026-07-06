@@ -1,4 +1,4 @@
-Count-Domain Fitting (α calibration & single histograms)
+Count-domain fitting (α calibration & single histograms)
 ========================================================
 
 Count-domain fitting works on raw detector counts rather than the reduced
@@ -17,10 +17,7 @@ fit:
   the natural mode for continuous-source data where a single detector already
   carries the full decay envelope.
 
-When to use this
-----------------
-
-Reach for the **free-α** fit whenever you need a defensible α from a
+*When to use this.* Reach for the **free-α** fit whenever you need a defensible α from a
 calibration measurement and want its uncertainty and — importantly — its
 correlation with the signal amplitude. In a transverse field the count balance
 can trade against the asymmetry amplitude, so α and A are strongly correlated;

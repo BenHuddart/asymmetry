@@ -859,10 +859,10 @@ References
 4. D. York, N. M. Evensen, M. L. Martínez, and J. De Basabe Delgado, *Am. J.
    Phys.* **72**, 367 (2004).
 
-RF-µSR Resonance (muon + electron + proton)
+RF-μSR Resonance (muon + electron + proton)
 -------------------------------------------
 
-``RFResonanceMuP`` fits a **field-swept RF-µSR resonance scan** of a muoniated
+``RFResonanceMuP`` fits a **field-swept RF-μSR resonance scan** of a muoniated
 radical — muon plus electron plus one dominant proton, such as the
 cyclohexadienyl radical C₆H₆Mu formed in benzene — and extracts the **muon and
 proton hyperfine couplings** :math:`A_\mu` and :math:`A_p` simultaneously. This
