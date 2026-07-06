@@ -78,6 +78,12 @@ repo-local docs and use this file as the map.
   the science/citation standard, the docs verification ladder — live in
   `docs/README.md` § "Maintaining the documentation"; the writing voice in
   `docs/STYLE.md`.
+- After a PR with user-visible changes merges, check `CHANGELOG.md`
+  `[Unreleased]` and propose a release per `RELEASING.md`: suggest the
+  version and bump kind with a one-line rationale, then wait for
+  confirmation — never cut a release unprompted. (This trigger lives here,
+  in the always-loaded map, because the moment it fires — end of a merged
+  task — is exactly when nothing else points an agent at `RELEASING.md`.)
 - `tools/harness.py structural` enforces the shared-foundations rules
   mechanically, so a duplicate/bespoke implementation fails fast rather than
   drifting: no second `*LimitField` class outside
