@@ -1,4 +1,4 @@
-GUI Components
+GUI components
 ==============
 
 .. currentmodule:: asymmetry.gui
@@ -14,14 +14,14 @@ window. The end-user reference for the GUI lives in
 developers who need to embed or extend the components, not for
 day-to-day use.
 
-Main Application
+Main application
 ----------------
 
 .. automodule:: asymmetry.gui.app
    :members:
    :undoc-members:
 
-Main Window
+Main window
 -----------
 
 .. autoclass:: asymmetry.gui.mainwindow.MainWindow
@@ -40,7 +40,7 @@ Data Browser
    :undoc-members:
    :show-inheritance:
 
-Plot Panel
+Plot panel
 ~~~~~~~~~~
 
 .. autoclass:: asymmetry.gui.panels.plot_panel.PlotPanel
@@ -48,7 +48,7 @@ Plot Panel
    :undoc-members:
    :show-inheritance:
 
-Fit Panel
+Fit panel
 ~~~~~~~~~
 
 .. autoclass:: asymmetry.gui.panels.fit_panel.FitPanel
@@ -56,7 +56,7 @@ Fit Panel
    :undoc-members:
    :show-inheritance:
 
-Fourier Panel
+Fourier panel
 ~~~~~~~~~~~~~
 
 .. autoclass:: asymmetry.gui.panels.fourier_panel.FourierPanel
@@ -64,7 +64,7 @@ Fourier Panel
    :undoc-members:
    :show-inheritance:
 
-Log Panel
+Log panel
 ~~~~~~~~~
 
 .. autoclass:: asymmetry.gui.panels.log_panel.LogPanel
@@ -75,7 +75,7 @@ Log Panel
 Dialogs
 -------
 
-Grouping Dialog
+Grouping dialog
 ~~~~~~~~~~~~~~~
 
 .. autoclass:: asymmetry.gui.windows.grouping_dialog.GroupingDialog
@@ -83,7 +83,7 @@ Grouping Dialog
    :undoc-members:
    :show-inheritance:
 
-Detector Layout Dialog
+Detector layout dialog
 ~~~~~~~~~~~~~~~~~~~~~~
 
 .. autoclass:: asymmetry.gui.windows.detector_layout_dialog.DetectorLayoutDialog
@@ -94,7 +94,7 @@ Detector Layout Dialog
 Widgets
 -------
 
-Detector Schematic
+Detector schematic
 ~~~~~~~~~~~~~~~~~~
 
 .. autoclass:: asymmetry.gui.widgets.detector_schematic.DetectorSchematicWidget

@@ -3,7 +3,7 @@ Rotating-reference-frame display
 
 The rotating-reference-frame (RRF) view shows the **slow envelope of a fast
 transverse-field precession**. A run at 2 T precesses at ~271 MHz — about
-2000 cycles across an 8 µs window — so the raw FB-asymmetry plot is a solid
+2000 cycles across an 8 μs window — so the raw FB-asymmetry plot is a solid
 band that tells you nothing about how the signal relaxes. Demodulating into
 a frame rotating at a frequency :math:`\nu_0` near the line leaves only what
 is *slow*: the relaxation envelope, and a beat at the offset
@@ -48,10 +48,7 @@ envelope but slower response; anything genuinely oscillating faster than
 the cutoff — including a large deliberate detuning beat — is filtered away
 with the image, so keep the bandwidth comfortably above :math:`|\delta\nu|`.
 
-When to use it — and when not to
---------------------------------
-
-Use the RRF view to **look**: to see whether a high-field signal relaxes
+*When to use it — and when not to.* Use the RRF view to **look**: to see whether a high-field signal relaxes
 exponentially or Gaussian-like, to spot beats from closely-spaced lines
 (two frequencies :math:`\delta` apart show up as an envelope oscillating at
 :math:`\delta`), and to make figures where the physics is the envelope, not

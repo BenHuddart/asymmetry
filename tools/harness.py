@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import importlib.util
 import json
 import os
 import re
@@ -760,6 +761,43 @@ def find_porting_policy_violations(root: Path = ROOT) -> list[HarnessFailure]:
     return failures
 
 
+def _load_screenshot_capture_module():
+    """Load ``docs/screenshots/capture.py`` without importing the docs package.
+
+    The module's top-level imports are stdlib-only (Qt is deferred into the
+    capture path), so executing it here keeps `structural` free of third-party
+    packages and of any sys.path manipulation.
+    """
+    capture_path = ROOT / "docs" / "screenshots" / "capture.py"
+    spec = importlib.util.spec_from_file_location("asymmetry_screenshot_capture", capture_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def find_screenshot_reference_violations(root: Path = ROOT) -> list[HarnessFailure]:
+    """Return docs screenshot references without a scenario, and vice versa.
+
+    Delegates to ``docs/screenshots/capture.py::check_screenshot_references``
+    (also exposed as ``--check-refs`` on the capture CLI): every
+    ``/_generated/screenshots/<name>.png`` referenced from an .rst must have a
+    scenario module declaring that name, and every scenario must be referenced
+    from at least one .rst — an unused scenario costs capture time on every
+    full docs build.
+    """
+    capture_path = root / "docs" / "screenshots" / "capture.py"
+    if not capture_path.is_file():
+        return [HarnessFailure(capture_path, 0, "Missing docs screenshot capture module.")]
+
+    capture = _load_screenshot_capture_module()
+    problems = capture.check_screenshot_references(
+        docs_dir=root / "docs",
+        scenarios_dir=root / "docs" / "screenshots" / "scenarios",
+    )
+    return [HarnessFailure(root / "docs", 0, problem) for problem in problems]
+
+
 def run_structural_checks() -> int:
     """Run fast structural checks that do not require third-party packages."""
 
@@ -775,6 +813,7 @@ def run_structural_checks() -> int:
         *find_raw_hex_colour_violations(),
         *find_literal_pixel_geometry_violations(),
         *find_test_placement_violations(),
+        *find_screenshot_reference_violations(),
     ]
     if not failures:
         print("structural: ok")
@@ -965,7 +1004,19 @@ def cmd_test(args: argparse.Namespace) -> int:
     return _run_command(command)
 
 
-def cmd_docs(_args: argparse.Namespace) -> int:
+def cmd_docs(args: argparse.Namespace) -> int:
+    if getattr(args, "screenshots", False):
+        capture_result = _run_command(
+            [
+                sys.executable,
+                "-m",
+                "docs.screenshots.capture",
+                "--out",
+                "docs/_generated/screenshots",
+            ]
+        )
+        if capture_result:
+            return capture_result
     return _run_command(
         [
             sys.executable,
@@ -1053,6 +1104,12 @@ def build_parser() -> argparse.ArgumentParser:
     test_parser.set_defaults(func=cmd_test)
 
     docs_parser = subparsers.add_parser("docs", help="Build Sphinx documentation")
+    docs_parser.add_argument(
+        "--screenshots",
+        action="store_true",
+        default=False,
+        help="Regenerate GUI screenshots (slow, offscreen Qt) before the Sphinx build",
+    )
     docs_parser.set_defaults(func=cmd_docs)
 
     examples_parser = subparsers.add_parser("examples", help="Run documentation examples")

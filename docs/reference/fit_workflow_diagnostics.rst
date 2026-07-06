@@ -1,6 +1,6 @@
 .. _fit-workflow-diagnostics:
 
-Fit Workflow: Asymmetric Errors, Chaining, and Abort
+Fit workflow: asymmetric errors, chaining, and abort
 ====================================================
 
 Four tools sharpen the fitting workflow: MINOS asymmetric errors, the

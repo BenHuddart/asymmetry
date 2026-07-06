@@ -1,4 +1,4 @@
-Logbook Workflows
+Logbook workflows
 =================
 
 .. image:: /_generated/screenshots/logbook_view.png
@@ -16,7 +16,7 @@ analysis. The :class:`~asymmetry.core.data.logbook.Logbook` Python class
 exposes the same machinery for scripted use — tagging runs with
 user-defined labels (``zf-cooled`` vs ``fc``, ``sample-A`` vs
 ``reference``), grouping them into named collections, free-text
-searching across titles, comments and tags, and exporting to TSV for
+searching across titles, comments, and tags, and exporting to TSV for
 further processing or RTF to paste directly into a manuscript. Every
 case study under :doc:`/workflows/index` begins with a logbook step to
 set up the run series.
@@ -26,7 +26,7 @@ set up the run series.
 Columns: metadata and custom
 ----------------------------
 
-Beyond the fixed **Run**, **Title**, **T (K)** and **B (G)** columns, the Data
+Beyond the fixed **Run**, **Title**, **T (K)**, and **B (G)** columns, the Data
 Browser shows two kinds of *extra* column. Both are managed the same way — a
 right-click on any extra-column header offers **Rename…** and a remove action,
 and both are saved with the project.
@@ -77,7 +77,7 @@ the trend (they cannot be placed on a numeric axis), and a small note beside the
 selector reports how many were skipped — e.g. *⚠ 2/8 skipped (empty/non-numeric)*.
 Fill those runs in (or pick a different axis) to include them.
 
-Basic Usage
+Basic usage
 -----------
 
 .. code-block:: python
@@ -92,7 +92,7 @@ Basic Usage
    print(logbook.run_numbers)
    print(logbook.get_entry(dataset.run_number))
 
-Filtering and Search
+Filtering and search
 --------------------
 
 .. code-block:: python
@@ -138,7 +138,7 @@ The logbook stores metadata and collection definitions in JSON.
    ``load_metadata`` restores logbook entries and collections, not raw datasets.
    Reload source data files and re-add datasets when needed.
 
-GUI Export
+GUI export
 ----------
 
 From the GUI Data Browser, use **Export logbook** on the main toolbar to export
@@ -149,7 +149,7 @@ the browser logbook.
 * Export uses active Data Browser columns and preserves data-group sections.
 * Hidden datasets (filtered/collapsed) are still included in the export file.
 
-Runnable Example
+Runnable example
 ----------------
 
 See ``examples/logbook_usage.py`` for a complete executable script.

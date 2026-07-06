@@ -22,7 +22,7 @@ fitted width therefore converts back to a time-domain rate via
 :math:`\lambda = \pi\,\mathrm{FWHM}` or
 :math:`\sigma = \pi\,\mathrm{FWHM}/(2\sqrt{\ln 2})`, and a peak centre to a
 local field via :math:`B_0 = \nu_0/(\gamma_\mu/2\pi)`. Peak heights are in
-the arbitrary units of the displayed spectrum (they depend on apodization and
+the arbitrary units of the displayed spectrum (they depend on apodisation and
 normalisation), so physical conclusions should rest on positions and widths
 rather than absolute heights.
 
@@ -79,7 +79,7 @@ ConstantBackground
    S(\nu) = b_g
 
 A flat spectral baseline, absorbing white noise and the flat part of any
-apodization pedestal. Parameter: ``bg`` (a.u.).
+apodisation pedestal. Parameter: ``bg`` (a.u.).
 
 .. _fit-linear-background:
 

@@ -1,19 +1,22 @@
-Fitting Engine
+Fitting engine
 ==============
 
-Asymmetry fits μSR data with an iminuit-based engine that exposes the same
-machinery through the GUI fit panels and through the Python API. This
-chapter documents the engine itself — the workflow, the parameter and
-results objects, the statistics, the global-fit API, and the conventions
-that apply across every model. The physical-model catalogue is split out
-into dedicated chapters: see :doc:`composite_models` for the expression
-grammar that drives the GUI builder, :doc:`fit_wizard` and
+Asymmetry fits μSR data with an :mod:`iminuit`-based engine that exposes the
+same machinery through the GUI fit panels and through the Python API. The
+minimiser is MINUIT [1]: the engine minimises the least-squares cost
+:math:`\chi^2 = \sum_i [(A_i - f(t_i))/\sigma_i]^2` with ``migrad``, and takes
+its symmetric parameter uncertainties from the HESSE step that ``migrad`` runs
+on convergence. This chapter documents the engine itself — the workflow, the
+parameter and results objects, the statistics, the global-fit API, and the
+conventions that apply across every model. The physical-model catalogue is
+split out into dedicated chapters: see :doc:`composite_models` for the
+expression grammar that drives the GUI builder, :doc:`fit_wizard` and
 :doc:`global_fit_wizard` for the guided model-selection workflows, and the
 per-function chapters for the depolarisation forms themselves
-(:doc:`fit_functions/relaxation`, :doc:`fit_functions/relaxation`,
-:doc:`fit_functions/oscillation`, :doc:`fit_functions/relaxation`, :doc:`fit_functions/kubo_toyabe`,
-:doc:`fit_functions/kubo_toyabe`, :doc:`fit_functions/nuclear_dipolar`, :doc:`diffusion_ballistic_lf`,
-:doc:`sc_penetration_depth`).
+(:doc:`fit_functions/relaxation`, :doc:`fit_functions/oscillation`,
+:doc:`fit_functions/muonium`, :doc:`fit_functions/kubo_toyabe`,
+:doc:`fit_functions/nuclear_dipolar`, :doc:`fit_functions/frequency_domain`,
+:doc:`diffusion_ballistic_lf`, :doc:`sc_penetration_depth`).
 
 When fitting through the GUI, the plot panel's current bunch factor is
 applied before the dataset is handed to the fitter. If the plot is showing
@@ -22,7 +25,7 @@ fit the full-resolution data and only simplify the view afterwards, run
 the fit with ``Bunch = 1`` and then increase the bunch factor; the fit
 curve remains overlaid on the plot.
 
-Basic Workflow
+Basic workflow
 --------------
 
 The minimal end-to-end fit is a model from the ``MODELS`` registry, a
@@ -60,7 +63,7 @@ short and contains only the standalone variants with explicit baselines;
 composite expressions are the canonical way to assemble realistic muSR
 models.
 
-Parameter Control
+Parameter control
 -----------------
 
 Bounds, fixing, and initial values are set on individual
@@ -89,7 +92,7 @@ consistent with what the model function actually expects.
 
 .. _fit-statistics:
 
-Fit Statistics
+Fit statistics
 --------------
 
 The ``FitResult`` exposes the standard goodness-of-fit numbers:
@@ -116,35 +119,22 @@ model.
 Advisory warnings (``result.warnings``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Before it minimises, the engine runs a pair of *advisory guards* that flag the
-two setup traps most likely to produce a converged-but-wrong fit:
+Before it minimises, the engine runs two *advisory guards* that flag the setup
+traps most likely to produce a converged-but-wrong fit, and carries their
+messages on ``result.warnings`` (they are also emitted through the Python
+:mod:`warnings` system). The guards never raise and never change the outcome:
 
 - :class:`~asymmetry.core.fitting.AsymmetryScaleWarning` — the data and the
-  seeded model sit on different asymmetry scales (the classic percent-vs-fraction
-  mix-up; a loaded ``MuonDataset.asymmetry`` is on the **percent** scale, ``×100``).
+  seeded model sit on different asymmetry scales (the percent-vs-fraction
+  mix-up; a loaded ``MuonDataset.asymmetry`` is on the **percent** scale).
 - :class:`~asymmetry.core.fitting.FixedFrequencyFieldMismatchWarning` — a
-  precession ``frequency`` is held **fixed** more than ~2 % from
-  :math:`\gamma_\mu B` implied by the run's ``field``; pinning the line away from
-  its true position leaks the misfit into the damping term and inflates the
-  fitted Gaussian ``sigma`` (the vortex-state TF trap).
+  precession ``frequency`` held **fixed** more than ~2 % from :math:`\gamma_\mu B`
+  implied by the run's ``field``; the misfit then leaks into the damping term and
+  inflates the fitted Gaussian ``sigma`` (the vortex-state transverse-field trap).
 
-These are emitted through the Python :mod:`warnings` system (so they still reach
-the log/stderr), and their messages are now **also carried on the result** as a
-plain list, ``result.warnings``:
-
-.. code-block:: python
-
-   result = FitEngine().fit(ds, model.function, params)
-   for note in result.warnings:
-       print("⚠", note)
-
-The guards never raise and never change the fit outcome — they only point you at
-the fix. In the **GUI**, the fit panel surfaces these messages directly in the
-result box alongside the converged line: a single fit shows them beneath its
-``Fit converged`` summary, and a batch/global fit shows them (deduplicated, since
-the same trap usually fires for every run) beneath ``Batch fit converged``. The
-underlying science and the corrective recipe for each trap are in the cookbook —
-see :ref:`the transverse-field frequency entry <cookbook-tf-frequency>` and
+The GUI fit panel surfaces these beneath the converged summary (deduplicated for
+a batch/global fit). The science and the fix for each are in the cookbook — see
+:ref:`the transverse-field frequency entry <cookbook-tf-frequency>` and
 :ref:`the asymmetry-scale entry <cookbook-asymmetry-scale>`.
 
 .. _fit-bg-amplitude-tf:
@@ -190,11 +180,14 @@ Parameter values and Hessian uncertainties come from
        err = result.uncertainties.get(p.name, 0.0)
        print(f"{p.name}: {p.value:.6f} ± {err:.6f}")
 
-Hessian errors assume the local quadratic approximation around the
-minimum is a good description of the likelihood. For well-conditioned
-fits this is fine. For ill-conditioned problems — strongly correlated
-parameters, fits near a bound, multi-modal likelihoods — either bootstrap
-(see :ref:`monte-carlo-errors` below) or compute MINOS errors externally.
+Hessian (HESSE) errors assume the local quadratic approximation around the
+minimum is a good description of the likelihood, i.e. that the parameter
+uncertainties are symmetric. For well-conditioned fits this holds. For
+ill-conditioned problems — strongly correlated parameters, fits near a bound,
+multi-modal likelihoods — the interval is skewed and the symmetric error
+misrepresents it; use MINUIT's asymmetric MINOS intervals [1]
+(:ref:`minos-asymmetric-errors`) or the re-simulation estimate below
+(:ref:`monte-carlo-errors`).
 
 .. _fit-residuals:
 
@@ -224,7 +217,7 @@ Persistent structure — a slow oscillation, a turn-up at long times, a
 visible knee — almost always points at a missing component rather than at
 noise.
 
-Restricting the Fit Range
+Restricting the fit range
 -------------------------
 
 The ``t_min`` and ``t_max`` keyword arguments to ``FitEngine.fit``
@@ -322,7 +315,7 @@ Affine ties are honoured by the single-run engine (``FitEngine.fit``). Global,
 count-domain, and grouped/series fits raise ``NotImplementedError`` when a tie is
 present rather than silently ignoring it — fit each run individually.
 
-Global Fitting
+Global fitting
 --------------
 
 The global-fit interface accepts a list of datasets, the model function,
@@ -369,7 +362,7 @@ datasets, mark parameters as **Global** (shared across runs) or **Local**
 (per-run) in the parameter table, and click **Run Batch Fit**. A fit where
 at least one parameter is **Global** is a global fit; otherwise each run is
 fitted independently but the results are collected into one trendable series.
-Results land in the **Fitted Parameters** panel where they can be browsed,
+Results land in the **Fit Parameters** panel where they can be browsed,
 exported to TSV, or passed into the parameter-trending fit framework documented
 in :doc:`parameter_trending`.
 
@@ -384,22 +377,31 @@ global fit if you do not yet know which composite model the data prefer.
 
 .. _monte-carlo-errors:
 
-Monte Carlo Error Estimation
+Monte Carlo error estimation
 ----------------------------
 
 For parameters whose Hessian uncertainties are not trustworthy — heavy
 correlations, fits sitting near a bound, multi-modal likelihoods —
-bootstrap resampling gives an empirical distribution:
+re-simulating the data and refitting gives an empirical distribution. The
+snippet below draws each replica by adding Gaussian noise at the per-bin error
+to the fitted data (a *parametric* Monte Carlo), so the spread it reports is
+only as good as that error model: it inherits the Gaussian-error assumption and
+will not capture non-Gaussian tails, and with a small replica count the
+estimated width itself carries appreciable scatter (raise ``n_bootstrap`` and
+seed the generator for a reproducible number). It is an approximation to the
+error, not an exact interval — for the definitive error-bar check re-simulate at
+matched statistics and inspect the pull distribution (:ref:`pull-diagnostic`).
 
 .. code-block:: python
 
    import numpy as np
    from asymmetry.core.data import MuonDataset
 
-   n_bootstrap = 100
+   rng = np.random.default_rng(0)
+   n_bootstrap = 500
    bootstrap_results = []
    for _ in range(n_bootstrap):
-       resampled = dataset.asymmetry + np.random.randn(len(dataset.asymmetry)) * dataset.error
+       resampled = dataset.asymmetry + rng.standard_normal(len(dataset.asymmetry)) * dataset.error
        boot_dataset = MuonDataset(
            time=dataset.time, asymmetry=resampled, error=dataset.error,
        )
@@ -411,10 +413,13 @@ bootstrap resampling gives an empirical distribution:
    ])
    print(f"Lambda = {lambda_dist.mean():.4f} ± {lambda_dist.std():.4f}")
 
-Asymmetric MINOS errors are not yet built into the engine and are on the
-roadmap.
+For a *single* parameter whose likelihood is skewed, the engine's own
+asymmetric MINOS interval (``FitEngine.fit(..., minos=True)``, reported in
+``result.minos_errors``) is usually the cheaper and more direct check; see
+:ref:`minos-asymmetric-errors`. The definitive test of whether the reported
+uncertainties are calibrated is the pull diagnostic (:ref:`pull-diagnostic`).
 
-Custom Models
+Custom models
 -------------
 
 Any callable with signature ``f(t, **params) -> array`` is a valid model
@@ -439,6 +444,11 @@ Custom callables do not get the symbol/unit metadata that registered
 components carry, so the GUI parameter table will show raw names and no
 units. For anything used more than once, a proper component or
 ``ModelDefinition`` registration is preferable.
+
+References
+----------
+
+[1] F. James and M. Roos, Comput. Phys. Commun. **10**, 343 (1975).
 
 See also
 --------

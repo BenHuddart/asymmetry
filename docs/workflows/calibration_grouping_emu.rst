@@ -54,9 +54,22 @@ series.
 Step 2 — Open the Grouping window
 -----------------------------------
 
-Click **Grouping** on the toolbar and create a profile for EMU (or pick an
-existing one). The window is the whole calibration surface for that
-profile:
+Click **Grouping** on the toolbar (or **Analysis → Grouping…**) and create
+a profile for EMU (or pick an existing one). The window is the whole
+calibration surface for that profile:
+
+.. figure:: /_generated/screenshots/grouping_window_profile_editor.png
+   :width: 100%
+   :alt: The Grouping window, with the scope panel on the left, the
+      status rows and calibration buttons in the centre, and the live
+      forward/backward asymmetry preview along the bottom.
+
+   The Grouping window as you first meet it (shown here on a representative
+   synthetic transverse-field run rather than the EMU silver run itself). The
+   **Runs of this instrument** scope panel on the left is the selector: the run
+   you pick there is the one the form previews and edits, and the live
+   asymmetry along the bottom redraws as you change the grouping,
+   :math:`\alpha`, binning, dead-time, or background.
 
 .. list-table::
    :header-rows: 1
@@ -67,9 +80,17 @@ profile:
    * - **Profile selector**
      - Which named profile you are editing — **New…** / **Duplicate…** to
        start fresh or branch from the current settings.
-   * - **Preview run**
-     - The run whose per-run facts (:math:`t_0`, good-bin window, file
-       dead-time) seed the preview. Changing it never edits the profile.
+   * - **Scope panel** ("Runs of this instrument")
+     - Every run of this instrument, tagged *inherits* or *override*. This is
+       the **selector**: the run you pick here is the one the form previews and
+       edits, and its per-run facts (:math:`t_0`, good-bin window, file
+       dead-time) seed the status rows. **Release** / **Reattach** move a run
+       between inheriting the profile and carrying its own override.
+   * - **Editing-target strip**
+     - A strip above the form that names what your edits currently apply to —
+       "Editing profile '<name>' — applies to N runs" while an inheriting run
+       is selected, or "Editing override for run N — this run only" while an
+       overridden run is selected.
    * - **Forward Group / Backward Group**
      - Which detector groups form the :math:`F` and :math:`B` sums of the
        asymmetry.
@@ -77,7 +98,8 @@ profile:
      - The current :math:`\alpha` and its provenance, with a button that
        opens the alpha calibration dialog (see Step 3).
    * - **t0 Bin**
-     - The time-zero bin (the muon-implantation prompt).
+     - The time-zero bin (the muon-implantation prompt), with a mode selector
+       — **From file** (the default), **Manual**, or **Auto-detect**.
    * - **t_good Offset**
      - First good bin, measured as an offset after :math:`t_0`.
    * - **Last Good Bin**
@@ -94,42 +116,62 @@ profile:
        updating as you edit.
    * - **Detector Layout…**
      - Opens the visual editor and instrument presets (see Step 4).
-   * - **Scope panel**
-     - Every run of this instrument, tagged *inherits* or *override*, with
-       **Release** / **Reattach** to move a run between the two.
    * - **Apply**
-     - Write the draft back to the profile. The Log echoes how many
-       inheriting runs it reached.
+     - Write the draft back to the profile — and any edited overrides to their
+       own runs, in one pass. The Log echoes how many inheriting runs it
+       reached.
 
 Step 3 — Calibrate α from the TF run
 --------------------------------------
 
-With the TF calibration run (``EMU00044989``) as the preview run, click
-**Calibrate…** beside the alpha status row. Because this run's field
+With the TF calibration run (``EMU00044989``) selected in the scope panel,
+click **Calibrate…** beside the alpha status row. Because this run's field
 geometry is transverse and its magnitude sits in the weak-TF window, the
 calibration dialog highlights and pre-selects it in its own run dropdown.
-Choose the **Diamagnetic** method: Asymmetry integrates the forward and
-backward grouped counts over the good-data window and fits
+
+.. figure:: /_generated/screenshots/alpha_calibration_dialog.png
+   :width: 80%
+   :align: center
+   :alt: The alpha calibration dialog, with a highlighted transverse-field
+      candidate run and a before (α = 1) / after (fitted α) asymmetry preview.
+
+   The alpha calibration dialog, shown here on a representative synthetic
+   transverse-field run (your EMU silver run ``44989`` reports
+   :math:`\alpha \approx 1.103`). The dropdown highlights the likely TF
+   calibration run, and the before/after preview shows the precession
+   becoming symmetric about zero once the fitted :math:`\alpha` is applied.
+
+Choose the **Diamagnetic** method. On a silver TF run the precession is a
+clean, non-relaxing oscillation, and the correct :math:`\alpha` is the one
+that makes the forward/backward asymmetry oscillate *symmetrically about
+zero* — an imbalanced :math:`\alpha` leaves the precession riding on a
+non-zero offset. Asymmetry finds it by minimising the weighted asymmetry
+power over the good-data window,
 
 .. math::
 
-   \alpha = \frac{\sum_i F_i}{\sum_i B_i},
+   \alpha = \arg\min_\alpha \sum_i \left(\frac{A_i}{\sigma_i}\right)^2,
+   \qquad A_i = \frac{F_i - \alpha B_i}{F_i + \alpha B_i},
 
-the same balance ratio Mantid's ``AlphaCalc`` uses (the **Ratio** method
-computes exactly this integral form directly, with no oscillation fit).
-On the Ag TF run this gives :math:`\alpha \approx 1.103`, and the dialog's
-before/after preview shows the TF precession becoming symmetric about
-zero — the visual signature of a correct :math:`\alpha`. A wrong
-:math:`\alpha` shows up as a precession riding on a non-zero offset.
-Accept the calibration: the status row now reads something like
-"α = 1.103 · diamagnetic · run 44989".
+with :math:`\sigma_i` the Poisson-propagated per-bin asymmetry error — WiMDA's
+diamagnetic estimate. (The **Ratio** method instead computes the simple
+integral balance :math:`\alpha = \sum_i F_i / \sum_i B_i`, Mantid's
+``AlphaCalc``, with no oscillation model; on a clean Ag run the two agree
+closely. The **General** method accommodates a genuinely relaxing or
+multi-component TF signal.) On the Ag TF run all of these give
+:math:`\alpha \approx 1.103`, and the dialog's before/after preview shows
+the balancing effect directly. Accept the calibration: the status row now
+reads something like "α = 1.103(2) · diamagnetic · run 44989".
 
-The same calculation is available from the Python API:
+The same calculation is available from the Python API. The diamagnetic fit
+lives in :func:`~asymmetry.core.transform.estimate_alpha_detailed`; the
+simpler integral ratio (equivalent to the dialog's **Ratio** method) is
+:func:`~asymmetry.core.transform.estimate_alpha`:
 
 .. code-block:: python
 
    from asymmetry.core.io import load
-   from asymmetry.core.transform import apply_grouping, estimate_alpha
+   from asymmetry.core.transform import apply_grouping, estimate_alpha_detailed
 
    tf = load("Basics/data_hdf5/EMU00044989.nxs")
    g = tf.run.grouping
@@ -138,12 +180,13 @@ The same calculation is available from the Python API:
    bwd = [int(d) - 1 for d in groups[g["backward_group"]]]
    forward = apply_grouping(tf.run.histograms, fwd)
    backward = apply_grouping(tf.run.histograms, bwd)
-   alpha = estimate_alpha(
+   est = estimate_alpha_detailed(
        forward, backward,
+       method="diamagnetic",
        first_good_bin=g.get("first_good_bin"),
        last_good_bin=g.get("last_good_bin"),
    )
-   print(round(alpha, 3))                           # 1.103
+   print(round(est.alpha, 3))                        # 1.103
 
 Press **Apply** to write the calibrated :math:`\alpha` back to the
 profile. Because ``EMU00034998`` is the same instrument, it will inherit
@@ -158,6 +201,16 @@ Click **Detector Layout…** to open the visual editor — Asymmetry's
 replacement for WiMDA's "edit detector list" text box. It draws the
 instrument's physical forward and backward detector arrays as concentric
 rings of segments:
+
+.. figure:: /_generated/screenshots/emu_longitudinal_layout.png
+   :width: 100%
+   :alt: The Detector Layout editor on EMU's Longitudinal preset, showing the
+      forward and backward detector rings split into two groups.
+
+   The Detector Layout editor on EMU's **Longitudinal** preset — the two-group
+   forward/backward split this exercise uses. The preset dropdown seeds the
+   arrangement; clicking a segment toggles its membership in the active group.
+
 
 - **Click a segment to toggle** its membership in the active group.
   Colours and names distinguish up to eight groups, each showing a live

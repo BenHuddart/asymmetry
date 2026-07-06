@@ -32,7 +32,7 @@ class EuoFitOscillatoryScenario(Scenario):
     def build(self) -> QWidget:
         from asymmetry.core.fitting.composite import CompositeModel
         from asymmetry.gui.mainwindow import MainWindow
-        from asymmetry.gui.panels.fit_panel import (
+        from asymmetry.gui.panels.fit.tab_base import (
             _param_table_rows_by_name,
             _set_param_table_value,
         )

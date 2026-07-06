@@ -3,7 +3,7 @@ Superconductor penetration depth from σ(T)
 
 This chapter is a worked example of the canonical superconductor μSR
 workflow: extract the temperature dependence of the magnetic
-penetration depth :math:`\lambda_L(T)` from transverse-field μSR data
+penetration depth :math:`\lambda_L(T)` from transverse-field (TF) μSR data
 in the vortex state, then fit a gap model to identify the pairing
 symmetry. The synthetic data corresponds to MgB₂
 (:math:`T_c \approx 36\;\mathrm{K}`, two-gap s+s structure with
@@ -269,27 +269,20 @@ Common pitfalls
   to MgB₂ or s+s to YBCO. Cross-check against other techniques
   (specific heat, scanning tunnelling).
 
-Forward pointer to the roadmap
-------------------------------
+Going further
+-------------
 
-This workflow exercises four planned improvements:
-
-- `maxent-spectrum
-  <../../porting/candidates/maxent-spectrum/>`_ would sharpen the
-  vortex-lattice FFT line shape at low :math:`T` where data windows
-  are short.
-- `dynamic-kubo-toyabe
-  <../../porting/candidates/dynamic-kubo-toyabe/>`_ is needed if the
-  sample shows fluctuating background magnetism that competes with
-  the vortex-lattice signal.
-- `theory-library-expansion
-  <../../porting/candidates/theory-library-expansion/>`_ would add a
-  time-domain Brandt vortex :math:`P(B)` model so raw TF asymmetry
-  can be fitted directly rather than via σ.
-- `minos-error-analysis
-  <../../porting/candidates/minos-error-analysis/>`_ delivers
-  asymmetric uncertainties on the gap parameters that publication
-  reviewers will increasingly expect.
+Several tools that once sat on this workflow's wish-list have since shipped
+and slot straight into it: the :doc:`maximum-entropy estimator
+</reference/fourier_analysis>` sharpens the vortex-lattice line shape at low
+:math:`T` where the data window is short, the dynamic Kubo–Toyabe functions
+(:doc:`/reference/fit_functions/kubo_toyabe`) handle fluctuating background
+magnetism that competes with the vortex-lattice signal, and MINOS asymmetric
+uncertainties (:doc:`/reference/assessing_a_fit`) give the gap parameters the
+error analysis reviewers increasingly expect. Still on the roadmap is a
+time-domain Brandt vortex :math:`P(B)` model
+(`theory-library-expansion <../../porting/candidates/theory-library-expansion/>`_),
+which would let the raw TF asymmetry be fitted directly rather than via σ.
 
 Further reading
 ---------------

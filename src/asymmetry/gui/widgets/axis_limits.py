@@ -19,7 +19,11 @@ Per-call-site validator ranges are preserved rather than converged: fit-range
 fields keep their historical ±1000 (later widened to ±1e6 for the frequency
 domain via ``setRange``), while plot/ALC axis-limit fields keep their
 historical ±1e6 so a legitimate axis limit (e.g. a frequency axis in
-thousands of MHz) is never silently clamped.
+thousands of MHz) is never silently clamped. The one exception is the
+frequency plot panel's Y pair (``AxisLimitControls(y_value_range=...)``): a
+grouped-count FFT magnitude scales with the event count and legitimately
+exceeds 1e6 on a high-statistics run, so clamping there hid the spectrum
+above the top of the axis.
 """
 
 from __future__ import annotations
@@ -227,11 +231,16 @@ class AxisLimitControls(QWidget):
         show_units: bool = False,
         auto_checked: bool = False,
         value_range: tuple[float, float] = (-1e6, 1e6),
+        y_value_range: tuple[float, float] | None = None,
         initial_values: tuple[float, float, float, float] = (0.0, 10.0, -30.0, 30.0),
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
 
+        # The Y pair can carry a wider range than X: the frequency plot
+        # panel's spectrum magnitude scales with the event count, while its
+        # x-axis (MHz) never approaches the historical ±1e6 guard.
+        y_range = y_value_range if y_value_range is not None else value_range
         x_min_v, x_max_v, y_min_v, y_max_v = initial_values
         self.x_min = FloatLimitField(
             x_min_v, minimum_width=field_width, maximum_width=None, value_range=value_range
@@ -240,10 +249,10 @@ class AxisLimitControls(QWidget):
             x_max_v, minimum_width=field_width, maximum_width=None, value_range=value_range
         )
         self.y_min = FloatLimitField(
-            y_min_v, minimum_width=field_width, maximum_width=None, value_range=value_range
+            y_min_v, minimum_width=field_width, maximum_width=None, value_range=y_range
         )
         self.y_max = FloatLimitField(
-            y_max_v, minimum_width=field_width, maximum_width=None, value_range=value_range
+            y_max_v, minimum_width=field_width, maximum_width=None, value_range=y_range
         )
 
         self.x_unit_label: QLabel | None = QLabel("") if show_units else None

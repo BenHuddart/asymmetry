@@ -19,6 +19,7 @@ The scenario:
 
 from __future__ import annotations
 
+import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget
 
@@ -51,22 +52,44 @@ class FourierTfScenario(Scenario):
         window._on_domain_button_clicked("frequency")
         _process_events_for(milliseconds=80)
 
-        # Pre-set the frequency view window onto the Larmor peak
+        # Frame the frequency view onto the Larmor peak
         # (γ_μ·B_app ≈ 27.1 MHz for 200 mT) so the canonical asymmetric
         # vortex P(B) shape is recognisable rather than lost in a wide
         # near-empty axis. _on_compute_fourier honours these limits because
         # _sync_frequency_plot_for_run is invoked with preserve_x_limits=True.
         freq_panel = window._frequency_plot_panel
         center_mhz = GAMMA_MU_MHZ_PER_G * 2000.0
-        _, _, y_min, y_max = freq_panel.get_view_limits()
-        freq_panel.set_view_limits(
-            center_mhz - 1.0, center_mhz + 1.5, y_min, y_max
-        )
-        _process_events_for(milliseconds=60)
+        x_min, x_max = center_mhz - 1.0, center_mhz + 1.5
 
-        # Trigger the Fourier pipeline so the spectrum plot is populated.
+        # Trigger the Fourier pipeline so the spectrum plot is populated. The
+        # panel's default y-limits are stale for a count-scale spectrum and
+        # Auto-Y collapses to degenerate limits on non-negative data (its
+        # masking is tuned for signed time-domain asymmetry), so the spectrum
+        # is read back and framed explicitly from its in-window peak below.
         window._on_compute_fourier()
-        _process_events_for(milliseconds=240)
+
+        # The recompute runs on a worker thread and its render lands via a
+        # queued signal, so a fixed settle is a race: read too early and the
+        # panel still holds the pre-compute placeholder trace (spanning only a
+        # few MHz), and the completing render then re-applies the stale view
+        # limits it preserved at compute time. Poll until the rendered spectrum
+        # actually reaches the Larmor window before framing it.
+        spectrum_x = spectrum_y = None
+        for _ in range(100):  # bounded at ~10 s; typically well under 1 s
+            _process_events_for(milliseconds=100)
+            x = freq_panel._last_plot_time
+            y = freq_panel._last_plot_asymmetry
+            if x is not None and y is not None and len(x) and float(np.nanmax(x)) >= x_max:
+                spectrum_x = np.asarray(x, dtype=float)
+                spectrum_y = np.asarray(y, dtype=float)
+                break
+        if spectrum_x is None:
+            raise RuntimeError("Fourier recompute did not render within 10 s")
+
+        in_window = (spectrum_x >= x_min) & (spectrum_x <= x_max)
+        peak = float(np.max(spectrum_y[in_window])) if np.any(in_window) else 1.0
+        freq_panel.set_view_limits(x_min, x_max, -0.04 * peak, 1.10 * peak)
+        _process_events_for(milliseconds=120)
         return window
 
 

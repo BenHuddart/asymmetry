@@ -1,6 +1,6 @@
 .. _detector-exclusion:
 
-Detector Exclusion
+Detector exclusion
 ==================
 
 A dead detector contributes nothing but dilutes a group's asymmetry

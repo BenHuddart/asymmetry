@@ -1,13 +1,13 @@
 .. _diffusion-ballistic-lf:
 
-Field-Dependent Transport Models (DiffusionLF / BallisticLF)
+Field-dependent transport models (DiffusionLF / BallisticLF)
 ============================================================
 
 When muon-spin relaxation is dominated by motion of the muon (or its host
 spin environment) rather than by a static field distribution, the diagnostic
 observable is the *field* dependence of the relaxation rate rather than the
 detailed shape of any single :math:`A(t)`. The standard workflow is
-two-stage: fit each LF-decoupled run to an empirical relaxation form to
+two-stage: fit each longitudinal-field (LF) decoupled run to an empirical relaxation form to
 extract :math:`\lambda(B_{LF})`, then fit the resulting
 :math:`\lambda` versus :math:`B_{LF}` curve with a transport model whose
 parameters carry direct physical meaning — a diffusion rate, a hopping
@@ -217,12 +217,45 @@ The GUI parameter-model builder filters the available components by the
 selected x-axis so that field-only components are not offered for
 temperature trends, and vice versa.
 
+Assumptions and limitations
+---------------------------
+
+Both families are idealised transport propagators, and the fitted parameters
+should be read with the following caveats in mind:
+
+- **Each model describes one limiting regime.** ``DiffusionLF_*`` assumes purely
+  *incoherent* random-walk motion and ``BallisticLF_*`` assumes purely
+  *coherent* propagation; a real system that sits between the two — or crosses
+  over between them as temperature or field changes — is not captured exactly by
+  either, and a good fit to one form does not by itself establish that regime.
+- **A single dominant, static-on-average fluctuating coupling is assumed.** The
+  amplitude :math:`A` collapses the whole coupling to one number and the Larmor
+  frequency is taken from :math:`\gamma_e` because the field is assumed to be set
+  by a single unpaired electron spin on a host atom; systems with several
+  comparable couplings, or where a nuclear rather than electronic moment
+  dominates, need a different construction.
+- **Disorder, trapping, and finite-size effects break the ideal propagators.**
+  Both autocorrelation forms assume an unbounded, homogeneous lattice with a
+  fixed dimensionality; carrier trapping, strong quenched disorder, or motion on
+  a finite cluster all modify :math:`S(t)` in ways the closed forms do not
+  represent.
+- **The dimensionality is an input, not an output.** As noted above, the field
+  dependence over a realistic experimental window is often too similar between
+  dimensionalities (and between the diffusive and ballistic families) for
+  :math:`\chi^2` to discriminate them reliably; fix the dimensionality from the
+  crystallography.
+- **The 1D ballistic log-form is a low-frequency approximation.** The
+  :math:`\lambda \propto \ln B_{LF}` linearity holds only over the field window
+  where :math:`\omega \ll 16 D_{\mathrm{hop}}`; outside it the full spectral
+  density must be used.
+
 References
 ----------
 
-[1] Phys. Rev. B **106**, L060401 (2022) — the four-term decomposition
-    used in the quasi-2D dynamic-relaxation analysis the diffusive
-    components were built to match.
+[1] F. L. Pratt, F. Lang, W. Steinhardt, S. Haravifard, and S. J.
+    Blundell, Phys. Rev. B **106**, L060401 (2022) — the four-term
+    decomposition used in the quasi-2D dynamic-relaxation analysis the
+    diffusive components were built to match.
 
 [2] F. L. Pratt, J. Phys.: Conf. Ser. **2462**, 012038 (2023) —
     autocorrelation forms for one-, two-, and three-dimensional diffusion.

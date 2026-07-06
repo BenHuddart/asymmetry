@@ -1,11 +1,5 @@
 """Global fit setup for an Ag LF Kubo–Toyabe field-decoupling series.
 
-.. note:: This scenario is **temporarily excluded** from the capture pipeline
-   (not imported in ``docs/screenshots/capture._import_scenarios``).  Re-enable
-   it — along with ``lf_kt_global_results`` — once the global fit wizard feature
-   has been further developed and its CI run time is acceptable.
-
-
 Loads four longitudinal-field Ag datasets (B_L = 0, 15, 50, 100 G against
 Δ=0.39 μs⁻¹, spanning the textbook decoupling units γ_μB_L/Δ ∈ {0, 3, 9, 19}),
 groups them, switches the fit panel to the Global tab, and captures the main

@@ -1,4 +1,4 @@
-Composite Models
+Composite models
 ================
 
 .. image:: /_generated/screenshots/composite_models_builder.png
@@ -24,8 +24,8 @@ expresses these combinations: a free-form arithmetic expression over
 registered baseline-free components, parsed into a compiled callable that
 the fit engine drives like any other model. The two patterns the builder
 is designed for are *multiplicative* combinations, where one physical
-effect modulates another (a Gaussian envelope multiplying a TF precession
-signal in the vortex state; an exponential damping multiplying a Larmor
+effect modulates another (a Gaussian envelope multiplying a transverse-field
+(TF) precession signal in the vortex state; an exponential damping multiplying a Larmor
 oscillation), and *additive* combinations, where independent populations
 of muons contribute separately. Fraction groups, documented below, let
 several additive components share one overall amplitude budget — the
@@ -41,7 +41,7 @@ For real examples that build composites step-by-step, see
    :alt: Fit Function Builder with a fraction-group expression
    :width: 100%
 
-Building a Composite Function
+Building a composite function
 -----------------------------
 
 .. code-block:: python
@@ -60,7 +60,7 @@ parentheses. The quadrature combinator ``⊕`` (:math:`\sqrt{f^2 + g^2}`) is
 where quadrature composition of width-like quantities is physically meaningful;
 see :doc:`parameter_trending`.
 
-Fraction Groups
+Fraction groups
 ---------------
 
 Composite models can also share one overall amplitude across several additive
@@ -83,13 +83,14 @@ weights directly, so together with the derived remainder they partition the
 group's amplitude.
 
 In the GUI fit-function builder, you do not need to type ``{frac}``. Instead,
-select two or more additive components, press ``Fractions``, and the dialog
-uses matching colours in the expression editor and preview to show which terms
-belong to the same fraction group. In the fit-panel parameter table the free
-fractions are ordinary editable rows; the group's remainder appears as a muted,
-read-only row that updates automatically as you edit the others.
+select two or more additive rows and press **Group as fractions**; the grouped
+terms then sit inside a single accented container, and the typeset preview
+colours each fraction group so it is clear which terms share an amplitude
+budget. In the fit-panel parameter table the free fractions are ordinary
+editable rows; the group's remainder appears as a muted, read-only row that
+updates automatically as you edit the others.
 
-Parameter Naming Rules
+Parameter naming rules
 ----------------------
 
 Composite models generate unique parameter names automatically:
@@ -304,7 +305,7 @@ The authoritative component list is the live registry — the
    #  'ExponentialRelaxation', 'GaussianRelaxation', 'Keren', 'LFKuboToyabe',
    #  'Oscillatory', 'StaticGKT_ZF', 'StretchedExponential']
 
-Evaluate Model and Components
+Evaluate model and components
 -----------------------------
 
 .. code-block:: python
@@ -376,7 +377,7 @@ Use with FitEngine
 If the model contains a multiplicative chain, include only that chain's shared
 amplitude parameter in the fit table.
 
-Available Components
+Available components
 --------------------
 
 The following components are registered in ``COMPONENTS`` and can be used by
@@ -411,7 +412,7 @@ name in ``CompositeModel``:
      - :math:`A \left[\tfrac{1}{3} + \tfrac{2}{3}(1-\Delta^2 t^2)e^{-\Delta^2 t^2/2}\right]`
      - ``A``, ``Delta``
    * - ``LongitudinalFieldKT``
-     - Hayano LF-KT :math:`G_z(t;\Delta,B_L)` — see :ref:`fit-lf-kubo-toyabe`
+     - Hayano longitudinal-field Kubo–Toyabe (LF-KT) :math:`G_z(t;\Delta,B_L)` — see :ref:`fit-lf-kubo-toyabe`
      - ``A``, ``Delta``, ``B_L`` (Gauss)
    * - ``MuF``
      - Analytical single mu-F polarisation :math:`D_z(t)`
@@ -426,7 +427,7 @@ name in ``CompositeModel``:
      - :math:`A_{\mathrm{bg}}`
      - ``A_bg``
 
-Runnable Example
+Runnable example
 ----------------
 
 See ``examples/composite_models.py`` for a complete executable script.

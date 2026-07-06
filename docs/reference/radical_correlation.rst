@@ -158,7 +158,8 @@ References
 ----------
 
 - I. McKenzie, Annu. Rep. Prog. Chem. Sect. C **109**, 65 (2013).
-- I. McKenzie, R. Scheuermann, *et al.*, J. Phys. Chem. B **117**, 13614 (2013).
+- I. McKenzie, R. Scheuermann, S. P. Cottrell, J. S. Lord, and I. M. Tucker,
+  J. Phys. Chem. B **117**, 13614 (2013).
 - F. L. Pratt, Physica B **289–290**, 710 (2000).
 - S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt,
   *Muon Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022).

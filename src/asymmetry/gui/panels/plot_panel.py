@@ -461,7 +461,16 @@ class PlotPanel(QWidget):
         self._limit_toolbar.setContentsMargins(4, 4, 4, 4)
 
         # ── Row 0: axis range fields + auto-scale buttons ─────────────────
-        self._axis_controls = AxisLimitControls(field_width=76, show_units=True, auto_checked=False)
+        self._axis_controls = AxisLimitControls(
+            field_width=76,
+            show_units=True,
+            auto_checked=False,
+            # A grouped-count FFT magnitude scales with the event count and
+            # legitimately exceeds the historical ±1e6 guard on a
+            # high-statistics run; the time-domain panels keep the tight
+            # range as an input-sanity guard.
+            y_value_range=(-1e12, 1e12) if self._is_frequency_plot_panel() else None,
+        )
         self._x_min = self._axis_controls.x_min
         self._x_max = self._axis_controls.x_max
         self._y_min = self._axis_controls.y_min
@@ -4367,6 +4376,15 @@ class PlotPanel(QWidget):
 
         asym = asymmetry[mask]
         err = error[mask]
+        if self._is_frequency_plot_panel():
+            # A spectrum is non-negative with a dominant peak; the signed
+            # asymmetry-envelope logic below (error ceilings, weighted
+            # quantile bounds) is tuned for time-domain data and can collapse
+            # to degenerate limits on it. Frame the in-window peak directly,
+            # with a small underdraw so the baseline reads as zero.
+            peak = float(np.max(asym))
+            if peak > 0.0:
+                return -0.04 * peak, 1.10 * peak
         # On low-statistics (transverse-field) data the counts decay so the
         # late-time error bars diverge (±100 %+) even inside the good-bin window,
         # and framing to the raw asymmetry ± error envelope buries the ~±20 %

@@ -373,8 +373,11 @@ def make_ybco_knight_grouped(seed: int = 101) -> MuonDataset:
     )
 
 
-def make_ybco_vortex_lattice(seed: int = 103) -> MuonDataset:
+def make_ybco_vortex_lattice(seed: int = 103, n0: float = 1.2e6) -> MuonDataset:
     """YBa₂Cu₃O₇₋δ in the vortex state — TF μSR with asymmetric P(B).
+
+    ``n0`` scales the per-detector event count (and hence the magnitude of
+    the grouped FFT, which grows with it).
 
     T = 10 K (below Tc=90 K), TF = 200 mT (mixed state). The synthesised
     time-domain polarization is the inverse-cosine-transform of a target
@@ -429,8 +432,8 @@ def make_ybco_vortex_lattice(seed: int = 103) -> MuonDataset:
     asym_bwd = -amplitude * asym_envelope  # opposite-sign asymmetry for the F-B pair
 
     detectors = [
-        {"label": "Forward", "asymmetry": asym_fwd, "n0": 1.2e6},
-        {"label": "Backward", "asymmetry": asym_bwd, "n0": 1.2e6},
+        {"label": "Forward", "asymmetry": asym_fwd, "n0": float(n0)},
+        {"label": "Backward", "asymmetry": asym_bwd, "n0": float(n0)},
     ]
 
     run, time_axis, raw_asym, raw_err = _build_run_with_detector_asymmetries(

@@ -1,4 +1,4 @@
-Superconducting Penetration Depth Models
+Superconducting penetration depth models
 ========================================
 
 .. image:: /_generated/screenshots/parameter_trending_mgb2.png
@@ -15,11 +15,11 @@ Superconducting Penetration Depth Models
 For an end-to-end walk-through that exercises every model on this
 page, see :doc:`/workflows/superconductor_penetration_depth`.
 
-This page documents the superconducting sigma(T) models used for TF-muSR
-vortex-state analysis and interleaves the core theory with the API for each
+This page documents the superconducting sigma(T) models used for
+transverse-field (TF) μSR vortex-state analysis and interleaves the core theory with the API for each
 model family.
 
-Scope and Terminology
+Scope and terminology
 ---------------------
 
 In this context, ``lambda`` denotes the London penetration depth
@@ -34,7 +34,7 @@ The superconducting workflow is:
 3. Interpret the fitted model in terms of :math:`\rho_s(T)` and optionally
    convert to :math:`\lambda_L(T)`.
 
-Core Equations
+Core equations
 --------------
 
 In the London limit for a triangular vortex lattice,
@@ -69,87 +69,16 @@ The gap is factorised as
 
 .. math::
 
-   \Delta(T,\mathbf{k}) = \Delta_0\,\delta(T/T_c)\,g(\mathbf{k}).
+   \Delta(T,\mathbf{k}) = \Delta_0\,\delta(T/T_c)\,g(\mathbf{k}),
 
-Normalised Superfluid-Density Integral
---------------------------------------
+with the normalised superfluid density :math:`\rho_s(T)` obtained from the
+semiclassical response integral and the reduced-gap temperature law
+:math:`\delta(T/T_c)`. The derivation-level detail of both — the response
+tensor and the per-symmetry gap-amplitude constants used by each model — is
+collapsed below; the practical starting point for most users is the
+model-selection table that follows.
 
-The semiclassical response tensor form used in the literature is [1]
-
-.. math::
-
-   R_{ij}(T) = \frac{e^2}{4\pi^3\hbar c}
-   \int_{FS} dS_k\,\frac{v_{Fi}v_{Fj}}{|v_F|}
-   \left[
-   1 + 2\int_{\Delta(\mathbf{k},T)}^{\infty}
-   \frac{\partial f}{\partial E}
-   \frac{E\,dE}{\sqrt{E^2-\Delta^2(\mathbf{k},T)}}
-   \right].
-
-With :math:`\rho_{ii}(T)=R_{ii}(T)/R_{ii}(0)`, the practical fitting form is
-
-.. math::
-
-   \rho_s(T)=1+2\left\langle
-   \int_{\Delta(T,\mathbf{k})}^{\infty}
-   \frac{\partial f}{\partial E}
-   \frac{E\,dE}{\sqrt{E^2-\Delta^2(T,\mathbf{k})}}
-   \right\rangle_{FS}.
-
-The implementation evaluates the energy and angular integrals with
-Gauss-Legendre quadrature and enforces stable limits
-:math:`\rho_s(0)=1`, :math:`\rho_s(T\ge T_c)=0`.
-
-Gap-Amplitude Approximations
-----------------------------
-
-The implementation does not apply one temperature-amplitude law to every
-symmetry.
-
-For isotropic s-wave-derived channels, the reduced gap uses the
-Carrington-Manzano interpolation [2]
-
-.. math::
-
-    \delta_{CM}(t)=\tanh\left(1.82[1.018(1/t-1)]^{0.51}\right),\quad t=T/T_c,
-
-while models with tabulated symmetry-dependent weak-coupling shape factors use
-the generalised Gross-style form discussed in the review literature [1]
-
-.. math::
-
-    \delta_{gen}(t)=\tanh\left[
-    \frac{\pi}{\Delta_0(0)/(k_B T_c)}\sqrt{a\left(\frac{1}{t}-1\right)}
-    \right],\quad t=T/T_c.
-
-This reduced form is algebraically equivalent to the review expression once
-energies are written in units of :math:`k_B T_c`.
-
-The current code paths are:
-
-- Isotropic s-wave, alpha model, and s-wave channels in two-gap models:
-  use :math:`\Delta_0(0)/(k_B T_c)=1.764`, following Carrington-Manzano.
-- d-wave and nonmonotonic d-wave channels:
-  default :math:`\Delta_0(0)/(k_B T_c)=2.14`, generalised form with
-  :math:`a=4/3`.
-- extended s-wave channel with :math:`g(\phi)=\cos(2\phi)` or
-  :math:`|\cos(2\phi)|`:
-  default :math:`\Delta_0(0)/(k_B T_c)=2.14`, generalised form with
-  :math:`a=4/3`.
-- s+g channel:
-  default :math:`\Delta_0(0)/(k_B T_c)=2.77`, generalised form with
-  :math:`a=2`.
-- Anisotropic s-wave and p-wave examples:
-  model-dependent gap ratio; use the generalised form only when the user
-  supplies a positive ``shape_factor_a``. Otherwise these channels fall back to
-  the Carrington-Manzano interpolation.
-
-In the GUI, ``shape_factor_a`` may be left at ``0`` to indicate that no
-symmetry-specific weak-coupling value is being supplied. A positive fixed value
-uses the generalised amplitude law directly, while a positive free value allows
-the fit to determine :math:`a`.
-
-Model Selection At A Glance
+Model selection at a glance
 ---------------------------
 
 .. list-table:: Physical Appropriateness Guide
@@ -188,7 +117,83 @@ Model Selection At A Glance
      - Interpolates between s and d signatures
      - One band appears nodal and another appears nodeless
 
-Superconducting Gap Models
+.. dropdown:: Mathematical detail: the normalised superfluid-density integral
+
+   The semiclassical response tensor form used in the literature is [1]
+
+   .. math::
+
+      R_{ij}(T) = \frac{e^2}{4\pi^3\hbar c}
+      \int_{FS} dS_k\,\frac{v_{Fi}v_{Fj}}{|v_F|}
+      \left[
+      1 + 2\int_{\Delta(\mathbf{k},T)}^{\infty}
+      \frac{\partial f}{\partial E}
+      \frac{E\,dE}{\sqrt{E^2-\Delta^2(\mathbf{k},T)}}
+      \right].
+
+   With :math:`\rho_{ii}(T)=R_{ii}(T)/R_{ii}(0)`, the practical fitting form is
+
+   .. math::
+
+      \rho_s(T)=1+2\left\langle
+      \int_{\Delta(T,\mathbf{k})}^{\infty}
+      \frac{\partial f}{\partial E}
+      \frac{E\,dE}{\sqrt{E^2-\Delta^2(T,\mathbf{k})}}
+      \right\rangle_{FS}.
+
+   The implementation evaluates the energy and angular integrals with
+   Gauss-Legendre quadrature and enforces stable limits
+   :math:`\rho_s(0)=1`, :math:`\rho_s(T\ge T_c)=0`.
+
+.. dropdown:: Mathematical detail: gap-amplitude approximations per symmetry
+
+   The implementation does not apply one temperature-amplitude law to every
+   symmetry.
+
+   For isotropic s-wave-derived channels, the reduced gap uses the
+   Carrington-Manzano interpolation [2]
+
+   .. math::
+
+       \delta_{CM}(t)=\tanh\left(1.82[1.018(1/t-1)]^{0.51}\right),\quad t=T/T_c,
+
+   while models with tabulated symmetry-dependent weak-coupling shape factors
+   use the generalised Gross-style form discussed in the review literature [1]
+
+   .. math::
+
+       \delta_{gen}(t)=\tanh\left[
+       \frac{\pi}{\Delta_0(0)/(k_B T_c)}\sqrt{a\left(\frac{1}{t}-1\right)}
+       \right],\quad t=T/T_c.
+
+   This reduced form is algebraically equivalent to the review expression once
+   energies are written in units of :math:`k_B T_c`.
+
+   The current code paths are:
+
+   - Isotropic s-wave, alpha model, and s-wave channels in two-gap models:
+     use :math:`\Delta_0(0)/(k_B T_c)=1.764`, following Carrington-Manzano.
+   - d-wave and nonmonotonic d-wave channels:
+     default :math:`\Delta_0(0)/(k_B T_c)=2.14`, generalised form with
+     :math:`a=4/3`.
+   - extended s-wave channel with :math:`g(\phi)=\cos(2\phi)` or
+     :math:`|\cos(2\phi)|`:
+     default :math:`\Delta_0(0)/(k_B T_c)=2.14`, generalised form with
+     :math:`a=4/3`.
+   - s+g channel:
+     default :math:`\Delta_0(0)/(k_B T_c)=2.77`, generalised form with
+     :math:`a=2`.
+   - Anisotropic s-wave and p-wave examples:
+     model-dependent gap ratio; use the generalised form only when the user
+     supplies a positive ``shape_factor_a``. Otherwise these channels fall back
+     to the Carrington-Manzano interpolation.
+
+   In the GUI, ``shape_factor_a`` may be left at ``0`` to indicate that no
+   symmetry-specific weak-coupling value is being supplied. A positive fixed
+   value uses the generalised amplitude law directly, while a positive free
+   value allows the fit to determine :math:`a`.
+
+Superconducting gap models
 --------------------------
 
 Isotropic s-wave
@@ -352,7 +357,7 @@ second-moment level rather than by direct addition.
 .. autofunction:: asymmetry.core.fitting.sc.models.sc_s_plus_g_q
    :no-index:
 
-Field-Dependent Vortex-Lattice Line Width (Brandt)
+Field-dependent vortex-lattice line width (Brandt)
 --------------------------------------------------
 
 The models above fit the line width as a function of **temperature** at fixed
@@ -432,7 +437,7 @@ a powder type-II superconductor, recovering :math:`\lambda_{ab}` in nm:
    result = fit_parameter_model(B0, sigma, sigma_err, model, params)
    # result.parameters -> lambda_ab ~ 195 nm; B_rms = sigma / gamma_mu.
 
-Shared Parameter Semantics
+Shared parameter semantics
 --------------------------
 
 ``sigma_0``
@@ -476,7 +481,7 @@ Shared Parameter Semantics
 ``signed_gap``
    Extended-s convention control (signed versus magnitude form).
 
-Info Helpers For Trend Components
+Info helpers for trend components
 ---------------------------------
 
 Each model component shown in parameter-trend fitting (for example
@@ -486,7 +491,7 @@ physics summary in
 the ``description`` field. Parameter-level helper text is provided by
 :func:`asymmetry.core.fitting.get_param_info`.
 
-Assumptions and Limitations
+Assumptions and limitations
 ---------------------------
 
 The current implementation is intended for practical experimental fitting and

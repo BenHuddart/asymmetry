@@ -3,7 +3,7 @@ Contributing
 
 We welcome contributions to Asymmetry!
 
-Development Setup
+Development setup
 -----------------
 
 1. Fork the repository on GitHub
@@ -26,7 +26,7 @@ Development Setup
 
       git checkout -b feature-name
 
-Code Style
+Code style
 ----------
 
 We use:
@@ -68,7 +68,7 @@ Update documentation for any new features:
       make html
       open _build/html/index.html
 
-Pull Request Process
+Pull request process
 ---------------------
 
 1. Ensure tests pass and code is formatted
@@ -76,7 +76,7 @@ Pull Request Process
 3. Push to your fork
 4. Open a pull request with a clear description
 
-Reporting Issues
+Reporting issues
 ----------------
 
 Report bugs and feature requests on the GitHub issue tracker.

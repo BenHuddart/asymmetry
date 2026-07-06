@@ -1,4 +1,4 @@
-Fourier Analysis
+Fourier analysis
 ================
 
 .. image:: /_generated/screenshots/fourier_tf.png
@@ -35,11 +35,23 @@ gives better control. Maximum entropy reconstruction (see `Maximum Entropy
 Method`_ below) is the alternative when an FFT line is too weak or the usable
 time window too short for the FFT to resolve it.
 
+.. note::
+
+   **Apodisation trades resolution for leakage, and the trade is not free.**
+   Weighting the time signal down at long times suppresses the spectral
+   leakage (the sidelobes) that a hard truncation would produce, but it also
+   broadens every line: an apodised FFT linewidth is the *convolution* of the
+   intrinsic width with the filter's transform, so a width or amplitude read
+   off an aggressively filtered spectrum is not the physical value. Use
+   apodisation to *see* a line clearly; **measure** widths and amplitudes with
+   a frequency-domain fit (:doc:`frequency_domain_fitting`) whose model carries
+   the true lineshape, or read them from the time-domain fit directly [6]_.
+
 .. image:: /_generated/screenshots/apodisation_comparison.png
    :alt: Apodisation comparison on a YBCO vortex-lattice TF FFT
    :width: 100%
 
-Implementation Summary
+Implementation summary
 ----------------------
 
 Asymmetry currently exposes two Fourier workflows:
@@ -63,10 +75,17 @@ In this guide, frequency-domain quantities use standard symbols:
 * :math:`\nu` for frequency (MHz)
 * :math:`\lvert\mathcal{F}\rvert` for FFT magnitude
 
-Fast Fourier Transform (FFT)
+Fast Fourier transform (FFT)
 -----------------------------
 
-The simplest method for frequency analysis:
+The FFT is the simplest, fastest route to a spectrum: a discrete Fourier
+transform of the (real) apodised asymmetry, evaluated by the radix
+Cooley–Tukey algorithm [1]_ through :func:`numpy.fft.rfft`. It is a *linear*
+transform, so its amplitudes and areas map directly onto the apodisation
+settings and can be trusted quantitatively (subject to the resolution/leakage
+trade above). Asymmetry takes the one-sided real transform and derives every
+display channel — magnitude, real, imaginary, phase — from that one complex
+spectrum.
 
 .. code-block:: python
 
@@ -85,7 +104,7 @@ The simplest method for frequency analysis:
    plt.ylabel(r"$|\\mathcal{F}|$")
    plt.show()
 
-Filter / Apodisation
+Filter / apodisation
 ~~~~~~~~~~~~~~~~~~~~
 
 The main Fourier workflow now follows WiMDA's filter model rather than the
@@ -98,8 +117,8 @@ modes:
 
 along with:
 
-* ``Filter start`` in microseconds
-* ``Tau`` (the filter time constant) in microseconds
+* ``Filter start (µs)``
+* ``Filter τ (µs)`` — the filter time constant
 
 For a Lorentzian filter, Asymmetry follows WiMDA's two cases:
 
@@ -116,7 +135,7 @@ The Gaussian mode uses the same WiMDA-style softened start with squared
 arguments. ``Subtract average signal`` is applied before the filter, matching
 WiMDA's default preprocessing path.
 
-How The GUI FFT Is Built
+How the GUI FFT is built
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
 The docked Fourier workflow in the desktop application is intentionally more
@@ -177,7 +196,7 @@ The same estimate is shared between the time-domain reduction and the FFT
 input, so the value the grouping dialog previews is exactly what the transform
 subtracts.
 
-FFT Phase Modes
+FFT phase modes
 ~~~~~~~~~~~~~~~
 
 The GUI computes one complex grouped FFT and then derives the displayed curve
@@ -195,18 +214,70 @@ Only ``Phase`` uses the manual phase value, per-group phase table, and
 ``t0 Offset (μs)`` entry. ``phaseOptReal`` ignores those manual controls and
 computes its own optimiser-driven correction instead.
 
-Maximum Entropy Method
+The auto-phase estimators are named concisely: ``Fill Phase Estimates``
+projects each group's spectrum onto the real axis by either the **peak-bin
+phase** (the angle of the dominant frequency bin) or a **power-weighted
+circular-mean phase** across the selected band, chosen with ``Auto method``.
+The ``phaseOptReal`` mode instead runs musrfit's ``PFTPhaseCorrection``
+algorithm — a two-parameter linear phase ramp :math:`\varphi(\nu)=c_0+c_1\nu`
+found by minimising an entropy-plus-negativity-penalty functional over the
+phase-corrected real spectrum, which makes the corrected spectrum as compact
+and positive as possible without a supplied reference phase.
+
+.. dropdown:: Derivation: the entropy phase-optimisation functional
+
+   Writing the complex spectrum as :math:`S(\nu)=|S|e^{i\theta(\nu)}`, the
+   corrected real channel is :math:`R(\nu)=\mathrm{Re}\,[S(\nu)e^{-i\varphi(\nu)}]`
+   for the linear ramp :math:`\varphi(\nu)=c_0+c_1(\nu-\nu_\mathrm{min})/\Delta\nu`.
+   From the normalised bin-to-bin increments
+   :math:`p_k=|\Delta R_k| / \sum_k|\Delta R_k|` the cost is the Shannon
+   entropy of that distribution plus a penalty on the negative excursions,
+
+   .. math::
+
+      C(c_0,c_1) = -\sum_k p_k\ln p_k
+      + \gamma\!\!\sum_{R(\nu)<0}\! R^2(\nu).
+
+   Minimising :math:`C` (a coarse grid scan over :math:`c_0` followed by an
+   iminuit refinement) yields the phase ramp that best projects the line onto
+   the real axis. This reproduces musrfit's ``PFTPhaseCorrection``; the
+   trivial zero-spectrum solution is given a large cost so the optimiser
+   avoids it.
+
+Maximum entropy method
 -----------------------
 
 Maximum entropy (MaxEnt) reconstructs the frequency spectrum as the *least
 committal* positive distribution consistent with the measured counts: it
 maximises the spectral entropy subject to a :math:`\chi^2` constraint against
-the data, weighting each bin by its own error. Compared with the FFT this can
-resolve sharper lines from short or noisy time windows, at the cost of an
-iterative refinement that you drive cycle by cycle and watch converge.
+the data, weighting each bin by its own error [2]_ [3]_. Compared with the FFT
+this can resolve sharper lines from short or noisy time windows, at the cost of
+an iterative refinement that you drive cycle by cycle and watch converge.
 
-MaxEnt is a shipped feature (added in PR #16) and is available from both the
-core Python API and the desktop GUI.
+Asymmetry follows the **MULTIMAX lineage** of grouped-count μSR MaxEnt [4]_
+[5]_: one non-negative frequency spectrum is reconstructed *jointly* from every
+detector group's raw count signal, carrying per-group phases, amplitudes, and
+backgrounds through a forward model of the counts. The numerical kernel is a
+deterministic entropy-regularised projected-gradient **V1** engine that shares
+the forward/adjoint contract of the full three-direction Skilling–Bryan search
+[2]_ but does not yet implement that search itself; it is available from both
+the core Python API and the desktop GUI.
+
+.. caution::
+
+   **A MaxEnt spectrum is an estimate, not a measurement — do not over-read
+   its line shapes or amplitudes.** Because the reconstruction chooses the
+   maximum-entropy distribution consistent with the data, the recovered
+   peak heights, widths, and the exact shape of a broad distribution depend on
+   the estimator and its settings (spectrum points, cycle count, prior level,
+   frequency window). Two runs to different cycle counts can give visibly
+   different lines. Read a MaxEnt spectrum for **the number and rough positions
+   of the lines and the qualitative shape of a field distribution**; when you
+   need a calibrated amplitude, width, or field, fit the spectrum
+   (:doc:`frequency_domain_fitting`) or fit the time domain directly. The
+   time-domain reconstruction overlay (see `Reading the reconstruction
+   overlay`_) is the check that the spectrum is consistent with the data, not a
+   guarantee that its amplitudes are unique.
 
 Engine API
 ~~~~~~~~~~
@@ -269,7 +340,7 @@ over. Reusing a ``state`` after changing the configuration raises
 ``ValueError`` (``"MaxEnt state is incompatible with the current
 configuration; restart."``) — build a fresh state for the new settings.
 
-GUI Workflow
+GUI workflow
 ~~~~~~~~~~~~
 
 Open the MaxEnt panel from **Frequency-domain → MaxEnt**: first select the run
@@ -283,18 +354,22 @@ The panel groups its controls as follows:
 * **Window** — ``Auto window from field`` (derive the frequency window from the
   applied field), ``Half width (G)``, or an explicit ``Min`` and ``Max``
   frequency.
-* **Time** — ``Start`` / ``End`` (µs) of the fitted window and a ``Binning``
+* **Time** — ``Start`` / ``End`` (μs) of the fitted window and a ``Binning``
   factor.
 * **Cycle Refinement** — ``Inner iterations``; ``χ² target / N``; toggles to
   ``Fit phases`` / ``amplitudes`` / ``backgrounds`` / ``constant background``;
   and ``Use existing deadtime correction``.
+
+The run controls sit in a footer pinned to the bottom of the panel, so they
+stay reachable however far the settings above are scrolled:
+
 * Cycle buttons — **+1**, **+5**, **+25** step the calculation by that many
   outer cycles; **Converge** runs a larger fixed batch in one go; **Restart**
   discards the current state; **Cancel** stops a running calculation.
-* **Apply settings to selected runs** copies the current configuration to the
-  other selected runs.
-* A **Progress** area and a **Diagnostics** line reporting the latest
-  ``Cycle``, ``χ²``, ``TEST``, and ``entropy``.
+* **Apply to selection** copies the current configuration to the other selected
+  runs.
+* A **Progress** bar and a **Diagnostics** line report the latest ``Cycle``,
+  ``χ²``, ``TEST``, and ``entropy``.
 
 .. important::
 
@@ -382,13 +457,13 @@ model, where it belongs — MaxEnt then reconstructs the *true* spectral weight
 rather than the attenuated one. Choose:
 
 * **Ignore** — no pulse shaping (continuous-source data).
-* **Single pulse** — one proton pulse of the given **Half-width** (µs).
+* **Single pulse** — one proton pulse of the given **Half-width** (μs).
 * **Double pulse** — the ISIS double-pulse structure, with the **Separation**
-  (µs) between the two pulses.
+  (μs) between the two pulses.
 
 The response is a parabolic proton-pulse transform rolled off by the pion
 lifetime; the half-width and separation default to the ISIS values (about 50 ns
-and 0.324 µs) because the loaders do not yet record them per run. The effect is
+and 0.324 μs) because the loaders do not yet record them per run. The effect is
 dramatic: on synthetic pulsed data with equal-amplitude lines at 1 and 7 MHz,
 the recovered 7 MHz weight is suppressed by a factor of ~4 with the response off
 and restored to roughly the 1 MHz weight with it on.
@@ -397,7 +472,7 @@ Excluding a time window
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
 A laser flash, an RF burst, or a detector glitch can corrupt an interior stretch
-of the histogram. Set **De-weight from / to** (µs) to down-weight that window in
+of the histogram. Set **De-weight from / to** (μs) to down-weight that window in
 the reconstruction. The points are *de-weighted* (their error bars are inflated
 so they carry essentially no weight), not removed, so the time grid — and any
 frequency resolution derived from it — is unchanged. This is why the control is
@@ -540,7 +615,7 @@ carries the per-group phases, the per-bin errors, and — at a pulsed source —
 pulse response through its forward model. Choose between them with the guidance
 above.
 
-Practical Example
+Practical example
 -----------------
 
 Complete workflow for frequency analysis:
@@ -584,7 +659,7 @@ Complete workflow for frequency analysis:
    plt.tight_layout()
    plt.show()
 
-GUI Fourier Workflow
+GUI Fourier workflow
 --------------------
 
 The FFT spectrum does **not** compute automatically. Nothing is transformed
@@ -640,7 +715,7 @@ WiMDA-first FFT workflow directly:
 * for averaged grouped spectra, optionally estimate WiMDA-style error bars from
   the spread across the selected group spectra
 
-Fitting The Displayed Spectrum
+Fitting the displayed spectrum
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Once a Fourier spectrum has been computed, the **Frequency** workspace can be
@@ -651,7 +726,7 @@ fits send ``nu0`` and ``fwhm`` values, plus derived ``B0`` and ``Bwid`` field
 equivalents, to the **Parameters** dock for trend analysis.  See
 :doc:`frequency_domain_fitting` for the full workflow.
 
-Phase Estimation Workflow
+Phase estimation workflow
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Phase estimation in the GUI is explicit rather than always-on:
@@ -688,7 +763,7 @@ they do in WiMDA.
 The Fourier panel is scrollable so these controls remain usable when the dock
 is narrow.
 
-Frequency-Domain Plot Behaviour
+Frequency-domain plot behaviour
 -------------------------------
 
 FFT output is shown on the dedicated ``Frequency Domain`` tab in the central
@@ -708,3 +783,23 @@ axis itself. The main toolbar also provides an ``FFT X relative to field``
 toggle, which recentres the x-limit controls around the applied
 field/frequency of the selected run while leaving the plotted tick labels in
 absolute units.
+
+References
+----------
+
+.. [1] J. W. Cooley and J. W. Tukey, Math. Comput. **19**, 297 (1965).
+
+.. [2] J. Skilling and R. K. Bryan, Mon. Not. R. Astron. Soc. **211**, 111 (1984).
+
+.. [3] B. D. Rainford and G. J. Daniell, Hyperfine Interact. **87**, 1129 (1994).
+
+.. [4] F. L. Pratt, Physica B **289–290**, 710 (2000).
+
+.. [5] T. M. Riseman and E. M. Forgan, Physica B **289–290**, 718 (2000).
+
+.. [6] S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt,
+   *Muon Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022), §15.5.
+
+The ``phaseOptReal`` entropy phase optimiser reproduces the
+``PFTPhaseCorrection`` routine of musrfit (A. Suter and B. M. Wojek,
+Phys. Procedia **30**, 69 (2012)).

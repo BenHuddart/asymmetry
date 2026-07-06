@@ -99,6 +99,16 @@ induces. This is an active area, and results should be checked against the
 primary literature and, where possible, an established analysis tool
 (:doc:`comparison`).
 
+Beyond this primer, this account is deliberately confined to the time-domain
+picture that underlies every μSR measurement; the specialist topics each have a
+home in the reference manual — muonium and muoniated radicals in
+:doc:`/reference/fit_functions/muonium`, avoided level crossings in
+:doc:`/reference/alc_mode` (with the terms defined in :doc:`glossary`), the
+Knight shift in transverse-field work, and the rotating-reference-frame view for
+high-field precession in :doc:`/reference/rotating_frame`, while the
+frequency-domain counterpart to this time-domain account is introduced in
+:doc:`/reference/fourier_analysis`.
+
 References
 ----------
 

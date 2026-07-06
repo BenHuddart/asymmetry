@@ -1,6 +1,6 @@
 .. _background-ladder:
 
-The Background Ladder: Which Stage Removes What
+The background ladder: which stage removes what
 ===============================================
 
 Several different controls across Asymmetry carry the word "background", and

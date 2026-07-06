@@ -1,6 +1,6 @@
 .. _fit-functions:
 
-Fit Functions
+Fit functions
 =============
 
 This chapter documents every fit function (component) available in the
