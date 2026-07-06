@@ -586,10 +586,12 @@ class PlotPanel(QWidget):
             self._frequency_reference_spin.setDecimals(2)
             self._frequency_reference_spin.setSuffix(" G")
             self._frequency_reference_spin.setValue(0.0)
+            # Set the mono field font *before* sizing, so field_width_for
+            # measures the font the spin actually renders in (mirrors alc_panel).
+            self._frequency_reference_spin.setFont(mono_font(11.0))
             self._frequency_reference_spin.setMinimumWidth(
                 field_width_for(8, self._frequency_reference_spin)
             )
-            self._frequency_reference_spin.setFont(mono_font(11.0))
             self._frequency_reference_spin.setEnabled(False)
             self._frequency_reference_spin.editingFinished.connect(
                 self._on_frequency_reference_spin_committed
