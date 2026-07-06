@@ -518,6 +518,75 @@ def test_fit_parameter_model_linear_recovers_parameters() -> None:
     np.testing.assert_allclose(fitted["b"], true_b, atol=0.1)
 
 
+def test_fit_parameter_model_covariance_present_for_free_parameters() -> None:
+    # Success path: covariance names match the free parameters, the matrix is
+    # symmetric, and the diagonal is consistent with the marginal uncertainties
+    # (BED next-point suggestion needs this, docs/studies/bed-next-point-suggestion.md §5.2).
+    rng = np.random.default_rng(123)
+    x = np.linspace(0.0, 10.0, 120)
+    true_m = 2.0
+    true_b = 1.5
+    noise = rng.normal(0.0, 0.03, size=x.shape)
+    y = true_m * x + true_b + noise
+    yerr = np.full_like(x, 0.03)
+
+    model = ParameterCompositeModel(["Linear"])
+    params = ParameterSet(
+        [
+            Parameter("m", value=1.0, min=-10.0, max=10.0),
+            Parameter("b", value=0.0, min=-10.0, max=10.0),
+        ]
+    )
+
+    result = fit_parameter_model(x, y, yerr, model, params)
+
+    assert result.success
+    assert result.covariance is not None
+    names, matrix = result.covariance
+    assert set(names) == {"m", "b"}
+    matrix_arr = np.array(matrix)
+    assert matrix_arr.shape == (2, 2)
+    np.testing.assert_allclose(matrix_arr, matrix_arr.T, rtol=1e-8, atol=1e-12)
+    for idx, name in enumerate(names):
+        variance = matrix_arr[idx, idx]
+        assert variance > 0.0
+        np.testing.assert_allclose(np.sqrt(variance), result.uncertainties[name], rtol=1e-3)
+
+
+def test_fit_parameter_model_covariance_excludes_fixed_parameter() -> None:
+    # A fixed parameter must not appear in the covariance's free-parameter names.
+    x = np.linspace(0.0, 10.0, 60)
+    y = 3.0 * x + 5.0
+    model = ParameterCompositeModel(["Linear"])
+    params = ParameterSet(
+        [
+            Parameter("m", value=1.0, min=-10.0, max=10.0),
+            Parameter("b", value=5.0, min=-10.0, max=10.0, fixed=True),
+        ]
+    )
+
+    result = fit_parameter_model(x, y, None, model, params)
+
+    assert result.success
+    assert result.covariance is not None
+    names, matrix = result.covariance
+    assert names == ["m"]
+    assert np.array(matrix).shape == (1, 1)
+
+
+def test_fit_parameter_model_covariance_none_on_failed_fit() -> None:
+    # An invalid/failed fit (no valid points in range) leaves covariance None.
+    x = np.linspace(0.0, 10.0, 20)
+    y = 2.0 * x + 1.0
+    model = ParameterCompositeModel(["Linear"])
+    params = ParameterSet([Parameter("m", value=1.0), Parameter("b", value=0.0)])
+
+    result = fit_parameter_model(x, y, None, model, params, x_min=100.0, x_max=200.0)
+
+    assert not result.success
+    assert result.covariance is None
+
+
 def test_fit_constant_recovers_value() -> None:
     x = np.linspace(0.0, 10.0, 50)
     y = np.full_like(x, 4.2)

@@ -18,7 +18,9 @@ from PySide6.QtCore import QEventLoop, Qt, QTimer
 from PySide6.QtWidgets import QApplication, QCheckBox, QDialog
 
 from asymmetry.core.fitting.composite import QUADRATURE_OPERATOR
+from asymmetry.core.fitting.experiment_design import SuggestionCalibration
 from asymmetry.core.fitting.parameter_models import (
+    ErrorMode,
     ModelFitRange,
     ParameterCompositeModel,
     ParameterModelFit,
@@ -2357,3 +2359,174 @@ def test_add_range_with_bounds_ignores_degenerate(qapp: QApplication) -> None:
     assert zero.x_min == default.x_min
     assert zero.x_max == default.x_max
     assert zero.x_max > zero.x_min
+
+
+# ---------------------------------------------------------------------------
+# "Suggest next point" section (BED, Phase 2 — docs/studies/bed-next-point-
+# suggestion.md §5.4). _make_dialog's default range is an exact linear
+# y = 2x + 1 fit under Column errors, so Run Fit converges with a real
+# covariance — the section's enable gate.
+# ---------------------------------------------------------------------------
+
+
+def _fit_active_range(dlg: ModelFitDialog) -> None:
+    """Run the active range's fit synchronously (drains the TaskRunner)."""
+    dlg._run_fit(dlg._active_range_idx)
+    _wait_for_fit(dlg)
+
+
+def _drain_calibration(dlg: ModelFitDialog, timeout_s: float = 10.0) -> None:
+    """Pump the event loop until the off-thread MC calibration completes."""
+    app = QApplication.instance()
+    deadline = time.time() + timeout_s
+    while dlg._calibration_in_progress and time.time() < deadline:
+        app.processEvents()
+        time.sleep(0.005)
+    app.processEvents()
+
+
+def test_suggest_section_disabled_before_fit(qapp: QApplication) -> None:
+    dlg = _make_dialog(qapp)
+    assert not dlg._suggest_btn.isEnabled()
+    # An offscreen/never-shown widget's isVisible() reads False regardless of
+    # setVisible(True), so check the explanatory text + tooltip instead.
+    assert dlg._suggest_disabled_hint.text()
+    assert dlg._suggest_section.toolTip()
+
+
+def test_suggest_section_enabled_after_successful_fit(qapp: QApplication) -> None:
+    dlg = _make_dialog(qapp)
+    _fit_active_range(dlg)
+
+    result = dlg._result_for_range(dlg._active_range_idx)
+    assert result.success
+    assert result.covariance is not None
+    assert dlg._suggest_btn.isEnabled()
+    assert not dlg._suggest_disabled_hint.isVisible()
+    # Default target is the first free parameter (spec default), not D-optimal.
+    assert dlg._suggest_target_combo.currentData() in {"m", "b"}
+
+
+def test_suggest_click_populates_result_and_overlay(qapp: QApplication) -> None:
+    dlg = _make_dialog(qapp)
+    _fit_active_range(dlg)
+
+    # Force D-optimal (no calibration path) to keep this test synchronous.
+    idx = dlg._suggest_target_combo.findData("__all__")
+    dlg._suggest_target_combo.setCurrentIndex(idx)
+    dlg._on_suggest_clicked()
+
+    assert dlg._suggest_result_label.text()
+    assert "Measure at x" in dlg._suggest_result_label.text()
+    assert dlg._preview._suggestion is not None
+    assert np.isfinite(dlg._preview._suggestion.best_x)
+    # A clean exact-linear fit should carry no warnings worth surfacing.
+    assert dlg._last_suggestion is not None
+
+
+def test_suggest_unreachable_goal_mentions_floor(qapp: QApplication) -> None:
+    dlg = _make_dialog(qapp)
+    _fit_active_range(dlg)
+
+    # Target "b" (intercept) with an absurdly tight goal that cannot be met by
+    # a single new point — forces target_unreachable=True.
+    idx = dlg._suggest_target_combo.findData("b")
+    dlg._suggest_target_combo.setCurrentIndex(idx)
+    dlg._suggest_goal_edit.setText("1e-12")
+    dlg._on_suggest_clicked()
+
+    assert dlg._last_suggestion is not None
+    assert dlg._last_suggestion.target_unreachable
+    text = dlg._suggest_result_label.text()
+    assert "cannot be reached" in text
+    _drain_calibration(dlg)
+
+
+def test_suggest_events_rate_fields_add_conversion(qapp: QApplication) -> None:
+    dlg = _make_dialog(qapp)
+    _fit_active_range(dlg)
+
+    # D-optimal has no events_factor_to_target; use c-optimal with a loose,
+    # reachable goal so a finite events_factor is produced synchronously
+    # (calibration is launched but this test inspects the pre-calibration line).
+    idx = dlg._suggest_target_combo.findData("m")
+    dlg._suggest_target_combo.setCurrentIndex(idx)
+    dlg._suggest_goal_edit.setText("0.006")
+    dlg._on_suggest_clicked()
+    _drain_calibration(dlg)
+    assert dlg._last_suggestion is not None
+    assert not dlg._last_suggestion.target_unreachable
+    assert dlg._last_suggestion.events_factor_to_target is not None
+
+    dlg._suggest_typical_run_edit.setText("10")
+    dlg._suggest_rate_edit.setText("2")
+
+    factor = dlg._last_suggestion.events_factor_to_target
+    expected_mevents = factor * 10.0
+    expected_hours = expected_mevents / 2.0
+    text = dlg._suggest_result_label.text()
+    assert f"{expected_mevents:.3g}" in text
+    assert f"{expected_hours:.3g}" in text
+    assert "Mevents" in text and "h" in text
+
+
+def test_refit_clears_suggestion_overlay_and_result(qapp: QApplication) -> None:
+    dlg = _make_dialog(qapp)
+    _fit_active_range(dlg)
+
+    idx = dlg._suggest_target_combo.findData("__all__")
+    dlg._suggest_target_combo.setCurrentIndex(idx)
+    dlg._on_suggest_clicked()
+    assert dlg._suggest_result_label.text()
+    assert dlg._preview._suggestion is not None
+
+    # Refitting the same (active) range must drop the stale suggestion.
+    _fit_active_range(dlg)
+    assert dlg._suggest_result_label.text() == ""
+    assert dlg._preview._suggestion is None
+    assert dlg._last_suggestion is None
+
+
+def test_suggest_disabled_for_none_and_scatter_error_modes(qapp: QApplication) -> None:
+    dlg = _make_dialog(qapp)
+    _fit_active_range(dlg)
+    assert dlg._suggest_btn.isEnabled()
+
+    for mode in (ErrorMode.NONE, ErrorMode.SCATTER):
+        combo_idx = dlg._error_mode_combo.findData(mode.value)
+        dlg._error_mode_combo.setCurrentIndex(combo_idx)
+        assert not dlg._suggest_btn.isEnabled()
+        assert dlg._suggest_disabled_hint.text()
+        assert dlg._suggest_section.toolTip()
+
+
+def test_calibration_completion_updates_result_line(qapp: QApplication) -> None:
+    """Direct call to the completion slot, per the spec's flakiness fallback."""
+    dlg = _make_dialog(qapp)
+    _fit_active_range(dlg)
+
+    idx = dlg._suggest_target_combo.findData("m")
+    dlg._suggest_target_combo.setCurrentIndex(idx)
+    dlg._on_suggest_clicked()
+    suggestion = dlg._last_suggestion
+    assert suggestion is not None
+    assert suggestion.target == "m"
+    _drain_calibration(dlg)
+
+    calibration = SuggestionCalibration(
+        x_new=float(suggestion.best_x),
+        events_factor=1.0,
+        target="m",
+        n_trials=30,
+        n_failed=0,
+        realized_post_sigma=0.00789,
+        realized_post_sigma_p16=0.006,
+        realized_post_sigma_p84=0.009,
+        predicted_post_sigma=suggestion.predicted_post_sigma,
+        calibration_ratio=1.2,
+    )
+    dlg._update_suggest_result_label(suggestion, calibration=calibration)
+
+    text = dlg._suggest_result_label.text()
+    assert "MC-calibrated" in text
+    assert "0.00789" in text

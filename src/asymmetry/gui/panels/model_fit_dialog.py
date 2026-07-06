@@ -5,11 +5,11 @@ from __future__ import annotations
 import os
 import re
 import traceback
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 import numpy as np
 from PySide6.QtCore import QSignalBlocker, Qt, QTimer
-from PySide6.QtGui import QBrush, QColor
+from PySide6.QtGui import QBrush, QColor, QDoubleValidator
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QPushButton,
     QScrollArea,
@@ -30,6 +31,12 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.fitting.composite import QUADRATURE_OPERATOR, UnknownComponentError
+from asymmetry.core.fitting.experiment_design import (
+    NextPointSuggestion,
+    SuggestionCalibration,
+    calibrate_suggestion,
+    suggest_next_point,
+)
 from asymmetry.core.fitting.fit_quality import assess_fit_quality
 from asymmetry.core.fitting.parameter_models import (
     PARAMETER_MODEL_COMPONENTS,
@@ -37,6 +44,7 @@ from asymmetry.core.fitting.parameter_models import (
     ModelFitRange,
     ParameterCompositeModel,
     ParameterModelFit,
+    apply_error_mode,
     carve_window_gap,
     component_names_for_x,
     fit_parameter_model,
@@ -68,6 +76,7 @@ from asymmetry.gui.styles.widgets import (
     warning_html,
 )
 from asymmetry.gui.tasks import TaskRunner
+from asymmetry.gui.widgets.axis_limits import FloatLimitField
 from asymmetry.gui.widgets.function_builder.dialog import (
     FunctionBuilderDialog,
     make_component_expression_parser,
@@ -77,10 +86,14 @@ from asymmetry.gui.widgets.screen_sizing import resize_to_available
 from asymmetry.gui.widgets.trend_preview import (
     PreviewRange,
     PreviewSeries,
+    SuggestionOverlay,
     TrendPreviewCanvas,
     range_span_color,
 )
 from asymmetry.gui.windows.new_user_function_dialog import NewUserFunctionDialog
+
+#: D-optimal combo entry (userData sentinel; see _on_suggest_target_changed).
+_SUGGEST_ALL_PARAMS = "__all__"
 
 #: Operators offered by the parameter/trending builder — the base arithmetic
 #: set plus the quadrature combinator ``⊕`` (``f ⊕ g = sqrt(f**2 + g**2)``),
@@ -570,6 +583,15 @@ class ModelFitDialog(QDialog):
         self._tasks = TaskRunner(self)
         self._fit_done_callback: Callable[[object], None] | None = None
 
+        # ── "Suggest next point" state (BED, Phase 2 — §5.4) ─────────────────
+        # The last suggestion computed for the active range (cleared on refit /
+        # range switch / a fresh Suggest click); calibration runs off-thread on
+        # the shared TaskRunner and its own busy flag (never _fit_in_progress).
+        self._last_suggestion: NextPointSuggestion | None = None
+        self._last_suggestion_calibration: SuggestionCalibration | None = None
+        self._calibration_in_progress = False
+        self._pending_calibration: tuple | None = None
+
         if existing_fit is not None and existing_fit.ranges:
             self._fit = existing_fit
         else:
@@ -886,6 +908,9 @@ class ModelFitDialog(QDialog):
         self._fit_progress_label.setStyleSheet(f"color: {tokens.WARN};")
         self._fit_progress_label.setVisible(False)
         params_layout.addWidget(self._fit_progress_label)
+
+        self._suggest_section = self._build_suggest_section()
+        params_layout.addWidget(self._suggest_section)
 
         self._param_table = QTableWidget(0, 6)
         self._param_table.setHorizontalHeaderLabels(
@@ -1306,6 +1331,13 @@ class ModelFitDialog(QDialog):
         # — disable the control instead of leaving it promising a no-op.
         if getattr(self, "_x_error_check", None) is not None:
             self._x_error_check.setEnabled(mode not in (ErrorMode.NONE, ErrorMode.SCATTER))
+        # A mode switch changes whether the noise model behind "Suggest next
+        # point" is meaningful (NONE/SCATTER never are; see
+        # _suggest_disabled_reason), so re-derive the section's enabled state.
+        # Guarded: this runs once during __init__ before the section exists.
+        if getattr(self, "_suggest_section", None) is not None:
+            self._clear_suggestion()
+            self._refresh_suggest_section()
         if self._error_value_label is None or self._error_value_spin is None:
             return
         needs_value = mode in (ErrorMode.PERCENT, ErrorMode.ABSOLUTE)
@@ -2164,6 +2196,13 @@ class ModelFitDialog(QDialog):
             if fit_result.success:
                 fit_range.parameters = fit_result.parameters
 
+            # A refit invalidates any suggestion computed against the previous
+            # fit (stale utility curve / result line must never survive it).
+            # _select_range below re-derives the section's enabled state from
+            # the fresh result via _refresh_suggest_section.
+            if idx == self._active_range_idx:
+                self._clear_suggestion()
+
             # Item 4.3: no per-fit success/failure MODAL. _select_range refreshes
             # the χ² label (inline "Fit successful …" / "Fit failed: …") and tints
             # the result box green on success, so both outcomes read inline.
@@ -2180,6 +2219,454 @@ class ModelFitDialog(QDialog):
                 )
 
         self._start_fit_task(_task, _on_done)
+
+    # -- "Suggest next point" section (BED, Phase 2 — §5.4) -------------------
+    #
+    # Enabled only for the ACTIVE range when it has a successful fit with a
+    # covariance AND the dialog's error mode produces a meaningful noise model
+    # (i.e. not NONE/SCATTER — those carry no real sigma to interpolate). The
+    # suggestion itself runs on the GUI thread (milliseconds); only the
+    # Monte-Carlo calibration pass runs off-thread via self._tasks.
+
+    def _build_suggest_section(self) -> QFrame:
+        """Build the "Suggest next point" group; returns its outer container."""
+        section, layout = make_section("Suggest next point")
+
+        self._suggest_disabled_hint = QLabel("")
+        self._suggest_disabled_hint.setWordWrap(True)
+        self._suggest_disabled_hint.setStyleSheet(f"color: {tokens.TEXT_MUTED}; font-size: 11px;")
+        layout.addWidget(self._suggest_disabled_hint)
+
+        target_row = QHBoxLayout()
+        target_row.addWidget(QLabel("Target:"))
+        self._suggest_target_combo = QComboBox()
+        self._suggest_target_combo.setToolTip(
+            "The parameter to minimise the posterior uncertainty of (c-optimal), "
+            "or the whole covariance ellipsoid (D-optimal, all parameters)."
+        )
+        self._suggest_target_combo.currentIndexChanged.connect(self._on_suggest_target_changed)
+        target_row.addWidget(self._suggest_target_combo, 1)
+        layout.addLayout(target_row)
+
+        goal_row = QHBoxLayout()
+        goal_row.addWidget(QLabel("Precision goal:"))
+        self._suggest_goal_edit = QLineEdit()
+        self._suggest_goal_edit.setPlaceholderText("e.g. 0.1")
+        self._suggest_goal_edit.setValidator(QDoubleValidator(0.0, 1.0e12, 12, self))
+        self._suggest_goal_edit.setToolTip(
+            "Optional target sigma for the selected parameter (same units). "
+            "Solves for the event-count factor needed at the suggested x; "
+            "only meaningful for a single-parameter (c-optimal) target."
+        )
+        goal_row.addWidget(self._suggest_goal_edit, 1)
+        layout.addLayout(goal_row)
+
+        range_row = QHBoxLayout()
+        range_row.addWidget(QLabel("Candidate range:"))
+        self._suggest_min_field = FloatLimitField(0.0, value_range=(-1e12, 1e12), decimals=6)
+        self._suggest_max_field = FloatLimitField(1.0, value_range=(-1e12, 1e12), decimals=6)
+        range_row.addWidget(self._suggest_min_field)
+        range_row.addWidget(QLabel("–"))
+        range_row.addWidget(self._suggest_max_field)
+        range_row.addStretch()
+        layout.addLayout(range_row)
+
+        rate_row = QHBoxLayout()
+        rate_row.addWidget(QLabel("Typical run (Mevents):"))
+        self._suggest_typical_run_edit = QLineEdit()
+        self._suggest_typical_run_edit.setPlaceholderText("optional")
+        self._suggest_typical_run_edit.setValidator(QDoubleValidator(0.0, 1.0e12, 6, self))
+        self._suggest_typical_run_edit.setToolTip(
+            "Display-only: your instrument's typical run size, used to convert "
+            "the events factor into an approximate Mevents figure."
+        )
+        self._suggest_typical_run_edit.textChanged.connect(self._on_suggest_conversion_changed)
+        rate_row.addWidget(self._suggest_typical_run_edit)
+        rate_row.addWidget(QLabel("Rate (Mevents/h):"))
+        self._suggest_rate_edit = QLineEdit()
+        self._suggest_rate_edit.setPlaceholderText("optional")
+        self._suggest_rate_edit.setValidator(QDoubleValidator(0.0, 1.0e12, 6, self))
+        self._suggest_rate_edit.setToolTip(
+            "Display-only: your instrument's count rate, used to additionally "
+            "show an equivalent counting time. Never affects the computation."
+        )
+        self._suggest_rate_edit.textChanged.connect(self._on_suggest_conversion_changed)
+        rate_row.addWidget(self._suggest_rate_edit)
+        layout.addLayout(rate_row)
+
+        button_row = QHBoxLayout()
+        self._suggest_btn = QPushButton("Suggest")
+        self._suggest_btn.clicked.connect(self._on_suggest_clicked)
+        button_row.addWidget(self._suggest_btn)
+        button_row.addStretch()
+        layout.addLayout(button_row)
+
+        self._suggest_result_label = QLabel("")
+        self._suggest_result_label.setTextFormat(Qt.TextFormat.RichText)
+        self._suggest_result_label.setWordWrap(True)
+        layout.addWidget(self._suggest_result_label)
+
+        self._suggest_warning_label = QLabel("")
+        self._suggest_warning_label.setTextFormat(Qt.TextFormat.RichText)
+        self._suggest_warning_label.setWordWrap(True)
+        self._suggest_warning_label.setVisible(False)
+        layout.addWidget(self._suggest_warning_label)
+
+        return section
+
+    def _suggest_disabled_reason(self, idx: int | None) -> str | None:
+        """Return why the section is disabled for range *idx*, or None if enabled."""
+        if idx is None or idx < 0 or idx >= len(self._fit.ranges):
+            return "Select a range."
+        result = self._result_for_range(idx)
+        if result is None or not getattr(result, "success", False):
+            return "Run a successful fit for this range to suggest a next point."
+        if getattr(result, "covariance", None) is None:
+            return (
+                "No covariance available from this fit (HESSE did not run/"
+                "converge) — cannot estimate parameter sensitivities."
+            )
+        if self._error_mode() in (ErrorMode.NONE, ErrorMode.SCATTER):
+            return (
+                "Errors are set to None/Estimate-from-scatter — there is no "
+                "real noise model to predict a new point's uncertainty from. "
+                "Choose Column, Percent, or Absolute errors."
+            )
+        return None
+
+    def _refresh_suggest_section(self) -> None:
+        """Sync the section's enabled state + target combo to the active range."""
+        idx = self._active_range_idx
+        reason = self._suggest_disabled_reason(idx)
+        enabled = reason is None
+
+        for widget in (
+            self._suggest_target_combo,
+            self._suggest_goal_edit,
+            self._suggest_min_field,
+            self._suggest_max_field,
+            self._suggest_btn,
+        ):
+            widget.setEnabled(enabled)
+        self._suggest_section.setToolTip(reason or "")
+        self._suggest_disabled_hint.setText(reason or "")
+        self._suggest_disabled_hint.setVisible(not enabled)
+
+        if not enabled:
+            return
+
+        fit_range = self._fit.ranges[idx]
+        free_names = [p.name for p in fit_range.parameters.free_parameters]
+        current = self._suggest_target_combo.currentData()
+        with QSignalBlocker(self._suggest_target_combo):
+            self._suggest_target_combo.clear()
+            self._suggest_target_combo.addItem(
+                "All parameters (D-optimal)", userData=_SUGGEST_ALL_PARAMS
+            )
+            for name in free_names:
+                self._suggest_target_combo.addItem(name, userData=name)
+            # Preserve the previous selection if it is still a free parameter;
+            # otherwise default to the first free parameter (spec default).
+            restore_idx = 0
+            if current in free_names:
+                restore_idx = self._suggest_target_combo.findData(current)
+            elif free_names:
+                restore_idx = self._suggest_target_combo.findData(free_names[0])
+            self._suggest_target_combo.setCurrentIndex(max(0, restore_idx))
+
+        if self._suggest_min_field.value() == self._suggest_max_field.value():
+            # Fresh section: seed the candidate range to the measured x span.
+            self._suggest_min_field.setValue(self._x_min_data)
+            self._suggest_max_field.setValue(self._x_max_data)
+
+        self._on_suggest_target_changed()
+
+    def _on_suggest_target_changed(self, *_args: object) -> None:
+        """Precision-goal field only makes sense for a single (c-optimal) target."""
+        target = self._suggest_target_combo.currentData()
+        is_c_optimal = target is not None and target != _SUGGEST_ALL_PARAMS
+        self._suggest_goal_edit.setEnabled(is_c_optimal)
+        if not is_c_optimal:
+            self._suggest_goal_edit.clear()
+
+    def _effective_y_err_for_active_fit(self) -> np.ndarray:
+        """The per-point sigma the active range's fit was actually weighted with.
+
+        Reuses the SAME error-mode resolution the fit itself uses
+        (``apply_error_mode``) so the suggestion's noise model matches the fit
+        that produced its covariance exactly. Falls back to the raw ``yerr``
+        column when the mode yields ``None`` (unit weights with no column).
+        """
+        resolved = apply_error_mode(self._y, self._yerr, self._error_mode(), self._error_value())
+        if resolved is None:
+            return np.ones_like(self._y)
+        return resolved
+
+    def _clear_suggestion(self) -> None:
+        """Drop any stale suggestion overlay + result line (spec item 7)."""
+        self._last_suggestion = None
+        self._last_suggestion_calibration = None
+        self._pending_calibration = None
+        if getattr(self, "_suggest_result_label", None) is not None:
+            self._suggest_result_label.setText("")
+        if getattr(self, "_suggest_warning_label", None) is not None:
+            self._suggest_warning_label.setText("")
+            self._suggest_warning_label.setVisible(False)
+        preview = getattr(self, "_preview", None)
+        if preview is not None:
+            preview.set_suggestion(None)
+
+    def _on_suggest_clicked(self) -> None:
+        """Compute a fresh suggestion for the active range (GUI thread; ms)."""
+        idx = self._active_range_idx
+        if self._suggest_disabled_reason(idx) is not None:
+            return
+        self._clear_suggestion()
+
+        fit_range = self._fit.ranges[idx]
+        result = self._result_for_range(idx)
+        covariance = result.covariance
+        target_data = self._suggest_target_combo.currentData()
+        target = None if target_data in (None, _SUGGEST_ALL_PARAMS) else str(target_data)
+
+        goal_text = self._suggest_goal_edit.text().strip()
+        sigma_goal: float | None = None
+        if target is not None and goal_text:
+            try:
+                parsed = float(goal_text)
+                if np.isfinite(parsed) and parsed > 0.0:
+                    sigma_goal = parsed
+            except ValueError:
+                sigma_goal = None
+
+        y_err = self._effective_y_err_for_active_fit()
+
+        suggestion = suggest_next_point(
+            fit_range.model,
+            fit_range.parameters,
+            covariance,
+            self._x,
+            y_err,
+            self._suggest_min_field.value(),
+            self._suggest_max_field.value(),
+            target=target,
+            sigma_goal=sigma_goal,
+        )
+        self._last_suggestion = suggestion
+        self._apply_suggestion_to_canvas(suggestion)
+        self._update_suggest_result_label(suggestion, calibration=None)
+
+        if target is not None and np.isfinite(suggestion.best_x):
+            self._launch_calibration(fit_range, result, suggestion, y_err)
+
+    def _apply_suggestion_to_canvas(self, suggestion: NextPointSuggestion) -> None:
+        preview = getattr(self, "_preview", None)
+        if preview is None:
+            return
+        preview.set_suggestion(
+            SuggestionOverlay(
+                x=suggestion.x_candidates,
+                utility=suggestion.utility,
+                extrapolated=suggestion.extrapolated,
+                best_x=suggestion.best_x,
+            )
+        )
+
+    def _suggest_conversion_line(self, events_factor: float | None) -> str:
+        """Optional "≈ N Mevents" / "≈ N h" tail (spec item 6; display-only)."""
+        if events_factor is None:
+            return ""
+        typical_text = self._suggest_typical_run_edit.text().strip()
+        if not typical_text:
+            return ""
+        try:
+            typical = float(typical_text)
+        except ValueError:
+            return ""
+        if not np.isfinite(typical) or typical <= 0.0:
+            return ""
+        mevents = events_factor * typical
+        line = f"≈ {mevents:.3g} Mevents"
+        rate_text = self._suggest_rate_edit.text().strip()
+        if rate_text:
+            try:
+                rate = float(rate_text)
+            except ValueError:
+                rate = float("nan")
+            if np.isfinite(rate) and rate > 0.0:
+                line += f" ≈ {mevents / rate:.3g} h"
+        return line
+
+    def _on_suggest_conversion_changed(self, *_args: object) -> None:
+        """Typical-run/rate fields are pure display — re-render the result line."""
+        if self._last_suggestion is None:
+            return
+        self._update_suggest_result_label(
+            self._last_suggestion, calibration=self._last_calibration()
+        )
+
+    def _last_calibration(self) -> SuggestionCalibration | None:
+        return getattr(self, "_last_suggestion_calibration", None)
+
+    def _update_suggest_result_label(
+        self,
+        suggestion: NextPointSuggestion,
+        *,
+        calibration: SuggestionCalibration | None,
+        calibrating: bool = False,
+    ) -> None:
+        """Render the result line + warnings for the current suggestion state."""
+        if not np.isfinite(suggestion.best_x):
+            self._suggest_result_label.setText(
+                info_html("No informative candidate found in this range.")
+            )
+            self._set_suggest_warnings(suggestion.warnings)
+            return
+
+        parts = [f"Measure at x = {suggestion.best_x:.4g}"]
+
+        if suggestion.target is not None:
+            if suggestion.target_unreachable:
+                floor = suggestion.floor_sigma
+                floor_text = f" (floor sigma({suggestion.target}) ~ {floor:.3g})" if floor else ""
+                parts.append(
+                    f"the precision goal cannot be reached with a single new point{floor_text}"
+                )
+            elif suggestion.events_factor_to_target is not None:
+                parts.append(
+                    f"× {suggestion.events_factor_to_target:.2g} of a typical run's statistics"
+                )
+
+            if calibrating:
+                parts.append("calibrating…")
+            elif calibration is not None and np.isfinite(calibration.realized_post_sigma):
+                parts.append(
+                    f"→ σ({suggestion.target}) ≈ {calibration.realized_post_sigma:.3g} "
+                    "(MC-calibrated)"
+                )
+            elif suggestion.predicted_post_sigma is not None:
+                parts.append(
+                    f"→ σ({suggestion.target}) ≈ {suggestion.predicted_post_sigma:.3g} (approximate)"
+                )
+
+        conversion = self._suggest_conversion_line(suggestion.events_factor_to_target)
+        if conversion:
+            parts.append(conversion)
+
+        self._suggest_result_label.setText(" ".join(parts))
+
+        warnings = list(suggestion.warnings)
+        if calibration is not None:
+            warnings.extend(calibration.warnings)
+        self._set_suggest_warnings(warnings)
+
+    def _set_suggest_warnings(self, warnings: Sequence[str]) -> None:
+        text = list(dict.fromkeys(w for w in warnings if w))
+        if not text:
+            self._suggest_warning_label.setText("")
+            self._suggest_warning_label.setVisible(False)
+            return
+        self._suggest_warning_label.setText(warning_html(" ".join(text)))
+        self._suggest_warning_label.setVisible(True)
+
+    def _launch_calibration(
+        self,
+        fit_range: ModelFitRange,
+        result: object,
+        suggestion: NextPointSuggestion,
+        y_err: np.ndarray,
+    ) -> None:
+        """Off-thread Monte-Carlo calibration of a c-optimal suggestion (§3.5)."""
+        if self._calibration_in_progress:
+            # A calibration is already running for a superseded suggestion; the
+            # completion callbacks drain this pending request so a fresh
+            # suggestion never silently stays uncalibrated.
+            self._pending_calibration = (fit_range, result, suggestion, y_err)
+            return
+
+        # Round-trip through the dict codec: a bare constructor call from the
+        # name/operator lists would drop the parentheses (they default to
+        # zeros) and silently change precedence for parenthesized composites.
+        model_snapshot = ParameterCompositeModel.from_dict(fit_range.model.to_dict())
+        params_snapshot = ParameterSet(
+            [
+                Parameter(
+                    name=p.name,
+                    value=float(p.value),
+                    min=float(p.min),
+                    max=float(p.max),
+                    fixed=bool(p.fixed),
+                )
+                for p in fit_range.parameters
+            ]
+        )
+        x_vals = np.asarray(self._x, dtype=float).copy()
+        y_vals = np.asarray(self._y, dtype=float).copy()
+        y_errs = np.asarray(y_err, dtype=float).copy()
+        target = suggestion.target
+        best_x = suggestion.best_x
+        events_factor = suggestion.events_factor_to_target or 1.0
+        predicted_post_sigma = suggestion.predicted_post_sigma
+        generation = self._active_range_idx
+        request_token = suggestion
+
+        def _worker(_worker: object) -> object:
+            return calibrate_suggestion(
+                model_snapshot,
+                params_snapshot,
+                x_vals,
+                y_vals,
+                y_errs,
+                best_x,
+                target=target,
+                events_factor=events_factor,
+                n_trials=30,
+                seed=0,
+                predicted_post_sigma=predicted_post_sigma,
+            )
+
+        def _on_done(calibration: object) -> None:
+            self._calibration_in_progress = False
+            if self._drain_pending_calibration():
+                return
+            # Drop a stale result: the active range changed, or a fresh
+            # suggestion superseded this one, since the worker was launched.
+            if self._active_range_idx != generation or self._last_suggestion is not request_token:
+                return
+            self._last_suggestion_calibration = calibration
+            self._update_suggest_result_label(suggestion, calibration=calibration)
+
+        def _on_error(_message: str) -> None:
+            self._calibration_in_progress = False
+            if self._drain_pending_calibration():
+                return
+            # Clear the transient "calibrating…" note; the analytic figure
+            # (labelled approximate) remains the best available.
+            if self._active_range_idx == generation and self._last_suggestion is request_token:
+                self._update_suggest_result_label(suggestion, calibration=None)
+
+        self._calibration_in_progress = True
+        self._update_suggest_result_label(suggestion, calibration=None, calibrating=True)
+        self._tasks.start(_worker, on_finished=_on_done, on_error=_on_error)
+
+    def _drain_pending_calibration(self) -> bool:
+        """Launch a calibration queued while another was in flight.
+
+        Returns True when a pending request was (re)launched — the caller's
+        own result is then stale by construction and must be dropped. The
+        pending request is only honoured if it still matches the live
+        suggestion; anything else (range switch, cleared suggestion) is
+        discarded.
+        """
+        pending = getattr(self, "_pending_calibration", None)
+        self._pending_calibration = None
+        if pending is None:
+            return False
+        fit_range, result, suggestion, y_err = pending
+        if self._last_suggestion is not suggestion:
+            return False
+        self._launch_calibration(fit_range, result, suggestion, y_err)
+        return True
 
     # -- template-method hooks: per-row control, error cell, result source -----
     #
@@ -2399,6 +2886,14 @@ class ModelFitDialog(QDialog):
         self._param_table.blockSignals(False)
         self._param_table.resizeColumnsToContents()
         self._post_select_range(idx)
+
+        # Range switch invalidates any suggestion computed for the previously
+        # active range (spec item 7); only clear the LIVE state (canvas/labels)
+        # here, then rebuild the section for whichever range is now active.
+        if getattr(self, "_suggest_section", None) is not None:
+            self._clear_suggestion()
+            self._refresh_suggest_section()
+
         self._request_preview_update()
 
     def _select_range(self, idx: int) -> None:

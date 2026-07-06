@@ -12,6 +12,7 @@ from asymmetry.gui.styles import tokens
 from asymmetry.gui.widgets.trend_preview import (
     PreviewRange,
     PreviewSeries,
+    SuggestionOverlay,
     TrendPreviewCanvas,
     range_span_color,
 )
@@ -695,6 +696,93 @@ def test_residual_axis_toggles(qapp: QApplication) -> None:
 
     canvas.set_show_residuals(False)
     assert len(canvas._figure.get_axes()) == 1
+
+
+# ── Suggestion overlay (Phase 2, §5.4) ───────────────────────────────────────
+def _suggestion(*, best_x: float = 2.0) -> SuggestionOverlay:
+    x = np.linspace(0.0, 4.0, 9)
+    utility = np.exp(-((x - best_x) ** 2))
+    extrapolated = (x < 0.5) | (x > 3.5)
+    return SuggestionOverlay(x=x, utility=utility, extrapolated=extrapolated, best_x=best_x)
+
+
+def test_set_suggestion_then_clear_no_exception_ylim_unchanged(qapp: QApplication) -> None:
+    """set_suggestion(...) then set_suggestion(None): no exception, ylim pinned.
+
+    The Part-A invariant: drawing (and clearing) the utility-band overlay must
+    never perturb the main axes' y autoscale, since the band is anchored via a
+    blended x-data/y-axes-fraction transform that could otherwise leak into
+    the main axes' datalim.
+    """
+    mask = np.array([True, True, True, True, True])
+
+    baseline = TrendPreviewCanvas()
+    baseline.set_series([_series()])
+    baseline.set_ranges([_range(fitted=True, mask=mask)])
+    baseline.set_active_range(0)
+    baseline.set_state("ready")
+    baseline._canvas.draw()
+    baseline_ylim = _axes(baseline).get_ylim()
+
+    canvas = TrendPreviewCanvas()
+    canvas.set_series([_series()])
+    canvas.set_ranges([_range(fitted=True, mask=mask)])
+    canvas.set_active_range(0)
+    canvas.set_state("ready")
+    canvas._canvas.draw()
+    ylim_before = _axes(canvas).get_ylim()
+    assert ylim_before == pytest.approx(baseline_ylim)
+
+    canvas.set_suggestion(_suggestion())
+    canvas._canvas.draw()
+    ylim_with_overlay = _axes(canvas).get_ylim()
+    assert ylim_with_overlay == pytest.approx(ylim_before)
+
+    canvas.set_suggestion(None)
+    canvas._canvas.draw()
+    ylim_after_clear = _axes(canvas).get_ylim()
+    assert ylim_after_clear == pytest.approx(ylim_before)
+
+
+def test_suggestion_marker_and_band_drawn(qapp: QApplication) -> None:
+    """A finite best_x draws a marker line + annotation; utility fills the band."""
+    mask = np.array([True, True, True, True, True])
+    canvas = TrendPreviewCanvas()
+    canvas.set_series([_series()])
+    canvas.set_ranges([_range(fitted=True, mask=mask)])
+    canvas.set_active_range(0)
+    canvas.set_state("ready")
+
+    canvas.set_suggestion(_suggestion(best_x=2.0))
+    ax = _axes(canvas)
+
+    marker_lines = [
+        ln for ln in ax.get_lines() if ln.get_linestyle() == ":" and ln.get_color() == tokens.ACCENT
+    ]
+    assert marker_lines, "expected a vertical best_x marker line"
+    texts = [t.get_text() for t in ax.texts]
+    assert any("suggested" in t for t in texts)
+    # Utility band fill(s) present.
+    assert len(ax.collections) >= 1
+
+
+def test_suggestion_nan_best_x_skips_marker(qapp: QApplication) -> None:
+    """best_x = NaN draws the band but no marker/annotation, and does not crash."""
+    mask = np.array([True, True, True, True, True])
+    canvas = TrendPreviewCanvas()
+    canvas.set_series([_series()])
+    canvas.set_ranges([_range(fitted=True, mask=mask)])
+    canvas.set_active_range(0)
+    canvas.set_state("ready")
+
+    overlay = _suggestion()
+    overlay = SuggestionOverlay(
+        x=overlay.x, utility=overlay.utility, extrapolated=overlay.extrapolated, best_x=float("nan")
+    )
+    canvas.set_suggestion(overlay)
+    ax = _axes(canvas)
+    texts = [t.get_text() for t in ax.texts]
+    assert not any("suggested" in t for t in texts)
 
 
 def test_residuals_no_curve_no_crash(qapp: QApplication) -> None:

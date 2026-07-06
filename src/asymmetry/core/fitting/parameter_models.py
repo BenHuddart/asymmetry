@@ -2289,6 +2289,11 @@ class ParameterModelFitResult:
     #: Names of free parameters whose fitted value sits within tolerance of a
     #: finite ``min``/``max`` bound — a sign the data did not determine them.
     params_at_bound: tuple[str, ...] = ()
+    #: ``(names, matrix)`` of the free-parameter covariance from Minuit, in
+    #: the same order as ``names`` (free parameters only, fixed parameters
+    #: excluded). ``None`` when unavailable: the fit failed/invalid or Minuit
+    #: produced no covariance (e.g. HESSE did not run/converge).
+    covariance: tuple[list[str], list[list[float]]] | None = None
 
 
 @dataclass
@@ -3161,6 +3166,16 @@ def _run_parameter_model_minuit(
             if err is not None and np.isfinite(err):
                 uncertainties[p.name] = float(err)
 
+    covariance: tuple[list[str], list[list[float]]] | None = None
+    if m.valid and m.covariance is not None and param_names:
+        try:
+            cov_sub = np.array(m.covariance[param_names], dtype=float)
+        except (KeyError, ValueError):
+            cov_sub = None
+        if cov_sub is not None and cov_sub.shape == (len(param_names), len(param_names)):
+            if np.all(np.isfinite(cov_sub)):
+                covariance = (list(param_names), cov_sub.tolist())
+
     ndof = max(len(x_fit) - len(free), 1)
     return (
         ParameterModelFitResult(
@@ -3170,6 +3185,7 @@ def _run_parameter_model_minuit(
             parameters=result_params,
             uncertainties=uncertainties,
             message="Fit successful" if m.valid else "Fit failed",
+            covariance=covariance,
         ),
         float(m.fval),
     )
@@ -3397,6 +3413,7 @@ def fit_parameter_model(
             # estimate errors from — χ² ≈ 0 would collapse the rescaled
             # errors to ~0, reporting an indeterminate fit as exact.
             best_result.uncertainties = {}
+            best_result.covariance = None
             best_result.message = (
                 f"{best_result.message}; no degrees of freedom to estimate errors from scatter"
             )
@@ -3406,6 +3423,13 @@ def fit_parameter_model(
                 best_result.uncertainties = {
                     name: err * scale for name, err in best_result.uncertainties.items()
                 }
+                if best_result.covariance is not None:
+                    names, matrix = best_result.covariance
+                    scale2 = scale * scale
+                    best_result.covariance = (
+                        names,
+                        [[value * scale2 for value in row] for row in matrix],
+                    )
     return best_result
 
 
