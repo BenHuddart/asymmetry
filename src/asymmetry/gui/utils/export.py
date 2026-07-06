@@ -12,12 +12,15 @@ def compile_gle(
     output_format: str,
     *,
     cwd: str | Path,
+    timeout: float = 120.0,
 ) -> subprocess.CompletedProcess:
     """Run GLE to compile *gle_file* to *output_format* in *cwd*.
 
     Centralizes the ``gle -d <fmt> <file>`` invocation (capture_output, text,
     check=True) shared by every GLE export/preview path. Raises
-    ``subprocess.CalledProcessError`` on non-zero exit (callers handle it).
+    ``subprocess.CalledProcessError`` on non-zero exit (callers handle it) and
+    ``subprocess.TimeoutExpired`` after *timeout* seconds — a bound so a
+    wedged GLE process can never hang its caller indefinitely.
     Returns the ``CompletedProcess``.
     """
     return subprocess.run(
@@ -26,4 +29,5 @@ def compile_gle(
         text=True,
         check=True,
         cwd=str(cwd),
+        timeout=timeout,
     )

@@ -2,12 +2,7 @@
 
 from __future__ import annotations
 
-import importlib
 import math
-import os
-import re
-import shutil
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -50,18 +45,17 @@ from asymmetry.core.fitting.parameter_models import (
     parse_fit_windows,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet, get_param_info
-from asymmetry.gui.export_paths import (
-    default_export_path,
-    remember_export_path,
-    resolve_gle_export_paths,
-)
-from asymmetry.gui.gle_settings import get_gle_executable
+from asymmetry.gui.export_paths import default_export_path, remember_export_path
 from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import apply_param_table_style, widest_button_width
 from asymmetry.gui.tasks import TaskRunner
-from asymmetry.gui.utils.export import compile_gle
-from asymmetry.gui.utils.gle_editor import launch_gle_editor
+from asymmetry.gui.utils.gle_export import (
+    GleExportBuild,
+    extract_gle_data_dependencies,
+    run_gle_export,
+    safe_file_token,
+)
 from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
 from asymmetry.gui.widgets.mpl_canvas import create_canvas
 from asymmetry.gui.windows.global_fit_window_helpers import (
@@ -1529,16 +1523,12 @@ class GlobalParameterFitWindow(QMainWindow):
         return get_param_info(name).gle_label()
 
     def _safe_file_token(self, value: str) -> str:
-        token = "".join(
-            ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in str(value).strip()
-        )
-        token = "_".join(part for part in token.split("_") if part)
-        return token or "group"
+        return safe_file_token(value, fallback="group")
 
     def _safe_data_name(self, value: str) -> str:
-        token = "".join(ch if ch.isalnum() or ch == "_" else "_" for ch in str(value).strip())
-        token = "_".join(part for part in token.split("_") if part)
-        return (token or "series").lower()
+        # Unlike filename tokens, data names feed gleplot ``data_name=``
+        # identifiers: keep the historical strictness (no hyphens, lowercase).
+        return safe_file_token(str(value).replace("-", "_"), fallback="series").lower()
 
     @staticmethod
     def _model_kwargs(result, model, group_id: str) -> dict[str, float]:
@@ -3286,149 +3276,49 @@ class GlobalParameterFitWindow(QMainWindow):
 
         return fig
 
-    def _show_gle_preview(self, output_path: Path) -> None:
-        if os.environ.get("PYTEST_CURRENT_TEST"):
-            return
-        if not output_path.exists():
-            return
-
-        try:
-            import tempfile
-
-            from PySide6.QtGui import QPixmap
-
-            dialog = QDialog(self)
-            dialog.setWindowTitle("GLE Plot Preview")
-            dialog.resize(850, 620)
-            layout = QVBoxLayout(dialog)
-
-            image_label = QLabel("Preview unavailable")
-            layout.addWidget(image_label)
-
-            _gle = get_gle_executable()
-            if _gle is not None:
-                gle_path = output_path.with_suffix(".gle")
-                if gle_path.exists():
-                    with tempfile.TemporaryDirectory() as tmpdir:
-                        tmpdir_path = Path(tmpdir)
-                        tmp_gle = tmpdir_path / gle_path.name
-                        preview_png = tmp_gle.with_suffix(".png")
-
-                        shutil.copy2(gle_path, tmp_gle)
-                        for dep_name in self._extract_gle_data_dependencies(gle_path):
-                            src = gle_path.parent / dep_name
-                            if src.exists() and src.is_file():
-                                shutil.copy2(src, tmpdir_path / dep_name)
-
-                        compile_gle(_gle, tmp_gle, "png", cwd=tmpdir_path)
-
-                        pixmap = QPixmap(str(preview_png))
-                        if not pixmap.isNull():
-                            image_label.setPixmap(pixmap)
-                            image_label.setText("")
-
-            close_btn = QPushButton("Close")
-            close_btn.clicked.connect(dialog.accept)
-            layout.addWidget(close_btn)
-            dialog.exec()
-        except Exception as exc:
-            QMessageBox.warning(self, "Preview error", f"Failed to show preview: {exc}")
-
-    def _extract_gle_data_dependencies(self, gle_path: Path) -> list[str]:
-        """Return data-file names referenced by `data <file>` commands in a GLE script."""
-        try:
-            text = gle_path.read_text(encoding="utf-8")
-        except OSError:
-            return []
-
-        seen: set[str] = set()
-        deps: list[str] = []
-        pattern = r"^\s*data\s+(?:\"([^\"]+)\"|(\S+))"
-        for match in re.finditer(pattern, text, flags=re.MULTILINE):
-            token = (match.group(1) or match.group(2) or "").strip()
-            name = Path(token).name
-            if name and name not in seen:
-                seen.add(name)
-                deps.append(name)
-        return deps
-
-    def _compile_and_preview_gle(self, gle_path: Path, output_format: str) -> None:
-        _gle = get_gle_executable()
-        if _gle is None:
-            QMessageBox.information(
-                self,
-                "GLE Not Installed",
-                f"GLE script saved to {gle_path}. Install GLE to compile to {output_format.upper()}.",
-            )
-            # The editor is useful even without a GLE binary (it can edit the
-            # script and reports its own "GLE: not found" status). No static
-            # fallback here — the legacy preview needs GLE to render anything.
-            if not os.environ.get("PYTEST_CURRENT_TEST"):
-                launch_gle_editor(gle_path)
-            return
-
-        output_path = gle_path.with_suffix(f".{output_format}")
-        try:
-            compile_gle(_gle, gle_path, output_format, cwd=gle_path.parent)
-            QMessageBox.information(
-                self,
-                "Export Successful",
-                f"GLE plot exported:\n\nGLE script: {gle_path}\nOutput: {output_path}",
-            )
-            if os.environ.get("PYTEST_CURRENT_TEST") or not launch_gle_editor(gle_path):
-                self._show_gle_preview(output_path)
-        except subprocess.CalledProcessError as exc:
-            QMessageBox.warning(self, "GLE compilation failed", exc.stderr or str(exc))
-            if os.environ.get("PYTEST_CURRENT_TEST") or not launch_gle_editor(gle_path):
-                self._show_gle_preview(output_path)
-
     def _export_plot_gle(
         self, *, title: str, default_name: str, builder, output_format: str
     ) -> None:
+        """Thin wrapper over the shared :func:`run_gle_export` orchestrator.
+
+        Keeps the pre-dialog "no result" guard (must fire before any file
+        dialog appears) and the wait-cursor for a cold fit-curve cache, then
+        delegates the save dialog, gleplot import, path resolution, async
+        compile, and result/preview dialogs to the shared sequence. ``builder``
+        keeps its existing ``(glp, gle_path) -> fig`` shape; ``fig.savefig``
+        and the written-file list move into the ``build`` closure below.
+        """
         if self._result is None or self._parameter_name is None:
             QMessageBox.information(self, "No result", "Run a cross-group fit first.")
             return
 
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            title,
-            default_export_path(default_name),
-            "GLE export folders (*.gleplot)",
-        )
-        if not path:
-            return
-        remember_export_path(path)
-
-        # The fit-subplot export reuses the warm curve cache; if it is cold
-        # (export before the plot has drawn) the builder falls back to an inline
-        # 800-pt evaluation per group — show a busy cursor for that stretch.
-        cold = self._fit_curve_cache_is_cold()
-        if cold:
-            QGuiApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
-            glp = importlib.import_module("gleplot")
-            requested_gle_path = Path(path)
-            gle_path, export_dir = resolve_gle_export_paths(requested_gle_path, folder=True)
-            export_dir.mkdir(parents=True, exist_ok=True)
-            fig = builder(glp, gle_path)
-            fig.savefig(str(gle_path))
-            self._compile_and_preview_gle(gle_path, output_format)
-        except ImportError:
-            QMessageBox.warning(
-                self, "gleplot not available", "Install gleplot to export GLE plots."
-            )
-        except TypeError as exc:
-            if "folder" in str(exc):
-                QMessageBox.warning(
-                    self, "gleplot update required", "Please update gleplot to a newer version."
-                )
-                return
-            QMessageBox.warning(self, "Export failed", f"Could not export GLE: {exc}")
-        except Exception as exc:
-            QMessageBox.warning(self, "Export failed", f"Could not export GLE: {exc}")
-        finally:
+        def build(glp, gle_path: Path, export_dir: Path) -> GleExportBuild | None:
+            # The fit-subplot export reuses the warm curve cache; if it is
+            # cold (export before the plot has drawn) the builder falls back
+            # to an inline 800-pt evaluation per group — show a busy cursor
+            # for that stretch.
+            cold = self._fit_curve_cache_is_cold()
             if cold:
-                QGuiApplication.restoreOverrideCursor()
+                QGuiApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                fig = builder(glp, gle_path)
+                fig.savefig(str(gle_path))
+            finally:
+                if cold:
+                    QGuiApplication.restoreOverrideCursor()
+
+            deps = extract_gle_data_dependencies(gle_path)
+            files = [gle_path, *(export_dir / name for name in deps)]
+            return GleExportBuild(files=files)
+
+        run_gle_export(
+            self,
+            tasks=self._tasks,
+            dialog_title=title,
+            default_name=default_name,
+            output_format=output_format,
+            build=build,
+        )
 
     def _fit_curve_cache_is_cold(self) -> bool:
         """Return ``True`` when any shown group lacks a cached total fit curve.

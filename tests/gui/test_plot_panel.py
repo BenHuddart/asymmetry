@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -18,6 +19,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pyside6 = pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QPushButton  # type: ignore
 
+import asymmetry.gui.utils.gle_export as gle_export
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.export_paths import resolve_gle_export_paths
@@ -3446,17 +3448,24 @@ class TestPlotPanel:
             "importlib.import_module", lambda name: fake_glp if name == "gleplot" else None
         )
         monkeypatch.setattr(
-            panel,
-            "_show_export_result_dialog",
-            lambda title, summary, details: dialogs.append((title, summary, details)),
+            gle_export,
+            "show_export_result_dialog",
+            lambda parent, title, summary, details: dialogs.append((title, summary, details)),
         )
         monkeypatch.setattr(
-            panel,
-            "_show_gle_preview",
-            lambda gle_path: previews.append(str(gle_path)),
+            gle_export,
+            "post_export_view",
+            lambda parent, gle_path: previews.append(str(gle_path)),
         )
 
         panel.export_current_plot()
+        # The GLE compile runs on the panel's TaskRunner; drain it before
+        # asserting (and before monkeypatch teardown restores subprocess.run).
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline and not dialogs:
+            QApplication.processEvents()
+            time.sleep(0.01)
+        assert panel._tasks.active_count == 0 or dialogs
 
         assert resolved_gle.exists()
         assert axis.errorbar_calls
@@ -3479,29 +3488,12 @@ class TestPlotPanel:
         assert f"! fit_function: {fit_function}" in fit_text
         assert dialogs
         assert dialogs[0][0] == "Export Successful"
-        assert "Data/fit files:" in dialogs[0][2]
+        assert str(resolved_gle) in dialogs[0][1]
         assert previews == [str(resolved_gle)]
         # Under pytest (PYTEST_CURRENT_TEST is set by the runner itself), the
-        # new editor-first preview path must not open a real editor window —
-        # today's PYTEST_CURRENT_TEST guard keeps the legacy static preview
-        # the only thing invoked (and it is stubbed above).
+        # post-export view seam is suppressed internally, so no real editor
+        # window may open (the seam is stubbed above to observe the call).
         assert open_gle_editor_count() == 0
-
-    def test_show_gle_preview_returns_early_under_pytest(
-        self,
-        panel: PlotPanel,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        gle_path = tmp_path / "preview.gle"
-        gle_path.write_text("! fake gle", encoding="utf-8")
-
-        monkeypatch.setenv(
-            "PYTEST_CURRENT_TEST",
-            "tests/test_plot_panel.py::test_show_gle_preview_returns_early_under_pytest",
-        )
-
-        panel._show_gle_preview(gle_path)
 
     def test_export_current_plot_sanitizes_gle_text(
         self,
@@ -3533,13 +3525,12 @@ class TestPlotPanel:
             lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
         )
         monkeypatch.setattr(panel, "get_current_plot_export_data", lambda: [payload])
-        monkeypatch.setattr("shutil.which", lambda _name: "gle")
+        monkeypatch.setattr(gle_export, "get_gle_executable", lambda: None)
         monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(
             "importlib.import_module", lambda name: fake_glp if name == "gleplot" else None
         )
         monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
-        monkeypatch.setattr(panel, "_show_gle_preview", lambda *args, **kwargs: None)
 
         panel.export_current_plot()
 
@@ -3590,13 +3581,12 @@ class TestPlotPanel:
             "asymmetry.gui.panels.plot_panel.QFileDialog.getSaveFileName",
             lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
         )
-        monkeypatch.setattr("shutil.which", lambda _name: "gle")
+        monkeypatch.setattr(gle_export, "get_gle_executable", lambda: None)
         monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(
             "importlib.import_module", lambda name: fake_glp if name == "gleplot" else None
         )
         monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
-        monkeypatch.setattr(panel, "_show_gle_preview", lambda *args, **kwargs: None)
 
         panel.export_current_plot()
 
@@ -3649,13 +3639,12 @@ class TestPlotPanel:
             "asymmetry.gui.panels.plot_panel.QFileDialog.getSaveFileName",
             lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
         )
-        monkeypatch.setattr("shutil.which", lambda _name: "gle")
+        monkeypatch.setattr(gle_export, "get_gle_executable", lambda: None)
         monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(
             "importlib.import_module", lambda name: fake_glp if name == "gleplot" else None
         )
         monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
-        monkeypatch.setattr(panel, "_show_gle_preview", lambda *args, **kwargs: None)
 
         panel.export_current_plot()
 
@@ -3708,13 +3697,12 @@ class TestPlotPanel:
             "asymmetry.gui.panels.plot_panel.QFileDialog.getSaveFileName",
             lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
         )
-        monkeypatch.setattr("shutil.which", lambda _name: "gle")
+        monkeypatch.setattr(gle_export, "get_gle_executable", lambda: None)
         monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(
             "importlib.import_module", lambda name: fake_glp if name == "gleplot" else None
         )
         monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
-        monkeypatch.setattr(panel, "_show_gle_preview", lambda *args, **kwargs: None)
 
         panel.export_current_plot()
 
@@ -3807,13 +3795,12 @@ class TestPlotPanel:
             "asymmetry.gui.panels.plot_panel.QFileDialog.getSaveFileName",
             lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
         )
-        monkeypatch.setattr("shutil.which", lambda _name: "gle")
+        monkeypatch.setattr(gle_export, "get_gle_executable", lambda: None)
         monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(
             "importlib.import_module", lambda name: fake_glp if name == "gleplot" else None
         )
         monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
-        monkeypatch.setattr(panel, "_show_gle_preview", lambda *args, **kwargs: None)
 
         panel.export_current_plot()
 
@@ -3891,13 +3878,12 @@ class TestPlotPanel:
             "asymmetry.gui.panels.plot_panel.QFileDialog.getSaveFileName",
             lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
         )
-        monkeypatch.setattr("shutil.which", lambda _name: "gle")
+        monkeypatch.setattr(gle_export, "get_gle_executable", lambda: None)
         monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(
             "importlib.import_module", lambda name: fake_glp if name == "gleplot" else None
         )
         monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *a, **k: None)
-        monkeypatch.setattr(panel, "_show_gle_preview", lambda *a, **k: None)
 
         panel.export_plots_to_gle()
 
@@ -4326,13 +4312,12 @@ class TestPlotPanel:
             "asymmetry.gui.panels.plot_panel.QFileDialog.getSaveFileName",
             lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
         )
-        monkeypatch.setattr("shutil.which", lambda _name: "gle")
+        monkeypatch.setattr(gle_export, "get_gle_executable", lambda: None)
         monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(
             "importlib.import_module", lambda name: fake_glp if name == "gleplot" else None
         )
         monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
-        monkeypatch.setattr(panel, "_show_gle_preview", lambda *args, **kwargs: None)
 
         panel.export_current_plot()
 
@@ -4405,13 +4390,12 @@ class TestPlotPanel:
             "asymmetry.gui.panels.plot_panel.QFileDialog.getSaveFileName",
             lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
         )
-        monkeypatch.setattr("shutil.which", lambda _name: "gle")
+        monkeypatch.setattr(gle_export, "get_gle_executable", lambda: None)
         monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(
             "importlib.import_module", lambda name: fake_glp if name == "gleplot" else None
         )
         monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
-        monkeypatch.setattr(panel, "_show_gle_preview", lambda *args, **kwargs: None)
 
         panel.export_current_plot()
 

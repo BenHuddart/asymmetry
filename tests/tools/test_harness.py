@@ -154,6 +154,39 @@ def test_current_gui_has_no_bespoke_section_definitions() -> None:
     assert harness.find_bespoke_section_violations() == []
 
 
+def test_current_gui_has_no_bespoke_gle_export_fragments() -> None:
+    harness = _load_harness()
+
+    assert harness.find_bespoke_gle_export_violations() == []
+
+
+def test_gle_export_check_reports_fragments_outside_shared_home(tmp_path: Path) -> None:
+    gui_root = tmp_path / "gui"
+    utils = gui_root / "utils"
+    utils.mkdir(parents=True)
+    (utils / "gle_export.py").write_text(
+        'glp = importlib.import_module("gleplot")\ncompile_gle(exe, f, "pdf", cwd=d)\n',
+        encoding="utf-8",
+    )
+    stray = gui_root / "panels" / "legacy_panel.py"
+    stray.parent.mkdir(parents=True)
+    stray.write_text(
+        'glp = importlib.import_module("gleplot")\n'
+        'compile_gle(exe, f, "pdf", cwd=d)\n'
+        "def _show_gle_preview(self, gle_path):\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    harness = _load_harness()
+    harness.GLE_EXPORT_UTILS = frozenset({utils / "gle_export.py"})
+
+    failures = harness.find_bespoke_gle_export_violations(gui_root)
+
+    assert len(failures) == 3
+    assert all(f.path == stray for f in failures)
+    assert any("run_gle_export" in f.message for f in failures)
+
+
 def test_bespoke_section_check_reports_class_and_deleted_import(tmp_path: Path) -> None:
     gui_root = tmp_path / "gui"
     (gui_root / "widgets").mkdir(parents=True)

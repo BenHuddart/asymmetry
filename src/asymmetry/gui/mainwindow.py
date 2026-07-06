@@ -14088,6 +14088,11 @@ class MainWindow(QMainWindow):
         params_panel = getattr(self, "_fit_parameters_panel", None)
         if params_panel is not None and hasattr(params_panel, "shutdown_workers"):
             params_panel.shutdown_workers()
+        # GLE export compile workers in the plot panels (docked widgets too).
+        for attr in ("_plot_panel", "_frequency_plot_panel"):
+            panel = getattr(self, attr, None)
+            if panel is not None and hasattr(panel, "shutdown_workers"):
+                panel.shutdown_workers()
         if hasattr(self, "_plot_panel") and hasattr(self._plot_panel, "get_view_limits"):
             x_min, x_max, y_min, y_max = self._plot_panel.get_view_limits()
             self._settings.setValue("plot/time_x_min", float(x_min))

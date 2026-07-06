@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **GLE exports no longer block the interface.** The GLE compile step of every
+  figure export (main plot, Fit Parameters, Global Parameter Fit window) now
+  runs in the background; a wedged GLE process is stopped after a bounded
+  timeout instead of hanging the export. All three export surfaces now share
+  one orchestrated sequence with a consistent, scrollable "Export Successful"
+  results dialog, and re-exporting to an existing `.gleplot` folder cleans up
+  stale `.dat`/`.fit` sidecars left by a previous, larger export.
+- **Setup ▸ GLE Setup… validates the chosen executable.** On accept the dialog
+  runs the path once and refuses to save one that cannot run or is not GLE,
+  showing the reason inline — previously a bad path was saved silently and
+  only surfaced later as an opaque export error. Export failures from an
+  unrunnable configured binary now name the path and point back to the setup
+  dialog.
+
 ### Added
 
 - **GLE figure editor.** Exporting a figure to GLE (main plot, Fit Parameters,

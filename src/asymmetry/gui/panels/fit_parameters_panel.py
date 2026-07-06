@@ -39,8 +39,9 @@ module is ``FitParametersPanel(QWidget)``, whose methods cluster thematically
 - **Async trend-curve sampling** — ``_compute_trend_curves``/
   ``_start_trend_curve_compute`` offload model-curve sampling to a worker;
   ``_on_trend_curves_ready``/``_on_trend_curves_error`` marshal results back.
-- **Export** — TSV (``_export_tsv``) and GLE (``_export_gle``,
-  ``_generate_gle_plot``, ``_write_gle_data_file``) writers.
+- **Export** — TSV (``_export_tsv``) and GLE (``_export_gle`` thinly wraps the
+  shared ``gle_export.run_gle_export`` orchestrator; ``_build_gle_export`` is
+  its ``build`` callback, ``_write_gle_data_file`` writes the sidecar data).
 
 Entry points GUI callers use most: ``set_fit_results``/``load_representation_series``
 to feed data in, ``get_state``/``restore_state`` for project persistence,
@@ -50,10 +51,6 @@ to feed data in, ``get_state``/``restore_state`` for project persistence,
 from __future__ import annotations
 
 import csv
-import importlib
-import os
-import shutil
-import subprocess
 from collections.abc import Iterator
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -134,12 +131,7 @@ from asymmetry.core.fitting.parameters import (
     unregister_derived_param_info,
 )
 from asymmetry.core.utils.angles import wrap_angle_deg
-from asymmetry.gui.export_paths import (
-    default_export_path,
-    remember_export_path,
-    resolve_gle_export_paths,
-)
-from asymmetry.gui.gle_settings import get_gle_executable
+from asymmetry.gui.export_paths import default_export_path, remember_export_path
 from asymmetry.gui.panels.composite_parameter_dialog import CompositeParameterDialog
 from asymmetry.gui.panels.cross_group_fit_dialog import CrossGroupFitDialog
 from asymmetry.gui.panels.knight_joint_fit_dialog import KnightJointFitDialog
@@ -153,9 +145,8 @@ from asymmetry.gui.styles.widgets import (
     style_group_state_button,
 )
 from asymmetry.gui.tasks import TaskRunner
-from asymmetry.gui.utils.export import compile_gle
+from asymmetry.gui.utils import gle_export
 from asymmetry.gui.utils.formatting import format_param_label
-from asymmetry.gui.utils.gle_editor import launch_gle_editor
 from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
 from asymmetry.gui.widgets.mpl_canvas import create_canvas
 from asymmetry.gui.widgets.panel_section import PanelSection
@@ -6131,8 +6122,7 @@ class FitParametersPanel(QWidget):
         include_param_name = len(unique_params) > 1
 
         def _safe_token(name: str) -> str:
-            token = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in name)
-            return token or "fit"
+            return gle_export.safe_file_token(name, fallback="fit")
 
         base_names: list[str] = []
         for pname, _, _fit_range in entries:
@@ -6408,19 +6398,24 @@ class FitParametersPanel(QWidget):
         if not self._rows:
             return
 
-        path, _ = QFileDialog.getSaveFileName(
+        gle_export.run_gle_export(
             self,
-            "Export to GLE",
-            default_export_path("fit_parameters.gleplot"),
-            "GLE export folders (*.gleplot);;All files (*)",
+            tasks=self._tasks,
+            dialog_title="Export to GLE",
+            default_name="fit_parameters.gleplot",
+            output_format=self._gle_format_combo.currentText().lower(),
+            build=self._build_gle_export,
         )
-        if not path:
-            return
-        remember_export_path(path)
 
-        requested_gle_path = Path(path)
-        gle_path, export_dir = resolve_gle_export_paths(requested_gle_path, folder=True)
-        export_dir.mkdir(parents=True, exist_ok=True)
+    def _build_gle_export(
+        self, glp: Any, gle_path: Path, export_dir: Path
+    ) -> gle_export.GleExportBuild | None:
+        if not hasattr(glp, "Axes") or not hasattr(glp.Axes, "errorbar_from_file"):
+            gle_export.show_warning(
+                self, "gleplot update required", "Please update gleplot to a newer version."
+            )
+            return None
+
         data_path = gle_path.with_suffix(".dat")
         self._write_gle_data_file(data_path)
         x_key = self._effective_x_key()
@@ -6434,52 +6429,16 @@ class FitParametersPanel(QWidget):
         ]
         fit_file_map = self._write_fit_files(gle_path, x_key, all_active_fit_params)
 
-        # Make available to preview/notifications invoked during _generate_gle_plot.
-        self._last_export_fit_files = list(fit_file_map.values())
-        output_format = self._gle_format_combo.currentText().lower()
-        self._generate_gle_plot(
-            requested_gle_path,
-            gle_path,
-            data_path,
-            output_format,
-            fit_file_map,
-        )
-
-    def _generate_gle_plot(
-        self,
-        requested_gle_path: Path,
-        gle_path: Path,
-        data_path: Path,
-        output_format: str,
-        fit_file_map: dict[tuple[str, int], Path] | None = None,
-    ) -> None:
-        is_test_mode = bool(os.environ.get("PYTEST_CURRENT_TEST"))
-
-        try:
-            glp = importlib.import_module("gleplot")
-        except ImportError:
-            QMessageBox.warning(
-                self, "gleplot not available", "Install gleplot to export GLE plots."
-            )
-            return
-
-        if not hasattr(glp, "Axes") or not hasattr(glp.Axes, "errorbar_from_file"):
-            QMessageBox.warning(
-                self, "gleplot update required", "Please update gleplot to a newer version."
-            )
-            return
-
         if fit_file_map and (not hasattr(glp.Axes, "line_from_file")):
-            QMessageBox.warning(
+            gle_export.show_warning(
                 self, "gleplot update required", "Please update gleplot to a newer version."
             )
-            return
+            return None
 
-        x_key = self._effective_x_key()
         display_params = self._display_y_parameters()
         y_params = self._selected_y_parameters() or ([display_params[0]] if display_params else [])
         if not y_params:
-            return
+            return None
 
         x_label = _format_x_label_gle(x_key, self._custom_x_labels())
         data_file_ref = data_path.name
@@ -6540,7 +6499,7 @@ class FitParametersPanel(QWidget):
                 left_cols = self._gle_columns_for_param(left_name)
                 right_cols = self._gle_columns_for_param(right_name)
                 if left_cols is None or right_cols is None:
-                    return
+                    return None
                 left_y_col, left_err_col = left_cols
                 right_y_col, right_err_col = right_cols
 
@@ -6647,95 +6606,11 @@ class FitParametersPanel(QWidget):
             fig.savefig(str(gle_path))
         except TypeError as exc:
             if "folder" in str(exc):
-                QMessageBox.warning(
+                gle_export.show_warning(
                     self, "gleplot update required", "Please update gleplot to a newer version."
                 )
-                return
+                return None
             raise
 
-        _gle = get_gle_executable()
-        if _gle is not None:
-            output_path = gle_path.with_suffix(f".{output_format}")
-            try:
-                compile_gle(_gle, gle_path, output_format, cwd=gle_path.parent)
-                if not is_test_mode:
-                    fit_files = getattr(self, "_last_export_fit_files", [])
-                    fit_files_text = "\n".join(str(p) for p in fit_files) if fit_files else "(none)"
-                    QMessageBox.information(
-                        self,
-                        "Export Successful",
-                        (
-                            f"GLE plot exported:\n\n"
-                            f"GLE script: {gle_path}\n"
-                            f"Data file: {data_path}\n"
-                            f"Fit files:\n{fit_files_text}\n"
-                            f"Output: {output_path}"
-                        ),
-                    )
-                    if not launch_gle_editor(gle_path):
-                        self._show_gle_preview(
-                            fig, data_path, list(fit_file_map.values()) if fit_file_map else []
-                        )
-            except subprocess.CalledProcessError as exc:
-                if not is_test_mode:
-                    QMessageBox.warning(self, "GLE compilation failed", exc.stderr or str(exc))
-                    if not launch_gle_editor(gle_path):
-                        self._show_gle_preview(
-                            fig, data_path, list(fit_file_map.values()) if fit_file_map else []
-                        )
-        else:
-            if not is_test_mode:
-                QMessageBox.information(
-                    self,
-                    "GLE Not Installed",
-                    f"GLE script saved to {gle_path}. Install GLE to compile to {output_format.upper()}.",
-                )
-                if not launch_gle_editor(gle_path):
-                    self._show_gle_preview(
-                        fig, data_path, list(fit_file_map.values()) if fit_file_map else []
-                    )
-
-    def _show_gle_preview(self, fig, data_path: Path, fit_files: list[Path] | None = None) -> None:
-        if os.environ.get("PYTEST_CURRENT_TEST"):
-            return
-
-        try:
-            import tempfile
-
-            from PySide6.QtGui import QPixmap
-
-            dialog = QDialog(self)
-            dialog.setWindowTitle("GLE Plot Preview")
-            dialog.resize(850, 620)
-            layout = QVBoxLayout(dialog)
-
-            image_label = QLabel("Preview unavailable")
-            layout.addWidget(image_label)
-
-            _gle = get_gle_executable()
-            if _gle is not None:
-                with tempfile.TemporaryDirectory() as tmpdir:
-                    tmpdir_path = Path(tmpdir)
-                    gle_file = tmpdir_path / "preview.gle"
-                    data_file = tmpdir_path / data_path.name
-                    png_file = tmpdir_path / "preview.png"
-
-                    shutil.copy2(data_path, data_file)
-                    for fit_file in fit_files or []:
-                        src = Path(fit_file)
-                        if src.exists():
-                            shutil.copy2(src, tmpdir_path / src.name)
-                    fig.savefig(str(gle_file))
-                    compile_gle(_gle, gle_file, "png", cwd=tmpdir_path)
-
-                    pixmap = QPixmap(str(png_file))
-                    if not pixmap.isNull():
-                        image_label.setPixmap(pixmap)
-                        image_label.setText("")
-
-            close_btn = QPushButton("Close")
-            close_btn.clicked.connect(dialog.accept)
-            layout.addWidget(close_btn)
-            dialog.exec()
-        except Exception as exc:
-            QMessageBox.warning(self, "Preview error", f"Failed to show preview: {exc}")
+        fit_files = list(fit_file_map.values()) if fit_file_map else []
+        return gle_export.GleExportBuild(files=[gle_path, data_path, *fit_files])

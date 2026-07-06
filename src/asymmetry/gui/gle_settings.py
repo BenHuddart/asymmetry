@@ -7,7 +7,9 @@ candidate paths and persists the user-chosen path across sessions.
 
 from __future__ import annotations
 
+import os
 import shutil
+import subprocess
 from pathlib import Path
 
 from PySide6.QtCore import QSettings
@@ -63,6 +65,31 @@ def get_gle_executable() -> str | None:
 
 def save_gle_executable(path: str) -> None:
     QSettings().setValue(_SETTINGS_KEY, path)
+
+
+def validate_gle_executable(path: str) -> str | None:
+    """Return a problem description for *path*, or None when it runs.
+
+    Actually executes ``<path> -v`` (GLE prints its version banner) so a
+    saved path that exists but cannot run — lost execute bit, a directory,
+    a non-GLE binary — is caught here in the setup dialog instead of
+    surfacing later as an opaque export failure.
+    """
+    p = Path(path)
+    if not p.is_file():
+        return "No file at this path."
+    if not os.access(p, os.X_OK):
+        return "The file is not executable."
+    try:
+        result = subprocess.run([str(p), "-v"], capture_output=True, text=True, timeout=10)
+    except OSError as exc:
+        return f"The file could not be run: {exc}"
+    except subprocess.TimeoutExpired:
+        return "The executable did not respond within 10 seconds."
+    banner = (result.stdout or "") + (result.stderr or "")
+    if "GLE" not in banner:
+        return "The executable does not look like GLE (no GLE version banner)."
+    return None
 
 
 class GleSetupDialog(QDialog):
@@ -142,5 +169,12 @@ class GleSetupDialog(QDialog):
 
     def _on_accept(self) -> None:
         path = self._path_edit.text().strip()
+        if path:
+            problem = validate_gle_executable(path)
+            if problem is not None:
+                # Keep the dialog open: a path that cannot run would only
+                # resurface later as an opaque export failure.
+                self._status_label.setText(f"Cannot use this GLE path: {problem}")
+                return
         save_gle_executable(path)
         self.accept()

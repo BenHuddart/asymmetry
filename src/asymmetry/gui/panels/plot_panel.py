@@ -40,8 +40,8 @@ cluster thematically in roughly this order:
   and moments-window drag handles, annotation add/edit/delete, and the cursor
   readout.
 - **Export** — ``get_current_plot_export_data``, ``export_plotted_data_as_text``,
-  ``export_plots_to_gle`` (using ``compile_gle`` from ``gui/utils/export.py``),
-  ``export_current_plot``.
+  ``export_plots_to_gle`` (via the shared ``run_gle_export`` orchestrator in
+  ``gui/utils/gle_export.py``), ``export_current_plot``.
 - **State I/O** — ``get_state``/``restore_state`` at the end serialize panel
   configuration (bunch factor, view limits, projections, decimation, RRF) for
   project persistence.
@@ -52,11 +52,7 @@ Entry points GUI callers use most: ``plot_datasets``/``plot_dataset``,
 
 from __future__ import annotations
 
-import importlib
-import os
 import re
-import shutil
-import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
@@ -77,7 +73,6 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSpinBox,
-    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -101,9 +96,7 @@ from asymmetry.core.utils.constants import (
 from asymmetry.gui.export_paths import (
     default_export_path,
     remember_export_path,
-    resolve_gle_export_paths,
 )
-from asymmetry.gui.gle_settings import get_gle_executable
 from asymmetry.gui.panels.draggable_handles import nearest_handle
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
@@ -118,8 +111,14 @@ from asymmetry.gui.styles.plots import (
     style_legend,
 )
 from asymmetry.gui.styles.widgets import build_nav_button_qss
-from asymmetry.gui.utils.export import compile_gle
-from asymmetry.gui.utils.gle_editor import launch_gle_editor
+from asymmetry.gui.tasks import TaskRunner
+from asymmetry.gui.utils.gle_export import (
+    GleExportBuild,
+    dedup_export_token,
+    run_gle_export,
+    safe_file_token,
+    show_export_result_dialog,
+)
 from asymmetry.gui.widgets.axis_limits import AxisLimitControls, FloatLimitField
 from asymmetry.gui.widgets.mpl_canvas import create_canvas
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox
@@ -225,6 +224,9 @@ class PlotPanel(QWidget):
 
     def __init__(self, parent: QWidget | None = None, *, domain: str = "time") -> None:
         super().__init__(parent)
+        #: Background tasks owned by this panel (GLE export compiles). Shut
+        #: down via :meth:`shutdown_workers` from the main window's closeEvent.
+        self._tasks = TaskRunner(self)
         self._domain = "frequency" if str(domain).strip().lower() == "frequency" else "time"
         #: Host-injected counts-first re-reduction hook for display bunching
         #: (see :meth:`set_counts_rebunch_provider`). ``None`` outside a
@@ -5808,29 +5810,13 @@ class PlotPanel(QWidget):
 
     @staticmethod
     def _safe_file_token(value: str) -> str:
-        """Sanitize a string for use in a filename."""
-        token = "".join(
-            ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in str(value).strip()
-        )
-        token = "_".join(part for part in token.split("_") if part)
-        return token or "dataset"
+        """Sanitize a string for use in a filename (shared foundation)."""
+        return safe_file_token(value, fallback="dataset")
 
     @staticmethod
     def _dedup_export_token(base: str, used: set[str] | None) -> str:
-        """Return a token unique within *used*, suffixing ``_2``, ``_3`` on clash.
-
-        Guards against two exported series whose labels sanitize to the same
-        token silently overwriting each other's ``.dat``/``.fit`` files.
-        """
-        if used is None:
-            return base
-        token = base
-        n = 2
-        while token in used:
-            token = f"{base}_{n}"
-            n += 1
-        used.add(token)
-        return token
+        """Return a token unique within *used* (shared foundation)."""
+        return dedup_export_token(base, used)
 
     @staticmethod
     def _sanitize_gle_text(value: object, *, fallback: str = "") -> str:
@@ -6325,33 +6311,8 @@ class PlotPanel(QWidget):
                 f.write(f"{tf:.10g} {float(y_val):.10g} {float(e_val):.10g}\n")
 
     def _show_export_result_dialog(self, title: str, summary: str, details: str) -> None:
-        """Show export results with scrollable details and fixed bottom button."""
-        dialog = QDialog(self)
-        dialog.setWindowTitle(title)
-        dialog.setModal(True)
-        dialog.resize(760, 460)
-
-        layout = QVBoxLayout(dialog)
-        summary_label = QLabel(summary)
-        summary_label.setWordWrap(True)
-        layout.addWidget(summary_label)
-
-        details_view = QTextEdit()
-        details_view.setReadOnly(True)
-        details_view.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
-        details_view.setPlainText(details)
-        details_view.setMinimumHeight(180)
-        details_view.setMaximumHeight(280)
-        layout.addWidget(details_view)
-
-        button_row = QHBoxLayout()
-        button_row.addStretch()
-        close_btn = QPushButton("OK")
-        close_btn.clicked.connect(dialog.accept)
-        button_row.addWidget(close_btn)
-        layout.addLayout(button_row)
-
-        dialog.exec()
+        """Show export results (delegates to the shared foundation)."""
+        show_export_result_dialog(self, title, summary, details)
 
     @staticmethod
     def _export_figure_size(series_count: int) -> tuple[float, float]:
@@ -6366,73 +6327,6 @@ class PlotPanel(QWidget):
         height = max(height, width * 0.85)
         height = min(height, 7.2)
         return width, height
-
-    def _extract_gle_data_dependencies(self, gle_path: Path) -> list[str]:
-        """Return data-file names referenced by `data <file>` commands."""
-        try:
-            text = gle_path.read_text(encoding="utf-8")
-        except OSError:
-            return []
-
-        seen: set[str] = set()
-        deps: list[str] = []
-        pattern = r"^\s*data\s+(?:\"([^\"]+)\"|(\S+))"
-        for match in re.finditer(pattern, text, flags=re.MULTILINE):
-            token = (match.group(1) or match.group(2) or "").strip()
-            name = Path(token).name
-            if name and name not in seen:
-                seen.add(name)
-                deps.append(name)
-        return deps
-
-    def _show_gle_preview(self, gle_path: Path) -> None:
-        """Show an in-app preview dialog for an exported GLE plot."""
-        if os.environ.get("PYTEST_CURRENT_TEST"):
-            return
-        if not gle_path.exists():
-            return
-        _gle = get_gle_executable()
-        if _gle is None:
-            return
-
-        try:
-            import tempfile
-
-            from PySide6.QtGui import QPixmap
-
-            dialog = QDialog(self)
-            dialog.setWindowTitle("GLE Plot Preview")
-            dialog.resize(850, 620)
-            layout = QVBoxLayout(dialog)
-
-            image_label = QLabel("Preview unavailable")
-            layout.addWidget(image_label)
-
-            with tempfile.TemporaryDirectory() as tmpdir:
-                tmpdir_path = Path(tmpdir)
-                tmp_gle = tmpdir_path / gle_path.name
-                preview_png = tmp_gle.with_suffix(".png")
-
-                shutil.copy2(gle_path, tmp_gle)
-                for dep_name in self._extract_gle_data_dependencies(gle_path):
-                    src = gle_path.parent / dep_name
-                    if src.exists() and src.is_file():
-                        shutil.copy2(src, tmpdir_path / dep_name)
-
-                compile_gle(_gle, tmp_gle, "png", cwd=tmpdir_path)
-
-                pixmap = QPixmap(str(preview_png))
-                if not pixmap.isNull():
-                    image_label.setPixmap(pixmap)
-                    image_label.setText("")
-
-            close_btn = QPushButton("Close")
-            close_btn.clicked.connect(dialog.accept)
-            layout.addWidget(close_btn)
-            dialog.exec()
-        except Exception:
-            # Preview is best-effort only; export should still succeed.
-            return
 
     def _collect_export_payloads(self) -> list[dict] | None:
         """Assemble the current plot's export payloads (with the ALL fallback).
@@ -6672,30 +6566,17 @@ class PlotPanel(QWidget):
             )
             return
 
-        path, _ = QFileDialog.getSaveFileName(
+        run_gle_export(
             self,
-            "Export Plot(s) to GLE",
-            default_export_path("asymmetry_plot.gleplot"),
-            "GLE export folders (*.gleplot)",
+            tasks=self._tasks,
+            dialog_title="Export Plot(s) to GLE",
+            default_name="asymmetry_plot.gleplot",
+            output_format=self._gle_format_combo.currentText().lower(),
+            build=lambda glp, gle_path, export_dir: self._build_gle_export(glp, gle_path, payloads),
         )
-        if not path:
-            return
-        remember_export_path(path)
 
-        try:
-            glp = importlib.import_module("gleplot")
-        except ImportError:
-            QMessageBox.warning(
-                self,
-                "gleplot not available",
-                "Install gleplot to export GLE plots.",
-            )
-            return
-
-        requested_gle_path = Path(path)
-        gle_path, export_dir = resolve_gle_export_paths(requested_gle_path, folder=True)
-        export_dir.mkdir(parents=True, exist_ok=True)
-        output_format = self._gle_format_combo.currentText().lower()
+    def _build_gle_export(self, glp, gle_path: Path, payloads: list[dict]) -> GleExportBuild:
+        """Build the export figure + sidecars (``run_gle_export`` builder)."""
         colors = [
             "black",
             "red",
@@ -6806,65 +6687,23 @@ class PlotPanel(QWidget):
             )
             ax.set_xlabel("Time (µs)")
 
-        try:
-            fig.savefig(str(gle_path))
-        except TypeError as exc:
-            if "folder" in str(exc):
-                QMessageBox.warning(
-                    self,
-                    "gleplot update required",
-                    "Please update gleplot to a newer version.",
-                )
-                return
-            raise
+        fig.savefig(str(gle_path))
 
         # Ensure our sidecar .dat files retain metadata headers even when
         # gleplot generates/overwrites data_name-matched data files on save.
         for dat_path, payload, label_text, axis_key in dat_writes:
             self._write_data_file(dat_path, payload, label_text=label_text, axis_key=axis_key)
 
-        # Compile using gleplot / GLE
-        _gle = get_gle_executable()
-        if _gle is not None:
-            output_path = gle_path.with_suffix(f".{output_format}")
-            try:
-                compile_gle(_gle, gle_path, output_format, cwd=gle_path.parent)
-                files_text = "\n".join(str(p) for p in written_files)
-                self._show_export_result_dialog(
-                    "Export Successful",
-                    "GLE plot exported successfully.",
-                    (
-                        f"GLE script: {gle_path}\n"
-                        f"Output: {output_path}\n\n"
-                        f"Data/fit files:\n{files_text}"
-                    ),
-                )
-                if os.environ.get("PYTEST_CURRENT_TEST") or not launch_gle_editor(gle_path):
-                    self._show_gle_preview(gle_path)
-            except subprocess.CalledProcessError as exc:
-                QMessageBox.warning(
-                    self,
-                    "GLE compilation failed",
-                    exc.stderr or str(exc),
-                )
-                if os.environ.get("PYTEST_CURRENT_TEST") or not launch_gle_editor(gle_path):
-                    self._show_gle_preview(gle_path)
-        else:
-            QMessageBox.information(
-                self,
-                "GLE Not Installed",
-                f"GLE script saved to {gle_path}.\nInstall GLE to compile to {output_format.upper()}.",
-            )
-            # The editor is useful even without a GLE binary (it can edit the
-            # script and reports its own "GLE: not found" status). No static
-            # fallback here — the legacy preview needs GLE to render anything.
-            if not os.environ.get("PYTEST_CURRENT_TEST"):
-                launch_gle_editor(gle_path)
+        return GleExportBuild(files=written_files)
 
     # Keep old name as alias for backward compatibility with tests.
     def export_current_plot(self) -> None:
         """Export current main-plot view as GLE (with optional compiled output)."""
         self.export_plots_to_gle()
+
+    def shutdown_workers(self, timeout_ms: int = 10_000) -> None:
+        """Stop this panel's background tasks (GLE export compiles)."""
+        self._tasks.shutdown(timeout_ms)
 
     # ── rotating reference frame (Options → Advanced) ───────────────────
 
