@@ -6557,3 +6557,111 @@ def test_project_restore_heals_stale_instrument_override(
     # The display identity reflects FLAME with 8 detectors.
     assert instrument_display_name(fingerprint.instrument) == "FLAME"
     assert fingerprint.histogram_count == 8
+
+
+def _forward_ring_hal_dataset(run_number: int = 3687) -> MuonDataset:
+    """A forward-ring-only PSI HAL-9500 ``.mdu``-style run: MV + F1..F8 only.
+
+    Nine histograms, no backward ring (detectors 10-17 absent). Applying a full
+    HAL preset that references the backward ring (Longitudinal, Per-octant) must
+    be reported as a specific skip, not silently dropped.
+    """
+    counts = np.array([100.0, 95.0, 90.0, 85.0], dtype=float)
+    labels = ["MV", "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8"]
+    run = Run(
+        run_number=run_number,
+        histograms=[Histogram(counts=counts, bin_width=0.01) for _ in labels],
+        metadata={"run_number": run_number, "instrument": "HIFI"},
+        grouping={
+            "groups": {i + 1: [i + 1] for i in range(len(labels))},
+            "group_names": {i + 1: labels[i] for i in range(len(labels))},
+            "histogram_labels": labels,
+            "forward_group": 2,
+            "backward_group": 6,
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 3,
+            "bunching_factor": 1,
+            "deadtime_correction": False,
+        },
+    )
+    t = np.array([0.0, 0.01, 0.02, 0.03])
+    return MuonDataset(
+        time=t,
+        asymmetry=np.zeros_like(t),
+        error=np.full_like(t, 0.01),
+        metadata={"run_number": run_number, "instrument": "HIFI"},
+        run=run,
+    )
+
+
+class TestGroupingSkipDiagnostic:
+    """Applying a grouping that names absent detectors is reported, not silent."""
+
+    def test_describe_skip_names_absent_backward_ring(self, mainwindow: MainWindow) -> None:
+        dataset = _forward_ring_hal_dataset()
+        # Per-octant preset: forward group 1 = (F1, B1) -> detectors (2, 10);
+        # detector 10 (backward ring) is absent from this nine-histogram file.
+        result = {
+            "groups": {k + 1: [2 + k, 10 + k] for k in range(8)},
+            "group_names": {k + 1: f"Octant {k + 1}" for k in range(8)},
+            "forward_group": 1,
+            "backward_group": 5,
+        }
+        reason = mainwindow._describe_grouping_skip(dataset, result)
+        assert reason is not None
+        assert "detector(s) 10" in reason
+        assert "detector(s) 14" in reason
+        assert "only 9 detector(s)" in reason
+
+    def test_describe_skip_returns_none_for_valid_grouping(self, mainwindow: MainWindow) -> None:
+        dataset = _forward_ring_hal_dataset()
+        # Transverse (opposed pairs): every group is a single present forward detector.
+        result = {
+            "groups": {k + 1: [2 + k] for k in range(8)},
+            "group_names": {k + 1: f"F{k + 1}" for k in range(8)},
+            "forward_group": 1,
+            "backward_group": 5,
+        }
+        assert mainwindow._describe_grouping_skip(dataset, result) is None
+
+    def test_apply_handler_logs_specific_reason(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from PySide6.QtWidgets import QDialog
+
+        dataset = _forward_ring_hal_dataset()
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(dataset.run_number)
+
+        octant_result = {
+            "groups": {k + 1: [2 + k, 10 + k] for k in range(8)},
+            "group_names": {k + 1: f"Octant {k + 1}" for k in range(8)},
+            "forward_group": 1,
+            "backward_group": 5,
+            "alpha": 1.0,
+        }
+
+        class _FakeDialog:
+            DialogCode = QDialog.DialogCode
+
+            def __init__(self, *args, **kwargs) -> None:
+                self.period_mapping_request = None
+
+            def exec(self) -> QDialog.DialogCode:
+                return QDialog.DialogCode.Accepted
+
+            def get_grouping_result(self) -> dict:
+                return octant_result
+
+            def get_profile_result(self):
+                return None
+
+        monkeypatch.setattr(mw_module, "GroupingDialog", _FakeDialog)
+
+        mainwindow._open_shared_grouping_dialog(selected_run_number=dataset.run_number)
+
+        log_text = mainwindow._log_panel.to_plain_text()
+        assert "Applied grouping to 0 dataset(s); skipped 1" in log_text
+        assert "detector(s) 10" in log_text
+        assert "only 9 detector(s)" in log_text

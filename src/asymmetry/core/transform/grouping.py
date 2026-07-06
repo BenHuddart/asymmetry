@@ -360,6 +360,39 @@ def resolve_group_indices(groups: dict, group_id: int) -> list[int]:
     return indices
 
 
+def group_detectors_outside_run(groups: dict, group_id: int, n_histograms: int) -> list[int]:
+    """Return the 1-based detector numbers in *group_id* absent from the run.
+
+    A grouping (typically an instrument preset or a saved profile) may name
+    detectors a particular run does not contain — e.g. a full HAL-9500 preset
+    referencing the backward ring (detectors 10-17) applied to a forward-ring-only
+    ``.mdu`` file with only nine histograms. Reduction rejects such a group
+    (:func:`effective_group_indices` would resolve indices past the last
+    histogram), so this helper names the offending detectors for a clear,
+    provenance-preserving diagnostic instead of a silent skip.
+
+    Returns the sorted detector numbers whose 0-based index is ``>= n_histograms``
+    (or ``< 1``), empty when every referenced detector is present.
+    """
+    if n_histograms is None or n_histograms < 0:
+        return []
+    entries = groups.get(group_id)
+    if entries is None:
+        entries = groups.get(str(group_id))
+    if not isinstance(entries, list):
+        return []
+    missing: set[int] = set()
+    for value in entries:
+        detector = value[0] if isinstance(value, (list, tuple)) and value else value
+        try:
+            number = int(detector)
+        except (TypeError, ValueError):
+            continue
+        if number < 1 or number - 1 >= n_histograms:
+            missing.add(number)
+    return sorted(missing)
+
+
 def effective_group_indices(
     grouping: dict | None,
     group_id: int,

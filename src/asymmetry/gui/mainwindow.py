@@ -215,7 +215,9 @@ from asymmetry.core.transform import (
     common_t0_for_groups,
     differentiate_scan,
     effective_group_indices,
+    format_detector_list,
     good_frames,
+    group_detectors_outside_run,
     has_file_deadtime,
     prepare_histograms_with_deadtime,
     reduce_grouped_asymmetry,
@@ -3743,6 +3745,7 @@ class MainWindow(QMainWindow):
         background_applied = 0
         background_missing = 0
         first_updated_dataset = None
+        skip_reasons: list[str] = []
 
         for dataset in dialog_datasets:
             if run_numbers is not None and int(dataset.run_number) not in run_numbers:
@@ -3750,6 +3753,9 @@ class MainWindow(QMainWindow):
             applied, dt_applied = self._apply_grouping_settings_to_dataset(dataset, grouping_result)
             if not applied:
                 skipped += 1
+                reason = self._describe_grouping_skip(dataset, grouping_result)
+                if reason:
+                    skip_reasons.append(f"run {int(dataset.run_number)}: {reason}")
                 continue
             if use_deadtime and not dt_applied:
                 deadtime_missing += 1
@@ -3821,6 +3827,10 @@ class MainWindow(QMainWindow):
             f"B={grouping_result['backward_group']}, alpha={alpha:.6g}, "
             f"deadtime={deadtime_msg}, background={background_msg}"
         )
+        for reason in skip_reasons:
+            self._log_panel.log(f"  skipped {reason}")
+        if skipped and updated == 0 and skip_reasons:
+            self.statusBar().showMessage(f"Grouping not applied — {skip_reasons[0]}", 10000)
 
         if profile_result is not None:
             profile_name = profile_result["profile"].name
@@ -4259,6 +4269,59 @@ class MainWindow(QMainWindow):
                 target[key] = own
             elif grouping_result.get(key) is not None:
                 target[key] = grouping_result.get(key)
+
+    def _describe_grouping_skip(self, dataset, grouping_result: dict) -> str | None:
+        """Explain why applying *grouping_result* to *dataset* was skipped.
+
+        Returns a short, human-readable reason for the log, or ``None`` when no
+        specific cause is identifiable. The dominant, actionable case is a
+        forward/backward group that names detectors the run does not contain
+        (an instrument preset or saved profile that outruns this file's
+        histogram count — e.g. a full HAL-9500 preset referencing the backward
+        ring on a forward-ring-only ``.mdu`` file). Reduction rejects such a
+        group rather than silently dropping the missing detectors, which would
+        change the physical meaning of the asymmetry, so this surfaces *which*
+        detectors are absent instead of a bare "skipped".
+        """
+        run = getattr(dataset, "run", None)
+        if run is None:
+            return "no run data is attached"
+        n_hist = len(run.histograms) if run.histograms else 0
+        if not n_hist:
+            return None
+        groups_raw = grouping_result.get("groups", {})
+        if not isinstance(groups_raw, dict):
+            return None
+        groups: dict[int, list[object]] = {}
+        for key, values in groups_raw.items():
+            try:
+                gid = int(key)
+            except (TypeError, ValueError):
+                continue
+            entries = self._normalize_group_entries(values)
+            if entries:
+                groups[gid] = entries
+        if not groups:
+            return "no detector groups are defined"
+        names = grouping_result.get("group_names")
+        names = names if isinstance(names, dict) else {}
+        parts: list[str] = []
+        for role, key in (("forward", "forward_group"), ("backward", "backward_group")):
+            try:
+                gid = int(grouping_result.get(key))
+            except (TypeError, ValueError):
+                continue
+            missing = group_detectors_outside_run(groups, gid, n_hist)
+            if missing:
+                label = str(names.get(gid) or names.get(str(gid)) or f"group {gid}")
+                parts.append(f"{role} {label} needs detector(s) {format_detector_list(missing)}")
+        if parts:
+            return (
+                f"{'; '.join(parts)}, but this run has only {n_hist} detector(s). "
+                "Pick a preset that matches this file's detectors "
+                "(e.g. a single-ring preset for a forward-only run)."
+            )
+        return None
 
     def _apply_grouping_settings_to_dataset(
         self, dataset, grouping_result: dict
