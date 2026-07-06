@@ -1060,6 +1060,36 @@ def test_param_edit_clears_quality_label(qapp: QApplication) -> None:
     assert fit_range.result is None
 
 
+def test_preview_curve_turns_solid_after_successful_fit(qapp: QApplication, monkeypatch) -> None:
+    """The preview curve is a dashed seed until the range's fit converges."""
+    from asymmetry.core.fitting.parameter_models import ParameterModelFitResult
+
+    dlg = _make_dialog(qapp)
+    assert [rng.fitted for rng in dlg._current_preview_ranges()] == [False]
+
+    monkeypatch.setattr(
+        "asymmetry.gui.panels.model_fit_dialog.fit_parameter_model",
+        lambda **kwargs: ParameterModelFitResult(success=True, reduced_chi_squared=1.0),
+    )
+    dlg._run_fit(0)
+    _wait_for_fit(dlg)
+
+    assert dlg._fit.ranges[0].result is not None
+    assert dlg._current_preview_ranges()[0].fitted is True
+
+    # A parameter edit invalidates the stale result → back to the dashed seed.
+    dlg._on_param_table_edited()
+    assert dlg._current_preview_ranges()[0].fitted is False
+
+
+def test_preview_curve_stays_dashed_after_failed_fit(qapp: QApplication) -> None:
+    from asymmetry.core.fitting.parameter_models import ParameterModelFitResult
+
+    dlg = _make_dialog(qapp)
+    dlg._fit.ranges[0].result = ParameterModelFitResult(success=False, message="no convergence")
+    assert dlg._current_preview_ranges()[0].fitted is False
+
+
 def test_quality_verdict_silent_for_unknown_point_count(qapp: QApplication) -> None:
     """Results built outside fit_parameter_model (cross-group bridge, legacy
     saved state) have n_points=0 — say nothing rather than implying the fit

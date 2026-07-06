@@ -386,6 +386,7 @@ def test_cross_group_card_no_status_chip() -> None:
     """A cross-group card shows no single-fit verdict chip: CrossGroupFitResult
     has no per-range χ²ᵣ/dof, so a "good/poor" chip would mislead (same reason
     the quality line is suppressed)."""
+    QApplication.instance() or QApplication([])
     dlg = CrossGroupFitDialog(
         parameter_name="Lambda",
         x_key="field",
