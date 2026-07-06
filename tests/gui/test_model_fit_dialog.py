@@ -2683,3 +2683,12 @@ def test_refit_clears_discrimination_candidates_and_both_overlays(qapp: QApplica
     assert dlg._preview._suggestion is None
     assert dlg._preview._discrimination is None
     assert dlg._compare_candidates_label.text() == ""
+
+
+def test_suggest_candidate_range_defaults_to_measured_span(qapp: QApplication) -> None:
+    # The range fields must seed from the data's x span at construction —
+    # a stale [0, 1] default silently confines suggestions to nonsense.
+    dlg = _make_dialog(qapp)
+    assert dlg._suggest_min_field.value() == pytest.approx(1.0)
+    assert dlg._suggest_max_field.value() == pytest.approx(10.0)
+    dlg.deleteLater()

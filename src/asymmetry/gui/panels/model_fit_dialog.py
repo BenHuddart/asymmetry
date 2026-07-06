@@ -2290,8 +2290,15 @@ class ModelFitDialog(QDialog):
 
         range_row = QHBoxLayout()
         range_row.addWidget(QLabel("Candidate range:"))
-        self._suggest_min_field = FloatLimitField(0.0, value_range=(-1e12, 1e12), decimals=6)
-        self._suggest_max_field = FloatLimitField(1.0, value_range=(-1e12, 1e12), decimals=6)
+        # Seeded from the measured x span, which is fixed for the dialog's
+        # lifetime (the series is passed at construction) — users widen it to
+        # allow extrapolated suggestions.
+        self._suggest_min_field = FloatLimitField(
+            self._x_min_data, value_range=(-1e12, 1e12), decimals=6
+        )
+        self._suggest_max_field = FloatLimitField(
+            self._x_max_data, value_range=(-1e12, 1e12), decimals=6
+        )
         range_row.addWidget(self._suggest_min_field)
         range_row.addWidget(QLabel("–"))
         range_row.addWidget(self._suggest_max_field)
@@ -2501,11 +2508,6 @@ class ModelFitDialog(QDialog):
             elif free_names:
                 restore_idx = self._suggest_target_combo.findData(free_names[0])
             self._suggest_target_combo.setCurrentIndex(max(0, restore_idx))
-
-        if self._suggest_min_field.value() == self._suggest_max_field.value():
-            # Fresh section: seed the candidate range to the measured x span.
-            self._suggest_min_field.setValue(self._x_min_data)
-            self._suggest_max_field.setValue(self._x_max_data)
 
         self._on_suggest_target_changed()
         self._refresh_compare_model_combo()
