@@ -78,7 +78,7 @@ root = [
 [package.metadata]
 requires-dist = [
     { name = "asymmetry", extras = ["gui", "gle", "hdf5", "hdf4", "root", "dev"], marker = "extra == 'all'" },
-    { name = "gleplot", marker = "extra == 'gle'", git = "https://github.com/BenHuddart/gleplot.git" },
+    { name = "gleplot", marker = "extra == 'gle'", git = "https://github.com/BenHuddart/gleplot.git?rev=v1.6.0" },
     { name = "h5py", marker = "extra == 'hdf5'", specifier = ">=3.8,<4" },
     { name = "iminuit", specifier = ">=2.0,<3" },
     { name = "matplotlib", marker = "extra == 'gui'", specifier = ">=3.7,<3.11" },
@@ -813,8 +813,8 @@ wheels = [
 
 [[package]]
 name = "gleplot"
-version = "1.1.0"
-source = { git = "https://github.com/BenHuddart/gleplot.git#cceb1dbd01cbe80b54d16aa8b2bc3e5871ae97c8" }
+version = "1.6.0"
+source = { git = "https://github.com/BenHuddart/gleplot.git?rev=v1.6.0#d64717fd8efc7e6d4eff6b0bca6f287b2a4570b9" }
 dependencies = [
     { name = "numpy" },
 ]
