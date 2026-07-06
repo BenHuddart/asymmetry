@@ -150,15 +150,14 @@ from asymmetry.gui.styles.widgets import (
     apply_param_table_style,
     clear_layout,
     make_provenance_label,
-    make_section,
     style_group_state_button,
 )
 from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.utils.export import compile_gle
 from asymmetry.gui.utils.formatting import format_param_label
-from asymmetry.gui.widgets.collapsible_section import CollapsibleSection
 from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
 from asymmetry.gui.widgets.mpl_canvas import create_canvas
+from asymmetry.gui.widgets.panel_section import PanelSection
 
 _PARAMETER_FIT_CURVE_SAMPLE_COUNT = 800
 
@@ -525,7 +524,8 @@ class FitParametersPanel(QWidget):
 
         layout = QVBoxLayout(self)
 
-        controls_group, controls_layout = make_section("Parameter settings")
+        controls_group = PanelSection("Parameter settings")
+        controls_layout = controls_group
         controls_form = QFormLayout()
         controls_layout.addLayout(controls_form)
 
@@ -619,7 +619,9 @@ class FitParametersPanel(QWidget):
         self._global_param_hint = QLabel("")
         self._global_param_hint.setWordWrap(True)
         self._global_param_hint.setObjectName("trendGlobalParamHint")
-        self._global_param_hint.setStyleSheet("color: palette(mid); font-style: italic;")
+        self._global_param_hint.setStyleSheet(
+            f"QLabel {{ color: {tokens.TEXT_MUTED}; font-style: italic; }}"
+        )
         self._global_param_hint.setVisible(False)
         controls_form.addRow("", self._global_param_hint)
 
@@ -656,7 +658,12 @@ class FitParametersPanel(QWidget):
         self._joint_knight_btn.setEnabled(False)
         self._joint_knight_btn.clicked.connect(self._open_joint_knight_fit_dialog)
 
-        self._derived_section = CollapsibleSection("Derived parameters", expanded=False)
+        self._derived_section = PanelSection(
+            "Derived parameters",
+            collapsible=True,
+            expanded=False,
+            settings_key="parameters/sections/derived",
+        )
         self._derived_section.setObjectName("fit-parameters-derived-section")
         composite_row = QGridLayout()
         composite_row.setContentsMargins(0, 0, 0, 0)
@@ -713,7 +720,8 @@ class FitParametersPanel(QWidget):
         self._table_data_columns = 0
         self._table.itemChanged.connect(self._on_table_item_changed)
 
-        self._plot_group, plot_layout = make_section("Parameter plot")
+        self._plot_group = PanelSection("Parameter plot")
+        plot_layout = self._plot_group.body_layout
         plot_layout.setSpacing(8)
 
         # Two-column grids (not a single wide row) so the plot toolbar does not
@@ -781,7 +789,9 @@ class FitParametersPanel(QWidget):
         self._empty_state_hint.setObjectName("trendEmptyStateHint")
         self._empty_state_hint.setWordWrap(True)
         self._empty_state_hint.setContentsMargins(2, 2, 2, 6)
-        self._empty_state_hint.setStyleSheet("color: palette(mid); font-style: italic;")
+        self._empty_state_hint.setStyleSheet(
+            f"QLabel {{ color: {tokens.TEXT_MUTED}; font-style: italic; }}"
+        )
         layout.addWidget(self._empty_state_hint)
 
         self._content_splitter = QSplitter(Qt.Orientation.Vertical)
@@ -814,6 +824,14 @@ class FitParametersPanel(QWidget):
     def _on_ui_scale_changed(self, _ui_scale: float, effective_scale: float) -> None:
         self._group_button_style_scale = max(0.8, float(effective_scale))
         self._refresh_group_button_styles()
+        # The parameter/selector tables carry an explicit mono cell font (and
+        # explicit row height) that ignore the (now re-scaled) application font,
+        # and QSS cannot reach a per-cell font, so re-derive them from the
+        # builders at the active scale. apply_param_table_style rebuilds the cell
+        # font via mono_font() and the row height via metrics.row_height(), both
+        # of which read the scale the UIManager has just published.
+        for table in (self._table, self._y_selector_table):
+            apply_param_table_style(table)
 
     def clear(self) -> None:
         self._bump_data_revision()

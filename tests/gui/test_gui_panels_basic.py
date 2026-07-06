@@ -12,11 +12,11 @@ pytestmark = [pytest.mark.gui]
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import (
     QApplication,
-    QGroupBox,
     QHeaderView,
+    QLabel,
     QPushButton,
     QScrollArea,
     QWidget,
@@ -77,7 +77,7 @@ def test_fourier_panel_defaults(qapp: QApplication) -> None:
         panel._phase_opt_real_radio.minimumHeight()
         >= panel._phase_opt_real_radio.sizeHint().height()
     )
-    assert panel._phase_table.horizontalHeaderItem(0).text() == "Include"
+    assert panel._phase_table.horizontalHeaderItem(0).text() == "✓"
     assert (
         panel._phase_table.horizontalHeader().sectionResizeMode(1) == QHeaderView.ResizeMode.Stretch
     )
@@ -94,7 +94,7 @@ def test_fourier_compute_button_pinned_outside_scroll(qapp: QApplication) -> Non
     """
     panel = FourierPanel()
     scroll = panel.findChild(QScrollArea)
-    footer = panel.findChild(QWidget, "fourierActionFooter")
+    footer = panel._action_footer
     assert scroll is not None
     assert footer is not None
     assert panel._fft_btn in footer.findChildren(QPushButton)
@@ -143,18 +143,216 @@ def test_maxent_cycle_controls_pinned_outside_scroll(qapp: QApplication) -> None
     assert panel._converge_btn not in scroll.widget().findChildren(QPushButton)
 
 
+def test_maxent_footer_buttons_present_and_enable_state_tracks_busy(qapp: QApplication) -> None:
+    """All run-control buttons live in the pinned footer and flip with set_busy.
+
+    Idle: the cycle steppers, Converge, Restart, and Apply-to-selection are
+    enabled and Cancel is disabled. Running: the reverse, so a user cannot
+    stack a second run and Cancel is the only reachable action.
+    """
+    panel = MaxEntPanel()
+    footer = panel.findChild(QWidget, "maxentActionFooter")
+    assert footer is not None
+    for button in (
+        panel._cycle_one_btn,
+        panel._cycle_five_btn,
+        panel._cycle_twentyfive_btn,
+        panel._converge_btn,
+        panel._restart_btn,
+        panel._cancel_btn,
+        panel._apply_to_selection_btn,
+    ):
+        assert button in footer.findChildren(QPushButton)
+
+    # Idle (constructor default): run buttons enabled, Cancel disabled.
+    assert panel._cycle_one_btn.isEnabled() is True
+    assert panel._converge_btn.isEnabled() is True
+    assert panel._restart_btn.isEnabled() is True
+    assert panel._apply_to_selection_btn.isEnabled() is True
+    assert panel._cancel_btn.isEnabled() is False
+
+    panel.set_busy(True)
+    assert panel._cycle_one_btn.isEnabled() is False
+    assert panel._cycle_five_btn.isEnabled() is False
+    assert panel._cycle_twentyfive_btn.isEnabled() is False
+    assert panel._converge_btn.isEnabled() is False
+    assert panel._restart_btn.isEnabled() is False
+    assert panel._apply_to_selection_btn.isEnabled() is False
+    assert panel._cancel_btn.isEnabled() is True
+
+    panel.set_busy(False)
+    assert panel._cycle_one_btn.isEnabled() is True
+    assert panel._converge_btn.isEnabled() is True
+    assert panel._cancel_btn.isEnabled() is False
+
+
+def test_maxent_progress_uses_determinate_footer_bar(qapp: QApplication) -> None:
+    """set_progress drives the footer's determinate 0..total bar (per-cycle count)."""
+    panel = MaxEntPanel()
+    panel.set_busy(True)
+    panel.set_progress(3, 10, "Cycle 3 of 10")
+    footer = panel._action_footer
+    assert footer._progress_bar.minimum() == 0
+    assert footer._progress_bar.maximum() == 10
+    assert footer._progress_bar.value() == 3
+    assert "Cycle 3 of 10" in footer._progress_label.text()
+    panel.set_busy(False)
+    # Idle resets the bar back to indeterminate for the next run.
+    assert footer._progress_bar.maximum() == 0
+
+
+def test_maxent_panel_sections_collapse_persist_via_isolated_settings(qapp: QApplication) -> None:
+    """Collapsed/expanded state for the collapsible sections persists across
+    panel instances via QSettings, isolated from the app's real settings scope
+    (mirrors the PanelSection persistence pattern)."""
+    settings = QSettings("AsymmetryTest", "maxent_panel_sections_test")
+    settings.clear()
+    try:
+        panel = MaxEntPanel()
+        # Patch the already-constructed sections' settings scope for this test
+        # (MaxEntPanel does not take a settings override, so drive the
+        # PanelSection objects directly — same isolation guarantee).
+        pulse_section = panel._pulse_section
+        pulse_section._settings = settings
+        pulse_section._settings_key = "maxent/sections/pulse_shape"
+
+        assert not pulse_section.isExpanded()
+        pulse_section.setExpanded(True)
+        assert settings.value("maxent/sections/pulse_shape", type=bool) is True
+
+        # A fresh PanelSection reading the same key comes up expanded.
+        from asymmetry.gui.widgets.panel_section import PanelSection
+
+        reloaded = PanelSection(
+            "Pulse shape",
+            collapsible=True,
+            settings_key="maxent/sections/pulse_shape",
+            settings=settings,
+        )
+        assert reloaded.isExpanded()
+    finally:
+        settings.clear()
+
+
+def test_maxent_panel_specbg_section_title_suffix_reflects_enabled(qapp: QApplication) -> None:
+    """The Zero-frequency background section shows an 'on' summary chip when
+    its enable checkbox is checked, and clears it when unchecked — the
+    "meaningful collapsed state gets a summary" requirement."""
+    panel = MaxEntPanel()
+    assert panel._specbg_group._suffix_label.isHidden()
+    panel._specbg_enabled_check.setChecked(True)
+    assert not panel._specbg_group._suffix_label.isHidden()
+    assert "on" in panel._specbg_group._suffix_label.text().lower()
+    panel._specbg_enabled_check.setChecked(False)
+    assert panel._specbg_group._suffix_label.isHidden()
+
+
+def test_maxent_panel_settings_round_trip_unchanged_after_restructure(qapp: QApplication) -> None:
+    """A full get_state -> restore_state round trip is unaffected by the
+    section-based restructure (serialization keys/shape are unchanged)."""
+    panel = MaxEntPanel()
+    panel.set_group_definitions({1: "F", 2: "B"})
+    panel.restore_state(
+        {
+            "n_spectrum_points": 2048,
+            "default_level": 0.02,
+            "auto_window": False,
+            "window_half_width_gauss": 150.0,
+            "f_min_mhz": 0.1,
+            "f_max_mhz": 5.0,
+            "t_min_us": 0.05,
+            "t_max_us": 8.0,
+            "time_binning_factor": 2,
+            "pulse_mode": "single",
+            "pulse_half_width_us": 0.09,
+            "pulse_separation_us": 0.4,
+            "mode": "zf_lf",
+            "specbg_enabled": True,
+            "specbg_gaussian_width_mhz": 0.3,
+            "specbg_lorentzian_width_mhz": 0.4,
+            "specbg_lorentzian_fraction": 0.6,
+            "inner_iterations": 20,
+            "chi2_target_over_n": 1.2,
+            "fit_phases": False,
+            "fit_amplitudes": False,
+            "fit_backgrounds": False,
+            "fit_constant_background": False,
+            "use_deadtime_correction": False,
+            "show_reconstruction": True,
+            "reconstruction_combined": True,
+            "group_enabled_table": {1: True, 2: False},
+            "group_phase_degrees": {1: 10.0, 2: 190.0},
+        }
+    )
+    state = panel.get_state()
+    assert state["n_spectrum_points"] == 2048
+    assert state["default_level"] == pytest.approx(0.02)
+    assert state["auto_window"] is False
+    assert state["window_half_width_gauss"] == pytest.approx(150.0)
+    assert state["f_min_mhz"] == pytest.approx(0.1)
+    assert state["f_max_mhz"] == pytest.approx(5.0)
+    assert state["t_min_us"] == pytest.approx(0.05)
+    assert state["t_max_us"] == pytest.approx(8.0)
+    assert state["time_binning_factor"] == 2
+    assert state["pulse_mode"] == "single"
+    assert state["pulse_half_width_us"] == pytest.approx(0.09)
+    assert state["pulse_separation_us"] == pytest.approx(0.4)
+    assert state["mode"] == "zf_lf"
+    assert state["specbg_enabled"] is True
+    assert state["specbg_gaussian_width_mhz"] == pytest.approx(0.3)
+    assert state["specbg_lorentzian_width_mhz"] == pytest.approx(0.4)
+    assert state["specbg_lorentzian_fraction"] == pytest.approx(0.6)
+    assert state["inner_iterations"] == 20
+    assert state["chi2_target_over_n"] == pytest.approx(1.2)
+    assert state["fit_phases"] is False
+    assert state["fit_amplitudes"] is False
+    assert state["fit_backgrounds"] is False
+    assert state["fit_constant_background"] is False
+    assert state["use_deadtime_correction"] is False
+    assert state["show_reconstruction"] is True
+    assert state["reconstruction_combined"] is True
+    assert state["group_enabled_table"] == {1: True, 2: False}
+    assert state["group_phase_degrees"][1] == pytest.approx(10.0)
+    assert state["group_phase_degrees"][2] == pytest.approx(190.0)
+
+    config = panel.maxent_config(cycles=7)
+    assert config.mode == "zf_lf"
+    assert config.n_spectrum_points == 2048
+
+
 def test_fourier_panel_group_order_matches_workflow(qapp: QApplication) -> None:
+    """The usage-tier restructure orders sections always-visible → conditional →
+    collapsed: FFT Phase Mode, Apodisation, Groups, FFT settings, then the
+    conditional Phase section, then the collapsed stack."""
+    from asymmetry.gui.styles.widgets import SECTION_HEADER_OBJECT_NAME
+    from asymmetry.gui.widgets.panel_section import PanelSection
+
     panel = FourierPanel()
 
-    # Only the top-level workflow sections — the "Advanced / experimental"
-    # disclosure is nested inside "FFT Phase Mode" and is excluded here.
+    # Flat section headers (make_section) carry the shared header objectName; the
+    # nested "Advanced / experimental" disclosure header is excluded so only the
+    # top-level workflow sections remain, in layout order.
+    advanced_labels = set(panel._advanced_modes_group.findChildren(QLabel))
     titles = [
-        group.title()
-        for group in panel.findChildren(QGroupBox)
-        if group.title() and group.title() != "Advanced / experimental"
+        label.text()
+        for label in panel.findChildren(QLabel)
+        if label.objectName() == SECTION_HEADER_OBJECT_NAME and label not in advanced_labels
     ]
+    # make_section uppercases; assert the always-visible tier then the Phase gate.
+    assert titles[:5] == ["FFT PHASE MODE", "APODISATION", "GROUPS", "FFT SETTINGS", "PHASE"]
 
-    assert titles[:4] == ["FFT Phase Mode", "Apodisation", "Groups", "Phase"]
+    # The four collapsed sections follow, each a collapsible PanelSection.
+    collapsed_titles = [
+        section.title()
+        for section in panel.findChildren(PanelSection)
+        if section is not panel._advanced_modes_group
+    ]
+    assert collapsed_titles == [
+        "Spectral moments",
+        "Conditioning",
+        "Diamagnetic correction",
+        "Frequency exclusions",
+    ]
 
 
 def test_fourier_panel_advanced_modes_collapsed_by_default(qapp: QApplication) -> None:
@@ -162,10 +360,9 @@ def test_fourier_panel_advanced_modes_collapsed_by_default(qapp: QApplication) -
     panel = FourierPanel()
 
     group = panel._advanced_modes_group
-    assert group.title() == "Advanced / experimental"
-    assert group.isCheckable() is True
-    # Collapsed (unchecked) by default — only the routine modes show up front.
-    assert group.isChecked() is False
+    assert group.title() == "Advanced"
+    # Collapsed by default — only the routine modes show up front.
+    assert group.isExpanded() is False
     # The three niche radios are parented into the disclosure, not the main column.
     for radio in (panel._phase_opt_real_radio, panel._burg_radio, panel._correlation_radio):
         assert radio in group.findChildren(type(radio))
@@ -183,12 +380,12 @@ def test_fourier_panel_advanced_modes_collapsed_by_default(qapp: QApplication) -
 def test_fourier_panel_restoring_advanced_mode_expands_disclosure(qapp: QApplication) -> None:
     """Restoring a project saved in an advanced mode reveals the disclosure."""
     panel = FourierPanel()
-    assert panel._advanced_modes_group.isChecked() is False
+    assert panel._advanced_modes_group.isExpanded() is False
 
     panel._set_display_mode("phaseOptReal")
 
     assert panel._phase_opt_real_radio.isChecked() is True
-    assert panel._advanced_modes_group.isChecked() is True
+    assert panel._advanced_modes_group.isExpanded() is True
 
 
 def test_fourier_panel_apodisation_fields_stay_enabled(qapp: QApplication) -> None:

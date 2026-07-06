@@ -49,6 +49,12 @@ WARN = "#b66815"
 # with a darker amber text keeps the strip legible against the light theme.
 WARN_BANNER_BG = "#fdf2d9"
 WARN_BANNER_TEXT = "#7a5210"
+# Orange banner fill + text for a "strong" caveat strip — one that invalidates
+# a reading rather than just cautioning (make_warning_banner severity="strong";
+# e.g. the Global Fit compare dialog's "criteria not comparable"). Softer
+# cautions use the WARN_BANNER_* amber above.
+CAVEAT_BANNER_BG = "#ffd9b3"
+CAVEAT_BANNER_TEXT = "#7a3b00"
 OK = "#2a7a3f"
 FIT = "#c34a2c"
 ERROR = "#b3261e"

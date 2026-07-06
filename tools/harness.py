@@ -45,6 +45,88 @@ MPL_CANVAS_CONSTRUCTION_ALLOWLIST = frozenset(
 # Canonical home for manual QThread lifecycles. Everything else in gui/ should
 # run background work via `asymmetry.gui.tasks.TaskRunner`.
 TASK_RUNNER_HOME = GUI_ROOT / "tasks.py"
+
+# ── Titled-section primitive ──────────────────────────────────────────────────
+# Canonical home for the one titled/collapsible section primitive. A bespoke
+# `*CollapsibleSection` class anywhere else in gui/ re-rolls a foundation the
+# refresh deliberately consolidated. (A panel-local `_collapsible_group` factory
+# that *wraps* PanelSection — as alc_panel does — is the sanctioned convention,
+# not a bespoke reimplementation, so it is intentionally not matched.)
+PANEL_SECTION_HOME = GUI_ROOT / "widgets" / "panel_section.py"
+PANEL_SECTION_CLASS_RE = re.compile(r"^\s*class\s+\w*CollapsibleSection\b")
+# The deleted module; a fresh import of it is a resurrection of the old widget.
+DELETED_SECTION_IMPORT_RE = re.compile(
+    r"\bfrom\s+asymmetry\.gui\.widgets\.collapsible_section\b"
+    r"|\bimport\s+asymmetry\.gui\.widgets\.collapsible_section\b"
+)
+
+# ── Raw hex-colour literals ───────────────────────────────────────────────────
+# A hex-colour token (``#rgb`` / ``#rrggbb`` / ``#rrggbbaa``) with a trailing
+# non-identifier guard so QSS id selectors like ``#addFieldRail`` (next char is
+# alphanumeric) are not mistaken for colours. The token is only counted when a
+# quote opens before it on the line — colour literals live inside strings,
+# whereas comment PR-refs like ``#108`` do not — see :func:`_line_has_hex_colour`.
+# (Known edge: a line like ``x = "s"  # see #abc123`` would false-positive; it is
+# rare and allowlistable if it ever surfaces.)
+HEX_COLOUR_RE = re.compile(r"""#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3})(?![0-9a-zA-Z_])""")
+# Files allowed to hold raw hex literals: every entry is a specialist,
+# non-BENCH-chrome palette (matplotlib scientific plots, QPainter icon fills,
+# deliberate accent cycles). Chrome colours must come from `styles/tokens.py`.
+HEX_COLOUR_ALLOWLIST: dict[Path, str] = {
+    # QPainter icon fill for the app/tile pixmap — not a stylesheet colour.
+    GUI_ROOT / "app.py": "QPainter icon-tile fill (#ffffff), not stylesheet chrome",
+    # Matplotlib fit/component preview colours and the stacked-component cycle.
+    GUI_ROOT / "panels" / "fit_parameters_panel.py": "matplotlib fit/component plot colours",
+    GUI_ROOT
+    / "windows"
+    / "global_parameter_fit_window.py": "stacked-component matplotlib fill palette",
+    GUI_ROOT / "windows" / "global_fit_compare_dialog.py": "matplotlib study-curve colours",
+    GUI_ROOT / "windows" / "pull_diagnostic_window.py": "matplotlib pull-histogram colours",
+    # Specialist diagram colours drawn on a matplotlib axes (schematic).
+    GUI_ROOT / "widgets" / "detector_schematic.py": "matplotlib detector-schematic colours",
+    # Deliberate non-BENCH fraction-group accent cycle.
+    GUI_ROOT
+    / "widgets"
+    / "function_builder"
+    / "model_rows.py": "fraction-group accent palette (non-BENCH)",
+}
+
+# ── Literal-pixel geometry ────────────────────────────────────────────────────
+# Fixed/minimum widths & heights set to a bare int literal freeze a widget at a
+# design size and drift once the font-driven UI zoom scales everything else.
+# Small paddings/hairlines (< this threshold) are fine; larger literals should
+# derive from `styles/metrics.py` (or be allowlisted as fixed-by-design).
+PIXEL_GEOMETRY_MIN = 24
+PIXEL_GEOMETRY_RE = re.compile(
+    r"\.set(?:Fixed|Minimum)(?:Width|Height|Size)\(\s*(\d+)\s*(?:,\s*(\d+)\s*)?\)"
+)
+# Files allowed to hold literal-pixel geometry >= PIXEL_GEOMETRY_MIN. These are
+# minimum-size *floors* on canvases/tables/scroll areas/log panels and a few
+# icon-sized swatches — none are font-derived, and metrics.py offers no safe
+# mechanical conversion for them, so they are fixed-by-design.
+PIXEL_GEOMETRY_ALLOWLIST: dict[Path, str] = {
+    GUI_ROOT / "mainwindow.py": "log-dock minimum-height floor",
+    GUI_ROOT / "panels" / "alc_panel.py": "canvas / analysis-scroll min-height floors",
+    GUI_ROOT / "panels" / "data_browser.py": "browser dock min-size floors",
+    GUI_ROOT / "panels" / "fourier_panel.py": "phase/exclusion table min-height floors",
+    GUI_ROOT / "panels" / "maxent_panel.py": "group-table min-height floor",
+    GUI_ROOT / "panels" / "plot_panel.py": "canvas / details-view min-size floors",
+    GUI_ROOT / "widgets" / "loading_overlay.py": "progress-bar fixed width (overlay chrome)",
+    GUI_ROOT / "widgets" / "wizard_series_card.py": "series-card canvas min-height floor",
+    GUI_ROOT / "widgets" / "function_builder" / "dialog.py": "library / equation-scroll floors",
+    GUI_ROOT / "widgets" / "function_builder" / "library_panel.py": "library-panel min-width floor",
+    GUI_ROOT
+    / "widgets"
+    / "function_builder"
+    / "model_rows.py": "icon-sized dash/combo/row swatches",
+    GUI_ROOT / "windows" / "detector_layout_dialog.py": "schematic min-width floor",
+    GUI_ROOT / "windows" / "fit_wizard_window.py": "compare-warning min-height floor",
+    GUI_ROOT / "windows" / "global_fit_wizard_window.py": "scope/log/rationale min-height floors",
+    GUI_ROOT
+    / "windows"
+    / "global_parameter_fit_window.py": "studies/params/canvas min-size floors",
+    GUI_ROOT / "windows" / "new_user_function_dialog.py": "editor/table/canvas min-size floors",
+}
 # Sanctioned tests/ subpackages (the Phase-4 taxonomy plus pre-existing ones).
 SANCTIONED_TEST_SUBPACKAGES = frozenset(
     {
@@ -215,6 +297,113 @@ def find_bespoke_qthread_violations(gui_root: Path = GUI_ROOT) -> list[HarnessFa
                         ),
                     )
                 )
+    return failures
+
+
+def find_bespoke_section_violations(gui_root: Path = GUI_ROOT) -> list[HarnessFailure]:
+    """Return bespoke titled/collapsible-section idioms outside the shared home.
+
+    A ``*CollapsibleSection`` class or a fresh import of the removed
+    ``collapsible_section`` module re-rolls the one titled-section primitive the
+    refresh consolidated onto ``PanelSection``.
+    """
+
+    remediation = "Use `asymmetry.gui.widgets.panel_section.PanelSection`."
+    failures: list[HarnessFailure] = []
+    for path in _iter_python_files(gui_root):
+        if path == PANEL_SECTION_HOME:
+            continue
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if PANEL_SECTION_CLASS_RE.match(line):
+                failures.append(
+                    HarnessFailure(
+                        path, lineno, f"Bespoke collapsible-section definition. {remediation}"
+                    )
+                )
+            elif DELETED_SECTION_IMPORT_RE.search(line):
+                failures.append(
+                    HarnessFailure(
+                        path,
+                        lineno,
+                        f"Import of the removed `collapsible_section` module. {remediation}",
+                    )
+                )
+    return failures
+
+
+def _line_has_hex_colour(line: str) -> bool:
+    """Return whether *line* holds a hex-colour token inside a string.
+
+    Only counts a hex token that has a quote before it on the line, so QSS id
+    selectors (rejected by the regex boundary guard) and bare comment PR-refs
+    like ``#108`` (no preceding quote) are not mistaken for colours.
+    """
+    for match in HEX_COLOUR_RE.finditer(line):
+        prefix = line[: match.start()]
+        if '"' in prefix or "'" in prefix:
+            return True
+    return False
+
+
+def find_raw_hex_colour_violations(gui_root: Path = GUI_ROOT) -> list[HarnessFailure]:
+    """Return raw hex-colour string literals in gui/ outside `styles/`.
+
+    Chrome colours must come from `styles/tokens.py`. Files whose only hex
+    literals are specialist matplotlib/QPainter/palette colours are allowlisted
+    in :data:`HEX_COLOUR_ALLOWLIST` with a reason.
+    """
+
+    styles_root = gui_root / "styles"
+    failures: list[HarnessFailure] = []
+    for path in _iter_python_files(gui_root):
+        if styles_root in path.parents or path in HEX_COLOUR_ALLOWLIST:
+            continue
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if _line_has_hex_colour(line):
+                failures.append(
+                    HarnessFailure(
+                        path,
+                        lineno,
+                        (
+                            "Raw hex-colour string literal. "
+                            "Use a semantic token from `asymmetry.gui.styles.tokens`."
+                        ),
+                    )
+                )
+    return failures
+
+
+def find_literal_pixel_geometry_violations(gui_root: Path = GUI_ROOT) -> list[HarnessFailure]:
+    """Return fixed/minimum width/height set to a bare int literal >= threshold.
+
+    Literal-pixel geometry freezes a widget at a design size and drifts once the
+    font-driven UI zoom scales everything else. Sizes should derive from
+    `styles/metrics.py` helpers; genuine design floors are allowlisted per file
+    in :data:`PIXEL_GEOMETRY_ALLOWLIST`.
+    """
+
+    failures: list[HarnessFailure] = []
+    for path in _iter_python_files(gui_root):
+        if path in PIXEL_GEOMETRY_ALLOWLIST:
+            continue
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            for match in PIXEL_GEOMETRY_RE.finditer(line):
+                values = [int(match.group(1))]
+                if match.group(2) is not None:
+                    values.append(int(match.group(2)))
+                if any(value >= PIXEL_GEOMETRY_MIN for value in values):
+                    failures.append(
+                        HarnessFailure(
+                            path,
+                            lineno,
+                            (
+                                "Literal-pixel geometry. Derive the size from "
+                                "`asymmetry.gui.styles.metrics` (field_width_for / "
+                                "row_height / char_width) so it tracks the UI zoom."
+                            ),
+                        )
+                    )
+                    break
     return failures
 
 
@@ -582,6 +771,9 @@ def run_structural_checks() -> int:
         *find_duplicate_limit_field_violations(),
         *find_duplicate_mpl_canvas_violations(),
         *find_bespoke_qthread_violations(),
+        *find_bespoke_section_violations(),
+        *find_raw_hex_colour_violations(),
+        *find_literal_pixel_geometry_violations(),
         *find_test_placement_violations(),
     ]
     if not failures:

@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from asymmetry.gui.styles import tokens
+from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.typography import SIZE_NUMERIC, header_font, section_label_font
 
@@ -129,11 +129,18 @@ def apply_param_table_style(table: QTableWidget) -> None:
     """Apply BENCH styling to any parameter or data table.
 
     Sets a DemiBold section header, 11pt mono cell font, hides the row-number
-    column, and tints alternating rows with surfaceAlt.
+    column, sizes rows to the live font (via :func:`metrics.row_height`), and
+    tints alternating rows with surfaceAlt.
+
+    Re-callable to re-scale a live table: the header/cell fonts and row height are
+    re-derived from the active UI-scale font builders, which is how the owning
+    panel refreshes an explicit-font table on a UI-scale change (QSS cannot reach
+    a per-cell font).
     """
     table.horizontalHeader().setFont(header_font())
     table.verticalHeader().setVisible(False)
     table.setFont(mono_font(SIZE_NUMERIC))
+    table.verticalHeader().setDefaultSectionSize(metrics.row_height())
     table.setAlternatingRowColors(True)
     table.setStyleSheet(f"QTableWidget {{ alternate-background-color: {tokens.SURFACE_ALT}; }}")
 
@@ -246,6 +253,43 @@ class FormulaBox(QScrollArea):
             f" border: 1px solid {tokens.BORDER}; border-radius: 3px; }}"
             " QScrollArea#formulaBox > QWidget > QWidget { background: transparent; }"
         )
+        #: True once the UI-scale signal is connected (guards double-connect).
+        self._ui_scale_sync_connected = False
+        self.refresh_height()
+
+    def showEvent(self, event) -> None:  # noqa: N802 — Qt override
+        super().showEvent(event)
+        self._ensure_ui_scale_sync()
+
+    def _ensure_ui_scale_sync(self) -> None:
+        """Subscribe the box to live UI-scale changes, once, on first show.
+
+        The inner mono label sets an explicit ``mono_font(SIZE_NUMERIC)`` that
+        ignores the (re-scaled) application font, and QSS cannot reach it cleanly
+        (its own local stylesheet — which the domain-mismatch recolour also sets
+        — would win). So each box re-derives its label font from the builders on
+        the owning window's UIManager signal. A modal dialog whose ``window()``
+        has no ``_ui_manager`` simply no-ops and relies on born-at-scale via
+        ``set_ui_font_scale``. This is decentralised (each box refreshes itself),
+        not a central per-widget tracker.
+        """
+        if self._ui_scale_sync_connected:
+            return
+        manager = getattr(self.window(), "_ui_manager", None)
+        if manager is None:
+            return
+        manager.ui_scale_changed.connect(self._on_ui_scale_changed)
+        self._ui_scale_sync_connected = True
+        # Sync now: a box first shown after a scale change would otherwise keep
+        # its born-at-construction size until the *next* change.
+        self._on_ui_scale_changed(manager.ui_scale, manager.effective_scale)
+
+    def _on_ui_scale_changed(self, _ui_scale: float, _effective_scale: float) -> None:
+        # Font-only refresh: re-calling configure_formula_label would reset the
+        # label's local stylesheet and clobber the domain-mismatch recolour. The
+        # builder already has the new scale published, so mono_font() returns the
+        # scaled size; refresh_height re-measures for the new line spacing.
+        self.label.setFont(mono_font(SIZE_NUMERIC))
         self.refresh_height()
 
     def set_formula(self, formula: str) -> None:
@@ -500,21 +544,31 @@ def make_confidence_chip(text: str, tier: Literal["high", "medium", "none"]) -> 
 #: objectName used to scope warning-banner QSS without touching other labels.
 WARNING_BANNER_OBJECT_NAME = "benchWarningBanner"
 
+#: Per-severity (background, text) colours for :func:`make_warning_banner`.
+_WARNING_BANNER_COLOURS = {
+    "warn": (tokens.WARN_BANNER_BG, tokens.WARN_BANNER_TEXT),
+    "strong": (tokens.CAVEAT_BANNER_BG, tokens.CAVEAT_BANNER_TEXT),
+}
 
-def make_warning_banner(text: str = "") -> QLabel:
-    """Return an amber, word-wrapped warning-banner strip.
 
-    The non-blocking "out of date" convention (``tokens.WARN_BANNER_*``, first
-    used by the Global Parameter Fit window): wizards show one when a scope or
-    seed edit makes the displayed results stale. Callers control visibility.
+def make_warning_banner(text: str = "", *, severity: Literal["warn", "strong"] = "warn") -> QLabel:
+    """Return a word-wrapped warning-banner strip.
+
+    ``severity`` picks the treatment: ``"warn"`` is the non-blocking amber
+    "out of date" convention (``tokens.WARN_BANNER_*``, first used by the
+    Global Parameter Fit window's stale banner); ``"strong"`` is the orange
+    ``tokens.CAVEAT_BANNER_*`` strip for caveats that invalidate a reading
+    (e.g. the compare dialog's "criteria not comparable"). Callers control
+    visibility.
     """
+    bg, fg = _WARNING_BANNER_COLOURS.get(severity, _WARNING_BANNER_COLOURS["warn"])
     label = QLabel(str(text))
     label.setObjectName(WARNING_BANNER_OBJECT_NAME)
     label.setWordWrap(True)
     label.setStyleSheet(
         f"QLabel#{WARNING_BANNER_OBJECT_NAME} {{"
-        f" background-color: {tokens.WARN_BANNER_BG};"
-        f" color: {tokens.WARN_BANNER_TEXT};"
+        f" background-color: {bg};"
+        f" color: {fg};"
         " border-radius: 4px;"
         " padding: 6px 10px;"
         " font-weight: 600;"

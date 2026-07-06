@@ -10,6 +10,7 @@ repo-local docs and use this file as the map.
 - [docs/INDEX.md](docs/INDEX.md): documentation table of contents.
 - [benhuddart.github.io/asymmetry](https://benhuddart.github.io/asymmetry/): published documentation site.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): system design, domain boundaries, and feature specs.
+- [docs/GUI_GUIDELINES.md](docs/GUI_GUIDELINES.md): how to build GUI here — tokens, fonts, metrics, PanelSection/ActionFooter, the UI zoom, and the harness rules.
 - [docs/HARNESS.md](docs/HARNESS.md): agent harness workflow and validation ladder.
 - [docs/porting/README.md](docs/porting/README.md): mandatory study-first workflow for feature ports.
 - [docs/QUALITY.md](docs/QUALITY.md): quality map and current risk areas.

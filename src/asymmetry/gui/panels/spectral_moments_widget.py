@@ -22,7 +22,6 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
-    QDoubleSpinBox,
     QFormLayout,
     QGridLayout,
     QGroupBox,
@@ -36,6 +35,7 @@ from PySide6.QtWidgets import (
 
 from asymmetry.core.fourier.moments import SpectrumMoments
 from asymmetry.core.fourier.units import FieldUnit, convert
+from asymmetry.gui.widgets.axis_limits import FloatLimitField
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox
 
 # Display unit options (label, FieldUnit). Gauss first — the penetration-depth
@@ -177,23 +177,34 @@ class SpectralMomentsWidget(QGroupBox):
 
         # ── controls ──────────────────────────────────────────────────────
         controls = QFormLayout()
+        # Stack label over field when the dock is narrow instead of
+        # forcing the panel into horizontal scrolling.
+        controls.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         self._unit_combo = QComboBox()
         for label, unit in _UNIT_OPTIONS:
             self._unit_combo.addItem(label, userData=unit.value)
+        # Shrinkable below the longest item so the row never forces the host
+        # panel into horizontal scrolling; the popup still shows full text.
+        self._unit_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self._unit_combo.setMinimumContentsLength(8)
         self._unit_combo.currentIndexChanged.connect(self._on_unit_changed)
         controls.addRow("Unit:", self._unit_combo)
 
-        range_row = QHBoxLayout()
+        # Two form rows rather than one "min to max" strip: side by side the
+        # spins force the host inspector panel into horizontal scrolling.
         self._range_min_spin = self._make_range_spin()
         self._range_max_spin = self._make_range_spin()
         self._range_min_spin.editingFinished.connect(self._on_range_edited)
         self._range_max_spin.editingFinished.connect(self._on_range_edited)
-        range_row.addWidget(self._range_min_spin)
-        range_row.addWidget(QLabel("to"))
-        range_row.addWidget(self._range_max_spin)
+        controls.addRow("Range from:", self._range_min_spin)
+        range_max_row = QHBoxLayout()
+        range_max_row.addWidget(self._range_max_spin)
         self._range_suffix_label = QLabel(_UNIT_SUFFIX[self._unit])
-        range_row.addWidget(self._range_suffix_label)
-        controls.addRow("Range:", self._wrap(range_row))
+        range_max_row.addWidget(self._range_suffix_label)
+        range_max_row.addStretch()
+        controls.addRow("Range to:", self._wrap(range_max_row))
 
         self._cutoff_spin = NoScrollDoubleSpinBox()
         self._cutoff_spin.setRange(0.0, 99.0)
@@ -226,7 +237,9 @@ class SpectralMomentsWidget(QGroupBox):
         # MaxEnt-only: reconstruct the selected runs' spectra first, then send —
         # so a B_rms(T) series builds without per-run reconstruct clicks. Hidden
         # until the MaxEnt host enables it.
-        self._batch_btn = QPushButton("Reconstruct selection & send")
+        # Short label — the full "reconstruct the selected runs, then send"
+        # story lives in the tooltip; the long form forced the host panel wide.
+        self._batch_btn = QPushButton("Reconstruct && send")
         self._batch_btn.setToolTip(
             "Reconstruct any MaxEnt spectra missing for the selected runs — each "
             "with its own stored settings, or the current panel settings if it "
@@ -249,12 +262,14 @@ class SpectralMomentsWidget(QGroupBox):
         self._info_dialog = show_spectral_moments_info_dialog(self)
 
     @staticmethod
-    def _make_range_spin() -> QDoubleSpinBox:
-        spin = NoScrollDoubleSpinBox()
-        spin.setDecimals(3)
-        spin.setRange(-1.0e12, 1.0e12)
-        spin.setKeyboardTracking(False)
-        return spin
+    def _make_range_spin() -> FloatLimitField:
+        # The shared compact limit field rather than a QDoubleSpinBox: a
+        # ±1e12-range spinbox sizes itself to ~15 characters plus arrow
+        # buttons, which alone forced the host inspector panel into
+        # horizontal scrolling (and capping the spin clipped its text).
+        # FloatLimitField is the BENCH fit-range idiom: arrow-free, compact,
+        # and spinbox-compatible (value/setValue/editingFinished).
+        return FloatLimitField(0.0, decimals=3, value_range=(-1.0e12, 1.0e12))
 
     @staticmethod
     def _wrap(layout: QHBoxLayout) -> QWidget:

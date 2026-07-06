@@ -107,6 +107,7 @@ from asymmetry.gui.gle_settings import get_gle_executable
 from asymmetry.gui.panels.draggable_handles import nearest_handle
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
+from asymmetry.gui.styles.metrics import field_width_for
 from asymmetry.gui.styles.plots import (
     draw_empty_state_message,
     draw_fit_range_span,
@@ -585,8 +586,12 @@ class PlotPanel(QWidget):
             self._frequency_reference_spin.setDecimals(2)
             self._frequency_reference_spin.setSuffix(" G")
             self._frequency_reference_spin.setValue(0.0)
-            self._frequency_reference_spin.setMinimumWidth(90)
+            # Set the mono field font *before* sizing, so field_width_for
+            # measures the font the spin actually renders in (mirrors alc_panel).
             self._frequency_reference_spin.setFont(mono_font(11.0))
+            self._frequency_reference_spin.setMinimumWidth(
+                field_width_for(8, self._frequency_reference_spin)
+            )
             self._frequency_reference_spin.setEnabled(False)
             self._frequency_reference_spin.editingFinished.connect(
                 self._on_frequency_reference_spin_committed

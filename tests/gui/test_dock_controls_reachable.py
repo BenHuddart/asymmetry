@@ -15,7 +15,10 @@ minimum, and the deck could not be widened afterwards. The fix (see
 ``MainWindow.showEvent`` / ``_apply_default_dock_widths`` and
 ``INSPECTOR_DOCK_DEFAULT_WIDTH``) re-applies a controls-fitting default width
 once the window is shown, and resizes the three tabified right docks as a group
-so the splitter widens them.
+so the splitter widens them. The default width is now adaptive (font-metric
+minimum, a fraction of the window width in between, capped so the plot stays
+dominant); tests read it from ``MainWindow._inspector_default_width`` rather than
+a fixed pixel constant.
 
 These tests drive the *real* ``MainWindow`` dock layout (a standalone panel
 already scrolls and so cannot reproduce the integration bug — that is why the
@@ -36,7 +39,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QScrollArea
 
-from asymmetry.gui.mainwindow import INSPECTOR_DOCK_DEFAULT_WIDTH, MainWindow
+from asymmetry.gui.mainwindow import MainWindow
 
 #: The squeezed width the dock opened at while the bug was live. The fix must
 #: clear this comfortably so the panels' controls are not clipped.
@@ -86,9 +89,9 @@ def _deck_region_width(window: MainWindow) -> int:
 def test_inspector_deck_opens_at_controls_fitting_width(shown_window) -> None:
     """The deck must open wide enough to show its controls, not the squeezed min."""
     window, _app = shown_window
-    # Comfortably past the clipped width, and up to the configured default.
+    # Comfortably past the clipped width, and up to the adaptive default.
     assert _deck_region_width(window) > _CLIPPED_DOCK_WIDTH
-    assert _deck_region_width(window) >= INSPECTOR_DOCK_DEFAULT_WIDTH - 1
+    assert _deck_region_width(window) >= window._inspector_default_width() - 1
 
 
 def test_inspector_deck_is_widenable(shown_window) -> None:
@@ -123,7 +126,7 @@ def test_reset_layout_restores_controls_fitting_width(shown_window) -> None:
     _settle(app, 3)
     window._ui_manager.reset_layout()
     _settle(app)
-    assert _deck_region_width(window) >= INSPECTOR_DOCK_DEFAULT_WIDTH - 1
+    assert _deck_region_width(window) >= window._inspector_default_width() - 1
 
 
 @pytest.mark.parametrize(

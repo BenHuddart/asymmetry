@@ -164,32 +164,215 @@ def test_build_stylesheet_chrome_font_sizes_scale(qapp) -> None:
     assert large > small
     # All three chrome selectors must carry a scaled size.
     qss = UIManager.build_stylesheet(None, 1.0)  # type: ignore[arg-type]
-    for selector in ("QDockWidget::title", "QHeaderView::section", "QGroupBox::title"):
+    for selector in (
+        "QDockWidget::title",
+        "QLabel#dockHeaderTitle",
+        "QHeaderView::section",
+        "QGroupBox::title",
+    ):
         assert re.search(rf"{re.escape(selector)} \{{\s*font-size:", qss)
 
 
 @pytest.mark.gui
-def test_ui_manager_font_scan_rescales_existing_chrome(qapp) -> None:
-    """Changing UI scale must re-scale already-built chrome fonts (the P1-4 bug)."""
+def test_ui_scale_qss_rescales_existing_section_header(qapp) -> None:
+    """A live UI-scale change must re-scale an already-built section header (P1-4).
+
+    Section headers set an explicit ``section_label_font()`` that ignores the
+    application font; the scale QSS block's ``QLabel#benchSectionHeader``
+    ``font-size`` rule re-scales them live (Qt merges the size onto the existing
+    font, so the builder's weight/letter-spacing survive). This is the QSS half
+    of the split that replaced the per-widget font-scan machinery.
+    """
     from PySide6.QtCore import QSettings
 
     from asymmetry.gui.mainwindow import MainWindow
+    from asymmetry.gui.styles.widgets import make_section_header
     from asymmetry.gui.ui_manager import UI_SCALE_SETTINGS_KEY
-    from asymmetry.gui.widgets.dock_header import DockHeader
 
     QSettings().setValue(UI_SCALE_SETTINGS_KEY, 1.0)
     window = MainWindow()
     try:
-        headers = window.findChildren(DockHeader)
-        assert headers, "expected dock headers"
+        header = make_section_header("SECTION")
+        header.setParent(window)
         window._ui_manager.set_ui_scale(1.0)
-        base = headers[0]._title_label.font().pointSizeF()
+        header.ensurePolished()
+        base = header.font().pointSizeF()
         window._ui_manager.set_ui_scale(1.2)
-        grown = headers[0]._title_label.font().pointSizeF()
+        header.ensurePolished()
+        grown = header.font().pointSizeF()
         window._ui_manager.set_ui_scale(0.8)
-        shrunk = headers[0]._title_label.font().pointSizeF()
+        header.ensurePolished()
+        shrunk = header.font().pointSizeF()
         assert grown > base > shrunk
         assert grown == pytest.approx(base * 1.2, rel=0.02)
+    finally:
+        window.close()
+
+
+@pytest.mark.gui
+def test_ui_scale_qss_rescales_dock_header_title(qapp) -> None:
+    """A live UI-scale change must re-scale a DockHeader's title label.
+
+    DockHeader is a custom title-bar widget, so the native ``QDockWidget::title``
+    pseudo-element never reaches it; the ``QLabel#dockHeaderTitle`` rule in the
+    scale QSS block does (the explicit ``header_font()`` keeps supplying
+    weight/letter-spacing). Visible mainly on floating docks, whose title text
+    is shown.
+    """
+    from PySide6.QtCore import QSettings
+
+    from asymmetry.gui.mainwindow import MainWindow
+    from asymmetry.gui.ui_manager import UI_SCALE_SETTINGS_KEY
+
+    QSettings().setValue(UI_SCALE_SETTINGS_KEY, 1.0)
+    window = MainWindow()
+    try:
+        title = window._browser_dock_header._title_label
+        window._ui_manager.set_ui_scale(1.0)
+        title.ensurePolished()
+        base = title.font().pointSizeF()
+        window._ui_manager.set_ui_scale(1.2)
+        title.ensurePolished()
+        grown = title.font().pointSizeF()
+        assert grown == pytest.approx(base * 1.2, rel=0.02)
+    finally:
+        window.close()
+
+
+@pytest.mark.gui
+def test_ui_scale_change_updates_app_font_and_stylesheet_once(qapp) -> None:
+    """A live scale change sets the QApplication font and stylesheet exactly once each.
+
+    The font-driven zoom replaced per-widget tracking: one app-font set, one
+    app-stylesheet set. Guards against a regression that re-multiplies the font
+    or appends a second scale block per apply.
+    """
+    from unittest.mock import patch
+
+    from PySide6.QtCore import QSettings
+
+    from asymmetry.gui.mainwindow import MainWindow
+    from asymmetry.gui.ui_manager import UI_SCALE_SETTINGS_KEY
+
+    QSettings().setValue(UI_SCALE_SETTINGS_KEY, 1.0)
+    window = MainWindow()
+    try:
+        with (
+            patch.object(qapp, "setFont", wraps=qapp.setFont) as set_font,
+            patch.object(qapp, "setStyleSheet", wraps=qapp.setStyleSheet) as set_sheet,
+        ):
+            window._ui_manager.set_ui_scale(1.2)
+        assert set_font.call_count == 1
+        assert set_sheet.call_count == 1
+        # The composed sheet is base + exactly one scale block: setting the same
+        # scale again is a no-op (guarded by the equality check).
+        with (
+            patch.object(qapp, "setFont", wraps=qapp.setFont) as set_font2,
+            patch.object(qapp, "setStyleSheet", wraps=qapp.setStyleSheet) as set_sheet2,
+        ):
+            window._ui_manager.set_ui_scale(1.2)
+        assert set_font2.call_count == 0
+        assert set_sheet2.call_count == 0
+    finally:
+        window.close()
+
+
+@pytest.mark.gui
+def test_ui_scale_change_updates_param_value_cell_font_via_owner_hook(qapp) -> None:
+    """A parameter table's cell font tracks a live scale change via its owner hook.
+
+    The table sets an explicit mono cell font (``apply_param_table_style``) that
+    ignores the application font, and QSS cannot reach a per-cell font. The
+    owning panel's ``_on_ui_scale_changed`` re-derives it from the builders, so
+    ``table.font()`` (which drives cell rendering) tracks the scale — only
+    because the hook re-applied it.
+    """
+    from PySide6.QtCore import QSettings
+
+    from asymmetry.gui.mainwindow import MainWindow
+    from asymmetry.gui.ui_manager import UI_SCALE_SETTINGS_KEY
+
+    QSettings().setValue(UI_SCALE_SETTINGS_KEY, 1.0)
+    window = MainWindow()
+    try:
+        panel = window._fit_parameters_panel
+        panel._ensure_ui_scale_sync()  # connect the hook (normally on showEvent)
+        window._ui_manager.set_ui_scale(1.0)
+        base = panel._table.font().pointSizeF()
+        window._ui_manager.set_ui_scale(1.2)
+        grown = panel._table.font().pointSizeF()
+        window._ui_manager.set_ui_scale(0.8)
+        shrunk = panel._table.font().pointSizeF()
+        assert grown > base > shrunk
+        assert grown == pytest.approx(base * 1.2, rel=0.02)
+    finally:
+        window.close()
+
+
+@pytest.mark.gui
+def test_ui_scale_change_updates_formula_box_font_via_owner_hook(qapp) -> None:
+    """A formula box's mono label tracks a live scale change, keeping any recolour.
+
+    ``FormulaBox`` sets an explicit ``mono_font(SIZE_NUMERIC)`` on its inner label
+    that ignores the application font; QSS cannot reach it cleanly because the
+    label's own local stylesheet (also used by the domain-mismatch recolour)
+    wins. The box self-subscribes to the UIManager signal and re-derives the
+    label font from the builders — font-only, so a recolour stylesheet survives.
+    """
+    from PySide6.QtCore import QSettings
+
+    from asymmetry.gui.mainwindow import MainWindow
+    from asymmetry.gui.styles.widgets import FormulaBox
+    from asymmetry.gui.ui_manager import UI_SCALE_SETTINGS_KEY
+
+    QSettings().setValue(UI_SCALE_SETTINGS_KEY, 1.0)
+    window = MainWindow()
+    try:
+        boxes = window.findChildren(FormulaBox)
+        assert boxes, "expected at least one FormulaBox in the fit panels"
+        box = boxes[0]
+        box._ensure_ui_scale_sync()  # connect the hook (normally on showEvent)
+        # A domain-mismatch recolour lives in the label's own stylesheet; it must
+        # survive the font-only refresh.
+        box.label.setStyleSheet("QLabel { background: transparent; color: #ff0000; }")
+        window._ui_manager.set_ui_scale(1.0)
+        base = box.label.font().pointSizeF()
+        window._ui_manager.set_ui_scale(1.2)
+        grown = box.label.font().pointSizeF()
+        window._ui_manager.set_ui_scale(0.8)
+        shrunk = box.label.font().pointSizeF()
+        assert grown > base > shrunk
+        assert grown == pytest.approx(base * 1.2, rel=0.02)
+        assert "#ff0000" in box.label.styleSheet()  # recolour not clobbered
+    finally:
+        window.close()
+
+
+@pytest.mark.gui
+def test_dock_min_widths_derive_from_font_metrics(qapp) -> None:
+    """Inspector/browser dock minimum widths derive from font metrics, not px literals."""
+    from PySide6.QtCore import QSettings
+
+    from asymmetry.gui.mainwindow import (
+        _BROWSER_DOCK_MIN_CHARS,
+        _INSPECTOR_DOCK_MIN_CHARS,
+        MainWindow,
+    )
+    from asymmetry.gui.styles import metrics
+    from asymmetry.gui.ui_manager import UI_SCALE_SETTINGS_KEY
+
+    QSettings().setValue(UI_SCALE_SETTINGS_KEY, 1.0)
+    window = MainWindow()
+    try:
+        assert window._dock_data_browser.minimumWidth() == metrics.char_width(
+            _BROWSER_DOCK_MIN_CHARS
+        )
+        for dock in (
+            window._dock_fit,
+            window._dock_fourier,
+            window._dock_fit_parameters,
+        ):
+            assert dock.minimumWidth() == metrics.char_width(_INSPECTOR_DOCK_MIN_CHARS)
     finally:
         window.close()
 

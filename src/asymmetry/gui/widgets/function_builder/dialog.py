@@ -63,6 +63,9 @@ from asymmetry.gui.widgets.screen_sizing import resize_to_available
 #: the card without dominating it (same pattern as the library row buttons in
 #: ``library_panel.py``'s ``_ROW_BUTTON_QSS``, duplicated locally rather than
 #: imported so the two widgets stay decoupled).
+#: The hover/pressed states are a translucent-black overlay tint (not an
+#: opaque fill), so no design token applies — only opaque colors are tokenized
+#: — and these stay literal rgba() values.
 _COPY_BUTTON_QSS = (
     "QToolButton { border: none; background: transparent; padding: 2px 6px; margin: 0px; }"
     "QToolButton:hover { background: rgba(0, 0, 0, 28); border-radius: 4px; }"
