@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Suggest next point: Bayesian experimental design from a trend fit.** Once
+  a trend model is fitted, the model-fit dialog's new **Suggest next point**
+  section recommends where to measure next — and how many events to count —
+  to constrain the model the most, computed from the fit's own covariance
+  (Laplace expected information gain). Choose a single target parameter
+  (c-optimal, e.g. "pin down `Tc`") or **All parameters (D-optimal)**; the
+  full utility curve is drawn on the trend preview so the *why* behind the
+  suggestion stays visible, extrapolated candidates are drawn distinctly, and
+  the recommended event count is Monte-Carlo calibrated (the raw rank-one
+  estimate is optimistic near critical points). When alternative trend models
+  are fitted, an **AIC evidence** line ranks them by Akaike weight and a
+  second overlay marks the **best discriminating point** — where the
+  competing models' predictions diverge most relative to measurement noise —
+  or reports that no discriminating point exists in range. Optional
+  **Weight by measurement cost** re-weights the utility by a move-time model
+  from the instrument's current position, changing where the marker sits but
+  never the underlying physics. Documented in *Reference ▸ Suggest next
+  point*. (The core suggestion engine and the first dialog section shipped
+  quietly in 0.7.0; this completes the feature and documents it.)
+
 ### Fixed
 
 - **Grouping Apply accepts groupings that name detectors a run does not
