@@ -96,8 +96,8 @@ group, so each detector group is an independent single-histogram measurement
 
 with no balancing backward detector. This is the data the **single-histogram**
 count fit expects — fit any one group and recover its :math:`N_0`, the
-amplitude inside :math:`a(t)`, and the flat background. Use it for LF/ZF
-single-detector work, or to manufacture a clean test case for the count-domain
+amplitude inside :math:`a(t)`, and the flat background. Use it for
+longitudinal-field / zero-field (LF/ZF) single-detector work, or to manufacture a clean test case for the count-domain
 fit modes.
 
 *Two-period (red/green)* generates two period histograms in one run, the way a
@@ -313,7 +313,7 @@ green and returns the loadable red/green payload.
    )
 
 Multi-group simulations (a different amplitude and phase per detector group —
-phases around a TF ring, for instance) use
+phases around a transverse-field (TF) ring, for instance) use
 :func:`asymmetry.core.simulate.simulate_multi_group_run` with a
 :class:`~asymmetry.core.simulate.GroupSignalSpec` per group; the
 forward/backward dialog exposes only the single-signal α-split case.

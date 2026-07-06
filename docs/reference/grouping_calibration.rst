@@ -18,7 +18,9 @@ the detector arrangement built visually in the **Detector Layout** editor and
 
 This page is a practical walkthrough. For the grouping-profile model, the
 stored payload, the deadtime/background correction maths, and the per-format
-(PSI / ROOT) details, see the reference page :doc:`detector_grouping`.
+(PSI / ROOT) details, see the reference page :doc:`detector_grouping`; for the
+same calibration carried out end-to-end on a real EMU run, see
+:doc:`/workflows/calibration_grouping_emu`.
 
 The Grouping window
 --------------------

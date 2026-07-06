@@ -3,7 +3,7 @@ Superconductor penetration depth from σ(T)
 
 This chapter is a worked example of the canonical superconductor μSR
 workflow: extract the temperature dependence of the magnetic
-penetration depth :math:`\lambda_L(T)` from transverse-field μSR data
+penetration depth :math:`\lambda_L(T)` from transverse-field (TF) μSR data
 in the vortex state, then fit a gap model to identify the pairing
 symmetry. The synthetic data corresponds to MgB₂
 (:math:`T_c \approx 36\;\mathrm{K}`, two-gap s+s structure with

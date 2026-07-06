@@ -801,10 +801,10 @@ Plot labels and annotations
 All label positions and text are saved in the project file and restored when the
 project is reopened.
 
-Fitted Parameters Panel
------------------------
+Fit Parameters Panel
+--------------------
 
-After a global fit, the Fitted Parameters panel shows how the varying
+After a global fit, the Fit Parameters panel shows how the varying
 (per-dataset) parameters change across runs. It provides:
 
 Parameter Table

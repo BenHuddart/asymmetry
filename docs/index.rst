@@ -33,7 +33,8 @@ Where to start
 - :doc:`reference/index` — feature-by-feature documentation and the
   fit-function library.
 - :doc:`explanation/index` — a μSR primer, the conventions Asymmetry follows,
-  and how it compares to other μSR tools.
+  how it compares to other μSR tools, and a :doc:`glossary
+  <explanation/glossary>` of terms.
 - :doc:`api/index` — the Python API reference for scripting.
 - :doc:`contributing` — how to report issues and contribute.
 

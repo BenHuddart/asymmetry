@@ -30,7 +30,8 @@ inconsistent results across groups, the diagnosis is almost always a
 calibration problem (alpha mismatch, per-detector time-zero drift) rather
 than a model problem. For ordinary F-B asymmetry fits with no
 geometry-sensitive observable, the regular single-fit panel is faster and
-imposes no grouped overhead.
+imposes no grouped overhead. For a full worked example on a rotated single
+crystal, see :doc:`/workflows/knight_shift_angle`.
 
 What This Mode Fits
 -------------------

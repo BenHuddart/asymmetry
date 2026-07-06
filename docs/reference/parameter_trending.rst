@@ -129,16 +129,16 @@ to the current trend.
 
 Typical use cases include extracting the ordering temperature :math:`T_c` and
 the critical exponent :math:`\beta` of a magnetic order parameter by fitting a
-spontaneous precession frequency :math:`\nu(T)` (or internal field) from a ZF
-series with an ``OrderParameter`` form (see `Magnetic Order Parameter`_ below
+spontaneous precession frequency :math:`\nu(T)` (or internal field) from a
+zero-field (ZF) series with an ``OrderParameter`` form (see `Magnetic Order Parameter`_ below
 and :doc:`/workflows/temperature_scan_magnetism`); locating a critical
 temperature where a relaxation rate *diverges* with a ``CriticalDivergence``
-form; inverting the TF
+form; inverting the transverse-field (TF)
 second-moment :math:`\sigma(T)` into a London penetration depth using one
 of the ``SC_*`` gap models (:doc:`/workflows/superconductor_penetration_depth`
 and :doc:`sc_penetration_depth`); fitting an Arrhenius form to
 :math:`\lambda(T)` across a temperature scan for motional narrowing;
-and field sweeps in either LF or TF geometry, where the trending panel
+and field sweeps in either longitudinal-field (LF) or TF geometry, where the trending panel
 handles parameter-vs-:math:`B` identically to parameter-vs-:math:`T`. The
 GUI panel is the right tool for interactive exploration and quick model
 selection; exporting to a Python script (the snippets below) is the right
@@ -744,7 +744,7 @@ frequency and give :math:`A_\mu, A_p` starting values near the expected coupling
 — the resonance condition is nonlinear, so the field-swept curve only constrains
 the fit once the trial resonances fall inside the scanned window. :math:`A_\mu`
 (the mean) is well determined; :math:`A_p` (the splitting) is the weaker axis and
-benefits from a complementary ALC measurement.
+benefits from a complementary avoided-level-crossing (ALC) measurement.
 
 .. code-block:: python
 
@@ -1027,9 +1027,13 @@ Runnable Example
 
 See ``examples/parameter_trending.py`` for a complete executable script.
 
-Superconducting Gap Models
---------------------------
+Downstream trend models
+-----------------------
 
-For TF-muSR superconducting penetration-depth analysis via
-temperature-dependent :math:`\sigma(T)`, see
-:doc:`sc_penetration_depth`.
+The trend framework feeds several physical models that consume a fitted
+parameter series: for TF-μSR superconducting penetration-depth analysis via a
+temperature-dependent :math:`\sigma(T)`, see :doc:`sc_penetration_depth`; for
+muonium reaction kinetics from relaxation rates linear in reactant
+concentration, see :doc:`muonium_kinetics`; and for the field-dependent
+transport models fitted to :math:`\lambda(B_\mathrm{LF})`, see
+:doc:`diffusion_ballistic_lf`.

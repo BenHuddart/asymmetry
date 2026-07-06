@@ -15,8 +15,8 @@ Superconducting Penetration Depth Models
 For an end-to-end walk-through that exercises every model on this
 page, see :doc:`/workflows/superconductor_penetration_depth`.
 
-This page documents the superconducting sigma(T) models used for TF-muSR
-vortex-state analysis and interleaves the core theory with the API for each
+This page documents the superconducting sigma(T) models used for
+transverse-field (TF) μSR vortex-state analysis and interleaves the core theory with the API for each
 model family.
 
 Scope and Terminology

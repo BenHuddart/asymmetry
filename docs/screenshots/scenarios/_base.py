@@ -12,6 +12,7 @@ mutate global Qt state themselves.
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, ClassVar
@@ -19,6 +20,13 @@ from typing import Callable, ClassVar
 from PySide6.QtCore import QCoreApplication, QEventLoop, Qt, QTimer
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QApplication, QWidget
+
+try:
+    import oxipng
+except ImportError:  # pragma: no cover - exercised when the optional dep is absent
+    oxipng = None
+
+_warned_missing_oxipng = False
 
 
 @dataclass
@@ -78,6 +86,7 @@ class Scenario:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         if not pixmap.save(str(out_path), "PNG"):
             raise RuntimeError(f"Failed to save screenshot to {out_path}")
+        _optimize_png(out_path)
         self.teardown(widget)
         return out_path
 
@@ -107,6 +116,33 @@ def _process_events_for(milliseconds: int) -> None:
     QTimer.singleShot(int(milliseconds), loop.quit)
     loop.exec()
     QCoreApplication.processEvents(QEventLoop.ProcessEventsFlag.AllEvents, milliseconds)
+
+
+def _optimize_png(path: Path) -> None:
+    """Losslessly re-encode ``path`` in place with ``oxipng``, if available.
+
+    Optimisation is best-effort: a missing ``pyoxipng`` install (an optional
+    dependency, see ``docs/requirements.txt``) must never fail a capture run,
+    so this prints one warning for the whole process and leaves the
+    Qt-written PNG as-is. ``level=4`` matches ``level=6`` byte-for-byte on
+    every screenshot sampled during development but runs in roughly half the
+    time; ``StripChunks.safe()`` drops incidental metadata (e.g. timestamps)
+    without touching color/gamma data, which keeps the output byte-identical
+    across repeated runs of the same input — required so Pages deploy diffs
+    only reflect real pixel changes.
+    """
+    global _warned_missing_oxipng
+    if oxipng is None:
+        if not _warned_missing_oxipng:
+            print(
+                "[screenshots] warning: pyoxipng not installed; skipping PNG "
+                "optimisation (see docs/requirements.txt)",
+                file=sys.stderr,
+                flush=True,
+            )
+            _warned_missing_oxipng = True
+        return
+    oxipng.optimize(str(path), str(path), level=4, strip=oxipng.StripChunks.safe())
 
 
 def _grab_at_dpr(widget: QWidget, dpr: float) -> QPixmap:

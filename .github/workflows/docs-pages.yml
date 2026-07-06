@@ -1,11 +1,19 @@
 name: Docs Build and Deploy
 
 on:
-  # Full generation + Pages deploy happens ONLY for releases (version tags).
-  # The published docs site therefore tracks released versions, not every merge.
+  # Full generation + Pages deploy happens for releases (version tags) and for
+  # pushes to main that touch the docs or the GUI code (screenshots are captured
+  # from the live GUI, so `src/**` changes can alter the published images). The
+  # `paths` filter is not evaluated for tag pushes, so releases always deploy.
   push:
     tags:
       - "v*"
+    branches:
+      - main
+    paths:
+      - "docs/**"
+      - "src/**"
+      - ".github/workflows/docs-pages.yml"
   # On pull requests we run a cheap build-only smoke (no screenshots, no deploy)
   # so a Sphinx-breaking docs change is still caught before merge. Scoped to
   # docs-affecting paths so ordinary code PRs don't pay any docs cost.
@@ -21,6 +29,10 @@ on:
 permissions:
   contents: read
 
+# Per-ref build concurrency: a superseded build for the same ref (e.g. two quick
+# merges to main, or a force-pushed PR) is cancelled rather than queued. The
+# deploy job additionally serializes under the shared `pages` group below, per
+# GitHub's recommended pattern, so an in-flight Pages deploy is never cancelled.
 concurrency:
   group: docs-pages-${{ github.ref }}
   cancel-in-progress: true
@@ -49,6 +61,13 @@ jobs:
           pip install -c constraints.txt -e .
           pip install -c constraints.txt -r docs/requirements.txt
 
+      - name: Check screenshot references
+        # Static consistency gate: every `/_generated/screenshots/<name>.png`
+        # referenced from the .rst sources must map to a registered scenario,
+        # and every scenario must be referenced somewhere (an unused scenario
+        # still costs capture time on every full build).
+        run: python -m docs.screenshots.capture --check-refs
+
       - name: Build HTML docs (no screenshots)
         # Screenshots are not generated here; pages that embed generated images
         # tolerate their absence. -W would turn missing-image warnings into
@@ -56,8 +75,9 @@ jobs:
         # fail the build).
         run: sphinx-build -d docs/_build/doctrees -b html docs docs/_build/html
 
-  # Full build for a release: regenerate GUI screenshots, build HTML, and (below)
-  # deploy to Pages. Runs only on a version tag push or a manual dispatch.
+  # Full build: regenerate GUI screenshots, build HTML, and (below) deploy to
+  # Pages. Runs on a version tag push, a docs/src push to main, or a manual
+  # dispatch.
   build-docs:
     name: Build Sphinx docs
     if: github.event_name != 'pull_request'
@@ -113,8 +133,19 @@ jobs:
     name: Deploy to GitHub Pages
     runs-on: ubuntu-latest
     needs: build-docs
-    # Deploy only for releases (version tag) or a deliberate manual dispatch.
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    # Deploy for releases (version tag), pushes to main, or a deliberate manual
+    # dispatch. Mirrors the `push` trigger above; PR events never reach here
+    # because build-docs is skipped for them.
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      github.ref == 'refs/heads/main' ||
+      github.event_name == 'workflow_dispatch'
+    # One Pages deploy at a time, never cancelled mid-flight (GitHub's
+    # recommended `pages` group): a tag deploy and a main deploy queue behind
+    # each other instead of racing or interrupting one another.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
     # The Pages deploy is the only job that needs write scopes: pages/id-token to
     # publish, and actions:write to delete the consumed artifact afterwards.
     permissions:

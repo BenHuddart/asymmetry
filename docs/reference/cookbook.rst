@@ -164,7 +164,7 @@ Accurate multi-group transverse-field σ
 ---------------------------------------
 
 A 2-group forward/backward asymmetry carries a systematic offset in the fitted
-TF width. For an accurate per-group σ, fit the lifetime-corrected grouped
+transverse-field (TF) width. For an accurate per-group σ, fit the lifetime-corrected grouped
 **counts** directly with
 :func:`~asymmetry.core.fitting.grouped_time_domain.fit_grouped_time_domain`,
 sharing the physics parameters across the dataset's detector groups:

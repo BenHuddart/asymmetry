@@ -145,7 +145,7 @@ Key points this case illustrates:
 * **The amplitude is** ``A_1``, **not** ``A``. Composite expressions mangle
   component parameters; always read ``model_def.param_names`` first and build the
   seeds from that list.
-* **Leave** ``A_bg`` **unbounded** so a negative TF-style background can settle
+* **Leave** ``A_bg`` **unbounded** so a negative transverse-field (TF) style background can settle
   (see :ref:`fit-bg-amplitude-tf` in :doc:`fitting`).
 
 Sharing ``Delta`` and ``nu`` across the series pins them far more tightly than

@@ -120,7 +120,8 @@ When to reach for each
   analysis at reduction time; re-estimate α afterwards, because the group
   balance changes with group membership.
 - **Scan-point exclusion** — to drop a single outlier *run* from an integral
-  (ALC) field scan so it does not distort the baseline or resonance fit, without
+  avoided-level-crossing (ALC) field scan so it does not distort the baseline or
+  resonance fit, without
   rebuilding the scan or de-selecting the run. Click the point to exclude it,
   click again to restore; it stays visible (greyed) throughout.
 

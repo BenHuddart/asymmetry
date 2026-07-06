@@ -7,7 +7,7 @@ When muon-spin relaxation is dominated by motion of the muon (or its host
 spin environment) rather than by a static field distribution, the diagnostic
 observable is the *field* dependence of the relaxation rate rather than the
 detailed shape of any single :math:`A(t)`. The standard workflow is
-two-stage: fit each LF-decoupled run to an empirical relaxation form to
+two-stage: fit each longitudinal-field (LF) decoupled run to an empirical relaxation form to
 extract :math:`\lambda(B_{LF})`, then fit the resulting
 :math:`\lambda` versus :math:`B_{LF}` curve with a transport model whose
 parameters carry direct physical meaning — a diffusion rate, a hopping

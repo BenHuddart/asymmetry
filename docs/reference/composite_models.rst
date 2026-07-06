@@ -24,8 +24,8 @@ expresses these combinations: a free-form arithmetic expression over
 registered baseline-free components, parsed into a compiled callable that
 the fit engine drives like any other model. The two patterns the builder
 is designed for are *multiplicative* combinations, where one physical
-effect modulates another (a Gaussian envelope multiplying a TF precession
-signal in the vortex state; an exponential damping multiplying a Larmor
+effect modulates another (a Gaussian envelope multiplying a transverse-field
+(TF) precession signal in the vortex state; an exponential damping multiplying a Larmor
 oscillation), and *additive* combinations, where independent populations
 of muons contribute separately. Fraction groups, documented below, let
 several additive components share one overall amplitude budget — the
@@ -411,7 +411,7 @@ name in ``CompositeModel``:
      - :math:`A \left[\tfrac{1}{3} + \tfrac{2}{3}(1-\Delta^2 t^2)e^{-\Delta^2 t^2/2}\right]`
      - ``A``, ``Delta``
    * - ``LongitudinalFieldKT``
-     - Hayano LF-KT :math:`G_z(t;\Delta,B_L)` — see :ref:`fit-lf-kubo-toyabe`
+     - Hayano longitudinal-field Kubo–Toyabe (LF-KT) :math:`G_z(t;\Delta,B_L)` — see :ref:`fit-lf-kubo-toyabe`
      - ``A``, ``Delta``, ``B_L`` (Gauss)
    * - ``MuF``
      - Analytical single mu-F polarisation :math:`D_z(t)`

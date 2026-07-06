@@ -1,7 +1,7 @@
 LF decoupling and static-vs-dynamic field distributions
 =======================================================
 
-This chapter is a worked example of a longitudinal-field decoupling
+This chapter is a worked example of a longitudinal-field (LF) decoupling
 series on a nonmagnetic host (Ag polycrystal — the standard
 calibration sample at every μSR facility). The analysis measures the
 Gaussian width :math:`\Delta` of the static local-field distribution
@@ -23,7 +23,7 @@ distribution of local fields :math:`B_\mu` that arise mainly from
 randomly-oriented nuclear dipoles. If the distribution is isotropic
 Gaussian with standard deviation :math:`\Delta / \gamma_\mu` along
 each Cartesian axis, the zero-field polarisation function is the
-**static Gaussian Kubo–Toyabe** form
+**static Gaussian Kubo–Toyabe (KT)** form
 
 .. math::
 

@@ -8,7 +8,9 @@ Frequency view.  It does not fit the complex FFT directly.
 
 The spectrum you fit can come from either quantitative estimator — the FFT or
 maximum entropy; pick one with :ref:`choosing-spectral-estimator`. (The Burg
-*Resolution* view is a line-count diagnostic, not a fit target.)
+*Resolution* view is a line-count diagnostic, not a fit target.) Computing and
+conditioning that spectrum in the first place is covered by
+:doc:`fourier_analysis`.
 
 Workflow
 --------

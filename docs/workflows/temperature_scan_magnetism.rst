@@ -2,7 +2,7 @@ Temperature scan through a magnetic transition
 ==============================================
 
 This chapter is a worked example showing how Asymmetry handles a
-zero-field μSR temperature scan through a magnetic ordering
+zero-field (ZF) μSR temperature scan through a magnetic ordering
 transition. The synthetic data corresponds to the textbook EuO example
 (:math:`T_c \approx 69` K; see Blundell *et al.* 2022 Fig 6.6 and the
 discussion of cubic ferromagnets in Amato & Morenzoni 2024 Ch 5). The

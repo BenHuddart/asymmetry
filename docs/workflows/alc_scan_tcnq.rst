@@ -2,9 +2,9 @@ ALC field scan in TCNQ
 ======================
 
 This worked example builds an **avoided-level-crossing (ALC)** resonance
-scan from a series of field-stepped runs and locates the resonance. ALC
-mode plots one integral-asymmetry value per run against field, rather than
-fitting a model in the time domain. For the full feature reference see
+scan from a series of field-stepped runs and locates the resonance. The
+**Integral scan** mode plots one integral-asymmetry value per run against
+field, rather than fitting a model in the time domain. For the full feature reference see
 :doc:`/reference/alc_mode`; this chapter is the end-to-end walkthrough on
 real data.
 

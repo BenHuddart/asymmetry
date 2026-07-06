@@ -12,9 +12,14 @@ points in the middle of a transition, a sample whose magnetic structure is not
 yet known, a survey of multiple compounds in a synthesis batch — but the
 ranking is also a useful sanity check when you already suspect a model: if the
 wizard does not agree with your guess, digging into the decision trail usually
-tells you why. For the very simplest cases (clean single-frequency TF
-precession, an obvious single-exponential decay) building the model by hand in
-the fit panel remains faster.
+tells you why. For the very simplest cases (clean single-frequency
+transverse-field (TF) precession, an obvious single-exponential decay) building
+the model by hand in the fit panel remains faster.
+
+Once the wizard has written a model into the single-fit tab, :doc:`fitting`
+covers running and refining it and :doc:`assessing_a_fit` covers judging the
+result; for the same guided approach applied across a whole run series, see the
+:doc:`global_fit_wizard`.
 
 The wizard opens in a non-modal window from the single-fit tab and does not
 start the expensive analysis until you press **Analyze**. It uses the same

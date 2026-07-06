@@ -16,7 +16,8 @@ packages do.
 
 If you are loading a new dataset for the first time, the subsections
 below document the metadata each loader extracts and the common failure
-modes. Period-mode files (e.g. photo-µSR light-OFF/ON, RF on/off, ALC) can
+modes. Period-mode files (e.g. photo-µSR light-OFF/ON, RF on/off,
+avoided-level-crossing) can
 be navigated with the scriptable period-selection API — see
 :ref:`selecting-periods` below.
 

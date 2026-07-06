@@ -9,7 +9,7 @@ either shared globally or free per run. (The single-spectrum wizard has
 since been redesigned around an answer-card-first flow with a decision
 trail; this wizard keeps its page-by-page layout, since it drives a
 multi-stage screening-then-optimisation workflow rather than a single
-recommendation.) The textbook use is an LF
+recommendation.) The textbook use is a longitudinal-field (LF)
 decoupling series where :math:`\Delta` is shared across runs and
 :math:`B_L` is fixed per run (:doc:`/workflows/lf_decoupling_dynamics`),
 but the same workflow applies whenever you expect a single model family

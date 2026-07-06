@@ -94,7 +94,7 @@ in the status bar:
   before you commit to a fit;
 - a **parabolic peak**: the sub-bin position and height of a local maximum, fitted
   from the point and its two neighbours. This reads a line in an FFT or MaxEnt
-  spectrum, or an ALC resonance centre, to better than the bin spacing without
+  spectrum, or an avoided-level-crossing (ALC) resonance centre, to better than the bin spacing without
   setting up a fit;
 - a **windowed average** :math:`\langle A\rangle \pm \sigma` over the visible
   x-range — the level of a baseline, an asymmetry plateau, or an ALC/repolarisation

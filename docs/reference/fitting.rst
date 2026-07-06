@@ -126,7 +126,7 @@ two setup traps most likely to produce a converged-but-wrong fit:
   precession ``frequency`` is held **fixed** more than ~2 % from
   :math:`\gamma_\mu B` implied by the run's ``field``; pinning the line away from
   its true position leaks the misfit into the damping term and inflates the
-  fitted Gaussian ``sigma`` (the vortex-state TF trap).
+  fitted Gaussian ``sigma`` (the vortex-state transverse-field (TF) trap).
 
 These are emitted through the Python :mod:`warnings` system (so they still reach
 the log/stderr), and their messages are now **also carried on the result** as a
@@ -369,7 +369,7 @@ datasets, mark parameters as **Global** (shared across runs) or **Local**
 (per-run) in the parameter table, and click **Run Batch Fit**. A fit where
 at least one parameter is **Global** is a global fit; otherwise each run is
 fitted independently but the results are collected into one trendable series.
-Results land in the **Fitted Parameters** panel where they can be browsed,
+Results land in the **Fit Parameters** panel where they can be browsed,
 exported to TSV, or passed into the parameter-trending fit framework documented
 in :doc:`parameter_trending`.
 
