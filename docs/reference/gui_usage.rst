@@ -928,19 +928,24 @@ The interface density can be adjusted from **View → UI Scale**. Five preset
 scales are available: 80 %, 90 %, 100 %, 110 %, and 120 %. The selection is
 persisted between sessions. The default is 90 %.
 
-Changing the scale adjusts:
+The scale is *font-driven*: it multiplies the application font (and the derived
+chrome font sizes) rather than resizing whole widgets. Everything sized from the
+font metrics then follows automatically, so a scale change adjusts:
 
-* Base font size across panels and dialogs
-* Table row heights
-* Dock minimum widths
-* Compact padding in parameter and data-browser tables
+* base font size across panels and dialogs;
+* table row heights and character-based column widths;
+* dock minimum widths, keeping the fit table's columns readable at every scale.
 
 Keyboard Shortcuts
 ------------------
 
-* **Ctrl+O**: Open file(s)
-* **Up/Down arrows**: Navigate table selection
-* **Ctrl+A**: Select all (in table)
+* **Ctrl+Shift+O**: Open data file(s)
+* **Ctrl+N**: New project
+* **Ctrl+O**: Open project
+* **Ctrl+S**: Save project
+* **Ctrl+Shift+S**: Save project as
+* **Ctrl+Return**: Run the fit
+* **Ctrl+W** / **Ctrl+Q**: Close the window (quit)
 
 Tips and Tricks
 ---------------
@@ -961,11 +966,27 @@ maintain several independent analyses side-by-side.
 Creating and saving
 ~~~~~~~~~~~~~~~~~~~~
 
-* **File → New Project** clears the current session after asking for
-   confirmation.  Any unsaved changes are discarded.
+* **File → New Project** (``Ctrl+N``) clears the current session.
 * **File → Save Project** (``Ctrl+S``) saves to the current project file.
    If no project file is open yet, you will be prompted to choose a location.
-* **File → Save Project As…** always asks for a new filename.
+* **File → Save Project As…** (``Ctrl+Shift+S``) always asks for a new filename.
+
+.. _unsaved-changes-guard:
+
+Unsaved-changes guard
+~~~~~~~~~~~~~~~~~~~~~~
+
+Hours of grouping, fitting, and trend work live in memory until you save, so
+Asymmetry tracks whether the session holds unsaved work and refuses to drop it
+silently. A ``*`` in the window title marks a modified session, and any action
+that would clear it — closing the window, **New Project**, **Open Project**, or
+opening a recent project — first raises a **Save / Discard / Cancel** prompt.
+Choosing **Cancel** aborts the action and keeps your work; **Save** writes the
+project (choosing a location if none is set yet) before proceeding. The flag is
+set by every mutating action — data load and removal, grouping edits, each fit
+completion, trend-series rename or delete, ALC scan builds, and custom-column
+edits — and cleared on a successful save, open, or new project. Opening a
+project or starting a fresh one therefore always begins from a clean state.
 
 Opening a project
 ~~~~~~~~~~~~~~~~~~

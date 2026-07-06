@@ -98,8 +98,8 @@ modes:
 
 along with:
 
-* ``Filter start`` in microseconds
-* ``Tau`` (the filter time constant) in microseconds
+* ``Filter start (µs)``
+* ``Filter τ (µs)`` — the filter time constant
 
 For a Lorentzian filter, Asymmetry follows WiMDA's two cases:
 
@@ -288,13 +288,17 @@ The panel groups its controls as follows:
 * **Cycle Refinement** — ``Inner iterations``; ``χ² target / N``; toggles to
   ``Fit phases`` / ``amplitudes`` / ``backgrounds`` / ``constant background``;
   and ``Use existing deadtime correction``.
+
+The run controls sit in a footer pinned to the bottom of the panel, so they
+stay reachable however far the settings above are scrolled:
+
 * Cycle buttons — **+1**, **+5**, **+25** step the calculation by that many
   outer cycles; **Converge** runs a larger fixed batch in one go; **Restart**
   discards the current state; **Cancel** stops a running calculation.
-* **Apply settings to selected runs** copies the current configuration to the
-  other selected runs.
-* A **Progress** area and a **Diagnostics** line reporting the latest
-  ``Cycle``, ``χ²``, ``TEST``, and ``entropy``.
+* **Apply to selection** copies the current configuration to the other selected
+  runs.
+* A **Progress** bar and a **Diagnostics** line report the latest ``Cycle``,
+  ``χ²``, ``TEST``, and ``entropy``.
 
 .. important::
 

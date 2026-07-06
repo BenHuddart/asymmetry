@@ -15,6 +15,16 @@ the GUI write it for you.
 Building a function in the GUI
 -------------------------------
 
+.. image:: /_generated/screenshots/new_user_function_dialog.png
+   :alt: New User Function dialog authoring a stretched-exponential oscillation
+   :width: 100%
+
+*The New User Function dialog mid-authoring:* ``StretchedOsc``, *a*
+*stretched-exponential envelope on a Larmor oscillation. The parameter table*
+*carries a start value per name; the preview redraws at those values, and the*
+*green status line with an enabled OK button confirms every load-time check*
+*has passed.*
+
 Both function builders — the fit builder (Fit panel → **Build…**) and the
 parameter-model builder (the parameter-trending window's model editor) —
 have a **New user function…** button. It sits in the library footer, and a
@@ -46,10 +56,13 @@ The dialog asks for:
 
 As you type, a preview curve redraws at the parameter start values, so a
 typo or a domain mismatch shows up as a wrong-looking curve (or a validation
-message) before you commit to anything. The same checks a hand-written
-plugin faces at load time — a finite result on a probe grid, a legal
-identifier, no name collision — run live, and **OK** stays disabled until
-they pass.
+message) before you commit to anything. Validation is debounced — it waits
+until you pause rather than running on every keystroke, because building the
+preview curve executes your code. It runs exactly the checks a hand-written
+plugin faces at load time — a legal, globally unique identifier, valid
+parameter names (none clashing with ``x``, ``np``, or a maths function), a
+non-empty description, and a finite result on a probe grid — with no second,
+looser path; **OK** stays disabled until they all pass.
 
 Press **OK** and Asymmetry writes an ordinary, readable plugin file into
 ``~/.asymmetry/user_functions/`` (the same folder and format described

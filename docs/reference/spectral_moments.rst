@@ -42,15 +42,7 @@ cutoff at the lattice's saddle-point field and a long tail to high field near th
 cores give it a positive skew, so :math:`\beta>0` and :math:`\gamma_1>0` are the
 expected signature, and their magnitude tracks the lattice geometry and its
 disorder. The sign convention here matches WiMDA and the literature for that
-distribution:
-
-- E. H. Brandt, Phys. Rev. B **37**, 2349 (1988); Phys. Rev. B **68**, 054506
-  (2003) — the vortex-lattice :math:`p(B)`.
-- J. E. Sonier, J. H. Brewer, and R. F. Kiefl, Rev. Mod. Phys. **72**, 769 (2000)
-  — μSR in the vortex state.
-- S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon Spectroscopy:
-  An Introduction* (Oxford University Press, Oxford, 2022) — the mixed-state field
-  distribution.
+distribution [1] [2] [3].
 
 The range and the cutoff
 -------------------------
@@ -134,4 +126,16 @@ assumption-light trend; a lineshape fit gives the interpreted physics.
    - :doc:`frequency_finishers` for the conditioning ladder that prepares them;
    - :doc:`parameter_trending` and :doc:`sc_penetration_depth` for fitting the
      resulting :math:`B_{\mathrm{rms}}(T)`.
+
+References
+----------
+
+[1] E. H. Brandt, Phys. Rev. B **37**, 2349 (1988); Phys. Rev. B **68**, 054506
+(2003).
+
+[2] J. E. Sonier, J. H. Brewer, and R. F. Kiefl, Rev. Mod. Phys. **72**, 769
+(2000).
+
+[3] S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
+Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022).
 

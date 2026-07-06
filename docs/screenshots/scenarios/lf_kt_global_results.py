@@ -1,13 +1,5 @@
 """Global fit results for the Ag LF Kubo–Toyabe decoupling series.
 
-.. note:: This scenario is **temporarily excluded** from the capture pipeline
-   (not imported in ``docs/screenshots/capture._import_scenarios``).  Re-enable
-   it — along with ``global_fit_lfkt`` — once the global fit wizard feature has
-   been further developed and its CI run time is acceptable.  When re-enabling,
-   also verify the 4-dataset global fit completes well within the
-   ``_CAPTURE_TIMEOUT_S`` budget set in ``capture.py``.
-
-
 Companion screenshot to
 :doc:`/workflows/lf_decoupling_dynamics`. The setup is the same
 as ``global_fit_lfkt`` (four-field Ag LF series, ``LongitudinalFieldKT +

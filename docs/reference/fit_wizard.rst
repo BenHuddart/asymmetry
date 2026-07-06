@@ -167,11 +167,13 @@ Alternatives and applying a fit
 ---------------------------------
 
 When another candidate scored close to the recommended one, the answer card
-shows an alternatives strip beneath the plot — for example, a simpler model
-of comparable quality. Clicking an alternative swaps the overlaid curve and
-becomes the candidate that **Apply this fit** would hand off, without leaving
-the card. A **"Show residuals"** toggle next to the plot switches the overlay
-to a residuals view for the currently selected candidate.
+shows an alternatives strip beneath the plot — a compact chip per candidate,
+each carrying a metric-delta badge (``· +1.0``) that says how much worse it
+scored than the winner, with its component family in a tooltip. Clicking an
+alternative swaps the overlaid curve and becomes the candidate that **Apply
+this fit** would hand off, without leaving the card. A **"Show residuals"**
+toggle next to the plot switches the overlay to a residuals view for the
+currently selected candidate.
 
 Applying a candidate (from the card or from a row selected in the comparison
 table) updates the single-fit tab: the composite function is replaced with

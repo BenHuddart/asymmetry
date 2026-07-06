@@ -25,6 +25,15 @@ same calibration carried out end-to-end on a real EMU run, see
 The Grouping window
 --------------------
 
+.. figure:: /_generated/screenshots/grouping_window_profile_editor.png
+   :width: 100%
+   :alt: The Grouping window profile editor, with its scope panel, status
+      rows, and the live forward/backward asymmetry preview.
+
+   The Grouping window: the scope panel (the selector) on the left, the
+   :math:`\alpha`/deadtime/background status rows in the centre, and the live
+   forward/backward asymmetry preview along the bottom.
+
 Open it with the **Grouping** button on the main toolbar (or
 **Analysis → Grouping…**). It edits one **profile** at a time — the named,
 shareable calibration for the loaded run's instrument — rather than pushing
@@ -32,10 +41,21 @@ settings out to whichever runs happen to be checked:
 
 * **Profile selector** — which saved profile you are editing, with **New…**
   and **Duplicate…** to start fresh or branch from the current settings.
-* **Preview run** — which run's own facts (:math:`t_0`, good-bin window, file
-  deadtime) feed the live preview and the status rows below. Changing it never
-  edits the profile itself, so it is safe to flip through several runs while
-  deciding on a calibration.
+  For a project with more than one instrument loaded, an **Instrument**
+  switcher beside it chooses which instrument's profile the window edits.
+* **Scope panel — the selector.** Headed **Runs of this instrument**, it lists
+  every run of the selected instrument, each tagged **inherits <profile>** or
+  **override**. The run you *select* here is the one the form previews and
+  edits: selecting a run shows its effective settings, drives the live preview,
+  and seeds the status rows with its own per-run facts (:math:`t_0`, good-bin
+  window, file deadtime). **Release** / **Reattach** move a run between
+  inheriting the profile and carrying its own override (see
+  `Scope: inheriting and releasing`_ below).
+* **Editing-target strip** — a strip above the form that always names what your
+  edits currently apply to: "Editing profile '<name>' — applies to N runs"
+  while an inheriting run is selected, or "Editing override for run N — this
+  run only" while an overridden run is selected. The same tint highlights the
+  selected scope row, so the two editing modes are never confused.
 * **Forward Group** / **Backward Group** — the two groups that enter the
   asymmetry. Pick them from the detector groups defined in the layout editor.
 * **Preset dropdown and chip** — an instrument-aware starting arrangement, with
@@ -46,9 +66,10 @@ settings out to whichever runs happen to be checked:
   **Calibrate…** button that opens the alpha calibration dialog (see the
   worked example below).
 * **t0 Bin**, **t_good Offset**, **Last Good Bin**, **Bunching Factor** — the
-  time-zero bin, the first-good-bin offset after t\ :sub:`0`, the last good bin,
+  time-zero bin (with a **From file** / **Manual** / **Auto-detect** mode
+  selector), the first-good-bin offset after t\ :sub:`0`, the last good bin,
   and the rebinning factor applied before analysis. These are per-run facts
-  seeded from the preview run, not part of the profile.
+  seeded from the selected run, not part of the profile.
 * **Deadtime status row** — the current mode (off / from file / manual /
   estimated) with a **Configure…** button opening the deadtime dialog (mode,
   per-detector table, **Cal** fit, and a maximum-correction-at-t=0 summary).
@@ -58,15 +79,26 @@ settings out to whichever runs happen to be checked:
 * **Live asymmetry preview** — updates automatically as you edit groups,
   :math:`\alpha`, binning, deadtime, or background, so the balancing effect of
   a change is visible immediately rather than only after Apply.
-* **Scope panel** — every run of this instrument, tagged **inherits <profile>**
-  or **override**, with **Release** / **Reattach** to move a run between the
-  two (see `Scope: inheriting and releasing`_ below).
 
-Press **Apply** to write the draft back to the profile. The **LOG** reports
-how many inheriting runs the profile reached and how many overridden runs
-were left untouched, for example::
+The editing target simply **follows the selected run**: pick an inheriting run
+and your edits go to the profile draft; pick a released run and they go to that
+run's own override draft, which profile edits never touch. Override drafts
+**accumulate** across the session — switching selection between the profile and
+several overrides never prompts, and each keeps its own in-progress edits.
+
+Press **Apply** to commit everything you have changed in one pass — the profile
+to every inheriting run, plus each edited override to its own run. When an
+override has pending edits the button names the blast radius, e.g.
+**"Apply (profile + 2 overrides)"**, and the **LOG** reports how many
+inheriting runs the profile reached and which overrides were updated, for
+example::
 
    Applied profile 'Silver TF' to 5 dataset(s); 1 override(s) untouched.
+
+The only guard is closing the window with uncommitted changes, which prompts
+and lists exactly what would be lost. For the full editing model — the
+per-target draft accumulation and the close guard — see
+:doc:`detector_grouping`.
 
 Scope: inheriting and releasing
 --------------------------------
@@ -82,6 +114,14 @@ needs a different grouping — a masked detector, say, or a one-off background
 run — without pulling the rest of the series off the shared profile. Use
 **Reattach** to drop that override once the run should go back to following
 the profile.
+
+Once released, a run's override is **edited in place**: select it in the scope
+panel and the editing-target strip switches to "Editing override for run N —
+this run only", the form seeds from that run's own grouping, and your edits go
+to a separate override draft. You can move freely between the profile and
+several overrides in one session, editing each in turn, and a single **Apply**
+commits them all — the profile to its inheriting runs and every edited override
+to its own run.
 
 The Detector Layout editor
 ---------------------------

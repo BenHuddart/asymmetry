@@ -83,11 +83,12 @@ weights directly, so together with the derived remainder they partition the
 group's amplitude.
 
 In the GUI fit-function builder, you do not need to type ``{frac}``. Instead,
-select two or more additive components, press ``Fractions``, and the dialog
-uses matching colours in the expression editor and preview to show which terms
-belong to the same fraction group. In the fit-panel parameter table the free
-fractions are ordinary editable rows; the group's remainder appears as a muted,
-read-only row that updates automatically as you edit the others.
+select two or more additive rows and press **Group as fractions**; the grouped
+terms then sit inside a single accented container, and the typeset preview
+colours each fraction group so it is clear which terms share an amplitude
+budget. In the fit-panel parameter table the free fractions are ordinary
+editable rows; the group's remainder appears as a muted, read-only row that
+updates automatically as you edit the others.
 
 Parameter Naming Rules
 ----------------------

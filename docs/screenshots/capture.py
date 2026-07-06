@@ -257,32 +257,31 @@ def _import_scenarios() -> None:
         composite_models_builder,
         data_browser_filter,
         data_processing_rebin,
+        emu_longitudinal_layout,
         euo_fit_oscillatory,
         fit_wizard_gkt,
         fit_wizard_result,
         fourier_tf,
-        # TODO: re-enable global_fit_lfkt and lf_kt_global_results once the global
-        # fit wizard has been further developed.  Both scenarios are temporarily
-        # excluded because lf_kt_global_results runs a synchronous 4-dataset global
-        # fit that takes several minutes on CI, and global_fit_lfkt is the companion
-        # setup screenshot for the same feature.  See docs/screenshots/scenarios/
-        # global_fit_lfkt.py and lf_kt_global_results.py — the files are intact and
-        # ready to be re-imported when the feature is ready.
-        #
-        # global_fit_lfkt,
-        # lf_kt_global_results,
+        global_fit_lfkt,
+        global_fit_wizard_result,
+        global_fit_wizard_running,
+        global_fit_wizard_setup,
         grouped_fit_ybco_knight,
         grouping_window_profile_editor,
         hifi_transverse_layout,
         knight_shift_angle,
+        knight_shift_dialog,
+        lf_kt_global_results,
         lf_kt_series_plot,
         logbook_view,
         main_window,
         maxent_ybco,
         mgb2_lambda_t,
         muon_fluorine_pbf2,
+        new_user_function_dialog,
         parameter_trending_mgb2,
         temperature_trend_fit,
+        trend_model_fit_dialog,
         vector_polarization_emu,
     )
 

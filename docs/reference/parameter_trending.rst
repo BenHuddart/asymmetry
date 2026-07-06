@@ -145,6 +145,161 @@ selection; exporting to a Python script (the snippets below) is the right
 tool for reproducible, publication-grade analyses and for unusual
 parametric models that are not in the built-in registry.
 
+.. _trend-model-fit-dialog:
+
+Fitting a trend model
+---------------------
+
+Selecting a model, seeding it sensibly, and deciding which points it should see
+is the slow, error-prone part of trend analysis: a power law seeded far from the
+data walks into a bad minimum, and a critical divergence contaminated by the very
+region it cannot describe reports a meaningless :math:`T_c`. The **model-fit
+dialog** exists to make those decisions visible while you make them. It fits one
+parametric model through the selected "parameter versus X" points and shows the
+candidate curve against the data as you set it up, so a converging fit is
+apparent before you commit to it.
+
+Open it from the **Fit Parameters** panel: choose the abscissa in the **X:**
+selector (temperature, field, run number, angle, a fitted parameter, or a custom
+logbook column), then click the **Model Fit** button beside the trended quantity
+in the Y-parameter list. (The button reads **Model Fit\*** once a fit is active,
+and becomes a joint **Global fit** action when two or more group series are
+selected — see `Cross-Group Fitting`_.) The panel hands the dialog the included
+trend points for that parameter — a point excluded from the trend (via its
+context menu or the include checkbox) stays visible on the plot but does not pull
+the fit — together with their propagated errors and, when the abscissa is a
+fitted parameter, its per-point x-uncertainty.
+
+.. image:: /_generated/screenshots/trend_model_fit_dialog.png
+   :alt: The trend model-fit dialog fitting an OrderParameter form to an EuO ν(T) trend
+   :width: 100%
+
+*The model-fit dialog fitting the* ``OrderParameter`` *form to a synthetic EuO*
+*spontaneous-precession-frequency trend* :math:`\nu(T)` *through the Curie point.*
+*The left pane carries the controls — error mode, the range card, the fit-region*
+*editor, the seed table and the fit result; the right pane is the live preview,*
+*with the candidate curve tracing the in-range points. The converged fit returns*
+:math:`T_c = 69.2(6)` *K and* :math:`\beta = 0.41(8)`, *with a* good *χ² verdict.*
+
+The model catalogue
+~~~~~~~~~~~~~~~~~~~~
+
+The dialog offers only the basis models that make sense for the current
+abscissa: the pool is drawn from ``component_names_for_x`` and filtered by each
+component's declared scope, so a temperature axis never lists a field-only form
+and vice versa. The registry (grouped by the context that offers them) is:
+
+* **Any axis** (``common``) — ``Constant``, ``Linear``, and the general
+  fifth-order ``Polynomial``; ``PowerLaw`` and its quadrature-background variant
+  ``PowerLawQuadBG``; and ``ExponentialDecay``.
+* **Temperature axis** — ``Arrhenius`` (thermal activation), ``OrderParameter``
+  (a magnetic order parameter vanishing at :math:`T_c`), ``CriticalDivergence``
+  (a rate diverging at :math:`T_c`), and the superconducting gap models
+  ``SC_SWave``, ``SC_DWave``, the anisotropic and non-monotonic forms
+  (``SC_AnisotropicS_Cos4``, ``SC_NonmonotonicD``, ``SC_PWaveAxial``,
+  ``SC_ExtendedS``, ``SC_SPlusG``), the phenomenological ``SC_AlphaModel``, the
+  two-gap ``SC_TwoGap_SS`` / ``SC_TwoGap_SD``, and their :math:`q`-weighted
+  ``_Q`` counterparts. These feed the :math:`\sigma(T) \to \lambda(T)` inversion
+  of :doc:`sc_penetration_depth`.
+* **Field axis** — degree-fixed baselines ``Cubic`` / ``Quartic`` / ``Quintic``
+  / ``Sextic`` (each a fixed-order restriction of ``Polynomial``, for
+  resonance backgrounds of increasing curvature); ``Redfield``; the resonance
+  lineshapes ``Lorentzian``, ``GaussianLCR``, ``LorentzianLCR``; the muonium
+  repolarisation curve ``MuRepolarisation`` and the exact-diagonalisation RF
+  resonance ``RFResonanceMuP``; the longitudinal-field diffusion and ballistic
+  transport forms ``DiffusionLF_1D/2D/3D`` and ``BallisticLF_1D/2D/3D`` with the
+  ``Lambda_bg`` background (:doc:`diffusion_ballistic_lf`); and the Brandt
+  vortex-lattice second-moment models ``SC_Brandt_VortexLattice`` and its powder
+  average.
+* **Angle axis** — ``KnightAnisotropy`` and ``AngularCos2`` for a Knight shift
+  mapped out by rotating a single crystal (:ref:`knight-shift`).
+
+Any of these can be combined into a composite via **Edit Model**, which opens the
+same two-panel builder used for time-domain functions (see `Build a Parameter
+Composite Model`_ and the quadrature combinator ``⊕``). The dialog picks a
+sensible default for a fresh range — ``Linear`` in general, but
+``OrderParameter`` automatically when the trended quantity is a magnetic
+order-parameter observable (a precession frequency or internal field) versus
+temperature, so the common critical-behaviour fit converges out of the box.
+
+The live preview
+~~~~~~~~~~~~~~~~
+
+The right-hand pane redraws as you edit: the data points (with error bars scaled
+to the current error mode), the in-range points against the greyed-out excluded
+ones, and the candidate model curve. The curve is sampled off the GUI thread —
+debounced, with stale results discarded — so dragging an edge or retyping a seed
+never freezes the dialog. The **Show residuals** toggle adds a
+:math:`(\text{data} - \text{model})/\sigma` strip with a :math:`\pm 1\sigma` guide
+band beneath the plot. On a narrow window the preview auto-collapses behind a
+**Show preview** toggle so the controls stay usable.
+
+The interactive fit region
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Every fit is restricted to a **fit region** — the set of x-intervals a point must
+fall inside to enter the fit. A range is defined by a **range card** (a colour
+swatch matching its span on the plot, a χ²ᵣ status chip, and its compact bounds)
+with **Run Fit** and **Edit Model** actions; **Add Range** adds another. The
+region is sculpted, not assembled: it starts as one interval spanning the data
+and you *carve gaps out of it* with **Exclude region…** (or by right-dragging
+across the plot), leaving a list of included intervals shown in the **Selected
+range** editor. This is the natural way to exclude a contaminated critical region
+— fit ``CriticalDivergence`` on both sides of a transition while dropping the
+points nearest :math:`T_c` — while keeping one consistent model across the gap
+(the fitted curve is drawn continuously through it). Directly on the preview you
+can drag an interval edge, drag on empty space to add a new range, click a span
+to select it, and right-drag to exclude a region.
+
+Adding a second *range* is different from excluding a gap: separate ranges fit
+*independent* models to different parts of the abscissa (piecewise modelling),
+whereas the intervals of one range OR-combine into the mask of a *single* fit.
+Internally the two-or-more-interval case is stored as fit windows and the
+single-interval case as a plain range, so a fit region that carves down to one
+interval collapses back automatically and saved projects are unaffected.
+
+Seeding and running
+~~~~~~~~~~~~~~~~~~~
+
+The seed (starting-value) table lists each model parameter with its start value,
+bounds and a Fixed toggle; you can also type bounds to constrain the fit.
+Starting values are chosen data-aware where it matters: the critical-temperature
+components take :math:`T_c` and amplitude seeds derived from the actual x/y data,
+so an ``OrderParameter`` default lands close to the transition rather than at a
+generic guess. **Guess seeds** re-derives data-aware starts for the selected
+range's *free* parameters on demand (fixed parameters are never touched), running
+off the GUI thread. The fit itself is a bounded least-squares minimisation via
+iminuit, and the dialog runs it from four extra deterministic starts in addition
+to your own seed, keeping the run reproducible while making a bad local minimum
+much less likely; when a parameter converges hard against a bound, or a
+data-aware restart beats your seed, the dialog says so inline.
+
+The **Errors** selector (`Weighting and Error Modes`_) controls how each point is
+weighted, and after a successful fit the result box tints green and reports
+:math:`\chi^2`, :math:`\chi^2_r`, and the two-sided quality verdict
+(`χ² Quality Verdict`_); the same verdict appears as the range card's status
+chip.
+
+Where the fit lands
+~~~~~~~~~~~~~~~~~~~
+
+Accepting the dialog with **OK** writes the fit back into the panel: the fitted
+curve overlays the trend plot (and any GLE/TSV export of it), the fitted
+parameters and uncertainties become readable, and the whole fit is stored with
+the project's trend series — the dialog remembers the last-used model per
+``(parameter, x-axis)`` within that project, so reopening it restores your
+choice. The fit's own outputs are also recorded as a new, trendable results
+series (**Model fit (single) · <parameter> vs <x>**): each fit *range*
+contributes one row of its fitted parameters and :math:`\chi^2_r`, indexed by the
+centre of its fitted x-window, so a multi-range fit is immediately trendable in
+turn (see `Recursive Trending (Model-Fit Results as a Series)`_). **Remove Fit**
+discards the fit and drops that series.
+
+For jointly fitting several detector groups or samples with shared and local
+parameters, the panel routes two or more selected group series to a cross-group
+variant of the same dialog — same catalogue, live preview, error modes and fit
+region, described under `Cross-Group Fitting`_.
+
 Trending One Parameter Against Another
 --------------------------------------
 
