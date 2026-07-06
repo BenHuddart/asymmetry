@@ -8,7 +8,9 @@ subsystems or days.
 
 ### Bayesian Experimental Design: Suggest Next Point (Trending)
 
-Status: study complete, implementation not started
+Status: complete — Phases 1–2 (core + dialog GUI) shipped in PR #203,
+Phase 3 (model discrimination, cost weighting, user docs) in PR #205; only
+the study's explicitly deferred refinements remain
 
 During a live experiment, after a trend model fit, suggest the next x
 (temperature/field) and event count that most constrains the trend model's
