@@ -366,10 +366,12 @@ def group_detectors_outside_run(groups: dict, group_id: int, n_histograms: int) 
     A grouping (typically an instrument preset or a saved profile) may name
     detectors a particular run does not contain — e.g. a full HAL-9500 preset
     referencing the backward ring (detectors 10-17) applied to a forward-ring-only
-    ``.mdu`` file with only nine histograms. Reduction rejects such a group
-    (:func:`effective_group_indices` would resolve indices past the last
-    histogram), so this helper names the offending detectors for a clear,
-    provenance-preserving diagnostic instead of a silent skip.
+    ``.mdu`` file with only nine histograms. Reduction sums over the detectors
+    that ARE present (:func:`effective_group_indices` with ``n_histograms``
+    drops the rest); this helper names the dropped detectors so the GUI can
+    report them — as an informational note when the group still has present
+    detectors, or as the skip reason when it has none and no asymmetry can be
+    formed.
 
     Returns the sorted detector numbers whose 0-based index is ``>= n_histograms``
     (or ``< 1``), empty when every referenced detector is present.
