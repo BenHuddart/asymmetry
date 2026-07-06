@@ -6,9 +6,11 @@ Mirrors WiMDA's Analyse → Fourier dialog.
 from __future__ import annotations
 
 import html
+from collections.abc import Iterator
+from contextlib import contextmanager
 from functools import lru_cache
 
-from PySide6.QtCore import QSettings, Qt, QTimer
+from PySide6.QtCore import QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QDoubleValidator
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -41,6 +43,7 @@ from asymmetry.gui.styles.widgets import (
     apply_param_table_style,
     info_html,
     make_section,
+    make_warning_banner,
     success_html,
 )
 from asymmetry.gui.utils.latex_renderer import render_latex_to_html_image
@@ -83,6 +86,9 @@ _PHASE_AUTOFILLED_COLOR = tokens.OK
 _MAX_EXCLUSION_ROWS = 10
 #: PSI continuous-source RF fundamental for the harmonics preset.
 _PSI_RF_FUNDAMENTAL_MHZ = 50.63
+#: Debounce window for ``settings_changed`` — coalesces radio-group double-fires
+#: (toggled fires for both the unchecked and checked button) and rapid typing.
+_SETTINGS_DEBOUNCE_MS = 150
 
 
 def _latex_html(latex: str, *, render_latex_images: bool) -> str:
@@ -215,6 +221,12 @@ def show_fourier_mode_info_dialog(parent: QWidget) -> QDialog:
 class FourierPanel(QWidget):
     """Controls for frequency-domain analysis."""
 
+    #: Emitted (debounced) whenever a control feeding get_state() changes,
+    #: except the spectral-moments widget (it does not affect the computed
+    #: spectrum). Suppressed during programmatic restores — see
+    #: _suppress_settings_signal_scope.
+    settings_changed = Signal()
+
     def __init__(self, parent: QWidget | None = None, *, settings: QSettings | None = None) -> None:
         super().__init__(parent)
         layout = QVBoxLayout(self)
@@ -226,6 +238,16 @@ class FourierPanel(QWidget):
         # (defaults to the app-configured org/app scope); tests pass a scratch
         # scope. Mirrors PanelSection's own ``settings=`` hook.
         self._settings = settings if settings is not None else QSettings()
+
+        # Depth counter (not a bool): the programmatic-restore methods nest
+        # (restore_state -> set_group_definitions, etc.), and a bare bool would
+        # get reset to False by the inner call's ``finally`` while the outer
+        # call is still mutating widgets. Parented so it dies with the panel.
+        self._suppress_settings_signal = 0
+        self._settings_debounce = QTimer(self)
+        self._settings_debounce.setSingleShot(True)
+        self._settings_debounce.setInterval(_SETTINGS_DEBOUNCE_MS)
+        self._settings_debounce.timeout.connect(self.settings_changed)
 
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
@@ -256,6 +278,14 @@ class FourierPanel(QWidget):
         content_layout.addWidget(self._build_exclusions_group())
 
         content_layout.addStretch()
+
+        # Stale-spectrum banner — pinned above the footer (not inside the
+        # scroll content) so it stays visible at any scroll position, matching
+        # the footer's always-visible contract. Built hidden; set_stale()
+        # toggles it. Uses the established amber "out of date" convention.
+        self._stale_banner = make_warning_banner("", severity="warn")
+        self._stale_banner.hide()
+        layout.addWidget(self._stale_banner)
 
         # Pinned action footer — the panel's primary action is "Compute FFT",
         # which previously sat at the bottom of the scroll content and was
@@ -290,6 +320,61 @@ class FourierPanel(QWidget):
         self._update_conditioning_suffix()
         self._update_diamag_suffix()
         self._update_exclusions_suffix()
+
+        # ── settings_changed wiring (last: nothing above schedules an emit) ──
+        # Every control that feeds get_state() reschedules the debounce, EXCEPT
+        # self._moments_widget (its own state is namespaced separately and does
+        # not affect the computed spectrum).
+        for radio in (
+            self._power_sqrt_radio,
+            self._phase_spectrum_radio,
+            self._cos_radio,
+            self._sin_radio,
+            self._phase_mode_radio,
+            self._real_imag_radio,
+            self._phase_opt_real_radio,
+            self._burg_radio,
+            self._correlation_radio,
+            self._filter_lorentzian_radio,
+            self._filter_gaussian_radio,
+            self._filter_none_radio,
+        ):
+            radio.toggled.connect(self._schedule_settings_changed)
+        for line_edit in (
+            self._filter_start_edit,
+            self._filter_time_constant_edit,
+            self._phase_spin,
+            self._t0_offset_spin,
+            self._pulse_width_edit,
+            self._pulse_max_gain_edit,
+            self._baseline_kappa_edit,
+            self._diamag_width_edit,
+            self._correlation_field_edit,
+        ):
+            line_edit.textChanged.connect(self._schedule_settings_changed)
+        for spin in (
+            self._padding_spin,
+            self._burg_order_min_spin,
+            self._burg_order_max_spin,
+            self._correlation_order_spin,
+        ):
+            spin.valueChanged.connect(self._schedule_settings_changed)
+        for check in (
+            self._subtract_average_signal_check,
+            self._estimate_average_error_check,
+            self._use_phase_table_check,
+            self._pulse_comp_check,
+            self._exclude_enabled_check,
+        ):
+            check.toggled.connect(self._schedule_settings_changed)
+        for combo in (
+            self._auto_method_combo,
+            self._baseline_mode_combo,
+            self._diamag_mode_combo,
+        ):
+            combo.currentIndexChanged.connect(self._schedule_settings_changed)
+        self._phase_table.itemChanged.connect(self._on_phase_table_item_changed_for_settings)
+        self._exclusion_table.itemChanged.connect(self._schedule_settings_changed)
 
     # ── always-visible section builders ────────────────────────────────────
 
@@ -1070,6 +1155,62 @@ class FourierPanel(QWidget):
             self._auto_filled_group_ids.discard(int(group_id))
         self._update_phase_colors()
 
+    def _on_phase_table_item_changed_for_settings(self, item: QTableWidgetItem) -> None:
+        """Schedule settings_changed for a real edit, not a colour/flag repaint.
+
+        _phase_table_updating is set around _update_phase_colors and
+        _update_phase_table_enabled, which both rewrite cells (setForeground /
+        setFlags) as a side effect of ordinary mode/toggle changes — that must
+        not itself count as a user edit. Unlike _on_phase_table_item_changed
+        (phase column only), this fires for every column: the include checkbox
+        (column 0) also feeds group_enabled_table() -> get_state().
+        """
+        if self._phase_table_updating:
+            return
+        self._schedule_settings_changed()
+
+    # ── settings_changed debounce + suppression ─────────────────────────
+
+    def _schedule_settings_changed(self, *_args: object) -> None:
+        """(Re)start the debounce timer unless a programmatic restore is in progress."""
+        if self._suppress_settings_signal:
+            return
+        self._settings_debounce.start()
+
+    @contextmanager
+    def _suppress_settings_signal_scope(self) -> Iterator[None]:
+        """Suppress settings_changed for the duration of a programmatic restore.
+
+        A depth counter, not a bool: the restore methods nest (e.g.
+        restore_state -> set_group_definitions), and a bare bool would be reset
+        to False by the inner call's ``finally`` while the outer call is still
+        mutating widgets, letting the tail of the outer method schedule an
+        unwanted emit. Nesting is safe.
+        """
+        self._suppress_settings_signal += 1
+        try:
+            yield
+        finally:
+            self._suppress_settings_signal -= 1
+
+    # ── stale-spectrum indicator ─────────────────────────────────────────
+
+    def set_stale(self, reason: str | None) -> None:
+        """Show or hide the "spectrum out of date" banner.
+
+        A non-empty ``reason`` shows the banner with that reason folded into
+        the fixed message; ``None`` or an empty string hides it.
+        """
+        if reason:
+            self._stale_banner.setText(f"Spectrum out of date — {reason}. Compute FFT to refresh.")
+            self._stale_banner.show()
+        else:
+            self._stale_banner.hide()
+
+    def is_stale(self) -> bool:
+        """Return whether the stale-spectrum banner is currently shown."""
+        return not self._stale_banner.isHidden()
+
     # ── project state helpers ──────────────────────────────────────────
 
     def group_phase_table(self) -> dict[int, float]:
@@ -1104,79 +1245,84 @@ class FourierPanel(QWidget):
         enabled_table: dict[int, bool] | None = None,
     ) -> None:
         """Populate the editable group-phase table for the active run."""
-        current_phases = self.group_phase_table()
-        current_enabled = self.group_enabled_table()
-        if phase_table is not None:
-            current_phases.update({int(k): float(v) for k, v in phase_table.items()})
-        if enabled_table is not None:
-            current_enabled.update({int(k): bool(v) for k, v in enabled_table.items()})
+        with self._suppress_settings_signal_scope():
+            current_phases = self.group_phase_table()
+            current_enabled = self.group_enabled_table()
+            if phase_table is not None:
+                current_phases.update({int(k): float(v) for k, v in phase_table.items()})
+            if enabled_table is not None:
+                current_enabled.update({int(k): bool(v) for k, v in enabled_table.items()})
 
-        group_ids = sorted(int(group_id) for group_id in group_names)
-        self._table_group_ids = group_ids
-        self._auto_filled_group_ids.intersection_update(group_ids)
-        self._phase_table.setRowCount(len(group_ids))
-        self._phase_table_updating = True
-        try:
-            for row, group_id in enumerate(group_ids):
-                include_item = QTableWidgetItem()
-                include_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable)
-                include_item.setCheckState(
-                    Qt.CheckState.Checked
-                    if current_enabled.get(int(group_id), True)
-                    else Qt.CheckState.Unchecked
-                )
-                self._phase_table.setItem(row, 0, include_item)
+            group_ids = sorted(int(group_id) for group_id in group_names)
+            self._table_group_ids = group_ids
+            self._auto_filled_group_ids.intersection_update(group_ids)
+            self._phase_table.setRowCount(len(group_ids))
+            self._phase_table_updating = True
+            try:
+                for row, group_id in enumerate(group_ids):
+                    include_item = QTableWidgetItem()
+                    include_item.setFlags(
+                        Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable
+                    )
+                    include_item.setCheckState(
+                        Qt.CheckState.Checked
+                        if current_enabled.get(int(group_id), True)
+                        else Qt.CheckState.Unchecked
+                    )
+                    self._phase_table.setItem(row, 0, include_item)
 
-                name_item = QTableWidgetItem(str(group_names[group_id]))
-                name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                self._phase_table.setItem(row, 1, name_item)
+                    name_item = QTableWidgetItem(str(group_names[group_id]))
+                    name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    self._phase_table.setItem(row, 1, name_item)
 
-                phase_value = current_phases.get(int(group_id), 0.0)
-                phase_item = QTableWidgetItem(f"{float(phase_value):.3f}")
-                self._phase_table.setItem(row, 2, phase_item)
-        finally:
-            self._phase_table_updating = False
-        self._update_phase_table_enabled(self._use_phase_table_check.isChecked())
+                    phase_value = current_phases.get(int(group_id), 0.0)
+                    phase_item = QTableWidgetItem(f"{float(phase_value):.3f}")
+                    self._phase_table.setItem(row, 2, phase_item)
+            finally:
+                self._phase_table_updating = False
+            self._update_phase_table_enabled(self._use_phase_table_check.isChecked())
 
     def set_group_phases(self, phase_table: dict[int, float], *, auto_filled: bool = False) -> None:
         """Update existing group-phase rows without rebuilding the table."""
-        current = self.group_phase_table()
-        current.update({int(k): float(v) for k, v in phase_table.items()})
-        if not self._table_group_ids:
-            fallback_names = {int(k): f"Group {int(k)}" for k in current}
-            self.set_group_definitions(fallback_names, current)
+        with self._suppress_settings_signal_scope():
+            current = self.group_phase_table()
+            current.update({int(k): float(v) for k, v in phase_table.items()})
+            if not self._table_group_ids:
+                fallback_names = {int(k): f"Group {int(k)}" for k in current}
+                self.set_group_definitions(fallback_names, current)
+                if auto_filled:
+                    self._auto_filled_group_ids = {int(k) for k in phase_table}
+                    self._update_phase_colors()
+                return
+            self.set_group_definitions(
+                {
+                    int(group_id): self._phase_table.item(row, 1).text()
+                    for row, group_id in enumerate(self._table_group_ids)
+                },
+                current,
+                self.group_enabled_table(),
+            )
             if auto_filled:
                 self._auto_filled_group_ids = {int(k) for k in phase_table}
-                self._update_phase_colors()
-            return
-        self.set_group_definitions(
-            {
-                int(group_id): self._phase_table.item(row, 1).text()
-                for row, group_id in enumerate(self._table_group_ids)
-            },
-            current,
-            self.group_enabled_table(),
-        )
-        if auto_filled:
-            self._auto_filled_group_ids = {int(k) for k in phase_table}
-        self._update_phase_colors()
+            self._update_phase_colors()
 
     def set_group_enabled(self, enabled_table: dict[int, bool]) -> None:
         """Update existing group-inclusion rows without rebuilding the table."""
-        current = self.group_enabled_table()
-        current.update({int(k): bool(v) for k, v in enabled_table.items()})
-        if not self._table_group_ids:
-            fallback_names = {int(k): f"Group {int(k)}" for k in current}
-            self.set_group_definitions(fallback_names, enabled_table=current)
-            return
-        self.set_group_definitions(
-            {
-                int(group_id): self._phase_table.item(row, 1).text()
-                for row, group_id in enumerate(self._table_group_ids)
-            },
-            self.group_phase_table(),
-            current,
-        )
+        with self._suppress_settings_signal_scope():
+            current = self.group_enabled_table()
+            current.update({int(k): bool(v) for k, v in enabled_table.items()})
+            if not self._table_group_ids:
+                fallback_names = {int(k): f"Group {int(k)}" for k in current}
+                self.set_group_definitions(fallback_names, enabled_table=current)
+                return
+            self.set_group_definitions(
+                {
+                    int(group_id): self._phase_table.item(row, 1).text()
+                    for row, group_id in enumerate(self._table_group_ids)
+                },
+                self.group_phase_table(),
+                current,
+            )
 
     def group_auto_filled_ids(self) -> set[int]:
         """Return group IDs whose phase cells were last auto-estimated."""
@@ -1194,33 +1340,34 @@ class FourierPanel(QWidget):
         self, state: dict[str, object] | None, group_names: dict[int, str]
     ) -> None:
         """Restore per-run group-phase state into the table."""
-        enabled_table: dict[int, bool] = {}
-        phase_table: dict[int, float] = {}
-        auto_filled_ids: set[int] = set()
-        if isinstance(state, dict):
-            raw_enabled = state.get("group_enabled_table", {})
-            if isinstance(raw_enabled, dict):
-                for key, value in raw_enabled.items():
-                    try:
-                        enabled_table[int(key)] = bool(value)
-                    except (TypeError, ValueError):
-                        continue
-            raw_phases = state.get("group_phase_table", {})
-            if isinstance(raw_phases, dict):
-                for key, value in raw_phases.items():
-                    try:
-                        phase_table[int(key)] = float(value)
-                    except (TypeError, ValueError):
-                        continue
-            raw_auto = state.get("group_auto_filled_ids", [])
-            if isinstance(raw_auto, (list, tuple, set)):
-                for value in raw_auto:
-                    try:
-                        auto_filled_ids.add(int(value))
-                    except (TypeError, ValueError):
-                        continue
-        self._auto_filled_group_ids = set(auto_filled_ids)
-        self.set_group_definitions(group_names, phase_table, enabled_table)
+        with self._suppress_settings_signal_scope():
+            enabled_table: dict[int, bool] = {}
+            phase_table: dict[int, float] = {}
+            auto_filled_ids: set[int] = set()
+            if isinstance(state, dict):
+                raw_enabled = state.get("group_enabled_table", {})
+                if isinstance(raw_enabled, dict):
+                    for key, value in raw_enabled.items():
+                        try:
+                            enabled_table[int(key)] = bool(value)
+                        except (TypeError, ValueError):
+                            continue
+                raw_phases = state.get("group_phase_table", {})
+                if isinstance(raw_phases, dict):
+                    for key, value in raw_phases.items():
+                        try:
+                            phase_table[int(key)] = float(value)
+                        except (TypeError, ValueError):
+                            continue
+                raw_auto = state.get("group_auto_filled_ids", [])
+                if isinstance(raw_auto, (list, tuple, set)):
+                    for value in raw_auto:
+                        try:
+                            auto_filled_ids.add(int(value))
+                        except (TypeError, ValueError):
+                            continue
+            self._auto_filled_group_ids = set(auto_filled_ids)
+            self.set_group_definitions(group_names, phase_table, enabled_table)
 
     def clear_average_summary(self) -> None:
         """Clear the averaged-spectrum summary text."""
@@ -1286,132 +1433,141 @@ class FourierPanel(QWidget):
 
     def restore_state(self, state: dict) -> None:
         """Restore Fourier panel settings from a saved dict."""
-        self._moments_widget.restore_state(state.get("moments"))
-        window_mode = self._coerce_filter_mode(state.get("window", "none"))
-        self._filter_lorentzian_radio.setChecked(window_mode == "lorentzian")
-        self._filter_gaussian_radio.setChecked(window_mode == "gaussian")
-        self._filter_none_radio.setChecked(window_mode == "none")
-        self._filter_start_edit.setText(
-            self._format_float_text(self._parse_float_text(state.get("filter_start_us", 0.0), 0.0))
-        )
-        self._filter_time_constant_edit.setText(
-            self._format_float_text(
-                self._parse_float_text(state.get("filter_time_constant_us", 1.5), 1.5)
-            )
-        )
-        self._padding_spin.setValue(state.get("padding", 1))
-        try:
-            phase_degrees = float(state.get("phase_degrees", 0.0))
-        except (TypeError, ValueError):
-            phase_degrees = 0.0
-        self._phase_spin.setText(self._format_float_text(phase_degrees))
-        try:
-            t0_offset_us = float(state.get("t0_offset_us", 0.0))
-        except (TypeError, ValueError):
-            t0_offset_us = 0.0
-        self._t0_offset_spin.setText(self._format_float_text(t0_offset_us))
-        self._set_display_mode(state.get("display", "(Power)^1/2"))
-        self._subtract_average_signal_check.setChecked(
-            bool(state.get("subtract_average_signal", True))
-        )
-        idx = self._auto_method_combo.findText(state.get("auto_phase_method", "Peak"))
-        if idx >= 0:
-            self._auto_method_combo.setCurrentIndex(idx)
-        self._use_phase_table_check.setChecked(bool(state.get("use_phase_table", False)))
-        self._estimate_average_error_check.setChecked(
-            bool(state.get("estimate_average_error", False))
-        )
-        enabled_table_raw = state.get("group_enabled_table", {})
-        parsed_enabled: dict[int, bool] = {}
-        if isinstance(enabled_table_raw, dict):
-            for key, value in enabled_table_raw.items():
-                try:
-                    parsed_enabled[int(key)] = bool(value)
-                except (TypeError, ValueError):
-                    continue
-        phase_table_raw = state.get("group_phase_table", {})
-        parsed_phases: dict[int, float] = {}
-        parsed_auto_filled: set[int] = set()
-        if isinstance(phase_table_raw, dict) and phase_table_raw:
-            for key, value in phase_table_raw.items():
-                try:
-                    parsed_phases[int(key)] = float(value)
-                except (TypeError, ValueError):
-                    continue
-        auto_filled_raw = state.get("group_auto_filled_ids", [])
-        if isinstance(auto_filled_raw, (list, tuple, set)):
-            for value in auto_filled_raw:
-                try:
-                    parsed_auto_filled.add(int(value))
-                except (TypeError, ValueError):
-                    continue
-        if parsed_enabled or parsed_phases:
-            group_ids = sorted(set(parsed_enabled) | set(parsed_phases))
-            group_names = {group_id: f"Group {group_id}" for group_id in group_ids}
-            if group_names:
-                self._auto_filled_group_ids = set(parsed_auto_filled)
-                self.set_group_definitions(group_names, parsed_phases, parsed_enabled)
-        self._pulse_comp_check.setChecked(bool(state.get("pulse_compensation", False)))
-        pulse_width = state.get("pulse_half_width_us", 0.0)
-        self._pulse_width_edit.setText(
-            self._format_float_text(self._parse_float_text(pulse_width, 0.0))
-            if self._parse_float_text(pulse_width, 0.0) > 0.0
-            else ""
-        )
-        self._pulse_max_gain_edit.setText(
-            self._format_float_text(self._parse_float_text(state.get("pulse_max_gain", 25.0), 25.0))
-        )
-        baseline_idx = self._baseline_mode_combo.findData(str(state.get("baseline_mode", "none")))
-        if baseline_idx >= 0:
-            self._baseline_mode_combo.setCurrentIndex(baseline_idx)
-        self._baseline_kappa_edit.setText(
-            self._format_float_text(self._parse_float_text(state.get("baseline_kappa", 2.0), 2.0))
-        )
-        self._exclude_enabled_check.setChecked(bool(state.get("exclude_enabled", False)))
-        self._diamag_width_edit.setText(
-            self._format_float_text(
-                self._parse_float_text(state.get("diamag_half_width_mhz", 0.3), 0.3)
-            )
-        )
-        exclusion_ranges = state.get("exclusion_ranges", [])
-        if isinstance(exclusion_ranges, (list, tuple)):
-            self._set_exclusion_ranges(list(exclusion_ranges))
-        # Map the two legacy booleans onto the single three-way control. Both
-        # readable; fit-and-subtract wins when a legacy project set both, with
-        # the band half-width preserved (and noted) rather than discarded.
-        remove_diamag = bool(state.get("remove_diamag", False))
-        diamag_exclusion = bool(state.get("diamag_exclusion", False))
-        if remove_diamag:
-            self._set_diamag_mode("subtract")
-            if diamag_exclusion:
-                self.set_fft_status(
-                    "Loaded with both diamagnetic paths set; using Fit & subtract "
-                    "(the band half-width is kept)."
+        with self._suppress_settings_signal_scope():
+            self._moments_widget.restore_state(state.get("moments"))
+            window_mode = self._coerce_filter_mode(state.get("window", "none"))
+            self._filter_lorentzian_radio.setChecked(window_mode == "lorentzian")
+            self._filter_gaussian_radio.setChecked(window_mode == "gaussian")
+            self._filter_none_radio.setChecked(window_mode == "none")
+            self._filter_start_edit.setText(
+                self._format_float_text(
+                    self._parse_float_text(state.get("filter_start_us", 0.0), 0.0)
                 )
-        elif diamag_exclusion:
-            self._set_diamag_mode("band")
-        else:
-            self._set_diamag_mode("leave")
-        try:
-            self._burg_order_min_spin.setValue(int(state.get("burg_order_min", 2)))
-            self._burg_order_max_spin.setValue(int(state.get("burg_order_max", 40)))
-        except (TypeError, ValueError):
-            pass
-        corr_field = state.get("correlation_reference_field_gauss")
-        if corr_field is None:
-            self._correlation_field_edit.setText("")
-        else:
-            self._correlation_field_edit.setText(
-                self._format_float_text(self._parse_float_text(corr_field, 0.0))
             )
-        try:
-            self._correlation_order_spin.setValue(
-                int(state.get("correlation_order", DEFAULT_CORR_ORDER))
+            self._filter_time_constant_edit.setText(
+                self._format_float_text(
+                    self._parse_float_text(state.get("filter_time_constant_us", 1.5), 1.5)
+                )
             )
-        except (TypeError, ValueError):
-            pass
-        self._update_conditioning_enabled()
-        self._update_exclusion_enabled()
-        self._update_diamag_controls_enabled()
-        self._normalize_phase_line_edits()
-        self._update_phase_controls_enabled()
+            self._padding_spin.setValue(state.get("padding", 1))
+            try:
+                phase_degrees = float(state.get("phase_degrees", 0.0))
+            except (TypeError, ValueError):
+                phase_degrees = 0.0
+            self._phase_spin.setText(self._format_float_text(phase_degrees))
+            try:
+                t0_offset_us = float(state.get("t0_offset_us", 0.0))
+            except (TypeError, ValueError):
+                t0_offset_us = 0.0
+            self._t0_offset_spin.setText(self._format_float_text(t0_offset_us))
+            self._set_display_mode(state.get("display", "(Power)^1/2"))
+            self._subtract_average_signal_check.setChecked(
+                bool(state.get("subtract_average_signal", True))
+            )
+            idx = self._auto_method_combo.findText(state.get("auto_phase_method", "Peak"))
+            if idx >= 0:
+                self._auto_method_combo.setCurrentIndex(idx)
+            self._use_phase_table_check.setChecked(bool(state.get("use_phase_table", False)))
+            self._estimate_average_error_check.setChecked(
+                bool(state.get("estimate_average_error", False))
+            )
+            enabled_table_raw = state.get("group_enabled_table", {})
+            parsed_enabled: dict[int, bool] = {}
+            if isinstance(enabled_table_raw, dict):
+                for key, value in enabled_table_raw.items():
+                    try:
+                        parsed_enabled[int(key)] = bool(value)
+                    except (TypeError, ValueError):
+                        continue
+            phase_table_raw = state.get("group_phase_table", {})
+            parsed_phases: dict[int, float] = {}
+            parsed_auto_filled: set[int] = set()
+            if isinstance(phase_table_raw, dict) and phase_table_raw:
+                for key, value in phase_table_raw.items():
+                    try:
+                        parsed_phases[int(key)] = float(value)
+                    except (TypeError, ValueError):
+                        continue
+            auto_filled_raw = state.get("group_auto_filled_ids", [])
+            if isinstance(auto_filled_raw, (list, tuple, set)):
+                for value in auto_filled_raw:
+                    try:
+                        parsed_auto_filled.add(int(value))
+                    except (TypeError, ValueError):
+                        continue
+            if parsed_enabled or parsed_phases:
+                group_ids = sorted(set(parsed_enabled) | set(parsed_phases))
+                group_names = {group_id: f"Group {group_id}" for group_id in group_ids}
+                if group_names:
+                    self._auto_filled_group_ids = set(parsed_auto_filled)
+                    self.set_group_definitions(group_names, parsed_phases, parsed_enabled)
+            self._pulse_comp_check.setChecked(bool(state.get("pulse_compensation", False)))
+            pulse_width = state.get("pulse_half_width_us", 0.0)
+            self._pulse_width_edit.setText(
+                self._format_float_text(self._parse_float_text(pulse_width, 0.0))
+                if self._parse_float_text(pulse_width, 0.0) > 0.0
+                else ""
+            )
+            self._pulse_max_gain_edit.setText(
+                self._format_float_text(
+                    self._parse_float_text(state.get("pulse_max_gain", 25.0), 25.0)
+                )
+            )
+            baseline_idx = self._baseline_mode_combo.findData(
+                str(state.get("baseline_mode", "none"))
+            )
+            if baseline_idx >= 0:
+                self._baseline_mode_combo.setCurrentIndex(baseline_idx)
+            self._baseline_kappa_edit.setText(
+                self._format_float_text(
+                    self._parse_float_text(state.get("baseline_kappa", 2.0), 2.0)
+                )
+            )
+            self._exclude_enabled_check.setChecked(bool(state.get("exclude_enabled", False)))
+            self._diamag_width_edit.setText(
+                self._format_float_text(
+                    self._parse_float_text(state.get("diamag_half_width_mhz", 0.3), 0.3)
+                )
+            )
+            exclusion_ranges = state.get("exclusion_ranges", [])
+            if isinstance(exclusion_ranges, (list, tuple)):
+                self._set_exclusion_ranges(list(exclusion_ranges))
+            # Map the two legacy booleans onto the single three-way control. Both
+            # readable; fit-and-subtract wins when a legacy project set both, with
+            # the band half-width preserved (and noted) rather than discarded.
+            remove_diamag = bool(state.get("remove_diamag", False))
+            diamag_exclusion = bool(state.get("diamag_exclusion", False))
+            if remove_diamag:
+                self._set_diamag_mode("subtract")
+                if diamag_exclusion:
+                    self.set_fft_status(
+                        "Loaded with both diamagnetic paths set; using Fit & subtract "
+                        "(the band half-width is kept)."
+                    )
+            elif diamag_exclusion:
+                self._set_diamag_mode("band")
+            else:
+                self._set_diamag_mode("leave")
+            try:
+                self._burg_order_min_spin.setValue(int(state.get("burg_order_min", 2)))
+                self._burg_order_max_spin.setValue(int(state.get("burg_order_max", 40)))
+            except (TypeError, ValueError):
+                pass
+            corr_field = state.get("correlation_reference_field_gauss")
+            if corr_field is None:
+                self._correlation_field_edit.setText("")
+            else:
+                self._correlation_field_edit.setText(
+                    self._format_float_text(self._parse_float_text(corr_field, 0.0))
+                )
+            try:
+                self._correlation_order_spin.setValue(
+                    int(state.get("correlation_order", DEFAULT_CORR_ORDER))
+                )
+            except (TypeError, ValueError):
+                pass
+            self._update_conditioning_enabled()
+            self._update_exclusion_enabled()
+            self._update_diamag_controls_enabled()
+            self._normalize_phase_line_edits()
+            self._update_phase_controls_enabled()

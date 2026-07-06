@@ -148,9 +148,11 @@ from asymmetry.core.fourier import (
     build_group_signal_dataset,
     canonical_fourier_display_mode,
     compute_average_group_spectrum,
+    config_differences,
     estimate_fft_phase,
     fft_complex_asymmetry,
     fourier_display_ylabel,
+    fourier_grouping_digest,
     fourier_mode_uses_phase_correction,
 )
 from asymmetry.core.fourier.moments import moments_trend_row, spectrum_moments
@@ -1906,6 +1908,8 @@ class MainWindow(QMainWindow):
             )
         if hasattr(self._fourier_panel, "_auto_phase_btn"):
             self._fourier_panel._auto_phase_btn.clicked.connect(self._on_fill_fourier_phases)
+        if hasattr(self._fourier_panel, "settings_changed"):
+            self._fourier_panel.settings_changed.connect(self._refresh_fourier_staleness)
         if hasattr(self._maxent_panel, "_cycle_one_btn"):
             self._maxent_panel._cycle_one_btn.clicked.connect(lambda: self._on_compute_maxent(1))
         if hasattr(self._maxent_panel, "_cycle_five_btn"):
@@ -1953,6 +1957,7 @@ class MainWindow(QMainWindow):
                 self._fit_panel.set_domain("frequency")
             self._fit_panel.set_dataset(self._active_frequency_fit_dataset())
             self._set_frequency_fit_datasets_for_selection()
+            self._refresh_fourier_staleness()
         else:
             if hasattr(self._fit_panel, "set_domain"):
                 self._fit_panel.set_domain("time")
@@ -2786,6 +2791,9 @@ class MainWindow(QMainWindow):
         self._refresh_vector_axis_selector()
         self._rebind_single_fit_to_active_projection()
         self._update_fit_block_state()
+        # Usually a no-op for the FFT (the digest gates forward/backward on
+        # list-routed backgrounds), but an axis switch can re-route those.
+        self._refresh_fourier_staleness()
         self._log_panel.log(f"Set vector polarization axis to {axis} for {updated} dataset(s).")
 
     def _rebind_single_fit_to_active_projection(self) -> None:
@@ -3830,6 +3838,9 @@ class MainWindow(QMainWindow):
             self._data_browser._rebuild_table()
             self._render_current_selection_plot()
             self._refresh_vector_axis_selector()
+            # A computed FFT derives from the grouping just replaced; surface
+            # the mismatch (keep-and-flag, not invalidate) on the active run.
+            self._refresh_fourier_staleness()
 
         deadtime_msg = "off"
         if use_deadtime:
@@ -5883,6 +5894,9 @@ class MainWindow(QMainWindow):
         self._fourier_panel.restore_group_phase_state(state, group_names)
         if hasattr(self, "_maxent_panel"):
             self._sync_maxent_panel_for_dataset(dataset)
+        # The banner is per-run state: re-derive it for the run just synced in
+        # (the table restore above is signal-suppressed, so nothing else fires).
+        self._refresh_fourier_staleness()
 
     def _store_maxent_panel_state_for_dataset(self, dataset: MuonDataset | None) -> None:
         """Persist the current MaxEnt panel state for one dataset/run."""
@@ -6290,17 +6304,25 @@ class MainWindow(QMainWindow):
         run_number: int,
         config: GroupSpectrumConfig,
         spectrum: MuonDataset,
+        *,
+        grouping_digest: str | None = None,
     ) -> None:
         """Persist the generation recipe for a run's FFT representation.
 
         The recipe lets the spectrum be recomputed on project load instead of
         storing the spectrum arrays.  The freshly computed spectrum is cached on
         the representation so it need not be recomputed immediately.
+        ``grouping_digest`` records the grouping provenance the spectrum was
+        computed from (see :func:`fourier_grouping_digest`); the staleness check
+        compares it against the run's current grouping.
         """
         representation = self._project_model.ensure_dataset(int(run_number)).ensure(
             RepresentationType.FREQ_FFT
         )
-        representation.recipe = {"fourier_config": config.to_dict()}
+        recipe: dict[str, object] = {"fourier_config": config.to_dict()}
+        if grouping_digest:
+            recipe["grouping_digest"] = grouping_digest
+        representation.recipe = recipe
         representation.cache_datasets([spectrum])
 
     def _restore_frequency_representations(self, state: dict) -> None:
@@ -6779,6 +6801,20 @@ class MainWindow(QMainWindow):
         representation.cache_datasets(list(spectra) if spectra else [])
         resolved = self._frequency_spectra_from_cache(run_number, rep_type)
         self._lazy_recompute_failures.discard(key)
+        if rep_type == RepresentationType.FREQ_FFT and spectra:
+            # The recipe just re-ran against the run's CURRENT grouping, so the
+            # displayed spectrum's provenance is now — not whatever grouping the
+            # recipe was originally recorded under. Re-stamp so the staleness
+            # check compares against reality.
+            recipe = getattr(representation, "recipe", None)
+            dataset = (
+                self._data_browser.get_dataset(run_number)
+                if hasattr(self._data_browser, "get_dataset")
+                else None
+            )
+            run = getattr(dataset, "run", None)
+            if isinstance(recipe, dict) and recipe.get("fourier_config") and run is not None:
+                recipe["grouping_digest"] = fourier_grouping_digest(run)
         self._log_perf_event("lazy_spectrum_recompute", started_at, run=run_number)
         self._finish_frequency_recompute_ui()
         # Only redraw if this exact (run, rep) is still displayed — a rapid run
@@ -6787,6 +6823,7 @@ class MainWindow(QMainWindow):
             self._render_frequency_spectra(
                 run_number, rep_type, resolved, preserved_x_limits, preserved_y_limits
             )
+        self._refresh_fourier_staleness()
 
     def _on_frequency_recompute_error(
         self,
@@ -7490,6 +7527,143 @@ class MainWindow(QMainWindow):
             ),
         )
 
+    def _fourier_config_from_state(
+        self,
+        state: dict,
+        *,
+        selected_group_ids: list[int],
+        group_phase_degrees: dict[int, float],
+        t_min_us: float | None,
+        t_max_us: float | None,
+    ) -> GroupSpectrumConfig:
+        """Build the concrete spectrum config for a panel-state snapshot.
+
+        Single chokepoint shared by the compute path and the staleness check
+        (:meth:`_candidate_fourier_config`), so "what would be computed now"
+        and "what was computed then" can never drift in how they read the
+        panel state.
+        """
+        return GroupSpectrumConfig(
+            display=str(state.get("display", "Real")),
+            window=str(state.get("window", "none")),
+            padding=int(state.get("padding", 1)),
+            filter_start_us=float(state.get("filter_start_us", 0.0)),
+            filter_time_constant_us=float(state.get("filter_time_constant_us", 1.5)),
+            t0_offset_us=float(state.get("t0_offset_us", 0.0)),
+            subtract_average_signal=bool(state.get("subtract_average_signal", True)),
+            estimate_average_error=bool(state.get("estimate_average_error", False)),
+            t_min_us=t_min_us,
+            t_max_us=t_max_us,
+            selected_group_ids=list(selected_group_ids),
+            group_phase_degrees=dict(group_phase_degrees),
+            pulse_compensation=bool(state.get("pulse_compensation", False)),
+            pulse_half_width_us=float(state.get("pulse_half_width_us", 0.0)),
+            pulse_max_gain=float(state.get("pulse_max_gain", 25.0)),
+            baseline_mode=str(state.get("baseline_mode", "none")),
+            baseline_kappa=float(state.get("baseline_kappa", 2.0)),
+            exclude_enabled=bool(state.get("exclude_enabled", False)),
+            exclusion_ranges=[
+                (float(pair[0]), float(pair[1]))
+                for pair in state.get("exclusion_ranges", [])
+                if isinstance(pair, (list, tuple)) and len(pair) == 2
+            ],
+            diamag_exclusion=bool(state.get("diamag_exclusion", False)),
+            diamag_half_width_mhz=float(state.get("diamag_half_width_mhz", 0.3)),
+            remove_diamag=bool(state.get("remove_diamag", False)),
+            burg_order_min=int(state.get("burg_order_min", 2)),
+            burg_order_max=int(state.get("burg_order_max", 40)),
+            correlation_reference_field_gauss=(
+                float(state["correlation_reference_field_gauss"])
+                if state.get("correlation_reference_field_gauss") is not None
+                else None
+            ),
+            correlation_order=int(state.get("correlation_order", 2)),
+        )
+
+    def _candidate_fourier_config(self, dataset: MuonDataset) -> GroupSpectrumConfig:
+        """Return the config an explicit Compute FFT would use right now.
+
+        GUI-thread only. Mirrors :meth:`_on_compute_fourier`'s snapshotting —
+        panel state, enabled groups, and the tail-capped time window — but
+        resolves phases from the manual entry / phase table alone (the compute
+        path's automatic estimation is likewise never driven from panel state).
+        Comparing the *resolved* window means a time-view fit-range wiggle that
+        the good-statistics tail cap absorbs does not read as a difference.
+        """
+        state = self._fourier_panel.get_state()
+        display = str(state.get("display", "(Power)^1/2"))
+        selected_group_ids = self._selected_fourier_group_ids(dataset)
+        t_min_us, t_max_us = self._current_fourier_time_window_us()
+        t_min_us, t_max_us = self._fourier_time_window_excluding_tail(dataset, t_min_us, t_max_us)
+        group_phase_degrees: dict[int, float] = {}
+        if fourier_mode_uses_phase_correction(display):
+            manual_phase = float(state.get("phase_degrees", 0.0))
+            if bool(state.get("use_phase_table", False)):
+                table = self._fourier_panel.group_phase_table()
+                group_phase_degrees = {
+                    int(group_id): float(table.get(int(group_id), manual_phase))
+                    for group_id in selected_group_ids
+                }
+            else:
+                group_phase_degrees = {
+                    int(group_id): manual_phase for group_id in selected_group_ids
+                }
+        return self._fourier_config_from_state(
+            state,
+            selected_group_ids=selected_group_ids,
+            group_phase_degrees=group_phase_degrees,
+            t_min_us=t_min_us,
+            t_max_us=t_max_us,
+        )
+
+    def _fourier_staleness_for_current_run(self) -> tuple[bool, str]:
+        """Return ``(stale, reason)`` for the active run's displayed FFT.
+
+        Not stale when nothing is displayed (the empty prompt owns that state),
+        when only a legacy array snapshot exists (no recipe to compare), or when
+        the recipe predates the grouping digest (old project; grouping staleness
+        is then unknowable and a false alarm would be worse than silence).
+        """
+        dataset = self._current_dataset
+        if dataset is None or dataset.run is None:
+            return False, ""
+        run_number = int(dataset.run_number)
+        if not self._cached_frequency_spectra(run_number, RepresentationType.FREQ_FFT):
+            return False, ""
+        representation = self._project_model.representation(run_number, RepresentationType.FREQ_FFT)
+        recipe = getattr(representation, "recipe", None) if representation is not None else None
+        if not isinstance(recipe, dict) or not recipe.get("fourier_config"):
+            return False, ""
+        reasons: list[str] = []
+        recorded_digest = recipe.get("grouping_digest")
+        if (
+            isinstance(recorded_digest, str)
+            and recorded_digest
+            and fourier_grouping_digest(dataset.run) != recorded_digest
+        ):
+            reasons.append("grouping changed")
+        recorded = GroupSpectrumConfig.from_dict(recipe.get("fourier_config"))
+        differences = config_differences(self._candidate_fourier_config(dataset), recorded)
+        if differences:
+            shown = ", ".join(differences[:3]) + (", …" if len(differences) > 3 else "")
+            reasons.append(f"{shown} changed")
+        return bool(reasons), "; ".join(reasons)
+
+    def _refresh_fourier_staleness(self, *_args) -> None:
+        """Reflect displayed-FFT staleness in the Fourier panel's banner.
+
+        Cheap and idempotent; called from every event that can open or close a
+        gap between the displayed spectrum and what Compute FFT would produce:
+        panel edits, fit-range changes, grouping application, run switches,
+        domain switches, and compute completions. ``*_args`` absorbs signal
+        payloads so it can sit directly on varied signals.
+        """
+        panel = getattr(self, "_fourier_panel", None)
+        if panel is None or not hasattr(panel, "set_stale"):
+            return
+        stale, reason = self._fourier_staleness_for_current_run()
+        panel.set_stale(reason if stale else None)
+
     def _compute_fourier_payload(
         self,
         *,
@@ -7537,41 +7711,12 @@ class MainWindow(QMainWindow):
             plot_window=plot_window,
         )
 
-        fourier_config = GroupSpectrumConfig(
-            display=str(state.get("display", "Real")),
-            window=str(state.get("window", "none")),
-            padding=int(state.get("padding", 1)),
-            filter_start_us=float(state.get("filter_start_us", 0.0)),
-            filter_time_constant_us=float(state.get("filter_time_constant_us", 1.5)),
-            t0_offset_us=float(state.get("t0_offset_us", 0.0)),
-            subtract_average_signal=bool(state.get("subtract_average_signal", True)),
-            estimate_average_error=bool(state.get("estimate_average_error", False)),
+        fourier_config = self._fourier_config_from_state(
+            state,
+            selected_group_ids=selected_group_ids,
+            group_phase_degrees=group_phase_degrees,
             t_min_us=t_min_us,
             t_max_us=t_max_us,
-            selected_group_ids=list(selected_group_ids),
-            group_phase_degrees=group_phase_degrees,
-            pulse_compensation=bool(state.get("pulse_compensation", False)),
-            pulse_half_width_us=float(state.get("pulse_half_width_us", 0.0)),
-            pulse_max_gain=float(state.get("pulse_max_gain", 25.0)),
-            baseline_mode=str(state.get("baseline_mode", "none")),
-            baseline_kappa=float(state.get("baseline_kappa", 2.0)),
-            exclude_enabled=bool(state.get("exclude_enabled", False)),
-            exclusion_ranges=[
-                (float(pair[0]), float(pair[1]))
-                for pair in state.get("exclusion_ranges", [])
-                if isinstance(pair, (list, tuple)) and len(pair) == 2
-            ],
-            diamag_exclusion=bool(state.get("diamag_exclusion", False)),
-            diamag_half_width_mhz=float(state.get("diamag_half_width_mhz", 0.3)),
-            remove_diamag=bool(state.get("remove_diamag", False)),
-            burg_order_min=int(state.get("burg_order_min", 2)),
-            burg_order_max=int(state.get("burg_order_max", 40)),
-            correlation_reference_field_gauss=(
-                float(state["correlation_reference_field_gauss"])
-                if state.get("correlation_reference_field_gauss") is not None
-                else None
-            ),
-            correlation_order=int(state.get("correlation_order", 2)),
         )
         average_dataset = compute_average_group_spectrum(
             run,
@@ -7606,6 +7751,9 @@ class MainWindow(QMainWindow):
         return {
             "average_dataset": average_dataset,
             "config": fourier_config,
+            # Snapshot the grouping provenance the spectrum was computed from,
+            # so the staleness check can detect a later regroup of this run.
+            "grouping_digest": fourier_grouping_digest(run),
             "estimated_phases": estimated_phases,
             "use_phase_table": use_phase_table,
             "summary": summary,
@@ -7649,7 +7797,12 @@ class MainWindow(QMainWindow):
                     self._fourier_panel.set_average_summary(**payload["summary"])
                 self._report_fourier_diagnostics(average_dataset)
                 spectra.append(average_dataset)
-                self._record_frequency_fft_recipe(run_number, fourier_config, average_dataset)
+                self._record_frequency_fft_recipe(
+                    run_number,
+                    fourier_config,
+                    average_dataset,
+                    grouping_digest=str(payload.get("grouping_digest") or "") or None,
+                )
 
             if not spectra:
                 self._set_fourier_status(
@@ -7695,6 +7848,9 @@ class MainWindow(QMainWindow):
             self._log_panel.log(
                 f"Computed averaged grouped Fourier spectrum using {display.lower()} display."
             )
+            # A fresh compute is in sync by construction; clear (or, if the user
+            # kept editing while it ran, re-derive) the staleness banner.
+            self._refresh_fourier_staleness()
         finally:
             self._log_perf_event(
                 "compute_fourier",
@@ -7743,7 +7899,12 @@ class MainWindow(QMainWindow):
             representation = self._project_model.ensure_dataset(run_number).ensure(
                 RepresentationType.FREQ_FFT
             )
-            representation.recipe = {"fourier_config": dict(config_dict)}
+            # Each target's digest is its OWN grouping at this compute, not the
+            # source run's — the copied config is re-run against the target.
+            representation.recipe = {
+                "fourier_config": dict(config_dict),
+                "grouping_digest": fourier_grouping_digest(dataset.run),
+            }
             representation.invalidate()
             try:
                 spectra = representation.ensure_computed(dataset.run)
@@ -8884,6 +9045,9 @@ class MainWindow(QMainWindow):
                     self._get_fit_dataset(self._current_dataset)
                 )
         self._update_selected_datasets()
+        # The FFT window inherits the TIME plot's fit range; the staleness check
+        # compares the tail-capped result, so no-op wiggles don't flag.
+        self._refresh_fourier_staleness()
 
     def _on_fit_range_edit_committed(self, x_min: float, x_max: float) -> None:
         """Push a spinbox-committed fit range from the Fit panel to the plot."""
@@ -14112,6 +14276,8 @@ class MainWindow(QMainWindow):
         self._maxent_panel_state_by_run = {}
         self._fourier_group_phase_state_by_run = {}
         self._fourier_included_seeded.clear()
+        if hasattr(self._fourier_panel, "set_stale"):
+            self._fourier_panel.set_stale(None)
         self._data_browser.clear()
         self._plot_workspace.clear()
         if hasattr(self._frequency_plot_panel, "_frequency_x_unit_combo"):

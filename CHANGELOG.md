@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The Fourier panel now flags a displayed FFT that is out of sync with the
+  current settings.** Editing any FFT parameter (display mode, apodisation,
+  zero-pad, groups, phases, conditioning, exclusions), changing the
+  time-domain fit range the transform inherits, or applying a new grouping /
+  t0 / deadtime / background to the run raises an amber banner above
+  **Compute FFT** — "Spectrum out of date — …. Compute FFT to refresh." —
+  naming what changed. The spectrum itself is kept on screen (nothing
+  disappears under you); the banner clears on the next compute. Parameters
+  that are inert in the active mode (e.g. a filter τ while apodisation is
+  *None*) never flag, and each computed spectrum now records the grouping it
+  was derived from, so a regroup is detected even across a project
+  save/load — previously a regrouped run silently kept showing its old FFT.
+
 - **Suggest next point: Bayesian experimental design from a trend fit.** Once
   a trend model is fitted, the model-fit dialog's new **Suggest next point**
   section recommends where to measure next — and how many events to count —
