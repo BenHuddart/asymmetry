@@ -18,6 +18,7 @@ from asymmetry.core.transform import (
     excluded_detector_indices,
     filter_excluded_indices,
     format_detector_list,
+    group_detectors_outside_run,
     group_forward_backward,
     parse_detector_list,
 )
@@ -91,6 +92,34 @@ def test_effective_group_indices_is_the_exclusion_aware_chokepoint():
     # absent / malformed grouping resolves to empty rather than raising
     assert effective_group_indices({}, 1) == []
     assert effective_group_indices(None, 1) == []
+
+
+def test_group_detectors_outside_run_names_absent_detectors():
+    """A HAL-9500 backward-ring preset applied to a forward-only 9-histogram
+    ``.mdu`` names detectors 10-17 the run does not contain; the helper reports
+    exactly those so the skip can be explained instead of silently dropped."""
+    # Per-octant: group k pairs forward det (2+k-1) with backward det (10+k-1).
+    per_octant = {k + 1: [2 + k, 10 + k] for k in range(8)}
+    # Forward group 1 = [2, 10]; det 10 is absent from a 9-detector run.
+    assert group_detectors_outside_run(per_octant, 1, 9) == [10]
+    # Backward group 5 = [6, 14]; det 14 absent.
+    assert group_detectors_outside_run(per_octant, 5, 9) == [14]
+    # Longitudinal backward group = the whole backward ring 10-17.
+    longitudinal = {1: list(range(2, 10)), 2: list(range(10, 18))}
+    assert group_detectors_outside_run(longitudinal, 2, 9) == [10, 11, 12, 13, 14, 15, 16, 17]
+    # A group wholly within the run is clean.
+    assert group_detectors_outside_run(longitudinal, 1, 9) == []
+
+
+def test_group_detectors_outside_run_edge_cases():
+    groups = {1: [1, 2], "2": [3, 99], 3: [(4, 12), 5]}  # str key, (det, t0) pair
+    assert group_detectors_outside_run(groups, 1, 4) == []
+    assert group_detectors_outside_run(groups, 2, 4) == [99]  # str-keyed group resolves
+    # pair (4, 12) decodes to det 4 (present); det 5 is absent from a 4-detector run
+    assert group_detectors_outside_run(groups, 3, 4) == [5]
+    assert group_detectors_outside_run(groups, 99, 4) == []  # missing group id -> empty
+    assert group_detectors_outside_run(groups, 1, 0) == [1, 2]  # empty run: all absent
+    assert group_detectors_outside_run({1: [0, 1]}, 1, 4) == [0]  # det number < 1 is invalid
 
 
 def test_effective_group_indices_matches_manual_compose():
