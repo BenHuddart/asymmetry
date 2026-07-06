@@ -215,7 +215,9 @@ from asymmetry.core.transform import (
     common_t0_for_groups,
     differentiate_scan,
     effective_group_indices,
+    format_detector_list,
     good_frames,
+    group_detectors_outside_run,
     has_file_deadtime,
     prepare_histograms_with_deadtime,
     reduce_grouped_asymmetry,
@@ -3743,6 +3745,8 @@ class MainWindow(QMainWindow):
         background_applied = 0
         background_missing = 0
         first_updated_dataset = None
+        skip_reasons: list[str] = []
+        dropped_notes: list[str] = []
 
         for dataset in dialog_datasets:
             if run_numbers is not None and int(dataset.run_number) not in run_numbers:
@@ -3750,7 +3754,13 @@ class MainWindow(QMainWindow):
             applied, dt_applied = self._apply_grouping_settings_to_dataset(dataset, grouping_result)
             if not applied:
                 skipped += 1
+                reason = self._describe_grouping_skip(dataset, grouping_result)
+                if reason:
+                    skip_reasons.append(f"run {int(dataset.run_number)}: {reason}")
                 continue
+            dropped = self._describe_grouping_dropped_detectors(dataset, grouping_result)
+            if dropped:
+                dropped_notes.append(f"run {int(dataset.run_number)}: {dropped}")
             if use_deadtime and not dt_applied:
                 deadtime_missing += 1
             if dt_applied:
@@ -3821,6 +3831,12 @@ class MainWindow(QMainWindow):
             f"B={grouping_result['backward_group']}, alpha={alpha:.6g}, "
             f"deadtime={deadtime_msg}, background={background_msg}"
         )
+        for note in dropped_notes:
+            self._log_panel.log(f"  {note}")
+        for reason in skip_reasons:
+            self._log_panel.log(f"  skipped {reason}")
+        if skipped and updated == 0 and skip_reasons:
+            self.statusBar().showMessage(f"Grouping not applied — {skip_reasons[0]}", 10000)
 
         if profile_result is not None:
             profile_name = profile_result["profile"].name
@@ -4260,6 +4276,117 @@ class MainWindow(QMainWindow):
             elif grouping_result.get(key) is not None:
                 target[key] = grouping_result.get(key)
 
+    def _normalized_result_groups(self, grouping_result: dict) -> dict[int, list[object]]:
+        """Decode a grouping payload's ``groups`` the way the apply path does."""
+        groups_raw = grouping_result.get("groups", {})
+        if not isinstance(groups_raw, dict):
+            return {}
+        groups: dict[int, list[object]] = {}
+        for key, values in groups_raw.items():
+            try:
+                gid = int(key)
+            except (TypeError, ValueError):
+                continue
+            entries = self._normalize_group_entries(values)
+            if entries:
+                groups[gid] = entries
+        return groups
+
+    def _result_group_label(self, grouping_result: dict, gid: int) -> str:
+        names = grouping_result.get("group_names")
+        names = names if isinstance(names, dict) else {}
+        return str(names.get(gid) or names.get(str(gid)) or f"group {gid}")
+
+    def _describe_grouping_skip(self, dataset, grouping_result: dict) -> str | None:
+        """Explain why applying *grouping_result* to *dataset* was skipped.
+
+        Returns a short, human-readable reason for the log, or ``None`` when no
+        specific cause is identifiable. The dominant, actionable case is a
+        forward/backward group with *none* of its detectors in this run — e.g.
+        a HAL-9500 Longitudinal preset, whose backward ring (detectors 10-17)
+        is entirely absent from a forward-ring-only ``.mdu`` file — so no F-B
+        asymmetry can be formed. (A group that merely *includes* some absent
+        detectors is applied over the detectors that are present and is not a
+        skip; see ``_describe_grouping_dropped_detectors``.)
+        """
+        run = getattr(dataset, "run", None)
+        if run is None:
+            return "no run data is attached"
+        n_hist = len(run.histograms) if run.histograms else 0
+        if not n_hist:
+            return None
+        groups = self._normalized_result_groups(grouping_result)
+        if not groups:
+            return "no detector groups are defined"
+        exclusion_source = (
+            grouping_result
+            if "excluded_detectors" in grouping_result
+            else (run.grouping if isinstance(run.grouping, dict) else {})
+        )
+        resolution_grouping = {
+            "groups": groups,
+            "excluded_detectors": exclusion_source.get("excluded_detectors"),
+        }
+        parts: list[str] = []
+        for role, key in (("forward", "forward_group"), ("backward", "backward_group")):
+            try:
+                gid = int(grouping_result.get(key))
+            except (TypeError, ValueError):
+                continue
+            if effective_group_indices(resolution_grouping, gid, n_histograms=n_hist):
+                continue
+            label = self._result_group_label(grouping_result, gid)
+            missing = group_detectors_outside_run(groups, gid, n_hist)
+            if missing:
+                parts.append(
+                    f"{role} {label} has none of its detector(s) "
+                    f"{format_detector_list(missing)} in this run"
+                )
+            else:
+                parts.append(f"{role} {label} resolves to no detectors (all excluded?)")
+        if parts:
+            return (
+                f"{'; '.join(parts)} — this run has {n_hist} detector(s). "
+                "Pick a preset that matches this file's detectors "
+                "(e.g. a single-ring preset for a forward-only run)."
+            )
+        return None
+
+    def _describe_grouping_dropped_detectors(self, dataset, grouping_result: dict) -> str | None:
+        """Name detectors in the applied F/B groups that this run lacks.
+
+        A grouping may legitimately outrun a partial export — a Per-octant
+        HAL-9500 preset pairs each forward detector with its backward wedge, and
+        on a forward-ring-only file each octant degrades to just its forward
+        detector, which is still a physically valid azimuthal group. The apply
+        succeeds over the present detectors; this reports the ignored ones so
+        the reduction's provenance stays explicit in the LOG.
+        """
+        run = getattr(dataset, "run", None)
+        if run is None or not run.histograms:
+            return None
+        n_hist = len(run.histograms)
+        groups = self._normalized_result_groups(grouping_result)
+        if not groups:
+            return None
+        parts: list[str] = []
+        seen: set[int] = set()
+        for key in ("forward_group", "backward_group"):
+            try:
+                gid = int(grouping_result.get(key))
+            except (TypeError, ValueError):
+                continue
+            if gid in seen:
+                continue
+            seen.add(gid)
+            missing = group_detectors_outside_run(groups, gid, n_hist)
+            if missing:
+                label = self._result_group_label(grouping_result, gid)
+                parts.append(f"{label}: detector(s) {format_detector_list(missing)}")
+        if not parts:
+            return None
+        return f"ignored detector(s) absent from this {n_hist}-detector run — {'; '.join(parts)}"
+
     def _apply_grouping_settings_to_dataset(
         self, dataset, grouping_result: dict
     ) -> tuple[bool, bool]:
@@ -4338,8 +4465,17 @@ class MainWindow(QMainWindow):
             "groups": groups,
             "excluded_detectors": exclusion_source.get("excluded_detectors"),
         }
-        forward_idx = effective_group_indices(resolution_grouping, forward_gid)
-        backward_idx = effective_group_indices(resolution_grouping, backward_gid)
+        # Resolve against this run's histogram count so a grouping that names
+        # detectors the run does not contain (a full-instrument preset or a
+        # saved profile on a partial export, e.g. a forward-ring-only HAL-9500
+        # ``.mdu`` file) reduces over the detectors that ARE present — the same
+        # semantics as the dialog preview, profile application, and the summing
+        # chokepoints. A group left EMPTY by the filter is rejected below.
+        n_hist = len(run.histograms) if run.histograms else None
+        forward_idx = effective_group_indices(resolution_grouping, forward_gid, n_histograms=n_hist)
+        backward_idx = effective_group_indices(
+            resolution_grouping, backward_gid, n_histograms=n_hist
+        )
 
         if run.histograms:
             max_bin = len(run.histograms[0].counts) - 1
@@ -4520,11 +4656,10 @@ class MainWindow(QMainWindow):
 
         if not groups:
             return False, False
+        # Empty after filtering to present, non-excluded detectors: the group
+        # contributes no counts, so an F-B asymmetry cannot be formed (e.g. a
+        # Longitudinal preset's backward ring on a forward-ring-only file).
         if not forward_idx or not backward_idx:
-            return False, False
-        if max(forward_idx, default=-1) >= len(run.histograms):
-            return False, False
-        if max(backward_idx, default=-1) >= len(run.histograms):
             return False, False
 
         if not isinstance(run.grouping, dict):
@@ -4951,11 +5086,14 @@ class MainWindow(QMainWindow):
             "groups": groups,
             "excluded_detectors": grouping.get("excluded_detectors"),
         }
-        forward_idx = effective_group_indices(resolution_grouping, forward_gid)
-        backward_idx = effective_group_indices(resolution_grouping, backward_gid)
+        # Same present-detector filtering as the apply path: a grouping naming
+        # detectors this run lacks reduces over the ones present.
+        n_hist = len(run.histograms)
+        forward_idx = effective_group_indices(resolution_grouping, forward_gid, n_histograms=n_hist)
+        backward_idx = effective_group_indices(
+            resolution_grouping, backward_gid, n_histograms=n_hist
+        )
         if not forward_idx or not backward_idx:
-            return None
-        if max(forward_idx) >= len(run.histograms) or max(backward_idx) >= len(run.histograms):
             return None
 
         period_mode = str(grouping.get("period_mode", PeriodMode.RED))

@@ -207,7 +207,14 @@ with uncommitted changes, which prompts and lists exactly what would be lost —
 e.g. "profile 'Default (GPS)' and overrides for runs 12, 15".
 
 Applying reports, in the LOG and the status bar, how many runs the profile
-reached and which overrides were updated.
+reached and which overrides were updated. A grouping may name detectors a run
+does not contain — a full instrument preset applied to a file exporting only
+some of the instrument's detectors. The forward/backward groups then reduce
+over the detectors that are present (matching the dialog preview), and the LOG
+notes which absent detectors were ignored. Only when a forward or backward
+group has *none* of its detectors in the run — so no asymmetry can be formed —
+is that run skipped, and the report names the missing detectors and the run's
+detector count so the mismatch is diagnosable rather than a silent no-op.
 
 The grouping payload stores:
 
@@ -644,6 +651,15 @@ PSI HAL-9500
    forward detector as its own group, defaulting to the F1–F5 diametric pair),
    and **Per-octant** (each azimuthal sector combining its forward and
    backward wedge).
+
+   Some high-field ``.mdu`` runs ship only the forward ring (``MV, F1…F8`` —
+   nine histograms, no backward ring). Presets naming backward-ring detectors
+   (10–17) apply over the detectors the run *does* contain: **Per-octant**
+   degrades to one forward wedge per octant (physically equivalent to
+   **Transverse (opposed pairs)**), and the LOG notes which absent detectors
+   were ignored. **Longitudinal** cannot apply — one of its analysis groups is
+   the entire missing backward ring, so no forward/backward asymmetry can be
+   formed — and the skip is reported with the missing detectors named.
 
 PSI GPS
 ~~~~~~~
