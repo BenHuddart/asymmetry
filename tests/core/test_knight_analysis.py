@@ -13,6 +13,7 @@ from asymmetry.core.fitting.knight_analysis import (
     KnightAnalysisResult,
     KnightAnalysisState,
     KnightBranch,
+    KnightCorrection,
     KnightJointCurve,
     KnightJointFitState,
     KnightPoint,
@@ -531,6 +532,104 @@ def test_mixed_kind_components_never_cross_compared():
     assert any(e.kind == "order_swap" for e in result.crossings)
 
 
+# --- KnightCorrection ----------------------------------------------------------
+
+
+def test_knight_correction_offset_disabled_is_zero():
+    correction = KnightCorrection(enabled=False, shape="plate_perpendicular", chi_volume_si=1e-3)
+    assert correction.offset() == 0.0
+
+
+def test_knight_correction_offset_sphere_is_zero_regardless_of_chi():
+    for chi in (1e-3, -5.0, 1e6):
+        correction = KnightCorrection(enabled=True, shape="sphere", chi_volume_si=chi)
+        assert correction.offset() == 0.0
+
+
+def test_knight_correction_offset_plate_perpendicular():
+    # N=1 for plate_perpendicular: offset = -(1/3 - 1)*chi = (2/3)*chi.
+    correction = KnightCorrection(enabled=True, shape="plate_perpendicular", chi_volume_si=1e-3)
+    assert correction.offset() == pytest.approx(2e-3 / 3.0)
+
+
+def test_knight_correction_offset_custom_shape_uses_custom_n():
+    correction = KnightCorrection(enabled=True, shape="custom", custom_n=0.5, chi_volume_si=1e-3)
+    expected = -(1.0 / 3.0 - 0.5) * 1e-3
+    assert correction.offset() == pytest.approx(expected)
+
+
+def test_knight_correction_offset_non_finite_chi_is_zero():
+    correction = KnightCorrection(
+        enabled=True, shape="plate_perpendicular", chi_volume_si=float("inf")
+    )
+    assert correction.offset() == 0.0
+    correction_nan = KnightCorrection(
+        enabled=True, shape="plate_perpendicular", chi_volume_si=float("nan")
+    )
+    assert correction_nan.offset() == 0.0
+
+
+def test_knight_correction_to_dict_from_dict_round_trip():
+    correction = KnightCorrection(
+        enabled=True, shape="cylinder_transverse", custom_n=0.42, chi_volume_si=2.5e-4
+    )
+    restored = KnightCorrection.from_dict(correction.to_dict())
+    assert restored == correction
+
+
+def test_knight_correction_from_dict_unknown_shape_falls_back_to_sphere():
+    restored = KnightCorrection.from_dict({"enabled": True, "shape": "not_a_real_shape"})
+    assert restored.shape == "sphere"
+
+
+@pytest.mark.parametrize("garbage", [None, [], "not a dict", 5, 3.14])
+def test_knight_correction_from_dict_garbage_gives_defaults(garbage):
+    restored = KnightCorrection.from_dict(garbage)
+    assert restored == KnightCorrection()
+
+
+# --- evaluate(): correction shifts every branch by a common offset ------------
+
+
+def test_evaluate_with_correction_shifts_every_branch_by_offset_only():
+    # Two same-kind components that swap order (a real crossing) so the "no
+    # crossing change" assertion is non-vacuous.
+    points = [
+        _point(1, 0.0, 7000.0, {"frequency": 10.0, "frequency_2": 20.0}),
+        _point(2, 30.0, 7000.0, {"frequency": 21.0, "frequency_2": 11.0}),  # swapped
+    ]
+    analysis_input = _input(
+        points, components=(("frequency", "frequency"), ("frequency_2", "frequency"))
+    )
+    config = KnightShiftConfig(enabled=True, unit=KnightShiftUnit.FRACTION)
+    correction = KnightCorrection(enabled=True, shape="plate_perpendicular", chi_volume_si=1e-3)
+    offset = correction.offset()
+    assert offset != 0.0
+
+    uncorrected = knight_evaluate(analysis_input, config)
+    corrected = knight_evaluate(analysis_input, config, correction)
+
+    assert [b.name for b in corrected.branches] == [b.name for b in uncorrected.branches]
+    for branch_before, branch_after in zip(uncorrected.branches, corrected.branches):
+        assert branch_after.name == branch_before.name
+        assert branch_after.k == pytest.approx(tuple(k + offset for k in branch_before.k))
+        assert branch_after.k_err == pytest.approx(branch_before.k_err)
+        assert branch_after.run_numbers == branch_before.run_numbers
+
+    assert corrected.crossings == uncorrected.crossings
+
+
+def test_evaluate_without_correction_argument_matches_disabled_correction():
+    points = [_point(1, 0.0, 7000.0, {"frequency": 95.0})]
+    analysis_input = _input(points)
+    config = KnightShiftConfig(enabled=True, unit=KnightShiftUnit.FRACTION)
+
+    no_arg = knight_evaluate(analysis_input, config)
+    disabled = knight_evaluate(analysis_input, config, KnightCorrection(enabled=False))
+
+    assert no_arg.branch("K[frequency]").k == disabled.branch("K[frequency]").k
+
+
 # --- selected_components() unit tests -----------------------------------------
 
 
@@ -603,6 +702,36 @@ def test_knight_analysis_state_from_dict_garbage_gives_defaults(garbage):
     state = KnightAnalysisState.from_dict(garbage)
     default = KnightAnalysisState()
     assert state.to_dict() == default.to_dict()
+
+
+def test_knight_analysis_state_round_trip_includes_correction_and_rescale_errors():
+    correction = KnightCorrection(enabled=True, shape="plate_perpendicular", chi_volume_si=1e-3)
+    state = KnightAnalysisState(correction=correction, rescale_errors=True)
+
+    restored = KnightAnalysisState.from_dict(state.to_dict())
+
+    assert restored.correction == correction
+    assert restored.rescale_errors is True
+
+
+def test_knight_analysis_state_from_dict_legacy_dict_defaults_correction_and_rescale():
+    # A dict saved before correction/rescale_errors existed (only the fields
+    # that were present at the time) must not raise, and must default to a
+    # disabled correction and rescale_errors=False.
+    legacy_dict = {
+        "config": KnightShiftConfig().to_dict(),
+        "source_batch_id": None,
+        "source_group_id": None,
+        "x_key": "angle",
+        "fold_180": False,
+        "show_markers": True,
+    }
+
+    restored = KnightAnalysisState.from_dict(legacy_dict)
+
+    assert restored.correction == KnightCorrection()
+    assert restored.correction.enabled is False
+    assert restored.rescale_errors is False
 
 
 # --- migrate_legacy_state() ---------------------------------------------------
@@ -744,6 +873,27 @@ def test_run_joint_fit_recovers_curves_through_a_label_swap():
     # Assignment is keyed by run_number, not scan-point index.
     assert set(joint.assignment) == set(runs)
     assert all(len(perm) == 2 for perm in joint.assignment.values())
+
+
+def test_run_joint_fit_stores_and_round_trips_correction_offset():
+    result, _curve_a, _curve_b, _angles, _runs = _two_branch_crossing_scan()
+
+    joint = run_joint_fit(
+        result, model_name="KnightAnisotropy", max_iter=25, correction_offset=0.0025
+    )
+
+    assert joint.correction_offset == pytest.approx(0.0025)
+
+    restored = KnightJointFitState.from_dict(joint.to_dict())
+    assert restored.correction_offset == pytest.approx(0.0025)
+
+
+def test_run_joint_fit_default_correction_offset_is_zero():
+    result, _curve_a, _curve_b, _angles, _runs = _two_branch_crossing_scan()
+
+    joint = run_joint_fit(result, model_name="KnightAnisotropy", max_iter=25)
+
+    assert joint.correction_offset == 0.0
 
 
 def test_run_joint_fit_raises_with_fewer_than_two_branches():

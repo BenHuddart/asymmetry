@@ -99,6 +99,87 @@ def _crossing_snapshot(n_points: int = 13) -> KnightAnalysisInput:
     )
 
 
+def _theta0_snapshot(n_points: int = 19, theta0_true: float = 20.0) -> KnightAnalysisInput:
+    """A 2-branch axial scan whose K(θ) carries a known mount offset θ0.
+
+    Built by passing ``theta0`` straight through the ``KnightAnisotropy``
+    component function (mirroring ``_axial_field`` above), so a joint fit
+    against these branches should recover ``theta0_true`` for each curve.
+    The two sites' K_ax have opposite sign but the same magnitude
+    everywhere shy of the fold points, so — unlike ``_crossing_snapshot`` —
+    the branches never cross or swap identity: the point here is isolating
+    the theta0 read-out, not the assignment machinery.
+    """
+    angles = np.linspace(0.0, 40.0, n_points)  # short span: stays well clear of any crossing
+    fn = PARAMETER_MODEL_COMPONENTS["KnightAnisotropy"].function
+    b_ext = 7000.0
+    k_a = fn(angles, K_iso=0.02, K_ax=0.03, theta0=theta0_true)
+    k_b = fn(angles, K_iso=0.02, K_ax=-0.02, theta0=theta0_true)
+    field_a = b_ext * (1.0 + k_a)
+    field_b = b_ext * (1.0 + k_b)
+    points = tuple(
+        KnightPoint(
+            run_number=i + 1,
+            run_label=str(i + 1),
+            x=float(ang),
+            field_gauss=b_ext,
+            values={"field_1": float(field_a[i]), "field_2": float(field_b[i])},
+            errors={"field_1": 0.2, "field_2": 0.2},
+        )
+        for i, ang in enumerate(angles)
+    )
+    return KnightAnalysisInput(
+        x_key="angle",
+        x_label="Angle (°)",
+        components=(("field_1", "field"), ("field_2", "field")),
+        points=points,
+        source_label="Theta0 scan",
+        batch_id="batch-theta0",
+        group_id="group-theta0",
+    )
+
+
+def _misfit_crossing_snapshot(n_points: int = 13) -> KnightAnalysisInput:
+    """Like :func:`_crossing_snapshot` but with an added deterministic misfit.
+
+    An alternating +/- perturbation is added on top of the smooth K(theta)
+    curves so the model cannot absorb it — driving reduced chi-squared above
+    one deterministically (no RNG), so the "scale errors by root chi-squared_r"
+    checkbox has real work to do.
+    """
+    angles = np.linspace(0.0, 90.0, n_points)
+    b_ext = 7000.0
+    a = _axial_field(angles, 0.02, 0.03, b_ext)
+    b = _axial_field(angles, 0.02, -0.01, b_ext)
+    past = angles > 54.7356103
+    f1 = np.where(past, b, a)
+    f2 = np.where(past, a, b)
+    # Deterministic alternating misfit, well above the quoted 0.2 G error bar.
+    wobble = np.array([3.0 if i % 2 == 0 else -3.0 for i in range(n_points)])
+    f1 = f1 + wobble
+    f2 = f2 - wobble
+    points = tuple(
+        KnightPoint(
+            run_number=i + 1,
+            run_label=str(i + 1),
+            x=float(ang),
+            field_gauss=b_ext,
+            values={"field_1": float(f1[i]), "field_2": float(f2[i])},
+            errors={"field_1": 0.2, "field_2": 0.2},
+        )
+        for i, ang in enumerate(angles)
+    )
+    return KnightAnalysisInput(
+        x_key="angle",
+        x_label="Angle (°)",
+        components=(("field_1", "field"), ("field_2", "field")),
+        points=points,
+        source_label="Misfit crossing series",
+        batch_id="batch-misfit",
+        group_id="group-misfit",
+    )
+
+
 # ── 1. No snapshot ───────────────────────────────────────────────────────────
 
 
@@ -416,3 +497,193 @@ def test_unchecking_a_component_invalidates_the_stored_fit(qapp):
 
     assert len(window._figure.axes) == 1
     assert len(window._figure.axes[0].containers) > 0
+
+
+# ── 13. Lorentz/demag correction ─────────────────────────────────────────────
+
+
+def test_correction_shifts_branch_k_by_offset_and_leaves_errors_unchanged(qapp):
+    window = KnightShiftWindow()
+    window.set_snapshot(_snapshot())
+
+    # Baseline: correction unchecked (shape defaults to sphere anyway).
+    baseline_k = {b.name: b.k for b in window._result.branches}
+    baseline_err = {b.name: b.k_err for b in window._result.branches}
+    assert "corrected" not in window._footer._status_label.text()
+
+    window._shape_combo.setCurrentIndex(window._shape_combo.findData("plate_perpendicular"))
+    window._chi_edit.setText("1e-3")
+    window._correction_check.setChecked(True)
+
+    # N = 1, chi = 1e-3 => offset = -(1/3 - 1) * 1e-3 = +2e-3/3.
+    expected_offset = 2e-3 / 3.0
+    for branch in window._result.branches:
+        shifted = branch.k
+        base = baseline_k[branch.name]
+        assert shifted == pytest.approx(tuple(k + expected_offset for k in base), abs=1e-12)
+        assert branch.k_err == baseline_err[branch.name]
+
+    assert "Lorentz/demag corrected" in window._footer._status_label.text()
+
+
+def test_n_field_only_enabled_for_custom_shape(qapp):
+    window = KnightShiftWindow()
+    window.set_snapshot(_snapshot())
+
+    for label, key in (
+        ("sphere", "sphere"),
+        ("plate_parallel", "plate_parallel"),
+        ("plate_perpendicular", "plate_perpendicular"),
+        ("cylinder_axial", "cylinder_axial"),
+        ("cylinder_transverse", "cylinder_transverse"),
+    ):
+        window._shape_combo.setCurrentIndex(window._shape_combo.findData(key))
+        assert not window._custom_n_edit.isEnabled(), f"N enabled for shape {label!r}"
+
+    window._shape_combo.setCurrentIndex(window._shape_combo.findData("custom"))
+    assert window._custom_n_edit.isEnabled()
+
+    window._custom_n_edit.setText("0.25")
+    window._correction_check.setChecked(True)
+    correction = window._current_correction()
+    assert correction.shape == "custom"
+    assert correction.custom_n == pytest.approx(0.25)
+    assert correction.demag_factor() == pytest.approx(0.25)
+
+
+# ── 14. Correction + rescale state round-trip ────────────────────────────────
+
+
+def test_correction_and_rescale_round_trip_through_state(qapp):
+    window = KnightShiftWindow()
+    window.set_snapshot(_snapshot())
+
+    window._shape_combo.setCurrentIndex(window._shape_combo.findData("custom"))
+    window._custom_n_edit.setText("0.25")
+    window._chi_edit.setText("0.001")
+    window._correction_check.setChecked(True)
+    window._rescale_check.setChecked(True)
+
+    state = window.get_state()
+    assert state["correction"]["enabled"] is True
+    assert state["correction"]["shape"] == "custom"
+    assert state["rescale_errors"] is True
+
+    restored = KnightShiftWindow()
+    restored.restore_state(state)
+
+    assert restored._correction_check.isChecked() is True
+    assert restored._rescale_check.isChecked() is True
+    assert restored._shape_combo.currentData() == "custom"
+    assert restored._custom_n_edit.text() == "0.25"
+    assert restored._chi_edit.text() == "0.001"
+
+    restored_correction = restored._current_correction()
+    assert restored_correction.enabled is True
+    assert restored_correction.shape == "custom"
+    assert restored_correction.custom_n == pytest.approx(0.25)
+    assert restored_correction.chi_volume_si == pytest.approx(0.001)
+
+
+# ── 15. Correction offset staleness for the joint fit ────────────────────────
+
+
+def test_changing_chi_after_a_joint_fit_marks_curves_stale_then_fresh_again(qapp):
+    window = KnightShiftWindow()
+    window.set_snapshot(_crossing_snapshot())
+
+    # Pin a concrete display unit so AUTO can't reselect a different unit when
+    # the correction offset shifts the fractions — that would confound the
+    # thing this test isolates (the offset check in _joint_curves_fresh()).
+    window._unit_combo.setCurrentIndex(2)  # percent
+    window._shape_combo.setCurrentIndex(window._shape_combo.findData("plate_perpendicular"))
+    window._chi_edit.setText("1e-3")
+    window._correction_check.setChecked(True)
+
+    window._on_run_joint_fit()
+    wait_for(lambda: not window._joint_running, QApplication.instance(), timeout_s=20.0)
+    assert window._joint_applies()
+    assert window._joint_curves_fresh()
+    assert "re-run to refresh" not in window._fit_results_label.text()
+
+    # Change chi (correction offset changes) without re-running the fit.
+    window._chi_edit.setText("2e-3")
+    assert not window._joint_curves_fresh()
+    window._update_fit_controls()
+    assert "re-run to refresh" in window._fit_results_label.text()
+
+    # Revert chi: freshness (and the label) is restored.
+    window._chi_edit.setText("1e-3")
+    assert window._joint_curves_fresh()
+    window._update_fit_controls()
+    assert "re-run to refresh" not in window._fit_results_label.text()
+
+
+# ── 16. theta0 recovered from a known offset scan ────────────────────────────
+
+
+def test_joint_fit_recovers_known_theta0_offset(qapp):
+    theta0_true = 20.0
+    window = KnightShiftWindow()
+    window.set_snapshot(_theta0_snapshot(theta0_true=theta0_true))
+    window._unit_combo.setCurrentIndex(2)  # percent
+
+    assert window._fit_btn.isEnabled()
+    window._on_run_joint_fit()
+    wait_for(lambda: not window._joint_running, QApplication.instance(), timeout_s=20.0)
+
+    assert window._state.joint is not None
+    assert "theta0" in window._fit_results_label.text()
+
+    for curve in window._state.joint.curves:
+        by_name = {name: value for name, value, _err in curve.parameters}
+        assert "theta0" in by_name
+        assert by_name["theta0"] == pytest.approx(theta0_true, abs=2.0)
+
+
+# ── 17. Rescale-errors suffix only appears for a genuine chi-squared_r > 1 misfit ──
+
+
+def test_rescale_suffix_appears_only_for_chi_squared_r_above_one(qapp):
+    window = KnightShiftWindow()
+    window.set_snapshot(_misfit_crossing_snapshot())
+    window._unit_combo.setCurrentIndex(2)  # percent
+
+    window._on_run_joint_fit()
+    wait_for(lambda: not window._joint_running, QApplication.instance(), timeout_s=20.0)
+    assert window._state.joint is not None
+
+    # Self-check: the crafted misfit must actually drive chi-squared_r above
+    # one, or the rest of the test would silently check nothing.
+    chi2r_values = [curve.reduced_chi_squared for curve in window._state.joint.curves]
+    assert any(c == c and c > 1.0 for c in chi2r_values), (
+        f"expected at least one branch with chi-squared_r > 1, got {chi2r_values}"
+    )
+
+    window._rescale_check.setChecked(True)
+    assert "(errors ×√χ²ᵣ)" in window._fit_results_label.text()
+
+    window._rescale_check.setChecked(False)
+    assert "(errors ×√χ²ᵣ)" not in window._fit_results_label.text()
+
+
+def test_rescale_suffix_absent_when_chi_squared_r_is_not_above_one(qapp):
+    window = KnightShiftWindow()
+    window.set_snapshot(_snapshot())
+    window._unit_combo.setCurrentIndex(2)  # percent
+
+    # _snapshot() is a smooth linear trend with no crossing, well inside a
+    # KnightAnisotropy fit's reach: chi-squared_r stays at or below one.
+    window._on_run_joint_fit()
+    wait_for(lambda: not window._joint_running, QApplication.instance(), timeout_s=20.0)
+    if window._state.joint is None:
+        pytest.skip("joint fit did not converge for the smooth-trend snapshot")
+
+    chi2r_values = [curve.reduced_chi_squared for curve in window._state.joint.curves]
+    assert all(c != c or c <= 1.0 for c in chi2r_values)
+
+    window._rescale_check.setChecked(True)
+    assert "(errors ×√χ²ᵣ)" not in window._fit_results_label.text()
+
+    window._rescale_check.setChecked(False)
+    assert "(errors ×√χ²ᵣ)" not in window._fit_results_label.text()

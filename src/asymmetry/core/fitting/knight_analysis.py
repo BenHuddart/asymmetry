@@ -148,6 +148,71 @@ class KnightAnalysisResult:
         return None
 
 
+#: Demagnetization factor N along the applied field for standard sample shapes
+#: (SI convention, ΣN = 1). ``custom`` defers to the user-entered value.
+SAMPLE_SHAPE_DEMAG_FACTORS: dict[str, float | None] = {
+    "sphere": 1.0 / 3.0,
+    "plate_parallel": 0.0,
+    "plate_perpendicular": 1.0,
+    "cylinder_axial": 0.0,
+    "cylinder_transverse": 0.5,
+    "custom": None,
+}
+
+
+@dataclass
+class KnightCorrection:
+    """Lorentz/demagnetizing-field correction to the measured shift.
+
+    Applies Amato & Morenzoni Eq. 5.60: ``K_µ = K_exp − (1/3 − N)·χ``, with
+    ``N`` the demagnetization factor along the applied field (SI convention,
+    sphere = 1/3 — for which Lorentz and demagnetizing fields cancel and the
+    correction vanishes) and ``chi`` the *volume* susceptibility in SI
+    dimensionless units (multiply a CGS emu/cm³ value by 4π). The correction is
+    a constant offset per branch, exact for an ellipsoidal sample whose shape
+    is fixed relative to the field; for a rotating non-spheroidal sample N
+    itself varies with angle, which this scalar form does not capture.
+    """
+
+    enabled: bool = False
+    shape: str = "sphere"
+    custom_n: float = 1.0 / 3.0
+    chi_volume_si: float = 0.0
+
+    def demag_factor(self) -> float:
+        factor = SAMPLE_SHAPE_DEMAG_FACTORS.get(self.shape)
+        return float(self.custom_n) if factor is None else float(factor)
+
+    def offset(self) -> float:
+        """The additive correction to a dimensionless K fraction (Eq. 5.60)."""
+        if not self.enabled:
+            return 0.0
+        offset = -(1.0 / 3.0 - self.demag_factor()) * float(self.chi_volume_si)
+        return offset if math.isfinite(offset) else 0.0
+
+    def to_dict(self) -> dict:
+        return {
+            "enabled": bool(self.enabled),
+            "shape": str(self.shape),
+            "custom_n": float(self.custom_n),
+            "chi_volume_si": float(self.chi_volume_si),
+        }
+
+    @classmethod
+    def from_dict(cls, data: object) -> KnightCorrection:
+        if not isinstance(data, dict):
+            return cls()
+        shape = str(data.get("shape") or "sphere")
+        if shape not in SAMPLE_SHAPE_DEMAG_FACTORS:
+            shape = "sphere"
+        return cls(
+            enabled=bool(data.get("enabled", False)),
+            shape=shape,
+            custom_n=_finite_or_nan(data.get("custom_n", 1.0 / 3.0)),
+            chi_volume_si=_finite_or_nan(data.get("chi_volume_si", 0.0)),
+        )
+
+
 def branch_name(component: str) -> str:
     """Trace name for a component's Knight shift (``K[<component>]``)."""
     return f"K[{component}]"
@@ -255,16 +320,22 @@ def _detect_scan_crossings(
 
 
 def evaluate(
-    analysis_input: KnightAnalysisInput, config: KnightShiftConfig
+    analysis_input: KnightAnalysisInput,
+    config: KnightShiftConfig,
+    correction: KnightCorrection | None = None,
 ) -> KnightAnalysisResult:
     """Derive the Knight-shift branches and crossings for a snapshot + config.
 
     Pure: the snapshot is not mutated, and calling twice with the same inputs
     gives the same result. A disabled config yields an empty result (no
     branches, no crossings) with the unit still resolved so axis labels stay
-    stable while the user toggles the conversion.
+    stable while the user toggles the conversion. ``correction`` (optional)
+    applies the Lorentz/demagnetizing offset of Eq. 5.60 to every shift; the
+    offset is common to all branches, so crossings and branch ordering are
+    unaffected. K uncertainties do not include a χ uncertainty.
     """
     components = selected_components(analysis_input, config) if config.enabled else ()
+    correction_offset = correction.offset() if correction is not None else 0.0
 
     # First pass computes the dimensionless fractions so AUTO can pick a unit
     # from the full set before any branch is materialised.
@@ -275,7 +346,7 @@ def evaluate(
             if not math.isfinite(point.x) or name not in point.values:
                 continue
             k, sigma_k = _point_shift(point, name, kind, config)
-            rows.append((point, k, sigma_k))
+            rows.append((point, k + correction_offset, sigma_k))
         per_component[name] = rows
 
     # A point is "skipped" only when no branch retains it (NaN abscissa, or all
@@ -386,6 +457,11 @@ class KnightJointFitState:
     model_name: str = "KnightAnisotropy"
     max_iter: int = 25
     unit: str = KnightShiftUnit.PERCENT.value
+    #: Lorentz/demag offset (fraction units) active when the fit ran — like
+    #: ``unit``, a bookkeeping value: a changed correction shifts every K, so
+    #: the fitted curves go stale (the assignment does not — a common offset
+    #: cannot reorder branches).
+    correction_offset: float = 0.0
     converged: bool = False
     total_chi_squared: float = 0.0
     dof: int = 0
@@ -398,6 +474,7 @@ class KnightJointFitState:
             "model_name": str(self.model_name),
             "max_iter": int(self.max_iter),
             "unit": str(self.unit),
+            "correction_offset": float(self.correction_offset),
             "converged": bool(self.converged),
             "total_chi_squared": float(self.total_chi_squared),
             "dof": int(self.dof),
@@ -426,6 +503,7 @@ class KnightJointFitState:
             model_name=str(data.get("model_name") or "KnightAnisotropy"),
             max_iter=int(data.get("max_iter", 25) or 25),
             unit=str(data.get("unit") or KnightShiftUnit.PERCENT.value),
+            correction_offset=_finite_or_nan(data.get("correction_offset", 0.0)),
             converged=bool(data.get("converged", False)),
             total_chi_squared=_finite_or_nan(data.get("total_chi_squared", 0.0)),
             dof=int(data.get("dof", 0) or 0),
@@ -485,6 +563,7 @@ def run_joint_fit(
     *,
     model_name: str = "KnightAnisotropy",
     max_iter: int = 25,
+    correction_offset: float = 0.0,
 ) -> KnightJointFitState:
     """Jointly fit all branches' K(θ) with per-angle component assignment.
 
@@ -533,6 +612,7 @@ def run_joint_fit(
         model_name=model_name,
         max_iter=int(max_iter),
         unit=result.unit.value,
+        correction_offset=float(correction_offset),
         converged=bool(outcome.converged),
         total_chi_squared=float(outcome.total_chi_squared),
         dof=int(outcome.dof),
@@ -637,21 +717,25 @@ class KnightAnalysisState:
     """
 
     config: KnightShiftConfig = field(default_factory=KnightShiftConfig)
+    correction: KnightCorrection = field(default_factory=KnightCorrection)
     source_batch_id: str | None = None
     source_group_id: str | None = None
     x_key: str = "angle"
     fold_180: bool = False
     show_markers: bool = True
+    rescale_errors: bool = False
     joint: KnightJointFitState | None = None
 
     def to_dict(self) -> dict:
         return {
             "config": self.config.to_dict(),
+            "correction": self.correction.to_dict(),
             "source_batch_id": self.source_batch_id,
             "source_group_id": self.source_group_id,
             "x_key": str(self.x_key),
             "fold_180": bool(self.fold_180),
             "show_markers": bool(self.show_markers),
+            "rescale_errors": bool(self.rescale_errors),
             "joint": self.joint.to_dict() if self.joint is not None else None,
         }
 
@@ -663,11 +747,13 @@ class KnightAnalysisState:
         group_id = data.get("source_group_id")
         return cls(
             config=KnightShiftConfig.from_dict(data.get("config")),
+            correction=KnightCorrection.from_dict(data.get("correction")),
             source_batch_id=str(batch_id) if batch_id else None,
             source_group_id=str(group_id) if group_id else None,
             x_key=str(data.get("x_key") or "angle"),
             fold_180=bool(data.get("fold_180", False)),
             show_markers=bool(data.get("show_markers", True)),
+            rescale_errors=bool(data.get("rescale_errors", False)),
             joint=KnightJointFitState.from_dict(data.get("joint")),
         )
 

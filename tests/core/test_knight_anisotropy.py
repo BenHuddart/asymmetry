@@ -56,3 +56,32 @@ def test_fit_recovers_anisotropy_parameters():
     fitted = {p.name: p.value for p in result.parameters}
     assert fitted["K_iso"] == pytest.approx(120.0, abs=1e-2)
     assert fitted["K_ax"] == pytest.approx(40.0, abs=1e-2)
+
+
+# --- theta0 (mount/zero misalignment) ---------------------------------------
+
+
+def test_knight_anisotropy_theta0_default_matches_old_two_arg_form():
+    fn = PARAMETER_MODEL_COMPONENTS["KnightAnisotropy"].function
+    theta = np.linspace(-90.0, 90.0, 13)
+    with_default = fn(theta, K_iso=100.0, K_ax=30.0, theta0=0.0)
+    two_arg = fn(theta, K_iso=100.0, K_ax=30.0)
+    np.testing.assert_allclose(with_default, two_arg)
+
+
+def test_knight_anisotropy_theta0_shifts_the_extremum():
+    fn = PARAMETER_MODEL_COMPONENTS["KnightAnisotropy"].function
+    theta0 = 17.0
+    delta = 8.0
+    # K(theta) is symmetric about its extremum, and its extremum value is
+    # K_iso + K_ax (theta = theta0, where cos^2 = 1).
+    left = fn(np.array([theta0 - delta]), K_iso=100.0, K_ax=30.0, theta0=theta0)[0]
+    right = fn(np.array([theta0 + delta]), K_iso=100.0, K_ax=30.0, theta0=theta0)[0]
+    peak = fn(np.array([theta0]), K_iso=100.0, K_ax=30.0, theta0=theta0)[0]
+    assert left == pytest.approx(right)
+    assert peak == pytest.approx(100.0 + 30.0)
+
+
+def test_knight_anisotropy_registry_lists_theta0_param():
+    definition = PARAMETER_MODEL_COMPONENTS["KnightAnisotropy"]
+    assert definition.param_names == ["K_iso", "K_ax", "theta0"]

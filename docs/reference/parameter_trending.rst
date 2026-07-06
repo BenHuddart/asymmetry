@@ -1071,14 +1071,18 @@ pipeline:
 * **Conversion** — the reference (**Applied field (γ_µ·B)** or **Designated
   component**, with a combo box for the chosen component when the latter is
   selected), the display **Unit** (**Auto (ppm / %)**, **ppm**, **percent**, or
-  **fraction**), and a checkbox per convertible component to include or
-  exclude it from the conversion.
+  **fraction**), a checkbox per convertible component to include or exclude it
+  from the conversion, and the **Lorentz/demag correction** checkbox with its
+  **Shape** combo, **N** field, and **χ (SI)** field (described below) that
+  turns the measured shift into the intrinsic :math:`K_\mu`.
 * **Branches** — one converted :math:`K` trace per included component, each
   named :math:`K_n` and coloured to match its curve on the plot, together with
   a count of the crossings flagged along the scan (see *Component identity and
   crossings* below).
 * **Model fit** — the joint :math:`K(\theta)` fit that resolves those
-  crossings (see *Component identity and crossings*, below).
+  crossings (see *Component identity and crossings*, below), with a **Scale
+  errors by √χ²ᵣ** checkbox that inflates the quoted parameter uncertainties
+  when a fit's reduced :math:`\chi^2` exceeds one.
 
 The plot area has two view toggles, **Fold 180°** (overlay symmetry-equivalent
 orientations onto one period, for an angle scan — a display choice local to
@@ -1136,9 +1140,37 @@ fitted in is not always recoverable).
 K is dimensionless. It is stored internally as a fraction and shown in a unit you
 select, with an **Auto** mode that reads parts per million for a diamagnet
 (typically tens of ppm) and per cent for a paramagnet (up to a few per cent). The
-conversion yields the directly measured shift :math:`K_{\mathrm{exp}}`; the small
-Lorentz and demagnetising corrections that recover the intrinsic :math:`K_\mu`
-require the sample geometry and bulk susceptibility and are left to the user.
+conversion itself yields the directly measured shift :math:`K_{\mathrm{exp}}`; the
+window's **Lorentz/demag correction** (below) recovers the intrinsic :math:`K_\mu`
+from it given the sample geometry and bulk susceptibility.
+
+**Lorentz/demagnetising correction.** The measured shift :math:`K_{\mathrm{exp}}`
+includes the Lorentz cavity field and the sample's own demagnetising field, both
+of which depend on the sample shape rather than the local hyperfine coupling. The
+**Lorentz/demag correction** checkbox in the *Conversion* section removes them,
+
+.. math::
+
+   K_\mu = K_{\mathrm{exp}} - \left(\frac{1}{3} - N\right)\chi
+   \qquad\text{(Amato \& Morenzoni Eq. 5.60)}
+
+with :math:`N` the demagnetisation factor along the applied field (SI convention,
+:math:`\sum N = 1` over the three principal axes) and :math:`\chi` the sample's
+*volume* susceptibility, also SI dimensionless — multiply a CGS value in
+emu cm\ :sup:`-3` by :math:`4\pi` before entering it. The **Shape** combo sets
+:math:`N` from the sample geometry — **Sphere (N = 1/3)**, for which the
+correction vanishes exactly (the Lorentz and demagnetising fields cancel);
+**Thin plate, B ∥ plane (N = 0)**; **Thin plate, B ⊥ plane (N = 1)**; **Long
+cylinder, B ∥ axis (N = 0)**; **Long cylinder, B ⊥ axis (N = 1/2)**; or
+**Custom N**, which enables the **N** field for a value outside these standard
+shapes — and **χ (SI)** takes the volume susceptibility. The correction is a
+constant offset applied equally to every
+branch, so it shifts K but never reorders branches or moves a crossing. It is
+exact for an ellipsoidal sample whose orientation relative to the field is fixed;
+for a rotating non-spheroidal sample :math:`N` itself varies with angle, which
+this scalar form does not capture — a caveat worth remembering for an angle-scan
+correction with a non-sphere shape. The K uncertainties reported by the window do
+not include a :math:`\chi` uncertainty.
 
 **Angle dependence.** Rotating a single crystal in the applied field maps out
 :math:`K(\theta)`. The contact term is isotropic, while the dipolar term carries
@@ -1181,12 +1213,19 @@ the angles where the assignment swaps (the crossings the fit actually
 resolved, a firmer signal than the raw proximity flags). The sidebar reports
 each curve's fitted parameters and reduced :math:`\chi^2` beneath the
 controls; **Clear fit** discards the fit and returns the branches to their
-raw component labels. Changing the display unit only marks the fitted curves
-stale (their parameters are unit-dependent even though the assignment is
-not) — re-run the fit to refresh them. The fit (assignment and per-curve
-parameters) is saved with the project and restored on reload, and stays
-applicable across a **Refresh from trend** as long as the branch count is
-unchanged; a different component selection invalidates it.
+raw component labels. Changing the display unit or the Lorentz/demag
+correction only marks the fitted curves stale (their parameters shift with
+either — the assignment does not, since a common offset or scale cannot
+reorder branches) — re-run the fit to refresh them. The **Scale errors by
+√χ²ᵣ** checkbox inflates every quoted parameter uncertainty by
+:math:`\sqrt{\chi^2_r}` when that curve's reduced :math:`\chi^2` exceeds one
+(a fit that is already better than the noise is left alone); it is
+display-only — the stored fit itself is unchanged, and toggling it appends or
+removes an "(errors ×√χ²ᵣ)" note next to the affected curve. The fit
+(assignment and per-curve parameters) is saved with the project and restored
+on reload, and stays applicable across a **Refresh from trend** as long as
+the branch count is unchanged; a different component selection invalidates
+it.
 
 In the trend panel, select one or more ``K[...]`` traces and use **Remove**
 to delete them: the backing component is dropped from the conversion (via
@@ -1199,7 +1238,7 @@ usual ones:
 
 .. math::
 
-   K(\theta) = K_{\mathrm{iso}} + K_{\mathrm{ax}}\,\frac{3\cos^2\theta - 1}{2}
+   K(\theta) = K_{\mathrm{iso}} + K_{\mathrm{ax}}\,\frac{3\cos^2(\theta - \theta_0) - 1}{2}
    \qquad\text{(}\texttt{KnightAnisotropy}\text{)}
 
 for the axial dipolar form — the isotropic contact term :math:`K_{\mathrm{iso}}`
@@ -1211,11 +1250,22 @@ two-fold modulation
    K(\theta) = K_{\mathrm{avg}} + K_{\mathrm{amp}}\cos 2(\theta - \theta_0)
    \qquad\text{(}\texttt{AngularCos2}\text{)}
 
-for a crystal rotated in a plane, with :math:`\theta_0` the principal-axis
-offset. Both take :math:`\theta` in degrees, so they fit directly against the
-Angle axis (folded or not). The diagonal dipolar-tensor components recovered for
-rotations about the crystal axes constrain the muon stopping site. For a
-worked example end to end, see :doc:`/workflows/knight_shift_angle`.
+for a crystal rotated in a plane. Both models carry a :math:`\theta_0` term —
+the goniometer/mount misalignment between the zero of the angle scale and the
+crystal's principal axis, since a real mount is never perfectly aligned; without
+it, that misalignment would otherwise bias :math:`K_{\mathrm{iso}}` and
+:math:`K_{\mathrm{ax}}` (or :math:`K_{\mathrm{avg}}` and :math:`K_{\mathrm{amp}}`)
+directly. Both forms are invariant under a :math:`90^\circ` shift of
+:math:`\theta_0` together with a sign flip of the anisotropic amplitude, so the
+joint fit canonicalises the fitted :math:`\theta_0` into
+:math:`(-45^\circ, 45^\circ]` — folding to the small-:math:`|\theta_0|`
+representation so a mount that is nearly aligned reads with a small offset and
+a physically sensible amplitude sign, rather than an equally valid but
+larger-offset relabelling of the same curve. Both models take :math:`\theta` in
+degrees, so they fit directly against the Angle axis (folded or not). The
+diagonal dipolar-tensor components recovered for rotations about the crystal
+axes constrain the muon stopping site. For a worked example end to end, see
+:doc:`/workflows/knight_shift_angle`.
 
 **Clogston–Jaccarino** (:math:`K` vs :math:`\chi`). Plotting the Knight shift
 against the bulk susceptibility with temperature as the implicit parameter gives

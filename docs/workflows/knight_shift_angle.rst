@@ -70,7 +70,12 @@ Walkthrough
    **Analysis → Knight shift analysis…** — and reference against the
    **Applied field** in the *Conversion* section of its sidebar. Each frequency
    trace becomes a branch in the *Branches* section, converted live as you edit
-   the reference or unit.
+   the reference or unit. This yields the directly measured shift
+   :math:`K_{\mathrm{exp}}`; if the sample's shape and bulk susceptibility are
+   known, tick **Lorentz/demag correction**, pick the **Shape** (or **Custom
+   N**) and enter **χ (SI)**, to recover the intrinsic :math:`K_\mu` — see
+   *Reading the result*, below, for the caveat this correction carries under
+   rotation.
 
    .. figure:: /_generated/screenshots/knight_shift_window.png
       :width: 100%
@@ -110,7 +115,16 @@ Walkthrough
    matching), iterating until both the curves and the assignment settle. The
    plotted branches realign so each follows a single physical site
    continuously through the crossings, with the per-curve fits overlaid and
-   swap markers at the angles where the assignment changes.
+   swap markers at the angles where the assignment changes. ``KnightAnisotropy``
+   also fits a per-site :math:`\theta_0`, the goniometer/mount misalignment
+   between the scale's zero and the crystal's principal axis. A large reduced
+   :math:`\chi^2` with :math:`\theta_0` pinned at zero was the old failure
+   mode here — a mount that is even slightly off-axis pushes the residual
+   misalignment into :math:`K_{\mathrm{iso}}` and :math:`K_{\mathrm{ax}}`
+   instead, biasing exactly the parameters that identify the site; fitting
+   :math:`\theta_0` absorbs it. If **Scale errors by √χ²ᵣ** is ticked and the
+   fit's reduced :math:`\chi^2` still exceeds one after that, the quoted
+   uncertainties are inflated accordingly.
 
 .. image:: /_generated/screenshots/knight_shift_angle.png
    :alt: Two-site angle-dependent Knight shift with a joint K(theta) anisotropy fit
@@ -130,12 +144,14 @@ own site, and the fitted :math:`K_{\mathrm{ax}}` carries the real sign and
 magnitude. That sign, together with the magnitude of the anisotropy, is what
 constrains the candidate stopping site.
 
-For the absolute shift, note that the conversion yields the directly measured
-:math:`K_{\mathrm{exp}}`; the Lorentz and demagnetising corrections that
-recover the intrinsic :math:`K_\mu` need the sample geometry and bulk
-susceptibility and are left to you. To turn a :math:`K`–:math:`\chi` pair into
-a hyperfine coupling, see the Clogston–Jaccarino discussion at
-:ref:`knight-shift`.
+For the absolute shift, note that the conversion by itself yields the directly
+measured :math:`K_{\mathrm{exp}}`; recovering the intrinsic :math:`K_\mu` needs
+the **Lorentz/demag correction** step above, with the sample geometry and bulk
+susceptibility as inputs. For a rotating sample that is not itself spheroidal,
+remember that the correction assumes a fixed demagnetisation factor :math:`N`
+along the field — exact for a sphere, an approximation as the sample turns
+otherwise. To turn a :math:`K`–:math:`\chi` pair into a hyperfine coupling, see
+the Clogston–Jaccarino discussion at :ref:`knight-shift`.
 
 See also
 --------

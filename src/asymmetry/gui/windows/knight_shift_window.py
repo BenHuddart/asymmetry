@@ -31,6 +31,8 @@ curves stale (the assignment is unit-independent).
 
 from __future__ import annotations
 
+import math
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -38,6 +40,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QPushButton,
     QRadioButton,
@@ -52,6 +55,7 @@ from asymmetry.core.fitting.knight_analysis import (
     KnightAnalysisInput,
     KnightAnalysisResult,
     KnightAnalysisState,
+    KnightCorrection,
     KnightJointFitState,
     apply_assignment,
     assignment_swap_positions,
@@ -83,6 +87,16 @@ _UNIT_CHOICES: tuple[tuple[str, KnightShiftUnit], ...] = (
     ("ppm", KnightShiftUnit.PPM),
     ("percent", KnightShiftUnit.PERCENT),
     ("fraction", KnightShiftUnit.FRACTION),
+)
+
+#: Sample-shape choices for the Lorentz/demag correction, in combo order.
+_SHAPE_CHOICES: tuple[tuple[str, str], ...] = (
+    ("Sphere (N = 1/3)", "sphere"),
+    ("Thin plate, B ∥ plane (N = 0)", "plate_parallel"),
+    ("Thin plate, B ⊥ plane (N = 1)", "plate_perpendicular"),
+    ("Long cylinder, B ∥ axis (N = 0)", "cylinder_axial"),
+    ("Long cylinder, B ⊥ axis (N = 1/2)", "cylinder_transverse"),
+    ("Custom N", "custom"),
 )
 
 #: Fixed per-branch plot colours — the Okabe-Ito trace palette (colour-blind
@@ -215,11 +229,50 @@ class KnightShiftWindow(QMainWindow):
         self._components_layout.setContentsMargins(0, 0, 0, 0)
         self._components_layout.setSpacing(2)
         self._component_checks: dict[str, QCheckBox] = {}
+
+        self._correction_check = QCheckBox("Lorentz/demag correction", sidebar)
+        self._correction_check.setToolTip(
+            "Correct the measured shift for the Lorentz and demagnetizing fields: "
+            "K_µ = K_exp − (1/3 − N)·χ (Amato & Morenzoni Eq. 5.60). Vanishes for "
+            "a sphere. Assumes the demagnetization factor N along the field stays "
+            "fixed as the sample rotates — exact for a sphere, an approximation "
+            "otherwise."
+        )
+        shape_row = QWidget(sidebar)
+        shape_layout = QHBoxLayout(shape_row)
+        shape_layout.setContentsMargins(0, 0, 0, 0)
+        shape_layout.setSpacing(6)
+        shape_layout.addWidget(QLabel("Shape", shape_row))
+        self._shape_combo = QComboBox(shape_row)
+        for label, key in _SHAPE_CHOICES:
+            self._shape_combo.addItem(label, key)
+        shape_layout.addWidget(self._shape_combo, 1)
+        n_chi_row = QWidget(sidebar)
+        n_chi_layout = QHBoxLayout(n_chi_row)
+        n_chi_layout.setContentsMargins(0, 0, 0, 0)
+        n_chi_layout.setSpacing(6)
+        n_chi_layout.addWidget(QLabel("N", n_chi_row))
+        self._custom_n_edit = QLineEdit("0.3333", n_chi_row)
+        self._custom_n_edit.setToolTip(
+            "Demagnetization factor along the applied field (SI convention, 0–1)."
+        )
+        n_chi_layout.addWidget(self._custom_n_edit, 1)
+        n_chi_layout.addWidget(QLabel("χ (SI)", n_chi_row))
+        self._chi_edit = QLineEdit("0", n_chi_row)
+        self._chi_edit.setToolTip(
+            "Volume susceptibility, SI dimensionless (multiply a CGS emu/cm³ "
+            "value by 4π). The K error bars do not include a χ uncertainty."
+        )
+        n_chi_layout.addWidget(self._chi_edit, 1)
+
         for widget in (
             self._ref_field_radio,
             self._ref_component_radio,
             self._ref_component_combo,
             unit_row,
+            self._correction_check,
+            shape_row,
+            n_chi_row,
             self._components_label,
             self._components_box,
         ):
@@ -229,6 +282,10 @@ class KnightShiftWindow(QMainWindow):
         self._ref_field_radio.toggled.connect(self._on_controls_changed)
         self._ref_component_combo.currentIndexChanged.connect(self._on_controls_changed)
         self._unit_combo.currentIndexChanged.connect(self._on_controls_changed)
+        self._correction_check.toggled.connect(self._on_controls_changed)
+        self._shape_combo.currentIndexChanged.connect(self._on_controls_changed)
+        self._custom_n_edit.textChanged.connect(self._on_controls_changed)
+        self._chi_edit.textChanged.connect(self._on_controls_changed)
 
         # Branches ---------------------------------------------------------------
         self._branches_section = PanelSection(
@@ -266,6 +323,13 @@ class KnightShiftWindow(QMainWindow):
         self._max_iter_spin.setRange(1, 200)
         self._max_iter_spin.setValue(25)
         iter_layout.addWidget(self._max_iter_spin, 1)
+        self._rescale_check = QCheckBox("Scale errors by √χ²ᵣ", sidebar)
+        self._rescale_check.setToolTip(
+            "Inflate the fitted parameter uncertainties by √χ²ᵣ when χ²ᵣ > 1 "
+            "(the standard scale-factor treatment for a model that does not "
+            "fully describe the data). Display only — the stored fit is unchanged."
+        )
+        self._rescale_check.toggled.connect(self._on_rescale_toggled)
         self._fit_results_label = QLabel("", sidebar)
         self._fit_results_label.setWordWrap(True)
         self._fit_results_label.setTextFormat(Qt.TextFormat.RichText)
@@ -277,6 +341,7 @@ class KnightShiftWindow(QMainWindow):
         self._clear_fit_btn.setEnabled(False)
         self._fit_section.addWidget(model_row)
         self._fit_section.addWidget(iter_row)
+        self._fit_section.addWidget(self._rescale_check)
         self._fit_section.addWidget(self._fit_results_label)
         self._fit_section.addWidget(self._clear_fit_btn)
         layout.addWidget(self._fit_section)
@@ -345,8 +410,10 @@ class KnightShiftWindow(QMainWindow):
     def get_state(self) -> dict:
         """Serializable window state (config + source binding + view flags)."""
         self._state.config = self._config_from_controls()
+        self._state.correction = self._current_correction()
         self._state.fold_180 = self._fold_check.isChecked()
         self._state.show_markers = self._markers_check.isChecked()
+        self._state.rescale_errors = self._rescale_check.isChecked()
         if self._snapshot is not None:
             self._state.source_batch_id = self._snapshot.batch_id
             self._state.source_group_id = self._snapshot.group_id
@@ -364,6 +431,14 @@ class KnightShiftWindow(QMainWindow):
         try:
             self._fold_check.setChecked(self._state.fold_180)
             self._markers_check.setChecked(self._state.show_markers)
+            self._rescale_check.setChecked(self._state.rescale_errors)
+            correction = self._state.correction
+            self._correction_check.setChecked(correction.enabled)
+            shape_index = self._shape_combo.findData(correction.shape)
+            if shape_index >= 0:
+                self._shape_combo.setCurrentIndex(shape_index)
+            self._custom_n_edit.setText(f"{correction.custom_n:g}")
+            self._chi_edit.setText(f"{correction.chi_volume_si:g}")
             joint = self._state.joint
             if joint is not None:
                 index = self._model_combo.findText(joint.model_name)
@@ -474,13 +549,38 @@ class KnightShiftWindow(QMainWindow):
         if not self._updating_controls:
             self._redraw()
 
+    def _on_rescale_toggled(self, *_args: object) -> None:
+        if not self._updating_controls:
+            self._state.rescale_errors = self._rescale_check.isChecked()
+            self._update_fit_controls()
+
+    def _current_correction(self) -> KnightCorrection:
+        """The Lorentz/demag correction as currently edited."""
+
+        def _parse(edit: QLineEdit, fallback: float) -> float:
+            try:
+                value = float(edit.text().strip())
+            except ValueError:
+                return fallback
+            return value if value == value else fallback
+
+        return KnightCorrection(
+            enabled=self._correction_check.isChecked(),
+            shape=str(self._shape_combo.currentData() or "sphere"),
+            custom_n=_parse(self._custom_n_edit, 1.0 / 3.0),
+            chi_volume_si=_parse(self._chi_edit, 0.0),
+        )
+
     def _reevaluate(self) -> None:
         config = self._config_from_controls()
+        correction = self._current_correction()
         self._state.config = config
+        self._state.correction = correction
+        self._custom_n_edit.setEnabled(self._shape_combo.currentData() == "custom")
         if self._snapshot is None:
             self._result = None
         else:
-            self._result = evaluate(self._snapshot, config)
+            self._result = evaluate(self._snapshot, config, correction)
         self._update_source_labels()
         self._update_branch_rows()
         self._update_fit_controls()
@@ -512,10 +612,20 @@ class KnightShiftWindow(QMainWindow):
         return True
 
     def _joint_curves_fresh(self) -> bool:
-        """Whether the fitted curve parameters are in the current display unit."""
+        """Whether the fitted curves match the current display unit and correction.
+
+        Either change shifts/rescales every K value, so drawn curves and quoted
+        parameters would no longer overlay the data; the assignment itself stays
+        valid (a common offset or scale cannot reorder branches).
+        """
         joint = self._state.joint
         result = self._result
-        return joint is not None and result is not None and joint.unit == result.unit.value
+        return (
+            joint is not None
+            and result is not None
+            and joint.unit == result.unit.value
+            and abs(joint.correction_offset - self._current_correction().offset()) < 1e-12
+        )
 
     def _display_result(self) -> KnightAnalysisResult | None:
         """The result as plotted: realigned by the joint fit when it applies."""
@@ -538,11 +648,17 @@ class KnightShiftWindow(QMainWindow):
         result = self._result
         model_name = self._model_combo.currentText()
         max_iter = int(self._max_iter_spin.value())
+        correction_offset = self._current_correction().offset()
         self._joint_running = True
         self._fit_btn.setEnabled(False)
         self._footer.show_progress("Fitting K(θ)…")
         self._tasks.start(
-            lambda _worker: run_joint_fit(result, model_name=model_name, max_iter=max_iter),
+            lambda _worker: run_joint_fit(
+                result,
+                model_name=model_name,
+                max_iter=max_iter,
+                correction_offset=correction_offset,
+            ),
             on_finished=self._on_joint_fit_ready,
             on_error=self._on_joint_fit_error,
         )
@@ -579,20 +695,27 @@ class KnightShiftWindow(QMainWindow):
         if not applies:
             lines.append("<i>Stored fit does not match the current branches — re-run.</i>")
         elif not self._joint_curves_fresh():
-            lines.append(
-                "<i>Fitted curves are in a different display unit — re-run to refresh.</i>"
+            result = self._result
+            cause = (
+                "display unit"
+                if result is not None and joint.unit != result.unit.value
+                else "Lorentz/demag correction"
             )
+            lines.append(f"<i>Fitted curves predate the current {cause} — re-run to refresh.</i>")
+        rescale = self._rescale_check.isChecked()
         for index, curve in enumerate(joint.curves):
             color = _BRANCH_COLORS[index % len(_BRANCH_COLORS)]
+            chi2r = curve.reduced_chi_squared
+            # The PDG-style scale factor: only ever inflates (χ²ᵣ < 1 is left
+            # alone — an over-good fit does not license shrinking the errors).
+            factor = math.sqrt(chi2r) if rescale and chi2r == chi2r and chi2r > 1.0 else 1.0
             params = ", ".join(
-                f"{name} = {value:.4g} ± {error:.2g}" for name, value, error in curve.parameters
+                f"{name} = {value:.4g} ± {error * factor:.2g}"
+                for name, value, error in curve.parameters
             )
-            chi = (
-                f" · χ²ᵣ = {curve.reduced_chi_squared:.3g}"
-                if curve.reduced_chi_squared == curve.reduced_chi_squared
-                else ""
-            )
-            lines.append(f"<span style='color:{color};'>●</span> {params}{chi}")
+            chi = f" · χ²ᵣ = {chi2r:.3g}" if chi2r == chi2r else ""
+            scaled = " (errors ×√χ²ᵣ)" if factor > 1.0 else ""
+            lines.append(f"<span style='color:{color};'>●</span> {params}{chi}{scaled}")
         if joint.message and not joint.converged:
             lines.append(f"<i>{joint.message}</i>")
         self._fit_results_label.setText("<br>".join(lines))
@@ -653,6 +776,8 @@ class KnightShiftWindow(QMainWindow):
         ]
         if result.unit_label:
             parts.append(f"unit {result.unit_label}")
+        if self._current_correction().enabled:
+            parts.append("Lorentz/demag corrected")
         if result.skipped_points:
             parts.append(f"{result.skipped_points} skipped")
         if self._joint_applies():
@@ -724,7 +849,8 @@ class KnightShiftWindow(QMainWindow):
                             mid, color=tokens.BORDER, linestyle="--", linewidth=1.0, zorder=0
                         )
             unit_suffix = f" ({result.unit_label})" if result.unit_label else ""
-            ax.set_ylabel(f"K{unit_suffix}")
+            symbol = r"$K_\mu$" if self._current_correction().enabled else "K"
+            ax.set_ylabel(f"{symbol}{unit_suffix}")
             ax.set_xlabel(snapshot.x_label if snapshot is not None else "")
             ax.legend(loc="best", fontsize="small")
         else:
