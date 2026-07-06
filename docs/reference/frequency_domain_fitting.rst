@@ -70,3 +70,15 @@ This lets a project reopen with both a time-domain model and a spectral peak
 model intact.  Cached Fourier spectra are still stored in the Fourier spectrum
 state; raw detector arrays remain referenced by source-file path rather than
 embedded in the project.
+
+.. note::
+
+   The Gaussian and Lorentzian peak forms fitted here are the ordinary
+   line shapes; the minimiser and its statistics are the shared engine
+   documented in :doc:`fitting`. Because the fit target is the *displayed*
+   real spectrum, an apodised or baseline-subtracted spectrum carries those
+   conditioning choices into the fitted width and amplitude — see the
+   apodisation caveat in :doc:`fourier_analysis` and the conditioning steps in
+   :doc:`frequency_finishers`. This page therefore adds no new physics of its
+   own; the underlying references are those of :doc:`fitting` and
+   :doc:`fourier_analysis`.

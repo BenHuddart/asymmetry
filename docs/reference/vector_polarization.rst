@@ -131,6 +131,41 @@ internally consistent (each octant selection matches the geometric
 half-plane of the layout's own detector angles) but is not itself a
 published EMU convention.
 
+Assumptions and limitations
+---------------------------
+
+The vector treatment rests on a small set of geometry assumptions; read the
+projections with them in mind:
+
+- **Each projection is a forward/backward asymmetry along one detector-pair
+  axis.** A forward/backward asymmetry measures the muon polarisation projected
+  onto the axis joining that detector pair, so :math:`P_x`, :math:`P_y`, and
+  :math:`P_z` are the three orthogonal projections only insofar as the three
+  detector-pair axes are mutually orthogonal and aligned with the spectrometer
+  frame. On a real instrument the octant groups approximate those axes; the
+  reconstruction is exact only for an idealised orthogonal layout.
+- **Per-axis α decouples the three projections.** Each axis carries its own
+  calibration constant (``alpha_x`` / ``alpha_y`` / ``alpha_z``) and is reduced
+  independently, so a miscalibrated α on one axis biases that projection's
+  amplitude without contaminating the other two — but all three must be
+  calibrated for the vector to be quantitatively balanced.
+- **Powder samples do not need it.** An orientational average collapses the
+  polarisation onto a single non-trivial component along :math:`\hat{z}`, so the
+  ordinary F–B asymmetry workflow is sufficient; the vector projections add
+  information only when the local field is canted away from :math:`\hat{z}`, as
+  in an oriented single crystal.
+- **The EMU Px/Py/Pz preset is an Asymmetry construct**, not a published EMU
+  convention (see `Detector Group Composition`_): it is verified internally
+  consistent against the layout's own detector angles, but should be
+  cross-checked against the facility detector numbering before quantitative use.
+
+References
+----------
+
+- S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt,
+  *Muon Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022) —
+  detector geometry and the polarisation-projection observable.
+
 Related Topics
 --------------
 

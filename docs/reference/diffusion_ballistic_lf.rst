@@ -252,9 +252,10 @@ should be read with the following caveats in mind:
 References
 ----------
 
-[1] Phys. Rev. B **106**, L060401 (2022) — the four-term decomposition
-    used in the quasi-2D dynamic-relaxation analysis the diffusive
-    components were built to match.
+[1] F. L. Pratt, F. Lang, W. Steinhardt, S. Haravifard, and S. J.
+    Blundell, Phys. Rev. B **106**, L060401 (2022) — the four-term
+    decomposition used in the quasi-2D dynamic-relaxation analysis the
+    diffusive components were built to match.
 
 [2] F. L. Pratt, J. Phys.: Conf. Ser. **2462**, 012038 (2023) —
     autocorrelation forms for one-, two-, and three-dimensional diffusion.
