@@ -662,33 +662,55 @@ Complete workflow for frequency analysis:
 GUI Fourier workflow
 --------------------
 
-The FFT spectrum does **not** compute automatically. Nothing is transformed
-until you click ``Compute FFT``, pinned in the action footer at the bottom of
-the Fourier panel (always visible, outside the scrolling settings area). A run
-you have not computed shows a **centred prompt over the Frequency-domain plot** —
-*"No FFT computed for this run. Configure the FFT parameters and click Compute
-FFT."* — instead of a blank tab. That prompt is the expected
-"not computed yet" state, not a broken transform, and it clears the moment a
-spectrum is computed.
+The FFT spectrum computes automatically the moment you look at it. Opening the
+**Frequency Domain** tab — via the plot workspace's tab strip or the toolbar
+``FFT`` button — for a run that has never been transformed synthesises a
+recipe from the current Fourier panel settings and the run's own detector
+grouping, then runs the transform off-thread behind a busy overlay
+(*"Computing FFT for run <n>…"*) so the window stays responsive. Switching to
+a different run while the Frequency-domain tab is showing does the same: each
+never-computed run picks up a fresh spectrum as you select it. ``Compute FFT``,
+pinned in the action footer at the bottom of the Fourier panel (always visible,
+outside the scrolling settings area), remains the explicit way to re-run the
+transform after you change a setting — auto-compute only ever fills a genuinely
+empty spectrum, it never overwrites one you have already computed.
 
-To compute an FFT spectrum:
+A **multi-run overlay** extends the same idea to a selection: toggling Overlay
+with several runs selected auto-computes every member that has no spectrum yet,
+in waves of 25 runs at a time (an overlay status of *"Computing FFT for <n>
+run(s)…"*), re-rendering after each wave until every selected run is included.
+Runs that cannot compute — no detector groups, or a transform that fails — are
+skipped and reported in the status line: *"Overlaying <n> runs; <m> selected
+run(s) could not be computed — check their detector grouping and the log."*
+
+Auto-compute needs detector groups to work from. A run with no groups (or with
+every group excluded), or one whose transform genuinely fails, cannot seed a
+recipe and instead shows a **centred prompt over the Frequency-domain plot** —
+*"No FFT spectrum for this run. Spectra compute automatically when the run has
+detector groups — check the grouping and the log, or click Compute FFT to
+retry."* — instead of a blank tab. That prompt is the "cannot auto-compute"
+state, not a broken transform, and it clears the moment a spectrum is computed.
+
+To see an FFT spectrum:
 
 #. **Select the run** in the Data Browser. Selecting a run populates the
    Fourier panel's ``Groups`` table (``Group 1`` / ``Group 2`` …). With no run
    selected the ``Groups`` table — and therefore the spectrum — stays empty.
-#. **Bring up the Fourier panel** if it is not already visible (the toolbar
-   ``FFT`` button raises it). The ``FFT`` button also switches the central plot
-   to the **Frequency Domain** tab, so you see the spectrum area (with the
-   compute prompt until you transform) rather than staying on the time view. It
-   does **not** run the transform.
+#. **Open the FFT view** — the toolbar ``FFT`` button raises the Fourier panel
+   and switches the central plot to the **Frequency Domain** tab. If the run
+   has never been transformed, the spectrum computes automatically at this
+   point (behind the busy overlay); if it already has one, that spectrum is
+   shown directly.
 #. *(Optional)* **Tune the settings** — phase mode, apodisation, included
    groups, phases — using the controls described below.
-#. **Click** ``Compute FFT`` in the panel's pinned action footer. Only this
-   click runs the transform and fills the **Frequency Domain** tab.
+#. **Click** ``Compute FFT`` in the panel's pinned action footer to apply any
+   settings you changed. Auto-compute only fills a never-computed run, so this
+   click is still how you re-run the transform with new parameters.
 
-While the Frequency-domain tab has no computed spectrum, the plot shows the
-compute prompt above and the status line reads ``No FFT computed for run <n>`` —
-configure the parameters and click ``Compute FFT``.
+While the Frequency-domain tab has no spectrum and cannot auto-compute one, the
+plot shows the empty-state prompt above and the status line reads ``No FFT
+computed for run <n>`` — check the run's detector grouping (and the log for a
+failed transform), or click ``Compute FFT`` to retry.
 
 Before you click ``Compute FFT``, the docked Fourier panel lets you tune the
 WiMDA-first FFT workflow directly:
@@ -717,23 +739,29 @@ Out-of-date indicator
 
 A computed spectrum stays on screen when you keep working, so the panel tells
 you when the display no longer matches the current settings. Editing any FFT
-parameter, changing the time-domain fit range the transform inherits, or
-applying a new grouping / t0 / deadtime / background correction to the run
+parameter, or changing the time-domain fit range the transform inherits,
 raises an amber banner directly above the action footer::
 
    Spectrum out of date — <what changed>. Compute FFT to refresh.
 
 The banner names what changed (for example ``zero-pad factor, apodisation
-changed`` or ``grouping changed``) and clears on the next ``Compute FFT``.
-Nothing recomputes automatically — the displayed spectrum is never replaced
-behind your back — and parameters that are inert in the active mode never
-flag: a filter τ edit while apodisation is ``None`` does not mark the
+changed``) and clears on the next ``Compute FFT``. Nothing recomputes
+automatically for these two triggers — the displayed spectrum is never
+replaced behind your back — and parameters that are inert in the active mode
+never flag: a filter τ edit while apodisation is ``None`` does not mark the
 spectrum out of date, and a time-range change already absorbed by the
-good-statistics tail cap does not either. Each computed spectrum records the
-grouping it was derived from, so a regroup is detected even after a project
-save and reload. Spectra restored from projects saved before this feature
-cannot be checked against grouping changes (their recipes carry no grouping
-record); recomputing once re-arms the check.
+good-statistics tail cap does not either.
+
+Applying a new grouping — or a t0, deadtime, or background change through the
+grouping dialog — is handled differently: the FFT spectrum "follows the data"
+the same way the time-domain plot does. A spectrum computed under the old
+grouping is not merely stale, it is wrong, so applying a regroup discards the
+affected runs' FFT spectra and recipes outright (logged as *"Discarded <n> FFT
+spectrum(s) computed under the previous grouping; they recompute on next
+view."*) and, if the Frequency-domain tab is the active view, recomputes it
+immediately rather than leaving the stale banner up. There is nothing to
+refresh by hand here — the next view of the run gets a fresh spectrum against
+the new grouping automatically.
 
 Fitting the displayed spectrum
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -787,16 +815,18 @@ Frequency-domain plot behaviour
 -------------------------------
 
 FFT output is shown on the dedicated ``Frequency Domain`` tab in the central
-plot workspace. Each loaded run keeps its own frequency-domain view state in the
-session, and a run with no computed FFT shows the centred compute prompt on that
-tab — *"No FFT computed for this run. Configure the FFT parameters and click
-Compute FFT."* — until you transform it (see `GUI Fourier Workflow`_). Entering
-the Frequency-domain view with nothing computed **stays** on that tab and shows
-the prompt; it no longer silently falls back to the time view, so the cue is
-always where you are looking. The current x-range is preserved when switching
-onto a run whose Fourier spectrum has not yet been computed. (The MaxEnt
-spectrum tab behaves the same way, with a *"No MaxEnt spectrum computed…"*
-prompt.)
+plot workspace. Each loaded run keeps its own frequency-domain view state in
+the session. Opening that tab for a run that has never been transformed
+computes its spectrum automatically (see `GUI Fourier workflow`_); a run whose
+spectrum cannot be auto-computed — no detector groups, or a failed transform —
+shows the centred empty-state prompt on that tab instead — *"No FFT spectrum
+for this run. Spectra compute automatically when the run has detector groups —
+check the grouping and the log, or click Compute FFT to retry."* Entering the
+Frequency-domain view **stays** on that tab whether it is computing, showing a
+spectrum, or showing the prompt; it no longer silently falls back to the time
+view, so the cue is always where you are looking. The current x-range is
+preserved across the switch. (The MaxEnt spectrum tab is unchanged: it is
+compute-on-demand, with its own *"No MaxEnt spectrum computed…"* prompt.)
 
 The frequency viewer keeps canonical FFT x-data in absolute MHz or Gauss on the
 axis itself. The main toolbar also provides an ``FFT X relative to field``
