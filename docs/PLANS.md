@@ -6,6 +6,36 @@ subsystems or days.
 
 ## Active
 
+### Bayesian Experimental Design: Suggest Next Point (Trending)
+
+Status: study complete, implementation not started
+
+During a live experiment, after a trend model fit, suggest the next x
+(temperature/field) and event count that most constrains the trend model's
+parameters — Laplace expected-information-gain acquisition with c-/D-optimality,
+a target-precision event-count rule (counts, not time; a user-supplied count
+rate converts for display), and closed-form design oracles as tests. A
+numerical prototype validated the acquisition math and showed the raw
+rank-one post-σ is ~5–10× optimistic near critical points, so the counting
+recommendation is calibrated by a Monte-Carlo refit pass
+([studies/prototype-results.md](studies/prototype-results.md)).
+
+Full study, method, decision log, and the phased plan (core → dialog GUI →
+cost/discrimination → deferred refinements) live in
+[studies/bed-next-point-suggestion.md](studies/bed-next-point-suggestion.md).
+
+Acceptance criteria (v1 = Phases 1–2):
+
+- `ParameterModelFitResult` exposes the fit covariance (serialised with the
+  project; legacy projects tolerated).
+- `core/fitting/experiment_design.py::suggest_next_point` +
+  `calibrate_suggestion` are GUI-free and pass the oracle tests (line →
+  interval extremes, Arrhenius → 1/T extreme, order parameter → just below
+  T_c, ranking honesty + MC-calibrated post-σ vs direct refit,
+  unreachable-goal detection).
+- Model Fit dialog shows the utility curve + suggestion on demand, with an
+  ill-conditioned-fit warning banner; `harness validate` green.
+
 ### Fit Function Builder Redesign (Option C)
 
 Status: implemented on branch `feat/fit-builder-redesign`; awaiting live GUI

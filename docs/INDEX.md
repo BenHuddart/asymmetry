@@ -20,6 +20,7 @@ This directory contains all project documentation.
 - **[GUI_GUIDELINES.md](GUI_GUIDELINES.md)**: How to build GUI here — tokens, fonts, metrics, PanelSection/ActionFooter, the UI zoom, and what the harness enforces
 - **[HARNESS.md](HARNESS.md)**: Agent harness workflow and validation commands
 - **[porting/README.md](porting/README.md)**: Policy and required artifacts for study-first feature ports
+- **[studies/](studies/)**: Design studies for novel (non-ported) features
 - **[QUALITY.md](QUALITY.md)**: Current quality map, risk areas, and validation paths
 - **[PLANS.md](PLANS.md)**: Active and deferred execution plans for agents
 - **[contributing.rst](contributing.rst)**: Contributing guidelines (Sphinx format)
