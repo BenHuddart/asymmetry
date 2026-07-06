@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.fitting.angular_assignment import ANGULAR_MODELS
+from asymmetry.gui.styles.metrics import dialog_width
 
 _MODEL_LABELS = {
     "KnightAnisotropy": "Axial  K_iso + K_ax·(3cos²θ−1)/2",
@@ -27,7 +28,7 @@ class KnightJointFitDialog(QDialog):
     def __init__(self, *, n_curves: int, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Joint K(θ) Fit")
-        self.setMinimumWidth(420)
+        self.setMinimumWidth(dialog_width(58))  # ~420px at default scale
         self._result: tuple[str, int] | None = None
 
         root = QVBoxLayout(self)
