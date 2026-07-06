@@ -320,6 +320,310 @@ def evaluate(
     )
 
 
+# ── Joint K(θ) fit with per-angle assignment ─────────────────────────────────
+
+
+@dataclass(frozen=True)
+class KnightJointCurve:
+    """One fitted physical curve of a joint K(θ) fit.
+
+    ``branch_name`` is the ``K[...]`` trace this curve occupies after
+    realignment. ``parameters`` are ``(name, value, error)`` triples in the fit
+    unit (see :attr:`KnightJointFitState.unit`).
+    """
+
+    branch_name: str
+    parameters: tuple[tuple[str, float, float], ...]
+    chi_squared: float
+    reduced_chi_squared: float
+    n_points: int
+    success: bool
+
+    def to_dict(self) -> dict:
+        return {
+            "branch_name": self.branch_name,
+            "parameters": [[n, v, e] for n, v, e in self.parameters],
+            "chi_squared": float(self.chi_squared),
+            "reduced_chi_squared": float(self.reduced_chi_squared),
+            "n_points": int(self.n_points),
+            "success": bool(self.success),
+        }
+
+    @classmethod
+    def from_dict(cls, data: object) -> KnightJointCurve | None:
+        if not isinstance(data, dict):
+            return None
+        raw_params = data.get("parameters")
+        parameters: list[tuple[str, float, float]] = []
+        if isinstance(raw_params, list):
+            for entry in raw_params:
+                if isinstance(entry, (list, tuple)) and len(entry) == 3:
+                    parameters.append(
+                        (str(entry[0]), _finite_or_nan(entry[1]), _finite_or_nan(entry[2]))
+                    )
+        return cls(
+            branch_name=str(data.get("branch_name") or ""),
+            parameters=tuple(parameters),
+            chi_squared=_finite_or_nan(data.get("chi_squared", float("nan"))),
+            reduced_chi_squared=_finite_or_nan(data.get("reduced_chi_squared", float("nan"))),
+            n_points=int(data.get("n_points", 0) or 0),
+            success=bool(data.get("success", False)),
+        )
+
+
+@dataclass
+class KnightJointFitState:
+    """Persisted joint K(θ) fit: model, per-run assignment, per-curve parameters.
+
+    ``assignment[run_number][component]`` is the curve index that component was
+    assigned to at that run — the durable representation (run numbers survive
+    refits and reordering; scan-point indices would not). ``unit`` records the
+    concrete display unit the fit ran in: the assignment is unit-independent,
+    but the curve *parameters* are not, so a unit change marks the curves stale
+    until the fit is re-run.
+    """
+
+    model_name: str = "KnightAnisotropy"
+    max_iter: int = 25
+    unit: str = KnightShiftUnit.PERCENT.value
+    converged: bool = False
+    total_chi_squared: float = 0.0
+    dof: int = 0
+    message: str = ""
+    assignment: dict[int, tuple[int, ...]] = field(default_factory=dict)
+    curves: tuple[KnightJointCurve, ...] = ()
+
+    def to_dict(self) -> dict:
+        return {
+            "model_name": str(self.model_name),
+            "max_iter": int(self.max_iter),
+            "unit": str(self.unit),
+            "converged": bool(self.converged),
+            "total_chi_squared": float(self.total_chi_squared),
+            "dof": int(self.dof),
+            "message": str(self.message),
+            "assignment": {str(run): list(perm) for run, perm in self.assignment.items()},
+            "curves": [curve.to_dict() for curve in self.curves],
+        }
+
+    @classmethod
+    def from_dict(cls, data: object) -> KnightJointFitState | None:
+        if not isinstance(data, dict):
+            return None
+        assignment: dict[int, tuple[int, ...]] = {}
+        raw_assignment = data.get("assignment")
+        if isinstance(raw_assignment, dict):
+            for run, perm in raw_assignment.items():
+                try:
+                    assignment[int(run)] = tuple(int(c) for c in perm)
+                except (TypeError, ValueError):
+                    continue
+        curves = []
+        raw_curves = data.get("curves")
+        if isinstance(raw_curves, list):
+            curves = [c for c in (KnightJointCurve.from_dict(entry) for entry in raw_curves) if c]
+        return cls(
+            model_name=str(data.get("model_name") or "KnightAnisotropy"),
+            max_iter=int(data.get("max_iter", 25) or 25),
+            unit=str(data.get("unit") or KnightShiftUnit.PERCENT.value),
+            converged=bool(data.get("converged", False)),
+            total_chi_squared=_finite_or_nan(data.get("total_chi_squared", 0.0)),
+            dof=int(data.get("dof", 0) or 0),
+            message=str(data.get("message") or ""),
+            assignment=assignment,
+            curves=tuple(curves),
+        )
+
+
+def _joint_fit_matrices(
+    result: KnightAnalysisResult,
+) -> tuple[list[int], list[float], list[list[float]], list[list[float]]]:
+    """Aligned per-point matrices for the joint fit.
+
+    Only runs present (and included) in *every* branch participate — the
+    one-to-one assignment problem needs the full component set at each scan
+    point. Returns ``(run_numbers, angles, values, errors)`` sorted by angle,
+    with values/errors in fractions (``[point][component]``).
+    """
+    branches = result.branches
+    if not branches:
+        return [], [], [], []
+    per_branch: list[dict[int, tuple[float, float, float, bool]]] = [
+        {
+            run: (x, k, e, inc)
+            for run, x, k, e, inc in zip(b.run_numbers, b.x, b.k, b.k_err, b.included)
+        }
+        for b in branches
+    ]
+    shared = set(per_branch[0])
+    for mapping in per_branch[1:]:
+        shared &= set(mapping)
+    rows: list[tuple[float, int, list[float], list[float]]] = []
+    for run in shared:
+        if not all(mapping[run][3] for mapping in per_branch):
+            continue  # excluded on some branch: keep it out of the fit entirely
+        x = per_branch[0][run][0]
+        rows.append(
+            (
+                x,
+                run,
+                [mapping[run][1] for mapping in per_branch],
+                [mapping[run][2] for mapping in per_branch],
+            )
+        )
+    rows.sort(key=lambda item: item[0])
+    return (
+        [run for _x, run, _v, _e in rows],
+        [x for x, _run, _v, _e in rows],
+        [v for _x, _run, v, _e in rows],
+        [e for _x, _run, _v, e in rows],
+    )
+
+
+def run_joint_fit(
+    result: KnightAnalysisResult,
+    *,
+    model_name: str = "KnightAnisotropy",
+    max_iter: int = 25,
+) -> KnightJointFitState:
+    """Jointly fit all branches' K(θ) with per-angle component assignment.
+
+    A thin bridge to :func:`asymmetry.core.fitting.angular_assignment.
+    fit_assigned_angular_curves`: builds the aligned matrices in the result's
+    display unit (so curve parameters read in the plotted unit), runs the
+    classification-EM fit, and re-keys the assignment by run number.
+    Raises ``ValueError`` with fewer than two branches or two shared points.
+    """
+    from asymmetry.core.fitting.angular_assignment import fit_assigned_angular_curves
+
+    if len(result.branches) < 2:
+        raise ValueError("The joint K(θ) fit needs at least two Knight-shift branches")
+    runs, angles, values, errors = _joint_fit_matrices(result)
+    if len(angles) < 2:
+        raise ValueError("The joint K(θ) fit needs at least two scan points shared by all branches")
+
+    scale = result.scale
+    scaled_values = [[k * scale for k in row] for row in values]
+    scaled_errors = [[e * scale for e in row] for row in errors]
+    outcome = fit_assigned_angular_curves(
+        angles, scaled_values, scaled_errors, model_name=model_name, max_iter=max_iter
+    )
+
+    curves = []
+    for branch, fit in zip(result.branches, outcome.curves):
+        parameters = tuple(
+            (
+                p.name,
+                float(p.value),
+                _finite_or_nan(fit.uncertainties.get(p.name, float("nan"))),
+            )
+            for p in fit.parameters
+        )
+        curves.append(
+            KnightJointCurve(
+                branch_name=branch.name,
+                parameters=parameters,
+                chi_squared=float(fit.chi_squared),
+                reduced_chi_squared=float(fit.reduced_chi_squared),
+                n_points=int(fit.n_points) or len(angles),
+                success=bool(fit.success),
+            )
+        )
+    return KnightJointFitState(
+        model_name=model_name,
+        max_iter=int(max_iter),
+        unit=result.unit.value,
+        converged=bool(outcome.converged),
+        total_chi_squared=float(outcome.total_chi_squared),
+        dof=int(outcome.dof),
+        message=str(outcome.message or ""),
+        assignment={run: tuple(perm) for run, perm in zip(runs, outcome.assignment)},
+        curves=tuple(curves),
+    )
+
+
+def apply_assignment(
+    result: KnightAnalysisResult, joint: KnightJointFitState
+) -> KnightAnalysisResult:
+    """Realign the branches so each follows its physical curve through crossings.
+
+    For every run in the joint fit's assignment, the component values are
+    permuted onto the branch of the curve they were assigned to
+    (``perm[component] = curve``). Runs outside the assignment (new points, or
+    points not shared by all branches at fit time) keep their raw labels. The
+    input result is not mutated.
+    """
+    branches = result.branches
+    n = len(branches)
+    if n < 2 or not joint.assignment:
+        return result
+    per_branch: list[dict[int, tuple[float, float]]] = [
+        {run: (k, e) for run, k, e in zip(b.run_numbers, b.k, b.k_err)} for b in branches
+    ]
+    new_k: list[list[float]] = [list(b.k) for b in branches]
+    new_e: list[list[float]] = [list(b.k_err) for b in branches]
+    index_of_run = [{run: i for i, run in enumerate(b.run_numbers)} for b in branches]
+    for run, perm in joint.assignment.items():
+        if len(perm) != n or not all(run in mapping for mapping in per_branch):
+            continue
+        for component, curve in enumerate(perm):
+            target = index_of_run[curve].get(run)
+            if target is None:
+                continue
+            k, e = per_branch[component][run]
+            new_k[curve][target] = k
+            new_e[curve][target] = e
+    realigned = tuple(
+        KnightBranch(
+            name=b.name,
+            component=b.component,
+            kind=b.kind,
+            subscript=b.subscript,
+            x=b.x,
+            k=tuple(new_k[i]),
+            k_err=tuple(new_e[i]),
+            run_numbers=b.run_numbers,
+            included=b.included,
+        )
+        for i, b in enumerate(branches)
+    )
+    return KnightAnalysisResult(
+        unit=result.unit,
+        unit_label=result.unit_label,
+        scale=result.scale,
+        branches=realigned,
+        crossings=result.crossings,
+        skipped_points=result.skipped_points,
+    )
+
+
+def assignment_swap_positions(
+    result: KnightAnalysisResult, joint: KnightJointFitState
+) -> tuple[float, ...]:
+    """Scan positions (midpoints) where the fitted assignment swaps curves.
+
+    These are the crossings the joint fit actually resolved — a firmer signal
+    than the raw proximity flags, so the window marks these when a fit is
+    active. Points not covered by the assignment are skipped.
+    """
+    if not result.branches or not joint.assignment:
+        return ()
+    reference = result.branches[0]
+    ordered = sorted(
+        (
+            (x, joint.assignment[run])
+            for x, run in zip(reference.x, reference.run_numbers)
+            if run in joint.assignment
+        ),
+        key=lambda item: item[0],
+    )
+    swaps = []
+    for (x_left, perm_left), (x_right, perm_right) in zip(ordered, ordered[1:]):
+        if perm_left != perm_right:
+            swaps.append(0.5 * (x_left + x_right))
+    return tuple(swaps)
+
+
 @dataclass
 class KnightAnalysisState:
     """Persisted window state: conversion config + source binding + view hints.
@@ -328,6 +632,8 @@ class KnightAnalysisState:
     open — a saved copy could go stale against a refit). ``source_batch_id`` /
     ``source_group_id`` re-bind the window to its series; ``x_key`` pins the
     scan axis. ``fold_180`` and ``show_markers`` are plot-view preferences.
+    ``joint`` carries the (optional) joint K(θ) fit; its run-keyed assignment
+    stays valid across snapshot rebuilds.
     """
 
     config: KnightShiftConfig = field(default_factory=KnightShiftConfig)
@@ -336,6 +642,7 @@ class KnightAnalysisState:
     x_key: str = "angle"
     fold_180: bool = False
     show_markers: bool = True
+    joint: KnightJointFitState | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -345,6 +652,7 @@ class KnightAnalysisState:
             "x_key": str(self.x_key),
             "fold_180": bool(self.fold_180),
             "show_markers": bool(self.show_markers),
+            "joint": self.joint.to_dict() if self.joint is not None else None,
         }
 
     @classmethod
@@ -360,6 +668,7 @@ class KnightAnalysisState:
             x_key=str(data.get("x_key") or "angle"),
             fold_180=bool(data.get("fold_180", False)),
             show_markers=bool(data.get("show_markers", True)),
+            joint=KnightJointFitState.from_dict(data.get("joint")),
         )
 
 
@@ -384,6 +693,79 @@ def migrate_legacy_state(fit_parameters_state: object) -> KnightAnalysisState | 
         config=config,
         source_group_id=str(active_group) if active_group else None,
         x_key=x_key,
+        joint=_migrate_legacy_joint_fit(fit_parameters_state.get("joint_fit"), config),
+    )
+
+
+def _migrate_legacy_joint_fit(
+    legacy: object, config: KnightShiftConfig
+) -> KnightJointFitState | None:
+    """Lift a legacy trend-panel ``joint_fit`` block into a joint-fit state.
+
+    The run-keyed assignment (the durable, valuable part) migrates exactly. The
+    per-curve parameters are lifted where present, but the *unit* they were
+    fitted in is recorded as the legacy config's unit — for an ``auto`` unit
+    that never matches a concrete display unit, so migrated curves render as
+    stale ("re-run to refresh") rather than risking a wrongly-scaled overlay.
+    """
+    if not isinstance(legacy, dict):
+        return None
+    raw_assignment = legacy.get("assignment")
+    if not isinstance(raw_assignment, dict) or not raw_assignment:
+        return None
+    assignment: dict[int, tuple[int, ...]] = {}
+    for run, perm in raw_assignment.items():
+        try:
+            assignment[int(run)] = tuple(int(c) for c in perm)
+        except (TypeError, ValueError):
+            continue
+    if not assignment:
+        return None
+
+    curves: list[KnightJointCurve] = []
+    raw_curves = legacy.get("curves")
+    if isinstance(raw_curves, dict):
+        for trace in legacy.get("traces") or raw_curves.keys():
+            entry = raw_curves.get(str(trace))
+            ranges = entry.get("ranges") if isinstance(entry, dict) else None
+            first = ranges[0] if isinstance(ranges, list) and ranges else None
+            if not isinstance(first, dict):
+                continue
+            result = first.get("result") if isinstance(first.get("result"), dict) else {}
+            uncertainties = (
+                result.get("uncertainties") if isinstance(result.get("uncertainties"), dict) else {}
+            )
+            parameters = []
+            for param in first.get("parameters") or []:
+                if isinstance(param, dict) and "name" in param:
+                    name = str(param["name"])
+                    parameters.append(
+                        (
+                            name,
+                            _finite_or_nan(param.get("value")),
+                            _finite_or_nan(uncertainties.get(name, float("nan"))),
+                        )
+                    )
+            curves.append(
+                KnightJointCurve(
+                    branch_name=str(trace),
+                    parameters=tuple(parameters),
+                    chi_squared=_finite_or_nan(result.get("chi_squared", float("nan"))),
+                    reduced_chi_squared=_finite_or_nan(
+                        result.get("reduced_chi_squared", float("nan"))
+                    ),
+                    n_points=int(result.get("n_points", 0) or 0),
+                    success=bool(result.get("success", False)),
+                )
+            )
+
+    return KnightJointFitState(
+        model_name=str(legacy.get("model_name") or "KnightAnisotropy"),
+        unit=config.unit.value,
+        converged=True,
+        message="Migrated from a saved trend-panel joint fit.",
+        assignment=assignment,
+        curves=tuple(curves),
     )
 
 

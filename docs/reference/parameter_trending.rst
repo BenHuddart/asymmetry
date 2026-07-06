@@ -1077,6 +1077,8 @@ pipeline:
   named :math:`K_n` and coloured to match its curve on the plot, together with
   a count of the crossings flagged along the scan (see *Component identity and
   crossings* below).
+* **Model fit** — the joint :math:`K(\theta)` fit that resolves those
+  crossings (see *Component identity and crossings*, below).
 
 The plot area has two view toggles, **Fold 180°** (overlay symmetry-equivalent
 orientations onto one period, for an angle scan — a display choice local to
@@ -1086,37 +1088,35 @@ crossing; on by default). Every control change re-derives the branches and
 redraws immediately, so a bad reference choice or an accidentally excluded
 component is visible before anything is published. The footer's **Send K
 columns to trend table** button writes the current configuration back to the
-trend panel as :math:`K[\ldots]` columns — the same generated columns the
-older dialog below produces — so they can be plotted, exported, and (for an
-angle scan) carried into the joint :math:`K(\theta)` fit, which remains a
-trend-panel action (see *Component identity and crossings*, below). Until
-that button is pressed the trend table is untouched, unlike the older
-dialog's apply-on-OK behaviour.
+trend panel as :math:`K[\ldots]` columns so they can be plotted and exported
+alongside the fitted parameters. Until that button is pressed the trend table
+is untouched.
 
 .. figure:: /_generated/screenshots/knight_shift_window.png
    :width: 100%
    :align: center
    :alt: The Knight shift analysis window, with the Applied field reference
-      selected, two frequency branches converted, and crossing markers on
-      the K(theta) plot.
+      selected, two frequency branches converted, a completed joint K(theta)
+      fit in the Model fit section, and the fitted curves overlaid on the
+      K(theta) plot.
 
    The Knight shift analysis window on a two-site angle scan: **Source**,
-   **Conversion**, and **Branches** in the sidebar, and the converted
-   :math:`K(\theta)` branches with **Crossing markers** on in the plot area.
+   **Conversion**, **Branches**, and **Model fit** in the sidebar — the last
+   showing a completed joint :math:`K(\theta)` fit — and the converted
+   branches with their fitted curves and **Crossing markers** on in the plot
+   area.
 
-The window's configuration and view-toggle state persist with the project
-under the ``knight_shift_analysis_state`` key (the point snapshot itself is
-always rebuilt from the source series on load, so a saved project can never
-carry stale fitted values). Projects saved before the window existed stored
-the conversion under the trend panel's own ``fit_parameters_state`` block;
-these migrate automatically the first time the project is opened, so the
-window reopens already configured.
-
-The window sits alongside the older **Knight shift…** dialog (still reached
-from the same *Derived parameters* section) rather than replacing it — the
-dialog remains a quick, modal way to apply a conversion without the window's
-persistent inspection surface — chosen from the **Knight shift…** button in
-the *Derived parameters* section:
+The window's configuration and view-toggle state — including any joint fit —
+persist with the project under the ``knight_shift_analysis_state`` key (the
+point snapshot itself is always rebuilt from the source series on load, so a
+saved project can never carry stale fitted values). Projects saved before the
+window existed stored the conversion, and any joint fit, under the trend
+panel's own ``fit_parameters_state`` block; these migrate automatically the
+first time the project is opened, so the window reopens already configured
+and, where a legacy joint fit is present, with its run-keyed branch
+assignment carried over (the migrated fit's curves render as stale — "re-run
+to refresh" — until the fit is re-run, since the unit they were originally
+fitted in is not always recoverable).
 
 * **Applied field** — the precession is referenced to the bare applied field. For
   a frequency-parameterised component (MHz) the reference is the free-muon Larmor
@@ -1132,18 +1132,6 @@ the *Derived parameters* section:
   :math:`\nu` and :math:`\nu_{\mathrm{ref}}` then come from the same fit, their
   covariance is carried through the error propagation; the applied-field reference
   treats :math:`B` as exact.
-
-.. figure:: /_generated/screenshots/knight_shift_dialog.png
-   :width: 70%
-   :align: center
-   :alt: The Knight Shift conversion dialog, with the Applied field
-      reference selected, two frequency components listed, and a
-      component-crossing warning.
-
-   The Knight Shift conversion dialog. Referencing against the **Applied
-   field** (:math:`\gamma_\mu B`) needs no reference line; the two fitted
-   frequency components are listed for conversion, and the warning notes
-   that the scan's component crossings can swap the trace labels.
 
 K is dimensionless. It is stored internally as a fraction and shown in a unit you
 select, with an **Auto** mode that reads parts per million for a diamagnet
@@ -1177,22 +1165,33 @@ judgement to you. Seeding each fit from its neighbour (chained batch seeding) ke
 the labelling stable through an ordered scan and minimises such crossings in the
 first place.
 
-To *resolve* a crossing rather than just flag it, select two or more
-Knight-shift traces with **Angle** as the x-axis and use **Joint K(θ) fit…**.
-This fits one K(θ) curve per component simultaneously and, at each angle, assigns
-that angle's component points one-to-one to the curves they best fit (a Hungarian
-matching), iterating fit ↔ reassignment to convergence. The selected ``K[...]``
-traces are then reordered **in place** so each one follows a single physical site
-continuously through the crossings, with the per-curve fits overlaid and the
-resolved crossings marked. No extra traces are created — re-running the
-Knight-shift conversion regenerates the original per-component ordering. The joint
-fit (reorder, per-curve overlays and markers) is saved with the project and
-restored on reload.
+To *resolve* a crossing rather than just flag it, open the Knight shift
+analysis window (with at least two branches and **Angle** as the scan axis)
+and use the **Model fit** section of its sidebar: choose a **Model**
+(``KnightAnisotropy`` or ``AngularCos2``, the same two angular basis models
+described below) and a **Max iterations** bound, then press the footer's
+**Run joint K(θ) fit** button. The fit runs off-thread — the button reports
+progress and re-enables when it finishes — and fits one K(θ) curve per
+branch simultaneously, assigning each angle's component points one-to-one to
+the curve they best fit (a Hungarian matching) and iterating fit ↔
+reassignment to convergence. The plotted branches are realigned so each
+follows one physical curve continuously through the crossings, the fitted
+model curves overlay in the branch colours, and dashed vertical markers flag
+the angles where the assignment swaps (the crossings the fit actually
+resolved, a firmer signal than the raw proximity flags). The sidebar reports
+each curve's fitted parameters and reduced :math:`\chi^2` beneath the
+controls; **Clear fit** discards the fit and returns the branches to their
+raw component labels. Changing the display unit only marks the fitted curves
+stale (their parameters are unit-dependent even though the assignment is
+not) — re-run the fit to refresh them. The fit (assignment and per-curve
+parameters) is saved with the project and restored on reload, and stays
+applicable across a **Refresh from trend** as long as the branch count is
+unchanged; a different component selection invalidates it.
 
-Select one or more ``K[...]`` traces and use **Remove** to delete them: the
-backing component is dropped from the conversion (so the trace does not
-regenerate), and any joint fit spanning it is cleared. Removing every component
-turns the conversion off.
+In the trend panel, select one or more ``K[...]`` traces and use **Remove**
+to delete them: the backing component is dropped from the conversion (via
+``set_knight_shift_config``, so the trace does not regenerate). Removing
+every component turns the conversion off.
 
 **Fitting the anisotropy** :math:`K(\theta)`. With **Angle (°)** as the trend
 x-axis, the model-fit builder offers two angle-only basis models alongside the

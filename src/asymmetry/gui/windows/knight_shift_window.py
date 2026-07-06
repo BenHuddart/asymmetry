@@ -18,8 +18,15 @@ table. Data refresh works the same way: :attr:`refresh_requested` asks the
 owner for a fresh snapshot, so the window has no direct panel dependency and
 stays constructible headless (tests, no-matplotlib installs).
 
-Sidebar reads top-to-bottom as the pipeline: Source → Conversion → Branches;
-phase 2 adds branch assignment and the joint K(θ) model fit below them.
+Sidebar reads top-to-bottom as the pipeline: Source → Conversion → Branches →
+Model fit. The joint K(θ) fit (classification-EM with per-angle Hungarian
+assignment, run off-thread via :class:`~asymmetry.gui.tasks.TaskRunner`)
+realigns the plotted branches so each follows one physical curve through
+crossings; the fitted model curves overlay in branch colours and dashed
+markers flag the angles where the assignment swaps. The run-keyed assignment
+persists in :class:`~asymmetry.core.fitting.knight_analysis.KnightJointFitState`
+and survives snapshot refreshes; a changed display unit only marks the fitted
+curves stale (the assignment is unit-independent).
 """
 
 from __future__ import annotations
@@ -40,11 +47,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from asymmetry.core.fitting.angular_assignment import ANGULAR_MODELS
 from asymmetry.core.fitting.knight_analysis import (
     KnightAnalysisInput,
     KnightAnalysisResult,
     KnightAnalysisState,
+    KnightJointFitState,
+    apply_assignment,
+    assignment_swap_positions,
     evaluate,
+    run_joint_fit,
 )
 from asymmetry.core.fitting.knight_shift import (
     REFERENCE_APPLIED_FIELD,
@@ -52,10 +64,17 @@ from asymmetry.core.fitting.knight_shift import (
     KnightShiftConfig,
     KnightShiftUnit,
 )
+from asymmetry.core.fitting.parameter_models import (
+    ParameterCompositeModel,
+    sample_parameter_model,
+)
+from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.utils.angles import wrap_angle_deg
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.metrics import field_width_for
+from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.widgets.action_footer import ActionFooter
+from asymmetry.gui.widgets.no_scroll_spin import NoScrollSpinBox
 from asymmetry.gui.widgets.panel_section import PanelSection
 
 #: Display-unit choices in combo order.
@@ -81,7 +100,7 @@ _BRANCH_COLORS = (
 
 
 class KnightShiftWindow(QMainWindow):
-    """Knight-shift conversion and (phase 2) K(θ) model fitting for one series."""
+    """Knight-shift conversion and joint K(θ) model fitting for one series."""
 
     #: Emitted with the current :class:`KnightShiftConfig` when the user asks to
     #: publish ``K[...]`` columns back to the trend table.
@@ -97,10 +116,14 @@ class KnightShiftWindow(QMainWindow):
         self.resize(980, 620)
 
         self._snapshot: KnightAnalysisInput | None = None
+        #: The raw (label-ordered) derivation; the plot shows the realigned view
+        #: via :meth:`_display_result` when a joint fit applies.
         self._result: KnightAnalysisResult | None = None
         self._state = KnightAnalysisState(config=KnightShiftConfig(enabled=True))
         #: Guard so programmatic control updates never re-enter _reevaluate.
         self._updating_controls = False
+        self._tasks = TaskRunner(self)
+        self._joint_running = False
 
         central = QWidget(self)
         self.setCentralWidget(central)
@@ -118,6 +141,14 @@ class KnightShiftWindow(QMainWindow):
         splitter.setSizes([300, 680])
 
         self._footer = ActionFooter(central)
+        self._fit_btn = self._footer.add_primary("Run joint K(θ) fit")
+        self._fit_btn.setToolTip(
+            "Fit all branches jointly, assigning each angle's components one-to-one "
+            "to the curve they fit best — resolves branch labels through crossings. "
+            "Needs at least two branches and Angle as the scan axis."
+        )
+        self._fit_btn.clicked.connect(self._on_run_joint_fit)
+        self._fit_btn.setEnabled(False)
         self._send_btn = self._footer.add_secondary("Send K columns to trend table")
         self._send_btn.setToolTip(
             "Publish the converted K[…] columns to the trend table so they can be "
@@ -213,6 +244,43 @@ class KnightShiftWindow(QMainWindow):
         self._branches_section.addWidget(self._crossings_label)
         layout.addWidget(self._branches_section)
 
+        # Model fit ------------------------------------------------------------
+        self._fit_section = PanelSection(
+            "Model fit", hint="Joint K(θ) fit with per-angle assignment.", parent=sidebar
+        )
+        model_row = QWidget(sidebar)
+        model_layout = QHBoxLayout(model_row)
+        model_layout.setContentsMargins(0, 0, 0, 0)
+        model_layout.setSpacing(6)
+        model_layout.addWidget(QLabel("Model", model_row))
+        self._model_combo = QComboBox(model_row)
+        for name in ANGULAR_MODELS:
+            self._model_combo.addItem(name)
+        model_layout.addWidget(self._model_combo, 1)
+        iter_row = QWidget(sidebar)
+        iter_layout = QHBoxLayout(iter_row)
+        iter_layout.setContentsMargins(0, 0, 0, 0)
+        iter_layout.setSpacing(6)
+        iter_layout.addWidget(QLabel("Max iterations", iter_row))
+        self._max_iter_spin = NoScrollSpinBox(iter_row)
+        self._max_iter_spin.setRange(1, 200)
+        self._max_iter_spin.setValue(25)
+        iter_layout.addWidget(self._max_iter_spin, 1)
+        self._fit_results_label = QLabel("", sidebar)
+        self._fit_results_label.setWordWrap(True)
+        self._fit_results_label.setTextFormat(Qt.TextFormat.RichText)
+        self._clear_fit_btn = QPushButton("Clear fit", sidebar)
+        self._clear_fit_btn.setToolTip(
+            "Discard the joint fit: branches return to their raw component labels."
+        )
+        self._clear_fit_btn.clicked.connect(self._on_clear_joint_fit)
+        self._clear_fit_btn.setEnabled(False)
+        self._fit_section.addWidget(model_row)
+        self._fit_section.addWidget(iter_row)
+        self._fit_section.addWidget(self._fit_results_label)
+        self._fit_section.addWidget(self._clear_fit_btn)
+        layout.addWidget(self._fit_section)
+
         layout.addStretch(1)
 
         scroll = QScrollArea(self)
@@ -296,6 +364,12 @@ class KnightShiftWindow(QMainWindow):
         try:
             self._fold_check.setChecked(self._state.fold_180)
             self._markers_check.setChecked(self._state.show_markers)
+            joint = self._state.joint
+            if joint is not None:
+                index = self._model_combo.findText(joint.model_name)
+                if index >= 0:
+                    self._model_combo.setCurrentIndex(index)
+                self._max_iter_spin.setValue(max(1, min(200, int(joint.max_iter))))
         finally:
             self._updating_controls = False
         self._reevaluate()
@@ -409,8 +483,119 @@ class KnightShiftWindow(QMainWindow):
             self._result = evaluate(self._snapshot, config)
         self._update_source_labels()
         self._update_branch_rows()
+        self._update_fit_controls()
         self._update_status()
         self._redraw()
+
+    # ── Joint K(θ) fit ───────────────────────────────────────────────────────
+
+    def _joint_applies(self) -> bool:
+        """Whether the stored joint fit matches the current branch set.
+
+        The run-keyed assignment stays applicable across snapshot refreshes as
+        long as the branch count is unchanged; a different component selection
+        (different branch names) invalidates it.
+        """
+        joint = self._state.joint
+        result = self._result
+        if joint is None or result is None or not joint.assignment:
+            return False
+        if len(result.branches) < 2:
+            return False
+        perm_len = len(next(iter(joint.assignment.values())))
+        if perm_len != len(result.branches):
+            return False
+        if joint.curves and {c.branch_name for c in joint.curves} != {
+            b.name for b in result.branches
+        }:
+            return False
+        return True
+
+    def _joint_curves_fresh(self) -> bool:
+        """Whether the fitted curve parameters are in the current display unit."""
+        joint = self._state.joint
+        result = self._result
+        return joint is not None and result is not None and joint.unit == result.unit.value
+
+    def _display_result(self) -> KnightAnalysisResult | None:
+        """The result as plotted: realigned by the joint fit when it applies."""
+        if self._result is not None and self._joint_applies():
+            return apply_assignment(self._result, self._state.joint)
+        return self._result
+
+    def _can_run_joint_fit(self) -> bool:
+        return (
+            not self._joint_running
+            and self._snapshot is not None
+            and self._snapshot.x_key == "angle"
+            and self._result is not None
+            and len(self._result.branches) >= 2
+        )
+
+    def _on_run_joint_fit(self) -> None:
+        if not self._can_run_joint_fit():
+            return
+        result = self._result
+        model_name = self._model_combo.currentText()
+        max_iter = int(self._max_iter_spin.value())
+        self._joint_running = True
+        self._fit_btn.setEnabled(False)
+        self._footer.show_progress("Fitting K(θ)…")
+        self._tasks.start(
+            lambda _worker: run_joint_fit(result, model_name=model_name, max_iter=max_iter),
+            on_finished=self._on_joint_fit_ready,
+            on_error=self._on_joint_fit_error,
+        )
+
+    def _on_joint_fit_ready(self, joint: KnightJointFitState) -> None:
+        self._joint_running = False
+        self._footer.hide_progress()
+        self._state.joint = joint
+        self._update_fit_controls()
+        self._update_status()
+        self._redraw()
+
+    def _on_joint_fit_error(self, message: str) -> None:
+        self._joint_running = False
+        self._footer.hide_progress()
+        self._update_fit_controls()
+        self._footer.set_status(f"Joint fit failed: {message}")
+
+    def _on_clear_joint_fit(self) -> None:
+        self._state.joint = None
+        self._update_fit_controls()
+        self._update_status()
+        self._redraw()
+
+    def _update_fit_controls(self) -> None:
+        self._fit_btn.setEnabled(self._can_run_joint_fit())
+        joint = self._state.joint
+        self._clear_fit_btn.setEnabled(joint is not None)
+        if joint is None:
+            self._fit_results_label.setText("")
+            return
+        applies = self._joint_applies()
+        lines: list[str] = []
+        if not applies:
+            lines.append("<i>Stored fit does not match the current branches — re-run.</i>")
+        elif not self._joint_curves_fresh():
+            lines.append(
+                "<i>Fitted curves are in a different display unit — re-run to refresh.</i>"
+            )
+        for index, curve in enumerate(joint.curves):
+            color = _BRANCH_COLORS[index % len(_BRANCH_COLORS)]
+            params = ", ".join(
+                f"{name} = {value:.4g} ± {error:.2g}" for name, value, error in curve.parameters
+            )
+            chi = (
+                f" · χ²ᵣ = {curve.reduced_chi_squared:.3g}"
+                if curve.reduced_chi_squared == curve.reduced_chi_squared
+                else ""
+            )
+            lines.append(f"<span style='color:{color};'>●</span> {params}{chi}")
+        if joint.message and not joint.converged:
+            lines.append(f"<i>{joint.message}</i>")
+        self._fit_results_label.setText("<br>".join(lines))
 
     def _update_source_labels(self) -> None:
         snapshot = self._snapshot
@@ -470,6 +655,13 @@ class KnightShiftWindow(QMainWindow):
             parts.append(f"unit {result.unit_label}")
         if result.skipped_points:
             parts.append(f"{result.skipped_points} skipped")
+        if self._joint_applies():
+            joint = self._state.joint
+            swaps = len(assignment_swap_positions(self._result, joint))
+            parts.append(
+                f"joint {joint.model_name} fit"
+                + (f" · {swaps} swap{'s' if swaps != 1 else ''}" if swaps else "")
+            )
         self._footer.set_status(" · ".join(parts))
         self._send_btn.setEnabled(bool(result.branches))
 
@@ -481,8 +673,9 @@ class KnightShiftWindow(QMainWindow):
             return
         self._figure.clear()
         ax = self._figure.add_subplot(111)
-        snapshot, result = self._snapshot, self._result
+        snapshot, result = self._snapshot, self._display_result()
         fold = self._fold_check.isChecked() and snapshot is not None and snapshot.x_key == "angle"
+        joint_active = self._joint_applies()
         if result is not None and result.branches:
             for index, branch in enumerate(result.branches):
                 color = _BRANCH_COLORS[index % len(_BRANCH_COLORS)]
@@ -508,10 +701,28 @@ class KnightShiftWindow(QMainWindow):
                         linestyle="none",
                         label=label if included_flag else None,
                     )
+            # Fitted K(θ) curves (drawn unfolded: the raw scan coordinate is the
+            # frame the fit ran in), only while the fit unit matches the display.
+            if joint_active and not fold and self._joint_curves_fresh():
+                self._draw_joint_curves(ax, result)
             if self._markers_check.isChecked() and not fold:
-                for event in result.crossings:
-                    mid = 0.5 * (float(event.x_left) + float(event.x_right))
-                    ax.axvline(mid, color=tokens.BORDER, linestyle="--", linewidth=1.0, zorder=0)
+                if joint_active:
+                    # Assignment swaps are the crossings the fit resolved — a
+                    # firmer signal than the raw proximity flags.
+                    for x_swap in assignment_swap_positions(self._result, self._state.joint):
+                        ax.axvline(
+                            x_swap,
+                            color=tokens.BORDER_STRONG,
+                            linestyle="--",
+                            linewidth=1.0,
+                            zorder=0,
+                        )
+                else:
+                    for event in result.crossings:
+                        mid = 0.5 * (float(event.x_left) + float(event.x_right))
+                        ax.axvline(
+                            mid, color=tokens.BORDER, linestyle="--", linewidth=1.0, zorder=0
+                        )
             unit_suffix = f" ({result.unit_label})" if result.unit_label else ""
             ax.set_ylabel(f"K{unit_suffix}")
             ax.set_xlabel(snapshot.x_label if snapshot is not None else "")
@@ -528,3 +739,35 @@ class KnightShiftWindow(QMainWindow):
             )
         ax.grid(alpha=0.3)
         self._canvas.draw_idle()
+
+    def _draw_joint_curves(self, ax: object, result: KnightAnalysisResult) -> None:
+        """Overlay the fitted K(θ) model curves in branch colours."""
+        joint = self._state.joint
+        finite = [x for b in result.branches for x in b.x if x == x]
+        if joint is None or not finite:
+            return
+        x_min, x_max = min(finite), max(finite)
+        model = ParameterCompositeModel([joint.model_name])
+        by_name = {c.branch_name: c for c in joint.curves}
+        for index, branch in enumerate(result.branches):
+            curve = by_name.get(branch.name)
+            if curve is None or not curve.success:
+                continue
+            parameters = ParameterSet(
+                [Parameter(name=name, value=value) for name, value, _e in curve.parameters]
+            )
+            xs, ys = sample_parameter_model(model, parameters, x_min, x_max)
+            if xs.size == 0:
+                continue
+            ax.plot(
+                xs,
+                ys,
+                color=_BRANCH_COLORS[index % len(_BRANCH_COLORS)],
+                linewidth=1.4,
+                alpha=0.85,
+                zorder=1,
+            )
+
+    def closeEvent(self, event: object) -> None:  # noqa: N802 — Qt override
+        self._tasks.shutdown()
+        super().closeEvent(event)

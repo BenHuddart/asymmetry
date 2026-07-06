@@ -5,13 +5,21 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+import numpy as np
 import pytest
 
 from asymmetry.core.fitting.knight_analysis import (
     KnightAnalysisInput,
+    KnightAnalysisResult,
     KnightAnalysisState,
+    KnightBranch,
+    KnightJointCurve,
+    KnightJointFitState,
     KnightPoint,
+    apply_assignment,
+    assignment_swap_positions,
     migrate_legacy_state,
+    run_joint_fit,
     selected_components,
     snapshot_from_rows,
 )
@@ -61,6 +69,79 @@ def _input(
         components=tuple(components),
         points=tuple(points),
     )
+
+
+def _branch(
+    name: str,
+    run_numbers,
+    x,
+    k,
+    k_err=None,
+    included=None,
+    component: str | None = None,
+) -> KnightBranch:
+    """Build a KnightBranch directly (bypassing evaluate()) for joint-fit tests.
+
+    run_joint_fit()/apply_assignment()/assignment_swap_positions() only read
+    KnightAnalysisResult.branches (name/x/k/k_err/run_numbers/included) plus the
+    result-level scale/unit, so constructing branches directly keeps the
+    synthetic data exact instead of routing it back through a KnightShiftConfig.
+    """
+    n = len(run_numbers)
+    return KnightBranch(
+        name=name,
+        component=component or name,
+        kind="field",
+        subscript="1",
+        x=tuple(x),
+        k=tuple(k),
+        k_err=tuple(k_err if k_err is not None else [0.001] * n),
+        run_numbers=tuple(run_numbers),
+        included=tuple(included if included is not None else [True] * n),
+    )
+
+
+def _result(branches, unit=KnightShiftUnit.FRACTION) -> KnightAnalysisResult:
+    return KnightAnalysisResult(
+        unit=unit,
+        unit_label=label_for_unit(unit),
+        scale=scale_for_unit(unit),
+        branches=tuple(branches),
+        crossings=(),
+    )
+
+
+def _axial(theta_deg, k_iso, k_ax):
+    """K_iso + K_ax*(3cos^2(theta)-1)/2 for theta in degrees (KnightAnisotropy)."""
+    theta = np.radians(np.asarray(theta_deg, dtype=float))
+    return k_iso + k_ax * (3.0 * np.cos(theta) ** 2 - 1.0) / 2.0
+
+
+#: Magic angle (degrees) where the axial term (3cos^2(theta)-1)/2 vanishes —
+#: two KnightAnisotropy curves sharing K_iso cross here regardless of K_ax.
+_MAGIC_ANGLE_DEG = 54.7356103
+
+
+def _two_branch_crossing_scan():
+    """A clean two-branch K(theta) scan with a raw-label swap past the crossing.
+
+    19 points over 0-90 degrees (as in tests/core/test_angular_assignment.py's
+    own crossing test): curve_a/curve_b share K_iso=100 and cross once at the
+    magic angle; raw labels are swapped for every point past it, mimicking a
+    grouped fit that relabels the near-degenerate components. Returns
+    (result, curve_a, curve_b, angles, runs).
+    """
+    angles = np.linspace(0.0, 90.0, 19)
+    runs = list(range(101, 101 + len(angles)))
+    curve_a = _axial(angles, 100.0, 60.0)
+    curve_b = _axial(angles, 100.0, -20.0)
+    past = angles > _MAGIC_ANGLE_DEG
+    comp0 = np.where(past, curve_b, curve_a)
+    comp1 = np.where(past, curve_a, curve_b)
+    branch0 = _branch("K[c0]", runs, angles, comp0, component="c0")
+    branch1 = _branch("K[c1]", runs, angles, comp1, component="c1")
+    result = _result([branch0, branch1])
+    return result, curve_a, curve_b, angles, runs
 
 
 # --- KnightPoint / KnightAnalysisInput construction ------------------------
@@ -638,3 +719,310 @@ def test_snapshot_from_rows_non_finite_field_and_x_coerced_to_nan():
     point = snapshot.points[0]
     assert math.isnan(point.x)
     assert math.isnan(point.field_gauss)
+
+
+# --- run_joint_fit(): recovery on a synthetic crossing scan --------------------
+
+
+def test_run_joint_fit_recovers_curves_through_a_label_swap():
+    result, curve_a, curve_b, angles, runs = _two_branch_crossing_scan()
+
+    joint = run_joint_fit(result, model_name="KnightAnisotropy", max_iter=25)
+
+    assert joint.converged is True
+    assert joint.unit == result.unit.value
+    recovered = {
+        curve.branch_name: {name: value for name, value, _err in curve.parameters}
+        for curve in joint.curves
+    }
+    branch_names = {b.name for b in result.branches}
+    assert set(recovered) == branch_names
+    k_iso_values = [params["K_iso"] for params in recovered.values()]
+    k_ax_values = sorted(params["K_ax"] for params in recovered.values())
+    assert all(v == pytest.approx(100.0, abs=1e-3) for v in k_iso_values)
+    assert k_ax_values == pytest.approx([-20.0, 60.0], abs=1e-3)
+    # Assignment is keyed by run_number, not scan-point index.
+    assert set(joint.assignment) == set(runs)
+    assert all(len(perm) == 2 for perm in joint.assignment.values())
+
+
+def test_run_joint_fit_raises_with_fewer_than_two_branches():
+    branch = _branch("K[a]", [1, 2], [0.0, 10.0], [1.0, 2.0])
+    result = _result([branch])
+    with pytest.raises(ValueError, match="at least two Knight-shift branches"):
+        run_joint_fit(result)
+
+
+def test_run_joint_fit_raises_with_fewer_than_two_shared_points():
+    # Two branches, but their run_numbers don't overlap enough to share 2 points.
+    branch_a = _branch("K[a]", [1], [0.0], [1.0])
+    branch_b = _branch("K[b]", [2], [0.0], [1.0])
+    result = _result([branch_a, branch_b])
+    with pytest.raises(ValueError, match="at least two scan points shared"):
+        run_joint_fit(result)
+
+
+# --- run_joint_fit() / _joint_fit_matrices(): excluded / partial points --------
+
+
+def test_excluded_and_partial_points_are_left_out_of_the_fit():
+    # Run 4 is excluded on branch a; run 5 exists only on branch a. Neither
+    # should enter the fit, so the assignment only ever mentions runs 1-3.
+    branch_a = _branch(
+        "K[a]",
+        [1, 2, 3, 4, 5],
+        [0.0, 10.0, 20.0, 30.0, 40.0],
+        [100.0, 101.0, 102.0, 103.0, 104.0],
+        included=[True, True, True, False, True],
+    )
+    branch_b = _branch(
+        "K[b]",
+        [1, 2, 3, 4],
+        [0.0, 10.0, 20.0, 30.0],
+        [50.0, 51.0, 52.0, 53.0],
+    )
+    result = _result([branch_a, branch_b])
+
+    joint = run_joint_fit(result, max_iter=5)
+
+    assert set(joint.assignment) == {1, 2, 3}
+    assert 4 not in joint.assignment
+    assert 5 not in joint.assignment
+
+
+# --- apply_assignment() --------------------------------------------------------
+
+
+def test_apply_assignment_realigns_branches_to_the_true_curve():
+    result, curve_a, curve_b, angles, runs = _two_branch_crossing_scan()
+    joint = run_joint_fit(result, model_name="KnightAnisotropy", max_iter=25)
+
+    realigned = apply_assignment(result, joint)
+
+    # Curve indices follow the fit's own branch order (result.branches[0]/[1]),
+    # not necessarily "a"/"b" — match realigned branches directly to the true
+    # curves by value rather than assuming which index landed where.
+    by_name = {b.name: b for b in realigned.branches}
+    branch0_vals = np.array(by_name["K[c0]"].k)
+    branch1_vals = np.array(by_name["K[c1]"].k)
+    if np.allclose(branch0_vals, curve_a, atol=1e-6):
+        matched_a, matched_b = branch0_vals, branch1_vals
+    else:
+        matched_a, matched_b = branch1_vals, branch0_vals
+    assert matched_a == pytest.approx(curve_a, abs=1e-6)
+    assert matched_b == pytest.approx(curve_b, abs=1e-6)
+
+    # The input result must not be mutated.
+    original_branch0 = result.branch("K[c0]")
+    assert np.array(original_branch0.k) == pytest.approx(
+        np.where(angles > _MAGIC_ANGLE_DEG, curve_b, curve_a), abs=1e-9
+    )
+
+
+def test_apply_assignment_keeps_raw_values_for_runs_outside_the_assignment():
+    branch_a = _branch("K[a]", [1, 2, 3], [0.0, 10.0, 20.0], [1.0, 2.0, 3.0])
+    branch_b = _branch("K[b]", [1, 2, 3], [0.0, 10.0, 20.0], [10.0, 20.0, 30.0])
+    result = _result([branch_a, branch_b])
+    # Only run 1 is covered by the assignment (a deliberate swap); runs 2/3 are
+    # "new points" the fit never saw.
+    joint = KnightJointFitState(assignment={1: (1, 0)})
+
+    realigned = apply_assignment(result, joint)
+
+    assert realigned.branch("K[a]").k == (10.0, 2.0, 3.0)
+    assert realigned.branch("K[b]").k == (1.0, 20.0, 30.0)
+
+
+def test_apply_assignment_perm_length_mismatch_leaves_run_unchanged():
+    branch_a = _branch("K[a]", [1, 2], [0.0, 10.0], [1.0, 2.0])
+    branch_b = _branch("K[b]", [1, 2], [0.0, 10.0], [10.0, 20.0])
+    result = _result([branch_a, branch_b])
+    # perm for run 1 has 3 entries but there are only 2 branches -> skipped.
+    joint = KnightJointFitState(assignment={1: (0, 1, 2), 2: (1, 0)})
+
+    realigned = apply_assignment(result, joint)
+
+    assert realigned.branch("K[a]").k == (1.0, 20.0)
+    assert realigned.branch("K[b]").k == (10.0, 2.0)
+
+
+def test_apply_assignment_with_fewer_than_two_branches_or_no_assignment_returns_input():
+    branch = _branch("K[a]", [1, 2], [0.0, 10.0], [1.0, 2.0])
+    single_branch_result = _result([branch])
+    joint_with_assignment = KnightJointFitState(assignment={1: (0,)})
+    assert apply_assignment(single_branch_result, joint_with_assignment) is single_branch_result
+
+    branch_a = _branch("K[a]", [1, 2], [0.0, 10.0], [1.0, 2.0])
+    branch_b = _branch("K[b]", [1, 2], [0.0, 10.0], [10.0, 20.0])
+    two_branch_result = _result([branch_a, branch_b])
+    empty_joint = KnightJointFitState(assignment={})
+    assert apply_assignment(two_branch_result, empty_joint) is two_branch_result
+
+
+# --- assignment_swap_positions() ------------------------------------------------
+
+
+def test_assignment_swap_positions_finds_one_midpoint_at_the_crossing():
+    result, _curve_a, _curve_b, angles, _runs = _two_branch_crossing_scan()
+    joint = run_joint_fit(result, model_name="KnightAnisotropy", max_iter=25)
+
+    swaps = assignment_swap_positions(result, joint)
+
+    assert len(swaps) == 1
+    # The swap sits between the two scan points straddling the magic angle.
+    below = max(a for a in angles if a <= _MAGIC_ANGLE_DEG)
+    above = min(a for a in angles if a > _MAGIC_ANGLE_DEG)
+    assert swaps[0] == pytest.approx(0.5 * (below + above))
+
+
+def test_assignment_swap_positions_empty_without_joint_or_branches():
+    branch_a = _branch("K[a]", [1, 2], [0.0, 10.0], [1.0, 2.0])
+    branch_b = _branch("K[b]", [1, 2], [0.0, 10.0], [10.0, 20.0])
+    result = _result([branch_a, branch_b])
+
+    assert assignment_swap_positions(result, KnightJointFitState(assignment={})) == ()
+    assert assignment_swap_positions(_result([]), KnightJointFitState(assignment={1: (0,)})) == ()
+
+
+# --- KnightJointCurve / KnightJointFitState to_dict/from_dict round-trip -------
+
+
+def test_knight_joint_curve_round_trip():
+    curve = KnightJointCurve(
+        branch_name="K[c0]",
+        parameters=(("K_iso", 100.0, 0.5), ("K_ax", 60.0, 1.2)),
+        chi_squared=12.5,
+        reduced_chi_squared=0.8,
+        n_points=19,
+        success=True,
+    )
+
+    restored = KnightJointCurve.from_dict(curve.to_dict())
+
+    assert restored == curve
+
+
+@pytest.mark.parametrize("garbage", [None, [], "nope", 5, 3.14])
+def test_knight_joint_curve_from_dict_garbage_returns_none(garbage):
+    assert KnightJointCurve.from_dict(garbage) is None
+
+
+def test_knight_joint_fit_state_round_trip_with_int_assignment_keys():
+    curve = KnightJointCurve(
+        branch_name="K[c0]",
+        parameters=(("K_iso", 100.0, 0.5),),
+        chi_squared=12.5,
+        reduced_chi_squared=0.8,
+        n_points=19,
+        success=True,
+    )
+    state = KnightJointFitState(
+        model_name="KnightAnisotropy",
+        max_iter=30,
+        unit=KnightShiftUnit.PERCENT.value,
+        converged=True,
+        total_chi_squared=5.0,
+        dof=17,
+        message="ok",
+        assignment={1637: (1, 0), 42: (0, 1)},
+        curves=(curve,),
+    )
+
+    restored = KnightJointFitState.from_dict(state.to_dict())
+
+    assert restored == state
+    assert all(isinstance(run, int) for run in restored.assignment)
+
+
+@pytest.mark.parametrize("garbage", [None, [], "nope", 5, 3.14])
+def test_knight_joint_fit_state_from_dict_garbage_returns_none(garbage):
+    assert KnightJointFitState.from_dict(garbage) is None
+
+
+# --- KnightAnalysisState.joint field --------------------------------------------
+
+
+def test_knight_analysis_state_round_trip_includes_joint():
+    curve = KnightJointCurve(
+        branch_name="K[c0]",
+        parameters=(("K_iso", 100.0, 0.5),),
+        chi_squared=1.0,
+        reduced_chi_squared=0.5,
+        n_points=3,
+        success=True,
+    )
+    joint = KnightJointFitState(
+        model_name="KnightAnisotropy",
+        converged=True,
+        assignment={7: (1, 0)},
+        curves=(curve,),
+    )
+    state = KnightAnalysisState(joint=joint)
+
+    restored = KnightAnalysisState.from_dict(state.to_dict())
+
+    assert restored.joint == joint
+
+
+def test_knight_analysis_state_joint_none_round_trips_as_none():
+    state = KnightAnalysisState(joint=None)
+
+    as_dict = state.to_dict()
+    assert as_dict["joint"] is None
+
+    restored = KnightAnalysisState.from_dict(as_dict)
+
+    assert restored.joint is None
+    # Pin the from_dict(None) contract run_joint_fit-adjacent code relies on.
+    assert KnightJointFitState.from_dict(None) is None
+
+
+# --- migrate_legacy_state(): legacy joint_fit block -----------------------------
+
+
+def test_migrate_legacy_state_lifts_joint_fit_block():
+    legacy = {
+        "knight_shift": {"enabled": True, "unit": "auto"},
+        "x_axis_key": "angle",
+        "joint_fit": {
+            "traces": ["K[c0]"],
+            "model_name": "KnightAnisotropy",
+            "assignment": {"1637": [1, 0]},
+            "curves": {
+                "K[c0]": {
+                    "ranges": [
+                        {
+                            "parameters": [{"name": "K_iso", "value": 0.2}],
+                            "result": {
+                                "success": True,
+                                "chi_squared": 1.0,
+                                "reduced_chi_squared": 0.5,
+                                "uncertainties": {"K_iso": 0.01},
+                            },
+                        }
+                    ]
+                }
+            },
+        },
+    }
+
+    state = migrate_legacy_state(legacy)
+
+    assert state is not None
+    joint = state.joint
+    assert joint is not None
+    assert joint.model_name == "KnightAnisotropy"
+    # Run-keyed assignment migrates with int keys.
+    assert joint.assignment == {1637: (1, 0)}
+    # Curve params + errors are lifted from the legacy result/uncertainties blocks.
+    assert len(joint.curves) == 1
+    curve = joint.curves[0]
+    assert curve.branch_name == "K[c0]"
+    assert curve.parameters == (("K_iso", 0.2, 0.01),)
+    assert curve.chi_squared == pytest.approx(1.0)
+    assert curve.reduced_chi_squared == pytest.approx(0.5)
+    assert curve.success is True
+    # The unit is lifted from the *legacy config's* unit ("auto" here), not a
+    # concrete display unit -- an 'auto' unit never matches result.unit.value,
+    # so migrated curves are stale-by-construction until the fit is re-run.
+    assert joint.unit == "auto"

@@ -26,6 +26,21 @@ def qapp() -> QApplication:
     return QApplication.instance() or QApplication([])
 
 
+def _select_y(panel: FitParametersPanel, names: list[str]) -> None:
+    """Select the given Y-trace names in the Y-selector table."""
+    from PySide6.QtCore import Qt
+
+    wanted = set(names)
+    table = panel._y_selector_table
+    for i in range(table.rowCount()):
+        item = table.item(i, 0)
+        if item is None:
+            continue
+        pname = item.data(Qt.ItemDataRole.UserRole)
+        item.setSelected(isinstance(pname, str) and pname in wanted)
+    panel._selected_y_param_names = panel._selected_y_parameters()
+
+
 def _row(run: int, field: float, values: dict[str, float]) -> dict:
     return {
         "run_number": run,
@@ -259,6 +274,47 @@ def test_fraction_weights_note_empty_without_data(qapp):
     panel = FitParametersPanel()
     panel.load_representation_series([("batch-1", "S", [_row(1, 7000.0, {"field_1": 7050.0})])])
     assert panel._fraction_weights_note() == ""
+
+
+def test_remove_button_deletes_selected_knight_trace(qapp, monkeypatch):
+    # Ported from the removed test_knight_joint_fit.py: K-trace removal is a
+    # panel-level behaviour (_remove_knight_traces / set_knight_shift_config)
+    # independent of the joint fit, which now lives in the analysis window.
+    from PySide6.QtWidgets import QMessageBox
+
+    panel = FitParametersPanel()
+    panel.load_representation_series(
+        [
+            (
+                "batch-1",
+                "S",
+                [
+                    _row(1, 7000.0, {"field_1": 7050.0, "field_2": 7100.0}),
+                    _row(2, 7000.0, {"field_1": 7060.0, "field_2": 7110.0}),
+                ],
+            )
+        ],
+        knight_observables_by_id={"batch-1": {"field_1": "field", "field_2": "field"}},
+    )
+    panel.set_knight_shift_config(KnightShiftConfig(enabled=True, unit=KnightShiftUnit.PPM))
+    traces = sorted(panel._knight_shift_names)
+    assert len(traces) == 2
+
+    _select_y(panel, [traces[0]])
+    panel._update_composite_action_buttons()
+    assert panel._remove_composite_btn.isEnabled()  # K traces are removable
+
+    monkeypatch.setattr(
+        QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes)
+    )
+    panel._remove_selected_composite_parameters()
+
+    # The deleted trace is gone and excluded from the conversion so it won't regenerate.
+    assert traces[0] not in panel._knight_shift_names
+    assert not any(traces[0] in row.values for row in panel._rows)
+    field = panel._knight_shift_names[traces[1]]
+    assert panel._knight_shift_config.components == (field,)
+    assert traces[1] in panel._knight_shift_names  # the unselected trace survives
 
 
 def test_config_round_trips_through_state(qapp):

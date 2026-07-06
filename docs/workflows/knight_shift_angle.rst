@@ -76,19 +76,23 @@ Walkthrough
       :width: 100%
       :align: center
       :alt: The Knight shift analysis window, with the Applied field
-         reference selected, two frequency branches converted, and
-         crossing markers on the K(theta) plot.
+         reference selected, two frequency branches converted, a completed
+         joint K(theta) fit in the Model fit section, and the fitted curves
+         on the K(theta) plot.
 
       The Knight shift analysis window on a two-site angle scan. The sidebar
       reads top to bottom as the pipeline — **Source** (the fitted series
-      supplying the frequencies), **Conversion** (reference and unit), and
+      supplying the frequencies), **Conversion** (reference and unit),
       **Branches** (one :math:`K` trace per converted component, with a count
-      of the crossings flagged along the scan); the plot shows both branches
-      against angle with **Crossing markers** on, dashed at the scan intervals
-      where the raw component labels can swap. Converting here does not touch
-      the trend table — press **Send K columns to trend table** in the footer
-      to publish the :math:`K[\ldots]` columns for plotting, export, and the
-      joint fit in the next step.
+      of the crossings flagged along the scan), and **Model fit** (the joint
+      :math:`K(\theta)` fit covered in a later step, shown here already run);
+      the plot shows both branches against angle with their fitted curves and
+      **Crossing markers** on, dashed at the scan intervals where the raw
+      component labels can swap. Converting here does not touch the trend
+      table — press **Send K columns to trend table** in the footer to
+      publish the :math:`K[\ldots]` columns for plotting and export (the
+      joint fit runs here in the window and does not need them published
+      first).
 
 #. **Plot against orientation.** Back in the trend panel, select **Angle (°)**
    as the trend x-axis to see the published :math:`K[\ldots]` traces. If the
@@ -97,13 +101,16 @@ Walkthrough
    angular sampling — the same fold the analysis window offers as its own
    **Fold 180°** view toggle for inspecting the branches before publishing.
 
-#. **Resolve and fit with a joint** :math:`K(\theta)` **fit.** Select the two
-   :math:`K[\ldots]` traces and use **Joint K(θ) fit…**. This fits one
+#. **Resolve and fit with a joint** :math:`K(\theta)` **fit.** Back in the
+   Knight shift analysis window, use its **Model fit** sidebar section:
+   pick a model (``KnightAnisotropy`` for the axial dipolar form used here)
+   and press the footer's **Run joint K(θ) fit** button. This fits one
    :math:`K(\theta)` curve per site at once and, at each angle, assigns that
    angle's points one-to-one to the curves they best match (a Hungarian
    matching), iterating until both the curves and the assignment settle. The
-   traces are reordered in place so each follows a single physical site
-   continuously through the crossings, with the per-curve fits overlaid.
+   plotted branches realign so each follows a single physical site
+   continuously through the crossings, with the per-curve fits overlaid and
+   swap markers at the angles where the assignment changes.
 
 .. image:: /_generated/screenshots/knight_shift_angle.png
    :alt: Two-site angle-dependent Knight shift with a joint K(theta) anisotropy fit

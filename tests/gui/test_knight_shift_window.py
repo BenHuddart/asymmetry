@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 
+import numpy as np
 import pytest
 
 pytestmark = [pytest.mark.gui]
@@ -19,8 +20,10 @@ from asymmetry.core.fitting.knight_shift import (
     KnightShiftConfig,
     KnightShiftUnit,
 )
+from asymmetry.core.fitting.parameter_models import PARAMETER_MODEL_COMPONENTS
 from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
 from asymmetry.gui.windows.knight_shift_window import KnightShiftWindow
+from tests._qt_helpers import wait_for
 
 
 @pytest.fixture(scope="module")
@@ -49,6 +52,50 @@ def _snapshot(n_points: int = 10) -> KnightAnalysisInput:
         source_label="Test series",
         batch_id="batch-1",
         group_id="group-1",
+    )
+
+
+def _axial_field(angle, k_iso, k_ax, b_ext=7000.0):
+    """A local field giving an axial K(θ) under the applied-field reference."""
+    fn = PARAMETER_MODEL_COMPONENTS["KnightAnisotropy"].function
+    k = fn(np.asarray(angle, dtype=float), K_iso=k_iso, K_ax=k_ax)  # dimensionless
+    return b_ext * (1.0 + k)
+
+
+def _crossing_snapshot(n_points: int = 13) -> KnightAnalysisInput:
+    """A 2-branch angle scan whose K(θ) curves cross at the magic angle (~54.7°).
+
+    Mirrors the construction used by ``tests/core/test_angular_assignment.py``
+    and the removed panel joint-fit tests: labels are swapped past the
+    crossing (as a grouped fit would emit), so the joint fit has real work to
+    do (assignment departs from identity) and is proven to converge.
+    """
+    angles = np.linspace(0.0, 90.0, n_points)
+    b_ext = 7000.0
+    a = _axial_field(angles, 0.02, 0.03, b_ext)  # two crossing K(θ) curves
+    b = _axial_field(angles, 0.02, -0.01, b_ext)
+    past = angles > 54.7356103
+    f1 = np.where(past, b, a)
+    f2 = np.where(past, a, b)
+    points = tuple(
+        KnightPoint(
+            run_number=i + 1,
+            run_label=str(i + 1),
+            x=float(ang),
+            field_gauss=b_ext,
+            values={"field_1": float(f1[i]), "field_2": float(f2[i])},
+            errors={"field_1": 0.2, "field_2": 0.2},
+        )
+        for i, ang in enumerate(angles)
+    )
+    return KnightAnalysisInput(
+        x_key="angle",
+        x_label="Angle (°)",
+        components=(("field_1", "field"), ("field_2", "field")),
+        points=points,
+        source_label="Crossing series",
+        batch_id="batch-crossing",
+        group_id="group-crossing",
     )
 
 
@@ -299,6 +346,73 @@ def test_toggling_fold_and_markers_redraws_without_exception(qapp):
     window._markers_check.setChecked(False)
     window._fold_check.setChecked(False)
     window._markers_check.setChecked(True)
+
+
+# ── 12. Joint K(θ) fit ────────────────────────────────────────────────────────
+
+
+def test_run_joint_fit_converges_and_updates_state_and_controls(qapp):
+    window = KnightShiftWindow()
+    window.set_snapshot(_crossing_snapshot())
+
+    assert window._fit_btn.isEnabled()
+    window._on_run_joint_fit()
+    assert not window._fit_btn.isEnabled()  # disabled while the fit runs
+
+    wait_for(lambda: not window._joint_running, QApplication.instance(), timeout_s=20.0)
+
+    assert window._state.joint is not None
+    assert window._joint_applies()
+    assert window._fit_results_label.text() != ""
+    assert window._fit_btn.isEnabled()
+    assert window._clear_fit_btn.isEnabled()
+
+
+def test_joint_fit_state_round_trips_into_a_new_window(qapp):
+    window = KnightShiftWindow()
+    snapshot = _crossing_snapshot()
+    window.set_snapshot(snapshot)
+    window._on_run_joint_fit()
+    wait_for(lambda: not window._joint_running, QApplication.instance(), timeout_s=20.0)
+    assert window._joint_applies()
+
+    state = window.get_state()
+    assert state["joint"] is not None
+
+    restored = KnightShiftWindow()
+    restored.restore_state(state)
+    restored.set_snapshot(snapshot)
+
+    assert restored._state.joint is not None
+    assert restored._joint_applies()
+
+
+def test_clear_fit_clears_joint_state(qapp):
+    window = KnightShiftWindow()
+    window.set_snapshot(_crossing_snapshot())
+    window._on_run_joint_fit()
+    wait_for(lambda: not window._joint_running, QApplication.instance(), timeout_s=20.0)
+    assert window._state.joint is not None
+
+    window._clear_fit_btn.click()
+
+    assert window._state.joint is None
+    assert not window._clear_fit_btn.isEnabled()
+    assert window._fit_results_label.text() == ""
+
+
+def test_unchecking_a_component_invalidates_the_stored_fit(qapp):
+    window = KnightShiftWindow()
+    window.set_snapshot(_crossing_snapshot())
+    window._on_run_joint_fit()
+    wait_for(lambda: not window._joint_running, QApplication.instance(), timeout_s=20.0)
+    assert window._joint_applies()
+
+    window._component_checks["field_1"].setChecked(False)
+
+    # Only one branch remains: the stored (two-branch) fit no longer applies.
+    assert not window._joint_applies()
+    assert "does not match" in window._fit_results_label.text()
 
     assert len(window._figure.axes) == 1
     assert len(window._figure.axes[0].containers) > 0
