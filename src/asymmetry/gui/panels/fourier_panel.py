@@ -8,7 +8,7 @@ from __future__ import annotations
 import html
 from functools import lru_cache
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QSettings, Qt, QTimer
 from PySide6.QtGui import QColor, QDoubleValidator
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -16,9 +16,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QFormLayout,
-    QFrame,
     QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -34,13 +32,21 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.fourier.correlation import DEFAULT_CORR_ORDER
+from asymmetry.core.fourier.fft import fourier_mode_uses_phase_correction
 from asymmetry.gui.panels.spectral_moments_widget import SpectralMomentsWidget
-from asymmetry.gui.styles import tokens
+from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.styles.fonts import mono_font
-from asymmetry.gui.styles.typography import status_font
-from asymmetry.gui.styles.widgets import apply_param_table_style, build_primary_button_qss
+from asymmetry.gui.styles.typography import SIZE_NUMERIC
+from asymmetry.gui.styles.widgets import (
+    apply_param_table_style,
+    info_html,
+    make_section,
+    success_html,
+)
 from asymmetry.gui.utils.latex_renderer import render_latex_to_html_image
+from asymmetry.gui.widgets.action_footer import ActionFooter
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollSpinBox
+from asymmetry.gui.widgets.panel_section import PanelSection
 
 _PHASE_MODE_LABELS = (
     "(Power)^1/2",
@@ -177,27 +183,6 @@ def _build_fourier_mode_info_html(render_latex_images: bool) -> str:
     return "".join(section_html)
 
 
-def _collapsible_group(title: str) -> tuple[QGroupBox, QVBoxLayout]:
-    """A checkable group box that hides its content when unchecked.
-
-    Mirrors the ALC panel's ``_collapsible_group`` disclosure so niche /
-    experimental controls can be tucked away without leaving the ~236px
-    inspector deck. Returns the group and the layout to fill with content.
-    """
-    group = QGroupBox(title)
-    group.setCheckable(True)
-    group.setChecked(True)
-    content = QWidget()
-    shell = QVBoxLayout(group)
-    shell.setContentsMargins(6, 2, 6, 6)
-    shell.addWidget(content)
-    group.toggled.connect(content.setVisible)
-    inner = QVBoxLayout(content)
-    inner.setContentsMargins(0, 0, 0, 0)
-    inner.setSpacing(6)
-    return group, inner
-
-
 def show_fourier_mode_info_dialog(parent: QWidget) -> QDialog:
     """Open a non-modal info dialog describing the WiMDA-style FFT modes."""
     dialog = QDialog(parent)
@@ -230,13 +215,17 @@ def show_fourier_mode_info_dialog(parent: QWidget) -> QDialog:
 class FourierPanel(QWidget):
     """Controls for frequency-domain analysis."""
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, *, settings: QSettings | None = None) -> None:
         super().__init__(parent)
         layout = QVBoxLayout(self)
         self._table_group_ids: list[int] = []
         self._auto_filled_group_ids: set[int] = set()
         self._phase_table_updating = False
         self._mode_info_dialog: QDialog | None = None
+        # Injectable QSettings scope for collapsible-section persistence
+        # (defaults to the app-configured org/app scope); tests pass a scratch
+        # scope. Mirrors PanelSection's own ``settings=`` hook.
+        self._settings = settings if settings is not None else QSettings()
 
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
@@ -247,8 +236,84 @@ class FourierPanel(QWidget):
         scroll_area.setWidget(content)
         content_layout = QVBoxLayout(content)
 
-        phase_mode_group = QGroupBox("FFT Phase Mode")
-        phase_mode_layout = QGridLayout(phase_mode_group)
+        # ── ALWAYS VISIBLE (usage-tier top) ──────────────────────────────────
+        # FFT Phase Mode → Apodisation → Groups → FFT settings. Everyday
+        # controls rendered as flat BENCH sections (static headers).
+        content_layout.addWidget(self._build_phase_mode_section())
+        content_layout.addWidget(self._build_apodisation_section())
+        content_layout.addWidget(self._build_groups_section())
+        content_layout.addWidget(self._build_fft_settings_section())
+        # ── CONDITIONAL ──────────────────────────────────────────────────────
+        # The Phase section is consumed by the core only in a phase-correcting
+        # display mode; shown/hidden as a unit by _update_phase_controls_enabled.
+        content_layout.addWidget(self._build_phase_section())
+        # ── COLLAPSED (niche / occasional) ───────────────────────────────────
+        # Spectral moments, Conditioning, Diamagnetic correction, Frequency
+        # exclusions — collapsible PanelSections with persisted state.
+        content_layout.addWidget(self._build_moments_section())
+        content_layout.addWidget(self._build_conditioning_group())
+        content_layout.addWidget(self._build_diamag_group())
+        content_layout.addWidget(self._build_exclusions_group())
+
+        content_layout.addStretch()
+
+        # Pinned action footer — the panel's primary action is "Compute FFT",
+        # which previously sat at the bottom of the scroll content and was
+        # unreachable at the default window size. The footer (background hint +
+        # Compute + Apply + status) sits outside the scroll area so it stays
+        # visible at any scroll position.
+        layout.addWidget(self._build_action_footer())
+
+        self._use_phase_table_check.toggled.connect(self._update_phase_table_enabled)
+        self._phase_table.itemChanged.connect(self._on_phase_table_item_changed)
+        self._power_sqrt_radio.toggled.connect(self._update_phase_controls_enabled)
+        self._phase_spectrum_radio.toggled.connect(self._update_phase_controls_enabled)
+        self._cos_radio.toggled.connect(self._update_phase_controls_enabled)
+        self._sin_radio.toggled.connect(self._update_phase_controls_enabled)
+        self._phase_mode_radio.toggled.connect(self._update_phase_controls_enabled)
+        self._real_imag_radio.toggled.connect(self._update_phase_controls_enabled)
+        self._phase_opt_real_radio.toggled.connect(self._update_phase_controls_enabled)
+        self._burg_radio.toggled.connect(self._update_phase_controls_enabled)
+        self._burg_radio.toggled.connect(self._update_conditioning_enabled)
+        self._correlation_radio.toggled.connect(self._update_phase_controls_enabled)
+        self._correlation_radio.toggled.connect(self._update_conditioning_enabled)
+        self._phase_mode_info_btn.clicked.connect(self._show_phase_mode_info)
+        self._phase_spin.editingFinished.connect(self._normalize_phase_line_edits)
+        self._t0_offset_spin.editingFinished.connect(self._normalize_phase_line_edits)
+        self._exclude_enabled_check.toggled.connect(self._update_exclusions_suffix)
+        self._exclusion_table.itemChanged.connect(self._update_exclusions_suffix)
+        self._pulse_comp_check.toggled.connect(self._update_conditioning_suffix)
+        self._baseline_mode_combo.currentIndexChanged.connect(self._update_conditioning_suffix)
+        self._diamag_mode_combo.currentIndexChanged.connect(self._update_diamag_suffix)
+        self._update_phase_table_enabled(self._use_phase_table_check.isChecked())
+        self._update_phase_controls_enabled()
+        self._update_conditioning_suffix()
+        self._update_diamag_suffix()
+        self._update_exclusions_suffix()
+
+    # ── always-visible section builders ────────────────────────────────────
+
+    def _numeric_field_width(self, chars: int) -> int:
+        """Return a max width (px) sized to hold ``chars`` numeric characters.
+
+        Fields are capped (not fixed) so a numeric edit never eats the whole
+        ~236px row — the wrapping label takes the remaining width.
+        """
+        return metrics.field_width_for(chars)
+
+    @staticmethod
+    def _wrapping_label(text: str) -> QLabel:
+        """Return a word-wrapping form label so long text never clips at ~236px."""
+        label = QLabel(text)
+        label.setWordWrap(True)
+        return label
+
+    def _build_phase_mode_section(self) -> QWidget:
+        """FFT Phase Mode — routine projections plus the advanced disclosure."""
+        section, section_layout = make_section("FFT Phase Mode")
+        grid_host = QWidget()
+        phase_mode_layout = QGridLayout(grid_host)
+        phase_mode_layout.setContentsMargins(0, 0, 0, 0)
 
         self._phase_mode_button_group = QButtonGroup(self)
         self._power_sqrt_radio = QRadioButton("(Power)^1/2")
@@ -313,12 +378,15 @@ class FourierPanel(QWidget):
             mode_column_layout.addWidget(button)
         mode_column_layout.addStretch()
 
-        self._advanced_modes_group, advanced_modes_layout = _collapsible_group(
-            "Advanced / experimental"
-        )
-        self._advanced_modes_group.setToolTip(
-            "Niche FFT projections: an entropy-based auto-phase optimiser and "
-            "two diagnostic super-resolution spectra. Expand only when needed."
+        # The advanced/experimental sub-disclosure — a collapsible PanelSection,
+        # collapsed by default (no settings_key: it auto-expands on restore of an
+        # advanced-mode project rather than persisting its open/closed state).
+        self._advanced_modes_group = PanelSection(
+            "Advanced / experimental",
+            collapsible=True,
+            expanded=False,
+            hint="Niche FFT projections: entropy auto-phase and two diagnostic "
+            "super-resolution spectra.",
         )
         for button in (
             self._phase_opt_real_radio,
@@ -326,10 +394,7 @@ class FourierPanel(QWidget):
             self._correlation_radio,
         ):
             self._phase_mode_button_group.addButton(button)
-            advanced_modes_layout.addWidget(button)
-        # Collapsed by default — only (Power)^1/2 and the routine projections
-        # are the everyday path.
-        self._advanced_modes_group.setChecked(False)
+            self._advanced_modes_group.addWidget(button)
 
         self._phase_mode_info_btn = QPushButton("Info")
         phase_mode_layout.addWidget(mode_column, 0, 0)
@@ -340,10 +405,13 @@ class FourierPanel(QWidget):
             alignment=Qt.AlignmentFlag.AlignTop,
         )
         phase_mode_layout.addWidget(self._advanced_modes_group, 1, 0, 1, 2)
-        content_layout.addWidget(phase_mode_group)
+        section_layout.addWidget(grid_host)
+        return section
 
-        apodisation_group = QGroupBox("Apodisation")
-        apodisation_form = QFormLayout(apodisation_group)
+    def _build_apodisation_section(self) -> QWidget:
+        """Apodisation — filter start/time-constant and the filter-mode radios."""
+        section, section_layout = make_section("Apodisation")
+        apodisation_form = QFormLayout()
 
         # Kept always editable with sensible defaults rather than greyed out
         # when the mode is "None": a disabled field reads as broken. The tooltip
@@ -352,14 +420,18 @@ class FourierPanel(QWidget):
             "Applies only when an apodisation filter (Lorentzian or Gaussian) is selected."
         )
         self._filter_start_edit = QLineEdit("0.0")
-        self._filter_start_edit.setFont(mono_font(11.0))
+        self._filter_start_edit.setFont(mono_font(SIZE_NUMERIC))
+        self._filter_start_edit.setMaximumWidth(self._numeric_field_width(9))
         self._filter_start_edit.setToolTip(_apodisation_hint)
-        apodisation_form.addRow("Filter start time (µs):", self._filter_start_edit)
+        apodisation_form.addRow(self._wrapping_label("Filter start (µs):"), self._filter_start_edit)
 
         self._filter_time_constant_edit = QLineEdit("1.5")
-        self._filter_time_constant_edit.setFont(mono_font(11.0))
+        self._filter_time_constant_edit.setFont(mono_font(SIZE_NUMERIC))
+        self._filter_time_constant_edit.setMaximumWidth(self._numeric_field_width(9))
         self._filter_time_constant_edit.setToolTip(_apodisation_hint)
-        apodisation_form.addRow("Filter time constant (µs):", self._filter_time_constant_edit)
+        apodisation_form.addRow(
+            self._wrapping_label("Filter τ (µs):"), self._filter_time_constant_edit
+        )
 
         self._filter_button_group = QButtonGroup(self)
         self._filter_lorentzian_radio = QRadioButton("Lorentzian")
@@ -380,65 +452,45 @@ class FourierPanel(QWidget):
         filter_mode_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
         apodisation_form.addRow(filter_mode_row)
 
-        content_layout.addWidget(apodisation_group)
+        section_layout.addLayout(apodisation_form)
+        return section
 
-        groups_group = QGroupBox("Groups")
-        groups_layout = QVBoxLayout(groups_group)
+    def _build_groups_section(self) -> QWidget:
+        """Groups — the include/name/phase table plus the per-group-phase toggle."""
+        section, section_layout = make_section("Groups")
         self._phase_table = QTableWidget(0, 3)
-        self._phase_table.setHorizontalHeaderLabels(["Include", "Group", "Phase (deg)"])
+        self._phase_table.setHorizontalHeaderLabels(["✓", "Group", "Phase (deg)"])
         apply_param_table_style(self._phase_table)
         self._phase_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
         self._phase_table.setEditTriggers(QTableWidget.EditTrigger.AllEditTriggers)
-        self._phase_table.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.ResizeMode.ResizeToContents
-        )
-        self._phase_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self._phase_table.horizontalHeader().setSectionResizeMode(
-            2, QHeaderView.ResizeMode.ResizeToContents
-        )
+        header = self._phase_table.horizontalHeader()
+        # Include is a narrow checkbox column; Group stretches to fill; the Phase
+        # column is a fixed numeric width so the table always fits at ~236px.
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        self._phase_table.setColumnWidth(2, self._numeric_field_width(9))
         self._phase_table.setMinimumHeight(100)
-        groups_layout.addWidget(self._phase_table)
-        groups_form = QFormLayout()
+        section_layout.addWidget(self._phase_table)
+
+        # The per-group-phase toggle is only meaningful in the phase-correcting
+        # display mode; its own text is self-describing, so it is a label-less
+        # widget that hides cleanly (no orphaned "Group phases:" label) when not
+        # applicable.
         self._use_phase_table_check = QCheckBox("Use per-group phase table")
-        groups_form.addRow("Group phases:", self._use_phase_table_check)
-        groups_layout.addLayout(groups_form)
-        content_layout.addWidget(groups_group)
+        section_layout.addWidget(self._use_phase_table_check)
+        return section
 
-        phase_group = QGroupBox("Phase")
-        phase_layout = QVBoxLayout(phase_group)
-        phase_form = QFormLayout()
-
-        self._phase_spin = QLineEdit("0")
-        self._phase_spin.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self._phase_spin.setFont(mono_font(11.0))
-        self._phase_spin.setValidator(QDoubleValidator(-3600.0, 3600.0, 6, self))
-        phase_form.addRow("Phase (deg):", self._phase_spin)
-
-        self._t0_offset_spin = QLineEdit("0")
-        self._t0_offset_spin.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self._t0_offset_spin.setFont(mono_font(11.0))
-        self._t0_offset_spin.setValidator(QDoubleValidator(-1000.0, 1000.0, 6, self))
-        phase_form.addRow("t0 Offset (\u03bcs):", self._t0_offset_spin)
-
-        self._auto_method_combo = QComboBox()
-        self._auto_method_combo.addItems(["Peak", "Average"])
-        phase_form.addRow("Auto method:", self._auto_method_combo)
-        phase_layout.addLayout(phase_form)
-
-        self._auto_phase_btn = QPushButton("Fill phases")
-        self._auto_phase_btn.setToolTip("Fill per-group phase estimates from the data.")
-        phase_layout.addWidget(self._auto_phase_btn)
-
-        content_layout.addWidget(phase_group)
-
-        fft_settings_group = QGroupBox("FFT settings")
-        fft_settings_layout = QVBoxLayout(fft_settings_group)
+    def _build_fft_settings_section(self) -> QWidget:
+        """FFT settings — zero-pad, average-subtraction, averaged-error toggles."""
+        section, section_layout = make_section("FFT settings")
         fft_settings_form = QFormLayout()
 
         self._padding_spin = NoScrollSpinBox()
         self._padding_spin.setRange(1, 16)
         self._padding_spin.setValue(1)
-        fft_settings_form.addRow("Zero-pad factor:", self._padding_spin)
+        self._padding_spin.setMaximumWidth(self._numeric_field_width(6))
+        fft_settings_form.addRow(self._wrapping_label("Zero-pad factor:"), self._padding_spin)
 
         self._subtract_average_signal_check = QCheckBox("Subtract average signal")
         self._subtract_average_signal_check.setChecked(True)
@@ -451,92 +503,91 @@ class FourierPanel(QWidget):
 
         self._average_summary_label = QLabel("")
         self._average_summary_label.setWordWrap(True)
-        fft_settings_form.addRow("Average summary:", self._average_summary_label)
-        fft_settings_layout.addLayout(fft_settings_form)
-        content_layout.addWidget(fft_settings_group)
+        fft_settings_form.addRow(
+            self._wrapping_label("Average summary:"), self._average_summary_label
+        )
+        section_layout.addLayout(fft_settings_form)
+        return section
 
-        content_layout.addWidget(self._build_conditioning_group())
-        content_layout.addWidget(self._build_diamag_group())
-        content_layout.addWidget(self._build_exclusions_group())
-        # Spectral moments — a sibling of the advanced stack (range/cutoff control
-        # over the lineshape-faithful spectrum); the host wires it up.
+    def _build_phase_section(self) -> QWidget:
+        """Phase — manual phase, t0 offset, auto method, Fill phases (conditional)."""
+        # Shown/hidden as a unit by _update_phase_controls_enabled; a flat static
+        # section so the whole block (header included) disappears when the display
+        # mode does not consume a phase correction.
+        section, section_layout = make_section("Phase")
+        self._phase_section = section
+        phase_form = QFormLayout()
+
+        self._phase_spin = QLineEdit("0")
+        self._phase_spin.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self._phase_spin.setFont(mono_font(SIZE_NUMERIC))
+        self._phase_spin.setMaximumWidth(self._numeric_field_width(9))
+        self._phase_spin.setValidator(QDoubleValidator(-3600.0, 3600.0, 6, self))
+        phase_form.addRow(self._wrapping_label("Phase (deg):"), self._phase_spin)
+
+        self._t0_offset_spin = QLineEdit("0")
+        self._t0_offset_spin.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self._t0_offset_spin.setFont(mono_font(SIZE_NUMERIC))
+        self._t0_offset_spin.setMaximumWidth(self._numeric_field_width(9))
+        self._t0_offset_spin.setValidator(QDoubleValidator(-1000.0, 1000.0, 6, self))
+        phase_form.addRow(self._wrapping_label("t0 offset (\u03bcs):"), self._t0_offset_spin)
+
+        self._auto_method_combo = QComboBox()
+        self._auto_method_combo.addItems(["Peak", "Average"])
+        phase_form.addRow(self._wrapping_label("Auto method:"), self._auto_method_combo)
+        section_layout.addLayout(phase_form)
+
+        self._auto_phase_btn = QPushButton("Fill phases")
+        self._auto_phase_btn.setToolTip("Fill per-group phase estimates from the data.")
+        section_layout.addWidget(self._auto_phase_btn)
+        return section
+
+    def _build_moments_section(self) -> QWidget:
+        """Spectral moments — the shared moments widget in a collapsible section."""
+        # The shared SpectralMomentsWidget is a self-titled QGroupBox; clear its
+        # inner title so this host shows a single "SPECTRAL MOMENTS" PanelSection
+        # header (its own instance — MaxEnt keeps its titled copy). The residual
+        # QGroupBox border is a minor cosmetic inconsistency, noted for a future
+        # headless-mode pass on the widget.
         self._moments_widget = SpectralMomentsWidget()
-        content_layout.addWidget(self._moments_widget)
-
-        content_layout.addStretch()
-
-        # Pinned action footer — the primary action of this ~9-section panel is
-        # "Compute FFT", which previously sat at the very bottom of the scroll
-        # content and was unreachable at the default window size. Keep the action
-        # cluster (background hint + Compute + Apply + status) outside the scroll
-        # area so it stays visible at any scroll position.
-        layout.addWidget(self._build_action_footer())
-
-        self._use_phase_table_check.toggled.connect(self._update_phase_table_enabled)
-        self._phase_table.itemChanged.connect(self._on_phase_table_item_changed)
-        self._power_sqrt_radio.toggled.connect(self._update_phase_controls_enabled)
-        self._phase_spectrum_radio.toggled.connect(self._update_phase_controls_enabled)
-        self._cos_radio.toggled.connect(self._update_phase_controls_enabled)
-        self._sin_radio.toggled.connect(self._update_phase_controls_enabled)
-        self._phase_mode_radio.toggled.connect(self._update_phase_controls_enabled)
-        self._real_imag_radio.toggled.connect(self._update_phase_controls_enabled)
-        self._phase_opt_real_radio.toggled.connect(self._update_phase_controls_enabled)
-        self._burg_radio.toggled.connect(self._update_phase_controls_enabled)
-        self._burg_radio.toggled.connect(self._update_conditioning_enabled)
-        self._correlation_radio.toggled.connect(self._update_phase_controls_enabled)
-        self._correlation_radio.toggled.connect(self._update_conditioning_enabled)
-        self._phase_mode_info_btn.clicked.connect(self._show_phase_mode_info)
-        self._phase_spin.editingFinished.connect(self._normalize_phase_line_edits)
-        self._t0_offset_spin.editingFinished.connect(self._normalize_phase_line_edits)
-        self._update_phase_table_enabled(self._use_phase_table_check.isChecked())
-        self._update_phase_controls_enabled()
+        self._moments_widget.setTitle("")
+        section = PanelSection(
+            "Spectral moments",
+            collapsible=True,
+            expanded=False,
+            settings_key="fourier/sections/moments",
+            settings=self._settings,
+        )
+        section.addWidget(self._moments_widget)
+        return section
 
     def _build_action_footer(self) -> QWidget:
-        """Build the always-visible footer holding the Compute FFT action."""
-        footer = QWidget()
-        footer.setObjectName("fourierActionFooter")
-        footer_layout = QVBoxLayout(footer)
-        footer_layout.setContentsMargins(0, 6, 0, 0)
-        footer_layout.setSpacing(4)
-
-        divider = QFrame()
-        divider.setFrameShape(QFrame.Shape.HLine)
-        divider.setFrameShadow(QFrame.Shadow.Plain)
-        divider.setStyleSheet(f"color: {tokens.BORDER};")
-        footer_layout.addWidget(divider)
-
+        """Build the always-visible ActionFooter holding the Compute FFT action."""
+        self._action_footer = ActionFooter()
         # Read-only hint: the grouping's pre-FFT background correction is
         # inherited by the Fourier input (F3) and is otherwise invisible here.
-        self._background_hint_label = QLabel("")
-        self._background_hint_label.setWordWrap(True)
-        self._background_hint_label.setStyleSheet(f"QLabel {{ color: {tokens.TEXT_MUTED}; }}")
         self.set_background_hint(None)
-        footer_layout.addWidget(self._background_hint_label)
-
-        self._fft_btn = QPushButton("Compute FFT")
-        self._fft_btn.setStyleSheet(build_primary_button_qss())
-        footer_layout.addWidget(self._fft_btn)
-
-        self._apply_to_selection_btn = QPushButton("Apply to selection")
+        self._fft_btn = self._action_footer.add_primary("Compute FFT")
+        self._apply_to_selection_btn = self._action_footer.add_secondary("Apply to selection")
         self._apply_to_selection_btn.setToolTip(
             "Copy this run's Fourier settings to the other selected runs and "
             "generate their spectra."
         )
-        footer_layout.addWidget(self._apply_to_selection_btn)
-
-        self._status_label = QLabel("")
-        self._status_label.setFont(status_font())
-        self._status_label.setWordWrap(True)
-        footer_layout.addWidget(self._status_label)
-
-        return footer
+        return self._action_footer
 
     # ── conditioning + exclusions sections ─────────────────────────────
 
-    def _build_conditioning_group(self) -> QGroupBox:
-        """Build the pulse-compensation + baseline conditioning section."""
-        group = QGroupBox("Conditioning")
-        form = QFormLayout(group)
+    def _build_conditioning_group(self) -> PanelSection:
+        """Build the pulse-compensation + baseline conditioning section (collapsible)."""
+        section = PanelSection(
+            "Conditioning",
+            collapsible=True,
+            expanded=False,
+            settings_key="fourier/sections/conditioning",
+            settings=self._settings,
+        )
+        self._conditioning_section = section
+        form = QFormLayout()
 
         self._pulse_comp_check = QCheckBox("Pulse-response compensation")
         self._pulse_comp_check.setToolTip(
@@ -546,33 +597,38 @@ class FourierPanel(QWidget):
         form.addRow(self._pulse_comp_check)
 
         self._pulse_width_edit = QLineEdit("")
-        self._pulse_width_edit.setPlaceholderText("auto (from metadata)")
-        self._pulse_width_edit.setFont(mono_font(11.0))
+        self._pulse_width_edit.setPlaceholderText("auto")
+        self._pulse_width_edit.setFont(mono_font(SIZE_NUMERIC))
+        self._pulse_width_edit.setMaximumWidth(self._numeric_field_width(9))
         self._pulse_width_edit.setValidator(QDoubleValidator(0.0, 10.0, 6, self))
-        form.addRow("Pulse half-width (µs):", self._pulse_width_edit)
+        form.addRow(self._wrapping_label("Pulse half-width (µs):"), self._pulse_width_edit)
 
         self._pulse_max_gain_edit = QLineEdit("25")
-        self._pulse_max_gain_edit.setFont(mono_font(11.0))
+        self._pulse_max_gain_edit.setFont(mono_font(SIZE_NUMERIC))
+        self._pulse_max_gain_edit.setMaximumWidth(self._numeric_field_width(8))
         self._pulse_max_gain_edit.setValidator(QDoubleValidator(1.0, 1000.0, 3, self))
-        form.addRow("Max gain:", self._pulse_max_gain_edit)
+        form.addRow(self._wrapping_label("Max gain:"), self._pulse_max_gain_edit)
 
         self._baseline_mode_combo = QComboBox()
         self._baseline_mode_combo.addItem("None", userData="none")
         self._baseline_mode_combo.addItem("Robust σ-clip", userData="sigma_clip")
         self._baseline_mode_combo.addItem("WiMDA single-pass", userData="wimda")
-        form.addRow("Baseline offset:", self._baseline_mode_combo)
+        form.addRow(self._wrapping_label("Baseline offset:"), self._baseline_mode_combo)
 
         self._baseline_kappa_edit = QLineEdit("2")
-        self._baseline_kappa_edit.setFont(mono_font(11.0))
+        self._baseline_kappa_edit.setFont(mono_font(SIZE_NUMERIC))
+        self._baseline_kappa_edit.setMaximumWidth(self._numeric_field_width(8))
         self._baseline_kappa_edit.setValidator(QDoubleValidator(0.5, 10.0, 3, self))
-        form.addRow("Clip κ (σ):", self._baseline_kappa_edit)
+        form.addRow(self._wrapping_label("Clip κ (σ):"), self._baseline_kappa_edit)
 
         self._burg_order_min_spin = NoScrollSpinBox()
         self._burg_order_min_spin.setRange(1, 200)
         self._burg_order_min_spin.setValue(2)
+        self._burg_order_min_spin.setMaximumWidth(self._numeric_field_width(6))
         self._burg_order_max_spin = NoScrollSpinBox()
         self._burg_order_max_spin.setRange(1, 200)
         self._burg_order_max_spin.setValue(40)
+        self._burg_order_max_spin.setMaximumWidth(self._numeric_field_width(6))
         burg_row = QWidget()
         burg_layout = QHBoxLayout(burg_row)
         burg_layout.setContentsMargins(0, 0, 0, 0)
@@ -580,36 +636,39 @@ class FourierPanel(QWidget):
         burg_layout.addWidget(QLabel("to"))
         burg_layout.addWidget(self._burg_order_max_spin)
         burg_layout.addStretch()
-        form.addRow("Burg pole scan:", burg_row)
+        form.addRow(self._wrapping_label("Burg pole scan:"), burg_row)
 
         # Muoniated-radical correlation controls (revealed by the specialist
         # display-mode radio, as with the Burg pole-scan above).
         self._correlation_field_edit = QLineEdit("")
-        self._correlation_field_edit.setPlaceholderText("auto (run field)")
-        self._correlation_field_edit.setFont(mono_font(11.0))
+        self._correlation_field_edit.setPlaceholderText("auto")
+        self._correlation_field_edit.setFont(mono_font(SIZE_NUMERIC))
+        self._correlation_field_edit.setMaximumWidth(self._numeric_field_width(9))
         self._correlation_field_edit.setValidator(QDoubleValidator(0.0, 1.0e6, 3, self))
         self._correlation_field_edit.setToolTip(
             "Transverse field (Gauss) used for the Breit–Rabi pairing; defaults "
             "to the run's applied field."
         )
-        form.addRow("Correlation field (G):", self._correlation_field_edit)
+        form.addRow(self._wrapping_label("Correlation field (G):"), self._correlation_field_edit)
 
         self._correlation_order_spin = NoScrollSpinBox()
         self._correlation_order_spin.setRange(0, 10)
         self._correlation_order_spin.setValue(DEFAULT_CORR_ORDER)
+        self._correlation_order_spin.setMaximumWidth(self._numeric_field_width(6))
         self._correlation_order_spin.setToolTip(
             "CorrFn ratio-penalty order: higher values suppress unequal-amplitude "
             "(spurious) line pairs more strongly. 0 = plain product."
         )
-        form.addRow("Correlation order:", self._correlation_order_spin)
+        form.addRow(self._wrapping_label("Correlation order:"), self._correlation_order_spin)
 
+        section.addLayout(form)
         self._pulse_comp_check.toggled.connect(self._update_conditioning_enabled)
         self._baseline_mode_combo.currentIndexChanged.connect(self._update_conditioning_enabled)
         self._update_conditioning_enabled()
-        return group
+        return section
 
-    def _build_diamag_group(self) -> QGroupBox:
-        """Build the single three-way diamagnetic-line control (F4).
+    def _build_diamag_group(self) -> PanelSection:
+        """Build the single three-way diamagnetic-line control (F4, collapsible).
 
         One mutually-exclusive choice replaces the two former checkboxes
         (time-domain fit-and-subtract in Conditioning, post-FFT band exclusion
@@ -617,8 +676,15 @@ class FourierPanel(QWidget):
         ``diamag_exclusion``) stay readable; :meth:`get_state` derives them from
         the selected mode and they remain mutually exclusive.
         """
-        group = QGroupBox("Diamagnetic line")
-        form = QFormLayout(group)
+        section = PanelSection(
+            "Diamagnetic correction",
+            collapsible=True,
+            expanded=False,
+            settings_key="fourier/sections/diamag",
+            settings=self._settings,
+        )
+        self._diamag_section = section
+        form = QFormLayout()
 
         self._diamag_mode_combo = QComboBox()
         self._diamag_mode_combo.addItem("Leave", userData="leave")
@@ -632,27 +698,35 @@ class FourierPanel(QWidget):
             "Exclude band: hard-zero a band centred on γ_μ·B after the FFT — the "
             "robust fallback for lines too strong or distorted to fit."
         )
-        form.addRow("Diamagnetic line:", self._diamag_mode_combo)
+        form.addRow(self._wrapping_label("Diamagnetic line:"), self._diamag_mode_combo)
 
         self._diamag_width_edit = QLineEdit("0.3")
-        self._diamag_width_edit.setFont(mono_font(11.0))
+        self._diamag_width_edit.setFont(mono_font(SIZE_NUMERIC))
+        self._diamag_width_edit.setMaximumWidth(self._numeric_field_width(8))
         self._diamag_width_edit.setValidator(QDoubleValidator(0.0, 100.0, 4, self))
         self._diamag_width_edit.setToolTip(
             "Half-width of the excluded band, centred on γ_μ·B (used by 'Exclude band')."
         )
-        form.addRow("Band half-width (MHz):", self._diamag_width_edit)
+        form.addRow(self._wrapping_label("Band half-width (MHz):"), self._diamag_width_edit)
 
+        section.addLayout(form)
         self._diamag_mode_combo.currentIndexChanged.connect(self._update_diamag_controls_enabled)
         self._update_diamag_controls_enabled()
-        return group
+        return section
 
-    def _build_exclusions_group(self) -> QGroupBox:
-        """Build the frequency-range exclusions section."""
-        group = QGroupBox("Exclusions")
-        layout = QVBoxLayout(group)
+    def _build_exclusions_group(self) -> PanelSection:
+        """Build the frequency-range exclusions section (collapsible)."""
+        section = PanelSection(
+            "Frequency exclusions",
+            collapsible=True,
+            expanded=False,
+            settings_key="fourier/sections/exclusions",
+            settings=self._settings,
+        )
+        self._exclusions_section = section
 
         self._exclude_enabled_check = QCheckBox("Exclude frequency ranges")
-        layout.addWidget(self._exclude_enabled_check)
+        section.addWidget(self._exclude_enabled_check)
 
         self._exclusion_table = QTableWidget(_MAX_EXCLUSION_ROWS, 2)
         self._exclusion_table.setHorizontalHeaderLabels(["Centre (MHz)", "Half-width (MHz)"])
@@ -668,16 +742,16 @@ class FourierPanel(QWidget):
         for row in range(_MAX_EXCLUSION_ROWS):
             for col in range(2):
                 self._exclusion_table.setItem(row, col, QTableWidgetItem(""))
-        layout.addWidget(self._exclusion_table)
+        section.addWidget(self._exclusion_table)
 
         self._psi_preset_btn = QPushButton("PSI RF harmonics")
         self._psi_preset_btn.setToolTip("Fill DC + 50.63 MHz × 1–5.")
         self._psi_preset_btn.clicked.connect(self._apply_psi_harmonics_preset)
-        layout.addWidget(self._psi_preset_btn)
+        section.addWidget(self._psi_preset_btn)
 
         self._exclude_enabled_check.toggled.connect(self._update_exclusion_enabled)
         self._update_exclusion_enabled()
-        return group
+        return section
 
     def _update_conditioning_enabled(self) -> None:
         pulse_on = self._pulse_comp_check.isChecked()
@@ -700,6 +774,37 @@ class FourierPanel(QWidget):
     def _update_diamag_controls_enabled(self) -> None:
         """Enable the band half-width only for the 'Exclude band' mode."""
         self._diamag_width_edit.setEnabled(self._diamag_mode() == "band")
+
+    # ── collapsed-section summaries ─────────────────────────────────────────
+
+    def _update_conditioning_suffix(self) -> None:
+        """Surface active conditioning state as a terse collapsed-section summary."""
+        parts: list[str] = []
+        if self._pulse_comp_check.isChecked():
+            parts.append("pulse comp on")
+        baseline = str(self._baseline_mode_combo.currentData() or "none")
+        if baseline != "none":
+            parts.append("baseline on")
+        self._conditioning_section.set_title_suffix(info_html(" · ".join(parts)) if parts else None)
+
+    def _update_diamag_suffix(self) -> None:
+        """Surface the selected diamagnetic mode as a collapsed-section summary."""
+        mode = self._diamag_mode()
+        label = {"subtract": "fit & subtract", "band": "exclude band"}.get(mode)
+        self._diamag_section.set_title_suffix(info_html(label) if label else None)
+
+    def _update_exclusions_suffix(self) -> None:
+        """Surface the active exclusion-range count as a collapsed-section summary."""
+        if not self._exclude_enabled_check.isChecked():
+            self._exclusions_section.set_title_suffix(None)
+            return
+        count = len(self.exclusion_ranges())
+        if count == 0:
+            self._exclusions_section.set_title_suffix(None)
+            return
+        self._exclusions_section.set_title_suffix(
+            info_html(f"{count} range{'s' if count != 1 else ''}")
+        )
 
     def _diamag_mode(self) -> str:
         """Return the selected diamagnetic mode: ``leave`` / ``subtract`` / ``band``."""
@@ -758,21 +863,25 @@ class FourierPanel(QWidget):
         """Show the inherited grouping-background state above the FFT button (F3).
 
         ``text`` is the resolved mode description (e.g. ``"tail-fit"``) or
-        ``None`` when no grouping background correction is active.
+        ``None`` when no grouping background correction is active. Rendered as the
+        footer hint.
         """
         if text:
-            self._background_hint_label.setText(f"Background: {text}, inherited from grouping")
+            self._action_footer.set_hint(f"Background: {text}, inherited from grouping")
         else:
-            self._background_hint_label.setText("Background: off")
+            self._action_footer.set_hint("Background: off")
 
     def set_fft_status(self, message: str, *, success: bool = False) -> None:
-        """Set the status label below the Compute FFT button."""
+        """Set the footer status line for a computed-spectrum outcome.
+
+        A successful compute is reported with the green success chip; other
+        messages fall through as an informational (accent) chip.
+        """
+        text = str(message)
         if success:
-            self._status_label.setText(
-                f'<span style="color: {tokens.OK};">● {html.escape(str(message))}</span>'
-            )
+            self._action_footer.set_status(success_html(f"● {html.escape(text)}"))
         else:
-            self._status_label.setText(str(message))
+            self._action_footer.set_status(info_html(html.escape(text)))
 
     def _show_phase_mode_info(self) -> None:
         self._mode_info_dialog = show_fourier_mode_info_dialog(self)
@@ -857,12 +966,21 @@ class FourierPanel(QWidget):
         # Reveal the disclosure when an advanced mode is active so the checked
         # radio is visible (e.g. restoring a project saved in phaseOptReal/Burg).
         if mode in ("phaseOptReal", "Resolution (Burg)", "Correlation (radical)"):
-            self._advanced_modes_group.setChecked(True)
+            self._advanced_modes_group.setExpanded(True)
 
     def _update_phase_controls_enabled(self) -> None:
         mode = self._current_display_mode()
         is_phase_mode = mode == "Phase"
         is_entropy_mode = mode == "phaseOptReal"
+        # The core is the oracle: the Phase section, the phase COLUMN, and the
+        # per-group-phase toggle are only meaningful in a phase-correcting display
+        # mode. Hidden ≠ cleared — every value stays in config/serialization, so
+        # round-trips are unchanged; only visibility is gated. Do NOT re-derive the
+        # mode list in the GUI.
+        uses_phase = fourier_mode_uses_phase_correction(mode)
+        self._phase_section.setVisible(uses_phase)
+        self._phase_table.setColumnHidden(2, not uses_phase)
+        self._use_phase_table_check.setVisible(uses_phase)
         if self._cos_radio.isChecked():
             self._phase_spin.setText(self._format_float_text(0.0))
         elif self._sin_radio.isChecked():
