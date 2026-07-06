@@ -24,6 +24,7 @@ Everything here is GUI-free and pure numpy; refits happen only inside
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -209,6 +210,43 @@ def _utility_curve(
     return np.nan_to_num(utility, nan=0.0, posinf=0.0, neginf=0.0)
 
 
+def _candidate_grid(
+    x_data: NDArray[np.float64],
+    y_err: NDArray[np.float64],
+    x_min: float,
+    x_max: float,
+    n_candidates: int,
+    warnings: list[str],
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64], NDArray[np.bool_]] | None:
+    """Shared candidate-grid + empirical-noise construction.
+
+    Returns ``(candidates, x_meas, sigma_new, extrapolated)`` or ``None`` if
+    degenerate (appending to ``warnings`` in that case). ``candidates``
+    includes the in-range measured x values (so "re-measure" competes) plus
+    a uniform grid of ``n_candidates`` points over ``[x_min, x_max]``.
+    """
+    noise = _empirical_sigma(x_data, y_err, warnings)
+    if noise is None:
+        return None
+    x_meas, sigma_meas = noise
+
+    if not (np.isfinite(x_min) and np.isfinite(x_max)) or x_max <= x_min:
+        warnings.append("Invalid candidate range.")
+        return None
+
+    grid = np.linspace(float(x_min), float(x_max), int(n_candidates))
+    in_range = x_meas[(x_meas >= x_min) & (x_meas <= x_max)]
+    candidates = np.unique(np.concatenate([grid, in_range]))
+    sigma_new = np.interp(candidates, x_meas, sigma_meas)
+    extrapolated = (candidates < x_meas[0]) | (candidates > x_meas[-1])
+    if np.any(extrapolated):
+        warnings.append(
+            "Candidate range extends beyond the measured points; suggestions "
+            "there rely entirely on the assumed model form."
+        )
+    return candidates, x_meas, sigma_new, extrapolated
+
+
 def suggest_next_point(
     model: ParameterCompositeModel,
     parameters: ParameterSet,
@@ -250,28 +288,21 @@ def suggest_next_point(
     noise = _empirical_sigma(x_data, y_err, warnings)
     if noise is None:
         return _empty_suggestion(target, warnings)
-    x_meas, sigma_meas = noise
+    x_meas_all, _sigma_meas = noise
 
     if not (np.isfinite(x_min) and np.isfinite(x_max)) or x_max <= x_min:
         warnings.append("Invalid candidate range.")
         return _empty_suggestion(target, warnings)
 
-    if len(x_meas) <= len(free_names) + 1:
+    if len(x_meas_all) <= len(free_names) + 1:
         warnings.append(
             "Fit is barely constrained (few points for the number of free "
             "parameters); the suggestion is unreliable — consider a coarse scan."
         )
 
-    grid = np.linspace(float(x_min), float(x_max), int(n_candidates))
-    in_range = x_meas[(x_meas >= x_min) & (x_meas <= x_max)]
-    candidates = np.unique(np.concatenate([grid, in_range]))
-    sigma_new = np.interp(candidates, x_meas, sigma_meas)
-    extrapolated = (candidates < x_meas[0]) | (candidates > x_meas[-1])
-    if np.any(extrapolated):
-        warnings.append(
-            "Candidate range extends beyond the measured points; suggestions "
-            "there rely entirely on the assumed model form."
-        )
+    grid_result = _candidate_grid(x_data, y_err, x_min, x_max, n_candidates, warnings)
+    assert grid_result is not None  # already validated noise + range above
+    candidates, x_meas, sigma_new, extrapolated = grid_result
 
     values = {p.name: float(p.value) for p in parameters}
     missing = [n for n in free_names if n not in values]
@@ -532,3 +563,179 @@ def calibrate_events_for_goal(
         factor = min(factor * min((median / sigma_goal) ** 2, 8.0), max_events_factor)
     assert calibration is not None
     return None, calibration
+
+
+#: Relative-to-noise threshold below which the discrimination utility is
+#: considered "everywhere within noise" (candidate models agree).
+_DISCRIMINATION_NOISE_FLOOR = 1.0e-12
+
+
+def suggest_discriminating_point(
+    lead_model: ParameterCompositeModel,
+    lead_parameters: ParameterSet,
+    alternatives: Sequence[tuple[ParameterCompositeModel, ParameterSet]],
+    x_data: NDArray[np.float64],
+    y_err: NDArray[np.float64],
+    x_min: float,
+    x_max: float,
+    *,
+    n_candidates: int = 257,
+) -> NextPointSuggestion:
+    """Rank candidate x values by how well they discriminate between models.
+
+    Scores the ``lead_model`` (the currently favoured fit) against **every**
+    entry in ``alternatives`` (each a fitted ``(model, parameters)`` pair
+    over the same series), taking the elementwise max over alternatives —
+    per the TAS-AI lock-in lesson (§4/§8.1 of the study), a leader must be
+    tested against all live competitors, not just the runner-up:
+
+        U_disc(x) = max_i [f_lead(x) - f_i(x)]^2 / (2 sigma_new^2(x))
+
+    Returns a :class:`NextPointSuggestion` with ``target=None`` (this mode
+    has no single target parameter) and no event-count/goal fields set.
+    Never raises: degenerate inputs (no alternatives, no noise model, bad
+    range) degrade to an empty suggestion with an explanatory warning, and a
+    utility that is everywhere within noise of zero is flagged rather than
+    silently returning a meaningless argmax.
+    """
+    warnings: list[str] = []
+
+    if not alternatives:
+        warnings.append("No alternative models supplied to discriminate against.")
+        return _empty_suggestion(None, warnings)
+
+    grid_result = _candidate_grid(x_data, y_err, x_min, x_max, n_candidates, warnings)
+    if grid_result is None:
+        return _empty_suggestion(None, warnings)
+    candidates, _x_meas, sigma_new, extrapolated = grid_result
+
+    lead_values = {p.name: float(p.value) for p in lead_parameters}
+    non_finite_seen = False
+
+    def _evaluate(model: ParameterCompositeModel, values: dict[str, float]) -> NDArray[np.float64]:
+        nonlocal non_finite_seen
+        raw = np.asarray(model.function(candidates, **values), dtype=float)
+        if not np.all(np.isfinite(raw)):
+            non_finite_seen = True
+        return np.nan_to_num(raw, nan=0.0, posinf=0.0, neginf=0.0)
+
+    f_lead = _evaluate(lead_model, lead_values)
+
+    variance = sigma_new**2
+    utility = np.zeros_like(candidates)
+    for alt_model, alt_parameters in alternatives:
+        alt_values = {p.name: float(p.value) for p in alt_parameters}
+        f_alt = _evaluate(alt_model, alt_values)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            pairwise = (f_lead - f_alt) ** 2 / (2.0 * variance)
+        pairwise = np.nan_to_num(pairwise, nan=0.0, posinf=0.0, neginf=0.0)
+        utility = np.maximum(utility, pairwise)
+
+    if non_finite_seen:
+        warnings.append(
+            "One or more candidate models produced non-finite values on the "
+            "candidate grid; those points were treated as carrying no "
+            "discriminating information."
+        )
+
+    noise_scale = float(np.max(variance)) if variance.size else 0.0
+    relative_floor = _DISCRIMINATION_NOISE_FLOOR * max(noise_scale, 1.0)
+    if not np.any(utility > relative_floor):
+        warnings.append(
+            "candidate models agree within noise everywhere in this range — no discriminating point"
+        )
+        return NextPointSuggestion(
+            x_candidates=candidates,
+            utility=utility,
+            extrapolated=extrapolated,
+            best_x=float("nan"),
+            target=None,
+            sigma_new=sigma_new,
+            warnings=tuple(warnings),
+        )
+
+    best_index = int(np.argmax(utility))
+    best_x = float(candidates[best_index])
+
+    return NextPointSuggestion(
+        x_candidates=candidates,
+        utility=utility,
+        extrapolated=extrapolated,
+        best_x=best_x,
+        target=None,
+        sigma_new=sigma_new,
+        warnings=tuple(warnings),
+    )
+
+
+def aic_weights(chi_squareds: Sequence[float], n_free_params: Sequence[int]) -> list[float]:
+    """Akaike-weight a set of candidate models from their fit chi-squareds.
+
+    ``AIC_i = chi2_i + 2 p_i``; weights are ``exp(-(AIC_i - min AIC)/2)``
+    normalised to sum to 1 (the minimum is subtracted before exponentiating
+    for numerical safety, per Burnham & Anderson). BIC is deliberately not
+    used here — its ``p * ln(n)`` penalty drifts under the sequential-n
+    growth of an in-progress trend series (§4 of the study).
+
+    A model with non-finite chi-squared gets weight ``0.0`` and is excluded
+    from the normalisation; if every model is non-finite, returns a list of
+    ``0.0`` (there is nothing to rank). Raises ``ValueError`` if the two
+    input lists differ in length — a mismatch here is a programming error,
+    not a user-data problem.
+    """
+    if len(chi_squareds) != len(n_free_params):
+        raise ValueError(
+            f"chi_squareds and n_free_params must have the same length "
+            f"({len(chi_squareds)} != {len(n_free_params)})."
+        )
+    if not chi_squareds:
+        return []
+
+    aic = np.array(
+        [c + 2.0 * p for c, p in zip(chi_squareds, n_free_params, strict=True)], dtype=float
+    )
+    finite = np.isfinite(aic)
+    if not np.any(finite):
+        return [0.0] * len(aic)
+
+    min_aic = float(np.min(aic[finite]))
+    raw_weights = np.zeros_like(aic)
+    raw_weights[finite] = np.exp(-(aic[finite] - min_aic) / 2.0)
+    total = float(np.sum(raw_weights))
+    if total <= 0.0:
+        return [0.0] * len(aic)
+    return (raw_weights / total).tolist()
+
+
+def cost_weighted_utility(
+    x_candidates: NDArray[np.float64],
+    utility: NDArray[np.float64],
+    x_current: float,
+    *,
+    count_time: float,
+    up_rate: float,
+    down_rate: float,
+    gamma: float = 0.7,
+) -> NDArray[np.float64]:
+    """Weight a utility curve by movement + counting cost (TAS-AI's IG^gamma/t).
+
+    ``move_time(x) = up_rate * (x - x_current)`` for ``x > x_current``, else
+    ``down_rate * (x_current - x)``; all rates/times share a unit (hours).
+    Returns ``clip(utility, 0)**gamma / (count_time + move_time)``.
+
+    Pure array-in/array-out with defensive guards rather than raising: an
+    invalid cost model (``count_time <= 0``, a negative rate, or a
+    non-finite ``x_current``) must not silently distort the ranking, so the
+    original ``utility`` is returned unchanged in that case. The GUI is
+    responsible for validating these inputs before calling; this function
+    does not emit warnings.
+    """
+    x = np.asarray(x_candidates, dtype=float)
+    u = np.asarray(utility, dtype=float)
+
+    if count_time <= 0.0 or up_rate < 0.0 or down_rate < 0.0 or not np.isfinite(x_current):
+        return u
+
+    move_time = np.where(x > x_current, up_rate * (x - x_current), down_rate * (x_current - x))
+    denominator = count_time + move_time
+    return np.clip(u, 0.0, None) ** gamma / denominator
