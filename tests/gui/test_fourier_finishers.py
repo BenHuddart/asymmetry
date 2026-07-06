@@ -499,3 +499,123 @@ def test_diamag_overlay_is_run_gated(qapp) -> None:
     panel._current_dataset = None
     panel.set_diamagnetic_overlay(None, None)
     assert panel._diamagnetic_overlay is None
+
+
+# ── Phase 1B: usage-tier restructure (visibility, persistence, round-trip) ──
+
+
+def test_phase_section_and_group_phase_column_track_display_mode(qapp) -> None:
+    """The Phase section, the group-phase column, and the per-group toggle are
+    shown only in a phase-correcting display mode — with the core predicate as
+    the oracle, never a mode list re-derived in the GUI."""
+    from asymmetry.core.fourier.fft import fourier_mode_uses_phase_correction
+    from asymmetry.gui.panels.fourier_panel import FourierPanel
+
+    panel = FourierPanel()
+
+    # Drive every routine + advanced display mode via its radio and assert the
+    # Phase section / column / checkbox visibility matches the core predicate.
+    radios = {
+        "(Power)^1/2": panel._power_sqrt_radio,
+        "Phase Spectrum": panel._phase_spectrum_radio,
+        "Cos": panel._cos_radio,
+        "Sin": panel._sin_radio,
+        "Phase": panel._phase_mode_radio,
+        "Real+Imag": panel._real_imag_radio,
+        "phaseOptReal": panel._phase_opt_real_radio,
+        "Resolution (Burg)": panel._burg_radio,
+        "Correlation (radical)": panel._correlation_radio,
+    }
+    for mode, radio in radios.items():
+        radio.setChecked(True)
+        expected = fourier_mode_uses_phase_correction(mode)
+        assert panel._current_display_mode() == mode
+        assert panel._phase_section.isVisibleTo(panel) is expected, mode
+        assert panel._phase_table.isColumnHidden(2) is (not expected), mode
+        assert panel._use_phase_table_check.isVisibleTo(panel) is expected, mode
+
+
+def test_hidden_phase_controls_are_not_cleared(qapp) -> None:
+    """Hiding the phase controls (non-phase mode) must preserve their values in
+    the serialised state — hidden ≠ cleared."""
+    from asymmetry.gui.panels.fourier_panel import FourierPanel
+
+    panel = FourierPanel()
+    panel._set_display_mode("Phase")
+    panel._phase_spin.setText("42.5")
+    panel._t0_offset_spin.setText("0.13")
+    panel._use_phase_table_check.setChecked(True)
+    panel._normalize_phase_line_edits()
+
+    # Switch to a non-phase mode that does NOT mutate the phase (Cos→0/Sin→90 do,
+    # so use (Power)^1/2). The Phase section hides; the values must survive.
+    panel._set_display_mode("(Power)^1/2")
+    panel._update_phase_controls_enabled()
+    assert not panel._phase_section.isVisibleTo(panel)
+
+    state = panel.get_state()
+    assert state["phase_degrees"] == pytest.approx(42.5)
+    assert state["t0_offset_us"] == pytest.approx(0.13)
+    assert state["use_phase_table"] is True
+
+
+def test_settings_round_trip_unchanged_with_phase_hidden(qapp) -> None:
+    """A full get_state → restore_state round-trip is identical even when the
+    saved project was in a phase-hidden (non-correcting) display mode."""
+    from asymmetry.gui.panels.fourier_panel import FourierPanel
+
+    source = FourierPanel()
+    source._set_display_mode("Phase")
+    source._phase_spin.setText("30")
+    source._t0_offset_spin.setText("0.05")
+    source._use_phase_table_check.setChecked(True)
+    source._normalize_phase_line_edits()
+    # Now leave it in a phase-hidden mode for save.
+    source._set_display_mode("(Power)^1/2")
+    source._update_phase_controls_enabled()
+    saved = source.get_state()
+
+    restored = FourierPanel()
+    restored.restore_state(saved)
+    assert restored.get_state() == saved
+
+
+def test_collapsed_section_state_persists_via_isolated_settings(qapp) -> None:
+    """Expanding a collapsed section persists through an injected QSettings scope,
+    so a freshly built panel reads the section back expanded."""
+    from PySide6.QtCore import QSettings
+
+    from asymmetry.gui.panels.fourier_panel import FourierPanel
+
+    settings = QSettings("AsymmetryTest", "fourier_sections_test")
+    settings.clear()
+    try:
+        first = FourierPanel(settings=settings)
+        assert not first._conditioning_section.isExpanded()
+        first._conditioning_section.setExpanded(True)
+
+        second = FourierPanel(settings=settings)
+        assert second._conditioning_section.isExpanded()
+    finally:
+        settings.clear()
+
+
+def test_collapsed_section_suffixes_reflect_state(qapp) -> None:
+    """Collapsed sections surface terse state summaries via set_title_suffix."""
+    from asymmetry.gui.panels.fourier_panel import FourierPanel
+
+    panel = FourierPanel()
+
+    # Exclusions: a count of active ranges.
+    panel._apply_psi_harmonics_preset()
+    panel._update_exclusions_suffix()
+    assert "range" in panel._exclusions_section._suffix_label.text().lower()
+
+    # Conditioning: pulse-comp on.
+    panel._pulse_comp_check.setChecked(True)
+    assert "pulse comp" in panel._conditioning_section._suffix_label.text().lower()
+
+    # Diamagnetic: the selected non-leave mode.
+    panel._set_diamag_mode("band")
+    panel._update_diamag_suffix()
+    assert "exclude band" in panel._diamag_section._suffix_label.text().lower()
