@@ -66,6 +66,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The Fourier panel's spinboxes no longer clip their digits.** The
+  zero-pad factor, Burg pole-scan, and correlation-order spins were capped at
+  a text-field width that left the step buttons no room of their own, so the
+  inner text area shrank to a sliver (a zero-pad of "16" rendered cut off).
+  Spinbox width caps now include a step-button allowance.
+
 - **Grouping Apply accepts groupings that name detectors a run does not
   contain, reducing over the detectors present.** Applying a full-instrument
   preset to a file that exports only some of the instrument's detectors —
