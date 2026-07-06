@@ -224,7 +224,7 @@ def test_maxent_panel_sections_collapse_persist_via_isolated_settings(qapp: QApp
         from asymmetry.gui.widgets.panel_section import PanelSection
 
         reloaded = PanelSection(
-            "Pulse shape (pulsed sources)",
+            "Pulse shape",
             collapsible=True,
             settings_key="maxent/sections/pulse_shape",
             settings=settings,
@@ -360,7 +360,7 @@ def test_fourier_panel_advanced_modes_collapsed_by_default(qapp: QApplication) -
     panel = FourierPanel()
 
     group = panel._advanced_modes_group
-    assert group.title() == "Advanced / experimental"
+    assert group.title() == "Advanced"
     # Collapsed by default — only the routine modes show up front.
     assert group.isExpanded() is False
     # The three niche radios are parented into the disclosure, not the main column.

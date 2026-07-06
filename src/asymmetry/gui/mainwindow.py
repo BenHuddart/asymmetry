@@ -507,8 +507,11 @@ _BROWSER_DOCK_MIN_CHARS = 32
 _INSPECTOR_DOCK_MAX_CHARS = 60
 #: Fraction of the window width the inspector deck rests at when the window is
 #: wide enough — so a 27-inch monitor gives FFT/MaxEnt panels room rather than
-#: leaving them cramped at the minimum while the plot hogs everything.
-_INSPECTOR_DOCK_WIDTH_FRACTION = 0.18
+#: leaving them cramped at the minimum while the plot hogs everything. 0.20
+#: clears the widest MaxEnt section (Time) plus scroll chrome on a 13-inch
+#: window with no horizontal scrollbar, while staying leaner than the
+#: pre-refresh fixed 360 px (25% of a 1440-wide window).
+_INSPECTOR_DOCK_WIDTH_FRACTION = 0.20
 
 
 def _inspector_scroll_area(content: QWidget) -> QScrollArea:

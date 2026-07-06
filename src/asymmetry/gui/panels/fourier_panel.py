@@ -381,12 +381,15 @@ class FourierPanel(QWidget):
         # The advanced/experimental sub-disclosure — a collapsible PanelSection,
         # collapsed by default (no settings_key: it auto-expands on restore of an
         # advanced-mode project rather than persisting its open/closed state).
+        # Title kept short so the uppercase header (which cannot wrap) never
+        # forces the panel wider than the resting dock width; the hint carries
+        # the "experimental" framing.
         self._advanced_modes_group = PanelSection(
-            "Advanced / experimental",
+            "Advanced",
             collapsible=True,
             expanded=False,
-            hint="Niche FFT projections: entropy auto-phase and two diagnostic "
-            "super-resolution spectra.",
+            hint="Experimental FFT projections: entropy auto-phase and two "
+            "diagnostic super-resolution spectra.",
         )
         for button in (
             self._phase_opt_real_radio,
@@ -412,6 +415,9 @@ class FourierPanel(QWidget):
         """Apodisation — filter start/time-constant and the filter-mode radios."""
         section, section_layout = make_section("Apodisation")
         apodisation_form = QFormLayout()
+        # Stack label over field when the dock is narrow instead of
+        # forcing the panel into horizontal scrolling.
+        apodisation_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
 
         # Kept always editable with sensible defaults rather than greyed out
         # when the mode is "None": a disabled field reads as broken. The tooltip
@@ -441,15 +447,18 @@ class FourierPanel(QWidget):
         self._filter_button_group.addButton(self._filter_lorentzian_radio)
         self._filter_button_group.addButton(self._filter_gaussian_radio)
         self._filter_button_group.addButton(self._filter_none_radio)
+        # 2x2 grid rather than one horizontal row: three radios side by side
+        # need ~260px and would force the panel into horizontal scrolling at
+        # the resting dock width.
         filter_mode_row = QWidget()
-        filter_mode_layout = QHBoxLayout(filter_mode_row)
+        filter_mode_layout = QGridLayout(filter_mode_row)
         filter_mode_layout.setContentsMargins(0, 0, 0, 0)
-        filter_mode_layout.setSpacing(10)
-        filter_mode_layout.addWidget(self._filter_lorentzian_radio)
-        filter_mode_layout.addWidget(self._filter_gaussian_radio)
-        filter_mode_layout.addWidget(self._filter_none_radio)
-        filter_mode_layout.addStretch()
-        filter_mode_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        filter_mode_layout.setHorizontalSpacing(10)
+        filter_mode_layout.setVerticalSpacing(2)
+        filter_mode_layout.addWidget(self._filter_lorentzian_radio, 0, 0)
+        filter_mode_layout.addWidget(self._filter_gaussian_radio, 0, 1)
+        filter_mode_layout.addWidget(self._filter_none_radio, 1, 0)
+        filter_mode_layout.setColumnStretch(2, 1)
         apodisation_form.addRow(filter_mode_row)
 
         section_layout.addLayout(apodisation_form)
@@ -485,6 +494,9 @@ class FourierPanel(QWidget):
         """FFT settings — zero-pad, average-subtraction, averaged-error toggles."""
         section, section_layout = make_section("FFT settings")
         fft_settings_form = QFormLayout()
+        # Stack label over field when the dock is narrow instead of
+        # forcing the panel into horizontal scrolling.
+        fft_settings_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
 
         self._padding_spin = NoScrollSpinBox()
         self._padding_spin.setRange(1, 16)
@@ -517,6 +529,9 @@ class FourierPanel(QWidget):
         section, section_layout = make_section("Phase")
         self._phase_section = section
         phase_form = QFormLayout()
+        # Stack label over field when the dock is narrow instead of
+        # forcing the panel into horizontal scrolling.
+        phase_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
 
         self._phase_spin = QLineEdit("0")
         self._phase_spin.setAlignment(Qt.AlignmentFlag.AlignRight)
@@ -588,6 +603,9 @@ class FourierPanel(QWidget):
         )
         self._conditioning_section = section
         form = QFormLayout()
+        # Stack label over field when the dock is narrow instead of
+        # forcing the panel into horizontal scrolling.
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
 
         self._pulse_comp_check = QCheckBox("Pulse-response compensation")
         self._pulse_comp_check.setToolTip(
@@ -685,6 +703,9 @@ class FourierPanel(QWidget):
         )
         self._diamag_section = section
         form = QFormLayout()
+        # Stack label over field when the dock is narrow instead of
+        # forcing the panel into horizontal scrolling.
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
 
         self._diamag_mode_combo = QComboBox()
         self._diamag_mode_combo.addItem("Leave", userData="leave")

@@ -113,24 +113,37 @@ class MaxEntPanel(QWidget):
     def _build_mode_section(self) -> PanelSection:
         section = PanelSection("Mode")
         mode_form = QFormLayout()
+        # Stack label over field when the dock is narrow instead of
+        # forcing the panel into horizontal scrolling.
+        mode_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         mode_form.setContentsMargins(0, 0, 0, 0)
         self._mode_combo = QComboBox()
         self._mode_combo.addItem("General (multi-group)", userData="general")
         self._mode_combo.addItem("ZF / LF (two-group)", userData="zf_lf")
+        # Let the combo shrink below its longest item so the row never forces
+        # the panel into horizontal scrolling; the popup still shows full text.
+        self._mode_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self._mode_combo.setMinimumContentsLength(12)
         self._mode_combo.setToolTip(
             "ZF/LF mode reconstructs a zero/longitudinal-field distribution from "
             "exactly two forward/backward groups, with phases pinned 0/180° and "
             "amplitudes tied through the run's α."
         )
         self._mode_combo.currentIndexChanged.connect(self._on_mode_changed)
-        mode_form.addRow("Reconstruction:", self._mode_combo)
+        # The section header already reads MODE — a long "Reconstruction:" row
+        # label only repeated it and forced the row past the resting dock width.
+        mode_form.addRow(self._mode_combo)
         section.addLayout(mode_form)
         return section
 
     def _build_groups_section(self) -> PanelSection:
         section = PanelSection("Groups")
         self._group_table = QTableWidget(0, 3)
-        self._group_table.setHorizontalHeaderLabels(["Include", "Group", "Phase (deg)"])
+        # "✓" header matches the Fourier groups table and keeps the checkbox
+        # column narrow enough for the resting dock width.
+        self._group_table.setHorizontalHeaderLabels(["✓", "Group", "Phase (deg)"])
         apply_param_table_style(self._group_table)
         self._group_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
         header = self._group_table.horizontalHeader()
@@ -145,6 +158,9 @@ class MaxEntPanel(QWidget):
     def _build_spectrum_section(self) -> PanelSection:
         section = PanelSection("Spectrum")
         spectrum_form = QFormLayout()
+        # Stack label over field when the dock is narrow instead of
+        # forcing the panel into horizontal scrolling.
+        spectrum_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         spectrum_form.setContentsMargins(0, 0, 0, 0)
         self._points_spin = self._make_scroll_guarded_int_spin()
         self._points_spin.setRange(8, 1 << 20)
@@ -164,6 +180,9 @@ class MaxEntPanel(QWidget):
     def _build_window_section(self) -> PanelSection:
         section = PanelSection("Window")
         window_form = QFormLayout()
+        # Stack label over field when the dock is narrow instead of
+        # forcing the panel into horizontal scrolling.
+        window_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         window_form.setContentsMargins(0, 0, 0, 0)
         self._auto_window_check = QCheckBox("Auto window from field")
         self._auto_window_check.setChecked(True)
@@ -185,6 +204,9 @@ class MaxEntPanel(QWidget):
     def _build_time_section(self) -> PanelSection:
         section = PanelSection("Time")
         time_form = QFormLayout()
+        # Stack label over field when the dock is narrow instead of
+        # forcing the panel into horizontal scrolling.
+        time_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         time_form.setContentsMargins(0, 0, 0, 0)
         self._t_min_edit = self._make_numeric_edit(
             "", minimum=-1_000_000.0, maximum=1_000_000.0, decimals=6
@@ -223,13 +245,20 @@ class MaxEntPanel(QWidget):
     # ── Collapsed-by-default sections ───────────────────────────────────────
 
     def _build_pulse_section(self) -> PanelSection:
+        # Title kept short so the uppercase header (which cannot wrap) never
+        # forces the panel wider than the resting dock width; the pulsed-source
+        # context lives in the hint.
         section = PanelSection(
-            "Pulse shape (pulsed sources)",
+            "Pulse shape",
             collapsible=True,
             settings_key="maxent/sections/pulse_shape",
-            hint="Correct the forward model for the finite muon pulse at a pulsed source.",
+            hint="Correct the forward model for the finite muon pulse at a "
+            "pulsed source (ISIS); ignore for continuous beams.",
         )
         pulse_form = QFormLayout()
+        # Stack label over field when the dock is narrow instead of
+        # forcing the panel into horizontal scrolling.
+        pulse_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         pulse_form.setContentsMargins(0, 0, 0, 0)
         self._pulse_mode_combo = QComboBox()
         self._pulse_mode_combo.addItem("Ignore", userData="ignore")
@@ -262,6 +291,9 @@ class MaxEntPanel(QWidget):
             settings_key="maxent/sections/cycle_refinement",
         )
         fit_form = QFormLayout()
+        # Stack label over field when the dock is narrow instead of
+        # forcing the panel into horizontal scrolling.
+        fit_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         fit_form.setContentsMargins(0, 0, 0, 0)
         self._inner_spin = self._make_scroll_guarded_int_spin()
         self._inner_spin.setRange(1, 200)
@@ -360,14 +392,16 @@ class MaxEntPanel(QWidget):
         # ENABLE semantic (subtract the central-peak model) is a checkbox in
         # the body, separate from the section's own expanded/collapsed state;
         # serialization ("specbg_enabled") is unchanged.
+        # Title kept short so the uppercase header (which cannot wrap) never
+        # forces the panel wider than the resting dock width.
         section = PanelSection(
-            "Zero-frequency background (ZF/LF)",
+            "ZF/LF background",
             collapsible=True,
             settings_key="maxent/sections/specbg",
         )
         section.set_hint(
             "Subtract a zero-centred pseudo-Voigt model of the static central "
-            "peak from the displayed field-distribution spectrum."
+            "peak from the displayed field-distribution spectrum (ZF/LF mode)."
         )
         self._specbg_enabled_check = QCheckBox("Enabled")
         self._specbg_enabled_check.setChecked(False)
@@ -375,6 +409,12 @@ class MaxEntPanel(QWidget):
         section.addWidget(self._specbg_enabled_check)
 
         specbg_form = QFormLayout()
+
+        # Stack label over field when the dock is narrow instead of
+
+        # forcing the panel into horizontal scrolling.
+
+        specbg_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         specbg_form.setContentsMargins(0, 0, 0, 0)
         self._specbg_gaussian_edit = self._make_numeric_edit(
             "0.1", minimum=0.0, maximum=1_000.0, decimals=6
