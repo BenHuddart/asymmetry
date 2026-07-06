@@ -1068,7 +1068,11 @@ class ALCScanView(QWidget):
                     item = self._peaks_table.item(row, col)
                     if item is not None:
                         item.setText(f"{res[key]:.4g}")
-        self._peaks_results.setText(info_html(summary) if summary else "")
+        # One line per peak: info_html's <span> flips the label into rich text,
+        # where Qt collapses bare "\n" (unlike plain text) — convert to <br>
+        # so a multi-peak summary still renders one line per peak.
+        html_summary = info_html(summary.replace("\n", "<br>")) if summary else ""
+        self._peaks_results.setText(html_summary)
 
     def show_fit_overlay(self, x: NDArray[np.float64], fit_curve: NDArray[np.float64]) -> None:
         """Overlay the total (baseline + peaks) fit curve on the scan plot.

@@ -687,6 +687,24 @@ def test_alc_section_collapse_state_persists_across_views(qapp: QApplication):
     assert second._peaks_section.isExpanded()
 
 
+def test_alc_multi_peak_summary_keeps_one_line_per_peak(qapp: QApplication):
+    # set_peak_results renders its summary through info_html, which flips the
+    # QLabel into rich text — Qt rich text collapses a bare "\n" (unlike plain
+    # text), so a multi-peak, newline-joined summary must convert breaks to
+    # "<br>" or a 2+ peak fit collapses onto one run-on line.
+    view = ALCScanView()
+    summary = "Peak 1 (Gaussian): B₀ = 140 G\nPeak 2 (Lorentzian): B₀ = 160 G"
+    view.set_peak_results([], summary)
+
+    text = view._peaks_results.text()
+    assert text.count("<br>") == 1
+    assert "\n" not in text
+    assert "Peak 1" in text and "Peak 2" in text
+    # The label reports a two-line size hint, not one collapsed line.
+    one_line_height = view._peaks_results.fontMetrics().height()
+    assert view._peaks_results.sizeHint().height() > one_line_height
+
+
 def _seed_view_scan(view: ALCScanView) -> None:
     view.show_scan(
         np.array([0.0, 100.0, 200.0, 300.0]),
