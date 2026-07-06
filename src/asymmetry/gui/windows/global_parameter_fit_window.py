@@ -702,7 +702,14 @@ class GlobalParameterFitWindow(QMainWindow):
                             for p in fit_range.result.parameters
                         ],
                         "uncertainties": dict(fit_range.result.uncertainties),
+                        "params_at_bound": list(fit_range.result.params_at_bound),
                     }
+                    if fit_range.result.covariance is not None:
+                        cov_names, cov_matrix = fit_range.result.covariance
+                        range_item["result"]["covariance"] = {
+                            "names": list(cov_names),
+                            "matrix": [[float(v) for v in row] for row in cov_matrix],
+                        }
                 ranges_data.append(range_item)
 
             payload[param_name] = {
@@ -775,6 +782,26 @@ class GlobalParameterFitWindow(QMainWindow):
                             )
                         except Exception:
                             continue
+                    params_at_bound: tuple[str, ...] = ()
+                    raw_params_at_bound = result_state.get("params_at_bound")
+                    if isinstance(raw_params_at_bound, (list, tuple)):
+                        params_at_bound = tuple(str(name) for name in raw_params_at_bound)
+
+                    covariance: tuple[list[str], list[list[float]]] | None = None
+                    raw_covariance = result_state.get("covariance")
+                    if isinstance(raw_covariance, dict):
+                        raw_names = raw_covariance.get("names")
+                        raw_matrix = raw_covariance.get("matrix")
+                        if isinstance(raw_names, (list, tuple)) and isinstance(
+                            raw_matrix, (list, tuple)
+                        ):
+                            try:
+                                cov_names = [str(name) for name in raw_names]
+                                cov_matrix = [[float(v) for v in row] for row in raw_matrix]
+                                covariance = (cov_names, cov_matrix)
+                            except (TypeError, ValueError):
+                                covariance = None
+
                     result_obj = ParameterModelFitResult(
                         success=bool(result_state.get("success", False)),
                         chi_squared=float(result_state.get("chi_squared", 0.0)),
@@ -787,6 +814,8 @@ class GlobalParameterFitWindow(QMainWindow):
                         message=str(result_state.get("message", "")),
                         error_mode=str(result_state.get("error_mode", "column")),
                         n_points=int(result_state.get("n_points", 0)),
+                        params_at_bound=params_at_bound,
+                        covariance=covariance,
                     )
 
                 ranges.append(

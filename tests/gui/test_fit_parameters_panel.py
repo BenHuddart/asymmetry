@@ -2366,6 +2366,69 @@ def test_model_fit_serialization_round_trips_windows_and_error_mode(
     assert legacy_range.result.n_points == 0
 
 
+def test_model_fit_serialization_round_trips_covariance_and_params_at_bound(
+    panel: FitParametersPanel,
+) -> None:
+    """``covariance`` and ``params_at_bound`` must survive a save/reload cycle:
+    both feed the ill-conditioning warning banner (BED next-point suggestion,
+    docs/studies/bed-next-point-suggestion.md §3.4/§5.2), and params_at_bound
+    was previously silently dropped by the serializer."""
+    import json
+
+    model = ParameterCompositeModel(["Linear"])
+    params = ParameterSet([Parameter("a", value=1.0), Parameter("b", value=2.0)])
+    result = ParameterModelFitResult(
+        success=True,
+        chi_squared=4.2,
+        reduced_chi_squared=0.6,
+        parameters=params,
+        uncertainties={"a": 0.1, "b": 0.2},
+        message="Fit successful",
+        error_mode="column",
+        n_points=9,
+        params_at_bound=("a",),
+        covariance=(["a", "b"], [[0.01, 0.002], [0.002, 0.04]]),
+    )
+    panel._model_fits = {
+        "A0": ParameterModelFit(
+            parameter_name="A0",
+            x_key="field",
+            active=True,
+            ranges=[
+                ModelFitRange(
+                    x_min=0.0,
+                    x_max=10.0,
+                    model=model,
+                    parameters=params,
+                    result=result,
+                )
+            ],
+        )
+    }
+
+    # JSON round-trip mirrors project persistence (tuples become lists).
+    state = json.loads(json.dumps(panel._serialize_model_fits()))
+    restored = panel._deserialize_model_fits(state)
+
+    fit_range = restored["A0"].ranges[0]
+    assert fit_range.result is not None
+    assert fit_range.result.params_at_bound == ("a",)
+    assert fit_range.result.covariance is not None
+    cov_names, cov_matrix = fit_range.result.covariance
+    assert cov_names == ["a", "b"]
+    assert cov_matrix == [[0.01, 0.002], [0.002, 0.04]]
+
+    # Legacy state without either key still loads (defaults applied).
+    for range_state in state["A0"]["ranges"]:
+        range_state["result"].pop("params_at_bound", None)
+        range_state["result"].pop("covariance", None)
+    legacy = panel._deserialize_model_fits(state)
+    legacy_range = legacy["A0"].ranges[0]
+    assert legacy_range.result is not None
+    assert legacy_range.result.params_at_bound == ()
+    assert legacy_range.result.covariance is None
+
+
 def test_fit_range_curve_sampler_spans_window_envelope(panel: FitParametersPanel) -> None:
     """The panel overlay/GLE sampler must cover the window-union envelope,
     not the stale x_min/x_max, so the drawn curve matches what was fitted."""

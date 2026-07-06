@@ -1378,3 +1378,67 @@ def test_local_y_selector_fit_button_column_fits_widest_label(qapp: QApplication
         "reproduces the in-place relabel this test targets"
     )
     assert column_width_after >= fit_button.sizeHint().width()
+
+
+def test_local_model_fit_serialization_round_trips_covariance_and_params_at_bound(
+    qapp: QApplication,
+) -> None:
+    """``covariance`` and ``params_at_bound`` must survive a save/reload cycle
+    on the group-fit-window's local model-fit serializer, the same as the
+    plain ``FitParametersPanel`` serializer (BED next-point suggestion,
+    docs/studies/bed-next-point-suggestion.md §3.4/§5.2)."""
+    import json
+
+    window = GlobalParameterFitWindow()
+
+    model = ParameterCompositeModel(["Linear"])
+    params = ParameterSet([Parameter("m", value=1.0), Parameter("b", value=2.0)])
+    result = ParameterModelFitResult(
+        success=True,
+        chi_squared=4.2,
+        reduced_chi_squared=0.6,
+        parameters=params,
+        uncertainties={"m": 0.1, "b": 0.2},
+        message="Fit successful",
+        error_mode="column",
+        n_points=9,
+        params_at_bound=("m",),
+        covariance=(["m", "b"], [[0.01, 0.002], [0.002, 0.04]]),
+    )
+    window._local_model_fits = {
+        "Lambda": ParameterModelFit(
+            parameter_name="Lambda",
+            x_key="temperature",
+            active=True,
+            ranges=[
+                ModelFitRange(
+                    x_min=0.0,
+                    x_max=10.0,
+                    model=model,
+                    parameters=params,
+                    result=result,
+                )
+            ],
+        )
+    }
+
+    state = json.loads(json.dumps(window._serialize_local_model_fits()))
+    restored = window._deserialize_local_model_fits(state)
+
+    fit_range = restored["Lambda"].ranges[0]
+    assert fit_range.result is not None
+    assert fit_range.result.params_at_bound == ("m",)
+    assert fit_range.result.covariance is not None
+    cov_names, cov_matrix = fit_range.result.covariance
+    assert cov_names == ["m", "b"]
+    assert cov_matrix == [[0.01, 0.002], [0.002, 0.04]]
+
+    # Legacy state without either key still loads (defaults applied).
+    for range_state in state["Lambda"]["ranges"]:
+        range_state["result"].pop("params_at_bound", None)
+        range_state["result"].pop("covariance", None)
+    legacy = window._deserialize_local_model_fits(state)
+    legacy_range = legacy["Lambda"].ranges[0]
+    assert legacy_range.result is not None
+    assert legacy_range.result.params_at_bound == ()
+    assert legacy_range.result.covariance is None
