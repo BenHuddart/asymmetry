@@ -1894,6 +1894,7 @@ class GlobalFitTab(FitTabBase):
         # Run the global fit on the shared TaskRunner; the GUI (and Stop
         # button) stay live.
         self._result_text.setText("Fitting... This may take a moment for many datasets...")
+        self._result_text.setToolTip("")
         self._set_series_busy(True)
 
         # Store model for later use in callbacks (read by _on_fit_finished).
@@ -2053,6 +2054,7 @@ class GlobalFitTab(FitTabBase):
         )
 
         self._result_text.setText("Fitting grouped time-domain data...")
+        self._result_text.setToolTip("")
         self._set_series_busy(True)
         self._current_model = grouped_model
         self._current_global_params = global_params
@@ -2300,6 +2302,7 @@ class GlobalFitTab(FitTabBase):
         forward, backward = self._count_fb_groups(dataset)
 
         self._result_text.setText("Fitting count-domain data…")
+        self._result_text.setToolTip("")
         minos = self._minos_checkbox.isChecked()
         # Launch-time context (dataset, groups, cost, side) is bound into the
         # result closures: the user may flip the cost/side controls or switch
@@ -2362,6 +2365,7 @@ class GlobalFitTab(FitTabBase):
         self._count_fit_worker = None
         self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
         self._result_text.setHtml(error_html(f"Count-domain fit failed: {message}"))
+        self._result_text.setToolTip("")
 
     def _on_count_fit_cancelled(self) -> None:
         """Handle a cancelled count-domain fit: restore the panel, record nothing."""
@@ -2375,6 +2379,7 @@ class GlobalFitTab(FitTabBase):
         if not result.success:
             self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
             self._result_text.setHtml(error_html(result.message or "Forward/backward fit failed"))
+            self._result_text.setToolTip("")
             return
         fwd = result.group_results[forward]
         self._store_count_deadtime(fwd, forward)
@@ -2418,6 +2423,7 @@ class GlobalFitTab(FitTabBase):
         if not result.success:
             self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
             self._result_text.setHtml(error_html(result.message or "Single-histogram fit failed"))
+            self._result_text.setToolTip("")
             return
         self._store_count_deadtime(result, group_id)
         self._store_count_single_extras(dataset, result, group_id)
@@ -2841,6 +2847,7 @@ class GlobalFitTab(FitTabBase):
         }
 
         self._result_text.setText("Fitting grouped time-domain series...")
+        self._result_text.setToolTip("")
         self._set_series_busy(True)
         self._current_model = grouped_model
         self._current_global_params = global_params
