@@ -98,6 +98,11 @@ from asymmetry.gui.windows.new_user_function_dialog import NewUserFunctionDialog
 #: D-optimal combo entry (userData sentinel; see _on_suggest_target_changed).
 _SUGGEST_ALL_PARAMS = "__all__"
 
+#: Compare-against combo entry for a composite built via Edit… (userData
+#: sentinel; see _adopt_custom_compare_model). The selected entry is the
+#: single source of truth for what "Fit & compare" fits.
+_COMPARE_CUSTOM = "__custom__"
+
 #: Operators offered by the parameter/trending builder — the base arithmetic
 #: set plus the quadrature combinator ``⊕`` (``f ⊕ g = sqrt(f**2 + g**2)``),
 #: e.g. ``PowerLaw ⊕ Constant`` reproduces ``PowerLawQuadBG``.
@@ -2523,8 +2528,14 @@ class ModelFitDialog(QDialog):
         different from the primary model.
         """
         current = self._compare_model_combo.currentData()
+        custom = getattr(self, "_compare_custom_model", None)
         with QSignalBlocker(self._compare_model_combo):
             self._compare_model_combo.clear()
+            if custom is not None:
+                self._compare_model_combo.addItem(
+                    f"{custom.component_expression_string()} (custom)",
+                    userData=_COMPARE_CUSTOM,
+                )
             for name in self._component_pool:
                 self._compare_model_combo.addItem(name, userData=name)
             restore_idx = self._compare_model_combo.findData(current)
@@ -2983,16 +2994,18 @@ class ModelFitDialog(QDialog):
     # alternatives) refresh from that list.
 
     def _selected_compare_model(self) -> ParameterCompositeModel | None:
-        """The model "Fit & compare" would fit: the Edit… composite if set,
-        otherwise the quick-pick combo's single component."""
-        custom = getattr(self, "_compare_custom_model", None)
-        if custom is not None:
-            return custom
-        name = self._compare_model_combo.currentData()
-        if not name:
+        """The model "Fit & compare" would fit — exactly what the combo shows:
+        the "(custom)" entry maps to the Edit… composite, any other entry to
+        that single component. The displayed selection is the sole truth (a
+        hidden stash silently overriding the combo caused fits of something
+        other than what was on screen)."""
+        data = self._compare_model_combo.currentData()
+        if data == _COMPARE_CUSTOM:
+            return getattr(self, "_compare_custom_model", None)
+        if not data:
             return None
         try:
-            return ParameterCompositeModel([str(name)], [])
+            return ParameterCompositeModel([str(data)], [])
         except Exception:
             return None
 
@@ -3011,18 +3024,29 @@ class ModelFitDialog(QDialog):
         model = dlg.get_model()
         if model is None:
             return
+        self._adopt_custom_compare_model(model)
+
+    def _adopt_custom_compare_model(self, model: ParameterCompositeModel) -> None:
+        """Surface an Edit…-built composite as a selected "(custom)" combo entry."""
         self._compare_custom_model = model
-        # Reflect the custom choice in the combo's tooltip-visible state by
-        # clearing any stale quick-pick highlight — the combo itself keeps
-        # its prior selection, but _selected_compare_model prioritises the
-        # custom model until a fresh quick-pick or range change drops it.
+        self._refresh_compare_model_combo()
+        with QSignalBlocker(self._compare_model_combo):
+            self._compare_model_combo.setCurrentIndex(
+                max(0, self._compare_model_combo.findData(_COMPARE_CUSTOM))
+            )
         self._compare_model_combo.setToolTip(
             f"Custom (via Edit…): {model.component_expression_string()}"
         )
 
     def _on_compare_model_combo_changed(self, *_args: object) -> None:
-        """Picking from the quick-pick combo drops any stashed Edit… model."""
+        """Picking a plain component drops the Edit… composite and its entry."""
+        if self._compare_model_combo.currentData() == _COMPARE_CUSTOM:
+            return
         self._compare_custom_model = None
+        custom_idx = self._compare_model_combo.findData(_COMPARE_CUSTOM)
+        if custom_idx >= 0:
+            with QSignalBlocker(self._compare_model_combo):
+                self._compare_model_combo.removeItem(custom_idx)
         self._compare_model_combo.setToolTip(
             "Quick-pick a single alternative component, or use Edit… to build a "
             "composite model the same way the primary model is built."

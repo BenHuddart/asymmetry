@@ -2692,3 +2692,32 @@ def test_suggest_candidate_range_defaults_to_measured_span(qapp: QApplication) -
     assert dlg._suggest_min_field.value() == pytest.approx(1.0)
     assert dlg._suggest_max_field.value() == pytest.approx(10.0)
     dlg.deleteLater()
+
+
+def test_custom_compare_model_shows_as_selected_combo_entry(qapp: QApplication) -> None:
+    # An Edit…-built composite must be visible as a selected "(custom)" combo
+    # entry — and the combo's selection is the sole truth for what
+    # "Fit & compare" fits (a hidden stash overriding the display previously
+    # fitted something other than what was on screen).
+    dlg = _make_dialog(qapp)
+    custom = ParameterCompositeModel(["Linear", "Constant"], ["+"])
+
+    dlg._adopt_custom_compare_model(custom)
+    combo = dlg._compare_model_combo
+    assert combo.currentData() == "__custom__"
+    assert "(custom)" in combo.currentText()
+    selected = dlg._selected_compare_model()
+    assert selected is not None
+    assert selected.component_expression_string() == custom.component_expression_string()
+
+    # Picking a plain component drops the composite and removes its entry.
+    for i in range(combo.count()):
+        if combo.itemData(i) != "__custom__":
+            combo.setCurrentIndex(i)
+            break
+    assert dlg._compare_custom_model is None
+    assert combo.findData("__custom__") < 0
+    selected = dlg._selected_compare_model()
+    assert selected is not None
+    assert selected.component_expression_string() == combo.currentData()
+    dlg.deleteLater()
