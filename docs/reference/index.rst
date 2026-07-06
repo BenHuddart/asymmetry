@@ -94,6 +94,9 @@ graphical interface where the feature lives.
    * - Trend a fitted parameter across a scan
      - :doc:`parameter_trending`
      - Fit Parameters panel
+   * - Decide where to measure next during a scan
+     - :doc:`suggest_next_point`
+     - Model Fit dialog → Suggest next point
    * - Fit λ(T) and superfluid density
      - :doc:`sc_penetration_depth`
      - Fit Parameters panel
@@ -252,6 +255,7 @@ superconducting penetration depth, and other consumers of a parameter series.
    :caption: Trending and downstream models
 
    parameter_trending
+   suggest_next_point
    muonium_kinetics
    diffusion_ballistic_lf
    sc_penetration_depth

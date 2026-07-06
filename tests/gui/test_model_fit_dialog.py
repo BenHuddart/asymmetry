@@ -2530,3 +2530,194 @@ def test_calibration_completion_updates_result_line(qapp: QApplication) -> None:
     text = dlg._suggest_result_label.text()
     assert "MC-calibrated" in text
     assert "0.00789" in text
+
+
+# ---------------------------------------------------------------------------
+# Model discrimination + cost weighting (Phase 3 — docs/studies/
+# bed-next-point-suggestion.md §8.1/§8.2). Reuses _make_dialog's exact linear
+# y = 2x + 1 fixture.
+# ---------------------------------------------------------------------------
+
+
+def _drain_compare(dlg: ModelFitDialog, timeout_s: float = 10.0) -> None:
+    """Pump the event loop until the off-thread "Fit & compare" completes."""
+    app = QApplication.instance()
+    deadline = time.time() + timeout_s
+    while dlg._compare_fit_in_progress and time.time() < deadline:
+        app.processEvents()
+        time.sleep(0.005)
+    app.processEvents()
+
+
+def test_fit_and_compare_populates_candidates_and_discrimination(qapp: QApplication) -> None:
+    dlg = _make_dialog(qapp)
+    _fit_active_range(dlg)
+
+    # Quick-pick a different single component than the active Linear leader.
+    idx = dlg._compare_model_combo.findData("PowerLaw")
+    assert idx >= 0
+    dlg._compare_model_combo.setCurrentIndex(idx)
+    dlg._on_compare_fit_clicked()
+    _drain_compare(dlg)
+
+    candidates = dlg._discrimination_candidates.get(dlg._active_range_idx)
+    assert candidates
+    model, params, chi2, n_free = candidates[0]
+    assert model.component_names == ["PowerLaw"]
+    assert np.isfinite(chi2)
+
+    label_text = dlg._compare_candidates_label.text()
+    assert "weight" in label_text
+
+    assert dlg._last_discrimination is not None
+    assert dlg._preview._discrimination is not None
+
+
+def test_discrimination_agree_within_noise_shows_warning_no_marker(qapp: QApplication) -> None:
+    """Comparing the leader's own model/params against itself: everywhere-agree."""
+    dlg = _make_dialog(qapp)
+    _fit_active_range(dlg)
+
+    idx = dlg._active_range_idx
+    fit_range = dlg._fit.ranges[idx]
+    result = dlg._result_for_range(idx)
+
+    # Directly seed a candidate identical to the leader (same model+params),
+    # bypassing the off-thread fit path per the spec's flakiness fallback.
+    dlg._discrimination_candidates[idx] = [
+        (fit_range.model, fit_range.parameters, float(result.chi_squared), 2)
+    ]
+    dlg._refresh_discrimination_suggestion()
+
+    suggestion = dlg._last_discrimination
+    assert suggestion is not None
+    assert not np.isfinite(suggestion.best_x)
+    assert any("agree within noise" in w for w in suggestion.warnings)
+
+    text = dlg._discrimination_result_label.text()
+    assert "agree within noise" in text
+
+
+def test_aic_display_decisive_tag_for_much_worse_alternative(qapp: QApplication) -> None:
+    dlg = _make_dialog(qapp)
+    _fit_active_range(dlg)
+
+    idx = dlg._active_range_idx
+    alt_model = ParameterCompositeModel(["Constant"], [])
+    alt_params = ParameterSet([Parameter("c", 1.0)])
+
+    dlg._discrimination_candidates[idx] = [(alt_model, alt_params, 1.0e6, 1)]
+    dlg._refresh_candidates_label()
+
+    text = dlg._compare_candidates_label.text()
+    assert "decisive" in text
+
+
+def test_cost_weighting_moves_marker_and_drops_sigma_tail(qapp: QApplication) -> None:
+    dlg = _make_dialog(qapp)
+    _fit_active_range(dlg)
+
+    idx = dlg._suggest_target_combo.findData("__all__")
+    dlg._suggest_target_combo.setCurrentIndex(idx)
+    dlg._on_suggest_clicked()
+    suggestion = dlg._last_suggestion
+    assert suggestion is not None
+    assert np.isfinite(suggestion.best_x)
+
+    # A large down-rate makes moving DOWN from x_current expensive, so the
+    # weighted argmax should shift toward/above x_current relative to the
+    # unweighted best_x (or at least differ from it) when x_current sits
+    # above the unweighted best_x.
+    x_current = float(dlg._x_max_data)
+    dlg._cost_current_x_edit.setText(f"{x_current}")
+    dlg._cost_count_time_edit.setText("1")
+    dlg._cost_up_rate_edit.setText("0.01")
+    dlg._cost_down_rate_edit.setText("1000")
+    dlg._cost_weight_check.setChecked(True)
+
+    utility, display_x, weighted = dlg._display_curve(suggestion)
+    assert weighted
+    text = dlg._suggest_result_label.text()
+    assert "(cost-weighted)" in text
+    if not np.isclose(display_x, suggestion.best_x):
+        assert "approximate" not in text
+        assert "MC-calibrated" not in text
+        assert f"x = {display_x:.4g}" in text
+
+    # Invalid inputs (count_time = 0) silently disable weighting: result
+    # identical to the unweighted suggestion.
+    dlg._cost_count_time_edit.setText("0")
+    utility2, display_x2, weighted2 = dlg._display_curve(suggestion)
+    assert not weighted2
+    assert display_x2 == suggestion.best_x
+    assert np.array_equal(utility2, suggestion.utility)
+
+
+def test_refit_clears_discrimination_candidates_and_both_overlays(qapp: QApplication) -> None:
+    dlg = _make_dialog(qapp)
+    _fit_active_range(dlg)
+
+    idx = dlg._active_range_idx
+    result = dlg._result_for_range(idx)
+    alt_model = ParameterCompositeModel(["Constant"], [])
+    alt_params = ParameterSet([Parameter("c", 1.0)])
+    dlg._discrimination_candidates[idx] = [
+        (alt_model, alt_params, float(result.chi_squared) + 5.0, 1)
+    ]
+    dlg._refresh_discrimination_suggestion()
+    assert dlg._last_discrimination is not None
+    assert dlg._preview._discrimination is not None
+
+    suggest_idx = dlg._suggest_target_combo.findData("__all__")
+    dlg._suggest_target_combo.setCurrentIndex(suggest_idx)
+    dlg._on_suggest_clicked()
+    assert dlg._preview._suggestion is not None
+
+    # Refitting the active range must drop both the candidates list and both
+    # overlays/result lines.
+    _fit_active_range(dlg)
+
+    assert dlg._discrimination_candidates.get(idx, []) == []
+    assert dlg._last_discrimination is None
+    assert dlg._last_suggestion is None
+    assert dlg._preview._suggestion is None
+    assert dlg._preview._discrimination is None
+    assert dlg._compare_candidates_label.text() == ""
+
+
+def test_suggest_candidate_range_defaults_to_measured_span(qapp: QApplication) -> None:
+    # The range fields must seed from the data's x span at construction —
+    # a stale [0, 1] default silently confines suggestions to nonsense.
+    dlg = _make_dialog(qapp)
+    assert dlg._suggest_min_field.value() == pytest.approx(1.0)
+    assert dlg._suggest_max_field.value() == pytest.approx(10.0)
+    dlg.deleteLater()
+
+
+def test_custom_compare_model_shows_as_selected_combo_entry(qapp: QApplication) -> None:
+    # An Edit…-built composite must be visible as a selected "(custom)" combo
+    # entry — and the combo's selection is the sole truth for what
+    # "Fit & compare" fits (a hidden stash overriding the display previously
+    # fitted something other than what was on screen).
+    dlg = _make_dialog(qapp)
+    custom = ParameterCompositeModel(["Linear", "Constant"], ["+"])
+
+    dlg._adopt_custom_compare_model(custom)
+    combo = dlg._compare_model_combo
+    assert combo.currentData() == "__custom__"
+    assert "(custom)" in combo.currentText()
+    selected = dlg._selected_compare_model()
+    assert selected is not None
+    assert selected.component_expression_string() == custom.component_expression_string()
+
+    # Picking a plain component drops the composite and removes its entry.
+    for i in range(combo.count()):
+        if combo.itemData(i) != "__custom__":
+            combo.setCurrentIndex(i)
+            break
+    assert dlg._compare_custom_model is None
+    assert combo.findData("__custom__") < 0
+    selected = dlg._selected_compare_model()
+    assert selected is not None
+    assert selected.component_expression_string() == combo.currentData()
+    dlg.deleteLater()

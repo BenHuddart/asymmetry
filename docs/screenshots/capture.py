@@ -280,6 +280,7 @@ def _import_scenarios() -> None:
         muon_fluorine_pbf2,
         new_user_function_dialog,
         parameter_trending_mgb2,
+        suggest_next_point,
         temperature_trend_fit,
         trend_model_fit_dialog,
         vector_polarization_emu,

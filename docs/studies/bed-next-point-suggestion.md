@@ -371,7 +371,71 @@ test files green; `harness validate` green.
   utility summed across active trend fits.
 - Trending-panel live suggestion (auto-refresh as runs land).
 
-## 8. Decision log
+## 8. Phase 3 design addendum (2026-07-06, post-v1 merge)
+
+### 8.1 Model discrimination (3.2)
+
+UX: the primary flow stays one-model-per-range. The suggestion section
+gains a **"Compare against"** row: a model picker plus a "Fit & compare"
+action that fits the alternative model over the same masked data
+off-thread (same worker pattern as calibration), keeping a per-range list
+of alternative fitted candidates. With ≥1 alternative:
+
+- **Disagreement utility** (leader vs ALL alternatives, per the TAS-AI
+  lock-in lesson): U_disc(x) = max_i [f_lead(x) − f_i(x)]² / 2σ²(x),
+  overlaid in a visually distinct style from the refinement band, with
+  its own suggested-x marker.
+- **Live ranking**: AIC weights w_i ∝ exp(−AIC_i/2), AIC_i = χ²_i + 2p_i
+  from each fit's existing χ²; displayed per candidate ("evidence ratio
+  ~ N"), with the "decisive ⇔ ratio > 100" convention. BIC is rejected
+  (sequential-n drift, per §4).
+- Nuisance freezing during discrimination (TAS-AI) is **deferred**: it
+  matters for in-loop autonomous refits; for a one-shot comparison the
+  full-fit AIC is honest enough, and identifying "background" parameters
+  generically is not yet possible. Recorded as a Phase 4 refinement.
+
+Core API (`experiment_design.py`):
+
+```python
+def suggest_discriminating_point(
+    lead_model, lead_parameters,
+    alternatives,                  # sequence of (model, parameters)
+    x_data, y_err, x_min, x_max, *, n_candidates=257,
+) -> NextPointSuggestion           # target=None, utility=U_disc
+
+def aic_weights(chi_squareds, n_free_params) -> list[float]
+```
+
+Reuses `NextPointSuggestion` (the overlay/warning plumbing is identical);
+discrimination results carry a warning when all candidate models agree
+within noise everywhere ("no discriminating point in range").
+
+### 8.2 Movement/settling cost weighting (3.1)
+
+Off by default, behind a "Weight by measurement cost" toggle. The user
+supplies a crude directional model: counting time per point (h), plus
+move-time rates (h per unit x) for increasing and decreasing x, and the
+current instrument position (defaulting to the last measured x). Core:
+
+```python
+def cost_weighted_utility(
+    x_candidates, utility, x_current, *,
+    count_time, up_rate, down_rate, gamma=0.7,
+) -> NDArray   # utility**gamma / (count_time + move_time(x))
+```
+
+Pure array-in/array-out so the GUI composes it onto either the
+refinement or the discrimination curve. γ = 0.7 fixed (TAS-AI's stable
+choice); not exposed in the UI.
+
+### 8.3 User docs (3.3)
+
+A GUI walkthrough with screenshots (docs/screenshots/capture.py
+scenario) covering: fit a trend → suggest → read the utility curve →
+set a goal → events/time conversion → compare two models. Follows the
+house rule that worked illustrations are GUI-based, not API code.
+
+## 9. Decision log
 
 Settled with the maintainer (2026-07-06): c-optimality with user-picked
 target parameter as default flavour (D-optimal available); counting
