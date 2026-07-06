@@ -663,10 +663,9 @@ GUI Fourier workflow
 --------------------
 
 The FFT spectrum does **not** compute automatically. Nothing is transformed
-until you click ``Compute FFT``, and — exactly like the MaxEnt panel's cycle
-buttons (see `Maximum Entropy Method`_) — that button sits below the fold in a
-scrollable panel, so on a narrow dock it is easy to miss. A run you have not
-computed shows a **centred prompt over the Frequency-domain plot** —
+until you click ``Compute FFT``, pinned in the action footer at the bottom of
+the Fourier panel (always visible, outside the scrolling settings area). A run
+you have not computed shows a **centred prompt over the Frequency-domain plot** —
 *"No FFT computed for this run. Configure the FFT parameters and click Compute
 FFT."* — instead of a blank tab. That prompt is the expected
 "not computed yet" state, not a broken transform, and it clears the moment a
@@ -684,10 +683,8 @@ To compute an FFT spectrum:
    does **not** run the transform.
 #. *(Optional)* **Tune the settings** — phase mode, apodisation, included
    groups, phases — using the controls described below.
-#. **Click** ``Compute FFT``. This button is at the **bottom** of the panel,
-   below the settings groups; on a narrow dock you must scroll the panel down to
-   reach it. Only this click runs the transform and fills the
-   **Frequency Domain** tab.
+#. **Click** ``Compute FFT`` in the panel's pinned action footer. Only this
+   click runs the transform and fills the **Frequency Domain** tab.
 
 While the Frequency-domain tab has no computed spectrum, the plot shows the
 compute prompt above and the status line reads ``No FFT computed for run <n>`` —
@@ -714,6 +711,29 @@ WiMDA-first FFT workflow directly:
   current dataset
 * for averaged grouped spectra, optionally estimate WiMDA-style error bars from
   the spread across the selected group spectra
+
+Out-of-date indicator
+~~~~~~~~~~~~~~~~~~~~~
+
+A computed spectrum stays on screen when you keep working, so the panel tells
+you when the display no longer matches the current settings. Editing any FFT
+parameter, changing the time-domain fit range the transform inherits, or
+applying a new grouping / t0 / deadtime / background correction to the run
+raises an amber banner directly above the action footer::
+
+   Spectrum out of date — <what changed>. Compute FFT to refresh.
+
+The banner names what changed (for example ``zero-pad factor, apodisation
+changed`` or ``grouping changed``) and clears on the next ``Compute FFT``.
+Nothing recomputes automatically — the displayed spectrum is never replaced
+behind your back — and parameters that are inert in the active mode never
+flag: a filter τ edit while apodisation is ``None`` does not mark the
+spectrum out of date, and a time-range change already absorbed by the
+good-statistics tail cap does not either. Each computed spectrum records the
+grouping it was derived from, so a regroup is detected even after a project
+save and reload. Spectra restored from projects saved before this feature
+cannot be checked against grouping changes (their recipes carry no grouping
+record); recomputing once re-arms the check.
 
 Fitting the displayed spectrum
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

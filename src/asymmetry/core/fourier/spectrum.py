@@ -14,6 +14,9 @@ deterministic and faithful to what was originally generated.
 
 from __future__ import annotations
 
+import hashlib
+import json
+import math
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -36,6 +39,7 @@ from asymmetry.core.fourier.fft import (
 )
 from asymmetry.core.fourier.grouped import build_group_signal_dataset
 from asymmetry.core.fourier.units import gauss_to_mhz
+from asymmetry.core.transform.background import resolve_background_mode
 from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
 from asymmetry.core.transform.grouping import common_t0_for_groups, group_names
 from asymmetry.core.utils.coerce import optional_float
@@ -204,6 +208,306 @@ def _coerce_exclusion_ranges(value: object) -> list[tuple[float, float]]:
             except (TypeError, ValueError):
                 continue
     return ranges
+
+
+def _digest_groups(groups: object) -> dict[int, list[int]] | None:
+    """Normalise a ``grouping["groups"]`` payload to ``{gid: sorted detector ids}``.
+
+    Entries may be plain detector numbers or ``[detector, weight]`` pairs (only
+    the detector number is grouping-relevant to the FFT input); unparseable
+    group ids or entries are dropped rather than raising, since a digest must
+    tolerate whatever a run happens to carry.
+    """
+    if not isinstance(groups, dict):
+        return None
+    normalized: dict[int, list[int]] = {}
+    for raw_gid, entries in groups.items():
+        try:
+            gid = int(raw_gid)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(entries, (list, tuple)):
+            continue
+        detectors: list[int] = []
+        for entry in entries:
+            detector = entry[0] if isinstance(entry, (list, tuple)) and entry else entry
+            try:
+                detectors.append(int(detector))
+            except (TypeError, ValueError):
+                continue
+        normalized[gid] = sorted(detectors)
+    return normalized
+
+
+def _digest_int_list(value: object) -> list[int] | None:
+    """Parse a sequence of ids into a sorted ``list[int]``, or ``None``."""
+    if not isinstance(value, (list, tuple, set, frozenset)):
+        return None
+    ids: list[int] = []
+    for item in value:
+        try:
+            ids.append(int(item))
+        except (TypeError, ValueError):
+            continue
+    return sorted(ids)
+
+
+def _digest_int(value: object) -> int | None:
+    """Parse a scalar id/bin count, or ``None`` when unparseable."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _background_values_are_list_routed(grouping: dict) -> bool:
+    """Return whether ``forward_group``/``backward_group`` route background values.
+
+    ``background_values``/``background_ranges`` keyed by group id (a ``dict``)
+    address a group directly; only the *list*-shaped form (WiMDA's positional
+    ``[forward, backward]`` convention — see
+    :func:`asymmetry.core.fourier.grouped._group_background_value_for_group`)
+    needs ``forward_group``/``backward_group`` to know which entry belongs to
+    which group. Switching a projection's polarisation axis rewrites
+    ``forward_group``/``backward_group`` on every dataset, so that rewrite must
+    not perturb the digest unless a list-routed background is actually in play.
+    """
+    values = grouping.get("background_values")
+    ranges = grouping.get("background_ranges")
+    return isinstance(values, (list, tuple)) or isinstance(ranges, (list, tuple))
+
+
+def fourier_grouping_digest(run: Run | None) -> str:
+    """Return a short, stable digest of the grouping state the grouped-FFT input consumes.
+
+    Captures exactly the keys read by
+    :func:`asymmetry.core.fourier.grouped.build_group_signal_dataset` (and the
+    deadtime/background helpers it calls) so a recipe recorded at compute time
+    can later be compared against the run's *current* grouping to flag a
+    displayed spectrum as stale. Cosmetic keys the FFT input never reads
+    (``group_names``, ``projections``, ``vector_axis``, alpha values) are
+    deliberately excluded — renaming a group must not change the digest.
+
+    Parameters that are inert for the current grouping are also excluded, so a
+    change that cannot affect the FFT input does not falsely flag staleness:
+    ``dead_time_us`` only matters when ``deadtime_correction`` is set, the
+    background detail keys only matter when ``background_correction`` is set,
+    and ``forward_group``/``backward_group`` only matter when a *list*-shaped
+    ``background_values``/``background_ranges`` needs them to route entries to
+    groups (see :func:`_background_values_are_list_routed`).
+
+    Returns ``""`` for ``run is None``, so a not-yet-loaded run trivially
+    compares unequal to any real recorded digest.
+    """
+    if run is None:
+        return ""
+    grouping = run.grouping if isinstance(run.grouping, dict) else {}
+
+    payload: dict[str, object] = {}
+
+    groups = _digest_groups(grouping.get("groups"))
+    if groups is not None:
+        payload["groups"] = groups
+
+    excluded = _digest_int_list(grouping.get("excluded_detectors"))
+    payload["excluded_detectors"] = excluded if excluded is not None else []
+
+    deadtime_correction = bool(grouping.get("deadtime_correction", False))
+    payload["deadtime_correction"] = deadtime_correction
+    if deadtime_correction:
+        dead_time_us = grouping.get("dead_time_us")
+        if isinstance(dead_time_us, (list, tuple)):
+            try:
+                payload["dead_time_us"] = [float(v) for v in dead_time_us]
+            except (TypeError, ValueError):
+                pass
+        elif dead_time_us is not None:
+            try:
+                payload["dead_time_us"] = float(dead_time_us)
+            except (TypeError, ValueError):
+                pass
+
+    background_correction = bool(grouping.get("background_correction", False))
+    payload["background_correction"] = background_correction
+    if background_correction:
+        # Digest the RESOLVED mode, not a raw key: the consumer selects its
+        # behaviour via resolve_background_mode (explicit ``background_mode``
+        # with inference from the pre-existing keys), and ``background_method``
+        # is a GUI-hint key the FFT input never reads.
+        payload["background_mode"] = resolve_background_mode(grouping)
+        for key in (
+            "background_values",
+            "background_ranges",
+            "background_range",
+            "background_run",
+        ):
+            if key in grouping:
+                payload[key] = grouping[key]
+        if _background_values_are_list_routed(grouping):
+            forward_group = _digest_int(grouping.get("forward_group"))
+            backward_group = _digest_int(grouping.get("backward_group"))
+            if forward_group is not None:
+                payload["forward_group"] = forward_group
+            if backward_group is not None:
+                payload["backward_group"] = backward_group
+
+    for key in ("t0_bin", "first_good_bin", "last_good_bin", "bunching_factor"):
+        parsed = _digest_int(grouping.get(key))
+        if parsed is not None:
+            payload[key] = parsed
+
+    encoded = json.dumps(payload, sort_keys=True, default=str)
+    return hashlib.sha1(encoded.encode("utf-8")).hexdigest()[:16]
+
+
+def _floats_equal(a: float | None, b: float | None) -> bool:
+    """Compare two optional floats: both ``None`` is equal, one ``None`` is not."""
+    if a is None or b is None:
+        return a is b
+    return math.isclose(a, b, rel_tol=1e-9, abs_tol=1e-12)
+
+
+def _sorted_group_ids(value: list[int] | None) -> list[int] | None:
+    return None if value is None else sorted(int(v) for v in value)
+
+
+def _ranges_equal(a: list[tuple[float, float]], b: list[tuple[float, float]]) -> bool:
+    """Compare exclusion-range lists as sorted float pairs, order-insensitive."""
+    sa = sorted(a)
+    sb = sorted(b)
+    if len(sa) != len(sb):
+        return False
+    return all(_floats_equal(x[0], y[0]) and _floats_equal(x[1], y[1]) for x, y in zip(sa, sb))
+
+
+def _phase_ids(config: GroupSpectrumConfig) -> set[int]:
+    if config.selected_group_ids is not None:
+        return {int(g) for g in config.selected_group_ids}
+    return {int(g) for g in config.group_phase_degrees}
+
+
+def config_differences(current: GroupSpectrumConfig, recorded: GroupSpectrumConfig) -> list[str]:
+    """Return human-readable labels of effective differences between two configs.
+
+    "Effective" means a difference that could change the resulting spectrum:
+    a parameter that is inert in ``current``'s active display/filter mode (a
+    filter time constant while apodisation is "none", say) is not reported even
+    if its raw value differs, because recomputing with either value would
+    produce the same spectrum. Labels are returned most-significant first
+    (display mode, then time window, then the remaining checks in a fixed
+    order) and each label appears at most once.
+
+    Intended to drive a GUI "displayed FFT is out of sync with the current
+    grouping/config" indicator: an empty list means the two configs would
+    produce the same spectrum.
+    """
+    labels: list[str] = []
+
+    def emit(label: str) -> None:
+        if label not in labels:
+            labels.append(label)
+
+    # Canonical compare so a legacy display alias (e.g. "power" for
+    # "(Power)^1/2") in an old recipe cannot read as a mode change.
+    if canonical_fourier_display_mode(current.display) != canonical_fourier_display_mode(
+        recorded.display
+    ):
+        emit("display mode")
+
+    if not _floats_equal(current.t_min_us, recorded.t_min_us) or not _floats_equal(
+        current.t_max_us, recorded.t_max_us
+    ):
+        emit("time window")
+
+    if _sorted_group_ids(current.selected_group_ids) != _sorted_group_ids(
+        recorded.selected_group_ids
+    ):
+        emit("included groups")
+
+    if current.padding != recorded.padding:
+        emit("zero-pad factor")
+
+    if current.subtract_average_signal != recorded.subtract_average_signal:
+        emit("average subtraction")
+
+    if current.estimate_average_error != recorded.estimate_average_error:
+        emit("averaged errors")
+
+    if current.window != recorded.window:
+        emit("apodisation")
+
+    apodisation_active = current.window != "none" or recorded.window != "none"
+    if apodisation_active:
+        if not _floats_equal(current.filter_start_us, recorded.filter_start_us):
+            emit("apodisation filter start")
+        if not _floats_equal(current.filter_time_constant_us, recorded.filter_time_constant_us):
+            emit("apodisation filter τ")
+
+    uses_phase = fourier_mode_uses_phase_correction(current.display)
+    if uses_phase:
+        if not _floats_equal(current.t0_offset_us, recorded.t0_offset_us):
+            emit("t0 offset")
+        ids = _phase_ids(current) | _phase_ids(recorded)
+        phases_differ = any(
+            not _floats_equal(
+                current.group_phase_degrees.get(gid, 0.0),
+                recorded.group_phase_degrees.get(gid, 0.0),
+            )
+            for gid in ids
+        )
+        if phases_differ:
+            emit("group phases")
+
+    if current.pulse_compensation != recorded.pulse_compensation:
+        emit("pulse compensation")
+
+    pulse_active = current.pulse_compensation or recorded.pulse_compensation
+    if pulse_active and (
+        not _floats_equal(current.pulse_half_width_us, recorded.pulse_half_width_us)
+        or not _floats_equal(current.pulse_separation_us, recorded.pulse_separation_us)
+        or current.pulse_n_pulses != recorded.pulse_n_pulses
+        or not _floats_equal(current.pulse_max_gain, recorded.pulse_max_gain)
+    ):
+        emit("pulse settings")
+
+    if current.baseline_mode != recorded.baseline_mode:
+        emit("baseline offset")
+    baseline_active = current.baseline_mode != "none" or recorded.baseline_mode != "none"
+    if baseline_active and not _floats_equal(current.baseline_kappa, recorded.baseline_kappa):
+        emit("baseline offset")
+
+    if current.exclude_enabled != recorded.exclude_enabled:
+        emit("frequency exclusions")
+    exclusions_active = current.exclude_enabled or recorded.exclude_enabled
+    if exclusions_active and not _ranges_equal(current.exclusion_ranges, recorded.exclusion_ranges):
+        emit("frequency exclusions")
+
+    if current.remove_diamag != recorded.remove_diamag or current.diamag_exclusion != (
+        recorded.diamag_exclusion
+    ):
+        emit("diamagnetic handling")
+    diamag_active = current.diamag_exclusion or recorded.diamag_exclusion
+    if diamag_active and not _floats_equal(
+        current.diamag_half_width_mhz, recorded.diamag_half_width_mhz
+    ):
+        emit("diamagnetic handling")
+
+    if canonical_fourier_display_mode(current.display) == "burg" and (
+        current.burg_order_min != recorded.burg_order_min
+        or current.burg_order_max != recorded.burg_order_max
+    ):
+        emit("Burg pole scan")
+
+    if canonical_fourier_display_mode(current.display) == "correlation" and (
+        not _floats_equal(
+            current.correlation_reference_field_gauss,
+            recorded.correlation_reference_field_gauss,
+        )
+        or current.correlation_order != recorded.correlation_order
+    ):
+        emit("correlation settings")
+
+    return labels
 
 
 def precompute_group_fourier_inputs(
@@ -618,7 +922,9 @@ def compute_average_group_spectrum(
 __all__ = [
     "GroupSpectrumConfig",
     "compute_average_group_spectrum",
+    "config_differences",
     "fourier_display_ylabel",
+    "fourier_grouping_digest",
     "precompute_group_fourier_inputs",
     "reference_field_gauss",
 ]
