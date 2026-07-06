@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import numpy as np
@@ -10,8 +11,9 @@ import pytest
 pytestmark = [pytest.mark.gui]
 
 pyside6 = pytest.importorskip("PySide6")
-from PySide6.QtWidgets import QApplication, QMessageBox  # type: ignore
+from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox  # type: ignore
 
+import asymmetry.gui.utils.gle_export as gle_export
 from asymmetry.core.fitting.parameter_models import (
     CrossGroupFitResult,
     ModelFitRange,
@@ -24,6 +26,17 @@ from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.export_paths import resolve_gle_export_paths
 from asymmetry.gui.windows.global_parameter_fit_window import GlobalParameterFitWindow
 from tests._qt_helpers import wait_for
+
+
+def _wait(qapp, predicate, timeout_s: float = 10.0) -> bool:
+    """Pump the event loop until *predicate* is true (the compile runs on a worker)."""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        qapp.processEvents()
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return False
 
 
 def _wait_fit_curves(window: GlobalParameterFitWindow, timeout_s: float = 10.0) -> None:
@@ -470,40 +483,38 @@ def test_export_plot_gle_saves_and_compiles(
     window._fit_gle_format_combo.setCurrentText("EPS")
 
     out_path = tmp_path / "export_test.gle"
-    resolved_gle_path, _ = resolve_gle_export_paths(out_path, folder=True)
+    resolved_gle_path, _export_dir = resolve_gle_export_paths(out_path, folder=True)
     monkeypatch.setattr(
-        "asymmetry.gui.windows.global_parameter_fit_window.QFileDialog.getSaveFileName",
-        lambda *_a, **_k: (str(out_path), "GLE files (*.gle)"),
+        QFileDialog,
+        "getSaveFileName",
+        staticmethod(lambda *_a, **_k: (str(out_path), "GLE files (*.gle)")),
     )
 
     compile_calls: list[tuple[Path, str]] = []
-    save_kwargs: list[dict[str, object]] = []
+    result_dialogs: list[tuple[str, str]] = []
 
-    def _fake_compile(path: Path, fmt: str) -> None:
-        compile_calls.append((path, fmt))
+    def _fake_compile(exe, gle_file, fmt, *, cwd, **kw):
+        compile_calls.append((Path(gle_file), fmt))
 
-    window._compile_and_preview_gle = _fake_compile  # type: ignore[method-assign]
+    monkeypatch.setattr(gle_export, "compile_gle", _fake_compile)
+    monkeypatch.setattr(gle_export, "get_gle_executable", lambda: "/fake/gle")
+    monkeypatch.setattr(
+        gle_export,
+        "show_export_result_dialog",
+        lambda p, title, summary, details: result_dialogs.append((summary, details)),
+    )
+    monkeypatch.setattr(gle_export, "post_export_view", lambda p, gp: None)
 
     class _FakeFigure:
         def savefig(self, path: str, **kwargs) -> None:
-            save_kwargs.append(dict(kwargs))
-            output_path = Path(path)
-            if kwargs.get("folder"):
-                output_path, export_dir = resolve_gle_export_paths(output_path, folder=True)
-                export_dir.mkdir(parents=True, exist_ok=True)
-            else:
-                output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_text("! fake gle", encoding="utf-8")
+            Path(path).write_text("! fake gle", encoding="utf-8")
 
     class _FakeGlp:
         @staticmethod
         def figure(**_kwargs):
             return _FakeFigure()
 
-    monkeypatch.setattr(
-        "asymmetry.gui.windows.global_parameter_fit_window.importlib.import_module",
-        lambda _name: _FakeGlp(),
-    )
+    monkeypatch.setattr(gle_export.importlib, "import_module", lambda _name: _FakeGlp())
 
     def _builder(glp, _gle_path):
         return glp.figure(figsize=(7.0, 4.5))
@@ -515,9 +526,86 @@ def test_export_plot_gle_saves_and_compiles(
         output_format="eps",
     )
 
+    assert _wait(qapp, lambda: result_dialogs)
     assert resolved_gle_path.exists()
-    assert "folder" not in save_kwargs[-1]
     assert compile_calls == [(resolved_gle_path, "eps")]
+    assert result_dialogs
+    _summary, details = result_dialogs[0]
+    assert str(resolved_gle_path) in details
+
+
+def test_export_plot_gle_collects_data_sidecars_referenced_by_the_script(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, qapp: QApplication
+) -> None:
+    """The written-files list must include sidecars the script references.
+
+    Real gleplot's ``errorbar_from_file``/``line_from_file`` (used by
+    ``_build_fit_subplot_gle_figure`` when the fake-glp test doubles are not
+    in play) serialize as a leading-whitespace ``data "<file>" ...`` command
+    in the compiled ``.gle`` (see gleplot's ``writer.add_errorbar_from_file``/
+    ``add_plot_line_from_file``). ``extract_gle_data_dependencies`` greps for
+    exactly that, so a builder that writes such a line must see its sidecar
+    surface in the export's result-dialog details.
+    """
+    window = GlobalParameterFitWindow()
+    window._result = CrossGroupFitResult(success=True, chi_squared=1.0, reduced_chi_squared=1.0)
+    window._parameter_name = "Lambda"
+    window._fit_gle_format_combo.setCurrentText("PDF")
+
+    out_path = tmp_path / "export_sidecars.gle"
+    resolved_gle_path, export_dir = resolve_gle_export_paths(out_path, folder=True)
+    monkeypatch.setattr(
+        QFileDialog,
+        "getSaveFileName",
+        staticmethod(lambda *_a, **_k: (str(out_path), "GLE files (*.gle)")),
+    )
+
+    result_dialogs: list[tuple[str, str]] = []
+    monkeypatch.setattr(gle_export, "compile_gle", lambda *a, **k: None)
+    monkeypatch.setattr(gle_export, "get_gle_executable", lambda: "/fake/gle")
+    monkeypatch.setattr(
+        gle_export,
+        "show_export_result_dialog",
+        lambda p, title, summary, details: result_dialogs.append((summary, details)),
+    )
+    monkeypatch.setattr(gle_export, "post_export_view", lambda p, gp: None)
+
+    class _FakeFigure:
+        def savefig(self, path: str, **kwargs) -> None:
+            gle_file = Path(path)
+            gle_file.parent.mkdir(parents=True, exist_ok=True)
+            # Mirror gleplot's writer: a leading-whitespace `data` command
+            # referencing the sidecar written alongside the script.
+            gle_file.write_text(
+                '    data "export_sidecars_g0_data.dat" d1=c1,c2\n',
+                encoding="utf-8",
+            )
+
+    class _FakeGlp:
+        @staticmethod
+        def figure(**_kwargs):
+            return _FakeFigure()
+
+    monkeypatch.setattr(gle_export.importlib, "import_module", lambda _name: _FakeGlp())
+
+    def _builder(glp, gle_path):
+        # Write the sidecar the .gle will reference, as a real builder does.
+        (gle_path.parent / "export_sidecars_g0_data.dat").write_text(
+            "100 0.15 0.01\n", encoding="utf-8"
+        )
+        return glp.figure(figsize=(7.0, 4.5))
+
+    window._export_plot_gle(
+        title="Export Test",
+        default_name="test.gle",
+        builder=_builder,
+        output_format="pdf",
+    )
+
+    assert _wait(qapp, lambda: result_dialogs)
+    _summary, details = result_dialogs[0]
+    assert str(resolved_gle_path) in details
+    assert str(export_dir / "export_sidecars_g0_data.dat") in details
 
 
 def test_export_plot_gle_requires_result(
@@ -533,6 +621,12 @@ def test_export_plot_gle_requires_result(
         "information",
         lambda *args, **_kwargs: infos.append(str(args[2]) if len(args) > 2 else ""),
     )
+    dialog_opened = []
+    monkeypatch.setattr(
+        QFileDialog,
+        "getSaveFileName",
+        staticmethod(lambda *_a, **_k: dialog_opened.append(True) or ("", "")),
+    )
 
     window._export_plot_gle(
         title="Export Test",
@@ -543,34 +637,58 @@ def test_export_plot_gle_requires_result(
 
     assert infos
     assert "Run a cross-group fit first" in infos[0]
+    # The guard must fire before any save dialog appears.
+    assert not dialog_opened
 
 
-def test_compile_and_preview_gle_runs_in_export_dir(
+def test_export_plot_gle_runs_compile_in_export_dir(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, qapp: QApplication
 ) -> None:
+    """End-to-end: the async GLE compile runs with cwd set to the export folder."""
     window = GlobalParameterFitWindow()
-    gle_path = tmp_path / "export_bundle.gleplot" / "export_bundle.gle"
-    gle_path.parent.mkdir(parents=True, exist_ok=True)
-    gle_path.write_text("! fake gle", encoding="utf-8")
+    window._result = CrossGroupFitResult(success=True, chi_squared=1.0, reduced_chi_squared=1.0)
+    window._parameter_name = "Lambda"
+    window._fit_gle_format_combo.setCurrentText("PDF")
 
-    subprocess_kwargs: list[dict[str, object]] = []
-    infos: list[str] = []
-    previews: list[Path] = []
-
-    monkeypatch.setattr("shutil.which", lambda _name: "gle")
+    out_path = tmp_path / "export_bundle.gle"
+    resolved_gle_path, export_dir = resolve_gle_export_paths(out_path, folder=True)
     monkeypatch.setattr(
-        "subprocess.run",
-        lambda *args, **kwargs: subprocess_kwargs.append(dict(kwargs)) or None,
+        QFileDialog,
+        "getSaveFileName",
+        staticmethod(lambda *_a, **_k: (str(out_path), "GLE files (*.gle)")),
     )
-    monkeypatch.setattr(QMessageBox, "information", lambda *args, **_kwargs: infos.append("ok"))
-    monkeypatch.setattr(window, "_show_gle_preview", lambda path: previews.append(path))
 
-    window._compile_and_preview_gle(gle_path, "pdf")
+    compile_cwds: list[Path] = []
 
-    assert subprocess_kwargs
-    assert subprocess_kwargs[0]["cwd"] == str(gle_path.parent)
-    assert infos == ["ok"]
-    assert previews == [gle_path.with_suffix(".pdf")]
+    def _fake_compile(exe, gle_file, fmt, *, cwd, **kw):
+        compile_cwds.append(Path(cwd))
+
+    monkeypatch.setattr(gle_export, "compile_gle", _fake_compile)
+    monkeypatch.setattr(gle_export, "get_gle_executable", lambda: "/fake/gle")
+    monkeypatch.setattr(gle_export, "show_export_result_dialog", lambda *a, **k: None)
+    monkeypatch.setattr(gle_export, "post_export_view", lambda p, gp: None)
+
+    class _FakeFigure:
+        def savefig(self, path: str, **kwargs) -> None:
+            Path(path).write_text("! fake gle", encoding="utf-8")
+
+    class _FakeGlp:
+        @staticmethod
+        def figure(**_kwargs):
+            return _FakeFigure()
+
+    monkeypatch.setattr(gle_export.importlib, "import_module", lambda _name: _FakeGlp())
+
+    window._export_plot_gle(
+        title="Export Test",
+        default_name="test.gle",
+        builder=lambda glp, _gle_path: glp.figure(figsize=(7.0, 4.5)),
+        output_format="pdf",
+    )
+
+    assert _wait(qapp, lambda: compile_cwds)
+    assert compile_cwds == [export_dir]
+    assert resolved_gle_path.exists()
 
 
 class _LabelAxis:

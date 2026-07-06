@@ -23,6 +23,7 @@ def test_compile_gle_builds_expected_argv(monkeypatch: pytest.MonkeyPatch, tmp_p
         text=True,
         check=True,
         cwd=str(tmp_path),
+        timeout=120.0,
     )
     assert result is mock_run.return_value
 
@@ -41,6 +42,7 @@ def test_compile_gle_accepts_string_paths(monkeypatch: pytest.MonkeyPatch, tmp_p
         text=True,
         check=True,
         cwd=str(tmp_path),
+        timeout=120.0,
     )
 
 

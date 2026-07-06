@@ -262,6 +262,7 @@ from asymmetry.gui.ui_manager import (
     UI_SCALE_SETTINGS_KEY,
     UIManager,
 )
+from asymmetry.gui.utils.gle_editor import close_all_gle_editors, launch_gle_editor
 from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
 from asymmetry.gui.widgets.dock_header import DockHeader
 from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
@@ -978,6 +979,8 @@ class MainWindow(QMainWindow):
             self._batch_seeding_group.addAction(action)
             self._batch_seeding_actions[mode] = action
         analysis_menu.addAction("Export fit report…", self._on_export_fit_report)
+        analysis_menu.addSeparator()
+        analysis_menu.addAction("GLE Figure &Editor…", self._on_open_gle_editor)
 
         # View
         view_menu = mb.addMenu("&View")
@@ -5275,6 +5278,17 @@ class MainWindow(QMainWindow):
             self._log_panel.log(f"ERROR writing fit report: {exc}")
             return
         self._log_panel.log(f"Exported fit report ({len(records)} fits) to {path}", tag="fit")
+
+    def _on_open_gle_editor(self) -> None:
+        """Open a blank gleplot figure editor window (Analysis menu)."""
+        if not launch_gle_editor(None):
+            QMessageBox.information(
+                self,
+                "GLE Figure Editor Unavailable",
+                "The GLE figure editor requires the gleplot package with its GUI "
+                "extra (gleplot ≥ 1.6). Update Asymmetry's optional dependencies "
+                "or install gleplot[gui].",
+            )
 
     def _should_launch_multi_group_fit_window(self) -> bool:
         """Return True when Fit should open the multi-group fit window."""
@@ -14061,6 +14075,10 @@ class MainWindow(QMainWindow):
         # and wait, with the bounded + orphan-reaper fallback shutdown() owns.
         if getattr(self, "_tasks", None) is not None:
             self._tasks.shutdown()
+        # Parentless gleplot editor windows (Analysis ▸ GLE Figure Editor… and
+        # post-export previews) outlive the panel that opened them — close them
+        # explicitly rather than leaving them dangling after MainWindow exits.
+        close_all_gle_editors()
         # Fit-panel worker threads (single / batch / count-domain fits).
         fit_panel = getattr(self, "_fit_panel", None)
         if fit_panel is not None and hasattr(fit_panel, "shutdown_workers"):
@@ -14070,6 +14088,11 @@ class MainWindow(QMainWindow):
         params_panel = getattr(self, "_fit_parameters_panel", None)
         if params_panel is not None and hasattr(params_panel, "shutdown_workers"):
             params_panel.shutdown_workers()
+        # GLE export compile workers in the plot panels (docked widgets too).
+        for attr in ("_plot_panel", "_frequency_plot_panel"):
+            panel = getattr(self, attr, None)
+            if panel is not None and hasattr(panel, "shutdown_workers"):
+                panel.shutdown_workers()
         if hasattr(self, "_plot_panel") and hasattr(self._plot_panel, "get_view_limits"):
             x_min, x_max, y_min, y_max = self._plot_panel.get_view_limits()
             self._settings.setValue("plot/time_x_min", float(x_min))
