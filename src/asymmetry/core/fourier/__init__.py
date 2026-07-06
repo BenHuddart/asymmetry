@@ -27,7 +27,9 @@ from asymmetry.core.fourier.grouped import build_group_signal_dataset
 from asymmetry.core.fourier.spectrum import (
     GroupSpectrumConfig,
     compute_average_group_spectrum,
+    config_differences,
     fourier_display_ylabel,
+    fourier_grouping_digest,
     precompute_group_fourier_inputs,
 )
 from asymmetry.core.fourier.units import (
@@ -75,7 +77,9 @@ __all__ = [
     "fpe_order_scan",
     "GroupSpectrumConfig",
     "compute_average_group_spectrum",
+    "config_differences",
     "fourier_display_ylabel",
+    "fourier_grouping_digest",
     "precompute_group_fourier_inputs",
     "apply_window",
 ]
