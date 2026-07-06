@@ -410,7 +410,7 @@ class TestMainWindowFourier:
 
         mainwindow._on_maxent_worker_finished(diverged)
 
-        status = mainwindow._maxent_panel._status_label.text()
+        status = mainwindow._maxent_panel._action_footer._status_label.text()
         assert "diverged" in status.lower()
         assert tokens.WARN in status  # rendered in the warning colour
         # D7/F19: the message must name the control and the bounds a user

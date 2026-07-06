@@ -68,6 +68,27 @@ def test_progress_hidden_by_default_and_toggles(qapp) -> None:
     footer.show_progress("Reconstructing…")
     assert not footer._progress_row.isHidden()
     assert footer._progress_label.text() == "Reconstructing…"
+    # Indeterminate (the default, no current/total given): range (0, 0).
+    assert footer._progress_bar.minimum() == 0
+    assert footer._progress_bar.maximum() == 0
     footer.hide_progress()
     assert footer._progress_row.isHidden()
     assert footer._progress_label.text() == ""
+
+
+def test_show_progress_determinate_variant(qapp) -> None:
+    footer = ActionFooter()
+    footer.show_progress("Cycle 3/10", current=3, total=10)
+    assert footer._progress_bar.minimum() == 0
+    assert footer._progress_bar.maximum() == 10
+    assert footer._progress_bar.value() == 3
+    # Clamped to the total even if current overshoots.
+    footer.show_progress("Cycle 12/10", current=12, total=10)
+    assert footer._progress_bar.value() == 10
+    # hide_progress resets back to indeterminate for the next show_progress call.
+    footer.hide_progress()
+    assert footer._progress_bar.minimum() == 0
+    assert footer._progress_bar.maximum() == 0
+    # Passing only one of current/total falls back to indeterminate.
+    footer.show_progress("Busy", current=5, total=None)
+    assert footer._progress_bar.maximum() == 0
