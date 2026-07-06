@@ -275,6 +275,45 @@ def test_ui_scale_change_updates_param_value_cell_font_via_owner_hook(qapp) -> N
 
 
 @pytest.mark.gui
+def test_ui_scale_change_updates_formula_box_font_via_owner_hook(qapp) -> None:
+    """A formula box's mono label tracks a live scale change, keeping any recolour.
+
+    ``FormulaBox`` sets an explicit ``mono_font(SIZE_NUMERIC)`` on its inner label
+    that ignores the application font; QSS cannot reach it cleanly because the
+    label's own local stylesheet (also used by the domain-mismatch recolour)
+    wins. The box self-subscribes to the UIManager signal and re-derives the
+    label font from the builders — font-only, so a recolour stylesheet survives.
+    """
+    from PySide6.QtCore import QSettings
+
+    from asymmetry.gui.mainwindow import MainWindow
+    from asymmetry.gui.styles.widgets import FormulaBox
+    from asymmetry.gui.ui_manager import UI_SCALE_SETTINGS_KEY
+
+    QSettings().setValue(UI_SCALE_SETTINGS_KEY, 1.0)
+    window = MainWindow()
+    try:
+        boxes = window.findChildren(FormulaBox)
+        assert boxes, "expected at least one FormulaBox in the fit panels"
+        box = boxes[0]
+        box._ensure_ui_scale_sync()  # connect the hook (normally on showEvent)
+        # A domain-mismatch recolour lives in the label's own stylesheet; it must
+        # survive the font-only refresh.
+        box.label.setStyleSheet("QLabel { background: transparent; color: #ff0000; }")
+        window._ui_manager.set_ui_scale(1.0)
+        base = box.label.font().pointSizeF()
+        window._ui_manager.set_ui_scale(1.2)
+        grown = box.label.font().pointSizeF()
+        window._ui_manager.set_ui_scale(0.8)
+        shrunk = box.label.font().pointSizeF()
+        assert grown > base > shrunk
+        assert grown == pytest.approx(base * 1.2, rel=0.02)
+        assert "#ff0000" in box.label.styleSheet()  # recolour not clobbered
+    finally:
+        window.close()
+
+
+@pytest.mark.gui
 def test_dock_min_widths_derive_from_font_metrics(qapp) -> None:
     """Inspector/browser dock minimum widths derive from font metrics, not px literals."""
     from PySide6.QtCore import QSettings

@@ -253,6 +253,43 @@ class FormulaBox(QScrollArea):
             f" border: 1px solid {tokens.BORDER}; border-radius: 3px; }}"
             " QScrollArea#formulaBox > QWidget > QWidget { background: transparent; }"
         )
+        #: True once the UI-scale signal is connected (guards double-connect).
+        self._ui_scale_sync_connected = False
+        self.refresh_height()
+
+    def showEvent(self, event) -> None:  # noqa: N802 — Qt override
+        super().showEvent(event)
+        self._ensure_ui_scale_sync()
+
+    def _ensure_ui_scale_sync(self) -> None:
+        """Subscribe the box to live UI-scale changes, once, on first show.
+
+        The inner mono label sets an explicit ``mono_font(SIZE_NUMERIC)`` that
+        ignores the (re-scaled) application font, and QSS cannot reach it cleanly
+        (its own local stylesheet — which the domain-mismatch recolour also sets
+        — would win). So each box re-derives its label font from the builders on
+        the owning window's UIManager signal. A modal dialog whose ``window()``
+        has no ``_ui_manager`` simply no-ops and relies on born-at-scale via
+        ``set_ui_font_scale``. This is decentralised (each box refreshes itself),
+        not a central per-widget tracker.
+        """
+        if self._ui_scale_sync_connected:
+            return
+        manager = getattr(self.window(), "_ui_manager", None)
+        if manager is None:
+            return
+        manager.ui_scale_changed.connect(self._on_ui_scale_changed)
+        self._ui_scale_sync_connected = True
+        # Sync now: a box first shown after a scale change would otherwise keep
+        # its born-at-construction size until the *next* change.
+        self._on_ui_scale_changed(manager.ui_scale, manager.effective_scale)
+
+    def _on_ui_scale_changed(self, _ui_scale: float, _effective_scale: float) -> None:
+        # Font-only refresh: re-calling configure_formula_label would reset the
+        # label's local stylesheet and clobber the domain-mismatch recolour. The
+        # builder already has the new scale published, so mono_font() returns the
+        # scaled size; refresh_height re-measures for the new line spacing.
+        self.label.setFont(mono_font(SIZE_NUMERIC))
         self.refresh_height()
 
     def set_formula(self, formula: str) -> None:

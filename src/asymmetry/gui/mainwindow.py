@@ -1523,7 +1523,6 @@ class MainWindow(QMainWindow):
         self._data_browser = DataBrowserPanel()
         self._dock_data_browser = QDockWidget("Data Browser", self)
         self._dock_data_browser.setWidget(self._data_browser)
-        self._dock_data_browser.setMinimumWidth(metrics.char_width(_BROWSER_DOCK_MIN_CHARS))
         self._dock_data_browser.setFeatures(
             QDockWidget.DockWidgetFeature.DockWidgetMovable
             | QDockWidget.DockWidgetFeature.DockWidgetFloatable
@@ -1573,8 +1572,8 @@ class MainWindow(QMainWindow):
         # widths), so all three floor at the compacted Single-fit tab width
         # (~34 chars) to let the deck get as narrow as a 13" screen wants; a
         # denser current page (grouped count fit, ALC scan) still grows it via
-        # the per-page sizing mixin.
-        self._dock_fit.setMinimumWidth(metrics.char_width(_INSPECTOR_DOCK_MIN_CHARS))
+        # the per-page sizing mixin. The char-based minimums are applied (and
+        # re-applied on a UI-scale change) by _apply_dock_min_widths.
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_fit)
 
         # Right dock — spectrum controls (FFT / MaxEnt, tabbed with fit)
@@ -1585,7 +1584,6 @@ class MainWindow(QMainWindow):
         self._spectrum_stack.addWidget(self._maxent_panel)
         self._dock_fourier = QDockWidget("Spectrum", self)
         self._dock_fourier.setWidget(_inspector_scroll_area(self._spectrum_stack))
-        self._dock_fourier.setMinimumWidth(metrics.char_width(_INSPECTOR_DOCK_MIN_CHARS))
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_fourier)
 
         # Right dock — fitted parameter trends (tabbed with fit/fourier). In ALC
@@ -1599,8 +1597,11 @@ class MainWindow(QMainWindow):
         self._parameters_stack.addWidget(self._alc_analysis_widget)
         self._dock_fit_parameters = QDockWidget("Parameters", self)
         self._dock_fit_parameters.setWidget(_inspector_scroll_area(self._parameters_stack))
-        self._dock_fit_parameters.setMinimumWidth(metrics.char_width(_INSPECTOR_DOCK_MIN_CHARS))
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_fit_parameters)
+        # Apply the char-based dock minimums now that all four docks exist; they
+        # are re-applied on a UI-scale change (see _on_ui_scale_changed) so the
+        # floors track the live font instead of freezing at construction scale.
+        self._apply_dock_min_widths()
         # Canonical inspector tab order, left to right: processing (Spectrum)
         # first, then Fit, then Parameters — the user works through the deck in
         # that order. Time-domain views simply hide the Spectrum tab, so one
@@ -5435,6 +5436,13 @@ class MainWindow(QMainWindow):
         font = status_font()
         for label in getattr(self, "_status_labels", ()):
             label.setFont(font)
+        # Re-derive the char-based dock minimums from the now-scaled font so the
+        # floors track the UI scale (they are set once at construction against
+        # whatever font was live then). setMinimumWidth is a floor: a smaller
+        # scale lowers it without forcing a resize; a larger scale only widens a
+        # dock currently below the new floor — a user-dragged wider width is a
+        # no-op against a lower minimum, so persistence is preserved.
+        self._apply_dock_min_widths()
         # Deliberately do NOT re-apply the inspector default width here: a live
         # scale change must not clobber a width the user has dragged. The
         # adaptive default is applied only at launch (showEvent) and Reset
@@ -5476,6 +5484,26 @@ class MainWindow(QMainWindow):
         window_width = self.width() or self.sizeHint().width()
         fraction = round(window_width * _INSPECTOR_DOCK_WIDTH_FRACTION)
         return max(minimum, min(maximum, fraction))
+
+    def _apply_dock_min_widths(self) -> None:
+        """Set the char-based minimum widths on the browser and inspector docks.
+
+        Read from the live UI font (:func:`metrics.char_width`) so the floors
+        track the UI scale. Called at construction and re-called on a UI-scale
+        change; each ``setMinimumWidth`` is an independent floor set, so a
+        missing/deleted dock (defensive ``getattr``) never skips the others.
+        """
+        browser_min = metrics.char_width(_BROWSER_DOCK_MIN_CHARS)
+        inspector_min = metrics.char_width(_INSPECTOR_DOCK_MIN_CHARS)
+        specs = (
+            (getattr(self, "_dock_data_browser", None), browser_min),
+            (getattr(self, "_dock_fit", None), inspector_min),
+            (getattr(self, "_dock_fourier", None), inspector_min),
+            (getattr(self, "_dock_fit_parameters", None), inspector_min),
+        )
+        for dock, width in specs:
+            if dock is not None:
+                dock.setMinimumWidth(width)
 
     def _refresh_inspector_tab_bar(self) -> None:
         """Force the right dock area to relayout so its tab bar reappears.
