@@ -5,8 +5,8 @@ It replaces the two older idioms it is designed to fully cover:
 
 - ``styles/widgets.make_section`` — a flat header over an always-expanded body
   (``PanelSection`` in its default *static* mode), and
-- ``widgets/collapsible_section.CollapsibleSection`` — a disclosure header that
-  hides its body (``PanelSection`` in *collapsible* mode).
+- the former ``CollapsibleSection`` — a disclosure header that hides its body
+  (``PanelSection`` in *collapsible* mode; that module has been removed).
 
 Beyond that union it adds the pieces the panel refresh needs everywhere: a
 one-line muted *hint* under the header, an optional right-aligned *title suffix*

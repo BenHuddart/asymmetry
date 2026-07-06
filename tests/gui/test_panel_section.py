@@ -24,8 +24,10 @@ def qapp() -> QApplication:
 
 
 @pytest.fixture
-def settings():
-    s = QSettings("AsymmetryTest", "panel_section_test")
+def settings(tmp_path):
+    # A per-test IniFormat file rather than a shared native scope, so parallel
+    # xdist workers cannot race on the same on-disk key.
+    s = QSettings(str(tmp_path / "panel_section.ini"), QSettings.Format.IniFormat)
     s.clear()
     yield s
     s.clear()
