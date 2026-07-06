@@ -322,6 +322,9 @@ QLabel#{SECTION_HEADER_OBJECT_NAME} {{
 QDockWidget::title {{
     font-size: {header_pt}pt;
 }}
+QLabel#dockHeaderTitle {{
+    font-size: {header_pt}pt;
+}}
 QHeaderView::section {{
     font-size: {header_pt}pt;
 }}

@@ -1611,14 +1611,6 @@ class MainWindow(QMainWindow):
         # Slim title bars for the deck: the tab strip above already names the
         # active pane, so the docked header shows only the float/close buttons
         # (no repeated "Fit"); the title text returns when the dock floats.
-        # KNOWN GAP (UI-scale): DockHeader's title QLabel carries an explicit
-        # header_font() that the font-driven zoom does not reach — the scale QSS
-        # uses the native QDockWidget::title pseudo-element, but DockHeader is a
-        # custom title-bar widget with no matching objectName, so a live scale
-        # change leaves the title frozen. The clean fix is an objectName (or a
-        # public refresh) on DockHeader._title_label in gui/widgets/dock_header.py,
-        # which is outside this change's scope. Impact is limited to *floating*
-        # docks, since the title text is hidden while docked (title_when_floating_only).
         for deck_dock in (self._dock_fourier, self._dock_fit, self._dock_fit_parameters):
             deck_dock.setTitleBarWidget(DockHeader("", deck_dock, title_when_floating_only=True))
 

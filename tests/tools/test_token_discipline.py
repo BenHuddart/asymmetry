@@ -164,7 +164,12 @@ def test_build_stylesheet_chrome_font_sizes_scale(qapp) -> None:
     assert large > small
     # All three chrome selectors must carry a scaled size.
     qss = UIManager.build_stylesheet(None, 1.0)  # type: ignore[arg-type]
-    for selector in ("QDockWidget::title", "QHeaderView::section", "QGroupBox::title"):
+    for selector in (
+        "QDockWidget::title",
+        "QLabel#dockHeaderTitle",
+        "QHeaderView::section",
+        "QGroupBox::title",
+    ):
         assert re.search(rf"{re.escape(selector)} \{{\s*font-size:", qss)
 
 
@@ -199,6 +204,36 @@ def test_ui_scale_qss_rescales_existing_section_header(qapp) -> None:
         header.ensurePolished()
         shrunk = header.font().pointSizeF()
         assert grown > base > shrunk
+        assert grown == pytest.approx(base * 1.2, rel=0.02)
+    finally:
+        window.close()
+
+
+@pytest.mark.gui
+def test_ui_scale_qss_rescales_dock_header_title(qapp) -> None:
+    """A live UI-scale change must re-scale a DockHeader's title label.
+
+    DockHeader is a custom title-bar widget, so the native ``QDockWidget::title``
+    pseudo-element never reaches it; the ``QLabel#dockHeaderTitle`` rule in the
+    scale QSS block does (the explicit ``header_font()`` keeps supplying
+    weight/letter-spacing). Visible mainly on floating docks, whose title text
+    is shown.
+    """
+    from PySide6.QtCore import QSettings
+
+    from asymmetry.gui.mainwindow import MainWindow
+    from asymmetry.gui.ui_manager import UI_SCALE_SETTINGS_KEY
+
+    QSettings().setValue(UI_SCALE_SETTINGS_KEY, 1.0)
+    window = MainWindow()
+    try:
+        title = window._browser_dock_header._title_label
+        window._ui_manager.set_ui_scale(1.0)
+        title.ensurePolished()
+        base = title.font().pointSizeF()
+        window._ui_manager.set_ui_scale(1.2)
+        title.ensurePolished()
+        grown = title.font().pointSizeF()
         assert grown == pytest.approx(base * 1.2, rel=0.02)
     finally:
         window.close()
