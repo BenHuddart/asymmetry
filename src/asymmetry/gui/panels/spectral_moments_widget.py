@@ -22,7 +22,6 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
-    QDoubleSpinBox,
     QFormLayout,
     QGridLayout,
     QGroupBox,
@@ -36,7 +35,7 @@ from PySide6.QtWidgets import (
 
 from asymmetry.core.fourier.moments import SpectrumMoments
 from asymmetry.core.fourier.units import FieldUnit, convert
-from asymmetry.gui.styles.metrics import field_width_for
+from asymmetry.gui.widgets.axis_limits import FloatLimitField
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox
 
 # Display unit options (label, FieldUnit). Gauss first — the penetration-depth
@@ -263,16 +262,14 @@ class SpectralMomentsWidget(QGroupBox):
         self._info_dialog = show_spectral_moments_info_dialog(self)
 
     @staticmethod
-    def _make_range_spin() -> QDoubleSpinBox:
-        spin = NoScrollDoubleSpinBox()
-        spin.setDecimals(3)
-        spin.setRange(-1.0e12, 1.0e12)
-        spin.setKeyboardTracking(False)
-        # The ±1e12 range makes the spin's own minimumSizeHint ~15 characters
-        # wide, which alone forces the host inspector panel into horizontal
-        # scrolling; cap it at a practical field width instead.
-        spin.setMaximumWidth(field_width_for(8))
-        return spin
+    def _make_range_spin() -> FloatLimitField:
+        # The shared compact limit field rather than a QDoubleSpinBox: a
+        # ±1e12-range spinbox sizes itself to ~15 characters plus arrow
+        # buttons, which alone forced the host inspector panel into
+        # horizontal scrolling (and capping the spin clipped its text).
+        # FloatLimitField is the BENCH fit-range idiom: arrow-free, compact,
+        # and spinbox-compatible (value/setValue/editingFinished).
+        return FloatLimitField(0.0, decimals=3, value_range=(-1.0e12, 1.0e12))
 
     @staticmethod
     def _wrap(layout: QHBoxLayout) -> QWidget:
