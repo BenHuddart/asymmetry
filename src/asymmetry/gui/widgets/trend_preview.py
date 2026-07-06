@@ -154,6 +154,11 @@ class TrendPreviewCanvas(QWidget):
         #: Optional BED "suggest next point" overlay (Phase 2, §5.4). None = no
         #: overlay drawn. Passive chrome only — never touched by drag handlers.
         self._suggestion: SuggestionOverlay | None = None
+        #: Optional BED model-discrimination overlay (Phase 3, §8.1). Drawn by
+        #: the same machinery as ``_suggestion`` but in a distinct colour/label
+        #: and independently; both may be visible simultaneously. Passive chrome
+        #: only — never touched by drag handlers.
+        self._discrimination: SuggestionOverlay | None = None
 
         # ── Drag state (all None/idle until a grab; see _on_button_press) ─────
         #: The grabbed edge key, one of ("range","min"/"max") or
@@ -239,6 +244,14 @@ class TrendPreviewCanvas(QWidget):
     def set_suggestion(self, overlay: SuggestionOverlay | None) -> None:
         """Set (or clear, with ``None``) the "suggest next point" overlay."""
         self._suggestion = overlay
+        self._redraw()
+
+    def set_discrimination(self, overlay: SuggestionOverlay | None) -> None:
+        """Set (or clear, with ``None``) the model-discrimination overlay
+        (Phase 3, §8.1). Independent of :meth:`set_suggestion` — both bands
+        may be shown at once, each with its own colour/marker/annotation.
+        """
+        self._discrimination = overlay
         self._redraw()
 
     def enable_drag(self, enabled: bool) -> None:
@@ -591,7 +604,10 @@ class TrendPreviewCanvas(QWidget):
         # Curves are suppressed in the "error" state (points still drawn above).
         if self._state != "error":
             self._draw_ranges(ax)
-            self._draw_suggestion(ax)
+            self._draw_suggestion(ax, self._suggestion, tokens.ACCENT, "suggested")
+            self._draw_suggestion(
+                ax, self._discrimination, tokens.TRACE_VERMILLION, "discriminating"
+            )
 
         if self._state == "error" and self._message:
             self._draw_message_banner(ax, self._message, tokens.ERROR)
@@ -893,15 +909,25 @@ class TrendPreviewCanvas(QWidget):
             except Exception:
                 pass
 
-    def _draw_suggestion(self, ax: object) -> None:
-        """Draw the BED "suggest next point" overlay (Phase 2, §5.4).
+    def _draw_suggestion(
+        self,
+        ax: object,
+        overlay: SuggestionOverlay | None,
+        colour: str,
+        label: str,
+    ) -> None:
+        """Draw one BED "next point" overlay band (Phase 2 §5.4 / Phase 3 §8.1).
 
         Utility is drawn as a translucent filled band anchored to the BOTTOM
         of the axes via the blended x-data/y-axes-fraction transform, so it
         reads as chrome rather than a second data series. Normalised so the
         band's peak spans roughly ``_SUGGESTION_BAND_FRACTION`` of the axes
         height; extrapolated candidates are drawn at reduced alpha. A vertical
-        marker + annotation mark ``best_x`` (skipped when NaN).
+        marker + annotation mark ``best_x`` (skipped when NaN). *colour* and
+        *label* let this same routine draw the refinement suggestion band and
+        the model-discrimination band in distinct styles (see
+        :meth:`set_suggestion` / :meth:`set_discrimination`); both may be
+        drawn on the same axes.
 
         INVARIANT: this overlay must never change the main axes' data limits/
         autoscale. ``axhspan``/``fill_between`` with a blended transform can
@@ -909,7 +935,6 @@ class TrendPreviewCanvas(QWidget):
         y-datalim) as a side effect of adding the artist, so the pre-overlay
         ylim is captured and forcibly restored after every artist is added.
         """
-        overlay = self._suggestion
         if overlay is None:
             return
         x = np.asarray(overlay.x, dtype=float)
@@ -953,7 +978,12 @@ class TrendPreviewCanvas(QWidget):
                         run_start = i
                     elif not in_run and run_start is not None:
                         self._fill_suggestion_run(
-                            ax, transform, xs[run_start:i], normalised[run_start:i], is_extra
+                            ax,
+                            transform,
+                            xs[run_start:i],
+                            normalised[run_start:i],
+                            is_extra,
+                            colour,
                         )
                         run_start = None
 
@@ -961,20 +991,20 @@ class TrendPreviewCanvas(QWidget):
                 try:
                     ax.axvline(  # type: ignore[union-attr]
                         overlay.best_x,
-                        color=tokens.ACCENT,
+                        color=colour,
                         linestyle=":",
                         linewidth=1.4,
                         zorder=7,
                     )
                     ax.annotate(  # type: ignore[union-attr]
-                        "suggested",
+                        label,
                         xy=(overlay.best_x, 1.0),
                         xycoords=transform,
                         xytext=(3, -10),
                         textcoords="offset points",
                         ha="left",
                         va="top",
-                        color=tokens.ACCENT,
+                        color=colour,
                         fontsize=8,
                         zorder=7,
                     )
@@ -994,6 +1024,7 @@ class TrendPreviewCanvas(QWidget):
         xs: NDArray[np.float64],
         heights: NDArray[np.float64],
         extrapolated: bool,
+        colour: str,
     ) -> None:
         """Fill one contiguous run of the utility band at the given alpha."""
         if xs.size == 0:
@@ -1004,7 +1035,7 @@ class TrendPreviewCanvas(QWidget):
                 0.0,
                 heights,
                 transform=transform,
-                facecolor=tokens.ACCENT,
+                facecolor=colour,
                 edgecolor="none",
                 alpha=0.10 if extrapolated else 0.28,
                 zorder=1.2,

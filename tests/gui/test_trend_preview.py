@@ -785,6 +785,53 @@ def test_suggestion_nan_best_x_skips_marker(qapp: QApplication) -> None:
     assert not any("suggested" in t for t in texts)
 
 
+def test_both_overlays_drawn_simultaneously_ylim_unchanged(qapp: QApplication) -> None:
+    """set_suggestion + set_discrimination together: both drawn, ylim unchanged.
+
+    Clearing one (set_suggestion(None)) must leave the other's marker/band in
+    place — the two overlays are independent state (Phase 3, §8.1/§C).
+    """
+    mask = np.array([True, True, True, True, True])
+    canvas = TrendPreviewCanvas()
+    canvas.set_series([_series()])
+    canvas.set_ranges([_range(fitted=True, mask=mask)])
+    canvas.set_active_range(0)
+    canvas.set_state("ready")
+    canvas._canvas.draw()
+    ylim_before = _axes(canvas).get_ylim()
+
+    canvas.set_suggestion(_suggestion(best_x=1.0))
+    canvas.set_discrimination(_suggestion(best_x=3.0))
+    canvas._canvas.draw()
+    ax = _axes(canvas)
+
+    assert _axes(canvas).get_ylim() == pytest.approx(ylim_before)
+
+    accent_markers = [
+        ln for ln in ax.get_lines() if ln.get_linestyle() == ":" and ln.get_color() == tokens.ACCENT
+    ]
+    discrimination_markers = [
+        ln
+        for ln in ax.get_lines()
+        if ln.get_linestyle() == ":" and ln.get_color() == tokens.TRACE_VERMILLION
+    ]
+    assert accent_markers, "expected the refinement suggestion marker"
+    assert discrimination_markers, "expected the discrimination marker in a distinct colour"
+
+    texts = [t.get_text() for t in ax.texts]
+    assert any("suggested" in t for t in texts)
+    assert any("discriminating" in t for t in texts)
+
+    # Clearing the refinement overlay leaves the discrimination overlay drawn.
+    canvas.set_suggestion(None)
+    canvas._canvas.draw()
+    ax = _axes(canvas)
+    assert _axes(canvas).get_ylim() == pytest.approx(ylim_before)
+    texts = [t.get_text() for t in ax.texts]
+    assert not any("suggested" in t for t in texts)
+    assert any("discriminating" in t for t in texts)
+
+
 def test_residuals_no_curve_no_crash(qapp: QApplication) -> None:
     """With residuals on but no active-range curve, the strip is empty (no crash)."""
     canvas = TrendPreviewCanvas()
