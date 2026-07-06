@@ -34,7 +34,10 @@ from asymmetry.core.fitting.composite import QUADRATURE_OPERATOR, UnknownCompone
 from asymmetry.core.fitting.experiment_design import (
     NextPointSuggestion,
     SuggestionCalibration,
+    aic_weights,
     calibrate_suggestion,
+    cost_weighted_utility,
+    suggest_discriminating_point,
     suggest_next_point,
 )
 from asymmetry.core.fitting.fit_quality import assess_fit_quality
@@ -94,6 +97,11 @@ from asymmetry.gui.windows.new_user_function_dialog import NewUserFunctionDialog
 
 #: D-optimal combo entry (userData sentinel; see _on_suggest_target_changed).
 _SUGGEST_ALL_PARAMS = "__all__"
+
+#: Compare-against combo entry for a composite built via Edit… (userData
+#: sentinel; see _adopt_custom_compare_model). The selected entry is the
+#: single source of truth for what "Fit & compare" fits.
+_COMPARE_CUSTOM = "__custom__"
 
 #: Operators offered by the parameter/trending builder — the base arithmetic
 #: set plus the quadrature combinator ``⊕`` (``f ⊕ g = sqrt(f**2 + g**2)``),
@@ -591,6 +599,19 @@ class ModelFitDialog(QDialog):
         self._last_suggestion_calibration: SuggestionCalibration | None = None
         self._calibration_in_progress = False
         self._pending_calibration: tuple | None = None
+
+        # ── Model discrimination state (BED, Phase 3 — §8.1) ──────────────────
+        # Per-range list of fitted alternative candidates, keyed by range index.
+        # Deliberately session-local (not on ModelFitRange / not serialized):
+        # cleared whenever the range's primary fit reruns or its model
+        # expression changes (see _clear_discrimination_candidates).
+        # Each entry: (model, parameters, chi2, n_free).
+        self._discrimination_candidates: dict[
+            int, list[tuple[ParameterCompositeModel, ParameterSet, float, int]]
+        ] = {}
+        self._last_discrimination: NextPointSuggestion | None = None
+        self._compare_fit_in_progress = False
+        self._pending_compare: tuple | None = None
 
         if existing_fit is not None and existing_fit.ranges:
             self._fit = existing_fit
@@ -1333,10 +1354,13 @@ class ModelFitDialog(QDialog):
             self._x_error_check.setEnabled(mode not in (ErrorMode.NONE, ErrorMode.SCATTER))
         # A mode switch changes whether the noise model behind "Suggest next
         # point" is meaningful (NONE/SCATTER never are; see
-        # _suggest_disabled_reason), so re-derive the section's enabled state.
-        # Guarded: this runs once during __init__ before the section exists.
+        # _suggest_disabled_reason) AND changes what chi2 means for the
+        # existing candidates' AIC weights, so clear both and re-derive the
+        # section's enabled state. Guarded: this runs once during __init__
+        # before the section exists.
         if getattr(self, "_suggest_section", None) is not None:
             self._clear_suggestion()
+            self._clear_discrimination_candidates()
             self._refresh_suggest_section()
         if self._error_value_label is None or self._error_value_spin is None:
             return
@@ -1992,11 +2016,15 @@ class ModelFitDialog(QDialog):
 
         The base dialog already tracks fit state per-range via
         ``fit_range.result`` (cleared just above), so it needs no extra
-        invalidation here. Subclasses that cache a fit result *outside* the
-        per-range model (e.g. ``CrossGroupFitDialog``'s ``self._result`` /
-        ``self._last_config``, which span the single shared range) override
-        this to drop that cache too.
+        invalidation here beyond dropping this range's fitted discrimination
+        alternatives (§8.1 item 1: cleared when the range's model expression
+        changes — they were fitted/ranked against the previous leader).
+        Subclasses that cache a fit result *outside* the per-range model
+        (e.g. ``CrossGroupFitDialog``'s ``self._result`` / ``self._last_config``,
+        which span the single shared range) override this to drop that cache
+        too.
         """
+        self._discrimination_candidates.pop(idx, None)
 
     # -- data-aware "Guess seeds" (item 3.3) ----------------------------------
     #
@@ -2197,11 +2225,15 @@ class ModelFitDialog(QDialog):
                 fit_range.parameters = fit_result.parameters
 
             # A refit invalidates any suggestion computed against the previous
-            # fit (stale utility curve / result line must never survive it).
+            # fit (stale utility curve / result line must never survive it), and
+            # invalidates this range's fitted alternatives (they were compared
+            # against the previous leader/masked-data fit) — spec item 1.
             # _select_range below re-derives the section's enabled state from
             # the fresh result via _refresh_suggest_section.
+            self._discrimination_candidates.pop(idx, None)
             if idx == self._active_range_idx:
                 self._clear_suggestion()
+                self._compare_candidates_label.setText("")
 
             # Item 4.3: no per-fit success/failure MODAL. _select_range refreshes
             # the χ² label (inline "Fit successful …" / "Fit failed: …") and tints
@@ -2263,8 +2295,15 @@ class ModelFitDialog(QDialog):
 
         range_row = QHBoxLayout()
         range_row.addWidget(QLabel("Candidate range:"))
-        self._suggest_min_field = FloatLimitField(0.0, value_range=(-1e12, 1e12), decimals=6)
-        self._suggest_max_field = FloatLimitField(1.0, value_range=(-1e12, 1e12), decimals=6)
+        # Seeded from the measured x span, which is fixed for the dialog's
+        # lifetime (the series is passed at construction) — users widen it to
+        # allow extrapolated suggestions.
+        self._suggest_min_field = FloatLimitField(
+            self._x_min_data, value_range=(-1e12, 1e12), decimals=6
+        )
+        self._suggest_max_field = FloatLimitField(
+            self._x_max_data, value_range=(-1e12, 1e12), decimals=6
+        )
         range_row.addWidget(self._suggest_min_field)
         range_row.addWidget(QLabel("–"))
         range_row.addWidget(self._suggest_max_field)
@@ -2294,6 +2333,50 @@ class ModelFitDialog(QDialog):
         rate_row.addWidget(self._suggest_rate_edit)
         layout.addLayout(rate_row)
 
+        # ── Cost weighting (Phase 3, §8.2) ────────────────────────────────────
+        # Off by default; a compact grid of four fields beneath the rate row.
+        self._cost_weight_check = QCheckBox("Weight by measurement cost")
+        self._cost_weight_check.setToolTip(
+            "Weight the displayed utility curve(s) by a crude movement/counting "
+            "cost model (TAS-AI's IG^0.7 / time): utility**0.7 / (count_time + "
+            "move_time(x)). Recomputes best_x as the argmax of the weighted "
+            "curve; the analytic post-sigma/events figures still refer to the "
+            "unweighted point, so they are dropped from the result line when "
+            "the weighted peak differs."
+        )
+        self._cost_weight_check.toggled.connect(self._on_cost_weight_toggled)
+        layout.addWidget(self._cost_weight_check)
+
+        cost_row = QHBoxLayout()
+        cost_row.addWidget(QLabel("Count time/pt (h):"))
+        self._cost_count_time_edit = QLineEdit()
+        self._cost_count_time_edit.setValidator(QDoubleValidator(0.0, 1.0e12, 6, self))
+        self._cost_count_time_edit.setPlaceholderText("e.g. 2")
+        cost_row.addWidget(self._cost_count_time_edit)
+        cost_row.addWidget(QLabel("Move up (h/+1x):"))
+        self._cost_up_rate_edit = QLineEdit()
+        self._cost_up_rate_edit.setValidator(QDoubleValidator(0.0, 1.0e12, 6, self))
+        self._cost_up_rate_edit.setPlaceholderText("e.g. 0.1")
+        cost_row.addWidget(self._cost_up_rate_edit)
+        cost_row.addWidget(QLabel("Move down (h/-1x):"))
+        self._cost_down_rate_edit = QLineEdit()
+        self._cost_down_rate_edit.setValidator(QDoubleValidator(0.0, 1.0e12, 6, self))
+        self._cost_down_rate_edit.setPlaceholderText("e.g. 0.1")
+        cost_row.addWidget(self._cost_down_rate_edit)
+        cost_row.addWidget(QLabel("Current x:"))
+        self._cost_current_x_edit = QLineEdit()
+        self._cost_current_x_edit.setValidator(QDoubleValidator(-1.0e12, 1.0e12, 6, self))
+        cost_row.addWidget(self._cost_current_x_edit)
+        layout.addLayout(cost_row)
+        for edit in (
+            self._cost_count_time_edit,
+            self._cost_up_rate_edit,
+            self._cost_down_rate_edit,
+            self._cost_current_x_edit,
+        ):
+            edit.textChanged.connect(self._on_cost_field_changed)
+        self._on_cost_weight_toggled(False)
+
         button_row = QHBoxLayout()
         self._suggest_btn = QPushButton("Suggest")
         self._suggest_btn.clicked.connect(self._on_suggest_clicked)
@@ -2311,6 +2394,49 @@ class ModelFitDialog(QDialog):
         self._suggest_warning_label.setWordWrap(True)
         self._suggest_warning_label.setVisible(False)
         layout.addWidget(self._suggest_warning_label)
+
+        # ── "Compare against" discrimination subsection (Phase 3, §8.1) ───────
+        compare_section, compare_layout = make_section("Compare against")
+        layout.addWidget(compare_section)
+
+        compare_row = QHBoxLayout()
+        compare_row.addWidget(QLabel("Model:"))
+        self._compare_model_combo = QComboBox()
+        self._compare_model_combo.setToolTip(
+            "Quick-pick a single alternative component, or use Edit… to build a "
+            "composite model the same way the primary model is built."
+        )
+        self._compare_model_combo.currentIndexChanged.connect(self._on_compare_model_combo_changed)
+        compare_row.addWidget(self._compare_model_combo, 1)
+        self._compare_edit_btn = QPushButton("Edit…")
+        self._compare_edit_btn.setToolTip(
+            "Open the same model-builder dialog used for the primary model to "
+            "compose the alternative candidate."
+        )
+        self._compare_edit_btn.clicked.connect(self._on_compare_edit_clicked)
+        compare_row.addWidget(self._compare_edit_btn)
+        compare_layout.addLayout(compare_row)
+
+        compare_button_row = QHBoxLayout()
+        self._compare_fit_btn = QPushButton("Fit && compare")
+        self._compare_fit_btn.setToolTip(
+            "Fit the alternative model over the same masked data as the active "
+            "range's fit, off-thread, and add it to the candidate list below."
+        )
+        self._compare_fit_btn.clicked.connect(self._on_compare_fit_clicked)
+        compare_button_row.addWidget(self._compare_fit_btn)
+        compare_button_row.addStretch()
+        compare_layout.addLayout(compare_button_row)
+
+        self._compare_candidates_label = QLabel("")
+        self._compare_candidates_label.setTextFormat(Qt.TextFormat.RichText)
+        self._compare_candidates_label.setWordWrap(True)
+        compare_layout.addWidget(self._compare_candidates_label)
+
+        self._discrimination_result_label = QLabel("")
+        self._discrimination_result_label.setTextFormat(Qt.TextFormat.RichText)
+        self._discrimination_result_label.setWordWrap(True)
+        compare_layout.addWidget(self._discrimination_result_label)
 
         return section
 
@@ -2352,7 +2478,21 @@ class ModelFitDialog(QDialog):
         self._suggest_disabled_hint.setText(reason or "")
         self._suggest_disabled_hint.setVisible(not enabled)
 
+        # "Compare against" needs the same successful-fit gate (it fits over
+        # the same masked data), but not the error-mode noise-model gate on
+        # its own — the AIC ranking only needs chi2, though the
+        # discrimination-utility overlay reuses the same noise model as the
+        # refinement band, so it is gated identically for simplicity.
+        for widget in (
+            self._compare_model_combo,
+            self._compare_edit_btn,
+            self._compare_fit_btn,
+        ):
+            widget.setEnabled(enabled)
+
         if not enabled:
+            self._compare_candidates_label.setText("")
+            self._discrimination_result_label.setText("")
             return
 
         fit_range = self._fit.ranges[idx]
@@ -2374,12 +2514,62 @@ class ModelFitDialog(QDialog):
                 restore_idx = self._suggest_target_combo.findData(free_names[0])
             self._suggest_target_combo.setCurrentIndex(max(0, restore_idx))
 
-        if self._suggest_min_field.value() == self._suggest_max_field.value():
-            # Fresh section: seed the candidate range to the measured x span.
-            self._suggest_min_field.setValue(self._x_min_data)
-            self._suggest_max_field.setValue(self._x_max_data)
-
         self._on_suggest_target_changed()
+        self._refresh_compare_model_combo()
+        self._refresh_candidates_label()
+        self._refresh_cost_current_x_default()
+
+    def _refresh_compare_model_combo(self) -> None:
+        """Populate the quick-pick combo with this context's component pool.
+
+        Excludes the active range's own model expression from the default
+        selection (best-effort — a composite expression simply won't match
+        any single entry) so "Fit & compare" defaults to something
+        different from the primary model.
+        """
+        current = self._compare_model_combo.currentData()
+        custom = getattr(self, "_compare_custom_model", None)
+        with QSignalBlocker(self._compare_model_combo):
+            self._compare_model_combo.clear()
+            if custom is not None:
+                self._compare_model_combo.addItem(
+                    f"{custom.component_expression_string()} (custom)",
+                    userData=_COMPARE_CUSTOM,
+                )
+            for name in self._component_pool:
+                self._compare_model_combo.addItem(name, userData=name)
+            restore_idx = self._compare_model_combo.findData(current)
+            if restore_idx < 0:
+                idx = self._active_range_idx
+                active_expr = (
+                    self._fit.ranges[idx].model.component_expression_string()
+                    if idx is not None
+                    else ""
+                )
+                for i in range(self._compare_model_combo.count()):
+                    if self._compare_model_combo.itemData(i) != active_expr:
+                        restore_idx = i
+                        break
+                restore_idx = max(restore_idx, 0)
+            self._compare_model_combo.setCurrentIndex(restore_idx)
+        # A model built via Edit… (composite/custom) is stashed here and takes
+        # priority over the quick-pick combo until the user picks a plain
+        # component again; a fresh range/model change drops it.
+        if not hasattr(self, "_compare_custom_model"):
+            self._compare_custom_model: ParameterCompositeModel | None = None
+
+    def _refresh_cost_current_x_default(self) -> None:
+        """Default "Current x" to the last measured x; refresh when data changes."""
+        if self._cost_current_x_edit.text().strip():
+            return
+        xs = np.asarray(self._x, dtype=float)
+        finite_idx = np.flatnonzero(np.isfinite(xs))
+        if finite_idx.size == 0:
+            return
+        # "Last measured x" means the last finite point in measurement order
+        # (position in the series), not the numerically largest x.
+        last_x = float(xs[finite_idx[-1]])
+        self._cost_current_x_edit.setText(f"{last_x:.6g}")
 
     def _on_suggest_target_changed(self, *_args: object) -> None:
         """Precision-goal field only makes sense for a single (c-optimal) target."""
@@ -2403,7 +2593,12 @@ class ModelFitDialog(QDialog):
         return resolved
 
     def _clear_suggestion(self) -> None:
-        """Drop any stale suggestion overlay + result line (spec item 7)."""
+        """Drop any stale suggestion overlay + result line (spec item 7).
+
+        Also drops the discrimination overlay/state (Part A): both bands
+        share the same clearing rules — a refit, range switch, or error-mode
+        change invalidates both, never just one.
+        """
         self._last_suggestion = None
         self._last_suggestion_calibration = None
         self._pending_calibration = None
@@ -2415,6 +2610,30 @@ class ModelFitDialog(QDialog):
         preview = getattr(self, "_preview", None)
         if preview is not None:
             preview.set_suggestion(None)
+        self._clear_discrimination_display()
+
+    def _clear_discrimination_candidates(self) -> None:
+        """Drop the active range's fitted alternative candidates (spec item 1).
+
+        Called whenever the range's primary fit reruns or its model
+        expression changes — the candidates were fitted against a specific
+        masked dataset/leader and do not survive either.
+        """
+        idx = self._active_range_idx
+        if idx is not None:
+            self._discrimination_candidates.pop(idx, None)
+        if getattr(self, "_compare_candidates_label", None) is not None:
+            self._compare_candidates_label.setText("")
+        self._clear_discrimination_display()
+
+    def _clear_discrimination_display(self) -> None:
+        """Drop the discrimination suggestion/overlay only (candidates kept)."""
+        self._last_discrimination = None
+        if getattr(self, "_discrimination_result_label", None) is not None:
+            self._discrimination_result_label.setText("")
+        preview = getattr(self, "_preview", None)
+        if preview is not None:
+            preview.set_discrimination(None)
 
     def _on_suggest_clicked(self) -> None:
         """Compute a fresh suggestion for the active range (GUI thread; ms)."""
@@ -2459,16 +2678,99 @@ class ModelFitDialog(QDialog):
         if target is not None and np.isfinite(suggestion.best_x):
             self._launch_calibration(fit_range, result, suggestion, y_err)
 
+    # -- cost weighting (Phase 3, §8.2) ---------------------------------------
+    #
+    # Pure display recomposition: the checkbox/fields never trigger a
+    # re-suggest, only a re-render from the last stored suggestion(s) (spec
+    # item 3). "Weighted" means: apply cost_weighted_utility to the RAW curve,
+    # recompute best_x as its argmax, and use that x for the canvas marker and
+    # result line — the events/sigma tail (which describes the unweighted
+    # point) is dropped whenever the weighted argmax differs.
+
+    def _read_cost_model(self) -> tuple[float, float, float, float] | None:
+        """Return (count_time, up_rate, down_rate, x_current) iff valid+enabled.
+
+        Validated here (not in core): count_time > 0, rates >= 0, x_current
+        finite. Invalid/incomplete input means "not applied" — the caller
+        falls back to the unweighted curve, matching the core's own silent
+        no-op guard in ``cost_weighted_utility``.
+        """
+        if not self._cost_weight_check.isChecked():
+            return None
+        try:
+            count_time = float(self._cost_count_time_edit.text())
+            up_rate = float(self._cost_up_rate_edit.text())
+            down_rate = float(self._cost_down_rate_edit.text())
+            x_current = float(self._cost_current_x_edit.text())
+        except ValueError:
+            return None
+        if not (
+            np.isfinite(count_time)
+            and np.isfinite(up_rate)
+            and np.isfinite(down_rate)
+            and np.isfinite(x_current)
+        ):
+            return None
+        if count_time <= 0.0 or up_rate < 0.0 or down_rate < 0.0:
+            return None
+        return count_time, up_rate, down_rate, x_current
+
+    def _display_curve(self, suggestion: NextPointSuggestion) -> tuple[np.ndarray, float, bool]:
+        """Return (utility_for_display, best_x_for_display, cost_weighted).
+
+        Applies the cost model to ``suggestion.utility`` when enabled+valid;
+        otherwise returns the suggestion's own curve/best_x unchanged.
+        """
+        cost = self._read_cost_model()
+        if cost is None or suggestion.x_candidates.size == 0:
+            return suggestion.utility, suggestion.best_x, False
+        count_time, up_rate, down_rate, x_current = cost
+        weighted = cost_weighted_utility(
+            suggestion.x_candidates,
+            suggestion.utility,
+            x_current,
+            count_time=count_time,
+            up_rate=up_rate,
+            down_rate=down_rate,
+        )
+        if not np.any(np.isfinite(weighted)):
+            return suggestion.utility, suggestion.best_x, False
+        best_idx = int(np.nanargmax(weighted))
+        weighted_best_x = float(suggestion.x_candidates[best_idx])
+        return weighted, weighted_best_x, True
+
+    def _on_cost_weight_toggled(self, checked: bool) -> None:
+        for edit in (
+            self._cost_count_time_edit,
+            self._cost_up_rate_edit,
+            self._cost_down_rate_edit,
+            self._cost_current_x_edit,
+        ):
+            edit.setEnabled(checked)
+        self._on_cost_field_changed()
+
+    def _on_cost_field_changed(self, *_args: object) -> None:
+        """Re-render from the stored suggestion(s) without re-running suggest."""
+        if self._last_suggestion is not None:
+            self._apply_suggestion_to_canvas(self._last_suggestion)
+            self._update_suggest_result_label(
+                self._last_suggestion, calibration=self._last_calibration()
+            )
+        if self._last_discrimination is not None:
+            self._apply_discrimination_to_canvas(self._last_discrimination)
+            self._update_discrimination_result_label(self._last_discrimination)
+
     def _apply_suggestion_to_canvas(self, suggestion: NextPointSuggestion) -> None:
         preview = getattr(self, "_preview", None)
         if preview is None:
             return
+        utility, best_x, _weighted = self._display_curve(suggestion)
         preview.set_suggestion(
             SuggestionOverlay(
                 x=suggestion.x_candidates,
-                utility=suggestion.utility,
+                utility=utility,
                 extrapolated=suggestion.extrapolated,
-                best_x=suggestion.best_x,
+                best_x=best_x,
             )
         )
 
@@ -2523,9 +2825,17 @@ class ModelFitDialog(QDialog):
             self._set_suggest_warnings(suggestion.warnings)
             return
 
-        parts = [f"Measure at x = {suggestion.best_x:.4g}"]
+        _utility, display_x, weighted = self._display_curve(suggestion)
+        # Cost-weighting moves WHERE (display_x) but the analytic post-sigma/
+        # events figures below refer only to suggestion.best_x — when the
+        # weighted argmax differs, those figures are no longer valid at
+        # display_x, so they are dropped and a "(cost-weighted)" note is
+        # added instead (spec item 2).
+        moved = weighted and not np.isclose(display_x, suggestion.best_x)
 
-        if suggestion.target is not None:
+        parts = [f"Measure at x = {display_x:.4g}"]
+
+        if suggestion.target is not None and not moved:
             if suggestion.target_unreachable:
                 floor = suggestion.floor_sigma
                 floor_text = f" (floor sigma({suggestion.target}) ~ {floor:.3g})" if floor else ""
@@ -2549,9 +2859,13 @@ class ModelFitDialog(QDialog):
                     f"→ σ({suggestion.target}) ≈ {suggestion.predicted_post_sigma:.3g} (approximate)"
                 )
 
-        conversion = self._suggest_conversion_line(suggestion.events_factor_to_target)
-        if conversion:
-            parts.append(conversion)
+        if not moved:
+            conversion = self._suggest_conversion_line(suggestion.events_factor_to_target)
+            if conversion:
+                parts.append(conversion)
+
+        if weighted:
+            parts.append("(cost-weighted)")
 
         self._suggest_result_label.setText(" ".join(parts))
 
@@ -2667,6 +2981,300 @@ class ModelFitDialog(QDialog):
             return False
         self._launch_calibration(fit_range, result, suggestion, y_err)
         return True
+
+    # -- "Compare against" model discrimination (BED, Phase 3 — §8.1) ---------
+    #
+    # UX: a model picker (component-pool quick-pick combo, or Edit… reusing the
+    # SAME ParameterModelBuilderDialog affordance the primary model uses) plus
+    # "Fit & compare". The chosen alternative is fitted over the SAME masked
+    # data as the active range's fit, off-thread, following _launch_calibration's
+    # snapshot/token/pending pattern. Successful fits accumulate in
+    # self._discrimination_candidates[range_idx]; the AIC display and the
+    # discrimination suggestion (suggest_discriminating_point, leader vs ALL
+    # alternatives) refresh from that list.
+
+    def _selected_compare_model(self) -> ParameterCompositeModel | None:
+        """The model "Fit & compare" would fit — exactly what the combo shows:
+        the "(custom)" entry maps to the Edit… composite, any other entry to
+        that single component. The displayed selection is the sole truth (a
+        hidden stash silently overriding the combo caused fits of something
+        other than what was on screen)."""
+        data = self._compare_model_combo.currentData()
+        if data == _COMPARE_CUSTOM:
+            return getattr(self, "_compare_custom_model", None)
+        if not data:
+            return None
+        try:
+            return ParameterCompositeModel([str(data)], [])
+        except Exception:
+            return None
+
+    def _on_compare_edit_clicked(self) -> None:
+        """Open the same model-builder dialog the primary model uses (§8.1
+        item 2: "reuse whatever affordance the dialog already uses"), seeded
+        from the current quick-pick/custom selection."""
+        initial = self._selected_compare_model()
+        dlg = ParameterModelBuilderDialog(
+            component_pool=self._component_pool,
+            initial_model=initial,
+            parent=self,
+        )
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        model = dlg.get_model()
+        if model is None:
+            return
+        self._adopt_custom_compare_model(model)
+
+    def _adopt_custom_compare_model(self, model: ParameterCompositeModel) -> None:
+        """Surface an Edit…-built composite as a selected "(custom)" combo entry."""
+        self._compare_custom_model = model
+        self._refresh_compare_model_combo()
+        with QSignalBlocker(self._compare_model_combo):
+            self._compare_model_combo.setCurrentIndex(
+                max(0, self._compare_model_combo.findData(_COMPARE_CUSTOM))
+            )
+        self._compare_model_combo.setToolTip(
+            f"Custom (via Edit…): {model.component_expression_string()}"
+        )
+
+    def _on_compare_model_combo_changed(self, *_args: object) -> None:
+        """Picking a plain component drops the Edit… composite and its entry."""
+        if self._compare_model_combo.currentData() == _COMPARE_CUSTOM:
+            return
+        self._compare_custom_model = None
+        custom_idx = self._compare_model_combo.findData(_COMPARE_CUSTOM)
+        if custom_idx >= 0:
+            with QSignalBlocker(self._compare_model_combo):
+                self._compare_model_combo.removeItem(custom_idx)
+        self._compare_model_combo.setToolTip(
+            "Quick-pick a single alternative component, or use Edit… to build a "
+            "composite model the same way the primary model is built."
+        )
+
+    def _on_compare_fit_clicked(self) -> None:
+        """Fit the selected alternative over the active range's masked data."""
+        idx = self._active_range_idx
+        if self._suggest_disabled_reason(idx) is not None:
+            return
+        alt_model = self._selected_compare_model()
+        if alt_model is None:
+            return
+
+        fit_range = self._fit.ranges[idx]
+        # Identity token for the leader fit this comparison is against: a
+        # refit of the SAME range (possibly with changed bounds/windows)
+        # replaces the result object, and a candidate fitted against the old
+        # masked data must not join the new leader's AIC ranking — the range
+        # index alone cannot catch that.
+        leader_token = self._result_for_range(idx)
+
+        # Seed the alternative the SAME way a fresh model of that type is
+        # seeded (_create_default_range's heuristic): data-aware trend seeds
+        # merged over per-component defaults, mirroring _edit_model's reseed
+        # path for a newly-adopted model.
+        params = ParameterSet()
+        y_mean = float(np.nanmean(self._y)) if np.any(np.isfinite(self._y)) else 0.0
+        y_span = (
+            float(np.nanmax(self._y) - np.nanmin(self._y)) if np.any(np.isfinite(self._y)) else 1.0
+        )
+        x_min_data, x_max_data = self._x_min_data, self._x_max_data
+        trend_seeds = suggest_trend_seeds(alt_model, self._x, self._y)
+        for pname in alt_model.param_names:
+            default_val = alt_model.param_defaults[pname]
+            if pname in {"c", "b"}:
+                default_val = y_mean
+            elif pname in {"m", "a"}:
+                default_val = y_span if y_span > 0 else default_val
+            elif pname.startswith("B0") or pname.startswith("tau") or pname.startswith("nu"):
+                default_val = max(1e-6, (x_max_data - x_min_data) / 2.0)
+            elif pname.startswith("D"):
+                default_val = max(1e-6, default_val)
+            params.add(
+                Parameter(
+                    name=pname,
+                    value=float(trend_seeds.get(pname, default_val)),
+                    fixed=(pname == "shape_factor_a"),
+                )
+            )
+
+        # Snapshot exactly like _run_fit: same x/y/err, same range bounds/
+        # windows/error mode as the active (leader) fit, so the comparison is
+        # over the identical masked dataset.
+        model_snapshot = ParameterCompositeModel.from_dict(alt_model.to_dict())
+        params_snapshot = ParameterSet(
+            [
+                Parameter(name=p.name, value=p.value, min=p.min, max=p.max, fixed=p.fixed)
+                for p in params
+            ]
+        )
+        x_vals = np.asarray(self._x, dtype=float).copy()
+        y_vals = np.asarray(self._y, dtype=float).copy()
+        y_errs = np.asarray(self._yerr, dtype=float).copy()
+        x_min = fit_range.x_min
+        x_max = fit_range.x_max
+        windows = list(fit_range.windows) if fit_range.windows else None
+        error_mode = self._error_mode()
+        error_value = self._error_value()
+        generation = idx
+
+        def _worker(_worker: object) -> object:
+            return fit_parameter_model(
+                x=x_vals,
+                y=y_vals,
+                yerr=y_errs,
+                model=model_snapshot,
+                parameters=params_snapshot,
+                x_min=x_min,
+                x_max=x_max,
+                error_mode=error_mode,
+                error_value=error_value,
+                windows=windows,
+                extra_starts=4,
+                seed=0,
+            )
+
+        def _on_done(result: object) -> None:
+            self._compare_fit_in_progress = False
+            if self._drain_pending_compare():
+                return
+            if (
+                self._active_range_idx != generation
+                or self._result_for_range(generation) is not leader_token
+            ):
+                return
+            if getattr(result, "success", False):
+                n_free = len(result.parameters.free_parameters)
+                self._discrimination_candidates.setdefault(generation, []).append(
+                    (model_snapshot, result.parameters, float(result.chi_squared), n_free)
+                )
+                self._refresh_candidates_label()
+                self._refresh_discrimination_suggestion()
+            else:
+                self._compare_candidates_label.setText(
+                    warning_html(f"Alternative fit failed: {result.message or 'No convergence'}")
+                )
+
+        def _on_error(message: str) -> None:
+            self._compare_fit_in_progress = False
+            if self._drain_pending_compare():
+                return
+            if self._active_range_idx == generation:
+                self._compare_candidates_label.setText(warning_html(f"Fit error: {message}"))
+
+        if self._compare_fit_in_progress:
+            self._pending_compare = (_worker, _on_done, _on_error)
+            return
+        self._compare_fit_in_progress = True
+        self._tasks.start(_worker, on_finished=_on_done, on_error=_on_error)
+
+    def _drain_pending_compare(self) -> bool:
+        """Launch a compare-fit queued while another was in flight."""
+        pending = getattr(self, "_pending_compare", None)
+        self._pending_compare = None
+        if pending is None:
+            return False
+        worker, on_done, on_error = pending
+        self._compare_fit_in_progress = True
+        self._tasks.start(worker, on_finished=on_done, on_error=on_error)
+        return True
+
+    def _refresh_candidates_label(self) -> None:
+        """Render the fitted-alternatives list with AIC evidence (spec item 3)."""
+        idx = self._active_range_idx
+        if idx is None:
+            self._compare_candidates_label.setText("")
+            return
+        candidates = self._discrimination_candidates.get(idx, [])
+        if not candidates:
+            self._compare_candidates_label.setText("")
+            return
+
+        result = self._result_for_range(idx)
+        leader_chi2 = float(getattr(result, "chi_squared", float("nan")))
+        fit_range = self._fit.ranges[idx]
+        leader_n_free = len(fit_range.parameters.free_parameters)
+
+        chi2s = [leader_chi2] + [c[2] for c in candidates]
+        n_frees = [leader_n_free] + [c[3] for c in candidates]
+        weights = aic_weights(chi2s, n_frees)
+        leader_weight = weights[0] if weights else 0.0
+
+        lines = [
+            f"Leader ({fit_range.model.component_expression_string()}): weight {leader_weight:.3g}"
+        ]
+        for (model, _params, chi2, n_free), weight in zip(candidates, weights[1:], strict=True):
+            ratio = leader_weight / weight if weight > 0.0 else float("inf")
+            decisive = " — decisive" if ratio > 100.0 else ""
+            lines.append(
+                f"{model.component_expression_string()}: weight {weight:.3g} "
+                f"/ ratio {ratio:.3g} vs leader{decisive}"
+            )
+        self._compare_candidates_label.setText("<br>".join(lines))
+
+    def _refresh_discrimination_suggestion(self) -> None:
+        """Recompute the discrimination suggestion from the current candidates."""
+        idx = self._active_range_idx
+        if idx is None:
+            return
+        candidates = self._discrimination_candidates.get(idx, [])
+        if not candidates:
+            self._clear_discrimination_display()
+            return
+
+        fit_range = self._fit.ranges[idx]
+        result = self._result_for_range(idx)
+        if result is None or not getattr(result, "success", False):
+            self._clear_discrimination_display()
+            return
+
+        y_err = self._effective_y_err_for_active_fit()
+        alternatives = [(model, params) for model, params, _chi2, _n in candidates]
+        suggestion = suggest_discriminating_point(
+            fit_range.model,
+            fit_range.parameters,
+            alternatives,
+            self._x,
+            y_err,
+            self._suggest_min_field.value(),
+            self._suggest_max_field.value(),
+        )
+        self._last_discrimination = suggestion
+        self._apply_discrimination_to_canvas(suggestion)
+        self._update_discrimination_result_label(suggestion)
+
+    def _apply_discrimination_to_canvas(self, suggestion: NextPointSuggestion) -> None:
+        preview = getattr(self, "_preview", None)
+        if preview is None:
+            return
+        utility, best_x, _weighted = self._display_curve(suggestion)
+        preview.set_discrimination(
+            SuggestionOverlay(
+                x=suggestion.x_candidates,
+                utility=utility,
+                extrapolated=suggestion.extrapolated,
+                best_x=best_x,
+            )
+        )
+
+    def _update_discrimination_result_label(self, suggestion: NextPointSuggestion) -> None:
+        """Render the discrimination result line (spec item 4 of §8.1)."""
+        if not np.isfinite(suggestion.best_x):
+            text = "; ".join(suggestion.warnings) or "No discriminating point found in this range."
+            self._discrimination_result_label.setText(info_html(text))
+            return
+
+        _utility, display_x, weighted = self._display_curve(suggestion)
+        parts = [f"Best discriminating point: x = {display_x:.4g}"]
+        if weighted:
+            parts.append("(cost-weighted)")
+        self._discrimination_result_label.setText(" ".join(parts))
+        if suggestion.warnings:
+            self._discrimination_result_label.setText(
+                self._discrimination_result_label.text()
+                + "<br>"
+                + warning_html(" ".join(suggestion.warnings))
+            )
 
     # -- template-method hooks: per-row control, error cell, result source -----
     #
@@ -2888,11 +3496,15 @@ class ModelFitDialog(QDialog):
         self._post_select_range(idx)
 
         # Range switch invalidates any suggestion computed for the previously
-        # active range (spec item 7); only clear the LIVE state (canvas/labels)
-        # here, then rebuild the section for whichever range is now active.
+        # active range (spec item 7); only clear the LIVE display state
+        # (canvas/labels) here — the candidates dict is keyed per range index,
+        # so a range's fitted alternatives survive switching away and back —
+        # then rebuild the section (incl. the candidates label + discrimination
+        # suggestion) for whichever range is now active.
         if getattr(self, "_suggest_section", None) is not None:
             self._clear_suggestion()
             self._refresh_suggest_section()
+            self._refresh_discrimination_suggestion()
 
         self._request_preview_update()
 

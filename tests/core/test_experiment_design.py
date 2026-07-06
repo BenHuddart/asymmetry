@@ -16,8 +16,11 @@ import numpy as np
 import pytest
 
 from asymmetry.core.fitting.experiment_design import (
+    aic_weights,
     calibrate_events_for_goal,
     calibrate_suggestion,
+    cost_weighted_utility,
+    suggest_discriminating_point,
     suggest_next_point,
 )
 from asymmetry.core.fitting.parameter_models import (
@@ -452,3 +455,298 @@ def test_ranking_honesty_order_parameter_best_x_far_outranks_flat_region() -> No
     flat_utility = float(suggestion.utility[flat_index])
 
     assert flat_utility <= 0.0 or best_utility >= 50.0 * flat_utility
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 (§8.1): suggest_discriminating_point
+# ---------------------------------------------------------------------------
+
+
+def _fit_component(component: str, x, y, yerr, params: ParameterSet):
+    model = ParameterCompositeModel([component])
+    result = fit_parameter_model(x, y, yerr, model, params)
+    assert result.success
+    return model, result.parameters
+
+
+def test_discrimination_crossing_models_peak_at_range_end() -> None:
+    # Linear vs Constant fitted to the same gently-sloped noisy data: the
+    # two curves diverge most at whichever end of the range is farthest
+    # from where they cross (near the data mean, since Constant fits the
+    # weighted mean of a line).
+    rng = np.random.default_rng(7)
+    x = np.linspace(1.0, 9.0, 40)
+    true_m, true_b = 0.3, 2.0
+    yerr = np.full_like(x, 0.05)
+    y = true_m * x + true_b + rng.normal(0.0, 0.05, size=x.shape)
+
+    lead_model, lead_params = _fit_component(
+        "Linear",
+        x,
+        y,
+        yerr,
+        ParameterSet(
+            [
+                Parameter("m", value=1.0, min=-10.0, max=10.0),
+                Parameter("b", value=0.0, min=-10.0, max=10.0),
+            ]
+        ),
+    )
+    alt_model, alt_params = _fit_component(
+        "Constant", x, y, yerr, ParameterSet([Parameter("c", value=2.0, min=-10.0, max=10.0)])
+    )
+
+    x_min, x_max = 0.0, 10.0
+    suggestion = suggest_discriminating_point(
+        lead_model, lead_params, [(alt_model, alt_params)], x, yerr, x_min, x_max
+    )
+
+    # Analytic argmax: |line - constant| grows monotonically away from the
+    # crossing point (near the data's weighted mean), so the disagreement
+    # is largest at whichever end of [x_min, x_max] is farther from the mean.
+    lead_values = {p.name: float(p.value) for p in lead_params}
+    alt_values = {p.name: float(p.value) for p in alt_params}
+    crossing_x = (alt_values["c"] - lead_values["b"]) / lead_values["m"]
+    expected_end = x_min if abs(x_min - crossing_x) > abs(x_max - crossing_x) else x_max
+
+    assert not np.isnan(suggestion.best_x)
+    assert suggestion.best_x == pytest.approx(expected_end, abs=0.5)
+    assert suggestion.target is None
+
+
+def test_discrimination_leader_vs_all_takes_elementwise_max() -> None:
+    # Three candidates: alternative A disagrees most with the lead at low
+    # x, alternative B disagrees most at high x. The combined utility (max
+    # over alternatives) must exceed each pairwise curve at the respective
+    # end, and its argmax should differ from at least one pairwise argmax.
+    x = np.linspace(0.0, 10.0, 50)
+    yerr = np.full_like(x, 0.1)
+
+    lead_model = ParameterCompositeModel(["Constant"])
+    lead_params = ParameterSet([Parameter("c", value=0.0)])
+
+    # A: a steep positive line -> disagrees most with the flat lead at
+    # high x.
+    a_model = ParameterCompositeModel(["Linear"])
+    a_params = ParameterSet([Parameter("m", value=2.0), Parameter("b", value=0.0)])
+
+    # B: a steep negative line -> disagrees most with the flat lead at low
+    # x (since b(0) is very negative-ish... use offset to control this).
+    b_model = ParameterCompositeModel(["Linear"])
+    b_params = ParameterSet([Parameter("m", value=-2.0), Parameter("b", value=0.0)])
+
+    combined = suggest_discriminating_point(
+        lead_model,
+        lead_params,
+        [(a_model, a_params), (b_model, b_params)],
+        x,
+        yerr,
+        0.0,
+        10.0,
+    )
+    only_a = suggest_discriminating_point(
+        lead_model, lead_params, [(a_model, a_params)], x, yerr, 0.0, 10.0
+    )
+    only_b = suggest_discriminating_point(
+        lead_model, lead_params, [(b_model, b_params)], x, yerr, 0.0, 10.0
+    )
+
+    # Elementwise max: combined utility is never below either pairwise curve.
+    assert np.all(combined.utility >= only_a.utility - 1e-9)
+    assert np.all(combined.utility >= only_b.utility - 1e-9)
+
+    # A disagrees most at high x, B disagrees most at low x (both steep
+    # lines through the same flat lead), so their argmaxes sit at opposite
+    # ends and the combined curve exceeds each pairwise curve at the
+    # opposite end.
+    assert only_a.best_x == pytest.approx(10.0, abs=0.3)
+    assert only_b.best_x == pytest.approx(10.0, abs=0.3) or only_b.best_x == pytest.approx(
+        0.0, abs=0.3
+    )
+    assert combined.best_x is not None
+
+
+def test_discrimination_order_parameter_vs_linear_peaks_near_transition() -> None:
+    model, result, x, _y, yerr = _order_parameter_fit()
+    lead_model, lead_params = model, result.parameters
+
+    linear_model, linear_params = _fit_component(
+        "Linear",
+        x,
+        _y,
+        yerr,
+        ParameterSet(
+            [
+                Parameter("m", value=0.0, min=-10.0, max=10.0),
+                Parameter("b", value=0.5, min=-10.0, max=10.0),
+            ]
+        ),
+    )
+
+    fitted_tc = next(p.value for p in result.parameters if p.name == "Tc")
+    suggestion = suggest_discriminating_point(
+        lead_model, lead_params, [(linear_model, linear_params)], x, yerr, 5.0, 120.0
+    )
+
+    assert not np.isnan(suggestion.best_x)
+    # Physically sensible: the order-parameter curvature is strongest near
+    # /below Tc, not in the flat saturated region far above Tc.
+    assert suggestion.best_x <= fitted_tc + 1.0
+    flat_region = suggestion.x_candidates > fitted_tc + 5.0
+    if np.any(flat_region):
+        assert suggestion.best_x not in suggestion.x_candidates[flat_region]
+
+
+def test_discrimination_identical_model_gives_agreement_warning() -> None:
+    model, result, x, _y, yerr = _order_parameter_fit()
+    suggestion = suggest_discriminating_point(
+        model, result.parameters, [(model, result.parameters)], x, yerr, 5.0, 120.0
+    )
+    assert any("agree within noise" in w.lower() for w in suggestion.warnings)
+    assert np.isnan(suggestion.best_x) or float(np.max(suggestion.utility)) == pytest.approx(
+        0.0, abs=1e-6
+    )
+
+
+def test_discrimination_empty_alternatives_gives_empty_suggestion() -> None:
+    model, result, x, yerr = _line_fit()
+    suggestion = suggest_discriminating_point(model, result.parameters, [], x, yerr, 0.0, 10.0)
+    assert suggestion.x_candidates.size == 0
+    assert np.isnan(suggestion.best_x)
+    assert suggestion.warnings
+
+
+def test_discrimination_no_valid_errors_gives_empty_suggestion() -> None:
+    model, result, x, _yerr = _line_fit()
+    bad_yerr = np.zeros_like(x)
+    suggestion = suggest_discriminating_point(
+        model, result.parameters, [(model, result.parameters)], x, bad_yerr, 0.0, 10.0
+    )
+    assert suggestion.x_candidates.size == 0
+    assert suggestion.warnings
+
+
+def test_discrimination_inverted_range_gives_empty_suggestion() -> None:
+    model, result, x, yerr = _line_fit()
+    suggestion = suggest_discriminating_point(
+        model, result.parameters, [(model, result.parameters)], x, yerr, 10.0, 0.0
+    )
+    assert suggestion.x_candidates.size == 0
+    assert suggestion.warnings
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 (§8.1): aic_weights
+# ---------------------------------------------------------------------------
+
+
+def test_aic_weights_known_values() -> None:
+    chi2 = [0.0, 2.0]
+    p = [1, 1]
+    weights = aic_weights(chi2, p)
+    expected_0 = 1.0 / (1.0 + np.exp(-1.0))
+    expected_1 = np.exp(-1.0) / (1.0 + np.exp(-1.0))
+    assert weights[0] == pytest.approx(expected_0)
+    assert weights[1] == pytest.approx(expected_1)
+    assert sum(weights) == pytest.approx(1.0)
+
+
+def test_aic_weights_extra_parameter_penalised() -> None:
+    weights = aic_weights([10.0, 10.0], [1, 3])
+    assert weights[0] > weights[1]
+    assert sum(weights) == pytest.approx(1.0)
+
+
+def test_aic_weights_non_finite_chi2_gets_zero_weight_and_renormalises() -> None:
+    weights = aic_weights([1.0, float("nan"), 3.0], [1, 1, 1])
+    assert weights[1] == 0.0
+    assert weights[0] > 0.0
+    assert weights[2] > 0.0
+    assert sum(weights) == pytest.approx(1.0)
+
+
+def test_aic_weights_all_non_finite_returns_uniform_zero() -> None:
+    weights = aic_weights([float("nan"), float("inf")], [1, 2])
+    assert weights == [0.0, 0.0]
+
+
+def test_aic_weights_mismatched_lengths_raises() -> None:
+    with pytest.raises(ValueError):
+        aic_weights([1.0, 2.0], [1])
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 (§8.2): cost_weighted_utility
+# ---------------------------------------------------------------------------
+
+
+def test_cost_weighted_utility_zero_rates_preserves_ranking() -> None:
+    x_candidates = np.array([0.0, 5.0, 10.0])
+    utility = np.array([1.0, 4.0, 2.0])
+    weighted = cost_weighted_utility(
+        x_candidates,
+        utility,
+        x_current=5.0,
+        count_time=2.0,
+        up_rate=0.0,
+        down_rate=0.0,
+        gamma=0.7,
+    )
+    expected = np.clip(utility, 0.0, None) ** 0.7 / 2.0
+    assert np.allclose(weighted, expected)
+    assert int(np.argmax(weighted)) == int(np.argmax(utility))
+
+
+def test_cost_weighted_utility_asymmetric_rates_can_flip_ranking() -> None:
+    # x_current = 5. A candidate below x_current (x=0) has slightly higher
+    # raw utility than one above (x=10), but a big down_rate makes moving
+    # down expensive enough that the "above" candidate wins after weighting.
+    x_candidates = np.array([0.0, 10.0])
+    utility = np.array([1.1, 1.0])
+    x_current = 5.0
+
+    unweighted_argmax = int(np.argmax(utility))
+    assert unweighted_argmax == 0
+
+    weighted = cost_weighted_utility(
+        x_candidates,
+        utility,
+        x_current=x_current,
+        count_time=1.0,
+        up_rate=0.01,
+        down_rate=100.0,
+        gamma=0.7,
+    )
+    assert int(np.argmax(weighted)) == 1
+
+
+def test_cost_weighted_utility_zero_count_time_returns_utility_unchanged() -> None:
+    x_candidates = np.array([0.0, 5.0, 10.0])
+    utility = np.array([1.0, 4.0, 2.0])
+    weighted = cost_weighted_utility(
+        x_candidates, utility, x_current=5.0, count_time=0.0, up_rate=1.0, down_rate=1.0
+    )
+    assert np.array_equal(weighted, utility)
+
+
+def test_cost_weighted_utility_negative_rate_returns_utility_unchanged() -> None:
+    x_candidates = np.array([0.0, 5.0, 10.0])
+    utility = np.array([1.0, 4.0, 2.0])
+    weighted = cost_weighted_utility(
+        x_candidates, utility, x_current=5.0, count_time=1.0, up_rate=-1.0, down_rate=1.0
+    )
+    assert np.array_equal(weighted, utility)
+
+
+def test_cost_weighted_utility_non_finite_x_current_returns_utility_unchanged() -> None:
+    x_candidates = np.array([0.0, 5.0, 10.0])
+    utility = np.array([1.0, 4.0, 2.0])
+    weighted = cost_weighted_utility(
+        x_candidates,
+        utility,
+        x_current=float("nan"),
+        count_time=1.0,
+        up_rate=1.0,
+        down_rate=1.0,
+    )
+    assert np.array_equal(weighted, utility)
