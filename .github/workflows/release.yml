@@ -13,9 +13,45 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Fail fast if the tag disagrees with the tree it points at, before paying
+  # for the platform builds: the tag version must match pyproject.toml (the
+  # single source of truth that importlib.metadata reports at runtime), and a
+  # stable release must have a rolled CHANGELOG heading. Prerelease tags
+  # (containing "-") skip the changelog requirement.
+  verify-version:
+    name: Verify tag matches version and changelog
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Check tag against pyproject.toml and CHANGELOG.md
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          PY_VERSION="$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml)"
+          if [ "${VERSION}" != "${PY_VERSION}" ]; then
+            echo "::error::Tag ${TAG} does not match pyproject.toml version" \
+              "${PY_VERSION}. Release via the 'Cut release' workflow (or fix" \
+              "the tag) so the packaged app reports the version it is labelled with."
+            exit 1
+          fi
+          case "${VERSION}" in
+            *-*) echo "Prerelease tag; skipping changelog check." ;;
+            *)
+              if ! grep -q "^## \[${VERSION}\] " CHANGELOG.md; then
+                echo "::error::CHANGELOG.md has no '## [${VERSION}]' heading -" \
+                  "the [Unreleased] section was not rolled for this release."
+                exit 1
+              fi
+              ;;
+          esac
+
   build-macos-arm:
     name: Build macOS DMG (arm64)
     runs-on: macos-14
+    needs: verify-version
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -89,6 +125,7 @@ jobs:
   build-windows:
     name: Build Windows installer (x64)
     runs-on: windows-2025
+    needs: verify-version
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5

@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **One-command releases.** A new **Cut release** workflow (see `RELEASING.md`)
+  bumps `pyproject.toml`, rolls this changelog, commits `release: X.Y.Z` to
+  `main`, and pushes the tag that triggers the existing installer builds and
+  docs deploy — replacing the manual release-PR-then-tag ritual. The release
+  build now fails fast if the tag does not match `pyproject.toml` or the
+  changelog was not rolled.
 - **Instrument switcher in the Grouping window.** When a project holds runs from
   more than one instrument, the Grouping window now shows an **Instrument**
   selector ("GPS — 3 runs") that swaps the whole editor — its draft, selected
@@ -31,58 +37,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the status bar naming both parts. The only guard is closing the window with
   uncommitted changes, which lists exactly what would be lost ("profile 'Default
   (GPS)' and overrides for runs 12, 15").
-
-### Changed
-
-- **"Instrument" replaces "fingerprint" throughout the Grouping window and its
-  documentation.** The user-facing term for a run's `(instrument, histogram
-  count)` identity is now plainly "Instrument"; the scope panel is headed "Runs
-  of this instrument", and the detector count is shown ("GPS (6 detectors)") only
-  when two variants of the same instrument are both loaded. The internal
-  `ProfileFingerprint` API is unchanged.
-
-### Removed
-
-- **`.grp` file Load/Save.** The Grouping window's "Load .grp" / "Save .grp"
-  buttons, and the underlying line-based `.grp` serialization
-  (`GroupingDialog.serialize_grp`/`parse_grp`), have been retired. Project
-  persistence (grouping profiles saved in `.asymp` files) and instrument
-  presets now cover what `.grp` files were for — sharing and reusing a
-  grouping/calibration between sessions — without a separate file format to
-  keep in sync with the profile schema. Existing `.grp` files are unaffected
-  on disk; there is simply no in-app way to read or write them any more.
-
-### Fixed
-
-- **Stale persisted instrument identities now self-heal on reload.** A run whose
-  saved grouping named the wrong instrument (e.g. a FLAME run stored as "GPS" by
-  an earlier version with broken detection) stayed wrong forever: the stale string
-  pinned the wrong profile fingerprint, so the run inherited a mismatched profile
-  and kept the wrong preset's group names. A freshly loaded run is now treated as
-  the ground truth for its own instrument — when detection positively disagrees
-  with the stored value, the detected instrument wins (the run's grouping and
-  metadata are corrected and the stale instrument-dependent structure is
-  discarded in favour of the loader defaults), so the run re-detected as FLAME no
-  longer inherits a (GPS, 8) profile. Inconclusive detection leaves the stored
-  value untouched, and a matching value is preserved byte-identical. Saved
-  profiles are never modified; only runs heal.
-- **PSI analysis convention in the GPS/FLAME/HAL presets.** PSI names detectors
-  by beam direction, and for surface muons the initial polarisation points toward
-  the *Backward* detector, so the PSI/musrfit analysis convention is
-  `A = (B − αF)/(B + αF)` (GPS instrument paper, Amato *et al.* 2017, Eq. 2). The
-  loaders already honoured this, but the built-in GPS, FLAME and HAL-9500
-  presets declared the beam-Forward group as analysis-forward, so a preset used
-  headless (core) reduced with the wrong sign/leg. Every PSI Longitudinal preset
-  now declares the Backward-named group in the analysis-forward slot, and the GPS
-  `WEP` `FB` projection follows musrfit's `forward=2(B) backward=1(F) alpha=0.75`
-  so it reduces to `(B − 0.75F)/(B + 0.75F)`. The GPS spin-rotated combined-pair
-  preset was also fixed: the ~50° upward-rotated spin points along the
-  **Backward–Up** diagonal (not Forward–Up), so it is now
-  `Spin-rotated (B+U/F+D)` (was `F+U/B+D`). The grouping-dialog beam→analysis
-  swap is widened to recognise single-letter (`F`/`B`) and compound (`B+U`) group
-  names as defence in depth, and no longer double-swaps a fixed preset.
-
-### Added
 
 - **Time-zero (t0) policy on grouping profiles.** The **t0 Bin** row gains a
   mode selector — *From file*, *Manual*, or *Auto-detect* — carried by the
@@ -146,6 +100,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   consistent with the layout's own detector angles (and remains an Asymmetry
   construct with no facility-documented equivalent) and that the HiFi and MuSR
   schematic orientations already matched their respective user manuals.
+
+### Changed
+
+- **"Instrument" replaces "fingerprint" throughout the Grouping window and its
+  documentation.** The user-facing term for a run's `(instrument, histogram
+  count)` identity is now plainly "Instrument"; the scope panel is headed "Runs
+  of this instrument", and the detector count is shown ("GPS (6 detectors)") only
+  when two variants of the same instrument are both loaded. The internal
+  `ProfileFingerprint` API is unchanged.
+
+- **macOS release binaries are Apple Silicon (arm64) only.** GitHub Releases
+  publish a Windows x64 installer and a single macOS arm64 DMG; the Intel macOS
+  build was dropped because PyPI ships no Intel macOS `pyhdf` wheel. Intel Mac
+  and Linux users install from source.
+
+### Removed
+
+- **`.grp` file Load/Save.** The Grouping window's "Load .grp" / "Save .grp"
+  buttons, and the underlying line-based `.grp` serialization
+  (`GroupingDialog.serialize_grp`/`parse_grp`), have been retired. Project
+  persistence (grouping profiles saved in `.asymp` files) and instrument
+  presets now cover what `.grp` files were for — sharing and reusing a
+  grouping/calibration between sessions — without a separate file format to
+  keep in sync with the profile schema. Existing `.grp` files are unaffected
+  on disk; there is simply no in-app way to read or write them any more.
+
+### Fixed
+
+- **Changelog history repaired.** A re-land merge (#175) had accidentally
+  deleted the `## [0.5.0] - 2026-06-21` heading, leaving all of 0.5.0's
+  released notes stranded under `[Unreleased]`, and a later entry landed
+  inside the released section. The heading is restored (the section again
+  matches the release commit exactly) and the misplaced entry moved here.
+- **Stale persisted instrument identities now self-heal on reload.** A run whose
+  saved grouping named the wrong instrument (e.g. a FLAME run stored as "GPS" by
+  an earlier version with broken detection) stayed wrong forever: the stale string
+  pinned the wrong profile fingerprint, so the run inherited a mismatched profile
+  and kept the wrong preset's group names. A freshly loaded run is now treated as
+  the ground truth for its own instrument — when detection positively disagrees
+  with the stored value, the detected instrument wins (the run's grouping and
+  metadata are corrected and the stale instrument-dependent structure is
+  discarded in favour of the loader defaults), so the run re-detected as FLAME no
+  longer inherits a (GPS, 8) profile. Inconclusive detection leaves the stored
+  value untouched, and a matching value is preserved byte-identical. Saved
+  profiles are never modified; only runs heal.
+- **PSI analysis convention in the GPS/FLAME/HAL presets.** PSI names detectors
+  by beam direction, and for surface muons the initial polarisation points toward
+  the *Backward* detector, so the PSI/musrfit analysis convention is
+  `A = (B − αF)/(B + αF)` (GPS instrument paper, Amato *et al.* 2017, Eq. 2). The
+  loaders already honoured this, but the built-in GPS, FLAME and HAL-9500
+  presets declared the beam-Forward group as analysis-forward, so a preset used
+  headless (core) reduced with the wrong sign/leg. Every PSI Longitudinal preset
+  now declares the Backward-named group in the analysis-forward slot, and the GPS
+  `WEP` `FB` projection follows musrfit's `forward=2(B) backward=1(F) alpha=0.75`
+  so it reduces to `(B − 0.75F)/(B + 0.75F)`. The GPS spin-rotated combined-pair
+  preset was also fixed: the ~50° upward-rotated spin points along the
+  **Backward–Up** diagonal (not Forward–Up), so it is now
+  `Spin-rotated (B+U/F+D)` (was `F+U/B+D`). The grouping-dialog beam→analysis
+  swap is widened to recognise single-letter (`F`/`B`) and compound (`B+U`) group
+  names as defence in depth, and no longer double-swaps a fixed preset.
+
+## [0.5.0] - 2026-06-21
+
+### Added
+
 - **Robust batch seeding for near-transition oscillatory scans.** A block-separable
   F-B asymmetry batch (every free parameter Local — e.g. an EuO ZF temperature scan
   approaching `T_C`) now honours the **Chain from previous run** / **Auto** seeding
@@ -194,7 +213,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the precession and collapses the time-domain fit — toward the recommended
   spin-rotated/transverse preset. The Grouping dialog points at the Detector
   Layout editor; the editor pre-selects the recommended preset (e.g. GPS
-  `Spin-rotated (B+U/F+D)`) so applying it is one click. The recommendation is a
+  `Spin-rotated (F+U/B+D)`) so applying it is one click. The recommendation is a
   pure helper, `asymmetry.core.instrument.recommend_grouping_preset(layout,
   field_direction)`; nothing is auto-applied.
 - **PSI field geometry from free text**: the PSI `.bin`/`.mdu`/`.root` loaders
@@ -205,13 +224,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never inferred from the field magnitude or the sample/detector orientation —
   and is left blank when absent or ambiguous. This lets the grouping nudge fire
   on PSI GPS data, which carries no structured field-state code.
-
-### Changed
-
-- **macOS release binaries are Apple Silicon (arm64) only.** GitHub Releases
-  publish a Windows x64 installer and a single macOS arm64 DMG; the Intel macOS
-  build was dropped because PyPI ships no Intel macOS `pyhdf` wheel. Intel Mac
-  and Linux users install from source.
 
 ### Fixed
 

@@ -12,6 +12,8 @@ repo-local docs and use this file as the map.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): system design, domain boundaries, and feature specs.
 - [docs/GUI_GUIDELINES.md](docs/GUI_GUIDELINES.md): how to build GUI here — tokens, fonts, metrics, PanelSection/ActionFooter, the UI zoom, and the harness rules.
 - [docs/HARNESS.md](docs/HARNESS.md): agent harness workflow and validation ladder.
+- [RELEASING.md](RELEASING.md): how releases are cut, changelog discipline, and
+  when/how agents should propose a release (never cut one unprompted).
 - [docs/porting/README.md](docs/porting/README.md): mandatory study-first workflow for feature ports.
 - [docs/QUALITY.md](docs/QUALITY.md): quality map and current risk areas.
 - [docs/PLANS.md](docs/PLANS.md): active and deferred execution plans.

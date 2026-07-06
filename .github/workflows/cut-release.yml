@@ -1,0 +1,101 @@
+name: Cut release
+
+# One-command releases (see RELEASING.md). Manually dispatched with a bump
+# kind (or an explicit version); this workflow bumps pyproject.toml, rolls
+# CHANGELOG.md, commits `release: X.Y.Z` directly to main, and pushes the
+# vX.Y.Z tag. The tag push then fires the existing "Build and Release
+# Executables" and docs-pages workflows exactly as a manual tag would.
+#
+# Pushing to protected main requires acting as a bypass actor, so the push
+# uses the RELEASE_TOKEN secret: a fine-grained PAT owned by the repo admin,
+# scoped to this repository with "Contents: read and write" only. A PAT push
+# (unlike the default GITHUB_TOKEN) also triggers the tag-driven workflows.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump kind"
+        type: choice
+        options: [minor, patch, major]
+        default: minor
+      version:
+        description: "Explicit version X.Y.Z (overrides bump)"
+        type: string
+        required: false
+
+permissions:
+  contents: read
+  checks: read
+
+concurrency:
+  group: cut-release
+  cancel-in-progress: false
+
+jobs:
+  cut-release:
+    name: Bump, roll changelog, tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check RELEASE_TOKEN is configured
+        env:
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          if [ -z "${RELEASE_TOKEN}" ]; then
+            echo "::error::RELEASE_TOKEN secret is missing (or empty). Create a" \
+              "fine-grained PAT scoped to this repo with Contents: read/write" \
+              "and save it as the RELEASE_TOKEN Actions secret. If it existed" \
+              "before, it has likely expired and needs rotating."
+            exit 1
+          fi
+
+      - name: Checkout main
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          token: ${{ secrets.RELEASE_TOKEN }}
+
+      - name: Require green "CI success" on main HEAD
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SHA="$(git rev-parse HEAD)"
+          CONCLUSION="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${SHA}/check-runs" \
+            --jq '[.check_runs[] | select(.name == "CI success")] | first | .conclusion // "absent"')"
+          echo "CI success on ${SHA}: ${CONCLUSION}"
+          if [ "${CONCLUSION}" != "success" ]; then
+            echo "::error::Refusing to release: the 'CI success' check on main" \
+              "HEAD is '${CONCLUSION}' (wait for CI to finish, or fix it)."
+            exit 1
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Bump version and roll changelog
+        id: prep
+        run: |
+          ARGS=()
+          if [ -n "${{ inputs.version }}" ]; then
+            ARGS+=(--version "${{ inputs.version }}")
+          else
+            ARGS+=(--bump "${{ inputs.bump }}")
+          fi
+          python tools/release_prep.py "${ARGS[@]}" | tee -a "${GITHUB_STEP_SUMMARY}"
+
+      - name: Commit, tag, and push
+        run: |
+          VERSION="${{ steps.prep.outputs.version }}"
+          TAG="${{ steps.prep.outputs.tag }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml CHANGELOG.md
+          git commit -m "release: ${VERSION}"
+          git tag -a "${TAG}" -m "Release ${VERSION}"
+          # Atomic: either the release commit and its tag both land, or neither
+          # does (e.g. if a merge raced us onto main - just re-run the workflow).
+          git push --atomic origin main "${TAG}"
+          echo "Pushed ${TAG}; the executable build and docs deploy now run on the tag." \
+            | tee -a "${GITHUB_STEP_SUMMARY}"
