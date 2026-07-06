@@ -1,4 +1,4 @@
-Muonium Reaction Kinetics at a Pulsed Source (Scripting)
+Muonium reaction kinetics at a pulsed source (scripting)
 ========================================================
 
 Muonium (Mu = μ⁺e⁻) is a light isotope of the hydrogen atom; the rate at which it

@@ -1,4 +1,4 @@
-Global Fit Wizard
+Global fit wizard
 =================
 
 The global fit wizard is the analogue of :doc:`fit_wizard` for an ordered

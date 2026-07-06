@@ -1,4 +1,4 @@
-Data Processing
+Data processing
 ===============
 
 The processing tools in this chapter act on a loaded dataset before it
@@ -60,7 +60,7 @@ Reduce noise by combining adjacent time bins:
    print(f"Rebinned: {len(t_rebinned)} points")
    # Errors are propagated: σ_new = √(Σσ²) / N
 
-Time Range Selection
+Time range selection
 --------------------
 
 Extract a subset of the data:
@@ -75,7 +75,7 @@ Extract a subset of the data:
    print(f"Original: {dataset.n_points} points")
    print(f"Subset: {subset.n_points} points")
 
-Grouping Histograms
+Grouping histograms
 -------------------
 
 Combine detector histograms into logical groups:
@@ -108,7 +108,7 @@ grouping profiles.
 For detector-by-detector instrument layouts and grouping workflows, see
 :doc:`detector_grouping`.
 
-Alpha Estimation and Asymmetry
+Alpha estimation and asymmetry
 ------------------------------
 
 Estimate ``alpha`` from a good-bin range, then compute asymmetry and errors.
@@ -125,7 +125,7 @@ Estimate ``alpha`` from a good-bin range, then compute asymmetry and errors.
    )
    asymmetry, error = compute_asymmetry(forward_counts, backward_counts, alpha=alpha)
 
-Asymmetry Definition and Error Model
+Asymmetry definition and error model
 ------------------------------------
 
 Asymmetry uses the standard pair formula:
@@ -175,7 +175,7 @@ In vector-polarisation mode, axis-specific alpha values (``alpha_x``,
 ``alpha_y``, ``alpha_z``) are used for ``P_x``, ``P_y``, and ``P_z``
 respectively. See :doc:`vector_polarization` for setup and UI behaviour.
 
-Co-adding Datasets
+Co-adding datasets
 ------------------
 
 Average multiple datasets with proper error propagation:
@@ -214,7 +214,7 @@ change to the hidden source datasets and rebuilds the combined row from those
 updated sources. Separating the combined dataset restores those source runs
 with the same grouping that was active on the combined entry.
 
-Windowing for Fourier Analysis
+Windowing for Fourier analysis
 ------------------------------
 
 Apply window functions before FFT:
@@ -230,7 +230,7 @@ Apply window functions before FFT:
    
    # Available windows: 'hann', 'hamming', 'blackman', 'bartlett'
 
-Runnable Example
+Runnable example
 ----------------
 
 See ``examples/transform_workflow.py`` for a complete executable script.

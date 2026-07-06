@@ -35,7 +35,7 @@ The GUI workflow
 
 3. **Build the scan.** In the **Fit** dock, set the **Integration
    window** — the time window each run's asymmetry is integrated over —
-   to ``0.2``–``8`` µs (type it into the spinboxes, or drag the shaded
+   to ``0.2``–``8`` μs (type it into the spinboxes, or drag the shaded
    window on the strip beneath the scan), and click **Build Scan**. Each
    selected run collapses to one point, and the scan appears in the
    central plot area.

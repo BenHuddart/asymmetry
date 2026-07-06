@@ -4412,9 +4412,7 @@ class TestPlotPanel:
         assert len(fig.axes) == 3
         assert all(axis.legend_call_count == 0 for axis in fig.axes)
 
-    def test_frequency_panel_y_limits_accept_fft_scale_magnitudes(
-        self, qapp: QApplication
-    ) -> None:
+    def test_frequency_panel_y_limits_accept_fft_scale_magnitudes(self, qapp: QApplication) -> None:
         """The frequency view must frame a count-scale FFT peak (> 1e6).
 
         A grouped-count (Power)^1/2 spectrum of a high-statistics run peaks
@@ -4446,9 +4444,7 @@ class TestPlotPanel:
             panel.close()
             panel.deleteLater()
 
-    def test_auto_y_frames_non_negative_spectrum_from_peak(
-        self, qapp: QApplication
-    ) -> None:
+    def test_auto_y_frames_non_negative_spectrum_from_peak(self, qapp: QApplication) -> None:
         """Auto Y on the frequency view frames [-0.04·peak, 1.10·peak].
 
         The signed-asymmetry envelope logic (error ceilings, weighted

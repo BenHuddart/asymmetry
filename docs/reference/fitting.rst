@@ -1,4 +1,4 @@
-Fitting Engine
+Fitting engine
 ==============
 
 Asymmetry fits μSR data with an :mod:`iminuit`-based engine that exposes the
@@ -25,7 +25,7 @@ fit the full-resolution data and only simplify the view afterwards, run
 the fit with ``Bunch = 1`` and then increase the bunch factor; the fit
 curve remains overlaid on the plot.
 
-Basic Workflow
+Basic workflow
 --------------
 
 The minimal end-to-end fit is a model from the ``MODELS`` registry, a
@@ -63,7 +63,7 @@ short and contains only the standalone variants with explicit baselines;
 composite expressions are the canonical way to assemble realistic muSR
 models.
 
-Parameter Control
+Parameter control
 -----------------
 
 Bounds, fixing, and initial values are set on individual
@@ -92,7 +92,7 @@ consistent with what the model function actually expects.
 
 .. _fit-statistics:
 
-Fit Statistics
+Fit statistics
 --------------
 
 The ``FitResult`` exposes the standard goodness-of-fit numbers:
@@ -217,7 +217,7 @@ Persistent structure — a slow oscillation, a turn-up at long times, a
 visible knee — almost always points at a missing component rather than at
 noise.
 
-Restricting the Fit Range
+Restricting the fit range
 -------------------------
 
 The ``t_min`` and ``t_max`` keyword arguments to ``FitEngine.fit``
@@ -315,7 +315,7 @@ Affine ties are honoured by the single-run engine (``FitEngine.fit``). Global,
 count-domain, and grouped/series fits raise ``NotImplementedError`` when a tie is
 present rather than silently ignoring it — fit each run individually.
 
-Global Fitting
+Global fitting
 --------------
 
 The global-fit interface accepts a list of datasets, the model function,
@@ -377,7 +377,7 @@ global fit if you do not yet know which composite model the data prefer.
 
 .. _monte-carlo-errors:
 
-Monte Carlo Error Estimation
+Monte Carlo error estimation
 ----------------------------
 
 For parameters whose Hessian uncertainties are not trustworthy — heavy
@@ -419,7 +419,7 @@ asymmetric MINOS interval (``FitEngine.fit(..., minos=True)``, reported in
 :ref:`minos-asymmetric-errors`. The definitive test of whether the reported
 uncertainties are calibrated is the pull diagnostic (:ref:`pull-diagnostic`).
 
-Custom Models
+Custom models
 -------------
 
 Any callable with signature ``f(t, **params) -> array`` is a valid model

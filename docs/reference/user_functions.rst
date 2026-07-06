@@ -1,4 +1,4 @@
-User Functions
+User functions
 ==============
 
 A fit function Asymmetry doesn't ship is one function away. Every fit

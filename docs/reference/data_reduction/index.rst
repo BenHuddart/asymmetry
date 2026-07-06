@@ -2,7 +2,7 @@
 
 .. _data-reduction:
 
-Data Reduction
+Data reduction
 ==============
 
 These pages document the reduction layer between the raw detector histograms

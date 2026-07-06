@@ -1,6 +1,6 @@
 .. _exclusions-glossary:
 
-Exclusions: A Glossary of Six Mechanisms
+Exclusions: a glossary of six mechanisms
 ========================================
 
 Six different controls in Asymmetry are described as "excluding" or "skipping"

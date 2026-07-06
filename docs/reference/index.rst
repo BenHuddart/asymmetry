@@ -128,7 +128,7 @@ Data and projects
 
 Everything starts with getting runs into the program and keeping track of them —
 reading the supported file formats, organising and annotating runs in the
-logbook, and saving a whole analysis (data, reduction, fits and trends) to a
+logbook, and saving a whole analysis (data, reduction, fits, and trends) to a
 project file so a session can be reopened exactly as it was left.
 
 .. toctree::

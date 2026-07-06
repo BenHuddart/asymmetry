@@ -1,4 +1,4 @@
-Fit Wizard
+Fit wizard
 ==========
 
 The fit wizard is a guided workflow for choosing a sensible single-spectrum

@@ -1,4 +1,4 @@
-Composite Models
+Composite models
 ================
 
 .. image:: /_generated/screenshots/composite_models_builder.png
@@ -41,7 +41,7 @@ For real examples that build composites step-by-step, see
    :alt: Fit Function Builder with a fraction-group expression
    :width: 100%
 
-Building a Composite Function
+Building a composite function
 -----------------------------
 
 .. code-block:: python
@@ -60,7 +60,7 @@ parentheses. The quadrature combinator ``⊕`` (:math:`\sqrt{f^2 + g^2}`) is
 where quadrature composition of width-like quantities is physically meaningful;
 see :doc:`parameter_trending`.
 
-Fraction Groups
+Fraction groups
 ---------------
 
 Composite models can also share one overall amplitude across several additive
@@ -90,7 +90,7 @@ budget. In the fit-panel parameter table the free fractions are ordinary
 editable rows; the group's remainder appears as a muted, read-only row that
 updates automatically as you edit the others.
 
-Parameter Naming Rules
+Parameter naming rules
 ----------------------
 
 Composite models generate unique parameter names automatically:
@@ -305,7 +305,7 @@ The authoritative component list is the live registry — the
    #  'ExponentialRelaxation', 'GaussianRelaxation', 'Keren', 'LFKuboToyabe',
    #  'Oscillatory', 'StaticGKT_ZF', 'StretchedExponential']
 
-Evaluate Model and Components
+Evaluate model and components
 -----------------------------
 
 .. code-block:: python
@@ -377,7 +377,7 @@ Use with FitEngine
 If the model contains a multiplicative chain, include only that chain's shared
 amplitude parameter in the fit table.
 
-Available Components
+Available components
 --------------------
 
 The following components are registered in ``COMPONENTS`` and can be used by
@@ -427,7 +427,7 @@ name in ``CompositeModel``:
      - :math:`A_{\mathrm{bg}}`
      - ``A_bg``
 
-Runnable Example
+Runnable example
 ----------------
 
 See ``examples/composite_models.py`` for a complete executable script.

@@ -1,4 +1,4 @@
-Grouped Time-Domain Fitting
+Grouped time-domain fitting
 ===========================
 
 .. image:: /_generated/screenshots/grouped_fit_ybco_knight.png
@@ -33,7 +33,7 @@ geometry-sensitive observable, the regular single-fit panel is faster and
 imposes no grouped overhead. For a full worked example on a rotated single
 crystal, see :doc:`/workflows/knight_shift_angle`.
 
-What This Mode Fits
+What this mode fits
 -------------------
 
 Grouped time-domain mode works on the detector groups defined in the
@@ -60,7 +60,7 @@ where:
 * :math:`B` is the group background term
 * the optional group ``relative_phase`` is added onto the model ``phase`` parameter when the model supports phase
 
-Current GUI Workflow
+Current GUI workflow
 --------------------
 
 Single-run grouped fit
@@ -102,12 +102,12 @@ checked groups appear in the **Individual Groups** viewer and in grouped
 time-domain fitting. At least two groups must remain included for grouped
 plotting and grouped fitting to stay available.
 
-Parameter Blocks
+Parameter blocks
 ----------------
 
 The grouped GUI mode separates parameters into two blocks.
 
-Per-Group (Nuisance) Parameters
+Per-group (nuisance) parameters
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 These nuisance parameters are attached to each detector group and are
@@ -120,7 +120,7 @@ always estimated **independently per (run, group)**:
 
 They do not appear in the physics-role table and are not trended.
 
-Physics (Fit-Function) Parameters
+Physics (fit-function) parameters
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 These are the parameters of the selected composite polarisation function.
@@ -143,7 +143,7 @@ selector.
    **Local/Fixed** for a given fit. Mixed cross-run-global + per-run-local
    physics is not yet supported and is rejected with a clear error message.
 
-Interaction With Existing Plot Controls
+Interaction with existing plot controls
 ---------------------------------------
 
 Grouped time-domain mode follows the same GUI data-preparation conventions as
@@ -250,7 +250,7 @@ The returned ``GroupedSeriesFitResult`` carries the cross-run
    see :doc:`asymmetry_domain_global_fit`. In the GUI, the asymmetry-domain
    shared-parameter workflow is the interactive :doc:`global_fit_wizard`.
 
-Current Limitations
+Current limitations
 -------------------
 
 * The **Global Fit Wizard** is not available in grouped mode.
@@ -261,7 +261,7 @@ Current Limitations
 * Detector phase tables and detector quadrature workflows are out of scope.
 * The count-domain lifetime term is fixed to the physical muon lifetime.
 
-Practical Notes
+Practical notes
 ---------------
 
 * Choose an oscillatory model with a ``phase`` parameter if you want non-zero

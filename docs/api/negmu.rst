@@ -1,4 +1,4 @@
-Negative-Muon Analysis API (Experimental)
+Negative-muon analysis API (experimental)
 ==========================================
 
 .. warning::

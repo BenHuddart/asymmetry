@@ -1,4 +1,4 @@
-Data Transforms
+Data transforms
 ===============
 
 .. currentmodule:: asymmetry.core.transform
@@ -21,7 +21,7 @@ documentation of these steps and of Asymmetry's conventions (alpha
 applied to the backward group; Mantid-style uncertainty handling at
 zero denominator) is in :doc:`/reference/data_processing`.
 
-Asymmetry Calculation
+Asymmetry calculation
 ----------------------
 
 .. automodule:: asymmetry.core.transform.asymmetry

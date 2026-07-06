@@ -1,4 +1,4 @@
-Parameter Trending
+Parameter trending
 ==================
 
 .. image:: /_generated/screenshots/parameter_trending_mgb2.png
@@ -101,13 +101,13 @@ as before. A run with no recorded temperature or field stays *off that axis*
 existed re-plot against the browser's currently displayed value when their
 runs are still loaded.
 
-Beyond temperature, field and run number, the **X:** selector also offers any
+Beyond temperature, field, and run number, the **X:** selector also offers any
 fitted parameter (parameter-vs-parameter trending) and any **custom data-browser
 column** (:ref:`logbook-columns`). Custom columns hold free-form text, so when
 one is the x-axis each value is coerced to a number and runs whose value is empty
 or non-numeric are dropped, with a note reporting how many were skipped.
 
-Representation-Aware Trending
+Representation-aware trending
 ------------------------------
 
 The Fit Parameters panel automatically tracks which *representation* is active
@@ -297,10 +297,10 @@ discards the fit and drops that series.
 
 For jointly fitting several detector groups or samples with shared and local
 parameters, the panel routes two or more selected group series to a cross-group
-variant of the same dialog — same catalogue, live preview, error modes and fit
+variant of the same dialog — same catalogue, live preview, error modes, and fit
 region, described under `Cross-Group Fitting`_.
 
-Trending One Parameter Against Another
+Trending one parameter against another
 --------------------------------------
 
 The x-axis need not be a run-level quantity. Below the fixed ``Auto`` / ``B`` /
@@ -330,7 +330,7 @@ plotting an internal field against a measured frequency to check a linear
 gyromagnetic relation. For the ordinary "property versus temperature or field"
 analysis, keep the ``B`` / ``T`` axes.
 
-Accounting for x Uncertainty
+Accounting for x uncertainty
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 When the abscissa is a fitted parameter it carries its own per-point
@@ -375,7 +375,7 @@ shifts the estimates slightly — the intended errors-in-variables behaviour.
    distance regression) was considered and rejected: it offers no box
    constraints, and Asymmetry's parameter models rely on bounds.
 
-Available Basis Components
+Available basis components
 --------------------------
 
 .. code-block:: python
@@ -385,7 +385,7 @@ Available Basis Components
    print(component_names_for_x("field"))
    print(component_names_for_x("temperature"))
 
-Build a Parameter Composite Model
+Build a parameter composite model
 ---------------------------------
 
 In the GUI parameter-trending workflow, the **Edit Model** action opens the
@@ -415,7 +415,7 @@ shows the expanded ``y(x)`` preview above the parameter table as you edit.
 Grouped expressions are also supported programmatically and in the GUI, for
 example ``Linear + (Arrhenius * Constant)``.
 
-Quadrature Combinator (``⊕``)
+Quadrature combinator (``⊕``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The parameter-vs-x builder adds one operator beyond ordinary arithmetic: the
@@ -490,7 +490,7 @@ Single-Series Fit
    result = fit_parameter_model(field, values, errors, model, params)
    print(result.success, result.reduced_chi_squared)
 
-Weighting and Error Modes
+Weighting and error modes
 -------------------------
 
 By default a model fit weights each point by the propagated error of the
@@ -525,7 +525,7 @@ verdict (below) is suppressed in those modes.
        field, values, None, model, params, error_mode="scatter"
    )
 
-Fit Windows (Union Multi-Range)
+Fit windows (union multi-range)
 -------------------------------
 
 A fit range may be restricted to a union of (min, max) windows: a point
@@ -553,7 +553,7 @@ This differs from adding a second *range* in the dialog: separate ranges fit
 independent models (piecewise modelling), whereas windows OR-combine into
 the mask of one model.
 
-χ² Quality Verdict
+χ² quality verdict
 ------------------
 
 After a successful fit the dialog reports a quality verdict alongside
@@ -576,7 +576,7 @@ unit-weight and scatter-estimated fits. Programmatic access is via
 ``asymmetry.core.fitting.assess_fit_quality(chi_squared, dof)``, which
 returns the verdict and the band.
 
-Cross-Group Fitting
+Cross-group fitting
 -------------------
 
 For jointly fitting multiple groups with shared and local parameters, use
@@ -652,7 +652,7 @@ combine with :math:`\sigma_x`).
        xerr={"g1": nu_errors_g1, "g2": nu_errors_g2},
    )
 
-Recursive Trending (Model-Fit Results as a Series)
+Recursive trending (model-fit results as a series)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 A successful cross-group fit is itself recorded as a new trend series, named
@@ -689,7 +689,7 @@ per *distinct* fit. These rows sit off the physical field/temperature axes;
 select ``fit_index`` or a global parameter as the x-axis (see
 `Trending One Parameter Against Another`_) to trend them.
 
-Magnetic Order Parameter
+Magnetic order parameter
 ------------------------
 
 For a second-order magnetic transition, the spontaneous muon precession
@@ -744,7 +744,7 @@ parameter that vanishes there.
    for p in result.parameters:
        print(p.name, p.value, result.uncertainties.get(p.name))
 
-Polynomial Trends
+Polynomial trends
 -----------------
 
 ``Polynomial`` fits an empirical trend or background up to fifth order,
@@ -766,7 +766,7 @@ other coefficient.
 
 .. _quadrature-background:
 
-Power Law with Quadrature Background
+Power law with quadrature background
 ------------------------------------
 
 ``PowerLawQuadBG`` combines a power law with a constant background *in
@@ -790,7 +790,7 @@ quadrature sum is a richer model than a bare power law or constant.
 
 .. _muonium-repolarisation:
 
-Muonium Repolarisation
+Muonium repolarisation
 ----------------------
 
 ``MuRepolarisation`` measures a muonium hyperfine constant from a
@@ -859,7 +859,7 @@ References
 4. D. York, N. M. Evensen, M. L. Martínez, and J. De Basabe Delgado, *Am. J.
    Phys.* **72**, 367 (2004).
 
-RF-μSR Resonance (muon + electron + proton)
+RF-μSR resonance (muon + electron + proton)
 -------------------------------------------
 
 ``RFResonanceMuP`` fits a **field-swept RF-μSR resonance scan** of a muoniated
@@ -936,7 +936,7 @@ References
 2. E. Roduner, *The Positive Muon as a Probe in Free Radical Chemistry*,
    Lecture Notes in Chemistry Vol. 40 (Springer, Berlin, 1988).
 
-Migrating WiMDA Model Functions
+Migrating WiMDA model functions
 -------------------------------
 
 Every function in WiMDA's Model-layer library ("Standard fit models") has a
@@ -996,7 +996,7 @@ direct counterpart or a composite recipe. Parameter names map as follows:
        :func:`numpy.linalg.eigvalsh` (basis-independent spectrum, identical
        level differences).
 
-Composite Parameters in the Fit Parameters Panel
+Composite parameters in the Fit Parameters panel
 ------------------------------------------------
 
 In the GUI Fit Parameters panel, you can define a derived parameter from
@@ -1038,7 +1038,7 @@ available (falling back to diagonal variances otherwise).
 
 .. _knight-shift:
 
-Knight Shift
+Knight shift
 ------------
 
 A muon in a metal or paramagnet precesses not at the bare Larmor frequency of the
@@ -1177,7 +1177,7 @@ References
 3. W. D. Knight, Phys. Rev. **76**, 1259 (1949).
 4. A. M. Clogston, V. Jaccarino, and Y. Yafet, Phys. Rev. **134**, A650 (1964).
 
-Runnable Example
+Runnable example
 ----------------
 
 See ``examples/parameter_trending.py`` for a complete executable script.

@@ -1,4 +1,4 @@
-Grouping and Calibration Walkthrough
+Grouping and calibration walkthrough
 ====================================
 
 Before you fit anything, a raw run has to be *calibrated*: the time-zero and

@@ -4,7 +4,7 @@ Synthetic runs and degraded statistics
 ======================================
 
 Asymmetry can manufacture a complete synthetic run — per-detector count
-histograms, grouping, provenance and a loadable NeXus file — from any fit
+histograms, grouping, provenance, and a loadable NeXus file — from any fit
 model, and can resample a measured run to a lower statistics level. Both
 tools draw Poisson counts at the histogram level, so the synthetic data flow
 through exactly the same reduction chain (grouping, α balance, error
@@ -73,7 +73,7 @@ as real data would — the generating α is recorded in the file's
 deadtime distortion, so the file's deadtimes are correctly written as zero;
 do not enable deadtime correction for synthetic runs.
 
-Generation modes: asymmetry, counts and periods
+Generation modes: asymmetry, counts, and periods
 ------------------------------------------------
 
 **When to use this.** The **Generation** dropdown chooses *what kind* of

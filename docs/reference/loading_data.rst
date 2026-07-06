@@ -24,7 +24,7 @@ be navigated with the scriptable period-selection API — see
 For an end-to-end walk-through that starts with loading, see
 :doc:`/workflows/temperature_scan_magnetism`.
 
-Supported Formats
+Supported formats
 -----------------
 
 ISIS Muon NeXus (.nxs, .nexus)
@@ -264,10 +264,10 @@ In the GUI, supported raw data runs use the full Grouping dialog:
    and ROOT per-detector ``t0`` values are handled like PSI BIN/MDU ``t0``
    metadata.
 
-Basic Usage
+Basic usage
 -----------
 
-Loading a Single File
+Loading a single file
 ~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: python
@@ -308,7 +308,7 @@ The returned ``MuonDataset`` contains:
 
 .. _selecting-periods:
 
-Selecting Periods (Red / Green)
+Selecting periods (Red / Green)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Period-mode runs record several period histograms in one file — for example
@@ -340,7 +340,7 @@ relaxation for your instrument. Out-of-range numbers and unknown labels raise a
 clear error at the boundary. The GUI red/green selector calls this same core
 API, so scripts and the desktop app agree on the per-period spectra.
 
-Accessing Metadata
+Accessing metadata
 ~~~~~~~~~~~~~~~~~~
 
 .. code-block:: python
@@ -352,7 +352,7 @@ Accessing Metadata
    print(f"Field: {dataset.metadata.get('field')} G")
    print(f"Title: {dataset.metadata.get('title')}")
 
-Loading Multiple Files
+Loading multiple files
 ~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: python
@@ -370,7 +370,7 @@ Loading Multiple Files
 
 .. _loading-a-run-range:
 
-Loading a Run Range
+Loading a run range
 ~~~~~~~~~~~~~~~~~~~
 
 A contiguous run series — a field or temperature scan such as BiSCCO
@@ -423,7 +423,7 @@ Resolver semantics:
   :class:`ValueError`. A valid folder with no matching runs in range returns an
   empty list (the GUI reports this as "no run files found").
 
-Direct File Format Access
+Direct file format access
 --------------------------
 
 For advanced users, you can access the low-level file loaders. For NeXus files:
@@ -444,7 +444,7 @@ For ROOT files:
    loader = RootLoader()
    dataset = loader.load("lem15_his_2994.root")
 
-Loader Registry and Custom Formats
+Loader registry and custom formats
 ----------------------------------
 
 ``LoaderRegistry`` maps file extensions to loader classes.
@@ -458,7 +458,7 @@ Loader Registry and Custom Formats
 
 You can register custom loader classes at runtime for additional formats.
 
-Runnable Examples
+Runnable examples
 -----------------
 
 See the executable scripts:

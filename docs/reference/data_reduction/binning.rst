@@ -1,6 +1,6 @@
 .. _binning-modes:
 
-Histogram Binning
+Histogram binning
 =================
 
 Counts arrive in bins of the TDC resolution (16 ns at ISIS, sub-ns at

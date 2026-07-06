@@ -1,4 +1,4 @@
-Fourier Analysis
+Fourier analysis
 ================
 
 .. currentmodule:: asymmetry.core.fourier
@@ -22,7 +22,7 @@ FFT
    :members:
    :undoc-members:
 
-Maximum Entropy
+Maximum entropy
 ---------------
 
 .. automodule:: asymmetry.core.fourier.maxent

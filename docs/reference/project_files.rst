@@ -1,4 +1,4 @@
-Project Files
+Project files
 =============
 
 The ``.asymp`` project file persists the analysis state of a session:
@@ -30,7 +30,7 @@ hand-editable ``.msr`` text format (the import of ``.msr`` into
 ``.asymp`` is a roadmap candidate; see :doc:`/explanation/comparison`)
 and from Mantid's binary HDF5 ``.mantid`` files.
 
-What Is Stored
+What is stored
 --------------
 
 Project files store:
@@ -61,7 +61,7 @@ histogram metadata used by RG recomputation.
 
 Project files do not embed raw detector arrays or computed Fourier spectra.
 
-Wizard Cache State
+Wizard cache state
 ------------------
 
 The single-fit and global-fit panels may each include an optional
@@ -80,7 +80,7 @@ These blocks are optional and backward-compatible. Older project files do not
 need them, but when present they allow wizard results to reopen immediately
 without rerunning the expensive analysis.
 
-Grouping Overrides
+Grouping overrides
 ------------------
 
 Each dataset entry in the project JSON may contain a ``grouping_overrides``
@@ -170,7 +170,7 @@ exact detector grouping is preserved without re-running the Grouping dialog.
     Two-period RG mode (``Red``, ``Green``, ``G minus R``, ``G plus R``).
 
 
-Save and Load
+Save and load
 -------------
 
 .. code-block:: python
@@ -196,7 +196,7 @@ Save and Load
    restored = load_project("session.asymp")
    print(restored["schema_version"])
 
-Schema Migration
+Schema migration
 ----------------
 
 Use ``migrate_to_current`` to normalise older project files in scripts or tests.
@@ -219,7 +219,7 @@ Use ``migrate_to_current`` to normalise older project files in scripts or tests.
    migrated = migrate_to_current(old_state)
    print(migrated["schema_version"])  # current schema
 
-Runnable Example
+Runnable example
 ----------------
 
 See ``examples/project_files.py`` for a complete executable script.

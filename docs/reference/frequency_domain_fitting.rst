@@ -1,4 +1,4 @@
-Frequency-Domain Fitting
+Frequency-domain fitting
 ========================
 
 Frequency-domain fitting extends the same single-fit, global-fit, and
@@ -29,7 +29,7 @@ The fitting x axis is stored internally as absolute frequency in MHz.  Plotting
 controls may show field in gauss or a reference-relative frequency axis, but fit
 parameters remain canonical: ``nu0`` and ``fwhm`` are MHz quantities.
 
-Available Components
+Available components
 --------------------
 
 The fit-function builder is filtered by analysis domain: when fitting a
@@ -49,7 +49,7 @@ Typing a component name from the other domain gives an explanatory error.
 ``LinearBackground``
     Background ``bg + slope * nu``.
 
-Global Fits And Trends
+Global fits and trends
 ----------------------
 
 Global frequency-domain fitting uses the same parameter-role table as
@@ -62,7 +62,7 @@ Successful global frequency fits are sent to the **Parameters** dock under the
 ``nu0(T)``, ``fwhm(B)``, ``B0(T)``, or ``Bwid(B)`` using the usual trend-model
 workflow.
 
-Project Files
+Project files
 -------------
 
 Project files store frequency-fit state separately from time-domain fit state.

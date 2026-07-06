@@ -1,6 +1,6 @@
 .. _diffusion-ballistic-lf:
 
-Field-Dependent Transport Models (DiffusionLF / BallisticLF)
+Field-dependent transport models (DiffusionLF / BallisticLF)
 ============================================================
 
 When muon-spin relaxation is dominated by motion of the muon (or its host

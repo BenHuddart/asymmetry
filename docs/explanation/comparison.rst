@@ -1,4 +1,4 @@
-Asymmetry in the μSR Software Landscape
+Asymmetry in the μSR software landscape
 =======================================
 
 This page positions Asymmetry alongside the established μSR analysis

@@ -166,7 +166,7 @@ References
   *Muon Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022) —
   detector geometry and the polarisation-projection observable.
 
-Related Topics
+Related topics
 --------------
 
 * :doc:`detector_grouping`

@@ -1,4 +1,4 @@
-Analysis Workflows
+Analysis workflows
 ==================
 
 These chapters walk through end-to-end μSR data analyses and

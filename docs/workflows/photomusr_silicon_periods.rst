@@ -52,7 +52,7 @@ out a single period as an ordinary :class:`~asymmetry.core.data.dataset.MuonData
    )
 
 Each returned dataset keeps its parent's :math:`t_0`, good-bin window,
-grouping, field and temperature, plus its **own** per-period
+grouping, field, and temperature, plus its **own** per-period
 ``good_frames`` and ``dead_time_us``. For files with three or more
 periods, pass a 1-based integer period number instead of a label.
 

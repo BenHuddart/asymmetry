@@ -1,4 +1,4 @@
-Spectral Moments
+Spectral moments
 ================
 
 A muon field/frequency spectrum carries more than a peak position. Its *moments*

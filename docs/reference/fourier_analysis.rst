@@ -1,4 +1,4 @@
-Fourier Analysis
+Fourier analysis
 ================
 
 .. image:: /_generated/screenshots/fourier_tf.png
@@ -51,7 +51,7 @@ time window too short for the FFT to resolve it.
    :alt: Apodisation comparison on a YBCO vortex-lattice TF FFT
    :width: 100%
 
-Implementation Summary
+Implementation summary
 ----------------------
 
 Asymmetry currently exposes two Fourier workflows:
@@ -75,7 +75,7 @@ In this guide, frequency-domain quantities use standard symbols:
 * :math:`\nu` for frequency (MHz)
 * :math:`\lvert\mathcal{F}\rvert` for FFT magnitude
 
-Fast Fourier Transform (FFT)
+Fast Fourier transform (FFT)
 -----------------------------
 
 The FFT is the simplest, fastest route to a spectrum: a discrete Fourier
@@ -104,7 +104,7 @@ spectrum.
    plt.ylabel(r"$|\\mathcal{F}|$")
    plt.show()
 
-Filter / Apodisation
+Filter / apodisation
 ~~~~~~~~~~~~~~~~~~~~
 
 The main Fourier workflow now follows WiMDA's filter model rather than the
@@ -135,7 +135,7 @@ The Gaussian mode uses the same WiMDA-style softened start with squared
 arguments. ``Subtract average signal`` is applied before the filter, matching
 WiMDA's default preprocessing path.
 
-How The GUI FFT Is Built
+How the GUI FFT is built
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
 The docked Fourier workflow in the desktop application is intentionally more
@@ -196,7 +196,7 @@ The same estimate is shared between the time-domain reduction and the FFT
 input, so the value the grouping dialog previews is exactly what the transform
 subtracts.
 
-FFT Phase Modes
+FFT phase modes
 ~~~~~~~~~~~~~~~
 
 The GUI computes one complex grouped FFT and then derives the displayed curve
@@ -244,7 +244,7 @@ and positive as possible without a supplied reference phase.
    trivial zero-spectrum solution is given a large cost so the optimiser
    avoids it.
 
-Maximum Entropy Method
+Maximum entropy method
 -----------------------
 
 Maximum entropy (MaxEnt) reconstructs the frequency spectrum as the *least
@@ -340,7 +340,7 @@ over. Reusing a ``state`` after changing the configuration raises
 ``ValueError`` (``"MaxEnt state is incompatible with the current
 configuration; restart."``) — build a fresh state for the new settings.
 
-GUI Workflow
+GUI workflow
 ~~~~~~~~~~~~
 
 Open the MaxEnt panel from **Frequency-domain → MaxEnt**: first select the run
@@ -615,7 +615,7 @@ carries the per-group phases, the per-bin errors, and — at a pulsed source —
 pulse response through its forward model. Choose between them with the guidance
 above.
 
-Practical Example
+Practical example
 -----------------
 
 Complete workflow for frequency analysis:
@@ -659,7 +659,7 @@ Complete workflow for frequency analysis:
    plt.tight_layout()
    plt.show()
 
-GUI Fourier Workflow
+GUI Fourier workflow
 --------------------
 
 The FFT spectrum does **not** compute automatically. Nothing is transformed
@@ -715,7 +715,7 @@ WiMDA-first FFT workflow directly:
 * for averaged grouped spectra, optionally estimate WiMDA-style error bars from
   the spread across the selected group spectra
 
-Fitting The Displayed Spectrum
+Fitting the displayed spectrum
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Once a Fourier spectrum has been computed, the **Frequency** workspace can be
@@ -726,7 +726,7 @@ fits send ``nu0`` and ``fwhm`` values, plus derived ``B0`` and ``Bwid`` field
 equivalents, to the **Parameters** dock for trend analysis.  See
 :doc:`frequency_domain_fitting` for the full workflow.
 
-Phase Estimation Workflow
+Phase estimation workflow
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Phase estimation in the GUI is explicit rather than always-on:
@@ -763,7 +763,7 @@ they do in WiMDA.
 The Fourier panel is scrollable so these controls remain usable when the dock
 is narrow.
 
-Frequency-Domain Plot Behaviour
+Frequency-domain plot behaviour
 -------------------------------
 
 FFT output is shown on the dedicated ``Frequency Domain`` tab in the central

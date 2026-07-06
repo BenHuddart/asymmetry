@@ -9,7 +9,7 @@ Asymmetry does both at the **raw-count level** — it sums (or subtracts) the
 detector histograms and reduces afterwards, never averaging the finished
 asymmetry curves. The combined row that appears in the Data Browser is a
 first-class run: it carries real histograms, so it can be regrouped,
-deadtime-corrected, count-fitted and Fourier/MaxEnt-transformed exactly like a
+deadtime-corrected, count-fitted, and Fourier/MaxEnt-transformed exactly like a
 loaded run.
 
 Both actions live in the Data Browser context menu. Select two or more runs and
@@ -83,7 +83,7 @@ event-weights them and records the spread.
 *When to use which.*
 
 - **Co-add** — the same physical measurement repeated for more statistics. The
-  result is one higher-statistics run; reduce, fit or transform it normally.
+  result is one higher-statistics run; reduce, fit, or transform it normally.
 - **Co-subtract (reference run)** — remove a signal carried by a separate
   exposure: laser-OFF from laser-ON in photo-μSR, or a known reference run.
   Frame-scaled, errors add in quadrature.
