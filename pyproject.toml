@@ -37,7 +37,12 @@ gui = [
     "PySide6>=6.5,<6.11",
     "matplotlib>=3.7,<3.11",
 ]
-gle = ["gleplot @ git+https://github.com/BenHuddart/gleplot.git"]
+# Tag-pinned: v1.6.0 is the first release with the editor embedding API
+# (gleplot.gui.open_editor) that the in-app GLE figure editor requires.
+# Asymmetry feature-detects, so an older gleplot degrades to the static
+# preview — but builds should be reproducible, so pin the tag and bump
+# deliberately.
+gle = ["gleplot @ git+https://github.com/BenHuddart/gleplot.git@v1.6.0"]
 hdf5 = ["h5py>=3.8,<4"]
 hdf4 = ["pyhdf>=0.10,<1"]  # legacy ISIS muon NeXus v1 in an HDF4 container
 root = ["uproot>=5.0,<6"]
