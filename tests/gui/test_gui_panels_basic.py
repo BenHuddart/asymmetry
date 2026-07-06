@@ -799,3 +799,39 @@ def test_plot_panel_can_render_grouped_time_domain_subplots(qapp: QApplication) 
     assert len(panel._current_datasets) == 2
     assert len(panel._subplot_axes_by_polarization) == 2
     assert panel._current_dataset is ds2
+
+
+def test_fourier_spinboxes_fit_their_widest_value_under_app_styling(qapp: QApplication) -> None:
+    """The zero-pad / Burg / correlation spins must never clip their digits.
+
+    A spinbox capped at the bare field width hands its step buttons the text
+    area's budget: under the real app stylesheet the zero-pad spin rendered
+    "16" in a 5px line edit. The cap must include the spin-chrome allowance
+    (metrics.spin_width_for), measured with the styled MainWindow because the
+    stylesheet is (re)applied after panels are constructed.
+    """
+    from asymmetry.gui.mainwindow import MainWindow
+
+    window = MainWindow()
+    try:
+        window.show()
+        qapp.processEvents()
+        panel = window._fourier_panel
+        for spin in (
+            panel._padding_spin,
+            panel._burg_order_min_spin,
+            panel._burg_order_max_spin,
+            panel._correlation_order_spin,
+        ):
+            spin.setValue(spin.maximum())
+            qapp.processEvents()
+            edit = spin.lineEdit()
+            needed = edit.fontMetrics().horizontalAdvance(str(spin.maximum()))
+            assert edit.width() >= needed + 4, (
+                f"{spin.objectName() or spin} clips: line edit {edit.width()}px "
+                f"for {needed}px of text"
+            )
+            # Still capped: the WrapLongRows form must not stretch it row-wide.
+            assert spin.maximumWidth() < 200
+    finally:
+        window.close()

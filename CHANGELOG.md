@@ -11,16 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The Fourier panel now flags a displayed FFT that is out of sync with the
   current settings.** Editing any FFT parameter (display mode, apodisation,
-  zero-pad, groups, phases, conditioning, exclusions), changing the
-  time-domain fit range the transform inherits, or applying a new grouping /
-  t0 / deadtime / background to the run raises an amber banner above
+  zero-pad, groups, phases, conditioning, exclusions), or changing the
+  time-domain fit range the transform inherits, raises an amber banner above
   **Compute FFT** — "Spectrum out of date — …. Compute FFT to refresh." —
   naming what changed. The spectrum itself is kept on screen (nothing
   disappears under you); the banner clears on the next compute. Parameters
   that are inert in the active mode (e.g. a filter τ while apodisation is
-  *None*) never flag, and each computed spectrum now records the grouping it
-  was derived from, so a regroup is detected even across a project
-  save/load — previously a regrouped run silently kept showing its old FFT.
+  *None*) never flag.
 
 - **Suggest next point: Bayesian experimental design from a trend fit.** Once
   a trend model is fitted, the model-fit dialog's new **Suggest next point**
@@ -42,7 +39,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   point*. (The core suggestion engine and the first dialog section shipped
   quietly in 0.7.0; this completes the feature and documents it.)
 
+### Changed
+
+- **The FFT tab now computes on view instead of waiting for a click.**
+  Opening the **Frequency Domain** tab — or switching runs while on it — for a
+  run that has never been transformed synthesises a recipe from the current
+  Fourier panel settings and the run's own grouping and computes the spectrum
+  automatically, off-thread behind a busy overlay ("Computing FFT for run
+  *N*…"). **Compute FFT** remains the explicit way to re-run the
+  transform after changing a setting. A multi-run overlay auto-computes its
+  missing members too, in waves of 25 ("Computing FFT for *N* run(s)…"),
+  re-rendering after each wave until every selected run is included; runs that
+  cannot compute (no detector groups, a failed transform) are still skipped
+  and reported. Applying a new grouping — or a t0 / deadtime / background
+  change through the grouping dialog — now discards the affected runs' FFT
+  spectra and recipes and recomputes the active view immediately if it is on
+  the frequency domain, so the spectrum "follows the data" the way the
+  time-domain plot already does; it no longer just raises the stale banner for
+  a regroup (the banner still covers FFT-parameter and time-window edits,
+  where recompute stays explicit). The empty-state prompt changed to match:
+  "No FFT spectrum for this run. Spectra compute automatically when the run
+  has detector groups — check the grouping and the log, or click Compute FFT
+  to retry." — and now appears only when auto-compute cannot run. MaxEnt is
+  unchanged (explicit cycles only), and opening a project still recomputes
+  restored recipes lazily without creating new ones.
+
 ### Fixed
+
+- **The Fourier panel's spinboxes no longer clip their digits.** The
+  zero-pad factor, Burg pole-scan, and correlation-order spins were capped at
+  a text-field width that left the step buttons no room of their own, so the
+  inner text area shrank to a sliver (a zero-pad of "16" rendered cut off).
+  Spinbox width caps now include a step-button allowance.
 
 - **Grouping Apply accepts groupings that name detectors a run does not
   contain, reducing over the detectors present.** Applying a full-instrument
