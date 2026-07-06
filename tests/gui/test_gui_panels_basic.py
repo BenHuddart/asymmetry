@@ -15,8 +15,8 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication,
-    QGroupBox,
     QHeaderView,
+    QLabel,
     QPushButton,
     QScrollArea,
     QWidget,
@@ -77,7 +77,7 @@ def test_fourier_panel_defaults(qapp: QApplication) -> None:
         panel._phase_opt_real_radio.minimumHeight()
         >= panel._phase_opt_real_radio.sizeHint().height()
     )
-    assert panel._phase_table.horizontalHeaderItem(0).text() == "Include"
+    assert panel._phase_table.horizontalHeaderItem(0).text() == "✓"
     assert (
         panel._phase_table.horizontalHeader().sectionResizeMode(1) == QHeaderView.ResizeMode.Stretch
     )
@@ -94,7 +94,7 @@ def test_fourier_compute_button_pinned_outside_scroll(qapp: QApplication) -> Non
     """
     panel = FourierPanel()
     scroll = panel.findChild(QScrollArea)
-    footer = panel.findChild(QWidget, "fourierActionFooter")
+    footer = panel._action_footer
     assert scroll is not None
     assert footer is not None
     assert panel._fft_btn in footer.findChildren(QPushButton)
@@ -144,17 +144,38 @@ def test_maxent_cycle_controls_pinned_outside_scroll(qapp: QApplication) -> None
 
 
 def test_fourier_panel_group_order_matches_workflow(qapp: QApplication) -> None:
+    """The usage-tier restructure orders sections always-visible → conditional →
+    collapsed: FFT Phase Mode, Apodisation, Groups, FFT settings, then the
+    conditional Phase section, then the collapsed stack."""
+    from asymmetry.gui.styles.widgets import SECTION_HEADER_OBJECT_NAME
+    from asymmetry.gui.widgets.panel_section import PanelSection
+
     panel = FourierPanel()
 
-    # Only the top-level workflow sections — the "Advanced / experimental"
-    # disclosure is nested inside "FFT Phase Mode" and is excluded here.
+    # Flat section headers (make_section) carry the shared header objectName; the
+    # nested "Advanced / experimental" disclosure header is excluded so only the
+    # top-level workflow sections remain, in layout order.
+    advanced_labels = set(panel._advanced_modes_group.findChildren(QLabel))
     titles = [
-        group.title()
-        for group in panel.findChildren(QGroupBox)
-        if group.title() and group.title() != "Advanced / experimental"
+        label.text()
+        for label in panel.findChildren(QLabel)
+        if label.objectName() == SECTION_HEADER_OBJECT_NAME and label not in advanced_labels
     ]
+    # make_section uppercases; assert the always-visible tier then the Phase gate.
+    assert titles[:5] == ["FFT PHASE MODE", "APODISATION", "GROUPS", "FFT SETTINGS", "PHASE"]
 
-    assert titles[:4] == ["FFT Phase Mode", "Apodisation", "Groups", "Phase"]
+    # The four collapsed sections follow, each a collapsible PanelSection.
+    collapsed_titles = [
+        section.title()
+        for section in panel.findChildren(PanelSection)
+        if section is not panel._advanced_modes_group
+    ]
+    assert collapsed_titles == [
+        "Spectral moments",
+        "Conditioning",
+        "Diamagnetic correction",
+        "Frequency exclusions",
+    ]
 
 
 def test_fourier_panel_advanced_modes_collapsed_by_default(qapp: QApplication) -> None:
@@ -163,9 +184,8 @@ def test_fourier_panel_advanced_modes_collapsed_by_default(qapp: QApplication) -
 
     group = panel._advanced_modes_group
     assert group.title() == "Advanced / experimental"
-    assert group.isCheckable() is True
-    # Collapsed (unchecked) by default — only the routine modes show up front.
-    assert group.isChecked() is False
+    # Collapsed by default — only the routine modes show up front.
+    assert group.isExpanded() is False
     # The three niche radios are parented into the disclosure, not the main column.
     for radio in (panel._phase_opt_real_radio, panel._burg_radio, panel._correlation_radio):
         assert radio in group.findChildren(type(radio))
@@ -183,12 +203,12 @@ def test_fourier_panel_advanced_modes_collapsed_by_default(qapp: QApplication) -
 def test_fourier_panel_restoring_advanced_mode_expands_disclosure(qapp: QApplication) -> None:
     """Restoring a project saved in an advanced mode reveals the disclosure."""
     panel = FourierPanel()
-    assert panel._advanced_modes_group.isChecked() is False
+    assert panel._advanced_modes_group.isExpanded() is False
 
     panel._set_display_mode("phaseOptReal")
 
     assert panel._phase_opt_real_radio.isChecked() is True
-    assert panel._advanced_modes_group.isChecked() is True
+    assert panel._advanced_modes_group.isExpanded() is True
 
 
 def test_fourier_panel_apodisation_fields_stay_enabled(qapp: QApplication) -> None:
