@@ -148,6 +148,154 @@ def test_qthread_check_reports_construction_outside_tasks_module(tmp_path: Path)
     assert "TaskRunner" in failures[0].message
 
 
+def test_current_gui_has_no_bespoke_section_definitions() -> None:
+    harness = _load_harness()
+
+    assert harness.find_bespoke_section_violations() == []
+
+
+def test_bespoke_section_check_reports_class_and_deleted_import(tmp_path: Path) -> None:
+    gui_root = tmp_path / "gui"
+    (gui_root / "widgets").mkdir(parents=True)
+    # The canonical home is exempt.
+    (gui_root / "widgets" / "panel_section.py").write_text(
+        "class PanelSection(QWidget):\n    pass\n", encoding="utf-8"
+    )
+    stray_class = gui_root / "panels" / "rogue.py"
+    stray_class.parent.mkdir(parents=True)
+    stray_class.write_text("class MyCollapsibleSection(QWidget):\n    pass\n", encoding="utf-8")
+    stray_import = gui_root / "windows" / "legacy.py"
+    stray_import.parent.mkdir(parents=True)
+    stray_import.write_text(
+        "from asymmetry.gui.widgets.collapsible_section import CollapsibleSection\n",
+        encoding="utf-8",
+    )
+    harness = _load_harness()
+    harness.PANEL_SECTION_HOME = gui_root / "widgets" / "panel_section.py"
+
+    failures = harness.find_bespoke_section_violations(gui_root)
+
+    assert {f.path for f in failures} == {stray_class, stray_import}
+    assert all("PanelSection" in f.message for f in failures)
+
+
+def test_bespoke_section_check_ignores_panel_local_wrapper(tmp_path: Path) -> None:
+    # A `_collapsible_group` factory that *wraps* PanelSection is the sanctioned
+    # convention (alc_panel), not a bespoke reimplementation.
+    gui_root = tmp_path / "gui"
+    (gui_root / "widgets").mkdir(parents=True)
+    (gui_root / "widgets" / "panel_section.py").write_text(
+        "class PanelSection(QWidget):\n    pass\n", encoding="utf-8"
+    )
+    wrapper = gui_root / "panels" / "alc_panel.py"
+    wrapper.parent.mkdir(parents=True)
+    wrapper.write_text(
+        "def _collapsible_group(title):\n    return PanelSection(title, collapsible=True)\n",
+        encoding="utf-8",
+    )
+    harness = _load_harness()
+    harness.PANEL_SECTION_HOME = gui_root / "widgets" / "panel_section.py"
+
+    assert harness.find_bespoke_section_violations(gui_root) == []
+
+
+def test_current_gui_has_no_raw_hex_colour_literals() -> None:
+    harness = _load_harness()
+
+    assert harness.find_raw_hex_colour_violations() == []
+
+
+def test_raw_hex_colour_check_reports_stray_literal(tmp_path: Path) -> None:
+    gui_root = tmp_path / "gui"
+    (gui_root / "styles").mkdir(parents=True)
+    # styles/ is exempt (the token source).
+    (gui_root / "styles" / "tokens.py").write_text('ACCENT = "#1f4d8a"\n', encoding="utf-8")
+    stray = gui_root / "panels" / "rogue.py"
+    stray.parent.mkdir(parents=True)
+    stray.write_text('label.setStyleSheet("color: #a8332a;")\n', encoding="utf-8")
+    harness = _load_harness()
+
+    failures = harness.find_raw_hex_colour_violations(gui_root)
+
+    assert len(failures) == 1
+    assert failures[0].path == stray
+    assert "tokens" in failures[0].message
+
+
+def test_raw_hex_colour_check_ignores_qss_id_selectors(tmp_path: Path) -> None:
+    # `#addFieldRail` is a QSS id selector, not a hex colour — the trailing
+    # non-identifier guard must reject it.
+    gui_root = tmp_path / "gui"
+    (gui_root / "panels").mkdir(parents=True)
+    qss = gui_root / "panels" / "data_browser.py"
+    qss.write_text(
+        'rail.setStyleSheet("#addFieldRail { background-color: red; }")\n'
+        'filler.setStyleSheet("#addFieldFiller { background-color: red; }")\n',
+        encoding="utf-8",
+    )
+    harness = _load_harness()
+
+    assert harness.find_raw_hex_colour_violations(gui_root) == []
+
+
+def test_raw_hex_colour_check_honours_allowlist(tmp_path: Path) -> None:
+    gui_root = tmp_path / "gui"
+    (gui_root / "widgets").mkdir(parents=True)
+    allowed = gui_root / "widgets" / "detector_schematic.py"
+    allowed.write_text('ax.text(0, 0, "s", color="#333333")\n', encoding="utf-8")
+    harness = _load_harness()
+    harness.HEX_COLOUR_ALLOWLIST = {allowed: "matplotlib diagram colours"}
+
+    assert harness.find_raw_hex_colour_violations(gui_root) == []
+
+
+def test_current_gui_has_no_literal_pixel_geometry() -> None:
+    harness = _load_harness()
+
+    assert harness.find_literal_pixel_geometry_violations() == []
+
+
+def test_literal_pixel_geometry_check_reports_large_literal(tmp_path: Path) -> None:
+    gui_root = tmp_path / "gui"
+    (gui_root / "panels").mkdir(parents=True)
+    stray = gui_root / "panels" / "rogue.py"
+    stray.write_text("widget.setFixedWidth(120)\n", encoding="utf-8")
+    harness = _load_harness()
+    harness.PIXEL_GEOMETRY_ALLOWLIST = {}
+
+    failures = harness.find_literal_pixel_geometry_violations(gui_root)
+
+    assert len(failures) == 1
+    assert failures[0].path == stray
+    assert "metrics" in failures[0].message
+
+
+def test_literal_pixel_geometry_check_allows_small_paddings(tmp_path: Path) -> None:
+    # Literals below the threshold (paddings / hairlines / icon swatches) are fine.
+    gui_root = tmp_path / "gui"
+    (gui_root / "panels").mkdir(parents=True)
+    small = gui_root / "panels" / "fine.py"
+    small.write_text(
+        "pad.setFixedWidth(6)\ntable.setMinimumHeight(0)\nicon.setFixedSize(20, 20)\n",
+        encoding="utf-8",
+    )
+    harness = _load_harness()
+    harness.PIXEL_GEOMETRY_ALLOWLIST = {}
+
+    assert harness.find_literal_pixel_geometry_violations(gui_root) == []
+
+
+def test_literal_pixel_geometry_check_honours_allowlist(tmp_path: Path) -> None:
+    gui_root = tmp_path / "gui"
+    (gui_root / "panels").mkdir(parents=True)
+    allowed = gui_root / "panels" / "canvas_panel.py"
+    allowed.write_text("self._canvas.setMinimumHeight(200)\n", encoding="utf-8")
+    harness = _load_harness()
+    harness.PIXEL_GEOMETRY_ALLOWLIST = {allowed: "canvas floor"}
+
+    assert harness.find_literal_pixel_geometry_violations(gui_root) == []
+
+
 def test_current_tests_directory_satisfies_placement_rule() -> None:
     harness = _load_harness()
 

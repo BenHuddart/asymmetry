@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.fitting.parameters import get_param_info
+from asymmetry.gui.styles import tokens
 from asymmetry.gui.widgets.mpl_canvas import create_canvas
 from asymmetry.gui.windows.global_fit_window_helpers import (
     format_value_with_error,
@@ -212,7 +213,8 @@ class GlobalFitCompareDialog(QDialog):
         if not same_mode_and_n:
             caveat = QLabel("Criteria not comparable: different data/error mode")
             caveat.setStyleSheet(
-                "QLabel { background-color: #ffd9b3; color: #7a3b00; "
+                f"QLabel {{ background-color: {tokens.CAVEAT_BANNER_BG}; "
+                f"color: {tokens.CAVEAT_BANNER_TEXT}; "
                 "font-weight: bold; padding: 4px 8px; }"
             )
             caveat.setWordWrap(True)
@@ -221,7 +223,8 @@ class GlobalFitCompareDialog(QDialog):
         if not same_snapshot:
             snap_caveat = QLabel("Fitted to different data snapshots")
             snap_caveat.setStyleSheet(
-                "QLabel { background-color: #fff3cd; color: #66512c; padding: 4px 8px; }"
+                f"QLabel {{ background-color: {tokens.CAUTION_BANNER_BG}; "
+                f"color: {tokens.CAUTION_BANNER_TEXT}; padding: 4px 8px; }}"
             )
             snap_caveat.setWordWrap(True)
             layout.addWidget(snap_caveat)

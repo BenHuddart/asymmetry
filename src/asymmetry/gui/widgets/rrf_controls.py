@@ -32,6 +32,7 @@ from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fourier.spectrum import reference_field_gauss
 from asymmetry.core.fourier.units import FieldUnit, convert, gauss_to_mhz
 from asymmetry.core.transform.rrf import rrf_demodulate, rrf_demodulate_values
+from asymmetry.gui.styles.metrics import field_width_for
 
 __all__ = [
     "RRFControls",
@@ -82,7 +83,7 @@ class RRFControls(QWidget):
         self._freq_spin.setDecimals(4)
         self._freq_spin.setRange(0.0, 10_000_000.0)
         self._freq_spin.setValue(0.0)
-        self._freq_spin.setMinimumWidth(110)
+        self._freq_spin.setMinimumWidth(field_width_for(11, self._freq_spin))
         self._freq_spin.setToolTip(
             "Frame frequency ν₀. Auto-seeded from the run's field metadata "
             "(γ_μB/2π) when first enabled."

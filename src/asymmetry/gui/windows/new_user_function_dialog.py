@@ -59,6 +59,7 @@ from asymmetry.core.fitting.user_function_authoring import (
 )
 from asymmetry.core.fitting.user_functions import UserFunctionError
 from asymmetry.gui.styles import tokens
+from asymmetry.gui.styles.metrics import field_width_for
 from asymmetry.gui.widgets.screen_sizing import resize_to_available
 
 __all__ = ["NewUserFunctionDialog"]
@@ -341,7 +342,7 @@ class NewUserFunctionDialog(QDialog):
     def _labelled_row(self, text: str, widget: QWidget) -> QHBoxLayout:
         row = QHBoxLayout()
         label = QLabel(text)
-        label.setMinimumWidth(88)
+        label.setMinimumWidth(field_width_for(9, label))
         row.addWidget(label)
         row.addWidget(widget, stretch=1)
         return row

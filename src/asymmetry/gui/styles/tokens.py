@@ -49,6 +49,15 @@ WARN = "#b66815"
 # with a darker amber text keeps the strip legible against the light theme.
 WARN_BANNER_BG = "#fdf2d9"
 WARN_BANNER_TEXT = "#7a5210"
+# Two caveat-banner styles used by the Global Fit compare dialog. The orange
+# strip flags "criteria not comparable"; the softer yellow strip flags "different
+# data snapshot". Preserved as bespoke shades (the yellow sits close to the
+# WARN_BANNER_* amber above — a candidate for unification in a future visual
+# pass, kept distinct here to avoid a silent appearance change).
+CAVEAT_BANNER_BG = "#ffd9b3"
+CAVEAT_BANNER_TEXT = "#7a3b00"
+CAUTION_BANNER_BG = "#fff3cd"
+CAUTION_BANNER_TEXT = "#66512c"
 OK = "#2a7a3f"
 FIT = "#c34a2c"
 ERROR = "#b3261e"

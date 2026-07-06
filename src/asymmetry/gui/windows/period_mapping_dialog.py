@@ -22,9 +22,10 @@ from PySide6.QtWidgets import (
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.io.periods import normalise_period_mapping
+from asymmetry.gui.styles import tokens
 
 _TARGETS = ("red", "green", "ignore")
-_TARGET_COLOURS = {"red": "#c00000", "green": "#008000", "ignore": ""}
+_TARGET_COLOURS = {"red": tokens.ACCENT_RED, "green": tokens.OK, "ignore": ""}
 
 
 class PeriodMappingDialog(QDialog):

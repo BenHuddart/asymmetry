@@ -341,8 +341,8 @@ class GroupingDialog(QDialog):
         form.setHorizontalSpacing(12)
         self._forward_combo = QComboBox()
         self._backward_combo = QComboBox()
-        self._forward_combo.setMinimumWidth(220)
-        self._backward_combo.setMinimumWidth(220)
+        # setMinimumContentsLength sizes the combo to N characters of the
+        # current font, so it tracks the UI zoom without a frozen pixel width.
         self._forward_combo.setMinimumContentsLength(18)
         self._backward_combo.setMinimumContentsLength(18)
         self._refresh_group_combo_items()
