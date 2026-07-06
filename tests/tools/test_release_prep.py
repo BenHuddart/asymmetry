@@ -175,5 +175,13 @@ class TestRealRepoFiles:
         extract_unreleased_body((self.ROOT / "CHANGELOG.md").read_text())
 
     def test_dry_run_against_real_repo(self, capsys):
+        # [Unreleased] is legitimately empty right after a release commit, and
+        # this test runs on that commit's CI - both outcomes are correct
+        # behavior, so pin whichever applies to the current tree.
+        body = extract_unreleased_body((self.ROOT / "CHANGELOG.md").read_text())
         rc = release_prep.main(["--bump", "minor", "--root", str(self.ROOT), "--dry-run"])
-        assert rc == 0
+        if body.strip():
+            assert rc == 0
+        else:
+            assert rc == 1
+            assert "empty" in capsys.readouterr().err
