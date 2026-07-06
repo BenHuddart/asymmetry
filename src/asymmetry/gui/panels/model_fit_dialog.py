@@ -1102,10 +1102,22 @@ class ModelFitDialog(QDialog):
                     in_mask=empty.astype(bool),
                     curve_x=curve[0],
                     curve_y=curve[1],
-                    fitted=False,
+                    fitted=self._range_is_fitted(idx),
                 )
             )
         return ranges
+
+    def _range_is_fitted(self, idx: int) -> bool:
+        """Whether range *idx* currently holds a converged fit result.
+
+        Drives the preview curve style (solid vs dashed seed). Reads through
+        the ``_result_for_range`` hook so subclasses that cache results outside
+        the per-range model (e.g. the cross-group dialog) stay consistent; any
+        edit that invalidates the result flips the curve back to dashed on the
+        next preview update.
+        """
+        result = self._result_for_range(idx)
+        return result is not None and bool(getattr(result, "success", False))
 
     def _launch_preview_sample(self) -> None:
         """Snapshot inputs on the GUI thread and start the off-thread sampler.
@@ -1162,6 +1174,7 @@ class ModelFitDialog(QDialog):
                     "x_min": fit_range.x_min,
                     "x_max": fit_range.x_max,
                     "windows": list(fit_range.windows) if fit_range.windows else None,
+                    "fitted": self._range_is_fitted(idx),
                 }
             )
 
@@ -1198,7 +1211,7 @@ class ModelFitDialog(QDialog):
                         in_mask=in_mask,
                         curve_x=curve_x,
                         curve_y=curve_y,
-                        fitted=False,
+                        fitted=bool(snap["fitted"]),
                     )
                 )
             return (gen, out_ranges)
