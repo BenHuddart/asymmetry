@@ -19,6 +19,7 @@ Pure/deterministic — no Qt. Reuses the K(θ) basis models and ``fit_parameter_
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -77,7 +78,17 @@ def _seed_parameters(model_name: str, values: np.ndarray) -> ParameterSet:
                 Parameter("theta0", 0.0),
             ]
         )
-    return ParameterSet([Parameter("K_iso", centre), Parameter("K_ax", spread or 1.0)])
+    return ParameterSet(
+        [
+            Parameter("K_iso", centre),
+            Parameter("K_ax", spread or 1.0),
+            # Mount/zero misalignment. Bounded to half the axial form's 180°
+            # period: beyond ±90° the same curve re-parameterises with the
+            # opposite-sign K_ax, so an open bound would let the optimiser pick
+            # either label for the same physics.
+            Parameter("theta0", 0.0, min=-90.0, max=90.0),
+        ]
+    )
 
 
 def _identity_seed(n_points: int, n_components: int) -> list[np.ndarray]:
@@ -329,6 +340,9 @@ def fit_assigned_angular_curves(
             ]
         )
 
+    for fit in fits:
+        _canonicalize_theta0(model_name, fit)
+
     return AngularAssignmentResult(
         success=all(fit.success for fit in fits),
         converged=converged,
@@ -341,3 +355,44 @@ def fit_assigned_angular_curves(
         total_chi_squared=float(total),
         dof=max(n_points * n_components - n_components * n_params, 0),
     )
+
+
+def _canonicalize_theta0(model_name: str, fit: ParameterModelFitResult) -> None:
+    """Fold a fitted θ0 into (−45°, 45°] via the model's exact reparameterisation.
+
+    Both angular models are invariant under a 90° shift of θ0 with a sign flip
+    of the anisotropic amplitude (the axial form additionally shifts
+    ``K_iso → K_iso + K_ax/2``, since ``(3cos²t−1)/2 + (3sin²t−1)/2 = 1/2``), so
+    the optimiser may return either representation of the same curve. Fold to
+    the small-|θ0| one so amplitude signs read physically (a mount is expected
+    to be *nearly* aligned) and equivalent curves report comparable θ0. Under
+    the fold K_iso's uncertainty picks up K_ax's in quadrature (their covariance
+    is not propagated here — a conservative approximation). In-place.
+    """
+    params = {p.name: p for p in fit.parameters}
+    theta0 = params.get("theta0")
+    if theta0 is None or not math.isfinite(theta0.value):
+        return
+    folded = math.remainder(float(theta0.value), 180.0)
+    flips = 0
+    while folded > 45.0:
+        folded -= 90.0
+        flips += 1
+    while folded <= -45.0:
+        folded += 90.0
+        flips += 1
+    if flips % 2 == 1:
+        if model_name == "KnightAnisotropy" and "K_ax" in params:
+            k_iso, k_ax = params.get("K_iso"), params["K_ax"]
+            if k_iso is not None:
+                k_iso.value = float(k_iso.value) + float(k_ax.value) / 2.0
+                iso_err = fit.uncertainties.get("K_iso")
+                ax_err = fit.uncertainties.get("K_ax")
+                if iso_err is not None and ax_err is not None:
+                    fit.uncertainties["K_iso"] = math.hypot(float(iso_err), float(ax_err) / 2.0)
+            k_ax.value = -float(k_ax.value)
+        elif model_name == "AngularCos2" and "K_amp" in params:
+            params["K_amp"].value = -float(params["K_amp"].value)
+        else:
+            return
+    theta0.value = folded

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import inspect
 import re
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import Enum
-from functools import partial
+from functools import cache, partial
 from itertools import product
 
 import numpy as np
@@ -77,6 +78,26 @@ class ParameterModelComponentDefinition:
 #: Recognised scope tokens for :attr:`ParameterModelComponentDefinition.scopes`
 #: (see :func:`component_names_for_x`).
 SCOPES: tuple[str, ...] = ("common", "field", "temperature", "angle")
+
+
+@cache
+def _optional_function_params(function: Callable) -> frozenset[str]:
+    """Names of a component function's parameters that carry a Python default.
+
+    These are the parameters that may legitimately be absent from a saved
+    parameter set (added to the component after the fit was stored); the
+    function's own default then applies. Cached per function — the component
+    registry is a small fixed set.
+    """
+    try:
+        signature = inspect.signature(function)
+    except (TypeError, ValueError):
+        return frozenset()
+    return frozenset(
+        name
+        for name, parameter in signature.parameters.items()
+        if parameter.default is not inspect.Parameter.empty
+    )
 
 
 def _constant(x: NDArray, c: float) -> NDArray[np.float64]:
@@ -228,14 +249,20 @@ def _order_parameter(
     )
 
 
-def _knight_anisotropy(x: NDArray, K_iso: float, K_ax: float) -> NDArray[np.float64]:
+def _knight_anisotropy(
+    x: NDArray, K_iso: float, K_ax: float, theta0: float = 0.0
+) -> NDArray[np.float64]:
     """Axial Knight-shift anisotropy vs orientation angle θ (degrees).
 
-    ``K(θ) = K_iso + K_ax * (3 cos²θ − 1) / 2``. The contact term is isotropic
-    (``K_iso``); the dipolar coupling tensor gives the axial angular dependence
-    (``K_ax``) for a rotation about an axis perpendicular to the principal axis.
+    ``K(θ) = K_iso + K_ax * (3 cos²(θ − θ0) − 1) / 2``. The contact term is
+    isotropic (``K_iso``); the dipolar coupling tensor gives the axial angular
+    dependence (``K_ax``) for a rotation about an axis perpendicular to the
+    principal axis. ``θ0`` (degrees) absorbs the mount/zero misalignment between
+    the goniometer scale and the crystal axis — real mounts are never perfectly
+    aligned, and without it the misfit is pushed into K_iso/K_ax (defaults to 0,
+    so fits saved before it existed evaluate unchanged).
     """
-    theta = np.radians(np.asarray(x, dtype=float))
+    theta = np.radians(np.asarray(x, dtype=float) - float(theta0))
     return float(K_iso) + float(K_ax) * (3.0 * np.cos(theta) ** 2 - 1.0) / 2.0
 
 
@@ -811,13 +838,20 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
     ),
     "KnightAnisotropy": ParameterModelComponentDefinition(
         name="KnightAnisotropy",
-        description="K_iso + K_ax*(3 cos^2(theta) - 1)/2  (theta in degrees)",
+        description="K_iso + K_ax*(3 cos^2(theta - theta0) - 1)/2  (theta in degrees)",
         function=_knight_anisotropy,
-        param_names=["K_iso", "K_ax"],
-        param_defaults={"K_iso": 0.0, "K_ax": 1.0},
-        param_info={"K_iso": get_param_info("K_iso"), "K_ax": get_param_info("K_ax")},
-        formula_template="{K_iso} + {K_ax}*(3*cos(theta)^2 - 1)/2",
-        latex_equation=r"K(\theta) = K_{\mathrm{iso}} + K_{\mathrm{ax}}\,\frac{3\cos^2\theta - 1}{2}",
+        param_names=["K_iso", "K_ax", "theta0"],
+        param_defaults={"K_iso": 0.0, "K_ax": 1.0, "theta0": 0.0},
+        param_info={
+            "K_iso": get_param_info("K_iso"),
+            "K_ax": get_param_info("K_ax"),
+            "theta0": get_param_info("theta0"),
+        },
+        formula_template="{K_iso} + {K_ax}*(3*cos(theta - {theta0})^2 - 1)/2",
+        latex_equation=(
+            r"K(\theta) = K_{\mathrm{iso}}"
+            r" + K_{\mathrm{ax}}\,\frac{3\cos^2(\theta - \theta_0) - 1}{2}"
+        ),
         scopes=("angle",),
     ),
     "AngularCos2": ParameterModelComponentDefinition(
@@ -1644,6 +1678,14 @@ class ParameterCompositeModel:
         for pname in component.param_names:
             unique_name = mapping[pname]
             if unique_name not in kwargs:
+                # A parameter grown onto a component after a fit was saved (e.g.
+                # KnightAnisotropy's later theta0) is absent from old parameter
+                # sets. Such parameters carry a Python default on the component
+                # function precisely so old fits still evaluate — omit the kwarg
+                # and let that default apply. A parameter *without* a function
+                # default is genuinely required and still raises.
+                if pname in _optional_function_params(component.function):
+                    continue
                 raise KeyError(f"Missing parameter '{unique_name}'")
             local_kwargs[pname] = float(kwargs[unique_name])
         return local_kwargs
