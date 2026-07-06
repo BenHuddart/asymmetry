@@ -64,37 +64,67 @@ Walkthrough
    neighbour (chained batch seeding) so each component keeps a stable label
    through the scan and the trend follows one site at a time.
 
-#. **Convert to the Knight shift.** With the fitted frequencies trended, press
-   **Knight shift…** in the *Derived parameters* section and reference against
-   the **Applied field**. Each frequency trace becomes a :math:`K[\ldots]`
-   trace in per cent.
+#. **Convert to the Knight shift.** With the fitted frequencies trended, open
+   the **Knight shift analysis** window — the **Knight shift window…** button
+   in the *Derived parameters* section of the Fit Parameters panel, or
+   **Analysis → Knight shift analysis…** — and reference against the
+   **Applied field** in the *Conversion* section of its sidebar. Each frequency
+   trace becomes a branch in the *Branches* section, converted live as you edit
+   the reference or unit. This yields the directly measured shift
+   :math:`K_{\mathrm{exp}}`; if the sample's shape and bulk susceptibility are
+   known, tick **Lorentz/demag correction**, pick the **Shape** (or **Custom
+   N**) and enter **χ (SI)**, to recover the intrinsic :math:`K_\mu` — see
+   *Reading the result*, below, for the caveat this correction carries under
+   rotation.
 
-   .. figure:: /_generated/screenshots/knight_shift_dialog.png
-      :width: 70%
+   .. figure:: /_generated/screenshots/knight_shift_window.png
+      :width: 100%
       :align: center
-      :alt: The Knight Shift conversion dialog, with the Applied field
-         reference selected, two frequency components listed, and a
-         component-crossing warning.
+      :alt: The Knight shift analysis window, with the Applied field
+         reference selected, two frequency branches converted, a completed
+         joint K(theta) fit in the Model fit section, and the fitted curves
+         on the K(theta) plot.
 
-      The Knight Shift conversion dialog. Referencing against the
-      **Applied field** (:math:`\gamma_\mu B`) needs no reference line; the
-      two fitted frequency components are listed for conversion, and the
-      warning notes that the scan's component crossings can swap the trace
-      labels — which the joint :math:`K(\theta)` fit in the final step
-      resolves.
+      The Knight shift analysis window on a two-site angle scan. The sidebar
+      reads top to bottom as the pipeline — **Source** (the fitted series
+      supplying the frequencies), **Conversion** (reference and unit),
+      **Branches** (one :math:`K` trace per converted component, with a count
+      of the crossings flagged along the scan), and **Model fit** (the joint
+      :math:`K(\theta)` fit covered in a later step, shown here already run);
+      the plot shows both branches against angle with their fitted curves and
+      **Crossing markers** on, dashed at the scan intervals where the raw
+      component labels can swap. Converting here does not touch the trend
+      table — press **Send K columns to trend table** in the footer to
+      publish the :math:`K[\ldots]` columns for plotting and export (the
+      joint fit runs here in the window and does not need them published
+      first).
 
-#. **Plot against orientation.** Select **Angle (°)** as the trend x-axis. If
-   the scan wraps past one period, the **Fold** control overlays equivalent
+#. **Plot against orientation.** Back in the trend panel, select **Angle (°)**
+   as the trend x-axis to see the published :math:`K[\ldots]` traces. If the
+   scan wraps past one period, the **Fold** control overlays equivalent
    orientations onto a single :math:`180^\circ` period, doubling the effective
-   angular sampling.
+   angular sampling — the same fold the analysis window offers as its own
+   **Fold 180°** view toggle for inspecting the branches before publishing.
 
-#. **Resolve and fit with a joint** :math:`K(\theta)` **fit.** Select the two
-   :math:`K[\ldots]` traces and use **Joint K(θ) fit…**. This fits one
+#. **Resolve and fit with a joint** :math:`K(\theta)` **fit.** Back in the
+   Knight shift analysis window, use its **Model fit** sidebar section:
+   pick a model (``KnightAnisotropy`` for the axial dipolar form used here)
+   and press the footer's **Run joint K(θ) fit** button. This fits one
    :math:`K(\theta)` curve per site at once and, at each angle, assigns that
    angle's points one-to-one to the curves they best match (a Hungarian
    matching), iterating until both the curves and the assignment settle. The
-   traces are reordered in place so each follows a single physical site
-   continuously through the crossings, with the per-curve fits overlaid.
+   plotted branches realign so each follows a single physical site
+   continuously through the crossings, with the per-curve fits overlaid and
+   swap markers at the angles where the assignment changes. ``KnightAnisotropy``
+   also fits a per-site :math:`\theta_0`, the goniometer/mount misalignment
+   between the scale's zero and the crystal's principal axis. A large reduced
+   :math:`\chi^2` with :math:`\theta_0` pinned at zero was the old failure
+   mode here — a mount that is even slightly off-axis pushes the residual
+   misalignment into :math:`K_{\mathrm{iso}}` and :math:`K_{\mathrm{ax}}`
+   instead, biasing exactly the parameters that identify the site; fitting
+   :math:`\theta_0` absorbs it. If **Scale errors by √χ²ᵣ** is ticked and the
+   fit's reduced :math:`\chi^2` still exceeds one after that, the quoted
+   uncertainties are inflated accordingly.
 
 .. image:: /_generated/screenshots/knight_shift_angle.png
    :alt: Two-site angle-dependent Knight shift with a joint K(theta) anisotropy fit
@@ -114,12 +144,14 @@ own site, and the fitted :math:`K_{\mathrm{ax}}` carries the real sign and
 magnitude. That sign, together with the magnitude of the anisotropy, is what
 constrains the candidate stopping site.
 
-For the absolute shift, note that the conversion yields the directly measured
-:math:`K_{\mathrm{exp}}`; the Lorentz and demagnetising corrections that
-recover the intrinsic :math:`K_\mu` need the sample geometry and bulk
-susceptibility and are left to you. To turn a :math:`K`–:math:`\chi` pair into
-a hyperfine coupling, see the Clogston–Jaccarino discussion at
-:ref:`knight-shift`.
+For the absolute shift, note that the conversion by itself yields the directly
+measured :math:`K_{\mathrm{exp}}`; recovering the intrinsic :math:`K_\mu` needs
+the **Lorentz/demag correction** step above, with the sample geometry and bulk
+susceptibility as inputs. For a rotating sample that is not itself spheroidal,
+remember that the correction assumes a fixed demagnetisation factor :math:`N`
+along the field — exact for a sphere, an approximation as the sample turns
+otherwise. To turn a :math:`K`–:math:`\chi` pair into a hyperfine coupling, see
+the Clogston–Jaccarino discussion at :ref:`knight-shift`.
 
 See also
 --------

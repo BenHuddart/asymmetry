@@ -134,6 +134,9 @@ from asymmetry.core.fitting import (
     grouped_time_domain_available,
 )
 from asymmetry.core.fitting.composite import CompositeModel
+from asymmetry.core.fitting.knight_analysis import (
+    migrate_legacy_state as migrate_legacy_knight_state,
+)
 from asymmetry.core.fitting.parameter_models import (
     CrossGroupFitResult,
     ParameterGroupData,
@@ -274,6 +277,7 @@ from asymmetry.gui.windows.global_parameter_fit_window import (
     StudySidebarEntry,
 )
 from asymmetry.gui.windows.grouping_dialog import GroupingDialog
+from asymmetry.gui.windows.knight_shift_window import KnightShiftWindow
 from asymmetry.gui.windows.multi_group_fit_window import MultiGroupFitWindow
 from asymmetry.gui.windows.run_info_dialog import RunInfoDialog
 from asymmetry.gui.windows.simulate_dialog import SimulateDialog
@@ -727,6 +731,11 @@ class MainWindow(QMainWindow):
         # stores its panel state before each re-sync, so it needs no such guard.)
         self._fourier_included_seeded: set[int] = set()
         self._global_parameter_fit_window: GlobalParameterFitWindow | None = None
+        #: Knight shift analysis window (lazy) and its persisted state. The
+        #: cached dict carries a loaded project's state until (unless) the
+        #: window is opened; save prefers the live window's state.
+        self._knight_shift_window: KnightShiftWindow | None = None
+        self._knight_shift_analysis_state: dict | None = None
         #: The single open two-study comparison dialog (opened from the results
         #: window's "Compare with…" submenu). Only one is allowed at a time; a new
         #: comparison closes the previous one.
@@ -946,6 +955,7 @@ class MainWindow(QMainWindow):
         # representation's deck has no spectrum tab (time-domain views).
         self._fourier_analysis_action = analysis_menu.addAction("F&ourier", self._on_fourier)
         analysis_menu.addAction("Fit &Parameters", self._on_fit_parameters)
+        analysis_menu.addAction("Knight shift analysis…", self._on_knight_shift_analysis)
         analysis_menu.addAction("Grouping...", self._on_grouping_current)
         self._global_parameter_fit_action = analysis_menu.addAction(
             "Global Parameter Fit",
@@ -1863,6 +1873,9 @@ class MainWindow(QMainWindow):
             )
             self._fit_parameters_panel.member_trend_inclusion_changed.connect(
                 self._on_member_trend_inclusion_changed
+            )
+            self._fit_parameters_panel.knight_window_requested.connect(
+                self._on_knight_shift_analysis
             )
 
         # Unsaved-changes guard (P0-2): every fit result and trend-series edit
@@ -11320,6 +11333,34 @@ class MainWindow(QMainWindow):
         self._rebuild_global_fit_studies_menu()
         self._refresh_global_fit_sidebar()
 
+    def _on_knight_shift_analysis(self) -> None:
+        """Open (or raise) the Knight shift analysis window on the active series.
+
+        The window is created lazily, restored from any cached project state,
+        and fed a fresh snapshot of the trend panel's rows each time it is
+        opened (its Refresh button re-requests the same snapshot).
+        """
+        if self._knight_shift_window is None:
+            window = KnightShiftWindow(self)
+            self._knight_shift_window = window
+            window.refresh_requested.connect(self._refresh_knight_shift_snapshot)
+            window.apply_config_requested.connect(
+                self._fit_parameters_panel.set_knight_shift_config
+            )
+            if self._knight_shift_analysis_state is not None:
+                window.restore_state(self._knight_shift_analysis_state)
+        self._refresh_knight_shift_snapshot()
+        self._knight_shift_window.show()
+        self._knight_shift_window.raise_()
+        self._knight_shift_window.activateWindow()
+
+    def _refresh_knight_shift_snapshot(self) -> None:
+        """Feed the Knight shift window the trend panel's current snapshot."""
+        if self._knight_shift_window is not None:
+            self._knight_shift_window.set_snapshot(
+                self._fit_parameters_panel.knight_analysis_snapshot()
+            )
+
     def _connect_global_fit_window(self) -> None:
         """Wire the Global Parameter Fit window's outbound signals once."""
         window = self._global_parameter_fit_window
@@ -13273,6 +13314,11 @@ class MainWindow(QMainWindow):
                 "frequency": _domain_block("frequency", frequency_fit_state),
             },
             "fit_parameters_state": self._fit_parameters_panel.get_state(),
+            "knight_shift_analysis_state": (
+                self._knight_shift_window.get_state()
+                if self._knight_shift_window is not None
+                else self._knight_shift_analysis_state
+            ),
             # View preferences only (log axes, plot mode, …). The window's
             # decorations live in the owning series' ``extra`` — see
             # _sync_global_fit_decorations_to_series below.
@@ -13963,6 +14009,21 @@ class MainWindow(QMainWindow):
             self._fit_parameters_panel.refresh_display()
 
         self._restore_global_fit_studies(state, fit_parameters_state)
+
+        # Knight shift analysis window: cache the saved state (applied when the
+        # window opens). Projects saved before the window existed migrate their
+        # trend-panel conversion block so the analysis reopens configured.
+        knight_state = state.get("knight_shift_analysis_state")
+        if not isinstance(knight_state, dict):
+            migrated = migrate_legacy_knight_state(fit_parameters_state)
+            knight_state = migrated.to_dict() if migrated is not None else None
+        self._knight_shift_analysis_state = knight_state
+        if self._knight_shift_window is not None:
+            if knight_state is not None:
+                self._knight_shift_window.restore_state(knight_state)
+            self._knight_shift_window.set_snapshot(
+                self._fit_parameters_panel.knight_analysis_snapshot()
+            )
 
         # ── restore Fourier state ──────────────────────────────────────
         fourier_state = state.get("fourier_state")

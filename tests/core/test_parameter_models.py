@@ -439,6 +439,17 @@ def test_composite_function_missing_parameter_raises() -> None:
         model.function(np.array([1.0, 2.0]), m=1.0)  # missing b
 
 
+def test_composite_function_missing_optional_param_falls_back_to_function_default() -> None:
+    # KnightAnisotropy's theta0 carries a Python default (0.0) on the component
+    # function precisely so a parameter set saved before theta0 existed still
+    # evaluates: _extract_component_kwargs omits the kwarg instead of raising.
+    model = ParameterCompositeModel(["KnightAnisotropy"])
+    x = np.array([0.0, 90.0])
+    with_default_kwarg = model.function(x, K_iso=100.0, K_ax=30.0, theta0=0.0)
+    without_theta0 = model.function(x, K_iso=100.0, K_ax=30.0)  # theta0 missing entirely
+    np.testing.assert_allclose(without_theta0, with_default_kwarg)
+
+
 def test_composite_function_division_by_near_zero_produces_nan() -> None:
     model = ParameterCompositeModel(["Constant", "Constant"], operators=["/"])
     x = np.array([1.0])

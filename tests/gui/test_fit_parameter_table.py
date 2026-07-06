@@ -180,3 +180,23 @@ def test_batch_column_can_be_hidden(qapp):
     assert not table.isColumnHidden(table.COL_BATCH)
     table.set_batch_column_visible(False)
     assert table.isColumnHidden(table.COL_BATCH)
+
+
+def test_format_value_error_matches_precision_to_uncertainty():
+    from asymmetry.gui.utils.formatting import format_value_error
+
+    assert format_value_error(0.46674, 0.00163) == "0.4667 ± 0.0016"
+    assert format_value_error(12.5001, 0.28) == "12.50 ± 0.28"
+    assert format_value_error(-0.8797, 0.0011) == "-0.8797 ± 0.0011"
+    assert format_value_error(199.83, 12.0) == "200 ± 12"
+
+
+def test_format_value_error_degenerate_inputs():
+    from asymmetry.gui.utils.formatting import format_value_error
+
+    assert format_value_error(0.4, 0.0) == "0.4"
+    assert format_value_error(0.4, float("nan")) == "0.4"
+    assert format_value_error(float("nan"), 0.1) == "—"
+    # Pathological scale mismatch falls back to independent rounding rather
+    # than an unreadable 16-decimal matched-precision string.
+    assert format_value_error(1.0, 1e-15) == "1 ± 1e-15"

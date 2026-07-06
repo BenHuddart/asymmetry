@@ -1053,8 +1053,78 @@ converts a fitted precession frequency :math:`\nu` to
 
    K = \frac{\nu - \nu_{\mathrm{ref}}}{\nu_{\mathrm{ref}}}
 
-against one of two references, chosen from the **Knight shift…** button in the
-*Derived parameters* section:
+against one of two references.
+
+The **Knight shift analysis** window (**Analysis → Knight shift analysis…**, or
+the **Knight shift window…** button in the *Derived parameters* section of the
+Fit Parameters panel) is the recommended way to set this up: it is a
+non-modal window dedicated to the conversion, so the reference, unit, and
+component choices, the resulting branches, and the scan's crossings are all
+visible together while you edit them, and nothing is written back to the
+trend table until you ask for it. Its sidebar reads top to bottom as the
+pipeline:
+
+* **Source** — the fitted series supplying the frequencies (run count,
+  component count, and scan axis), with a **Refresh from trend** button that
+  rebuilds the snapshot from the trend panel's current rows after a refit or a
+  series change.
+* **Conversion** — the reference (**Applied field (γ_µ·B)** or **Designated
+  component**, with a combo box for the chosen component when the latter is
+  selected), the display **Unit** (**Auto (ppm / %)**, **ppm**, **percent**, or
+  **fraction**), a checkbox per convertible component to include or exclude it
+  from the conversion, and the **Lorentz/demag correction** checkbox with its
+  **Shape** combo, **N** field, and **χ (SI)** field (described below) that
+  turns the measured shift into the intrinsic :math:`K_\mu`.
+* **Branches** — one converted :math:`K` trace per included component, each
+  named :math:`K_n` and coloured to match its curve on the plot, together with
+  a count of the crossings flagged along the scan (see *Component identity and
+  crossings* below).
+* **Model fit** — the joint :math:`K(\theta)` fit that resolves those
+  crossings (see *Component identity and crossings*, below). The **Info…**
+  button beside the model selector opens the shared component-information
+  dialog for the selected :math:`K(\theta)` model — its formula, parameters,
+  and applicability. Fitted parameters are presented per branch in a table,
+  each value quoted to the precision its uncertainty supports, with a **Scale
+  errors by √χ²ᵣ** checkbox that inflates the quoted uncertainties when a
+  fit's reduced :math:`\chi^2` exceeds one.
+
+The plot area has two view toggles, **Fold 180°** (overlay symmetry-equivalent
+orientations onto one period, for an angle scan — a display choice local to
+the window, independent of the trend panel's own **Fold** control described
+below) and **Crossing markers** (draw a dashed vertical line at each flagged
+crossing; on by default). Every control change re-derives the branches and
+redraws immediately, so a bad reference choice or an accidentally excluded
+component is visible before anything is published. The footer's **Send K
+columns to trend table** button writes the current configuration back to the
+trend panel as :math:`K[\ldots]` columns so they can be plotted and exported
+alongside the fitted parameters. Until that button is pressed the trend table
+is untouched.
+
+.. figure:: /_generated/screenshots/knight_shift_window.png
+   :width: 100%
+   :align: center
+   :alt: The Knight shift analysis window, with the Applied field reference
+      selected, two frequency branches converted, a completed joint K(theta)
+      fit in the Model fit section, and the fitted curves overlaid on the
+      K(theta) plot.
+
+   The Knight shift analysis window on a two-site angle scan: **Source**,
+   **Conversion**, **Branches**, and **Model fit** in the sidebar — the last
+   showing a completed joint :math:`K(\theta)` fit — and the converted
+   branches with their fitted curves and **Crossing markers** on in the plot
+   area.
+
+The window's configuration and view-toggle state — including any joint fit —
+persist with the project under the ``knight_shift_analysis_state`` key (the
+point snapshot itself is always rebuilt from the source series on load, so a
+saved project can never carry stale fitted values). Projects saved before the
+window existed stored the conversion, and any joint fit, under the trend
+panel's own ``fit_parameters_state`` block; these migrate automatically the
+first time the project is opened, so the window reopens already configured
+and, where a legacy joint fit is present, with its run-keyed branch
+assignment carried over (the migrated fit's curves render as stale — "re-run
+to refresh" — until the fit is re-run, since the unit they were originally
+fitted in is not always recoverable).
 
 * **Applied field** — the precession is referenced to the bare applied field. For
   a frequency-parameterised component (MHz) the reference is the free-muon Larmor
@@ -1074,9 +1144,37 @@ against one of two references, chosen from the **Knight shift…** button in the
 K is dimensionless. It is stored internally as a fraction and shown in a unit you
 select, with an **Auto** mode that reads parts per million for a diamagnet
 (typically tens of ppm) and per cent for a paramagnet (up to a few per cent). The
-conversion yields the directly measured shift :math:`K_{\mathrm{exp}}`; the small
-Lorentz and demagnetising corrections that recover the intrinsic :math:`K_\mu`
-require the sample geometry and bulk susceptibility and are left to the user.
+conversion itself yields the directly measured shift :math:`K_{\mathrm{exp}}`; the
+window's **Lorentz/demag correction** (below) recovers the intrinsic :math:`K_\mu`
+from it given the sample geometry and bulk susceptibility.
+
+**Lorentz/demagnetising correction.** The measured shift :math:`K_{\mathrm{exp}}`
+includes the Lorentz cavity field and the sample's own demagnetising field, both
+of which depend on the sample shape rather than the local hyperfine coupling. The
+**Lorentz/demag correction** checkbox in the *Conversion* section removes them,
+
+.. math::
+
+   K_\mu = K_{\mathrm{exp}} - \left(\frac{1}{3} - N\right)\chi
+   \qquad\text{(Amato \& Morenzoni Eq. 5.60)}
+
+with :math:`N` the demagnetisation factor along the applied field (SI convention,
+:math:`\sum N = 1` over the three principal axes) and :math:`\chi` the sample's
+*volume* susceptibility, also SI dimensionless — multiply a CGS value in
+emu cm\ :sup:`-3` by :math:`4\pi` before entering it. The **Shape** combo sets
+:math:`N` from the sample geometry — **Sphere (N = 1/3)**, for which the
+correction vanishes exactly (the Lorentz and demagnetising fields cancel);
+**Thin plate, B ∥ plane (N = 0)**; **Thin plate, B ⊥ plane (N = 1)**; **Long
+cylinder, B ∥ axis (N = 0)**; **Long cylinder, B ⊥ axis (N = 1/2)**; or
+**Custom N**, which enables the **N** field for a value outside these standard
+shapes — and **χ (SI)** takes the volume susceptibility. The correction is a
+constant offset applied equally to every
+branch, so it shifts K but never reorders branches or moves a crossing. It is
+exact for an ellipsoidal sample whose orientation relative to the field is fixed;
+for a rotating non-spheroidal sample :math:`N` itself varies with angle, which
+this scalar form does not capture — a caveat worth remembering for an angle-scan
+correction with a non-sphere shape. The K uncertainties reported by the window do
+not include a :math:`\chi` uncertainty.
 
 **Angle dependence.** Rotating a single crystal in the applied field maps out
 :math:`K(\theta)`. The contact term is isotropic, while the dipolar term carries
@@ -1103,22 +1201,40 @@ judgement to you. Seeding each fit from its neighbour (chained batch seeding) ke
 the labelling stable through an ordered scan and minimises such crossings in the
 first place.
 
-To *resolve* a crossing rather than just flag it, select two or more
-Knight-shift traces with **Angle** as the x-axis and use **Joint K(θ) fit…**.
-This fits one K(θ) curve per component simultaneously and, at each angle, assigns
-that angle's component points one-to-one to the curves they best fit (a Hungarian
-matching), iterating fit ↔ reassignment to convergence. The selected ``K[...]``
-traces are then reordered **in place** so each one follows a single physical site
-continuously through the crossings, with the per-curve fits overlaid and the
-resolved crossings marked. No extra traces are created — re-running the
-Knight-shift conversion regenerates the original per-component ordering. The joint
-fit (reorder, per-curve overlays and markers) is saved with the project and
-restored on reload.
+To *resolve* a crossing rather than just flag it, open the Knight shift
+analysis window (with at least two branches and **Angle** as the scan axis)
+and use the **Model fit** section of its sidebar: choose a **Model**
+(``KnightAnisotropy`` or ``AngularCos2``, the same two angular basis models
+described below) and a **Max iterations** bound, then press the footer's
+**Run joint K(θ) fit** button. The fit runs off-thread — the button reports
+progress and re-enables when it finishes — and fits one K(θ) curve per
+branch simultaneously, assigning each angle's component points one-to-one to
+the curve they best fit (a Hungarian matching) and iterating fit ↔
+reassignment to convergence. The plotted branches are realigned so each
+follows one physical curve continuously through the crossings, the fitted
+model curves overlay in the branch colours, and dashed vertical markers flag
+the angles where the assignment swaps (the crossings the fit actually
+resolved, a firmer signal than the raw proximity flags). The sidebar reports
+each curve's fitted parameters and reduced :math:`\chi^2` beneath the
+controls; **Clear fit** discards the fit and returns the branches to their
+raw component labels. Changing the display unit or the Lorentz/demag
+correction only marks the fitted curves stale (their parameters shift with
+either — the assignment does not, since a common offset or scale cannot
+reorder branches) — re-run the fit to refresh them. The **Scale errors by
+√χ²ᵣ** checkbox inflates every quoted parameter uncertainty by
+:math:`\sqrt{\chi^2_r}` when that curve's reduced :math:`\chi^2` exceeds one
+(a fit that is already better than the noise is left alone); it is
+display-only — the stored fit itself is unchanged, and toggling it appends or
+removes an "(errors ×√χ²ᵣ)" note next to the affected curve. The fit
+(assignment and per-curve parameters) is saved with the project and restored
+on reload, and stays applicable across a **Refresh from trend** as long as
+the branch count is unchanged; a different component selection invalidates
+it.
 
-Select one or more ``K[...]`` traces and use **Remove** to delete them: the
-backing component is dropped from the conversion (so the trace does not
-regenerate), and any joint fit spanning it is cleared. Removing every component
-turns the conversion off.
+In the trend panel, select one or more ``K[...]`` traces and use **Remove**
+to delete them: the backing component is dropped from the conversion (via
+``set_knight_shift_config``, so the trace does not regenerate). Removing
+every component turns the conversion off.
 
 **Fitting the anisotropy** :math:`K(\theta)`. With **Angle (°)** as the trend
 x-axis, the model-fit builder offers two angle-only basis models alongside the
@@ -1126,7 +1242,7 @@ usual ones:
 
 .. math::
 
-   K(\theta) = K_{\mathrm{iso}} + K_{\mathrm{ax}}\,\frac{3\cos^2\theta - 1}{2}
+   K(\theta) = K_{\mathrm{iso}} + K_{\mathrm{ax}}\,\frac{3\cos^2(\theta - \theta_0) - 1}{2}
    \qquad\text{(}\texttt{KnightAnisotropy}\text{)}
 
 for the axial dipolar form — the isotropic contact term :math:`K_{\mathrm{iso}}`
@@ -1138,11 +1254,22 @@ two-fold modulation
    K(\theta) = K_{\mathrm{avg}} + K_{\mathrm{amp}}\cos 2(\theta - \theta_0)
    \qquad\text{(}\texttt{AngularCos2}\text{)}
 
-for a crystal rotated in a plane, with :math:`\theta_0` the principal-axis
-offset. Both take :math:`\theta` in degrees, so they fit directly against the
-Angle axis (folded or not). The diagonal dipolar-tensor components recovered for
-rotations about the crystal axes constrain the muon stopping site. For a
-worked example end to end, see :doc:`/workflows/knight_shift_angle`.
+for a crystal rotated in a plane. Both models carry a :math:`\theta_0` term —
+the goniometer/mount misalignment between the zero of the angle scale and the
+crystal's principal axis, since a real mount is never perfectly aligned; without
+it, that misalignment would otherwise bias :math:`K_{\mathrm{iso}}` and
+:math:`K_{\mathrm{ax}}` (or :math:`K_{\mathrm{avg}}` and :math:`K_{\mathrm{amp}}`)
+directly. Both forms are invariant under a :math:`90^\circ` shift of
+:math:`\theta_0` together with a sign flip of the anisotropic amplitude, so the
+joint fit canonicalises the fitted :math:`\theta_0` into
+:math:`(-45^\circ, 45^\circ]` — folding to the small-:math:`|\theta_0|`
+representation so a mount that is nearly aligned reads with a small offset and
+a physically sensible amplitude sign, rather than an equally valid but
+larger-offset relabelling of the same curve. Both models take :math:`\theta` in
+degrees, so they fit directly against the Angle axis (folded or not). The
+diagonal dipolar-tensor components recovered for rotations about the crystal
+axes constrain the muon stopping site. For a worked example end to end, see
+:doc:`/workflows/knight_shift_angle`.
 
 **Clogston–Jaccarino** (:math:`K` vs :math:`\chi`). Plotting the Knight shift
 against the bulk susceptibility with temperature as the implicit parameter gives
