@@ -35,8 +35,8 @@ from asymmetry.gui.panels.fit_panel import (
     _get_file_value_for_parameter,
 )
 from asymmetry.gui.styles.widgets import make_section
-from asymmetry.gui.widgets.collapsible_section import CollapsibleSection
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox
+from asymmetry.gui.widgets.panel_section import PanelSection
 
 #: Fit-target choices (label, mode key) shown in the count-domain selector.
 #: Labels stay short so the selector does not set the Fit dock's minimum width;
@@ -145,7 +145,9 @@ class MultiGroupFitWindow(QWidget):
         self._target_form.addRow(self._side_label, self._side_combo)
 
         # ── Collapsed: count-fit options (Cost / Skip / Nuisances / Double pulse). ──
-        self._count_options_section = CollapsibleSection("Count-fit options", expanded=False)
+        self._count_options_section = PanelSection(
+            "Count-fit options", collapsible=True, expanded=False
+        )
         options_form = QFormLayout()
         options_form.setContentsMargins(0, 0, 0, 0)
         self._count_options_section.addLayout(options_form)
@@ -224,7 +226,7 @@ class MultiGroupFitWindow(QWidget):
         options_form.addRow(self._dpsep_label, dpsep_row)
 
         # ── Collapsed: calibration (promote fitted count terms → the grouping). ──
-        self._calibration_section = CollapsibleSection("Calibration", expanded=False)
+        self._calibration_section = PanelSection("Calibration", collapsible=True, expanded=False)
         calibration_form = QFormLayout()
         calibration_form.setContentsMargins(0, 0, 0, 0)
         self._calibration_section.addLayout(calibration_form)

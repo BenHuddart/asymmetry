@@ -94,8 +94,8 @@ from asymmetry.gui.styles.widgets import (
     make_section_header,
     make_warning_banner,
 )
-from asymmetry.gui.widgets.collapsible_section import CollapsibleSection
 from asymmetry.gui.widgets.decision_trail import DecisionTrail
+from asymmetry.gui.widgets.panel_section import PanelSection
 from asymmetry.gui.widgets.screen_sizing import resize_to_available
 from asymmetry.gui.widgets.wizard_scope_selector import WizardScopeSelector
 from asymmetry.gui.widgets.wizard_series_card import (
@@ -477,15 +477,15 @@ class GlobalFitWizardWindow(WizardWindowBase):
         layout.addStretch()
         return self._make_scroll_page(content)
 
-    def _build_expectations_section(self) -> CollapsibleSection:
+    def _build_expectations_section(self) -> PanelSection:
         """Build the embedded parameter-expectations editor (ex modal dialog).
 
         Screening no longer blocks on a dialog: the table is populated from the
         candidate portfolio when the context arrives, and *Run screening* reads
         it in place (invalid bounds surface inline and stop the run).
         """
-        self._expectations_section = CollapsibleSection(
-            "Guide the search (optional)", expanded=False
+        self._expectations_section = PanelSection(
+            "Guide the search (optional)", collapsible=True, expanded=False
         )
         hint = QLabel(
             "The wizard explores the candidate families below. Review the combined "
@@ -534,7 +534,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
         layout.addWidget(self._running_header_label)
         self._running_trail = DecisionTrail()
         layout.addWidget(self._running_trail)
-        self._log_section = CollapsibleSection("Live log", expanded=False)
+        self._log_section = PanelSection("Live log", collapsible=True, expanded=False)
         self._log_panel = LogPanel()
         self._log_panel.setMinimumHeight(180)
         self._log_section.addWidget(self._log_panel)

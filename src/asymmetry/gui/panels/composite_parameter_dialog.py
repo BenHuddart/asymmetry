@@ -26,6 +26,7 @@ from asymmetry.core.fitting.composite_parameters import (
     validate_composite_expression,
 )
 from asymmetry.gui.styles import tokens
+from asymmetry.gui.styles.metrics import dialog_width
 
 
 class CompositeParameterDialog(QDialog):
@@ -49,7 +50,7 @@ class CompositeParameterDialog(QDialog):
             if initial_definition is not None
             else "Create Composite Parameter"
         )
-        self.setMinimumWidth(760)
+        self.setMinimumWidth(dialog_width(106))  # ~760px at default scale
 
         self._available_parameters = sorted(
             {str(name) for name in available_parameters if str(name)}

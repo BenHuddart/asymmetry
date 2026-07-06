@@ -17,6 +17,7 @@ This directory contains all project documentation.
 ### Developer Documentation
 - **[README.md](README.md)**: Documentation build instructions
 - **[ARCHITECTURE.md](ARCHITECTURE.md)**: System design, architecture, and specifications
+- **[GUI_GUIDELINES.md](GUI_GUIDELINES.md)**: How to build GUI here — tokens, fonts, metrics, PanelSection/ActionFooter, the UI zoom, and what the harness enforces
 - **[HARNESS.md](HARNESS.md)**: Agent harness workflow and validation commands
 - **[porting/README.md](porting/README.md)**: Policy and required artifacts for study-first feature ports
 - **[QUALITY.md](QUALITY.md)**: Current quality map, risk areas, and validation paths
@@ -50,6 +51,7 @@ This directory contains all project documentation.
 docs/
 ├── README.md              # This file
 ├── ARCHITECTURE.md        # System architecture and design principles
+├── GUI_GUIDELINES.md      # How to build GUI here (tokens, fonts, metrics, panels, zoom)
 ├── HARNESS.md             # Agent harness workflow
 ├── porting/               # Study-first porting workflow and feature studies
 ├── QUALITY.md             # Quality map and risk areas

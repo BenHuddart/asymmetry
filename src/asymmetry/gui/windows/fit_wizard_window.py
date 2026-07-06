@@ -71,8 +71,8 @@ from asymmetry.core.fitting.wizard_scope import (
 from asymmetry.core.fourier.fft import fft_asymmetry
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import build_primary_button_qss, make_warning_banner
-from asymmetry.gui.widgets.collapsible_section import CollapsibleSection
 from asymmetry.gui.widgets.decision_trail import DecisionTrail, TrailSeparator
+from asymmetry.gui.widgets.panel_section import PanelSection
 from asymmetry.gui.widgets.screen_sizing import resize_to_available
 from asymmetry.gui.widgets.wizard_answer_card import WizardAnswerCard
 from asymmetry.gui.widgets.wizard_scope_selector import WizardScopeSelector
@@ -219,7 +219,9 @@ class FitWizardWindow(WizardWindowBase):
         layout.addWidget(self._welcome_hint_label)
 
         # Collapsed optional-guidance section: scope selector + FFT/peaks seeding.
-        self._guidance_section = CollapsibleSection("Guide the analysis (optional)", expanded=False)
+        self._guidance_section = PanelSection(
+            "Guide the analysis (optional)", collapsible=True, expanded=False
+        )
         self._guidance_scope_slot = QWidget()
         QVBoxLayout(self._guidance_scope_slot).setContentsMargins(0, 0, 0, 0)
         self._guidance_fingerprint_slot = QWidget()

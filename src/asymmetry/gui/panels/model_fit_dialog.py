@@ -51,7 +51,7 @@ from asymmetry.core.fitting.parameter_models import (
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.fit_settings import fit_quality_confidence
-from asymmetry.gui.styles import tokens
+from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.styles.widgets import (
     _FIT_VERDICT_COLOURS,
     RESULT_BOX_NEUTRAL_STYLE,
@@ -589,6 +589,12 @@ class ModelFitDialog(QDialog):
         # splitter's size negotiation: the scroll area itself only demands
         # _LEFT_PANE_MIN_WIDTH, and any wider row scrolls horizontally instead
         # of starving (or clipping) the preview pane on the right.
+        #
+        # Sized via metrics.dialog_width (not a class constant): it reads the
+        # live application font, so it must be computed per-instance once a
+        # QApplication is guaranteed to exist, not at class-definition time.
+        self._LEFT_PANE_MIN_WIDTH = metrics.dialog_width(58)  # ~420px at default scale
+        self._PREVIEW_PANE_MIN_WIDTH = metrics.dialog_width(47)  # ~340px at default scale
         top_layout = QVBoxLayout(self)
 
         left_pane = QWidget()
@@ -923,12 +929,6 @@ class ModelFitDialog(QDialog):
     #: Below this usable width the right-hand preview pane auto-collapses and a
     #: "Show preview" toggle appears so it can be restored.
     _PREVIEW_NARROW_THRESHOLD = 900
-    #: Floor for the (scrollable) left pane so its controls stay usable even
-    #: when the splitter hands it less than its content's natural width.
-    _LEFT_PANE_MIN_WIDTH = 420
-    #: Floor for the preview pane so it can never be squashed below a usable
-    #: width — this is the number the bug report wants guaranteed on load.
-    _PREVIEW_PANE_MIN_WIDTH = 340
     #: Share of the dialog's usable width given to the left pane when
     #: computing the proportional initial/expanded split (see
     #: ``_expanded_split_sizes``).

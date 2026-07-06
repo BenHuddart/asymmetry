@@ -32,7 +32,6 @@ from PySide6.QtWidgets import (
     QDialog,
     QDoubleSpinBox,
     QFileDialog,
-    QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -50,14 +49,17 @@ from asymmetry.gui.export_paths import default_export_path, remember_export_path
 from asymmetry.gui.panels.draggable_handles import nearest_handle
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
+from asymmetry.gui.styles.metrics import field_width_for
 from asymmetry.gui.styles.plots import draw_empty_state_message, draw_fit_range_span, style_axes
 from asymmetry.gui.styles.widgets import (
     build_primary_button_qss,
+    info_html,
     make_provenance_label,
 )
 from asymmetry.gui.widgets.axis_limits import AxisLimitControls
 from asymmetry.gui.widgets.mpl_canvas import create_canvas
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox
+from asymmetry.gui.widgets.panel_section import PanelSection
 
 if TYPE_CHECKING:
     from matplotlib.figure import Figure
@@ -92,8 +94,10 @@ class ALCFitPanel(QWidget):
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
-        window_box = QGroupBox("Integration window")
-        window_layout = QVBoxLayout(window_box)
+        window_section = PanelSection(
+            "Integration window",
+            hint="Drag the shaded range on the time plot, or set it here.",
+        )
         range_row = QHBoxLayout()
         range_row.setContentsMargins(6, 4, 6, 4)
         range_row.setSpacing(4)
@@ -106,12 +110,8 @@ class ALCFitPanel(QWidget):
         range_row.addWidget(self._max_spin)
         range_row.addWidget(QLabel("µs"))
         range_row.addStretch()
-        window_layout.addLayout(range_row)
-        hint = QLabel("Drag the shaded range on the time plot, or set it here.")
-        hint.setWordWrap(True)
-        hint.setStyleSheet("color: gray;")
-        window_layout.addWidget(hint)
-        layout.addWidget(window_box)
+        window_section.addLayout(range_row)
+        layout.addWidget(window_section)
 
         self._min_spin.editingFinished.connect(self._on_spin_committed)
         self._max_spin.editingFinished.connect(self._on_spin_committed)
@@ -142,8 +142,8 @@ class ALCFitPanel(QWidget):
         spin.setDecimals(3)
         spin.setRange(-1000.0, 1000.0)
         spin.setSingleStep(0.1)
-        spin.setMinimumWidth(90)
         spin.setFont(mono_font(11.0))
+        spin.setMinimumWidth(field_width_for(8, spin))  # ~90px at the mono field font
         spin.setEnabled(False)  # enabled once the plot has a fit-range
         return spin
 
@@ -282,9 +282,12 @@ class ALCScanView(QWidget):
         analysis = QWidget()
         analysis_layout = QVBoxLayout(analysis)
         analysis_layout.setContentsMargins(0, 0, 0, 0)
-        analysis_layout.addWidget(self._build_baseline_group())
-        analysis_layout.addWidget(self._build_peaks_group())
-        analysis_layout.addWidget(self._build_rf_group())
+        self._baseline_section = self._build_baseline_group()
+        self._peaks_section = self._build_peaks_group()
+        self._rf_section = self._build_rf_group()
+        analysis_layout.addWidget(self._baseline_section)
+        analysis_layout.addWidget(self._peaks_section)
+        analysis_layout.addWidget(self._rf_section)
         analysis_layout.addStretch(0)
         self._analysis_scroll = QScrollArea()
         self._analysis_scroll.setWidgetResizable(True)
@@ -482,19 +485,19 @@ class ALCScanView(QWidget):
                 field.setValue(float(value))
 
     @staticmethod
-    def _collapsible_group(title: str) -> tuple[QGroupBox, QVBoxLayout]:
-        """A checkable group box that hides its content when unchecked."""
-        group = QGroupBox(title)
-        group.setCheckable(True)
-        group.setChecked(True)
-        content = QWidget()
-        shell = QVBoxLayout(group)
-        shell.setContentsMargins(6, 2, 6, 6)
-        shell.addWidget(content)
-        group.toggled.connect(content.setVisible)
-        return group, QVBoxLayout(content)
+    def _collapsible_group(
+        title: str, *, slug: str, expanded: bool = True
+    ) -> tuple[PanelSection, QVBoxLayout]:
+        """A collapsible BENCH section persisted under ``alc/sections/<slug>``."""
+        section = PanelSection(
+            title,
+            collapsible=True,
+            expanded=expanded,
+            settings_key=f"alc/sections/{slug}",
+        )
+        return section, section.body_layout
 
-    def _build_baseline_group(self) -> QGroupBox:
+    def _build_baseline_group(self) -> PanelSection:
         """Baseline controls: model + non-resonant regions table + Fit button.
 
         The "Fit baseline" button sits on its own row at the bottom rather than at
@@ -504,7 +507,7 @@ class ALCScanView(QWidget):
         right edge with no way to reach it (test_rf_fit_row_reachable; mirrors the
         RF group's wrapping in ``_build_rf_group``).
         """
-        group, outer = self._collapsible_group("Baseline")
+        group, outer = self._collapsible_group("Baseline", slug="baseline")
 
         row = QHBoxLayout()
         row.addWidget(QLabel("Model:"))
@@ -546,7 +549,7 @@ class ALCScanView(QWidget):
         outer.addLayout(fit_row)
         return group
 
-    def _build_peaks_group(self) -> QGroupBox:
+    def _build_peaks_group(self) -> PanelSection:
         """Peak controls: add/remove Gaussian/Lorentzian peaks + Fit peaks.
 
         The buttons are wrapped to fit the ~360px inspector deck (the analysis
@@ -557,7 +560,7 @@ class ALCScanView(QWidget):
         add pair and "− peak" sit on separate rows and "Fit peaks" gets its own
         row beneath the table.
         """
-        group, outer = self._collapsible_group("Peaks")
+        group, outer = self._collapsible_group("Peaks", slug="peaks")
 
         add_row = QHBoxLayout()
         add_g = QPushButton("+ Gaussian")
@@ -585,7 +588,6 @@ class ALCScanView(QWidget):
 
         self._peaks_results = QLabel("")
         self._peaks_results.setWordWrap(True)
-        self._peaks_results.setStyleSheet(f"color: {tokens.ACCENT};")
         outer.addWidget(self._peaks_results)
 
         fit_row = QHBoxLayout()
@@ -596,7 +598,7 @@ class ALCScanView(QWidget):
         outer.addLayout(fit_row)
         return group
 
-    def _build_rf_group(self) -> QGroupBox:
+    def _build_rf_group(self) -> PanelSection:
         """RF-resonance fit: exact muon+proton model → A_µ, A_p (collapsed by default).
 
         Fits the (Green − Red) field scan with the ``RFResonanceMuP`` component:
@@ -605,8 +607,8 @@ class ALCScanView(QWidget):
         fit. The amplitudes/widths/background are seeded from the data by the core
         helper, so only these three physics inputs are exposed here.
         """
-        group, outer = self._collapsible_group("RF resonance (A_µ, A_p)")
-        group.setChecked(False)  # advanced; collapsed until needed
+        # Advanced; collapsed until needed (expanded=False).
+        group, outer = self._collapsible_group("RF resonance (A_µ, A_p)", slug="rf", expanded=False)
 
         # One labeled row per seed. A single horizontal row of three MHz
         # spinboxes needs ~510px — wider than the ~360px inspector deck — and
@@ -639,7 +641,6 @@ class ALCScanView(QWidget):
 
         self._rf_results = QLabel("")
         self._rf_results.setWordWrap(True)
-        self._rf_results.setStyleSheet(f"color: {tokens.ACCENT};")
         outer.addWidget(self._rf_results)
         return group
 
@@ -651,8 +652,8 @@ class ALCScanView(QWidget):
         spin.setRange(0.0, 100000.0)
         spin.setSingleStep(1.0)
         spin.setValue(float(default))
-        spin.setMinimumWidth(80)
         spin.setFont(mono_font(11.0))
+        spin.setMinimumWidth(field_width_for(7, spin))  # ~80px at the mono field font
         return spin
 
     def rf_nu(self) -> float:
@@ -669,7 +670,7 @@ class ALCScanView(QWidget):
 
     def set_rf_results(self, summary: str) -> None:
         """Show the RF-resonance fit read-out (A_µ / A_p)."""
-        self._rf_results.setText(summary)
+        self._rf_results.setText(info_html(summary) if summary else "")
 
     #: Derivative-checkbox label per x-axis (the y-quantity is dA/dx).
     _DERIV_LABELS = {"field": "dA/dB", "temperature": "dA/dT", "run": "dA/d(run)"}
@@ -1067,7 +1068,11 @@ class ALCScanView(QWidget):
                     item = self._peaks_table.item(row, col)
                     if item is not None:
                         item.setText(f"{res[key]:.4g}")
-        self._peaks_results.setText(summary)
+        # One line per peak: info_html's <span> flips the label into rich text,
+        # where Qt collapses bare "\n" (unlike plain text) — convert to <br>
+        # so a multi-peak summary still renders one line per peak.
+        html_summary = info_html(summary.replace("\n", "<br>")) if summary else ""
+        self._peaks_results.setText(html_summary)
 
     def show_fit_overlay(self, x: NDArray[np.float64], fit_curve: NDArray[np.float64]) -> None:
         """Overlay the total (baseline + peaks) fit curve on the scan plot.

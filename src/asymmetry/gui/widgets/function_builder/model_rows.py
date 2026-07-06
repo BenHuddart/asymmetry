@@ -63,6 +63,44 @@ _ROW_MIME_TYPE = "application/x-asymmetry-model-row"
 
 _DEFAULT_OPERATORS: tuple[str, ...] = ("+", "-", "*", "/")
 
+#: A between-rows drop zone's idle style — repeated by _DropTarget's
+#: constructor and both its drag-leave/drop handlers (3 call sites), so this
+#: is the single copy they all share.
+_DROP_TARGET_IDLE_STYLE = "background: transparent;"
+
+
+def _model_row_style(*, selected: bool) -> str:
+    """QSS for one ``_RowWidget`` frame, selected or not.
+
+    Shared by :meth:`_RowWidget._refresh_style` so the selected/unselected
+    treatments (both ``#modelRow {...}`` rules differing only in accent vs.
+    neutral colors) are built from one place.
+    """
+    if selected:
+        return (
+            f"#modelRow {{ background: {tokens.ACCENT_SOFT}; "
+            f"border: 1px solid {tokens.ACCENT}; border-radius: 4px; }}"
+        )
+    return (
+        f"#modelRow {{ background: {tokens.SURFACE}; "
+        f"border: 1px solid {tokens.BORDER}; border-radius: 4px; }}"
+    )
+
+
+def _group_frame_style(*, is_fraction: bool, color: str) -> str:
+    """QSS for a ``#groupFrame`` container, fraction or plain.
+
+    Shared by :meth:`ModelRowList._render_container` so the fraction-group
+    (accent-colored, 2px) and plain-group (neutral, 1px) frame borders are
+    built from one place; both differ from each other only in border color
+    and width, and share the same surface fill and radius.
+    """
+    width = 2 if is_fraction else 1
+    return (
+        f"#groupFrame {{ border: {width}px solid {color}; border-radius: 6px; "
+        f"background: {tokens.SURFACE_ALT}; }}"
+    )
+
 
 @dataclass
 class _Node:
@@ -237,16 +275,7 @@ class _RowWidget(QFrame):
 
     def _refresh_style(self) -> None:
         selected = self._component_index in self._owner._selected_indices
-        if selected:
-            self.setStyleSheet(
-                f"#modelRow {{ background: {tokens.ACCENT_SOFT}; "
-                f"border: 1px solid {tokens.ACCENT}; border-radius: 4px; }}"
-            )
-        else:
-            self.setStyleSheet(
-                f"#modelRow {{ background: {tokens.SURFACE}; "
-                f"border: 1px solid {tokens.BORDER}; border-radius: 4px; }}"
-            )
+        self.setStyleSheet(_model_row_style(selected=selected))
 
     # -- selection + drag ---------------------------------------------------
     def mousePressEvent(self, event) -> None:  # noqa: N802
@@ -281,7 +310,7 @@ class _DropTarget(QFrame):
         self._before_index = before_index
         self.setAcceptDrops(True)
         self.setFixedHeight(6)
-        self.setStyleSheet("background: transparent;")
+        self.setStyleSheet(_DROP_TARGET_IDLE_STYLE)
 
     def dragEnterEvent(self, event) -> None:  # noqa: N802
         if event.mimeData().hasFormat(_ROW_MIME_TYPE):
@@ -289,10 +318,10 @@ class _DropTarget(QFrame):
             self.setStyleSheet(f"background: {tokens.ACCENT};")
 
     def dragLeaveEvent(self, event) -> None:  # noqa: N802
-        self.setStyleSheet("background: transparent;")
+        self.setStyleSheet(_DROP_TARGET_IDLE_STYLE)
 
     def dropEvent(self, event) -> None:  # noqa: N802
-        self.setStyleSheet("background: transparent;")
+        self.setStyleSheet(_DROP_TARGET_IDLE_STYLE)
         raw = bytes(event.mimeData().data(_ROW_MIME_TYPE)).decode("ascii")
         try:
             source_index = int(raw)
@@ -1126,18 +1155,12 @@ class ModelRowList(QWidget):
             amplitude_n = node.start + 1
             title = QLabel(f"Fraction group · amplitude A_{amplitude_n}")
             title.setStyleSheet(f"color: {color}; font-weight: 600;")
-            frame.setStyleSheet(
-                f"#groupFrame {{ border: 2px solid {color}; border-radius: 6px; "
-                f"background: {tokens.SURFACE_ALT}; }}"
-            )
+            frame.setStyleSheet(_group_frame_style(is_fraction=True, color=color))
         else:
             color = tokens.BORDER_STRONG
             title = QLabel("Group")
             title.setStyleSheet(f"color: {tokens.TEXT}; font-weight: 600;")
-            frame.setStyleSheet(
-                f"#groupFrame {{ border: 1px solid {tokens.BORDER_STRONG}; "
-                f"border-radius: 6px; background: {tokens.SURFACE_ALT}; }}"
-            )
+            frame.setStyleSheet(_group_frame_style(is_fraction=False, color=color))
         header.addWidget(title)
         header.addStretch(1)
 

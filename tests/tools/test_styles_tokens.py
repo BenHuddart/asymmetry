@@ -1,72 +1,42 @@
-"""Verify that cleaned GUI files contain no raw hex-colour string literals.
+"""Verify the GUI colour tokens and the no-raw-hex guard.
 
-Every file in CLEAN_FILES was explicitly converted during the BENCH redesign
-phases 11-15.  Any new `"#rrggbb"` literal in those files is a regression:
-colours must come from `styles/tokens.py` or a helper in `styles/widgets.py`.
-
-Files with deliberate non-BENCH hex literals (period-mode palettes, component
-colour cycles, specialist diagram colours) are intentionally excluded from this
-list and should stay that way.
+The no-raw-hex rule is enforced repository-wide by
+:func:`tools.harness.find_raw_hex_colour_violations` (over all of ``gui/``
+outside ``styles/``, with a per-file allowlist for specialist matplotlib /
+QPainter / palette colours). This module keeps a single test that delegates to
+that function so there is *one* home for the rule, plus the token-inventory
+spot-checks.
 """
 
 from __future__ import annotations
 
-import re
+import importlib.util
+import sys
 from pathlib import Path
 
-import pytest
-
-_GUI_ROOT = Path(__file__).parent.parent.parent / "src" / "asymmetry" / "gui"
-
-# Regex: a hex-colour string starting with # immediately after an opening
-# quote.  Matches "  "#1f4d8a"  and  '#e8eef7'  but NOT  # comments  or
-# triple-quoted docstrings where the # is not right after a quote character.
-_HEX_IN_STRING = re.compile(r"""["']#[0-9a-fA-F]{6}""")
-
-# Files that were cleaned during phases 11-15 and should have zero stray hex
-# colour literals.  Period-mode palettes, fit-component colour cycles, wizard
-# plot colours, and detector-schematic diagram colours live elsewhere and are
-# intentionally preserved.
-CLEAN_FILES: list[str] = [
-    "mainwindow.py",
-    "ui_manager.py",
-    "panels/fit_panel.py",
-    # fit_panel.py was split into panels/fit/ (Phase 2 mechanical split); keep
-    # the no-raw-hex guard on the relocated code.
-    "panels/fit/seeding.py",
-    "panels/fit/tab_base.py",
-    "panels/fit/single_tab.py",
-    "panels/fit/global_tab.py",
-    "panels/fit/panel.py",
-    "panels/fourier_panel.py",
-    "panels/data_browser.py",
-    # plot_panel.py's period-mode base colours and the Okabe-Ito overlay palette
-    # were routed through tokens.py / styles/plots.py (F6, P2-6).
-    "panels/plot_panel.py",
-    "panels/cross_group_fit_dialog.py",
-    "panels/model_fit_dialog.py",
-    "panels/composite_parameter_dialog.py",
-    "windows/detector_layout_dialog.py",
-    # fit_wizard_window.py is excluded — its embedded matplotlib preview plots
-    # use specialist non-BENCH hex colours for scientific visualisation.
-]
+_HARNESS_PATH = Path(__file__).resolve().parents[2] / "tools" / "harness.py"
 
 
-@pytest.mark.parametrize("rel_path", CLEAN_FILES)
-def test_no_raw_hex_literals(rel_path: str) -> None:
-    """Fail if a hex-colour string literal appears in a cleaned GUI file."""
-    path = _GUI_ROOT / rel_path
-    if not path.exists():
-        pytest.skip(f"{rel_path} not found")
+def _load_harness():
+    spec = importlib.util.spec_from_file_location("asymmetry_harness", _HARNESS_PATH)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
-    violations: list[str] = []
-    for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        if _HEX_IN_STRING.search(line):
-            violations.append(f"  line {lineno}: {line.strip()}")
 
-    assert not violations, (
-        f"{rel_path} contains raw hex-colour string literals — "
-        f"use tokens.py instead:\n" + "\n".join(violations)
+def test_no_raw_hex_literals_anywhere_in_gui() -> None:
+    """No raw hex-colour literal outside styles/ and the harness allowlist.
+
+    Delegates to the structural harness rule so the check has one home; chrome
+    colours must come from ``styles/tokens.py``.
+    """
+    harness = _load_harness()
+
+    failures = harness.find_raw_hex_colour_violations()
+    assert not failures, "Raw hex-colour literals in gui/:\n" + "\n".join(
+        f.format() for f in failures
     )
 
 
@@ -128,6 +98,8 @@ def test_tokens_module_exports_expected_constants() -> None:
         "PLOT_FIT_PREVIEW",
         "LOGGED_VALUE_FG",
         "WHITE",
+        "CAVEAT_BANNER_BG",
+        "CAVEAT_BANNER_TEXT",
     ]
     missing = [name for name in required if not hasattr(tokens, name)]
     assert not missing, f"Missing token constants: {missing}"

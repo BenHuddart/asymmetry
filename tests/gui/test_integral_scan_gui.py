@@ -660,6 +660,51 @@ def test_alc_analysis_sections_live_in_scroll_area(qapp: QApplication):
     assert content.isAncestorOf(view._peaks_table)
 
 
+def test_alc_sections_default_expanded_state(qapp: QApplication):
+    # Baseline/Peaks start expanded (checked=True in the pre-PanelSection
+    # QGroupBox); RF resonance starts collapsed (advanced, opt-in).
+    view = ALCScanView()
+    assert view._baseline_section.isExpanded()
+    assert view._peaks_section.isExpanded()
+    assert not view._rf_section.isExpanded()
+
+
+def test_alc_section_collapse_state_persists_across_views(qapp: QApplication):
+    # Each analysis section's expanded/collapsed state is persisted under
+    # "alc/sections/<slug>" (PanelSection's settings_key), so collapsing the
+    # RF section (or re-collapsing an expanded one) survives rebuilding the
+    # view — e.g. switching representations and coming back to ALC.
+    first = ALCScanView()
+    assert not first._rf_section.isExpanded()
+    first._rf_section.setExpanded(True)
+    assert first._baseline_section.isExpanded()
+    first._baseline_section.setExpanded(False)
+
+    second = ALCScanView()
+    assert second._rf_section.isExpanded()  # restored True
+    assert not second._baseline_section.isExpanded()  # restored False
+    # Peaks was never touched: keeps its default (expanded).
+    assert second._peaks_section.isExpanded()
+
+
+def test_alc_multi_peak_summary_keeps_one_line_per_peak(qapp: QApplication):
+    # set_peak_results renders its summary through info_html, which flips the
+    # QLabel into rich text — Qt rich text collapses a bare "\n" (unlike plain
+    # text), so a multi-peak, newline-joined summary must convert breaks to
+    # "<br>" or a 2+ peak fit collapses onto one run-on line.
+    view = ALCScanView()
+    summary = "Peak 1 (Gaussian): B₀ = 140 G\nPeak 2 (Lorentzian): B₀ = 160 G"
+    view.set_peak_results([], summary)
+
+    text = view._peaks_results.text()
+    assert text.count("<br>") == 1
+    assert "\n" not in text
+    assert "Peak 1" in text and "Peak 2" in text
+    # The label reports a two-line size hint, not one collapsed line.
+    one_line_height = view._peaks_results.fontMetrics().height()
+    assert view._peaks_results.sizeHint().height() > one_line_height
+
+
 def _seed_view_scan(view: ALCScanView) -> None:
     view.show_scan(
         np.array([0.0, 100.0, 200.0, 300.0]),

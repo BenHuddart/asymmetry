@@ -23,6 +23,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from asymmetry.gui.styles.metrics import dialog_width
+
 _SETTINGS_KEY = "gle/executable_path"
 
 # Common GLE install locations on macOS (Homebrew Intel/ARM, MacPorts, system)
@@ -69,7 +71,7 @@ class GleSetupDialog(QDialog):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("GLE Setup")
-        self.setMinimumWidth(500)
+        self.setMinimumWidth(dialog_width(69))  # ~500px at default scale
         self._build_ui()
         self._refresh_status()
 

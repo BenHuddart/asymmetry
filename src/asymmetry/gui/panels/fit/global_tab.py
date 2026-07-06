@@ -130,6 +130,7 @@ from asymmetry.core.fitting.spectral import (
 from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
 from asymmetry.gui.panels.initial_values_dialog import InitialValuesDialog
 from asymmetry.gui.styles import tokens
+from asymmetry.gui.styles.metrics import char_width, row_height
 from asymmetry.gui.styles.widgets import (
     RESULT_BOX_NEUTRAL_STYLE,
     RESULT_BOX_OBJECT_NAME,
@@ -137,8 +138,8 @@ from asymmetry.gui.styles.widgets import (
     build_primary_button_qss,
     error_html,
     fit_quality_chip_html,
+    fit_quality_tooltip,
     info_html,
-    make_section,
     make_section_header,
     success_html,
     warning_html,
@@ -146,6 +147,7 @@ from asymmetry.gui.styles.widgets import (
 from asymmetry.gui.tasks import TaskRunner, TaskWorker
 from asymmetry.gui.utils.formatting import format_param_label
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollSpinBox
+from asymmetry.gui.widgets.panel_section import PanelSection
 from asymmetry.gui.windows.global_fit_wizard_window import GlobalFitWizardWindow
 
 from .seeding import (
@@ -155,7 +157,6 @@ from .seeding import (
 )
 from .tab_base import (
     _GLOBAL_FIT_PARAMETER_CLASSIFICATION_HELP_TEXT,
-    PARAM_NAME_COL_WIDTH,
     FitParameterTable,
     FitTabBase,
     _apply_domain_mismatch_warning,
@@ -178,6 +179,7 @@ from .tab_base import (
     _start_fit_call,
     _synchronize_fraction_group_values_in_table,
     _wait_for_fit_thread,
+    param_name_col_width,
 )
 
 #: (label, mode) for the batch-series seeding selector, shared by the Batch-tab
@@ -334,10 +336,10 @@ class GlobalFitTab(FitTabBase):
         self._group_param_group_specs: list[tuple[object, str]] = []
 
         # Model selection
-        model_group, model_box = make_section("Model")
+        model_group = PanelSection("Model")
         model_layout = QFormLayout()
         model_layout.setContentsMargins(0, 0, 0, 0)
-        model_box.addLayout(model_layout)
+        model_group.addLayout(model_layout)
         self._build_formula_box()
         self._fit_wizard_btn = QPushButton("Global Wizard...")
         self._fit_wizard_btn.setToolTip("Open the Global Fit Wizard.")
@@ -375,11 +377,11 @@ class GlobalFitTab(FitTabBase):
         layout.addWidget(model_group)
 
         # Fit range section
-        _fr_group, _fr_box = make_section("Fit range")
+        _fr_group = PanelSection("Fit range")
         _fr_layout = QHBoxLayout()
         _fr_layout.setContentsMargins(0, 0, 0, 0)
         _fr_layout.setSpacing(4)
-        _fr_box.addLayout(_fr_layout)
+        _fr_group.addLayout(_fr_layout)
 
         self._build_fit_range_fields()
 
@@ -395,12 +397,13 @@ class GlobalFitTab(FitTabBase):
         layout.addWidget(_fr_group)
 
         # Parameter classification table
-        self._param_group, param_layout = make_section("Parameter Classification")
+        self._param_group = PanelSection("Parameter Classification")
+        param_layout = self._param_group
 
         param_header_layout = QHBoxLayout()
         param_header_layout.addStretch()
         self._param_help_btn = QPushButton("?")
-        self._param_help_btn.setFixedWidth(28)
+        self._param_help_btn.setFixedWidth(char_width(4))
         self._param_help_btn.setToolTip("Explain Global, Local, Fixed, and File parameter roles")
         self._param_help_btn.clicked.connect(self._show_parameter_classification_help)
         param_header_layout.addWidget(self._param_help_btn)
@@ -421,10 +424,10 @@ class GlobalFitTab(FitTabBase):
                 "change it. Per-run fitted values appear in the Parameters tab "
                 "after the batch fit completes."
             )
-        self._param_table.setColumnWidth(0, PARAM_NAME_COL_WIDTH)  # Parameter name
-        self._param_table.setColumnWidth(1, 76)  # Shared seed value
-        self._param_table.setColumnWidth(2, 86)  # Type (dropdown)
-        self._param_table.setColumnWidth(3, 104)  # Bounds
+        self._param_table.setColumnWidth(0, param_name_col_width())  # Parameter name
+        self._param_table.setColumnWidth(1, char_width(11))  # Shared seed value, 76 px
+        self._param_table.setColumnWidth(2, char_width(12))  # Type (dropdown), 86 px
+        self._param_table.setColumnWidth(3, char_width(15))  # Bounds, 104 px
         _apply_param_table_style(self._param_table)
         # Tab commits the open editor on the editable columns (Value, Bounds);
         # without this Qt's focus traversal jumps to the Type combo and the
@@ -445,14 +448,15 @@ class GlobalFitTab(FitTabBase):
         self._grouped_context_label.hide()
         layout.addWidget(self._grouped_context_label)
 
-        self._group_param_group, group_param_layout = make_section("Per-Group Parameters")
+        self._group_param_group = PanelSection("Per-Group Parameters")
+        group_param_layout = self._group_param_group
         self._group_param_table = QTableWidget(0, 4)
         self._group_param_table.setHorizontalHeaderLabels(["Parameter", "Value", "Type", "Bounds"])
         self._group_param_table.horizontalHeader().setStretchLastSection(False)
-        self._group_param_table.setColumnWidth(0, PARAM_NAME_COL_WIDTH)
-        self._group_param_table.setColumnWidth(1, 78)
-        self._group_param_table.setColumnWidth(2, 86)
-        self._group_param_table.setColumnWidth(3, 104)
+        self._group_param_table.setColumnWidth(0, param_name_col_width())
+        self._group_param_table.setColumnWidth(1, char_width(11))  # 78 px
+        self._group_param_table.setColumnWidth(2, char_width(12))  # 86 px
+        self._group_param_table.setColumnWidth(3, char_width(15))  # 104 px
         _apply_param_table_style(self._group_param_table)
         self._group_param_table.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
@@ -470,7 +474,8 @@ class GlobalFitTab(FitTabBase):
         group_param_layout.addLayout(group_param_button_layout)
         layout.addWidget(self._group_param_group)
 
-        self._group_model_group, group_model_layout = make_section("Fit-Function Parameters")
+        self._group_model_group = PanelSection("Fit-Function Parameters")
+        group_model_layout = self._group_model_group
         if self._grouped_single:
             # Single grouped fit: every detector group shares one fit-function,
             # so the physics params take the single-fit-style Fix tickbox instead
@@ -490,10 +495,10 @@ class GlobalFitTab(FitTabBase):
                 ["Parameter", "Value", "Type", "Bounds"]
             )
             self._group_model_table.horizontalHeader().setStretchLastSection(False)
-            self._group_model_table.setColumnWidth(0, PARAM_NAME_COL_WIDTH)
-            self._group_model_table.setColumnWidth(1, 78)
-            self._group_model_table.setColumnWidth(2, 86)
-            self._group_model_table.setColumnWidth(3, 104)
+            self._group_model_table.setColumnWidth(0, param_name_col_width())
+            self._group_model_table.setColumnWidth(1, char_width(11))  # 78 px
+            self._group_model_table.setColumnWidth(2, char_width(12))  # 86 px
+            self._group_model_table.setColumnWidth(3, char_width(15))  # 104 px
             _apply_param_table_style(self._group_model_table)
             self._group_model_table.setSizePolicy(
                 QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
@@ -508,11 +513,11 @@ class GlobalFitTab(FitTabBase):
 
         # In-batch co-add (WiMDA BatchFit Smooth/Bin): co-add successive members
         # through combine_runs before each series fit. Grouped-series mode only.
-        self._coadd_group, _coadd_box = make_section("Co-add members")
+        self._coadd_group = PanelSection("Co-add members")
         coadd_layout = QHBoxLayout()
         coadd_layout.setContentsMargins(0, 0, 0, 0)
         coadd_layout.setSpacing(6)
-        _coadd_box.addLayout(coadd_layout)
+        self._coadd_group.addLayout(coadd_layout)
         self._coadd_mode_combo = QComboBox()
         # Short labels (the tooltip below spells out Bin vs Smooth) so the row
         # does not set the Batch tab's minimum width past the other Fit tabs.
@@ -620,7 +625,7 @@ class GlobalFitTab(FitTabBase):
         results_layout = QVBoxLayout(self._results_group)
         self._result_text = QTextEdit()
         self._result_text.setReadOnly(True)
-        self._result_text.setMaximumHeight(200)
+        self._result_text.setMaximumHeight(row_height() * 10)
         self._result_text.setText("No fit performed yet")
         results_layout.addWidget(self._result_text)
         layout.addWidget(self._results_group)
@@ -1889,6 +1894,7 @@ class GlobalFitTab(FitTabBase):
         # Run the global fit on the shared TaskRunner; the GUI (and Stop
         # button) stay live.
         self._result_text.setText("Fitting... This may take a moment for many datasets...")
+        self._result_text.setToolTip("")
         self._set_series_busy(True)
 
         # Store model for later use in callbacks (read by _on_fit_finished).
@@ -2048,6 +2054,7 @@ class GlobalFitTab(FitTabBase):
         )
 
         self._result_text.setText("Fitting grouped time-domain data...")
+        self._result_text.setToolTip("")
         self._set_series_busy(True)
         self._current_model = grouped_model
         self._current_global_params = global_params
@@ -2295,6 +2302,7 @@ class GlobalFitTab(FitTabBase):
         forward, backward = self._count_fb_groups(dataset)
 
         self._result_text.setText("Fitting count-domain data…")
+        self._result_text.setToolTip("")
         minos = self._minos_checkbox.isChecked()
         # Launch-time context (dataset, groups, cost, side) is bound into the
         # result closures: the user may flip the cost/side controls or switch
@@ -2357,6 +2365,7 @@ class GlobalFitTab(FitTabBase):
         self._count_fit_worker = None
         self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
         self._result_text.setHtml(error_html(f"Count-domain fit failed: {message}"))
+        self._result_text.setToolTip("")
 
     def _on_count_fit_cancelled(self) -> None:
         """Handle a cancelled count-domain fit: restore the panel, record nothing."""
@@ -2370,6 +2379,7 @@ class GlobalFitTab(FitTabBase):
         if not result.success:
             self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
             self._result_text.setHtml(error_html(result.message or "Forward/backward fit failed"))
+            self._result_text.setToolTip("")
             return
         fwd = result.group_results[forward]
         self._store_count_deadtime(fwd, forward)
@@ -2386,6 +2396,9 @@ class GlobalFitTab(FitTabBase):
         self._results_group.setStyleSheet(RESULT_BOX_SUCCESS_STYLE)
         self._result_text.setHtml(
             success_html(f"Forward/backward fit · groups {forward}/{backward}", detail=detail)
+        )
+        self._result_text.setToolTip(
+            fit_quality_tooltip(fwd_summary.get("quality"), fwd_summary.get("params_at_bound"))
         )
         if self._current_dataset is dataset:
             self.count_fit_completed.emit(
@@ -2410,17 +2423,25 @@ class GlobalFitTab(FitTabBase):
         if not result.success:
             self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
             self._result_text.setHtml(error_html(result.message or "Single-histogram fit failed"))
+            self._result_text.setToolTip("")
             return
         self._store_count_deadtime(result, group_id)
         self._store_count_single_extras(dataset, result, group_id)
         rows = [self._count_param_row(result, name) for name in result.parameters.names]
-        detail = f"χ²/ν = {result.reduced_chi_squared:.4f} (cost: {cost})<br>" + "<br>".join(rows)
+        summary = _fit_summary(result)
+        chip = fit_quality_chip_html(summary.get("quality"), summary.get("params_at_bound"))
+        detail = f"χ²/ν = {result.reduced_chi_squared:.4f}{chip} (cost: {cost})<br>" + "<br>".join(
+            rows
+        )
         self._results_group.setStyleSheet(RESULT_BOX_SUCCESS_STYLE)
         self._result_text.setHtml(
             success_html(
                 f"Single-histogram fit · group {group_id} ({side})",
                 detail=detail,
             )
+        )
+        self._result_text.setToolTip(
+            fit_quality_tooltip(summary.get("quality"), summary.get("params_at_bound"))
         )
         if self._current_dataset is dataset:
             self.count_fit_completed.emit(
@@ -2826,6 +2847,7 @@ class GlobalFitTab(FitTabBase):
         }
 
         self._result_text.setText("Fitting grouped time-domain series...")
+        self._result_text.setToolTip("")
         self._set_series_busy(True)
         self._current_model = grouped_model
         self._current_global_params = global_params
@@ -4356,11 +4378,11 @@ class GlobalFitTab(FitTabBase):
         self._group_param_table.setHorizontalHeaderLabels(
             ["Parameter", *value_headers, "Type", "Bounds"]
         )
-        self._group_param_table.setColumnWidth(0, PARAM_NAME_COL_WIDTH)
+        self._group_param_table.setColumnWidth(0, param_name_col_width())
         for offset in range(len(value_headers)):
-            self._group_param_table.setColumnWidth(1 + offset, 78)
-        self._group_param_table.setColumnWidth(self._group_param_type_column(), 86)
-        self._group_param_table.setColumnWidth(self._group_param_bounds_column(), 104)
+            self._group_param_table.setColumnWidth(1 + offset, char_width(11))  # 78 px
+        self._group_param_table.setColumnWidth(self._group_param_type_column(), char_width(12))
+        self._group_param_table.setColumnWidth(self._group_param_bounds_column(), char_width(15))
         self._group_param_table.setRowCount(len(GROUP_NUISANCE_PARAMS))
 
         n0_defaults_by_group: dict[str, float] = {}

@@ -10,9 +10,8 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFormLayout,
-    QFrame,
     QGridLayout,
-    QGroupBox,
+    QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
@@ -28,14 +27,23 @@ from asymmetry.core.maxent import MaxEntConfig
 from asymmetry.gui.panels.spectral_moments_widget import SpectralMomentsWidget
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
-from asymmetry.gui.styles.typography import status_font
-from asymmetry.gui.styles.widgets import apply_param_table_style, build_primary_button_qss
-from asymmetry.gui.widgets.fit_run_controls import FitRunControls
+from asymmetry.gui.styles.metrics import field_width_for
+from asymmetry.gui.styles.widgets import apply_param_table_style, success_html, warning_html
+from asymmetry.gui.widgets.action_footer import ActionFooter
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollSpinBox
+from asymmetry.gui.widgets.panel_section import PanelSection
 
 
 class MaxEntPanel(QWidget):
-    """Controls for Maximum Entropy spectra."""
+    """Controls for Maximum Entropy spectra.
+
+    Controls are tiered by how often they are touched. The always-visible top
+    tier (Mode, Groups, Spectrum, Window, Time) covers the settings changed on
+    every run; the rest live in collapsible :class:`PanelSection`\\s that stay
+    out of the way until expanded. The cycle/Converge run controls live in a
+    pinned :class:`ActionFooter` below the scroll area so they never scroll
+    out of reach — the original defect this refresh fixes.
+    """
 
     #: Emitted when the "Show time-domain reconstruction" toggle changes.
     reconstruction_toggled = Signal(bool)
@@ -64,40 +72,97 @@ class MaxEntPanel(QWidget):
         scroll_area.setWidget(content)
         content_layout = QVBoxLayout(content)
 
-        mode_group = QGroupBox("Mode")
-        mode_form = QFormLayout(mode_group)
+        # ── Always-visible tier ──────────────────────────────────────────────
+        content_layout.addWidget(self._build_mode_section())
+        content_layout.addWidget(self._build_groups_section())
+        content_layout.addWidget(self._build_spectrum_section())
+        content_layout.addWidget(self._build_window_section())
+        content_layout.addWidget(self._build_time_section())
+
+        # ── Collapsed-by-default tiers ───────────────────────────────────────
+        content_layout.addWidget(self._build_pulse_section())
+        content_layout.addWidget(self._build_cycle_refinement_section())
+        content_layout.addWidget(self._build_calibration_section())
+        content_layout.addWidget(self._build_specbg_section())
+
+        # Reconstruction-display checkboxes stay visible, compactly, at the
+        # end of the scrolled body (not tucked in a collapsed section — they
+        # govern what the plot workspace shows right now).
+        content_layout.addWidget(self._build_reconstruction_display_row())
+
+        # Spectral moments over the MaxEnt reconstruction (the canonical input);
+        # the same widget class as the Fourier panel, wired by the host.
+        self._moments_widget = SpectralMomentsWidget()
+        content_layout.addWidget(self._moments_widget)
+
+        content_layout.addStretch()
+
+        # Pinned action footer — the primary action (the cycle/Converge grid)
+        # previously sat mid-scroll with six more sections below it, so it was
+        # buried whichever way the user scrolled. Keep the cycle controls plus
+        # their progress/status feedback outside the scroll area, always visible.
+        layout.addWidget(self._build_action_footer())
+
+        self._auto_window_check.toggled.connect(self._update_window_controls)
+        self._update_window_controls()
+        self._update_mode_dependent_controls()
+        self._update_section_summaries()
+
+    # ── Always-visible sections ─────────────────────────────────────────────
+
+    def _build_mode_section(self) -> PanelSection:
+        section = PanelSection("Mode")
+        mode_form = QFormLayout()
+        # Stack label over field when the dock is narrow instead of
+        # forcing the panel into horizontal scrolling.
+        mode_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        mode_form.setContentsMargins(0, 0, 0, 0)
         self._mode_combo = QComboBox()
         self._mode_combo.addItem("General (multi-group)", userData="general")
         self._mode_combo.addItem("ZF / LF (two-group)", userData="zf_lf")
+        # Let the combo shrink below its longest item so the row never forces
+        # the panel into horizontal scrolling; the popup still shows full text.
+        self._mode_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self._mode_combo.setMinimumContentsLength(12)
         self._mode_combo.setToolTip(
             "ZF/LF mode reconstructs a zero/longitudinal-field distribution from "
             "exactly two forward/backward groups, with phases pinned 0/180° and "
             "amplitudes tied through the run's α."
         )
         self._mode_combo.currentIndexChanged.connect(self._on_mode_changed)
-        mode_form.addRow("Reconstruction:", self._mode_combo)
-        content_layout.addWidget(mode_group)
+        # The section header already reads MODE — a long "Reconstruction:" row
+        # label only repeated it and forced the row past the resting dock width.
+        mode_form.addRow(self._mode_combo)
+        section.addLayout(mode_form)
+        return section
 
-        groups_group = QGroupBox("Groups")
-        groups_layout = QVBoxLayout(groups_group)
+    def _build_groups_section(self) -> PanelSection:
+        section = PanelSection("Groups")
         self._group_table = QTableWidget(0, 3)
-        self._group_table.setHorizontalHeaderLabels(["Include", "Group", "Phase (deg)"])
+        # "✓" header matches the Fourier groups table and keeps the checkbox
+        # column narrow enough for the resting dock width.
+        self._group_table.setHorizontalHeaderLabels(["✓", "Group", "Phase (deg)"])
         apply_param_table_style(self._group_table)
         self._group_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
-        self._group_table.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.ResizeMode.ResizeToContents
-        )
-        self._group_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self._group_table.horizontalHeader().setSectionResizeMode(
-            2, QHeaderView.ResizeMode.ResizeToContents
-        )
+        header = self._group_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self._group_table.setColumnWidth(2, field_width_for(9, self._group_table))
         self._group_table.setMinimumHeight(100)
-        groups_layout.addWidget(self._group_table)
-        content_layout.addWidget(groups_group)
+        section.addWidget(self._group_table)
+        return section
 
-        spectrum_group = QGroupBox("Spectrum")
-        spectrum_form = QFormLayout(spectrum_group)
-        self._points_spin = NoScrollSpinBox()
+    def _build_spectrum_section(self) -> PanelSection:
+        section = PanelSection("Spectrum")
+        spectrum_form = QFormLayout()
+        # Stack label over field when the dock is narrow instead of
+        # forcing the panel into horizontal scrolling.
+        spectrum_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        spectrum_form.setContentsMargins(0, 0, 0, 0)
+        self._points_spin = self._make_scroll_guarded_int_spin()
         self._points_spin.setRange(8, 1 << 20)
         self._points_spin.setSingleStep(512)
         # 1024 resolves the line cleanly; the old 4096 default added a spurious
@@ -109,10 +174,16 @@ class MaxEntPanel(QWidget):
             "0.01", minimum=1.0e-12, maximum=1.0e6, decimals=8
         )
         spectrum_form.addRow("Default level:", self._default_level_edit)
-        content_layout.addWidget(spectrum_group)
+        section.addLayout(spectrum_form)
+        return section
 
-        window_group = QGroupBox("Window")
-        window_form = QFormLayout(window_group)
+    def _build_window_section(self) -> PanelSection:
+        section = PanelSection("Window")
+        window_form = QFormLayout()
+        # Stack label over field when the dock is narrow instead of
+        # forcing the panel into horizontal scrolling.
+        window_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        window_form.setContentsMargins(0, 0, 0, 0)
         self._auto_window_check = QCheckBox("Auto window from field")
         self._auto_window_check.setChecked(True)
         window_form.addRow(self._auto_window_check)
@@ -127,10 +198,16 @@ class MaxEntPanel(QWidget):
 
         self._f_max_edit = self._make_numeric_edit("", minimum=0.0, maximum=1_000_000.0, decimals=6)
         window_form.addRow("Max frequency (MHz):", self._f_max_edit)
-        content_layout.addWidget(window_group)
+        section.addLayout(window_form)
+        return section
 
-        time_group = QGroupBox("Time")
-        time_form = QFormLayout(time_group)
+    def _build_time_section(self) -> PanelSection:
+        section = PanelSection("Time")
+        time_form = QFormLayout()
+        # Stack label over field when the dock is narrow instead of
+        # forcing the panel into horizontal scrolling.
+        time_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        time_form.setContentsMargins(0, 0, 0, 0)
         self._t_min_edit = self._make_numeric_edit(
             "", minimum=-1_000_000.0, maximum=1_000_000.0, decimals=6
         )
@@ -141,7 +218,7 @@ class MaxEntPanel(QWidget):
         )
         time_form.addRow("End (µs):", self._t_max_edit)
 
-        self._time_binning_spin = NoScrollSpinBox()
+        self._time_binning_spin = self._make_scroll_guarded_int_spin()
         self._time_binning_spin.setRange(1, 4096)
         self._time_binning_spin.setValue(1)
         time_form.addRow("Binning:", self._time_binning_spin)
@@ -162,10 +239,27 @@ class MaxEntPanel(QWidget):
             "", minimum=-1_000_000.0, maximum=1_000_000.0, decimals=6
         )
         time_form.addRow("De-weight to (µs):", self._exclude_t_max_edit)
-        content_layout.addWidget(time_group)
+        section.addLayout(time_form)
+        return section
 
-        pulse_group = QGroupBox("Pulse shape (pulsed sources)")
-        pulse_form = QFormLayout(pulse_group)
+    # ── Collapsed-by-default sections ───────────────────────────────────────
+
+    def _build_pulse_section(self) -> PanelSection:
+        # Title kept short so the uppercase header (which cannot wrap) never
+        # forces the panel wider than the resting dock width; the pulsed-source
+        # context lives in the hint.
+        section = PanelSection(
+            "Pulse shape",
+            collapsible=True,
+            settings_key="maxent/sections/pulse_shape",
+            hint="Correct the forward model for the finite muon pulse at a "
+            "pulsed source (ISIS); ignore for continuous beams.",
+        )
+        pulse_form = QFormLayout()
+        # Stack label over field when the dock is narrow instead of
+        # forcing the panel into horizontal scrolling.
+        pulse_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        pulse_form.setContentsMargins(0, 0, 0, 0)
         self._pulse_mode_combo = QComboBox()
         self._pulse_mode_combo.addItem("Ignore", userData="ignore")
         self._pulse_mode_combo.addItem("Single pulse", userData="single")
@@ -174,6 +268,7 @@ class MaxEntPanel(QWidget):
             "Correct the forward model for the finite muon pulse at a pulsed "
             "source (ISIS). Leave on 'Ignore' for continuous-source data."
         )
+        self._pulse_mode_combo.currentIndexChanged.connect(self._update_section_summaries)
         pulse_form.addRow("Mode:", self._pulse_mode_combo)
 
         self._pulse_half_width_edit = self._make_numeric_edit(
@@ -185,12 +280,22 @@ class MaxEntPanel(QWidget):
             "0.324", minimum=0.0, maximum=1_000.0, decimals=6
         )
         pulse_form.addRow("Separation (µs):", self._pulse_separation_edit)
-        content_layout.addWidget(pulse_group)
+        section.addLayout(pulse_form)
+        self._pulse_section = section
+        return section
 
-        fit_group = QGroupBox("Cycle Refinement")
-        fit_layout = QVBoxLayout(fit_group)
+    def _build_cycle_refinement_section(self) -> PanelSection:
+        section = PanelSection(
+            "Cycle refinement",
+            collapsible=True,
+            settings_key="maxent/sections/cycle_refinement",
+        )
         fit_form = QFormLayout()
-        self._inner_spin = NoScrollSpinBox()
+        # Stack label over field when the dock is narrow instead of
+        # forcing the panel into horizontal scrolling.
+        fit_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        fit_form.setContentsMargins(0, 0, 0, 0)
+        self._inner_spin = self._make_scroll_guarded_int_spin()
         self._inner_spin.setRange(1, 200)
         self._inner_spin.setValue(12)
         fit_form.addRow("Inner iterations:", self._inner_spin)
@@ -198,7 +303,7 @@ class MaxEntPanel(QWidget):
             "1.0", minimum=1.0e-12, maximum=1.0e6, decimals=8
         )
         fit_form.addRow("χ² target / N:", self._chi_target_edit)
-        fit_layout.addLayout(fit_form)
+        section.addLayout(fit_form)
 
         self._fit_phases_check = QCheckBox("Fit phases")
         self._fit_phases_check.setChecked(True)
@@ -217,58 +322,42 @@ class MaxEntPanel(QWidget):
             self._fit_constant_background_check,
             self._use_deadtime_check,
         ):
-            fit_layout.addWidget(check)
-        content_layout.addWidget(fit_group)
+            section.addWidget(check)
+        self._cycle_refinement_section = section
+        return section
 
-        self._show_reconstruction_check = QCheckBox("Show time-domain reconstruction")
-        self._show_reconstruction_check.setChecked(False)
-        self._show_reconstruction_check.setToolTip(
-            "Overlay the per-group MaxEnt reconstruction on the measured data "
-            "(time domain), with residuals. Available after a run."
+    def _build_calibration_section(self) -> PanelSection:
+        section = PanelSection(
+            "Calibration",
+            collapsible=True,
+            settings_key="maxent/sections/calibration",
         )
-        self._show_reconstruction_check.toggled.connect(self.reconstruction_toggled.emit)
-        content_layout.addWidget(self._show_reconstruction_check)
-
-        self._combine_reconstruction_check = QCheckBox("Combine groups on one axis")
-        self._combine_reconstruction_check.setChecked(False)
-        self._combine_reconstruction_check.setToolTip(
-            "Overlay every selected group's reconstruction on a single colour-coded "
-            "axis with a shared residuals strip, instead of stacking them per group."
-        )
-        self._combine_reconstruction_check.toggled.connect(self.reconstruction_layout_changed.emit)
-        content_layout.addWidget(self._combine_reconstruction_check)
-
-        self._apply_to_selection_btn = QPushButton("Apply settings to selected runs")
-        content_layout.addWidget(self._apply_to_selection_btn)
-
-        calibration_group = QGroupBox("Calibration")
-        calibration_layout = QVBoxLayout(calibration_group)
         phase_buttons = QGridLayout()
-        self._use_fitted_phases_btn = QPushButton("Use fitted phases")
+        self._use_fitted_phases_btn = self._make_secondary_button("Use fitted phases")
         self._use_fitted_phases_btn.setToolTip(
             "Seed the group phases from the active run's grouped time-domain fit."
         )
         self._use_fitted_phases_btn.clicked.connect(self.use_fitted_phases_requested.emit)
-        self._send_phases_to_fit_btn = QPushButton("Send phases to fit")
+        self._send_phases_to_fit_btn = self._make_secondary_button("Send phases to fit")
         self._send_phases_to_fit_btn.setToolTip(
             "Write the current MaxEnt group phases back to the grouped time-domain fit."
         )
         self._send_phases_to_fit_btn.clicked.connect(self.send_phases_to_fit_requested.emit)
         phase_buttons.addWidget(self._use_fitted_phases_btn, 0, 0)
         phase_buttons.addWidget(self._send_phases_to_fit_btn, 0, 1)
-        calibration_layout.addLayout(phase_buttons)
+        section.addLayout(phase_buttons)
         self._phase_provenance_label = QLabel("")
         self._phase_provenance_label.setWordWrap(True)
         self._phase_provenance_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
-        calibration_layout.addWidget(self._phase_provenance_label)
+        section.addWidget(self._phase_provenance_label)
 
         deadtime_buttons = QGridLayout()
-        self._fit_deadtime_btn = QPushButton("Fit deadtime")
+        self._fit_deadtime_btn = self._make_secondary_button("Fit deadtime")
         self._fit_deadtime_btn.setToolTip(
             "Estimate per-detector deadtime from the early-time count decay."
         )
         self._fit_deadtime_btn.clicked.connect(self.fit_deadtime_requested.emit)
-        self._apply_deadtime_btn = QPushButton("Apply to grouping")
+        self._apply_deadtime_btn = self._make_secondary_button("Apply to grouping")
         self._apply_deadtime_btn.setToolTip(
             "Apply the fitted deadtime to the run's grouping deadtime correction."
         )
@@ -276,21 +365,57 @@ class MaxEntPanel(QWidget):
         self._apply_deadtime_btn.clicked.connect(self.apply_deadtime_requested.emit)
         deadtime_buttons.addWidget(self._fit_deadtime_btn, 0, 0)
         deadtime_buttons.addWidget(self._apply_deadtime_btn, 0, 1)
-        calibration_layout.addLayout(deadtime_buttons)
+        section.addLayout(deadtime_buttons)
         self._deadtime_label = QLabel("")
         self._deadtime_label.setWordWrap(True)
         self._deadtime_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
-        calibration_layout.addWidget(self._deadtime_label)
-        content_layout.addWidget(calibration_group)
+        section.addWidget(self._deadtime_label)
 
-        self._specbg_group = QGroupBox("Zero-frequency background (ZF/LF)")
-        self._specbg_group.setCheckable(True)
-        self._specbg_group.setChecked(False)
-        self._specbg_group.setToolTip(
-            "Subtract a zero-centred pseudo-Voigt model of the static central "
-            "peak from the displayed field-distribution spectrum."
+        export_buttons = QGridLayout()
+        self._export_spectrum_btn = self._make_secondary_button("Export spectrum…")
+        self._export_spectrum_btn.clicked.connect(self.export_spectrum_requested.emit)
+        self._export_log_btn = self._make_secondary_button("Export log…")
+        self._export_log_btn.clicked.connect(self.export_log_requested.emit)
+        export_buttons.addWidget(self._export_spectrum_btn, 0, 0)
+        export_buttons.addWidget(self._export_log_btn, 0, 1)
+        section.addLayout(export_buttons)
+
+        self._diagnostics_label = QLabel("")
+        self._diagnostics_label.setWordWrap(True)
+        section.addWidget(self._diagnostics_label)
+
+        self._calibration_section = section
+        return section
+
+    def _build_specbg_section(self) -> PanelSection:
+        # A collapsible PanelSection replaces the old checkable QGroupBox. The
+        # ENABLE semantic (subtract the central-peak model) is a checkbox in
+        # the body, separate from the section's own expanded/collapsed state;
+        # serialization ("specbg_enabled") is unchanged.
+        # Title kept short so the uppercase header (which cannot wrap) never
+        # forces the panel wider than the resting dock width.
+        section = PanelSection(
+            "ZF/LF background",
+            collapsible=True,
+            settings_key="maxent/sections/specbg",
         )
-        specbg_form = QFormLayout(self._specbg_group)
+        section.set_hint(
+            "Subtract a zero-centred pseudo-Voigt model of the static central "
+            "peak from the displayed field-distribution spectrum (ZF/LF mode)."
+        )
+        self._specbg_enabled_check = QCheckBox("Enabled")
+        self._specbg_enabled_check.setChecked(False)
+        self._specbg_enabled_check.toggled.connect(self._update_section_summaries)
+        section.addWidget(self._specbg_enabled_check)
+
+        specbg_form = QFormLayout()
+
+        # Stack label over field when the dock is narrow instead of
+
+        # forcing the panel into horizontal scrolling.
+
+        specbg_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        specbg_form.setContentsMargins(0, 0, 0, 0)
         self._specbg_gaussian_edit = self._make_numeric_edit(
             "0.1", minimum=0.0, maximum=1_000.0, decimals=6
         )
@@ -303,87 +428,80 @@ class MaxEntPanel(QWidget):
             "0.5", minimum=0.0, maximum=1.0, decimals=6
         )
         specbg_form.addRow("Lorentzian fraction:", self._specbg_fraction_edit)
-        content_layout.addWidget(self._specbg_group)
+        section.addLayout(specbg_form)
 
-        export_buttons = QGridLayout()
-        self._export_spectrum_btn = QPushButton("Export spectrum…")
-        self._export_spectrum_btn.clicked.connect(self.export_spectrum_requested.emit)
-        self._export_log_btn = QPushButton("Export log…")
-        self._export_log_btn.clicked.connect(self.export_log_requested.emit)
-        export_buttons.addWidget(self._export_spectrum_btn, 0, 0)
-        export_buttons.addWidget(self._export_log_btn, 0, 1)
-        content_layout.addLayout(export_buttons)
+        # ``_specbg_group`` is kept as the public name for this section (tests
+        # and mode-gating check ``isEnabled()``/``setEnabled()`` on it — a
+        # PanelSection is a QWidget, so that semantic carries over unchanged).
+        self._specbg_group = section
+        return section
 
-        diagnostics_group = QGroupBox("Diagnostics")
-        diagnostics_layout = QVBoxLayout(diagnostics_group)
-        self._diagnostics_label = QLabel("")
-        self._diagnostics_label.setWordWrap(True)
-        diagnostics_layout.addWidget(self._diagnostics_label)
-        content_layout.addWidget(diagnostics_group)
+    def _build_reconstruction_display_row(self) -> QWidget:
+        """Compact, always-visible reconstruction-display checkboxes.
 
-        # Spectral moments over the MaxEnt reconstruction (the canonical input);
-        # the same widget class as the Fourier panel, wired by the host.
-        self._moments_widget = SpectralMomentsWidget()
-        content_layout.addWidget(self._moments_widget)
+        Kept outside any collapsible section (they govern what the plot
+        workspace shows *right now*, not a setup choice) but placed at the end
+        of the scrolled body per the usage-tier design.
+        """
+        row = QWidget()
+        row_layout = QVBoxLayout(row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(2)
 
-        content_layout.addStretch()
+        self._show_reconstruction_check = QCheckBox("Show time-domain reconstruction")
+        self._show_reconstruction_check.setChecked(False)
+        self._show_reconstruction_check.setToolTip(
+            "Overlay the per-group MaxEnt reconstruction on the measured data "
+            "(time domain), with residuals. Available after a run."
+        )
+        self._show_reconstruction_check.toggled.connect(self.reconstruction_toggled.emit)
+        row_layout.addWidget(self._show_reconstruction_check)
 
-        # Pinned action footer — the primary action (the cycle/Converge grid)
-        # previously sat mid-scroll with six more sections below it, so it was
-        # buried whichever way the user scrolled. Keep the cycle controls plus
-        # their progress/status feedback outside the scroll area, always visible.
-        layout.addWidget(self._build_action_footer())
+        self._combine_reconstruction_check = QCheckBox("Combine groups on one axis")
+        self._combine_reconstruction_check.setChecked(False)
+        self._combine_reconstruction_check.setToolTip(
+            "Overlay every selected group's reconstruction on a single colour-coded "
+            "axis with a shared residuals strip, instead of stacking them per group."
+        )
+        self._combine_reconstruction_check.toggled.connect(self.reconstruction_layout_changed.emit)
+        row_layout.addWidget(self._combine_reconstruction_check)
+        return row
 
-        self._auto_window_check.toggled.connect(self._update_window_controls)
-        self._update_window_controls()
-        self._update_mode_dependent_controls()
+    # ── Pinned action footer ─────────────────────────────────────────────────
 
-    def _build_action_footer(self) -> QWidget:
+    def _build_action_footer(self) -> ActionFooter:
         """Build the always-visible footer holding the MaxEnt cycle controls."""
-        footer = QWidget()
+        footer = ActionFooter()
         footer.setObjectName("maxentActionFooter")
-        footer_layout = QVBoxLayout(footer)
-        footer_layout.setContentsMargins(0, 6, 0, 0)
-        footer_layout.setSpacing(4)
 
-        divider = QFrame()
-        divider.setFrameShape(QFrame.Shape.HLine)
-        divider.setFrameShadow(QFrame.Shadow.Plain)
-        divider.setStyleSheet(f"color: {tokens.BORDER};")
-        footer_layout.addWidget(divider)
+        stepper_row = QWidget()
+        stepper_layout = QHBoxLayout(stepper_row)
+        stepper_layout.setContentsMargins(0, 0, 0, 0)
+        stepper_layout.setSpacing(4)
+        self._cycle_one_btn = self._make_secondary_button("+1")
+        self._cycle_five_btn = self._make_secondary_button("+5")
+        self._cycle_twentyfive_btn = self._make_secondary_button("+25")
+        for button in (self._cycle_one_btn, self._cycle_five_btn, self._cycle_twentyfive_btn):
+            stepper_layout.addWidget(button)
+        footer.add_widget(stepper_row)
 
-        buttons = QGridLayout()
-        self._cycle_one_btn = QPushButton("+1")
-        self._cycle_five_btn = QPushButton("+5")
-        self._cycle_twentyfive_btn = QPushButton("+25")
-        self._converge_btn = QPushButton("Converge")
-        self._converge_btn.setStyleSheet(build_primary_button_qss())
-        self._restart_btn = QPushButton("Restart")
+        self._converge_btn = footer.add_primary("Converge")
+        self._restart_btn = footer.add_secondary("Restart")
         # Cancel starts visible-but-disabled (it sits fixed in the footer,
         # unlike the fit tabs' Stop button which swaps in for Fit); MainWindow
         # wires .clicked externally via hasattr, so on_cancel is left unset here.
-        self._run_controls = FitRunControls(button_label="Cancel", hidden=False, with_progress=True)
-        self._cancel_btn = self._run_controls.button
+        self._cancel_btn = footer.add_secondary("Cancel")
         self._cancel_btn.setEnabled(False)
-        buttons.addWidget(self._cycle_one_btn, 0, 0)
-        buttons.addWidget(self._cycle_five_btn, 0, 1)
-        buttons.addWidget(self._cycle_twentyfive_btn, 0, 2)
-        buttons.addWidget(self._converge_btn, 1, 0, 1, 2)
-        buttons.addWidget(self._restart_btn, 1, 2)
-        buttons.addWidget(self._cancel_btn, 2, 0, 1, 3)
-        footer_layout.addLayout(buttons)
 
-        self._progress_label = self._run_controls.progress_label
-        footer_layout.addWidget(self._progress_label)
-        self._progress_bar = self._run_controls.progress_bar
-        footer_layout.addWidget(self._progress_bar)
+        self._apply_to_selection_btn = footer.add_secondary("Apply to selection")
+        self._apply_to_selection_btn.setToolTip(
+            "Copy this run's MaxEnt settings to the other selected runs."
+        )
 
-        self._status_label = QLabel("")
-        self._status_label.setFont(status_font())
-        self._status_label.setWordWrap(True)
-        footer_layout.addWidget(self._status_label)
-
+        self._action_footer = footer
         return footer
+
+    # ── Shared field/button helpers ─────────────────────────────────────────
 
     def _make_numeric_edit(
         self,
@@ -397,15 +515,25 @@ class MaxEntPanel(QWidget):
         """Return a right-aligned mono-font numeric ``QLineEdit`` with a validator.
 
         Collapses the repeated alignment/font/validator boilerplate shared by the
-        panel's ~dozen numeric fields into one place.
+        panel's ~dozen numeric fields into one place. Sized via
+        :func:`field_width_for` so it renders fully at the ~236px inspector width.
         """
         edit = QLineEdit(text)
         edit.setAlignment(Qt.AlignmentFlag.AlignRight)
         edit.setFont(mono_font(11.0))
         edit.setValidator(QDoubleValidator(minimum, maximum, decimals, self))
+        edit.setMinimumWidth(field_width_for(9, edit))
         if tooltip:
             edit.setToolTip(tooltip)
         return edit
+
+    @staticmethod
+    def _make_secondary_button(text: str) -> QPushButton:
+        return QPushButton(text)
+
+    @staticmethod
+    def _make_scroll_guarded_int_spin() -> NoScrollSpinBox:
+        return NoScrollSpinBox()
 
     @staticmethod
     def _parse_float(text: str, default: float) -> float:
@@ -448,6 +576,22 @@ class MaxEntPanel(QWidget):
         self._half_width_edit.setEnabled(auto)
         self._f_min_edit.setEnabled(not auto)
         self._f_max_edit.setEnabled(not auto)
+
+    # ── Collapsed-section summary chips ─────────────────────────────────────
+
+    def _update_section_summaries(self) -> None:
+        """Refresh each collapsible section's title-suffix summary chip."""
+        pulse_mode = str(self._pulse_mode_combo.currentData() or "ignore")
+        if pulse_mode == "ignore":
+            self._pulse_section.set_title_suffix(None)
+        else:
+            label = "single pulse" if pulse_mode == "single" else "double pulse"
+            self._pulse_section.set_title_suffix(label)
+
+        if self._specbg_enabled_check.isChecked():
+            self._specbg_group.set_title_suffix("on")
+        else:
+            self._specbg_group.set_title_suffix(None)
 
     def set_group_definitions(
         self,
@@ -544,7 +688,7 @@ class MaxEntPanel(QWidget):
             "pulse_half_width_us": self._parse_float(self._pulse_half_width_edit.text(), 0.05),
             "pulse_separation_us": self._parse_float(self._pulse_separation_edit.text(), 0.324),
             "mode": str(self._mode_combo.currentData() or "general"),
-            "specbg_enabled": bool(self._specbg_group.isChecked()),
+            "specbg_enabled": bool(self._specbg_enabled_check.isChecked()),
             "specbg_gaussian_width_mhz": self._parse_float(self._specbg_gaussian_edit.text(), 0.1),
             "specbg_lorentzian_width_mhz": self._parse_float(
                 self._specbg_lorentzian_edit.text(), 0.1
@@ -658,7 +802,7 @@ class MaxEntPanel(QWidget):
         blocker = self._mode_combo.blockSignals(True)
         self._mode_combo.setCurrentIndex(mode_index if mode_index >= 0 else 0)
         self._mode_combo.blockSignals(blocker)
-        self._specbg_group.setChecked(bool(state.get("specbg_enabled", False)))
+        self._specbg_enabled_check.setChecked(bool(state.get("specbg_enabled", False)))
         self._specbg_gaussian_edit.setText(
             self._format_float(state.get("specbg_gaussian_width_mhz", 0.1), "0.1")
         )
@@ -708,25 +852,21 @@ class MaxEntPanel(QWidget):
                 enabled if isinstance(enabled, dict) else None,
             )
         self._update_window_controls()
+        self._update_section_summaries()
 
     def set_status(self, message: str, *, success: bool = False, warning: bool = False) -> None:
-        """Set status text below the action buttons.
+        """Set status text in the pinned footer.
 
         *warning* renders the message in the warning colour (and wins over
         *success*) so a divergence / early-stop notice is visible rather than
         buried in the small diagnostics line.
         """
         if warning:
-            self._status_label.setText(
-                f'<span style="color: {tokens.WARN}; font-weight: 600;">'
-                f"{html.escape(str(message))}</span>"
-            )
+            self._action_footer.set_status(warning_html(html.escape(str(message))))
         elif success:
-            self._status_label.setText(
-                f'<span style="color: {tokens.OK};">● {html.escape(str(message))}</span>'
-            )
+            self._action_footer.set_status(success_html(html.escape(str(message))))
         else:
-            self._status_label.setText(html.escape(str(message)))
+            self._action_footer.set_status(html.escape(str(message)))
 
     def set_busy(self, busy: bool) -> None:
         """Toggle MaxEnt calculation busy state."""
@@ -741,22 +881,16 @@ class MaxEntPanel(QWidget):
         for button in buttons:
             button.setEnabled(not busy)
         self._cancel_btn.setEnabled(busy)
-        self._progress_bar.setVisible(busy)
         if busy:
-            self._progress_bar.setRange(0, 0)
-            self._progress_label.setText("Preparing MaxEnt calculation...")
+            self._action_footer.show_progress("Preparing MaxEnt calculation...")
         else:
-            self._progress_bar.setRange(0, 1)
-            self._progress_bar.setValue(0)
-            self._progress_label.setText("")
+            self._action_footer.hide_progress()
 
     def set_progress(self, current: int, total: int, message: str) -> None:
         """Update progress indicator from the worker thread."""
-        resolved_total = max(1, int(total))
-        resolved_current = max(0, min(int(current), resolved_total))
-        self._progress_bar.setRange(0, resolved_total)
-        self._progress_bar.setValue(resolved_current)
-        self._progress_label.setText(html.escape(str(message)))
+        self._action_footer.show_progress(
+            html.escape(str(message)), current=int(current), total=int(total)
+        )
 
     def set_diagnostics(self, diagnostics: dict | None) -> None:
         """Show a compact diagnostics summary."""

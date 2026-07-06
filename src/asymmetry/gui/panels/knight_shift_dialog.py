@@ -27,6 +27,7 @@ from asymmetry.core.fitting.knight_shift import (
     KnightShiftUnit,
 )
 from asymmetry.core.fitting.parameters import get_param_info
+from asymmetry.gui.styles.metrics import dialog_width
 
 _UNIT_CHOICES = [
     ("Auto (ppm / %)", KnightShiftUnit.AUTO),
@@ -54,7 +55,7 @@ class KnightShiftDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Knight Shift")
-        self.setMinimumWidth(420)
+        self.setMinimumWidth(dialog_width(58))  # ~420px at default scale
         self._components = [str(c) for c in available_components]
         self._result: KnightShiftConfig | None = None
 

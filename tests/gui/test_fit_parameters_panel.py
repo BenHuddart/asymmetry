@@ -411,6 +411,28 @@ def test_secondary_sections_start_collapsed(panel: FitParametersPanel) -> None:
     assert not panel._derived_section.isExpanded()
 
 
+def test_derived_section_expanded_state_persists_across_panels(qapp: QApplication) -> None:
+    """Expanding the Derived-parameters section persists to the next panel.
+
+    The migration to the collapsible ``PanelSection`` gave the section a
+    ``settings_key`` so its state survives a session; previously each panel
+    reset it to collapsed. QSettings is redirected to a per-test temp store by
+    the autouse ``_isolate_qsettings`` fixture, so this only sees state written
+    within the test.
+    """
+    first = FitParametersPanel()
+    assert not first._derived_section.isExpanded()
+    first._derived_section.setExpanded(True)
+
+    second = FitParametersPanel()
+    assert second._derived_section.isExpanded()
+
+    # Collapsing again persists the collapsed state to a further panel.
+    second._derived_section.setExpanded(False)
+    third = FitParametersPanel()
+    assert not third._derived_section.isExpanded()
+
+
 def test_parameter_plot_hosts_label_and_export_controls(panel: FitParametersPanel) -> None:
     assert panel._plot_group.isAncestorOf(panel._add_label_btn)
     assert panel._plot_group.isAncestorOf(panel._clear_labels_btn)

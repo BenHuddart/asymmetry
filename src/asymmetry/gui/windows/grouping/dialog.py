@@ -341,8 +341,8 @@ class GroupingDialog(QDialog):
         form.setHorizontalSpacing(12)
         self._forward_combo = QComboBox()
         self._backward_combo = QComboBox()
-        self._forward_combo.setMinimumWidth(220)
-        self._backward_combo.setMinimumWidth(220)
+        # setMinimumContentsLength sizes the combo to N characters of the
+        # current font, so it tracks the UI zoom without a frozen pixel width.
         self._forward_combo.setMinimumContentsLength(18)
         self._backward_combo.setMinimumContentsLength(18)
         self._refresh_group_combo_items()
@@ -552,10 +552,10 @@ class GroupingDialog(QDialog):
         period_layout.setSpacing(10)
 
         period_specs = [
-            ("Red", str(PeriodMode.RED), "#c00000"),
-            ("Green", str(PeriodMode.GREEN), "#008000"),
-            ("G minus R", str(PeriodMode.GREEN_MINUS_RED), "#0000c0"),
-            ("G plus R", str(PeriodMode.GREEN_PLUS_RED), "#800080"),
+            ("Red", str(PeriodMode.RED), tokens.PERIOD_RED),
+            ("Green", str(PeriodMode.GREEN), tokens.PERIOD_GREEN),
+            ("G minus R", str(PeriodMode.GREEN_MINUS_RED), tokens.PERIOD_DIFF),
+            ("G plus R", str(PeriodMode.GREEN_PLUS_RED), tokens.PERIOD_SUM),
         ]
         for idx, (label, mode_key, color) in enumerate(period_specs):
             btn = QRadioButton(label)

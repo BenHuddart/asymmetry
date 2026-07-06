@@ -211,5 +211,5 @@ class ProjectionChipBar(QWidget):
             " border-radius: 9px;"
             " padding: 2px 10px;"
             "}"
-            f"QPushButton:checked {{ background: {tint}; color: #ffffff; }}"
+            f"QPushButton:checked {{ background: {tint}; color: {tokens.WHITE}; }}"
         )

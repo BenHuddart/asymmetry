@@ -157,10 +157,12 @@ def test_background_hint_label(qapp) -> None:
     from asymmetry.gui.panels.fourier_panel import FourierPanel
 
     panel = FourierPanel()
+    # The inherited-background hint now renders as the ActionFooter hint line.
+    hint = panel._action_footer._hint_label
     panel.set_background_hint(None)
-    assert panel._background_hint_label.text() == "Background: off"
+    assert hint.text() == "Background: off"
     panel.set_background_hint("tail-fit")
-    assert panel._background_hint_label.text() == "Background: tail-fit, inherited from grouping"
+    assert hint.text() == "Background: tail-fit, inherited from grouping"
 
 
 def test_background_hint_helper_reflects_grouping(qapp) -> None:

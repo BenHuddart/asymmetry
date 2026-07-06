@@ -64,6 +64,9 @@ class DockHeader(QWidget):
         layout.setSpacing(4)
 
         self._title_label = QLabel(title or dock.windowTitle().upper())
+        # objectName lets the UI-scale QSS block re-size this label live; the
+        # explicit header_font() still supplies family/weight/letter-spacing.
+        self._title_label.setObjectName("dockHeaderTitle")
         self._title_label.setFont(header_font())
         self._title_label.setStyleSheet(f"color: {tokens.TEXT_MUTED}; background: transparent;")
         layout.addWidget(self._title_label)
