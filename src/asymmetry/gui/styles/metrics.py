@@ -23,6 +23,15 @@ from PySide6.QtGui import QFont, QFontMetrics, QGuiApplication
 #: monotonic in the character count.
 _FIELD_PADDING = 16
 
+#: Extra width (px) a QSpinBox needs beyond :data:`_FIELD_PADDING` for its step
+#: buttons and frame. Measured against the platform style under bench.qss
+#: (macOS spin chrome ≈ 53 px), with slack. A spinbox capped at the bare
+#: :func:`field_width_for` hands this chrome the text area's budget and clips
+#: the digits; the constant keeps :func:`spin_width_for` constructor-safe —
+#: the widget's own size hints are unreliable at construction because the app
+#: stylesheet is (re)applied after the panels are built.
+_SPIN_BUTTONS_ALLOWANCE = 64
+
 #: Vertical padding (px) added to the font line height for a table row so cell
 #: text is not cramped against the grid lines.
 _ROW_PADDING = 6
@@ -64,6 +73,22 @@ def field_width_for(chars: int, widget=None) -> int:
     """
     font = widget.font() if widget is not None else None
     return char_width(chars, font) + _FIELD_PADDING
+
+
+def spin_width_for(chars: int, widget=None) -> int:
+    """Return a pixel width CAP for a spinbox sized to *chars* characters.
+
+    :func:`field_width_for` is a text-area measure; a spinbox's step buttons
+    and frame come out of the same width, so capping a spinbox at the field
+    width squeezes its inner line edit to a sliver and clips the digits (the
+    Fourier zero-pad spin rendered "16" in a 5 px text area). Adds
+    :data:`_SPIN_BUTTONS_ALLOWANCE` on top so the cap always leaves the text
+    its full measure. Pass *chars* at least the digit count of the range's
+    widest value. A size-policy cap is NOT an alternative in this codebase:
+    the inspector forms use ``WrapLongRows``, which stretches fields past
+    their size hint unless an explicit ``maximumWidth`` binds.
+    """
+    return field_width_for(chars, widget) + _SPIN_BUTTONS_ALLOWANCE
 
 
 def dialog_width(chars: int) -> int:

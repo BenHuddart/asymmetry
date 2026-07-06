@@ -1047,9 +1047,10 @@ class TestMainWindowFourier:
         run_numbers = {int(d.run_number) for d in rendered}
         assert run_numbers == {8830, 8831}
 
-    def test_frequency_overlay_skips_uncomputed_runs(self, mainwindow: MainWindow) -> None:
-        # A selected run with no computed spectrum is skipped (and reported),
-        # not recomputed; the computed runs still overlay.
+    def test_frequency_overlay_auto_computes_uncomputed_runs(self, mainwindow: MainWindow) -> None:
+        # A selected run with no computed spectrum is computed off-thread and
+        # joins the overlay once its wave lands — a partial overlay silently
+        # rendered as if it were the whole selection was the failure mode.
         ds1 = self._compute_run_fft(mainwindow, 8832)
         ds2 = self._compute_run_fft(mainwindow, 8833)
         ds3 = _make_fourier_ready_dataset(8834, with_grouping=True)  # never computed
@@ -1058,13 +1059,34 @@ class TestMainWindowFourier:
         mainwindow._frequency_plot_panel.set_overlay_enabled(True)
         mainwindow._data_browser.get_selected_datasets = lambda: [ds1, ds2, ds3]
         mainwindow._sync_frequency_plot_for_current_dataset()
+        _wait_frequency_idle(mainwindow)
+
+        assert 8834 in mainwindow._frequency_spectra_by_run
+        rendered = mainwindow._frequency_plot_panel._current_datasets
+        assert {int(d.run_number) for d in rendered} == {8832, 8833, 8834}
+        # The auto-computed member carries a full recipe + provenance digest,
+        # resolved against its own grouping (not the active run's panel table).
+        recipe = mainwindow._project_model.representation(8834, RepresentationType.FREQ_FFT).recipe
+        assert recipe.get("fourier_config", {}).get("selected_group_ids") == [1, 2]
+        assert recipe.get("grouping_digest")
+
+    def test_frequency_overlay_reports_uncomputable_runs(self, mainwindow: MainWindow) -> None:
+        # A selected run that CANNOT compute (no detector groups) is still
+        # skipped and reported; auto-compute never manufactures a spectrum.
+        ds1 = self._compute_run_fft(mainwindow, 8845)
+        ds2 = self._compute_run_fft(mainwindow, 8846)
+        ds3 = _make_fourier_ready_dataset(8847, with_grouping=False)
+        mainwindow._data_browser.add_dataset(ds3)
+
+        mainwindow._frequency_plot_panel.set_overlay_enabled(True)
+        mainwindow._data_browser.get_selected_datasets = lambda: [ds1, ds2, ds3]
+        mainwindow._sync_frequency_plot_for_current_dataset()
+        _wait_frequency_idle(mainwindow)
 
         rendered = mainwindow._frequency_plot_panel._current_datasets
-        assert {int(d.run_number) for d in rendered} == {8832, 8833}
-        assert 8834 not in mainwindow._frequency_spectra_by_run  # not recomputed
-        assert "8834" in mainwindow.statusBar().currentMessage() or "1 selected" in (
-            mainwindow.statusBar().currentMessage()
-        )
+        assert {int(d.run_number) for d in rendered} == {8845, 8846}
+        assert 8847 not in mainwindow._frequency_spectra_by_run
+        assert "could not be computed" in mainwindow.statusBar().currentMessage()
 
     def test_frequency_overlay_off_renders_single_run(self, mainwindow: MainWindow) -> None:
         # Overlay off: even with multiple runs selected, only the active run shows.
@@ -1264,10 +1286,17 @@ class TestMainWindowFourier:
         _compute_fourier_sync(mainwindow)
         plotted_a = mainwindow._frequency_plot_panel._current_dataset
 
+        # Switching to a never-computed run on the frequency view computes it
+        # on view (off-thread) rather than showing the empty prompt.
         mainwindow._on_dataset_selected(8810)
-        assert mainwindow._frequency_plot_panel._current_dataset is None
+        _wait_frequency_idle(mainwindow)
+        plotted_b = mainwindow._frequency_plot_panel._current_dataset
+        assert plotted_b is not None
+        assert plotted_b.metadata["run_number"] == 8810
 
+        # Switching back serves the cache: same spectrum, no new compute.
         mainwindow._on_dataset_selected(8809)
+        assert not mainwindow._frequency_recompute_active
         restored = mainwindow._frequency_plot_panel._current_dataset
 
         assert plotted_a is not None
@@ -1286,16 +1315,16 @@ class TestMainWindowFourier:
 
         mainwindow._on_dataset_selected(8812)
         _compute_fourier_sync(mainwindow)
+
+        # Switching to a never-computed run computes it on view; once it has
+        # rendered, an explicit recompute must preserve the user's zoom (the
+        # original guarantee this test pinned, now downstream of auto-compute).
+        mainwindow._on_dataset_selected(8815)
+        _wait_frequency_idle(mainwindow)
+        assert mainwindow._frequency_plot_panel._current_dataset is not None
+
         _x_min, _x_max, y_min, y_max = mainwindow._frequency_plot_panel.get_view_limits()
         mainwindow._frequency_plot_panel.set_view_limits(1.25, 3.75, y_min, y_max)
-
-        mainwindow._on_dataset_selected(8815)
-
-        x_min, x_max, _y_min, _y_max = mainwindow._frequency_plot_panel.get_view_limits()
-        assert mainwindow._frequency_plot_panel._current_dataset is None
-        assert x_min == pytest.approx(1.25)
-        assert x_max == pytest.approx(3.75)
-
         _compute_fourier_sync(mainwindow)
 
         computed_x_min, computed_x_max, _computed_y_min, _computed_y_max = (
@@ -2004,6 +2033,139 @@ class TestMainWindowFourier:
 
         assert seen["defer"] is True  # restore_state was asked to defer its draw
         assert seen["plots"] == 1  # exactly one panel plot refresh, not two
+
+
+class TestFourierAutoCompute:
+    """Compute-on-view: entering the FFT view computes a never-computed run.
+
+    The auto-compute path synthesizes a recipe from the current panel settings
+    and the run's own grouping, then reuses the shared async recompute
+    machinery — so everything here lands off-thread behind the overlay.
+    """
+
+    def _add_run(
+        self, mainwindow: MainWindow, run_number: int, *, with_grouping: bool = True
+    ) -> MuonDataset:
+        dataset = _make_fourier_ready_dataset(run_number, with_grouping=with_grouping)
+        mainwindow._data_browser.add_dataset(dataset)
+        return dataset
+
+    def test_entering_frequency_view_computes_automatically(self, mainwindow: MainWindow) -> None:
+        self._add_run(mainwindow, 8850)
+        mainwindow._on_dataset_selected(8850)
+        assert 8850 not in mainwindow._frequency_spectra_by_run
+
+        mainwindow._plot_workspace.set_active_domain("frequency")
+        _wait_frequency_idle(mainwindow)
+
+        assert 8850 in mainwindow._frequency_spectra_by_run
+        recipe = mainwindow._project_model.representation(8850, RepresentationType.FREQ_FFT).recipe
+        assert recipe.get("fourier_config")
+        assert recipe.get("grouping_digest")
+        # Born from the live settings, so in sync — no stale banner.
+        assert mainwindow._fourier_panel.is_stale() is False
+
+    def test_run_switch_in_frequency_view_computes_new_run(self, mainwindow: MainWindow) -> None:
+        self._add_run(mainwindow, 8851)
+        self._add_run(mainwindow, 8852)
+        mainwindow._on_dataset_selected(8851)
+        mainwindow._plot_workspace.set_active_domain("frequency")
+        _wait_frequency_idle(mainwindow)
+
+        mainwindow._on_dataset_selected(8852)
+        _wait_frequency_idle(mainwindow)
+        assert 8852 in mainwindow._frequency_spectra_by_run
+
+    def test_run_without_groups_shows_prompt_not_a_compute(self, mainwindow: MainWindow) -> None:
+        self._add_run(mainwindow, 8853, with_grouping=False)
+        mainwindow._on_dataset_selected(8853)
+        mainwindow._plot_workspace.set_active_domain("frequency")
+        _wait_frequency_idle(mainwindow)
+
+        assert 8853 not in mainwindow._frequency_spectra_by_run
+        representation = mainwindow._project_model.representation(8853, RepresentationType.FREQ_FFT)
+        assert representation is None or not representation.recipe.get("fourier_config")
+
+    def test_existing_recipe_is_never_clobbered_by_seeding(self, mainwindow: MainWindow) -> None:
+        """A run whose recipe exists (project load) recomputes FROM that recipe;
+        the seed path must not overwrite it with panel defaults."""
+        self._add_run(mainwindow, 8857)
+        representation = mainwindow._project_model.ensure_dataset(8857).ensure(
+            RepresentationType.FREQ_FFT
+        )
+        representation.recipe = {"fourier_config": {"display": "Sin", "padding": 2}}
+
+        assert mainwindow._seed_fft_recipe_for_view(8857) is None
+        assert representation.recipe["fourier_config"]["display"] == "Sin"
+
+    def test_failed_auto_compute_is_not_retried_on_next_view(
+        self, mainwindow: MainWindow, monkeypatch
+    ) -> None:
+        import asymmetry.core.representation.frequency as frequency_module
+
+        self._add_run(mainwindow, 8854)
+        mainwindow._on_dataset_selected(8854)
+        calls: list[int] = []
+
+        def _boom(run, config, **kwargs):
+            calls.append(int(run.run_number))
+            raise ValueError("synthetic compute failure")
+
+        monkeypatch.setattr(frequency_module, "compute_average_group_spectrum", _boom)
+        mainwindow._plot_workspace.set_active_domain("frequency")
+        _wait_frequency_idle(mainwindow)
+        assert calls == [8854]
+        assert 8854 not in mainwindow._frequency_spectra_by_run
+
+        # A later view of the same run must not retry the remembered failure.
+        mainwindow._sync_frequency_plot_for_current_dataset()
+        _wait_frequency_idle(mainwindow)
+        assert calls == [8854]
+
+    def test_regroup_discards_spectrum_and_recomputes_live_view(
+        self, mainwindow: MainWindow
+    ) -> None:
+        self._add_run(mainwindow, 8855)
+        mainwindow._on_dataset_selected(8855)
+        mainwindow._plot_workspace.set_active_domain("frequency")
+        _wait_frequency_idle(mainwindow)
+        old_spectrum = mainwindow._frequency_spectra_by_run[8855][0]
+
+        mainwindow._invalidate_fft_after_regroup([8855])
+        _wait_frequency_idle(mainwindow)
+
+        assert 8855 in mainwindow._frequency_spectra_by_run
+        assert mainwindow._frequency_spectra_by_run[8855][0] is not old_spectrum
+        # Recomputed against the (new) grouping: fresh digest, no stale banner.
+        recipe = mainwindow._project_model.representation(8855, RepresentationType.FREQ_FFT).recipe
+        assert recipe.get("grouping_digest")
+        assert mainwindow._fourier_panel.is_stale() is False
+
+    def test_regroup_off_view_defers_recompute_to_next_view(self, mainwindow: MainWindow) -> None:
+        self._add_run(mainwindow, 8858)
+        mainwindow._on_dataset_selected(8858)
+        mainwindow._plot_workspace.set_active_domain("frequency")
+        _wait_frequency_idle(mainwindow)
+
+        mainwindow._plot_workspace.set_active_domain("time")
+        mainwindow._invalidate_fft_after_regroup([8858])
+        # Off the frequency view: discarded, but no compute started.
+        assert 8858 not in mainwindow._frequency_spectra_by_run
+        assert not mainwindow._frequency_recompute_active
+
+        mainwindow._plot_workspace.set_active_domain("frequency")
+        _wait_frequency_idle(mainwindow)
+        assert 8858 in mainwindow._frequency_spectra_by_run
+
+    def test_maxent_view_does_not_auto_compute(self, mainwindow: MainWindow) -> None:
+        self._add_run(mainwindow, 8856)
+        mainwindow._on_dataset_selected(8856)
+        mainwindow._plot_workspace.set_active_domain("frequency")
+        _wait_frequency_idle(mainwindow)
+
+        mainwindow._plot_workspace.set_active_view("maxent")
+        _wait_frequency_idle(mainwindow)
+        assert 8856 not in mainwindow._frequency_cache(RepresentationType.FREQ_MAXENT)
 
 
 class TestMainWindowBasic:
