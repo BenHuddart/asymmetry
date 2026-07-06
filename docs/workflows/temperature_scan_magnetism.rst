@@ -2,7 +2,7 @@ Temperature scan through a magnetic transition
 ==============================================
 
 This chapter is a worked example showing how Asymmetry handles a
-zero-field μSR temperature scan through a magnetic ordering
+zero-field (ZF) μSR temperature scan through a magnetic ordering
 transition. The synthetic data corresponds to the textbook EuO example
 (:math:`T_c \approx 69` K; see Blundell *et al.* 2022 Fig 6.6 and the
 discussion of cubic ferromagnets in Amato & Morenzoni 2024 Ch 5). The
@@ -230,7 +230,7 @@ The analysis exposes four physical quantities:
   2D Ising. EuO sits close to the 3D Heisenberg universality class.
 - :math:`\nu_0` is the muon-site local field at :math:`T = 0`.
   Combined with a calculated dipolar tensor (e.g. from MuFinder or
-  µ-LFC) it pins down which crystallographic site the muon occupies.
+  μ-LFC) it pins down which crystallographic site the muon occupies.
 - The :math:`\lambda` peak at :math:`T_c` is the critical-fluctuation
   signature; its width in temperature is set by the correlation
   length divergence.

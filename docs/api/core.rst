@@ -1,4 +1,4 @@
-Core Data Structures
+Core data structures
 ====================
 
 .. currentmodule:: asymmetry.core.data
@@ -49,7 +49,7 @@ Logbook
    :undoc-members:
    :show-inheritance:
 
-Instrument Geometry
+Instrument geometry
 -------------------
 
 .. autoclass:: asymmetry.core.instrument.DetectorSegment

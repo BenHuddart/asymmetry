@@ -3,6 +3,7 @@
 import os
 import sys
 sys.path.insert(0, os.path.abspath('../src'))
+sys.path.insert(0, os.path.abspath('_ext'))
 
 from asymmetry import __version__
 
@@ -20,6 +21,8 @@ extensions = [
     'sphinx.ext.viewcode',
     'sphinx.ext.intersphinx',
     'sphinx.ext.mathjax',
+    'sphinx_design',
+    'lazy_images',
 ]
 
 templates_path = ['_templates']

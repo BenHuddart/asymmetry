@@ -1,4 +1,4 @@
-Frequency-Domain Fitting
+Frequency-domain fitting
 ========================
 
 Frequency-domain fitting extends the same single-fit, global-fit, and
@@ -8,7 +8,9 @@ Frequency view.  It does not fit the complex FFT directly.
 
 The spectrum you fit can come from either quantitative estimator — the FFT or
 maximum entropy; pick one with :ref:`choosing-spectral-estimator`. (The Burg
-*Resolution* view is a line-count diagnostic, not a fit target.)
+*Resolution* view is a line-count diagnostic, not a fit target.) Computing and
+conditioning that spectrum in the first place is covered by
+:doc:`fourier_analysis`.
 
 Workflow
 --------
@@ -27,7 +29,7 @@ The fitting x axis is stored internally as absolute frequency in MHz.  Plotting
 controls may show field in gauss or a reference-relative frequency axis, but fit
 parameters remain canonical: ``nu0`` and ``fwhm`` are MHz quantities.
 
-Available Components
+Available components
 --------------------
 
 The fit-function builder is filtered by analysis domain: when fitting a
@@ -47,7 +49,7 @@ Typing a component name from the other domain gives an explanatory error.
 ``LinearBackground``
     Background ``bg + slope * nu``.
 
-Global Fits And Trends
+Global fits and trends
 ----------------------
 
 Global frequency-domain fitting uses the same parameter-role table as
@@ -60,7 +62,7 @@ Successful global frequency fits are sent to the **Parameters** dock under the
 ``nu0(T)``, ``fwhm(B)``, ``B0(T)``, or ``Bwid(B)`` using the usual trend-model
 workflow.
 
-Project Files
+Project files
 -------------
 
 Project files store frequency-fit state separately from time-domain fit state.
@@ -68,3 +70,15 @@ This lets a project reopen with both a time-domain model and a spectral peak
 model intact.  Cached Fourier spectra are still stored in the Fourier spectrum
 state; raw detector arrays remain referenced by source-file path rather than
 embedded in the project.
+
+.. note::
+
+   The Gaussian and Lorentzian peak forms fitted here are the ordinary
+   line shapes; the minimiser and its statistics are the shared engine
+   documented in :doc:`fitting`. Because the fit target is the *displayed*
+   real spectrum, an apodised or baseline-subtracted spectrum carries those
+   conditioning choices into the fitted width and amplitude — see the
+   apodisation caveat in :doc:`fourier_analysis` and the conditioning steps in
+   :doc:`frequency_finishers`. This page therefore adds no new physics of its
+   own; the underlying references are those of :doc:`fitting` and
+   :doc:`fourier_analysis`.

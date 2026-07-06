@@ -1,4 +1,4 @@
-Asymmetry-Domain Global Fit (Scripting)
+Asymmetry-domain global fit (scripting)
 =======================================
 
 :func:`asymmetry.core.fitting.fit_global` fits **one model across several
@@ -25,10 +25,7 @@ for each local parameter.
    between the two — and which to reach for — see
    :ref:`asymmetry-vs-count-domain` below.
 
-When to use it
---------------
-
-Reach for ``fit_global`` whenever a physical parameter is genuinely shared
+*When to use it.* Reach for ``fit_global`` whenever a physical parameter is genuinely shared
 across several measurements while a nuisance parameter is not. The motivating
 case is a global Keren fit that shares the dynamic field width
 :math:`\Delta` and fluctuation rate :math:`\nu` across several longitudinal
@@ -145,7 +142,7 @@ Key points this case illustrates:
 * **The amplitude is** ``A_1``, **not** ``A``. Composite expressions mangle
   component parameters; always read ``model_def.param_names`` first and build the
   seeds from that list.
-* **Leave** ``A_bg`` **unbounded** so a negative TF-style background can settle
+* **Leave** ``A_bg`` **unbounded** so a negative transverse-field (TF) style background can settle
   (see :ref:`fit-bg-amplitude-tf` in :doc:`fitting`).
 
 Sharing ``Delta`` and ``nu`` across the series pins them far more tightly than

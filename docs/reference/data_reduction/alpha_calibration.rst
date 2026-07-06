@@ -1,6 +1,6 @@
 .. _alpha-calibration:
 
-Alpha Calibration
+Alpha calibration
 =================
 
 The measured forward/backward asymmetry

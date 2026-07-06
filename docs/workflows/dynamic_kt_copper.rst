@@ -2,7 +2,7 @@ Copper dynamic Kubo–Toyabe (muon diffusion)
 ===========================================
 
 This worked example fits a zero-field (ZF) copper run with the
-**dynamic Gaussian Kubo–Toyabe** model to measure the field-fluctuation
+**dynamic Gaussian Kubo–Toyabe (KT)** model to measure the field-fluctuation
 rate :math:`\nu` — the observable that reports on muon diffusion. It
 demonstrates the standard tactic for dynamic-KT fits: **fix the static
 width** :math:`\Delta` from a low-temperature reference and **float only**

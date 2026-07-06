@@ -1,8 +1,8 @@
-Vector Polarization Mode
+Vector-polarisation mode
 ========================
 
 .. image:: /_generated/screenshots/vector_polarization_emu.png
-   :alt: Three EMU vector-polarization projections P_x, P_y, P_z overlaid
+   :alt: Three EMU vector-polarisation projections P_x, P_y, P_z overlaid
    :width: 100%
 
 *Synthetic EMU-style three-axis polarisation projections overlaid in the*
@@ -11,7 +11,7 @@ P_x *carries a weak transverse oscillation, and* P_y *is centred near*
 *zero with statistical noise — the standard signature of a sample whose*
 *local field is aligned along the* z *axis of the spectrometer.*
 
-Vector polarization mode treats the muon-spin polarisation as a
+Vector-polarisation mode treats the muon-spin polarisation as a
 three-component vector, exposing the :math:`P_x`, :math:`P_y`, and
 :math:`P_z` projections separately rather than collapsing the detector
 counts onto a single forward/backward asymmetry. This is the right
@@ -44,7 +44,7 @@ Setup
 4. Apply the ``Vector Polarization`` preset.
 5. Return to Grouping and calibrate each axis's alpha (see below).
 
-Per-Axis Alpha
+Per-axis alpha
 --------------
 
 When vector mode is active, the Grouping window switches to a vector table
@@ -68,7 +68,7 @@ Backwards compatibility:
 * Older projects are migrated so vector groupings initialise
   ``alpha_x``, ``alpha_y``, and ``alpha_z`` from scalar ``alpha``.
 
-Display in the Main Plot
+Display in the main plot
 ------------------------
 
 The Polarization selector in the plot header provides:
@@ -94,7 +94,7 @@ Per-axis alpha values are persisted in:
 This preserves axis-specific alpha values across save/load cycles and across
 axis switching in vector mode.
 
-Transverse-Field Dual Grouping
+Transverse-field dual grouping
 ------------------------------
 
 The same projection workflow generalises beyond EMU's three-axis vector mode.
@@ -116,14 +116,14 @@ echo and save/load persistence. Unlike EMU's octant model, the two transverse
 pairs use four distinct detector groups so both coexist (the legacy split
 presets reused the same group IDs and were mutually exclusive).
 
-Detector Group Composition
+Detector group composition
 --------------------------
 
 EMU vector mode follows octant-style detector composition. The detector layout
 reference in :doc:`detector_grouping` should be used for instrument-consistent
 verification of assigned groups.
 
-EMU has no facility-documented "vector polarization" grouping — the EMU User
+EMU has no facility-documented "vector-polarisation" grouping — the EMU User
 Guide and the Mantid EMU instrument definition only describe the physical
 detector numbering (Section 8.1), not a Px/Py/Pz preset. The ``Vector
 Polarization`` preset is therefore an **Asymmetry construct**: it is verified
@@ -131,7 +131,42 @@ internally consistent (each octant selection matches the geometric
 half-plane of the layout's own detector angles) but is not itself a
 published EMU convention.
 
-Related Topics
+Assumptions and limitations
+---------------------------
+
+The vector treatment rests on a small set of geometry assumptions; read the
+projections with them in mind:
+
+- **Each projection is a forward/backward asymmetry along one detector-pair
+  axis.** A forward/backward asymmetry measures the muon polarisation projected
+  onto the axis joining that detector pair, so :math:`P_x`, :math:`P_y`, and
+  :math:`P_z` are the three orthogonal projections only insofar as the three
+  detector-pair axes are mutually orthogonal and aligned with the spectrometer
+  frame. On a real instrument the octant groups approximate those axes; the
+  reconstruction is exact only for an idealised orthogonal layout.
+- **Per-axis α decouples the three projections.** Each axis carries its own
+  calibration constant (``alpha_x`` / ``alpha_y`` / ``alpha_z``) and is reduced
+  independently, so a miscalibrated α on one axis biases that projection's
+  amplitude without contaminating the other two — but all three must be
+  calibrated for the vector to be quantitatively balanced.
+- **Powder samples do not need it.** An orientational average collapses the
+  polarisation onto a single non-trivial component along :math:`\hat{z}`, so the
+  ordinary F–B asymmetry workflow is sufficient; the vector projections add
+  information only when the local field is canted away from :math:`\hat{z}`, as
+  in an oriented single crystal.
+- **The EMU Px/Py/Pz preset is an Asymmetry construct**, not a published EMU
+  convention (see `Detector Group Composition`_): it is verified internally
+  consistent against the layout's own detector angles, but should be
+  cross-checked against the facility detector numbering before quantitative use.
+
+References
+----------
+
+- S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt,
+  *Muon Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022) —
+  detector geometry and the polarisation-projection observable.
+
+Related topics
 --------------
 
 * :doc:`detector_grouping`

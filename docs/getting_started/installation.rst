@@ -12,13 +12,13 @@ Requirements
 
 Asymmetry requires Python 3.10 or later, and is fully compatible with Python 3.13.
 
-Core Dependencies
+Core dependencies
 ~~~~~~~~~~~~~~~~~
 
 * numpy >= 1.24
 * iminuit >= 2.0 (for fitting without scipy dependency)
 
-Optional Dependencies
+Optional dependencies
 ~~~~~~~~~~~~~~~~~~~~~
 
 For GUI support:
@@ -67,7 +67,7 @@ For GLE export support:
   and QGLE locations. Override the search from **Setup → GLE Setup…**
   in the main menu; the chosen path is persisted across sessions.
 
-Installation Methods
+Installation methods
 --------------------
 
 From a local repository checkout (recommended)
@@ -105,7 +105,7 @@ Install directly from GitHub with pip
    # Full end-user feature set (no development extras)
    python -m pip install "asymmetry[gui,hdf5,hdf4,root,gle] @ git+https://github.com/BenHuddart/asymmetry.git"
 
-Development Installation
+Development installation
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
 For development work:
@@ -119,7 +119,7 @@ For development work:
    # Run tests
    python -m pytest
 
-Verifying Installation
+Verifying installation
 ----------------------
 
 .. code-block:: python

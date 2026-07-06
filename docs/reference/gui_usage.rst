@@ -1,4 +1,4 @@
-GUI Usage
+GUI usage
 =========
 
 This chapter is the comprehensive reference for the Asymmetry GUI — menus,
@@ -24,7 +24,7 @@ Or from Python:
    from asymmetry.gui.app import main
    main()
 
-Main Window Layout
+Main window layout
 ------------------
 
 .. image:: /_generated/screenshots/main_window.png
@@ -45,10 +45,10 @@ The main window has four main areas:
 3. **Analysis Panels** (right): Fit and Fourier controls
 4. **Log Panel** (bottom): Status messages and command history
 
-Loading Data
+Loading data
 ------------
 
-Multiple File Selection
+Multiple file selection
 ~~~~~~~~~~~~~~~~~~~~~~~
 
 1. Click **File → Open** (or toolbar "Open" button)
@@ -74,7 +74,7 @@ exports to TSV: with the option on, a temperature trend uses each run's logged
 temperature rather than its parked setpoint — see
 :ref:`trend-abscissa-coordinate`.
 
-Data Browser Features
+Data Browser features
 ---------------------
 
 Sorting
@@ -88,7 +88,7 @@ Click any column header to sort by that field:
 
 The sorting is robust and works correctly even after filtering.
 
-**Excel-Style Column Filtering**
+**Excel-style column filtering**
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. image:: /_generated/screenshots/data_browser_filter.png
@@ -114,7 +114,7 @@ Features:
 * Clear filters by right-clicking and selecting all values again
 * Works seamlessly with sorting
 
-Multi-Selection
+Multi-selection
 ~~~~~~~~~~~~~~~
 
 * Click a row to select it
@@ -130,12 +130,12 @@ For a single selected Data Group, Asymmetry keeps the most recently displayed
 dataset if it belongs to that group; otherwise it shows the first dataset in
 the group.
 
-Viewing Data
+Viewing data
 ~~~~~~~~~~~~
 
 Click any dataset row to plot it in the main panel.
 
-Context Menu
+Context menu
 ~~~~~~~~~~~~
 
 Right-click any dataset row to access options:
@@ -146,7 +146,7 @@ Right-click any dataset row to access options:
 
 These options appear contextually based on your current selection.
 
-Co-adding Datasets
+Co-adding datasets
 ~~~~~~~~~~~~~~~~~~
 
 To average multiple datasets:
@@ -170,7 +170,7 @@ good-bin limits, bunching, deadtime settings, and related grouped-data
 controls), co-add is blocked and the browser leaves all source rows unchanged.
 Align grouping first, then retry the co-add.
 
-Separating Combined Data
+Separating combined data
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
 To remove a co-added dataset:
@@ -185,7 +185,7 @@ then rebuilds the combined row from those updated sources. Separating the
 combined dataset therefore returns single runs with the same grouping that was
 active on the combined entry.
 
-Deleting Datasets
+Deleting datasets
 ~~~~~~~~~~~~~~~~~
 
 To remove a dataset from the browser:
@@ -196,7 +196,7 @@ To remove a dataset from the browser:
 
 This removes the dataset(s) from the browser; they can be reloaded via **File → Open**.
 
-Exporting the Logbook
+Exporting the logbook
 ~~~~~~~~~~~~~~~~~~~~~
 
 Use the **Export logbook** toolbar button (immediately after **Open**) to write
@@ -224,12 +224,12 @@ Default filename:
    default export filename is ``My_Project_logbook.tsv``.
 * If no project name is available, the default is ``logbook.tsv``.
 
-Plot Panel Controls
+Plot panel controls
 -------------------
 
 The plot panel displays the selected dataset(s) with error bars.
 
-Axis Limits
+Axis limits
 ~~~~~~~~~~~
 
 Control the plot range using the spinboxes at the top:
@@ -246,12 +246,12 @@ foreground points (excluding undefined/low-confidence bins when available).
 Default limits automatically adjust to fit the data including error bars, 
 with 5% padding.
 
-Dense-Data Display (Decimation)
+Dense-data display (decimation)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Very dense traces (e.g. high-resolution ROOT histograms or many-point
 spectra) are *display-decimated*: only a bounded number of points is
-rendered so panning, zooming and switching runs stay responsive. A small
+rendered so panning, zooming, and switching runs stay responsive. A small
 corner chip — for example ``4.0k of 1.2M pts`` — appears whenever the
 current view is decimated, and disappears once you zoom in far enough that
 every visible point is drawn.
@@ -264,7 +264,7 @@ visual sample of noisy data. Frequency-domain spectra instead keep the
 minimum and maximum of each display bucket, so a narrow spectral peak can
 never vanish from the screen.
 
-Legend Label Field
+Legend label field
 ~~~~~~~~~~~~~~~~~~
 
 Use the **Label** dropdown (left side of toolbar row 2) to choose how each selected run
@@ -286,7 +286,7 @@ For single-dataset views, the main plot also shows the active grouping
 ``alpha`` value above the canvas when one is available. The overlay is hidden
 for multi-dataset comparisons.
 
-Run Info and Metadata Columns
+Run Info and metadata columns
 -----------------------------
 
 Use **Get Info** (context menu on a run) to open the Run Info window.
@@ -353,7 +353,7 @@ The Advanced window now includes a search box, so you can filter the metadata
 table by field name or rendered value before adding a column or opening a log
 trace.
 
-Grouping and Bunching
+Grouping and bunching
 ~~~~~~~~~~~~~~~~~~~~~
 
 Grouping configuration is opened from **Grouping** (toolbar/menu). Supported
@@ -379,7 +379,7 @@ correction is enabled for PSI BIN/MDU and PSI/LEM ROOT data.
 Changing bunching refreshes both the displayed curve and the dataset passed to
 the fitting panel.
 
-Detector Layout Editor
+Detector Layout editor
 ~~~~~~~~~~~~~~~~~~~~~~
 
 The full Grouping dialog includes a **Detector Layout...** button that opens a
@@ -435,7 +435,7 @@ Preset highlights:
 
 .. note::
 
-   Vector polarization mode is not exclusive to EMU.  Any dataset whose six
+   Vector-polarisation mode is not exclusive to EMU. Any dataset whose six
    group names follow the canonical pattern
    (``Pz Forward`` / ``Pz Backward``, ``Py Top`` / ``Py Bottom``,
    ``Px Left`` / ``Px Right``) will activate vector-mode features in the main
@@ -447,7 +447,7 @@ When vector grouping is active, the main plot header shows a
 * **x** — display the :math:`P_x` pair (Left / Right detectors).
 * **y** — display the :math:`P_y` pair (Top / Bottom detectors).
 * **z** — display the :math:`P_z` pair (Forward / Backward detectors).
-* **All** — display all three polarization components as stacked subplots
+* **All** — display all three polarisation components as stacked subplots
    sharing the same time axis.  Each subplot carries its own Y-axis label and
    colour-matched error bars.
 
@@ -463,7 +463,7 @@ button is available to update all three axis values in one step.
 
 All of these are available without reopening the Grouping dialog.
 
-The main-plot Y limits are remembered separately for each polarization axis,
+The main-plot Y limits are remembered separately for each polarisation axis,
 so changing between axes restores your previous Y-range for that axis.
 In **All** mode the Y-axis controls are read-only; adjust the limits for each
 component individually by switching to that axis first.
@@ -484,7 +484,7 @@ preset dropdown, for example ``(Current: Vector Polarization)``. This remains
 until the grouping is edited away from the applied preset, then changes to
 ``(Current: Custom)``.
 
-Two-Period RG Mode
+Two-period RG mode
 ~~~~~~~~~~~~~~~~~~
 
 When the reference run contains two periods in the full Grouping dialog, an
@@ -520,7 +520,7 @@ Colour behaviour in the main plot:
 
 The selected RG mode is saved in the grouping payload as ``period_mode``.
 
-Low-count Tail Display
+Low-count tail display
 ~~~~~~~~~~~~~~~~~~~~~~
 
 At late times, grouped counts can become very small. Asymmetry bins with a
@@ -531,7 +531,7 @@ Bins with very small but positive denominator may still show large
 point-to-point variation (including values near :math:`\pm 100\%`), which is
 expected for low-statistics tails.
 
-Main Plot Labels and Export
+Main plot labels and export
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The main plot now supports interactive labels and direct GLE export for the
@@ -598,7 +598,7 @@ Compilation behaviour:
 * If ``gleplot`` regenerates matching ``.dat`` files while saving, Asymmetry
   rewrites the metadata-rich sidecars afterwards so those headers are retained.
 
-Fitting Panel
+Fitting panel
 -------------
 
 .. image:: /_generated/screenshots/fit_wizard_gkt.png
@@ -616,7 +616,7 @@ It is located in the right dock area next to the plot panel.
 The fit function is shown as :math:`A(t)` and is built from components using
 the **Edit Function...** button.
 
-**Single Dataset Fitting**
+**Single dataset fitting**
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The "Single" tab fits one composite model to the currently selected dataset.
@@ -644,9 +644,9 @@ Available components in the builder:
 * **StretchedExponential**: :math:`A e^{-(|\lambda|t)^\beta}`
 * **StaticGKT_ZF**: Static Gaussian Kubo-Toyabe
 * **LongitudinalFieldKT**: Hayano LF-KT; :math:`B_L` initialised from run field. See :ref:`fit-lf-kubo-toyabe`.
-* **Nuclear dipolar / MuF**: Analytical single-``mu-F`` polarization
-* **Nuclear dipolar / FmuF_Linear**: Analytical collinear ``F-mu-F`` polarization
-* **Nuclear dipolar / FmuF_General**: Numerical powder-averaged ``F-mu-F`` polarization
+* **Nuclear dipolar / MuF**: Analytical single-``mu-F`` polarisation
+* **Nuclear dipolar / FmuF_Linear**: Analytical collinear ``F-mu-F`` polarisation
+* **Nuclear dipolar / FmuF_General**: Numerical powder-averaged ``F-mu-F`` polarisation
 * **Constant**: :math:`A_{\mathrm{bg}}`
 
 .. note::
@@ -695,7 +695,7 @@ Fitting workflow:
 * Look for χ²ᵣ ≈ 1 (good fit); >> 1 (poor fit); << 1 (overestimated errors)
 * If fit fails to converge, try different initial values or tighter bounds
 
-**Global Fitting**
+**Global fitting**
 ~~~~~~~~~~~~~~~~~~
 
 The "Global" tab fits multiple datasets simultaneously with shared and
@@ -725,7 +725,7 @@ After a global fit completes:
 * The **Global Parameter Fit** window opens automatically (see below)
 * The log panel shows a summary with average χ²ᵣ
 
-**Grouped Time-Domain Fitting**
+**Grouped time-domain fitting**
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Asymmetry also supports WiMDA-style grouped count fitting inside one selected
@@ -757,7 +757,7 @@ In that workflow:
 See :doc:`grouped_time_domain_fitting` for the detailed workflow and current
 limitations of this first implementation slice.
 
-Global Parameter Fit Window
+Global parameter fit window
 ---------------------------
 
 .. image:: /_generated/screenshots/global_fit_lfkt.png
@@ -801,13 +801,13 @@ Plot labels and annotations
 All label positions and text are saved in the project file and restored when the
 project is reopened.
 
-Fitted Parameters Panel
------------------------
+Fit Parameters panel
+--------------------
 
-After a global fit, the Fitted Parameters panel shows how the varying
+After a global fit, the Fit Parameters panel shows how the varying
 (per-dataset) parameters change across runs. It provides:
 
-Parameter Table
+Parameter table
 ~~~~~~~~~~~~~~~
 
 A tabular view of all fitted varying parameters, with columns for:
@@ -817,7 +817,7 @@ A tabular view of all fitted varying parameters, with columns for:
 * :math:`T` (K) — sample temperature
 * Each varying parameter with its uncertainty
 
-Parameter Trend Plot
+Parameter trend plot
 ~~~~~~~~~~~~~~~~~~~~
 
 A plot of one selected parameter versus a sweep variable. Controls include:
@@ -835,7 +835,7 @@ A plot of one selected parameter versus a sweep variable. Controls include:
 When **Show components** is enabled, y-axes are forced to linear scale with a
 zero baseline so stacked component areas remain physically interpretable.
 
-Exporting Data
+Exporting data
 ~~~~~~~~~~~~~~
 
 **Export TSV**: Save the parameter table to a tab-separated (``.tsv``) file for
@@ -888,10 +888,10 @@ Both global-fit export buttons use the same foldered layout, so the exported
 Both global and local export dialogs remember the last export directory and use
 it as the default location next time.
 
-Analysis Workflows
+Analysis workflows
 ------------------
 
-Basic Analysis
+Basic analysis
 ~~~~~~~~~~~~~~
 
 1. Load data files
@@ -900,49 +900,54 @@ Basic Analysis
 4. Adjust plot limits for detailed inspection
 5. Apply bunching to reduce noise if needed
 
-Comparing Runs
+Comparing runs
 ~~~~~~~~~~~~~~
 
 1. Filter by temperature or field
 2. Click through filtered runs to compare
 3. Use co-adding to average similar runs
 
-Temperature Series
+Temperature series
 ~~~~~~~~~~~~~~~~~~
 
 1. Sort by temperature column
 2. Step through runs in order
 3. Filter by field to isolate specific conditions
 
-Field Series
+Field series
 ~~~~~~~~~~~~
 
 1. Sort by field column  
 2. Step through runs in order
 3. Filter by temperature for isothermal scans
 
-UI Scale
+UI scale
 --------
 
 The interface density can be adjusted from **View → UI Scale**. Five preset
 scales are available: 80 %, 90 %, 100 %, 110 %, and 120 %. The selection is
 persisted between sessions. The default is 90 %.
 
-Changing the scale adjusts:
+The scale is *font-driven*: it multiplies the application font (and the derived
+chrome font sizes) rather than resizing whole widgets. Everything sized from the
+font metrics then follows automatically, so a scale change adjusts:
 
-* Base font size across panels and dialogs
-* Table row heights
-* Dock minimum widths
-* Compact padding in parameter and data-browser tables
+* base font size across panels and dialogs;
+* table row heights and character-based column widths;
+* dock minimum widths, keeping the fit table's columns readable at every scale.
 
-Keyboard Shortcuts
+Keyboard shortcuts
 ------------------
 
-* **Ctrl+O**: Open file(s)
-* **Up/Down arrows**: Navigate table selection
-* **Ctrl+A**: Select all (in table)
+* **Ctrl+Shift+O**: Open data file(s)
+* **Ctrl+N**: New project
+* **Ctrl+O**: Open project
+* **Ctrl+S**: Save project
+* **Ctrl+Shift+S**: Save project as
+* **Ctrl+Return**: Run the fit
+* **Ctrl+W** / **Ctrl+Q**: Close the window (quit)
 
-Tips and Tricks
+Tips and tricks
 ---------------
 
 * Double-click column borders to auto-resize
@@ -951,7 +956,7 @@ Tips and Tricks
 * Bunch data before Fourier analysis to reduce computation time
 * Right-click on plot to save figure (via matplotlib toolbar)
 
-Saving and Reopening Projects
+Saving and reopening projects
 ------------------------------
 
 A *project file* (``.asymp``) saves the complete state of your analysis
@@ -961,11 +966,27 @@ maintain several independent analyses side-by-side.
 Creating and saving
 ~~~~~~~~~~~~~~~~~~~~
 
-* **File → New Project** clears the current session after asking for
-   confirmation.  Any unsaved changes are discarded.
+* **File → New Project** (``Ctrl+N``) clears the current session.
 * **File → Save Project** (``Ctrl+S``) saves to the current project file.
    If no project file is open yet, you will be prompted to choose a location.
-* **File → Save Project As…** always asks for a new filename.
+* **File → Save Project As…** (``Ctrl+Shift+S``) always asks for a new filename.
+
+.. _unsaved-changes-guard:
+
+Unsaved-changes guard
+~~~~~~~~~~~~~~~~~~~~~~
+
+Hours of grouping, fitting, and trend work live in memory until you save, so
+Asymmetry tracks whether the session holds unsaved work and refuses to drop it
+silently. A ``*`` in the window title marks a modified session, and any action
+that would clear it — closing the window, **New Project**, **Open Project**, or
+opening a recent project — first raises a **Save / Discard / Cancel** prompt.
+Choosing **Cancel** aborts the action and keeps your work; **Save** writes the
+project (choosing a location if none is set yet) before proceeding. The flag is
+set by every mutating action — data load and removal, grouping edits, each fit
+completion, trend-series rename or delete, ALC scan builds, and custom-column
+edits — and cleared on a successful save, open, or new project. Opening a
+project or starting a fresh one therefore always begins from a clean state.
 
 Opening a project
 ~~~~~~~~~~~~~~~~~~

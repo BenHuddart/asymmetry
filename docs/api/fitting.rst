@@ -28,7 +28,7 @@ Frequency-domain peak fitting reuses the same engine and composite-model path.
 The spectral helper module supplies the default Fourier-spectrum peak model,
 MHz/G conversion, and derived field parameters for trend tables.
 
-Fit Engine
+Fit engine
 ----------
 
 .. autoclass:: asymmetry.core.fitting.engine.FitEngine
@@ -43,7 +43,7 @@ Models
    :members:
    :undoc-members:
 
-Composite Models
+Composite models
 ----------------
 
 .. autoclass:: asymmetry.core.fitting.composite.ComponentDefinition
@@ -65,7 +65,7 @@ Composite Models
    :members:
    :undoc-members:
 
-Muon-Fluorine Models
+Muon-fluorine models
 --------------------
 
 .. automodule:: asymmetry.core.fitting.muon_fluorine.dipolar
@@ -76,7 +76,7 @@ Muon-Fluorine Models
    :members:
    :undoc-members:
 
-Parameter Trend Models
+Parameter trend models
 ----------------------
 
 .. autoclass:: asymmetry.core.fitting.parameter_models.ParameterModelComponentDefinition
@@ -135,7 +135,7 @@ Parameter Trend Models
    The angle-only :math:`K(\theta)` basis models ``KnightAnisotropy`` and
    ``AngularCos2`` are registered alongside the others (``scope="angle"``).
 
-Knight Shift
+Knight shift
 ------------
 
 Convert fitted oscillation components to the muon Knight shift and fit its
@@ -152,14 +152,14 @@ workflow.
    :undoc-members:
    :show-inheritance:
 
-Frequency-Domain Helpers
+Frequency-domain helpers
 ------------------------
 
 .. automodule:: asymmetry.core.fitting.spectral
    :members:
    :undoc-members:
 
-Superconductivity Models
+Superconductivity models
 ------------------------
 
 The superconductivity API is organised around normalised superfluid density
@@ -170,7 +170,7 @@ The superconductivity API is organised around normalised superfluid density
 
 with measured :math:`\sigma(T)` provided in additive and quadrature forms.
 
-Kernel and Gap Helpers
+Kernel and gap helpers
 ^^^^^^^^^^^^^^^^^^^^^^
 
 Thermal kernel and angular averaging:
@@ -203,7 +203,7 @@ Angular gap form factors:
 
 .. autofunction:: asymmetry.core.fitting.sc.gaps.s_plus_g
 
-Single-Gap And Anisotropic Models
+Single-gap and anisotropic models
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Isotropic and nodal baselines:
@@ -252,7 +252,7 @@ Additional unconventional examples:
    to be fitted. If ``shape_factor_a`` is omitted or left at ``0``, these
    models fall back to the Carrington-Manzano interpolation.
 
-Two-Gap And Alpha Models
+Two-gap and alpha models
 ^^^^^^^^^^^^^^^^^^^^^^^^
 
 Weighted-sum two-gap models (including MgB2-style s+s decomposition):
@@ -265,7 +265,7 @@ Alpha-model scaling:
 
 .. autofunction:: asymmetry.core.fitting.sc.models.sc_alpha_model
 
-Quadrature Sigma Models
+Quadrature sigma models
 ^^^^^^^^^^^^^^^^^^^^^^^
 
 These variants are intended for workflows where superconducting and
@@ -305,13 +305,13 @@ Parameters
    :undoc-members:
    :show-inheritance:
 
-Fit Results
+Fit results
 -----------
 
 .. autoclass:: asymmetry.core.fitting.engine.FitResult
    :members:
 
-Fit Wizards
+Fit wizards
 -----------
 
 Single-spectrum fit-wizard helpers:

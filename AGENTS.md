@@ -67,13 +67,24 @@ repo-local docs and use this file as the map.
   them down in `closeEvent`.
 - When adding datasets to the browser in a loop, wrap the loop in
   `DataBrowserPanel.batch_updates()` — per-add table rebuilds are O(n²).
+- A user-facing change is not complete until the Sphinx docs describe it: in
+  the same PR, update the owning page (find it via `reference/index.rst` or
+  `grep -rl <feature> docs/`), quote UI strings verbatim from the widget
+  code, and update/add the screenshot scenario when the UI changed visibly
+  (CI regenerates every screenshot on merge to main, so a stale scenario is
+  a stale published image). Full rules — scenario determinism, size budget,
+  the science/citation standard, the docs verification ladder — live in
+  `docs/README.md` § "Maintaining the documentation"; the writing voice in
+  `docs/STYLE.md`.
 - `tools/harness.py structural` enforces the shared-foundations rules
   mechanically, so a duplicate/bespoke implementation fails fast rather than
   drifting: no second `*LimitField` class outside
   `gui/widgets/axis_limits.py`, no direct `FigureCanvasQTAgg(` construction
   outside `gui/widgets/mpl_canvas.py`, no bespoke `QThread(` construction in
-  `gui/` outside `gui/tasks.py`'s `TaskRunner`, and no `test_*.py` file
-  outside a sanctioned `tests/<subpackage>/` (see `tests/README.md`).
+  `gui/` outside `gui/tasks.py`'s `TaskRunner`, no `test_*.py` file outside
+  a sanctioned `tests/<subpackage>/` (see `tests/README.md`), and no docs
+  screenshot drift (every image referenced from the .rst sources maps to a
+  registered scenario and vice versa, within the per-image size budget).
 
 ## Validation Ladder
 

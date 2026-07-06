@@ -1,4 +1,4 @@
-Parameter Trending
+Parameter trending
 ==================
 
 .. image:: /_generated/screenshots/parameter_trending_mgb2.png
@@ -101,13 +101,13 @@ as before. A run with no recorded temperature or field stays *off that axis*
 existed re-plot against the browser's currently displayed value when their
 runs are still loaded.
 
-Beyond temperature, field and run number, the **X:** selector also offers any
+Beyond temperature, field, and run number, the **X:** selector also offers any
 fitted parameter (parameter-vs-parameter trending) and any **custom data-browser
 column** (:ref:`logbook-columns`). Custom columns hold free-form text, so when
 one is the x-axis each value is coerced to a number and runs whose value is empty
 or non-numeric are dropped, with a note reporting how many were skipped.
 
-Representation-Aware Trending
+Representation-aware trending
 ------------------------------
 
 The Fit Parameters panel automatically tracks which *representation* is active
@@ -129,23 +129,178 @@ to the current trend.
 
 Typical use cases include extracting the ordering temperature :math:`T_c` and
 the critical exponent :math:`\beta` of a magnetic order parameter by fitting a
-spontaneous precession frequency :math:`\nu(T)` (or internal field) from a ZF
-series with an ``OrderParameter`` form (see `Magnetic Order Parameter`_ below
+spontaneous precession frequency :math:`\nu(T)` (or internal field) from a
+zero-field (ZF) series with an ``OrderParameter`` form (see `Magnetic Order Parameter`_ below
 and :doc:`/workflows/temperature_scan_magnetism`); locating a critical
 temperature where a relaxation rate *diverges* with a ``CriticalDivergence``
-form; inverting the TF
+form; inverting the transverse-field (TF)
 second-moment :math:`\sigma(T)` into a London penetration depth using one
 of the ``SC_*`` gap models (:doc:`/workflows/superconductor_penetration_depth`
 and :doc:`sc_penetration_depth`); fitting an Arrhenius form to
 :math:`\lambda(T)` across a temperature scan for motional narrowing;
-and field sweeps in either LF or TF geometry, where the trending panel
+and field sweeps in either longitudinal-field (LF) or TF geometry, where the trending panel
 handles parameter-vs-:math:`B` identically to parameter-vs-:math:`T`. The
 GUI panel is the right tool for interactive exploration and quick model
 selection; exporting to a Python script (the snippets below) is the right
 tool for reproducible, publication-grade analyses and for unusual
 parametric models that are not in the built-in registry.
 
-Trending One Parameter Against Another
+.. _trend-model-fit-dialog:
+
+Fitting a trend model
+---------------------
+
+Selecting a model, seeding it sensibly, and deciding which points it should see
+is the slow, error-prone part of trend analysis: a power law seeded far from the
+data walks into a bad minimum, and a critical divergence contaminated by the very
+region it cannot describe reports a meaningless :math:`T_c`. The **model-fit
+dialog** exists to make those decisions visible while you make them. It fits one
+parametric model through the selected "parameter versus X" points and shows the
+candidate curve against the data as you set it up, so a converging fit is
+apparent before you commit to it.
+
+Open it from the **Fit Parameters** panel: choose the abscissa in the **X:**
+selector (temperature, field, run number, angle, a fitted parameter, or a custom
+logbook column), then click the **Model Fit** button beside the trended quantity
+in the Y-parameter list. (The button reads **Model Fit\*** once a fit is active,
+and becomes a joint **Global fit** action when two or more group series are
+selected — see `Cross-Group Fitting`_.) The panel hands the dialog the included
+trend points for that parameter — a point excluded from the trend (via its
+context menu or the include checkbox) stays visible on the plot but does not pull
+the fit — together with their propagated errors and, when the abscissa is a
+fitted parameter, its per-point x-uncertainty.
+
+.. image:: /_generated/screenshots/trend_model_fit_dialog.png
+   :alt: The trend model-fit dialog fitting an OrderParameter form to an EuO ν(T) trend
+   :width: 100%
+
+*The model-fit dialog fitting the* ``OrderParameter`` *form to a synthetic EuO*
+*spontaneous-precession-frequency trend* :math:`\nu(T)` *through the Curie point.*
+*The left pane carries the controls — error mode, the range card, the fit-region*
+*editor, the seed table and the fit result; the right pane is the live preview,*
+*with the candidate curve tracing the in-range points. The converged fit returns*
+:math:`T_c = 69.2(6)` *K and* :math:`\beta = 0.41(8)`, *with a* good *χ² verdict.*
+
+The model catalogue
+~~~~~~~~~~~~~~~~~~~~
+
+The dialog offers only the basis models that make sense for the current
+abscissa: the pool is drawn from ``component_names_for_x`` and filtered by each
+component's declared scope, so a temperature axis never lists a field-only form
+and vice versa. The registry (grouped by the context that offers them) is:
+
+* **Any axis** (``common``) — ``Constant``, ``Linear``, and the general
+  fifth-order ``Polynomial``; ``PowerLaw`` and its quadrature-background variant
+  ``PowerLawQuadBG``; and ``ExponentialDecay``.
+* **Temperature axis** — ``Arrhenius`` (thermal activation), ``OrderParameter``
+  (a magnetic order parameter vanishing at :math:`T_c`), ``CriticalDivergence``
+  (a rate diverging at :math:`T_c`), and the superconducting gap models
+  ``SC_SWave``, ``SC_DWave``, the anisotropic and non-monotonic forms
+  (``SC_AnisotropicS_Cos4``, ``SC_NonmonotonicD``, ``SC_PWaveAxial``,
+  ``SC_ExtendedS``, ``SC_SPlusG``), the phenomenological ``SC_AlphaModel``, the
+  two-gap ``SC_TwoGap_SS`` / ``SC_TwoGap_SD``, and their :math:`q`-weighted
+  ``_Q`` counterparts. These feed the :math:`\sigma(T) \to \lambda(T)` inversion
+  of :doc:`sc_penetration_depth`.
+* **Field axis** — degree-fixed baselines ``Cubic`` / ``Quartic`` / ``Quintic``
+  / ``Sextic`` (each a fixed-order restriction of ``Polynomial``, for
+  resonance backgrounds of increasing curvature); ``Redfield``; the resonance
+  lineshapes ``Lorentzian``, ``GaussianLCR``, ``LorentzianLCR``; the muonium
+  repolarisation curve ``MuRepolarisation`` and the exact-diagonalisation RF
+  resonance ``RFResonanceMuP``; the longitudinal-field diffusion and ballistic
+  transport forms ``DiffusionLF_1D/2D/3D`` and ``BallisticLF_1D/2D/3D`` with the
+  ``Lambda_bg`` background (:doc:`diffusion_ballistic_lf`); and the Brandt
+  vortex-lattice second-moment models ``SC_Brandt_VortexLattice`` and its powder
+  average.
+* **Angle axis** — ``KnightAnisotropy`` and ``AngularCos2`` for a Knight shift
+  mapped out by rotating a single crystal (:ref:`knight-shift`).
+
+Any of these can be combined into a composite via **Edit Model**, which opens the
+same two-panel builder used for time-domain functions (see `Build a Parameter
+Composite Model`_ and the quadrature combinator ``⊕``). The dialog picks a
+sensible default for a fresh range — ``Linear`` in general, but
+``OrderParameter`` automatically when the trended quantity is a magnetic
+order-parameter observable (a precession frequency or internal field) versus
+temperature, so the common critical-behaviour fit converges out of the box.
+
+The live preview
+~~~~~~~~~~~~~~~~
+
+The right-hand pane redraws as you edit: the data points (with error bars scaled
+to the current error mode), the in-range points against the greyed-out excluded
+ones, and the candidate model curve. The curve is sampled off the GUI thread —
+debounced, with stale results discarded — so dragging an edge or retyping a seed
+never freezes the dialog. The **Show residuals** toggle adds a
+:math:`(\text{data} - \text{model})/\sigma` strip with a :math:`\pm 1\sigma` guide
+band beneath the plot. On a narrow window the preview auto-collapses behind a
+**Show preview** toggle so the controls stay usable.
+
+The interactive fit region
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Every fit is restricted to a **fit region** — the set of x-intervals a point must
+fall inside to enter the fit. A range is defined by a **range card** (a colour
+swatch matching its span on the plot, a χ²ᵣ status chip, and its compact bounds)
+with **Run Fit** and **Edit Model** actions; **Add Range** adds another. The
+region is sculpted, not assembled: it starts as one interval spanning the data
+and you *carve gaps out of it* with **Exclude region…** (or by right-dragging
+across the plot), leaving a list of included intervals shown in the **Selected
+range** editor. This is the natural way to exclude a contaminated critical region
+— fit ``CriticalDivergence`` on both sides of a transition while dropping the
+points nearest :math:`T_c` — while keeping one consistent model across the gap
+(the fitted curve is drawn continuously through it). Directly on the preview you
+can drag an interval edge, drag on empty space to add a new range, click a span
+to select it, and right-drag to exclude a region.
+
+Adding a second *range* is different from excluding a gap: separate ranges fit
+*independent* models to different parts of the abscissa (piecewise modelling),
+whereas the intervals of one range OR-combine into the mask of a *single* fit.
+Internally the two-or-more-interval case is stored as fit windows and the
+single-interval case as a plain range, so a fit region that carves down to one
+interval collapses back automatically and saved projects are unaffected.
+
+Seeding and running
+~~~~~~~~~~~~~~~~~~~
+
+The seed (starting-value) table lists each model parameter with its start value,
+bounds and a Fixed toggle; you can also type bounds to constrain the fit.
+Starting values are chosen data-aware where it matters: the critical-temperature
+components take :math:`T_c` and amplitude seeds derived from the actual x/y data,
+so an ``OrderParameter`` default lands close to the transition rather than at a
+generic guess. **Guess seeds** re-derives data-aware starts for the selected
+range's *free* parameters on demand (fixed parameters are never touched), running
+off the GUI thread. The fit itself is a bounded least-squares minimisation via
+iminuit, and the dialog runs it from four extra deterministic starts in addition
+to your own seed, keeping the run reproducible while making a bad local minimum
+much less likely; when a parameter converges hard against a bound, or a
+data-aware restart beats your seed, the dialog says so inline.
+
+The **Errors** selector (`Weighting and Error Modes`_) controls how each point is
+weighted, and after a successful fit the result box tints green and reports
+:math:`\chi^2`, :math:`\chi^2_r`, and the two-sided quality verdict
+(`χ² Quality Verdict`_); the same verdict appears as the range card's status
+chip.
+
+Where the fit lands
+~~~~~~~~~~~~~~~~~~~
+
+Accepting the dialog with **OK** writes the fit back into the panel: the fitted
+curve overlays the trend plot (and any GLE/TSV export of it), the fitted
+parameters and uncertainties become readable, and the whole fit is stored with
+the project's trend series — the dialog remembers the last-used model per
+``(parameter, x-axis)`` within that project, so reopening it restores your
+choice. The fit's own outputs are also recorded as a new, trendable results
+series (**Model fit (single) · <parameter> vs <x>**): each fit *range*
+contributes one row of its fitted parameters and :math:`\chi^2_r`, indexed by the
+centre of its fitted x-window, so a multi-range fit is immediately trendable in
+turn (see `Recursive Trending (Model-Fit Results as a Series)`_). **Remove Fit**
+discards the fit and drops that series.
+
+For jointly fitting several detector groups or samples with shared and local
+parameters, the panel routes two or more selected group series to a cross-group
+variant of the same dialog — same catalogue, live preview, error modes, and fit
+region, described under `Cross-Group Fitting`_.
+
+Trending one parameter against another
 --------------------------------------
 
 The x-axis need not be a run-level quantity. Below the fixed ``Auto`` / ``B`` /
@@ -175,7 +330,7 @@ plotting an internal field against a measured frequency to check a linear
 gyromagnetic relation. For the ordinary "property versus temperature or field"
 analysis, keep the ``B`` / ``T`` axes.
 
-Accounting for x Uncertainty
+Accounting for x uncertainty
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 When the abscissa is a fitted parameter it carries its own per-point
@@ -220,7 +375,7 @@ shifts the estimates slightly — the intended errors-in-variables behaviour.
    distance regression) was considered and rejected: it offers no box
    constraints, and Asymmetry's parameter models rely on bounds.
 
-Available Basis Components
+Available basis components
 --------------------------
 
 .. code-block:: python
@@ -230,7 +385,7 @@ Available Basis Components
    print(component_names_for_x("field"))
    print(component_names_for_x("temperature"))
 
-Build a Parameter Composite Model
+Build a parameter composite model
 ---------------------------------
 
 In the GUI parameter-trending workflow, the **Edit Model** action opens the
@@ -260,7 +415,7 @@ shows the expanded ``y(x)`` preview above the parameter table as you edit.
 Grouped expressions are also supported programmatically and in the GUI, for
 example ``Linear + (Arrhenius * Constant)``.
 
-Quadrature Combinator (``⊕``)
+Quadrature combinator (``⊕``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The parameter-vs-x builder adds one operator beyond ordinary arithmetic: the
@@ -335,7 +490,7 @@ Single-Series Fit
    result = fit_parameter_model(field, values, errors, model, params)
    print(result.success, result.reduced_chi_squared)
 
-Weighting and Error Modes
+Weighting and error modes
 -------------------------
 
 By default a model fit weights each point by the propagated error of the
@@ -370,7 +525,7 @@ verdict (below) is suppressed in those modes.
        field, values, None, model, params, error_mode="scatter"
    )
 
-Fit Windows (Union Multi-Range)
+Fit windows (union multi-range)
 -------------------------------
 
 A fit range may be restricted to a union of (min, max) windows: a point
@@ -398,7 +553,7 @@ This differs from adding a second *range* in the dialog: separate ranges fit
 independent models (piecewise modelling), whereas windows OR-combine into
 the mask of one model.
 
-χ² Quality Verdict
+χ² quality verdict
 ------------------
 
 After a successful fit the dialog reports a quality verdict alongside
@@ -421,7 +576,7 @@ unit-weight and scatter-estimated fits. Programmatic access is via
 ``asymmetry.core.fitting.assess_fit_quality(chi_squared, dof)``, which
 returns the verdict and the band.
 
-Cross-Group Fitting
+Cross-group fitting
 -------------------
 
 For jointly fitting multiple groups with shared and local parameters, use
@@ -497,7 +652,7 @@ combine with :math:`\sigma_x`).
        xerr={"g1": nu_errors_g1, "g2": nu_errors_g2},
    )
 
-Recursive Trending (Model-Fit Results as a Series)
+Recursive trending (model-fit results as a series)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 A successful cross-group fit is itself recorded as a new trend series, named
@@ -534,7 +689,7 @@ per *distinct* fit. These rows sit off the physical field/temperature axes;
 select ``fit_index`` or a global parameter as the x-axis (see
 `Trending One Parameter Against Another`_) to trend them.
 
-Magnetic Order Parameter
+Magnetic order parameter
 ------------------------
 
 For a second-order magnetic transition, the spontaneous muon precession
@@ -589,7 +744,7 @@ parameter that vanishes there.
    for p in result.parameters:
        print(p.name, p.value, result.uncertainties.get(p.name))
 
-Polynomial Trends
+Polynomial trends
 -----------------
 
 ``Polynomial`` fits an empirical trend or background up to fifth order,
@@ -611,7 +766,7 @@ other coefficient.
 
 .. _quadrature-background:
 
-Power Law with Quadrature Background
+Power law with quadrature background
 ------------------------------------
 
 ``PowerLawQuadBG`` combines a power law with a constant background *in
@@ -635,7 +790,7 @@ quadrature sum is a richer model than a bare power law or constant.
 
 .. _muonium-repolarisation:
 
-Muonium Repolarisation
+Muonium repolarisation
 ----------------------
 
 ``MuRepolarisation`` measures a muonium hyperfine constant from a
@@ -704,10 +859,10 @@ References
 4. D. York, N. M. Evensen, M. L. Martínez, and J. De Basabe Delgado, *Am. J.
    Phys.* **72**, 367 (2004).
 
-RF-µSR Resonance (muon + electron + proton)
+RF-μSR resonance (muon + electron + proton)
 -------------------------------------------
 
-``RFResonanceMuP`` fits a **field-swept RF-µSR resonance scan** of a muoniated
+``RFResonanceMuP`` fits a **field-swept RF-μSR resonance scan** of a muoniated
 radical — muon plus electron plus one dominant proton, such as the
 cyclohexadienyl radical C₆H₆Mu formed in benzene — and extracts the **muon and
 proton hyperfine couplings** :math:`A_\mu` and :math:`A_p` simultaneously. This
@@ -744,7 +899,7 @@ frequency and give :math:`A_\mu, A_p` starting values near the expected coupling
 — the resonance condition is nonlinear, so the field-swept curve only constrains
 the fit once the trial resonances fall inside the scanned window. :math:`A_\mu`
 (the mean) is well determined; :math:`A_p` (the splitting) is the weaker axis and
-benefits from a complementary ALC measurement.
+benefits from a complementary avoided-level-crossing (ALC) measurement.
 
 .. code-block:: python
 
@@ -781,7 +936,7 @@ References
 2. E. Roduner, *The Positive Muon as a Probe in Free Radical Chemistry*,
    Lecture Notes in Chemistry Vol. 40 (Springer, Berlin, 1988).
 
-Migrating WiMDA Model Functions
+Migrating WiMDA model functions
 -------------------------------
 
 Every function in WiMDA's Model-layer library ("Standard fit models") has a
@@ -841,7 +996,7 @@ direct counterpart or a composite recipe. Parameter names map as follows:
        :func:`numpy.linalg.eigvalsh` (basis-independent spectrum, identical
        level differences).
 
-Composite Parameters in the Fit Parameters Panel
+Composite parameters in the Fit Parameters panel
 ------------------------------------------------
 
 In the GUI Fit Parameters panel, you can define a derived parameter from
@@ -883,7 +1038,7 @@ available (falling back to diagonal variances otherwise).
 
 .. _knight-shift:
 
-Knight Shift
+Knight shift
 ------------
 
 A muon in a metal or paramagnet precesses not at the bare Larmor frequency of the
@@ -1022,14 +1177,18 @@ References
 3. W. D. Knight, Phys. Rev. **76**, 1259 (1949).
 4. A. M. Clogston, V. Jaccarino, and Y. Yafet, Phys. Rev. **134**, A650 (1964).
 
-Runnable Example
+Runnable example
 ----------------
 
 See ``examples/parameter_trending.py`` for a complete executable script.
 
-Superconducting Gap Models
---------------------------
+Downstream trend models
+-----------------------
 
-For TF-muSR superconducting penetration-depth analysis via
-temperature-dependent :math:`\sigma(T)`, see
-:doc:`sc_penetration_depth`.
+The trend framework feeds several physical models that consume a fitted
+parameter series: for TF-μSR superconducting penetration-depth analysis via a
+temperature-dependent :math:`\sigma(T)`, see :doc:`sc_penetration_depth`; for
+muonium reaction kinetics from relaxation rates linear in reactant
+concentration, see :doc:`muonium_kinetics`; and for the field-dependent
+transport models fitted to :math:`\lambda(B_\mathrm{LF})`, see
+:doc:`diffusion_ballistic_lf`.

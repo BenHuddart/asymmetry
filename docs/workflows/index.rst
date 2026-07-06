@@ -1,4 +1,4 @@
-Analysis Workflows
+Analysis workflows
 ==================
 
 These chapters walk through end-to-end μSR data analyses and
@@ -47,7 +47,7 @@ Quick chooser
      - Measure the muon hop rate ν in copper from a ZF dynamic-KT fit
      - DynamicGaussianKT, fixed Δ / floated ν, motional narrowing
    * - :doc:`photomusr_silicon_periods`
-     - Compare light-ON vs light-OFF muonium dynamics in a photo-µSR run
+     - Compare light-ON vs light-OFF muonium dynamics in a photo-μSR run
      - Red/green RG box, ``select_period`` / ``load(period=…)`` API
    * - :doc:`alc_scan_tcnq`
      - Locate an ALC resonance from a field-stepped scan

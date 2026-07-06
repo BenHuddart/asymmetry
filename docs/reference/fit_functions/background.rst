@@ -14,7 +14,7 @@ Constant
 
 A time-independent background asymmetry, used additively in essentially
 every composite model. Physically it accounts for muons that stop outside
-the sample — silver sample holders, cryostat walls and tails — and for any
+the sample — silver sample holders, cryostat walls, and tails — and for any
 residual detector imbalance that survives the α calibration. Because all
 relaxation functions satisfy :math:`G(0) = 1`, the asymmetry amplitudes and
 the background obey the sum rule :math:`\sum_i A_i + A_{\mathrm{bg}} = A_0`

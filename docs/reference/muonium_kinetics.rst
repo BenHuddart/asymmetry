@@ -1,10 +1,10 @@
-Muonium Reaction Kinetics at a Pulsed Source (Scripting)
+Muonium reaction kinetics at a pulsed source (scripting)
 ========================================================
 
 Muonium (Mu = μ⁺e⁻) is a light isotope of the hydrogen atom; the rate at which it
 reacts with a dissolved scavenger is measured by the relaxation of its
-transverse-field precession signal. In a weak transverse field the Mu signal is a
-*relaxing oscillation*
+transverse-field precession signal [1]. In a weak transverse field the Mu signal
+is a *relaxing oscillation*
 
 .. math::
 
@@ -30,21 +30,28 @@ The pulsed-source problem
 -------------------------
 
 At a pulsed source (e.g. ISIS EMU) the muon pulse and the resulting dead window
-mean the **first good bin** sits at :math:`t_g \approx 0.2\,\mu\mathrm{s}`. For a
-*fast*-reacting sample :math:`\lambda_\mathrm{Mu}` is large enough that the Mu
-oscillation has decayed before :math:`t_g`. Re-centred on :math:`t_g`,
+put the **first good bin** at :math:`t_g \approx 0.2\,\mu\mathrm{s}`. For a
+*fast*-reacting sample the Mu oscillation has largely decayed before :math:`t_g`,
+so a free per-run fit cannot separate the initial amplitude from the rate — the
+two trade off through the conserved surviving amplitude and the fit rails to the
+amplitude bound. Integrating the asymmetry does not rescue it either, since a
+transverse-field oscillation averages toward zero.
 
-.. math::
+.. dropdown:: Mathematical detail: why the truncated fit is degenerate
 
-   A(t) = \bigl[A_\mathrm{Mu}\, e^{-\lambda_\mathrm{Mu} t_g}\bigr]\,
-          e^{-\lambda_\mathrm{Mu}(t-t_g)} \cos(\dots),
+   Re-centred on the first good bin :math:`t_g`,
 
-so the data fix the **surviving amplitude** (the bracket) but not
-:math:`\lambda_\mathrm{Mu}` itself — the initial amplitude and the rate trade off
-through the conserved product :math:`A_\mathrm{Mu} e^{-\lambda_\mathrm{Mu} t_g}`.
-A free per-run fit is **degenerate** and rails to the amplitude bound. Integrating
-the asymmetry does not help either: a transverse-field *oscillation* averages
-toward zero.
+   .. math::
+
+      A(t) = \bigl[A_\mathrm{Mu}\, e^{-\lambda_\mathrm{Mu} t_g}\bigr]\,
+             e^{-\lambda_\mathrm{Mu}(t-t_g)} \cos(\dots),
+
+   so the data fix the **surviving amplitude** (the bracket) but not
+   :math:`\lambda_\mathrm{Mu}` itself: the initial amplitude
+   :math:`A_\mathrm{Mu}` and the rate :math:`\lambda_\mathrm{Mu}` are coupled
+   through the conserved product :math:`A_\mathrm{Mu} e^{-\lambda_\mathrm{Mu}
+   t_g}`. Any increase in the rate can be absorbed by a compensating increase in
+   the initial amplitude, which is what makes the free per-run fit degenerate.
 
 The fix: share the muonium amplitude across the series
 ------------------------------------------------------
@@ -55,7 +62,7 @@ scavenger changes only the rate. So fit the whole series **simultaneously with**
 :math:`A_\mathrm{Mu}` **(and the phase) shared** and :math:`\lambda_\mathrm{Mu}`
 varying per run: the slow, well-surviving members pin the shared amplitude, which
 then **forces** :math:`\lambda_\mathrm{Mu}` for the truncated fast members. This is
-the muonium-chemistry "fraction" method, realised over
+the muonium-chemistry "fraction" method [1], realised over
 :func:`~asymmetry.core.fitting.fit_global`.
 
 .. important::
@@ -105,7 +112,7 @@ Fit the recovered rates against concentration:
    print(rate.lambda0, rate.lambda0_error)  # intercept: solvent background
 
 Because the supplied data give **relative** concentrations only, ``k_mu`` is in
-units of µs⁻¹ per relative-concentration unit; converting to an absolute
+units of μs⁻¹ per relative-concentration unit; converting to an absolute
 :math:`\mathrm{M^{-1}s^{-1}}` value needs the stock molarity (an external input).
 
 Step 3 — the activation energy
@@ -148,8 +155,17 @@ fit cannot reach. The room-temperature concentration line gives
 :math:`k_\mathrm{Mu} \approx 0.68\ \mu\mathrm{s^{-1}}` per relative-concentration
 unit and a water background :math:`\lambda_0 \approx 0.6\ \mu\mathrm{s^{-1}}`, and
 the Arrhenius plot over 278–338 K gives an activation energy of order
-:math:`10\ \mathrm{kJ\,mol^{-1}}` — the diffusion-controlled regime expected for
-this π-addition (literature :math:`\approx 17.6\ \mathrm{kJ\,mol^{-1}}`).
+:math:`10\ \mathrm{kJ\,mol^{-1}}` — the right order for the diffusion-controlled
+regime expected for this π-addition, and consistent with the literature value of
+:math:`\approx 17.6\ \mathrm{kJ\,mol^{-1}}` quoted for the reaction (see the
+porting study under ``docs/porting/pulsed-fast-mu-kinetics/`` for the corpus
+ground truth this is checked against).
+
+References
+----------
+
+[1] E. Roduner, *The Positive Muon as a Probe in Free Radical Chemistry*,
+Lecture Notes in Chemistry Vol. 40 (Springer, Berlin, 1988).
 
 .. seealso::
 

@@ -1,6 +1,6 @@
 .. _background-correction:
 
-Background Correction
+Background correction
 =====================
 
 Two different things are called "background" in μSR, and they must not be

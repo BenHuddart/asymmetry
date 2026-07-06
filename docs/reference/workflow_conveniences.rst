@@ -9,7 +9,7 @@ with the question it answers.
 Run-quality columns
 -------------------
 
-The Data Browser shows **Run**, **Title**, **T** and **B** by default. Right-click
+The Data Browser shows **Run**, **Title**, **T**, and **B** by default. Right-click
 any column header and choose **Add column…** to add a run-quality column; the
 chosen set is remembered with the project. Two are worth knowing:
 
@@ -74,7 +74,7 @@ The **Export…** button on the plot offers two destinations. *Export to GLE…*
 the full ``.gleplot`` package as before. *Export plotted data (text)…* writes just
 the data — no GLE script, no compile — for loading into any other program. Choose:
 
-- **Data only** — time, asymmetry and error columns;
+- **Data only** — time, asymmetry, and error columns;
 - **Data + fit** — the data file plus a ``.fit`` sidecar of the fitted curve;
 - **Fit only** — the fitted curve alone.
 
@@ -94,7 +94,7 @@ in the status bar:
   before you commit to a fit;
 - a **parabolic peak**: the sub-bin position and height of a local maximum, fitted
   from the point and its two neighbours. This reads a line in an FFT or MaxEnt
-  spectrum, or an ALC resonance centre, to better than the bin spacing without
+  spectrum, or an avoided-level-crossing (ALC) resonance centre, to better than the bin spacing without
   setting up a fit;
 - a **windowed average** :math:`\langle A\rangle \pm \sigma` over the visible
   x-range — the level of a baseline, an asymmetry plateau, or an ALC/repolarisation

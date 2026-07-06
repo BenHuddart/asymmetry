@@ -22,3 +22,14 @@
     font-size: 1.1em;
     line-height: 1;
 }
+
+/* Responsive screenshots: sphinx_rtd_theme already ships
+   `.rst-content img{max-width:100%;height:auto}`, which covers every
+   figure/image directive in these docs (all use a percentage `:width:`, not a
+   raw pixel value). This rule is a narrow, scoped restatement for the same
+   selector so content-area images stay responsive even if a future page adds
+   an image outside a directive the theme rule doesn't already reach. */
+.rst-content img {
+    max-width: 100%;
+    height: auto;
+}

@@ -1,4 +1,4 @@
-Project Persistence
+Project persistence
 ===================
 
 .. currentmodule:: asymmetry.core.project

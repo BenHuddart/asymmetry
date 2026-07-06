@@ -376,7 +376,7 @@ projection has none declared. See :doc:`vector_polarization` for the EMU
 per-axis alpha table and estimation buttons, which follow the same
 per-projection model.
 
-Deadtime Correction
+Deadtime correction
 --------------------
 
 The Grouping window's deadtime status row summarises the profile's deadtime
@@ -432,7 +432,7 @@ can still use ``Manual`` or ``Estimate`` deadtime correction, with ``Cal``
 available to populate per-detector manual values from the selected preview
 run. The background correction path remains separate and optional.
 
-Background Correction
+Background correction
 ----------------------
 
 The background status row summarises the profile's background policy; click
@@ -529,7 +529,7 @@ ROOT ``DetectorInfo`` entries can provide detector-specific ``Time Zero Bin``,
 grouping payload and aligns detector histograms by their own ``t0`` before
 constructing the initial asymmetry.
 
-Detector Layout Editor Workflow
+Detector layout editor workflow
 --------------------------------
 
 1. Open Grouping from the toolbar or menu.
@@ -546,7 +546,7 @@ not change the stored detector membership of the group. Instead, it controls
 whether that group participates in the **Individual Groups** plot view and in
 grouped time-domain fitting.
 
-In-App Arrangement Schematics
+In-app arrangement schematics
 -------------------------------
 
 The schematic renders each detector's **full group membership**, not just its
@@ -761,7 +761,7 @@ table — the facility user guides document detector *numbering*, not these
 compact label strings — so Asymmetry's schematic and group names follow
 whatever the file itself records.
 
-Related Topics
+Related topics
 --------------
 
 * :doc:`grouping_calibration` for a practical, worked walkthrough of the

@@ -1,7 +1,9 @@
 sphinx>=7.0,<10
 sphinx-rtd-theme>=2.0,<4
+sphinx-design>=0.6,<1
 numpy>=1.24,<2.3
 scipy>=1.10,<1.18
 PySide6>=6.5,<6.11
 matplotlib>=3.7,<3.11
 lmfit>=1.2,<2
+pyoxipng>=9.0,<10

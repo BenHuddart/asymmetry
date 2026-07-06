@@ -1,16 +1,16 @@
-Photo-µSR in silicon (red/green periods)
+Photo-μSR in silicon (red/green periods)
 ========================================
 
 This worked example shows how to analyse a **period-mode** run, where a
 single file holds more than one detector histogram set recorded under
-different conditions. The archetype is **photo-µSR**: the sample is
+different conditions. The archetype is **photo-μSR**: the sample is
 measured with the pump laser **ON** and **OFF** in alternating periods,
 and the difference isolates the light-induced muonium dynamics.
 
 The run
 -------
 
-``HIFI00103277`` (corpus *Semiconductors → Photo-µSR in silicon*,
+``HIFI00103277`` (corpus *Semiconductors → Photo-μSR in silicon*,
 ``Data_hdf5/``) is a two-period HIFI run at :math:`T = 291\;\mathrm{K}`.
 The two periods are labelled **red** (period 1) and **green** (period 2)
 — the same convention as the GUI's **RG box** — and each carries its own
@@ -52,13 +52,13 @@ out a single period as an ordinary :class:`~asymmetry.core.data.dataset.MuonData
    )
 
 Each returned dataset keeps its parent's :math:`t_0`, good-bin window,
-grouping, field and temperature, plus its **own** per-period
+grouping, field, and temperature, plus its **own** per-period
 ``good_frames`` and ``dead_time_us``. For files with three or more
 periods, pass a 1-based integer period number instead of a label.
 
 .. note::
 
-   In a photo-µSR experiment the usual convention is **light-ON = Red**
+   In a photo-μSR experiment the usual convention is **light-ON = Red**
    (period 1) and **light-OFF = Green** (period 2). Confirm this against
    the relaxation for *your* instrument and run before interpreting the
    difference — the period ordering is a property of the data-acquisition
@@ -67,7 +67,7 @@ periods, pass a 1-based integer period number instead of a label.
 The light-ON − light-OFF analysis
 ---------------------------------
 
-With the two periods in hand, the photo-µSR observable is the difference
+With the two periods in hand, the photo-μSR observable is the difference
 of their fitted (or raw) asymmetries: the light-OFF period is the dark
 baseline, and the light-ON period adds the photo-excited muonium signal.
 Fit each period with the model appropriate to silicon muonium (e.g. an

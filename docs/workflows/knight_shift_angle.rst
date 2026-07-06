@@ -69,6 +69,20 @@ Walkthrough
    the **Applied field**. Each frequency trace becomes a :math:`K[\ldots]`
    trace in per cent.
 
+   .. figure:: /_generated/screenshots/knight_shift_dialog.png
+      :width: 70%
+      :align: center
+      :alt: The Knight Shift conversion dialog, with the Applied field
+         reference selected, two frequency components listed, and a
+         component-crossing warning.
+
+      The Knight Shift conversion dialog. Referencing against the
+      **Applied field** (:math:`\gamma_\mu B`) needs no reference line; the
+      two fitted frequency components are listed for conversion, and the
+      warning notes that the scan's component crossings can swap the trace
+      labels — which the joint :math:`K(\theta)` fit in the final step
+      resolves.
+
 #. **Plot against orientation.** Select **Angle (°)** as the trend x-axis. If
    the scan wraps past one period, the **Fold** control overlays equivalent
    orientations onto a single :math:`180^\circ` period, doubling the effective

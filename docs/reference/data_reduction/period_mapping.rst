@@ -1,6 +1,6 @@
 .. _period-mapping:
 
-Period Mapping
+Period mapping
 ==============
 
 Pulsed-source runs can interleave acquisition conditions frame by frame —

@@ -1,15 +1,17 @@
-ALC Mode (Integral-Asymmetry Field Scans)
-=========================================
+Integral scan mode (avoided-level-crossing field scans)
+=======================================================
 
-**ALC mode** turns a set of runs taken at different fields (or temperatures)
-into a single *field scan*: one integral-asymmetry value per run, plotted
-against the swept variable. It is the workflow for **avoided level crossing
-(ALC)**, **repolarisation / decoupling**, and **quadrupolar level-crossing
-resonance (QLCR)** measurements, where a resonance appears as a dip or step in
-the asymmetry as the field is stepped through the crossing.
+The **Integral scan** mode turns a set of runs taken at different fields (or
+temperatures) into a single *field scan*: one integral-asymmetry value per run,
+plotted against the swept variable. It is the workflow for **avoided level
+crossing (ALC)**, **repolarisation / decoupling**, and **quadrupolar
+level-crossing resonance (QLCR)** measurements, where a resonance appears as a
+dip or step in the asymmetry as the field is stepped through the crossing. The
+technique is often called an ALC scan, and the mode is labelled **Integral scan
+(ALC)** in the interface.
 
-Unlike the time-domain fitting workflows, ALC mode does **not** fit a model to
-each spectrum. It reduces every run to one number — the asymmetry integrated
+Unlike the time-domain fitting workflows, the Integral scan mode does **not**
+fit a model to each spectrum. It reduces every run to one number — the asymmetry integrated
 over a time window — and then lets you fit a baseline and resonance peaks to the
 resulting scan. The method follows WiMDA's count-integral ALC and Mantid's
 ``PlotAsymmetryByLogValue``; with :math:`\alpha = 1` it reproduces the WiMDA
@@ -328,10 +330,10 @@ To split a multi-period *file* into its periods first, select each period
 upstream with :func:`asymmetry.core.io.periods.select_period`
 (period extraction lives in ``io``; the scan transform stays free of it).
 
-RF-µSR resonance (Green − Red): GUI and API
+RF-μSR resonance (Green − Red): GUI and API
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-RF-µSR resonance is the **(Green − Red)** integral-asymmetry observable of a
+RF-μSR resonance is the **(Green − Red)** integral-asymmetry observable of a
 muoniated radical (Green = RF-off, Red = RF-on, recorded as two periods of each
 run): a W-shaped double dip whose two resonance fields give the muon
 (:math:`A_\mu`) and proton (:math:`A_p`) hyperfine couplings from one field scan.

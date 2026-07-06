@@ -1,6 +1,6 @@
 .. _t0-search:
 
-Time-Zero Search
+Time-zero search
 ================
 
 Everything downstream counts time from t0, the moment the muon spin starts

@@ -1,4 +1,4 @@
-Input/Output
+Input/output
 =============
 
 .. currentmodule:: asymmetry.core.io
@@ -21,15 +21,15 @@ subclassing :class:`~asymmetry.core.io.base.BaseLoader` and
 registering it with the
 :class:`~asymmetry.core.io.base.LoaderRegistry`.
 
-Main Interface
+Main interface
 --------------
 
 .. autofunction:: asymmetry.core.io.load
 
-Period Selection
+Period selection
 ----------------
 
-Period-mode (multi-period) runs — photo-µSR light-OFF/ON, RF on/off, ALC —
+Period-mode (multi-period) runs — photo-μSR light-OFF/ON, RF on/off, ALC —
 expose a scriptable selection API in :mod:`asymmetry.core.io.periods`. The same
 helpers back the GUI red/green ("RG") selector, so scripts and the desktop app
 share one implementation. See :ref:`selecting-periods` for a worked example.
@@ -53,7 +53,7 @@ Registry
 Loaders
 -------
 
-Base Loader
+Base loader
 ~~~~~~~~~~~
 
 .. autoclass:: asymmetry.core.io.base.BaseLoader
@@ -61,7 +61,7 @@ Base Loader
    :undoc-members:
    :show-inheritance:
 
-NeXus Loader
+NeXus loader
 ~~~~~~~~~~~~
 
 .. autoclass:: asymmetry.core.io.nexus.NexusLoader
@@ -69,7 +69,7 @@ NeXus Loader
    :undoc-members:
    :show-inheritance:
 
-PSI Loader
+PSI loader
 ~~~~~~~~~~
 
 Loads PSI BIN/MDU raw histogram files using the musrfit-compatible binary
@@ -82,7 +82,7 @@ and parsed using Mantid ``LoadPSIMuonBin``-compatible rules, then exposed as
    :undoc-members:
    :show-inheritance:
 
-ROOT Loader
+ROOT loader
 ~~~~~~~~~~~
 
 Loads MusrRoot/LEM ROOT histograms and header metadata. MusrRoot slow-control
@@ -95,7 +95,7 @@ logs such as ``hSampleTemperature``.
    :undoc-members:
    :show-inheritance:
 
-NeXus Writer
+NeXus writer
 ------------
 
 Writes synthetic or derived runs (see :doc:`/reference/simulation`) as

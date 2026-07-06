@@ -4412,6 +4412,61 @@ class TestPlotPanel:
         assert len(fig.axes) == 3
         assert all(axis.legend_call_count == 0 for axis in fig.axes)
 
+    def test_frequency_panel_y_limits_accept_fft_scale_magnitudes(self, qapp: QApplication) -> None:
+        """The frequency view must frame a count-scale FFT peak (> 1e6).
+
+        A grouped-count (Power)^1/2 spectrum of a high-statistics run peaks
+        above the historical ±1e6 field guard; a clamped y_max left the whole
+        spectrum above the top of the axis, rendering the plot empty.
+        """
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+            panel.set_view_limits(26.1, 28.6, -4.4e5, 1.2e7)
+            _, _, y_min, y_max = panel.get_view_limits()
+            assert y_max == pytest.approx(1.2e7)
+            assert y_min == pytest.approx(-4.4e5)
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_time_panel_y_limits_keep_the_1e6_guard(self, qapp: QApplication) -> None:
+        """Time-domain panels keep the tight range as an input-sanity guard."""
+        panel = PlotPanel()
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+            panel.set_view_limits(0.0, 10.0, -30.0, 2.0e7)
+            _, _, _, y_max = panel.get_view_limits()
+            assert y_max == pytest.approx(1e6)
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_auto_y_frames_non_negative_spectrum_from_peak(self, qapp: QApplication) -> None:
+        """Auto Y on the frequency view frames [-0.04·peak, 1.10·peak].
+
+        The signed-asymmetry envelope logic (error ceilings, weighted
+        quantiles) collapses to degenerate limits on a non-negative spectrum;
+        the frequency view frames the in-window peak directly instead.
+        """
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+            values = np.array([1.0e5, 2.0e5, 1.1e7, 3.0e5, 1.5e5])
+            errors = np.full_like(values, 1.0e3)
+            mask = np.ones_like(values, dtype=bool)
+            limits = panel._auto_y_limits_from_arrays(values, errors, mask)
+            assert limits is not None
+            y_min, y_max = limits
+            assert y_min == pytest.approx(-0.04 * 1.1e7)
+            assert y_max == pytest.approx(1.10 * 1.1e7)
+        finally:
+            panel.close()
+            panel.deleteLater()
+
 
 class TestDecimationStrategies:
     """Domain-specific decimation: stride for time scatter, min-max for spectra."""

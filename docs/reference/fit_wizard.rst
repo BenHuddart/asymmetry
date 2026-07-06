@@ -1,4 +1,4 @@
-Fit Wizard
+Fit wizard
 ==========
 
 The fit wizard is a guided workflow for choosing a sensible single-spectrum
@@ -12,9 +12,14 @@ points in the middle of a transition, a sample whose magnetic structure is not
 yet known, a survey of multiple compounds in a synthesis batch — but the
 ranking is also a useful sanity check when you already suspect a model: if the
 wizard does not agree with your guess, digging into the decision trail usually
-tells you why. For the very simplest cases (clean single-frequency TF
-precession, an obvious single-exponential decay) building the model by hand in
-the fit panel remains faster.
+tells you why. For the very simplest cases (clean single-frequency
+transverse-field (TF) precession, an obvious single-exponential decay) building
+the model by hand in the fit panel remains faster.
+
+Once the wizard has written a model into the single-fit tab, :doc:`fitting`
+covers running and refining it and :doc:`assessing_a_fit` covers judging the
+result; for the same guided approach applied across a whole run series, see the
+:doc:`global_fit_wizard`.
 
 The wizard opens in a non-modal window from the single-fit tab and does not
 start the expensive analysis until you press **Analyze**. It uses the same
@@ -73,7 +78,7 @@ metadata; open it only when you know something the metadata does not:
 
 - **Scope.** A preset menu offers physics-motivated selections — ZF static
   magnetism, TF Knight shift / precession, TF superconductor, LF dynamics,
-  fluoride (F-µ-F), muonium / radical, or everything — and the default
+  fluoride (F-μ-F), muonium / radical, or everything — and the default
   ``Auto`` preset infers a scope from the run metadata: the recorded field
   geometry selects ZF, TF, or LF families, and for TF runs the field
   magnitude excludes muonium components outside their validity regime (the
@@ -114,7 +119,7 @@ reach from the guidance section, now populated with the finished analysis:
 2. **Physics families considered** — which candidate families were screened
    and whether each was expanded for detailed fitting.
 3. **Spectral search results** — how many spectral lines and recognised
-   patterns (a Larmor line, a muonium doublet, an F-µ-F triplet, and similar)
+   patterns (a Larmor line, a muonium doublet, an F-μ-F triplet, and similar)
    were found. Expands to the FFT plot and peaks table, with the same
    click-to-seed/click-to-remove peak controls available during guidance.
 4. **Candidates fitted, rejections with reasons** — how many candidate models
@@ -162,11 +167,13 @@ Alternatives and applying a fit
 ---------------------------------
 
 When another candidate scored close to the recommended one, the answer card
-shows an alternatives strip beneath the plot — for example, a simpler model
-of comparable quality. Clicking an alternative swaps the overlaid curve and
-becomes the candidate that **Apply this fit** would hand off, without leaving
-the card. A **"Show residuals"** toggle next to the plot switches the overlay
-to a residuals view for the currently selected candidate.
+shows an alternatives strip beneath the plot — a compact chip per candidate,
+each carrying a metric-delta badge (``· +1.0``) that says how much worse it
+scored than the winner, with its component family in a tooltip. Clicking an
+alternative swaps the overlaid curve and becomes the candidate that **Apply
+this fit** would hand off, without leaving the card. A **"Show residuals"**
+toggle next to the plot switches the overlay to a residuals view for the
+currently selected candidate.
 
 Applying a candidate (from the card or from a row selected in the comparison
 table) updates the single-fit tab: the composite function is replaced with
@@ -195,15 +202,15 @@ Candidate families
 The wizard groups the component library into families — simple relaxation,
 multi-rate relaxation, static nuclear fields (Kubo-Toyabe), precession signals
 (including vortex-lattice line shapes), muonium, and muon-fluorine bonding
-(µ-F / F-µ-F) — and screens them in two stages. Stage 1 fits one cheap
+(μ-F / F-μ-F) — and screens them in two stages. Stage 1 fits one cheap
 representative per in-scope family (both exponential and Gaussian shapes for
 the relaxation family). A family is expanded to its full portfolio when its
 representative passes the residual checks, scores within a small margin of
 the best family, matches a recognised multiplet pattern in the detected
 peaks, or is pointed at by a fingerprint hint; expensive members such as the
-numerical F-µ-F powder averages are only ever fitted inside an expanded
+numerical F-μ-F powder averages are only ever fitted inside an expanded
 family, seeded from the match (a hyperfine constant from a muonium pair, a
-µ-F distance from a triplet). When several strong spectral lines are
+μ-F distance from a triplet). When several strong spectral lines are
 detected, the wizard also constructs multi-cosine candidates with one damped
 oscillator per line.
 

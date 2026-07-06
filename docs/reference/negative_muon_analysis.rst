@@ -1,4 +1,4 @@
-Negative-Muon Capture-Lifetime Analysis (Experimental)
+Negative-muon capture-lifetime analysis (experimental)
 =======================================================
 
 .. warning::
@@ -100,10 +100,7 @@ the porting study (``docs/porting/negative-muon-analysis/``). The Table C.1
 values from the primary Suzuki/Measday/Roalsvig compilation are adopted
 throughout.
 
-When to use this
-----------------
-
-Reach for the negative-muon capture-lifetime API when:
+*When to use this.* Reach for the negative-muon capture-lifetime API when:
 
 * you have a raw μ⁻ histogram from a mixed-element sample and want relative
   capture probabilities — for example, the stoichiometric composition of a

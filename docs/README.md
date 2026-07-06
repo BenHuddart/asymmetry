@@ -59,6 +59,79 @@ docs/
     └── ...
 ```
 
+## Maintaining the documentation
+
+The documentation is part of the product: a user-facing change is not complete
+until the docs describe it. These rules keep the pages, the screenshots, and
+the program from drifting apart. `tools/harness.py structural` enforces the
+mechanical ones.
+
+### When you add a feature or change user-facing behaviour
+
+1. **Update the page in the same PR.** Find the owning page via
+   `reference/index.rst` (the "Find a feature" table) or
+   `grep -rl "<feature name>" docs/`. A genuinely new feature gets a new page
+   in the matching cluster of `reference/index.rst`, plus a row in the
+   find-a-feature table when users will look for it by task.
+2. **Quote the UI verbatim.** Button labels, menu paths, and window titles in
+   the docs must match the widget code exactly (`QPushButton("…")`,
+   `addAction("…")`). Verify against the source, not memory — UI strings keep
+   American spellings (e.g. ``Optimize``) inside code-quotes while the
+   surrounding prose stays British.
+3. **Screenshots come from scenarios, never from hand-captures.** If the UI
+   changed visibly, update or add a scenario under `screenshots/scenarios/`
+   (see below) and recapture locally with
+   `.venv/bin/python -m docs.screenshots.capture --only <name>` to check the
+   framing. CI regenerates every screenshot on merge to main, so a stale
+   scenario means a stale published image.
+4. **Grep for casualties.** A renamed control, mode, or menu item usually
+   appears on more than one page: `grep -rn "<old label>" docs/`.
+
+### Screenshot scenarios
+
+A scenario is a small `Scenario` subclass (see `screenshots/scenarios/_base.py`)
+registered in `capture.py::_import_scenarios()`. House rules:
+
+- **Deterministic**: seed every RNG; build synthetic data from
+  `screenshots/data/archetypes.py` (physically grounded presets — EuO, Ag,
+  MgB₂, YBCO, PbF₂) so the physics in the figure is defensible.
+- **Cropped**: frame the panel or dialog the prose discusses, not the whole
+  main window, and never ship a figure with large empty regions — an empty
+  table or blank plot reads as a broken program.
+- **Fast**: well under a minute; the whole suite shares an 8-minute watchdog.
+  Set `requires_fit = True` when a real fit runs.
+- **Budgeted**: ≤ 600 KB per PNG after the automatic lossless optimisation
+  (`structural` fails oversized images when they exist on disk).
+- **Referenced**: every scenario must be embedded by at least one page and
+  every referenced image must have a scenario — `capture.py --check-refs`
+  (run by `structural` and the docs CI smoke) fails on either mismatch.
+
+### Science content
+
+- Follow `STYLE.md` for voice and citation format. Weave applicability into
+  prose ("You should use this when…") instead of dedicated "When to use"
+  headers; avoid runs of very short sections.
+- Name algorithms concisely with an APS-style citation; put derivation-level
+  mathematics in a `.. dropdown::` (sphinx-design), not in the reading line.
+- State approximations that affect the accuracy of results — an
+  "Assumptions and limitations" subsection when several apply, a sentence in
+  place when one does.
+- Every physics-bearing page ends with a References rubric. **Never fabricate
+  a reference or a missing datum** — an incomplete entry with a FIXME beats a
+  plausible invention.
+
+### Verification ladder for docs changes
+
+```bash
+python -m docs.screenshots.capture --check-refs   # refs + size budget
+python tools/harness.py structural                # includes the check above
+python tools/harness.py docs                      # Sphinx build (no screenshots)
+python tools/harness.py docs --screenshots        # full local build
+```
+
+A docs-only PR gets the cheap CI smoke; the published site rebuilds (with
+fresh screenshots) on every merge to main that touches `docs/**` or `src/**`.
+
 ## Writing Documentation
 
 ### Tutorials and reference
