@@ -271,6 +271,7 @@ def _import_scenarios() -> None:
         hifi_transverse_layout,
         knight_shift_angle,
         knight_shift_dialog,
+        knight_shift_window,
         lf_kt_global_results,
         lf_kt_series_plot,
         logbook_view,

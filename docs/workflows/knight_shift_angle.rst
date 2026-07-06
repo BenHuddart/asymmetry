@@ -64,29 +64,38 @@ Walkthrough
    neighbour (chained batch seeding) so each component keeps a stable label
    through the scan and the trend follows one site at a time.
 
-#. **Convert to the Knight shift.** With the fitted frequencies trended, press
-   **Knight shift…** in the *Derived parameters* section and reference against
-   the **Applied field**. Each frequency trace becomes a :math:`K[\ldots]`
-   trace in per cent.
+#. **Convert to the Knight shift.** With the fitted frequencies trended, open
+   the **Knight shift analysis** window — the **Knight shift window…** button
+   in the *Derived parameters* section of the Fit Parameters panel, or
+   **Analysis → Knight shift analysis…** — and reference against the
+   **Applied field** in the *Conversion* section of its sidebar. Each frequency
+   trace becomes a branch in the *Branches* section, converted live as you edit
+   the reference or unit.
 
-   .. figure:: /_generated/screenshots/knight_shift_dialog.png
-      :width: 70%
+   .. figure:: /_generated/screenshots/knight_shift_window.png
+      :width: 100%
       :align: center
-      :alt: The Knight Shift conversion dialog, with the Applied field
-         reference selected, two frequency components listed, and a
-         component-crossing warning.
+      :alt: The Knight shift analysis window, with the Applied field
+         reference selected, two frequency branches converted, and
+         crossing markers on the K(theta) plot.
 
-      The Knight Shift conversion dialog. Referencing against the
-      **Applied field** (:math:`\gamma_\mu B`) needs no reference line; the
-      two fitted frequency components are listed for conversion, and the
-      warning notes that the scan's component crossings can swap the trace
-      labels — which the joint :math:`K(\theta)` fit in the final step
-      resolves.
+      The Knight shift analysis window on a two-site angle scan. The sidebar
+      reads top to bottom as the pipeline — **Source** (the fitted series
+      supplying the frequencies), **Conversion** (reference and unit), and
+      **Branches** (one :math:`K` trace per converted component, with a count
+      of the crossings flagged along the scan); the plot shows both branches
+      against angle with **Crossing markers** on, dashed at the scan intervals
+      where the raw component labels can swap. Converting here does not touch
+      the trend table — press **Send K columns to trend table** in the footer
+      to publish the :math:`K[\ldots]` columns for plotting, export, and the
+      joint fit in the next step.
 
-#. **Plot against orientation.** Select **Angle (°)** as the trend x-axis. If
-   the scan wraps past one period, the **Fold** control overlays equivalent
+#. **Plot against orientation.** Back in the trend panel, select **Angle (°)**
+   as the trend x-axis to see the published :math:`K[\ldots]` traces. If the
+   scan wraps past one period, the **Fold** control overlays equivalent
    orientations onto a single :math:`180^\circ` period, doubling the effective
-   angular sampling.
+   angular sampling — the same fold the analysis window offers as its own
+   **Fold 180°** view toggle for inspecting the branches before publishing.
 
 #. **Resolve and fit with a joint** :math:`K(\theta)` **fit.** Select the two
    :math:`K[\ldots]` traces and use **Joint K(θ) fit…**. This fits one

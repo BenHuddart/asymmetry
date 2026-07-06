@@ -1053,8 +1053,70 @@ converts a fitted precession frequency :math:`\nu` to
 
    K = \frac{\nu - \nu_{\mathrm{ref}}}{\nu_{\mathrm{ref}}}
 
-against one of two references, chosen from the **Knight shift…** button in the
-*Derived parameters* section:
+against one of two references.
+
+The **Knight shift analysis** window (**Analysis → Knight shift analysis…**, or
+the **Knight shift window…** button in the *Derived parameters* section of the
+Fit Parameters panel) is the recommended way to set this up: it is a
+non-modal window dedicated to the conversion, so the reference, unit, and
+component choices, the resulting branches, and the scan's crossings are all
+visible together while you edit them, and nothing is written back to the
+trend table until you ask for it. Its sidebar reads top to bottom as the
+pipeline:
+
+* **Source** — the fitted series supplying the frequencies (run count,
+  component count, and scan axis), with a **Refresh from trend** button that
+  rebuilds the snapshot from the trend panel's current rows after a refit or a
+  series change.
+* **Conversion** — the reference (**Applied field (γ_µ·B)** or **Designated
+  component**, with a combo box for the chosen component when the latter is
+  selected), the display **Unit** (**Auto (ppm / %)**, **ppm**, **percent**, or
+  **fraction**), and a checkbox per convertible component to include or
+  exclude it from the conversion.
+* **Branches** — one converted :math:`K` trace per included component, each
+  named :math:`K_n` and coloured to match its curve on the plot, together with
+  a count of the crossings flagged along the scan (see *Component identity and
+  crossings* below).
+
+The plot area has two view toggles, **Fold 180°** (overlay symmetry-equivalent
+orientations onto one period, for an angle scan — a display choice local to
+the window, independent of the trend panel's own **Fold** control described
+below) and **Crossing markers** (draw a dashed vertical line at each flagged
+crossing; on by default). Every control change re-derives the branches and
+redraws immediately, so a bad reference choice or an accidentally excluded
+component is visible before anything is published. The footer's **Send K
+columns to trend table** button writes the current configuration back to the
+trend panel as :math:`K[\ldots]` columns — the same generated columns the
+older dialog below produces — so they can be plotted, exported, and (for an
+angle scan) carried into the joint :math:`K(\theta)` fit, which remains a
+trend-panel action (see *Component identity and crossings*, below). Until
+that button is pressed the trend table is untouched, unlike the older
+dialog's apply-on-OK behaviour.
+
+.. figure:: /_generated/screenshots/knight_shift_window.png
+   :width: 100%
+   :align: center
+   :alt: The Knight shift analysis window, with the Applied field reference
+      selected, two frequency branches converted, and crossing markers on
+      the K(theta) plot.
+
+   The Knight shift analysis window on a two-site angle scan: **Source**,
+   **Conversion**, and **Branches** in the sidebar, and the converted
+   :math:`K(\theta)` branches with **Crossing markers** on in the plot area.
+
+The window's configuration and view-toggle state persist with the project
+under the ``knight_shift_analysis_state`` key (the point snapshot itself is
+always rebuilt from the source series on load, so a saved project can never
+carry stale fitted values). Projects saved before the window existed stored
+the conversion under the trend panel's own ``fit_parameters_state`` block;
+these migrate automatically the first time the project is opened, so the
+window reopens already configured.
+
+The window sits alongside the older **Knight shift…** dialog (still reached
+from the same *Derived parameters* section) rather than replacing it — the
+dialog remains a quick, modal way to apply a conversion without the window's
+persistent inspection surface — chosen from the **Knight shift…** button in
+the *Derived parameters* section:
 
 * **Applied field** — the precession is referenced to the bare applied field. For
   a frequency-parameterised component (MHz) the reference is the free-muon Larmor
@@ -1070,6 +1132,18 @@ against one of two references, chosen from the **Knight shift…** button in the
   :math:`\nu` and :math:`\nu_{\mathrm{ref}}` then come from the same fit, their
   covariance is carried through the error propagation; the applied-field reference
   treats :math:`B` as exact.
+
+.. figure:: /_generated/screenshots/knight_shift_dialog.png
+   :width: 70%
+   :align: center
+   :alt: The Knight Shift conversion dialog, with the Applied field
+      reference selected, two frequency components listed, and a
+      component-crossing warning.
+
+   The Knight Shift conversion dialog. Referencing against the **Applied
+   field** (:math:`\gamma_\mu B`) needs no reference line; the two fitted
+   frequency components are listed for conversion, and the warning notes
+   that the scan's component crossings can swap the trace labels.
 
 K is dimensionless. It is stored internally as a fraction and shown in a unit you
 select, with an **Auto** mode that reads parts per million for a diamagnet

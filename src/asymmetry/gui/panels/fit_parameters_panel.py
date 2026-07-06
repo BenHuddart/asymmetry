@@ -389,6 +389,9 @@ class FitParametersPanel(QWidget):
     #: Emitted when the user toggles a member's trend inclusion via the table
     #: checkbox or a trend-point context menu (batch_id, member_key, include).
     member_trend_inclusion_changed = Signal(str, int, bool)
+    #: Emitted when the user asks for the Knight shift analysis window. The
+    #: MainWindow owns that window and feeds it this panel's snapshot.
+    knight_window_requested = Signal()
 
     @property
     def last_cross_group_fit(self) -> dict[str, object] | None:
@@ -650,6 +653,14 @@ class FitParametersPanel(QWidget):
         self._joint_knight_btn.setEnabled(False)
         self._joint_knight_btn.clicked.connect(self._open_joint_knight_fit_dialog)
 
+        self._knight_window_btn = QPushButton("Knight shift window…")
+        self._knight_window_btn.setToolTip(
+            "Open the Knight shift analysis window: convert, inspect branches and "
+            "crossings, and publish K columns back to this table."
+        )
+        self._knight_window_btn.setEnabled(False)
+        self._knight_window_btn.clicked.connect(self.knight_window_requested.emit)
+
         self._derived_section = PanelSection(
             "Derived parameters",
             collapsible=True,
@@ -666,6 +677,7 @@ class FitParametersPanel(QWidget):
         composite_row.addWidget(self._remove_composite_btn, 1, 0, 1, 2)
         composite_row.addWidget(self._knight_shift_btn, 2, 0, 1, 2)
         composite_row.addWidget(self._joint_knight_btn, 3, 0, 1, 2)
+        composite_row.addWidget(self._knight_window_btn, 4, 0, 1, 2)
         composite_row.setColumnStretch(2, 1)
         self._derived_section.addLayout(composite_row)
         controls_layout.addWidget(self._derived_section)
@@ -857,6 +869,7 @@ class FitParametersPanel(QWidget):
         self._remove_composite_btn.setEnabled(False)
         self._knight_shift_btn.setEnabled(False)
         self._joint_knight_btn.setEnabled(False)
+        self._knight_window_btn.setEnabled(False)
         self._rebuild_y_controls()
         self._refresh_plot()
 
@@ -1053,6 +1066,7 @@ class FitParametersPanel(QWidget):
         self._edit_composite_btn.setEnabled(False)
         self._remove_composite_btn.setEnabled(False)
         self._knight_shift_btn.setEnabled(bool(self._rows))
+        self._knight_window_btn.setEnabled(bool(self._rows))
 
         varying = state.get("varying_params", [])
         if isinstance(varying, list) and all(isinstance(v, str) for v in varying):
@@ -1729,6 +1743,7 @@ class FitParametersPanel(QWidget):
             self._edit_composite_btn.setEnabled(False)
             self._remove_composite_btn.setEnabled(False)
             self._knight_shift_btn.setEnabled(False)
+            self._knight_window_btn.setEnabled(False)
             self._rebuild_y_controls(preferred_selected=previous_selected_y)
             self._refresh_model_fit_button_labels()
             self._update_x_axis_auto_hint()
@@ -1793,6 +1808,7 @@ class FitParametersPanel(QWidget):
         self._gle_format_combo.setEnabled(has_rows)
         self._create_composite_btn.setEnabled(has_rows)
         self._knight_shift_btn.setEnabled(has_rows)
+        self._knight_window_btn.setEnabled(has_rows)
 
         display_params = set(self._display_y_parameters())
         self._model_fits = {k: v for k, v in self._model_fits.items() if k in display_params}
@@ -3483,6 +3499,36 @@ class FitParametersPanel(QWidget):
     def knight_shift_crossings(self) -> list[object]:
         """Crossing events flagged on the active series (for annotation/reporting)."""
         return list(self._knight_shift_crossings)
+
+    def knight_analysis_snapshot(self) -> object | None:
+        """Snapshot of the active series for the Knight shift analysis window.
+
+        Returns a :class:`~asymmetry.core.fitting.knight_analysis.
+        KnightAnalysisInput` built from the current rows, the effective x-axis
+        (unfolded, so the scan order is preserved), and the model-derived
+        convertible components — or ``None`` when there is nothing to analyse
+        (no rows, or no oscillation components among them).
+        """
+        from asymmetry.core.fitting.knight_analysis import snapshot_from_rows
+
+        rows = self._rows
+        if not rows:
+            return None
+        components = self._oscillation_components(rows)
+        if not components:
+            return None
+        x_key = self._effective_x_key()
+        group = self._group_fit_results.get(self._active_group_id or "")
+        return snapshot_from_rows(
+            rows,
+            x_values=[self._x_value(row, x_key, fold=False) for row in rows],
+            x_key=x_key,
+            x_label=self._x_axis_display_label(x_key),
+            components=components,
+            source_label=group.group_name if group is not None else "",
+            batch_id=next((row.batch_id for row in rows if row.batch_id), None),
+            group_id=self._active_group_id,
+        )
 
     def set_knight_shift_config(self, config: KnightShiftConfig) -> None:
         """Apply a new Knight-shift configuration and refresh the trend.
