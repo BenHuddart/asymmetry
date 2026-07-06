@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from asymmetry.gui.styles import tokens
+from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.typography import SIZE_NUMERIC, header_font, section_label_font
 
@@ -129,11 +129,18 @@ def apply_param_table_style(table: QTableWidget) -> None:
     """Apply BENCH styling to any parameter or data table.
 
     Sets a DemiBold section header, 11pt mono cell font, hides the row-number
-    column, and tints alternating rows with surfaceAlt.
+    column, sizes rows to the live font (via :func:`metrics.row_height`), and
+    tints alternating rows with surfaceAlt.
+
+    Re-callable to re-scale a live table: the header/cell fonts and row height are
+    re-derived from the active UI-scale font builders, which is how the owning
+    panel refreshes an explicit-font table on a UI-scale change (QSS cannot reach
+    a per-cell font).
     """
     table.horizontalHeader().setFont(header_font())
     table.verticalHeader().setVisible(False)
     table.setFont(mono_font(SIZE_NUMERIC))
+    table.verticalHeader().setDefaultSectionSize(metrics.row_height())
     table.setAlternatingRowColors(True)
     table.setStyleSheet(f"QTableWidget {{ alternate-background-color: {tokens.SURFACE_ALT}; }}")
 

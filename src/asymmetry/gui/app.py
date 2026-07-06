@@ -176,6 +176,8 @@ def _create_splash_screen(app, logo=None):
     except (ImportError, ModuleNotFoundError):
         return None
 
+    # Literal px here are intentional: the splash paints before QSettings /
+    # QApplication font are read, so there is no UI scale to derive from yet.
     canvas = QPixmap(420, 300)
     canvas.fill(QColor(tokens.BG))
 

@@ -814,6 +814,14 @@ class FitParametersPanel(QWidget):
     def _on_ui_scale_changed(self, _ui_scale: float, effective_scale: float) -> None:
         self._group_button_style_scale = max(0.8, float(effective_scale))
         self._refresh_group_button_styles()
+        # The parameter/selector tables carry an explicit mono cell font (and
+        # explicit row height) that ignore the (now re-scaled) application font,
+        # and QSS cannot reach a per-cell font, so re-derive them from the
+        # builders at the active scale. apply_param_table_style rebuilds the cell
+        # font via mono_font() and the row height via metrics.row_height(), both
+        # of which read the scale the UIManager has just published.
+        for table in (self._table, self._y_selector_table):
+            apply_param_table_style(table)
 
     def clear(self) -> None:
         self._bump_data_revision()

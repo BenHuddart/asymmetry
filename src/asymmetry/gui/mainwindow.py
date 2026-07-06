@@ -249,9 +249,8 @@ from asymmetry.gui.panels.log_panel import LogPanel
 from asymmetry.gui.panels.maxent_panel import MaxEntPanel
 from asymmetry.gui.panels.plot_panel import PlotPanel
 from asymmetry.gui.panels.plot_workspace_panel import PlotWorkspacePanel
-from asymmetry.gui.styles import tokens
-from asymmetry.gui.styles.fonts import mono_font
-from asymmetry.gui.styles.typography import header_font
+from asymmetry.gui.styles import metrics, tokens
+from asymmetry.gui.styles.typography import header_font, status_font
 from asymmetry.gui.styles.widgets import (
     build_segmented_button_qss,
     build_segmented_cell_qss,
@@ -495,14 +494,21 @@ class _InspectorStack(CurrentPageSizingMixin, QStackedWidget):
     """
 
 
-#: Default width (px) the right-hand inspector deck opens at. Wide enough that
-#: its controls — per-parameter Model Fit buttons, MaxEnt frequency/time fields,
-#: parameter Min/Max columns — are visible without horizontal scrolling, while
-#: still leaving the central plot dominant on a 13-inch laptop. The dock floors
-#: at its own setMinimumWidth (narrower, for small screens); below this default
-#: each panel's own QScrollArea keeps its controls reachable, and the splitter
-#: widens the deck on demand.
-INSPECTOR_DOCK_DEFAULT_WIDTH = 360
+#: Inspector/browser dock minimum widths, expressed in characters of the live UI
+#: font (via :func:`metrics.char_width`) so they track the UI-scale setting
+#: instead of freezing at a design-size pixel count. ``_INSPECTOR_DOCK_MIN_CHARS``
+#: floors the tabified inspector deck at the compacted Single-fit tab width;
+#: ``_BROWSER_DOCK_MIN_CHARS`` floors the data-browser dock. Historically 236 /
+#: 220 px at the design font.
+_INSPECTOR_DOCK_MIN_CHARS = 34
+_BROWSER_DOCK_MIN_CHARS = 32
+#: Upper bound (in characters) on the adaptive inspector default width — a wide
+#: deck on a large monitor stops here so the central plot still dominates.
+_INSPECTOR_DOCK_MAX_CHARS = 60
+#: Fraction of the window width the inspector deck rests at when the window is
+#: wide enough — so a 27-inch monitor gives FFT/MaxEnt panels room rather than
+#: leaving them cramped at the minimum while the plot hogs everything.
+_INSPECTOR_DOCK_WIDTH_FRACTION = 0.18
 
 
 def _inspector_scroll_area(content: QWidget) -> QScrollArea:
@@ -754,6 +760,12 @@ class MainWindow(QMainWindow):
         self._create_toolbars()
         self._create_docks()
         self._ui_manager = UIManager(self)
+        # The status-bar labels set an explicit mono font that ignores the
+        # (UI-scaled) application font and that QSS cannot reach cleanly without
+        # a broad QLabel rule, so this owned hook re-derives them from the
+        # builders on every scale change. Connected before restore_settings so
+        # the initial apply_ui_scale emit reaches it.
+        self._ui_manager.ui_scale_changed.connect(self._on_ui_scale_changed)
         self._connect_actions()
         self._ui_manager.restore_settings()
         self._restore_plot_ranges_from_settings()
@@ -1511,7 +1523,7 @@ class MainWindow(QMainWindow):
         self._data_browser = DataBrowserPanel()
         self._dock_data_browser = QDockWidget("Data Browser", self)
         self._dock_data_browser.setWidget(self._data_browser)
-        self._dock_data_browser.setMinimumWidth(220)
+        self._dock_data_browser.setMinimumWidth(metrics.char_width(_BROWSER_DOCK_MIN_CHARS))
         self._dock_data_browser.setFeatures(
             QDockWidget.DockWidgetFeature.DockWidgetMovable
             | QDockWidget.DockWidgetFeature.DockWidgetFloatable
@@ -1559,10 +1571,10 @@ class MainWindow(QMainWindow):
         self._dock_fit.setWidget(_inspector_scroll_area(self._fit_stack))
         # The inspector docks are tabified (share the max of their minimum
         # widths), so all three floor at the compacted Single-fit tab width
-        # (~236) to let the deck get as narrow as a 13" screen wants; a denser
-        # current page (grouped count fit, ALC scan) still grows it via the
-        # per-page sizing mixin.
-        self._dock_fit.setMinimumWidth(236)
+        # (~34 chars) to let the deck get as narrow as a 13" screen wants; a
+        # denser current page (grouped count fit, ALC scan) still grows it via
+        # the per-page sizing mixin.
+        self._dock_fit.setMinimumWidth(metrics.char_width(_INSPECTOR_DOCK_MIN_CHARS))
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_fit)
 
         # Right dock — spectrum controls (FFT / MaxEnt, tabbed with fit)
@@ -1573,7 +1585,7 @@ class MainWindow(QMainWindow):
         self._spectrum_stack.addWidget(self._maxent_panel)
         self._dock_fourier = QDockWidget("Spectrum", self)
         self._dock_fourier.setWidget(_inspector_scroll_area(self._spectrum_stack))
-        self._dock_fourier.setMinimumWidth(236)
+        self._dock_fourier.setMinimumWidth(metrics.char_width(_INSPECTOR_DOCK_MIN_CHARS))
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_fourier)
 
         # Right dock — fitted parameter trends (tabbed with fit/fourier). In ALC
@@ -1587,7 +1599,7 @@ class MainWindow(QMainWindow):
         self._parameters_stack.addWidget(self._alc_analysis_widget)
         self._dock_fit_parameters = QDockWidget("Parameters", self)
         self._dock_fit_parameters.setWidget(_inspector_scroll_area(self._parameters_stack))
-        self._dock_fit_parameters.setMinimumWidth(236)
+        self._dock_fit_parameters.setMinimumWidth(metrics.char_width(_INSPECTOR_DOCK_MIN_CHARS))
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_fit_parameters)
         # Canonical inspector tab order, left to right: processing (Spectrum)
         # first, then Fit, then Parameters — the user works through the deck in
@@ -1637,39 +1649,51 @@ class MainWindow(QMainWindow):
 
         # Design-handoff status line: ● state · selection/view · cursor · χ²/ν.
         self._status_state_label = QLabel("● Idle")
-        self._status_state_label.setFont(mono_font(10.5))
+        self._status_state_label.setFont(status_font())
         # Right padding separates the state tracker from the run-number /
         # selection text that follows it, which otherwise read as cramped.
         self._status_state_label.setStyleSheet(f"color: {tokens.TEXT_MUTED}; padding-right: 10px;")
         _sb.addPermanentWidget(self._status_state_label)
 
         self._status_sel_label = QLabel("")
-        self._status_sel_label.setFont(mono_font(10.5))
+        self._status_sel_label.setFont(status_font())
         _sb.addPermanentWidget(self._status_sel_label, 1)
 
         self._status_coords_label = QLabel("")
-        self._status_coords_label.setFont(mono_font(10.5))
+        self._status_coords_label.setFont(status_font())
         self._status_coords_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
         _sb.addPermanentWidget(self._status_coords_label)
 
         self._status_chi2_label = QLabel("")
-        self._status_chi2_label.setFont(mono_font(10.5))
+        self._status_chi2_label.setFont(status_font())
         _sb.addPermanentWidget(self._status_chi2_label)
+
+        #: Status-bar labels carrying an explicit mono font that QSS cannot reach
+        #: cleanly; _on_ui_scale_changed re-derives them from status_font().
+        self._status_labels = (
+            self._status_state_label,
+            self._status_sel_label,
+            self._status_coords_label,
+            self._status_chi2_label,
+        )
 
         self._last_fit_chi2: float | None = None
 
         # Set compact-friendly defaults while keeping the central plot dominant.
         # The width budget must leave the plot dominant on a 13-inch laptop
-        # (~1280 logical px): browser 330 + inspector deck 360 + plot ~590.
-        # The inspector deck is sized as a group (the three right docks are
-        # tabified into one region; resizing one alone is a no-op against its
-        # siblings). This pass seeds the layout; the width is re-applied in
-        # showEvent because it does not fully stick until the dock area has real
-        # geometry, once the window is shown (see _apply_default_dock_widths).
+        # (~1280 logical px): browser 330 + inspector deck + plot. The inspector
+        # deck rests at an adaptive width (see _inspector_default_width) that
+        # widens on a large monitor but stays compact on a laptop. The deck is
+        # sized as a group (the three right docks are tabified into one region;
+        # resizing one alone is a no-op against its siblings). This pass seeds the
+        # layout; the width is re-applied in showEvent because it does not fully
+        # stick until the dock area has real geometry (see
+        # _apply_default_dock_widths).
+        inspector_width = self._inspector_default_width()
         self.resizeDocks([self._dock_data_browser], [330], Qt.Orientation.Horizontal)
         self.resizeDocks(
             [self._dock_fit, self._dock_fourier, self._dock_fit_parameters],
-            [INSPECTOR_DOCK_DEFAULT_WIDTH] * 3,
+            [inspector_width] * 3,
             Qt.Orientation.Horizontal,
         )
         self.resizeDocks([self._dock_log], [112], Qt.Orientation.Vertical)
@@ -5400,6 +5424,22 @@ class MainWindow(QMainWindow):
             self._default_dock_widths_applied = True
             QTimer.singleShot(0, self, self._apply_default_dock_widths)
 
+    def _on_ui_scale_changed(self, _ui_scale: float, _effective_scale: float) -> None:
+        """Re-derive explicit-font chrome the QSS/app-font paths cannot reach.
+
+        The status-bar labels set an explicit mono ``status_font()`` that ignores
+        the re-scaled application font. The font builders already have the new
+        scale published (UIManager sets it before emitting this signal), so
+        re-calling the builder rebuilds each label's font at the active scale.
+        """
+        font = status_font()
+        for label in getattr(self, "_status_labels", ()):
+            label.setFont(font)
+        # Deliberately do NOT re-apply the inspector default width here: a live
+        # scale change must not clobber a width the user has dragged. The
+        # adaptive default is applied only at launch (showEvent) and Reset
+        # Layout, matching "persist user-dragged widths".
+
     def _apply_default_dock_widths(self) -> None:
         """Open the right inspector deck at its controls-fitting default width.
 
@@ -5413,11 +5453,29 @@ class MainWindow(QMainWindow):
         inspector_docks = self._inspector_deck_docks()
         if not inspector_docks:
             return
+        width = self._inspector_default_width()
         self.resizeDocks(
             inspector_docks,
-            [INSPECTOR_DOCK_DEFAULT_WIDTH] * len(inspector_docks),
+            [width] * len(inspector_docks),
             Qt.Orientation.Horizontal,
         )
+
+    def _inspector_default_width(self) -> int:
+        """Return the adaptive default width (px) for the right inspector deck.
+
+        Clamped to ``[char_width(min), char_width(max)]`` and set to a fraction
+        of the window width in between, all read from the live UI font so the
+        deck tracks the UI-scale setting. On a laptop the fraction lands near the
+        minimum (plot stays dominant); on a 27-inch monitor it opens wider so the
+        FFT/MaxEnt panels are not cramped. ``resizeDocks`` still caps the result
+        to the room the plot and left dock can yield, so this is an upper request,
+        not a guarantee.
+        """
+        minimum = metrics.char_width(_INSPECTOR_DOCK_MIN_CHARS)
+        maximum = metrics.char_width(_INSPECTOR_DOCK_MAX_CHARS)
+        window_width = self.width() or self.sizeHint().width()
+        fraction = round(window_width * _INSPECTOR_DOCK_WIDTH_FRACTION)
+        return max(minimum, min(maximum, fraction))
 
     def _refresh_inspector_tab_bar(self) -> None:
         """Force the right dock area to relayout so its tab bar reappears.
