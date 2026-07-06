@@ -16,6 +16,9 @@ import pytest
 pytestmark = [pytest.mark.gui]
 
 pyside6 = pytest.importorskip("PySide6")
+# test_gle_editor_available_in_project_venv asserts the embedding API is
+# present, which needs gleplot installed at all (the gle extra).
+pytest.importorskip("gleplot", reason="gle extra not installed")
 from PySide6.QtWidgets import QApplication, QMessageBox  # type: ignore
 
 import asymmetry.gui.mainwindow as mw_module

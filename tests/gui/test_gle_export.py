@@ -18,6 +18,8 @@ import pytest
 pytestmark = [pytest.mark.gui]
 
 pytest.importorskip("PySide6")
+# The builder callbacks in these tests drive the real gleplot API.
+pytest.importorskip("gleplot", reason="gle extra not installed")
 from PySide6.QtWidgets import QApplication, QFileDialog, QWidget  # noqa: E402
 
 import asymmetry.gui.utils.gle_export as gle_export  # noqa: E402
