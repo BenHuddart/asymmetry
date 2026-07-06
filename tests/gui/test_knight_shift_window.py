@@ -689,3 +689,63 @@ def test_rescale_suffix_absent_when_chi_squared_r_is_not_above_one(qapp):
 
     window._rescale_check.setChecked(False)
     assert "(errors ×√χ²ᵣ)" not in window._fit_results_label.text()
+
+
+# ── 18. Legacy-migrated joint fit with an AUTO unit ──────────────────────────
+
+
+def test_restore_of_legacy_migrated_joint_with_auto_unit_does_not_crash(qapp):
+    """A joint fit migrated from a legacy project carries unit="auto".
+
+    The concrete unit the legacy fit ran in was never recorded, so the
+    migration stores the config's own (possibly AUTO) unit and the curves are
+    stale-by-construction. AUTO has no display label — building the results
+    table must not crash on it (regression: KeyError in label_for_unit when a
+    migrated project reopened the window), and the K headers simply go
+    unannotated while the stale note invites a re-run.
+    """
+    from asymmetry.core.fitting.knight_analysis import (
+        KnightAnalysisState,
+        KnightJointCurve,
+        KnightJointFitState,
+    )
+
+    state = KnightAnalysisState(
+        config=KnightShiftConfig(enabled=True),
+        joint=KnightJointFitState(
+            model_name="KnightAnisotropy",
+            unit="auto",
+            converged=True,
+            message="Migrated from a saved trend-panel joint fit.",
+            assignment={1000 + i: (0, 1) for i in range(10)},
+            curves=(
+                KnightJointCurve(
+                    branch_name="K[field_1]",
+                    parameters=(("K_iso", 0.2, 0.01), ("K_ax", -0.8, 0.02)),
+                    chi_squared=10.0,
+                    reduced_chi_squared=1.5,
+                    n_points=10,
+                    success=True,
+                ),
+                KnightJointCurve(
+                    branch_name="K[field_2]",
+                    parameters=(("K_iso", 0.1, 0.01), ("K_ax", 0.8, 0.02)),
+                    chi_squared=12.0,
+                    reduced_chi_squared=1.8,
+                    n_points=10,
+                    success=True,
+                ),
+            ),
+        ),
+    )
+
+    window = KnightShiftWindow()
+    window.restore_state(state.to_dict())
+    window.set_snapshot(_snapshot())  # crashed before the AUTO-unit guard
+
+    text = window._fit_results_label.text()
+    assert "re-run to refresh" in text
+    # AUTO has no label: K headers stay unannotated (no unit parenthesis).
+    header_row = text.split("</tr>")[0]
+    assert "K<sub>iso</sub>" in header_row
+    assert "(" not in header_row.replace("(°)", "")

@@ -740,9 +740,14 @@ class KnightShiftWindow(QMainWindow):
             return ""
         rescale = self._rescale_check.isChecked()
         try:
-            fit_unit_label = label_for_unit(KnightShiftUnit(joint.unit))
+            fit_unit = KnightShiftUnit(joint.unit)
         except ValueError:
-            fit_unit_label = ""
+            fit_unit = KnightShiftUnit.AUTO
+        # A joint fit migrated from a legacy project can carry AUTO — the
+        # concrete unit it actually ran in was never recorded (the curves are
+        # stale-by-construction; see _migrate_legacy_joint_fit). AUTO has no
+        # label, so the K headers simply go unannotated.
+        fit_unit_label = "" if fit_unit is KnightShiftUnit.AUTO else label_for_unit(fit_unit)
 
         def _html_subscript(label: str) -> str:
             # "K_iso (…)" → "K<sub>iso</sub> (…)": the unicode registry keeps
