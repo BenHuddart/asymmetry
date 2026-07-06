@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **GLE figure editor.** Exporting a figure to GLE (main plot, Fit Parameters,
+  or the Global Parameter Fit window) now opens the exported `.gle` script in
+  the gleplot figure editor — an in-app window styled like the rest of
+  Asymmetry — instead of the static preview dialog, so scripts can be tweaked
+  and re-rendered without leaving the app. The editor also opens when no GLE
+  binary is installed (editing still works; its preview reports "GLE: not
+  found"), uses the binary configured under **Setup ▸ GLE Setup…**, and is
+  reachable any time via **Analysis ▸ GLE Figure Editor…**. Requires
+  gleplot ≥ 1.6; older installs keep the static preview dialog.
+
 ## [0.6.0] - 2026-07-06
 
 ### Added

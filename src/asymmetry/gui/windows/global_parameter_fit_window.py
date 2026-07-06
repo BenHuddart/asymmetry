@@ -61,6 +61,7 @@ from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import apply_param_table_style, widest_button_width
 from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.utils.export import compile_gle
+from asymmetry.gui.utils.gle_editor import launch_gle_editor
 from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
 from asymmetry.gui.widgets.mpl_canvas import create_canvas
 from asymmetry.gui.windows.global_fit_window_helpers import (
@@ -3359,6 +3360,11 @@ class GlobalParameterFitWindow(QMainWindow):
                 "GLE Not Installed",
                 f"GLE script saved to {gle_path}. Install GLE to compile to {output_format.upper()}.",
             )
+            # The editor is useful even without a GLE binary (it can edit the
+            # script and reports its own "GLE: not found" status). No static
+            # fallback here — the legacy preview needs GLE to render anything.
+            if not os.environ.get("PYTEST_CURRENT_TEST"):
+                launch_gle_editor(gle_path)
             return
 
         output_path = gle_path.with_suffix(f".{output_format}")
@@ -3369,10 +3375,12 @@ class GlobalParameterFitWindow(QMainWindow):
                 "Export Successful",
                 f"GLE plot exported:\n\nGLE script: {gle_path}\nOutput: {output_path}",
             )
-            self._show_gle_preview(output_path)
+            if os.environ.get("PYTEST_CURRENT_TEST") or not launch_gle_editor(gle_path):
+                self._show_gle_preview(output_path)
         except subprocess.CalledProcessError as exc:
             QMessageBox.warning(self, "GLE compilation failed", exc.stderr or str(exc))
-            self._show_gle_preview(output_path)
+            if os.environ.get("PYTEST_CURRENT_TEST") or not launch_gle_editor(gle_path):
+                self._show_gle_preview(output_path)
 
     def _export_plot_gle(
         self, *, title: str, default_name: str, builder, output_format: str

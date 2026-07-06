@@ -119,6 +119,7 @@ from asymmetry.gui.styles.plots import (
 )
 from asymmetry.gui.styles.widgets import build_nav_button_qss
 from asymmetry.gui.utils.export import compile_gle
+from asymmetry.gui.utils.gle_editor import launch_gle_editor
 from asymmetry.gui.widgets.axis_limits import AxisLimitControls, FloatLimitField
 from asymmetry.gui.widgets.mpl_canvas import create_canvas
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox
@@ -6838,20 +6839,27 @@ class PlotPanel(QWidget):
                         f"Data/fit files:\n{files_text}"
                     ),
                 )
-                self._show_gle_preview(gle_path)
+                if os.environ.get("PYTEST_CURRENT_TEST") or not launch_gle_editor(gle_path):
+                    self._show_gle_preview(gle_path)
             except subprocess.CalledProcessError as exc:
                 QMessageBox.warning(
                     self,
                     "GLE compilation failed",
                     exc.stderr or str(exc),
                 )
-                self._show_gle_preview(gle_path)
+                if os.environ.get("PYTEST_CURRENT_TEST") or not launch_gle_editor(gle_path):
+                    self._show_gle_preview(gle_path)
         else:
             QMessageBox.information(
                 self,
                 "GLE Not Installed",
                 f"GLE script saved to {gle_path}.\nInstall GLE to compile to {output_format.upper()}.",
             )
+            # The editor is useful even without a GLE binary (it can edit the
+            # script and reports its own "GLE: not found" status). No static
+            # fallback here — the legacy preview needs GLE to render anything.
+            if not os.environ.get("PYTEST_CURRENT_TEST"):
+                launch_gle_editor(gle_path)
 
     # Keep old name as alias for backward compatibility with tests.
     def export_current_plot(self) -> None:

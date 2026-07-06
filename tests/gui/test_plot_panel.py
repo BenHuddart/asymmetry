@@ -23,6 +23,7 @@ from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.export_paths import resolve_gle_export_paths
 from asymmetry.gui.panels.plot_panel import PlotPanel
 from asymmetry.gui.styles import tokens
+from asymmetry.gui.utils.gle_editor import open_gle_editor_count
 from asymmetry.gui.widgets.axis_limits import FloatLimitField
 
 _PROJECTION_TINTS = {"P_x": "#534AB7", "P_y": "#BA7517", "P_z": "#0F6E56"}
@@ -3480,6 +3481,11 @@ class TestPlotPanel:
         assert dialogs[0][0] == "Export Successful"
         assert "Data/fit files:" in dialogs[0][2]
         assert previews == [str(resolved_gle)]
+        # Under pytest (PYTEST_CURRENT_TEST is set by the runner itself), the
+        # new editor-first preview path must not open a real editor window —
+        # today's PYTEST_CURRENT_TEST guard keeps the legacy static preview
+        # the only thing invoked (and it is stubbed above).
+        assert open_gle_editor_count() == 0
 
     def test_show_gle_preview_returns_early_under_pytest(
         self,

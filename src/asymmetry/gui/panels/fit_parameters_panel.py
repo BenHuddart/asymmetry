@@ -155,6 +155,7 @@ from asymmetry.gui.styles.widgets import (
 from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.utils.export import compile_gle
 from asymmetry.gui.utils.formatting import format_param_label
+from asymmetry.gui.utils.gle_editor import launch_gle_editor
 from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
 from asymmetry.gui.widgets.mpl_canvas import create_canvas
 from asymmetry.gui.widgets.panel_section import PanelSection
@@ -6671,15 +6672,17 @@ class FitParametersPanel(QWidget):
                             f"Output: {output_path}"
                         ),
                     )
-                    self._show_gle_preview(
-                        fig, data_path, list(fit_file_map.values()) if fit_file_map else []
-                    )
+                    if not launch_gle_editor(gle_path):
+                        self._show_gle_preview(
+                            fig, data_path, list(fit_file_map.values()) if fit_file_map else []
+                        )
             except subprocess.CalledProcessError as exc:
                 if not is_test_mode:
                     QMessageBox.warning(self, "GLE compilation failed", exc.stderr or str(exc))
-                    self._show_gle_preview(
-                        fig, data_path, list(fit_file_map.values()) if fit_file_map else []
-                    )
+                    if not launch_gle_editor(gle_path):
+                        self._show_gle_preview(
+                            fig, data_path, list(fit_file_map.values()) if fit_file_map else []
+                        )
         else:
             if not is_test_mode:
                 QMessageBox.information(
@@ -6687,9 +6690,10 @@ class FitParametersPanel(QWidget):
                     "GLE Not Installed",
                     f"GLE script saved to {gle_path}. Install GLE to compile to {output_format.upper()}.",
                 )
-                self._show_gle_preview(
-                    fig, data_path, list(fit_file_map.values()) if fit_file_map else []
-                )
+                if not launch_gle_editor(gle_path):
+                    self._show_gle_preview(
+                        fig, data_path, list(fit_file_map.values()) if fit_file_map else []
+                    )
 
     def _show_gle_preview(self, fig, data_path: Path, fit_files: list[Path] | None = None) -> None:
         if os.environ.get("PYTEST_CURRENT_TEST"):
