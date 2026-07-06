@@ -177,6 +177,10 @@ class DetectorLayoutDialog(QDialog):
             colour = _colour_css(gid)
             swatch.setStyleSheet(
                 f"background-color: {colour}; border-radius: 2px;"
+                # Translucent-black hairline outline so the swatch reads against
+                # any of the per-group fill colours; no token models a
+                # translucent overlay (only opaque tokens exist), so this stays
+                # a literal rather than approximating it with an opaque token.
                 " border: 1px solid rgba(0,0,0,0.15);"
             )
             swatch.setToolTip(f"Group {gid} colour")
@@ -407,7 +411,7 @@ class DetectorLayoutDialog(QDialog):
             colour = _colour_css(gid)
             button.setStyleSheet(
                 "QPushButton {"
-                " border: 1px solid #999;"
+                f" border: 1px solid {tokens.BORDER_STRONG};"
                 f" border-radius: {border_radius}px;"
                 f" padding: {padding_v}px {padding_h}px;"
                 f" background-color: {tokens.SURFACE_ALT};"

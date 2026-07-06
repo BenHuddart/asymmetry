@@ -49,6 +49,16 @@ CLEAN_FILES: list[str] = [
     "windows/detector_layout_dialog.py",
     # fit_wizard_window.py is excluded — its embedded matplotlib preview plots
     # use specialist non-BENCH hex colours for scientific visualisation.
+    # Phase 1E (older-surfaces polish pass) additions:
+    "panels/alc_panel.py",
+    "gle_settings.py",
+    "panels/knight_shift_dialog.py",
+    "panels/knight_joint_fit_dialog.py",
+    "windows/grouping/dialog.py",
+    "widgets/function_builder/dialog.py",
+    "windows/new_user_function_dialog.py",
+    # widgets/function_builder/model_rows.py is excluded — its
+    # _FRACTION_GROUP_COLORS accent cycle is a deliberate non-BENCH palette.
 ]
 
 

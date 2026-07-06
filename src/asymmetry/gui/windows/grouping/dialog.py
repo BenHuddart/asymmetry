@@ -552,10 +552,10 @@ class GroupingDialog(QDialog):
         period_layout.setSpacing(10)
 
         period_specs = [
-            ("Red", str(PeriodMode.RED), "#c00000"),
-            ("Green", str(PeriodMode.GREEN), "#008000"),
-            ("G minus R", str(PeriodMode.GREEN_MINUS_RED), "#0000c0"),
-            ("G plus R", str(PeriodMode.GREEN_PLUS_RED), "#800080"),
+            ("Red", str(PeriodMode.RED), tokens.PERIOD_RED),
+            ("Green", str(PeriodMode.GREEN), tokens.PERIOD_GREEN),
+            ("G minus R", str(PeriodMode.GREEN_MINUS_RED), tokens.PERIOD_DIFF),
+            ("G plus R", str(PeriodMode.GREEN_PLUS_RED), tokens.PERIOD_SUM),
         ]
         for idx, (label, mode_key, color) in enumerate(period_specs):
             btn = QRadioButton(label)
