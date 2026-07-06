@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **GLE exports no longer block the interface.** The GLE compile step of every
+  figure export (main plot, Fit Parameters, Global Parameter Fit window) now
+  runs in the background; a wedged GLE process is stopped after a bounded
+  timeout instead of hanging the export. All three export surfaces now share
+  one orchestrated sequence with a consistent, scrollable "Export Successful"
+  results dialog, and re-exporting to an existing `.gleplot` folder cleans up
+  stale `.dat`/`.fit` sidecars left by a previous, larger export.
+- **Setup ▸ GLE Setup… validates the chosen executable.** On accept the dialog
+  runs the path once and refuses to save one that cannot run or is not GLE,
+  showing the reason inline — previously a bad path was saved silently and
+  only surfaced later as an opaque export error. Export failures from an
+  unrunnable configured binary now name the path and point back to the setup
+  dialog.
+
+### Added
+
+- **GLE figure editor.** Exporting a figure to GLE (main plot, Fit Parameters,
+  or the Global Parameter Fit window) now opens the exported `.gle` script in
+  the gleplot figure editor — an in-app window styled like the rest of
+  Asymmetry — instead of the static preview dialog, so scripts can be tweaked
+  and re-rendered without leaving the app. The editor also opens when no GLE
+  binary is installed (editing still works; its preview reports "GLE: not
+  found"), uses the binary configured under **Setup ▸ GLE Setup…**, and is
+  reachable any time via **Analysis ▸ GLE Figure Editor…**. Requires
+  gleplot ≥ 1.6; older installs keep the static preview dialog.
+
 ## [0.6.0] - 2026-07-06
 
 ### Added

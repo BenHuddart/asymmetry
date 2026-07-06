@@ -47,6 +47,24 @@ MPL_CANVAS_CONSTRUCTION_ALLOWLIST = frozenset(
 # run background work via `asymmetry.gui.tasks.TaskRunner`.
 TASK_RUNNER_HOME = GUI_ROOT / "tasks.py"
 
+# ── GLE export orchestration ──────────────────────────────────────────────────
+# Canonical home for the GLE export sequence (save dialog → build → async
+# compile on a TaskRunner → result dialogs → editor/static-preview step).
+# A direct `compile_gle(` call, a fresh `importlib.import_module("gleplot")`,
+# or a bespoke `_show_gle_preview` implementation outside gui/utils re-rolls
+# that foundation — and, for the compile, re-introduces a synchronous
+# subprocess on the GUI thread.
+GLE_EXPORT_HOME = GUI_ROOT / "utils" / "gle_export.py"
+GLE_EXPORT_UTILS = frozenset(
+    {
+        GLE_EXPORT_HOME,
+        GUI_ROOT / "utils" / "export.py",
+        GUI_ROOT / "utils" / "gle_editor.py",
+    }
+)
+GLEPLOT_IMPORT_RE = re.compile(r"""import_module\(\s*["']gleplot["']\s*\)""")
+GLE_PREVIEW_DEF_RE = re.compile(r"^\s*def\s+_show_gle_preview\b")
+
 # ── Titled-section primitive ──────────────────────────────────────────────────
 # Canonical home for the one titled/collapsible section primitive. A bespoke
 # `*CollapsibleSection` class anywhere else in gui/ re-rolls a foundation the
@@ -295,6 +313,57 @@ def find_bespoke_qthread_violations(gui_root: Path = GUI_ROOT) -> list[HarnessFa
                         (
                             "Bespoke `QThread(` construction. "
                             "Run background work via `asymmetry.gui.tasks.TaskRunner`."
+                        ),
+                    )
+                )
+    return failures
+
+
+def find_bespoke_gle_export_violations(gui_root: Path = GUI_ROOT) -> list[HarnessFailure]:
+    """Return GLE-export sequence fragments re-rolled outside the shared home.
+
+    Three signatures, one rule: `compile_gle(` calls, dynamic gleplot imports,
+    and `_show_gle_preview` definitions belong in `gui/utils/` — surfaces go
+    through `asymmetry.gui.utils.gle_export.run_gle_export`.
+    """
+
+    failures: list[HarnessFailure] = []
+    for path in _iter_python_files(gui_root):
+        if path in GLE_EXPORT_UTILS:
+            continue
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if "compile_gle(" in line:
+                failures.append(
+                    HarnessFailure(
+                        path,
+                        lineno,
+                        (
+                            "Direct `compile_gle(` call (synchronous subprocess on the "
+                            "GUI thread). Export via "
+                            "`asymmetry.gui.utils.gle_export.run_gle_export`."
+                        ),
+                    )
+                )
+            if GLEPLOT_IMPORT_RE.search(line):
+                failures.append(
+                    HarnessFailure(
+                        path,
+                        lineno,
+                        (
+                            "Bespoke dynamic gleplot import. "
+                            "`run_gle_export` owns the import and its failure dialog."
+                        ),
+                    )
+                )
+            if GLE_PREVIEW_DEF_RE.match(line):
+                failures.append(
+                    HarnessFailure(
+                        path,
+                        lineno,
+                        (
+                            "Bespoke `_show_gle_preview` implementation. Use "
+                            "`asymmetry.gui.utils.gle_export.post_export_view` "
+                            "(editor with static-preview fallback)."
                         ),
                     )
                 )
@@ -809,6 +878,7 @@ def run_structural_checks() -> int:
         *find_duplicate_limit_field_violations(),
         *find_duplicate_mpl_canvas_violations(),
         *find_bespoke_qthread_violations(),
+        *find_bespoke_gle_export_violations(),
         *find_bespoke_section_violations(),
         *find_raw_hex_colour_violations(),
         *find_literal_pixel_geometry_violations(),

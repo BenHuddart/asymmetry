@@ -65,7 +65,11 @@ For GLE export support:
   later. In a frozen macOS app the inherited ``PATH`` is minimal, so
   Asymmetry also looks for ``gle`` in the standard Homebrew, MacPorts,
   and QGLE locations. Override the search from **Setup → GLE Setup…**
-  in the main menu; the chosen path is persisted across sessions.
+  in the main menu; the chosen path is persisted across sessions. On
+  accept the dialog runs the chosen executable once to verify it is
+  actually GLE — a path that cannot run (or is not GLE) is rejected with
+  the reason shown in the dialog, rather than saved and left to fail at
+  export time.
 
 Installation methods
 --------------------

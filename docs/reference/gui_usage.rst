@@ -598,6 +598,18 @@ Compilation behaviour:
 * If ``gleplot`` regenerates matching ``.dat`` files while saving, Asymmetry
   rewrites the metadata-rich sidecars afterwards so those headers are retained.
 
+After the export is written, Asymmetry opens the exported ``.gle`` script
+directly in the gleplot figure editor (an in-app window, styled to match the
+rest of Asymmetry) so you can tweak the script and re-render without leaving
+the app. The editor opens even when no GLE binary is installed — you can still
+edit the script, and the editor reports "GLE: not found" in its status bar.
+Its live preview compiles with the same GLE binary configured under
+**Setup ▸ GLE Setup…**. This requires ``gleplot`` >= 1.6; against older
+``gleplot`` installs Asymmetry falls back to the previous behaviour, a
+read-only static preview dialog after successful compiles. The same editor is
+also reachable directly from **Analysis ▸ GLE Figure Editor…**, which opens a
+blank editor window at any time.
+
 Fitting panel
 -------------
 
@@ -858,10 +870,12 @@ fitted model and the shared global-parameter values, and per-run reduced χ² an
    * Any optional ``.fit`` sidecars needed for active model overlays
 
 5. If GLE is installed on your system, the script is compiled automatically
-   to PDF or EPS and a preview window is shown
-6. If GLE is not installed, the script and data files are still saved —
-   you can compile them later with ``gle -d pdf <name>.gle`` from inside the
-   ``.gleplot`` folder
+   to PDF or EPS and the exported ``.gle`` script opens in the gleplot figure
+   editor (falling back to a read-only static preview dialog against
+   ``gleplot`` < 1.6)
+6. If GLE is not installed, the script and data files are still saved — and
+   still open in the figure editor for editing — you can compile them later
+   with ``gle -d pdf <name>.gle`` from inside the ``.gleplot`` folder
 
 .. note::
 
@@ -876,6 +890,10 @@ The Global Parameter Fit window provides two dedicated GLE export buttons:
 
 * **Export fits to GLE** (left pane): exports the per-dataset fit overlays
 * **Export plot(s) to GLE** (right pane): exports local-parameter trend plots
+
+Both buttons open the exported ``.gle`` script in the gleplot figure editor
+after the export is written, the same as the main-plot and fit-parameters GLE
+exports above.
 
 For local-parameter exports, Asymmetry also writes:
 

@@ -42,6 +42,7 @@ from asymmetry.gui.panels.fit_parameters_panel import (
     _format_plot_legend_label,
     _GroupFitData,
 )
+from asymmetry.gui.utils import gle_export
 from asymmetry.gui.utils.formatting import format_param_label as _format_param_label
 from tests._qt_helpers import wait_for
 
@@ -588,54 +589,75 @@ class _FakeFigure:
         output_path.write_text("! fake gle", encoding="utf-8")
 
 
-def test_generate_gle_plot_uses_errorbar_from_file(
-    panel: FitParametersPanel, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def _patch_save_dialog(monkeypatch: pytest.MonkeyPatch, out_gle: Path) -> None:
+    monkeypatch.setattr(
+        "asymmetry.gui.panels.fit_parameters_panel.QFileDialog.getSaveFileName",
+        lambda *_a, **_k: (str(out_gle), "GLE export folders (*.gleplot)"),
+    )
+
+
+def test_export_gle_uses_errorbar_from_file(
+    panel: FitParametersPanel, qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    data_path = tmp_path / "fit_parameters.dat"
-    data_path.write_text("1 2 3\n", encoding="utf-8")
-    requested_gle_path = tmp_path / "plot.gle"
-    gle_path, _ = resolve_gle_export_paths(requested_gle_path, folder=True)
+    out_gle = tmp_path / "plot.gleplot"
+    gle_path, _ = resolve_gle_export_paths(out_gle, folder=True)
 
     axis = _FakeAxis()
     fig = _FakeFigure(axis)
 
     fake_glp = SimpleNamespace(
-        Axes=type("FakeAxes", (), {"errorbar_from_file": staticmethod(lambda *a, **k: None)}),
+        Axes=type(
+            "FakeAxes",
+            (),
+            {
+                "errorbar_from_file": staticmethod(lambda *a, **k: None),
+                "line_from_file": staticmethod(lambda *a, **k: None),
+            },
+        ),
         figure=lambda **_kwargs: fig,
     )
 
-    subprocess_kwargs: list[dict[str, object]] = []
+    compiled: list[tuple[Path, str, Path]] = []
 
     monkeypatch.setitem(sys.modules, "gleplot", fake_glp)
-    monkeypatch.setattr("shutil.which", lambda _name: "gle")
+    _patch_save_dialog(monkeypatch, out_gle)
+    monkeypatch.setattr(gle_export, "get_gle_executable", lambda: "/fake/gle")
     monkeypatch.setattr(
-        "subprocess.run",
-        lambda *a, **k: subprocess_kwargs.append(dict(k)) or None,
+        gle_export,
+        "compile_gle",
+        lambda exe, gle_file, fmt, *, cwd, **kw: compiled.append((Path(gle_file), fmt, Path(cwd))),
     )
-    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: None)
-    monkeypatch.setattr(panel, "_show_gle_preview", lambda *_a, **_k: None)
+    results: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        gle_export,
+        "show_export_result_dialog",
+        lambda p, title, summary, details: results.append((summary, details)),
+    )
+    monkeypatch.setattr(gle_export, "post_export_view", lambda p, gp: None)
 
-    panel._generate_gle_plot(requested_gle_path, gle_path, data_path, "pdf")
+    panel._export_gle()
 
     assert axis.calls, "Expected at least one errorbar_from_file call"
     first = axis.calls[0]
-    assert first["args"][0] == data_path.name
+    assert first["args"][0] == gle_path.with_suffix(".dat").name
     assert first["kwargs"]["x_col"] == 2
     assert first["kwargs"]["y_col"] == 4
     assert first["kwargs"]["yerr_col"] == 5
     assert str(gle_path) in fig.saved_paths
     assert "folder" not in fig.saved_kwargs[-1]
-    assert subprocess_kwargs
-    assert subprocess_kwargs[0]["cwd"] == str(gle_path.parent)
+
+    wait_for(lambda: bool(compiled), qapp)
+    assert compiled[0][0] == gle_path
+    assert compiled[0][1] == "pdf"
+    assert compiled[0][2] == gle_path.parent
+    wait_for(lambda: bool(results), qapp)
 
 
-def test_generate_gle_plot_saves_to_resolved_gle_path(
-    panel: FitParametersPanel, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_export_gle_saves_to_resolved_gle_path(
+    panel: FitParametersPanel, qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    data_path = tmp_path / "fit_parameters.dat"
-    data_path.write_text("1 2 3\n", encoding="utf-8")
-    requested_gle_path = tmp_path / "plot.gle"
-    gle_path, _export_dir = resolve_gle_export_paths(requested_gle_path, folder=True)
+    out_gle = tmp_path / "plot.gleplot"
+    gle_path, _export_dir = resolve_gle_export_paths(out_gle, folder=True)
 
     axis = _FakeAxis()
 
@@ -655,38 +677,39 @@ def test_generate_gle_plot_saves_to_resolved_gle_path(
     )
 
     monkeypatch.setitem(sys.modules, "gleplot", fake_glp)
-    monkeypatch.setattr("shutil.which", lambda _name: None)
-    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: None)
-    monkeypatch.setattr(panel, "_show_gle_preview", lambda *_a, **_k: None)
+    _patch_save_dialog(monkeypatch, out_gle)
+    monkeypatch.setattr(gle_export, "get_gle_executable", lambda: None)
+    infos: list[tuple[str, str]] = []
+    monkeypatch.setattr(gle_export, "show_info", lambda p, title, msg: infos.append((title, msg)))
+    monkeypatch.setattr(gle_export, "post_export_view", lambda p, gp: None)
 
-    panel._generate_gle_plot(requested_gle_path, gle_path, data_path, "pdf")
+    panel._export_gle()
 
     assert fig.requested_paths == [str(gle_path)]
     assert str(gle_path) in fig.saved_paths
+    # Synchronous "no GLE binary" path: no task/compile involved.
+    assert infos and "GLE script saved" in infos[0][1]
 
 
-def test_generate_gle_plot_warns_for_old_gleplot(
+def test_export_gle_warns_for_old_gleplot(
     panel: FitParametersPanel, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    data_path = tmp_path / "fit_parameters.dat"
-    data_path.write_text("1 2 3\n", encoding="utf-8")
-    requested_gle_path = tmp_path / "plot.gle"
-    gle_path, _ = resolve_gle_export_paths(requested_gle_path, folder=True)
+    out_gle = tmp_path / "plot.gleplot"
 
-    warnings: list[str] = []
+    warnings: list[tuple[str, str]] = []
     fake_glp = SimpleNamespace(Axes=type("OldAxes", (), {}))
 
     monkeypatch.setitem(sys.modules, "gleplot", fake_glp)
+    _patch_save_dialog(monkeypatch, out_gle)
     monkeypatch.setattr(
-        QMessageBox,
-        "warning",
-        lambda *args, **_kwargs: warnings.append(str(args[2]) if len(args) > 2 else ""),
+        gle_export, "show_warning", lambda p, title, msg: warnings.append((title, msg))
     )
 
-    panel._generate_gle_plot(requested_gle_path, gle_path, data_path, "pdf")
+    panel._export_gle()
 
     assert warnings
-    assert "gleplot" in warnings[0]
+    assert warnings[0][0] == "gleplot update required"
+    assert "gleplot" in warnings[0][1]
 
 
 def test_effective_x_key_mapping(panel: FitParametersPanel) -> None:
@@ -704,13 +727,10 @@ def test_effective_x_key_mapping(panel: FitParametersPanel) -> None:
     assert panel._effective_x_key() == "temperature"
 
 
-def test_generate_gle_plot_subplots_mode_uses_black_series(
+def test_export_gle_subplots_mode_uses_black_series(
     panel: FitParametersPanel, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    data_path = tmp_path / "fit_parameters.dat"
-    data_path.write_text("1 2 3\n", encoding="utf-8")
-    requested_gle_path = tmp_path / "plot_subplots.gle"
-    gle_path, _ = resolve_gle_export_paths(requested_gle_path, folder=True)
+    out_gle = tmp_path / "plot_subplots.gleplot"
 
     ax1 = _FakeAxis()
     ax2 = _FakeAxis()
@@ -728,11 +748,12 @@ def test_generate_gle_plot_subplots_mode_uses_black_series(
     monkeypatch.setattr(panel, "_selected_y_parameters", lambda: ["A0", "Lambda"])
 
     monkeypatch.setitem(sys.modules, "gleplot", fake_glp)
-    monkeypatch.setattr("shutil.which", lambda _name: None)
-    monkeypatch.setattr(QMessageBox, "exec", lambda _self: None)
-    monkeypatch.setattr(panel, "_show_gle_preview", lambda *_a, **_k: None)
+    _patch_save_dialog(monkeypatch, out_gle)
+    monkeypatch.setattr(gle_export, "get_gle_executable", lambda: None)
+    monkeypatch.setattr(gle_export, "show_info", lambda p, title, msg: None)
+    monkeypatch.setattr(gle_export, "post_export_view", lambda p, gp: None)
 
-    panel._generate_gle_plot(requested_gle_path, gle_path, data_path, "pdf")
+    panel._export_gle()
 
     assert ax1.calls and ax2.calls
     assert ax1.calls[0]["kwargs"]["color"] == "black"
@@ -741,13 +762,10 @@ def test_generate_gle_plot_subplots_mode_uses_black_series(
     assert ax2.xscale_calls and ax2.yscale_calls
 
 
-def test_generate_gle_plot_dual_axis_assigns_y_and_y2(
-    panel: FitParametersPanel, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_export_gle_dual_axis_assigns_y_and_y2(
+    panel: FitParametersPanel, qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    data_path = tmp_path / "fit_parameters.dat"
-    data_path.write_text("1 2 3\n", encoding="utf-8")
-    requested_gle_path = tmp_path / "plot_dual.gle"
-    gle_path, _ = resolve_gle_export_paths(requested_gle_path, folder=True)
+    out_gle = tmp_path / "plot_dual.gleplot"
 
     axis = _FakeAxis()
     fig = _FakeFigure(axis)
@@ -760,18 +778,25 @@ def test_generate_gle_plot_dual_axis_assigns_y_and_y2(
     monkeypatch.setattr(panel, "_selected_y_parameters", lambda: ["A0", "Lambda"])
 
     monkeypatch.setitem(sys.modules, "gleplot", fake_glp)
-    monkeypatch.setattr("shutil.which", lambda _name: "gle")
-    monkeypatch.setattr("subprocess.run", lambda *a, **k: None)
-    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: None)
-    monkeypatch.setattr(panel, "_show_gle_preview", lambda *_a, **_k: None)
+    _patch_save_dialog(monkeypatch, out_gle)
+    monkeypatch.setattr(gle_export, "get_gle_executable", lambda: "/fake/gle")
+    monkeypatch.setattr(gle_export, "compile_gle", lambda *a, **k: None)
+    results: list[object] = []
+    monkeypatch.setattr(
+        gle_export,
+        "show_export_result_dialog",
+        lambda p, title, summary, details: results.append(summary),
+    )
+    monkeypatch.setattr(gle_export, "post_export_view", lambda p, gp: None)
 
-    panel._generate_gle_plot(requested_gle_path, gle_path, data_path, "pdf")
+    panel._export_gle()
 
     assert len(axis.calls) == 2
     assert axis.calls[0]["kwargs"]["x_col"] == 2
     assert axis.calls[1]["kwargs"]["x_col"] == 2
     assert axis.calls[0]["kwargs"]["yaxis"] == "y"
     assert axis.calls[1]["kwargs"]["yaxis"] == "y2"
+    wait_for(lambda: bool(results), qapp)
 
 
 def test_write_fit_files_restored_fit_without_bounds(
@@ -881,38 +906,51 @@ def test_export_gle_writes_fit_files_for_active_unselected_fit_param(
         )
     }
 
-    out_gle = tmp_path / "fit_parameters.gle"
+    out_gle = tmp_path / "fit_parameters.gleplot"
     resolved_gle, _ = resolve_gle_export_paths(out_gle, folder=True)
-    monkeypatch.setattr(
-        "asymmetry.gui.panels.fit_parameters_panel.QFileDialog.getSaveFileName",
-        lambda *_a, **_k: (str(out_gle), "GLE files (*.gle)"),
-    )
+    _patch_save_dialog(monkeypatch, out_gle)
 
     # Simulate user selecting a different parameter than the one with active fit.
     monkeypatch.setattr(panel, "_selected_y_parameters", lambda: ["Lambda"])
 
     captured: dict[str, object] = {}
+    original_build = panel._build_gle_export
 
-    def _fake_generate(requested_gle_path, gle_path, data_path, output_format, fit_file_map=None):
-        captured["requested_gle_path"] = requested_gle_path
+    def _capturing_build(glp, gle_path, export_dir):
+        result = original_build(glp, gle_path, export_dir)
         captured["gle_path"] = gle_path
-        captured["data_path"] = data_path
-        captured["output_format"] = output_format
-        captured["fit_file_map"] = fit_file_map or {}
+        captured["result"] = result
+        return result
 
-    monkeypatch.setattr(panel, "_generate_gle_plot", _fake_generate)
+    monkeypatch.setattr(panel, "_build_gle_export", _capturing_build)
+
+    axis = _FakeAxis()
+    fig = _FakeFigure(axis)
+    fake_glp = SimpleNamespace(
+        Axes=type(
+            "FakeAxes",
+            (),
+            {
+                "errorbar_from_file": staticmethod(lambda *a, **k: None),
+                "line_from_file": staticmethod(lambda *a, **k: None),
+            },
+        ),
+        figure=lambda **_kwargs: fig,
+    )
+    monkeypatch.setitem(sys.modules, "gleplot", fake_glp)
+    monkeypatch.setattr(gle_export, "get_gle_executable", lambda: None)
+    monkeypatch.setattr(gle_export, "show_info", lambda p, title, msg: None)
+    monkeypatch.setattr(gle_export, "post_export_view", lambda p, gp: None)
 
     panel._export_gle()
 
-    assert captured["requested_gle_path"] == out_gle
     assert captured["gle_path"] == resolved_gle
-    assert Path(captured["data_path"]).parent == resolved_gle.parent
-    fit_map = captured.get("fit_file_map")
-    assert isinstance(fit_map, dict)
-    assert fit_map, "Expected active fit sidecar map to be passed to GLE generator"
-    fit_file = next(iter(fit_map.values()))
-    assert Path(fit_file).exists()
-    assert Path(fit_file).parent == resolved_gle.parent
+    result = captured.get("result")
+    assert result is not None, "Expected the builder to succeed, not abort"
+    fit_files = [p for p in result.files if p.suffix == ".fit"]
+    assert fit_files, "Expected active fit sidecar map to be passed to GLE generator"
+    assert fit_files[0].exists()
+    assert fit_files[0].parent == resolved_gle.parent
 
 
 def test_add_gle_model_overlay_uses_formatted_labels_without_hash_one(
