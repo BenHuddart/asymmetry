@@ -544,21 +544,31 @@ def make_confidence_chip(text: str, tier: Literal["high", "medium", "none"]) -> 
 #: objectName used to scope warning-banner QSS without touching other labels.
 WARNING_BANNER_OBJECT_NAME = "benchWarningBanner"
 
+#: Per-severity (background, text) colours for :func:`make_warning_banner`.
+_WARNING_BANNER_COLOURS = {
+    "warn": (tokens.WARN_BANNER_BG, tokens.WARN_BANNER_TEXT),
+    "strong": (tokens.CAVEAT_BANNER_BG, tokens.CAVEAT_BANNER_TEXT),
+}
 
-def make_warning_banner(text: str = "") -> QLabel:
-    """Return an amber, word-wrapped warning-banner strip.
 
-    The non-blocking "out of date" convention (``tokens.WARN_BANNER_*``, first
-    used by the Global Parameter Fit window): wizards show one when a scope or
-    seed edit makes the displayed results stale. Callers control visibility.
+def make_warning_banner(text: str = "", *, severity: Literal["warn", "strong"] = "warn") -> QLabel:
+    """Return a word-wrapped warning-banner strip.
+
+    ``severity`` picks the treatment: ``"warn"`` is the non-blocking amber
+    "out of date" convention (``tokens.WARN_BANNER_*``, first used by the
+    Global Parameter Fit window's stale banner); ``"strong"`` is the orange
+    ``tokens.CAVEAT_BANNER_*`` strip for caveats that invalidate a reading
+    (e.g. the compare dialog's "criteria not comparable"). Callers control
+    visibility.
     """
+    bg, fg = _WARNING_BANNER_COLOURS.get(severity, _WARNING_BANNER_COLOURS["warn"])
     label = QLabel(str(text))
     label.setObjectName(WARNING_BANNER_OBJECT_NAME)
     label.setWordWrap(True)
     label.setStyleSheet(
         f"QLabel#{WARNING_BANNER_OBJECT_NAME} {{"
-        f" background-color: {tokens.WARN_BANNER_BG};"
-        f" color: {tokens.WARN_BANNER_TEXT};"
+        f" background-color: {bg};"
+        f" color: {fg};"
         " border-radius: 4px;"
         " padding: 6px 10px;"
         " font-weight: 600;"

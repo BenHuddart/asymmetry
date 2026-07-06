@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.fitting.parameters import get_param_info
-from asymmetry.gui.styles import tokens
+from asymmetry.gui.styles.widgets import make_warning_banner
 from asymmetry.gui.widgets.mpl_canvas import create_canvas
 from asymmetry.gui.windows.global_fit_window_helpers import (
     format_value_with_error,
@@ -211,23 +211,15 @@ class GlobalFitCompareDialog(QDialog):
         self._criteria_comparable = same_mode_and_n and same_snapshot
 
         if not same_mode_and_n:
-            caveat = QLabel("Criteria not comparable: different data/error mode")
-            caveat.setStyleSheet(
-                f"QLabel {{ background-color: {tokens.CAVEAT_BANNER_BG}; "
-                f"color: {tokens.CAVEAT_BANNER_TEXT}; "
-                "font-weight: bold; padding: 4px 8px; }"
+            layout.addWidget(
+                make_warning_banner(
+                    "Criteria not comparable: different data/error mode",
+                    severity="strong",
+                )
             )
-            caveat.setWordWrap(True)
-            layout.addWidget(caveat)
 
         if not same_snapshot:
-            snap_caveat = QLabel("Fitted to different data snapshots")
-            snap_caveat.setStyleSheet(
-                f"QLabel {{ background-color: {tokens.CAUTION_BANNER_BG}; "
-                f"color: {tokens.CAUTION_BANNER_TEXT}; padding: 4px 8px; }}"
-            )
-            snap_caveat.setWordWrap(True)
-            layout.addWidget(snap_caveat)
+            layout.addWidget(make_warning_banner("Fitted to different data snapshots"))
 
         # ── Log X / Log Y toggles + legend ──────────────────────────────────
         from PySide6.QtWidgets import QCheckBox

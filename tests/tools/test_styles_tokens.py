@@ -100,8 +100,6 @@ def test_tokens_module_exports_expected_constants() -> None:
         "WHITE",
         "CAVEAT_BANNER_BG",
         "CAVEAT_BANNER_TEXT",
-        "CAUTION_BANNER_BG",
-        "CAUTION_BANNER_TEXT",
     ]
     missing = [name for name in required if not hasattr(tokens, name)]
     assert not missing, f"Missing token constants: {missing}"
