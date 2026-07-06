@@ -633,7 +633,9 @@ def test_joint_fit_recovers_known_theta0_offset(qapp):
     wait_for(lambda: not window._joint_running, QApplication.instance(), timeout_s=20.0)
 
     assert window._state.joint is not None
-    assert "theta0" in window._fit_results_label.text()
+    # The results table headers use the display form of the parameter registry
+    # (θ₀ with its degree unit), not the raw parameter name.
+    assert "θ₀" in window._fit_results_label.text()
 
     for curve in window._state.joint.curves:
         by_name = {name: value for name, value, _err in curve.parameters}

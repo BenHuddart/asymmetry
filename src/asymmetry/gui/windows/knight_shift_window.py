@@ -67,12 +67,13 @@ from asymmetry.core.fitting.knight_shift import (
     REFERENCE_COMPONENT,
     KnightShiftConfig,
     KnightShiftUnit,
+    label_for_unit,
 )
 from asymmetry.core.fitting.parameter_models import (
     ParameterCompositeModel,
     sample_parameter_model,
 )
-from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.fitting.parameters import Parameter, ParameterSet, get_param_info
 from asymmetry.core.utils.angles import wrap_angle_deg
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.metrics import field_width_for
@@ -314,6 +315,12 @@ class KnightShiftWindow(QMainWindow):
         for name in ANGULAR_MODELS:
             self._model_combo.addItem(name)
         model_layout.addWidget(self._model_combo, 1)
+        self._model_info_btn = QPushButton("Info…", model_row)
+        self._model_info_btn.setToolTip(
+            "Formula, parameters, and applicability of the selected K(θ) model."
+        )
+        self._model_info_btn.clicked.connect(self._on_model_info)
+        model_layout.addWidget(self._model_info_btn, 0)
         iter_row = QWidget(sidebar)
         iter_layout = QHBoxLayout(iter_row)
         iter_layout.setContentsMargins(0, 0, 0, 0)
@@ -683,6 +690,15 @@ class KnightShiftWindow(QMainWindow):
         self._update_status()
         self._redraw()
 
+    def _on_model_info(self) -> None:
+        """Open the shared component-info dialog for the selected K(θ) model."""
+        from asymmetry.core.fitting.parameter_models import PARAMETER_MODEL_COMPONENTS
+        from asymmetry.gui.widgets.component_info_dialog import show_component_info_dialog
+
+        definition = PARAMETER_MODEL_COMPONENTS.get(self._model_combo.currentText())
+        if definition is not None:
+            show_component_info_dialog(self, definition)
+
     def _update_fit_controls(self) -> None:
         self._fit_btn.setEnabled(self._can_run_joint_fit())
         joint = self._state.joint
@@ -702,23 +718,76 @@ class KnightShiftWindow(QMainWindow):
                 else "Lorentz/demag correction"
             )
             lines.append(f"<i>Fitted curves predate the current {cause} — re-run to refresh.</i>")
+        table = self._fit_results_table(joint)
+        if table:
+            lines.append(table)
+        if joint.message and not joint.converged:
+            lines.append(f"<i>{joint.message}</i>")
+        self._fit_results_label.setText("<br>".join(lines))
+
+    def _fit_results_table(self, joint: KnightJointFitState) -> str:
+        """The fitted parameters as a compact rich-text table.
+
+        One row per branch (colour chip + K subscript), one column per model
+        parameter plus χ²ᵣ. K-type parameters (no intrinsic unit) carry the fit
+        unit in the header; θ0 keeps its own degree unit from the parameter
+        registry. Values are shown to the precision the (optionally √χ²ᵣ-scaled)
+        uncertainty supports.
+        """
+        from asymmetry.gui.utils.formatting import format_param_label, format_value_error
+
+        if not joint.curves:
+            return ""
         rescale = self._rescale_check.isChecked()
+        try:
+            fit_unit_label = label_for_unit(KnightShiftUnit(joint.unit))
+        except ValueError:
+            fit_unit_label = ""
+
+        def _html_subscript(label: str) -> str:
+            # "K_iso (…)" → "K<sub>iso</sub> (…)": the unicode registry keeps
+            # ASCII underscores for latin subscripts; rich text can do better.
+            head, _, tail = label.partition(" ")
+            if head.count("_") == 1 and not head.endswith("_"):
+                base, sub = head.split("_")
+                head = f"{base}<sub>{sub}</sub>"
+            return f"{head} {tail}".strip()
+
+        param_names = [name for name, _v, _e in joint.curves[0].parameters]
+        headers = []
+        for name in param_names:
+            label = format_param_label(name)
+            if get_param_info(name).unit is None and fit_unit_label:
+                label = f"{label} ({fit_unit_label})"
+            headers.append(_html_subscript(label))
+
+        subscript_by_branch = {}
+        if self._result is not None:
+            subscript_by_branch = {b.name: b.subscript for b in self._result.branches}
+
+        muted = tokens.TEXT_MUTED
+        header_cells = "".join(
+            f"<td align='center' style='color:{muted};'>{label}</td>" for label in [*headers, "χ²ᵣ"]
+        )
+        rows = [f"<tr><td></td>{header_cells}</tr>"]
+        any_scaled = False
         for index, curve in enumerate(joint.curves):
             color = _BRANCH_COLORS[index % len(_BRANCH_COLORS)]
             chi2r = curve.reduced_chi_squared
             # The PDG-style scale factor: only ever inflates (χ²ᵣ < 1 is left
             # alone — an over-good fit does not license shrinking the errors).
             factor = math.sqrt(chi2r) if rescale and chi2r == chi2r and chi2r > 1.0 else 1.0
-            params = ", ".join(
-                f"{name} = {value:.4g} ± {error * factor:.2g}"
-                for name, value, error in curve.parameters
+            any_scaled = any_scaled or factor > 1.0
+            subscript = subscript_by_branch.get(curve.branch_name, str(index + 1))
+            chip = f"<span style='color:{color};'>●</span>&nbsp;K<sub>{subscript}</sub>&nbsp;&nbsp;"
+            cells = "".join(
+                f"<td align='right'>{format_value_error(value, error * factor)}</td>"
+                for _name, value, error in curve.parameters
             )
-            chi = f" · χ²ᵣ = {chi2r:.3g}" if chi2r == chi2r else ""
-            scaled = " (errors ×√χ²ᵣ)" if factor > 1.0 else ""
-            lines.append(f"<span style='color:{color};'>●</span> {params}{chi}{scaled}")
-        if joint.message and not joint.converged:
-            lines.append(f"<i>{joint.message}</i>")
-        self._fit_results_label.setText("<br>".join(lines))
+            chi_cell = f"<td align='right'>{chi2r:.3g}</td>" if chi2r == chi2r else "<td></td>"
+            rows.append(f"<tr><td>{chip}</td>{cells}{chi_cell}</tr>")
+        note = f"<div style='color:{muted};'>(errors ×√χ²ᵣ)</div>" if any_scaled else ""
+        return f"<table cellspacing='0' cellpadding='2'>{''.join(rows)}</table>{note}"
 
     def _update_source_labels(self) -> None:
         snapshot = self._snapshot

@@ -1080,9 +1080,13 @@ pipeline:
   a count of the crossings flagged along the scan (see *Component identity and
   crossings* below).
 * **Model fit** — the joint :math:`K(\theta)` fit that resolves those
-  crossings (see *Component identity and crossings*, below), with a **Scale
-  errors by √χ²ᵣ** checkbox that inflates the quoted parameter uncertainties
-  when a fit's reduced :math:`\chi^2` exceeds one.
+  crossings (see *Component identity and crossings*, below). The **Info…**
+  button beside the model selector opens the shared component-information
+  dialog for the selected :math:`K(\theta)` model — its formula, parameters,
+  and applicability. Fitted parameters are presented per branch in a table,
+  each value quoted to the precision its uncertainty supports, with a **Scale
+  errors by √χ²ᵣ** checkbox that inflates the quoted uncertainties when a
+  fit's reduced :math:`\chi^2` exceeds one.
 
 The plot area has two view toggles, **Fold 180°** (overlay symmetry-equivalent
 orientations onto one period, for an angle scan — a display choice local to
