@@ -889,6 +889,63 @@ class TestPlotPanel:
             panel.close()
             panel.deleteLater()
 
+    def test_dataset_switch_redecimates_for_the_new_frame(self, qapp: QApplication) -> None:
+        """Switching datasets must not render one viewport behind.
+
+        The draw decimates against the CURRENT axes window, and a switched
+        dataset's reframe moves the axes only afterwards — without the deferred
+        viewport refresh, run B rendered only the points inside run A's old
+        window (its own line missing entirely), one view behind on every
+        switch. The refresh re-decimates for the window just applied.
+        """
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            freqs = np.linspace(0.0, 2000.0, 50001)  # > per-trace render budget
+            hwhm = 0.5
+
+            def _spectrum(run: int, line_mhz: float) -> MuonDataset:
+                values = 1.0 + 5.0e3 * hwhm**2 / (hwhm**2 + (freqs - line_mhz) ** 2)
+                values[:5] = 3.0e5
+                return MuonDataset(
+                    time=freqs,
+                    asymmetry=values,
+                    error=np.zeros_like(freqs),
+                    metadata={"run_number": run, "plot_domain": "frequency"},
+                )
+
+            def _drain() -> None:
+                for _ in range(5):
+                    qapp.processEvents()
+
+            def _line_covers_view() -> bool:
+                x_lo, x_hi = panel._ax.get_xlim()
+                lines = [
+                    line
+                    for line in panel._ax.lines
+                    if line.get_linestyle() == "-" and np.asarray(line.get_xdata()).size > 2
+                ]
+                assert lines, "no spectrum line drawn"
+                xd = np.asarray(lines[-1].get_xdata(), dtype=float)
+                return bool(xd.min() <= x_lo + 1.0 and xd.max() >= x_hi - 1.0)
+
+            panel.plot_dataset(_spectrum(1, 813.0))
+            _drain()
+            assert _line_covers_view()
+
+            panel.plot_dataset(_spectrum(2, 1400.0))
+            _drain()
+            # The axes reframed to run 2's line …
+            x_lo, x_hi = panel._ax.get_xlim()
+            assert x_lo < 1400.0 < x_hi
+            # … and the drawn data covers the NEW window, not run 1's old one.
+            assert _line_covers_view()
+        finally:
+            panel.close()
+            panel.deleteLater()
+
     def test_manual_x_max_field_overrides_auto_x_on_frequency_panel(
         self, qapp: QApplication
     ) -> None:

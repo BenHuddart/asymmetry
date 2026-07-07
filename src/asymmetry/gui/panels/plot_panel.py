@@ -3826,6 +3826,9 @@ class PlotPanel(QWidget):
             style_legend(self._ax.legend())
 
             self._reframe_if_content_changed()
+            # Same one-view-behind guard as plot_dataset: a reframe moves the
+            # axes after a draw decimated for the previous content's viewport.
+            reframed = not self._limits_initialized
             if not self._limits_initialized:
                 t_all = self._last_plot_time
                 a_all = self._last_plot_asymmetry
@@ -3866,9 +3869,10 @@ class PlotPanel(QWidget):
             self._last_low_count_mask = None
             self._fit_x_min = None
             self._fit_x_max = None
+            reframed = False
 
         self._draw_fit_range_artists()
-        self._apply_limits()
+        self._apply_limits(schedule_viewport_refresh=reframed)
         self._apply_auto_limits_if_enabled()
         self._update_export_enabled()
         self._connect_axis_limit_callbacks([self._ax])
@@ -4095,6 +4099,13 @@ class PlotPanel(QWidget):
         # freshly loaded dataset frames to itself instead of inheriting stale
         # (incl. persisted cross-session) limits.
         self._reframe_if_content_changed()
+        # A reframe moves the axes AFTER the draw above, whose decimation was
+        # clipped to the PREVIOUS content's viewport — a switched dataset would
+        # otherwise render one view behind (fresh limits over data sampled for
+        # the old window, the new run's line missing entirely). Remember to
+        # re-decimate once the new limits are applied; a same-content redraw
+        # keeps its viewport and skips the extra pass.
+        reframed = not self._limits_initialized
         if not self._limits_initialized:
             # X first: time panels span the full data; frequency panels frame the
             # dominant non-DC peak so high-TF Larmor lines aren't squashed off the
@@ -4124,8 +4135,8 @@ class PlotPanel(QWidget):
 
         self._draw_fit_range_artists()
 
-        # Apply the limits
-        self._apply_limits()
+        # Apply the limits; a reframe re-decimates for the window just applied.
+        self._apply_limits(schedule_viewport_refresh=reframed)
         self._apply_auto_limits_if_enabled()
         self._update_export_enabled()
         self._connect_axis_limit_callbacks([self._ax])

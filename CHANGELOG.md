@@ -128,6 +128,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Switching runs no longer renders the plot one view behind.** The draw
+  decimates points for the current view window, but a switched dataset's
+  reframe moved the axes only afterwards — so the new run showed only the
+  points that fell inside the previous run's window (its own line could be
+  missing entirely), and switching back inverted the mismatch. Most visible
+  when browsing runs at different fields on the frequency view. The plot now
+  re-decimates for the window it just framed.
+
 - **HiFi high-TF TDC FFTs are no longer silently truncated to nanoseconds.**
   The FFT window's good-statistics tail cap compared raw per-bin counts to
   the raw peak bin. On finely-binned TDC histograms (24 ps bins with a
