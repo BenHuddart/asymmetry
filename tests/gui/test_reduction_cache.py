@@ -389,3 +389,22 @@ class TestWiredCallSites:
         assert calls["n"] == 2  # new run identity → fresh compute
         mainwindow._counts_first_rebunched_arrays(dataset, 2)
         assert calls["n"] == 2  # and the new run now caches
+
+    def test_apply_grouping_settings_invalidates_run(self, mainwindow: MainWindow) -> None:
+        """Group-label / metadata freshness leans on the belt-and-braces hook.
+
+        ``group_names`` is not in the digest, so a rename is only guaranteed to
+        refresh cached grouped-count datasets because the wholesale grouping
+        rewrite calls ``invalidate_run``. Pin that it actually does.
+        """
+        dataset = _multi_group_dataset()
+        seen: list[object] = []
+        original = mainwindow._reduction_cache.invalidate_run
+
+        def spy(run: object) -> None:
+            seen.append(run)
+            original(run)
+
+        mainwindow._reduction_cache.invalidate_run = spy  # type: ignore[method-assign]
+        mainwindow._apply_grouping_settings_to_dataset(dataset, dict(dataset.run.grouping))
+        assert dataset.run in seen

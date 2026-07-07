@@ -508,16 +508,21 @@ def _included_groups_key(grouping: dict) -> tuple:
 
 
 def _period_histograms_key(period_histograms: object) -> tuple:
-    """Stable, hashable image of a grouping's ``period_histograms`` entry.
+    """Stable, hashable structural image of a grouping's ``period_histograms``.
 
-    The counts-first rebunch selects a period slice from this structure, which
-    ``fourier_grouping_digest`` does not capture. Represented as its top-level
-    length plus a repr of each element so a change to the split forces a
-    recompute; non-list values collapse to an empty key.
+    The counts-first rebunch selects a period slice from this structure (a list
+    of per-period histogram lists), which ``fourier_grouping_digest`` does not
+    capture. The slice contents are tied to the run and are never rewritten in
+    place — period mapping builds a *new* run — so ``id(run)`` already
+    discriminates them; this is a belt-and-braces structural summary (period
+    count and per-period histogram count) that avoids materialising the
+    (numpy-truncated, collision-prone) repr of the count arrays. Non-list
+    values collapse to an empty key.
     """
     if not isinstance(period_histograms, (list, tuple)):
         return ()
-    return (len(period_histograms),) + tuple(repr(entry) for entry in period_histograms)
+    shape = tuple(len(p) if isinstance(p, (list, tuple)) else -1 for p in period_histograms)
+    return (len(period_histograms),) + shape
 
 
 def _rebunch_nbytes(result: tuple[np.ndarray, np.ndarray, np.ndarray]) -> int:
@@ -4543,6 +4548,12 @@ class MainWindow(QMainWindow):
         run = dataset.run
         if run is None:
             return False, False
+        # Grouping is about to be (re)written for this run; drop its cached
+        # reductions up front. The recipe key already embeds the digest (so a
+        # stale entry can never hit), but this removes the dead entries early —
+        # and covers the group-label / metadata keys the digest omits — for both
+        # the histogram and histogram-less branches below.
+        self._reduction_cache.invalidate_run(run)
         existing_grouping = run.grouping if isinstance(run.grouping, dict) else {}
 
         groups_raw = grouping_result.get("groups", {})
@@ -4730,12 +4741,6 @@ class MainWindow(QMainWindow):
                 dataset.time = time_out
                 dataset.asymmetry = asym_out
                 dataset.error = err_out
-
-            # Grouping is about to be rewritten wholesale; drop this run's cached
-            # reductions early. The recipe key already embeds the digest (so a
-            # stale entry can never hit), but this removes the dead entries now
-            # rather than waiting for LRU pressure.
-            self._reduction_cache.invalidate_run(run)
 
             if not isinstance(run.grouping, dict):
                 run.grouping = {}
