@@ -279,6 +279,15 @@ class InstrumentLayout:
         sub-detector layout ``"GPS-RD"``) share a display name so the user only
         ever sees the variant matching their loaded data, while ``name`` stays a
         distinct registry key for detection and persistence.
+    apply_default_preset_on_load:
+        When ``True``, a loader applies this instrument's default preset (the
+        first entry in :attr:`presets`) to a freshly loaded run automatically,
+        instead of leaving the loader's generic label-based grouping in place.
+        Used for instruments whose useful grouping is not the plain
+        forward/backward split the labels imply — HAL-9500, whose per-octant
+        angle-resolved grouping should be live the moment the data loads, without
+        the user having to open the grouping window and click Apply.  Off by
+        default so every other instrument keeps its loader grouping untouched.
     """
 
     name: str
@@ -288,6 +297,7 @@ class InstrumentLayout:
     view: str = "radial"
     reference_arrows: tuple[ReferenceArrow, ...] = ()
     display_name: str | None = None
+    apply_default_preset_on_load: bool = False
 
     @property
     def display(self) -> str:
@@ -1446,6 +1456,12 @@ def _build_hal() -> InstrumentLayout:
         n_detectors=17,
         banks=banks,
         presets=presets,
+        # HAL-9500 loads straight into the Per-octant grouping: it is a
+        # high-field spectrometer whose analysis is angle-resolved, so the plain
+        # forward/backward split the labels imply is not the grouping users want.
+        # Applying the default preset on load makes the per-group analysis
+        # available immediately, without opening the grouping window.
+        apply_default_preset_on_load=True,
     )
 
 

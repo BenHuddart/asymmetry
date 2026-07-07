@@ -71,14 +71,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the dof part of this correction; Asymmetry additionally corrects χ² and
   the uncertainties for consistency.) The time-domain plot is unchanged.
 
-- **PSI HAL-9500's default grouping preset is now Per-octant, not
-  Longitudinal.** High-field (TF) work on HAL-9500 — the AFM-transition
-  corpus and similar — is done per-octant in practice: each azimuthal wedge
-  combines its forward and backward detector for better statistics than a
-  lone opposed pair. The Detector Layout / Grouping dialogs now pre-select
-  Per-octant for a fresh HAL layout, and the transverse-field grouping nudge
-  recommends Per-octant instead of steering a TF run to the older
-  ``Transverse (opposed pairs)`` preset.
+- **PSI HAL-9500 data now loads directly into the Per-octant grouping.**
+  High-field (TF) work on HAL-9500 — the AFM-transition corpus and similar —
+  is done per-octant in practice: each azimuthal wedge combines its forward
+  and backward detector for better statistics than a lone opposed pair. A
+  freshly loaded full HAL-9500 run is therefore grouped per-octant
+  immediately, so the angle-resolved per-group analysis is available without
+  opening the Grouping window (the previous default was the plain
+  Longitudinal forward/backward split, which had to be changed by hand). The
+  Detector Layout / Grouping dialogs still pre-select Per-octant for a fresh
+  HAL layout, and the transverse-field grouping nudge recommends Per-octant
+  instead of steering a TF run to the older ``Transverse (opposed pairs)``
+  preset. A run shipping only the forward ring (``MV, F1…F8``) still opens
+  Per-octant, each octant degrading to its present forward wedge (the F1-vs-F5
+  opposed-pair asymmetry) — exactly what applying Per-octant by hand produces.
 
 - **The first FFT view is framed to where the physics is, with interpolated
   line shapes.** A narrow high-frequency line (a 6 T Larmor line, ~13 G wide
