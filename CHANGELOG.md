@@ -200,6 +200,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   change shipped exactly that intermittent crash; it is now covered by
   parent-destruction regression tests.)
 
+- **A typed frequency-domain fit range now actually applies.** The Fourier
+  Fit tab's fit-range spinboxes committed a value on the frequency plot panel
+  through the same code path as the time-domain plot, but that path
+  unconditionally no-opped for frequency panels (they draw no draggable
+  fit-range selector, so the guard blocked storing state too, not just the
+  artists). A typed range therefore never reached the frequency fit — the
+  spinboxes showed the new numbers, but the next render silently mirrored the
+  untouched full-spectrum default back into the display, and any fit run in
+  between used the full spectrum regardless of what was shown. The frequency
+  panel now stores the committed range like the time panel does; the
+  no-draggable-selector contract is preserved by gating the mouse hit-test
+  itself, which also closes a latent ghost-hit-test path where a click near
+  an invisible handle position could otherwise start a "drag" with no visual
+  feedback.
+
 - **Four small GUI-responsiveness cleanups from the audit's minor findings.**
   Fit-parameter and global-fit trend/compare plots now coalesce their final
   paint with `draw_idle()` instead of a synchronous `draw()` once a background
