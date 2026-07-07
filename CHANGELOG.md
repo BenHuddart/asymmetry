@@ -186,6 +186,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   works on the first click. Fit-range dragging on the time-domain panel is
   unaffected.
 
+- **Alpha calibration and background-configure grouping scans now run off the
+  GUI thread without risking a teardown crash.** Pressing **Estimate** in the
+  Alpha Calibration dialog, and opening **Configure…** for a reference-run
+  background, group the full forward/backward histograms — a per-detector scan
+  that briefly froze the window on large runs. Both now run on a background
+  worker, with the button disabled and a busy hint for the duration. The
+  worker machinery gained a safety net that makes this robust even when a
+  parented child dialog (like Alpha Calibration) is torn down through its
+  parent's destruction rather than a normal close: a still-running worker
+  thread is handed to the process-level keep-alive instead of being destroyed
+  mid-run, which would otherwise abort the process. (An earlier take on this
+  change shipped exactly that intermittent crash; it is now covered by
+  parent-destruction regression tests.)
+
 - **Four small GUI-responsiveness cleanups from the audit's minor findings.**
   Fit-parameter and global-fit trend/compare plots now coalesce their final
   paint with `draw_idle()` instead of a synchronous `draw()` once a background

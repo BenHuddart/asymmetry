@@ -16,22 +16,28 @@ method, and source run. **Cancel** returns ``None`` and the caller keeps its
 policy. The grouping window's ``Calibrate…`` button launches it (see
 :mod:`asymmetry.gui.windows.grouping.dialog`).
 
-The estimate and the two preview curves are all fast, pure-core reductions
-(:func:`~asymmetry.core.transform.grouping.group_forward_backward` +
-:func:`~asymmetry.core.transform.rebin.binned_fb_asymmetry` and
-:func:`~asymmetry.core.transform.asymmetry.estimate_alpha_detailed`), so the work
-runs synchronously under a wait cursor — no worker thread.
+The two preview curves (the α=1 "before" and the α̂ "after") are fast, pure-core
+reductions and stay synchronous. The **Estimate** action's own work —
+:func:`~asymmetry.core.transform.grouping.group_forward_backward` over the full
+forward/backward groups (a full-histogram scan for large detector counts) plus
+:func:`~asymmetry.core.transform.asymmetry.estimate_alpha_detailed` — runs on a
+:class:`~asymmetry.gui.tasks.TaskRunner` worker thread instead (see
+``gui/tasks.py`` and ``AGENTS.md``'s no-GUI-thread-blocking rule). Inputs are
+snapshotted into a plain :class:`_AlphaEstimateRequest` on the GUI thread before
+the worker starts, so the worker never touches widgets; the button is disabled
+and the result label shows a busy hint for the duration. The runner is shut down
+on every dismissal (``done``/``closeEvent``).
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QBrush, QColor, QCursor
+from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
-    QApplication,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -49,16 +55,74 @@ from asymmetry.core.data.calibration import (
     best_calibration_run_index,
     classify_tf_calibration_run,
 )
-from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.data.dataset import Histogram, MuonDataset
 from asymmetry.core.project.profiles import AlphaPolicy
 from asymmetry.core.transform.asymmetry import AlphaEstimate, estimate_alpha_detailed
 from asymmetry.core.transform.grouping import group_forward_backward
 from asymmetry.core.transform.rebin import binned_fb_asymmetry
 from asymmetry.gui.styles import tokens
+from asymmetry.gui.tasks import TaskCancelledError, TaskRunner, TaskWorker
 from asymmetry.gui.windows.grouping.format import (
     ALPHA_METHOD_ITEMS,
     format_value_with_uncertainty,
 )
+
+
+@dataclass(frozen=True)
+class _AlphaEstimateRequest:
+    """An immutable snapshot of what to estimate, built on the GUI thread.
+
+    Everything here is a plain object, so the worker function can run entirely
+    off the GUI thread — it must never read widgets.
+    """
+
+    token: int
+    histograms: list[Histogram]
+    grouping: dict[str, Any]
+    method: str
+    first_good_bin: int
+    last_good_bin: int
+    run_label: str
+
+
+@dataclass(frozen=True)
+class _AlphaEstimateResult:
+    """The estimate marshalled back to the GUI thread, tagged with its token."""
+
+    token: int
+    estimate: AlphaEstimate
+    run_label: str
+
+
+def _run_alpha_estimate(worker: TaskWorker, request: _AlphaEstimateRequest) -> _AlphaEstimateResult:
+    """Group the full forward/backward histograms and estimate alpha off-thread.
+
+    ``group_forward_backward`` raises :class:`ValueError` when the groups
+    reference no present detectors; :class:`~asymmetry.gui.tasks.TaskWorker`
+    turns that into the worker's ``error`` signal, which the dialog surfaces
+    with the same warning dialog the synchronous path used.
+    """
+    if worker.is_cancelled():
+        raise TaskCancelledError
+    grouped = group_forward_backward(request.histograms, request.grouping)
+    forward, backward, common_t0 = grouped.forward, grouped.backward, int(grouped.common_t0)
+    bin_width = float(request.histograms[0].bin_width)
+
+    time_us = None
+    if request.method == "general":
+        time_us = (np.arange(forward.size, dtype=np.float64) - float(common_t0)) * bin_width
+
+    if worker.is_cancelled():
+        raise TaskCancelledError
+    estimate = estimate_alpha_detailed(
+        forward,
+        backward,
+        method=request.method,
+        time_us=time_us,
+        first_good_bin=request.first_good_bin,
+        last_good_bin=request.last_good_bin,
+    )
+    return _AlphaEstimateResult(token=request.token, estimate=estimate, run_label=request.run_label)
 
 
 class AlphaCalibrationDialog(QDialog):
@@ -118,6 +182,15 @@ class AlphaCalibrationDialog(QDialog):
         #: Latest successful estimate, used to draw the "after" curve and build
         #: the returned policy. Cleared whenever the run/window/method changes.
         self._estimate: AlphaEstimate | None = None
+
+        # Off-thread estimate worker. Created before the "no runs" early return
+        # below so ``done``/``closeEvent`` can unconditionally shut it down.
+        self._tasks = TaskRunner(self)
+        #: Bumped on every Estimate click; a finished/errored result whose
+        #: token no longer matches the current one is stale (the run or inputs
+        #: changed while the worker was in flight) and is discarded.
+        self._estimate_token = 0
+        self._estimate_prior_text = ""
 
         title = "Alpha Calibration"
         if slot_label:
@@ -299,6 +372,9 @@ class AlphaCalibrationDialog(QDialog):
         """Re-seed the good-bin window from the new run and redraw."""
         dataset = self._current_dataset()
         self._group_summary.setText(self._group_summary_text())
+        # Invalidate any in-flight estimate: its result would no longer match
+        # the selected run when the worker finishes.
+        self._estimate_token += 1
         if dataset is None or dataset.run is None or not dataset.run.histograms:
             self._estimate = None
             self._clear_plot("Selected run has no histograms.")
@@ -316,12 +392,17 @@ class AlphaCalibrationDialog(QDialog):
             spin.blockSignals(False)
         # A new run invalidates any prior estimate.
         self._estimate = None
+        self._result_label.setStyleSheet("")
         self._result_label.setText("Press Estimate to measure α from this run.")
         self._redraw_preview()
 
     def _on_inputs_changed(self) -> None:
         """A method/window change invalidates the estimate; redraw the before."""
+        # Invalidate any in-flight estimate — it was snapshotted from the
+        # inputs before this change.
+        self._estimate_token += 1
         self._estimate = None
+        self._result_label.setStyleSheet("")
         self._result_label.setText("Inputs changed — press Estimate to re-measure α.")
         self._redraw_preview()
 
@@ -394,35 +475,40 @@ class AlphaCalibrationDialog(QDialog):
         return grouped.forward, grouped.backward, int(grouped.common_t0), bin_width
 
     def _on_estimate(self) -> None:
-        """Run the estimate synchronously under a wait cursor and redraw."""
+        """Snapshot the current inputs and estimate alpha off the GUI thread."""
         dataset = self._current_dataset()
         if dataset is None or dataset.run is None or not dataset.run.histograms:
             QMessageBox.warning(self, "Alpha Calibration", "Selected run has no histograms.")
             return
-        counts = self._grouped_counts(dataset)
-        if counts is None:
-            return
-        forward, backward, common_t0, bin_width = counts
-        first_good = int(self._first_good_spin.value())
-        last_good = int(self._last_good_spin.value())
-        method = self._current_method()
 
-        time_us = None
-        if method == "general":
-            time_us = (np.arange(forward.size, dtype=np.float64) - float(common_t0)) * bin_width
+        self._estimate_token += 1
+        request = _AlphaEstimateRequest(
+            token=self._estimate_token,
+            histograms=list(dataset.run.histograms),
+            grouping=self._grouping_for_reduction(dataset),
+            method=self._current_method(),
+            first_good_bin=int(self._first_good_spin.value()),
+            last_good_bin=int(self._last_good_spin.value()),
+            run_label=str(dataset.run_label),
+        )
 
-        QApplication.setOverrideCursor(QCursor(Qt.CursorShape.WaitCursor))
-        try:
-            estimate = estimate_alpha_detailed(
-                forward,
-                backward,
-                method=method,
-                time_us=time_us,
-                first_good_bin=first_good,
-                last_good_bin=last_good,
-            )
-        finally:
-            QApplication.restoreOverrideCursor()
+        self._estimate_prior_text = self._result_label.text()
+        self._estimate_btn.setEnabled(False)
+        self._result_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+        self._result_label.setText("Computing estimate…")
+        self._tasks.start(
+            lambda worker: _run_alpha_estimate(worker, request),
+            on_finished=self._on_estimate_finished,
+            on_error=self._on_estimate_error,
+        )
+
+    def _on_estimate_finished(self, result: object) -> None:
+        """GUI thread: apply the estimate unless a newer request supersedes it."""
+        self._estimate_btn.setEnabled(True)
+        self._result_label.setStyleSheet("")
+        if not isinstance(result, _AlphaEstimateResult) or result.token != self._estimate_token:
+            return  # superseded by a later Estimate click / input change
+        estimate = result.estimate
 
         if not estimate.ok:
             self._estimate = None
@@ -436,10 +522,15 @@ class AlphaCalibrationDialog(QDialog):
             estimate.method,
         )
         formatted = format_value_with_uncertainty(estimate.alpha, estimate.alpha_error)
-        self._result_label.setText(
-            f"α = {formatted}  ·  {method_label}  ·  run {dataset.run_label}"
-        )
+        self._result_label.setText(f"α = {formatted}  ·  {method_label}  ·  run {result.run_label}")
         self._redraw_preview()
+
+    def _on_estimate_error(self, message: str) -> None:
+        """GUI thread: restore the prior status and surface the same warning."""
+        self._estimate_btn.setEnabled(True)
+        self._result_label.setStyleSheet("")
+        self._result_label.setText(self._estimate_prior_text)
+        QMessageBox.warning(self, "Alpha Calibration", message)
 
     def _redraw_preview(self) -> None:
         """Draw the before (α=1) and, when available, after (α̂) asymmetry."""
@@ -569,6 +660,27 @@ class AlphaCalibrationDialog(QDialog):
     def result_policy(self) -> AlphaPolicy | None:
         """The calibrated :class:`AlphaPolicy` on OK, or ``None`` on Cancel."""
         return self._result_policy
+
+    # ------------------------------------------------------------------
+    # Teardown (TaskRunner contract, gui/tasks.py)
+    # ------------------------------------------------------------------
+
+    def closeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        """Cancel and join the estimate worker on window close (the ✕ button)."""
+        self._tasks.shutdown()
+        super().closeEvent(event)
+
+    def done(self, result: int) -> None:
+        """Cancel and join the estimate worker on every dismissal (accept/reject).
+
+        ``QDialog.done`` only ``hide()``s the window rather than routing through
+        ``closeEvent``, so accept()/reject() need their own teardown call;
+        ``TaskRunner.shutdown`` is idempotent (an empty ``_live`` list on a
+        second call), so this and ``closeEvent`` both firing for the ✕-button
+        path is harmless.
+        """
+        self._tasks.shutdown()
+        super().done(result)
 
 
 __all__ = ["AlphaCalibrationDialog"]

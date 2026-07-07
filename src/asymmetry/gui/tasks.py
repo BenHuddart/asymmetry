@@ -96,6 +96,50 @@ def retire_thread(thread: QThread, worker: object | None = None) -> None:
     _orphan_reaper.adopt(thread, worker)
 
 
+def _retire_running_threads(live: list[tuple[QThread, TaskWorker]]) -> None:
+    """Safety net for a :class:`TaskRunner` destroyed without ``shutdown()``.
+
+    A runner created with ``TaskRunner(parent)`` owns its worker ``QThread``\\ s
+    as QObject children (``QThread(self)``). When the parent is destroyed via
+    C++ destruction rather than ``close()``/``done()`` — e.g. a parented *child*
+    dialog reaped through its parent's destruction, or a test's teardown
+    ``deleteLater``-ing a window — the runner's ``closeEvent``/``done`` never
+    run, so ``shutdown()`` is never called, and a still-running child
+    ``QThread`` would be destroyed with the runner. Destroying a running
+    ``QThread`` qFatal-aborts the process.
+
+    ``destroyed`` is emitted from ``~QObject`` *before* children are deleted, so
+    a slot connected to ``TaskRunner.destroyed`` can still reach the live
+    threads here. Each still-running thread is unparented from the dying runner
+    (so ``~QObject`` no longer owns it) and handed to the process-level reaper —
+    the exact hand-off :meth:`TaskRunner.shutdown` uses for a timed-out wait.
+
+    The caller passes the runner's ``_live`` list (never the runner itself), so
+    this touches no half-destroyed wrapper and cannot form a GC cycle that
+    delays collecting a parentless runner. It calls nothing that pumps the event
+    loop, so ``~QObject``'s auto-disconnect of the runner's own connections
+    (right after this returns) still races nothing.
+    """
+    for thread, worker in list(live):
+        try:
+            running = thread.isRunning()
+        except RuntimeError:
+            # C++ side already gone (mid-teardown); nothing to retire.
+            continue
+        if not running:
+            continue
+        try:
+            worker.cancel()
+        except (RuntimeError, AttributeError):
+            pass
+        try:
+            thread.setParent(None)
+        except RuntimeError:
+            continue
+        retire_thread(thread, worker)
+    live.clear()
+
+
 class TaskWorker(QObject):
     """Runs one callable off the GUI thread and emits exactly one terminal signal.
 
@@ -207,6 +251,15 @@ class TaskRunner(QObject):
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._live: list[tuple[QThread, TaskWorker]] = []
+        # Safety net for destruction WITHOUT shutdown() (a parented child dialog
+        # reaped through its parent, or a test deleteLater-ing a window): the
+        # slot captures the _live *list object* — never self — so it neither
+        # touches the half-destroyed wrapper nor forms a GC cycle that would
+        # delay collecting a parentless runner. This REQUIRES _live to be
+        # mutated in place forever (see _on_thread_finished); reassigning it
+        # would silently orphan this net. See _retire_running_threads.
+        _live = self._live
+        self.destroyed.connect(lambda: _retire_running_threads(_live))
 
     def start(
         self,
@@ -257,7 +310,10 @@ class TaskRunner(QObject):
 
     def _on_thread_finished(self) -> None:
         thread = self.sender()
-        self._live = [(t, w) for (t, w) in self._live if t is not thread]
+        # Mutate _live IN PLACE (never rebind): the destroyed-safety-net slot in
+        # __init__ captures this exact list object, so reassigning self._live
+        # would silently orphan it and let a running thread be destroyed with us.
+        self._live[:] = [(t, w) for (t, w) in self._live if t is not thread]
         if isinstance(thread, QThread):
             thread.deleteLater()
 

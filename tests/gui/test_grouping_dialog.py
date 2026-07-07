@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import threading
 
 import numpy as np
 import pytest
@@ -11,7 +12,7 @@ pytestmark = [pytest.mark.gui]
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEventLoop, Qt, QTimer
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QLabel
 
@@ -23,6 +24,30 @@ from asymmetry.gui.windows.grouping.alpha_calibration_dialog import AlphaCalibra
 from asymmetry.gui.windows.grouping_dialog import GroupingDialog
 
 
+def _wait_until(predicate, timeout_ms: int = 30_000) -> None:
+    """Pump a real nested event loop until *predicate* holds (queued signals).
+
+    Both the alpha estimate (B4) and the background-configure preview grouping
+    run on a ``TaskRunner`` worker thread now, so tests that trigger them must
+    pump the event loop for the finished/error callback to land instead of
+    reading state right after the triggering call returns.
+    """
+    if predicate():
+        return
+    loop = QEventLoop()
+    check = QTimer()
+    check.timeout.connect(lambda: loop.quit() if predicate() else None)
+    check.start(10)
+    guard = QTimer()
+    guard.setSingleShot(True)
+    guard.timeout.connect(loop.quit)
+    guard.start(timeout_ms)
+    loop.exec()
+    check.stop()
+    guard.stop()
+    assert predicate(), "timed out waiting for the background worker"
+
+
 def _autocalibrate(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make the launched Alpha calibration dialog run headlessly.
 
@@ -32,13 +57,28 @@ def _autocalibrate(monkeypatch: pytest.MonkeyPatch) -> None:
     flow instead: this patches ``exec`` to run the dialog's own estimate + accept
     path (so the estimator, provenance and returned policy are all exercised) and
     never blocks. ``result_policy()`` then returns the genuine calibrated policy.
+
+    ``_on_estimate`` now runs the estimate on a TaskRunner worker thread (B4),
+    so this pumps the event loop until it lands before reading ``_estimate``.
+
+    This dialog is launched with ``parent=self`` (the GroupingDialog), so it is
+    a *child* widget, not top-level — the ``tests/conftest.py`` teardown fixture
+    only ``close()``s top-level widgets, and it is not reachable via
+    ``QApplication.findChildren(QThread)`` either (its GroupingDialog parent is
+    itself typically parentless in these tests). The only thing that shuts its
+    ``_tasks`` runner down is going through ``done()`` here, exactly as a real
+    modal ``exec()`` would on close — so both branches below must call
+    ``reject()``/``accept()`` rather than just returning a result code.
     """
 
     def _fake_exec(self: AlphaCalibrationDialog) -> int:
         self._on_estimate()
+        _wait_until(lambda: self._tasks.active_count == 0)
         if self._estimate is None:
             # Estimate failed (e.g. the General method on flat data): behave like
-            # a user who cancels, so the caller leaves alpha untouched.
+            # a user who cancels, so the caller leaves alpha untouched. reject()
+            # (not a bare return) so done() -> _tasks.shutdown() still runs.
+            self.reject()
             return QDialog.DialogCode.Rejected
         self._on_accept()
         return QDialog.DialogCode.Accepted
@@ -1435,6 +1475,202 @@ def test_background_run_payload_round_trips(qapp: QApplication) -> None:
     result = dialog.get_grouping_result()
     assert result["background_run"]["run_number"] == 9001
     assert "9001" in dialog._background_status_label.text()
+
+
+# ---------------------------------------------------------------------------
+# Background Configure… grouping runs off-thread (B4)
+# ---------------------------------------------------------------------------
+
+
+def test_configure_background_groups_off_thread_and_opens_with_arrays(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The forward/backward preview arrays are grouped off the GUI thread, and
+    BackgroundDialog opens seeded with exactly those arrays."""
+    call_threads: list[int] = []
+    real_apply_grouping = grouping_dialog_dialog_module.apply_grouping
+
+    def spy(histograms, indices):
+        call_threads.append(threading.get_ident())
+        return real_apply_grouping(histograms, indices)
+
+    monkeypatch.setattr(grouping_dialog_dialog_module, "apply_grouping", spy)
+
+    captured: dict[str, object] = {}
+
+    class _FakeBackgroundDialog:
+        def __init__(self, **kwargs) -> None:
+            captured.update(kwargs)
+
+        def exec(self) -> int:
+            return QDialog.DialogCode.Rejected  # cancel; only the inputs matter here
+
+    monkeypatch.setattr(grouping_dialog_dialog_module, "BackgroundDialog", _FakeBackgroundDialog)
+
+    dataset = _dataset_with_histograms()
+    dialog = GroupingDialog([dataset])
+    gui_thread = threading.get_ident()
+
+    assert dialog._background_configure_btn.isEnabled()
+    dialog._on_configure_background()
+    _wait_until(lambda: "preview" in captured)
+    assert not any(t == gui_thread for t in call_threads), "apply_grouping ran on the GUI thread"
+    assert call_threads  # apply_grouping was actually called (twice: forward + backward)
+
+    _wait_until(lambda: dialog._tasks.active_count == 0)
+    assert dialog._background_configure_btn.isEnabled()
+
+    preview = captured["preview"]
+    assert preview is not None
+    forward_counts, backward_counts, bin_width, _t0_bin, _last_good = preview
+    assert forward_counts.tolist() == [100.0, 100.0, 100.0, 100.0]
+    assert backward_counts.tolist() == [50.0, 50.0, 50.0, 50.0]
+    assert bin_width == pytest.approx(0.01)
+
+
+def test_configure_background_mid_flight_close_does_not_crash(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Closing the grouping dialog while the background grouping is still
+    running cancels and joins the worker instead of aborting the process."""
+    real_apply_grouping = grouping_dialog_dialog_module.apply_grouping
+    release = threading.Event()
+
+    def blocked_apply_grouping(histograms, indices):
+        release.wait(timeout=5.0)
+        return real_apply_grouping(histograms, indices)
+
+    monkeypatch.setattr(grouping_dialog_dialog_module, "apply_grouping", blocked_apply_grouping)
+
+    dataset = _dataset_with_histograms()
+    dialog = GroupingDialog([dataset])
+    dialog._on_configure_background()
+    assert dialog._tasks.active_count == 1
+    assert not dialog._background_configure_btn.isEnabled()
+
+    # Let the blocked worker proceed shortly after, so the shutdown's bounded
+    # wait does not have to wait out its full timeout.
+    threading.Timer(0.2, release.set).start()
+
+    # Close mid-flight: done() -> _teardown_workers() -> self._tasks.shutdown()
+    # must cancel + join the worker cleanly.
+    dialog.reject()
+
+    for _ in range(50):
+        qapp.processEvents()
+    assert dialog._tasks.active_count == 0
+
+
+def test_configure_background_parent_destruction_does_not_crash(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Destroying the grouping dialog (no close()) mid background-grouping is safe.
+
+    The background-configure preview grouping runs on the dialog's own
+    ``TaskRunner``. The ``tests/conftest.py`` teardown fixture and any
+    ``deleteLater``-based reap destroy the dialog through C++ destruction rather
+    than ``close()``/``done()``, so ``_teardown_workers``/``shutdown()`` never
+    runs. With the worker gated mid-flight, the ``TaskRunner`` destroyed-safety-net
+    must park the still-running thread in the reaper instead of aborting.
+    """
+    from PySide6.QtCore import QEvent
+
+    from asymmetry.gui import tasks as tasks_mod
+
+    release = threading.Event()
+    entered = threading.Event()
+    real_apply_grouping = grouping_dialog_dialog_module.apply_grouping
+
+    def gated(histograms, indices):
+        entered.set()
+        release.wait(timeout=5.0)
+        return real_apply_grouping(histograms, indices)
+
+    monkeypatch.setattr(grouping_dialog_dialog_module, "apply_grouping", gated)
+
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    dialog._on_configure_background()
+    _wait_until(lambda: entered.is_set())  # worker inside apply_grouping -> running
+    assert dialog._tasks.active_count == 1
+
+    reaper_before = tasks_mod._orphan_reaper
+    parked_before = len(reaper_before._threads) if reaper_before is not None else 0
+
+    # Destroy WITHOUT close()/done(): deleteLater + a DeferredDelete drain.
+    dialog.deleteLater()
+    del dialog
+    qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    qapp.processEvents()
+
+    reaper = tasks_mod._orphan_reaper
+    assert reaper is not None
+    assert len(reaper._threads) == parked_before + 1
+
+    release.set()
+    _wait_until(lambda: len(reaper._threads) == parked_before)
+
+
+def test_alpha_child_dialog_survives_grouping_dialog_destruction(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The exact production race: an alpha *child* dialog with an estimate in
+    flight when its GroupingDialog parent is destroyed without a child close().
+
+    ``AlphaCalibrationDialog`` is launched with ``parent=self`` (the
+    GroupingDialog), so destroying the parent reaps the child — and the child's
+    estimate ``TaskRunner`` — via C++ destruction. Its ``done``/``closeEvent``
+    never fire, so only the ``TaskRunner`` destroyed-safety-net can keep the
+    running worker thread from being destroyed mid-run. This is the crash a
+    previous B4 attempt shipped.
+    """
+    from PySide6.QtCore import QEvent
+
+    from asymmetry.gui import tasks as tasks_mod
+    from asymmetry.gui.windows.grouping import (
+        alpha_calibration_dialog as alpha_calibration_dialog_module,
+    )
+
+    release = threading.Event()
+    entered = threading.Event()
+    real_estimate = alpha_calibration_dialog_module.estimate_alpha_detailed
+
+    def gated(*args, **kwargs):
+        entered.set()
+        release.wait(timeout=5.0)
+        return real_estimate(*args, **kwargs)
+
+    monkeypatch.setattr(alpha_calibration_dialog_module, "estimate_alpha_detailed", gated)
+
+    parent = GroupingDialog([_dataset_with_ratio(5, ratio=2.0)])
+    child = AlphaCalibrationDialog(
+        [_dataset_with_ratio(5, ratio=2.0)],
+        groups={1: [0], 2: [1]},
+        group_names={1: "Forward", 2: "Backward"},
+        forward_group=1,
+        backward_group=2,
+        parent=parent,
+    )
+    child._set_method("ratio")
+    child._on_estimate()
+    _wait_until(lambda: entered.is_set())  # estimate worker is in-flight
+    assert child._tasks.active_count == 1
+
+    reaper_before = tasks_mod._orphan_reaper
+    parked_before = len(reaper_before._threads) if reaper_before is not None else 0
+
+    # Destroy the GroupingDialog PARENT without close()/done() on the child.
+    del child
+    parent.deleteLater()
+    del parent
+    qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    qapp.processEvents()
+
+    reaper = tasks_mod._orphan_reaper
+    assert reaper is not None
+    assert len(reaper._threads) == parked_before + 1  # child worker parked, not aborted
+
+    release.set()
+    _wait_until(lambda: len(reaper._threads) == parked_before)
 
 
 # ---------------------------------------------------------------------------
