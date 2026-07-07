@@ -808,6 +808,87 @@ class TestPlotPanel:
             panel.close()
             panel.deleteLater()
 
+    def test_frequency_high_tf_narrow_line_gets_centered_window(self, qapp: QApplication) -> None:
+        """A narrow line at high frequency is framed AROUND, not from zero.
+
+        Run-687 shape: a 0.2 MHz-wide line at 813 MHz is sub-pixel on the
+        from-zero [0, 1.2 GHz] wide view; the first paint must centre on it
+        (WiMDA's reference ± offsets view, derived from the data).
+        """
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            freqs = np.linspace(0.0, 1300.0, 130001)  # 0.01 MHz bins
+            hwhm = 0.1
+            values = 1.0 + 5.0e3 * hwhm**2 / (hwhm**2 + (freqs - 813.0) ** 2)
+            values[:5] = 3.0e5  # DC peak
+            ds = MuonDataset(
+                time=freqs,
+                asymmetry=values,
+                error=np.zeros_like(freqs),
+                metadata={
+                    "run_number": 3697,
+                    "plot_domain": "frequency",
+                    "x_label": "Frequency (MHz)",
+                },
+            )
+            panel.plot_dataset(ds)
+
+            x_min = panel._x_min.value()
+            x_max = panel._x_max.value()
+            # Centred: the lower edge is nowhere near zero, and the window
+            # brackets the line tightly enough to resolve it.
+            assert 700.0 < x_min < 760.0
+            assert 860.0 < x_max < 900.0
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_frequency_centered_window_bails_when_lines_spread(self, qapp: QApplication) -> None:
+        """Two well-separated lines must keep the wide framing — nothing framed out."""
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            freqs = np.linspace(0.0, 1300.0, 130001)
+            hwhm = 0.1
+            values = (
+                1.0
+                + 5.0e3 * hwhm**2 / (hwhm**2 + (freqs - 300.0) ** 2)
+                + 5.0e3 * hwhm**2 / (hwhm**2 + (freqs - 800.0) ** 2)
+            )
+            values[:5] = 3.0e5
+            ds = MuonDataset(
+                time=freqs,
+                asymmetry=values,
+                error=np.zeros_like(freqs),
+                metadata={"run_number": 3698, "plot_domain": "frequency"},
+            )
+            panel._current_dataset = ds
+            panel._current_datasets = [ds]
+            assert panel._frequency_centered_window(freqs, values) is None
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_frequency_centered_window_skips_relative_axis(self, qapp: QApplication) -> None:
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            freqs = np.linspace(0.0, 1300.0, 13001)
+            values = np.ones_like(freqs)
+            values[8130] = 5.0e3
+            panel._frequency_axis_relative_to_reference = True
+            assert panel._frequency_centered_window(freqs, values) is None
+        finally:
+            panel.close()
+            panel.deleteLater()
+
     def test_manual_x_max_field_overrides_auto_x_on_frequency_panel(
         self, qapp: QApplication
     ) -> None:

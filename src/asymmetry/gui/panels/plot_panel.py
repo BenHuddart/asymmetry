@@ -4130,20 +4130,31 @@ class PlotPanel(QWidget):
         # Correlation-axis frequency mode is a coupling coordinate, not a Larmor
         # spectrum, so dominant-peak framing is not meaningful there.
         if self._is_frequency_plot_panel() and not self._frequency_axis_is_correlation:
-            peak_upper = self._frequency_peak_upper_bound(time, asymmetry)
-            field_upper = self._frequency_field_upper_bound(time)
-            # Combine by max(): data evidence must never be framed out by the
-            # field expectation (muonium / radical lines sit far above γ_μ·B),
-            # and the expected Larmor region must never be framed out by a
-            # lone lower-frequency line (e.g. a strong background peak).
-            candidates = [
-                upper for upper in (peak_upper, field_upper) if upper is not None and upper > x_min
-            ]
-            if candidates:
-                # Keep the data's own lower edge (an rfft spectrum starts at the DC
-                # bin); only pull the upper edge in to frame the peak. Injecting an
-                # absolute 0 here would misbehave on reference-relative / field axes.
-                x_max = max(candidates)
+            centered = self._frequency_centered_window(time, asymmetry)
+            if centered is not None:
+                # High-TF case: the line is unresolvable in a from-zero view
+                # (0.18 MHz wide at 813 MHz is sub-pixel on a [0, 1.2 GHz]
+                # axis), so frame a window AROUND it instead — WiMDA's
+                # reference-field ± offsets view, derived from the data.
+                x_min, x_max = centered
+            else:
+                peak_upper = self._frequency_peak_upper_bound(time, asymmetry)
+                field_upper = self._frequency_field_upper_bound(time)
+                # Combine by max(): data evidence must never be framed out by the
+                # field expectation (muonium / radical lines sit far above γ_μ·B),
+                # and the expected Larmor region must never be framed out by a
+                # lone lower-frequency line (e.g. a strong background peak).
+                candidates = [
+                    upper
+                    for upper in (peak_upper, field_upper)
+                    if upper is not None and upper > x_min
+                ]
+                if candidates:
+                    # Keep the data's own lower edge (an rfft spectrum starts at
+                    # the DC bin); only pull the upper edge in to frame the peak.
+                    # Injecting an absolute 0 here would misbehave on
+                    # reference-relative / field axes.
+                    x_max = max(candidates)
 
         if x_max <= x_min:
             pad = max(abs(x_min) * 0.05, 1e-6)
@@ -4212,15 +4223,25 @@ class PlotPanel(QWidget):
             return None
         return upper
 
-    def _frequency_peak_upper_bound(self, freqs: np.ndarray, values: np.ndarray) -> float | None:
-        """Upper frequency-axis bound that frames the highest-frequency line.
+    def _frequency_significant_lines(
+        self, freqs: np.ndarray, values: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray, float] | None:
+        """Return ``(line_freqs, line_ratios, f_max)`` for baseline-clearing bins.
 
-        Returns ``None`` (keep the full span) for DC-only or featureless spectra,
-        where no non-DC bin clears the baseline and zooming would merely chase a
-        noise spike. Otherwise frames to the *highest-frequency* line that rises
-        above the baseline — not just the single tallest peak — so weaker
-        high-frequency lines (high-TF Larmor lines, muoniated-radical pairs) are
-        not cut off by a stronger low-frequency line such as the diamagnetic peak.
+        The shared line finder behind the first-paint framing helpers;
+        ``line_ratios`` is each bin's height over its LOCAL baseline. Returns
+        ``None`` for DC-only or featureless spectra, where no non-DC bin clears
+        the baseline and zooming would merely chase a noise spike. The DC
+        region (zero-frequency peak + filter rolloff, the lowest 2 % of the
+        span) is excluded — the DC peak typically dwarfs the signal, so it must
+        not count as a line.
+
+        The baseline is a block-median estimated locally, not one global
+        median: a real TDC spectrum's noise floor is a coloured pedestal (run
+        687's floor below ~1 GHz sits 22× above its quiet high-frequency
+        level), so against a global median a quarter of the spectrum reads as
+        "significant" and the framing chases the pedestal's edge instead of
+        the physics. A narrow line perturbs its own block's median negligibly.
         """
         f = np.asarray(freqs, dtype=float)
         v = np.abs(np.asarray(values, dtype=float))
@@ -4233,27 +4254,128 @@ class PlotPanel(QWidget):
         if f_max <= 0.0:
             return None
 
-        # Exclude the DC region (zero-frequency peak + filter rolloff): the lowest
-        # 2 % of the span. The DC peak typically dwarfs the signal, so it must not
-        # count as a line.
         dc_cut = f_max * 0.02
         nondc = f > dc_cut
         if np.count_nonzero(nondc) < 2:
             return None
         f_nondc = f[nondc]
         v_nondc = v[nondc]
-        baseline = float(np.median(v_nondc))
-        if baseline <= 0.0:
-            baseline = float(np.mean(v_nondc))
-        threshold = baseline * _FREQUENCY_PEAK_PROMINENCE
-        significant = v_nondc > threshold
-        if not np.any(significant):
+
+        n_blocks = int(np.clip(f_nondc.size // 64, 8, 512))
+        usable = (f_nondc.size // n_blocks) * n_blocks
+        if usable >= n_blocks:
+            block_medians = np.median(v_nondc[:usable].reshape(n_blocks, -1), axis=1)
+            block_centers = f_nondc[:usable].reshape(n_blocks, -1).mean(axis=1)
+            baseline = np.interp(f_nondc, block_centers, block_medians)
+        else:
+            baseline = np.full_like(v_nondc, float(np.median(v_nondc)))
+        fallback = float(np.median(v_nondc)) or float(np.mean(v_nondc))
+        baseline = np.where(baseline > 0.0, baseline, fallback)
+        if not np.any(baseline > 0.0):
             return None
 
-        # Frame to the highest-frequency significant line with head-room, never
+        ratios = np.divide(v_nondc, baseline, out=np.zeros_like(v_nondc), where=baseline > 0.0)
+        significant = ratios > _FREQUENCY_PEAK_PROMINENCE
+        if not np.any(significant):
+            return None
+        return f_nondc[significant], ratios[significant], f_max
+
+    def _frequency_peak_upper_bound(self, freqs: np.ndarray, values: np.ndarray) -> float | None:
+        """Upper frequency-axis bound that frames the highest-frequency line.
+
+        Returns ``None`` (keep the full span) for DC-only or featureless
+        spectra. Otherwise frames to the *highest-frequency* line that rises
+        above the baseline — not just the single tallest peak — so weaker
+        high-frequency lines (high-TF Larmor lines, muoniated-radical pairs)
+        are not cut off by a stronger low-frequency line such as the
+        diamagnetic peak.
+        """
+        lines = self._frequency_significant_lines(freqs, values)
+        if lines is None:
+            return None
+        line_freqs, line_ratios, f_max = lines
+        # Only STRICT lines drive the upper bound: on a large padded spectrum
+        # extreme-value noise reaches ~4.5× its local baseline, so framing to
+        # the highest merely-significant bin would chase a stray. Real
+        # secondary lines (radical pairs, satellites) clear 2× the prominence
+        # threshold comfortably.
+        strict = line_ratios >= 2.0 * _FREQUENCY_PEAK_PROMINENCE
+        if not np.any(strict):
+            return None
+        # Frame to the highest-frequency strict line with head-room, never
         # past the available data.
-        highest_f = float(np.max(f_nondc[significant]))
+        highest_f = float(np.max(line_freqs[strict]))
         return float(min(f_max, highest_f * 1.5))
+
+    def _frequency_centered_window(
+        self, freqs: np.ndarray, values: np.ndarray
+    ) -> tuple[float, float] | None:
+        """A window centred on the dominant line, when a from-zero view can't show it.
+
+        High transverse field puts a narrow line at a large frequency: run 687
+        of the corpus has a 0.18 MHz-wide line at 813 MHz, which is sub-pixel
+        on the from-zero [0, 1.5·f₀] view the wide framing produces. When the
+        highest significant line's measured FWHM is below 1/400 of that wide
+        span — genuinely unresolvable, not merely narrow — frame
+        ``f₀ ± max(0.08·f₀, 30·FWHM)`` instead, WiMDA's reference-field ±
+        offsets view derived from the data. Bails to the wide framing whenever
+        any other significant line would fall outside the centred window (AFM
+        satellites, radical pairs — nothing may be framed out) or on the
+        reference-relative axis, where the framing maths lives near zero.
+        """
+        if self.is_frequency_axis_relative_to_reference():
+            return None
+        lines = self._frequency_significant_lines(freqs, values)
+        if lines is None:
+            return None
+        line_freqs, line_ratios, f_max = lines
+        # Centre on the bin most prominent over its LOCAL baseline — the
+        # summit. The highest FREQUENCY significant bin is a tail bin a few
+        # linewidths up-slope, and a half-maximum walk started there straddles
+        # the summit and measures the whole prominence region instead of the
+        # line.
+        center = float(line_freqs[int(np.argmax(line_ratios))])
+        if center <= 0.0:
+            return None
+
+        f = np.asarray(freqs, dtype=float)
+        v = np.abs(np.asarray(values, dtype=float))
+        finite = np.isfinite(f) & np.isfinite(v)
+        f = f[finite]
+        v = v[finite]
+        order = np.argsort(f)
+        f = f[order]
+        v = v[order]
+        peak_index = int(np.argmin(np.abs(f - center)))
+        half = 0.5 * float(v[peak_index])
+        left = peak_index
+        while left > 0 and v[left] > half:
+            left -= 1
+        right = peak_index
+        while right < v.size - 1 and v[right] > half:
+            right += 1
+        fwhm = float(f[right] - f[left])
+        if not np.isfinite(fwhm) or fwhm <= 0.0:
+            return None
+
+        x_min_data = float(np.min(f))
+        wide_span = min(f_max, center * 1.5) - x_min_data
+        if wide_span <= 0.0 or fwhm / wide_span >= 1.0 / 400.0:
+            return None
+        half_window = max(0.08 * center, 30.0 * fwhm)
+        lower = max(x_min_data, center - half_window)
+        upper = min(f_max, center + half_window)
+        if upper <= lower:
+            return None
+        # Only a STRICT line outside the window vetoes the zoom: nothing real
+        # may be framed out, but extreme-value noise bins (which barely clear
+        # the significance threshold against their local baseline) must not
+        # hold the view hostage at full span.
+        strict = line_ratios >= 2.0 * _FREQUENCY_PEAK_PROMINENCE
+        strict_freqs = line_freqs[strict]
+        if np.any(strict_freqs < lower) or np.any(strict_freqs > upper):
+            return None
+        return lower, upper
 
     def _auto_x_limits(self) -> None:
         """Auto-scale x-axis and update x-limit controls."""

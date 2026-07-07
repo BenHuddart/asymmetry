@@ -598,11 +598,19 @@ class FourierPanel(QWidget):
         fft_settings_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
 
         self._padding_spin = NoScrollSpinBox()
-        self._padding_spin.setRange(1, 16)
+        # The cap is a memory guard, not physics: padding is pure sinc
+        # interpolation, but the padded transform is materialised — a
+        # 336k-sample TDC window at ×64 is a ~21M-point spectrum. (The former
+        # cap of 16 was WiMDA-adjacent habit; WiMDA's own dialog stops at ×8.)
+        self._padding_spin.setRange(1, 64)
         # Deliberate divergence from WiMDA (whose dialog defaults to no zero
         # padding): the spectrum is auto-shown on view now, and an
         # uninterpolated peak spanning 2-3 bins reads as broken on first paint.
-        # x4 sinc-interpolates the line shapes at negligible cost; recipes and
+        # x4 sinc-interpolates the line shapes at negligible cost. Higher is
+        # display-only smoothing: padded bins are strongly CORRELATED, and
+        # frequency-domain fits / moment bootstraps treat samples as
+        # independent, so over-padded spectra yield underestimated
+        # uncertainties — the reason the default stays modest. Recipes and
         # restored projects keep whatever padding they were saved with.
         self._padding_spin.setValue(4)
         self._padding_spin.setMaximumWidth(metrics.spin_width_for(6, self._padding_spin))

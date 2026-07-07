@@ -65,18 +65,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ``Transverse (opposed pairs)`` preset.
 
 - **The first FFT view is framed to where the physics is, with interpolated
-  line shapes.** The Frequency-domain plot's initial window now considers the
-  run's applied field as well as the data: it frames the highest detected
-  line *or* the expected Larmor region γ_μ·B, whichever is wider — so a weak
-  or low-field line the peak detection cannot see still gets a sensible
-  window instead of the full Nyquist span, while muonium/radical lines far
-  above γ_μ·B are never framed out. A multi-run overlay frames to its highest
-  member field. (WiMDA frames its FFT plot around the reference field the
-  same way.) The default zero-pad factor is now **4** (previously 1), so
-  auto-shown spectra arrive with sinc-interpolated rather than 2–3-bin-wide
-  peaks — a deliberate divergence from WiMDA's no-padding default, cosmetic
-  only; saved projects and recipes keep the padding they were saved with.
-  Both are first-paint seeds: manual zoom and settings always win.
+  line shapes.** A narrow high-frequency line (a 6 T Larmor line, ~13 G wide
+  at 813 MHz) is framed *around* — centred, a few dozen linewidths wide —
+  because a from-zero axis renders it sub-pixel. Otherwise the initial window
+  frames the highest detected line *or* the expected Larmor region γ_μ·B,
+  whichever is wider — so a weak or low-field line the peak detection cannot
+  see still gets a sensible window instead of the full Nyquist span, while
+  second lines (AFM satellites, muonium/radical lines) are never framed out.
+  Line detection measures prominence against a local (block-median) baseline,
+  so the coloured noise pedestal of a finely-binned TDC spectrum cannot
+  masquerade as signal. A multi-run overlay frames to its highest member
+  field. (WiMDA frames its FFT plot around the reference field the same
+  way.) The default zero-pad factor is now **4** (previously 1) and the
+  factor now goes up to 64 (previously 16): padding is pure sinc
+  interpolation — display-smoothness only — but note that padded points are
+  strongly correlated, so heavily over-padded spectra fed to frequency-domain
+  fits or moment error estimates yield artificially small uncertainties;
+  that is why the default stays modest. Saved projects and recipes keep the
+  padding they were saved with. All are first-paint seeds: manual zoom and
+  settings always win. An auto-computed spectrum now also reports "Computed
+  FFT for run *N*." in the status line instead of leaving a stale
+  "No FFT computed" message under a freshly rendered spectrum.
 
 - **The FFT tab now computes on view instead of waiting for a click.**
   Opening the **Frequency Domain** tab — or switching runs while on it — for a

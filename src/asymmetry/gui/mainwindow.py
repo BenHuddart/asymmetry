@@ -6886,6 +6886,14 @@ class MainWindow(QMainWindow):
             self._render_frequency_spectra(
                 run_number, rep_type, resolved, preserved_x_limits, preserved_y_limits
             )
+            if resolved:
+                # An auto/lazy compute otherwise leaves whatever footer status
+                # preceded it (often the hidden-sync "No FFT computed for run
+                # N.") sitting under a freshly rendered spectrum.
+                self._set_fourier_status(
+                    f"Computed {self._frequency_status_name(rep_type)} for run {run_number}.",
+                    success=True,
+                )
         self._refresh_fourier_staleness()
 
     def _on_frequency_recompute_error(

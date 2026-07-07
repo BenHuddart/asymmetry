@@ -714,18 +714,25 @@ Runs that cannot compute — no detector groups, or a transform that fails — a
 skipped and reported in the status line: *"Overlaying <n> runs; <m> selected
 run(s) could not be computed — check their detector grouping and the log."*
 
-The first view is also **framed to where the physics is**. The plot frames the
-highest-frequency line that clears the noise baseline, and — when the run
-carries an applied field — at least the expected Larmor region γ\ :sub:`μ`\ ·B
-(WiMDA frames its FFT plot around the reference field the same way). The wider
-of the two wins, so a detected line far above the expected frequency (muonium
-triplet lines, muoniated-radical pairs) is never framed out, and a weak or
-low-field line that the peak detection cannot see still gets a sensible window
-instead of the full Nyquist span. Spectra also default to a **zero-pad factor
-of 4**, so line shapes arrive sinc-interpolated rather than 2–3 bins wide;
-this deliberately diverges from WiMDA's no-padding default because the
-spectrum is now shown unbidden, and it changes nothing quantitative (zero
-padding adds no information — only smoother rendering). Both are first-paint
+The first view is also **framed to where the physics is**. A narrow line at
+high frequency — a 6 T Larmor line is ~13 G wide at 813 MHz — is framed
+*around* (the line centred, the window a few dozen linewidths wide: WiMDA's
+reference-field ± offsets view, derived from the data), because on a from-zero
+axis it would be sub-pixel. Otherwise the plot frames from the data's lower
+edge up to the highest-frequency line that clears the local noise baseline,
+and — when the run carries an applied field — at least the expected Larmor
+region γ\ :sub:`μ`\ ·B. The widest need wins: a second real line (AFM
+satellites, muonium triplet lines, muoniated-radical pairs) is never framed
+out, and a weak or low-field line that the peak detection cannot see still
+gets a sensible window instead of the full Nyquist span. Spectra also default
+to a **zero-pad factor of 4**, so line shapes arrive sinc-interpolated rather
+than 2–3 bins wide; this deliberately diverges from WiMDA's no-padding default
+because the spectrum is now shown unbidden, and it changes nothing
+quantitative — zero padding adds no information, only smoother rendering.
+(That is also why the default stays modest even though the factor now goes up
+to 64: padded points are strongly correlated, and frequency-domain fits and
+moment error estimates treat samples as independent, so heavily over-padded
+spectra yield artificially small uncertainties.) All of these are first-paint
 seeds only: your own zoom and settings are never overridden.
 
 Auto-compute needs detector groups to work from. A run with no groups (or with
