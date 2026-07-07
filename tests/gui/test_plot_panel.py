@@ -653,6 +653,161 @@ class TestPlotPanel:
             panel.close()
             panel.deleteLater()
 
+    def test_frequency_default_x_range_seeds_from_field_when_featureless(
+        self, qapp: QApplication
+    ) -> None:
+        """No detectable line + an applied field → frame the expected Larmor region.
+
+        The peak heuristic keeps the full span for featureless spectra, but a
+        weak line is exactly when a first look matters: γ_μ·B says where to
+        look (2000 G → 27.1 MHz), so the view frames [.., 1.5×] that instead
+        of the full 1000 MHz Nyquist span. WiMDA frames its FFT plot around
+        the reference field the same way.
+        """
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            rng = np.random.default_rng(5)
+            freqs = np.linspace(0.0, 1000.0, 2048)
+            values = np.abs(rng.normal(0.0, 1.0, freqs.size)) + 1.0
+            values[:3] = 3.0e5  # only the DC peak stands out
+            ds = MuonDataset(
+                time=freqs,
+                asymmetry=values,
+                error=np.zeros_like(freqs),
+                metadata={
+                    "run_number": 3690,
+                    "field": 2000.0,
+                    "plot_domain": "frequency",
+                    "x_label": "Frequency (MHz)",
+                },
+            )
+            panel.plot_dataset(ds)
+
+            # 1.5 × 27.1 MHz ≈ 40.7, plus the 5 % pad — not the 1000 MHz span.
+            assert 35.0 <= panel._x_max.value() <= 50.0
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_frequency_field_seed_rescues_low_field_line_inside_dc_cut(
+        self, qapp: QApplication
+    ) -> None:
+        """A 20 G line at 0.27 MHz hides under the DC cut; the field seed frames it."""
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            freqs = np.linspace(0.0, 30.0, 2048)
+            values = np.full_like(freqs, 1.0)
+            values[:3] = 3.0e5
+            # The physical line sits below the 2 % DC cut (0.6 MHz), where the
+            # peak heuristic is structurally blind to it.
+            values[int(np.argmin(np.abs(freqs - 0.27)))] = 5.0e3
+            ds = MuonDataset(
+                time=freqs,
+                asymmetry=values,
+                error=np.zeros_like(freqs),
+                metadata={
+                    "run_number": 3691,
+                    "field": 20.0,
+                    "plot_domain": "frequency",
+                    "x_label": "Frequency (MHz)",
+                },
+            )
+            panel.plot_dataset(ds)
+
+            assert panel._x_max.value() <= 1.0
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_frequency_field_seed_never_frames_out_a_detected_line(
+        self, qapp: QApplication
+    ) -> None:
+        """Data evidence wins: a muonium-style line far above γ_μ·B stays framed."""
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            freqs = np.linspace(0.0, 500.0, 2048)
+            values = np.full_like(freqs, 1.0)
+            values[:3] = 3.0e5
+            # ~20 G TF: expected Larmor line at 0.27 MHz, but the muonium
+            # triplet lines sit near 140 MHz.
+            values[int(np.argmin(np.abs(freqs - 140.0)))] = 5.0e3
+            ds = MuonDataset(
+                time=freqs,
+                asymmetry=values,
+                error=np.zeros_like(freqs),
+                metadata={
+                    "run_number": 3692,
+                    "field": 20.0,
+                    "plot_domain": "frequency",
+                    "x_label": "Frequency (MHz)",
+                },
+            )
+            panel.plot_dataset(ds)
+
+            assert panel._x_max.value() >= 140.0
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_frequency_field_seed_skipped_on_relative_axis(self, qapp: QApplication) -> None:
+        """On the reference-relative axis the expected line sits at ~0 — no seed."""
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            ds = MuonDataset(
+                time=np.linspace(0.0, 100.0, 512),
+                asymmetry=np.ones(512),
+                error=np.zeros(512),
+                metadata={"run_number": 3693, "field": 2000.0, "plot_domain": "frequency"},
+            )
+            panel._current_dataset = ds
+            panel._current_datasets = [ds]
+            panel._frequency_axis_relative_to_reference = True
+            assert panel._frequency_field_upper_bound(ds.time) is None
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_frequency_field_seed_uses_highest_field_of_an_overlay(
+        self, qapp: QApplication
+    ) -> None:
+        """A field-series overlay frames to its highest member field."""
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            freqs = np.linspace(0.0, 1000.0, 512)
+
+            def _member(run: int, field: float) -> MuonDataset:
+                return MuonDataset(
+                    time=freqs,
+                    asymmetry=np.ones_like(freqs),
+                    error=np.zeros_like(freqs),
+                    metadata={"run_number": run, "field": field, "plot_domain": "frequency"},
+                )
+
+            members = [_member(3694, 500.0), _member(3695, 4000.0), _member(3696, 2000.0)]
+            panel._current_datasets = members
+            panel._current_dataset = members[-1]
+            upper = panel._frequency_field_upper_bound(freqs)
+            # 1.5 × γ_μ·B(4000 G) ≈ 81.3 MHz — the 4000 G member, not the last-plotted 2000 G one.
+            assert upper == pytest.approx(1.5 * 4000.0 * 0.01355342, rel=0.01)
+        finally:
+            panel.close()
+            panel.deleteLater()
+
     def test_manual_x_max_field_overrides_auto_x_on_frequency_panel(
         self, qapp: QApplication
     ) -> None:

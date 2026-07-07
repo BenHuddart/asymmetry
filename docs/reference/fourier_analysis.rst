@@ -683,6 +683,20 @@ Runs that cannot compute — no detector groups, or a transform that fails — a
 skipped and reported in the status line: *"Overlaying <n> runs; <m> selected
 run(s) could not be computed — check their detector grouping and the log."*
 
+The first view is also **framed to where the physics is**. The plot frames the
+highest-frequency line that clears the noise baseline, and — when the run
+carries an applied field — at least the expected Larmor region γ\ :sub:`μ`\ ·B
+(WiMDA frames its FFT plot around the reference field the same way). The wider
+of the two wins, so a detected line far above the expected frequency (muonium
+triplet lines, muoniated-radical pairs) is never framed out, and a weak or
+low-field line that the peak detection cannot see still gets a sensible window
+instead of the full Nyquist span. Spectra also default to a **zero-pad factor
+of 4**, so line shapes arrive sinc-interpolated rather than 2–3 bins wide;
+this deliberately diverges from WiMDA's no-padding default because the
+spectrum is now shown unbidden, and it changes nothing quantitative (zero
+padding adds no information — only smoother rendering). Both are first-paint
+seeds only: your own zoom and settings are never overridden.
+
 Auto-compute needs detector groups to work from. A run with no groups (or with
 every group excluded), or one whose transform genuinely fails, cannot seed a
 recipe and instead shows a **centred prompt over the Frequency-domain plot** —

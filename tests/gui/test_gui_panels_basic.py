@@ -58,7 +58,9 @@ def test_fourier_panel_defaults(qapp: QApplication) -> None:
     assert panel._filter_time_constant_edit.isEnabled() is True
     assert "Lorentzian" in panel._filter_start_edit.toolTip()
     assert "Lorentzian" in panel._filter_time_constant_edit.toolTip()
-    assert panel._padding_spin.value() == 1
+    # x4 by default (deliberate WiMDA divergence): the auto-shown spectrum
+    # needs interpolated line shapes on first paint.
+    assert panel._padding_spin.value() == 4
     assert float(panel._phase_spin.text()) == pytest.approx(0.0)
     assert float(panel._t0_offset_spin.text()) == pytest.approx(0.0)
     assert panel._current_display_mode() == "(Power)^1/2"

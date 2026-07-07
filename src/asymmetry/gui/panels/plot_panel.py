@@ -4131,11 +4131,19 @@ class PlotPanel(QWidget):
         # spectrum, so dominant-peak framing is not meaningful there.
         if self._is_frequency_plot_panel() and not self._frequency_axis_is_correlation:
             peak_upper = self._frequency_peak_upper_bound(time, asymmetry)
-            if peak_upper is not None and peak_upper > x_min:
+            field_upper = self._frequency_field_upper_bound(time)
+            # Combine by max(): data evidence must never be framed out by the
+            # field expectation (muonium / radical lines sit far above γ_μ·B),
+            # and the expected Larmor region must never be framed out by a
+            # lone lower-frequency line (e.g. a strong background peak).
+            candidates = [
+                upper for upper in (peak_upper, field_upper) if upper is not None and upper > x_min
+            ]
+            if candidates:
                 # Keep the data's own lower edge (an rfft spectrum starts at the DC
                 # bin); only pull the upper edge in to frame the peak. Injecting an
                 # absolute 0 here would misbehave on reference-relative / field axes.
-                x_max = peak_upper
+                x_max = max(candidates)
 
         if x_max <= x_min:
             pad = max(abs(x_min) * 0.05, 1e-6)
@@ -4155,6 +4163,54 @@ class PlotPanel(QWidget):
             self._convert_frequency_axis_limit_to_control_value(lower),
             self._convert_frequency_axis_limit_to_control_value(upper),
         )
+
+    def _frequency_field_upper_bound(self, display_freqs: np.ndarray) -> float | None:
+        """Upper display-axis bound framing the field-expected Larmor line, or ``None``.
+
+        The peak heuristic is structurally blind to exactly the cases where a
+        first look matters most: a weak line that does not clear the prominence
+        threshold, and a low-field line hiding inside the excluded DC region
+        (a 20 G line at 0.27 MHz sits below the 2 % DC cut of a ~30 MHz span).
+        When the run carries an applied field, γ_μ·B says where to look —
+        WiMDA frames its FFT plot around the reference field the same way
+        (``WiMDA_Main.pas`` ``UseShiftRange``). The 1.5× headroom puts the
+        expected line at two-thirds of the axis. Skipped on the
+        reference-relative axis, where the line sits at ~0 and an upper bound
+        derived from it would collapse the window, and when the expected line
+        is at/off the Nyquist edge (the full span already frames it).
+        """
+        if self.is_frequency_axis_relative_to_reference():
+            return None
+        # A multi-run overlay can span a field series; frame to the HIGHEST
+        # member field so no member's expected line starts off-screen.
+        datasets = self._current_datasets or (
+            [self._current_dataset] if self._current_dataset is not None else []
+        )
+        fields = [
+            field
+            for field in (
+                reference_field_gauss(getattr(dataset, "run", None), dataset)
+                for dataset in datasets
+            )
+            if field is not None and field > 0.0
+        ]
+        if not fields:
+            return None
+        expected_mhz = float(gauss_to_mhz(max(fields)))
+        if not np.isfinite(expected_mhz) or expected_mhz <= 0.0:
+            return None
+        center = float(self._convert_frequency_axis_for_display(np.array([expected_mhz]))[0])
+        if not np.isfinite(center) or center <= 0.0:
+            return None
+        finite = np.asarray(display_freqs, dtype=float)
+        finite = finite[np.isfinite(finite)]
+        if finite.size == 0:
+            return None
+        f_max = float(np.max(finite))
+        upper = 1.5 * center
+        if upper >= f_max:
+            return None
+        return upper
 
     def _frequency_peak_upper_bound(self, freqs: np.ndarray, values: np.ndarray) -> float | None:
         """Upper frequency-axis bound that frames the highest-frequency line.

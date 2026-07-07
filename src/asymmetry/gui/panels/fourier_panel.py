@@ -587,7 +587,12 @@ class FourierPanel(QWidget):
 
         self._padding_spin = NoScrollSpinBox()
         self._padding_spin.setRange(1, 16)
-        self._padding_spin.setValue(1)
+        # Deliberate divergence from WiMDA (whose dialog defaults to no zero
+        # padding): the spectrum is auto-shown on view now, and an
+        # uninterpolated peak spanning 2-3 bins reads as broken on first paint.
+        # x4 sinc-interpolates the line shapes at negligible cost; recipes and
+        # restored projects keep whatever padding they were saved with.
+        self._padding_spin.setValue(4)
         self._padding_spin.setMaximumWidth(metrics.spin_width_for(6, self._padding_spin))
         fft_settings_form.addRow(self._wrapping_label("Zero-pad factor:"), self._padding_spin)
 
