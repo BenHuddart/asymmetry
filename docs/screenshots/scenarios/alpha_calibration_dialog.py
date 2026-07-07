@@ -49,13 +49,17 @@ class AlphaCalibrationDialogScenario(Scenario):
         dialog.show()
         _pump_events(150)
 
-        # Estimate is a synchronous, pure-core reduction (no worker thread),
-        # so a single button click is enough to populate the before/after
-        # preview and the result label before the grab.
+        # Estimate now runs the grouping + alpha reduction on a background
+        # worker thread, so a single click does not populate the result before
+        # the grab. Pump the event loop until the worker's queued finished
+        # callback has landed (deterministic, not a fixed sleep) so the captured
+        # preview and result label always show the estimate, never the transient
+        # "Computing estimate…" busy state.
         estimate_btn = getattr(dialog, "_estimate_btn", None)
         if estimate_btn is not None:
             estimate_btn.click()
-            _pump_events(150)
+            _pump_until(lambda: dialog._tasks.active_count == 0 and dialog._estimate is not None)
+            _pump_events(50)
 
         pix = dialog.grab()
         out_path = ctx.output_dir / f"{self.name}.png"
@@ -74,6 +78,27 @@ def _pump_events(milliseconds: int) -> None:
     QTimer.singleShot(int(milliseconds), loop.quit)
     loop.exec()
     QApplication.processEvents()
+
+
+def _pump_until(predicate, timeout_ms: int = 10_000) -> None:
+    """Pump a nested event loop until *predicate* holds (or the timeout lapses).
+
+    The estimate lands via a queued cross-thread signal, so the loop must be
+    entered for the callback to run; the timeout is only a backstop.
+    """
+    if predicate():
+        return
+    loop = QEventLoop()
+    check = QTimer()
+    check.timeout.connect(lambda: loop.quit() if predicate() else None)
+    check.start(10)
+    guard = QTimer()
+    guard.setSingleShot(True)
+    guard.timeout.connect(loop.quit)
+    guard.start(int(timeout_ms))
+    loop.exec()
+    check.stop()
+    guard.stop()
 
 
 register(AlphaCalibrationDialogScenario())
