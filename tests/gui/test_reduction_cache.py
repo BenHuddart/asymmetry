@@ -408,3 +408,167 @@ class TestWiredCallSites:
         mainwindow._reduction_cache.invalidate_run = spy  # type: ignore[method-assign]
         mainwindow._apply_grouping_settings_to_dataset(dataset, dict(dataset.run.grouping))
         assert dataset.run in seen
+
+
+# ── User-action-level invocation-count regressions (audit D2) ──────────────
+#
+# ``TestWiredCallSites`` above pins the cache-wrapper behaviour by calling the
+# ``_grouped_time_domain_display_datasets``/``_counts_first_rebunched_arrays``
+# wrappers directly. The tests below instead drive the real user-facing paths
+# — data-browser row selection (``select_runs``, which mirrors a mouse click:
+# it goes through the same ``_on_selection_changed`` → ``dataset_selected``/
+# ``selection_changed`` signal chain), the Domain toolbar buttons, and the
+# View → Diagnostics → Raw counts action — and assert the *end-to-end*
+# payoff the audit measured: dataset ping-pong and view toggling used to
+# recompute a reduction on every dataset switch, and a single render could
+# invoke the underlying provider 2-4 times.
+
+
+class TestUserActionInvocationCounts:
+    def test_dataset_ping_pong_in_groups_view_computes_each_run_once(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Selecting A, B, A in the Groups view builds A and B once each.
+
+        The groups Domain button is disabled until a grouped-capable dataset
+        is current, so run A is selected first (enabling it) and then the
+        button click renders A in the Groups view for the first time — that
+        click *is* the first of the three ping-pong renders. Selecting B
+        renders B (new run -> cache miss); reselecting A hits the still-live
+        per-run cache entry instead of rebuilding.
+        """
+        run_a = _multi_group_dataset(run_number=5101)
+        run_b = _multi_group_dataset(run_number=5102)
+        mainwindow._data_browser.add_dataset(run_a)
+        mainwindow._data_browser.add_dataset(run_b)
+
+        mainwindow._data_browser.select_runs({5101})
+        assert mainwindow._domain_buttons_by_token["groups"].isEnabled()
+
+        calls = _count_builds(monkeypatch)
+
+        mainwindow._domain_buttons_by_token["groups"].click()  # render A (1st)
+        assert mainwindow._plot_workspace.active_view() == "groups"
+        mainwindow._data_browser.select_runs({5102})  # render B
+        mainwindow._data_browser.select_runs({5101})  # render A again (cache hit)
+
+        assert calls["n"] == 2
+
+    def test_single_render_with_bunch_factor_reduces_exactly_once(
+        self, mainwindow: MainWindow
+    ) -> None:
+        """One render at bunch factor > 1 reduces once, though it is probed
+        repeatedly.
+
+        The main-toolbar bunch spinbox bakes its value into
+        ``run.grouping['bunching_factor']`` and re-reduces through
+        ``_apply_grouping_settings_to_dataset`` for any dataset with a real
+        grouping (see ``_apply_bunch_factor_to_context``), so it never
+        reaches the counts-first-rebunch provider wired here. The provider
+        (``_counts_first_rebunched_arrays``, installed as the plot panel's
+        ``counts_rebunch_provider``) is instead driven by the panel's own
+        (normally hidden) bunch spinbox, exactly as
+        ``tests/gui/test_plot_bunch_counts_first.py`` exercises it:
+        ``plot_panel.set_bunch_factor(factor, emit_signal=False)``.
+
+        The seam counted is ``_reduce_grouped_histograms_to_asymmetry`` — the
+        chokepoint shared by every reduction path in this module (see its
+        docstring and ``_count_reduces`` above) — rather than counting calls
+        to ``get_analysis_dataset``/the rebunch provider directly, so the
+        assertion holds regardless of how many internal call sites
+        (plotting, RRF display, fit-range seeding) probe the analysis
+        dataset during one render. A plain ``calls["n"] == 1`` would pass
+        vacuously if the render happened to only probe once even without a
+        cache, so the cache's own hit/miss counters are asserted too: exactly
+        one miss (the single real compute) plus several hits confirms the
+        render actually exercised — and deduplicated — more than one call
+        into the provider (measured at 4 probes for one render of this
+        fixture, matching the audit's "2-4 calls per render" finding).
+
+        The bunch factor is pre-armed on the panel *before* the dataset is
+        ever selected, and the counter/snapshot are installed just before
+        that first selection. This matters for two reasons: (1)
+        ``set_bunch_factor(..., emit_signal=False)`` itself redraws
+        immediately (it calls ``_redraw_current_view()``, which no-ops here
+        because the panel has no current dataset yet), so arming it first
+        avoids a stray extra render; and (2) the panel's per-window fit-range
+        seed (``_fit_x_min``/``_fit_x_max``) is populated on the *first* plot
+        of a session and then stays sticky, and one of the probe call sites
+        (``_raw_fit_seed_range``) only fires while it is still unset — so
+        this is the one render in a window's life where that seam's full
+        multiplicity is guaranteed to show up. A run already selected once at
+        bunch factor 1 and then switched to bunch factor 3 would still prove
+        the dedup (one miss), but could under-count the probes this test
+        wants to demonstrate collapsing.
+        """
+        dataset = _multi_group_dataset(run_number=5201, n=1200)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._plot_panel.set_bunch_factor(3, emit_signal=False)  # pre-armed; no-op redraw
+
+        calls = _count_reduces(mainwindow)
+        misses_before = mainwindow._reduction_cache.misses
+        hits_before = mainwindow._reduction_cache.hits
+
+        mainwindow._data_browser.select_runs({5201})  # the one render
+        assert mainwindow._plot_workspace.active_view() == "fb_asymmetry"
+
+        assert calls["n"] == 1
+        assert mainwindow._reduction_cache.misses - misses_before == 1
+        assert mainwindow._reduction_cache.hits - hits_before >= 1
+
+    def test_grouping_edit_invalidates_cached_groups_view_build(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A digest-covered grouping edit forces the next selection to rebuild.
+
+        Mirrors ``test_grouped_td_reuses_then_rebuilds_on_digest_change``
+        above but through the real selection path: the run's grouping is
+        mutated directly (as the grouping dialog would leave it after
+        ``_apply_grouping_settings_to_dataset`` writes ``first_good_bin``),
+        then the same run is reselected. ``select_runs`` on an already-
+        selected run still fires ``_on_selection_changed`` (it calls it
+        unconditionally after restoring the selection, not only on a Qt-
+        detected change), so "reselect" reliably triggers a fresh render.
+        """
+        dataset = _multi_group_dataset(run_number=5301)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._data_browser.select_runs({5301})
+
+        calls = _count_builds(monkeypatch)
+        mainwindow._domain_buttons_by_token["groups"].click()
+        assert calls["n"] == 1
+
+        dataset.run.grouping["first_good_bin"] = 5
+        mainwindow._data_browser.select_runs({5301})  # reselect after the edit
+
+        assert calls["n"] == 2
+
+    def test_view_toggle_ping_pong_caches_both_kinds(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Groups -> Raw counts -> Groups builds each representation once.
+
+        Groups (lifetime-corrected) and Raw counts (uncorrected) key to two
+        distinct cache entries for the same ``(run, "grouped_td")`` bucket;
+        the per-``(run, kind)`` cap is 2 (``TestReductionCacheClass
+        .test_per_run_kind_cap_of_two``), so both stay resident and the
+        third leg — back to Groups — is a hit rather than an eviction-forced
+        rebuild.
+        """
+        dataset = _multi_group_dataset(run_number=5401)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._data_browser.select_runs({5401})
+
+        calls = _count_builds(monkeypatch)
+
+        mainwindow._domain_buttons_by_token["groups"].click()
+        assert mainwindow._plot_workspace.active_view() == "groups"
+        assert calls["n"] == 1
+
+        mainwindow._raw_counts_action.trigger()
+        assert mainwindow._plot_workspace.active_view() == "raw_counts"
+        assert calls["n"] == 2
+
+        mainwindow._raw_counts_action.trigger()
+        assert mainwindow._plot_workspace.active_view() == "groups"
+        assert calls["n"] == 2  # cache hit, not a third build
