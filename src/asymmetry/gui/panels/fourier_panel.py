@@ -315,6 +315,10 @@ class FourierPanel(QWidget):
         self._pulse_comp_check.toggled.connect(self._update_conditioning_suffix)
         self._baseline_mode_combo.currentIndexChanged.connect(self._update_conditioning_suffix)
         self._diamag_mode_combo.currentIndexChanged.connect(self._update_diamag_suffix)
+        # textEdited (not textChanged) fires only on a user keystroke, not the
+        # programmatic setText() in set_apodisation_suggestion/restore_state, so
+        # the auto-filled green clears exactly when the user overrides it.
+        self._filter_time_constant_edit.textEdited.connect(self._on_filter_time_constant_edited)
         self._update_phase_table_enabled(self._use_phase_table_check.isChecked())
         self._update_phase_controls_enabled()
         self._update_conditioning_suffix()
@@ -549,6 +553,14 @@ class FourierPanel(QWidget):
         apodisation_form.addRow(filter_mode_row)
 
         section_layout.addLayout(apodisation_form)
+
+        self._suggest_apodisation_btn = QPushButton("Suggest from data")
+        self._suggest_apodisation_btn.setToolTip(
+            "Estimate the matched filter from the spectrum's dominant line: "
+            "maximises its peak S/N at the cost of roughly doubling its apparent "
+            "width. Fills the values; Compute FFT applies them."
+        )
+        section_layout.addWidget(self._suggest_apodisation_btn)
         return section
 
     def _build_groups_section(self) -> QWidget:
@@ -1319,6 +1331,24 @@ class FourierPanel(QWidget):
                 self._auto_filled_group_ids = {int(k) for k in phase_table}
             self._update_phase_colors()
 
+    def set_apodisation_suggestion(self, window: str, time_constant_us: float) -> None:
+        """Fill a matched-apodisation suggestion into the filter controls.
+
+        Deliberately does NOT suppress ``settings_changed``: filling the values
+        is itself a settings change, and the staleness banner engaging is the
+        designed flow (suggestion -> banner -> explicit Compute FFT applies it).
+        """
+        if str(window).strip().lower() == "lorentzian":
+            self._filter_lorentzian_radio.setChecked(True)
+        else:
+            self._filter_gaussian_radio.setChecked(True)
+        self._filter_time_constant_edit.setText(f"{float(time_constant_us):.4g}")
+        self._set_line_edit_text_color(self._filter_time_constant_edit, _PHASE_AUTOFILLED_COLOR)
+
+    def _on_filter_time_constant_edited(self, _text: str) -> None:
+        """Clear the auto-filled colour on a user edit of the filter τ field."""
+        self._filter_time_constant_edit.setStyleSheet("")
+
     def set_group_enabled(self, enabled_table: dict[int, bool]) -> None:
         """Update existing group-inclusion rows without rebuilding the table."""
         with self._suppress_settings_signal_scope():
@@ -1446,6 +1476,9 @@ class FourierPanel(QWidget):
 
     def restore_state(self, state: dict) -> None:
         """Restore Fourier panel settings from a saved dict."""
+        # A project restore is never a live suggestion — clear any leftover
+        # auto-filled green from a previous session before it can show stale.
+        self._filter_time_constant_edit.setStyleSheet("")
         with self._suppress_settings_signal_scope():
             self._moments_widget.restore_state(state.get("moments"))
             window_mode = self._coerce_filter_mode(state.get("window", "none"))

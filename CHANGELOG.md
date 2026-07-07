@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The Fourier panel can suggest a matched apodisation filter from the
+  data.** The Apodisation section's new **Suggest from data** button measures
+  the dominant line of the (unapodised) spectrum inside the field-narrowed
+  search window and fills the matched filter — mode and τ, shown in the green
+  auto-filled colour — without applying anything: the out-of-date banner
+  flags the spectrum and an explicit **Compute FFT** applies the filter. A
+  matched filter maximises the line's peak S/N at the cost of ≈2× its
+  apparent width, so it is never auto-applied; when no line clears the noise
+  baseline (or the dominant line is resolution-limited) the panel says *"No
+  clear line to match — leave apodisation off."* Because filtered widths are
+  a systematic, the spectral-moments readout now shows a caveat whenever the
+  active spectrum was computed with apodisation on (each FFT records its
+  window and τ in the spectrum metadata).
+
 - **The Fourier panel now flags a displayed FFT that is out of sync with the
   current settings.** Editing any FFT parameter (display mode, apodisation,
   zero-pad, groups, phases, conditioning, exclusions), or changing the

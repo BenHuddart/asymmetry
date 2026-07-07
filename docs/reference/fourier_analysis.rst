@@ -135,6 +135,37 @@ The Gaussian mode uses the same WiMDA-style softened start with squared
 arguments. ``Subtract average signal`` is applied before the filter, matching
 WiMDA's default preprocessing path.
 
+Matched-filter suggestion
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The Apodisation section's ``Suggest from data`` button estimates the matched
+filter for the spectrum's dominant line and **fills the fields without
+applying anything**: it selects the filter mode, writes the matched
+``Filter τ (µs)`` (shown in the green auto-filled colour until you edit it),
+and reports what it did in the status line —
+
+   *Suggested Lorentzian τ = 2 µs, matched to the 2.7 MHz line — maximises
+   peak S/N, ≈2× its apparent width.*
+
+The out-of-date banner then flags the displayed spectrum, and your explicit
+``Compute FFT`` applies the filter. Nothing is ever auto-applied: a matched
+filter maximises the line's peak signal-to-noise at the cost of roughly
+doubling its apparent width, which is a trade you should make knowingly —
+never measure linewidths or moments from a spectrum filtered this way without
+accounting for it (the spectral-moments readout shows a caveat on apodised
+spectra for exactly this reason).
+
+The estimate is made from the **unapodised** power spectrum, whatever the
+current filter setting: the dominant line inside the field-narrowed search
+window (the same window automatic phase estimation uses) is measured at half
+maximum, and the matched time constant follows from the line shape —
+``τ = 1/(πΓ)`` for a Lorentzian of power-spectrum FWHM ``Γ``, with the
+equivalent (Dawson-corrected) relation for a Gaussian. If the ``Gaussian``
+filter mode is selected the match is Gaussian; otherwise Lorentzian. When no
+line clears the noise baseline, or the dominant line is resolution-limited
+(its width is the transform's, not the sample's), the status reads *"No clear
+line to match — leave apodisation off."* and nothing is filled.
+
 How the GUI FFT is built
 ~~~~~~~~~~~~~~~~~~~~~~~~
 

@@ -1,5 +1,9 @@
 """Frequency-domain analysis: FFT, grouped inputs, and apodization."""
 
+from asymmetry.core.fourier.apodisation import (
+    ApodisationSuggestion,
+    suggest_matched_apodisation,
+)
 from asymmetry.core.fourier.burg import (
     ar_power_spectrum,
     burg_coefficients,
@@ -47,6 +51,8 @@ from asymmetry.core.fourier.units import (
 from asymmetry.core.fourier.window import apply_window
 
 __all__ = [
+    "ApodisationSuggestion",
+    "suggest_matched_apodisation",
     "FieldUnit",
     "axis_label",
     "convert",
