@@ -160,9 +160,7 @@ class RunInfoDialog(QDialog):
             self._pending_counts_rows["mev"] = len(rows)
             rows.append(("Counts (MEv)", "computing…", "run_info.counts_mev", None))
             self._pending_counts_rows["per_detector"] = len(rows)
-            rows.append(
-                ("Counts per Detector", "computing…", "run_info.counts_per_detector", None)
-            )
+            rows.append(("Counts per Detector", "computing…", "run_info.counts_per_detector", None))
 
         self._fill_table(self._summary_table, rows)
 

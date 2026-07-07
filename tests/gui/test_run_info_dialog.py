@@ -348,9 +348,7 @@ def test_summary_total_counts_shows_placeholder_then_fills_after_event_pump(
 
     total = 100.0 + 90.0 + 80.0 + 70.0 + 95.0 + 85.0 + 75.0 + 65.0
     assert float(dialog._summary_table.item(mev_row, 2).text()) == pytest.approx(total / 1.0e6)
-    assert float(dialog._summary_table.item(per_detector_row, 2).text()) == pytest.approx(
-        total / 2
-    )
+    assert float(dialog._summary_table.item(per_detector_row, 2).text()) == pytest.approx(total / 2)
 
     dialog.close()
 
