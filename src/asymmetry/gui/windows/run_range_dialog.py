@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.io import scan_run_files
+from asymmetry.gui.styles import tokens
 
 _MAX_RUN = 99_999_999
 
@@ -78,6 +79,16 @@ class RunRangeDialog(QDialog):
 
         layout.addLayout(form)
 
+        # Shown only when the folder scan hit the entry cap (see
+        # scan_run_files.DEFAULT_MAX_SCAN_ENTRIES) — the prefill above then
+        # reflects only the inspected prefix of the folder, not the whole
+        # thing, so the range may need manual adjustment.
+        self._scan_truncated_label = QLabel()
+        self._scan_truncated_label.setStyleSheet(f"color: {tokens.WARN};")
+        self._scan_truncated_label.setWordWrap(True)
+        self._scan_truncated_label.hide()
+        layout.addWidget(self._scan_truncated_label)
+
         self._buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -100,9 +111,19 @@ class RunRangeDialog(QDialog):
     def _prefill_from_folder(self, folder: str) -> None:
         """Prefill prefix and first/last from the run files in ``folder``."""
         try:
-            found = scan_run_files(folder)
+            result = scan_run_files(folder)
         except ValueError:
             return
+        if result.truncated:
+            self._scan_truncated_label.setText(
+                f"This folder has too many files to scan in full — showing the first "
+                f"{len(result.entries)} run files found. Adjust the range by hand if "
+                "runs are missing."
+            )
+            self._scan_truncated_label.show()
+        else:
+            self._scan_truncated_label.hide()
+        found = result.entries
         if not found:
             return
         runs = [run for _, run, _ in found]

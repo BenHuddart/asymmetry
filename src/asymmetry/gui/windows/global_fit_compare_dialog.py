@@ -278,7 +278,7 @@ class GlobalFitCompareDialog(QDialog):
         if n == 0:
             ax = self._figure.add_subplot(111)
             ax.set_title("No groups")
-            self._canvas.draw()
+            self._canvas.draw_idle()
             return
         ncols = max(1, min(int(np.ceil(np.sqrt(n))), 4))
         nrows = (n + ncols - 1) // ncols
@@ -354,7 +354,7 @@ class GlobalFitCompareDialog(QDialog):
             ax.grid(True, alpha=0.3)
 
         self._figure.tight_layout(h_pad=1.4)
-        self._canvas.draw()
+        self._canvas.draw_idle()
 
     # ── stats table ──────────────────────────────────────────────────────────
 

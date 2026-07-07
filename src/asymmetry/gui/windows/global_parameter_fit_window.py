@@ -1389,7 +1389,7 @@ class GlobalParameterFitWindow(QMainWindow):
         if self._left_canvas is not None and self._left_figure is not None:
             self._left_figure.clear()
             self._axes_tag_map = {}
-            self._left_canvas.draw()
+            self._left_canvas.draw_idle()
 
     # ── Edit fit ────────────────────────────────────────────────────────────
 
@@ -2140,7 +2140,7 @@ class GlobalParameterFitWindow(QMainWindow):
         self._left_figure.clear()
         self._axes_tag_map = {}
         if self._result is None or self._model is None:
-            self._left_canvas.draw()
+            self._left_canvas.draw_idle()
             return
 
         curves = self._current_curve_cache() or {}
@@ -2156,7 +2156,7 @@ class GlobalParameterFitWindow(QMainWindow):
             ax = self._left_figure.add_subplot(111)
             ax.set_title("No group panels shown")
             ax.grid(True, alpha=0.3)
-            self._left_canvas.draw()
+            self._left_canvas.draw_idle()
             return
 
         x_label = self._x_label()
@@ -2276,7 +2276,7 @@ class GlobalParameterFitWindow(QMainWindow):
             except Exception:
                 self._left_figure.tight_layout(h_pad=1.8)
             self._left_figure.subplots_adjust(left=0.12, hspace=0.5)
-        self._left_canvas.draw()
+        self._left_canvas.draw_idle()
 
     def _draw_group_fit_panel(
         self, ax, group: ParameterGroupData, legend_entries: dict[str, str], curve: dict | None
@@ -2380,7 +2380,7 @@ class GlobalParameterFitWindow(QMainWindow):
         self._local_figure.clear()
         self._local_axes_tag_map = {}
         if self._result is None:
-            self._local_canvas.draw()
+            self._local_canvas.draw_idle()
             return
 
         local_param_names = sorted(
@@ -2400,7 +2400,7 @@ class GlobalParameterFitWindow(QMainWindow):
             ax = self._local_figure.add_subplot(111)
             ax.set_title("No local parameters in this fit")
             ax.grid(True, alpha=0.3)
-            self._local_canvas.draw()
+            self._local_canvas.draw_idle()
             return
 
         x_label = self._local_group_axis_label()
@@ -2437,7 +2437,7 @@ class GlobalParameterFitWindow(QMainWindow):
             ax = self._local_figure.add_subplot(111)
             ax.set_title("No local parameters in this fit")
             ax.grid(True, alpha=0.3)
-            self._local_canvas.draw()
+            self._local_canvas.draw_idle()
             return
 
         plot_mode = self._local_plot_mode_combo.currentText()
@@ -2597,7 +2597,7 @@ class GlobalParameterFitWindow(QMainWindow):
         self._draw_plot_annotations(local=True)
 
         self._local_figure.tight_layout()
-        self._local_canvas.draw()
+        self._local_canvas.draw_idle()
 
     def _write_local_parameter_data_file(
         self,

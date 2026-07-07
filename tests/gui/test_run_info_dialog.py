@@ -328,6 +328,31 @@ def test_summary_derived_rows_have_enabled_include_checkboxes(qapp: QApplication
     dialog.close()
 
 
+def test_summary_total_counts_shows_placeholder_then_fills_after_event_pump(
+    qapp: QApplication,
+) -> None:
+    """F3: the full-histogram sum is deferred via QTimer.singleShot(0, ...) so
+    opening the dialog never blocks on it — the row shows a placeholder
+    immediately and the real value once the event loop has run."""
+    dialog = RunInfoDialog(_dataset_with_run())
+
+    mev_row = _row_for_field(dialog._summary_table, "Counts (MEv)")
+    per_detector_row = _row_for_field(dialog._summary_table, "Counts per Detector")
+    assert mev_row >= 0
+    assert per_detector_row >= 0
+    assert dialog._summary_table.item(mev_row, 2).text() == "computing…"
+    assert dialog._summary_table.item(per_detector_row, 2).text() == "computing…"
+
+    # Pump the event loop once so the singleShot(0, ...) callback fires.
+    qapp.processEvents()
+
+    total = 100.0 + 90.0 + 80.0 + 70.0 + 95.0 + 85.0 + 75.0 + 65.0
+    assert float(dialog._summary_table.item(mev_row, 2).text()) == pytest.approx(total / 1.0e6)
+    assert float(dialog._summary_table.item(per_detector_row, 2).text()) == pytest.approx(total / 2)
+
+    dialog.close()
+
+
 def test_summary_shows_orientation_from_nexus_sample_shape(qapp: QApplication) -> None:
     dialog = RunInfoDialog(_dataset())
 

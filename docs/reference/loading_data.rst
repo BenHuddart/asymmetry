@@ -391,6 +391,14 @@ ordinary multi-file path (duplicate prompts, auto-grouping, and the missing-run
 gap warning all apply). The log records how many of the requested runs were
 found, e.g. ``Loading run range 1276–1289: 14 of 14 runs found.``
 
+The prefill scan is capped at 20,000 directory entries so a huge facility
+folder (often on a slow network mount) cannot stall the dialog. When the cap
+is hit, a warning appears under the folder field — *"This folder has too many
+files to scan in full — showing the first N run files found. Adjust the range
+by hand if runs are missing."* — and the prefilled first/last numbers may
+cover only part of the folder; type the range you want and the load proceeds
+normally.
+
 **In scripts.** :func:`~asymmetry.core.io.resolve_run_range` is the pure,
 GUI-free resolver behind the dialog. It scans a folder and returns the existing
 files for an inclusive run range, sorted by run number:

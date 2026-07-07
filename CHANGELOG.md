@@ -153,6 +153,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Four small GUI-responsiveness cleanups from the audit's minor findings.**
+  Fit-parameter and global-fit trend/compare plots now coalesce their final
+  paint with `draw_idle()` instead of a synchronous `draw()` once a background
+  compute or checkbox toggle has already finished rendering. The log panel
+  caps at 5000 lines (`QTextDocument.setMaximumBlockCount`) instead of growing
+  without bound over a long session. Run Info opens instantly and fills its
+  Counts (MEv) / Counts per Detector rows with "computing…" first, backfilling
+  the real full-histogram sum a moment later instead of blocking dialog-open
+  on a GB-scale array sum. And Load Run Range's folder scan now caps at 20,000
+  directory entries — a warning appears in the dialog when a facility folder
+  (often a network mount) has more files than that, so the range may need
+  manual adjustment instead of the scan hanging indefinitely.
+
 - **Opening a project keeps the window responsive and can be cancelled.** The
   per-dataset restore loop — re-applying each run's grouping and recomputing
   its asymmetry, then recreating combined datasets — ran to completion on the

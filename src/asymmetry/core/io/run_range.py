@@ -12,7 +12,9 @@ in one folder; it never opens or parses the data files.
 
 from __future__ import annotations
 
+import itertools
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 from asymmetry.core.io.base import LoaderRegistry
@@ -20,6 +22,23 @@ from asymmetry.core.io.base import LoaderRegistry
 #: Filename = leading (non-digit-terminated) prefix + trailing run-number digits.
 #: ``MUSR00001276`` → prefix ``"MUSR"``, run number ``1276`` (padding-agnostic).
 _NAME_RE = re.compile(r"^(?P<prefix>.*?)(?P<num>\d+)$")
+
+#: Default cap on directory entries inspected by :func:`scan_run_files`. Some
+#: facility folders hold tens of thousands of files (often on a network
+#: mount), and the scan does a ``stat`` + regex per entry — this bounds the
+#: worst case rather than threading the scan (out of scope here). Exposed as
+#: a module attribute so tests can monkeypatch it down cheaply.
+DEFAULT_MAX_SCAN_ENTRIES = 20_000
+
+
+@dataclass(frozen=True)
+class ScanRunFilesResult:
+    """Result of :func:`scan_run_files`: matched entries plus a truncation flag."""
+
+    entries: list[tuple[str, int, Path]]
+    #: True when the folder held more directory entries than the scan cap, so
+    #: ``entries`` may be missing runs that exist beyond the inspected prefix.
+    truncated: bool
 
 
 def _parse_stem(stem: str) -> tuple[str, int] | None:
@@ -41,7 +60,8 @@ def scan_run_files(
     folder: str | Path,
     *,
     ext: str | None = None,
-) -> list[tuple[str, int, Path]]:
+    max_entries: int | None = None,
+) -> ScanRunFilesResult:
     """Parse every run file in ``folder`` into ``(prefix, run_number, path)``.
 
     Non-recursive; only files whose extension a loader claims (or ``ext`` when
@@ -49,13 +69,25 @@ def scan_run_files(
     run number. Useful for prefilling a run-range dialog (prefix + min/max run)
     from a chosen folder. Raises :class:`ValueError` if ``folder`` is not a
     directory.
+
+    At most ``max_entries`` (default :data:`DEFAULT_MAX_SCAN_ENTRIES`)
+    directory entries are inspected — a facility folder can hold tens of
+    thousands of files, and each entry costs a ``stat`` + regex match. When
+    the folder holds more entries than the cap, ``result.truncated`` is
+    ``True`` and ``result.entries`` reflects only the inspected prefix (in
+    filesystem iteration order, not sorted by run number, so some in-range
+    runs beyond the cap may be missing).
     """
     folder = Path(folder)
     if not folder.is_dir():
         raise ValueError(f"Run-range folder does not exist or is not a directory: {folder}")
+    cap = DEFAULT_MAX_SCAN_ENTRIES if max_entries is None else max_entries
     allowed = _allowed_extensions(ext)
+    entries = list(itertools.islice(folder.iterdir(), cap + 1))
+    truncated = len(entries) > cap
+    entries = entries[:cap]
     found: list[tuple[str, int, Path]] = []
-    for entry in folder.iterdir():
+    for entry in entries:
         if not entry.is_file() or entry.suffix.lower() not in allowed:
             continue
         parsed = _parse_stem(entry.stem)
@@ -64,7 +96,7 @@ def scan_run_files(
         name_prefix, run_number = parsed
         found.append((name_prefix, run_number, entry))
     found.sort(key=lambda item: item[1])
-    return found
+    return ScanRunFilesResult(entries=found, truncated=truncated)
 
 
 def resolve_run_range(
@@ -122,7 +154,7 @@ def resolve_run_range(
 
     candidates = [
         (name_prefix, run_number, path)
-        for name_prefix, run_number, path in scan_run_files(folder, ext=ext)
+        for name_prefix, run_number, path in scan_run_files(folder, ext=ext).entries
         if first <= run_number <= last
         and (wanted_prefix is None or name_prefix.lower() == wanted_prefix)
     ]
