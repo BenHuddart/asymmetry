@@ -41,6 +41,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **PSI HAL-9500's default grouping preset is now Per-octant, not
+  Longitudinal.** High-field (TF) work on HAL-9500 — the AFM-transition
+  corpus and similar — is done per-octant in practice: each azimuthal wedge
+  combines its forward and backward detector for better statistics than a
+  lone opposed pair. The Detector Layout / Grouping dialogs now pre-select
+  Per-octant for a fresh HAL layout, and the transverse-field grouping nudge
+  recommends Per-octant instead of steering a TF run to the older
+  ``Transverse (opposed pairs)`` preset.
+
+- **The first FFT view is framed to where the physics is, with interpolated
+  line shapes.** The Frequency-domain plot's initial window now considers the
+  run's applied field as well as the data: it frames the highest detected
+  line *or* the expected Larmor region γ_μ·B, whichever is wider — so a weak
+  or low-field line the peak detection cannot see still gets a sensible
+  window instead of the full Nyquist span, while muonium/radical lines far
+  above γ_μ·B are never framed out. A multi-run overlay frames to its highest
+  member field. (WiMDA frames its FFT plot around the reference field the
+  same way.) The default zero-pad factor is now **4** (previously 1), so
+  auto-shown spectra arrive with sinc-interpolated rather than 2–3-bin-wide
+  peaks — a deliberate divergence from WiMDA's no-padding default, cosmetic
+  only; saved projects and recipes keep the padding they were saved with.
+  Both are first-paint seeds: manual zoom and settings always win.
+
 - **The FFT tab now computes on view instead of waiting for a click.**
   Opening the **Frequency Domain** tab — or switching runs while on it — for a
   run that has never been transformed synthesises a recipe from the current
