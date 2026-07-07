@@ -5562,6 +5562,20 @@ class PlotPanel(QWidget):
         ):
             return None
 
+        # The frequency panel never draws fit-range handles (see the matching
+        # early return in _draw_fit_range_artists) and has no draggable fit-range
+        # selector at all — _set_fit_range no-ops there, and the actual
+        # frequency-domain fit reads its range from the Fit panel's spinboxes,
+        # not from this panel's state (see test_frequency_domain_fitting.py's
+        # "no draggable selector" test). ``_fit_x_min``/``_fit_x_max`` are still
+        # populated on this instance (seeded to the full spectrum extent so the
+        # Fit panel's display has something to mirror), so without this guard
+        # they hit-test as invisible "ghost" handles that steal clicks from the
+        # visible, actually-interactive spectral-moments handles whenever a
+        # moments window sits at its default (full-extent) position.
+        if self._is_frequency_plot_panel():
+            return None
+
         hit_axis = None
         for axis in self._fit_range_axes():
             if event.inaxes is axis:
