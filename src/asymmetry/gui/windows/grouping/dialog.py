@@ -347,7 +347,7 @@ class GroupingDialog(QDialog):
         self._backward_combo.setMinimumContentsLength(18)
         self._refresh_group_combo_items()
 
-        grouping = self._seed_source().grouping
+        grouping = seed.grouping
         self._grouping_preset_name: str | None = (
             str(grouping.get("grouping_preset")).strip()
             if grouping.get("grouping_preset")
@@ -1752,8 +1752,9 @@ class GroupingDialog(QDialog):
 
     def _reload_controls_from_seed(self) -> None:
         """Re-seed every form control from the draft resolved for the preview run."""
-        grouping = self._seed_source().grouping
-        self._groups = self._load_groups(self._seed_source())
+        seed = self._seed_source()
+        grouping = seed.grouping
+        self._groups = self._load_groups(seed)
         self._populate_group_table()
 
         self._grouping_preset_name = (
@@ -1761,9 +1762,9 @@ class GroupingDialog(QDialog):
             if grouping.get("grouping_preset")
             else None
         )
-        self._group_names = self._load_group_names(self._seed_source())
-        self._included_groups = self._load_included_groups(self._seed_source())
-        self._projection_specs = self._load_projection_specs(self._seed_source())
+        self._group_names = self._load_group_names(seed)
+        self._included_groups = self._load_included_groups(seed)
+        self._projection_specs = self._load_projection_specs(seed)
         forward_gid, backward_gid = self._analysis_pair_for_reference(
             int(grouping.get("forward_group", 1)),
             int(grouping.get("backward_group", 2)),
