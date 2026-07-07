@@ -153,6 +153,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Switching datasets in the plot panel now rasterises the canvas once, not
+  twice.** A content switch reframes the view, and a reframe re-decimates for
+  the new window on a deferred refresh one event-loop turn later — but the
+  plot path also rasterised synchronously first, so every switch paid two full
+  `canvas.draw()` calls and the first was overwritten (with decimation clipped
+  to the *previous* viewport) before the user could see it. `_apply_limits`
+  now skips its synchronous draw whenever a deferred refresh will genuinely
+  run, in both the single-axis and stacked-subplot paths, and falls back to
+  the synchronous draw whenever the refresh guard bails (reconstruction view,
+  no datasets, a refresh already in progress) so the canvas is never left
+  undrawn.
+
 - **Selecting a dataset no longer repaints the hidden frequency panel.** Once
   a run had a cached spectrum, every dataset selection on a time view rebuilt
   and rasterised the invisible frequency plot to keep it warm — a full extra
