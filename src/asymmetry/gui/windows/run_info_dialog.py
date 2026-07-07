@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -63,6 +63,7 @@ class RunInfoDialog(QDialog):
             str(v) for v in (included_fields or set()) if str(v).strip()
         }
         self._advanced_dialog: AdvancedRunInfoDialog | None = None
+        self._pending_counts_rows: dict[str, int] = {}
 
         self.setWindowTitle(f"Run Info - {dataset.run_label}")
         self.resize(760, 460)
@@ -151,25 +152,47 @@ class RunInfoDialog(QDialog):
                 ]
             )
 
-            total_counts = float(np.sum([np.sum(h.counts) for h in run.histograms]))
-            rows.append(
-                (
-                    "Counts (MEv)",
-                    self._fmt_float(total_counts / 1.0e6),
-                    "run_info.counts_mev",
-                    None,
-                )
-            )
-            rows.append(
-                (
-                    "Counts per Detector",
-                    self._fmt_float(total_counts / max(n_hist, 1)),
-                    "run_info.counts_per_detector",
-                    None,
-                )
-            )
+            # Summing every histogram's full counts array is O(bins x
+            # detectors) and can run to GB-scale on long high-rate runs.
+            # Rather than block dialog-open on it, show a placeholder now and
+            # backfill the real value once the event loop has had a turn
+            # (see _fill_total_counts).
+            self._pending_counts_rows["mev"] = len(rows)
+            rows.append(("Counts (MEv)", "computing…", "run_info.counts_mev", None))
+            self._pending_counts_rows["per_detector"] = len(rows)
+            rows.append(("Counts per Detector", "computing…", "run_info.counts_per_detector", None))
 
         self._fill_table(self._summary_table, rows)
+
+        if self._pending_counts_rows:
+            QTimer.singleShot(0, self, self._fill_total_counts)
+
+    def _fill_total_counts(self) -> None:
+        """Backfill the placeholder total-counts cells with the real sum.
+
+        Deferred from :meth:`_populate_summary_table` via
+        ``QTimer.singleShot(0, ...)`` so opening the dialog never blocks on
+        the full-array histogram sum; the table paints immediately with
+        "computing…" and this fills in the value on the next event-loop turn.
+        """
+        run = self._dataset.run
+        if run is None or not run.histograms:
+            return
+        n_hist = len(run.histograms)
+        total_counts = float(np.sum([np.sum(h.counts) for h in run.histograms]))
+
+        mev_row = self._pending_counts_rows.get("mev")
+        if mev_row is not None and mev_row < self._summary_table.rowCount():
+            self._summary_table.setItem(
+                mev_row, 2, QTableWidgetItem(self._fmt_float(total_counts / 1.0e6))
+            )
+        per_detector_row = self._pending_counts_rows.get("per_detector")
+        if per_detector_row is not None and per_detector_row < self._summary_table.rowCount():
+            self._summary_table.setItem(
+                per_detector_row,
+                2,
+                QTableWidgetItem(self._fmt_float(total_counts / max(n_hist, 1))),
+            )
 
     def _advanced_rows(self) -> list[tuple[str, str, str | None, str | None]]:
         """Build rows for the advanced metadata subwindow."""
