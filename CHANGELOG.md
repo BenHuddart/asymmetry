@@ -65,6 +65,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Grouping detectors uses less memory and time.** ``apply_grouping_aligned``
+  (the per-detector t0-aligned sum behind every grouped reduction) built a
+  full-length padded copy of every detector in the group before summing them;
+  it now accumulates each detector's aligned slice straight into one buffer.
+  The result is bit-identical, but on a 128-detector, 1-million-bin run the
+  aligned sum is ~3× faster and the full grouped reduction's peak memory drops
+  by ~0.75 GB — the transient copies the largest ROOT/HIFI datasets used to
+  allocate on every reduction are gone.
+
 - **Dataset switching in the Groups / Raw-counts and bunched views now reuses
   cached reductions.** Toggling between two runs or two views — or nudging the
   display bunch factor back and forth — no longer re-runs the grouped-count
