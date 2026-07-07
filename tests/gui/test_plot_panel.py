@@ -3590,6 +3590,48 @@ class TestPlotPanel:
             panel.close()
             panel.deleteLater()
 
+    def test_frequency_panel_committed_fit_range_survives_state_round_trip(
+        self, qapp: QApplication
+    ) -> None:
+        """A committed frequency fit range must persist through project save/restore.
+
+        ``restore_state`` calls ``_set_fit_range(..., redraw=True)`` (after
+        directly assigning ``_fit_x_min``/``_fit_x_max`` from the saved state)
+        to redraw the fit-range artists before the saved view limits are
+        re-applied. That call used to no-op for frequency panels; now that it
+        executes, it must not perturb the restored view.
+        """
+        panel, ds = self._frequency_panel_dataset()
+        try:
+            if not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            panel.set_fit_range(2.0, 4.0)
+            panel.set_view_limits(1.5, 4.5, -1.0, 2.0)
+            view_before = panel.get_view_limits()
+
+            state = panel.get_state()
+            assert state["fit_x_min"] == pytest.approx(2.0)
+            assert state["fit_x_max"] == pytest.approx(4.0)
+
+            restored = PlotPanel(domain="frequency")
+            try:
+                restored.plot_dataset(ds)
+                restored.restore_state(state, dataset=ds)
+
+                assert restored.get_fit_range() == (pytest.approx(2.0), pytest.approx(4.0))
+                assert restored.get_view_limits() == pytest.approx(view_before)
+                # Restore must not resurrect the no-artists contract either.
+                assert restored._fit_span_artists == []
+                assert restored._fit_min_handles == []
+                assert restored._fit_max_handles == []
+            finally:
+                restored.close()
+                restored.deleteLater()
+        finally:
+            panel.close()
+            panel.deleteLater()
+
     def test_get_current_plot_export_data_available_with_plotted_data(
         self, panel: PlotPanel, sample_dataset: MuonDataset
     ) -> None:
