@@ -144,3 +144,98 @@ def test_physical_constants_reasonable_ranges() -> None:
     assert MUON_GYROMAGNETIC_RATIO_MHZ_PER_T > 100
     assert MUON_LIFETIME_US > 2.0
     assert GAUSS_TO_TESLA == 1.0e-4
+
+
+# --------------------------------------------------------------------------- #
+# apply_grouping_aligned: in-place accumulation is bit-identical to the
+# list-of-shifted-copies reference (G1). Covers all three offset regimes:
+# zero shift, positive shift (zero-pad head), negative shift (trim head).
+# --------------------------------------------------------------------------- #
+
+
+def _apply_grouping_aligned_reference(
+    histograms: list[Histogram],
+    group_indices: list[int],
+    *,
+    common_t0_bin: int | None = None,
+    detector_t0_bins: list[int] | None = None,
+) -> np.ndarray:
+    """The pre-G1 implementation: build shifted full-length copies, then sum.
+
+    Kept here as the oracle the optimised in-place version must match exactly.
+    """
+    from asymmetry.core.transform.grouping import _detector_t0, _present_indices
+
+    present = _present_indices(group_indices, len(histograms))
+    selected = [(i, histograms[i]) for i in present]
+    if not selected:
+        return np.array([], dtype=np.float64)
+    if common_t0_bin is None:
+        common_t0_bin = max(
+            0, max(_detector_t0(histograms, i, detector_t0_bins) for i, _ in selected)
+        )
+    common_t0_bin = max(0, int(common_t0_bin))
+    shifted: list[np.ndarray] = []
+    for i, hist in selected:
+        counts = np.asarray(hist.counts, dtype=np.float64)
+        offset = common_t0_bin - _detector_t0(histograms, i, detector_t0_bins)
+        if offset <= 0:
+            shifted.append(counts[-offset:].copy() if offset < 0 else counts.copy())
+            continue
+        out = np.zeros(len(counts) + offset, dtype=np.float64)
+        out[offset:] = counts
+        shifted.append(out)
+    min_len = min(len(a) for a in shifted)
+    total = np.zeros(min_len, dtype=np.float64)
+    for a in shifted:
+        total += a[:min_len]
+    return total
+
+
+@pytest.mark.parametrize(
+    "t0_bins",
+    [
+        [3, 3, 3, 3],  # all equal -> zero shift for every detector
+        [0, 2, 5, 1],  # mixed positive shifts against the max
+        [5, 5, 0, 5],  # one detector shifted far, others aligned at the max
+    ],
+)
+def test_apply_grouping_aligned_matches_reference_across_offsets(t0_bins) -> None:
+    hists = [
+        Histogram(counts=np.arange(0, 20, dtype=float), bin_width=0.01, t0_bin=t0_bins[0]),
+        Histogram(counts=np.arange(20, 43, dtype=float), bin_width=0.01, t0_bin=t0_bins[1]),
+        Histogram(counts=np.arange(43, 60, dtype=float), bin_width=0.01, t0_bin=t0_bins[2]),
+        Histogram(counts=np.arange(60, 82, dtype=float), bin_width=0.01, t0_bin=t0_bins[3]),
+    ]
+    group = [1, 2, 3, 4]
+    got = apply_grouping_aligned(hists, group)
+    want = _apply_grouping_aligned_reference(hists, group)
+    np.testing.assert_array_equal(got, want)
+
+
+def test_apply_grouping_aligned_matches_reference_with_explicit_overrides() -> None:
+    # detector_t0_bins overrides each histogram's own t0_bin (0-based).
+    hists = [
+        Histogram(counts=np.arange(0, 18, dtype=float), bin_width=0.01, t0_bin=0),
+        Histogram(counts=np.arange(18, 34, dtype=float), bin_width=0.01, t0_bin=0),
+        Histogram(counts=np.arange(34, 55, dtype=float), bin_width=0.01, t0_bin=0),
+    ]
+    overrides = [4, 1, 6]
+    group = [1, 2, 3]
+    got = apply_grouping_aligned(hists, group, detector_t0_bins=overrides)
+    want = _apply_grouping_aligned_reference(hists, group, detector_t0_bins=overrides)
+    np.testing.assert_array_equal(got, want)
+
+
+def test_apply_grouping_aligned_matches_reference_on_integer_counts() -> None:
+    # Raw loader counts are integer dtype; the aligned sum must be identical
+    # whether the input arrays are int or float.
+    hists = [
+        Histogram(counts=np.arange(0, 15, dtype=np.int32), bin_width=0.01, t0_bin=2),
+        Histogram(counts=np.arange(15, 33, dtype=np.int32), bin_width=0.01, t0_bin=0),
+    ]
+    group = [1, 2]
+    got = apply_grouping_aligned(hists, group)
+    want = _apply_grouping_aligned_reference(hists, group)
+    np.testing.assert_array_equal(got, want)
+    assert got.dtype == np.float64
