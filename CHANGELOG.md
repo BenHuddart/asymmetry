@@ -153,6 +153,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The pull-distribution diagnostic no longer freezes the app.** Its up to
+  2000 simulate+refit iterations ran synchronously on the GUI thread, kept
+  "alive" only by a `QApplication.processEvents()` call inside the progress
+  callback — a re-entrancy hazard that also forced the Close button to stay
+  disabled for the whole run. Clicking Run now starts the diagnostic on a
+  `TaskRunner` worker thread with every input snapshotted first; Cancel stops
+  it promptly (`run_pull_distribution` polls a cooperative flag rather than
+  raising, so a cancelled run reports its partial result instead of aborting),
+  and Close stays enabled throughout — closing mid-run cancels and shuts the
+  worker down cleanly instead of freezing or crashing.
+
+- **Generating a synthetic run no longer freezes the app.** The Generate
+  Synthetic Run and Generate Multi-Group Run dialogs called
+  `simulate_run`/`simulate_count_run`/`simulate_two_period_run`/
+  `simulate_multi_group_run` directly on the GUI thread, so a large
+  multi-detector template at a high event budget blocked the whole
+  application with no feedback and no way to cancel. Generate now runs on a
+  worker thread (the dialog snapshots every form input first); the button
+  reads "Generating…" and disables for the duration, and closing the dialog
+  mid-flight joins the worker instead of crashing. Errors and the delivered
+  run are unchanged.
+
 - **Switching datasets in the plot panel now rasterises the canvas once, not
   twice.** A content switch reframes the view, and a reframe re-decimates for
   the new window on a deferred refresh one event-loop turn later — but the
