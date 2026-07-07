@@ -162,6 +162,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Custom-column relinking no longer silently breaks once a co-added or
+  subtracted run exists.** `DataBrowserPanel.custom_values_by_run()` iterated
+  both the run table and the combined-run index as if each mapped run numbers
+  to dataset objects, but the combined-run index maps a combined run number
+  to its *list* of source run numbers. With any co-add/subtract present this
+  raised `AttributeError: 'list' object has no attribute 'metadata'` from a
+  Qt slot, silently swallowed by the event loop, so a custom column added or
+  edited after a batch fit stopped re-linking into existing trend results.
+  The accessor now reads the run table alone — the combined dataset's own
+  object already lives there under its combined run number.
+
 - **Four small GUI-responsiveness cleanups from the audit's minor findings.**
   Fit-parameter and global-fit trend/compare plots now coalesce their final
   paint with `draw_idle()` instead of a synchronous `draw()` once a background

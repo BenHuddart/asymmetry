@@ -69,6 +69,38 @@ def test_coadd_row_is_histogram_backed():
     assert panel._combined_run_display(crn) == "401 + 402"
 
 
+def test_custom_values_by_run_survives_combined_dataset():
+    # Regression: custom_values_by_run() used to iterate _combined_datasets as
+    # if its values were dataset objects, but it maps combined_run -> [source
+    # run numbers]. With any combined row present this raised
+    # AttributeError: 'list' object has no attribute 'metadata', silently
+    # swallowed by the Qt event loop (called from a slot), so custom-column
+    # relinking just stopped working once a co-add/subtract existed.
+    panel = DataBrowserPanel()
+    panel.add_dataset(_dataset(401, frames=1000, seed=1))
+    panel.add_dataset(_dataset(402, frames=1000, seed=2))
+    column = panel.add_custom_column("Current (A)")
+    assert column is not None
+
+    # Co-add consumes the source rows: 401/402 leave _datasets, only the
+    # combined row remains.
+    crn = panel.add_combined_dataset([401, 402], sign=1)
+    assert crn is not None
+    assert 401 not in panel._datasets and 402 not in panel._datasets
+
+    # Must not raise, and must include the combined dataset's own entry.
+    values = panel.custom_values_by_run()
+    assert crn in values
+    assert values[crn] == {}
+
+    # Custom fields set directly on the combined dataset's metadata round-trip
+    # through the same accessor.
+    combined = panel.get_dataset(crn)
+    panel._set_custom_column_value(combined, column.id, "42.0")
+    values = panel.custom_values_by_run()
+    assert values[crn] == {column.id: "42.0"}
+
+
 def test_subtract_reference_row():
     panel = DataBrowserPanel()
     panel.add_dataset(_dataset(301, frames=1000, seed=1))
