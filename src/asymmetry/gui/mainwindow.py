@@ -220,6 +220,7 @@ from asymmetry.core.transform import (
     available_background_modes,
     build_field_scan,
     common_t0_for_groups,
+    detector_t0_overrides,
     differentiate_scan,
     effective_group_indices,
     format_detector_list,
@@ -273,6 +274,7 @@ from asymmetry.gui.ui_manager import (
     UIManager,
 )
 from asymmetry.gui.utils.gle_editor import close_all_gle_editors, launch_gle_editor
+from asymmetry.gui.utils.reduction_cache import ReductionCache
 from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
 from asymmetry.gui.widgets.dock_header import DockHeader
 from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
@@ -485,6 +487,73 @@ def _sync_grouping_keys(grouping: dict, payload: dict, keys: tuple[str, ...]) ->
             grouping.pop(key, None)
 
 
+def _included_groups_key(grouping: dict) -> tuple:
+    """Stable, hashable image of a grouping's ``included_groups`` map.
+
+    ``included_groups`` (group_id -> shown?) drives how many grouped-count
+    datasets the build returns but is absent from ``fourier_grouping_digest``,
+    so the reduction cache keys on it explicitly. A missing/ill-typed map is an
+    empty key (every group defaults to included).
+    """
+    raw = grouping.get("included_groups")
+    if not isinstance(raw, dict):
+        return ()
+    items: list[tuple[int, bool]] = []
+    for gid, shown in raw.items():
+        try:
+            items.append((int(gid), bool(shown)))
+        except (TypeError, ValueError):
+            continue
+    return tuple(sorted(items))
+
+
+def _period_histograms_key(period_histograms: object) -> tuple:
+    """Stable, hashable structural image of a grouping's ``period_histograms``.
+
+    The counts-first rebunch selects a period slice from this structure (a list
+    of per-period histogram lists), which ``fourier_grouping_digest`` does not
+    capture. The slice contents are tied to the run and are never rewritten in
+    place — period mapping builds a *new* run — so ``id(run)`` already
+    discriminates them; this is a belt-and-braces structural summary (period
+    count and per-period histogram count) that avoids materialising the
+    (numpy-truncated, collision-prone) repr of the count arrays. Non-list
+    values collapse to an empty key.
+    """
+    if not isinstance(period_histograms, (list, tuple)):
+        return ()
+    shape = tuple(len(p) if isinstance(p, (list, tuple)) else -1 for p in period_histograms)
+    return (len(period_histograms),) + shape
+
+
+def _rebunch_nbytes(result: tuple[np.ndarray, np.ndarray, np.ndarray]) -> int:
+    """Approximate byte size of a cached ``(time, asymmetry, error)`` triple."""
+    return sum(int(getattr(arr, "nbytes", 0)) for arr in result)
+
+
+def _grouped_time_domain_nbytes(datasets: list[MuonDataset]) -> int:
+    """Approximate byte size of a cached list of grouped-count datasets."""
+    total = 0
+    for ds in datasets:
+        for arr in (ds.time, ds.asymmetry, ds.error):
+            total += int(getattr(arr, "nbytes", 0))
+    return total
+
+
+def _copy_grouped_dataset(dataset: MuonDataset) -> MuonDataset:
+    """Deep-enough copy of a cached grouped-count dataset for safe handout.
+
+    The cache stores canonical results; display/RRF consumers may transform the
+    arrays in place, so each handout gets fresh arrays and a fresh metadata dict.
+    """
+    return MuonDataset(
+        time=np.asarray(dataset.time, dtype=float).copy(),
+        asymmetry=np.asarray(dataset.asymmetry, dtype=float).copy(),
+        error=np.asarray(dataset.error, dtype=float).copy(),
+        metadata=dict(dataset.metadata),
+        run=dataset.run,
+    )
+
+
 def _run_number_gap_ranges(run_numbers: Iterable[int]) -> list[tuple[int, int]]:
     """Contiguous runs of run numbers missing from ``[min..max]``.
 
@@ -604,6 +673,12 @@ class MainWindow(QMainWindow):
         #: All background work goes through this runner (see gui/tasks.py);
         #: closeEvent shuts it down so no live thread outlasts the window.
         self._tasks = TaskRunner(self)
+
+        #: Memoises the two uncached time-domain reductions (grouped-count build
+        #: and the counts-first rebunch) so dataset switches / view toggles reuse
+        #: results. GUI-thread only; keyed on run identity + grouping recipe (see
+        #: the two call sites below and gui/utils/reduction_cache.py).
+        self._reduction_cache = ReductionCache()
 
         self.compact_mode = False
 
@@ -4473,6 +4548,12 @@ class MainWindow(QMainWindow):
         run = dataset.run
         if run is None:
             return False, False
+        # Grouping is about to be (re)written for this run; drop its cached
+        # reductions up front. The recipe key already embeds the digest (so a
+        # stale entry can never hit), but this removes the dead entries early —
+        # and covers the group-label / metadata keys the digest omits — for both
+        # the histogram and histogram-less branches below.
+        self._reduction_cache.invalidate_run(run)
         existing_grouping = run.grouping if isinstance(run.grouping, dict) else {}
 
         groups_raw = grouping_result.get("groups", {})
@@ -5195,28 +5276,60 @@ class MainWindow(QMainWindow):
             alpha = 1.0
         deadtime_mode = str(grouping.get("deadtime_mode", "off")).strip().lower() or "off"
         period_index = 1 if period_mode == str(PeriodMode.GREEN) else 0
-        selected_histograms, selected_grouping = self._period_histograms_for_mode(
-            run.histograms,
-            reduction_grouping,
-            period_index=period_index,
+
+        # Recipe key. The grouping digest covers groups, exclusions, deadtime,
+        # background, good-bin window and the base bunching factor; the reduction
+        # additionally reads alpha, the forward/backward group ids, the deadtime
+        # mode, per-detector t0 overrides, good_frames and the period selection —
+        # none captured by the digest — plus the display multiplier ``extra``.
+        key = (
+            fourier_grouping_digest(run),
+            int(forward_gid),
+            int(backward_gid),
+            round(float(alpha), 12),
+            deadtime_mode,
+            int(base_factor),
+            int(extra),
+            tuple(detector_t0_overrides(grouping, len(run.histograms)) or ()),
+            grouping.get("good_frames"),
+            str(period_mode),
+            _period_histograms_key(grouping.get("period_histograms")),
         )
-        time_axis, asymmetry, error, _dt_applied, _background_state = (
-            self._reduce_grouped_histograms_to_asymmetry(
-                histograms=selected_histograms,
-                grouping=selected_grouping,
-                dataset=dataset,
-                run=run,
-                forward_idx=forward_idx,
-                backward_idx=backward_idx,
-                alpha=alpha if alpha > 0 else 1.0,
-                use_deadtime=bool(grouping.get("deadtime_correction", False)),
-                deadtime_mode=deadtime_mode,
-                use_background=bool(grouping.get("background_correction", False)),
+
+        def _compute() -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
+            selected_histograms, selected_grouping = self._period_histograms_for_mode(
+                run.histograms,
+                reduction_grouping,
+                period_index=period_index,
             )
+            time_axis, asymmetry, error, _dt_applied, _background_state = (
+                self._reduce_grouped_histograms_to_asymmetry(
+                    histograms=selected_histograms,
+                    grouping=selected_grouping,
+                    dataset=dataset,
+                    run=run,
+                    forward_idx=forward_idx,
+                    backward_idx=backward_idx,
+                    alpha=alpha if alpha > 0 else 1.0,
+                    use_deadtime=bool(grouping.get("deadtime_correction", False)),
+                    deadtime_mode=deadtime_mode,
+                    use_background=bool(grouping.get("background_correction", False)),
+                )
+            )
+            if len(time_axis) == 0:
+                return None
+            return time_axis, asymmetry, error
+
+        cached = self._reduction_cache.get_or_compute(
+            run, "rebunch", key, _compute, _rebunch_nbytes
         )
-        if len(time_axis) == 0:
+        if cached is None:
             return None
-        return time_axis, asymmetry, error
+        # Copy on the way out: the cache returns the stored arrays and the plot
+        # panel wraps them into a display dataset that RRF / plotting may
+        # transform in place.
+        time_axis, asymmetry, error = cached
+        return time_axis.copy(), asymmetry.copy(), error.copy()
 
     def _prepare_grouping_histograms(self, histograms, grouping: dict, use_deadtime: bool):
         """Return histograms prepared for grouping, with optional deadtime correction.
@@ -13545,13 +13658,60 @@ class MainWindow(QMainWindow):
         source_dataset = self._plot_panel.get_analysis_dataset(source)
         if source_dataset is None:
             return []
-        try:
-            return build_grouped_time_domain_datasets(
-                source_dataset,
-                lifetime_corrected=lifetime_corrected,
-            )
-        except ValueError:
+
+        run = getattr(source_dataset, "run", None)
+        if run is None or not getattr(run, "histograms", None):
+            # No run to key on (histogram-less curve); build uncached.
+            try:
+                return build_grouped_time_domain_datasets(
+                    source_dataset, lifetime_corrected=lifetime_corrected
+                )
+            except ValueError:
+                return []
+
+        key = self._grouped_time_domain_cache_key(run, lifetime_corrected)
+
+        def _compute() -> list[MuonDataset] | None:
+            try:
+                return build_grouped_time_domain_datasets(
+                    source_dataset, lifetime_corrected=lifetime_corrected
+                )
+            except ValueError:
+                return None
+
+        cached = self._reduction_cache.get_or_compute(
+            run,
+            "grouped_td",
+            key,
+            _compute,
+            _grouped_time_domain_nbytes,
+        )
+        if not cached:
             return []
+        # Copy on the way out: the cache hands back the stored objects, and
+        # display/RRF consumers may transform arrays in place.
+        return [_copy_grouped_dataset(ds) for ds in cached]
+
+    def _grouped_time_domain_cache_key(self, run: object, lifetime_corrected: bool) -> tuple:
+        """Recipe key for the grouped-count build.
+
+        The grouping digest covers groups, exclusions, deadtime, background,
+        first/last good bin and the base bunching factor. The build additionally
+        reads ``included_groups`` (which groups are drawn) and ``good_frames``
+        (its deadtime preparation), neither of which the digest captures — so
+        both are keyed explicitly. Per-detector t0 overrides are keyed too
+        (the sibling rebunch path reads them; the build does not, so this is a
+        harmless-but-safe extra component). ``lifetime_corrected`` selects the
+        Groups vs Raw-counts scaling.
+        """
+        grouping = run.grouping if isinstance(getattr(run, "grouping", None), dict) else {}
+        return (
+            fourier_grouping_digest(run),
+            bool(lifetime_corrected),
+            _included_groups_key(grouping),
+            grouping.get("good_frames"),
+            tuple(detector_t0_overrides(grouping, len(run.histograms)) or ()),
+        )
 
     def _grouped_time_domain_available(self, dataset: MuonDataset | None = None) -> bool:
         """Cheap probe: can the active dataset produce grouped time-domain views?

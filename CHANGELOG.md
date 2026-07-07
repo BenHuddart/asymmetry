@@ -65,6 +65,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Dataset switching in the Groups / Raw-counts and bunched views now reuses
+  cached reductions.** Toggling between two runs or two views — or nudging the
+  display bunch factor back and forth — no longer re-runs the grouped-count
+  build and the counts-first re-reduction from scratch each time; results are
+  memoised per run and grouping recipe, so a return to a view already shown is
+  served from the cache. A grouping edit (or a co-add / combine that swaps in a
+  new run) transparently recomputes; nothing about the displayed numbers
+  changes.
+
 - **Frequency-domain spectra draw as lines with an error band, and the
   statistics behind zero padding are now handled for you.** FFT and MaxEnt
   spectra render as solid lines (the convention of every reference muSR
