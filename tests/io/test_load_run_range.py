@@ -155,3 +155,35 @@ def test_resolve_run_range_raises_on_bad_inputs(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="is after end"):
         resolve_run_range(tmp_path, 9, 1, prefix="MUSR")
+
+
+def test_scan_run_files_reports_truncated_when_folder_exceeds_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F4: a facility folder with more entries than the scan cap must not
+    hang on an unbounded stat+regex-per-entry scan — scan_run_files bounds
+    the directory walk and flags the result as truncated."""
+    from asymmetry.core.io import run_range
+    from asymmetry.core.io.run_range import scan_run_files
+
+    monkeypatch.setattr(run_range, "DEFAULT_MAX_SCAN_ENTRIES", 50)
+
+    for run in range(60):
+        _touch(tmp_path, f"MUSR{run:08d}.nxs")
+
+    result = scan_run_files(tmp_path)
+
+    assert result.truncated is True
+    assert len(result.entries) <= 50
+
+
+def test_scan_run_files_not_truncated_when_folder_within_cap(tmp_path: Path) -> None:
+    from asymmetry.core.io.run_range import scan_run_files
+
+    for run in range(5):
+        _touch(tmp_path, f"MUSR{run:08d}.nxs")
+
+    result = scan_run_files(tmp_path)
+
+    assert result.truncated is False
+    assert len(result.entries) == 5
