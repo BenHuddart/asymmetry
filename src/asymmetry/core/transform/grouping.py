@@ -129,22 +129,33 @@ def apply_grouping_aligned(
             )
         common_t0_bin = max(0, int(common_t0_bin))
 
-        shifted: list[NDArray[np.float64]] = []
-        for i, hist in selected:
-            counts = np.asarray(hist.counts, dtype=np.float64)
-            offset = common_t0_bin - _detector_t0(histograms, i, detector_t0_bins)
-            if offset <= 0:
-                shifted.append(counts[-offset:].copy() if offset < 0 else counts.copy())
-                continue
+        # Each detector, once aligned, contributes an array of length
+        # ``len(counts) + offset`` (offset < 0 trims the head, offset > 0
+        # zero-pads it), so the summed length is known from the offsets alone —
+        # no need to materialise the shifted arrays to find it. Accumulate each
+        # detector's aligned slice directly into one buffer instead of building
+        # a list of full-length copies and summing them: same float64 additions
+        # in the same order (bit-identical result), but only the accumulator is
+        # allocated rather than one padded copy per detector in the group.
+        offsets = [
+            common_t0_bin - _detector_t0(histograms, i, detector_t0_bins) for i, _ in selected
+        ]
+        min_len = min(len(hist.counts) + offset for (_, hist), offset in zip(selected, offsets))
 
-            out = np.zeros(len(counts) + offset, dtype=np.float64)
-            out[offset:] = counts
-            shifted.append(out)
-
-        min_len = min(len(a) for a in shifted)
         total = np.zeros(min_len, dtype=np.float64)
-        for a in shifted:
-            total += a[:min_len]
+        for (_, hist), offset in zip(selected, offsets):
+            counts = np.asarray(hist.counts, dtype=np.float64)
+            if offset <= 0:
+                # Aligned array is ``counts[-offset:]`` (``counts`` itself when
+                # offset == 0); add its first ``min_len`` samples.
+                src_start = -offset
+                total += counts[src_start : src_start + min_len]
+            elif min_len > offset:
+                # Aligned array is ``offset`` leading zeros then ``counts``; the
+                # zeros contribute nothing, so add ``counts`` from ``offset`` on.
+                total[offset:min_len] += counts[: min_len - offset]
+            # offset >= min_len: the aligned array is all zeros within the
+            # summed window, so it contributes nothing.
         perf.detail(bins=min_len)
         return total
 
