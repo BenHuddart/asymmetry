@@ -976,8 +976,10 @@ class TestHALLayout:
         # F5 is diametrically opposite F1 (musrfit opposed pair).
         assert abs(((f5.angle_center_deg - f1.angle_center_deg) % 360.0) - 180.0) < 1e-6
 
-    def test_default_preset_is_longitudinal(self, layout):
-        assert layout.default_preset_name == "Longitudinal"
+    def test_default_preset_is_per_octant(self, layout):
+        # Per-octant is HAL's default: high-TF work on this instrument (the
+        # AFM-transition corpus and similar) is done per-octant in practice.
+        assert layout.default_preset_name == "Per-octant"
 
     def test_presets_present(self, layout):
         assert set(layout.presets) == {
@@ -1475,9 +1477,13 @@ class TestInstrumentLayoutHelpers:
         assert len(segs) == 64
 
     def test_default_preset_name_is_longitudinal(self):
+        # HAL-9500 is the one exception: its default is "Per-octant" (see
+        # TestHALLayout.test_default_preset_is_per_octant) because high-TF work
+        # on that instrument is done per-octant in practice.
         for name in INSTRUMENT_NAMES:
             layout = get_instrument_layout(name)
-            assert layout.default_preset_name == "Longitudinal"
+            expected = "Per-octant" if name == "HAL" else "Longitudinal"
+            assert layout.default_preset_name == expected
 
 
 # ---------------------------------------------------------------------------

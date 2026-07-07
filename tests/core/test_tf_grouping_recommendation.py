@@ -46,3 +46,16 @@ def test_longitudinal_field_does_not_nudge_off_longitudinal() -> None:
     rec_lf = recommend_grouping_preset(gps, "Longitudinal")
     # No nudge needed for LF/ZF: either no recommendation, or the Longitudinal preset.
     assert rec_lf in (None, "Longitudinal")
+
+
+def test_transverse_field_on_hal_recommends_its_per_octant_default() -> None:
+    """HAL's default is ``Per-octant`` (high-TF work is done per-octant in
+    practice), so a TF run must not be nudged away from it toward the older
+    ``Transverse (opposed pairs)`` single-pair preset."""
+    from asymmetry.core.instrument import recommend_grouping_preset
+
+    hal = get_instrument_layout("HAL")
+    assert hal.default_preset_name == "Per-octant"
+
+    rec_tf = recommend_grouping_preset(hal, "Transverse")
+    assert rec_tf == "Per-octant"

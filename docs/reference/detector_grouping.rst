@@ -646,11 +646,12 @@ PSI HAL-9500
    backward ring (B1–B8) — drawn as separate octagons. The central muon-veto
    detector (MV) is shown at the centre of the forward ring. The histograms are
    stored in the order ``MV, F1…F8, B1…B8``, so detector IDs run MV → 1,
-   F1–F8 → 2–9, and B1–B8 → 10–17. Presets include **Longitudinal**
-   (forward ring vs backward ring), **Transverse (opposed pairs)** (each
-   forward detector as its own group, defaulting to the F1–F5 diametric pair),
-   and **Per-octant** (each azimuthal sector combining its forward and
-   backward wedge).
+   F1–F8 → 2–9, and B1–B8 → 10–17. Presets include **Per-octant** (default —
+   each azimuthal sector combining its forward and backward wedge; HAL-9500 is
+   a high-field spectrometer, and this is the grouping used for that work in
+   practice), **Longitudinal** (forward ring vs backward ring), and
+   **Transverse (opposed pairs)** (each forward detector as its own group,
+   defaulting to the F1–F5 diametric pair).
 
    Some high-field ``.mdu`` runs ship only the forward ring (``MV, F1…F8`` —
    nine histograms, no backward ring). Presets naming backward-ring detectors

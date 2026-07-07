@@ -1402,7 +1402,19 @@ def _build_hal() -> InstrumentLayout:
 
     presets: dict[str, PresetGrouping] = {}
 
-    # Longitudinal (default): forward ring vs backward ring.  HAL-9500 is a PSI
+    # Per-octant (default): one group per azimuthal sector, combining the
+    # forward and backward wedge at that angle.  HAL-9500 is a high-field (TF)
+    # spectrometer in practice, and this is the grouping used for that work
+    # (e.g. the AFM-transition high-TF corpus) — angle-resolved, but with the
+    # combined F+B wedge giving better statistics than a lone opposed pair.
+    presets["Per-octant"] = PresetGrouping(
+        name="Per-octant",
+        groups={k + 1: GroupDefinition(f"Octant {k + 1}", (2 + k, 10 + k)) for k in range(8)},
+        forward_group=1,  # octant 1 (top)
+        backward_group=5,  # octant 5 (bottom, 180° opposite)
+    )
+
+    # Longitudinal: forward ring vs backward ring.  HAL-9500 is a PSI
     # instrument, so the rings are named by *beam* direction; for surface muons
     # the initial polarization points toward the Backward ring.  Declare the
     # analysis-forward slot as the Backward ring (group 2) so the preset follows
@@ -1427,15 +1439,6 @@ def _build_hal() -> InstrumentLayout:
         groups={k + 1: GroupDefinition(f"F{k + 1}", (2 + k,)) for k in range(8)},
         forward_group=1,  # F1
         backward_group=5,  # F5 (180° opposite F1)
-    )
-
-    # Per-octant: one group per azimuthal sector, combining the forward and
-    # backward wedge at that angle.  Useful for angle-resolved high-field work.
-    presets["Per-octant"] = PresetGrouping(
-        name="Per-octant",
-        groups={k + 1: GroupDefinition(f"Octant {k + 1}", (2 + k, 10 + k)) for k in range(8)},
-        forward_group=1,  # octant 1 (top)
-        backward_group=5,  # octant 5 (bottom, 180° opposite)
     )
 
     return InstrumentLayout(
@@ -1538,11 +1541,16 @@ def recommend_grouping_preset(layout: InstrumentLayout, field_direction: str | N
         # No nudge for longitudinal / zero-field / unknown geometries.
         return None
 
-    # Candidate transverse presets: name carries a spin-rotated or transverse
-    # marker. The longitudinal default never matches these tokens, so it is
-    # excluded automatically.
+    # Candidate transverse presets: name carries a spin-rotated, transverse, or
+    # (HAL-9500) octant marker. The longitudinal default never matches these
+    # tokens, so it is excluded automatically. HAL's "Per-octant" preset is
+    # itself a high-field grouping (each azimuthal wedge is a combined F+B
+    # opposed pair), so it counts as a transverse candidate alongside
+    # "Transverse (opposed pairs)".
     transverse = [
-        name for name in layout.presets if "rotat" in name.lower() or "transverse" in name.lower()
+        name
+        for name in layout.presets
+        if "rotat" in name.lower() or "transverse" in name.lower() or "octant" in name.lower()
     ]
     if not transverse:
         return None
