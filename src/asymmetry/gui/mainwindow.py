@@ -1225,7 +1225,7 @@ class MainWindow(QMainWindow):
         self._main_toolbar.addWidget(QLabel("Bunch:"))
         self._view_bunch_spin = QSpinBox()
         self._view_bunch_spin.setRange(1, 1000)
-        self._view_bunch_spin.setMaximumWidth(70)
+        self._view_bunch_spin.setMaximumWidth(metrics.spin_width_for(4, self._view_bunch_spin))
         self._view_bunch_spin.valueChanged.connect(self._on_main_bunch_factor_changed)
         self._main_toolbar.addWidget(self._view_bunch_spin)
 

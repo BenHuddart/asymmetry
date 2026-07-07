@@ -59,6 +59,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ring) — and the report now names the missing detectors and the run's
   detector count in the LOG and status bar instead of failing silently.
 
+- **Three spinboxes no longer clip their digits at wide values.** The main
+  toolbar's bunch-factor spin, the grouping dialog's bunching-factor spin, and
+  the grouped count-fit's exclude-window spins were each capped with a
+  hardcoded pixel maximum sized for the text alone; under the real app
+  stylesheet the spin-button chrome ate into that budget and clipped values
+  near the top of each range (e.g. a 4-digit view-bunch factor). Each now
+  sizes its cap from the widest value the range allows via
+  `metrics.spin_width_for`, the same fix already applied to the Fourier
+  panel's spins.
+
 ## [0.7.0] - 2026-07-06
 
 ### Changed
