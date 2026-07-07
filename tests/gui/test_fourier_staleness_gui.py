@@ -296,7 +296,7 @@ def test_computed_spectrum_starts_in_sync(window) -> None:
 def test_panel_edit_flags_stale_and_recompute_clears(window) -> None:
     window, dataset = _computed_window(window)
 
-    window._fourier_panel._padding_spin.setValue(4)
+    window._fourier_panel._padding_spin.setValue(8)  # != the panel default
     window._fourier_panel._settings_debounce.timeout.emit()
     assert window._fourier_panel.is_stale() is True
     assert "zero-pad factor" in window._fourier_panel._stale_banner.text()
@@ -364,7 +364,7 @@ def test_legacy_recipe_without_digest_skips_grouping_check(window) -> None:
 def test_run_switch_reevaluates_banner(window) -> None:
     """The banner is per-run state: switching to a run with no spectrum clears it."""
     window, _dataset = _computed_window(window)
-    window._fourier_panel._padding_spin.setValue(4)
+    window._fourier_panel._padding_spin.setValue(8)  # != the panel default
     window._fourier_panel._settings_debounce.timeout.emit()
     assert window._fourier_panel.is_stale() is True
 

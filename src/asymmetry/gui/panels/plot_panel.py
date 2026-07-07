@@ -2118,6 +2118,136 @@ class PlotPanel(QWidget):
         )
         return int(indices.size)
 
+    def _plot_frequency_line_masked(
+        self,
+        ax,
+        freq: np.ndarray,
+        values: np.ndarray,
+        error: np.ndarray,
+        mask: np.ndarray,
+        *,
+        color: str | None,
+        label: str,
+        linewidth: float = 1.2,
+    ) -> int:
+        """Plot one frequency-domain spectrum as a line with a shaded ±1σ band.
+
+        Every reference muSR package (WiMDA, musrview, Mantid) draws spectra
+        as lines, not the time-domain errorbar-dots idiom, so this is the
+        frequency-panel counterpart of :meth:`_plot_errorbar_masked` — it
+        shares the same bounded-density decimation (min-max bucketing on
+        *values*, applied before drawing) but renders a solid line instead of
+        point markers. A translucent ±1σ band replaces per-point error bars
+        when *error* carries any positive finite value; the common
+        un-averaged all-zero-error case draws no band. The line is drawn
+        first so an unresolved ``color=None`` (matplotlib's auto-cycle) is
+        pinned to the *resolved* colour actually used, keeping the band and
+        line the same hue rather than each independently advancing the
+        property cycle.
+        """
+        visible_indices = self._visible_plot_indices(freq, mask)
+        indices = self._decimated_plot_indices(
+            freq, mask, values=values, visible_indices=visible_indices
+        )
+        if indices.size <= 0:
+            return 0
+        if self.decimation_enabled() and indices.size < visible_indices.size:
+            self._decimation_applied_for_current_view = True
+        # Per-view totals feed the corner chip ("4.0k of 1.2M pts").
+        self._decimation_points_shown += int(indices.size)
+        self._decimation_points_total += int(visible_indices.size)
+
+        x = freq[indices]
+        y = values[indices]
+        err = error[indices]
+
+        (line,) = ax.plot(
+            x,
+            y,
+            "-",
+            color=color,
+            linewidth=linewidth,
+            label=label,
+            zorder=2.5,
+        )
+        # Presence is decided from the full masked error array (not just the
+        # decimated samples drawn), matching "the dataset's error array has
+        # any positive finite values" — a decimated bucket could otherwise
+        # miss the one point that carries a real error.
+        has_band = bool(np.any(np.isfinite(error[mask]) & (error[mask] > 0.0)))
+        if has_band:
+            finite_err = np.isfinite(err)
+            band_err = np.where(finite_err, err, 0.0)
+            ax.fill_between(
+                x,
+                y - band_err,
+                y + band_err,
+                color=line.get_color(),
+                alpha=0.25,
+                linewidth=0,
+                zorder=1.5,
+                label="_nolegend_",
+            )
+        return int(indices.size)
+
+    def _draw_expected_larmor_marker(self, dataset: MuonDataset) -> None:
+        """Mark the expected γ_μ·B Larmor position on a single displayed spectrum.
+
+        Single-run frequency view only — an overlay would need one marker per
+        member, which is noise rather than signal, so this is only called from
+        :meth:`plot_dataset`. Absent on the correlation (hyperfine-coupling)
+        axis, where an applied-field Larmor line is not meaningful, and absent
+        when the run/dataset metadata carries no applied field.
+
+        Built by hand and attached with ``add_artist`` — the same idiom
+        ``draw_zero_line`` uses in ``styles/plots.py`` — rather than
+        ``axvline``, so the marker can never perturb ``dataLim``/autoscale
+        regardless of when it is drawn relative to ``_apply_limits``. The x
+        position is derived exactly like ``_frequency_field_upper_bound``'s
+        framing math (reference field in Gauss → MHz → active display unit via
+        ``_convert_frequency_axis_for_display``), so it lands in the same
+        coordinate system the plotted spectrum itself uses — display-unit
+        conversion only, never reference-shifted.
+        """
+        if not self._has_mpl or self._frequency_axis_is_correlation:
+            return
+        field_gauss = reference_field_gauss(getattr(dataset, "run", None), dataset)
+        if field_gauss is None or field_gauss <= 0.0:
+            return
+        expected_mhz = float(gauss_to_mhz(field_gauss))
+        if not np.isfinite(expected_mhz) or expected_mhz <= 0.0:
+            return
+        x = float(self._convert_frequency_axis_for_display(np.array([expected_mhz]))[0])
+        if not np.isfinite(x):
+            return
+
+        from matplotlib import lines as mlines
+
+        transform = self._ax.get_xaxis_transform(which="grid")
+        marker = mlines.Line2D(
+            [x, x],
+            [0.0, 1.0],
+            transform=transform,
+            color=tokens.TEXT_MUTED,
+            alpha=0.6,
+            linestyle="--",
+            linewidth=1.0,
+            zorder=1,
+        )
+        marker.set_label("_nolegend_")
+        self._ax.add_artist(marker)
+        self._ax.annotate(
+            r"$\gamma_\mu \cdot B$",
+            xy=(x, 0.96),
+            xycoords=transform,
+            ha="left",
+            va="top",
+            fontsize=8,
+            color=tokens.TEXT_MUTED,
+            alpha=0.6,
+            zorder=1,
+        )
+
     def _set_frequency_reference_from_dataset(self, dataset: MuonDataset | None) -> None:
         """Update the reference frequency used by relative frequency displays."""
         if not self._is_frequency_plot_panel():
@@ -3619,35 +3749,49 @@ class PlotPanel(QWidget):
             )
 
             finite_mask = np.isfinite(time) & np.isfinite(asymmetry) & np.isfinite(error)
-            valid_low = finite_mask & low_count_mask
-            valid_main = finite_mask & ~low_count_mask
 
-            if np.any(valid_low):
+            if self._is_frequency_plot_panel():
+                # Line + error-band idiom (see plot_dataset); no expected-Larmor
+                # marker here — one per overlaid member would be noise, not signal.
+                self._plot_frequency_line_masked(
+                    self._ax,
+                    time,
+                    asymmetry,
+                    error,
+                    finite_mask,
+                    color=color,
+                    label=self._dataset_label_for(dataset),
+                )
+            else:
+                valid_low = finite_mask & low_count_mask
+                valid_main = finite_mask & ~low_count_mask
+
+                if np.any(valid_low):
+                    self._plot_errorbar_masked(
+                        self._ax,
+                        time,
+                        asymmetry,
+                        error,
+                        valid_low,
+                        fmt=".",
+                        markersize=3,
+                        color="0.6",
+                        ecolor="0.6",
+                        label="_nolegend_",
+                    )
+
+                draw_mask = valid_main if np.any(valid_main) else finite_mask
                 self._plot_errorbar_masked(
                     self._ax,
                     time,
                     asymmetry,
                     error,
-                    valid_low,
+                    draw_mask,
                     fmt=".",
                     markersize=3,
-                    color="0.6",
-                    ecolor="0.6",
-                    label="_nolegend_",
+                    color=color,
+                    label=self._dataset_label_for(dataset),
                 )
-
-            draw_mask = valid_main if np.any(valid_main) else finite_mask
-            self._plot_errorbar_masked(
-                self._ax,
-                time,
-                asymmetry,
-                error,
-                draw_mask,
-                fmt=".",
-                markersize=3,
-                color=color,
-                label=self._dataset_label_for(dataset),
-            )
 
             # Overlay fit curve in same colour; excluded from legend by "_" prefix.
             fit_to_plot = self._fit_curve_for_dataset(dataset)
@@ -3682,6 +3826,9 @@ class PlotPanel(QWidget):
             style_legend(self._ax.legend())
 
             self._reframe_if_content_changed()
+            # Same one-view-behind guard as plot_dataset: a reframe moves the
+            # axes after a draw decimated for the previous content's viewport.
+            reframed = not self._limits_initialized
             if not self._limits_initialized:
                 t_all = self._last_plot_time
                 a_all = self._last_plot_asymmetry
@@ -3722,9 +3869,10 @@ class PlotPanel(QWidget):
             self._last_low_count_mask = None
             self._fit_x_min = None
             self._fit_x_max = None
+            reframed = False
 
         self._draw_fit_range_artists()
-        self._apply_limits()
+        self._apply_limits(schedule_viewport_refresh=reframed)
         self._apply_auto_limits_if_enabled()
         self._update_export_enabled()
         self._connect_axis_limit_callbacks([self._ax])
@@ -3867,37 +4015,55 @@ class PlotPanel(QWidget):
         draw_zero_line(self._ax)
 
         finite_mask = np.isfinite(time) & np.isfinite(asymmetry) & np.isfinite(error)
-        valid_low = finite_mask & low_count_mask
-        valid_main = finite_mask & ~low_count_mask
+        point_color = self._period_mode_color_for_dataset(dataset)
 
-        if np.any(valid_low):
+        if self._is_frequency_plot_panel():
+            # Frequency spectra render as a line with an error band (the
+            # WiMDA/musrview/Mantid idiom), not time-domain errorbar dots. The
+            # low-count grey split is a raw-counts concept and is always inert
+            # here (``_low_count_mask_for_dataset`` returns all-False for a
+            # frequency panel), so there is only ever one trace to draw.
+            self._plot_frequency_line_masked(
+                self._ax,
+                time,
+                asymmetry,
+                error,
+                finite_mask,
+                color=point_color,
+                label=self._dataset_label_for(dataset),
+            )
+            self._draw_expected_larmor_marker(dataset)
+        else:
+            valid_low = finite_mask & low_count_mask
+            valid_main = finite_mask & ~low_count_mask
+
+            if np.any(valid_low):
+                self._plot_errorbar_masked(
+                    self._ax,
+                    time,
+                    asymmetry,
+                    error,
+                    valid_low,
+                    fmt=".",
+                    markersize=3,
+                    color="0.6",
+                    ecolor="0.6",
+                    label="_nolegend_",
+                )
+
+            draw_mask = valid_main if np.any(valid_main) else finite_mask
             self._plot_errorbar_masked(
                 self._ax,
                 time,
                 asymmetry,
                 error,
-                valid_low,
+                draw_mask,
                 fmt=".",
                 markersize=3,
-                color="0.6",
-                ecolor="0.6",
-                label="_nolegend_",
+                color=point_color,
+                ecolor=point_color,
+                label=self._dataset_label_for(dataset),
             )
-
-        draw_mask = valid_main if np.any(valid_main) else finite_mask
-        point_color = self._period_mode_color_for_dataset(dataset)
-        self._plot_errorbar_masked(
-            self._ax,
-            time,
-            asymmetry,
-            error,
-            draw_mask,
-            fmt=".",
-            markersize=3,
-            color=point_color,
-            ecolor=point_color,
-            label=self._dataset_label_for(dataset),
-        )
         self._overlay_fourier_imag(dataset, time)
         self._overlay_diamagnetic_fit(analysis_dataset)
         x_label, y_label = self._axis_labels_for_dataset(dataset, self._current_polarization_axis)
@@ -3933,6 +4099,13 @@ class PlotPanel(QWidget):
         # freshly loaded dataset frames to itself instead of inheriting stale
         # (incl. persisted cross-session) limits.
         self._reframe_if_content_changed()
+        # A reframe moves the axes AFTER the draw above, whose decimation was
+        # clipped to the PREVIOUS content's viewport — a switched dataset would
+        # otherwise render one view behind (fresh limits over data sampled for
+        # the old window, the new run's line missing entirely). Remember to
+        # re-decimate once the new limits are applied; a same-content redraw
+        # keeps its viewport and skips the extra pass.
+        reframed = not self._limits_initialized
         if not self._limits_initialized:
             # X first: time panels span the full data; frequency panels frame the
             # dominant non-DC peak so high-TF Larmor lines aren't squashed off the
@@ -3962,8 +4135,8 @@ class PlotPanel(QWidget):
 
         self._draw_fit_range_artists()
 
-        # Apply the limits
-        self._apply_limits()
+        # Apply the limits; a reframe re-decimates for the window just applied.
+        self._apply_limits(schedule_viewport_refresh=reframed)
         self._apply_auto_limits_if_enabled()
         self._update_export_enabled()
         self._connect_axis_limit_callbacks([self._ax])
@@ -4130,12 +4303,31 @@ class PlotPanel(QWidget):
         # Correlation-axis frequency mode is a coupling coordinate, not a Larmor
         # spectrum, so dominant-peak framing is not meaningful there.
         if self._is_frequency_plot_panel() and not self._frequency_axis_is_correlation:
-            peak_upper = self._frequency_peak_upper_bound(time, asymmetry)
-            if peak_upper is not None and peak_upper > x_min:
-                # Keep the data's own lower edge (an rfft spectrum starts at the DC
-                # bin); only pull the upper edge in to frame the peak. Injecting an
-                # absolute 0 here would misbehave on reference-relative / field axes.
-                x_max = peak_upper
+            centered = self._frequency_centered_window(time, asymmetry)
+            if centered is not None:
+                # High-TF case: the line is unresolvable in a from-zero view
+                # (0.18 MHz wide at 813 MHz is sub-pixel on a [0, 1.2 GHz]
+                # axis), so frame a window AROUND it instead — WiMDA's
+                # reference-field ± offsets view, derived from the data.
+                x_min, x_max = centered
+            else:
+                peak_upper = self._frequency_peak_upper_bound(time, asymmetry)
+                field_upper = self._frequency_field_upper_bound(time)
+                # Combine by max(): data evidence must never be framed out by the
+                # field expectation (muonium / radical lines sit far above γ_μ·B),
+                # and the expected Larmor region must never be framed out by a
+                # lone lower-frequency line (e.g. a strong background peak).
+                candidates = [
+                    upper
+                    for upper in (peak_upper, field_upper)
+                    if upper is not None and upper > x_min
+                ]
+                if candidates:
+                    # Keep the data's own lower edge (an rfft spectrum starts at
+                    # the DC bin); only pull the upper edge in to frame the peak.
+                    # Injecting an absolute 0 here would misbehave on
+                    # reference-relative / field axes.
+                    x_max = max(candidates)
 
         if x_max <= x_min:
             pad = max(abs(x_min) * 0.05, 1e-6)
@@ -4156,15 +4348,73 @@ class PlotPanel(QWidget):
             self._convert_frequency_axis_limit_to_control_value(upper),
         )
 
-    def _frequency_peak_upper_bound(self, freqs: np.ndarray, values: np.ndarray) -> float | None:
-        """Upper frequency-axis bound that frames the highest-frequency line.
+    def _frequency_field_upper_bound(self, display_freqs: np.ndarray) -> float | None:
+        """Upper display-axis bound framing the field-expected Larmor line, or ``None``.
 
-        Returns ``None`` (keep the full span) for DC-only or featureless spectra,
-        where no non-DC bin clears the baseline and zooming would merely chase a
-        noise spike. Otherwise frames to the *highest-frequency* line that rises
-        above the baseline — not just the single tallest peak — so weaker
-        high-frequency lines (high-TF Larmor lines, muoniated-radical pairs) are
-        not cut off by a stronger low-frequency line such as the diamagnetic peak.
+        The peak heuristic is structurally blind to exactly the cases where a
+        first look matters most: a weak line that does not clear the prominence
+        threshold, and a low-field line hiding inside the excluded DC region
+        (a 20 G line at 0.27 MHz sits below the 2 % DC cut of a ~30 MHz span).
+        When the run carries an applied field, γ_μ·B says where to look —
+        WiMDA frames its FFT plot around the reference field the same way
+        (``WiMDA_Main.pas`` ``UseShiftRange``). The 1.5× headroom puts the
+        expected line at two-thirds of the axis. Skipped on the
+        reference-relative axis, where the line sits at ~0 and an upper bound
+        derived from it would collapse the window, and when the expected line
+        is at/off the Nyquist edge (the full span already frames it).
+        """
+        if self.is_frequency_axis_relative_to_reference():
+            return None
+        # A multi-run overlay can span a field series; frame to the HIGHEST
+        # member field so no member's expected line starts off-screen.
+        datasets = self._current_datasets or (
+            [self._current_dataset] if self._current_dataset is not None else []
+        )
+        fields = [
+            field
+            for field in (
+                reference_field_gauss(getattr(dataset, "run", None), dataset)
+                for dataset in datasets
+            )
+            if field is not None and field > 0.0
+        ]
+        if not fields:
+            return None
+        expected_mhz = float(gauss_to_mhz(max(fields)))
+        if not np.isfinite(expected_mhz) or expected_mhz <= 0.0:
+            return None
+        center = float(self._convert_frequency_axis_for_display(np.array([expected_mhz]))[0])
+        if not np.isfinite(center) or center <= 0.0:
+            return None
+        finite = np.asarray(display_freqs, dtype=float)
+        finite = finite[np.isfinite(finite)]
+        if finite.size == 0:
+            return None
+        f_max = float(np.max(finite))
+        upper = 1.5 * center
+        if upper >= f_max:
+            return None
+        return upper
+
+    def _frequency_significant_lines(
+        self, freqs: np.ndarray, values: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray, float] | None:
+        """Return ``(line_freqs, line_ratios, f_max)`` for baseline-clearing bins.
+
+        The shared line finder behind the first-paint framing helpers;
+        ``line_ratios`` is each bin's height over its LOCAL baseline. Returns
+        ``None`` for DC-only or featureless spectra, where no non-DC bin clears
+        the baseline and zooming would merely chase a noise spike. The DC
+        region (zero-frequency peak + filter rolloff, the lowest 2 % of the
+        span) is excluded — the DC peak typically dwarfs the signal, so it must
+        not count as a line.
+
+        The baseline is a block-median estimated locally, not one global
+        median: a real TDC spectrum's noise floor is a coloured pedestal (run
+        687's floor below ~1 GHz sits 22× above its quiet high-frequency
+        level), so against a global median a quarter of the spectrum reads as
+        "significant" and the framing chases the pedestal's edge instead of
+        the physics. A narrow line perturbs its own block's median negligibly.
         """
         f = np.asarray(freqs, dtype=float)
         v = np.abs(np.asarray(values, dtype=float))
@@ -4177,27 +4427,128 @@ class PlotPanel(QWidget):
         if f_max <= 0.0:
             return None
 
-        # Exclude the DC region (zero-frequency peak + filter rolloff): the lowest
-        # 2 % of the span. The DC peak typically dwarfs the signal, so it must not
-        # count as a line.
         dc_cut = f_max * 0.02
         nondc = f > dc_cut
         if np.count_nonzero(nondc) < 2:
             return None
         f_nondc = f[nondc]
         v_nondc = v[nondc]
-        baseline = float(np.median(v_nondc))
-        if baseline <= 0.0:
-            baseline = float(np.mean(v_nondc))
-        threshold = baseline * _FREQUENCY_PEAK_PROMINENCE
-        significant = v_nondc > threshold
-        if not np.any(significant):
+
+        n_blocks = int(np.clip(f_nondc.size // 64, 8, 512))
+        usable = (f_nondc.size // n_blocks) * n_blocks
+        if usable >= n_blocks:
+            block_medians = np.median(v_nondc[:usable].reshape(n_blocks, -1), axis=1)
+            block_centers = f_nondc[:usable].reshape(n_blocks, -1).mean(axis=1)
+            baseline = np.interp(f_nondc, block_centers, block_medians)
+        else:
+            baseline = np.full_like(v_nondc, float(np.median(v_nondc)))
+        fallback = float(np.median(v_nondc)) or float(np.mean(v_nondc))
+        baseline = np.where(baseline > 0.0, baseline, fallback)
+        if not np.any(baseline > 0.0):
             return None
 
-        # Frame to the highest-frequency significant line with head-room, never
+        ratios = np.divide(v_nondc, baseline, out=np.zeros_like(v_nondc), where=baseline > 0.0)
+        significant = ratios > _FREQUENCY_PEAK_PROMINENCE
+        if not np.any(significant):
+            return None
+        return f_nondc[significant], ratios[significant], f_max
+
+    def _frequency_peak_upper_bound(self, freqs: np.ndarray, values: np.ndarray) -> float | None:
+        """Upper frequency-axis bound that frames the highest-frequency line.
+
+        Returns ``None`` (keep the full span) for DC-only or featureless
+        spectra. Otherwise frames to the *highest-frequency* line that rises
+        above the baseline — not just the single tallest peak — so weaker
+        high-frequency lines (high-TF Larmor lines, muoniated-radical pairs)
+        are not cut off by a stronger low-frequency line such as the
+        diamagnetic peak.
+        """
+        lines = self._frequency_significant_lines(freqs, values)
+        if lines is None:
+            return None
+        line_freqs, line_ratios, f_max = lines
+        # Only STRICT lines drive the upper bound: on a large padded spectrum
+        # extreme-value noise reaches ~4.5× its local baseline, so framing to
+        # the highest merely-significant bin would chase a stray. Real
+        # secondary lines (radical pairs, satellites) clear 2× the prominence
+        # threshold comfortably.
+        strict = line_ratios >= 2.0 * _FREQUENCY_PEAK_PROMINENCE
+        if not np.any(strict):
+            return None
+        # Frame to the highest-frequency strict line with head-room, never
         # past the available data.
-        highest_f = float(np.max(f_nondc[significant]))
+        highest_f = float(np.max(line_freqs[strict]))
         return float(min(f_max, highest_f * 1.5))
+
+    def _frequency_centered_window(
+        self, freqs: np.ndarray, values: np.ndarray
+    ) -> tuple[float, float] | None:
+        """A window centred on the dominant line, when a from-zero view can't show it.
+
+        High transverse field puts a narrow line at a large frequency: run 687
+        of the corpus has a 0.18 MHz-wide line at 813 MHz, which is sub-pixel
+        on the from-zero [0, 1.5·f₀] view the wide framing produces. When the
+        highest significant line's measured FWHM is below 1/400 of that wide
+        span — genuinely unresolvable, not merely narrow — frame
+        ``f₀ ± max(0.08·f₀, 30·FWHM)`` instead, WiMDA's reference-field ±
+        offsets view derived from the data. Bails to the wide framing whenever
+        any other significant line would fall outside the centred window (AFM
+        satellites, radical pairs — nothing may be framed out) or on the
+        reference-relative axis, where the framing maths lives near zero.
+        """
+        if self.is_frequency_axis_relative_to_reference():
+            return None
+        lines = self._frequency_significant_lines(freqs, values)
+        if lines is None:
+            return None
+        line_freqs, line_ratios, f_max = lines
+        # Centre on the bin most prominent over its LOCAL baseline — the
+        # summit. The highest FREQUENCY significant bin is a tail bin a few
+        # linewidths up-slope, and a half-maximum walk started there straddles
+        # the summit and measures the whole prominence region instead of the
+        # line.
+        center = float(line_freqs[int(np.argmax(line_ratios))])
+        if center <= 0.0:
+            return None
+
+        f = np.asarray(freqs, dtype=float)
+        v = np.abs(np.asarray(values, dtype=float))
+        finite = np.isfinite(f) & np.isfinite(v)
+        f = f[finite]
+        v = v[finite]
+        order = np.argsort(f)
+        f = f[order]
+        v = v[order]
+        peak_index = int(np.argmin(np.abs(f - center)))
+        half = 0.5 * float(v[peak_index])
+        left = peak_index
+        while left > 0 and v[left] > half:
+            left -= 1
+        right = peak_index
+        while right < v.size - 1 and v[right] > half:
+            right += 1
+        fwhm = float(f[right] - f[left])
+        if not np.isfinite(fwhm) or fwhm <= 0.0:
+            return None
+
+        x_min_data = float(np.min(f))
+        wide_span = min(f_max, center * 1.5) - x_min_data
+        if wide_span <= 0.0 or fwhm / wide_span >= 1.0 / 400.0:
+            return None
+        half_window = max(0.08 * center, 30.0 * fwhm)
+        lower = max(x_min_data, center - half_window)
+        upper = min(f_max, center + half_window)
+        if upper <= lower:
+            return None
+        # Only a STRICT line outside the window vetoes the zoom: nothing real
+        # may be framed out, but extreme-value noise bins (which barely clear
+        # the significance threshold against their local baseline) must not
+        # hold the view hostage at full span.
+        strict = line_ratios >= 2.0 * _FREQUENCY_PEAK_PROMINENCE
+        strict_freqs = line_freqs[strict]
+        if np.any(strict_freqs < lower) or np.any(strict_freqs > upper):
+            return None
+        return lower, upper
 
     def _auto_x_limits(self) -> None:
         """Auto-scale x-axis and update x-limit controls."""

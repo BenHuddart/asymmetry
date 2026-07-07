@@ -653,6 +653,299 @@ class TestPlotPanel:
             panel.close()
             panel.deleteLater()
 
+    def test_frequency_default_x_range_seeds_from_field_when_featureless(
+        self, qapp: QApplication
+    ) -> None:
+        """No detectable line + an applied field → frame the expected Larmor region.
+
+        The peak heuristic keeps the full span for featureless spectra, but a
+        weak line is exactly when a first look matters: γ_μ·B says where to
+        look (2000 G → 27.1 MHz), so the view frames [.., 1.5×] that instead
+        of the full 1000 MHz Nyquist span. WiMDA frames its FFT plot around
+        the reference field the same way.
+        """
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            rng = np.random.default_rng(5)
+            freqs = np.linspace(0.0, 1000.0, 2048)
+            values = np.abs(rng.normal(0.0, 1.0, freqs.size)) + 1.0
+            values[:3] = 3.0e5  # only the DC peak stands out
+            ds = MuonDataset(
+                time=freqs,
+                asymmetry=values,
+                error=np.zeros_like(freqs),
+                metadata={
+                    "run_number": 3690,
+                    "field": 2000.0,
+                    "plot_domain": "frequency",
+                    "x_label": "Frequency (MHz)",
+                },
+            )
+            panel.plot_dataset(ds)
+
+            # 1.5 × 27.1 MHz ≈ 40.7, plus the 5 % pad — not the 1000 MHz span.
+            assert 35.0 <= panel._x_max.value() <= 50.0
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_frequency_field_seed_rescues_low_field_line_inside_dc_cut(
+        self, qapp: QApplication
+    ) -> None:
+        """A 20 G line at 0.27 MHz hides under the DC cut; the field seed frames it."""
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            freqs = np.linspace(0.0, 30.0, 2048)
+            values = np.full_like(freqs, 1.0)
+            values[:3] = 3.0e5
+            # The physical line sits below the 2 % DC cut (0.6 MHz), where the
+            # peak heuristic is structurally blind to it.
+            values[int(np.argmin(np.abs(freqs - 0.27)))] = 5.0e3
+            ds = MuonDataset(
+                time=freqs,
+                asymmetry=values,
+                error=np.zeros_like(freqs),
+                metadata={
+                    "run_number": 3691,
+                    "field": 20.0,
+                    "plot_domain": "frequency",
+                    "x_label": "Frequency (MHz)",
+                },
+            )
+            panel.plot_dataset(ds)
+
+            assert panel._x_max.value() <= 1.0
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_frequency_field_seed_never_frames_out_a_detected_line(
+        self, qapp: QApplication
+    ) -> None:
+        """Data evidence wins: a muonium-style line far above γ_μ·B stays framed."""
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            freqs = np.linspace(0.0, 500.0, 2048)
+            values = np.full_like(freqs, 1.0)
+            values[:3] = 3.0e5
+            # ~20 G TF: expected Larmor line at 0.27 MHz, but the muonium
+            # triplet lines sit near 140 MHz.
+            values[int(np.argmin(np.abs(freqs - 140.0)))] = 5.0e3
+            ds = MuonDataset(
+                time=freqs,
+                asymmetry=values,
+                error=np.zeros_like(freqs),
+                metadata={
+                    "run_number": 3692,
+                    "field": 20.0,
+                    "plot_domain": "frequency",
+                    "x_label": "Frequency (MHz)",
+                },
+            )
+            panel.plot_dataset(ds)
+
+            assert panel._x_max.value() >= 140.0
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_frequency_field_seed_skipped_on_relative_axis(self, qapp: QApplication) -> None:
+        """On the reference-relative axis the expected line sits at ~0 — no seed."""
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            ds = MuonDataset(
+                time=np.linspace(0.0, 100.0, 512),
+                asymmetry=np.ones(512),
+                error=np.zeros(512),
+                metadata={"run_number": 3693, "field": 2000.0, "plot_domain": "frequency"},
+            )
+            panel._current_dataset = ds
+            panel._current_datasets = [ds]
+            panel._frequency_axis_relative_to_reference = True
+            assert panel._frequency_field_upper_bound(ds.time) is None
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_frequency_field_seed_uses_highest_field_of_an_overlay(
+        self, qapp: QApplication
+    ) -> None:
+        """A field-series overlay frames to its highest member field."""
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            freqs = np.linspace(0.0, 1000.0, 512)
+
+            def _member(run: int, field: float) -> MuonDataset:
+                return MuonDataset(
+                    time=freqs,
+                    asymmetry=np.ones_like(freqs),
+                    error=np.zeros_like(freqs),
+                    metadata={"run_number": run, "field": field, "plot_domain": "frequency"},
+                )
+
+            members = [_member(3694, 500.0), _member(3695, 4000.0), _member(3696, 2000.0)]
+            panel._current_datasets = members
+            panel._current_dataset = members[-1]
+            upper = panel._frequency_field_upper_bound(freqs)
+            # 1.5 × γ_μ·B(4000 G) ≈ 81.3 MHz — the 4000 G member, not the last-plotted 2000 G one.
+            assert upper == pytest.approx(1.5 * 4000.0 * 0.01355342, rel=0.01)
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_frequency_high_tf_narrow_line_gets_centered_window(self, qapp: QApplication) -> None:
+        """A narrow line at high frequency is framed AROUND, not from zero.
+
+        Run-687 shape: a 0.2 MHz-wide line at 813 MHz is sub-pixel on the
+        from-zero [0, 1.2 GHz] wide view; the first paint must centre on it
+        (WiMDA's reference ± offsets view, derived from the data).
+        """
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            freqs = np.linspace(0.0, 1300.0, 130001)  # 0.01 MHz bins
+            hwhm = 0.1
+            values = 1.0 + 5.0e3 * hwhm**2 / (hwhm**2 + (freqs - 813.0) ** 2)
+            values[:5] = 3.0e5  # DC peak
+            ds = MuonDataset(
+                time=freqs,
+                asymmetry=values,
+                error=np.zeros_like(freqs),
+                metadata={
+                    "run_number": 3697,
+                    "plot_domain": "frequency",
+                    "x_label": "Frequency (MHz)",
+                },
+            )
+            panel.plot_dataset(ds)
+
+            x_min = panel._x_min.value()
+            x_max = panel._x_max.value()
+            # Centred: the lower edge is nowhere near zero, and the window
+            # brackets the line tightly enough to resolve it.
+            assert 700.0 < x_min < 760.0
+            assert 860.0 < x_max < 900.0
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_frequency_centered_window_bails_when_lines_spread(self, qapp: QApplication) -> None:
+        """Two well-separated lines must keep the wide framing — nothing framed out."""
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            freqs = np.linspace(0.0, 1300.0, 130001)
+            hwhm = 0.1
+            values = (
+                1.0
+                + 5.0e3 * hwhm**2 / (hwhm**2 + (freqs - 300.0) ** 2)
+                + 5.0e3 * hwhm**2 / (hwhm**2 + (freqs - 800.0) ** 2)
+            )
+            values[:5] = 3.0e5
+            ds = MuonDataset(
+                time=freqs,
+                asymmetry=values,
+                error=np.zeros_like(freqs),
+                metadata={"run_number": 3698, "plot_domain": "frequency"},
+            )
+            panel._current_dataset = ds
+            panel._current_datasets = [ds]
+            assert panel._frequency_centered_window(freqs, values) is None
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_frequency_centered_window_skips_relative_axis(self, qapp: QApplication) -> None:
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            freqs = np.linspace(0.0, 1300.0, 13001)
+            values = np.ones_like(freqs)
+            values[8130] = 5.0e3
+            panel._frequency_axis_relative_to_reference = True
+            assert panel._frequency_centered_window(freqs, values) is None
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_dataset_switch_redecimates_for_the_new_frame(self, qapp: QApplication) -> None:
+        """Switching datasets must not render one viewport behind.
+
+        The draw decimates against the CURRENT axes window, and a switched
+        dataset's reframe moves the axes only afterwards — without the deferred
+        viewport refresh, run B rendered only the points inside run A's old
+        window (its own line missing entirely), one view behind on every
+        switch. The refresh re-decimates for the window just applied.
+        """
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            freqs = np.linspace(0.0, 2000.0, 50001)  # > per-trace render budget
+            hwhm = 0.5
+
+            def _spectrum(run: int, line_mhz: float) -> MuonDataset:
+                values = 1.0 + 5.0e3 * hwhm**2 / (hwhm**2 + (freqs - line_mhz) ** 2)
+                values[:5] = 3.0e5
+                return MuonDataset(
+                    time=freqs,
+                    asymmetry=values,
+                    error=np.zeros_like(freqs),
+                    metadata={"run_number": run, "plot_domain": "frequency"},
+                )
+
+            def _drain() -> None:
+                for _ in range(5):
+                    qapp.processEvents()
+
+            def _line_covers_view() -> bool:
+                x_lo, x_hi = panel._ax.get_xlim()
+                lines = [
+                    line
+                    for line in panel._ax.lines
+                    if line.get_linestyle() == "-" and np.asarray(line.get_xdata()).size > 2
+                ]
+                assert lines, "no spectrum line drawn"
+                xd = np.asarray(lines[-1].get_xdata(), dtype=float)
+                return bool(xd.min() <= x_lo + 1.0 and xd.max() >= x_hi - 1.0)
+
+            panel.plot_dataset(_spectrum(1, 813.0))
+            _drain()
+            assert _line_covers_view()
+
+            panel.plot_dataset(_spectrum(2, 1400.0))
+            _drain()
+            # The axes reframed to run 2's line …
+            x_lo, x_hi = panel._ax.get_xlim()
+            assert x_lo < 1400.0 < x_hi
+            # … and the drawn data covers the NEW window, not run 1's old one.
+            assert _line_covers_view()
+        finally:
+            panel.close()
+            panel.deleteLater()
+
     def test_manual_x_max_field_overrides_auto_x_on_frequency_panel(
         self, qapp: QApplication
     ) -> None:
@@ -4456,6 +4749,213 @@ class TestPlotPanel:
         finally:
             panel.close()
             panel.deleteLater()
+
+
+class TestFrequencyLineRendering:
+    """Frequency spectra draw as lines + an error band, not errorbar dots.
+
+    Every reference muSR package (WiMDA, musrview, Mantid) draws a spectrum
+    as a line; the time-domain errorbar-dots idiom is a counts convention
+    that does not belong on a Fourier spectrum. These tests pin the new
+    rendering contract on the frequency panel and confirm the time-domain
+    panel is untouched.
+    """
+
+    def test_frequency_spectrum_renders_as_line_not_errorbar_dots(self, qapp: QApplication) -> None:
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            freqs = np.linspace(0.0, 100.0, 256)
+            values = np.abs(np.sin(freqs)) + 1.0
+            ds = MuonDataset(
+                time=freqs,
+                asymmetry=values,
+                error=np.zeros_like(freqs),
+                metadata={
+                    "run_number": 4001,
+                    "plot_domain": "frequency",
+                    "x_label": "Frequency (MHz)",
+                },
+            )
+            panel.plot_dataset(ds)
+
+            # No errorbar dot-marker containers at all.
+            assert len(panel._ax.containers) == 0
+            # At least one solid line carries the full spectrum (the >2-point
+            # filter excludes the 2-point y=0 reference line).
+            data_lines = [ln for ln in panel._ax.lines if len(ln.get_xdata()) > 2]
+            assert len(data_lines) >= 1
+            assert all(ln.get_linestyle() == "-" for ln in data_lines)
+            assert all(ln.get_marker() == "None" for ln in data_lines)
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_frequency_error_band_present_only_with_positive_errors(
+        self, qapp: QApplication
+    ) -> None:
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            freqs = np.linspace(0.0, 100.0, 256)
+            values = np.abs(np.sin(freqs)) + 1.0
+
+            ds_zero_err = MuonDataset(
+                time=freqs,
+                asymmetry=values,
+                error=np.zeros_like(freqs),
+                metadata={"run_number": 4002, "plot_domain": "frequency"},
+            )
+            panel.plot_dataset(ds_zero_err)
+            assert len(panel._ax.collections) == 0
+
+            ds_with_err = MuonDataset(
+                time=freqs,
+                asymmetry=values,
+                error=np.full_like(freqs, 0.05),
+                metadata={"run_number": 4003, "plot_domain": "frequency"},
+            )
+            panel.plot_dataset(ds_with_err)
+            from matplotlib.collections import PolyCollection
+
+            assert len(panel._ax.collections) == 1
+            assert isinstance(panel._ax.collections[0], PolyCollection)
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_frequency_expected_larmor_marker_present_with_field(self, qapp: QApplication) -> None:
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            freqs = np.linspace(0.0, 100.0, 256)
+            values = np.abs(np.sin(freqs)) + 1.0
+            ds = MuonDataset(
+                time=freqs,
+                asymmetry=values,
+                error=np.zeros_like(freqs),
+                metadata={"run_number": 4004, "field": 2000.0, "plot_domain": "frequency"},
+            )
+            panel.plot_dataset(ds)
+
+            expected_x = 2000.0 * panel._mhz_per_gauss()
+            dashed = [ln for ln in panel._ax.lines if ln.get_linestyle() == "--"]
+            assert len(dashed) == 1
+            assert dashed[0].get_xdata()[0] == pytest.approx(expected_x)
+            assert dashed[0].get_label() == "_nolegend_"
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_frequency_expected_larmor_marker_absent_without_field(
+        self, qapp: QApplication
+    ) -> None:
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            freqs = np.linspace(0.0, 100.0, 256)
+            values = np.abs(np.sin(freqs)) + 1.0
+            ds = MuonDataset(
+                time=freqs,
+                asymmetry=values,
+                error=np.zeros_like(freqs),
+                metadata={"run_number": 4005, "plot_domain": "frequency"},
+            )
+            panel.plot_dataset(ds)
+
+            dashed = [ln for ln in panel._ax.lines if ln.get_linestyle() == "--"]
+            assert dashed == []
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_frequency_expected_larmor_marker_absent_on_correlation_axis(
+        self, qapp: QApplication
+    ) -> None:
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            freqs = np.linspace(0.0, 100.0, 256)
+            values = np.abs(np.sin(freqs)) + 1.0
+            ds = MuonDataset(
+                time=freqs,
+                asymmetry=values,
+                error=np.zeros_like(freqs),
+                metadata={
+                    "run_number": 4006,
+                    "field": 2000.0,
+                    "plot_domain": "frequency",
+                    "correlation_axis": True,
+                    "x_label": "A_mu (MHz)",
+                },
+            )
+            panel.plot_dataset(ds)
+
+            assert panel._frequency_axis_is_correlation is True
+            dashed = [ln for ln in panel._ax.lines if ln.get_linestyle() == "--"]
+            assert dashed == []
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_frequency_expected_larmor_marker_absent_on_multi_run_overlay(
+        self, qapp: QApplication
+    ) -> None:
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            freqs = np.linspace(0.0, 100.0, 256)
+            values = np.abs(np.sin(freqs)) + 1.0
+            ds1 = MuonDataset(
+                time=freqs,
+                asymmetry=values,
+                error=np.zeros_like(freqs),
+                metadata={"run_number": 5001, "field": 2000.0, "plot_domain": "frequency"},
+            )
+            ds2 = MuonDataset(
+                time=freqs,
+                asymmetry=values * 1.1,
+                error=np.zeros_like(freqs),
+                metadata={"run_number": 5002, "field": 2200.0, "plot_domain": "frequency"},
+            )
+            panel.plot_datasets([ds1, ds2])
+
+            assert len(panel._ax.containers) == 0
+            dashed = [ln for ln in panel._ax.lines if ln.get_linestyle() == "--"]
+            assert dashed == []
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_time_domain_panel_still_renders_errorbar_dots(self, panel: PlotPanel) -> None:
+        """Regression pin: the time domain must remain exactly the dots idiom."""
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.linspace(0.0, 10.0, 100)
+        ds = MuonDataset(
+            time=t,
+            asymmetry=0.2 * np.exp(-0.5 * t),
+            error=np.full_like(t, 0.01),
+            metadata={"run_number": 4100},
+        )
+        panel.plot_dataset(ds)
+
+        assert len(panel._ax.containers) >= 1
+        marker_lines = [ln for ln in panel._ax.lines if ln.get_marker() == "."]
+        assert len(marker_lines) >= 1
 
 
 class TestDecimationStrategies:

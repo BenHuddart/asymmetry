@@ -256,3 +256,38 @@ def test_restore_state_tolerates_absent_moments():
     panel = FourierPanel()
     panel.restore_state({})  # no "moments" key — must not raise
     assert panel.moments_widget.cutoff_fraction() == 0.0
+
+
+# ── apodisation caveat (integrity: filtered widths are not the physics) ──────
+
+
+def test_apodised_spectrum_shows_moments_caveat(window):
+    datasets = _activate_fft_spectrum(window, [61], display="phase_corrected")
+    datasets[0].metadata["fourier_window"] = "lorentzian"
+    datasets[0].metadata["fourier_filter_time_constant_us"] = 1.8
+    window._refresh_spectral_moments()
+
+    widget = window._fourier_panel.moments_widget
+    assert widget.is_eligible() is True
+    assert not widget._caveat_label.isHidden()
+    assert "lorentzian" in widget._caveat_label.text()
+    assert "1.8" in widget._caveat_label.text()
+    assert "broadening" in widget._caveat_label.text()
+
+
+def test_unapodised_spectrum_shows_no_caveat(window):
+    datasets = _activate_fft_spectrum(window, [62], display="phase_corrected")
+    datasets[0].metadata["fourier_window"] = "none"
+    window._refresh_spectral_moments()
+
+    widget = window._fourier_panel.moments_widget
+    assert widget.is_eligible() is True
+    assert widget._caveat_label.isHidden()
+
+
+def test_legacy_spectrum_without_window_metadata_shows_no_caveat(window):
+    _activate_fft_spectrum(window, [63], display="phase_corrected")
+    window._refresh_spectral_moments()
+
+    widget = window._fourier_panel.moments_widget
+    assert widget._caveat_label.isHidden()

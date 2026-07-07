@@ -446,6 +446,25 @@ def _fit_summary(result) -> dict:
         return {}
 
 
+def dataset_error_oversampling(dataset) -> float:
+    """The statistical oversampling of *dataset*'s samples — 1.0 unless padded.
+
+    Zero-padded FFT spectra stamp their padding factor into
+    ``metadata["fourier_padding"]``; their samples are sinc-interpolated and
+    correlated, so fits must apply the effective-sample-size correction (the
+    engine's ``error_oversampling``). Time-domain datasets (no stamp) and
+    unpadded spectra return 1.0, leaving every existing fit path untouched.
+    """
+    metadata = getattr(dataset, "metadata", None)
+    if not isinstance(metadata, dict):
+        return 1.0
+    try:
+        padding = float(metadata.get("fourier_padding", 1) or 1)
+    except (TypeError, ValueError):
+        return 1.0
+    return padding if padding > 1.0 else 1.0
+
+
 def _fit_range_provenance_text(min_spin, max_spin, unit_label) -> str | None:
     """Format the fit range as a provenance string, or ``None`` if degenerate.
 

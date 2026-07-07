@@ -41,6 +41,7 @@ rather than asserted.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -337,6 +338,7 @@ def spectrum_moments(
     seed: int = 0,
     unit: str | None = None,
     mode: str | None = None,
+    error_oversampling: float = 1.0,
 ) -> SpectrumMoments:
     """Return the moment set of a spectrum over a window above an amplitude cutoff.
 
@@ -366,6 +368,21 @@ def spectrum_moments(
         reproducibility).
     unit, mode:
         Provenance only — the display unit and spectrum mode, stored in ``recipe``.
+    error_oversampling:
+        Correction for correlated samples, keyword-only, default ``1.0`` (no
+        correction). A zero-padded FFT spectrum is sinc-interpolated — padding by
+        a factor ``s`` densifies the sampled points without adding independent
+        information, so only ``~1/s`` of the points are statistically
+        independent (the same correction applied to fits; see
+        :meth:`asymmetry.core.fitting.engine.FitEngine.fit`). The per-point
+        ``errors`` already describe the noise on the correlated samples
+        correctly, so the moment *values* need no change, but the bootstrap and
+        propagated *uncertainties* on the moments are correspondingly
+        underestimated by ``~1/√s``: when ``error_oversampling > 1`` every
+        finite ``*_err`` field is scaled by ``√error_oversampling`` before it is
+        returned. Pass the spectrum's zero-padding factor
+        (``metadata["fourier_padding"]``); ``1.0`` for an un-padded or
+        time-domain quantity.
     """
     if uncertainty not in UNCERTAINTY_METHODS:
         raise ValueError(f"uncertainty must be one of {UNCERTAINTY_METHODS}, got {uncertainty!r}")
@@ -425,6 +442,15 @@ def spectrum_moments(
             errs = _bootstrap_errors(xa, ya, sig_safe, cutoff_fraction, n_bootstrap, seed)
         else:
             errs = _propagate_errors(xa, ya, sig_safe, cutoff_fraction, base)
+
+    if error_oversampling > 1.0:
+        # Correlated (zero-padded) samples: the noise model above draws
+        # independent per-point perturbations, so its uncertainties are too
+        # small by the same ~1/√s the fit-error correction accounts for.
+        scale = math.sqrt(float(error_oversampling))
+        errs = {
+            key: (value * scale if np.isfinite(value) else value) for key, value in errs.items()
+        }
 
     return SpectrumMoments(
         b_pk=base["b_pk"],

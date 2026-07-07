@@ -61,6 +61,21 @@ Tighten the range toward the main line and the skewness and :math:`\beta` collap
 toward zero as the tail is excluded; raise the cutoff and the width narrows as the
 wings drop out. There is no single correct window — report the one you used.
 
+A caveat on apodised spectra
+----------------------------
+
+Apodisation broadens every line it smooths, so moments read from a filtered FFT
+carry the filter as a systematic: the widths and skewness include the filter's
+broadening, not just the sample's. When the active spectrum was computed with a
+Lorentzian or Gaussian filter, the moments readout shows an amber caveat —
+
+   *Apodised spectrum (lorentzian, τ = 1.8 µs): widths and skewness include the
+   filter's broadening.*
+
+— so a filtered reading is never silently mistaken for the unfiltered physics.
+For quantitative widths, recompute the FFT with apodisation ``None`` (or
+deconvolve the known filter contribution when reporting).
+
 A caveat on :math:`B_{\mathrm{pk}}`
 -----------------------------------
 
@@ -85,8 +100,12 @@ the spectrum carries per-point errors (the averaged-FFT error, or the MaxEnt err
 estimate), each moment is given a **bootstrap** uncertainty — the spectrum is
 resampled within its noise many times and the moments recomputed, so the error
 propagates correctly through the nonlinear peak, skewness and :math:`\beta`. A
-value reads as :math:`B_{\mathrm{rms}} = 18.4(3)`. Run-to-run scatter across a
-temperature scan is then handled, as for any series, by the trend layer.
+value reads as :math:`B_{\mathrm{rms}} = 18.4(3)`. For a zero-padded FFT the
+samples are sinc-interpolated and correlated (only :math:`1/n` of them are
+independent at pad factor :math:`n`), so moment uncertainties are scaled by
+:math:`\sqrt{n}` — the same effective-sample-size correction the
+frequency-domain fits apply. Run-to-run scatter across a temperature scan is
+then handled, as for any series, by the trend layer.
 
 Which spectra qualify
 ---------------------

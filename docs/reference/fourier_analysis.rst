@@ -135,6 +135,37 @@ The Gaussian mode uses the same WiMDA-style softened start with squared
 arguments. ``Subtract average signal`` is applied before the filter, matching
 WiMDA's default preprocessing path.
 
+Matched-filter suggestion
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The Apodisation section's ``Suggest from data`` button estimates the matched
+filter for the spectrum's dominant line and **fills the fields without
+applying anything**: it selects the filter mode, writes the matched
+``Filter τ (µs)`` (shown in the green auto-filled colour until you edit it),
+and reports what it did in the status line —
+
+   *Suggested Lorentzian τ = 2 µs, matched to the 2.7 MHz line — maximises
+   peak S/N, ≈2× its apparent width.*
+
+The out-of-date banner then flags the displayed spectrum, and your explicit
+``Compute FFT`` applies the filter. Nothing is ever auto-applied: a matched
+filter maximises the line's peak signal-to-noise at the cost of roughly
+doubling its apparent width, which is a trade you should make knowingly —
+never measure linewidths or moments from a spectrum filtered this way without
+accounting for it (the spectral-moments readout shows a caveat on apodised
+spectra for exactly this reason).
+
+The estimate is made from the **unapodised** power spectrum, whatever the
+current filter setting: the dominant line inside the field-narrowed search
+window (the same window automatic phase estimation uses) is measured at half
+maximum, and the matched time constant follows from the line shape —
+``τ = 1/(πΓ)`` for a Lorentzian of power-spectrum FWHM ``Γ``, with the
+equivalent (Dawson-corrected) relation for a Gaussian. If the ``Gaussian``
+filter mode is selected the match is Gaussian; otherwise Lorentzian. When no
+line clears the noise baseline, or the dominant line is resolution-limited
+(its width is the transform's, not the sample's), the status reads *"No clear
+line to match — leave apodisation off."* and nothing is filled.
+
 How the GUI FFT is built
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -683,6 +714,33 @@ Runs that cannot compute — no detector groups, or a transform that fails — a
 skipped and reported in the status line: *"Overlaying <n> runs; <m> selected
 run(s) could not be computed — check their detector grouping and the log."*
 
+The first view is also **framed to where the physics is**. A narrow line at
+high frequency — a 6 T Larmor line is ~13 G wide at 813 MHz — is framed
+*around* (the line centred, the window a few dozen linewidths wide: WiMDA's
+reference-field ± offsets view, derived from the data), because on a from-zero
+axis it would be sub-pixel. Otherwise the plot frames from the data's lower
+edge up to the highest-frequency line that clears the local noise baseline,
+and — when the run carries an applied field — at least the expected Larmor
+region γ\ :sub:`μ`\ ·B. The widest need wins: a second real line (AFM
+satellites, muonium triplet lines, muoniated-radical pairs) is never framed
+out, and a weak or low-field line that the peak detection cannot see still
+gets a sensible window instead of the full Nyquist span. Spectra also default
+to a **zero-pad factor of 4**, so line shapes arrive sinc-interpolated rather
+than 2–3 bins wide; this deliberately diverges from WiMDA's no-padding default
+because the spectrum is now shown unbidden, and it changes nothing
+quantitative — zero padding adds no information, only smoother rendering.
+Padded points are strongly correlated (only 1/*n* of them are statistically
+independent for a zero-pad factor *n*), so frequency-domain fits and moment
+uncertainties apply the **effective-sample-size correction** automatically:
+degrees of freedom count the independent samples, χ² is scaled to match, and
+parameter/moment uncertainties grow by √*n*. Fit results state the applied
+correction in their advisory row. (WiMDA applies the degrees-of-freedom part
+of this correction — ``dof := n div zpad`` — Asymmetry additionally corrects
+χ² and the uncertainties for full consistency.) With the statistics handled,
+the zero-pad factor is purely a display-density knob; the factor now goes up
+to 64. All of these are first-paint seeds only: your own zoom and settings
+are never overridden.
+
 Auto-compute needs detector groups to work from. A run with no groups (or with
 every group excluded), or one whose transform genuinely fails, cannot seed a
 recipe and instead shows a **centred prompt over the Frequency-domain plot** —
@@ -815,7 +873,15 @@ Frequency-domain plot behaviour
 -------------------------------
 
 FFT output is shown on the dedicated ``Frequency Domain`` tab in the central
-plot workspace. Each loaded run keeps its own frequency-domain view state in
+plot workspace. Spectra draw as **solid lines** — the convention of every
+reference muSR package — with a shaded ±1σ band when the spectrum carries
+per-point errors (enable ``Average errors`` to compute them), rather than the
+time domain's error-bar points. When the run's applied field is known, a
+subtle dashed marker sits at the expected Larmor position γ\ :sub:`μ`\ ·B on
+the single-run view, answering "am I looking at the right place?" at a
+glance; it is omitted on multi-run overlays and the correlation axis, and it
+never appears in GLE/PDF exports (those draw from the data, not the screen).
+Each loaded run keeps its own frequency-domain view state in
 the session. Opening that tab for a run that has never been transformed
 computes its spectrum automatically (see `GUI Fourier workflow`_); a run whose
 spectrum cannot be auto-computed — no detector groups, or a failed transform —

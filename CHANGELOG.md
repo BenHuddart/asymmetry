@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The Fourier panel can suggest a matched apodisation filter from the
+  data.** The Apodisation section's new **Suggest from data** button measures
+  the dominant line of the (unapodised) spectrum inside the field-narrowed
+  search window and fills the matched filter — mode and τ, shown in the green
+  auto-filled colour — without applying anything: the out-of-date banner
+  flags the spectrum and an explicit **Compute FFT** applies the filter. A
+  matched filter maximises the line's peak S/N at the cost of ≈2× its
+  apparent width, so it is never auto-applied; when no line clears the noise
+  baseline (or the dominant line is resolution-limited) the panel says *"No
+  clear line to match — leave apodisation off."* Because filtered widths are
+  a systematic, the spectral-moments readout now shows a caveat whenever the
+  active spectrum was computed with apodisation on (each FFT records its
+  window and τ in the spectrum metadata).
+
 - **The Fourier panel now flags a displayed FFT that is out of sync with the
   current settings.** Editing any FFT parameter (display mode, apodisation,
   zero-pad, groups, phases, conditioning, exclusions), or changing the
@@ -41,6 +55,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Frequency-domain spectra draw as lines with an error band, and the
+  statistics behind zero padding are now handled for you.** FFT and MaxEnt
+  spectra render as solid lines (the convention of every reference muSR
+  package) instead of the time-domain errorbar-dots idiom, with a shaded ±1σ
+  band when the spectrum carries per-point errors, and a subtle dashed
+  marker at the expected Larmor position γ_μ·B when the run's field is
+  known (single-run view; absent on the correlation axis and in GLE/PDF
+  exports, which draw from the data, not the screen). Because zero-padded
+  samples are sinc-interpolated and correlated, frequency-domain fits and
+  spectral-moment uncertainties now apply the effective-sample-size
+  correction automatically — degrees of freedom count the independent
+  samples, χ² is scaled to match, and uncertainties grow by √pad; fit
+  results state the applied correction in their advisory row. (WiMDA applies
+  the dof part of this correction; Asymmetry additionally corrects χ² and
+  the uncertainties for consistency.) The time-domain plot is unchanged.
+
 - **PSI HAL-9500's default grouping preset is now Per-octant, not
   Longitudinal.** High-field (TF) work on HAL-9500 — the AFM-transition
   corpus and similar — is done per-octant in practice: each azimuthal wedge
@@ -51,18 +81,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ``Transverse (opposed pairs)`` preset.
 
 - **The first FFT view is framed to where the physics is, with interpolated
-  line shapes.** The Frequency-domain plot's initial window now considers the
-  run's applied field as well as the data: it frames the highest detected
-  line *or* the expected Larmor region γ_μ·B, whichever is wider — so a weak
-  or low-field line the peak detection cannot see still gets a sensible
-  window instead of the full Nyquist span, while muonium/radical lines far
-  above γ_μ·B are never framed out. A multi-run overlay frames to its highest
-  member field. (WiMDA frames its FFT plot around the reference field the
-  same way.) The default zero-pad factor is now **4** (previously 1), so
-  auto-shown spectra arrive with sinc-interpolated rather than 2–3-bin-wide
-  peaks — a deliberate divergence from WiMDA's no-padding default, cosmetic
-  only; saved projects and recipes keep the padding they were saved with.
-  Both are first-paint seeds: manual zoom and settings always win.
+  line shapes.** A narrow high-frequency line (a 6 T Larmor line, ~13 G wide
+  at 813 MHz) is framed *around* — centred, a few dozen linewidths wide —
+  because a from-zero axis renders it sub-pixel. Otherwise the initial window
+  frames the highest detected line *or* the expected Larmor region γ_μ·B,
+  whichever is wider — so a weak or low-field line the peak detection cannot
+  see still gets a sensible window instead of the full Nyquist span, while
+  second lines (AFM satellites, muonium/radical lines) are never framed out.
+  Line detection measures prominence against a local (block-median) baseline,
+  so the coloured noise pedestal of a finely-binned TDC spectrum cannot
+  masquerade as signal. A multi-run overlay frames to its highest member
+  field. (WiMDA frames its FFT plot around the reference field the same
+  way.) The default zero-pad factor is now **4** (previously 1) and the
+  factor now goes up to 64 (previously 16): padding is pure sinc
+  interpolation — display-smoothness only — but note that padded points are
+  strongly correlated, so heavily over-padded spectra fed to frequency-domain
+  fits or moment error estimates yield artificially small uncertainties;
+  that is why the default stays modest. Saved projects and recipes keep the
+  padding they were saved with. All are first-paint seeds: manual zoom and
+  settings always win. An auto-computed spectrum now also reports "Computed
+  FFT for run *N*." in the status line instead of leaving a stale
+  "No FFT computed" message under a freshly rendered spectrum.
 
 - **The FFT tab now computes on view instead of waiting for a click.**
   Opening the **Frequency Domain** tab — or switching runs while on it — for a
@@ -88,6 +127,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   restored recipes lazily without creating new ones.
 
 ### Fixed
+
+- **Switching runs no longer renders the plot one view behind.** The draw
+  decimates points for the current view window, but a switched dataset's
+  reframe moved the axes only afterwards — so the new run showed only the
+  points that fell inside the previous run's window (its own line could be
+  missing entirely), and switching back inverted the mismatch. Most visible
+  when browsing runs at different fields on the frequency view. The plot now
+  re-decimates for the window it just framed.
+
+- **HiFi high-TF TDC FFTs are no longer silently truncated to nanoseconds.**
+  The FFT window's good-statistics tail cap compared raw per-bin counts to
+  the raw peak bin. On finely-binned TDC histograms (24 ps bins with a
+  prompt spike at t0 that dwarfs the per-bin decay counts) every bin in the
+  run sat below 1 % of the spike, so the cap fired at the first bin after it
+  and the transform saw ~40 ns of a 10 µs run — burying spectra under the
+  tiny window's sinc ringing and reporting linewidths that were the window's
+  resolution, not the sample's (corpus run 687: a 1750 G-wide artefact where
+  the true line is 13.5 G). The cap now compares 100 ns block averages, which
+  track the decay envelope, dilute the prompt spike, and leave 16 ns
+  pulsed-source histograms with their previous behaviour.
 
 - **The Fourier panel's spinboxes no longer clip their digits.** The
   zero-pad factor, Burg pole-scan, and correlation-order spins were capped at

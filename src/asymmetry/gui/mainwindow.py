@@ -144,6 +144,7 @@ from asymmetry.core.fitting.parameter_models import (
 )
 from asymmetry.core.fitting.parameters import ParameterSet
 from asymmetry.core.fourier import (
+    ApodisationSuggestion,
     GroupSpectrumConfig,
     build_group_signal_dataset,
     canonical_fourier_display_mode,
@@ -154,6 +155,7 @@ from asymmetry.core.fourier import (
     fourier_display_ylabel,
     fourier_grouping_digest,
     fourier_mode_uses_phase_correction,
+    suggest_matched_apodisation,
 )
 from asymmetry.core.fourier.moments import moments_trend_row, spectrum_moments
 from asymmetry.core.fourier.units import FieldUnit, convert
@@ -356,6 +358,14 @@ _VIEW_FROM_WIDGET = object()
 #: threshold corresponds to ≈4.6 muon lifetimes for an exponential pulsed-source
 #: decay; a continuous source never drops this low, so no tail is excluded there.
 _FOURIER_TAIL_COUNTS_FRACTION = 0.01
+
+#: Block length (µs) over which detector counts are averaged before the tail
+#: comparison above. Per-raw-bin comparison is meaningless on finely-binned TDC
+#: histograms (HiFi high-TF: 24 ps bins, a prompt spike at t0) — see
+#: :meth:`MainWindow._fourier_good_statistics_t_max`. 100 ns is ~6 bins on a
+#: 16 ns pulsed-source histogram (behaviour preserved) and ~4000 bins on a TDC
+#: one (envelope tracked, spike diluted).
+_FOURIER_TAIL_BLOCK_US = 0.1
 
 #: Overlay auto-compute wave size. A multi-run overlay computes its missing
 #: members' FFTs in batches of this many; each completed wave re-renders the
@@ -636,6 +646,7 @@ class MainWindow(QMainWindow):
         self._project_save_active = False  # True while a background save is writing
         self._fourier_compute_active = False  # True while a background FFT runs
         self._fourier_phase_estimate_active = False  # True while auto-phase runs
+        self._fourier_apodisation_suggest_active = False  # True while apodisation suggestion runs
         # In-flight (run, rep) lazy-FFT recompute keys: coalesce duplicate
         # requests and, via the _frequency_recompute_active property, drive the
         # overlay/idle state. _frequency_recompute_limits keeps the latest
@@ -1915,6 +1926,10 @@ class MainWindow(QMainWindow):
             )
         if hasattr(self._fourier_panel, "_auto_phase_btn"):
             self._fourier_panel._auto_phase_btn.clicked.connect(self._on_fill_fourier_phases)
+        if hasattr(self._fourier_panel, "_suggest_apodisation_btn"):
+            self._fourier_panel._suggest_apodisation_btn.clicked.connect(
+                self._on_suggest_apodisation
+            )
         if hasattr(self._fourier_panel, "settings_changed"):
             self._fourier_panel.settings_changed.connect(self._refresh_fourier_staleness)
         if hasattr(self._maxent_panel, "_cycle_one_btn"):
@@ -6871,6 +6886,14 @@ class MainWindow(QMainWindow):
             self._render_frequency_spectra(
                 run_number, rep_type, resolved, preserved_x_limits, preserved_y_limits
             )
+            if resolved:
+                # An auto/lazy compute otherwise leaves whatever footer status
+                # preceded it (often the hidden-sync "No FFT computed for run
+                # N.") sitting under a freshly rendered spectrum.
+                self._set_fourier_status(
+                    f"Computed {self._frequency_status_name(rep_type)} for run {run_number}.",
+                    success=True,
+                )
         self._refresh_fourier_staleness()
 
     def _on_frequency_recompute_error(
@@ -7038,10 +7061,35 @@ class MainWindow(QMainWindow):
             self._frequency_plot_panel.clear_moments_overlay()
             return
         active.set_eligible(True)
+        if hasattr(active, "set_lineshape_caveat"):
+            active.set_lineshape_caveat(self._moments_apodisation_caveat(dataset))
         freq_mhz = accessor[0]
         if freq_mhz.size:
             active.set_spectrum_bounds(float(np.min(freq_mhz)), float(np.max(freq_mhz)))
         self._compute_and_show_moments(active, accessor=accessor)
+
+    @staticmethod
+    def _moments_apodisation_caveat(dataset: MuonDataset | None) -> str | None:
+        """A moments caveat for an apodised spectrum, or ``None`` when unfiltered.
+
+        Apodisation broadens every line it smooths, so moments read from a
+        filtered spectrum carry the filter as a systematic — the caveat keeps
+        that from being silently mistaken for the physics. Keyed off the
+        ``fourier_window`` metadata the spectrum core stamps at compute time;
+        spectra without the key (MaxEnt, legacy caches) show no caveat.
+        """
+        metadata = getattr(dataset, "metadata", None)
+        if not isinstance(metadata, dict):
+            return None
+        window_name = str(metadata.get("fourier_window") or "none").strip().lower()
+        if window_name == "none":
+            return None
+        tau = metadata.get("fourier_filter_time_constant_us")
+        tau_text = f", τ = {float(tau):g} µs" if isinstance(tau, (int, float)) else ""
+        return (
+            f"Apodised spectrum ({window_name}{tau_text}): widths and skewness "
+            "include the filter's broadening."
+        )
 
     def _compute_moments_for(self, widget, freq_mhz, amplitude, errors):
         """Run the core on one spectrum using *widget*'s recipe; return moments."""
@@ -7063,7 +7111,29 @@ class MainWindow(QMainWindow):
             uncertainty=method,
             unit=unit.value,
             mode=self._active_frequency_rep_type().value,
+            error_oversampling=self._active_spectrum_error_oversampling(),
         )
+
+    def _active_spectrum_error_oversampling(self) -> float:
+        """The displayed spectrum's zero-padding factor, 1.0 when unpadded.
+
+        Zero-padded samples are sinc-interpolated and correlated, so moment
+        uncertainties need the effective-sample-size correction — the same
+        ``error_oversampling`` contract the fit engine applies (a padded FFT
+        stamps ``fourier_padding`` into its metadata; MaxEnt spectra carry no
+        stamp and are untouched).
+        """
+        dataset = None
+        if hasattr(self._frequency_plot_panel, "current_frequency_dataset"):
+            dataset = self._frequency_plot_panel.current_frequency_dataset()
+        metadata = getattr(dataset, "metadata", None)
+        if not isinstance(metadata, dict):
+            return 1.0
+        try:
+            padding = float(metadata.get("fourier_padding", 1) or 1)
+        except (TypeError, ValueError):
+            return 1.0
+        return padding if padding > 1.0 else 1.0
 
     def _compute_and_show_moments(self, widget, accessor=None) -> None:
         """Compute moments for the active spectrum and refresh readout + overlay.
@@ -7428,10 +7498,23 @@ class MainWindow(QMainWindow):
     def _fourier_good_statistics_t_max(self, dataset: MuonDataset) -> float | None:
         """Return the time (µs) past which counts are too sparse for a useful FFT.
 
-        Sums the per-bin detector counts and returns the first time after their
-        peak where they fall below :data:`_FOURIER_TAIL_COUNTS_FRACTION` of the
-        peak. Returns ``None`` when the run has no histograms or the counts never
-        decay that far (e.g. a continuous source), so no tail is excluded there.
+        Sums the per-bin detector counts, block-averages them over
+        :data:`_FOURIER_TAIL_BLOCK_US`, and returns the first block time after
+        the peak block where the mean falls below
+        :data:`_FOURIER_TAIL_COUNTS_FRACTION` of it. Returns ``None`` when the
+        run has no histograms or the counts never decay that far (e.g. a
+        continuous source), so no tail is excluded there.
+
+        The block average is load-bearing, not smoothing for taste: comparing
+        RAW bins against the raw peak bin silently truncated every HiFi
+        high-TF TDC FFT to nanoseconds. Those histograms have 24 ps bins and a
+        prompt spike at t0 that dwarfs the per-bin decay counts, so every bin
+        in the run sat below 1 % of the spike and the window collapsed to the
+        first bin after it — 42 ns for corpus run 687, whose spectrum then
+        showed the 42 ns window's 23.7 MHz sinc lobes as ~0.18 T ringing. The
+        block mean tracks the decay envelope instead: the spike dilutes into
+        its block, and 16 ns pulsed-source histograms (a handful of bins per
+        block) keep their previous behaviour.
         """
         run = getattr(dataset, "run", None)
         histograms = list(getattr(run, "histograms", None) or [])
@@ -7447,14 +7530,23 @@ class MainWindow(QMainWindow):
             return None
         if counts.size == 0 or counts.size != time_axis.size:
             return None
-        peak_index = int(np.argmax(counts))
-        peak = float(counts[peak_index])
+        bin_width = float(np.median(np.diff(time_axis))) if time_axis.size > 1 else 0.0
+        if not np.isfinite(bin_width) or bin_width <= 0.0:
+            return None
+        block = max(1, int(round(_FOURIER_TAIL_BLOCK_US / bin_width)))
+        usable = (counts.size // block) * block
+        if usable == 0:
+            return None
+        block_counts = counts[:usable].reshape(-1, block).mean(axis=1)
+        block_times = time_axis[:usable:block]
+        peak_index = int(np.argmax(block_counts))
+        peak = float(block_counts[peak_index])
         if peak <= 0.0:
             return None
-        spent = np.flatnonzero(counts[peak_index:] < peak * _FOURIER_TAIL_COUNTS_FRACTION)
+        spent = np.flatnonzero(block_counts[peak_index:] < peak * _FOURIER_TAIL_COUNTS_FRACTION)
         if spent.size == 0:
             return None
-        return float(time_axis[peak_index + int(spent[0])])
+        return float(block_times[peak_index + int(spent[0])])
 
     def _fourier_time_window_excluding_tail(
         self,
@@ -7531,6 +7623,113 @@ class MainWindow(QMainWindow):
         self._clear_status_state_if_idle()
         self._set_fourier_status(f"Phase estimation failed: {message}")
         self._log_panel.log(f"Phase estimation failed: {message}")
+
+    def _compute_apodisation_suggestion(
+        self,
+        dataset: MuonDataset,
+        state: dict,
+        selected_group_ids: list[int],
+        plot_window,
+    ) -> ApodisationSuggestion | None:
+        """Estimate the matched-filter apodisation for one run (off-thread; pure).
+
+        Transforms the UNAPODISED spectrum (``window="none"``) regardless of the
+        panel's own filter-mode setting — the estimator's contract requires the
+        unfiltered line shape, not an already-filtered one. Takes ``dataset``,
+        ``selected_group_ids``, and ``plot_window`` explicitly (rather than
+        reading live widgets) so it is safe to run on a worker thread.
+        """
+        if dataset.run is None or not selected_group_ids:
+            return None
+        prepared_histograms, reference_t0_bin = self._precompute_group_fourier_inputs(dataset)
+        # Shared so a reference_run background loads + deadtime-prepares once
+        # across the group sweep, not once per group.
+        background_reference_cache: dict = {}
+        magnitudes: list[np.ndarray] = []
+        freqs: np.ndarray | None = None
+        for group_id in selected_group_ids:
+            group_dataset = build_group_signal_dataset(
+                dataset.run,
+                group_id,
+                center_signal=False,
+                reference_t0_bin=reference_t0_bin,
+                prepared_histograms=prepared_histograms,
+                background_reference_cache=background_reference_cache,
+            )
+            group_freqs, spectrum = fft_complex_asymmetry(
+                group_dataset,
+                window="none",
+                padding_factor=max(4, int(state.get("padding", 1))),
+                phase_degrees=0.0,
+                t0_offset_us=0.0,
+                subtract_average_signal=True,
+            )
+            freqs = group_freqs
+            magnitudes.append(np.abs(spectrum))
+        if freqs is None or not magnitudes:
+            return None
+        averaged_magnitude = np.mean(np.stack(magnitudes, axis=0), axis=0)
+        min_frequency, max_frequency = self._resolve_fourier_phase_window_mhz(
+            dataset, freqs, plot_window=plot_window
+        )
+        window_kind = "gaussian" if str(state.get("window")) == "gaussian" else "lorentzian"
+        return suggest_matched_apodisation(
+            freqs,
+            averaged_magnitude,
+            window=window_kind,
+            min_frequency_mhz=min_frequency,
+            max_frequency_mhz=max_frequency,
+        )
+
+    def _on_suggest_apodisation(self) -> None:
+        """Suggest a matched apodisation filter from the run's dominant line."""
+        if self._current_dataset is None:
+            self._set_fourier_status("Select a run before suggesting apodisation.")
+            return
+        if self._fourier_apodisation_suggest_active:
+            self._set_fourier_status("Apodisation suggestion is already running.")
+            return
+        # Snapshot launch-time context on the GUI thread; the estimation (an
+        # unapodised FFT per group) runs on the shared TaskRunner.
+        state = self._fourier_panel.get_state()
+        dataset = self._current_dataset
+        selected_group_ids = self._selected_fourier_group_ids(dataset)
+        plot_window = self._capture_fourier_plot_window(dataset)
+        self._fourier_apodisation_suggest_active = True
+        self._set_status_state("Suggesting apodisation…")
+        self._tasks.start(
+            lambda w, dataset=dataset, state=state, selected_group_ids=selected_group_ids, plot_window=plot_window: (
+                self._compute_apodisation_suggestion(
+                    dataset, state, selected_group_ids, plot_window
+                )
+            ),
+            on_finished=self._on_apodisation_suggest_finished,
+            on_error=self._on_apodisation_suggest_error,
+        )
+
+    def _on_apodisation_suggest_finished(self, suggestion: ApodisationSuggestion | None) -> None:
+        """Apply a suggested matched apodisation to the panel (GUI thread)."""
+        self._fourier_apodisation_suggest_active = False
+        self._clear_status_state_if_idle()
+        if suggestion is None:
+            self._set_fourier_status("No clear line to match — leave apodisation off.")
+            return
+        self._fourier_panel.set_apodisation_suggestion(
+            suggestion.window, suggestion.time_constant_us
+        )
+        self._set_fourier_status(
+            f"Suggested {suggestion.window.capitalize()} τ = {suggestion.time_constant_us:.3g} µs, "
+            f"matched to the {suggestion.line_frequency_mhz:.3g} MHz line — maximises peak S/N, "
+            "≈2× its apparent width.",
+            success=True,
+        )
+
+    def _on_apodisation_suggest_error(self, message: str) -> None:
+        """Report a failed background apodisation suggestion (GUI thread)."""
+        self._fourier_apodisation_suggest_active = False
+        self._clear_status_state_if_idle()
+        self._set_fourier_status(f"Apodisation suggestion failed: {message}")
+        self._log_panel.log(f"Apodisation suggestion failed: {message}")
 
     def _on_compute_fourier(self) -> None:
         """Compute one averaged grouped FFT spectrum for the active run.
@@ -13129,7 +13328,7 @@ class MainWindow(QMainWindow):
     def _clear_status_state_if_idle(self) -> None:
         """Reset the state dot to Idle only when no background task remains.
 
-        The four feature flags share one status indicator, so a task that
+        The feature flags below share one status indicator, so a task that
         finishes while another is still running must not stamp "Idle" over the
         other's "Computing …" state.
         """
@@ -13137,6 +13336,7 @@ class MainWindow(QMainWindow):
             self._maxent_active
             or self._fourier_compute_active
             or self._fourier_phase_estimate_active
+            or self._fourier_apodisation_suggest_active
             or self._frequency_recompute_active
             or self._project_save_active
         ):

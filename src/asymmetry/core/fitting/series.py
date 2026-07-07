@@ -261,6 +261,7 @@ def fit_asymmetry_series(
     order_key: dict[int, float] | None = None,
     amplitude_param: str | None = None,
     frequency_param: str | None = None,
+    error_oversampling: float = 1.0,
 ) -> AsymmetrySeriesResult:
     """Fit a block-separable F-B asymmetry batch with optional robust chaining.
 
@@ -270,6 +271,13 @@ def fit_asymmetry_series(
     warm-starts from the previous good run and a converged-but-spurious run is
     reseeded from the good-run trend and refit. ``"auto"`` resolves to one of those via
     :func:`recommend_series_seeding` over the ``order_key``.
+
+    error_oversampling
+        Correlated-samples correction forwarded unchanged to every per-run
+        :meth:`FitEngine.fit` call; see that method's docstring for the exact
+        relations (χ²/dof/uncertainty scaling for a zero-padded FFT spectrum's
+        WiMDA-precedented effective-sample-size correction). Default ``1.0``
+        (no correction).
     """
     engine = fit_engine or FitEngine()
     if not datasets:
@@ -316,6 +324,7 @@ def fit_asymmetry_series(
             minos=minos,
             cancel_callback=cancel_callback,
             cost_factory=cost_factory,
+            error_oversampling=error_oversampling,
         )
 
     results: dict[int, FitResult] = {}

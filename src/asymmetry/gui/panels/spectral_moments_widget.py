@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
 
 from asymmetry.core.fourier.moments import SpectrumMoments
 from asymmetry.core.fourier.units import FieldUnit, convert
+from asymmetry.gui.styles.widgets import warning_html
 from asymmetry.gui.widgets.axis_limits import FloatLimitField
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox
 
@@ -254,6 +255,14 @@ class SpectralMomentsWidget(QGroupBox):
         self._status_label.setWordWrap(True)
         outer.addWidget(self._status_label)
 
+        # Non-blocking caveat about the spectrum the moments are read from
+        # (e.g. apodisation broadening). Distinct from _status_label, which is
+        # the ineligible-state explainer: a caveat coexists with live readouts.
+        self._caveat_label = QLabel("")
+        self._caveat_label.setWordWrap(True)
+        self._caveat_label.hide()
+        outer.addWidget(self._caveat_label)
+
         self.set_eligible(False, "No lineshape-faithful spectrum is active.")
 
     # ── small builders ────────────────────────────────────────────────────
@@ -298,11 +307,30 @@ class SpectralMomentsWidget(QGroupBox):
         if not self._eligible:
             self._status_label.setText(reason)
             self.clear_readout()
+            # No readout, nothing to caveat; the host re-sets it on the next
+            # eligible refresh.
+            self.set_lineshape_caveat(None)
         else:
             self._status_label.setText("")
 
     def is_eligible(self) -> bool:
         return self._eligible
+
+    def set_lineshape_caveat(self, text: str | None) -> None:
+        """Show (or clear) a non-blocking caveat about the active spectrum.
+
+        The host sets this when the displayed spectrum's line shape carries a
+        known systematic — an apodised spectrum's widths and skewness include
+        the filter's broadening — so a reading is never silently mistaken for
+        the unfiltered physics. Unlike :meth:`set_eligible`'s reason, a caveat
+        coexists with live readouts.
+        """
+        if text:
+            self._caveat_label.setText(warning_html(str(text)))
+            self._caveat_label.show()
+        else:
+            self._caveat_label.clear()
+            self._caveat_label.hide()
 
     def enable_batch_reconstruct(self, enabled: bool = True) -> None:
         """Show the MaxEnt "Reconstruct selection & send" button (host opt-in)."""

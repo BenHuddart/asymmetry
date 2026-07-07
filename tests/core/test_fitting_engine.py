@@ -274,6 +274,9 @@ def test_global_fit_all_local_reuses_single_fit_path(monkeypatch: pytest.MonkeyP
         cancel_callback=None,
         frequency_offsets=None,
         cost_factory=None,
+        migrad_kwargs=None,
+        *,
+        error_oversampling=1.0,
     ):
         captured_calls.append((int(dataset.run_number), method))
         return FitResult(

@@ -92,6 +92,7 @@ from .tab_base import (
     _start_fit_call,
     _ValueUncertaintyDelegate,
     _wait_for_fit_thread,
+    dataset_error_oversampling,
 )
 
 
@@ -940,6 +941,12 @@ class SingleFitTab(FitTabBase):
         fit_kwargs: dict = {"minos": self._minos_checkbox.isChecked()}
         if rrf_offsets:
             fit_kwargs["frequency_offsets"] = rrf_offsets
+        # Zero-padded FFT spectra carry correlated samples; thread the
+        # effective-sample-size correction. Conditional for the same
+        # test-double reason as above (time-domain fits never see the kwarg).
+        oversampling = dataset_error_oversampling(dataset)
+        if oversampling > 1.0:
+            fit_kwargs["error_oversampling"] = oversampling
         self._fit_worker = _start_fit_call(
             self,
             functools.partial(

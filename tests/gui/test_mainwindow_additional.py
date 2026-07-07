@@ -28,6 +28,7 @@ from asymmetry.core.project import load_project, save_project
 from asymmetry.core.project.profiles import profile_fingerprint_for_run
 from asymmetry.core.representation import FitSlot, RepresentationType
 from asymmetry.core.transform.asymmetry import compute_asymmetry
+from asymmetry.core.utils.constants import MUON_LIFETIME_US
 from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.styles import tokens
 from tests._qt_helpers import wait_for
@@ -2166,6 +2167,154 @@ class TestFourierAutoCompute:
         mainwindow._plot_workspace.set_active_view("maxent")
         _wait_frequency_idle(mainwindow)
         assert 8856 not in mainwindow._frequency_cache(RepresentationType.FREQ_MAXENT)
+
+
+class TestApodisationSuggestion:
+    """Suggest-from-data: a matched apodisation filter estimated off-thread from
+    the run's dominant line, mirroring the Fill-phases flow."""
+
+    def _make_damped_fourier_ready_dataset(
+        self, run_number: int, *, with_grouping: bool = True
+    ) -> MuonDataset:
+        """A damped variant of ``_make_fourier_ready_dataset`` (rate 0.5 us^-1).
+
+        The plain helper's undamped cosines are resolution-limited (no physical
+        linewidth to match), so the estimator correctly returns None for them.
+        This variant multiplies the oscillating term by exp(-0.5 * t) so the
+        dominant line has a real Lorentzian width to recover (expected tau ~ 2
+        us, loosely — the grouped pipeline's own decay correction and noise make
+        the recovered value approximate).
+
+        Unlike the plain helper, the counts here also carry the real muon-decay
+        envelope exp(-t / MUON_LIFETIME_US): ``build_group_signal_dataset``
+        (the actual pipeline ``_on_suggest_apodisation`` runs through) always
+        applies a lifetime correction ``exp(t / tau_mu)`` before the FFT. Without
+        a matching decay baked into the counts, that correction amplifies the
+        plain helper's already-flat baseline into a huge low-frequency leakage
+        that swamps the injected line — fine for the other Fourier tests (which
+        never inspect the line shape), but it leaves nothing for a matched-filter
+        estimator to find. Baking in the real decay cancels the correction and
+        leaves a clean baseline + damped-cosine signal, as real detector counts
+        would.
+        """
+        time = np.arange(256, dtype=float) * 0.05
+        frequency = 12.0 / (time.size * 0.05)
+        phase_a = np.deg2rad(32.0)
+        phase_b = np.deg2rad(-18.0)
+        decay = np.exp(-0.5 * time)
+        muon_decay = np.exp(-time / MUON_LIFETIME_US)
+        counts_a = muon_decay * (
+            1000.0 + 150.0 * decay * np.cos(2.0 * np.pi * frequency * time + phase_a)
+        )
+        counts_b = muon_decay * (
+            900.0 + 120.0 * decay * np.cos(2.0 * np.pi * frequency * time + phase_b)
+        )
+        run = Run(
+            run_number=run_number,
+            histograms=[
+                Histogram(counts=counts_a, bin_width=0.05),
+                Histogram(counts=counts_b, bin_width=0.05),
+            ],
+            metadata={"run_number": run_number, "field": 100.0},
+            grouping=(
+                {
+                    "groups": {1: [1], 2: [2]},
+                    "group_names": {1: "Left", 2: "Right"},
+                    "forward_group": 1,
+                    "backward_group": 2,
+                    "alpha": 1.0,
+                    "first_good_bin": 0,
+                    "last_good_bin": 255,
+                    "bunching_factor": 1,
+                    "deadtime_correction": False,
+                }
+                if with_grouping
+                else {}
+            ),
+        )
+        asymmetry = 0.2 * decay * np.cos(2.0 * np.pi * frequency * time + phase_a)
+        return MuonDataset(
+            time=time,
+            asymmetry=asymmetry,
+            error=np.full_like(time, 0.01),
+            metadata={"run_number": run_number, "field": 100.0},
+            run=run,
+        )
+
+    def _wait_apodisation_suggest(self, mainwindow: MainWindow, timeout_s: float = 15.0) -> None:
+        wait_for(
+            lambda: not mainwindow._fourier_apodisation_suggest_active,
+            QApplication.instance(),
+            timeout_s=timeout_s,
+        )
+
+    def test_damped_run_suggests_lorentzian_and_flags_staleness(
+        self, mainwindow: MainWindow
+    ) -> None:
+        dataset = self._make_damped_fourier_ready_dataset(8901)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8901)
+        # A spectrum computed under the current (unfiltered) settings first, so
+        # the staleness banner has a recorded recipe to compare the suggestion
+        # against.
+        _compute_fourier_sync(mainwindow)
+
+        mainwindow._on_suggest_apodisation()
+        self._wait_apodisation_suggest(mainwindow)
+
+        panel = mainwindow._fourier_panel
+        assert panel._filter_lorentzian_radio.isChecked()
+        tau = float(panel._filter_time_constant_edit.text())
+        assert 0.5 < tau < 8.0
+        assert "Suggested" in mainwindow.statusBar().currentMessage()
+
+        panel._settings_debounce.timeout.emit()
+        assert panel.is_stale()
+        assert "apodisation" in panel._stale_banner.text()
+
+    def test_gaussian_filter_selected_suggests_gaussian_matched_value(
+        self, mainwindow: MainWindow
+    ) -> None:
+        dataset = self._make_damped_fourier_ready_dataset(8902)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8902)
+
+        mainwindow._on_suggest_apodisation()
+        self._wait_apodisation_suggest(mainwindow)
+        panel = mainwindow._fourier_panel
+        assert panel._filter_lorentzian_radio.isChecked()
+        lorentzian_tau = float(panel._filter_time_constant_edit.text())
+
+        panel._filter_gaussian_radio.setChecked(True)
+        mainwindow._on_suggest_apodisation()
+        self._wait_apodisation_suggest(mainwindow)
+        assert panel._filter_gaussian_radio.isChecked()
+        gaussian_tau = float(panel._filter_time_constant_edit.text())
+        # The Lorentzian and Gaussian matched-tau formulas differ for the same
+        # measured line width, so the two suggested values must differ too.
+        assert gaussian_tau != pytest.approx(lorentzian_tau)
+
+    def test_undamped_run_reports_no_clear_line(self, mainwindow: MainWindow) -> None:
+        dataset = _make_fourier_ready_dataset(8903, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8903)
+
+        mainwindow._on_suggest_apodisation()
+        self._wait_apodisation_suggest(mainwindow)
+
+        assert "No clear line to match" in mainwindow.statusBar().currentMessage()
+
+    def test_set_apodisation_suggestion_colors_field_and_clears_on_user_edit(
+        self, mainwindow: MainWindow
+    ) -> None:
+        panel = mainwindow._fourier_panel
+        panel.set_apodisation_suggestion("lorentzian", 1.8)
+        assert panel._filter_lorentzian_radio.isChecked()
+        assert panel._filter_time_constant_edit.text() == "1.8"
+        assert tokens.OK in panel._filter_time_constant_edit.styleSheet()
+
+        panel._filter_time_constant_edit.textEdited.emit("2.0")
+        assert panel._filter_time_constant_edit.styleSheet() == ""
 
 
 class TestMainWindowBasic:

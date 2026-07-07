@@ -7,6 +7,7 @@ without scipy dependencies (important for Python 3.13+ compatibility).
 from __future__ import annotations
 
 import inspect
+import math
 import warnings
 from collections import Counter
 from collections.abc import Callable, Hashable, Sequence
@@ -404,6 +405,65 @@ def drive_minuit(
     return out or None
 
 
+def _oversampling_correction(
+    *,
+    chi_squared: float,
+    ndata: int,
+    nfree: int,
+    reduced_chi_squared: float,
+    dof: int,
+    uncertainties: dict[str, float],
+    covariance: NDArray[np.float64] | None,
+    minos_errors: dict[str, tuple[float, float]] | None,
+    error_oversampling: float,
+) -> tuple[
+    float,
+    float,
+    int,
+    dict[str, float],
+    NDArray[np.float64] | None,
+    dict[str, tuple[float, float]] | None,
+    str | None,
+]:
+    """Correct χ²/dof/errors for a zero-padded FFT spectrum's correlated samples.
+
+    A no-op (returns its inputs unchanged, no advisory) when
+    ``error_oversampling <= 1``. See :meth:`FitEngine.fit`'s docstring for the
+    relations this applies; shared by the single-fit path and both branches of
+    :meth:`FitEngine.global_fit` so every reported statistic is corrected the
+    same way.
+    """
+    if error_oversampling <= 1.0:
+        return chi_squared, reduced_chi_squared, dof, uncertainties, covariance, minos_errors, None
+
+    s = float(error_oversampling)
+    sqrt_s = math.sqrt(s)
+    ndata_eff = max(int(round(ndata / s)), 1)
+    corrected_dof = max(ndata_eff - nfree, 1)
+    corrected_chi2 = chi_squared / s
+    corrected_reduced_chi2 = corrected_chi2 / corrected_dof
+    scaled_uncertainties = {name: value * sqrt_s for name, value in uncertainties.items()}
+    scaled_covariance = None if covariance is None else np.asarray(covariance, dtype=float) * s
+    scaled_minos = None
+    if minos_errors:
+        scaled_minos = {
+            name: (lower * sqrt_s, upper * sqrt_s) for name, (lower, upper) in minos_errors.items()
+        }
+    message = (
+        f"Uncertainties and χ² include the ×{sqrt_s:.3g} zero-padding correlation "
+        f"correction (effective samples: 1/{s:g} of the spectrum)."
+    )
+    return (
+        corrected_chi2,
+        corrected_reduced_chi2,
+        corrected_dof,
+        scaled_uncertainties,
+        scaled_covariance,
+        scaled_minos,
+        message,
+    )
+
+
 # --- selectable fit cost ----------------------------------------------------
 
 
@@ -563,6 +623,8 @@ class FitEngine:
         frequency_offsets: dict[str, float] | None = None,
         cost_factory: CostFactory | None = None,
         migrad_kwargs: dict | None = None,
+        *,
+        error_oversampling: float = 1.0,
     ) -> FitResult:
         """Run a single-dataset fit.
 
@@ -601,6 +663,40 @@ class FitEngine:
             is the engine-level home of the RRF offset wrapper — fitting through
             it is bit-for-bit identical to wrapping ``model_fn`` with
             :func:`~asymmetry.core.fitting.rrf_offset.rrf_offset_model`.
+        error_oversampling : float, optional
+            Correction for correlated samples, keyword-only, default ``1.0`` (no
+            correction). A zero-padded FFT spectrum is sinc-interpolated: padding
+            by a factor ``s`` densifies the sampled points but does not add
+            independent information, so only ``~1/s`` of the points are
+            statistically independent. Fitting every sample as if independent
+            overcounts the χ² sum by ``~s`` and underestimates parameter
+            uncertainties by ``~√s``. Pass the spectrum's zero-padding factor
+            (``metadata["fourier_padding"]`` from
+            :func:`asymmetry.core.fourier.spectrum.compute_average_group_spectrum`)
+            here; for time-domain or count fits this correction is meaningless
+            and callers pass the default ``1.0``.
+
+            WiMDA's precedent (``Analyse.pas:5228``) is to divide the reported
+            dof by the zero-pad factor (``dof := n div zpad - nv``) but leaves χ²
+            and the parameter errors untouched. This implementation is the fully
+            consistent version: when ``error_oversampling`` (``s``) is greater
+            than 1,
+
+            * the effective point count is
+              ``ndata_eff = max(round(ndata / s), 1)``;
+            * ``dof = max(ndata_eff - nfree, 1)``;
+            * the minimised χ² summed ``s×`` too many correlated terms, so
+              ``chi_squared = m.fval / s`` and
+              ``reduced_chi_squared = chi_squared / dof``;
+            * Minuit's HESSE/MINOS errors come from the curvature of the
+              *overcounted* χ², so every entry of ``uncertainties`` is scaled by
+              ``√s``, the ``covariance`` matrix by ``s``, and every
+              ``minos_errors`` bound by ``√s``;
+            * the fitted parameter *values* are untouched — the overcounting
+              scales the curvature, not the location of the minimum.
+
+            A ``FitResult.warnings`` advisory records the applied correction so
+            it stays visible wherever the fit result is surfaced.
 
         Returns
         -------
@@ -838,13 +934,41 @@ class FitEngine:
         fitted_values = _call_model(ds.time, {p.name: p.value for p in result_params})
         residuals = np.asarray(ds.asymmetry, dtype=float) - np.asarray(fitted_values, dtype=float)
 
+        chi_squared = m.fval
+        dof = ndata - nfree
+        covariance = m.covariance if m.valid else None
+        minos_errors_result = minos_errors or None
+        result_warnings = list(advisory_warnings)
+        if error_oversampling > 1.0:
+            (
+                chi_squared,
+                red_chi2,
+                dof,
+                uncertainties,
+                covariance,
+                minos_errors_result,
+                oversampling_message,
+            ) = _oversampling_correction(
+                chi_squared=chi_squared,
+                ndata=ndata,
+                nfree=nfree,
+                reduced_chi_squared=red_chi2,
+                dof=dof,
+                uncertainties=uncertainties,
+                covariance=covariance,
+                minos_errors=minos_errors_result,
+                error_oversampling=error_oversampling,
+            )
+            if oversampling_message:
+                result_warnings.append(oversampling_message)
+
         return FitResult(
             success=m.valid,
-            chi_squared=m.fval,
+            chi_squared=chi_squared,
             reduced_chi_squared=red_chi2,
             parameters=result_params,
             uncertainties=uncertainties,
-            covariance=m.covariance if m.valid else None,
+            covariance=covariance,
             covariance_parameters=list(param_names) if m.valid else [],
             residuals=residuals,
             message=_minuit_status_message(
@@ -852,9 +976,9 @@ class FitEngine:
                 success_message="Fit successful",
                 failure_prefix="Fit failed",
             ),
-            dof=ndata - nfree,
-            minos_errors=minos_errors or None,
-            warnings=advisory_warnings,
+            dof=dof,
+            minos_errors=minos_errors_result,
+            warnings=result_warnings,
         )
 
     # --- global fit -----------------------------------------------------
@@ -882,6 +1006,8 @@ class FitEngine:
         cancel_callback: Callable[[], bool] | None = None,
         cost_factory: CostFactory | None = None,
         local_param_groups: dict[str, dict[int, Hashable]] | None = None,
+        *,
+        error_oversampling: float = 1.0,
     ) -> tuple[dict[int, FitResult], ParameterSet]:
         """Simultaneous fit of multiple datasets with shared and local parameters.
 
@@ -946,6 +1072,16 @@ class FitEngine:
             maps a dataset run number to a group key; datasets with the same key
             share one fitted value for ``pname`` (a third scope between fully
             global and fully per-dataset). Absent → ``pname`` is per-dataset.
+        error_oversampling : float, optional
+            Correction for correlated samples (zero-padded FFT spectra), applied
+            to every dataset's reported ``chi_squared``/``reduced_chi_squared``/
+            ``dof``/``uncertainties``/``covariance``/``minos_errors`` the same
+            way as :meth:`fit` — see that method's docstring for the exact
+            relations, the WiMDA precedent, and why fitted parameter values are
+            unaffected. Keyword-only, default ``1.0`` (no correction); pass the
+            common zero-padding factor of the fitted spectra
+            (``metadata["fourier_padding"]``), or ``1.0`` for time-domain/count
+            fits.
 
         Notes
         -----
@@ -1041,6 +1177,7 @@ class FitEngine:
                     minos=minos,
                     cancel_callback=cancel_callback,
                     cost_factory=cost_factory,
+                    error_oversampling=error_oversampling,
                 )
             return results, fitted_global
 
@@ -1073,6 +1210,7 @@ class FitEngine:
                 use_varpro=use_varpro,
                 cancel_callback=cancel_callback,
                 cost_factory=cost_factory,
+                error_oversampling=error_oversampling,
             )
         # ``use_varpro`` is applied by wrapping ``model_fn`` before the joint
         # objective is built (below); the profiled path handles it internally.
@@ -1388,6 +1526,31 @@ class FitEngine:
             nfree = nfree_global + nfree_local
 
             red_chi2 = dataset_chi2 / max(ndata - nfree, 1)
+            dataset_dof = ndata - nfree
+            minos_errors_result = minos_errors or None
+            dataset_warnings: list[str] = []
+            if error_oversampling > 1.0:
+                (
+                    dataset_chi2,
+                    red_chi2,
+                    dataset_dof,
+                    uncertainties,
+                    covariance_subset,
+                    minos_errors_result,
+                    oversampling_message,
+                ) = _oversampling_correction(
+                    chi_squared=dataset_chi2,
+                    ndata=ndata,
+                    nfree=nfree,
+                    reduced_chi_squared=red_chi2,
+                    dof=dataset_dof,
+                    uncertainties=uncertainties,
+                    covariance=covariance_subset,
+                    minos_errors=minos_errors_result,
+                    error_oversampling=error_oversampling,
+                )
+                if oversampling_message:
+                    dataset_warnings.append(oversampling_message)
 
             results[ds.run_number] = FitResult(
                 success=m.valid,
@@ -1408,8 +1571,9 @@ class FitEngine:
                 hessian_calls=hessian_calls,
                 edm=edm_value,
                 covariance_accurate=covariance_accurate,
-                dof=ndata - nfree,
-                minos_errors=minos_errors or None,
+                dof=dataset_dof,
+                minos_errors=minos_errors_result,
+                warnings=dataset_warnings,
             )
 
         return results, fitted_global
@@ -1437,6 +1601,7 @@ class FitEngine:
         use_varpro: bool,
         cancel_callback: Callable[[], bool] | None,
         cost_factory: CostFactory | None,
+        error_oversampling: float = 1.0,
     ) -> tuple[dict[int, FitResult], ParameterSet]:
         """Profiled/nested-locals global fit (technique L).
 
@@ -1458,6 +1623,13 @@ class FitEngine:
         errors. MINOS is not supported on the profiled path — asymmetric local
         intervals would need the coupled joint problem — so ``minos`` is accepted
         for signature parity with the joint path but ignored here.
+
+        ``error_oversampling`` is *not* forwarded to the inner ``self.fit`` calls
+        (they stay on the raw, uncorrected χ² so the outer search and its warm
+        starts are unaffected); the correction from :meth:`fit`'s docstring is
+        instead applied once, to each dataset's final reported statistics, after
+        the outer optimum is found — the same one-shot post-processing the joint
+        path uses.
         """
         try:
             from iminuit import Minuit
@@ -1671,10 +1843,35 @@ class FitEngine:
             nfree_local = sum(1 for pname in local_params if not params[pname].fixed)
             nfree = n_free_global + nfree_local
             dataset_chi2 = float(inner.chi_squared)
+            dataset_dof = ndata - nfree
+            dataset_reduced_chi2 = dataset_chi2 / max(dataset_dof, 1)
+            dataset_warnings: list[str] = []
+            if error_oversampling > 1.0:
+                (
+                    dataset_chi2,
+                    dataset_reduced_chi2,
+                    dataset_dof,
+                    uncertainties,
+                    _covariance,
+                    _minos_errors,
+                    oversampling_message,
+                ) = _oversampling_correction(
+                    chi_squared=dataset_chi2,
+                    ndata=ndata,
+                    nfree=nfree,
+                    reduced_chi_squared=dataset_reduced_chi2,
+                    dof=dataset_dof,
+                    uncertainties=uncertainties,
+                    covariance=None,
+                    minos_errors=None,
+                    error_oversampling=error_oversampling,
+                )
+                if oversampling_message:
+                    dataset_warnings.append(oversampling_message)
             results[ds.run_number] = FitResult(
                 success=bool(inner.success) and outer_valid,
                 chi_squared=dataset_chi2,
-                reduced_chi_squared=dataset_chi2 / max(ndata - nfree, 1),
+                reduced_chi_squared=dataset_reduced_chi2,
                 parameters=result_params,
                 uncertainties=uncertainties,
                 residuals=inner.residuals,
@@ -1688,7 +1885,8 @@ class FitEngine:
                 hessian_calls=counters["hess"],
                 edm=edm_value,
                 covariance_accurate=covariance_accurate,
-                dof=ndata - nfree,
+                dof=dataset_dof,
+                warnings=dataset_warnings,
             )
 
         return results, fitted_global
