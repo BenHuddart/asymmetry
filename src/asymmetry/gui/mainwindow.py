@@ -359,6 +359,14 @@ _VIEW_FROM_WIDGET = object()
 #: decay; a continuous source never drops this low, so no tail is excluded there.
 _FOURIER_TAIL_COUNTS_FRACTION = 0.01
 
+#: Block length (µs) over which detector counts are averaged before the tail
+#: comparison above. Per-raw-bin comparison is meaningless on finely-binned TDC
+#: histograms (HiFi high-TF: 24 ps bins, a prompt spike at t0) — see
+#: :meth:`MainWindow._fourier_good_statistics_t_max`. 100 ns is ~6 bins on a
+#: 16 ns pulsed-source histogram (behaviour preserved) and ~4000 bins on a TDC
+#: one (envelope tracked, spike diluted).
+_FOURIER_TAIL_BLOCK_US = 0.1
+
 #: Overlay auto-compute wave size. A multi-run overlay computes its missing
 #: members' FFTs in batches of this many; each completed wave re-renders the
 #: overlay and kicks off the next, so a very large selection streams in with
@@ -7460,10 +7468,23 @@ class MainWindow(QMainWindow):
     def _fourier_good_statistics_t_max(self, dataset: MuonDataset) -> float | None:
         """Return the time (µs) past which counts are too sparse for a useful FFT.
 
-        Sums the per-bin detector counts and returns the first time after their
-        peak where they fall below :data:`_FOURIER_TAIL_COUNTS_FRACTION` of the
-        peak. Returns ``None`` when the run has no histograms or the counts never
-        decay that far (e.g. a continuous source), so no tail is excluded there.
+        Sums the per-bin detector counts, block-averages them over
+        :data:`_FOURIER_TAIL_BLOCK_US`, and returns the first block time after
+        the peak block where the mean falls below
+        :data:`_FOURIER_TAIL_COUNTS_FRACTION` of it. Returns ``None`` when the
+        run has no histograms or the counts never decay that far (e.g. a
+        continuous source), so no tail is excluded there.
+
+        The block average is load-bearing, not smoothing for taste: comparing
+        RAW bins against the raw peak bin silently truncated every HiFi
+        high-TF TDC FFT to nanoseconds. Those histograms have 24 ps bins and a
+        prompt spike at t0 that dwarfs the per-bin decay counts, so every bin
+        in the run sat below 1 % of the spike and the window collapsed to the
+        first bin after it — 42 ns for corpus run 687, whose spectrum then
+        showed the 42 ns window's 23.7 MHz sinc lobes as ~0.18 T ringing. The
+        block mean tracks the decay envelope instead: the spike dilutes into
+        its block, and 16 ns pulsed-source histograms (a handful of bins per
+        block) keep their previous behaviour.
         """
         run = getattr(dataset, "run", None)
         histograms = list(getattr(run, "histograms", None) or [])
@@ -7479,14 +7500,23 @@ class MainWindow(QMainWindow):
             return None
         if counts.size == 0 or counts.size != time_axis.size:
             return None
-        peak_index = int(np.argmax(counts))
-        peak = float(counts[peak_index])
+        bin_width = float(np.median(np.diff(time_axis))) if time_axis.size > 1 else 0.0
+        if not np.isfinite(bin_width) or bin_width <= 0.0:
+            return None
+        block = max(1, int(round(_FOURIER_TAIL_BLOCK_US / bin_width)))
+        usable = (counts.size // block) * block
+        if usable == 0:
+            return None
+        block_counts = counts[:usable].reshape(-1, block).mean(axis=1)
+        block_times = time_axis[:usable:block]
+        peak_index = int(np.argmax(block_counts))
+        peak = float(block_counts[peak_index])
         if peak <= 0.0:
             return None
-        spent = np.flatnonzero(counts[peak_index:] < peak * _FOURIER_TAIL_COUNTS_FRACTION)
+        spent = np.flatnonzero(block_counts[peak_index:] < peak * _FOURIER_TAIL_COUNTS_FRACTION)
         if spent.size == 0:
             return None
-        return float(time_axis[peak_index + int(spent[0])])
+        return float(block_times[peak_index + int(spent[0])])
 
     def _fourier_time_window_excluding_tail(
         self,

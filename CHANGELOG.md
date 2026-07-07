@@ -103,6 +103,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **HiFi high-TF TDC FFTs are no longer silently truncated to nanoseconds.**
+  The FFT window's good-statistics tail cap compared raw per-bin counts to
+  the raw peak bin. On finely-binned TDC histograms (24 ps bins with a
+  prompt spike at t0 that dwarfs the per-bin decay counts) every bin in the
+  run sat below 1 % of the spike, so the cap fired at the first bin after it
+  and the transform saw ~40 ns of a 10 µs run — burying spectra under the
+  tiny window's sinc ringing and reporting linewidths that were the window's
+  resolution, not the sample's (corpus run 687: a 1750 G-wide artefact where
+  the true line is 13.5 G). The cap now compares 100 ns block averages, which
+  track the decay envelope, dilute the prompt spike, and leave 16 ns
+  pulsed-source histograms with their previous behaviour.
+
 - **The Fourier panel's spinboxes no longer clip their digits.** The
   zero-pad factor, Burg pole-scan, and correlation-order spins were capped at
   a text-field width that left the step buttons no room of their own, so the
