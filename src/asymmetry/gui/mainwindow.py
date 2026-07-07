@@ -302,6 +302,11 @@ _UI_SCALE_OPTIONS = UI_SCALE_OPTIONS
 _VIEW_MODE_COUNT = 3
 _PERF_LOGGING_SETTINGS_KEY = "debug/perf_logging"
 _PERF_LOGGING_ENV_VAR = "ASYMMETRY_PERF_LOGGING"
+#: Coalescing window for mid-drag spectral-moments recomputes (C1): each
+#: moments_window_changed/moments_cutoff_changed event restarts this single-shot
+#: timer, so a fast mouse-move burst collapses to one cheap recompute per ~30 ms
+#: of quiet, instead of one full recompute per motion event.
+_MOMENTS_DRAG_COALESCE_MS = 30
 _PLOT_DECIMATION_SETTINGS_KEY = "plot/enable_decimation"
 #: Options → Advanced → "Rotating reference frame" — an app-level chrome
 #: preference (like the dock/visibility toggles), NOT per-project. Default off.
@@ -1852,6 +1857,15 @@ class MainWindow(QMainWindow):
         if hasattr(self._frequency_plot_panel, "fit_range_changed"):
             self._frequency_plot_panel.fit_range_changed.connect(self._on_fit_range_changed)
         # Spectral-moments overlay drags + per-widget controls.
+        # Mid-drag moment recomputes are coalesced (latest-wins) at drag cadence:
+        # every drag event restarts this single-shot timer, so a fast burst of
+        # mouse-move events collapses to one cheap (no-bootstrap) recompute
+        # ~_MOMENTS_DRAG_COALESCE_MS after the last one — the same restart idiom
+        # as GroupingPreviewPane's 300 ms edit debounce, just at drag cadence.
+        self._moments_drag_timer = QTimer(self)
+        self._moments_drag_timer.setSingleShot(True)
+        self._moments_drag_timer.setInterval(_MOMENTS_DRAG_COALESCE_MS)
+        self._moments_drag_timer.timeout.connect(self._dispatch_pending_moments_drag)
         if hasattr(self._frequency_plot_panel, "moments_window_changed"):
             self._frequency_plot_panel.moments_window_changed.connect(
                 self._on_moments_window_dragged
@@ -1859,6 +1873,7 @@ class MainWindow(QMainWindow):
             self._frequency_plot_panel.moments_cutoff_changed.connect(
                 self._on_moments_cutoff_dragged
             )
+            self._frequency_plot_panel.moments_drag_finished.connect(self._on_moments_drag_finished)
         for _rep, _widget in self._spectral_moments_widgets().items():
             _widget.settings_changed.connect(lambda w=_widget: self._on_moments_settings_changed(w))
             _widget.send_to_trend_requested.connect(
@@ -7237,8 +7252,14 @@ class MainWindow(QMainWindow):
             "include the filter's broadening."
         )
 
-    def _compute_moments_for(self, widget, freq_mhz, amplitude, errors):
-        """Run the core on one spectrum using *widget*'s recipe; return moments."""
+    def _compute_moments_for(self, widget, freq_mhz, amplitude, errors, *, cheap: bool = False):
+        """Run the core on one spectrum using *widget*'s recipe; return moments.
+
+        *cheap*, when ``True``, forces the point-estimate path (no bootstrap)
+        regardless of whether *errors* is available — used for the live
+        mid-drag readout (C1), where a 256-resample bootstrap per mouse-move
+        would make dragging a moments handle jank.
+        """
         unit = widget.unit()
         x = np.asarray(convert(freq_mhz, FieldUnit.MHZ, unit), dtype=float)
         range_mhz = widget.range_mhz()
@@ -7247,7 +7268,7 @@ class MainWindow(QMainWindow):
             lo = float(convert(range_mhz[0], FieldUnit.MHZ, unit))
             hi = float(convert(range_mhz[1], FieldUnit.MHZ, unit))
             x_range = (lo, hi)
-        method = "bootstrap" if errors is not None else "none"
+        method = "none" if cheap else ("bootstrap" if errors is not None else "none")
         return spectrum_moments(
             x,
             amplitude,
@@ -7281,11 +7302,13 @@ class MainWindow(QMainWindow):
             return 1.0
         return padding if padding > 1.0 else 1.0
 
-    def _compute_and_show_moments(self, widget, accessor=None) -> None:
+    def _compute_and_show_moments(self, widget, accessor=None, *, cheap: bool = False) -> None:
         """Compute moments for the active spectrum and refresh readout + overlay.
 
         *accessor* (the W15 ``(x, amplitude, errors, unit)`` tuple) is reused when
         the caller already fetched it, avoiding a second full-spectrum copy.
+        *cheap* forces the no-bootstrap point-estimate path (see
+        :meth:`_compute_moments_for`) for the live mid-drag readout.
         """
         if accessor is None:
             if not hasattr(self._frequency_plot_panel, "active_spectrum_for_moments"):
@@ -7294,7 +7317,7 @@ class MainWindow(QMainWindow):
         if accessor is None:
             return
         freq_mhz, amplitude, errors, _unit = accessor
-        moments = self._compute_moments_for(widget, freq_mhz, amplitude, errors)
+        moments = self._compute_moments_for(widget, freq_mhz, amplitude, errors, cheap=cheap)
         widget.show_moments(moments)
         # The cutoff line sits at peak·fraction; reuse the kernel's window peak so
         # the drawn line cannot drift from the computed cutoff (NaN → no line).
@@ -7315,14 +7338,44 @@ class MainWindow(QMainWindow):
         widget = self._active_moments_widget()
         if widget is None or not widget.is_eligible():
             return
+        # Cheap: just updates the widget's spin boxes, no recompute.
         widget.set_range_mhz(lo_mhz, hi_mhz)
-        self._compute_and_show_moments(widget)
+        self._moments_drag_timer.start()
 
     def _on_moments_cutoff_dragged(self, fraction: float) -> None:
         widget = self._active_moments_widget()
         if widget is None or not widget.is_eligible():
             return
+        # Cheap: just updates the widget's cutoff spinner, no recompute.
         widget.set_cutoff_fraction(fraction)
+        self._moments_drag_timer.start()
+
+    def _dispatch_pending_moments_drag(self) -> None:
+        """Coalesced mid-drag recompute (C1): no-bootstrap, so it stays cheap.
+
+        Fired by ``_moments_drag_timer`` after ``_MOMENTS_DRAG_COALESCE_MS`` of
+        quiet since the last ``moments_window_changed``/``moments_cutoff_changed``
+        — a burst of mouse-move events collapses to (at most) one of these per
+        coalescing window, instead of one full bootstrap per motion event. The
+        widget already holds the latest window/cutoff (set synchronously in the
+        drag slots above), so there is nothing to re-read from a signal payload.
+        """
+        widget = self._active_moments_widget()
+        if widget is None or not widget.is_eligible():
+            return
+        self._compute_and_show_moments(widget, cheap=True)
+
+    def _on_moments_drag_finished(self) -> None:
+        """Drag ended: cancel any pending cheap tick and run one full bootstrap.
+
+        Stopping the timer first matters: a cheap tick still in flight (queued
+        within the last ``_MOMENTS_DRAG_COALESCE_MS``) must not fire after this
+        and clobber the just-restored uncertainties with the no-bootstrap NaNs.
+        """
+        self._moments_drag_timer.stop()
+        widget = self._active_moments_widget()
+        if widget is None or not widget.is_eligible():
+            return
         self._compute_and_show_moments(widget)
 
     def _spectral_moments_batch_id(self, rep_type, recipe: dict, runs: list[int]) -> str:

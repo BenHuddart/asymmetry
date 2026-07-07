@@ -221,6 +221,9 @@ class PlotPanel(QWidget):
     #: Spectral-moments overlay drags (frequency panel): window in canonical MHz.
     moments_window_changed = Signal(float, float)
     moments_cutoff_changed = Signal(float)  # new cutoff fraction in [0, 1)
+    #: A moments-handle drag has ended (mouse released after an actual move):
+    #: the signal for "recompute with full bootstrap uncertainty now".
+    moments_drag_finished = Signal()
 
     def __init__(self, parent: QWidget | None = None, *, domain: str = "time") -> None:
         super().__init__(parent)
@@ -5776,7 +5779,12 @@ class PlotPanel(QWidget):
 
         if self._active_moments_handle is not None:
             self._active_moments_handle = None
+            was_moments_drag = self._drag_started
             self._drag_started = False
+            if was_moments_drag:
+                # Mirrors the fit-handle branch above: only an actual move (not a
+                # stationary click) warrants the expensive full-bootstrap recompute.
+                self.moments_drag_finished.emit()
             return
 
         if self._active_annotation_idx is None:
