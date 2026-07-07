@@ -193,8 +193,14 @@ def test_fft_spectrum_renders_in_gui(run_path: Path | None, expected_mhz: float)
         )
         assert panel._last_plot_asymmetry is not None, "the FFT spectrum never rendered"
 
-        # (a) a non-empty spectrum curve is drawn.
-        assert panel._ax.collections, "no spectrum curve was drawn on the FFT canvas"
+        # (a) a non-empty spectrum curve is drawn. Frequency spectra render as
+        # solid lines (no errorbar collections) since the line-rendering round.
+        data_lines = [
+            line
+            for line in panel._ax.lines
+            if line.get_linestyle() == "-" and np.asarray(line.get_xdata()).size > 2
+        ]
+        assert data_lines, "no spectrum curve was drawn on the FFT canvas"
         freqs = np.asarray(panel._last_plot_time, dtype=float)
         values = np.abs(np.asarray(panel._last_plot_asymmetry, dtype=float))
         assert freqs.size > 1 and np.isfinite(freqs).all()
@@ -265,6 +271,24 @@ def test_fourier_tail_exclusion_heuristic() -> None:
         assert window._fourier_time_window_excluding_tail(flat, 0.1, 32.0) == (0.1, 32.0)
         empty = SimpleNamespace(run=SimpleNamespace(histograms=[]))
         assert window._fourier_time_window_excluding_tail(empty, 0.1, 32.0) == (0.1, 32.0)
+
+        # HiFi-style high-TF TDC histogram: picosecond bins and a prompt spike
+        # at t0 that dwarfs the per-bin decay counts. Comparing raw bins to the
+        # raw peak capped this at the first bin after the spike (~40 ns for
+        # corpus run 687), truncating the FFT to nanoseconds and drowning the
+        # spectrum in the tiny window's sinc lobes. The block-averaged
+        # criterion must track the decay envelope instead.
+        dt = 2.44e-5  # 24.4 ps
+        tdc_time = np.arange(102_400, dtype=float) * dt  # 2.5 µs span
+        tdc_counts = 50.0 * np.exp(-tdc_time / 0.2)
+        tdc_counts[0] = 5.0e5  # prompt spike: ~10⁴× the neighbouring bins
+        tdc = _dataset(tdc_counts, tdc_time)
+
+        tdc_tail = window._fourier_good_statistics_t_max(tdc)
+        assert tdc_tail is not None
+        # Envelope decays through 1 % of the (spike-diluted) peak block well
+        # into the run — not within nanoseconds of the spike.
+        assert 0.3 < tdc_tail < 1.5
     finally:
         window.close()
         window.deleteLater()

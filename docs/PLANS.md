@@ -86,6 +86,24 @@ Acceptance criteria:
 
 ## Deferred
 
+### FFT Zero-Padding as a Display-Only Concern
+
+Today zero padding is a transform parameter: the padded (sinc-interpolated,
+correlated) samples ARE the stored spectrum, threaded through recipes,
+staleness comparison, caching, fits, and moments. The statistically clean
+architecture stores the spectrum at padding 1 (independent samples — what
+fits, moments, and exports consume) and treats the smooth curve as a pure
+rendering: the plot draws the sinc envelope (computed from the complex
+spectrum at display time) with the independent samples as points on top.
+This dissolves the correlated-samples problem instead of correcting for it
+(the interim effective-sample-size correction — `error_oversampling`,
+WiMDA's `dof := n div zpad - nv` made consistent — ships with the padding
+work and covers the statistics until then). Non-trivial because the display
+curve must be derived from the COMPLEX spectrum (interpolating a magnitude
+display is wrong near its kinks), so the envelope has to come out of the
+compute path, not the plot panel; recipes and the project schema carry the
+padding field today and would need a migration story.
+
 ### GUI Journey Harness
 
 Build a repeatable smoke workflow for the most important GUI paths:

@@ -865,6 +865,15 @@ def compute_average_group_spectrum(
             "fourier_display": str(display),
             "fourier_group_output": "average",
             "group_ids": list(selected),
+            # Record the apodisation the spectrum was computed with, so
+            # downstream readings (spectral moments) can caveat filtered
+            # linewidths. Additive; "none" when no filter was applied.
+            "fourier_window": str(config.window or "none"),
+            "fourier_filter_time_constant_us": float(config.filter_time_constant_us),
+            # Zero-padding factor: sinc-interpolated points are correlated, so
+            # downstream statistics (fit error scaling, moment uncertainties)
+            # read this to correct for the reduced effective sample size.
+            "fourier_padding": int(config.padding),
         }
     )
     if is_correlation:
