@@ -12,12 +12,15 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.fit_panel import GlobalFitTab
+
+pytestmark = [pytest.mark.gui]
 
 _MODEL = SimpleNamespace(param_names=["A_1", "frequency", "lambda", "A_bg"])
 # Run -> (temperature, fitted amplitude, fitted frequency); run 2944 collapsed.

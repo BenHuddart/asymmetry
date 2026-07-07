@@ -13,7 +13,7 @@ import pytest
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.gui.panels.data_browser import DataBrowserPanel
 
-pytestmark = pytest.mark.usefixtures("qapp")
+pytestmark = [pytest.mark.gui, pytest.mark.usefixtures("qapp")]
 
 
 def _dataset(
