@@ -419,16 +419,19 @@ def test_plot_panel_emits_drag_finished_only_after_an_actual_move(window):
     emits ``moments_drag_finished`` exactly once on release, while a stationary
     click (press + release, no motion) on the same handle does not — mirroring
     the existing fit-range-handle ``was_drag`` gate right above it.
+
+    The widget's default window is the spectrum's full extent (20-60 MHz),
+    which coincides with the plot's generic fit-range handles (also defaulted
+    to the axis view limits). This used to require nudging the moments window
+    off that default so the click would unambiguously hit a moments handle
+    rather than the fit-range handle sitting at the same x; that workaround is
+    gone now that ``_detect_handle_hit`` excludes the frequency panel's
+    fit-range handles entirely (see ``_on_canvas_button_press`` priority and
+    ``test_default_window_click_grabs_moments_handle_not_fit_range`` below,
+    which pins the default-window case directly).
     """
     _activate_fft_spectrum(window, [1])
     panel = window._frequency_plot_panel
-    widget = window._fourier_panel.moments_widget
-    # The widget's default window is the spectrum's full extent (20-60 MHz),
-    # which coincides with the plot's generic fit-range handles (also defaulted
-    # to the axis view limits) — nudge the moments window off that so the click
-    # unambiguously hits a moments handle, not the (frequency-panel-inert)
-    # fit-range handle that happens to sit at the same x.
-    widget.set_range_mhz(30.0, 50.0, emit=True)
     panel._canvas.draw()  # force a real draw so transData is valid offscreen
     lo, hi = panel._moments_window_display()
 
@@ -448,3 +451,39 @@ def test_plot_panel_emits_drag_finished_only_after_an_actual_move(window):
     panel._on_canvas_button_release(_fake_moments_event(panel, lo + 1.0))
     assert finished_events == [None]  # exactly one, on release
     assert panel._active_moments_handle is None
+
+
+def test_default_window_click_grabs_moments_handle_not_fit_range(window):
+    """Regression for the hit-test priority bug found during the moments-drag
+    work (PR #218): the moments widget's default window equals the spectrum's
+    full extent, which coincides with the frequency panel's generic fit-range
+    handles (also seeded to the full extent the moment a spectrum is plotted —
+    see ``plot_dataset``). ``_on_canvas_button_press`` used to check fit-range
+    handles first, so a click on the *visible* moments handle at its default
+    position actually grabbed the *invisible* (never drawn, never draggable —
+    see ``test_frequency_domain_fitting.py``'s "no draggable selector" test)
+    fit-range handle instead.
+
+    Drags the min handle at the untouched default window (no (30, 50) nudge)
+    and asserts the moments drag fires, not a fit-range drag.
+    """
+    _activate_fft_spectrum(window, [1])
+    panel = window._frequency_plot_panel
+    panel._canvas.draw()  # force a real draw so transData is valid offscreen
+
+    # Confirm the premise: the frequency panel's fit-range state really does
+    # coincide with the moments window's default (full-extent) position.
+    assert panel._fit_x_min is not None and panel._fit_x_max is not None
+    lo, hi = panel._moments_window_display()
+    assert (panel._fit_x_min, panel._fit_x_max) == pytest.approx((lo, hi))
+
+    panel._on_canvas_button_press(_fake_moments_event(panel, lo))
+    assert panel._active_moments_handle == "min"
+    assert panel._active_fit_handle is None
+
+    panel._on_canvas_motion_notify(_fake_moments_event(panel, lo + 1.0))
+    panel._on_canvas_button_release(_fake_moments_event(panel, lo + 1.0))
+    assert panel._active_moments_handle is None
+    # The moments window moved; the (inert, invisible) fit-range state did not.
+    assert panel._moments_window_display() != (lo, hi)
+    assert (panel._fit_x_min, panel._fit_x_max) == pytest.approx((lo, hi))

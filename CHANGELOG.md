@@ -173,6 +173,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The accessor now reads the run table alone — the combined dataset's own
   object already lives there under its combined run number.
 
+- **Dragging a spectral-moments handle at its default window no longer grabs
+  an invisible fit-range handle underneath it.** The moments widget's default
+  window spans the whole spectrum, which coincides with the frequency panel's
+  fit-range state (also seeded to the full extent) — but that fit-range
+  selector is never drawn on the frequency panel and has no draggable
+  behaviour there (the actual frequency-domain fit reads its range from the
+  Fit panel's spinboxes instead), so it was a purely invisible target that
+  still won hit-testing priority over the visible moments handle sitting at
+  the same position. Hit-testing now excludes fit-range handles on the
+  frequency panel entirely; dragging a moments handle at the default window
+  works on the first click. Fit-range dragging on the time-domain panel is
+  unaffected.
+
 - **Four small GUI-responsiveness cleanups from the audit's minor findings.**
   Fit-parameter and global-fit trend/compare plots now coalesce their final
   paint with `draw_idle()` instead of a synchronous `draw()` once a background
