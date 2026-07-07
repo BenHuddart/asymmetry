@@ -19,6 +19,7 @@ from typing import Any
 import numpy as np
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.instrument import detect_instrument, get_instrument_layout
 from asymmetry.core.io.base import BaseLoader, field_direction_from_text
 from asymmetry.core.transform import (
     apply_grouping_aligned,
@@ -873,8 +874,19 @@ class PsiLoader(BaseLoader):
             raw.histogram_labels,
             n_hist,
         )
-        forward_idx = [det - 1 for det in groups[forward_gid]]
-        backward_idx = [det - 1 for det in groups[backward_gid]]
+        canonical_instrument = self._detect_canonical_instrument(raw, n_hist)
+        preset_override = self._instrument_default_preset(canonical_instrument, n_hist)
+        preset_name: str | None = None
+        preset_projections: list[dict[str, Any]] = []
+        if preset_override is not None:
+            groups, group_names, forward_gid, backward_gid, preset_name, preset_projections = (
+                preset_override
+            )
+        # A preset's group may name detectors absent from this run (e.g. the
+        # backward ring of a forward-only HAL .mdu); reduce over the present
+        # ones, matching how the grouping-window Apply path drops absentees.
+        forward_idx = [det - 1 for det in groups[forward_gid] if 1 <= det <= n_hist]
+        backward_idx = [det - 1 for det in groups[backward_gid] if 1 <= det <= n_hist]
         common_t0 = common_t0_for_groups(histograms, forward_idx, backward_idx)
 
         forward = apply_grouping_aligned(histograms, forward_idx, common_t0_bin=common_t0)
@@ -959,8 +971,18 @@ class PsiLoader(BaseLoader):
             "detector_first_good_bins": [int(v) for v in first_good_bins],
             "detector_last_good_bins": [int(v) for v in last_good_bins],
             "histogram_labels": list(raw.histogram_labels),
-            "instrument": raw.instrument,
+            # Stamp the canonical registry identity (e.g. "HAL") so fingerprinting
+            # and the stale-identity heal do not mistake the raw PSI "HIFI" string
+            # for the ISIS HiFi spectrometer and discard the loader grouping. The
+            # raw string is kept in metadata["instrument"] for provenance.
+            "instrument": canonical_instrument or raw.instrument,
         }
+        if preset_name is not None:
+            # Record the applied preset so the grouping window shows it as the
+            # live grouping (not merely the pre-selected default) and provenance
+            # is preserved through save/reload.
+            grouping["grouping_preset"] = preset_name
+            grouping["projections"] = preset_projections
 
         run = Run(
             run_number=int(raw.run_number),
@@ -975,6 +997,102 @@ class PsiLoader(BaseLoader):
             error=np.asarray(error, dtype=np.float64),
             metadata=metadata,
             run=run,
+        )
+
+    def _detect_canonical_instrument(self, raw: _PsiRawRun, n_hist: int) -> str | None:
+        """Canonical instrument name for a freshly loaded PSI run, or ``None``.
+
+        Resolves the registry identity (e.g. ``"HAL"``) from the run's metadata,
+        detector labels, and filename via
+        :func:`~asymmetry.core.instrument.detect_instrument`. The loader stamps
+        this into ``grouping["instrument"]`` so downstream fingerprinting and the
+        stale-identity self-heal see the *canonical* name rather than the raw PSI
+        instrument string (HAL-9500 files report ``"HIFI"``, which would
+        otherwise be mistaken for the ISIS HiFi spectrometer and trigger a heal
+        that discards the loader grouping). The raw string is preserved in
+        ``metadata["instrument"]``.
+        """
+        return detect_instrument(
+            n_hist,
+            metadata={
+                "instrument": raw.instrument,
+                "psi_format": raw.psi_format,
+                "facility": "PSI",
+                "histogram_labels": list(raw.histogram_labels),
+            },
+            source_file=raw.source_file or None,
+        )
+
+    def _instrument_default_preset(
+        self,
+        instrument_name: str | None,
+        n_hist: int,
+    ) -> tuple[dict[int, list[int]], dict[int, str], int, int, str, list[dict[str, Any]]] | None:
+        """Return the default-preset grouping to apply on load, or ``None``.
+
+        *instrument_name* is the canonical instrument resolved by
+        :meth:`_detect_canonical_instrument`.
+
+        Some instruments (currently HAL-9500) declare
+        :attr:`~asymmetry.core.instrument.InstrumentLayout.apply_default_preset_on_load`
+        so their default preset becomes the live grouping the moment the run
+        loads, rather than only being pre-selected in the grouping window. When
+        the freshly loaded PSI run resolves to such an instrument, this returns
+        the preset's ``(groups, group_names, forward_gid, backward_gid,
+        preset_name, projections)`` so the caller can build the asymmetry and the
+        grouping payload from it. Detector IDs are 1-based (matching the loader's
+        ``groups``), where detector *N* maps to histogram index ``N - 1``.
+
+        The preset's group definitions are kept intact — including detector IDs
+        the run does not carry — so the applied grouping is byte-for-byte what
+        the Grouping window's manual *Apply* produces, and reduction drops the
+        absent detectors at reduction time (mirroring
+        ``MainWindow._describe_grouping_dropped_detectors``). A HAL ``.mdu``
+        shipping only the forward ring (``MV, F1…F8``) therefore still adopts
+        Per-octant, each octant degrading to its present forward wedge.
+
+        Returns ``None`` — leaving the loader's label-based grouping untouched —
+        when detection is inconclusive, the instrument does not opt in, or an
+        *analysis* slot (the forward or backward group) has no detector present
+        in this run, since then no asymmetry can be formed (e.g. a preset whose
+        backward group is an entirely absent ring).
+        """
+        if not instrument_name:
+            return None
+        layout = get_instrument_layout(instrument_name)
+        if not layout.apply_default_preset_on_load:
+            return None
+        preset = layout.presets.get(layout.default_preset_name)
+        if preset is None:
+            return None
+
+        groups: dict[int, list[int]] = {}
+        group_names: dict[int, str] = {}
+        for gid, gdef in preset.groups.items():
+            detector_ids = sorted(int(d) for d in gdef.detector_ids)
+            if not detector_ids:
+                continue
+            groups[int(gid)] = detector_ids
+            if gdef.name:
+                group_names[int(gid)] = str(gdef.name)
+
+        forward_gid = int(preset.forward_group)
+        backward_gid = int(preset.backward_group)
+
+        def _has_present_detector(gid: int) -> bool:
+            return any(1 <= det <= n_hist for det in groups.get(gid, ()))
+
+        if not _has_present_detector(forward_gid) or not _has_present_detector(backward_gid):
+            return None
+
+        projections = [dict(p.to_payload()) for p in preset.projections]
+        return (
+            groups,
+            group_names,
+            forward_gid,
+            backward_gid,
+            preset.name,
+            projections,
         )
 
     def _default_groups(

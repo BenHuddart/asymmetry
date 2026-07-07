@@ -492,8 +492,11 @@ containing ``FLAME`` select the FLAME detector layout automatically; this
 includes PSI instrument strings such as ``LMU_BULKMUSR_FLAME``. PSI HAL-9500
 runs (the high-field πE3 spectrometer) are recognised from their ``HIFI``
 instrument string and ``tdc_hifi_*`` run names and open with the HAL-9500
-octagonal layout; this is a distinct instrument from the ISIS HiFi
-spectrometer despite the shared ``hifi`` token. PSI GPS BIN files
+octagonal layout; a full HAL-9500 run additionally opens already grouped into
+its default **Per-octant** preset (see `PSI HAL-9500`_ below), so the
+angle-resolved analysis is available without opening the Grouping window. This
+is a distinct instrument from the ISIS HiFi spectrometer despite the shared
+``hifi`` token. PSI GPS BIN files
 (``deltat_tdc_gps_*`` with the six ``Forw/Back/Up/Down/Righ/Left`` histograms)
 select the GPS two-panel layout automatically (see `PSI GPS`_ below). This
 behaviour
@@ -651,16 +654,25 @@ PSI HAL-9500
    a high-field spectrometer, and this is the grouping used for that work in
    practice), **Longitudinal** (forward ring vs backward ring), and
    **Transverse (opposed pairs)** (each forward detector as its own group,
-   defaulting to the F1–F5 diametric pair).
+   defaulting to the F1–F5 diametric pair). A full HAL-9500 run (all 17
+   histograms) **opens already grouped per-octant** — the loader applies the
+   Per-octant preset automatically, so the angle-resolved per-group analysis is
+   available immediately without opening the Grouping window. The eight octant
+   groups exclude the muon-veto MV.
 
    Some high-field ``.mdu`` runs ship only the forward ring (``MV, F1…F8`` —
-   nine histograms, no backward ring). Presets naming backward-ring detectors
-   (10–17) apply over the detectors the run *does* contain: **Per-octant**
-   degrades to one forward wedge per octant (physically equivalent to
-   **Transverse (opposed pairs)**), and the LOG notes which absent detectors
-   were ignored. **Longitudinal** cannot apply — one of its analysis groups is
-   the entire missing backward ring, so no forward/backward asymmetry can be
-   formed — and the skip is reported with the missing detectors named.
+   nine histograms, no backward ring). Such a run still opens grouped
+   **Per-octant**: the preset naming backward-ring detectors (10–17) applies
+   over the detectors the run *does* contain, so each octant degrades to one
+   forward wedge (physically equivalent to **Transverse (opposed pairs)**, with
+   the analysis pair reducing to F1 vs F5), and the absent detectors are dropped
+   at reduction time. This is identical to *applying* Per-octant by hand from the
+   Grouping window, where the LOG additionally notes which absent detectors were
+   ignored. A preset whose forward or backward *analysis* group is an entirely
+   absent ring — **Longitudinal**, whose backward group is the whole missing
+   backward ring — cannot form an asymmetry, so it is not auto-applied and the
+   loader's label-based default is kept instead; applying it by hand is likewise
+   skipped with the missing detectors named.
 
 PSI GPS
 ~~~~~~~
