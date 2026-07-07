@@ -63,6 +63,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   existing `ASYMMETRY_PERF_LOGGING` env var / "Enable performance logging"
   toggle with the GUI's own PERF lines, so one switch now covers both.
 
+- **Internal: the GUI responsiveness rules are now codified.**
+  `docs/GUI_GUIDELINES.md` gains a "Keeping the GUI responsive" section
+  distilling the 2026-07 responsiveness programme into copyable patterns —
+  the per-event-slot rule, debounced single-flight workers, content-keyed
+  caching, signal-blocked table repopulation, hidden-panel paint deferral,
+  the chunked progress runner, worker + nested-event-loop call sites,
+  teardown rules, and the quiet-machine measurement/stress protocols — each
+  pointing at its canonical implementation. `AGENTS.md` carries the short
+  form, and the structural harness now bans `QApplication.processEvents(`
+  in `gui/` outside the app-startup allowlist.
+
 ### Changed
 
 - **Grouping detectors uses less memory and time.** ``apply_grouping_aligned``

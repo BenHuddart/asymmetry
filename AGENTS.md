@@ -66,7 +66,20 @@ repo-local docs and use this file as the map.
   signal to a bare lambda/partial that touches widgets — with no receiver
   QObject the slot runs on the worker thread; route through a GUI-thread
   QObject method instead. Hold strong references to live threads, and shut
-  them down in `closeEvent`.
+  them down in `closeEvent` — and on a `QDialog` also in `reject()`, which
+  the Close button reaches without `closeEvent`.
+- GUI responsiveness rules (the distilled patterns live in
+  `docs/GUI_GUIDELINES.md` § "Keeping the GUI responsive" — read it before
+  wiring any slot to a high-frequency signal): per-event slots only read
+  widgets and build payloads, deferring reductions/resolves to a debounced
+  single-flight worker; expensive derived results are cached keyed on
+  content digests, never recomputed per event; table repopulation blocks
+  `itemChanged`; hidden panels defer painting to view entry and completed
+  renders use `draw_idle()`; `QApplication.processEvents()` in a loop is
+  banned (harness-enforced) — widget-touching loops use the chunked
+  progress runner (`MainWindow._apply_items_with_progress`); any threading
+  change is validated by repeated parallel test runs on a quiet machine,
+  not a single green run.
 - When adding datasets to the browser in a loop, wrap the loop in
   `DataBrowserPanel.batch_updates()` — per-add table rebuilds are O(n²).
 - A user-facing change is not complete until the Sphinx docs describe it: in
