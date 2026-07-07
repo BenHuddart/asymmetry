@@ -23,6 +23,7 @@ from asymmetry.core.transform import (
     common_t0_for_groups,
     compute_asymmetry,
 )
+from asymmetry.core.utils.perf import perf_timer
 
 
 def _extract_field_from_comment(comment: str) -> float | None:
@@ -78,14 +79,19 @@ class RootLoader(BaseLoader):
                 "install with asymmetry[root]."
             ) from exc
 
-        with uproot.open(path) as root_file:
-            header, header_kind = self._read_header(root_file)
-            root_histograms = self._read_histograms(root_file)
-            slow_control_logs = self._read_slow_control_logs(root_file, path, header)
+        with perf_timer("core.load.root", filename=path.name) as perf:
+            with uproot.open(path) as root_file:
+                header, header_kind = self._read_header(root_file)
+                root_histograms = self._read_histograms(root_file)
+                slow_control_logs = self._read_slow_control_logs(root_file, path, header)
 
-        if not root_histograms:
-            raise ValueError(f"ROOT file does not contain hDecay histograms: {filepath}")
-        return self._build_dataset(path, header, header_kind, root_histograms, slow_control_logs)
+            if not root_histograms:
+                raise ValueError(f"ROOT file does not contain hDecay histograms: {filepath}")
+            dataset = self._build_dataset(
+                path, header, header_kind, root_histograms, slow_control_logs
+            )
+            perf.detail(detectors=len(root_histograms), bins=dataset.n_points)
+            return dataset
 
     # ------------------------------------------------------------------
     # ROOT object extraction

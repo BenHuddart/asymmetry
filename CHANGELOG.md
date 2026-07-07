@@ -53,6 +53,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   point*. (The core suggestion engine and the first dialog section shipped
   quietly in 0.7.0; this completes the feature and documents it.)
 
+- **Internal: lightweight perf-timing helper for the core layer**
+  (`asymmetry.core.utils.perf`). `perf_timer` is a GUI-free context manager
+  wrapping seven hot functions (PSI/ROOT loading, grouped-asymmetry
+  reduction, effective-grouping resolution, grouped time-domain dataset
+  building, aligned grouping, and deadtime preparation) that logs a `PERF
+  {event}: {elapsed_ms:.1f} ms ...` record on the `asymmetry.perf` logger
+  when enabled, with near-zero overhead while disabled. It shares the
+  existing `ASYMMETRY_PERF_LOGGING` env var / "Enable performance logging"
+  toggle with the GUI's own PERF lines, so one switch now covers both.
+
 ### Changed
 
 - **Frequency-domain spectra draw as lines with an error band, and the
