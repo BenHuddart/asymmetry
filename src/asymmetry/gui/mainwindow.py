@@ -240,6 +240,7 @@ from asymmetry.core.utils.constants import (
     MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
     PeriodMode,
 )
+from asymmetry.core.utils.perf import set_perf_logging
 from asymmetry.gui.export_paths import default_export_path, remember_export_path
 from asymmetry.gui.fit_settings import fit_quality_confidence, set_fit_quality_confidence
 from asymmetry.gui.gle_settings import GleSetupDialog
@@ -830,17 +831,29 @@ class MainWindow(QMainWindow):
         self._update_status_selection()
 
     def _perf_logging_is_enabled(self) -> bool:
-        """Return whether lightweight GUI performance logging is enabled."""
+        """Return whether lightweight GUI performance logging is enabled.
+
+        Also pushes the resolved value into the core layer's
+        :func:`asymmetry.core.utils.perf.set_perf_logging` override, so the
+        core perf timers (wrapped around the hot reduction/loading functions)
+        follow the same enabled/disabled state as the GUI's own PERF lines,
+        regardless of whether that state came from the env var or QSettings.
+        """
         env_value = os.environ.get(_PERF_LOGGING_ENV_VAR)
         if env_value is not None:
-            return _coerce_bool(env_value, default=False)
+            enabled = _coerce_bool(env_value, default=False)
+            set_perf_logging(enabled)
+            return enabled
         if QThread.currentThread() is not self.thread():
             # QSettings instances must not be shared across threads; timed
             # code on a worker (e.g. _load_file) uses the last value the GUI
             # thread read instead of touching self._settings.
-            return bool(getattr(self, "_perf_logging_cached", False))
+            enabled = bool(getattr(self, "_perf_logging_cached", False))
+            set_perf_logging(enabled)
+            return enabled
         value = _coerce_bool(self._settings.value(_PERF_LOGGING_SETTINGS_KEY), default=False)
         self._perf_logging_cached = value
+        set_perf_logging(value)
         return value
 
     def _plot_decimation_is_enabled(self) -> bool:
@@ -3611,6 +3624,10 @@ class MainWindow(QMainWindow):
         # threads); refresh it now so a load started right after the toggle
         # logs (or stops logging) timings as the user just asked.
         self._perf_logging_cached = bool(checked)
+        # Push the same explicit state to the core layer's perf timers so the
+        # "Enable performance logging" toggle covers both the GUI's own PERF
+        # lines and the core hot-path timers in one switch.
+        set_perf_logging(bool(checked))
         state = "enabled" if checked else "disabled"
         self._log_panel.log(f"Performance logging {state}.")
         self.statusBar().showMessage(f"Performance logging {state}")

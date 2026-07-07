@@ -44,6 +44,7 @@ from asymmetry.core.transform.grouping import (
 )
 from asymmetry.core.transform.rebin import rebin_counts
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
+from asymmetry.core.utils.perf import perf_timer
 
 GROUP_NUISANCE_PARAMS: tuple[str, ...] = (
     "N0",
@@ -159,34 +160,42 @@ def build_grouped_time_domain_datasets(
     ``exp(t / tau_mu)``; with ``False`` the raw detector counts are returned, on
     which Poisson statistics are exact.
     """
-    groups = build_grouped_time_domain_groups(
-        dataset, t_min=t_min, t_max=t_max, lifetime_corrected=lifetime_corrected
-    )
-    y_label = "Lifetime-corrected counts" if lifetime_corrected else "Counts"
-    grouped_datasets: list[MuonDataset] = []
-    for index, group in enumerate(groups, start=1):
-        synthetic_run_number = _group_dataset_run_number(group.source_run_number, index)
-        metadata = {
-            **dict(group.metadata),
-            "run_number": synthetic_run_number,
-            "run_label": str(group.group_name),
-            "group_id": group.group_id,
-            "group_name": group.group_name,
-            "source_run_number": group.source_run_number,
-            "grouped_time_domain": True,
-            "x_label": "Time (µs)",
-            "y_label": y_label,
-        }
-        grouped_datasets.append(
-            MuonDataset(
-                time=np.asarray(group.time, dtype=float).copy(),
-                asymmetry=np.asarray(group.counts, dtype=float).copy(),
-                error=np.asarray(group.error, dtype=float).copy(),
-                metadata=metadata,
-                run=None,
-            )
+    with perf_timer(
+        "core.reduce.grouped_time_domain",
+        lifetime_corrected=lifetime_corrected,
+    ) as perf:
+        groups = build_grouped_time_domain_groups(
+            dataset, t_min=t_min, t_max=t_max, lifetime_corrected=lifetime_corrected
         )
-    return grouped_datasets
+        y_label = "Lifetime-corrected counts" if lifetime_corrected else "Counts"
+        grouped_datasets: list[MuonDataset] = []
+        for index, group in enumerate(groups, start=1):
+            synthetic_run_number = _group_dataset_run_number(group.source_run_number, index)
+            metadata = {
+                **dict(group.metadata),
+                "run_number": synthetic_run_number,
+                "run_label": str(group.group_name),
+                "group_id": group.group_id,
+                "group_name": group.group_name,
+                "source_run_number": group.source_run_number,
+                "grouped_time_domain": True,
+                "x_label": "Time (µs)",
+                "y_label": y_label,
+            }
+            grouped_datasets.append(
+                MuonDataset(
+                    time=np.asarray(group.time, dtype=float).copy(),
+                    asymmetry=np.asarray(group.counts, dtype=float).copy(),
+                    error=np.asarray(group.error, dtype=float).copy(),
+                    metadata=metadata,
+                    run=None,
+                )
+            )
+        perf.detail(
+            n_groups=len(grouped_datasets),
+            bins=grouped_datasets[0].n_points if grouped_datasets else 0,
+        )
+        return grouped_datasets
 
 
 def grouped_time_domain_available(dataset: MuonDataset | None) -> bool:

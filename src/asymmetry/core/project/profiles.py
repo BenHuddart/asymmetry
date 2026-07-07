@@ -113,6 +113,7 @@ from asymmetry.core.transform.grouping import (
     effective_group_indices,
 )
 from asymmetry.core.transform.t0 import find_t0_for_run
+from asymmetry.core.utils.perf import perf_timer
 
 # --------------------------------------------------------------------------- #
 # Policy defaults and vocabulary
@@ -988,57 +989,64 @@ def resolve_effective_grouping(profile: GroupingProfile, run: Run) -> dict[str, 
     gracefully by the reduction chokepoints (:func:`effective_group_indices`
     drops out-of-range ids), exactly as they are for a file-derived grouping.
     """
-    run_grouping = run.grouping if isinstance(run.grouping, dict) else {}
-    n_hist = len(run.histograms)
+    with perf_timer(
+        "core.grouping.resolve_effective",
+        t0_mode=profile.t0_policy.mode,
+        alpha_mode=profile.alpha_policy.mode,
+        deadtime_mode=profile.deadtime_policy.mode,
+    ) as perf:
+        run_grouping = run.grouping if isinstance(run.grouping, dict) else {}
+        n_hist = len(run.histograms)
 
-    grouping: dict[str, Any] = {
-        "groups": {int(gid): [int(d) for d in dets] for gid, dets in profile.groups.items()},
-        "group_names": {int(gid): str(name) for gid, name in profile.group_names.items()},
-        "forward_group": int(profile.forward_group),
-        "backward_group": int(profile.backward_group),
-        "excluded_detectors": [int(d) for d in profile.excluded_detectors],
-        "bunching_factor": int(profile.bunching_factor),
-    }
-    if profile.included_groups:
-        grouping["included_groups"] = {
-            int(gid): bool(v) for gid, v in profile.included_groups.items()
+        grouping: dict[str, Any] = {
+            "groups": {int(gid): [int(d) for d in dets] for gid, dets in profile.groups.items()},
+            "group_names": {int(gid): str(name) for gid, name in profile.group_names.items()},
+            "forward_group": int(profile.forward_group),
+            "backward_group": int(profile.backward_group),
+            "excluded_detectors": [int(d) for d in profile.excluded_detectors],
+            "bunching_factor": int(profile.bunching_factor),
         }
-    if profile.projections:
-        grouping["projections"] = [dict(p) for p in profile.projections]
+        if profile.included_groups:
+            grouping["included_groups"] = {
+                int(gid): bool(v) for gid, v in profile.included_groups.items()
+            }
+        if profile.projections:
+            grouping["projections"] = [dict(p) for p in profile.projections]
 
-    # Structure/provenance extras (grouping_preset, vector_axis, per-axis alpha).
-    for key, value in profile.extra.items():
-        grouping[key] = value
+        # Structure/provenance extras (grouping_preset, vector_axis, per-axis alpha).
+        for key, value in profile.extra.items():
+            grouping[key] = value
 
-    # Instrument is part of the fingerprint but also a payload key downstream
-    # code reads (background gating, fingerprinting on reload).
-    if profile.fingerprint.instrument:
-        grouping["instrument"] = profile.fingerprint.instrument
+        # Instrument is part of the fingerprint but also a payload key downstream
+        # code reads (background gating, fingerprinting on reload).
+        if profile.fingerprint.instrument:
+            grouping["instrument"] = profile.fingerprint.instrument
 
-    # -- per-run / file-derived facts ---------------------------------------
-    _copy_per_run_facts(grouping, run_grouping, run)
+        # -- per-run / file-derived facts ---------------------------------------
+        _copy_per_run_facts(grouping, run_grouping, run)
 
-    # -- binning ------------------------------------------------------------
-    if profile.binning_mode and profile.binning_mode != "fixed":
-        grouping["binning_mode"] = profile.binning_mode
-        if profile.bin0_us is not None:
-            grouping["bin0_us"] = float(profile.bin0_us)
-        if profile.binning_mode == "variable" and profile.bin10_us is not None:
-            grouping["bin10_us"] = float(profile.bin10_us)
+        # -- binning ------------------------------------------------------------
+        if profile.binning_mode and profile.binning_mode != "fixed":
+            grouping["binning_mode"] = profile.binning_mode
+            if profile.bin0_us is not None:
+                grouping["bin0_us"] = float(profile.bin0_us)
+            if profile.binning_mode == "variable" and profile.bin10_us is not None:
+                grouping["bin10_us"] = float(profile.bin10_us)
 
-    # -- period mode --------------------------------------------------------
-    if profile.period_mode is not None:
-        grouping["period_mode"] = str(profile.period_mode)
-    elif "period_mode" in run_grouping:
-        grouping["period_mode"] = run_grouping["period_mode"]
+        # -- period mode --------------------------------------------------------
+        if profile.period_mode is not None:
+            grouping["period_mode"] = str(profile.period_mode)
+        elif "period_mode" in run_grouping:
+            grouping["period_mode"] = run_grouping["period_mode"]
 
-    # -- policies -----------------------------------------------------------
-    _apply_t0_policy(grouping, profile.t0_policy, run, n_hist)
-    _apply_alpha_policy(grouping, profile.alpha_policy, run, n_hist)
-    _apply_deadtime_policy(grouping, profile.deadtime_policy, run_grouping, n_hist)
-    _apply_background_policy(grouping, profile.background_policy)
+        # -- policies -----------------------------------------------------------
+        _apply_t0_policy(grouping, profile.t0_policy, run, n_hist)
+        _apply_alpha_policy(grouping, profile.alpha_policy, run, n_hist)
+        _apply_deadtime_policy(grouping, profile.deadtime_policy, run_grouping, n_hist)
+        _apply_background_policy(grouping, profile.background_policy)
 
-    return grouping
+        perf.detail(n_detectors=n_hist, n_groups=len(grouping.get("groups", {})))
+        return grouping
 
 
 #: Per-run, file-derived keys copied straight through from the run's own

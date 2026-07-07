@@ -8,6 +8,7 @@ from scipy.optimize import curve_fit
 from asymmetry.core.data.dataset import Histogram
 from asymmetry.core.transform.grouping import good_frames
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
+from asymmetry.core.utils.perf import perf_timer
 
 
 def apply_deadtime_correction(
@@ -383,14 +384,25 @@ def prepare_histograms_with_deadtime(
     use_deadtime: bool,
 ) -> tuple[list[Histogram], bool]:
     """Return histograms with optional deadtime correction applied."""
-    if not use_deadtime:
+    with perf_timer(
+        "core.deadtime.prepare",
+        n_detectors=len(histograms),
+        use_deadtime=use_deadtime,
+    ) as perf:
+        if not use_deadtime:
+            perf.detail(applied=False)
+            return list(histograms), False
+
+        dead_time_us = grouping.get("dead_time_us") if isinstance(grouping, dict) else None
+        if isinstance(dead_time_us, list) and len(dead_time_us) >= len(histograms):
+            corrected, applied = _prepare_histograms_with_resolved_deadtime(
+                histograms, grouping, dead_time_us
+            )
+            perf.detail(applied=applied)
+            return corrected, applied
+
+        perf.detail(applied=False)
         return list(histograms), False
-
-    dead_time_us = grouping.get("dead_time_us") if isinstance(grouping, dict) else None
-    if isinstance(dead_time_us, list) and len(dead_time_us) >= len(histograms):
-        return _prepare_histograms_with_resolved_deadtime(histograms, grouping, dead_time_us)
-
-    return list(histograms), False
 
 
 def _prepare_histograms_with_resolved_deadtime(
