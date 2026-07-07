@@ -255,3 +255,65 @@ def test_shutdown_keeps_unjoinable_thread_alive_until_it_finishes():
     # Let it finish; the reaper prunes it on the GUI thread via finished.
     release.set()
     _wait_until(lambda: len(reaper._threads) == parked_before)
+
+
+def test_destroying_parent_without_shutdown_parks_running_worker():
+    """A runner destroyed via its parent (no shutdown()) must not abort.
+
+    A ``TaskRunner`` parented to a window/dialog owns its worker ``QThread``\\ s
+    as children. When the parent is destroyed by C++ destruction rather than
+    ``close()``/``done()`` — a parented *child* dialog reaped through its
+    parent's destruction, or a test's teardown ``deleteLater``-ing a window —
+    the runner's ``closeEvent``/``done`` never run, so ``shutdown()`` is never
+    called. Destroying a running child ``QThread`` qFatal-aborts the process, so
+    the ``destroyed`` safety net must instead park it in the reaper. This is the
+    tightest regression for the alpha-calibration child-dialog teardown crash.
+    """
+    from PySide6.QtCore import QEvent, QObject
+    from PySide6.QtWidgets import QApplication
+
+    from asymmetry.gui import tasks as tasks_mod
+
+    app = QApplication.instance()
+    assert app is not None
+    parent = QObject()
+    runner = TaskRunner(parent)
+    started = threading.Event()
+    release = threading.Event()
+
+    def fn(worker: TaskWorker):
+        started.set()
+        # Gated mid-flight and ignores cancellation, modelling a worker still
+        # inside a numpy call when its owner is torn down.
+        release.wait(10.0)
+        return "done"
+
+    runner.start(fn)
+    assert started.wait(10.0)
+
+    reaper_before = tasks_mod._orphan_reaper
+    parked_before = len(reaper_before._threads) if reaper_before is not None else 0
+    # Keep the thread wrapper alive so we can assert on it after the runner is gone.
+    live_thread = runner._live[0][0]
+
+    # Destroy the parent WITHOUT shutdown()/close()/done() — exactly the
+    # test-teardown / child-dialog path. deleteLater + a DeferredDelete drain
+    # destroys parent -> runner (its child), firing runner.destroyed while the
+    # worker still runs. Without the safety net this line aborts the process.
+    del runner
+    parent.deleteLater()
+    del parent
+    app.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    app.processEvents()
+
+    reaper = tasks_mod._orphan_reaper
+    assert reaper is not None
+    # The still-running thread was parked in the reaper, not destroyed with us.
+    assert len(reaper._threads) == parked_before + 1
+    assert live_thread.isRunning()
+
+    # Release the gate; the reaper prunes the now-finished thread on the GUI
+    # thread via finished (isRunning() False -> deleteLater), draining back to
+    # the baseline. Reaching the baseline is the proof it finished cleanly.
+    release.set()
+    _wait_until(lambda: len(reaper._threads) == parked_before)
