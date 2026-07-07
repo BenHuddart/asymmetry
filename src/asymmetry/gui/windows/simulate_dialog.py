@@ -7,6 +7,23 @@ when one exists — an event budget, an optional flat background and a fixed
 RNG seed, then Generate. The result is emitted via :attr:`run_generated` and
 appears in the Data Browser badged as synthetic; Save as NeXus… writes it as
 a loadable file through :func:`asymmetry.core.io.nexus_writer.write_nexus_v1`.
+
+Generation itself (``simulate_run``/``simulate_count_run``/
+``simulate_two_period_run``/``simulate_multi_group_run``) runs on a
+:class:`~asymmetry.gui.tasks.TaskRunner` worker thread, not the GUI thread —
+a large multi-detector template at a high event budget can take seconds, and
+the app must stay responsive (and paintable) for that whole time. ``_on_generate``
+snapshots every form input into plain values/objects first, so the worker
+touches nothing but the core function; the Generate button reads "Generating…"
+and is disabled meanwhile. None of the four core functions accept a
+progress/cancel callback, so the call is opaque from the worker's side — it can
+only be cancelled at the thread-join boundary (see ``TaskRunner.shutdown``),
+which both dialogs invoke from ``closeEvent`` and ``done`` so a mid-flight close
+cannot crash the process. ``shutdown`` blocks until the in-flight call actually
+finishes (bounded, see ``tasks.py``), so a run started just before the user
+dismisses the dialog still completes and still emits :attr:`run_generated` —
+closing only stops you from starting another Generate, it does not discard
+one already running.
 """
 
 from __future__ import annotations
@@ -50,6 +67,7 @@ from asymmetry.core.simulate import (
     total_events_of,
 )
 from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
+from asymmetry.gui.tasks import TaskRunner
 
 #: Synthetic runs are numbered from here, clear of real ISIS/PSI run series.
 _SYNTHETIC_RUN_SERIES = 90001
@@ -80,6 +98,29 @@ class _SimulateDialogBase(QDialog):
         self._run_number_releaser = run_number_releaser
         self._allocated: set[int] = set()
         self._last_run: Run | None = None
+        #: Owns the Generate worker thread; shut down on every dismissal path
+        #: (accept/reject/window-✕) so a mid-flight close cannot crash.
+        self._tasks = TaskRunner(self)
+
+    def _set_generate_busy(self, busy: bool) -> None:
+        """Toggle the Generate button between idle and in-flight states."""
+        button = self._generate_button
+        if busy:
+            button.setEnabled(False)
+            button.setText("Generating…")
+        else:
+            button.setText("Generate")
+            button.setEnabled(True)
+
+    def closeEvent(self, event) -> None:  # noqa: N802  (Qt override)
+        """Shut the worker down before closing (window ✕)."""
+        self._tasks.shutdown()
+        super().closeEvent(event)
+
+    def done(self, result: int) -> None:
+        """Shut the worker down on every dismissal (accept/reject)."""
+        self._tasks.shutdown()
+        super().done(result)
 
     def _extra_reserved(self) -> set[int]:
         """Run numbers to avoid in the internal fallback (e.g. loaded runs)."""
@@ -457,51 +498,78 @@ class SimulateDialog(_SimulateDialogBase):
         self._param_values = self._table_parameters()
         seed = self._resolve_seed()
         events = self._events_spin.value() * 1.0e6
+        events_display = self._events_spin.value()
         background = self._background_spin.value()
         mode = str(self._mode_combo.currentData())
         run_number = self._next_run_number()
-        try:
+
+        # Snapshot everything Generate needs as plain values/objects on the GUI
+        # thread before starting the worker — the model, parameters and
+        # two-period specs are read now so later form edits (the user can keep
+        # the dialog open and tweak things) cannot race the in-flight call.
+        model = self._model
+        params = dict(self._param_values)
+        template_run_number = template.run_number
+        two_period_specs = self._two_period_specs() if mode == "two_period" else None
+
+        def _generate(worker: object, *, mode: str = mode) -> Run:
             if mode == "count":
-                run = simulate_count_run(
+                return simulate_count_run(
                     template,
-                    self._model,
-                    self._param_values,
+                    model,
+                    params,
                     total_events=events,
                     seed=seed,
                     background_per_bin=background,
                     run_number=run_number,
                 )
-            elif mode == "two_period":
-                run = simulate_two_period_run(
+            if mode == "two_period":
+                return simulate_two_period_run(
                     template,
-                    self._two_period_specs(),
+                    two_period_specs,
                     total_events=events,
                     seed=seed,
                     background_per_bin=background,
                     run_number=run_number,
                 )
-            else:
-                run = simulate_run(
-                    template,
-                    self._model,
-                    self._param_values,
-                    total_events=events,
-                    seed=seed,
-                    background_per_bin=background,
-                    run_number=run_number,
-                )
-        except (TypeError, ValueError) as exc:
-            QMessageBox.warning(self, "Generate Synthetic Run", str(exc))
-            self._release_run_number(run_number)
-            return
+            return simulate_run(
+                template,
+                model,
+                params,
+                total_events=events,
+                seed=seed,
+                background_per_bin=background,
+                run_number=run_number,
+            )
+
+        self._set_generate_busy(True)
+        self._tasks.start(
+            _generate,
+            on_finished=lambda run, m=mode, ev=events_display, trn=template_run_number, sd=seed: (
+                self._on_generate_finished(run, m, ev, trn, sd)
+            ),
+            on_error=lambda message, rn=run_number: self._on_generate_error(message, rn),
+        )
+
+    def _on_generate_finished(
+        self, run: Run, mode: str, events_display: float, template_run_number: int, seed: int
+    ) -> None:
+        """Apply a completed Generate (GUI thread, via the TaskRunner relay)."""
+        self._set_generate_busy(False)
         self._last_run = run
         self._save_button.setEnabled(True)
         mode_note = {"count": " count histograms", "two_period": " two-period"}.get(mode, "")
         self._status_label.setText(
-            f"Generated SIM {run.run_number}{mode_note} from run {template.run_number} "
-            f"({self._events_spin.value():g} MEv, seed {seed})."
+            f"Generated SIM {run.run_number}{mode_note} from run {template_run_number} "
+            f"({events_display:g} MEv, seed {seed})."
         )
         self.run_generated.emit(run)
+
+    def _on_generate_error(self, message: str, run_number: int) -> None:
+        """Surface a Generate failure exactly as the synchronous path did."""
+        self._set_generate_busy(False)
+        self._release_run_number(run_number)
+        QMessageBox.warning(self, "Generate Synthetic Run", message)
 
     def _two_period_specs(self) -> list[PeriodSpec]:
         """Build red/green :class:`PeriodSpec`\\ s from the model and green scale.
@@ -736,28 +804,54 @@ class MultiGroupSimulateDialog(_SimulateDialogBase):
     def _on_generate(self) -> None:
         seed = self._resolve_seed()
         run_number = self._next_run_number()
-        try:
-            run = simulate_multi_group_run(
-                self._template,
-                self._model,
-                self._specs_from_table(),
-                total_events=self._events_spin.value() * 1.0e6,
+
+        # Snapshot every input on the GUI thread before starting the worker —
+        # the worker must touch nothing but the core function.
+        template = self._template
+        model = self._model
+        specs = self._specs_from_table()
+        base_parameters = dict(self._base_values)
+        events = self._events_spin.value() * 1.0e6
+        events_display = self._events_spin.value()
+        background = self._background_spin.value()
+
+        def _generate(worker: object) -> Run:
+            return simulate_multi_group_run(
+                template,
+                model,
+                specs,
+                total_events=events,
                 seed=seed,
-                base_parameters=self._base_values,
-                background_per_bin=self._background_spin.value(),
+                base_parameters=base_parameters,
+                background_per_bin=background,
                 run_number=run_number,
             )
-        except (TypeError, ValueError) as exc:
-            QMessageBox.warning(self, "Generate Multi-Group Run", str(exc))
-            self._release_run_number(run_number)
-            return
+
+        self._set_generate_busy(True)
+        self._tasks.start(
+            _generate,
+            on_finished=lambda run, ev=events_display, sd=seed: self._on_generate_finished(
+                run, ev, sd
+            ),
+            on_error=lambda message, rn=run_number: self._on_generate_error(message, rn),
+        )
+
+    def _on_generate_finished(self, run: Run, events_display: float, seed: int) -> None:
+        """Apply a completed Generate (GUI thread, via the TaskRunner relay)."""
+        self._set_generate_busy(False)
         self._last_run = run
         self._save_button.setEnabled(True)
         self._status_label.setText(
             f"Generated SIM {run.run_number} ({len(run.histograms)} detectors, "
-            f"{self._events_spin.value():g} MEv, seed {seed})."
+            f"{events_display:g} MEv, seed {seed})."
         )
         self.run_generated.emit(run)
+
+    def _on_generate_error(self, message: str, run_number: int) -> None:
+        """Surface a Generate failure exactly as the synchronous path did."""
+        self._set_generate_busy(False)
+        self._release_run_number(run_number)
+        QMessageBox.warning(self, "Generate Multi-Group Run", message)
 
     def _on_save_nexus(self) -> None:
         self._save_generated_as_nexus("Save Multi-Group Run")
