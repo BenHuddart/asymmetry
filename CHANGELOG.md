@@ -55,6 +55,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Frequency-domain spectra draw as lines with an error band, and the
+  statistics behind zero padding are now handled for you.** FFT and MaxEnt
+  spectra render as solid lines (the convention of every reference muSR
+  package) instead of the time-domain errorbar-dots idiom, with a shaded ±1σ
+  band when the spectrum carries per-point errors, and a subtle dashed
+  marker at the expected Larmor position γ_μ·B when the run's field is
+  known (single-run view; absent on the correlation axis and in GLE/PDF
+  exports, which draw from the data, not the screen). Because zero-padded
+  samples are sinc-interpolated and correlated, frequency-domain fits and
+  spectral-moment uncertainties now apply the effective-sample-size
+  correction automatically — degrees of freedom count the independent
+  samples, χ² is scaled to match, and uncertainties grow by √pad; fit
+  results state the applied correction in their advisory row. (WiMDA applies
+  the dof part of this correction; Asymmetry additionally corrects χ² and
+  the uncertainties for consistency.) The time-domain plot is unchanged.
+
 - **PSI HAL-9500's default grouping preset is now Per-octant, not
   Longitudinal.** High-field (TF) work on HAL-9500 — the AFM-transition
   corpus and similar — is done per-octant in practice: each azimuthal wedge

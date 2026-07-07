@@ -100,8 +100,12 @@ the spectrum carries per-point errors (the averaged-FFT error, or the MaxEnt err
 estimate), each moment is given a **bootstrap** uncertainty — the spectrum is
 resampled within its noise many times and the moments recomputed, so the error
 propagates correctly through the nonlinear peak, skewness and :math:`\beta`. A
-value reads as :math:`B_{\mathrm{rms}} = 18.4(3)`. Run-to-run scatter across a
-temperature scan is then handled, as for any series, by the trend layer.
+value reads as :math:`B_{\mathrm{rms}} = 18.4(3)`. For a zero-padded FFT the
+samples are sinc-interpolated and correlated (only :math:`1/n` of them are
+independent at pad factor :math:`n`), so moment uncertainties are scaled by
+:math:`\sqrt{n}` — the same effective-sample-size correction the
+frequency-domain fits apply. Run-to-run scatter across a temperature scan is
+then handled, as for any series, by the trend layer.
 
 Which spectra qualify
 ---------------------

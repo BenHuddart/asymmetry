@@ -897,6 +897,54 @@ def test_single_fit_uses_dataset_object_it_was_given(
     assert captured["n_points"] == len(rebinned.time)
 
 
+def test_single_fit_threads_zero_padding_oversampling(
+    qapp: QApplication, dataset: MuonDataset
+) -> None:
+    """A padded FFT spectrum's fit carries the effective-sample-size correction.
+
+    Zero-padded spectra stamp ``fourier_padding`` into their metadata; the tab
+    must thread it to the engine as ``error_oversampling``. Time-domain
+    datasets carry no stamp and must not see the kwarg at all (engine test
+    doubles with strict signatures stay unchanged).
+    """
+    captured: dict = {}
+
+    def _make_stub(model):
+        def _fit(ds, model_fn, parameters, *, minos=False, cancel_callback=None, **kwargs):
+            captured["kwargs"] = dict(kwargs)
+            return FitResult(
+                success=True,
+                chi_squared=1.0,
+                reduced_chi_squared=0.1,
+                parameters=ParameterSet(
+                    [Parameter(name=p, value=float(i + 1)) for i, p in enumerate(model.param_names)]
+                ),
+                uncertainties={p: 0.01 for p in model.param_names},
+            )
+
+        return _fit
+
+    tab = SingleFitTab()
+    tab.set_dataset(dataset)
+    tab._fit_engine = SimpleNamespace(fit=_make_stub(tab._composite_model))
+    tab._run_fit()
+    assert tab.wait_for_fit()
+    assert "error_oversampling" not in captured["kwargs"]
+
+    padded = MuonDataset(
+        time=dataset.time,
+        asymmetry=dataset.asymmetry,
+        error=dataset.error,
+        metadata={**dataset.metadata, "fourier_padding": 4},
+    )
+    tab_padded = SingleFitTab()
+    tab_padded.set_dataset(padded)
+    tab_padded._fit_engine = SimpleNamespace(fit=_make_stub(tab_padded._composite_model))
+    tab_padded._run_fit()
+    assert tab_padded.wait_for_fit()
+    assert captured["kwargs"].get("error_oversampling") == 4.0
+
+
 def test_single_fit_stop_button_cancels_worker(qapp: QApplication, dataset: MuonDataset) -> None:
     """Stop swaps in for Fit during a worker fit and cancels it cooperatively."""
     tab = SingleFitTab()

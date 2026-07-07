@@ -193,8 +193,14 @@ def test_fft_spectrum_renders_in_gui(run_path: Path | None, expected_mhz: float)
         )
         assert panel._last_plot_asymmetry is not None, "the FFT spectrum never rendered"
 
-        # (a) a non-empty spectrum curve is drawn.
-        assert panel._ax.collections, "no spectrum curve was drawn on the FFT canvas"
+        # (a) a non-empty spectrum curve is drawn. Frequency spectra render as
+        # solid lines (no errorbar collections) since the line-rendering round.
+        data_lines = [
+            line
+            for line in panel._ax.lines
+            if line.get_linestyle() == "-" and np.asarray(line.get_xdata()).size > 2
+        ]
+        assert data_lines, "no spectrum curve was drawn on the FFT canvas"
         freqs = np.asarray(panel._last_plot_time, dtype=float)
         values = np.abs(np.asarray(panel._last_plot_asymmetry, dtype=float))
         assert freqs.size > 1 and np.isfinite(freqs).all()

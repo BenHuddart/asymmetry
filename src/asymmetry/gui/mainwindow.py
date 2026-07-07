@@ -7111,7 +7111,29 @@ class MainWindow(QMainWindow):
             uncertainty=method,
             unit=unit.value,
             mode=self._active_frequency_rep_type().value,
+            error_oversampling=self._active_spectrum_error_oversampling(),
         )
+
+    def _active_spectrum_error_oversampling(self) -> float:
+        """The displayed spectrum's zero-padding factor, 1.0 when unpadded.
+
+        Zero-padded samples are sinc-interpolated and correlated, so moment
+        uncertainties need the effective-sample-size correction — the same
+        ``error_oversampling`` contract the fit engine applies (a padded FFT
+        stamps ``fourier_padding`` into its metadata; MaxEnt spectra carry no
+        stamp and are untouched).
+        """
+        dataset = None
+        if hasattr(self._frequency_plot_panel, "current_frequency_dataset"):
+            dataset = self._frequency_plot_panel.current_frequency_dataset()
+        metadata = getattr(dataset, "metadata", None)
+        if not isinstance(metadata, dict):
+            return 1.0
+        try:
+            padding = float(metadata.get("fourier_padding", 1) or 1)
+        except (TypeError, ValueError):
+            return 1.0
+        return padding if padding > 1.0 else 1.0
 
     def _compute_and_show_moments(self, widget, accessor=None) -> None:
         """Compute moments for the active spectrum and refresh readout + overlay.

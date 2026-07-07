@@ -179,6 +179,7 @@ from .tab_base import (
     _start_fit_call,
     _synchronize_fraction_group_values_in_table,
     _wait_for_fit_thread,
+    dataset_error_oversampling,
     param_name_col_width,
 )
 
@@ -1915,6 +1916,17 @@ class GlobalFitTab(FitTabBase):
         ]
         self._series_seeding_meta = None
         self.global_fit_started.emit()
+        # Zero-padded FFT spectra carry correlated samples (frequency-domain
+        # global fits); one scalar for the whole batch — members share a recipe
+        # in practice, and max() errs conservative if they ever diverge.
+        # Conditional so time-domain paths (and their test doubles) are unchanged.
+        fit_kwargs: dict = {}
+        oversampling = max(
+            (dataset_error_oversampling(dataset) for dataset in self._datasets),
+            default=1.0,
+        )
+        if oversampling > 1.0:
+            fit_kwargs["error_oversampling"] = oversampling
         if not free_global_params:
             amplitude_param, frequency_param = resolve_series_params(model.param_names)
             self._fit_worker = _start_fit_call(
@@ -1932,6 +1944,7 @@ class GlobalFitTab(FitTabBase):
                     order_key=self._asymmetry_series_order_key(),
                     amplitude_param=amplitude_param,
                     frequency_param=frequency_param,
+                    **fit_kwargs,
                 ),
                 on_finished=self._on_asymmetry_series_finished,
                 on_error=self._on_fit_error,
@@ -1950,6 +1963,7 @@ class GlobalFitTab(FitTabBase):
                     local_params,
                     initial_params,
                     minos=self._minos_checkbox.isChecked(),
+                    **fit_kwargs,
                 ),
                 on_finished=lambda result: self._on_fit_finished(*result),
                 on_error=self._on_fit_error,

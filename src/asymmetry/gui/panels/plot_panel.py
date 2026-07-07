@@ -2118,6 +2118,136 @@ class PlotPanel(QWidget):
         )
         return int(indices.size)
 
+    def _plot_frequency_line_masked(
+        self,
+        ax,
+        freq: np.ndarray,
+        values: np.ndarray,
+        error: np.ndarray,
+        mask: np.ndarray,
+        *,
+        color: str | None,
+        label: str,
+        linewidth: float = 1.2,
+    ) -> int:
+        """Plot one frequency-domain spectrum as a line with a shaded ±1σ band.
+
+        Every reference muSR package (WiMDA, musrview, Mantid) draws spectra
+        as lines, not the time-domain errorbar-dots idiom, so this is the
+        frequency-panel counterpart of :meth:`_plot_errorbar_masked` — it
+        shares the same bounded-density decimation (min-max bucketing on
+        *values*, applied before drawing) but renders a solid line instead of
+        point markers. A translucent ±1σ band replaces per-point error bars
+        when *error* carries any positive finite value; the common
+        un-averaged all-zero-error case draws no band. The line is drawn
+        first so an unresolved ``color=None`` (matplotlib's auto-cycle) is
+        pinned to the *resolved* colour actually used, keeping the band and
+        line the same hue rather than each independently advancing the
+        property cycle.
+        """
+        visible_indices = self._visible_plot_indices(freq, mask)
+        indices = self._decimated_plot_indices(
+            freq, mask, values=values, visible_indices=visible_indices
+        )
+        if indices.size <= 0:
+            return 0
+        if self.decimation_enabled() and indices.size < visible_indices.size:
+            self._decimation_applied_for_current_view = True
+        # Per-view totals feed the corner chip ("4.0k of 1.2M pts").
+        self._decimation_points_shown += int(indices.size)
+        self._decimation_points_total += int(visible_indices.size)
+
+        x = freq[indices]
+        y = values[indices]
+        err = error[indices]
+
+        (line,) = ax.plot(
+            x,
+            y,
+            "-",
+            color=color,
+            linewidth=linewidth,
+            label=label,
+            zorder=2.5,
+        )
+        # Presence is decided from the full masked error array (not just the
+        # decimated samples drawn), matching "the dataset's error array has
+        # any positive finite values" — a decimated bucket could otherwise
+        # miss the one point that carries a real error.
+        has_band = bool(np.any(np.isfinite(error[mask]) & (error[mask] > 0.0)))
+        if has_band:
+            finite_err = np.isfinite(err)
+            band_err = np.where(finite_err, err, 0.0)
+            ax.fill_between(
+                x,
+                y - band_err,
+                y + band_err,
+                color=line.get_color(),
+                alpha=0.25,
+                linewidth=0,
+                zorder=1.5,
+                label="_nolegend_",
+            )
+        return int(indices.size)
+
+    def _draw_expected_larmor_marker(self, dataset: MuonDataset) -> None:
+        """Mark the expected γ_μ·B Larmor position on a single displayed spectrum.
+
+        Single-run frequency view only — an overlay would need one marker per
+        member, which is noise rather than signal, so this is only called from
+        :meth:`plot_dataset`. Absent on the correlation (hyperfine-coupling)
+        axis, where an applied-field Larmor line is not meaningful, and absent
+        when the run/dataset metadata carries no applied field.
+
+        Built by hand and attached with ``add_artist`` — the same idiom
+        ``draw_zero_line`` uses in ``styles/plots.py`` — rather than
+        ``axvline``, so the marker can never perturb ``dataLim``/autoscale
+        regardless of when it is drawn relative to ``_apply_limits``. The x
+        position is derived exactly like ``_frequency_field_upper_bound``'s
+        framing math (reference field in Gauss → MHz → active display unit via
+        ``_convert_frequency_axis_for_display``), so it lands in the same
+        coordinate system the plotted spectrum itself uses — display-unit
+        conversion only, never reference-shifted.
+        """
+        if not self._has_mpl or self._frequency_axis_is_correlation:
+            return
+        field_gauss = reference_field_gauss(getattr(dataset, "run", None), dataset)
+        if field_gauss is None or field_gauss <= 0.0:
+            return
+        expected_mhz = float(gauss_to_mhz(field_gauss))
+        if not np.isfinite(expected_mhz) or expected_mhz <= 0.0:
+            return
+        x = float(self._convert_frequency_axis_for_display(np.array([expected_mhz]))[0])
+        if not np.isfinite(x):
+            return
+
+        from matplotlib import lines as mlines
+
+        transform = self._ax.get_xaxis_transform(which="grid")
+        marker = mlines.Line2D(
+            [x, x],
+            [0.0, 1.0],
+            transform=transform,
+            color=tokens.TEXT_MUTED,
+            alpha=0.6,
+            linestyle="--",
+            linewidth=1.0,
+            zorder=1,
+        )
+        marker.set_label("_nolegend_")
+        self._ax.add_artist(marker)
+        self._ax.annotate(
+            r"$\gamma_\mu \cdot B$",
+            xy=(x, 0.96),
+            xycoords=transform,
+            ha="left",
+            va="top",
+            fontsize=8,
+            color=tokens.TEXT_MUTED,
+            alpha=0.6,
+            zorder=1,
+        )
+
     def _set_frequency_reference_from_dataset(self, dataset: MuonDataset | None) -> None:
         """Update the reference frequency used by relative frequency displays."""
         if not self._is_frequency_plot_panel():
@@ -3619,35 +3749,49 @@ class PlotPanel(QWidget):
             )
 
             finite_mask = np.isfinite(time) & np.isfinite(asymmetry) & np.isfinite(error)
-            valid_low = finite_mask & low_count_mask
-            valid_main = finite_mask & ~low_count_mask
 
-            if np.any(valid_low):
+            if self._is_frequency_plot_panel():
+                # Line + error-band idiom (see plot_dataset); no expected-Larmor
+                # marker here — one per overlaid member would be noise, not signal.
+                self._plot_frequency_line_masked(
+                    self._ax,
+                    time,
+                    asymmetry,
+                    error,
+                    finite_mask,
+                    color=color,
+                    label=self._dataset_label_for(dataset),
+                )
+            else:
+                valid_low = finite_mask & low_count_mask
+                valid_main = finite_mask & ~low_count_mask
+
+                if np.any(valid_low):
+                    self._plot_errorbar_masked(
+                        self._ax,
+                        time,
+                        asymmetry,
+                        error,
+                        valid_low,
+                        fmt=".",
+                        markersize=3,
+                        color="0.6",
+                        ecolor="0.6",
+                        label="_nolegend_",
+                    )
+
+                draw_mask = valid_main if np.any(valid_main) else finite_mask
                 self._plot_errorbar_masked(
                     self._ax,
                     time,
                     asymmetry,
                     error,
-                    valid_low,
+                    draw_mask,
                     fmt=".",
                     markersize=3,
-                    color="0.6",
-                    ecolor="0.6",
-                    label="_nolegend_",
+                    color=color,
+                    label=self._dataset_label_for(dataset),
                 )
-
-            draw_mask = valid_main if np.any(valid_main) else finite_mask
-            self._plot_errorbar_masked(
-                self._ax,
-                time,
-                asymmetry,
-                error,
-                draw_mask,
-                fmt=".",
-                markersize=3,
-                color=color,
-                label=self._dataset_label_for(dataset),
-            )
 
             # Overlay fit curve in same colour; excluded from legend by "_" prefix.
             fit_to_plot = self._fit_curve_for_dataset(dataset)
@@ -3867,37 +4011,55 @@ class PlotPanel(QWidget):
         draw_zero_line(self._ax)
 
         finite_mask = np.isfinite(time) & np.isfinite(asymmetry) & np.isfinite(error)
-        valid_low = finite_mask & low_count_mask
-        valid_main = finite_mask & ~low_count_mask
+        point_color = self._period_mode_color_for_dataset(dataset)
 
-        if np.any(valid_low):
+        if self._is_frequency_plot_panel():
+            # Frequency spectra render as a line with an error band (the
+            # WiMDA/musrview/Mantid idiom), not time-domain errorbar dots. The
+            # low-count grey split is a raw-counts concept and is always inert
+            # here (``_low_count_mask_for_dataset`` returns all-False for a
+            # frequency panel), so there is only ever one trace to draw.
+            self._plot_frequency_line_masked(
+                self._ax,
+                time,
+                asymmetry,
+                error,
+                finite_mask,
+                color=point_color,
+                label=self._dataset_label_for(dataset),
+            )
+            self._draw_expected_larmor_marker(dataset)
+        else:
+            valid_low = finite_mask & low_count_mask
+            valid_main = finite_mask & ~low_count_mask
+
+            if np.any(valid_low):
+                self._plot_errorbar_masked(
+                    self._ax,
+                    time,
+                    asymmetry,
+                    error,
+                    valid_low,
+                    fmt=".",
+                    markersize=3,
+                    color="0.6",
+                    ecolor="0.6",
+                    label="_nolegend_",
+                )
+
+            draw_mask = valid_main if np.any(valid_main) else finite_mask
             self._plot_errorbar_masked(
                 self._ax,
                 time,
                 asymmetry,
                 error,
-                valid_low,
+                draw_mask,
                 fmt=".",
                 markersize=3,
-                color="0.6",
-                ecolor="0.6",
-                label="_nolegend_",
+                color=point_color,
+                ecolor=point_color,
+                label=self._dataset_label_for(dataset),
             )
-
-        draw_mask = valid_main if np.any(valid_main) else finite_mask
-        point_color = self._period_mode_color_for_dataset(dataset)
-        self._plot_errorbar_masked(
-            self._ax,
-            time,
-            asymmetry,
-            error,
-            draw_mask,
-            fmt=".",
-            markersize=3,
-            color=point_color,
-            ecolor=point_color,
-            label=self._dataset_label_for(dataset),
-        )
         self._overlay_fourier_imag(dataset, time)
         self._overlay_diamagnetic_fit(analysis_dataset)
         x_label, y_label = self._axis_labels_for_dataset(dataset, self._current_polarization_axis)

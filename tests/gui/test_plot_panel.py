@@ -4694,6 +4694,213 @@ class TestPlotPanel:
             panel.deleteLater()
 
 
+class TestFrequencyLineRendering:
+    """Frequency spectra draw as lines + an error band, not errorbar dots.
+
+    Every reference muSR package (WiMDA, musrview, Mantid) draws a spectrum
+    as a line; the time-domain errorbar-dots idiom is a counts convention
+    that does not belong on a Fourier spectrum. These tests pin the new
+    rendering contract on the frequency panel and confirm the time-domain
+    panel is untouched.
+    """
+
+    def test_frequency_spectrum_renders_as_line_not_errorbar_dots(self, qapp: QApplication) -> None:
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            freqs = np.linspace(0.0, 100.0, 256)
+            values = np.abs(np.sin(freqs)) + 1.0
+            ds = MuonDataset(
+                time=freqs,
+                asymmetry=values,
+                error=np.zeros_like(freqs),
+                metadata={
+                    "run_number": 4001,
+                    "plot_domain": "frequency",
+                    "x_label": "Frequency (MHz)",
+                },
+            )
+            panel.plot_dataset(ds)
+
+            # No errorbar dot-marker containers at all.
+            assert len(panel._ax.containers) == 0
+            # At least one solid line carries the full spectrum (the >2-point
+            # filter excludes the 2-point y=0 reference line).
+            data_lines = [ln for ln in panel._ax.lines if len(ln.get_xdata()) > 2]
+            assert len(data_lines) >= 1
+            assert all(ln.get_linestyle() == "-" for ln in data_lines)
+            assert all(ln.get_marker() == "None" for ln in data_lines)
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_frequency_error_band_present_only_with_positive_errors(
+        self, qapp: QApplication
+    ) -> None:
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            freqs = np.linspace(0.0, 100.0, 256)
+            values = np.abs(np.sin(freqs)) + 1.0
+
+            ds_zero_err = MuonDataset(
+                time=freqs,
+                asymmetry=values,
+                error=np.zeros_like(freqs),
+                metadata={"run_number": 4002, "plot_domain": "frequency"},
+            )
+            panel.plot_dataset(ds_zero_err)
+            assert len(panel._ax.collections) == 0
+
+            ds_with_err = MuonDataset(
+                time=freqs,
+                asymmetry=values,
+                error=np.full_like(freqs, 0.05),
+                metadata={"run_number": 4003, "plot_domain": "frequency"},
+            )
+            panel.plot_dataset(ds_with_err)
+            from matplotlib.collections import PolyCollection
+
+            assert len(panel._ax.collections) == 1
+            assert isinstance(panel._ax.collections[0], PolyCollection)
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_frequency_expected_larmor_marker_present_with_field(self, qapp: QApplication) -> None:
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            freqs = np.linspace(0.0, 100.0, 256)
+            values = np.abs(np.sin(freqs)) + 1.0
+            ds = MuonDataset(
+                time=freqs,
+                asymmetry=values,
+                error=np.zeros_like(freqs),
+                metadata={"run_number": 4004, "field": 2000.0, "plot_domain": "frequency"},
+            )
+            panel.plot_dataset(ds)
+
+            expected_x = 2000.0 * panel._mhz_per_gauss()
+            dashed = [ln for ln in panel._ax.lines if ln.get_linestyle() == "--"]
+            assert len(dashed) == 1
+            assert dashed[0].get_xdata()[0] == pytest.approx(expected_x)
+            assert dashed[0].get_label() == "_nolegend_"
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_frequency_expected_larmor_marker_absent_without_field(
+        self, qapp: QApplication
+    ) -> None:
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            freqs = np.linspace(0.0, 100.0, 256)
+            values = np.abs(np.sin(freqs)) + 1.0
+            ds = MuonDataset(
+                time=freqs,
+                asymmetry=values,
+                error=np.zeros_like(freqs),
+                metadata={"run_number": 4005, "plot_domain": "frequency"},
+            )
+            panel.plot_dataset(ds)
+
+            dashed = [ln for ln in panel._ax.lines if ln.get_linestyle() == "--"]
+            assert dashed == []
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_frequency_expected_larmor_marker_absent_on_correlation_axis(
+        self, qapp: QApplication
+    ) -> None:
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            freqs = np.linspace(0.0, 100.0, 256)
+            values = np.abs(np.sin(freqs)) + 1.0
+            ds = MuonDataset(
+                time=freqs,
+                asymmetry=values,
+                error=np.zeros_like(freqs),
+                metadata={
+                    "run_number": 4006,
+                    "field": 2000.0,
+                    "plot_domain": "frequency",
+                    "correlation_axis": True,
+                    "x_label": "A_mu (MHz)",
+                },
+            )
+            panel.plot_dataset(ds)
+
+            assert panel._frequency_axis_is_correlation is True
+            dashed = [ln for ln in panel._ax.lines if ln.get_linestyle() == "--"]
+            assert dashed == []
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_frequency_expected_larmor_marker_absent_on_multi_run_overlay(
+        self, qapp: QApplication
+    ) -> None:
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            freqs = np.linspace(0.0, 100.0, 256)
+            values = np.abs(np.sin(freqs)) + 1.0
+            ds1 = MuonDataset(
+                time=freqs,
+                asymmetry=values,
+                error=np.zeros_like(freqs),
+                metadata={"run_number": 5001, "field": 2000.0, "plot_domain": "frequency"},
+            )
+            ds2 = MuonDataset(
+                time=freqs,
+                asymmetry=values * 1.1,
+                error=np.zeros_like(freqs),
+                metadata={"run_number": 5002, "field": 2200.0, "plot_domain": "frequency"},
+            )
+            panel.plot_datasets([ds1, ds2])
+
+            assert len(panel._ax.containers) == 0
+            dashed = [ln for ln in panel._ax.lines if ln.get_linestyle() == "--"]
+            assert dashed == []
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_time_domain_panel_still_renders_errorbar_dots(self, panel: PlotPanel) -> None:
+        """Regression pin: the time domain must remain exactly the dots idiom."""
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.linspace(0.0, 10.0, 100)
+        ds = MuonDataset(
+            time=t,
+            asymmetry=0.2 * np.exp(-0.5 * t),
+            error=np.full_like(t, 0.01),
+            metadata={"run_number": 4100},
+        )
+        panel.plot_dataset(ds)
+
+        assert len(panel._ax.containers) >= 1
+        marker_lines = [ln for ln in panel._ax.lines if ln.get_marker() == "."]
+        assert len(marker_lines) >= 1
+
+
 class TestDecimationStrategies:
     """Domain-specific decimation: stride for time scatter, min-max for spectra."""
 

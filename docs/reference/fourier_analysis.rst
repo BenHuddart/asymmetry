@@ -729,11 +729,17 @@ to a **zero-pad factor of 4**, so line shapes arrive sinc-interpolated rather
 than 2–3 bins wide; this deliberately diverges from WiMDA's no-padding default
 because the spectrum is now shown unbidden, and it changes nothing
 quantitative — zero padding adds no information, only smoother rendering.
-(That is also why the default stays modest even though the factor now goes up
-to 64: padded points are strongly correlated, and frequency-domain fits and
-moment error estimates treat samples as independent, so heavily over-padded
-spectra yield artificially small uncertainties.) All of these are first-paint
-seeds only: your own zoom and settings are never overridden.
+Padded points are strongly correlated (only 1/*n* of them are statistically
+independent for a zero-pad factor *n*), so frequency-domain fits and moment
+uncertainties apply the **effective-sample-size correction** automatically:
+degrees of freedom count the independent samples, χ² is scaled to match, and
+parameter/moment uncertainties grow by √*n*. Fit results state the applied
+correction in their advisory row. (WiMDA applies the degrees-of-freedom part
+of this correction — ``dof := n div zpad`` — Asymmetry additionally corrects
+χ² and the uncertainties for full consistency.) With the statistics handled,
+the zero-pad factor is purely a display-density knob; the factor now goes up
+to 64. All of these are first-paint seeds only: your own zoom and settings
+are never overridden.
 
 Auto-compute needs detector groups to work from. A run with no groups (or with
 every group excluded), or one whose transform genuinely fails, cannot seed a
@@ -867,7 +873,15 @@ Frequency-domain plot behaviour
 -------------------------------
 
 FFT output is shown on the dedicated ``Frequency Domain`` tab in the central
-plot workspace. Each loaded run keeps its own frequency-domain view state in
+plot workspace. Spectra draw as **solid lines** — the convention of every
+reference muSR package — with a shaded ±1σ band when the spectrum carries
+per-point errors (enable ``Average errors`` to compute them), rather than the
+time domain's error-bar points. When the run's applied field is known, a
+subtle dashed marker sits at the expected Larmor position γ\ :sub:`μ`\ ·B on
+the single-run view, answering "am I looking at the right place?" at a
+glance; it is omitted on multi-run overlays and the correlation axis, and it
+never appears in GLE/PDF exports (those draw from the data, not the screen).
+Each loaded run keeps its own frequency-domain view state in
 the session. Opening that tab for a run that has never been transformed
 computes its spectrum automatically (see `GUI Fourier workflow`_); a run whose
 spectrum cannot be auto-computed — no detector groups, or a failed transform —
