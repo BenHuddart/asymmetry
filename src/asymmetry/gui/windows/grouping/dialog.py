@@ -13,7 +13,6 @@ module so the historical module API is unchanged after the package split.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -39,7 +38,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from asymmetry.core.data.dataset import Histogram, MuonDataset
+from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.instrument import (
     CANONICAL_VECTOR_AXES,
     derive_projection_pairs,
@@ -75,7 +74,6 @@ from asymmetry.core.transform import (
 from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.styles.widgets import apply_param_table_style, clear_layout
-from asymmetry.gui.tasks import TaskCancelledError, TaskRunner, TaskWorker
 from asymmetry.gui.windows.grouping.background_dialog import (
     BackgroundDialog,
     BackgroundReferenceRunCandidate,
@@ -100,71 +98,6 @@ from asymmetry.gui.windows.grouping.profile_bridge import (
     profile_from_form_payload,
 )
 from asymmetry.gui.windows.grouping.scope_panel import ScopePanel
-
-
-@dataclass(frozen=True)
-class _BackgroundDialogContext:
-    """Everything ``_on_configure_background`` gathers cheaply on the GUI thread.
-
-    Cheap relative to the group summation below: no full-histogram scan, so it
-    stays synchronous and is simply carried across to the worker's
-    finished/error callback, which opens :class:`BackgroundDialog` with it.
-    """
-
-    has_fixed: bool
-    candidates: list[BackgroundReferenceRunCandidate]
-    reference_grouping: dict[str, Any]
-    background_run_payload: dict[str, Any] | None
-
-
-@dataclass(frozen=True)
-class _BackgroundPreviewRequest:
-    """An immutable snapshot of what to group, built on the GUI thread."""
-
-    token: int
-    histograms: list[Histogram]
-    forward_indices: list[int]
-    backward_indices: list[int]
-    bin_width: float
-    t0_bin: int
-    last_good_bin: int
-
-
-@dataclass(frozen=True)
-class _BackgroundPreviewResult:
-    """The grouped forward/backward preview arrays, tagged with their token."""
-
-    token: int
-    forward_counts: np.ndarray
-    backward_counts: np.ndarray
-    bin_width: float
-    t0_bin: int
-    last_good_bin: int
-
-
-def _run_background_preview(
-    worker: TaskWorker, request: _BackgroundPreviewRequest
-) -> _BackgroundPreviewResult:
-    """Sum the full forward/backward groups off the GUI thread.
-
-    ``apply_grouping`` sums every listed histogram's counts array — for a
-    grouping spanning most of a 128-detector run over millions of bins this is
-    the expensive step the Configure… button used to run synchronously.
-    """
-    if worker.is_cancelled():
-        raise TaskCancelledError
-    forward_counts = apply_grouping(request.histograms, request.forward_indices)
-    if worker.is_cancelled():
-        raise TaskCancelledError
-    backward_counts = apply_grouping(request.histograms, request.backward_indices)
-    return _BackgroundPreviewResult(
-        token=request.token,
-        forward_counts=forward_counts,
-        backward_counts=backward_counts,
-        bin_width=request.bin_width,
-        t0_bin=request.t0_bin,
-        last_good_bin=request.last_good_bin,
-    )
 
 
 class GroupingDialog(QDialog):
@@ -244,16 +177,6 @@ class GroupingDialog(QDialog):
         #: get_profile_result after the dirty set is cleared).
         self._committed_override_runs: set[int] = set()
         self._current_run: int | None = None
-
-        # Off-thread worker for the background-configure preview grouping (the
-        # preview pane owns its own runner for the live-preview reduction; this
-        # one is the dialog's). Created before the "no runs" early return below
-        # so ``done``/``closeEvent`` can unconditionally shut it down.
-        self._tasks = TaskRunner(self)
-        #: Bumped on every Configure… click; a finished/errored result whose
-        #: token no longer matches the current one is stale and is discarded.
-        self._background_configure_token = 0
-        self._pending_background_context: _BackgroundDialogContext | None = None
 
         self.setWindowTitle("Grouping")
         self.resize(940, 560)
@@ -2227,14 +2150,7 @@ class GroupingDialog(QDialog):
         self._refresh_preview()
 
     def _on_configure_background(self) -> None:
-        """Gather the cheap context synchronously; group F/B off-thread if needed.
-
-        The context (candidates, payload, has-fixed flag) is cheap — no
-        full-histogram scan — so it stays synchronous. The forward/backward
-        preview arrays are the expensive step (``apply_grouping`` sums every
-        listed histogram), so when a preview is possible they are computed on
-        ``self._tasks`` and the dialog opens from the finished callback instead.
-        """
+        """Open the background dialog, seeded from the current state."""
         grouping = self._run.grouping if isinstance(self._run.grouping, dict) else {}
         has_fixed = any(
             isinstance(grouping.get(key), (list, tuple))
@@ -2255,6 +2171,25 @@ class GroupingDialog(QDialog):
             and int(ds.run_number) != int(self._reference_dataset.run_number)
         ]
 
+        preview = None
+        if self._run is not None and self._run.histograms:
+            forward_gid = int(self._forward_combo.currentData())
+            backward_gid = int(self._backward_combo.currentData())
+            forward_indices = self._filtered_group_indices(forward_gid)
+            backward_indices = self._filtered_group_indices(backward_gid)
+            n_hist = len(self._run.histograms)
+            if (
+                forward_indices
+                and backward_indices
+                and max(forward_indices) < n_hist
+                and max(backward_indices) < n_hist
+            ):
+                t0_bin, _offset, _first, last_good = self._resolve_good_bin_limits_from_controls()
+                forward_counts = apply_grouping(self._run.histograms, forward_indices)
+                backward_counts = apply_grouping(self._run.histograms, backward_indices)
+                bin_width = float(self._run.histograms[0].bin_width)
+                preview = (forward_counts, backward_counts, bin_width, t0_bin, last_good)
+
         # Attach the sample side's good_frames so a payload built from the
         # picked candidate can compute the frame-ratio scale immediately.
         reference_grouping = (
@@ -2269,90 +2204,13 @@ class GroupingDialog(QDialog):
             background_run_payload.setdefault(
                 "good_frames_sample", reference_grouping.get("good_frames")
             )
-        context = _BackgroundDialogContext(
-            has_fixed=has_fixed,
-            candidates=candidates,
-            reference_grouping=reference_grouping,
-            background_run_payload=background_run_payload,
-        )
 
-        forward_indices: list[int] = []
-        backward_indices: list[int] = []
-        if self._run is not None and self._run.histograms:
-            forward_gid = int(self._forward_combo.currentData())
-            backward_gid = int(self._backward_combo.currentData())
-            candidate_forward = self._filtered_group_indices(forward_gid)
-            candidate_backward = self._filtered_group_indices(backward_gid)
-            n_hist = len(self._run.histograms)
-            if (
-                candidate_forward
-                and candidate_backward
-                and max(candidate_forward) < n_hist
-                and max(candidate_backward) < n_hist
-            ):
-                forward_indices = candidate_forward
-                backward_indices = candidate_backward
-
-        if not forward_indices or not backward_indices:
-            self._open_background_dialog(preview=None, context=context)
-            return
-
-        t0_bin, _offset, _first, last_good = self._resolve_good_bin_limits_from_controls()
-        bin_width = float(self._run.histograms[0].bin_width)
-        self._background_configure_token += 1
-        request = _BackgroundPreviewRequest(
-            token=self._background_configure_token,
-            histograms=list(self._run.histograms),
-            forward_indices=list(forward_indices),
-            backward_indices=list(backward_indices),
-            bin_width=bin_width,
-            t0_bin=int(t0_bin),
-            last_good_bin=int(last_good),
-        )
-        self._pending_background_context = context
-        self._background_configure_btn.setEnabled(False)
-        self._tasks.start(
-            lambda worker: _run_background_preview(worker, request),
-            on_finished=self._on_background_preview_finished,
-            on_error=self._on_background_preview_error,
-        )
-
-    def _on_background_preview_finished(self, result: object) -> None:
-        """GUI thread: open the background dialog with the grouped preview."""
-        self._background_configure_btn.setEnabled(True)
-        context = self._pending_background_context
-        self._pending_background_context = None
-        if (
-            not isinstance(result, _BackgroundPreviewResult)
-            or result.token != self._background_configure_token
-            or context is None
-        ):
-            return  # superseded by a later Configure… click, or the dialog moved on
-        preview = (
-            result.forward_counts,
-            result.backward_counts,
-            result.bin_width,
-            result.t0_bin,
-            result.last_good_bin,
-        )
-        self._open_background_dialog(preview=preview, context=context)
-
-    def _on_background_preview_error(self, message: str) -> None:
-        """GUI thread: re-enable Configure… and surface the grouping failure."""
-        self._background_configure_btn.setEnabled(True)
-        self._pending_background_context = None
-        QMessageBox.warning(self, "Background", message)
-
-    def _open_background_dialog(
-        self, *, preview: tuple | None, context: _BackgroundDialogContext
-    ) -> None:
-        """Build, exec, and apply the result of :class:`BackgroundDialog`."""
         dlg = BackgroundDialog(
             available_modes=self._available_background_modes(),
-            has_fixed_values=context.has_fixed,
+            has_fixed_values=has_fixed,
             initial_mode=self._background_mode,
-            background_run_payload=context.background_run_payload,
-            reference_run_candidates=context.candidates,
+            background_run_payload=background_run_payload,
+            reference_run_candidates=candidates,
             preview=preview,
             forward_label="F",
             backward_label="B",
@@ -2365,7 +2223,7 @@ class GroupingDialog(QDialog):
         self._background_mode = policy.mode
         if policy.mode == "reference_run":
             payload = dict(policy.details.get("background_run") or {})
-            payload["good_frames_sample"] = context.reference_grouping.get("good_frames")
+            payload["good_frames_sample"] = reference_grouping.get("good_frames")
             self._background_run_payload = payload
         self._update_background_status()
         self._mark_dirty()
@@ -2690,27 +2548,19 @@ class GroupingDialog(QDialog):
         if self._datasets and not self._guard_discard():
             event.ignore()
             return
-        self._teardown_workers()
+        self._teardown_preview()
         super().closeEvent(event)
 
     def done(self, result: int) -> None:
-        """Tear the preview + background-configure runners down on dismissal."""
-        self._teardown_workers()
+        """Tear the preview runner down on every dialog dismissal (accept/reject)."""
+        self._teardown_preview()
         super().done(result)
 
-    def _teardown_workers(self) -> None:
-        """Cancel and join both worker runners (idempotent).
-
-        The preview pane owns its own runner for the live-preview reduction;
-        ``self._tasks`` is this dialog's own runner for the background-configure
-        preview grouping. Both ``shutdown()``s are safe to call more than once.
-        """
+    def _teardown_preview(self) -> None:
+        """Cancel and join the preview runner (idempotent)."""
         pane = getattr(self, "_preview_pane", None)
         if pane is not None:
             pane.shutdown()
-        tasks = getattr(self, "_tasks", None)
-        if tasks is not None:
-            tasks.shutdown()
 
     def _populate_group_table(self) -> None:
         """Render the detector-group table used as grouping context.

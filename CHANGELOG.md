@@ -156,14 +156,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reads) and hands it to the preview pane, whose existing debounced worker
   resolves against the run and reduces in one background pass — so an
   auto-detect t0 policy's full per-detector scan (~0.3 s at 128 detectors ×
-  1M bins) can no longer stall typing in the dialog. The alpha-calibration
-  dialog's **Estimate** button and the grouping dialog's background
-  **Configure…** step had the same defect — each summed the full
-  forward/backward groups (`group_forward_backward`/`apply_grouping`)
-  synchronously, one under a wait cursor — and now follow the same
-  TaskRunner template: inputs are snapshotted before the worker starts, the
-  triggering button disables for the run, and a mid-flight dialog close
-  cancels and joins cleanly instead of leaking the worker thread.
+  1M bins) can no longer stall typing in the dialog.
 
 - **Switching runs no longer renders the plot one view behind.** The draw
   decimates points for the current view window, but a switched dataset's
