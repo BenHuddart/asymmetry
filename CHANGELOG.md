@@ -153,6 +153,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Opening a project keeps the window responsive and can be cancelled.** The
+  per-dataset restore loop — re-applying each run's grouping and recomputing
+  its asymmetry, then recreating combined datasets — ran to completion on the
+  GUI thread with no feedback, freezing the window for the whole project
+  (50–200 runs in a typical scan). The loop now runs one dataset per
+  event-loop turn behind a cancellable progress dialog ("Restoring project"),
+  so the window repaints throughout; cancelling stops cleanly at a dataset
+  boundary, keeps everything already restored, flags the session as partially
+  loaded (so a save hard-confirms first, exactly like a cancelled file
+  prefetch), and still restores the browser and plot state for what was
+  loaded.
+
 - **The pull-distribution diagnostic no longer freezes the app.** Its up to
   2000 simulate+refit iterations ran synchronously on the GUI thread, kept
   "alive" only by a `QApplication.processEvents()` call inside the progress
