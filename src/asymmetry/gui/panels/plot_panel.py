@@ -5577,7 +5577,10 @@ class PlotPanel(QWidget):
         click could hit-test against an invisible handle position and start a
         "drag" that mutates state with no on-screen feedback — gate here, at
         the hit-test, so the documented no-draggable-selector contract holds
-        regardless of what ``_fit_x_min``/``_fit_x_max`` contain.
+        regardless of what ``_fit_x_min``/``_fit_x_max`` contain. The same
+        guard keeps these invisible positions from stealing clicks aimed at
+        the visible spectral-moments handles, whose default window coincides
+        with the seeded full-extent fit range.
         """
         if self._is_frequency_plot_panel():
             return None
@@ -5588,20 +5591,6 @@ class PlotPanel(QWidget):
             or event.x is None
             or event.y is None
         ):
-            return None
-
-        # The frequency panel never draws fit-range handles (see the matching
-        # early return in _draw_fit_range_artists) and has no draggable fit-range
-        # selector at all — _set_fit_range no-ops there, and the actual
-        # frequency-domain fit reads its range from the Fit panel's spinboxes,
-        # not from this panel's state (see test_frequency_domain_fitting.py's
-        # "no draggable selector" test). ``_fit_x_min``/``_fit_x_max`` are still
-        # populated on this instance (seeded to the full spectrum extent so the
-        # Fit panel's display has something to mirror), so without this guard
-        # they hit-test as invisible "ghost" handles that steal clicks from the
-        # visible, actually-interactive spectral-moments handles whenever a
-        # moments window sits at its default (full-extent) position.
-        if self._is_frequency_plot_panel():
             return None
 
         hit_axis = None
