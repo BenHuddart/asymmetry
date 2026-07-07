@@ -19,6 +19,8 @@ from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.fit_panel import SingleFitTab, _shift_rrf_parameters
 
+pytestmark = [pytest.mark.gui]
+
 NU_LAB = 30.0
 NU_FRAME = 29.2
 

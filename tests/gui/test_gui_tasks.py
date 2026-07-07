@@ -16,7 +16,7 @@ from PySide6.QtCore import QEventLoop, QThread, QTimer
 
 from asymmetry.gui.tasks import TaskCancelledError, TaskRunner, TaskWorker
 
-pytestmark = pytest.mark.usefixtures("qapp")
+pytestmark = [pytest.mark.gui, pytest.mark.usefixtures("qapp")]
 
 
 def _wait_until(predicate, timeout_ms: int = 30_000) -> None:

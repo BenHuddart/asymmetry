@@ -11,12 +11,15 @@ moment a real fit is recorded for the run.
 from __future__ import annotations
 
 import numpy as np
+import pytest
 from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.fit_panel import FitPanel
+
+pytestmark = [pytest.mark.gui]
 
 
 def _dataset(run_number: int) -> MuonDataset:

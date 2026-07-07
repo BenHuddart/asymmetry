@@ -23,6 +23,8 @@ from asymmetry.core.fitting.parameter_models import (
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
 
+pytestmark = [pytest.mark.gui]
+
 
 def _ea_row(dlg: ModelFitDialog) -> int:
     for r in range(dlg._param_table.rowCount()):

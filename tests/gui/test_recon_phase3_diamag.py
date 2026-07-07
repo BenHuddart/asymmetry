@@ -24,6 +24,8 @@ from asymmetry.core.fourier.units import gauss_to_mhz
 
 from .test_fourier_finishers import _tf_run
 
+pytestmark = [pytest.mark.gui]
+
 _FIELD_GAUSS = 200.0
 _DIAMAG_HALF_WIDTH_MHZ = 0.3
 

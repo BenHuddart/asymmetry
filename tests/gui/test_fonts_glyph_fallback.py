@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import pytest
 
+pytestmark = [pytest.mark.gui]
+
 # Representative glyphs the bundled value font cannot supply on its own.
 _REPRESENTATIVE_GLYPHS = ["χ", "ν", "φ", "λ", "σ", "Δ", "Γ", "µ", "⁻", "¹"]
 

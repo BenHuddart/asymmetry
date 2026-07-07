@@ -21,6 +21,8 @@ from asymmetry.core.fitting.parameter_models import (
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
 
+pytestmark = [pytest.mark.gui]
+
 _TC_TRUE = 69.0
 _PARAM = "frequency"
 

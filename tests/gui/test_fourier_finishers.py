@@ -204,6 +204,7 @@ def test_diamag_slot_tracks_reference_field() -> None:
     assert np.all(ds.asymmetry[inside] == 0.0)
 
 
+@pytest.mark.gui
 def test_psi_preset_centres(qapp) -> None:
     from asymmetry.gui.panels.fourier_panel import FourierPanel
 
@@ -474,6 +475,7 @@ def test_diamag_exclusion_independent_of_exclude_enabled() -> None:
     assert np.all(ds.asymmetry[inside] == 0.0)
 
 
+@pytest.mark.gui
 def test_diamag_overlay_is_run_gated(qapp) -> None:
     from types import SimpleNamespace
 
@@ -504,6 +506,7 @@ def test_diamag_overlay_is_run_gated(qapp) -> None:
 # ── Phase 1B: usage-tier restructure (visibility, persistence, round-trip) ──
 
 
+@pytest.mark.gui
 def test_phase_section_and_group_phase_column_track_display_mode(qapp) -> None:
     """The Phase section, the group-phase column, and the per-group toggle are
     shown only in a phase-correcting display mode — with the core predicate as
@@ -535,6 +538,7 @@ def test_phase_section_and_group_phase_column_track_display_mode(qapp) -> None:
         assert panel._use_phase_table_check.isVisibleTo(panel) is expected, mode
 
 
+@pytest.mark.gui
 def test_hidden_phase_controls_are_not_cleared(qapp) -> None:
     """Hiding the phase controls (non-phase mode) must preserve their values in
     the serialised state — hidden ≠ cleared."""
@@ -559,6 +563,7 @@ def test_hidden_phase_controls_are_not_cleared(qapp) -> None:
     assert state["use_phase_table"] is True
 
 
+@pytest.mark.gui
 def test_settings_round_trip_unchanged_with_phase_hidden(qapp) -> None:
     """A full get_state → restore_state round-trip is identical even when the
     saved project was in a phase-hidden (non-correcting) display mode."""
@@ -580,6 +585,7 @@ def test_settings_round_trip_unchanged_with_phase_hidden(qapp) -> None:
     assert restored.get_state() == saved
 
 
+@pytest.mark.gui
 def test_collapsed_section_state_persists_via_isolated_settings(qapp) -> None:
     """Expanding a collapsed section persists through an injected QSettings scope,
     so a freshly built panel reads the section back expanded."""
@@ -600,6 +606,7 @@ def test_collapsed_section_state_persists_via_isolated_settings(qapp) -> None:
         settings.clear()
 
 
+@pytest.mark.gui
 def test_collapsed_section_suffixes_reflect_state(qapp) -> None:
     """Collapsed sections surface terse state summaries via set_title_suffix."""
     from asymmetry.gui.panels.fourier_panel import FourierPanel

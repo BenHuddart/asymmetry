@@ -365,6 +365,78 @@ def test_test_placement_check_reports_unsanctioned_subpackage(tmp_path: Path) ->
     assert failures[0].path == misplaced
 
 
+def test_current_tests_directory_satisfies_gui_marker_rule() -> None:
+    harness = _load_harness()
+
+    assert harness.find_missing_gui_marker_violations() == []
+
+
+def test_gui_marker_check_reports_unmarked_qapp_function(tmp_path: Path) -> None:
+    tests_root = tmp_path / "tests"
+    gui_dir = tests_root / "gui"
+    gui_dir.mkdir(parents=True)
+    unmarked = gui_dir / "test_unmarked_gui.py"
+    unmarked.write_text(
+        "def test_needs_qt(qapp) -> None:\n    assert qapp is not None\n",
+        encoding="utf-8",
+    )
+    harness = _load_harness()
+
+    failures = harness.find_missing_gui_marker_violations(tests_root)
+
+    assert len(failures) == 1
+    assert failures[0].path == unmarked
+    assert "pytest.mark.gui" in failures[0].message
+
+
+def test_gui_marker_check_accepts_file_level_pytestmark(tmp_path: Path) -> None:
+    tests_root = tmp_path / "tests"
+    gui_dir = tests_root / "gui"
+    gui_dir.mkdir(parents=True)
+    marked = gui_dir / "test_marked_gui.py"
+    marked.write_text(
+        "import pytest\n\npytestmark = [pytest.mark.gui]\n\n\ndef test_needs_qt(qapp) -> None:\n"
+        "    assert qapp is not None\n",
+        encoding="utf-8",
+    )
+    harness = _load_harness()
+
+    assert harness.find_missing_gui_marker_violations(tests_root) == []
+
+
+def test_gui_marker_check_accepts_per_function_decorator(tmp_path: Path) -> None:
+    tests_root = tmp_path / "tests"
+    gui_dir = tests_root / "gui"
+    gui_dir.mkdir(parents=True)
+    mixed = gui_dir / "test_mixed_gui.py"
+    mixed.write_text(
+        "import pytest\n\n\ndef test_pure() -> None:\n    assert True\n\n\n"
+        "@pytest.mark.gui\ndef test_needs_qt(qapp) -> None:\n    assert qapp is not None\n",
+        encoding="utf-8",
+    )
+    harness = _load_harness()
+
+    assert harness.find_missing_gui_marker_violations(tests_root) == []
+
+
+def test_gui_marker_check_reports_unmarked_module_usefixtures(tmp_path: Path) -> None:
+    tests_root = tmp_path / "tests"
+    gui_dir = tests_root / "gui"
+    gui_dir.mkdir(parents=True)
+    unmarked = gui_dir / "test_unmarked_usefixtures.py"
+    unmarked.write_text(
+        'import pytest\n\npytestmark = pytest.mark.usefixtures("qapp")\n\n\n'
+        "def test_needs_qt() -> None:\n    assert True\n",
+        encoding="utf-8",
+    )
+    harness = _load_harness()
+
+    failures = harness.find_missing_gui_marker_violations(tests_root)
+
+    assert len(failures) == 1
+    assert failures[0].path == unmarked
+
+
 def _install_fake_os(monkeypatch, harness, *, name: str, execv=None):
     """Swap ``harness.os`` for a shim with a chosen ``name``.
 

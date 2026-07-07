@@ -17,6 +17,8 @@ from PySide6.QtWidgets import QApplication
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.gui.panels.fit_panel import FitPanel
 
+pytestmark = [pytest.mark.gui]
+
 
 def _row_for(table, name: str) -> int:
     for r in range(table.rowCount()):

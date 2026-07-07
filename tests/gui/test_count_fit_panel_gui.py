@@ -28,6 +28,8 @@ from asymmetry.core.simulate import (
 from asymmetry.gui.panels.fit_panel import FitParameterTable
 from asymmetry.gui.windows.multi_group_fit_window import MultiGroupFitWindow
 
+pytestmark = [pytest.mark.gui]
+
 
 def _tf(t, A=20.0, f=1.5, phi=0.0):  # noqa: N803 (A is the conventional asymmetry symbol)
     return A * np.cos(2.0 * np.pi * f * np.asarray(t, dtype=float) + phi)

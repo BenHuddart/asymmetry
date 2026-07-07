@@ -17,6 +17,8 @@ from asymmetry.gui.widgets.trend_preview import (
     range_span_color,
 )
 
+pytestmark = [pytest.mark.gui]
+
 
 @pytest.fixture(scope="module")
 def qapp() -> QApplication:

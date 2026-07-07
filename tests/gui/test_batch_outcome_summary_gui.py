@@ -7,11 +7,14 @@ in the panel, not just the log.
 
 from __future__ import annotations
 
+import pytest
 from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.fit_panel import GlobalFitTab
+
+pytestmark = [pytest.mark.gui]
 
 
 def _result(*, success=True, value=20.0, err=0.4) -> FitResult:
