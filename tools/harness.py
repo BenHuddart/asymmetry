@@ -510,6 +510,59 @@ def find_test_placement_violations(tests_root: Path = TESTS_ROOT) -> list[Harnes
     return failures
 
 
+def find_missing_gui_marker_violations(tests_root: Path = TESTS_ROOT) -> list[HarnessFailure]:
+    """Return `tests/gui/` files that need `qapp` but carry no `pytest.mark.gui`.
+
+    `--subset gui`/`--subset non-gui` shard by pytest marker, not by directory
+    (see `tests/conftest.py`), so a `tests/gui/` file with no explicit marker
+    silently falls into the `unit` bucket and runs on the non-GUI CI runner —
+    exactly the drift that put a `FitParametersPanel`-constructing test on the
+    non-GUI shard (crashing an xdist worker there) before this check existed.
+    Flags any file that requests the `qapp` fixture (by parameter or by
+    `pytestmark = pytest.mark.usefixtures("qapp")`) without a `pytest.mark.gui`
+    anywhere in the file; files that mix pure and Qt-dependent tests are
+    expected to carry a per-function `@pytest.mark.gui` instead of a blanket
+    `pytestmark`, which this check accepts equally.
+    """
+
+    gui_root = tests_root / "gui"
+    failures: list[HarnessFailure] = []
+    if not gui_root.exists():
+        return failures
+
+    func_pattern = re.compile(r"^def (test_\w+)\s*\(([^)]*)\)", re.MULTILINE)
+    module_qapp_fixture = re.compile(r'pytestmark\s*=.*usefixtures\(\s*["\']qapp["\']')
+    for path in sorted(gui_root.rglob("test_*.py")):
+        if not path.is_file() or "__pycache__" in path.parts:
+            continue
+        text = path.read_text(encoding="utf-8")
+        if re.search(r"pytest\.mark\.gui\b", text):
+            continue
+
+        offenders = [
+            match.group(1)
+            for match in func_pattern.finditer(text)
+            if re.search(r"(?:^|,)\s*qapp\b", match.group(2))
+        ]
+        if not offenders and module_qapp_fixture.search(text):
+            offenders = ["<module-level pytestmark>"]
+        if offenders:
+            failures.append(
+                HarnessFailure(
+                    path,
+                    0,
+                    (
+                        f"{len(offenders)} test(s) request the `qapp` fixture (e.g. "
+                        f"`{offenders[0]}`) but the file carries no `pytest.mark.gui`, so "
+                        "they silently run in the non-GUI CI shard. Add "
+                        "`pytestmark = [pytest.mark.gui]` (or a per-function "
+                        "`@pytest.mark.gui` if the file also has pure tests)."
+                    ),
+                )
+            )
+    return failures
+
+
 def _requirement_name(requirement: str) -> str:
     head = re.split(r"[<>=!~;@ \[]", requirement, maxsplit=1)[0]
     return head.strip().lower().replace("_", "-")
@@ -883,6 +936,7 @@ def run_structural_checks() -> int:
         *find_raw_hex_colour_violations(),
         *find_literal_pixel_geometry_violations(),
         *find_test_placement_violations(),
+        *find_missing_gui_marker_violations(),
         *find_screenshot_reference_violations(),
     ]
     if not failures:

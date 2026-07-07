@@ -12,12 +12,15 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.fit_panel import GlobalFitTab, SingleFitTab
+
+pytestmark = [pytest.mark.gui]
 
 _WARNING = (
     "Fixed-frequency trap: parameter 'frequency' is pinned at 6 MHz, ~11% away from "

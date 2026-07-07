@@ -21,6 +21,8 @@ from asymmetry.gui.widgets.rrf_controls import (
     rrf_display_fit_curve,
 )
 
+pytestmark = [pytest.mark.gui]
+
 NU = 30.0  # MHz
 LAM = 0.3
 
