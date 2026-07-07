@@ -12,6 +12,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import Histogram, Run
+from asymmetry.core.utils.perf import perf_timer
 
 
 def _present_indices(group_indices: list[int], n_histograms: int) -> list[int]:
@@ -116,34 +117,36 @@ def apply_grouping_aligned(
     route a *manual* T0Policy uses to shift the effective t0 without rewriting
     ``Histogram.t0_bin``. When ``None``, each histogram's own ``t0_bin`` is used.
     """
-    present = _present_indices(group_indices, len(histograms))
-    selected = [(i, histograms[i]) for i in present]
-    if not selected:
-        return np.array([], dtype=np.float64)
+    with perf_timer("core.grouping.apply_aligned", n_indices=len(group_indices)) as perf:
+        present = _present_indices(group_indices, len(histograms))
+        selected = [(i, histograms[i]) for i in present]
+        if not selected:
+            return np.array([], dtype=np.float64)
 
-    if common_t0_bin is None:
-        common_t0_bin = max(
-            0, max(_detector_t0(histograms, i, detector_t0_bins) for i, _ in selected)
-        )
-    common_t0_bin = max(0, int(common_t0_bin))
+        if common_t0_bin is None:
+            common_t0_bin = max(
+                0, max(_detector_t0(histograms, i, detector_t0_bins) for i, _ in selected)
+            )
+        common_t0_bin = max(0, int(common_t0_bin))
 
-    shifted: list[NDArray[np.float64]] = []
-    for i, hist in selected:
-        counts = np.asarray(hist.counts, dtype=np.float64)
-        offset = common_t0_bin - _detector_t0(histograms, i, detector_t0_bins)
-        if offset <= 0:
-            shifted.append(counts[-offset:].copy() if offset < 0 else counts.copy())
-            continue
+        shifted: list[NDArray[np.float64]] = []
+        for i, hist in selected:
+            counts = np.asarray(hist.counts, dtype=np.float64)
+            offset = common_t0_bin - _detector_t0(histograms, i, detector_t0_bins)
+            if offset <= 0:
+                shifted.append(counts[-offset:].copy() if offset < 0 else counts.copy())
+                continue
 
-        out = np.zeros(len(counts) + offset, dtype=np.float64)
-        out[offset:] = counts
-        shifted.append(out)
+            out = np.zeros(len(counts) + offset, dtype=np.float64)
+            out[offset:] = counts
+            shifted.append(out)
 
-    min_len = min(len(a) for a in shifted)
-    total = np.zeros(min_len, dtype=np.float64)
-    for a in shifted:
-        total += a[:min_len]
-    return total
+        min_len = min(len(a) for a in shifted)
+        total = np.zeros(min_len, dtype=np.float64)
+        for a in shifted:
+            total += a[:min_len]
+        perf.detail(bins=min_len)
+        return total
 
 
 def common_t0_for_groups(

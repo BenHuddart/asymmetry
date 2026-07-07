@@ -25,6 +25,7 @@ from asymmetry.core.transform import (
     common_t0_for_groups,
     compute_asymmetry,
 )
+from asymmetry.core.utils.perf import perf_timer
 
 _MAX_PSI_HISTOGRAMS = 32
 _BIN_HEADER_SIZE = 1024
@@ -152,16 +153,19 @@ class PsiLoader(BaseLoader):
         if not path.exists():
             raise FileNotFoundError(f"File not found: {filepath}")
 
-        with path.open("rb") as handle:
-            fmt = handle.read(2)
+        with perf_timer("core.load.psi", filename=path.name) as perf:
+            with path.open("rb") as handle:
+                fmt = handle.read(2)
 
-        if fmt == b"1N" or (len(fmt) == 2 and fmt[:1] == b"1"):
-            raw = self._read_bin(path)
-        elif fmt in {b"M3", b"T4", b"T5"}:
-            raw = self._read_mdu(path)
-        else:
-            raise ValueError(f"Unsupported PSI file signature {fmt!r}: {filepath}")
-        return self._build_dataset(raw)
+            if fmt == b"1N" or (len(fmt) == 2 and fmt[:1] == b"1"):
+                raw = self._read_bin(path)
+            elif fmt in {b"M3", b"T4", b"T5"}:
+                raw = self._read_mdu(path)
+            else:
+                raise ValueError(f"Unsupported PSI file signature {fmt!r}: {filepath}")
+            dataset = self._build_dataset(raw)
+            perf.detail(detectors=len(raw.counts), bins=dataset.n_points)
+            return dataset
 
     # ------------------------------------------------------------------
     # PSI-BIN
