@@ -189,6 +189,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when browsing runs at different fields on the frequency view. The plot now
   re-decimates for the window it just framed.
 
+- **Dragging a spectral-moments window/cutoff handle no longer runs a full
+  bootstrap on every mouse-move.** Each drag event used to call
+  `spectrum_moments(..., uncertainty="bootstrap", n_bootstrap=256)` on the GUI
+  thread — 256 resamples per motion event, textbook drag jank. Mid-drag now
+  runs the cheap point-estimate path only (`uncertainty="none"`), and even
+  that is coalesced behind a 30 ms single-shot timer (latest-wins, the same
+  restart idiom as the grouping dialog's preview debounce, just at drag
+  cadence) so a fast mouse-move burst collapses to at most one recompute per
+  quiet window. The readout stays live (values track the handle; the "±"
+  uncertainty term is simply absent while dragging), and releasing the handle
+  fires one full bootstrap recompute so the uncertainties return.
+
 - **HiFi high-TF TDC FFTs are no longer silently truncated to nanoseconds.**
   The FFT window's good-statistics tail cap compared raw per-bin counts to
   the raw peak bin. On finely-binned TDC histograms (24 ps bins with a
