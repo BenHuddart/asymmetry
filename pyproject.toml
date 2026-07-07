@@ -182,6 +182,7 @@ ignore = ["E501"]  # Ruff format handles normal wrapping; long prose/UI strings 
 "tests/gui/test_global_wizard_overview_populated.py" = ["E402"]
 "tests/gui/test_global_parameter_fit_window.py" = ["E402"]
 "tests/gui/test_grouping_dialog.py" = ["E402"]
+"tests/gui/test_grouping_dialog_perf.py" = ["E402"]  # pytest.importorskip before optional Qt imports
 "tests/gui/test_grouping_instrument_switcher.py" = ["E402"]  # pytest.importorskip before optional Qt imports
 "tests/gui/test_grouping_override_editing.py" = ["E402"]  # pytest.importorskip before optional Qt imports
 "tests/gui/test_headless_modal_guidance.py" = ["E402"]  # pytest.importorskip before optional Qt imports

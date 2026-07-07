@@ -1196,6 +1196,11 @@ class GroupingDialog(QDialog):
             return
         self._apply_preset_payload_to_form(payload)
         self._mark_dirty()
+        # _apply_preset_payload_to_form repopulates the group table with its
+        # itemChanged signal blocked (see _populate_group_table), so the preview
+        # needs one explicit refresh here rather than relying on the old
+        # per-cell itemChanged storm.
+        self._refresh_preview()
 
     def _apply_preset_payload_to_form(self, payload: dict[str, Any]) -> None:
         """Adopt a preset's groups/names/slots/projections into the form state."""
@@ -2560,26 +2565,38 @@ class GroupingDialog(QDialog):
             pane.shutdown()
 
     def _populate_group_table(self) -> None:
-        """Render the detector-group table used as grouping context."""
-        self._group_table.setRowCount(len(self._groups))
-        for row, gid in enumerate(sorted(self._groups)):
-            self._group_table.setItem(row, 0, QTableWidgetItem(str(gid)))
-            include_item = QTableWidgetItem()
-            include_item.setFlags(
-                Qt.ItemFlag.ItemIsEnabled
-                | Qt.ItemFlag.ItemIsSelectable
-                | Qt.ItemFlag.ItemIsUserCheckable
-            )
-            include_item.setCheckState(
-                Qt.CheckState.Checked
-                if self._included_groups.get(int(gid), True)
-                else Qt.CheckState.Unchecked
-            )
-            self._group_table.setItem(row, 1, include_item)
-            name = self._group_names.get(gid, "")
-            self._group_table.setItem(row, 2, QTableWidgetItem(name))
-            detectors = [str(idx + 1) for idx in self._groups[gid]]
-            self._group_table.setItem(row, 3, QTableWidgetItem(", ".join(detectors)))
+        """Render the detector-group table used as grouping context.
+
+        ``itemChanged`` is connected to both ``_mark_dirty`` and
+        ``_refresh_preview`` (a synchronous ``resolve_effective_grouping``), so
+        populating without blocking signals fires up to 4×N_groups redundant
+        resolves. Population is not a user edit, so the signal is blocked for
+        the whole rebuild; callers that need the dirty/preview side effects for
+        the triggering action invoke them explicitly once, after this returns.
+        """
+        blocked = self._group_table.blockSignals(True)
+        try:
+            self._group_table.setRowCount(len(self._groups))
+            for row, gid in enumerate(sorted(self._groups)):
+                self._group_table.setItem(row, 0, QTableWidgetItem(str(gid)))
+                include_item = QTableWidgetItem()
+                include_item.setFlags(
+                    Qt.ItemFlag.ItemIsEnabled
+                    | Qt.ItemFlag.ItemIsSelectable
+                    | Qt.ItemFlag.ItemIsUserCheckable
+                )
+                include_item.setCheckState(
+                    Qt.CheckState.Checked
+                    if self._included_groups.get(int(gid), True)
+                    else Qt.CheckState.Unchecked
+                )
+                self._group_table.setItem(row, 1, include_item)
+                name = self._group_names.get(gid, "")
+                self._group_table.setItem(row, 2, QTableWidgetItem(name))
+                detectors = [str(idx + 1) for idx in self._groups[gid]]
+                self._group_table.setItem(row, 3, QTableWidgetItem(", ".join(detectors)))
+        finally:
+            self._group_table.blockSignals(blocked)
         self._group_table.resizeColumnsToContents()
         visible_rows = min(max(len(self._groups), 3), 5)
         row_height = max(24, self._group_table.verticalHeader().defaultSectionSize())

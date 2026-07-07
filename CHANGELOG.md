@@ -138,6 +138,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The grouping dialog resolves the effective grouping far less often per
+  user action.** Two redundant-resolve defects made `resolve_effective_grouping`
+  (which can run a t0 auto-detect scan over every detector's full-resolution
+  histogram plus a per-run alpha estimate) fire many more times than the
+  action warranted: `_reload_controls_from_seed` re-resolved the draft from
+  scratch five separate times to read five different fields of the same
+  payload, and `_populate_group_table` rebuilt the group table's four columns
+  per row without blocking `itemChanged` — which drives both dirty-tracking
+  and the live preview — so every table refresh (dialog open, reseed, preset
+  apply, detector-layout accept) fired up to `4 × N_groups` redundant
+  resolves. Both now resolve/populate once and pass the result through;
+  callers that relied on the implicit `itemChanged` storm now trigger the
+  dirty/preview refresh explicitly, exactly once.
+
 - **Switching runs no longer renders the plot one view behind.** The draw
   decimates points for the current view window, but a switched dataset's
   reframe moved the axes only afterwards — so the new run showed only the
