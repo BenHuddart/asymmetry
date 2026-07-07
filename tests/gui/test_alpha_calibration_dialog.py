@@ -1,8 +1,21 @@
-"""Tests for the dedicated Alpha calibration dialog."""
+"""Tests for the dedicated Alpha calibration dialog.
+
+The Estimate action groups the full forward/backward histograms and runs
+``estimate_alpha_detailed`` on a :class:`~asymmetry.gui.tasks.TaskRunner`
+worker thread (see ``alpha_calibration_dialog.py``'s module docstring and
+``gui/tasks.py``). Tests that call :meth:`AlphaCalibrationDialog._on_estimate`
+must pump a real event loop until the worker lands — ``_wait_until`` below,
+the same idiom ``test_grouping_preview_pane.py`` uses — before reading
+``dialog._estimate``. Skipping that pump risks two failure modes: the assert
+races the still-in-flight worker (flaky failure), or, worse, the dialog goes
+out of scope while its worker thread is still running, which aborts the
+process (``gui/tasks.py``'s no-GC-of-a-live-QThread invariant).
+"""
 
 from __future__ import annotations
 
 import os
+import threading
 
 import numpy as np
 import pytest
@@ -11,11 +24,14 @@ pytestmark = [pytest.mark.gui]
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEventLoop, Qt, QTimer
 from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.project.profiles import AlphaPolicy
+from asymmetry.gui.windows.grouping import (
+    alpha_calibration_dialog as alpha_calibration_dialog_module,
+)
 from asymmetry.gui.windows.grouping.alpha_calibration_dialog import AlphaCalibrationDialog
 
 
@@ -25,6 +41,24 @@ def qapp() -> QApplication:
     if app is None:
         app = QApplication([])
     return app
+
+
+def _wait_until(predicate, timeout_ms: int = 30_000) -> None:
+    """Pump a real nested event loop until *predicate* holds (queued signals)."""
+    if predicate():
+        return
+    loop = QEventLoop()
+    check = QTimer()
+    check.timeout.connect(lambda: loop.quit() if predicate() else None)
+    check.start(10)
+    guard = QTimer()
+    guard.setSingleShot(True)
+    guard.timeout.connect(loop.quit)
+    guard.start(timeout_ms)
+    loop.exec()
+    check.stop()
+    guard.stop()
+    assert predicate(), "timed out waiting for the alpha estimate"
 
 
 def _run(run_number: int, *, ratio: float, metadata: dict | None = None) -> MuonDataset:
@@ -137,6 +171,7 @@ def test_estimate_populates_result_and_estimate(qapp: QApplication) -> None:
     dialog = _make_dialog([_run(5, ratio=2.0)])
     dialog._set_method("ratio")
     dialog._on_estimate()
+    _wait_until(lambda: dialog._tasks.active_count == 0)
     assert dialog._estimate is not None
     assert dialog._estimate.alpha == pytest.approx(2.0)
     assert "α =" in dialog._result_label.text()
@@ -152,6 +187,7 @@ def test_good_bin_window_seeds_from_run_facts(qapp: QApplication) -> None:
 def test_switching_run_invalidates_estimate(qapp: QApplication) -> None:
     dialog = _make_dialog([_run(1, ratio=2.0), _run(2, ratio=4.0)])
     dialog._on_estimate()
+    _wait_until(lambda: dialog._tasks.active_count == 0)
     assert dialog._estimate is not None
     other = dialog._run_combo.findData(2)
     dialog._run_combo.setCurrentIndex(other)
@@ -162,6 +198,7 @@ def test_changing_method_invalidates_estimate(qapp: QApplication) -> None:
     dialog = _make_dialog([_run(1, ratio=2.0)])
     dialog._set_method("ratio")
     dialog._on_estimate()
+    _wait_until(lambda: dialog._tasks.active_count == 0)
     assert dialog._estimate is not None
     dialog._set_method("diamagnetic")
     assert dialog._estimate is None
@@ -176,6 +213,7 @@ def test_ok_returns_calibrated_policy(qapp: QApplication) -> None:
     dialog = _make_dialog([_run(9, ratio=2.0)])
     dialog._set_method("ratio")
     dialog._on_estimate()
+    _wait_until(lambda: dialog._tasks.active_count == 0)
     dialog._on_accept()
 
     policy = dialog.result_policy()
@@ -201,6 +239,8 @@ def test_accept_without_estimate_is_blocked(qapp: QApplication, monkeypatch) -> 
 def test_cancel_returns_no_policy(qapp: QApplication) -> None:
     dialog = _make_dialog([_run(9, ratio=2.0)])
     dialog._on_estimate()  # even after a successful estimate...
+    _wait_until(lambda: dialog._tasks.active_count == 0)
+    assert dialog._estimate is not None
     dialog.reject()  # ...cancel returns nothing
     assert dialog.result_policy() is None
 
@@ -230,6 +270,115 @@ def test_preview_draws_before_and_after_curves(qapp: QApplication) -> None:
 
     dialog._set_method("ratio")
     dialog._on_estimate()
+    _wait_until(lambda: dialog._tasks.active_count == 0)
     labels_after = {str(line.get_label()) for line in dialog._axes.get_lines()}
     assert any("before" in lbl for lbl in labels_after)
     assert any("after" in lbl for lbl in labels_after)
+
+
+# ---------------------------------------------------------------------------
+# Off-thread estimate (B4: TaskRunner-backed Estimate action)
+# ---------------------------------------------------------------------------
+
+
+def test_estimate_runs_off_gui_thread_and_toggles_button(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The estimate runs on a worker thread; the button is busy for its duration."""
+    call_threads: list[int] = []
+    release = threading.Event()
+    real_estimate = alpha_calibration_dialog_module.estimate_alpha_detailed
+
+    def spy(*args, **kwargs):
+        call_threads.append(threading.get_ident())
+        release.wait(timeout=5.0)  # held open until the test has checked the button
+        return real_estimate(*args, **kwargs)
+
+    monkeypatch.setattr(alpha_calibration_dialog_module, "estimate_alpha_detailed", spy)
+
+    dialog = _make_dialog([_run(5, ratio=2.0)])
+    dialog._set_method("ratio")
+    gui_thread = threading.get_ident()
+
+    assert dialog._estimate_btn.isEnabled()
+    dialog._on_estimate()
+    _wait_until(lambda: len(call_threads) == 1)
+    assert call_threads[0] != gui_thread, "estimate_alpha_detailed ran on the GUI thread"
+    assert not dialog._estimate_btn.isEnabled(), "button should be disabled mid-flight"
+
+    release.set()
+    _wait_until(lambda: dialog._tasks.active_count == 0)
+    assert dialog._estimate_btn.isEnabled(), "button should re-enable once finished"
+    assert dialog._estimate is not None
+    assert dialog._estimate.alpha == pytest.approx(2.0)
+
+
+def test_mid_flight_close_does_not_crash(qapp: QApplication) -> None:
+    """Closing the dialog while an estimate is in flight cancels cleanly."""
+    dialog = _make_dialog([_run(5, ratio=2.0)])
+    dialog._set_method("ratio")
+    dialog._on_estimate()
+    # Close immediately — the worker may still be running (or, for this tiny
+    # synthetic dataset, may have already finished). Either way this must not
+    # crash: ``done()`` shuts the TaskRunner down before the dialog is dropped.
+    dialog.reject()
+    for _ in range(20):
+        qapp.processEvents()
+    assert dialog._tasks.active_count == 0
+    assert dialog.result_policy() is None
+
+
+def test_parent_destruction_mid_estimate_does_not_crash(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Destroying the dialog's *parent* mid-estimate must not abort the process.
+
+    In production the dialog is launched as a *child* of the grouping dialog, so
+    real teardown (and the ``tests/conftest.py`` cleanup fixture) reaps it
+    through its parent's destruction — never via ``done()``/``closeEvent``. With
+    the worker gated mid-flight, that destruction would drop the dialog's live
+    estimate ``QThread`` while it runs, which qFatal-aborts the process. The
+    ``TaskRunner`` destroyed-safety-net must park it in the reaper instead. This
+    is the exact race a previous B4 attempt introduced.
+    """
+    from PySide6.QtCore import QEvent
+    from PySide6.QtWidgets import QWidget
+
+    from asymmetry.gui import tasks as tasks_mod
+
+    release = threading.Event()
+    entered = threading.Event()
+    real_estimate = alpha_calibration_dialog_module.estimate_alpha_detailed
+
+    def gated(*args, **kwargs):
+        entered.set()
+        release.wait(timeout=5.0)  # hold the worker in-flight
+        return real_estimate(*args, **kwargs)
+
+    monkeypatch.setattr(alpha_calibration_dialog_module, "estimate_alpha_detailed", gated)
+
+    parent = QWidget()
+    dialog = _make_dialog([_run(5, ratio=2.0)], parent=parent)
+    dialog._set_method("ratio")
+    dialog._on_estimate()
+    _wait_until(lambda: entered.is_set())  # worker is inside the gate -> thread running
+
+    reaper_before = tasks_mod._orphan_reaper
+    parked_before = len(reaper_before._threads) if reaper_before is not None else 0
+
+    # Destroy the PARENT without close()/done() on the child. This reaps the
+    # child dialog and its TaskRunner through C++ destruction alone.
+    del dialog
+    parent.deleteLater()
+    del parent
+    qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    qapp.processEvents()
+
+    reaper = tasks_mod._orphan_reaper
+    assert reaper is not None
+    # The still-running estimate thread was parked, not destroyed with the dialog.
+    assert len(reaper._threads) == parked_before + 1
+
+    # Release the gate; the reaper prunes the finished thread back to baseline.
+    release.set()
+    _wait_until(lambda: len(reaper._threads) == parked_before)
