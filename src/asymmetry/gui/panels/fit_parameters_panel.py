@@ -4898,7 +4898,7 @@ class FitParametersPanel(QWidget):
             self._axes_tag_map[id(ax)] = "main"
             axes_by_tag["main"] = ax
             self._draw_plot_annotations(axes_by_tag)
-            self._canvas.draw()
+            self._canvas.draw_idle()
             return
 
         x_key = self._effective_x_key()
@@ -5080,7 +5080,7 @@ class FitParametersPanel(QWidget):
                 layout_engine.set(w_pad=0.04, h_pad=0.04, hspace=0.05, wspace=0.05)
         else:
             self._figure.tight_layout(pad=1.2)
-        self._canvas.draw()
+        self._canvas.draw_idle()
 
     def _x_axis_display_label(self, x_key: str) -> str:
         """Friendly, plain-text label for an x-axis key (for dialog titles).
