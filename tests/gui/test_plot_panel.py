@@ -3490,6 +3490,148 @@ class TestPlotPanel:
         assert x_min == pytest.approx(-1.0)
         assert x_max == pytest.approx(float(sample_dataset.time.max()))
 
+    def _frequency_panel_dataset(self) -> tuple[PlotPanel, MuonDataset]:
+        """Build a plotted frequency-domain panel + its dataset (caller closes it)."""
+        panel = PlotPanel(domain="frequency")
+        freq = np.linspace(1.0, 5.0, 401)
+        values = np.exp(-((freq - 3.0) ** 2) / 0.1)
+        ds = MuonDataset(
+            time=freq,
+            asymmetry=values,
+            error=np.full_like(freq, 0.05),
+            metadata={"run_number": 3210, "plot_domain": "frequency"},
+        )
+        panel.plot_dataset(ds)
+        return panel, ds
+
+    def test_frequency_panel_set_fit_range_updates_state(self, qapp: QApplication) -> None:
+        """Regression: a frequency panel used to make ``set_fit_range`` a silent no-op.
+
+        The Fit panel's frequency-range spinbox commit routes through
+        ``PlotPanel.set_fit_range`` for both domains
+        (``MainWindow._on_fit_range_edit_committed``); it must actually update
+        the state ``get_fit_range``/``get_fit_dataset`` read from, not just be
+        swallowed.
+        """
+        panel, ds = self._frequency_panel_dataset()
+        try:
+            if not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            full_min, full_max = panel.get_fit_range()
+            assert full_min == pytest.approx(float(ds.time.min()))
+            assert full_max == pytest.approx(float(ds.time.max()))
+
+            panel.set_fit_range(2.0, 4.0)
+
+            assert panel.get_fit_range() == (pytest.approx(2.0), pytest.approx(4.0))
+            fit_ds = panel.get_fit_dataset(ds)
+            assert np.all(fit_ds.time >= 2.0)
+            assert np.all(fit_ds.time <= 4.0)
+            assert len(fit_ds.time) < len(ds.time)
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_frequency_panel_set_fit_range_survives_replot(self, qapp: QApplication) -> None:
+        """A committed frequency fit range must not be re-seeded away on redraw."""
+        panel, ds = self._frequency_panel_dataset()
+        try:
+            if not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            panel.set_fit_range(2.0, 4.0)
+            panel.plot_dataset(ds)  # the real re-render call (e.g. a re-select)
+
+            assert panel.get_fit_range() == (pytest.approx(2.0), pytest.approx(4.0))
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_frequency_panel_never_draws_fit_range_artists_or_handles(
+        self, qapp: QApplication
+    ) -> None:
+        """State-only: a frequency panel still draws no fit-range span/handles."""
+        panel, _ds = self._frequency_panel_dataset()
+        try:
+            if not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            panel.set_fit_range(2.0, 4.0)
+
+            assert panel._fit_span_artists == []
+            assert panel._fit_min_handles == []
+            assert panel._fit_max_handles == []
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_frequency_panel_detect_handle_hit_always_none(self, qapp: QApplication) -> None:
+        """No draggable selector on a frequency panel, even at a handle-shaped position.
+
+        ``_fit_x_min``/``_fit_x_max`` are non-``None`` on a frequency panel (seeded
+        by ``plot_dataset``, and now also settable via ``set_fit_range``), so a
+        click positioned exactly at one of those x-values must still not be
+        reported as a handle hit — the frequency panel draws no handles, and a
+        "drag" started from a ghost hit-test would mutate state with no visual
+        feedback.
+        """
+        panel, _ds = self._frequency_panel_dataset()
+        try:
+            if not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            assert panel._fit_x_min is not None and panel._fit_x_max is not None
+            px = panel._ax.transData.transform((panel._fit_x_min, 0.0))[0]
+            event = SimpleNamespace(inaxes=panel._ax, x=px, y=100.0, xdata=panel._fit_x_min)
+
+            assert panel._detect_handle_hit(event) is None
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_frequency_panel_committed_fit_range_survives_state_round_trip(
+        self, qapp: QApplication
+    ) -> None:
+        """A committed frequency fit range must persist through project save/restore.
+
+        ``restore_state`` calls ``_set_fit_range(..., redraw=True)`` (after
+        directly assigning ``_fit_x_min``/``_fit_x_max`` from the saved state)
+        to redraw the fit-range artists before the saved view limits are
+        re-applied. That call used to no-op for frequency panels; now that it
+        executes, it must not perturb the restored view.
+        """
+        panel, ds = self._frequency_panel_dataset()
+        try:
+            if not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            panel.set_fit_range(2.0, 4.0)
+            panel.set_view_limits(1.5, 4.5, -1.0, 2.0)
+            view_before = panel.get_view_limits()
+
+            state = panel.get_state()
+            assert state["fit_x_min"] == pytest.approx(2.0)
+            assert state["fit_x_max"] == pytest.approx(4.0)
+
+            restored = PlotPanel(domain="frequency")
+            try:
+                restored.plot_dataset(ds)
+                restored.restore_state(state, dataset=ds)
+
+                assert restored.get_fit_range() == (pytest.approx(2.0), pytest.approx(4.0))
+                assert restored.get_view_limits() == pytest.approx(view_before)
+                # Restore must not resurrect the no-artists contract either.
+                assert restored._fit_span_artists == []
+                assert restored._fit_min_handles == []
+                assert restored._fit_max_handles == []
+            finally:
+                restored.close()
+                restored.deleteLater()
+        finally:
+            panel.close()
+            panel.deleteLater()
+
     def test_get_current_plot_export_data_available_with_plotted_data(
         self, panel: PlotPanel, sample_dataset: MuonDataset
     ) -> None:
