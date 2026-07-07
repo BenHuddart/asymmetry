@@ -159,6 +159,86 @@ worker signal to a bare lambda/partial that touches widgets — route through a
 GUI-thread `QObject` method. See the threading invariants in
 [AGENTS.md](AGENTS.md).
 
+## Keeping the GUI responsive
+
+Distilled from the 2026-07 responsiveness programme (PRs #214–#226). Every
+pattern below points at its canonical implementation — copy those, don't
+re-derive.
+
+**Know the cost model.** Everything wrapped in `perf_timer`
+(`core/utils/perf.py`) — loading, `resolve_effective_grouping`,
+`apply_grouping_aligned`, deadtime preparation, `reduce_grouped_asymmetry`,
+`build_grouped_time_domain_datasets` — is O(detectors × bins): tens to
+hundreds of milliseconds per call at ROOT/HIFI scale, with GB-scale transient
+allocations. By definition, none of these may be called from a per-event slot.
+
+**The event-frequency rule.** A slot wired to a per-keystroke, per-spin or
+per-mouse-move signal may only read widgets and build plain payloads. Anything
+heavier defers to a debounced worker: the grouping preview
+(`windows/grouping/preview_pane.py`) is the reference — 300 ms single-shot
+restart timer, latest-wins pending slot, single-flight worker, generation
+counter to drop superseded results. For drag-cadence work, the moments readout
+uses the same shape at 30 ms with the expensive finisher (bootstrap errors)
+run once on release (`moments_drag_finished`). If you find yourself calling a
+resolve/reduce function synchronously in a signal handler, stop.
+
+**Cache derived results keyed on content, not on events.** The
+`ReductionCache` (`gui/utils/reduction_cache.py`) is the pattern: a
+byte-budgeted LRU whose key embeds *everything the computation reads* — the
+grouping digest plus every digest-invisible field (alpha, per-detector t0
+overrides, `good_frames`, …). Key-embedded content means grouping edits can
+never serve stale data, with no invalidation choreography to get wrong; entry
+lifetime rides a `weakref.finalize` on the run. When you add such a cache,
+every key component the digest omits gets its own "change only this field →
+must recompute" test — that test family caught two real staleness bugs during
+implementation.
+
+**Repopulating a table? Block its signals.** `itemChanged` connected to
+dirty-tracking or preview refresh turns a 4-column × N-row repopulation into
+4×N recomputes. Wrap the population in `QSignalBlocker` and have the caller
+trigger the refresh explicitly, exactly once (`_populate_group_table` in
+`windows/grouping/dialog.py`).
+
+**Don't paint what isn't visible; paint once when you do.** A hidden panel's
+sync updates bookkeeping only and defers `plot_*`/rasterisation to view entry
+(`_render_frequency_spectra`'s visibility gate). Completion paths use
+`draw_idle()`, never `draw()`; and never issue an immediate draw that a
+scheduled deferred redraw will overwrite (`_apply_limits` skips its
+synchronous draw exactly when `_schedule_viewport_refresh()` reports a
+deferred pass will genuinely run).
+
+**Loops that must touch widgets get the chunked runner.** Work that mutates
+widgets or window state cannot go to a worker; if it is a bounded-item loop
+(project restore's per-dataset grouping re-application), run it through
+`MainWindow._apply_items_with_progress` — one item per event-loop turn behind
+a cancellable window-modal progress dialog, cancel stopping at an item
+boundary. `QApplication.processEvents()` inside a loop is banned (the harness
+enforces it): it invites re-entrancy while still freezing between calls.
+
+**Synchronous semantics without the freeze.** When a call site needs
+completed-when-returned behaviour, run the compute on a `TaskRunner` worker
+while the GUI thread waits in a nested `QEventLoop`
+(`_load_paths_with_progress`; the data browser's `_start_combine`) — and join
+the worker before returning, since the nested loop can exit before the queued
+`thread.quit` lands.
+
+**Teardown is part of the design.** `TaskRunner` parks still-running workers
+with the process-level reaper when a runner is destroyed without `shutdown()`
+(`tasks.py`, the `destroyed`-net) — but do not lean on the net: call
+`shutdown()` from `closeEvent`, and on a `QDialog` also from `reject()` (the
+Close button bypasses `closeEvent`). Any threading change must pass the
+stress protocol: N consecutive parallel runs of the affected test files on an
+otherwise-idle machine — a single green xdist run is not evidence (the first
+attempt at threading the alpha estimate passed one and crashed ~40% of the
+time).
+
+**Measure before and after.** Wrap new expensive core functions in
+`perf_timer`; quantify with `tools/perf_benchmark.py` — on a quiet machine
+only (a contended baseline once inflated our numbers 2–6×). Pin the win with
+invocation-count regression tests (monkeypatch a counter on the expensive
+function, drive the real user action, assert the exact count) — they are what
+keeps a fixed path fixed.
+
 ## What the harness enforces
 
 `python tools/harness.py structural` fails fast on:
@@ -172,6 +252,9 @@ GUI-thread `QObject` method. See the threading invariants in
   specialist palettes excepted) — use a `tokens` value.
 - **No literal-pixel geometry** (`setFixed/Minimum Width/Height/Size` with an
   int literal >= 24) outside the design-floor allowlist — use `metrics`.
+- **No `QApplication.processEvents(`** in `gui/` outside the `app.py` startup
+  allowlist — use `TaskRunner`, the chunked progress runner, or a nested
+  `QEventLoop` (see "Keeping the GUI responsive").
 - **Test files** live under a sanctioned `tests/<subpackage>/`.
 
 When a review comment exposes a new rule, encode it here and in

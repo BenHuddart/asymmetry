@@ -297,6 +297,45 @@ def find_duplicate_mpl_canvas_violations(gui_root: Path = GUI_ROOT) -> list[Harn
     return failures
 
 
+#: Files allowed to call ``QApplication.processEvents``: app startup pumps the
+#: splash screen before the event loop runs, which is the one legitimate use.
+PROCESS_EVENTS_ALLOWLIST = frozenset({GUI_ROOT / "app.py"})
+
+
+def find_process_events_violations(gui_root: Path = GUI_ROOT) -> list[HarnessFailure]:
+    """Return ``processEvents(`` calls outside the startup allowlist.
+
+    ``processEvents()`` in application code — classically inside a loop or a
+    progress callback — freezes between calls and invites re-entrancy while
+    *looking* responsive; the 2026-07 responsiveness programme removed every
+    such use. Long work belongs on a ``TaskRunner`` worker; widget-touching
+    loops go through the chunked progress runner
+    (``MainWindow._apply_items_with_progress``); completed-when-returned call
+    sites use a worker plus a nested ``QEventLoop``. See
+    ``docs/GUI_GUIDELINES.md`` § "Keeping the GUI responsive".
+    """
+
+    failures: list[HarnessFailure] = []
+    for path in _iter_python_files(gui_root):
+        if path in PROCESS_EVENTS_ALLOWLIST:
+            continue
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if "processEvents(" in line and "sendPostedEvents" not in line:
+                failures.append(
+                    HarnessFailure(
+                        path,
+                        lineno,
+                        (
+                            "`processEvents(` outside the startup allowlist. "
+                            "Use `TaskRunner`, `MainWindow._apply_items_with_progress`, "
+                            "or a worker + nested `QEventLoop` "
+                            "(docs/GUI_GUIDELINES.md § Keeping the GUI responsive)."
+                        ),
+                    )
+                )
+    return failures
+
+
 def find_bespoke_qthread_violations(gui_root: Path = GUI_ROOT) -> list[HarnessFailure]:
     """Return manual `QThread(` construction outside the shared task runner."""
 
@@ -878,6 +917,7 @@ def run_structural_checks() -> int:
         *find_duplicate_limit_field_violations(),
         *find_duplicate_mpl_canvas_violations(),
         *find_bespoke_qthread_violations(),
+        *find_process_events_violations(),
         *find_bespoke_gle_export_violations(),
         *find_bespoke_section_violations(),
         *find_raw_hex_colour_violations(),

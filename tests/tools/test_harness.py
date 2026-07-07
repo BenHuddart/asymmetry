@@ -585,3 +585,34 @@ def test_shard_is_forwarded_after_marker() -> None:
     # conftest hook. The "1/3" value must not be mistaken for a test target.
     assert _marker(command) == "(not slow and not integration) and (gui)"
     assert command[command.index("--shard") + 1] == "1/3"
+
+
+def test_current_gui_has_no_stray_process_events_calls() -> None:
+    harness = _load_harness()
+
+    assert harness.find_process_events_violations() == []
+
+
+def test_process_events_check_reports_calls_outside_allowlist(tmp_path: Path) -> None:
+    gui_root = tmp_path / "gui"
+    gui_root.mkdir(parents=True)
+    allowed = gui_root / "app.py"
+    allowed.write_text("app.processEvents()\n", encoding="utf-8")
+    stray = gui_root / "windows" / "busy_dialog.py"
+    stray.parent.mkdir(parents=True)
+    stray.write_text(
+        "def _progress(done, total):\n    QApplication.processEvents()\n",
+        encoding="utf-8",
+    )
+    benign = gui_root / "tasks.py"
+    # sendPostedEvents is the queued-event drain in TaskRunner.shutdown — not
+    # an event-loop pump; it must not trip the check.
+    benign.write_text("app.sendPostedEvents(self, 0)\n", encoding="utf-8")
+    harness = _load_harness()
+    harness.PROCESS_EVENTS_ALLOWLIST = frozenset({allowed})
+
+    failures = harness.find_process_events_violations(gui_root)
+
+    assert len(failures) == 1
+    assert failures[0].path == stray
+    assert "GUI_GUIDELINES" in failures[0].message
