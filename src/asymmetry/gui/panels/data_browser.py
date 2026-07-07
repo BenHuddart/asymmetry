@@ -1862,19 +1862,25 @@ class DataBrowserPanel(QWidget):
         that was added or populated *after* the fit completed (the ordering
         trap) without re-running the batch. A run with no custom values maps to
         an empty dict so consumers can clear stale snapshots, not just add.
+
+        Combined (co-added/subtracted) datasets are included here too: their
+        dataset object lives in ``_datasets`` under the combined run number,
+        same as any regular run, so a single pass over ``_datasets`` already
+        covers them. ``_combined_datasets`` maps a combined run number to its
+        *list of source run numbers*, not to a dataset, and must not be
+        iterated as ``(run_number, dataset)`` pairs.
         """
         out: dict[int, dict[str, str]] = {}
-        for source in (self._datasets, self._combined_datasets):
-            for run_number, dataset in source.items():
-                try:
-                    run_key = int(run_number)
-                except (TypeError, ValueError):
-                    continue
-                fields = dataset.metadata.get(CUSTOM_FIELDS_METADATA_KEY)
-                if isinstance(fields, dict):
-                    out[run_key] = {str(k): str(v) for k, v in fields.items()}
-                else:
-                    out.setdefault(run_key, {})
+        for run_number, dataset in self._datasets.items():
+            try:
+                run_key = int(run_number)
+            except (TypeError, ValueError):
+                continue
+            fields = dataset.metadata.get(CUSTOM_FIELDS_METADATA_KEY)
+            if isinstance(fields, dict):
+                out[run_key] = {str(k): str(v) for k, v in fields.items()}
+            else:
+                out.setdefault(run_key, {})
         return out
 
     def angle_x_field(self) -> tuple[str, str] | None:
