@@ -1840,6 +1840,10 @@ class MainWindow(QMainWindow):
             self._data_browser.group_selected.connect(self._on_group_selected)
         if hasattr(self._data_browser, "refit_coadded_requested"):
             self._data_browser.refit_coadded_requested.connect(self._on_refit_coadded_requested)
+        # Busy hint for the browser's background combines (co-add / subtract):
+        # a message while the combine runs, an empty string to clear it.
+        if hasattr(self._data_browser, "combine_status"):
+            self._data_browser.combine_status.connect(self._on_data_browser_combine_status)
         if hasattr(self._data_browser, "fit_group_requested"):
             self._data_browser.fit_group_requested.connect(self._on_fit_group_requested)
         if hasattr(self._data_browser, "show_group_series_requested"):
@@ -13257,6 +13261,13 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Co-added re-fit failed: {message}")
         self._log_panel.log(f"Co-added re-fit failed: {message}")
 
+    def _on_data_browser_combine_status(self, message: str) -> None:
+        """Relay the data browser's background-combine busy hint to the status bar."""
+        if message:
+            self.statusBar().showMessage(message)
+        else:
+            self.statusBar().clearMessage()
+
     def _refit_coadded_member_key(self, runs: list[int]) -> int:
         """Deterministic synthetic member key for a co-added re-fit selection.
 
@@ -15275,8 +15286,9 @@ class MainWindow(QMainWindow):
         params_panel = getattr(self, "_fit_parameters_panel", None)
         if params_panel is not None and hasattr(params_panel, "shutdown_workers"):
             params_panel.shutdown_workers()
-        # GLE export compile workers in the plot panels (docked widgets too).
-        for attr in ("_plot_panel", "_frequency_plot_panel"):
+        # GLE export compile workers in the plot panels, and the data browser's
+        # background combine worker (all docked widgets too).
+        for attr in ("_plot_panel", "_frequency_plot_panel", "_data_browser"):
             panel = getattr(self, attr, None)
             if panel is not None and hasattr(panel, "shutdown_workers"):
                 panel.shutdown_workers()

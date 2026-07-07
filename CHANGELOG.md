@@ -187,6 +187,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mid-flight joins the worker instead of crashing. Errors and the delivered
   run are unchanged.
 
+- **Combining runs in the data browser no longer freezes the window.** The
+  interactive run-arithmetic actions — Co-add Selected, Subtract Reference
+  Run…, and Subtract Selected (signed)… — summed per-detector counts across
+  every selected run and re-reduced the result synchronously on the GUI
+  thread, blocking the whole application for the duration of the combine.
+  The heavy combine+reduce now runs on a background worker while the window
+  keeps repainting, with a status-bar message ("Combining runs …") and a busy
+  cursor over the table for the duration; the combine entries are disabled
+  (and re-triggers ignored) while one is in flight, and closing the window
+  mid-combine shuts the worker down cleanly. The programmatic path that
+  recreates combined rows when a project opens is deliberately unchanged
+  (project restore depends on it completing before it returns), and combined
+  results are numerically identical.
+
 - **Switching datasets in the plot panel now rasterises the canvas once, not
   twice.** A content switch reframes the view, and a reframe re-decimates for
   the new window on a deferred refresh one event-loop turn later — but the
