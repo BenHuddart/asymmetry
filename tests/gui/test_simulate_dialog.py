@@ -1,11 +1,18 @@
 """GUI tests for the simulate dialog and the Data Browser degrade action.
 
 Verification-plan §5 of docs/porting/simulate-mode/verification-plan.md.
+
+Generate runs on a :class:`~asymmetry.gui.tasks.TaskRunner` worker thread (see
+the module docstring of ``simulate_dialog.py``), so ``_on_generate()`` only
+*starts* the work — tests that need the result pump a real nested event loop
+with ``_wait_until`` until the worker's queued callback lands, the same
+pattern ``test_grouping_preview_pane.py`` uses for its TaskRunner-based pane.
 """
 
 from __future__ import annotations
 
 import os
+import threading
 
 import numpy as np
 import pytest
@@ -15,6 +22,7 @@ pytestmark = [pytest.mark.gui]
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 pytest.importorskip("h5py")
+from PySide6.QtCore import QEventLoop, QTimer
 from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
@@ -35,6 +43,30 @@ def qapp() -> QApplication:
     if app is None:
         app = QApplication([])
     return app
+
+
+def _wait_until(predicate, timeout_ms: int = 30_000) -> None:
+    """Pump a real nested event loop until *predicate* holds (queued signals)."""
+    if predicate():
+        return
+    loop = QEventLoop()
+    check = QTimer()
+    check.timeout.connect(lambda: loop.quit() if predicate() else None)
+    check.start(10)
+    guard = QTimer()
+    guard.setSingleShot(True)
+    guard.timeout.connect(loop.quit)
+    guard.start(timeout_ms)
+    loop.exec()
+    check.stop()
+    guard.stop()
+    assert predicate(), "timed out waiting for Generate to finish"
+
+
+def _generate_and_wait(dialog) -> None:
+    """Click Generate and pump the event loop until its worker completes."""
+    dialog._on_generate()
+    _wait_until(lambda: dialog._tasks.active_count == 0)
 
 
 N_BINS = 600
@@ -92,7 +124,7 @@ class TestSimulateDialog:
 
         dialog._events_spin.setValue(1.0)
         dialog._seed_spin.setValue(7)
-        dialog._on_generate()
+        _generate_and_wait(dialog)
 
         assert len(generated) == 1
         run = generated[0]
@@ -129,7 +161,7 @@ class TestSimulateDialog:
         generated: list[Run] = []
         dialog.run_generated.connect(generated.append)
         dialog._events_spin.setValue(0.5)
-        dialog._on_generate()
+        _generate_and_wait(dialog)
         assert generated[0].run_number == 90555
 
     def test_edit_model_preserves_typed_values(self, qapp, monkeypatch) -> None:
@@ -156,7 +188,7 @@ class TestSimulateDialog:
     def test_save_as_nexus_round_trips(self, qapp, tmp_path, monkeypatch) -> None:
         dialog = SimulateDialog([_template_dataset()], preselected_run=1234)
         dialog._events_spin.setValue(1.0)
-        dialog._on_generate()
+        _generate_and_wait(dialog)
 
         target = tmp_path / "sim.nxs"
         monkeypatch.setattr(
@@ -197,7 +229,7 @@ class TestBuiltinTemplateDialog:
         dialog._template_combo.setCurrentIndex(index)
         generated: list[Run] = []
         dialog.run_generated.connect(generated.append)
-        dialog._on_generate()
+        _generate_and_wait(dialog)
 
         assert len(generated) == 1
         run = generated[0]
@@ -220,7 +252,7 @@ class TestBuiltinTemplateDialog:
             dialog._mode_combo.setCurrentIndex(dialog._mode_combo.findData(mode))
             generated: list[Run] = []
             dialog.run_generated.connect(generated.append)
-            dialog._on_generate()
+            _generate_and_wait(dialog)
             assert len(generated) == 1
             sim = generated[0].metadata["simulation"]
             assert sim.get(key) is True
@@ -270,7 +302,7 @@ class TestMultiGroupSimulateDialog:
         generated: list[Run] = []
         dialog.run_generated.connect(generated.append)
         dialog._events_spin.setValue(5.0)
-        dialog._on_generate()
+        _generate_and_wait(dialog)
         assert len(generated) == 1
         run = generated[0]
         assert run.run_number == 90010
@@ -295,6 +327,183 @@ class TestMultiGroupSimulateDialog:
         assert by_id[2].amplitude == pytest.approx(0.19)
         assert by_id[2].relative_phase == pytest.approx(1.57)
         assert by_id[2].n0_weight == pytest.approx(1.2)
+
+
+class TestGenerateIsAsync:
+    """Generate runs on a TaskRunner worker, not the GUI thread (E2).
+
+    A large multi-detector template at a high event budget can take seconds;
+    these tests pin that the call is threaded, that the button reflects
+    in-flight state, and that closing mid-flight does not crash.
+    """
+
+    def test_generate_runs_off_gui_thread(self, qapp, monkeypatch) -> None:
+        import asymmetry.gui.windows.simulate_dialog as simulate_dialog_module
+
+        gui_thread = threading.get_ident()
+        call_threads: list[int] = []
+        real_simulate_run = simulate_dialog_module.simulate_run
+
+        def spy(*args, **kwargs):
+            call_threads.append(threading.get_ident())
+            return real_simulate_run(*args, **kwargs)
+
+        monkeypatch.setattr(simulate_dialog_module, "simulate_run", spy)
+
+        dialog = SimulateDialog(
+            [_template_dataset()], preselected_run=1234, run_number_allocator=lambda: 90001
+        )
+        generated: list[Run] = []
+        dialog.run_generated.connect(generated.append)
+        dialog._events_spin.setValue(0.5)
+
+        dialog._on_generate()
+        # Nothing is delivered until the GUI event loop is pumped — the
+        # TaskRunner relay only fires via a queued connection.
+        assert generated == []
+
+        _wait_until(lambda: len(generated) == 1)
+        assert call_threads, "simulate_run was never called"
+        assert call_threads[0] != gui_thread, "simulate_run ran on the GUI thread"
+        assert generated[0].run_number == 90001
+
+    def test_multi_group_generate_runs_off_gui_thread(self, qapp, monkeypatch) -> None:
+        import asymmetry.gui.windows.simulate_dialog as simulate_dialog_module
+
+        gui_thread = threading.get_ident()
+        call_threads: list[int] = []
+        real_fn = simulate_dialog_module.simulate_multi_group_run
+
+        def spy(*args, **kwargs):
+            call_threads.append(threading.get_ident())
+            return real_fn(*args, **kwargs)
+
+        monkeypatch.setattr(simulate_dialog_module, "simulate_multi_group_run", spy)
+
+        dialog = MultiGroupSimulateDialog(_ring_template_run(4), run_number_allocator=lambda: 90010)
+        generated: list[Run] = []
+        dialog.run_generated.connect(generated.append)
+        dialog._events_spin.setValue(1.0)
+
+        dialog._on_generate()
+        assert generated == []
+
+        _wait_until(lambda: len(generated) == 1)
+        assert call_threads and call_threads[0] != gui_thread
+        assert generated[0].run_number == 90010
+
+    def test_generate_button_busy_during_flight(self, qapp) -> None:
+        dialog = SimulateDialog([_template_dataset()], preselected_run=1234)
+        assert dialog._generate_button.isEnabled()
+        assert dialog._generate_button.text() == "Generate"
+
+        dialog._on_generate()
+        assert not dialog._generate_button.isEnabled()
+        assert dialog._generate_button.text() == "Generating…"
+
+        _wait_until(lambda: dialog._tasks.active_count == 0)
+        assert dialog._generate_button.isEnabled()
+        assert dialog._generate_button.text() == "Generate"
+
+    def test_multi_group_generate_button_busy_during_flight(self, qapp) -> None:
+        dialog = MultiGroupSimulateDialog(_ring_template_run(4))
+        dialog._on_generate()
+        assert not dialog._generate_button.isEnabled()
+        assert dialog._generate_button.text() == "Generating…"
+
+        _wait_until(lambda: dialog._tasks.active_count == 0)
+        assert dialog._generate_button.isEnabled()
+        assert dialog._generate_button.text() == "Generate"
+
+    def test_error_surfaces_as_warning_and_releases_run_number(self, qapp, monkeypatch) -> None:
+        """A validation error from the core function still shows the same warning."""
+        import asymmetry.gui.windows.simulate_dialog as simulate_dialog_module
+
+        def raising(*args, **kwargs):
+            raise ValueError("alpha must be positive and finite.")
+
+        monkeypatch.setattr(simulate_dialog_module, "simulate_run", raising)
+        warnings: list[tuple[str, str]] = []
+        monkeypatch.setattr(
+            simulate_dialog_module.QMessageBox,
+            "warning",
+            staticmethod(lambda _parent, title, text, *a, **k: warnings.append((title, text))),
+        )
+        released: list[int] = []
+        dialog = SimulateDialog(
+            [_template_dataset()],
+            preselected_run=1234,
+            run_number_allocator=lambda: 90042,
+            run_number_releaser=released.append,
+        )
+        generated: list[Run] = []
+        dialog.run_generated.connect(generated.append)
+
+        dialog._on_generate()
+        _wait_until(lambda: dialog._tasks.active_count == 0)
+
+        assert generated == []
+        assert warnings == [("Generate Synthetic Run", "alpha must be positive and finite.")]
+        assert released == [90042]
+        assert dialog._generate_button.isEnabled()
+        assert dialog._generate_button.text() == "Generate"
+        assert not dialog._save_button.isEnabled()
+
+    def test_close_mid_flight_does_not_crash(self, qapp, monkeypatch) -> None:
+        import time
+
+        import asymmetry.gui.windows.simulate_dialog as simulate_dialog_module
+
+        real_simulate_run = simulate_dialog_module.simulate_run
+
+        def slow_simulate_run(*args, **kwargs):
+            time.sleep(0.05)
+            return real_simulate_run(*args, **kwargs)
+
+        monkeypatch.setattr(simulate_dialog_module, "simulate_run", slow_simulate_run)
+
+        dialog = SimulateDialog([_template_dataset()], preselected_run=1234)
+        generated: list[Run] = []
+        dialog.run_generated.connect(generated.append)
+        dialog._on_generate()
+        assert dialog._tasks.active_count == 1
+
+        # Closing while Generate is in flight must join the worker (bounded
+        # wait in TaskRunner.shutdown), not crash the process.
+        dialog.reject()
+        assert dialog._tasks.active_count == 0
+
+        # Any queued callback the worker posted before shutdown drains here;
+        # touching the (still-alive, just hidden) dialog widgets must not raise.
+        qapp.processEvents()
+        # Decision (pinned, not accidental): a run started before the dialog
+        # was dismissed still completes and still delivers — closing only
+        # blocks starting a *new* Generate, it does not discard one in flight.
+        assert len(generated) == 1
+
+    def test_close_via_window_x_mid_flight_does_not_crash(self, qapp, monkeypatch) -> None:
+        import time
+
+        import asymmetry.gui.windows.simulate_dialog as simulate_dialog_module
+
+        real_fn = simulate_dialog_module.simulate_multi_group_run
+
+        def slow(*args, **kwargs):
+            time.sleep(0.05)
+            return real_fn(*args, **kwargs)
+
+        monkeypatch.setattr(simulate_dialog_module, "simulate_multi_group_run", slow)
+
+        dialog = MultiGroupSimulateDialog(_ring_template_run(4))
+        generated: list[Run] = []
+        dialog.run_generated.connect(generated.append)
+        dialog._on_generate()
+        assert dialog._tasks.active_count == 1
+
+        dialog.close()  # QWidget close (window ✕) — goes through closeEvent
+        assert dialog._tasks.active_count == 0
+        qapp.processEvents()
+        assert len(generated) == 1  # same pinned decision as the reject() path
 
 
 class TestDegradeAction:

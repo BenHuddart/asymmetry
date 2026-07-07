@@ -81,7 +81,7 @@ import functools
 import hashlib
 import os
 import time
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
@@ -1840,6 +1840,10 @@ class MainWindow(QMainWindow):
             self._data_browser.group_selected.connect(self._on_group_selected)
         if hasattr(self._data_browser, "refit_coadded_requested"):
             self._data_browser.refit_coadded_requested.connect(self._on_refit_coadded_requested)
+        # Busy hint for the browser's background combines (co-add / subtract):
+        # a message while the combine runs, an empty string to clear it.
+        if hasattr(self._data_browser, "combine_status"):
+            self._data_browser.combine_status.connect(self._on_data_browser_combine_status)
         if hasattr(self._data_browser, "fit_group_requested"):
             self._data_browser.fit_group_requested.connect(self._on_fit_group_requested)
         if hasattr(self._data_browser, "show_group_series_requested"):
@@ -3313,6 +3317,74 @@ class MainWindow(QMainWindow):
                 f"File loading cancelled after {len(results)} of {len(paths)} file(s)."
             )
         return results
+
+    def _apply_items_with_progress(
+        self,
+        title: str,
+        items: list[tuple[str, Callable[[], None]]],
+    ) -> bool:
+        """Run short GUI-thread work items one per event-loop turn, with progress.
+
+        The GUI-thread sibling of :meth:`_load_paths_with_progress`, for loops
+        whose items must touch widgets and window state — project restore's
+        per-dataset grouping re-application — so a worker thread cannot run
+        them, but whose individual items are bounded (milliseconds to about a
+        second). Items run strictly in order, one per event-loop turn via
+        ``QTimer.singleShot(0, …)`` chaining, so the window repaints and the
+        (window-modal, so re-entry is blocked) dialog's Cancel button responds
+        between items rather than freezing for the whole loop.
+
+        Cancel stops cleanly at an item boundary — completed items are kept —
+        and returns ``False``; the caller decides what a partial application
+        means. An exception from an item aborts the run and propagates
+        unchanged, preserving the synchronous loop's contract. Items handle
+        their own expected per-item failures internally (as the restore loop
+        always has).
+        """
+        if not items:
+            return True
+
+        dialog = QProgressDialog(title, "Cancel", 0, len(items), self)
+        dialog.setWindowTitle(title)
+        dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        # Don't flash a dialog for loops that finish quickly.
+        dialog.setMinimumDuration(400)
+        dialog.setAutoClose(False)
+        dialog.setAutoReset(False)
+
+        loop = QEventLoop()
+        state: dict[str, object] = {"index": 0, "cancelled": False, "error": None}
+
+        def step() -> None:
+            if dialog.wasCanceled():
+                state["cancelled"] = True
+                loop.quit()
+                return
+            index = int(state["index"])  # type: ignore[arg-type]
+            if index >= len(items):
+                loop.quit()
+                return
+            label, fn = items[index]
+            dialog.setValue(index)
+            dialog.setLabelText(f"{label} ({index + 1}/{len(items)})…")
+            try:
+                fn()
+            except BaseException as exc:  # noqa: BLE001 — re-raised below unchanged
+                state["error"] = exc
+                loop.quit()
+                return
+            state["index"] = index + 1
+            QTimer.singleShot(0, step)
+
+        QTimer.singleShot(0, step)
+        loop.exec()
+        dialog.close()
+        dialog.deleteLater()
+
+        error = state["error"]
+        if error is not None:
+            raise error  # type: ignore[misc]  # the item's own exception, unchanged
+        return not bool(state["cancelled"])
 
     def _load_files(self, paths: list[str]) -> None:
         """Load multiple data files."""
@@ -13189,6 +13261,13 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Co-added re-fit failed: {message}")
         self._log_panel.log(f"Co-added re-fit failed: {message}")
 
+    def _on_data_browser_combine_status(self, message: str) -> None:
+        """Relay the data browser's background-combine busy hint to the status bar."""
+        if message:
+            self.statusBar().showMessage(message)
+        else:
+            self.statusBar().clearMessage()
+
     def _refit_coadded_member_key(self, runs: list[int]) -> int:
         """Deterministic synthetic member key for a co-added re-fit selection.
 
@@ -14562,17 +14641,24 @@ class MainWindow(QMainWindow):
         }
         combined_id_map: dict[int, int] = {}
         with self._browser_batch():
-            for ds_info in datasets_info:
+            # Each dataset's re-application (profile resolve + grouping apply +
+            # asymmetry reduction) is bounded but the loop is O(project size);
+            # run the items one per event-loop turn behind a cancellable
+            # progress dialog instead of freezing the window for the whole
+            # project (50–200 runs in a scan project). The bodies must stay on
+            # the GUI thread: they mutate run/grouping state, the browser, and
+            # the log panel.
+            def _restore_one_dataset(ds_info: dict) -> None:
                 rn = ds_info.get("run_number")
                 source_file = ds_info.get("source_file", "")
                 if not source_file:
                     self._log_panel.log(f"WARNING: Run {rn} has no source file; skipping.")
-                    continue
+                    return
 
                 resolved = resolved_paths.get(rn)
                 if not resolved:
                     self._log_panel.log(f"WARNING: Source file not found: {source_file}; skipping.")
-                    continue
+                    return
 
                 try:
                     if resolved in loaded_file_cache:
@@ -14584,7 +14670,7 @@ class MainWindow(QMainWindow):
                         raise loaded_obj
 
                     if loaded_obj is None:
-                        continue
+                        return
 
                     candidates = loaded_obj if isinstance(loaded_obj, list) else [loaded_obj]
                     dataset = None
@@ -14630,9 +14716,9 @@ class MainWindow(QMainWindow):
                         self._log_panel.log(
                             f"WARNING: Run {rn} not found in loaded file {source_file}; skipping."
                         )
-                        continue
+                        return
                     if int(dataset.run_number) in loaded_run_numbers:
-                        continue
+                        return
 
                     # Apply saved metadata overrides without prompting.
                     for key, val in ds_info.get("metadata_overrides", {}).items():
@@ -14687,8 +14773,9 @@ class MainWindow(QMainWindow):
 
             # ── recreate combined datasets ─────────────────────────────
             # Map saved combined IDs to restored IDs so selection can be
-            # adjusted.
-            for combined_info in state.get("combined_datasets", []):
+            # adjusted. Runs after every source dataset's item so the
+            # membership checks below see the complete restored set.
+            def _restore_one_combined(combined_info: dict) -> None:
                 old_id = combined_info.get("combined_run_number")
                 src_runs = combined_info.get("source_run_numbers", [])
                 operation = combined_info.get("operation")
@@ -14711,6 +14798,30 @@ class MainWindow(QMainWindow):
                         f"WARNING: Could not recreate combined dataset "
                         f"{src_runs}; missing runs: {missing}"
                     )
+
+            items: list[tuple[str, Callable[[], None]]] = [
+                (
+                    f"Run {ds_info.get('run_number', '?')}",
+                    functools.partial(_restore_one_dataset, ds_info),
+                )
+                for ds_info in datasets_info
+            ]
+            items += [
+                (
+                    "Combined " + "+".join(str(rn) for rn in ci.get("source_run_numbers", [])),
+                    functools.partial(_restore_one_combined, ci),
+                )
+                for ci in state.get("combined_datasets", [])
+            ]
+            completed = self._apply_items_with_progress("Restoring project", items)
+            if not completed:
+                self._project_load_incomplete = True
+                self._log_panel.log(
+                    "WARNING: project restore was cancelled before every dataset was "
+                    f"re-applied ({len(loaded_run_numbers)} of {len(datasets_info)} runs). "
+                    "The project is PARTIALLY loaded — saving it now would drop the "
+                    "missing runs."
+                )
 
         # ── fix up browser state: remap old combined IDs ───────────────
         browser_state = dict(state.get("browser_state", {}))
@@ -15175,8 +15286,9 @@ class MainWindow(QMainWindow):
         params_panel = getattr(self, "_fit_parameters_panel", None)
         if params_panel is not None and hasattr(params_panel, "shutdown_workers"):
             params_panel.shutdown_workers()
-        # GLE export compile workers in the plot panels (docked widgets too).
-        for attr in ("_plot_panel", "_frequency_plot_panel"):
+        # GLE export compile workers in the plot panels, and the data browser's
+        # background combine worker (all docked widgets too).
+        for attr in ("_plot_panel", "_frequency_plot_panel", "_data_browser"):
             panel = getattr(self, attr, None)
             if panel is not None and hasattr(panel, "shutdown_workers"):
                 panel.shutdown_workers()

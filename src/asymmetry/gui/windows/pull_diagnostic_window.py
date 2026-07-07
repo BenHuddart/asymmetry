@@ -4,8 +4,17 @@ Re-simulates the fitted run many times at matched statistics, refits each, and
 histograms the parameter pulls (θ̂ − θ_true)/σ_θ̂ against the N(0, 1) null. A
 mean at zero means the fit is unbiased; a width at one means the reported
 errors are honest. The heavy lifting is :func:`asymmetry.core.pull_diagnostic`;
-this window only collects the inputs, drives the loop with a progress bar and
+this window only collects the inputs, drives the run on a
+:class:`~asymmetry.gui.tasks.TaskRunner` worker thread with a progress bar and
 draws the histograms and verdict.
+
+The run can take up to 2000 simulate+refit iterations — potentially minutes —
+so the "Run" button starts it on a background thread via ``TaskRunner`` instead
+of blocking the GUI thread. ``run_pull_distribution`` accepts a
+``progress(done, total)`` callback and a ``should_continue()`` poll instead of
+raising a cancel exception, so the worker task adapts them to
+``worker.progress.emit`` / ``worker.is_cancelled`` and cancellation surfaces as
+a normal (shorter) result on the ``finished`` signal rather than ``cancelled``.
 """
 
 from __future__ import annotations
@@ -15,7 +24,6 @@ from typing import Any
 
 import numpy as np
 from PySide6.QtWidgets import (
-    QApplication,
     QDialog,
     QDialogButtonBox,
     QHBoxLayout,
@@ -28,6 +36,7 @@ from PySide6.QtWidgets import (
 
 from asymmetry.core.data.dataset import Run
 from asymmetry.core.pull_diagnostic import PullDistribution, Refit, run_pull_distribution
+from asymmetry.gui.tasks import TaskRunner, TaskWorker
 
 
 class PullDiagnosticWindow(QDialog):
@@ -61,6 +70,9 @@ class PullDiagnosticWindow(QDialog):
         self._last_result: PullDistribution | None = None
         self._cancelled = False
         self._running = False
+        self._cancel_requested = False
+        self._tasks = TaskRunner(self)
+        self._worker: TaskWorker | None = None
 
         layout = QVBoxLayout(self)
 
@@ -117,17 +129,19 @@ class PullDiagnosticWindow(QDialog):
     # ------------------------------------------------------------------
 
     def run_diagnostic(self, n_seeds: int) -> PullDistribution:
-        """Run the pull distribution for ``n_seeds`` and store/return it.
+        """Run the pull distribution for ``n_seeds`` synchronously and store/return it.
 
-        Polls a cancel flag before each seed (set by the Cancel button or by
-        closing the window mid-run), so the loop can stop early instead of
-        freezing the UI until all seeds finish.
+        This is a blocking helper for scripting/tests — it runs on the calling
+        thread and does not touch the progress bar or button states. The "Run"
+        button never calls this; it starts the same underlying
+        :func:`~asymmetry.core.pull_diagnostic.run_pull_distribution` call on a
+        :class:`~asymmetry.gui.tasks.TaskRunner` worker via :meth:`_on_run`
+        instead, so the GUI thread stays responsive.
+
+        Polls the ``self._cancelled`` flag before each seed (set by
+        :meth:`reject`), so a direct caller can still request early
+        termination.
         """
-
-        def progress(done: int, total: int) -> None:
-            self._progress.setValue(int(round(100 * done / total)))
-            QApplication.processEvents()
-
         result = run_pull_distribution(
             self._template,
             self._model,
@@ -138,7 +152,6 @@ class PullDiagnosticWindow(QDialog):
             track=self._track,
             background_per_bin=self._background_per_bin,
             time_range=self._time_range,
-            progress=progress,
             should_continue=lambda: not self._cancelled,
         )
         self._last_result = result
@@ -146,31 +159,105 @@ class PullDiagnosticWindow(QDialog):
 
     def _on_cancel(self) -> None:
         self._cancelled = True
+        self._cancel_requested = True
+        if self._worker is not None:
+            self._worker.cancel()
+        self._cancel_button.setEnabled(False)
 
     def reject(self) -> None:
-        # Closing mid-run aborts the loop instead of leaving it running against
-        # a dismissed window.
+        # Closing mid-run cancels the worker instead of leaving it running
+        # against a dismissed window, then waits for it to unwind before the
+        # dialog actually goes away. The Close button routes here directly
+        # (QDialogButtonBox.rejected → self.reject) without going through
+        # closeEvent, so the shutdown must happen here, not only there.
         self._cancelled = True
+        if self._worker is not None:
+            self._worker.cancel()
+        self._tasks.shutdown()
         super().reject()
 
+    def closeEvent(self, event: object) -> None:  # noqa: N802 — Qt override
+        # Belt-and-suspenders for a native window-close (title bar / Escape)
+        # that reaches closeEvent without going through reject()'s explicit
+        # button wiring; shutdown() is idempotent so this never double-blocks.
+        if self._worker is not None:
+            self._worker.cancel()
+        self._tasks.shutdown()
+        super().closeEvent(event)
+
     def _on_run(self) -> None:
+        if self._running:
+            return
+        n_seeds = self._seeds_spin.value()
+        # Snapshot every input the worker touches into plain locals before
+        # starting the thread — the worker callable must never read back
+        # through self, only the arguments and its own progress/cancel hooks.
+        template = self._template
+        model = self._model
+        parameters = dict(self._parameters)
+        refit = self._refit
+        track = list(self._track)
+        total_events = self._total_events
+        background_per_bin = self._background_per_bin
+        time_range = self._time_range
+
         self._cancelled = False
+        self._cancel_requested = False
         self._running = True
         self._run_button.setEnabled(False)
         self._cancel_button.setEnabled(True)
-        # The Close button must not dismiss the window mid-loop (processEvents
-        # would deliver the reject while the run is still touching widgets).
-        self._button_box.setEnabled(False)
         self._progress.setValue(0)
-        try:
-            result = self.run_diagnostic(self._seeds_spin.value())
-        finally:
-            self._running = False
-            self._run_button.setEnabled(True)
-            self._cancel_button.setEnabled(False)
-            self._button_box.setEnabled(True)
+        self._verdict_label.setText("Running…")
+
+        def task(worker: TaskWorker) -> PullDistribution:
+            # run_pull_distribution has no dedicated cancel exception: it
+            # polls should_continue() and, when it returns False, simply
+            # breaks the loop and returns a normal (shorter) PullDistribution
+            # instead of raising — so cancellation surfaces on `finished`,
+            # never on `cancelled`.
+            return run_pull_distribution(
+                template,
+                model,
+                parameters,
+                refit,
+                total_events=total_events,
+                n_seeds=n_seeds,
+                track=track,
+                background_per_bin=background_per_bin,
+                time_range=time_range,
+                progress=lambda done, total: worker.progress.emit(done, total, ""),
+                should_continue=lambda: not worker.is_cancelled(),
+            )
+
+        self._worker = self._tasks.start(
+            task,
+            on_finished=self._on_diagnostic_finished,
+            on_error=self._on_diagnostic_error,
+            on_progress=self._on_diagnostic_progress,
+        )
+
+    def _on_diagnostic_progress(self, current: int, total: int, _message: str) -> None:
+        if total > 0:
+            self._progress.setValue(int(round(100 * current / total)))
+
+    def _finish_run(self) -> None:
+        self._worker = None
+        self._running = False
+        self._run_button.setEnabled(True)
+        self._cancel_button.setEnabled(False)
+
+    def _on_diagnostic_finished(self, result: PullDistribution) -> None:
+        self._last_result = result
+        self._finish_run()
         self._plot(result)
-        self._verdict_label.setText(result.verdict())
+        verdict = result.verdict()
+        if self._cancel_requested:
+            verdict = f"Cancelled after {result.n_seeds} seed(s) — {verdict}"
+        self._verdict_label.setText(verdict)
+
+    def _on_diagnostic_error(self, message: str) -> None:
+        self._finish_run()
+        self._verdict_label.setText(f"Diagnostic failed: {message}")
 
     def _plot(self, result: PullDistribution) -> None:
         if self._figure is None or self._canvas is None:
