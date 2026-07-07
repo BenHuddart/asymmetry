@@ -5021,3 +5021,114 @@ class TestDecimationStrategies:
         # Endpoints are always kept and are finite here; interior picks must
         # never come from the NaN stretch.
         assert np.all(np.isfinite(kept))
+
+
+class TestViewportRefreshDrawCoalescing:
+    """The double rasterisation on a content switch collapses to one draw.
+
+    A content switch reframes, and a reframe re-decimates for the new window on
+    a deferred ``_redraw_current_view`` pass. Before the fix ``_apply_limits``
+    also rasterised synchronously first, so every switch paid two full draws;
+    the first was overwritten one event-loop turn later before the user saw it.
+    ``_apply_limits`` now skips its synchronous ``canvas.draw()`` whenever a
+    deferred refresh will genuinely run, and falls back to the synchronous draw
+    when ``_schedule_viewport_refresh`` bails.
+    """
+
+    @staticmethod
+    def _install_draw_counter(panel: PlotPanel) -> dict:
+        """Wrap the canvas's synchronous ``draw`` with a call counter."""
+        counter = {"n": 0}
+        original = panel._canvas.draw
+
+        def counting_draw(*args, **kwargs):
+            counter["n"] += 1
+            return original(*args, **kwargs)
+
+        panel._canvas.draw = counting_draw  # type: ignore[method-assign]
+        return counter
+
+    @staticmethod
+    def _dataset(run_number: int) -> MuonDataset:
+        t = np.linspace(0, 10, 100)
+        a = 0.2 * np.exp(-0.5 * t)
+        e = np.full_like(t, 0.01)
+        return MuonDataset(time=t, asymmetry=a, error=e, metadata={"run_number": run_number})
+
+    def test_content_switch_pays_one_deferred_draw(
+        self, qapp: QApplication, panel: PlotPanel
+    ) -> None:
+        """Switching datasets defers to a single synchronous draw, not two."""
+        if not getattr(panel, "_has_mpl", False):
+            pytest.skip("matplotlib not available")
+
+        # Plot A and let its own first-paint deferred refresh settle so the
+        # counter measures only the A -> B switch.
+        panel.plot_dataset(self._dataset(1))
+        qapp.processEvents()
+        assert panel._viewport_refresh_pending is False
+
+        counter = self._install_draw_counter(panel)
+
+        # A genuine content change (new run number) re-arms first-paint framing,
+        # so _apply_limits schedules a deferred refresh instead of drawing now.
+        panel.plot_dataset(self._dataset(2))
+        assert panel._viewport_refresh_pending is True
+        # No synchronous rasterisation happened during the switch itself.
+        assert counter["n"] == 0
+
+        # The deferred pass runs exactly once and consumes the pending flag,
+        # ending in a single draw with decimation clipped to the new window.
+        qapp.processEvents()
+        assert panel._viewport_refresh_pending is False
+        assert counter["n"] == 1
+        # The second pass did not re-arm another deferred pass (no loop).
+        assert panel._viewport_refresh_in_progress is False
+
+    def test_reconstruction_guard_falls_back_to_synchronous_draw(
+        self, qapp: QApplication, panel: PlotPanel
+    ) -> None:
+        """When the refresh guard bails, _apply_limits draws synchronously."""
+        if not getattr(panel, "_has_mpl", False):
+            pytest.skip("matplotlib not available")
+
+        panel.plot_dataset(self._dataset(1))
+        qapp.processEvents()
+        assert panel._viewport_refresh_pending is False
+
+        # Force the reconstruction guard: _schedule_viewport_refresh must return
+        # False, so _apply_limits keeps the immediate draw (canvas never left
+        # undrawn) and arms no deferred pass.
+        panel._is_reconstruction_view = lambda: True  # type: ignore[method-assign]
+        counter = self._install_draw_counter(panel)
+
+        panel._apply_limits(schedule_viewport_refresh=True)
+
+        assert counter["n"] == 1
+        assert panel._viewport_refresh_pending is False
+
+    def test_same_content_redraw_draws_once_immediately(
+        self, qapp: QApplication, panel: PlotPanel
+    ) -> None:
+        """schedule_viewport_refresh=False rasterises once, synchronously.
+
+        With no reframe requested ``_apply_limits`` must draw immediately rather
+        than defer, so the canvas is up to date within the call and does not
+        depend on a later event-loop turn. (Setting the axis limits still fires
+        Matplotlib's ``*lim_changed`` callback, which independently coalesces a
+        density refresh onto the next turn — that pre-existing pan/zoom path is
+        unaffected here; what matters is that the synchronous draw happened.)
+        """
+        if not getattr(panel, "_has_mpl", False):
+            pytest.skip("matplotlib not available")
+
+        panel.plot_dataset(self._dataset(1))
+        qapp.processEvents()
+        assert panel._viewport_refresh_pending is False
+
+        counter = self._install_draw_counter(panel)
+
+        panel._apply_limits(schedule_viewport_refresh=False)
+
+        # Exactly one synchronous rasterisation, before any event loop turn.
+        assert counter["n"] == 1

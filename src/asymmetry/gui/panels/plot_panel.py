@@ -1444,21 +1444,32 @@ class PlotPanel(QWidget):
             for key in self._subplot_axes_by_polarization
         )
 
-    def _schedule_viewport_refresh(self) -> None:
-        """Coalesce viewport-triggered density refreshes onto the next event loop turn."""
+    def _schedule_viewport_refresh(self) -> bool:
+        """Coalesce viewport-triggered density refreshes onto the next event loop turn.
+
+        Returns ``True`` when a deferred refresh will genuinely run — either it
+        was armed now, or one is already pending (a queued refresh covers this
+        request). Returns ``False`` when a guard bails (no mpl, no datasets, a
+        refresh already in progress, or a reconstruction view that
+        ``_redraw_current_view`` cannot rebuild), so callers can fall back to a
+        synchronous draw rather than leave the canvas undrawn.
+        """
         if (
             not self._has_mpl
             or not self._current_datasets
             or self._viewport_refresh_in_progress
-            or self._viewport_refresh_pending
             # MaxEnt reconstructions are not decimated and cannot be rebuilt by
             # _redraw_current_view; refreshing one would replace it with a plain
             # dataset plot. (Pre-existing: limit-field edits also route here.)
             or self._is_reconstruction_view()
         ):
-            return
+            return False
+        if self._viewport_refresh_pending:
+            # A queued refresh already covers this request; it will draw once.
+            return True
         self._viewport_refresh_pending = True
         QTimer.singleShot(0, self._apply_viewport_refresh)
+        return True
 
     def _apply_viewport_refresh(self) -> None:
         """Re-render the current view using the latest visible-axis limits."""
@@ -4182,20 +4193,34 @@ class PlotPanel(QWidget):
                     # subplots.
             finally:
                 self._syncing_limits_from_axes = False
-            self._canvas.draw()
+            # Try to defer the rasterisation onto the coalesced viewport refresh:
+            # on a reframe (schedule_viewport_refresh=True) the immediate draw
+            # would be replaced one event-loop turn later by _redraw_current_view
+            # with correct decimation, so skip it when a deferred pass will run.
+            deferred = (
+                schedule_viewport_refresh
+                and not self._viewport_refresh_in_progress
+                and self._schedule_viewport_refresh()
+            )
+            if not deferred:
+                self._canvas.draw()
             self._emit_view_limits_changed()
-            if schedule_viewport_refresh and not self._viewport_refresh_in_progress:
-                self._schedule_viewport_refresh()
             return
 
         self._ax.set_xlim(x0, x1)
         self._ax.set_ylim(y0, y1)
         self._cache_current_y_limits_for_axis()
         self._draw_fit_range_artists()
-        self._canvas.draw()
+        # See the subplot path above: defer the draw to the coalesced viewport
+        # refresh when one will genuinely run, else rasterise synchronously now.
+        deferred = (
+            schedule_viewport_refresh
+            and not self._viewport_refresh_in_progress
+            and self._schedule_viewport_refresh()
+        )
+        if not deferred:
+            self._canvas.draw()
         self._emit_view_limits_changed()
-        if schedule_viewport_refresh and not self._viewport_refresh_in_progress:
-            self._schedule_viewport_refresh()
 
     def _current_frame_identity(self) -> tuple:
         """Signature of what is currently plotted, for first-paint reframing.
