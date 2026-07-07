@@ -291,3 +291,160 @@ def test_legacy_spectrum_without_window_metadata_shows_no_caveat(window):
 
     widget = window._fourier_panel.moments_widget
     assert widget._caveat_label.isHidden()
+
+
+# ── C1: mid-drag recomputes are coalesced and bootstrap-free; release ───────
+# restores the full bootstrap. See gui-responsiveness audit item C1: dragging a
+# moments window/cutoff handle used to run a 256-resample bootstrap per
+# mouse-move event; it now runs the cheap point-estimate path, coalesced behind
+# a 30 ms single-shot timer, with exactly one full bootstrap on release.
+
+
+def _wrap_spectrum_moments_counter(monkeypatch) -> list:
+    """Patch mainwindow's bound ``spectrum_moments`` to record every call's
+    ``uncertainty`` kwarg while still delegating to the real implementation, so
+    ``_compute_and_show_moments`` still gets a real ``SpectrumMoments`` back
+    (``window_peak_amplitude``, the readout attrs, etc. all need to resolve).
+    """
+    import asymmetry.gui.mainwindow as mainwindow_module
+
+    calls: list[str] = []
+    original = mainwindow_module.spectrum_moments
+
+    def counting(*args, **kwargs):
+        calls.append(kwargs.get("uncertainty"))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(mainwindow_module, "spectrum_moments", counting)
+    return calls
+
+
+def test_drag_burst_defers_and_coalesces_to_one_cheap_recompute(window, monkeypatch):
+    _activate_fft_spectrum(window, [1])
+    widget = window._fourier_panel.moments_widget
+    assert widget.is_eligible() is True
+
+    calls = _wrap_spectrum_moments_counter(monkeypatch)
+
+    # A burst of 20 rapid drag events (mouse-move cadence): every one updates the
+    # widget's live window (latest-wins) but must not itself trigger a recompute
+    # — recomputes are coalesced behind the drag timer.
+    for i in range(20):
+        window._frequency_plot_panel.moments_window_changed.emit(25.0 + 0.1 * i, 55.0)
+
+    assert calls == []  # zero recomputes fired mid-burst, bootstrap or otherwise
+    assert widget.range_mhz() == pytest.approx((25.0 + 0.1 * 19, 55.0))  # live, latest wins
+
+    # The coalescing timer would fire once after ~30 ms of quiet; dispatch it
+    # directly rather than waiting on real Qt timing (flaky under xdist).
+    window._dispatch_pending_moments_drag()
+
+    assert calls == ["none"]  # exactly one recompute, and it is the cheap path
+    # Live but uncertainty-free: value updates, no "±" error term while dragging.
+    assert "±" not in widget._value_labels["b_ave"].text()
+    assert widget._value_labels["b_ave"].text() != "—"
+
+
+def test_real_timer_fires_the_coalesced_cheap_recompute(window):
+    """Exercises the actual ``QTimer`` wiring end to end (not a manual dispatch
+    call): a single drag event starts the real 30 ms single-shot timer, and
+    pumping the Qt event loop for a few multiples of that lets it fire on its
+    own, landing exactly one cheap recompute with a live (uncertainty-free)
+    readout — proving ``timeout.connect(self._dispatch_pending_moments_drag)``
+    is actually wired, not just the manually-invoked dispatch method.
+    """
+    from PySide6.QtTest import QTest
+
+    _activate_fft_spectrum(window, [1])
+    widget = window._fourier_panel.moments_widget
+    widget.clear_readout()
+    assert widget._value_labels["b_ave"].text() == "—"
+
+    window._frequency_plot_panel.moments_window_changed.emit(30.0, 50.0)
+    assert window._moments_drag_timer.isActive()
+
+    QTest.qWait(150)  # 5x the 30 ms interval: generous margin under CI load
+
+    assert not window._moments_drag_timer.isActive()  # single-shot: fired, not pending
+    assert widget._value_labels["b_ave"].text() != "—"
+    assert "±" not in widget._value_labels["b_ave"].text()  # cheap path: no bootstrap
+
+
+def test_drag_release_runs_one_bootstrap_and_restores_uncertainty(window, monkeypatch):
+    _activate_fft_spectrum(window, [1])
+    widget = window._fourier_panel.moments_widget
+    assert widget.is_eligible() is True
+
+    calls = _wrap_spectrum_moments_counter(monkeypatch)
+
+    for i in range(20):
+        window._frequency_plot_panel.moments_window_changed.emit(25.0 + 0.1 * i, 55.0)
+    window._dispatch_pending_moments_drag()
+    assert calls == ["none"]
+    assert "±" not in widget._value_labels["b_ave"].text()
+
+    # Release: cancels any still-pending cheap tick and runs one full bootstrap.
+    window._frequency_plot_panel.moments_drag_finished.emit()
+
+    assert calls == ["none", "bootstrap"]
+    assert not window._moments_drag_timer.isActive()
+    assert "±" in widget._value_labels["b_ave"].text()  # uncertainty is back
+
+
+def _fake_moments_event(panel, data_x, *, button=1):
+    """A minimal matplotlib-event stand-in for the moments-handle press/motion/
+    release path. Mirrors ``tests/gui/test_trend_preview.py``'s ``_fake_event``:
+    projects the intended data-space *x* through the real ``transData`` so
+    ``_detect_moments_handle_hit``'s pixel-space ``nearest_handle`` hit test
+    resolves correctly under the offscreen backend.
+    """
+
+    class _E:
+        pass
+
+    ax = panel._ax
+    e = _E()
+    e.button = button
+    e.x = float(ax.transData.transform((data_x, 0.0))[0])
+    e.y = float(ax.transData.transform((0.0, 0.0))[1])
+    e.xdata = float(data_x)
+    e.ydata = 0.0
+    e.inaxes = ax
+    return e
+
+
+def test_plot_panel_emits_drag_finished_only_after_an_actual_move(window):
+    """Exercises the real press/motion/release path in ``plot_panel.py`` (not
+    just the signal fired directly): a genuine drag of the window's min handle
+    emits ``moments_drag_finished`` exactly once on release, while a stationary
+    click (press + release, no motion) on the same handle does not — mirroring
+    the existing fit-range-handle ``was_drag`` gate right above it.
+    """
+    _activate_fft_spectrum(window, [1])
+    panel = window._frequency_plot_panel
+    widget = window._fourier_panel.moments_widget
+    # The widget's default window is the spectrum's full extent (20-60 MHz),
+    # which coincides with the plot's generic fit-range handles (also defaulted
+    # to the axis view limits) — nudge the moments window off that so the click
+    # unambiguously hits a moments handle, not the (frequency-panel-inert)
+    # fit-range handle that happens to sit at the same x.
+    widget.set_range_mhz(30.0, 50.0, emit=True)
+    panel._canvas.draw()  # force a real draw so transData is valid offscreen
+    lo, hi = panel._moments_window_display()
+
+    finished_events: list[None] = []
+    panel.moments_drag_finished.connect(lambda: finished_events.append(None))
+
+    # A stationary click on the min handle: press then release at the same spot.
+    panel._on_canvas_button_press(_fake_moments_event(panel, lo))
+    assert panel._active_moments_handle == "min"
+    panel._on_canvas_button_release(_fake_moments_event(panel, lo))
+    assert finished_events == []  # no move: not a drag, no recompute
+
+    # A genuine drag: press, move, release.
+    panel._on_canvas_button_press(_fake_moments_event(panel, lo))
+    assert panel._active_moments_handle == "min"
+    panel._on_canvas_motion_notify(_fake_moments_event(panel, lo + 1.0))
+    panel._on_canvas_button_release(_fake_moments_event(panel, lo + 1.0))
+    assert finished_events == [None]  # exactly one, on release
+    assert panel._active_moments_handle is None

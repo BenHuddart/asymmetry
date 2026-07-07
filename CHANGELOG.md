@@ -153,6 +153,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Switching datasets in the plot panel now rasterises the canvas once, not
+  twice.** A content switch reframes the view, and a reframe re-decimates for
+  the new window on a deferred refresh one event-loop turn later — but the
+  plot path also rasterised synchronously first, so every switch paid two full
+  `canvas.draw()` calls and the first was overwritten (with decimation clipped
+  to the *previous* viewport) before the user could see it. `_apply_limits`
+  now skips its synchronous draw whenever a deferred refresh will genuinely
+  run, in both the single-axis and stacked-subplot paths, and falls back to
+  the synchronous draw whenever the refresh guard bails (reconstruction view,
+  no datasets, a refresh already in progress) so the canvas is never left
+  undrawn.
+
+- **Selecting a dataset no longer repaints the hidden frequency panel.** Once
+  a run had a cached spectrum, every dataset selection on a time view rebuilt
+  and rasterised the invisible frequency plot to keep it warm — a full extra
+  synchronous canvas draw per click. The paint now defers until the frequency
+  view is actually entered (which always re-syncs from the cache), while the
+  sync's bookkeeping — the displayed-run key that drops stale async results,
+  and the spectral-moments readout — still updates on every selection.
+
 - **The grouping dialog resolves the effective grouping far less often per
   user action.** Two redundant-resolve defects made `resolve_effective_grouping`
   (which can run a t0 auto-detect scan over every detector's full-resolution
@@ -180,6 +200,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   missing entirely), and switching back inverted the mismatch. Most visible
   when browsing runs at different fields on the frequency view. The plot now
   re-decimates for the window it just framed.
+
+- **Dragging a spectral-moments window/cutoff handle no longer runs a full
+  bootstrap on every mouse-move.** Each drag event used to call
+  `spectrum_moments(..., uncertainty="bootstrap", n_bootstrap=256)` on the GUI
+  thread — 256 resamples per motion event, textbook drag jank. Mid-drag now
+  runs the cheap point-estimate path only (`uncertainty="none"`), and even
+  that is coalesced behind a 30 ms single-shot timer (latest-wins, the same
+  restart idiom as the grouping dialog's preview debounce, just at drag
+  cadence) so a fast mouse-move burst collapses to at most one recompute per
+  quiet window. The readout stays live (values track the handle; the "±"
+  uncertainty term is simply absent while dragging), and releasing the handle
+  fires one full bootstrap recompute so the uncertainties return.
 
 - **HiFi high-TF TDC FFTs are no longer silently truncated to nanoseconds.**
   The FFT window's good-statistics tail cap compared raw per-bin counts to
