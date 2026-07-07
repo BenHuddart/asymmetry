@@ -44,6 +44,21 @@ def test_log_panel_appends_message(qapp: QApplication) -> None:
     assert "hello world" in text
 
 
+def test_log_panel_caps_block_count_on_unbounded_growth(qapp: QApplication) -> None:
+    """A long-running session logging thousands of lines must not grow the
+    document without bound — QTextDocument's maximumBlockCount ring-buffers
+    it (see log_panel._MAX_LOG_BLOCKS)."""
+    from asymmetry.gui.panels.log_panel import _MAX_LOG_BLOCKS
+
+    panel = LogPanel()
+    for i in range(6000):
+        panel.log(f"line {i}")
+    assert panel._text.document().blockCount() <= _MAX_LOG_BLOCKS
+    # The most recent entry survives the trim; early entries are dropped.
+    assert "line 5999" in panel._text.toPlainText()
+    assert "line 0" not in panel._text.toPlainText()
+
+
 def test_fourier_panel_defaults(qapp: QApplication) -> None:
     panel = FourierPanel()
     assert not hasattr(panel, "_source_combo")

@@ -23,8 +23,21 @@ _TAG_COLOURS: dict[str, str] = {
 }
 
 
+#: Ring-buffer cap on retained log lines (``QTextDocument`` blocks). Once the
+#: document holds this many blocks, appending further entries drops the
+#: oldest ones automatically. ``to_plain_text()`` (and any "save log" /
+#: copy-from-panel feature) only ever sees the most recent
+#: ``_MAX_LOG_BLOCKS`` entries — earlier history is gone, not just hidden.
+_MAX_LOG_BLOCKS = 5000
+
+
 class LogPanel(QWidget):
-    """Scrollable log with per-category tag colouring."""
+    """Scrollable log with per-category tag colouring.
+
+    Capped to the most recent :data:`_MAX_LOG_BLOCKS` entries via
+    ``QTextDocument.setMaximumBlockCount`` so a long-running session's log
+    cannot grow the widget (and the app's memory footprint) without bound.
+    """
 
     #: Emitted with the running entry count (feeds the dock header's badge).
     entry_count_changed = Signal(int)
@@ -38,6 +51,7 @@ class LogPanel(QWidget):
         self._text = QTextEdit()
         self._text.setReadOnly(True)
         self._text.setFont(mono_font(10.5))
+        self._text.document().setMaximumBlockCount(_MAX_LOG_BLOCKS)
         layout.addWidget(self._text)
 
     def log(self, message: str, *, tag: str = "") -> None:
