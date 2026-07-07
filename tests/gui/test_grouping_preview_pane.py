@@ -18,6 +18,7 @@ debounce so tests do not wait on wall-clock.
 from __future__ import annotations
 
 import os
+import threading
 
 import numpy as np
 import pytest
@@ -30,6 +31,7 @@ from PySide6.QtCore import QEventLoop, QTimer
 from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.project.profiles import GroupingProfile, ProfileFingerprint
 from asymmetry.core.transform import (
     apply_grouped_background_correction,
     apply_grouping_aligned,
@@ -38,6 +40,7 @@ from asymmetry.core.transform import (
     prepare_histograms_with_deadtime,
     reduce_grouped_asymmetry,
 )
+from asymmetry.gui.windows.grouping import preview_pane as preview_pane_module
 from asymmetry.gui.windows.grouping.dialog import GroupingDialog
 from asymmetry.gui.windows.grouping.preview_pane import GroupingPreviewPane
 
@@ -426,3 +429,126 @@ def test_reduce_grouped_asymmetry_pins_mainwindow_delegation(qapp: QApplication)
         assert mw_dt == core.deadtime_applied
     finally:
         window.close()
+
+
+# --------------------------------------------------------------------------- #
+# Profile-mode requests: resolution stays off the GUI thread (audit finding #1)
+# --------------------------------------------------------------------------- #
+
+
+def _draft_profile(*, groups: dict[int, list[int]] | None = None) -> GroupingProfile:
+    """A minimal draft matching :func:`_histogram_dataset`'s two-detector run."""
+    return GroupingProfile(
+        name="draft",
+        fingerprint=ProfileFingerprint("TESTINST", 2),
+        groups={1: [1], 2: [2]} if groups is None else groups,
+        forward_group=1,
+        backward_group=2,
+    )
+
+
+def test_profile_request_resolves_on_worker_thread_only(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """request_preview_from_profile never resolves synchronously on the GUI thread.
+
+    resolve_effective_grouping can scan every detector's full histogram (auto-t0)
+    or sum whole groups (per-run alpha); the pane must defer it to the worker.
+    """
+    dataset = _histogram_dataset()
+    pane = GroupingPreviewPane()
+    try:
+        gui_thread = threading.get_ident()
+        call_threads: list[int] = []
+        real_resolve = preview_pane_module.resolve_effective_grouping
+
+        def spy(profile: GroupingProfile, run: Run) -> dict:
+            call_threads.append(threading.get_ident())
+            return real_resolve(profile, run)
+
+        monkeypatch.setattr(preview_pane_module, "resolve_effective_grouping", spy)
+        pane.request_preview_from_profile(
+            profile=_draft_profile(), run=dataset.run, run_number=5001
+        )
+        assert call_threads == [], "resolve ran synchronously during the request call"
+        pane.flush()
+        _wait_until(lambda: len(call_threads) == 1)
+        assert call_threads[0] != gui_thread, "resolve ran on the GUI thread"
+        _wait_until(lambda: pane._status.text().startswith("Preview: run"))
+        assert _last_curve(pane).size > 0
+    finally:
+        pane.shutdown()
+
+
+def test_profile_is_snapshotted_against_later_edits(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pane deep-copies the draft so form edits cannot race the worker."""
+    dataset = _histogram_dataset()
+    pane = GroupingPreviewPane()
+    try:
+        seen_profiles: list[GroupingProfile] = []
+        real_resolve = preview_pane_module.resolve_effective_grouping
+
+        def spy(profile: GroupingProfile, run: Run) -> dict:
+            seen_profiles.append(profile)
+            return real_resolve(profile, run)
+
+        monkeypatch.setattr(preview_pane_module, "resolve_effective_grouping", spy)
+        draft = _draft_profile()
+        pane.request_preview_from_profile(profile=draft, run=dataset.run, run_number=5001)
+        # Simulate the user editing the form while the request is pending.
+        draft.groups[1] = [2]
+        draft.forward_group = 99
+        pane.flush()
+        _wait_until(lambda: len(seen_profiles) == 1)
+        assert seen_profiles[0] is not draft
+        assert seen_profiles[0].groups == {1: [1], 2: [2]}
+        assert seen_profiles[0].forward_group == 1
+    finally:
+        pane.shutdown()
+
+
+def test_profile_request_burst_coalesces_resolves(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A keystroke-burst of profile requests coalesces to at most two resolves."""
+    dataset = _histogram_dataset()
+    pane = GroupingPreviewPane()
+    try:
+        call_count = 0
+        real_resolve = preview_pane_module.resolve_effective_grouping
+
+        def spy(profile: GroupingProfile, run: Run) -> dict:
+            nonlocal call_count
+            call_count += 1
+            return real_resolve(profile, run)
+
+        monkeypatch.setattr(preview_pane_module, "resolve_effective_grouping", spy)
+        for _ in range(10):
+            pane.request_preview_from_profile(
+                profile=_draft_profile(), run=dataset.run, run_number=5001
+            )
+        pane.flush()
+        _wait_until(lambda: pane._status.text().startswith("Preview: run"))
+        # Latest-wins pending slot + single-flight dispatch bound the resolves.
+        assert call_count <= 2, f"expected coalescing, saw {call_count} resolves"
+    finally:
+        pane.shutdown()
+
+
+def test_profile_with_empty_groups_surfaces_muted_error(qapp: QApplication) -> None:
+    """A draft whose F/B groups resolve to no detectors errors via the status strip."""
+    dataset = _histogram_dataset()
+    pane = GroupingPreviewPane()
+    try:
+        pane.request_preview_from_profile(
+            profile=_draft_profile(groups={1: [], 2: []}),
+            run=dataset.run,
+            run_number=5001,
+        )
+        pane.flush()
+        _wait_until(lambda: pane._status.text().startswith("Preview unavailable"))
+        assert "no detectors" in pane._status.text()
+    finally:
+        pane.shutdown()

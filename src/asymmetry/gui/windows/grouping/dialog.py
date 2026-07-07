@@ -347,7 +347,7 @@ class GroupingDialog(QDialog):
         self._backward_combo.setMinimumContentsLength(18)
         self._refresh_group_combo_items()
 
-        grouping = self._seed_source().grouping
+        grouping = seed.grouping
         self._grouping_preset_name: str | None = (
             str(grouping.get("grouping_preset")).strip()
             if grouping.get("grouping_preset")
@@ -1196,6 +1196,11 @@ class GroupingDialog(QDialog):
             return
         self._apply_preset_payload_to_form(payload)
         self._mark_dirty()
+        # _apply_preset_payload_to_form repopulates the group table with its
+        # itemChanged signal blocked (see _populate_group_table), so the preview
+        # needs one explicit refresh here rather than relying on the old
+        # per-cell itemChanged storm.
+        self._refresh_preview()
 
     def _apply_preset_payload_to_form(self, payload: dict[str, Any]) -> None:
         """Adopt a preset's groups/names/slots/projections into the form state."""
@@ -1752,8 +1757,9 @@ class GroupingDialog(QDialog):
 
     def _reload_controls_from_seed(self) -> None:
         """Re-seed every form control from the draft resolved for the preview run."""
-        grouping = self._seed_source().grouping
-        self._groups = self._load_groups(self._seed_source())
+        seed = self._seed_source()
+        grouping = seed.grouping
+        self._groups = self._load_groups(seed)
         self._populate_group_table()
 
         self._grouping_preset_name = (
@@ -1761,9 +1767,9 @@ class GroupingDialog(QDialog):
             if grouping.get("grouping_preset")
             else None
         )
-        self._group_names = self._load_group_names(self._seed_source())
-        self._included_groups = self._load_included_groups(self._seed_source())
-        self._projection_specs = self._load_projection_specs(self._seed_source())
+        self._group_names = self._load_group_names(seed)
+        self._included_groups = self._load_included_groups(seed)
+        self._projection_specs = self._load_projection_specs(seed)
         forward_gid, backward_gid = self._analysis_pair_for_reference(
             int(grouping.get("forward_group", 1)),
             int(grouping.get("backward_group", 2)),
@@ -2400,23 +2406,26 @@ class GroupingDialog(QDialog):
     def _refresh_preview(self, *args: object) -> None:
         """Recompute the live asymmetry preview for the draft + preview run.
 
-        Resolves the current form payload against the preview run into the
-        effective ``run.grouping`` shape and hands it to the pane, which debounces
-        and reduces off the GUI thread. Any resolution error is swallowed and
-        surfaced as a muted status message rather than a popup — the preview is
-        advisory. Datasets without raw histograms (co-added curves) make the pane
-        hide itself with a note.
+        Builds a throwaway draft profile from the live form payload (cheap
+        widget reads, without mutating ``self._draft`` or its dirty state) and
+        hands it to the pane, which debounces, then resolves it against the
+        preview run AND reduces on its worker thread. Resolution — a full
+        per-detector t0 scan under an ``auto_detect`` policy, group sums under a
+        per-run alpha estimate — must never run here: this slot fires per
+        keystroke/click from nearly every form control. Any error is swallowed
+        or surfaced as a muted status message rather than a popup — the preview
+        is advisory. Datasets without raw histograms (co-added curves) make the
+        pane hide itself with a note.
         """
         pane = getattr(self, "_preview_pane", None)
         if pane is None:
             return
         run = self._run
-        histograms = list(run.histograms) if run is not None and run.histograms else []
         try:
-            grouping = self._preview_effective_grouping()
+            profile = self._preview_draft_profile()
         except Exception:  # noqa: BLE001 — advisory preview, never crash the dialog
-            grouping = None
-        if grouping is None:
+            profile = None
+        if profile is None or run is None:
             pane.request_preview(
                 histograms=None,
                 grouping={},
@@ -2426,12 +2435,11 @@ class GroupingDialog(QDialog):
         metadata: dict[str, Any] = {}
         if self._reference_dataset is not None:
             metadata.update(getattr(self._reference_dataset, "metadata", {}) or {})
-        if run is not None:
-            metadata.update(getattr(run, "metadata", {}) or {})
+        metadata.update(getattr(run, "metadata", {}) or {})
         facility = str(metadata.get("facility", metadata.get("instrument", "")))
-        pane.request_preview(
-            histograms=histograms,
-            grouping=grouping,
+        pane.request_preview_from_profile(
+            profile=profile,
+            run=run,
             facility=facility,
             run_number=self._preview_run_number(),
         )
@@ -2444,25 +2452,21 @@ class GroupingDialog(QDialog):
         except (TypeError, ValueError):
             return None
 
-    def _preview_effective_grouping(self) -> dict[str, Any] | None:
-        """Resolve the current form payload against the preview run.
+    def _preview_draft_profile(self) -> GroupingProfile | None:
+        """Build a throwaway draft profile from the live form payload.
 
-        Builds a throwaway draft profile from the live form payload (without
-        mutating ``self._draft`` or its dirty state) and resolves it against the
-        preview run into the full ``run.grouping`` shape the reduction consumes.
+        Cheap (widget reads and dict lifting only) — resolution against the
+        preview run happens on the preview pane's worker thread, not here.
         """
         if self._run is None or not self._run.histograms or self._fingerprint is None:
             return None
-        from asymmetry.core.project.profiles import resolve_effective_grouping
-
         payload = self._current_grouping_payload()
-        profile = profile_from_form_payload(
+        return profile_from_form_payload(
             payload,
             name=self._draft_name,
             fingerprint=self._fingerprint,
             active=True,
         )
-        return resolve_effective_grouping(profile, self._run)
 
     def _pending_override_runs(self) -> list[int]:
         """Overridden runs with a dirty override draft, in ascending order."""
@@ -2559,26 +2563,38 @@ class GroupingDialog(QDialog):
             pane.shutdown()
 
     def _populate_group_table(self) -> None:
-        """Render the detector-group table used as grouping context."""
-        self._group_table.setRowCount(len(self._groups))
-        for row, gid in enumerate(sorted(self._groups)):
-            self._group_table.setItem(row, 0, QTableWidgetItem(str(gid)))
-            include_item = QTableWidgetItem()
-            include_item.setFlags(
-                Qt.ItemFlag.ItemIsEnabled
-                | Qt.ItemFlag.ItemIsSelectable
-                | Qt.ItemFlag.ItemIsUserCheckable
-            )
-            include_item.setCheckState(
-                Qt.CheckState.Checked
-                if self._included_groups.get(int(gid), True)
-                else Qt.CheckState.Unchecked
-            )
-            self._group_table.setItem(row, 1, include_item)
-            name = self._group_names.get(gid, "")
-            self._group_table.setItem(row, 2, QTableWidgetItem(name))
-            detectors = [str(idx + 1) for idx in self._groups[gid]]
-            self._group_table.setItem(row, 3, QTableWidgetItem(", ".join(detectors)))
+        """Render the detector-group table used as grouping context.
+
+        ``itemChanged`` is connected to both ``_mark_dirty`` and
+        ``_refresh_preview`` (a synchronous ``resolve_effective_grouping``), so
+        populating without blocking signals fires up to 4×N_groups redundant
+        resolves. Population is not a user edit, so the signal is blocked for
+        the whole rebuild; callers that need the dirty/preview side effects for
+        the triggering action invoke them explicitly once, after this returns.
+        """
+        blocked = self._group_table.blockSignals(True)
+        try:
+            self._group_table.setRowCount(len(self._groups))
+            for row, gid in enumerate(sorted(self._groups)):
+                self._group_table.setItem(row, 0, QTableWidgetItem(str(gid)))
+                include_item = QTableWidgetItem()
+                include_item.setFlags(
+                    Qt.ItemFlag.ItemIsEnabled
+                    | Qt.ItemFlag.ItemIsSelectable
+                    | Qt.ItemFlag.ItemIsUserCheckable
+                )
+                include_item.setCheckState(
+                    Qt.CheckState.Checked
+                    if self._included_groups.get(int(gid), True)
+                    else Qt.CheckState.Unchecked
+                )
+                self._group_table.setItem(row, 1, include_item)
+                name = self._group_names.get(gid, "")
+                self._group_table.setItem(row, 2, QTableWidgetItem(name))
+                detectors = [str(idx + 1) for idx in self._groups[gid]]
+                self._group_table.setItem(row, 3, QTableWidgetItem(", ".join(detectors)))
+        finally:
+            self._group_table.blockSignals(blocked)
         self._group_table.resizeColumnsToContents()
         visible_rows = min(max(len(self._groups), 3), 5)
         row_height = max(24, self._group_table.verticalHeader().defaultSectionSize())
