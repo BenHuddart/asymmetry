@@ -326,3 +326,59 @@ def test_mid_flight_close_does_not_crash(qapp: QApplication) -> None:
         qapp.processEvents()
     assert dialog._tasks.active_count == 0
     assert dialog.result_policy() is None
+
+
+def test_parent_destruction_mid_estimate_does_not_crash(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Destroying the dialog's *parent* mid-estimate must not abort the process.
+
+    In production the dialog is launched as a *child* of the grouping dialog, so
+    real teardown (and the ``tests/conftest.py`` cleanup fixture) reaps it
+    through its parent's destruction — never via ``done()``/``closeEvent``. With
+    the worker gated mid-flight, that destruction would drop the dialog's live
+    estimate ``QThread`` while it runs, which qFatal-aborts the process. The
+    ``TaskRunner`` destroyed-safety-net must park it in the reaper instead. This
+    is the exact race a previous B4 attempt introduced.
+    """
+    from PySide6.QtCore import QEvent
+    from PySide6.QtWidgets import QWidget
+
+    from asymmetry.gui import tasks as tasks_mod
+
+    release = threading.Event()
+    entered = threading.Event()
+    real_estimate = alpha_calibration_dialog_module.estimate_alpha_detailed
+
+    def gated(*args, **kwargs):
+        entered.set()
+        release.wait(timeout=5.0)  # hold the worker in-flight
+        return real_estimate(*args, **kwargs)
+
+    monkeypatch.setattr(alpha_calibration_dialog_module, "estimate_alpha_detailed", gated)
+
+    parent = QWidget()
+    dialog = _make_dialog([_run(5, ratio=2.0)], parent=parent)
+    dialog._set_method("ratio")
+    dialog._on_estimate()
+    _wait_until(lambda: entered.is_set())  # worker is inside the gate -> thread running
+
+    reaper_before = tasks_mod._orphan_reaper
+    parked_before = len(reaper_before._threads) if reaper_before is not None else 0
+
+    # Destroy the PARENT without close()/done() on the child. This reaps the
+    # child dialog and its TaskRunner through C++ destruction alone.
+    del dialog
+    parent.deleteLater()
+    del parent
+    qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    qapp.processEvents()
+
+    reaper = tasks_mod._orphan_reaper
+    assert reaper is not None
+    # The still-running estimate thread was parked, not destroyed with the dialog.
+    assert len(reaper._threads) == parked_before + 1
+
+    # Release the gate; the reaper prunes the finished thread back to baseline.
+    release.set()
+    _wait_until(lambda: len(reaper._threads) == parked_before)

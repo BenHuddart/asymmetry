@@ -1561,6 +1561,118 @@ def test_configure_background_mid_flight_close_does_not_crash(
     assert dialog._tasks.active_count == 0
 
 
+def test_configure_background_parent_destruction_does_not_crash(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Destroying the grouping dialog (no close()) mid background-grouping is safe.
+
+    The background-configure preview grouping runs on the dialog's own
+    ``TaskRunner``. The ``tests/conftest.py`` teardown fixture and any
+    ``deleteLater``-based reap destroy the dialog through C++ destruction rather
+    than ``close()``/``done()``, so ``_teardown_workers``/``shutdown()`` never
+    runs. With the worker gated mid-flight, the ``TaskRunner`` destroyed-safety-net
+    must park the still-running thread in the reaper instead of aborting.
+    """
+    from PySide6.QtCore import QEvent
+
+    from asymmetry.gui import tasks as tasks_mod
+
+    release = threading.Event()
+    entered = threading.Event()
+    real_apply_grouping = grouping_dialog_dialog_module.apply_grouping
+
+    def gated(histograms, indices):
+        entered.set()
+        release.wait(timeout=5.0)
+        return real_apply_grouping(histograms, indices)
+
+    monkeypatch.setattr(grouping_dialog_dialog_module, "apply_grouping", gated)
+
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    dialog._on_configure_background()
+    _wait_until(lambda: entered.is_set())  # worker inside apply_grouping -> running
+    assert dialog._tasks.active_count == 1
+
+    reaper_before = tasks_mod._orphan_reaper
+    parked_before = len(reaper_before._threads) if reaper_before is not None else 0
+
+    # Destroy WITHOUT close()/done(): deleteLater + a DeferredDelete drain.
+    dialog.deleteLater()
+    del dialog
+    qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    qapp.processEvents()
+
+    reaper = tasks_mod._orphan_reaper
+    assert reaper is not None
+    assert len(reaper._threads) == parked_before + 1
+
+    release.set()
+    _wait_until(lambda: len(reaper._threads) == parked_before)
+
+
+def test_alpha_child_dialog_survives_grouping_dialog_destruction(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The exact production race: an alpha *child* dialog with an estimate in
+    flight when its GroupingDialog parent is destroyed without a child close().
+
+    ``AlphaCalibrationDialog`` is launched with ``parent=self`` (the
+    GroupingDialog), so destroying the parent reaps the child — and the child's
+    estimate ``TaskRunner`` — via C++ destruction. Its ``done``/``closeEvent``
+    never fire, so only the ``TaskRunner`` destroyed-safety-net can keep the
+    running worker thread from being destroyed mid-run. This is the crash a
+    previous B4 attempt shipped.
+    """
+    from PySide6.QtCore import QEvent
+
+    from asymmetry.gui import tasks as tasks_mod
+    from asymmetry.gui.windows.grouping import (
+        alpha_calibration_dialog as alpha_calibration_dialog_module,
+    )
+
+    release = threading.Event()
+    entered = threading.Event()
+    real_estimate = alpha_calibration_dialog_module.estimate_alpha_detailed
+
+    def gated(*args, **kwargs):
+        entered.set()
+        release.wait(timeout=5.0)
+        return real_estimate(*args, **kwargs)
+
+    monkeypatch.setattr(alpha_calibration_dialog_module, "estimate_alpha_detailed", gated)
+
+    parent = GroupingDialog([_dataset_with_ratio(5, ratio=2.0)])
+    child = AlphaCalibrationDialog(
+        [_dataset_with_ratio(5, ratio=2.0)],
+        groups={1: [0], 2: [1]},
+        group_names={1: "Forward", 2: "Backward"},
+        forward_group=1,
+        backward_group=2,
+        parent=parent,
+    )
+    child._set_method("ratio")
+    child._on_estimate()
+    _wait_until(lambda: entered.is_set())  # estimate worker is in-flight
+    assert child._tasks.active_count == 1
+
+    reaper_before = tasks_mod._orphan_reaper
+    parked_before = len(reaper_before._threads) if reaper_before is not None else 0
+
+    # Destroy the GroupingDialog PARENT without close()/done() on the child.
+    del child
+    parent.deleteLater()
+    del parent
+    qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    qapp.processEvents()
+
+    reaper = tasks_mod._orphan_reaper
+    assert reaper is not None
+    assert len(reaper._threads) == parked_before + 1  # child worker parked, not aborted
+
+    release.set()
+    _wait_until(lambda: len(reaper._threads) == parked_before)
+
+
 # ---------------------------------------------------------------------------
 # Binning modes, Find t0, detector exclusion (data-reduction-parity Phase 3)
 # ---------------------------------------------------------------------------
