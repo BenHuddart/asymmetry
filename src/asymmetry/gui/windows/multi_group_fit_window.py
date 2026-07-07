@@ -34,6 +34,7 @@ from asymmetry.gui.panels.fit_panel import (
     GlobalFitTab,
     _get_file_value_for_parameter,
 )
+from asymmetry.gui.styles import metrics
 from asymmetry.gui.styles.widgets import make_section
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox
 from asymmetry.gui.widgets.panel_section import PanelSection
@@ -170,7 +171,7 @@ class MultiGroupFitWindow(QWidget):
             # set the Fit dock's minimum width past the other tabs: drop the spin
             # arrows (edit by typing/keys, or wheel once focused) and cap the width.
             spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
-            spin.setMaximumWidth(76)
+            spin.setMaximumWidth(metrics.spin_width_for(8, spin))
             spin.valueChanged.connect(self._sync_count_fit_target)
         exclude_row = QWidget()
         exclude_layout = QHBoxLayout(exclude_row)

@@ -801,6 +801,23 @@ def test_plot_panel_can_render_grouped_time_domain_subplots(qapp: QApplication) 
     assert panel._current_dataset is ds2
 
 
+def _assert_spin_fits_widest_value(spin) -> None:
+    """Fail if *spin*'s line edit clips the text of its range's widest value.
+
+    Same measurement ``test_fourier_spinboxes_fit_their_widest_value_under_app_
+    styling`` uses: a spinbox capped with a bare pixel literal (rather than
+    ``metrics.spin_width_for``) hands its step-button chrome the text area's
+    budget and clips the digits under the real app stylesheet.
+    """
+    spin.setValue(spin.maximum())
+    widest = str(spin.maximum())
+    edit = spin.lineEdit()
+    needed = edit.fontMetrics().horizontalAdvance(widest)
+    assert edit.width() >= needed + 4, (
+        f"{spin.objectName() or spin} clips: line edit {edit.width()}px for {needed}px of text"
+    )
+
+
 def test_fourier_spinboxes_fit_their_widest_value_under_app_styling(qapp: QApplication) -> None:
     """The zero-pad / Burg / correlation spins must never clip their digits.
 
@@ -823,15 +840,108 @@ def test_fourier_spinboxes_fit_their_widest_value_under_app_styling(qapp: QAppli
             panel._burg_order_max_spin,
             panel._correlation_order_spin,
         ):
-            spin.setValue(spin.maximum())
+            _assert_spin_fits_widest_value(spin)
             qapp.processEvents()
-            edit = spin.lineEdit()
-            needed = edit.fontMetrics().horizontalAdvance(str(spin.maximum()))
-            assert edit.width() >= needed + 4, (
-                f"{spin.objectName() or spin} clips: line edit {edit.width()}px "
-                f"for {needed}px of text"
-            )
             # Still capped: the WrapLongRows form must not stretch it row-wide.
             assert spin.maximumWidth() < 200
+    finally:
+        window.close()
+
+
+def test_mainwindow_bunch_spin_fits_its_widest_value_under_app_styling(
+    qapp: QApplication,
+) -> None:
+    """The main toolbar's bunch-factor spin must not clip 4-digit factors.
+
+    Regression for the same defect fixed on the Fourier panel's spins: a
+    literal ``setMaximumWidth`` sized for the field text alone squeezes the
+    line edit once the spin-button chrome is added back in by the real
+    stylesheet.
+    """
+    from asymmetry.gui.mainwindow import MainWindow
+
+    window = MainWindow()
+    try:
+        window.show()
+        qapp.processEvents()
+        _assert_spin_fits_widest_value(window._view_bunch_spin)
+    finally:
+        window.close()
+
+
+def test_multi_group_fit_window_exclude_spins_fit_their_widest_value_under_app_styling(
+    qapp: QApplication,
+) -> None:
+    """The grouped-fit count-mode exclude-window spins must not clip.
+
+    ``_exclude_min``/``_exclude_max`` range up to 1000.000 (µs); a bare
+    ``setMaximumWidth(76)`` clipped the widest value under the app stylesheet
+    even with the spin buttons hidden. ``_dpsep_spin`` shares the same literal
+    but never clipped (its range tops out at 5.000), so it is asserted here to
+    guard against a future range widening silently reintroducing the clip.
+    """
+    from asymmetry.gui.mainwindow import MainWindow
+
+    window = MainWindow()
+    try:
+        window.show()
+        qapp.processEvents()
+        panel = window._multi_group_fit_window
+        window._fit_stack.setCurrentWidget(panel)
+        qapp.processEvents()
+        for spin in (panel._exclude_min, panel._exclude_max, panel._dpsep_spin):
+            _assert_spin_fits_widest_value(spin)
+            qapp.processEvents()
+    finally:
+        window.close()
+
+
+def test_grouping_dialog_bunch_spin_fits_its_widest_value_under_app_styling(
+    qapp: QApplication,
+) -> None:
+    """The grouping dialog's bunching-factor spin must not clip up to 10000."""
+    import numpy as np
+
+    from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+    from asymmetry.gui.mainwindow import MainWindow
+    from asymmetry.gui.windows.grouping_dialog import GroupingDialog
+
+    window = MainWindow()
+    window.show()
+    qapp.processEvents()
+    try:
+        histograms = [
+            Histogram(counts=np.array([100.0, 100.0, 100.0, 100.0]), bin_width=0.01),
+            Histogram(counts=np.array([50.0, 50.0, 50.0, 50.0]), bin_width=0.01),
+        ]
+        run = Run(
+            run_number=4001,
+            histograms=histograms,
+            metadata={"run_number": 4001, "title": "Grouping Test"},
+            grouping={
+                "groups": {1: [1], 2: [2]},
+                "forward_group": 1,
+                "backward_group": 2,
+                "alpha": 1.0,
+                "first_good_bin": 0,
+                "last_good_bin": 3,
+            },
+        )
+        t = np.array([0.0, 0.01, 0.02, 0.03])
+        dataset = MuonDataset(
+            time=t,
+            asymmetry=np.zeros_like(t),
+            error=np.full_like(t, 0.01),
+            metadata={"run_number": 4001},
+            run=run,
+        )
+        # Do not close the dialog here: dirtying `_bunch_spin` below arms its
+        # unsaved-changes guard, whose modal blocks forever headless. The
+        # autouse `_cleanup_qt_widgets` fixture calls `_clear_dirty()` before
+        # closing every live top-level widget at teardown.
+        dialog = GroupingDialog([dataset])
+        dialog.show()
+        qapp.processEvents()
+        _assert_spin_fits_widest_value(dialog._bunch_spin)
     finally:
         window.close()

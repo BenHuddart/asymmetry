@@ -72,7 +72,7 @@ from asymmetry.core.transform import (
     resolve_binning_mode,
 )
 from asymmetry.core.utils.constants import PeriodMode
-from asymmetry.gui.styles import tokens
+from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.styles.widgets import apply_param_table_style, clear_layout
 from asymmetry.gui.windows.grouping.background_dialog import (
     BackgroundDialog,
@@ -425,7 +425,7 @@ class GroupingDialog(QDialog):
         self._bunch_spin.setRange(1, 10000)
         requested_bunching = int(grouping.get("bunching_factor", 1))
         self._bunch_spin.setValue(requested_bunching)
-        self._bunch_spin.setMaximumWidth(100)
+        self._bunch_spin.setMaximumWidth(metrics.spin_width_for(5, self._bunch_spin))
         self._bunch_spin.setToolTip("Set any bunching factor >= 1.")
 
         self._binning_mode_combo = QComboBox()
