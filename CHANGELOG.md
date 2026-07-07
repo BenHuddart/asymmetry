@@ -153,6 +153,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Selecting a dataset no longer repaints the hidden frequency panel.** Once
+  a run had a cached spectrum, every dataset selection on a time view rebuilt
+  and rasterised the invisible frequency plot to keep it warm — a full extra
+  synchronous canvas draw per click. The paint now defers until the frequency
+  view is actually entered (which always re-syncs from the cache), while the
+  sync's bookkeeping — the displayed-run key that drops stale async results,
+  and the spectral-moments readout — still updates on every selection.
+
 - **The grouping dialog resolves the effective grouping far less often per
   user action.** Two redundant-resolve defects made `resolve_effective_grouping`
   (which can run a t0 auto-detect scan over every detector's full-resolution

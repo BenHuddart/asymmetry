@@ -644,6 +644,70 @@ class TestMainWindowFourier:
         _wait_frequency_idle(mainwindow)
         assert 8821 in mainwindow._frequency_spectra_by_run
 
+    def test_hidden_frequency_panel_defers_render_on_selection(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Selecting a run on a time view must not paint the hidden frequency panel.
+
+        Once a run has a cached spectrum, every dataset selection used to
+        rebuild and Agg-rasterise the hidden panel — a full extra synchronous
+        canvas draw per click (responsiveness-audit finding: `plot_dataset` at
+        the tail of `_render_frequency_spectra` runs whether or not the panel
+        is on screen). The paint now defers to domain entry; the sync's
+        bookkeeping (display key, moments refresh) still runs so completions
+        for switched-away runs are still dropped correctly.
+        """
+        dataset = _make_fourier_ready_dataset(8871, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8871)
+        mainwindow._plot_workspace.set_active_view("frequency")
+        _compute_fourier_sync(mainwindow)  # warm the cache while visible
+
+        mainwindow._plot_workspace.set_active_view("fb_asymmetry")
+        assert not mainwindow._frequency_domain_is_active()
+        plotted: list[object] = []
+        monkeypatch.setattr(
+            mainwindow._frequency_plot_panel, "plot_dataset", lambda ds: plotted.append(ds)
+        )
+        monkeypatch.setattr(
+            mainwindow._frequency_plot_panel, "plot_datasets", lambda ds: plotted.append(ds)
+        )
+
+        mainwindow._on_dataset_selected(8871)  # cached spectrum, hidden panel
+
+        assert plotted == [], "hidden frequency panel was painted on a time-view selection"
+        assert mainwindow._frequency_display_key == (8871, RepresentationType.FREQ_FFT)
+
+    def test_frequency_panel_renders_deferred_spectrum_on_domain_entry(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Entering the frequency view paints the spectrum a hidden sync deferred."""
+        dataset = _make_fourier_ready_dataset(8872, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8872)
+        mainwindow._plot_workspace.set_active_view("frequency")
+        _compute_fourier_sync(mainwindow)
+        cached = mainwindow._frequency_spectra_by_run[8872]
+
+        mainwindow._plot_workspace.set_active_view("fb_asymmetry")
+        plotted: list[object] = []
+        monkeypatch.setattr(
+            mainwindow._frequency_plot_panel, "plot_dataset", lambda ds: plotted.append(ds)
+        )
+        monkeypatch.setattr(
+            mainwindow._frequency_plot_panel, "plot_datasets", lambda ds: plotted.append(ds)
+        )
+        mainwindow._on_dataset_selected(8872)
+        assert plotted == []  # deferred while hidden
+
+        # Enter the frequency domain the way the workspace does: activate the
+        # view, then the view-changed handler re-syncs from the cache.
+        mainwindow._plot_workspace.set_active_view("frequency")
+        mainwindow._on_plot_workspace_view_changed("frequency")
+
+        assert plotted, "domain entry did not repaint the deferred spectrum"
+        assert plotted[-1] is cached[0]
+
     def test_restored_recipe_falls_back_to_legacy_snapshot_on_failure(
         self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
     ) -> None:

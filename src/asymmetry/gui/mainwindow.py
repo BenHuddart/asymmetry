@@ -6893,6 +6893,22 @@ class MainWindow(QMainWindow):
             self._refresh_spectral_moments()
             return
 
+        if not self._frequency_domain_is_active():
+            # The panel is hidden (time-domain view active): skip the plot
+            # build + synchronous Agg rasterisation — the audit measured this
+            # as a full extra canvas draw on *every* dataset selection once a
+            # spectrum is cached. Entering the frequency domain always re-syncs
+            # from the cache (`_on_plot_workspace_view_changed` routes
+            # "frequency"/"maxent" through `_sync_frequency_plot_for_current_
+            # dataset`), so the panel repaints correctly on entry; because the
+            # panel keeps showing the previous run's pixels until then, the
+            # same-run/preserve-limits logic on the next sync still compares
+            # against what is genuinely on screen. The moments readout stays in
+            # step with those pixels (it describes the displayed spectrum), so
+            # it is refreshed here exactly as the painting path below does.
+            self._refresh_spectral_moments()
+            return
+
         if len(spectra) == 1:
             self._frequency_plot_panel.plot_dataset(spectra[0])
         else:
