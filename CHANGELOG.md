@@ -150,7 +150,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   apply, detector-layout accept) fired up to `4 × N_groups` redundant
   resolves. Both now resolve/populate once and pass the result through;
   callers that relied on the implicit `itemChanged` storm now trigger the
-  dirty/preview refresh explicitly, exactly once.
+  dirty/preview refresh explicitly, exactly once. The live preview's own
+  resolve has moved off the GUI thread entirely: the per-keystroke refresh
+  slot now only lifts the form payload into a draft profile (cheap widget
+  reads) and hands it to the preview pane, whose existing debounced worker
+  resolves against the run and reduces in one background pass — so an
+  auto-detect t0 policy's full per-detector scan (~0.3 s at 128 detectors ×
+  1M bins) can no longer stall typing in the dialog.
 
 - **Switching runs no longer renders the plot one view behind.** The draw
   decimates points for the current view window, but a switched dataset's

@@ -132,17 +132,20 @@ def _dataset_with_eight_groups(run_number: int = 4002) -> MuonDataset:
 def test_opening_dialog_resolves_bounded_number_of_times(
     qapp: QApplication, resolve_counter: _ResolveCounter
 ) -> None:
-    """Opening the dialog for a single-run project resolves at most twice.
+    """Opening the dialog performs exactly one GUI-thread resolve.
 
-    One resolve seeds the form controls (``_seed_source`` in ``__init__``, now
-    shared by every field read from it instead of re-resolved per field); one
-    resolve computes the initial live preview (``_refresh_preview`` at the end
-    of ``__init__``). Before the B1/B2 fixes this construction path performed
-    several more resolves (five from ``_seed_source`` fan-out alone, plus one
+    That one resolve seeds the form controls (``_seed_source`` in ``__init__``,
+    now shared by every field read from it instead of re-resolved per field).
+    The initial live preview no longer resolves synchronously at all: since B3,
+    ``_refresh_preview`` hands the unresolved draft to the preview pane, whose
+    worker thread resolves + reduces (covered by
+    ``test_grouping_preview_pane.py``). Before the B1–B3 fixes this
+    construction path performed several more GUI-thread resolves (five from
+    ``_seed_source`` fan-out alone, one from the synchronous preview, plus one
     per group-table cell from the unblocked ``itemChanged`` storm).
     """
     GroupingDialog([_dataset_with_histograms()])
-    assert resolve_counter.count == 2
+    assert resolve_counter.count == 1
 
 
 def test_reload_controls_from_seed_resolves_once(
@@ -153,9 +156,30 @@ def test_reload_controls_from_seed_resolves_once(
 
     dialog._reload_controls_from_seed()
 
-    # One resolve from the single _seed_source() call, one from the explicit
-    # _refresh_preview() at the end of the reseed.
-    assert resolve_counter.count == 2
+    # Exactly one GUI-thread resolve, from the single _seed_source() call. The
+    # explicit _refresh_preview() at the end of the reseed no longer resolves
+    # here — since B3 it passes the unresolved draft to the preview pane's
+    # worker thread.
+    assert resolve_counter.count == 1
+
+
+def test_refresh_preview_never_resolves_on_the_gui_thread(
+    qapp: QApplication, resolve_counter: _ResolveCounter
+) -> None:
+    """The per-keystroke preview slot performs zero synchronous resolves (B3).
+
+    ``_refresh_preview`` fires from nearly every form control; under an
+    ``auto_detect`` t0 policy a synchronous resolve scans every detector's full
+    histogram (~276 ms at 128 detectors x 1M bins), so it must only build the
+    cheap draft profile here and leave resolution to the preview pane's worker.
+    """
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    resolve_counter.count = 0
+
+    for _ in range(5):  # a burst, as from typing in the exclude field
+        dialog._refresh_preview()
+
+    assert resolve_counter.count == 0
 
 
 def test_populate_group_table_does_not_resolve_or_refresh_preview(

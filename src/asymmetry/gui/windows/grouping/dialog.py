@@ -2406,23 +2406,26 @@ class GroupingDialog(QDialog):
     def _refresh_preview(self, *args: object) -> None:
         """Recompute the live asymmetry preview for the draft + preview run.
 
-        Resolves the current form payload against the preview run into the
-        effective ``run.grouping`` shape and hands it to the pane, which debounces
-        and reduces off the GUI thread. Any resolution error is swallowed and
-        surfaced as a muted status message rather than a popup — the preview is
-        advisory. Datasets without raw histograms (co-added curves) make the pane
-        hide itself with a note.
+        Builds a throwaway draft profile from the live form payload (cheap
+        widget reads, without mutating ``self._draft`` or its dirty state) and
+        hands it to the pane, which debounces, then resolves it against the
+        preview run AND reduces on its worker thread. Resolution — a full
+        per-detector t0 scan under an ``auto_detect`` policy, group sums under a
+        per-run alpha estimate — must never run here: this slot fires per
+        keystroke/click from nearly every form control. Any error is swallowed
+        or surfaced as a muted status message rather than a popup — the preview
+        is advisory. Datasets without raw histograms (co-added curves) make the
+        pane hide itself with a note.
         """
         pane = getattr(self, "_preview_pane", None)
         if pane is None:
             return
         run = self._run
-        histograms = list(run.histograms) if run is not None and run.histograms else []
         try:
-            grouping = self._preview_effective_grouping()
+            profile = self._preview_draft_profile()
         except Exception:  # noqa: BLE001 — advisory preview, never crash the dialog
-            grouping = None
-        if grouping is None:
+            profile = None
+        if profile is None or run is None:
             pane.request_preview(
                 histograms=None,
                 grouping={},
@@ -2432,12 +2435,11 @@ class GroupingDialog(QDialog):
         metadata: dict[str, Any] = {}
         if self._reference_dataset is not None:
             metadata.update(getattr(self._reference_dataset, "metadata", {}) or {})
-        if run is not None:
-            metadata.update(getattr(run, "metadata", {}) or {})
+        metadata.update(getattr(run, "metadata", {}) or {})
         facility = str(metadata.get("facility", metadata.get("instrument", "")))
-        pane.request_preview(
-            histograms=histograms,
-            grouping=grouping,
+        pane.request_preview_from_profile(
+            profile=profile,
+            run=run,
             facility=facility,
             run_number=self._preview_run_number(),
         )
@@ -2450,25 +2452,21 @@ class GroupingDialog(QDialog):
         except (TypeError, ValueError):
             return None
 
-    def _preview_effective_grouping(self) -> dict[str, Any] | None:
-        """Resolve the current form payload against the preview run.
+    def _preview_draft_profile(self) -> GroupingProfile | None:
+        """Build a throwaway draft profile from the live form payload.
 
-        Builds a throwaway draft profile from the live form payload (without
-        mutating ``self._draft`` or its dirty state) and resolves it against the
-        preview run into the full ``run.grouping`` shape the reduction consumes.
+        Cheap (widget reads and dict lifting only) — resolution against the
+        preview run happens on the preview pane's worker thread, not here.
         """
         if self._run is None or not self._run.histograms or self._fingerprint is None:
             return None
-        from asymmetry.core.project.profiles import resolve_effective_grouping
-
         payload = self._current_grouping_payload()
-        profile = profile_from_form_payload(
+        return profile_from_form_payload(
             payload,
             name=self._draft_name,
             fingerprint=self._fingerprint,
             active=True,
         )
-        return resolve_effective_grouping(profile, self._run)
 
     def _pending_override_runs(self) -> list[int]:
         """Overridden runs with a dirty override draft, in ascending order."""

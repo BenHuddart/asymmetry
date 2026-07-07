@@ -14,16 +14,21 @@ is dropped on arrival. Results cross back as plain numpy arrays through the
 TaskRunner's GUI-thread relay (never a bare lambda touching widgets). The runner
 is shut down in :meth:`shutdown`, called from the dialog's ``closeEvent``.
 
-The pane is deliberately dumb about *how* the draft resolves: the dialog hands it
-a fully-resolved effective grouping dict plus the preview run's histograms (both
-cheap to build on the GUI thread), and the pane resolves the forward/backward
-detector indices and runs :func:`reduce_grouped_asymmetry`. Vector-mode drafts
-are previewed on their primary forward/backward pair (the resolved
-``forward_group`` / ``backward_group``; for canonical EMU that is the P_z axis).
+Resolution happens on the worker thread too: :meth:`request_preview_from_profile`
+takes the *unresolved* draft profile plus the preview run, and the worker calls
+:func:`resolve_effective_grouping` before reducing. That call can be expensive —
+an ``auto_detect`` t0 policy scans every detector's full histogram and a
+``per_run_estimate`` alpha policy sums whole groups — so it must never run on
+the GUI thread per edit. The profile is deep-copied at request time so later
+form edits cannot race the worker; the run is shared read-only (the dialog does
+not mutate it while open). Vector-mode drafts are previewed on their primary
+forward/backward pair (the resolved ``forward_group`` / ``backward_group``; for
+canonical EMU that is the P_z axis).
 """
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 from typing import Any
 
@@ -31,7 +36,8 @@ import numpy as np
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
 
-from asymmetry.core.data.dataset import Histogram
+from asymmetry.core.data.dataset import Histogram, Run
+from asymmetry.core.project.profiles import GroupingProfile, resolve_effective_grouping
 from asymmetry.core.transform import (
     effective_group_indices,
     reduce_grouped_asymmetry,
@@ -48,23 +54,23 @@ _PANE_HEIGHT = 200
 
 @dataclass(frozen=True)
 class _PreviewRequest:
-    """An immutable snapshot of what to reduce, built on the GUI thread.
+    """An immutable snapshot of what to resolve/reduce, built on the GUI thread.
 
-    Everything here is a plain object (histograms + a resolved grouping dict), so
-    the worker function can run entirely off the GUI thread.
+    Everything here is a plain object, so the worker function can run entirely
+    off the GUI thread. Exactly one of two shapes is populated: a pre-resolved
+    ``grouping`` payload, or an unresolved ``profile`` + ``run`` pair that the
+    worker resolves first (the expensive path — auto t0 / per-run alpha scans).
+    Index/alpha/policy extraction from the resolved payload happens in the
+    worker for both shapes.
     """
 
     generation: int
     histograms: list[Histogram]
-    grouping: dict[str, Any]
-    forward_idx: list[int]
-    backward_idx: list[int]
-    alpha: float
-    use_deadtime: bool
-    deadtime_mode: str
-    use_background: bool
     facility: str
     run_number: int | None
+    grouping: dict[str, Any] | None = None
+    profile: GroupingProfile | None = None
+    run: Run | None = None
 
 
 @dataclass(frozen=True)
@@ -156,32 +162,58 @@ class GroupingPreviewPane(QWidget):
             return  # matplotlib missing; fallback label already shown
 
         self.setVisible(True)
-        forward_gid = _as_int(grouping.get("forward_group"), 1)
-        backward_gid = _as_int(grouping.get("backward_group"), 2)
-        n_hist = len(histograms)
-        forward_idx = effective_group_indices(grouping, forward_gid, n_histograms=n_hist)
-        backward_idx = effective_group_indices(grouping, backward_gid, n_histograms=n_hist)
-        if not forward_idx or not backward_idx:
-            self._set_error("Forward/backward groups have no detectors in this run.")
-            return
-
-        self._generation += 1
-        use_deadtime = bool(grouping.get("deadtime_correction", False))
-        deadtime_mode = str(grouping.get("deadtime_mode", "off")).strip().lower() or "off"
-        use_background = bool(grouping.get("background_correction", False))
-        self._pending = _PreviewRequest(
-            generation=self._generation,
-            histograms=list(histograms),
-            grouping=dict(grouping),
-            forward_idx=list(forward_idx),
-            backward_idx=list(backward_idx),
-            alpha=_as_float(grouping.get("alpha"), 1.0),
-            use_deadtime=use_deadtime,
-            deadtime_mode=deadtime_mode,
-            use_background=use_background,
-            facility=str(facility or grouping.get("instrument", "") or ""),
-            run_number=run_number,
+        self._queue_request(
+            _PreviewRequest(
+                generation=self._next_generation(),
+                histograms=list(histograms),
+                grouping=dict(grouping),
+                facility=str(facility or grouping.get("instrument", "") or ""),
+                run_number=run_number,
+            )
         )
+
+    def request_preview_from_profile(
+        self,
+        *,
+        profile: GroupingProfile,
+        run: Run | None,
+        facility: str = "",
+        run_number: int | None = None,
+    ) -> None:
+        """Queue a (debounced) resolve + recompute for an unresolved draft.
+
+        Unlike :meth:`request_preview`, resolution against the run —
+        :func:`resolve_effective_grouping`, which may scan every detector for an
+        ``auto_detect`` t0 policy or sum whole groups for a per-run alpha
+        estimate — happens on the worker thread. *profile* is deep-copied here
+        so subsequent form edits cannot race the in-flight worker; *run* is
+        shared read-only.
+        """
+        histograms = list(run.histograms) if run is not None and run.histograms else []
+        if not histograms:
+            self._show_unavailable("Preview needs raw detector histograms (none loaded).")
+            return
+        if self._canvas is None:
+            return  # matplotlib missing; fallback label already shown
+
+        self.setVisible(True)
+        self._queue_request(
+            _PreviewRequest(
+                generation=self._next_generation(),
+                histograms=histograms,
+                profile=copy.deepcopy(profile),
+                run=run,
+                facility=str(facility or ""),
+                run_number=run_number,
+            )
+        )
+
+    def _next_generation(self) -> int:
+        self._generation += 1
+        return self._generation
+
+    def _queue_request(self, request: _PreviewRequest) -> None:
+        self._pending = request
         self._status.setText("Computing preview…")
         self._debounce.start()
 
@@ -286,27 +318,45 @@ class GroupingPreviewPane(QWidget):
 
 
 def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResult:
-    """Reduce one preview request off the GUI thread.
+    """Resolve (if needed) and reduce one preview request off the GUI thread.
 
     Pure numpy work: it touches no widgets and returns plain arrays, so the
     TaskRunner relay can marshal the result back safely. Cooperative cancellation
     is honoured up front (``worker.is_cancelled()``) so a shutdown mid-flight
     stops promptly; a merely *superseded* result is dropped later by generation
-    in :meth:`GroupingPreviewPane._on_finished`.
+    in :meth:`GroupingPreviewPane._on_finished`. Raised errors (including the
+    no-detectors case) surface through the pane's error status strip.
     """
     if worker.is_cancelled():
         raise TaskCancelledError
-    grouping = request.grouping
+    if request.profile is not None:
+        # The expensive step for auto-t0 / per-run-alpha policies; must stay
+        # off the GUI thread. The profile is the pane's private deep copy.
+        grouping = resolve_effective_grouping(request.profile, request.run)
+    else:
+        grouping = request.grouping or {}
+
+    n_hist = len(request.histograms)
+    forward_gid = _as_int(grouping.get("forward_group"), 1)
+    backward_gid = _as_int(grouping.get("backward_group"), 2)
+    forward_idx = effective_group_indices(grouping, forward_gid, n_histograms=n_hist)
+    backward_idx = effective_group_indices(grouping, backward_gid, n_histograms=n_hist)
+    if not forward_idx or not backward_idx:
+        raise ValueError("forward/backward groups have no detectors in this run")
+
+    if worker.is_cancelled():
+        raise TaskCancelledError
+    deadtime_mode = str(grouping.get("deadtime_mode", "off")).strip().lower() or "off"
     reduction = reduce_grouped_asymmetry(
         histograms=request.histograms,
         grouping=grouping,
-        forward_idx=request.forward_idx,
-        backward_idx=request.backward_idx,
-        alpha=request.alpha,
-        use_deadtime=request.use_deadtime,
-        deadtime_mode=request.deadtime_mode,
-        use_background=request.use_background,
-        facility=request.facility,
+        forward_idx=forward_idx,
+        backward_idx=backward_idx,
+        alpha=_as_float(grouping.get("alpha"), 1.0),
+        use_deadtime=bool(grouping.get("deadtime_correction", False)),
+        deadtime_mode=deadtime_mode,
+        use_background=bool(grouping.get("background_correction", False)),
+        facility=request.facility or str(grouping.get("instrument", "") or ""),
         reference_resolver=None,
     )
     return _PreviewResult(
