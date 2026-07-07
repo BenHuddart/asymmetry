@@ -658,10 +658,12 @@ def test_musrfit_mdu_fixture_matches_musrfit_psi_reader_dump() -> None:
         20071,
     ]
     assert ds.run.grouping["detector_last_good_bins"] == [409190] * 17
-    # The muon-veto MV (group 1) is excluded by default; F1-8/B1-8 are included.
+    # A full HAL-9500 run loads straight into the Per-octant preset (see
+    # test_hal_full_run_loads_per_octant_preset_by_default): eight angle-resolved
+    # octant groups, all included; the muon-veto MV is left out entirely.
+    assert ds.run.grouping["grouping_preset"] == "Per-octant"
     included = ds.run.grouping["included_groups"]
-    assert included[1] is False
-    assert all(included[gid] for gid in range(2, 18))
+    assert all(included[gid] for gid in range(1, 9))
     assert [float(np.sum(h.counts)) for h in ds.run.histograms] == pytest.approx(
         [
             1006775.0,
@@ -708,6 +710,103 @@ def test_hal_layout_matches_musrfit_mdu_histogram_order() -> None:
     # Layout detector N labels histogram index N-1.
     for hist_index, file_label in enumerate(file_labels):
         assert by_id[hist_index + 1].label == file_label
+
+
+def test_hal_full_run_loads_per_octant_preset_by_default() -> None:
+    """A full HAL-9500 run auto-applies the Per-octant preset at load time.
+
+    HAL-9500 declares ``apply_default_preset_on_load``, so the loader replaces
+    its generic label-based forward/backward split with the instrument's default
+    preset the moment the data loads — the per-group (angle-resolved) analysis is
+    live without opening the grouping window. The eight octant groups each pair a
+    forward-ring detector (F_k, ids 2-9) with the opposed backward-ring detector
+    (B_k, ids 10-17); the muon-veto MV (id 1) is left out. The applied preset is
+    recorded on the grouping so the window shows it as the live grouping.
+    """
+    from asymmetry.core.instrument import get_instrument_layout
+
+    path = _musrfit_example_file("tdc_hifi_2014_00153.mdu")
+
+    ds = PsiLoader().load(str(path))
+    grouping = ds.run.grouping
+
+    assert grouping["grouping_preset"] == "Per-octant"
+    assert grouping["projections"] == []
+    assert grouping["groups"] == {k + 1: [2 + k, 10 + k] for k in range(8)}
+    assert grouping["group_names"] == {k + 1: f"Octant {k + 1}" for k in range(8)}
+    assert grouping["forward_group"] == 1  # Octant 1 (top)
+    assert grouping["backward_group"] == 5  # Octant 5 (bottom, 180deg opposite)
+    # Every octant is a positron group, so all are included; MV is not a group.
+    assert grouping["included_groups"] == {k + 1: True for k in range(8)}
+
+    # The grouping is stamped with the canonical registry identity ("HAL"), not
+    # the raw PSI "HIFI" string — otherwise the stale-identity self-heal on load
+    # would mistake it for the ISIS HiFi spectrometer and discard the grouping.
+    assert grouping["instrument"] == "HAL"
+    assert ds.run.metadata["instrument"] == "HIFI"  # raw provenance preserved
+
+    # The loaded grouping matches the instrument's declared default preset.
+    layout = get_instrument_layout("HAL")
+    assert layout.apply_default_preset_on_load is True
+    assert grouping["grouping_preset"] == layout.default_preset_name
+
+
+def test_hal_loaded_grouping_survives_instrument_self_heal() -> None:
+    """The freshly loaded HAL grouping is not discarded by the stale-identity heal.
+
+    Regression: HAL files report ``instrument = "HIFI"``. If the loader stamped
+    that raw string into ``grouping["instrument"]``, the on-load self-heal
+    (:func:`reconcile_instrument_for_payload`) would see it disagree with fresh
+    detection ("HAL"), treat it as a stale identity, and discard the grouping
+    structure — wiping the auto-applied Per-octant grouping so the grouping
+    window fell back to a two-group half-split. Stamping the canonical "HAL"
+    keeps the heal a no-op.
+    """
+    from asymmetry.core.project.profiles import reconcile_instrument_for_payload
+
+    path = _musrfit_example_file("tdc_hifi_2014_00153.mdu")
+    ds = PsiLoader().load(str(path))
+    run = ds.run
+
+    reconciled, note = reconcile_instrument_for_payload(run, run.grouping)
+
+    assert note is None  # no heal fired
+    assert reconciled is run.grouping  # payload returned unchanged
+    assert reconciled["grouping_preset"] == "Per-octant"
+    assert reconciled["groups"] == {k + 1: [2 + k, 10 + k] for k in range(8)}
+
+
+def test_hal_forward_ring_only_run_applies_degraded_per_octant(tmp_path) -> None:
+    """A forward-ring-only HAL run still auto-applies Per-octant, degraded to present wedges.
+
+    The Per-octant preset names backward-ring detectors (ids 10-17) absent from a
+    nine-histogram ``MV, F1..F8`` file. Auto-apply keeps the full preset
+    definition — byte-for-byte what the grouping window's manual Apply stores —
+    so each octant degrades to just its present forward wedge (F_k) and the
+    analysis pair reduces to F1 vs F5, exactly the opposed-pair asymmetry. The
+    absent backward-ring detectors are dropped at reduction time.
+    """
+    labels = [b"MV", b"F1", b"F2", b"F3", b"F4", b"F5", b"F6", b"F7", b"F8"]
+    counts = np.vstack(
+        [np.arange(6, dtype=np.int32) + 10 * (i + 1) for i in range(len(labels))]
+    ).astype("<i4")
+    # A "hifi"-tokened filename resolves to HAL, but only 9 histograms are present.
+    path = tmp_path / "tdc_hifi_9999.bin"
+    _write_psi_bin(path, labels=labels, counts=counts)
+
+    ds = PsiLoader().load(str(path))
+    grouping = ds.run.grouping
+
+    # Per-octant is applied even though the backward ring is absent; the full
+    # preset group definitions are kept (matching the manual-apply path).
+    assert grouping["grouping_preset"] == "Per-octant"
+    assert grouping["groups"] == {k + 1: [2 + k, 10 + k] for k in range(8)}
+    assert grouping["group_names"] == {k + 1: f"Octant {k + 1}" for k in range(8)}
+    assert grouping["forward_group"] == 1  # Octant 1 → present F1
+    assert grouping["backward_group"] == 5  # Octant 5 → present F5
+    # The asymmetry reduces over the present detectors (F1 vs F5) — finite output.
+    assert ds.n_points >= 1
+    assert np.all(np.isfinite(ds.asymmetry))
 
 
 def test_aligned_grouping_preserves_per_detector_t0() -> None:
