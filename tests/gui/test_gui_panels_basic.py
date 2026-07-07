@@ -818,6 +818,36 @@ def _assert_spin_fits_widest_value(spin) -> None:
     )
 
 
+def test_fourier_spinboxes_fit_their_widest_value_under_app_styling(qapp: QApplication) -> None:
+    """The zero-pad / Burg / correlation spins must never clip their digits.
+
+    A spinbox capped at the bare field width hands its step buttons the text
+    area's budget: under the real app stylesheet the zero-pad spin rendered
+    "16" in a 5px line edit. The cap must include the spin-chrome allowance
+    (metrics.spin_width_for), measured with the styled MainWindow because the
+    stylesheet is (re)applied after panels are constructed.
+    """
+    from asymmetry.gui.mainwindow import MainWindow
+
+    window = MainWindow()
+    try:
+        window.show()
+        qapp.processEvents()
+        panel = window._fourier_panel
+        for spin in (
+            panel._padding_spin,
+            panel._burg_order_min_spin,
+            panel._burg_order_max_spin,
+            panel._correlation_order_spin,
+        ):
+            _assert_spin_fits_widest_value(spin)
+            qapp.processEvents()
+            # Still capped: the WrapLongRows form must not stretch it row-wide.
+            assert spin.maximumWidth() < 200
+    finally:
+        window.close()
+
+
 def test_mainwindow_bunch_spin_fits_its_widest_value_under_app_styling(
     qapp: QApplication,
 ) -> None:

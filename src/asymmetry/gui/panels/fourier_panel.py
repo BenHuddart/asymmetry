@@ -382,7 +382,9 @@ class FourierPanel(QWidget):
         """Return a max width (px) sized to hold ``chars`` numeric characters.
 
         Fields are capped (not fixed) so a numeric edit never eats the whole
-        ~236px row — the wrapping label takes the remaining width.
+        ~236px row — the wrapping label takes the remaining width. QLineEdit
+        only: spinboxes cap via :func:`metrics.spin_width_for`, which adds
+        the step-button allowance this text-area measure does not carry.
         """
         return metrics.field_width_for(chars)
 
@@ -586,7 +588,7 @@ class FourierPanel(QWidget):
         self._padding_spin = NoScrollSpinBox()
         self._padding_spin.setRange(1, 16)
         self._padding_spin.setValue(1)
-        self._padding_spin.setMaximumWidth(self._numeric_field_width(6))
+        self._padding_spin.setMaximumWidth(metrics.spin_width_for(6, self._padding_spin))
         fft_settings_form.addRow(self._wrapping_label("Zero-pad factor:"), self._padding_spin)
 
         self._subtract_average_signal_check = QCheckBox("Subtract average signal")
@@ -727,11 +729,15 @@ class FourierPanel(QWidget):
         self._burg_order_min_spin = NoScrollSpinBox()
         self._burg_order_min_spin.setRange(1, 200)
         self._burg_order_min_spin.setValue(2)
-        self._burg_order_min_spin.setMaximumWidth(self._numeric_field_width(6))
+        self._burg_order_min_spin.setMaximumWidth(
+            metrics.spin_width_for(6, self._burg_order_min_spin)
+        )
         self._burg_order_max_spin = NoScrollSpinBox()
         self._burg_order_max_spin.setRange(1, 200)
         self._burg_order_max_spin.setValue(40)
-        self._burg_order_max_spin.setMaximumWidth(self._numeric_field_width(6))
+        self._burg_order_max_spin.setMaximumWidth(
+            metrics.spin_width_for(6, self._burg_order_max_spin)
+        )
         burg_row = QWidget()
         burg_layout = QHBoxLayout(burg_row)
         burg_layout.setContentsMargins(0, 0, 0, 0)
@@ -757,7 +763,9 @@ class FourierPanel(QWidget):
         self._correlation_order_spin = NoScrollSpinBox()
         self._correlation_order_spin.setRange(0, 10)
         self._correlation_order_spin.setValue(DEFAULT_CORR_ORDER)
-        self._correlation_order_spin.setMaximumWidth(self._numeric_field_width(6))
+        self._correlation_order_spin.setMaximumWidth(
+            metrics.spin_width_for(6, self._correlation_order_spin)
+        )
         self._correlation_order_spin.setToolTip(
             "CorrFn ratio-penalty order: higher values suppress unequal-amplitude "
             "(spurious) line pairs more strongly. 0 = plain product."

@@ -357,6 +357,13 @@ _VIEW_FROM_WIDGET = object()
 #: decay; a continuous source never drops this low, so no tail is excluded there.
 _FOURIER_TAIL_COUNTS_FRACTION = 0.01
 
+#: Overlay auto-compute wave size. A multi-run overlay computes its missing
+#: members' FFTs in batches of this many; each completed wave re-renders the
+#: overlay and kicks off the next, so a very large selection streams in with
+#: visible progress instead of blocking behind one monolithic batch. Not a
+#: coverage cap — every selected run is eventually computed.
+_OVERLAY_AUTO_COMPUTE_BATCH = 25
+
 
 def _write_text_file(path: str, content: str) -> None:
     """Write *content* to *path* (used as a TaskRunner worker for exports)."""
@@ -3766,6 +3773,7 @@ class MainWindow(QMainWindow):
         background_applied = 0
         background_missing = 0
         first_updated_dataset = None
+        updated_run_numbers: list[int] = []
         skip_reasons: list[str] = []
         dropped_notes: list[str] = []
 
@@ -3802,6 +3810,10 @@ class MainWindow(QMainWindow):
                 self._fit_panel.set_dataset(self._get_fit_dataset(dataset))
             if first_updated_dataset is None:
                 first_updated_dataset = dataset
+            try:
+                updated_run_numbers.append(int(dataset.run_number))
+            except (TypeError, ValueError):
+                pass
             updated += 1
 
         mapping_request = getattr(dialog, "period_mapping_request", None)
@@ -3838,9 +3850,14 @@ class MainWindow(QMainWindow):
             self._data_browser._rebuild_table()
             self._render_current_selection_plot()
             self._refresh_vector_axis_selector()
-            # A computed FFT derives from the grouping just replaced; surface
-            # the mismatch (keep-and-flag, not invalidate) on the active run.
-            self._refresh_fourier_staleness()
+            self._invalidate_fft_after_regroup(
+                sorted(
+                    {
+                        *updated_run_numbers,
+                        *(int(r) for r in (override_updated_runs or [])),
+                    }
+                )
+            )
 
         deadtime_msg = "off"
         if use_deadtime:
@@ -5709,13 +5726,11 @@ class MainWindow(QMainWindow):
     def _on_fourier(self) -> None:
         """Show the Fourier spectrum: enter the frequency view and raise its dock.
 
-        Opening the Fourier panel used to leave the central plot on the time
-        view, so a user who had not yet computed an FFT saw the time-domain
-        asymmetry and concluded the spectrum "never renders" (the Compute FFT
-        button sits below the fold). Switching to the frequency domain here means
-        the Fourier plot area is what they see — populated if a spectrum exists,
-        or showing the compute prompt if not. We only switch when not already in
-        the frequency domain, so an active MaxEnt view is left untouched.
+        Switching to the frequency domain means the Fourier plot area is what
+        the user sees — populated from cache, computed on view for a run with
+        groups (the domain-change sync seeds a recipe and runs it off-thread),
+        or showing the cannot-compute prompt. We only switch when not already
+        in the frequency domain, so an active MaxEnt view is left untouched.
         """
         if (
             hasattr(self, "_plot_workspace")
@@ -5766,21 +5781,35 @@ class MainWindow(QMainWindow):
         resolved = rep_type or self._active_frequency_rep_type()
         return "MaxEnt" if resolved == RepresentationType.FREQ_MAXENT else "FFT"
 
+    def _frequency_empty_prompt_fft(self) -> str:
+        """The FFT empty-state prompt: shown only when auto-compute cannot run.
+
+        With compute-on-view, reaching this prompt means the run has no
+        detector groups/histograms, every group is excluded, or the compute
+        failed (logged with the reason).
+        """
+        return (
+            "No FFT spectrum for this run. Spectra compute automatically when the "
+            "run has detector groups — check the grouping and the log, or click "
+            "Compute FFT to retry."
+        )
+
     def _frequency_empty_prompt(self, rep_type: RepresentationType | None = None) -> str:
         """Return the on-canvas prompt shown when the active run has no spectrum.
 
-        The frequency views are compute-on-demand: a spectrum exists only after
-        the user configures the parameters and runs the transform. With nothing
-        computed the panel would otherwise be blank, so we draw a centred cue
-        (the same empty-state pattern as the time view and the ALC scan) telling
-        the user how to populate it — phrased for the active representation.
+        MaxEnt is compute-on-demand: a spectrum exists only after the user runs
+        the cycles. The FFT computes on view, so its prompt appears only when
+        auto-compute cannot run (see :meth:`_frequency_empty_prompt_fft`). With
+        nothing computed the panel would otherwise be blank, so we draw a
+        centred cue (the same empty-state pattern as the time view and the ALC
+        scan) — phrased for the active representation.
         """
         resolved = rep_type or self._active_frequency_rep_type()
         if resolved == RepresentationType.FREQ_MAXENT:
             return (
                 "No MaxEnt spectrum computed for this run. Configure the parameters and run MaxEnt."
             )
-        return "No FFT computed for this run. Configure the FFT parameters and click Compute FFT."
+        return self._frequency_empty_prompt_fft()
 
     def _set_fourier_status(self, message: str, *, success: bool = False) -> None:
         """Update the Fourier panel status text and main-window status bar."""
@@ -6431,6 +6460,11 @@ class MainWindow(QMainWindow):
         representation = container.get(rep_type) if container is not None else None
         if representation is None or not representation.recompute_on_load:
             return None
+        if not representation.recipe:
+            # No recipe means nothing to faithfully recompute from — e.g. a
+            # regroup just discarded it. Computing here would silently use a
+            # default config; the FFT seed path owns synthesizing a fresh one.
+            return None
         if representation.primary is not None:
             return None
         dataset = (
@@ -6666,10 +6700,24 @@ class MainWindow(QMainWindow):
             # resolve from the cache — it cannot block — and render now. Calling
             # the cache helper directly avoids re-evaluating the target.
             spectra = self._frequency_spectra_from_cache(int(run_number), rep_type)
-            self._render_frequency_spectra(
-                int(run_number), rep_type, spectra, preserved_x_limits, preserved_y_limits
-            )
-            return
+            if (
+                not spectra
+                and rep_type == RepresentationType.FREQ_FFT
+                and self._frequency_domain_is_active()
+            ):
+                # Compute-on-view: a run with neither cache nor recipe gets a
+                # recipe synthesized from the current settings and computed
+                # off-thread like any other recipe recompute. MaxEnt keeps its
+                # explicit-run-only contract. Gated on the frequency domain
+                # actually being VISIBLE: dataset selection also syncs this
+                # (hidden) panel to keep it warm, and a time-domain selection
+                # must not start FFTs.
+                target = self._seed_fft_recipe_for_view(int(run_number))
+            if target is None:
+                self._render_frequency_spectra(
+                    int(run_number), rep_type, spectra, preserved_x_limits, preserved_y_limits
+                )
+                return
         # A recipe recompute (an FFT) is due: run it off the GUI thread behind
         # the panel overlay so the window stays responsive on project open.
         self._start_async_frequency_recompute(
@@ -7219,11 +7267,17 @@ class MainWindow(QMainWindow):
         return []
 
     def _render_frequency_overlay(self, run_numbers: list[int]) -> None:
-        """Overlay the cached spectra of every selected run on one axis.
+        """Overlay the spectra of every selected run on one axis, computing as needed.
 
-        Runs whose spectrum has not been computed yet are skipped (and reported)
-        rather than triggering N recomputes. If fewer than two runs have a
-        spectrum, fall back to the single-run render of the active dataset.
+        FFT overlays auto-compute their missing members: an overlay that
+        silently rendered a subset of the selection read as a complete answer
+        (the user multi-selected and toggled Overlay — a stronger intent signal
+        than a tab click), so missing runs are computed off-thread in waves of
+        :data:`_OVERLAY_AUTO_COMPUTE_BATCH` and the overlay re-renders after
+        each wave. Runs that cannot compute (no groups, failed recipe) are
+        skipped and reported as before. MaxEnt overlays keep the skip-and-report
+        behaviour. If fewer than two runs have a spectrum, fall back to the
+        single-run render of the active dataset.
         """
         rep_type = self._active_frequency_rep_type()
         spectra: list = []
@@ -7236,6 +7290,40 @@ class MainWindow(QMainWindow):
                 rendered_runs.append(run_number)
             else:
                 missing.append(run_number)
+
+        if (
+            missing
+            and rep_type == RepresentationType.FREQ_FFT
+            and self._frequency_domain_is_active()
+        ):
+            to_compute: list[int] = []
+            for run_number in missing:
+                if len(to_compute) >= _OVERLAY_AUTO_COMPUTE_BATCH:
+                    break
+                if (run_number, rep_type) in self._frequency_recompute_inflight:
+                    # Already computing (an earlier wave); its completion will
+                    # re-render. Counting it here would recurse through the
+                    # batch helper's immediate on_ready with an empty target
+                    # list.
+                    continue
+                if (
+                    self._frequency_recompute_target(run_number, rep_type) is not None
+                    or self._seed_fft_recipe_for_view(run_number) is not None
+                ):
+                    to_compute.append(run_number)
+            if to_compute:
+                if len(missing) > len(to_compute):
+                    self._log_panel.log(
+                        f"Overlay: computing {len(to_compute)} of {len(missing)} missing "
+                        "FFT spectra this wave; the rest follow."
+                    )
+                self._ensure_frequency_spectra_for_runs_async(
+                    to_compute,
+                    rep_type,
+                    self._sync_frequency_plot_for_current_dataset,
+                    busy_message=f"Computing FFT for {len(to_compute)} run(s)…",
+                )
+                return
 
         if len(rendered_runs) <= 1:
             # Nothing to overlay (0 or 1 computed): render the one computed run if
@@ -7256,10 +7344,19 @@ class MainWindow(QMainWindow):
         self._render_frequency_spectra(rendered_runs[0], rep_type, spectra, None, None)
         if missing:
             name = self._frequency_status_name(rep_type)
-            self._set_fourier_status(
-                f"Overlaying {len(rendered_runs)} runs; {len(missing)} selected run(s) have no "
-                f"{name} yet — compute them to include."
-            )
+            if rep_type == RepresentationType.FREQ_FFT:
+                # FFT overlays auto-compute every computable member, so a run
+                # still missing here CANNOT compute — "compute them" would be
+                # bad advice. MaxEnt keeps its explicit-run wording below.
+                self._set_fourier_status(
+                    f"Overlaying {len(rendered_runs)} runs; {len(missing)} selected run(s) "
+                    "could not be computed — check their detector grouping and the log."
+                )
+            else:
+                self._set_fourier_status(
+                    f"Overlaying {len(rendered_runs)} runs; {len(missing)} selected run(s) "
+                    f"have no {name} yet — compute them to include."
+                )
 
     def _selected_fourier_group_ids(self, dataset: MuonDataset) -> list[int]:
         """Return the detector groups currently enabled for grouped Fourier transforms."""
@@ -7580,6 +7677,35 @@ class MainWindow(QMainWindow):
             correlation_order=int(state.get("correlation_order", 2)),
         )
 
+    def _fourier_group_ids_for_dataset(self, dataset: MuonDataset) -> list[int]:
+        """Enabled FFT group ids for *dataset* without reading the live panel table.
+
+        The panel's Groups table reflects the ACTIVE run only; for any other
+        run (overlay auto-compute) the stored per-run state — or the grouping's
+        own inclusion default — is authoritative.
+        """
+        group_names = self._fourier_group_names_for_dataset(dataset)
+        try:
+            run_number = int(dataset.run_number)
+        except (TypeError, ValueError):
+            run_number = None
+        stored = (
+            self._fourier_group_phase_state_by_run.get(run_number)
+            if run_number is not None
+            else None
+        )
+        enabled_raw = stored.get("group_enabled_table") if isinstance(stored, dict) else None
+        enabled: dict[int, bool] = {}
+        if isinstance(enabled_raw, dict):
+            for key, value in enabled_raw.items():
+                try:
+                    enabled[int(key)] = bool(value)
+                except (TypeError, ValueError):
+                    continue
+        else:
+            enabled = self._default_group_enabled_table(dataset, group_names)
+        return [group_id for group_id in group_names if enabled.get(int(group_id), True)]
+
     def _candidate_fourier_config(self, dataset: MuonDataset) -> GroupSpectrumConfig:
         """Return the config an explicit Compute FFT would use right now.
 
@@ -7589,17 +7715,37 @@ class MainWindow(QMainWindow):
         path's automatic estimation is likewise never driven from panel state).
         Comparing the *resolved* window means a time-view fit-range wiggle that
         the good-statistics tail cap absorbs does not read as a difference.
+
+        The live Groups table describes only the ACTIVE run; for any other
+        dataset (overlay auto-compute) group inclusion and phases resolve from
+        that run's stored state / defaults instead.
         """
         state = self._fourier_panel.get_state()
         display = str(state.get("display", "(Power)^1/2"))
-        selected_group_ids = self._selected_fourier_group_ids(dataset)
+        is_active_run = dataset is self._current_dataset
+        selected_group_ids = (
+            self._selected_fourier_group_ids(dataset)
+            if is_active_run
+            else self._fourier_group_ids_for_dataset(dataset)
+        )
         t_min_us, t_max_us = self._current_fourier_time_window_us()
         t_min_us, t_max_us = self._fourier_time_window_excluding_tail(dataset, t_min_us, t_max_us)
         group_phase_degrees: dict[int, float] = {}
         if fourier_mode_uses_phase_correction(display):
             manual_phase = float(state.get("phase_degrees", 0.0))
             if bool(state.get("use_phase_table", False)):
-                table = self._fourier_panel.group_phase_table()
+                if is_active_run:
+                    table = self._fourier_panel.group_phase_table()
+                else:
+                    stored = self._fourier_group_phase_state_by_run.get(int(dataset.run_number))
+                    raw = stored.get("group_phase_table") if isinstance(stored, dict) else None
+                    table = {}
+                    if isinstance(raw, dict):
+                        for key, value in raw.items():
+                            try:
+                                table[int(key)] = float(value)
+                            except (TypeError, ValueError):
+                                continue
                 group_phase_degrees = {
                     int(group_id): float(table.get(int(group_id), manual_phase))
                     for group_id in selected_group_ids
@@ -7615,6 +7761,70 @@ class MainWindow(QMainWindow):
             t_min_us=t_min_us,
             t_max_us=t_max_us,
         )
+
+    def _frequency_domain_is_active(self) -> bool:
+        """Return whether the frequency plot is the VISIBLE domain right now.
+
+        Compute-on-view triggers hang off this: the frequency panel is also
+        synced while hidden (dataset selection keeps it warm), and those hidden
+        syncs must never start FFTs.
+        """
+        return (
+            hasattr(self, "_plot_workspace") and self._plot_workspace.active_domain() == "frequency"
+        )
+
+    def _seed_fft_recipe_for_view(self, run_number: int) -> tuple[object, object] | None:
+        """Create a first FFT recipe from the current settings for a never-computed run.
+
+        The frequency view is compute-on-view: entering the tab (or an overlay)
+        for a run with neither a cached spectrum nor a recipe synthesizes one
+        from the panel settings and the run's own grouping, then hands it to the
+        shared async recompute machinery. Returns the ``(representation, run)``
+        target, or ``None`` when the run cannot be auto-computed: not loaded,
+        no histograms/groups, no enabled groups, a remembered failure, or an
+        existing recipe (which is never clobbered here — the recompute path
+        owns it).
+        """
+        if self._restoring_project:
+            # Mid-restore syncs run against a half-restored window; the
+            # restored recipes (or their absence) are authoritative, and a
+            # freshly opened project must not gain recipes it was saved
+            # without. See restore_project_state.
+            return None
+        run_number = int(run_number)
+        key = (run_number, RepresentationType.FREQ_FFT)
+        _pending, failures = self._ensure_recompute_tracking()
+        if key in failures or key in self._frequency_recompute_inflight:
+            return None
+        dataset = (
+            self._data_browser.get_dataset(run_number)
+            if hasattr(self._data_browser, "get_dataset")
+            else None
+        )
+        if dataset is None and self._current_dataset is not None:
+            try:
+                if int(self._current_dataset.run_number) == run_number:
+                    dataset = self._current_dataset
+            except (TypeError, ValueError):
+                dataset = None
+        run = getattr(dataset, "run", None)
+        if run is None or not run.histograms:
+            return None
+        if not self._fourier_group_names_for_dataset(dataset):
+            return None
+        representation = self._project_model.ensure_dataset(run_number).ensure(
+            RepresentationType.FREQ_FFT
+        )
+        if representation.recipe.get("fourier_config"):
+            return None
+        config = self._candidate_fourier_config(dataset)
+        if not config.selected_group_ids:
+            return None
+        representation.recipe = {
+            "fourier_config": config.to_dict(),
+            "grouping_digest": fourier_grouping_digest(run),
+        }
+        return representation, run
 
     def _fourier_staleness_for_current_run(self) -> tuple[bool, str]:
         """Return ``(stale, reason)`` for the active run's displayed FFT.
@@ -7663,6 +7873,54 @@ class MainWindow(QMainWindow):
             return
         stale, reason = self._fourier_staleness_for_current_run()
         panel.set_stale(reason if stale else None)
+
+    def _invalidate_fft_after_regroup(self, run_numbers: list[int]) -> None:
+        """Discard regrouped runs' FFT spectra and recipes; recompute a live view.
+
+        A spectrum computed under the old grouping is wrong, not merely
+        outdated — and its recipe is too: the recorded ``selected_group_ids``
+        and phases described groups that may no longer exist. Dropping both
+        lets compute-on-view synthesize a fresh recipe against the NEW grouping
+        (the panel widgets, not the recipe, carry the user's global settings),
+        exactly as the time-domain plot re-renders after a regroup. Parameter
+        edits, by contrast, only flag via the staleness banner — an explicit
+        Compute stays the only way a settings change replaces a spectrum.
+        """
+        cache = self._frequency_cache(RepresentationType.FREQ_FFT)
+        pending, failures = self._ensure_recompute_tracking()
+        invalidated = 0
+        for raw in run_numbers:
+            try:
+                run_number = int(raw)
+            except (TypeError, ValueError):
+                continue
+            key = (run_number, RepresentationType.FREQ_FFT)
+            representation = self._project_model.representation(
+                run_number, RepresentationType.FREQ_FFT
+            )
+            had_spectrum = bool(cache.get(run_number)) or (
+                representation is not None and representation.primary is not None
+            )
+            if representation is not None:
+                representation.recipe = {}
+                representation.invalidate()
+            cache.pop(run_number, None)
+            pending.discard(key)
+            # The regroup changed the inputs a remembered failure was recorded
+            # against; let the auto-compute retry with the new grouping.
+            failures.discard(key)
+            if had_spectrum:
+                invalidated += 1
+        if invalidated:
+            self._log_panel.log(
+                f"Discarded {invalidated} FFT spectrum(s) computed under the previous "
+                "grouping; they recompute on next view."
+            )
+            if self._frequency_domain_is_active():
+                # The user is looking at a spectrum that just became wrong:
+                # recompute it now rather than leaving a blank/stale view.
+                self._sync_frequency_plot_for_current_dataset()
+        self._refresh_fourier_staleness()
 
     def _compute_fourier_payload(
         self,
@@ -13738,6 +13996,15 @@ class MainWindow(QMainWindow):
     def restore_project_state(self, state: dict, project_path: str) -> None:
         """Restore the full application state from a project file state dict.
 
+        Owns the ``_restoring_project`` flag for its duration (the open-project
+        caller also sets it — idempotent) so direct callers get the same
+        suppressions: no dirty-marking, and no FFT compute-on-view seeding.
+        Restore replays domain/selection changes against a HALF-restored window
+        — the workspace state lands before the project model — so a mid-restore
+        seed would record a recipe into the outgoing model, and its in-flight
+        compute would then block the real recipe recompute against the restored
+        one.
+
         Parameters
         ----------
         state : dict
@@ -13746,6 +14013,15 @@ class MainWindow(QMainWindow):
         project_path : str
             Absolute path to the project file (used to resolve relative paths).
         """
+        previous_restoring = self._restoring_project
+        self._restoring_project = True
+        try:
+            self._restore_project_state_impl(state, project_path)
+        finally:
+            self._restoring_project = previous_restoring
+
+    def _restore_project_state_impl(self, state: dict, project_path: str) -> None:
+        """The body of :meth:`restore_project_state`, which owns the flag."""
         project_dir = os.path.dirname(os.path.abspath(project_path))
         loaded_run_numbers: set[int] = set()
 
