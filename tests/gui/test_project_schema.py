@@ -2684,3 +2684,134 @@ class TestNonFiniteJsonSafety:
         loaded = load_project(path)
         assert loaded["browser_state"]["filters"]["title"] == "NaN"
         assert loaded["browser_state"]["filters"]["note"] == "Infinity"
+
+
+class TestRestoreChunkedProgress:
+    """Project restore re-applies groupings via the chunked progress runner (E4).
+
+    The per-dataset loop in ``_restore_project_state_impl`` runs one item per
+    event-loop turn behind a cancellable ``QProgressDialog`` instead of
+    freezing the window for the whole project; these pin the item order and
+    the cancel-at-an-item-boundary contract.
+    """
+
+    @staticmethod
+    def _two_run_project(tmp_path, monkeypatch, qapp):
+        """Save-side: two groupable runs from one file, plus their co-add."""
+        import asymmetry.gui.mainwindow as mw_module
+        from asymmetry.core.data.dataset import Run
+
+        source_files = {
+            6001: tmp_path / "run6001.nxs",
+            6002: tmp_path / "run6002.nxs",
+        }
+        for path in source_files.values():
+            path.write_bytes(b"\x00")
+
+        def _make_run(run_number: int) -> MuonDataset:
+            h0 = Histogram(counts=np.array([10.0, 20.0, 30.0, 40.0]), bin_width=1.0)
+            h1 = Histogram(counts=np.array([5.0, 10.0, 15.0, 20.0]), bin_width=1.0)
+            run = Run(
+                run_number=run_number,
+                histograms=[h0, h1],
+                source_file=str(source_files[run_number]),
+                grouping={
+                    "groups": {1: [1], 2: [2]},
+                    "forward_group": 1,
+                    "backward_group": 2,
+                    "alpha": 1.0,
+                    "first_good_bin": 0,
+                    "last_good_bin": 3,
+                    "bunching_factor": 1,
+                    "deadtime_correction": False,
+                },
+            )
+            t = np.array([0.0, 1.0, 2.0, 3.0], dtype=float)
+            return MuonDataset(
+                time=t,
+                asymmetry=np.zeros_like(t),
+                error=np.ones_like(t),
+                metadata={"title": f"Run {run_number}"},
+                run=run,
+            )
+
+        window1 = mw_module.MainWindow()
+        window1._data_browser.add_dataset(_make_run(6001))
+        window1._data_browser.add_dataset(_make_run(6002))
+        combined_id = window1._data_browser.add_combined_dataset([6001, 6002], sign=1)
+        assert combined_id is not None
+        state = window1.collect_project_state()
+        window1.close()
+
+        runs_by_path = {str(path): rn for rn, path in source_files.items()}
+
+        def _stub_load_file(self_inner, path_str: str):
+            return _make_run(runs_by_path[path_str])
+
+        monkeypatch.setattr(mw_module.MainWindow, "_load_file", _stub_load_file)
+        return mw_module, state
+
+    def test_restore_runs_items_in_order_through_progress_runner(
+        self, monkeypatch: pytest.MonkeyPatch, qapp: QApplication, tmp_path
+    ) -> None:
+        mw_module, state = self._two_run_project(tmp_path, monkeypatch, qapp)
+
+        captured: dict[str, list[str]] = {}
+        real_apply = mw_module.MainWindow._apply_items_with_progress
+
+        def spy(self, title: str, items):
+            captured["labels"] = [label for label, _fn in items]
+            return real_apply(self, title, items)
+
+        monkeypatch.setattr(mw_module.MainWindow, "_apply_items_with_progress", spy)
+
+        window2 = mw_module.MainWindow()
+        window2.restore_project_state(state, str(tmp_path / "p.asymp"))
+
+        # Every source run strictly before every combined recreation, in order.
+        assert captured["labels"] == ["Run 6001", "Run 6002", "Combined 6001+6002"]
+        # Co-add CONSUMES its source rows (add_combined_dataset removes them
+        # after building the combined row) — so a fully-restored project shows
+        # the combined dataset only, exactly like the saved session did.
+        combined_by_id = {
+            crn: sorted(src) for crn, src in window2._data_browser._combined_datasets.items()
+        }
+        assert [6001, 6002] in combined_by_id.values(), (
+            "the co-added dataset was not recreated through the runner"
+        )
+        combined_id = next(crn for crn, src in combined_by_id.items() if src == [6001, 6002])
+        assert window2._data_browser.get_dataset(combined_id) is not None
+        assert window2._data_browser.get_dataset(6001) is None  # consumed into the co-add
+        assert window2._data_browser.get_dataset(6002) is None
+        window2.close()
+
+    def test_cancel_mid_restore_keeps_completed_items_and_flags_partial(
+        self, monkeypatch: pytest.MonkeyPatch, qapp: QApplication, tmp_path
+    ) -> None:
+        from PySide6.QtWidgets import QProgressDialog
+
+        mw_module, state = self._two_run_project(tmp_path, monkeypatch, qapp)
+
+        # Cancel the RESTORE dialog after its first item; every other
+        # QProgressDialog (the file-prefetch one) keeps real semantics.
+        calls = {"n": 0}
+        real_was_canceled = QProgressDialog.wasCanceled
+
+        def fake_was_canceled(dialog) -> bool:
+            if dialog.windowTitle() != "Restoring project":
+                return real_was_canceled(dialog)
+            calls["n"] += 1
+            return calls["n"] > 1
+
+        monkeypatch.setattr(QProgressDialog, "wasCanceled", fake_was_canceled)
+
+        window2 = mw_module.MainWindow()
+        window2.restore_project_state(state, str(tmp_path / "p.asymp"))
+
+        # Exactly the first item (run 6001) applied; the rest were skipped.
+        assert window2._data_browser.get_dataset(6001) is not None
+        assert window2._data_browser.get_dataset(6002) is None
+        # The partial state is flagged so a save hard-confirms, and the tail
+        # of the restore (browser/plot state) still completed without error.
+        assert window2._project_load_incomplete is True
+        window2.close()

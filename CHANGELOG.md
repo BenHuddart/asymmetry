@@ -153,6 +153,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Opening a project keeps the window responsive and can be cancelled.** The
+  per-dataset restore loop — re-applying each run's grouping and recomputing
+  its asymmetry, then recreating combined datasets — ran to completion on the
+  GUI thread with no feedback, freezing the window for the whole project
+  (50–200 runs in a typical scan). The loop now runs one dataset per
+  event-loop turn behind a cancellable progress dialog ("Restoring project"),
+  so the window repaints throughout; cancelling stops cleanly at a dataset
+  boundary, keeps everything already restored, flags the session as partially
+  loaded (so a save hard-confirms first, exactly like a cancelled file
+  prefetch), and still restores the browser and plot state for what was
+  loaded.
+
+- **The pull-distribution diagnostic no longer freezes the app.** Its up to
+  2000 simulate+refit iterations ran synchronously on the GUI thread, kept
+  "alive" only by a `QApplication.processEvents()` call inside the progress
+  callback — a re-entrancy hazard that also forced the Close button to stay
+  disabled for the whole run. Clicking Run now starts the diagnostic on a
+  `TaskRunner` worker thread with every input snapshotted first; Cancel stops
+  it promptly (`run_pull_distribution` polls a cooperative flag rather than
+  raising, so a cancelled run reports its partial result instead of aborting),
+  and Close stays enabled throughout — closing mid-run cancels and shuts the
+  worker down cleanly instead of freezing or crashing.
+
+- **Generating a synthetic run no longer freezes the app.** The Generate
+  Synthetic Run and Generate Multi-Group Run dialogs called
+  `simulate_run`/`simulate_count_run`/`simulate_two_period_run`/
+  `simulate_multi_group_run` directly on the GUI thread, so a large
+  multi-detector template at a high event budget blocked the whole
+  application with no feedback and no way to cancel. Generate now runs on a
+  worker thread (the dialog snapshots every form input first); the button
+  reads "Generating…" and disables for the duration, and closing the dialog
+  mid-flight joins the worker instead of crashing. Errors and the delivered
+  run are unchanged.
+
+- **Combining runs in the data browser no longer freezes the window.** The
+  interactive run-arithmetic actions — Co-add Selected, Subtract Reference
+  Run…, and Subtract Selected (signed)… — summed per-detector counts across
+  every selected run and re-reduced the result synchronously on the GUI
+  thread, blocking the whole application for the duration of the combine.
+  The heavy combine+reduce now runs on a background worker while the window
+  keeps repainting, with a status-bar message ("Combining runs …") and a busy
+  cursor over the table for the duration; the combine entries are disabled
+  (and re-triggers ignored) while one is in flight, and closing the window
+  mid-combine shuts the worker down cleanly. The programmatic path that
+  recreates combined rows when a project opens is deliberately unchanged
+  (project restore depends on it completing before it returns), and combined
+  results are numerically identical.
+
 - **Switching datasets in the plot panel now rasterises the canvas once, not
   twice.** A content switch reframes the view, and a reframe re-decimates for
   the new window on a deferred refresh one event-loop turn later — but the

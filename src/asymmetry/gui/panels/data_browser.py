@@ -40,7 +40,12 @@ section-comment markers in source):
   reference subtraction (``_subtract_reference_run``/``_subtract_datasets``),
   and signed subtraction (``_signed_subtract_selected``/
   ``_signed_subtract_datasets``), each producing a derived dataset tracked via
-  ``_store_combined_reduction``/``_separate_combined``.
+  ``_store_combined_reduction``/``_separate_combined``. The interactive
+  actions run the heavy combine+reduce on a background ``TaskRunner``
+  (``_start_combine``, single-flight, shut down via ``shutdown_workers``);
+  the programmatic paths (``add_combined_dataset``,
+  ``rebuild_combined_dataset``) stay synchronous — project restore depends
+  on completed-when-returned semantics.
 - **Logbook export** — ``render_logbook_tsv``/``export_logbook_tsv`` and the
   RTF equivalents (``render_logbook_rtf``/``export_logbook_rtf``).
 - **State I/O** — ``get_state``/``restore_state`` at the end serialize groups,
@@ -65,6 +70,7 @@ from dataclasses import dataclass
 import numpy as np
 from PySide6.QtCore import (
     QEvent,
+    QEventLoop,
     QItemSelectionModel,
     QPoint,
     QRect,
@@ -107,6 +113,7 @@ from asymmetry.core.transform.grouping import good_event_count, good_frames
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.typography import header_font
+from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.utils.series_scoring import score_series_path
 
 _GROUP_TEMP_ABS_TOL_K = 5e-3
@@ -588,6 +595,11 @@ class DataBrowserPanel(QWidget):
     # Re-fit a co-added selection: the host combines the runs, fits with the
     # active single-fit model, and records a computed trend row (combined_from).
     refit_coadded_requested = Signal(object)  # list[int] source run numbers
+    # Progress of an interactive combine (co-add / subtract) running on the
+    # background TaskRunner: a human-readable busy message on start, and an
+    # empty string when the combine finishes (however it ends). The host shows
+    # it on the status bar, matching the co-added re-fit's affordance.
+    combine_status = Signal(str)
     # Emitted whenever the dataset set or grouping structure is mutated by a
     # user action (add/remove a run, build/rebuild a combined run, create or
     # dissolve a group, move runs between groups). The host uses this to mark
@@ -679,6 +691,15 @@ class DataBrowserPanel(QWidget):
         self._batch_rebuild_pending = False
         self._batch_sort_pending = False
         self._batch_resize_pending = False
+
+        #: Background combine/reduce for the interactive run-arithmetic actions
+        #: (co-add, reference subtract, signed subtract). One combine runs at a
+        #: time: ``_combine_worker`` holds the in-flight worker handle and
+        #: doubles as the re-entry guard. Programmatic paths
+        #: (``add_combined_dataset``, ``rebuild_combined_dataset``) stay
+        #: synchronous — project restore depends on completed-when-returned.
+        self._tasks = TaskRunner(self)
+        self._combine_worker = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -3148,9 +3169,16 @@ class DataBrowserPanel(QWidget):
         regular_runs = [rn for rn in expanded_selected_runs if rn not in self._combined_datasets]
         combined_runs = [rn for rn in expanded_selected_runs if rn in self._combined_datasets]
 
+        # An in-flight background combine disables the combine entries (the
+        # handlers also hard-guard re-entry via _combine_in_flight).
+        combine_busy = self._combine_worker is not None
         if len(regular_runs) >= 2 and not combined_runs:
-            menu.addAction("Co-add Selected", self._coadd_selected)
-            menu.addAction("Subtract Selected (signed)…", self._signed_subtract_selected)
+            coadd_action = menu.addAction("Co-add Selected", self._coadd_selected)
+            signed_action = menu.addAction(
+                "Subtract Selected (signed)…", self._signed_subtract_selected
+            )
+            for action in (coadd_action, signed_action):
+                action.setEnabled(not combine_busy)
             menu.addAction("Re-fit as Co-added", self._emit_refit_coadded)
         if len(expanded_selected_runs) >= 2 and not selected_group_ids:
             menu.addAction("Form Data Group", self._form_data_group)
@@ -3169,10 +3197,11 @@ class DataBrowserPanel(QWidget):
                     lambda rn=selected_run: self._on_degrade_statistics(rn),
                 )
                 if self._reference_subtraction_candidates(selected_run):
-                    menu.addAction(
+                    subtract_action = menu.addAction(
                         "Subtract Reference Run…",
                         lambda rn=selected_run: self._subtract_reference_run(rn),
                     )
+                    subtract_action.setEnabled(not combine_busy)
 
         if combined_runs:
             menu.addAction("Separate Combined", self._separate_combined)
@@ -3740,6 +3769,8 @@ class DataBrowserPanel(QWidget):
             self.refit_coadded_requested.emit(list(runs))
 
     def _coadd_selected(self) -> None:
+        if self._combine_in_flight():
+            return
         run_numbers = self._get_selected_run_numbers()
         if len(run_numbers) < 2:
             return
@@ -3760,32 +3791,15 @@ class DataBrowserPanel(QWidget):
             QMessageBox.warning(self, "Cannot Co-add Selected Datasets", incompatibility)
             return
 
-        from asymmetry.core.data.combine import CombineError
-
         insert_index = min(self._display_index_for_run(rn) for rn in run_numbers)
-        combined_rn = self._next_combined_id
         source_datasets = [self._datasets[rn] for rn in run_numbers if rn in self._datasets]
-        try:
-            combined_dataset = self._coadd_datasets(
-                source_datasets,
-                run_numbers,
-                combined_run_number=combined_rn,
-            )
-        except CombineError as exc:
-            QMessageBox.warning(self, "Cannot Co-add Selected Datasets", str(exc))
-            return
-
-        self._next_combined_id -= 1
-        self._datasets[combined_rn] = combined_dataset
-        self._combined_datasets[combined_rn] = list(run_numbers)
-        self._combined_source_datasets[combined_rn] = source_datasets
-
-        for rn in run_numbers:
-            self._remove_run_number(rn)
-
-        self._display_order.insert(insert_index, combined_rn)
-        self._rebuild_table()
-        self.select_runs({combined_rn})
+        self._start_combine(
+            self._coadd_datasets,
+            source_datasets,
+            list(run_numbers),
+            insert_index,
+            failure_title="Cannot Co-add Selected Datasets",
+        )
 
     def _subtract_reference_run(self, sample_rn: int) -> None:
         """Subtract a chosen reference run from *sample_rn* (study RA3/RA4).
@@ -3794,6 +3808,8 @@ class DataBrowserPanel(QWidget):
         combined row (sample − reference) hiding both constituents, restorable
         with "Separate Combined".
         """
+        if self._combine_in_flight():
+            return
         sample = self._datasets.get(sample_rn)
         if sample is None or sample.run is None or not sample.run.histograms:
             return
@@ -3811,34 +3827,17 @@ class DataBrowserPanel(QWidget):
         if reference_rn is None:
             return
 
-        from asymmetry.core.data.combine import CombineError
-
         run_numbers = [int(sample_rn), int(reference_rn)]
         source_datasets = [self._datasets[sample_rn], self._datasets[reference_rn]]
         insert_index = self._display_index_for_run(sample_rn)
-        combined_rn = self._next_combined_id
-        try:
-            combined_dataset = self._subtract_datasets(
-                source_datasets,
-                run_numbers,
-                combined_run_number=combined_rn,
-            )
-        except CombineError as exc:
-            QMessageBox.warning(self, "Cannot Subtract Reference Run", str(exc))
-            return
-
-        self._next_combined_id -= 1
-        self._datasets[combined_rn] = combined_dataset
-        self._combined_datasets[combined_rn] = run_numbers
-        self._combined_source_datasets[combined_rn] = source_datasets
-        self._combined_signs[combined_rn] = -1
-
-        for rn in run_numbers:
-            self._remove_run_number(rn)
-
-        self._display_order.insert(insert_index, combined_rn)
-        self._rebuild_table()
-        self.select_runs({combined_rn})
+        self._start_combine(
+            self._subtract_datasets,
+            source_datasets,
+            run_numbers,
+            insert_index,
+            failure_title="Cannot Subtract Reference Run",
+            sign=-1,
+        )
 
     def _signed_subtract_selected(self) -> None:
         """Symmetric N-run signed co-subtract of the selected runs (sample − rest).
@@ -3848,6 +3847,8 @@ class DataBrowserPanel(QWidget):
         combined row hiding all constituents, restorable with "Separate
         Combined".
         """
+        if self._combine_in_flight():
+            return
         run_numbers = [rn for rn in self._get_selected_run_numbers()]
         regular = [rn for rn in run_numbers if rn not in self._combined_datasets]
         if len(regular) < 2:
@@ -3866,34 +3867,158 @@ class DataBrowserPanel(QWidget):
         if ordered is None:
             return
 
-        from asymmetry.core.data.combine import CombineError
-
         source_datasets = [self._datasets[rn] for rn in ordered]
         insert_index = min(self._display_index_for_run(rn) for rn in ordered)
+        self._start_combine(
+            self._signed_subtract_datasets,
+            source_datasets,
+            ordered,
+            insert_index,
+            failure_title="Cannot Subtract Selected Runs",
+            sign=-1,
+            method="subtract_signed",
+        )
+
+    def _combine_in_flight(self) -> bool:
+        """True while an interactive combine runs; nudges the user if so.
+
+        The context menu already disables the combine actions mid-flight, but
+        keyboard replays / queued triggers can still re-enter — this is the
+        hard guard.
+        """
+        if self._combine_worker is None:
+            return False
+        QToolTip.showText(QCursor.pos(), "A combine is already running…")
+        return True
+
+    def _start_combine(
+        self,
+        builder,
+        source_datasets: list[MuonDataset],
+        run_numbers: list[int],
+        insert_index: int,
+        *,
+        failure_title: str,
+        sign: int = 1,
+        method: str | None = None,
+    ) -> None:
+        """Run one interactive combine (combine + reduce) off the GUI thread.
+
+        *builder* is one of the three dataset builders (``_coadd_datasets`` /
+        ``_subtract_datasets`` / ``_signed_subtract_datasets``); they call only
+        core code (no widgets), so they are safe on a worker. While the worker
+        computes, the GUI thread spins a nested :class:`QEventLoop` — the same
+        keep-responsive-but-completed-when-returned shape as the main window's
+        bulk load — so the window repaints and the busy hint shows instead of
+        the O(n_runs × n_detectors × n_bins) freeze, yet callers (and the
+        table-state invariants) keep synchronous semantics. Re-entry through
+        the nested loop is blocked by :meth:`_combine_in_flight`, which callers
+        check first, and by the context menu disabling the combine actions.
+
+        The browser-side bookkeeping — inserting the combined row, hiding the
+        consumed sources, rebuilding the table — runs here on the GUI thread
+        after the loop exits. Because other events (Remove Entry, a project
+        clear) may run inside the nested loop, the snapshotted sources, insert
+        position and combined id are re-validated before committing; a stale
+        result is dropped.
+        """
         combined_rn = self._next_combined_id
-        try:
-            combined_dataset = self._signed_subtract_datasets(
+        label = self._combined_label_for(run_numbers, sign=sign)
+        outcome: dict[str, object] = {"dataset": None, "error": None, "done": False}
+        loop = QEventLoop(self)
+
+        def _work(_worker):
+            return builder(
                 source_datasets,
-                ordered,
+                run_numbers,
                 combined_run_number=combined_rn,
             )
-        except CombineError as exc:
-            QMessageBox.warning(self, "Cannot Subtract Selected Runs", str(exc))
+
+        def _finished(combined_dataset) -> None:
+            outcome["dataset"] = combined_dataset
+            outcome["done"] = True
+            loop.quit()
+
+        def _error(message: str) -> None:
+            outcome["error"] = str(message)
+            outcome["done"] = True
+            loop.quit()
+
+        def _cancelled() -> None:
+            outcome["done"] = True
+            loop.quit()
+
+        self._set_combine_busy(True, label)
+        self._combine_worker = self._tasks.start(
+            _work,
+            on_finished=_finished,
+            on_error=_error,
+            on_cancelled=_cancelled,
+        )
+        try:
+            if not outcome["done"]:
+                loop.exec()
+        finally:
+            self._combine_worker = None
+            self._set_combine_busy(False)
+            # Join the one-shot worker thread before returning: the nested loop
+            # exits on the relay's terminal delivery, which can land *before*
+            # the queued thread.quit, and a caller (or test teardown) may
+            # destroy the panel right after this method returns — destroying a
+            # running QThread aborts the process. The terminal signal has
+            # already fired here, so this quit-and-wait is near-instant, and a
+            # second shutdown from the window's closeEvent stays safe (idle
+            # runner, nothing to do).
+            self._tasks.shutdown()
+
+        error = outcome["error"]
+        if error is not None:
+            QMessageBox.warning(self, failure_title, str(error))
             return
+        combined_dataset = outcome["dataset"]
+        if combined_dataset is None:
+            return  # cancelled (e.g. shutdown mid-flight)
+        if any(rn not in self._datasets for rn in run_numbers):
+            return  # a source was removed (or the project cleared) mid-combine
+        if combined_rn in self._datasets:
+            return  # the snapshotted id was consumed by another allocator
 
         self._next_combined_id -= 1
         self._datasets[combined_rn] = combined_dataset
-        self._combined_datasets[combined_rn] = ordered
-        self._combined_source_datasets[combined_rn] = source_datasets
-        self._combined_signs[combined_rn] = -1
-        self._combined_methods[combined_rn] = "subtract_signed"
+        self._combined_datasets[combined_rn] = list(run_numbers)
+        self._combined_source_datasets[combined_rn] = list(source_datasets)
+        if sign == -1:
+            self._combined_signs[combined_rn] = -1
+        if method is not None:
+            self._combined_methods[combined_rn] = method
 
-        for rn in ordered:
+        for rn in run_numbers:
             self._remove_run_number(rn)
 
-        self._display_order.insert(insert_index, combined_rn)
+        self._display_order.insert(min(insert_index, len(self._display_order)), combined_rn)
         self._rebuild_table()
         self.select_runs({combined_rn})
+
+    def _combined_label_for(self, run_numbers: list[int], *, sign: int) -> str:
+        separator = " − " if sign == -1 else " + "
+        return separator.join(map(str, run_numbers))
+
+    def _set_combine_busy(self, busy: bool, label: str = "") -> None:
+        """Show/clear the busy affordances for an in-flight combine."""
+        if busy:
+            self._table.viewport().setCursor(Qt.CursorShape.BusyCursor)
+            self.combine_status.emit(f"Combining runs {label}…")
+        else:
+            self._table.viewport().unsetCursor()
+            self.combine_status.emit("")
+
+    def shutdown_workers(self, timeout_ms: int = 10_000) -> None:
+        """Stop background combine work (call from the main window's closeEvent).
+
+        The browser is a docked widget, so its own ``closeEvent`` never fires;
+        the main window shuts it down alongside the other panel runners.
+        """
+        self._tasks.shutdown(timeout_ms)
 
     def _prompt_signed_subtract(self, run_numbers: list[int]) -> list[int] | None:
         """Pick the sample (positive) run; return [sample, *others] or None.
