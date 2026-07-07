@@ -493,6 +493,62 @@ class TestMainWindowFourier:
         assert single_tab._fit_range_min_spin.value() == pytest.approx(plot_x_min)
         assert single_tab._fit_range_max_spin.value() == pytest.approx(plot_x_max)
 
+    def test_frequency_fit_range_commit_survives_dataset_reselect_rerender(
+        self, mainwindow: MainWindow
+    ) -> None:
+        """A user-typed frequency fit range must stick, not silently no-op.
+
+        Regression: the Fit panel's frequency-range spinbox commit
+        (``_on_fit_range_edit_committed`` -> ``panel.set_fit_range``) routed
+        through ``PlotPanel._set_fit_range``, which unconditionally early-
+        returned for the frequency panel. The typed value never reached
+        ``_fit_x_min``/``_fit_x_max``, so the next render (here: reselecting
+        the same run, the real ``_sync_frequency_plot_for_current_dataset`` ->
+        ``_render_frequency_spectra`` path) mirrored the untouched full-extent
+        seed back into the spinboxes -- and a fit run at any point used the
+        full spectrum instead of the typed range.
+        """
+        dataset = _make_fourier_ready_dataset(8808, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8808)
+        mainwindow._on_domain_button_clicked("frequency")
+
+        _compute_fourier_sync(mainwindow)
+
+        single_tab = mainwindow._fit_panel._single_tab
+        full_min, full_max = mainwindow._frequency_plot_panel.get_fit_range()
+        assert full_min is not None and full_max is not None
+
+        narrow_min = full_min + 0.2 * (full_max - full_min)
+        narrow_max = full_max - 0.2 * (full_max - full_min)
+        single_tab._fit_range_min_spin.setValue(narrow_min)
+        single_tab._fit_range_min_spin.editingFinished.emit()
+        single_tab._fit_range_max_spin.setValue(narrow_max)
+        single_tab._fit_range_max_spin.editingFinished.emit()
+
+        # The commit must land in the plot's state immediately -- the range an
+        # actual frequency fit consumes, not just what the spinbox displays.
+        committed_min, committed_max = mainwindow._frequency_plot_panel.get_fit_range()
+        assert committed_min == pytest.approx(narrow_min)
+        assert committed_max == pytest.approx(narrow_max)
+        fit_dataset = mainwindow._active_frequency_fit_dataset()
+        assert fit_dataset is not None
+        assert float(fit_dataset.time.min()) >= narrow_min - 1e-6
+        assert float(fit_dataset.time.max()) <= narrow_max + 1e-6
+
+        # Trigger a real re-render via the same-run reselect path.
+        mainwindow._on_dataset_selected(8808)
+
+        rerendered_min, rerendered_max = mainwindow._frequency_plot_panel.get_fit_range()
+        assert rerendered_min == pytest.approx(narrow_min)
+        assert rerendered_max == pytest.approx(narrow_max)
+        assert single_tab._fit_range_min_spin.value() == pytest.approx(narrow_min)
+        assert single_tab._fit_range_max_spin.value() == pytest.approx(narrow_max)
+        fit_dataset_after = mainwindow._active_frequency_fit_dataset()
+        assert fit_dataset_after is not None
+        assert float(fit_dataset_after.time.min()) >= narrow_min - 1e-6
+        assert float(fit_dataset_after.time.max()) <= narrow_max + 1e-6
+
     def test_group_phase_estimation_uses_field_centered_window(
         self,
         mainwindow: MainWindow,
