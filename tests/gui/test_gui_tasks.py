@@ -317,3 +317,54 @@ def test_destroying_parent_without_shutdown_parks_running_worker():
     # the baseline. Reaching the baseline is the proof it finished cleanly.
     release.set()
     _wait_until(lambda: len(reaper._threads) == parked_before)
+
+
+def test_drain_orphan_threads_joins_a_leaked_worker():
+    """``drain_orphan_threads`` bounded-joins a worker orphaned without shutdown.
+
+    The reaper deliberately keeps an orphaned worker *running* (destroying a
+    live QThread aborts the process), so between tests that compute bleeds CPU
+    into the next test and flakes GUI tests on the sharded 2-core CI runners.
+    The autouse Qt-cleanup fixture calls this to join them. Here we reproduce the
+    exact leak (an owner destroyed without ``shutdown()``) with a non-cooperative
+    worker that ignores cancellation, prove it is still running, then prove the
+    drain joins it.
+    """
+    from PySide6.QtCore import QEvent, QObject
+    from PySide6.QtWidgets import QApplication
+
+    from asymmetry.gui.tasks import drain_orphan_threads
+
+    app = QApplication.instance()
+    assert app is not None
+    parent = QObject()
+    runner = TaskRunner(parent)
+    started = threading.Event()
+
+    def slow(worker: TaskWorker):
+        started.set()
+        # Ignores the cancel the orphan path requests, so it is still running
+        # when we assert the leak — the drain must wait it out, not cancel it.
+        QThread.msleep(500)
+
+    runner.start(slow)
+    assert started.wait(10.0)
+    live_thread = runner._live[0][0]
+
+    # Orphan it the way a GC'd panel does: destroy the owner without shutdown().
+    del runner
+    parent.deleteLater()
+    del parent
+    app.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    app.processEvents()
+
+    # The leak: the worker thread outlives its runner, still running.
+    assert live_thread.isRunning()
+
+    # The fix: a bounded join drains it (the 500 ms body completes inside 5 s).
+    joined = drain_orphan_threads(5000)
+    assert joined >= 1
+    assert not live_thread.isRunning()
+
+    # And it is a cheap no-op once nothing is left running.
+    assert drain_orphan_threads(5000) == 0
