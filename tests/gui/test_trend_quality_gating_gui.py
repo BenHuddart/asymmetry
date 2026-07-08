@@ -133,7 +133,15 @@ def test_provenance_line_reports_excluded_members(qapp):
     rows = _good_rows()
     rows[0]["include_in_trend"] = False
     _load(panel, rows)
-    panel._refresh_plot()
+    # Drive the provenance summary directly from the loaded rows rather than
+    # through _refresh_plot(). Routing it through the plot made this test flaky
+    # under CI's sharded, 2-core `-n auto` runs: loading rebuilds the y-selector
+    # table (clearing its selection), and under load the selection could still be
+    # empty when the final _draw_plot() read it live — sending _draw_plot down its
+    # "no selected parameter" early-return, which calls _update_trend_provenance([])
+    # and hides the line. The behaviour under test — that an excluded member is
+    # reported — is computed purely from the rows, so assert it at that seam.
+    panel._update_trend_provenance(panel._rows)
     # The top-level panel is never shown in the test, so check the explicit
     # hidden flag (set by _update_trend_provenance) rather than isVisible().
     assert not panel._trend_provenance_label.isHidden()

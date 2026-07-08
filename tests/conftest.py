@@ -204,6 +204,20 @@ def _cleanup_qt_widgets() -> Iterator[None]:
             pass
     _drain()
 
+    # Join any worker thread orphaned this test: a panel GC'd without
+    # shutdown_workers(), or a shutdown() whose bounded wait timed out, hands its
+    # still-running QThread to the process-level reaper (destroying a running
+    # QThread aborts). The reaper keeps it running by design; left alone that
+    # lingering compute bleeds CPU into the next test and flakes GUI tests on the
+    # sharded 2-core CI runners. findChildren(QThread) above cannot reach these
+    # (they are unparented from their dying runner), so bounded-join them here.
+    try:
+        from asymmetry.gui.tasks import drain_orphan_threads
+
+        drain_orphan_threads()
+    except Exception:
+        pass
+
     # Release any matplotlib figures embedded in the closed widgets.
     try:
         import matplotlib.pyplot as plt
