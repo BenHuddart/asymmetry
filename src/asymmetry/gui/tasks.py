@@ -73,6 +73,42 @@ class _OrphanThreadReaper(QObject):
                 t.deleteLater()
         self._threads = remaining
 
+    def join_running(self, timeout_ms: int) -> int:
+        """Cancel + bounded-join every still-running adopted thread.
+
+        Returns the count that were still running on entry. **Test-teardown
+        hygiene only** — see :func:`drain_orphan_threads`. Production keeps
+        orphaned threads running on purpose (destroying a running ``QThread``
+        aborts the process), so the app never calls this; a test fixture does,
+        so a leaked worker finishes during teardown instead of contending with
+        the next test. The ``cancel()`` helps workers that poll
+        ``is_cancelled()``; the rest are simply waited out (bounded).
+        """
+        running = 0
+        for thread, worker in list(self._threads):
+            try:
+                if not thread.isRunning():
+                    continue
+            except RuntimeError:
+                continue
+            running += 1
+            try:
+                if worker is not None:
+                    worker.cancel()
+            except (RuntimeError, AttributeError):
+                pass
+            try:
+                # quit() before wait(): the worker QThread runs an event loop, so
+                # it only finishes once quit() breaks it. quit() is safe to call
+                # cross-thread; without it wait() would block until the timeout
+                # because the finished->quit relay is queued to this (blocked)
+                # GUI thread. Mirrors TaskRunner.shutdown().
+                thread.quit()
+                thread.wait(timeout_ms)
+            except RuntimeError:
+                pass
+        return running
+
 
 _orphan_reaper: _OrphanThreadReaper | None = None
 
@@ -94,6 +130,27 @@ def retire_thread(thread: QThread, worker: object | None = None) -> None:
             # but is still destroyed at process exit; keeps GUI-thread affinity.
             _orphan_reaper.setParent(app)
     _orphan_reaper.adopt(thread, worker)
+
+
+def drain_orphan_threads(timeout_ms: int = 5000) -> int:
+    """Cancel + bounded-join any orphaned worker threads the reaper holds.
+
+    Test-support hook for the autouse Qt-cleanup fixture. A worker whose
+    ``TaskRunner`` was destroyed without ``shutdown()`` (a panel GC'd at the end
+    of a test), or one that timed out on ``shutdown``'s bounded wait, is handed
+    to the process-level :data:`_orphan_reaper`, which deliberately keeps it
+    **running** until it finishes on its own (destroying a running ``QThread``
+    aborts the process). Left alone, that lingering compute bleeds CPU into the
+    next test and makes GUI tests flaky under the sharded, 2-core CI runners.
+    This joins them at teardown instead.
+
+    Cheap no-op when nothing has been orphaned (the common case). Returns the
+    number of threads that were still running. Not called by the app itself —
+    production keeps the keep-alive semantics unchanged.
+    """
+    if _orphan_reaper is None:
+        return 0
+    return _orphan_reaper.join_running(timeout_ms)
 
 
 def _retire_running_threads(live: list[tuple[QThread, TaskWorker]]) -> None:
