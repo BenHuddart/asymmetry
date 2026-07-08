@@ -5902,12 +5902,22 @@ class PlotPanel(QWidget):
             self._edit_annotation(ann_idx)
 
     def _prompt_handle_value_edit(self, handle: str) -> None:
-        """Prompt for an exact fit-handle x-value."""
+        """Prompt for an exact fit-handle x-value (time-domain click-to-edit).
+
+        Frequency panels deliberately skip this: exact entry there is the Fit
+        dock's MHz range spinboxes, and opening a modal ``QInputDialog`` from a
+        stationary click on a (possibly coincident) frequency handle would block
+        the event loop — a hang the per-test thread timeout cannot interrupt.
+        The frequency span stays fully draggable; only the click-to-type editor
+        is time-domain-only.
+        """
+        if self._is_frequency_plot_panel():
+            return
         if self._fit_x_min is None or self._fit_x_max is None:
             return
 
         current = self._fit_x_min if handle == "min" else self._fit_x_max
-        prompt = "Fit ν-value (MHz):" if self._is_frequency_plot_panel() else "Fit x-value (µs):"
+        prompt = "Fit x-value (µs):"
         value, ok = QInputDialog.getDouble(
             self,
             "Set Fit Range",

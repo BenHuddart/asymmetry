@@ -370,6 +370,43 @@ def test_frequency_fit_range_drag_converts_field_units_to_mhz(qapp) -> None:
 
 
 @pytest.mark.gui
+def test_frequency_stationary_handle_click_opens_no_modal_dialog(qapp, monkeypatch) -> None:
+    """A stationary click on a frequency handle must not open a modal editor.
+
+    Regression: enabling frequency fit-range handles made a click-without-drag
+    reach ``_prompt_handle_value_edit``, whose modal ``QInputDialog`` blocks the
+    event loop — a hang the per-test *thread* timeout cannot interrupt (it hung
+    a CI GUI shard for 10 min). Frequency exact-entry is the Fit-dock spinboxes,
+    so the stationary click is a no-op; only dragging moves the range.
+    """
+    from types import SimpleNamespace
+
+    from PySide6.QtWidgets import QInputDialog
+
+    from asymmetry.gui.panels.plot_panel import PlotPanel
+
+    calls: list[int] = []
+    monkeypatch.setattr(
+        QInputDialog, "getDouble", staticmethod(lambda *a, **k: (calls.append(1), (0.0, False))[1])
+    )
+
+    panel = PlotPanel(domain="frequency")
+    panel.plot_dataset(_frequency_dataset(1, center=3.0))
+    panel._canvas.draw()
+    panel._moments_overlay_visible = False
+    panel._add_label_btn.setChecked(False)
+
+    px = panel._ax.transData.transform((panel._fit_x_min, 0.0))[0]
+    event = SimpleNamespace(
+        inaxes=panel._ax, x=px, y=100.0, xdata=panel._fit_x_min, ydata=0.0, button=1, dblclick=False
+    )
+    panel._on_canvas_button_press(event)
+    panel._on_canvas_button_release(event)
+
+    assert calls == []  # no modal dialog was opened
+
+
+@pytest.mark.gui
 def test_frequency_fit_handle_defers_to_visible_moments_overlay(qapp) -> None:
     """With the moments overlay visible, its handles win the click (shared grammar)."""
     from types import SimpleNamespace
