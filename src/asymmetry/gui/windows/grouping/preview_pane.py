@@ -48,6 +48,14 @@ from asymmetry.gui.tasks import TaskCancelledError, TaskRunner, TaskWorker
 #: Debounce window for coalescing rapid edits before a recompute.
 _DEBOUNCE_MS = 300
 
+#: Cap on points drawn in the preview. The pane is only a few hundred pixels
+#: wide, so plotting the full reduced curve (which can be ~1M points for a
+#: long high-resolution run) is wasted work — and matplotlib ``errorbar`` over
+#: ~1M points freezes the GUI thread for ~12 s (rendering cannot leave the GUI
+#: thread). Uniformly striding down to this many points before drawing keeps
+#: the draw ~30 ms; the preview is advisory so exact sampling does not matter.
+_MAX_PREVIEW_POINTS = 2000
+
 #: Fixed height of the preview section so it never fights the form for space.
 _PANE_HEIGHT = 200
 
@@ -359,13 +367,39 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
         facility=request.facility or str(grouping.get("instrument", "") or ""),
         reference_resolver=None,
     )
+    # Decimate here, off the GUI thread: bounds both the marshalled payload and
+    # the GUI-thread errorbar draw (which is O(points) and the real hang on large
+    # runs — see _MAX_PREVIEW_POINTS).
+    time, asymmetry, error = _decimate_for_preview(
+        reduction.time, reduction.asymmetry, reduction.error, _MAX_PREVIEW_POINTS
+    )
     return _PreviewResult(
         generation=request.generation,
-        time=reduction.time,
-        asymmetry=reduction.asymmetry,
-        error=reduction.error,
+        time=time,
+        asymmetry=asymmetry,
+        error=error,
         run_number=request.run_number,
     )
+
+
+def _decimate_for_preview(
+    time: np.ndarray,
+    asymmetry: np.ndarray,
+    error: np.ndarray,
+    max_points: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Uniformly stride the reduced curve down to at most ``max_points``.
+
+    All three arrays share one stride so points stay aligned. Curves already
+    at or below the cap pass through unchanged. Advisory-only sampling: no
+    min/max envelope, just a plain stride — cheap and visually adequate for
+    the preview.
+    """
+    n = int(time.size)
+    if n <= max_points or max_points <= 0:
+        return time, asymmetry, error
+    step = (n + max_points - 1) // max_points  # ceil(n / max_points)
+    return time[::step], asymmetry[::step], error[::step]
 
 
 def _as_int(value: Any, default: int) -> int:

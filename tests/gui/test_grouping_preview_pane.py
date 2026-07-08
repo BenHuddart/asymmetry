@@ -42,7 +42,11 @@ from asymmetry.core.transform import (
 )
 from asymmetry.gui.windows.grouping import preview_pane as preview_pane_module
 from asymmetry.gui.windows.grouping.dialog import GroupingDialog
-from asymmetry.gui.windows.grouping.preview_pane import GroupingPreviewPane
+from asymmetry.gui.windows.grouping.preview_pane import (
+    _MAX_PREVIEW_POINTS,
+    GroupingPreviewPane,
+    _decimate_for_preview,
+)
 
 
 @pytest.fixture(scope="module")
@@ -550,5 +554,85 @@ def test_profile_with_empty_groups_surfaces_muted_error(qapp: QApplication) -> N
         pane.flush()
         _wait_until(lambda: pane._status.text().startswith("Preview unavailable"))
         assert "no detectors" in pane._status.text()
+    finally:
+        pane.shutdown()
+
+
+# --------------------------------------------------------------------------- #
+# Preview decimation: bounds the GUI-thread errorbar draw on huge runs
+# --------------------------------------------------------------------------- #
+
+
+def test_decimate_for_preview_passes_through_small_curves() -> None:
+    """A curve at/below the cap is returned unchanged (no copy needed)."""
+    n = _MAX_PREVIEW_POINTS
+    time = np.arange(n, dtype=float)
+    asymmetry = np.linspace(0.0, 1.0, n)
+    error = np.full(n, 0.01)
+    out_t, out_a, out_e = _decimate_for_preview(time, asymmetry, error, _MAX_PREVIEW_POINTS)
+    assert out_t is time
+    assert out_a is asymmetry
+    assert out_e is error
+
+
+def test_decimate_for_preview_strides_large_curve_to_cap() -> None:
+    """A ~1M-point curve (the pathological case that froze the GUI) is bounded."""
+    n = 1_000_000
+    time = np.arange(n, dtype=float)
+    asymmetry = np.sin(time)
+    error = np.full(n, 0.01)
+    out_t, out_a, out_e = _decimate_for_preview(time, asymmetry, error, _MAX_PREVIEW_POINTS)
+    assert out_t.size <= _MAX_PREVIEW_POINTS
+    assert out_a.size == out_t.size
+    assert out_e.size == out_t.size
+    # Uniform stride: the decimated time values stay monotonically increasing
+    # and are a subsequence of the original.
+    assert np.all(np.diff(out_t) > 0)
+    assert np.isin(out_t, time).all()
+
+
+def test_decimate_for_preview_nonpositive_cap_returns_input_unchanged() -> None:
+    time = np.arange(10, dtype=float)
+    asymmetry = np.zeros(10)
+    error = np.zeros(10)
+    out_t, out_a, out_e = _decimate_for_preview(time, asymmetry, error, 0)
+    assert out_t is time
+    assert out_a is asymmetry
+    assert out_e is error
+
+
+def test_decimate_for_preview_handles_empty_arrays() -> None:
+    time = np.array([], dtype=float)
+    asymmetry = np.array([], dtype=float)
+    error = np.array([], dtype=float)
+    out_t, out_a, out_e = _decimate_for_preview(time, asymmetry, error, _MAX_PREVIEW_POINTS)
+    assert out_t.size == 0
+    assert out_a.size == 0
+    assert out_e.size == 0
+
+
+def test_run_reduction_result_is_bounded_for_large_curve(qapp: QApplication) -> None:
+    """End-to-end: a preview request over a huge run yields a bounded curve.
+
+    Builds a run with 1M-bin histograms (the size that produced the 12 s
+    GUI-thread freeze) and asserts the marshalled ``_PreviewResult`` — and thus
+    the arrays ``_draw`` hands to matplotlib — never exceeds the preview cap.
+    """
+    n = 1_000_000
+    rng = np.random.default_rng(0)
+    forward = 100.0 + rng.normal(size=n)
+    backward = 80.0 + rng.normal(size=n)
+    dataset = _histogram_dataset(forward=forward, backward=backward)
+    pane = GroupingPreviewPane()
+    try:
+        pane.request_preview(
+            histograms=dataset.run.histograms,
+            grouping=dataset.run.grouping,
+            run_number=int(dataset.run_number),
+        )
+        pane.flush()
+        _wait_until(lambda: pane._tasks.active_count == 0 and bool(pane._axes.get_lines()))
+        curve = _last_curve(pane)
+        assert curve.size <= _MAX_PREVIEW_POINTS
     finally:
         pane.shutdown()
