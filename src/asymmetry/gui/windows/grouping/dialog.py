@@ -12,13 +12,16 @@ module so the historical module API is unchanged after the package split.
 
 from __future__ import annotations
 
+import contextlib
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QApplication,
     QButtonGroup,
     QComboBox,
     QDialog,
@@ -274,6 +277,11 @@ class GroupingDialog(QDialog):
         # the fingerprint, or synthesized from the reference run's payload.
         self._draft = self._initial_draft()
         self._draft_name = self._draft.name
+        #: The most recent resolved seed payload (set by :meth:`_seed_source`).
+        #: The read-only auto-detect t0 display reads the consensus t0 the
+        #: resolve already computed from here instead of re-scanning every
+        #: detector a second time (see :meth:`_seed_t0_spin_from_detection`).
+        self._last_resolved_seed: dict[str, Any] | None = None
         # The draft resolved against the preview run: a full payload with the
         # historical ``run.grouping`` shape that the form controls seed from. It
         # merges the draft's shareable settings with the preview run's per-run
@@ -997,7 +1005,21 @@ class GroupingDialog(QDialog):
             # back to it later restores the in-progress edits, not the file.
             payload = dict(self._override_draft_for(int(target)))
         else:
-            payload = payload_from_profile_for_preview(self._draft, self._run)
+            # An ``auto_detect`` t0 or ``per_run_estimate`` alpha policy makes
+            # this resolve scan/sum every detector on the GUI thread (hundreds
+            # of ms at HiFi scale); show a wait cursor for the duration.
+            expensive = (
+                self._draft.t0_policy.mode == "auto_detect"
+                or self._draft.alpha_policy.mode == "per_run_estimate"
+            )
+            cursor = self._busy_cursor() if expensive else contextlib.nullcontext()
+            with cursor:
+                payload = payload_from_profile_for_preview(self._draft, self._run)
+
+        # Cache the resolved payload so the read-only auto-detect t0 display can
+        # reuse the consensus t0 (and strategy/spread) the resolve just derived,
+        # rather than running a second full-detector scan on the GUI thread.
+        self._last_resolved_seed = payload
 
         class _SeedSource:
             grouping = payload
@@ -1754,26 +1776,76 @@ class GroupingDialog(QDialog):
             self._t0_spin.blockSignals(blocked)
 
     def _seed_t0_spin_from_detection(self) -> None:
-        """Run the t0 search on the preview run and show it in the read-only spin."""
-        base = self._bin_index_base()
+        """Show the auto-detected common t0 in the read-only t0 spinbox.
+
+        Prefers the consensus the resolve already computed (cached in
+        ``_last_resolved_seed`` whenever the draft was resolved under
+        ``auto_detect``). Re-running :func:`find_t0_for_run` here would scan
+        every detector a second time on the GUI thread — hundreds of ms at HiFi
+        scale — and, because it merged the reference-dataset metadata that
+        core's :func:`resolve_effective_grouping` does not, could even display a
+        t0 that disagreed with the one the reduction actually uses. Only an
+        explicit toggle to auto-detect (no fresh resolve in scope) falls back to
+        a scan, using the same ``run.metadata`` core does so the display cannot
+        diverge, under a wait cursor.
+        """
         if self._run is None or not self._run.histograms:
             self._t0_mode_label.setText("Auto-detect: preview run has no histograms")
             return
-        metadata = dict(getattr(self._reference_dataset, "metadata", {}) or {})
-        metadata.update(self._run.metadata or {})
-        search = find_t0_for_run(self._run.histograms, metadata)
+        resolved = self._last_resolved_seed
+        # Require ``t0_bin`` too, not just the strategy: ``_apply_t0_policy``
+        # writes the strategy before its ``delta == 0`` early return but leaves
+        # ``t0_bin`` unwritten there, so a run with per-detector-only t0 could
+        # carry provenance without a scalar consensus. Falling through to the
+        # scan then yields the right value, whereas a ``t0_bin`` default of 0
+        # would silently display the wrong t0.
+        if resolved is not None and resolved.get("t0_search_strategy") and "t0_bin" in resolved:
+            self._apply_detected_t0_to_spin(
+                consensus_t0=int(resolved["t0_bin"]),
+                strategy=str(resolved["t0_search_strategy"]),
+                spread_bins=int(resolved.get("t0_search_spread_bins", 0)),
+            )
+            return
+        with self._busy_cursor():
+            search = find_t0_for_run(self._run.histograms, self._run.metadata or {})
         if not search.ok:
             self._t0_mode_label.setText(f"Auto-detect: {search.message}")
             return
+        self._apply_detected_t0_to_spin(
+            consensus_t0=int(search.consensus_t0_bin),
+            strategy=str(search.strategy),
+            spread_bins=int(search.spread_bins),
+        )
+
+    def _apply_detected_t0_to_spin(
+        self, *, consensus_t0: int, strategy: str, spread_bins: int
+    ) -> None:
+        """Write a detected common t0 (+ provenance label) into the read-only spin."""
+        base = self._bin_index_base()
         blocked = self._t0_spin.blockSignals(True)
         try:
-            self._t0_spin.setValue(int(search.consensus_t0_bin) + base)
+            self._t0_spin.setValue(consensus_t0 + base)
         finally:
             self._t0_spin.blockSignals(blocked)
-        strategy = "prompt peak" if search.strategy == "prompt_peak" else "pulse-edge midpoint"
+        label = "prompt peak" if strategy == "prompt_peak" else "pulse-edge midpoint"
         self._t0_mode_label.setText(
-            f"Auto-detect: {strategy}, detector spread {search.spread_bins} bins (per run)"
+            f"Auto-detect: {label}, detector spread {spread_bins} bins (per run)"
         )
+
+    @contextlib.contextmanager
+    def _busy_cursor(self) -> Iterator[None]:
+        """Show a wait cursor for the duration of a synchronous detector scan.
+
+        The remaining GUI-thread ``find_t0_for_run`` scans (an explicit
+        auto-detect toggle, the manual **Find t0** button) are one-shot and
+        unavoidable without an async loading state; a wait cursor is the honest
+        signal that the app is working rather than wedged.
+        """
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            yield
+        finally:
+            QApplication.restoreOverrideCursor()
 
     def _on_t0_mode_changed(self, *args: object) -> None:
         """React to a t0 mode change: gate controls, then refresh the preview."""
@@ -3233,7 +3305,8 @@ class GroupingDialog(QDialog):
         if not histograms:
             QMessageBox.warning(self, "Find t0", "All detectors are excluded.")
             return
-        search = find_t0_for_run(histograms, metadata)
+        with self._busy_cursor():
+            search = find_t0_for_run(histograms, metadata)
         if not search.ok:
             QMessageBox.warning(self, "Find t0", search.message)
             return
