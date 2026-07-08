@@ -26,6 +26,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to at most 2000 points on the preview worker thread before it is drawn (the
   pane is only a few hundred pixels wide, so the sampling is visually
   indistinguishable), cutting the draw from seconds to tens of milliseconds.
+- **The grouping window no longer scans every detector twice when auto-detect
+  t0 is on.** With an ``auto_detect`` t0 policy, opening the window or switching
+  profile/run ran the full per-detector t0 search once to resolve the grouping
+  and again to fill the read-only t0 display — a redundant GUI-thread scan worth
+  hundreds of milliseconds on a large, high-detector-count run. The display now
+  reuses the consensus the resolve already computed. This also fixes a latent
+  mismatch: the display scan merged the reference-dataset metadata that the
+  resolve did not, so it could show a t0 that disagreed with the one the
+  reduction actually used. The remaining one-off scans (an explicit switch to
+  auto-detect, the manual **Find t0** button) now show a wait cursor.
 - **A Gaussian/Lorentzian preview on a Fourier spectrum now shows the peak,
   not just the background.** The peak centre ``nu0`` (and height/width) are
   re-derived from the displayed spectrum whenever the run changes, so they no
