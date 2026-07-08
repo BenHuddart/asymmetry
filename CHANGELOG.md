@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The grouping window's asymmetry preview no longer freezes the GUI on
+  large runs.** The live forward/backward preview curve was drawn on the GUI
+  thread as a Matplotlib errorbar over every reduced point — cheap for a
+  typical run but ~12 s for a long, high-resolution one (≈1 M points), since
+  rendering cannot leave the GUI thread. The curve is now uniformly decimated
+  to at most 2000 points on the preview worker thread before it is drawn (the
+  pane is only a few hundred pixels wide, so the sampling is visually
+  indistinguishable), cutting the draw from seconds to tens of milliseconds.
 - **A Gaussian/Lorentzian preview on a Fourier spectrum now shows the peak,
   not just the background.** The peak centre ``nu0`` (and height/width) are
   re-derived from the displayed spectrum whenever the run changes, so they no
