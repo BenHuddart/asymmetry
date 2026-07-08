@@ -5342,10 +5342,11 @@ class PlotPanel(QWidget):
         and the next render mirrored the untouched full-extent seed back into
         the display.
 
-        Frequency panels still have no draggable selector or artists:
-        ``_draw_fit_range_artists`` and ``_detect_handle_hit`` gate on domain
-        themselves, so no visual handle exists to drag and the mouse path
-        never reaches this method for a frequency panel.
+        Frequency panels now draw a draggable span too (converted to the
+        displayed field/relative unit): ``_draw_fit_range_artists`` draws it,
+        ``_detect_handle_hit`` hit-tests it, and the drag path in
+        ``_on_canvas_motion_notify`` converts the cursor back to canonical MHz
+        before reaching this method.
         """
         lo = float(min(x_min, x_max))
         hi = float(max(x_min, x_max))
@@ -5540,18 +5541,49 @@ class PlotPanel(QWidget):
         self._canvas.draw_idle()
         self.moments_window_changed.emit(min(lo, hi), max(lo, hi))
 
+    def _frequency_fit_range_display(self) -> tuple[float, float] | None:
+        """Return ``(nu_min, nu_max)`` fit-range endpoints in the display axis.
+
+        ``_fit_x_min``/``_fit_x_max`` are stored in canonical absolute MHz (the
+        fit spinbox and ``get_fit_dataset`` both work in MHz); the frequency
+        axis may be showing field or relative-to-reference units, so convert
+        each endpoint for drawing/hit-testing exactly as the moments overlay
+        does in :meth:`_moments_window_display`.
+        """
+        if self._fit_x_min is None or self._fit_x_max is None:
+            return None
+        unit = self._current_frequency_x_unit
+        relative = self._frequency_axis_relative_to_reference
+        lo = self._convert_canonical_mhz_to_display_limit(
+            self._fit_x_min, unit=unit, relative=relative
+        )
+        hi = self._convert_canonical_mhz_to_display_limit(
+            self._fit_x_max, unit=unit, relative=relative
+        )
+        return lo, hi
+
     def _draw_fit_range_artists(self) -> None:
         """Draw highlight and edge handles for the selected fit range."""
         if not self._has_mpl:
             return
-        # The frequency panel has no time-domain fit range, but it does carry the
-        # moments overlay; redraw it here so it survives every plot rebuild.
+        # The frequency panel also carries the moments overlay; redraw it here so
+        # it survives every plot rebuild.
         self._draw_moments_artists()
-        if self._is_frequency_plot_panel():
-            return
         self._clear_fit_range_artists()
 
         if self._fit_x_min is None or self._fit_x_max is None:
+            return
+
+        # Frequency panels draw a single span on the main axis, converting the
+        # MHz-stored range into the displayed field/relative units.
+        if self._is_frequency_plot_panel():
+            window = self._frequency_fit_range_display()
+            if window is None:
+                return
+            span, left_line, right_line = draw_fit_range_span(self._ax, min(window), max(window))
+            self._fit_span_artists.append(span)
+            self._fit_min_handles.append(left_line)
+            self._fit_max_handles.append(right_line)
             return
 
         axes = self._fit_range_axes()
@@ -5569,21 +5601,14 @@ class PlotPanel(QWidget):
     def _detect_handle_hit(self, event) -> str | None:
         """Return which fit handle (min/max) was clicked, if any.
 
-        Frequency panels never draw a fit-range span/handles (see
-        ``_draw_fit_range_artists``), and now that ``_set_fit_range`` stores
-        ``_fit_x_min``/``_fit_x_max`` for every domain (so the frequency
-        Fit-panel spinbox commit actually takes effect), those coordinates are
-        no longer reliably ``None`` on a frequency panel. Without this guard a
-        click could hit-test against an invisible handle position and start a
-        "drag" that mutates state with no on-screen feedback — gate here, at
-        the hit-test, so the documented no-draggable-selector contract holds
-        regardless of what ``_fit_x_min``/``_fit_x_max`` contain. The same
-        guard keeps these invisible positions from stealing clicks aimed at
-        the visible spectral-moments handles, whose default window coincides
-        with the seeded full-extent fit range.
+        Frequency panels now draw a draggable fit-range span too, hit-tested on
+        the main axis against the endpoints converted to display units. The one
+        exception is when the spectral-moments overlay is visible: its handles
+        share the same grammar and its default window coincides with the
+        seeded full-extent fit range, so we defer to the moments hit-test
+        (checked next in ``_on_canvas_button_press``) rather than steal its
+        clicks.
         """
-        if self._is_frequency_plot_panel():
-            return None
         if (
             self._fit_x_min is None
             or self._fit_x_max is None
@@ -5592,6 +5617,19 @@ class PlotPanel(QWidget):
             or event.y is None
         ):
             return None
+
+        if self._is_frequency_plot_panel():
+            if self._moments_overlay_visible or event.inaxes is not self._ax:
+                return None
+            window = self._frequency_fit_range_display()
+            if window is None:
+                return None
+            return nearest_handle(
+                self._ax,
+                [(window[0], "min"), (window[1], "max")],
+                event.x,
+                tolerance_px=8.0,
+            )
 
         hit_axis = None
         for axis in self._fit_range_axes():
@@ -5706,10 +5744,19 @@ class PlotPanel(QWidget):
             if not any(event.inaxes is axis for axis in self._fit_range_axes()):
                 return
             self._drag_started = True
+            new_value = float(event.xdata)
+            # The frequency range is stored in canonical MHz, but the cursor is
+            # in the displayed field/relative unit — convert back before storing.
+            if self._is_frequency_plot_panel():
+                new_value = self._convert_display_limit_to_canonical_mhz(
+                    new_value,
+                    unit=self._current_frequency_x_unit,
+                    relative=self._frequency_axis_relative_to_reference,
+                )
             if self._active_fit_handle == "min":
-                self._set_fit_range(event.xdata, self._fit_x_max, emit_signal=True, redraw=True)
+                self._set_fit_range(new_value, self._fit_x_max, emit_signal=True, redraw=True)
             else:
-                self._set_fit_range(self._fit_x_min, event.xdata, emit_signal=True, redraw=True)
+                self._set_fit_range(self._fit_x_min, new_value, emit_signal=True, redraw=True)
 
         if self._active_moments_handle is not None and event.inaxes is self._ax:
             self._drag_started = True
@@ -5855,15 +5902,26 @@ class PlotPanel(QWidget):
             self._edit_annotation(ann_idx)
 
     def _prompt_handle_value_edit(self, handle: str) -> None:
-        """Prompt for an exact fit-handle x-value."""
+        """Prompt for an exact fit-handle x-value (time-domain click-to-edit).
+
+        Frequency panels deliberately skip this: exact entry there is the Fit
+        dock's MHz range spinboxes, and opening a modal ``QInputDialog`` from a
+        stationary click on a (possibly coincident) frequency handle would block
+        the event loop — a hang the per-test thread timeout cannot interrupt.
+        The frequency span stays fully draggable; only the click-to-type editor
+        is time-domain-only.
+        """
+        if self._is_frequency_plot_panel():
+            return
         if self._fit_x_min is None or self._fit_x_max is None:
             return
 
         current = self._fit_x_min if handle == "min" else self._fit_x_max
+        prompt = "Fit x-value (µs):"
         value, ok = QInputDialog.getDouble(
             self,
             "Set Fit Range",
-            "Fit x-value (µs):",
+            prompt,
             float(current),
             -1e6,
             1e6,

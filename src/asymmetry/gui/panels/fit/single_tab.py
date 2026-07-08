@@ -585,6 +585,25 @@ class SingleFitTab(FitTabBase):
         self._param_table.populate(model, value_overrides=value_overrides, fixed_names=fixed_names)
         self._update_drop_background_enabled()
 
+    def reseed_frequency_peaks(self) -> None:
+        """Re-derive frequency peak seeds from the current spectrum, in place.
+
+        The peak position/height/width/background are field-dependent, so the
+        default GaussianPeak seed computed while switching to the frequency
+        domain (against whatever dataset was then current) is stale once the
+        real spectrum is bound — and carry-forward/session-restore replay that
+        stale seed verbatim, leaving ``nu0`` far off the displayed axis so a
+        preview shows only the background. Recompute against ``_current_dataset``
+        and write just the seed values, preserving the model, fixed flags and
+        bounds. A no-op outside the frequency domain or with no dataset/model.
+        """
+        if self._domain != "frequency" or self._current_dataset is None:
+            return
+        if self._composite_model is None:
+            return
+        seeds = seed_peak_parameters_from_dataset(self._current_dataset, self._composite_model)
+        self._param_table.apply_value_seeds(seeds)
+
     def _synchronize_fraction_value_rows(self, edited_param_name: str | None = None) -> None:
         self._param_table.synchronize_fractions(edited_param_name)
 
