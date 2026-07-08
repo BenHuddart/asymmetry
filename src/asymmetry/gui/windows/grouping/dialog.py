@@ -2716,11 +2716,13 @@ class GroupingDialog(QDialog):
         """Render the detector-group table used as grouping context.
 
         ``itemChanged`` is connected to both ``_mark_dirty`` and
-        ``_refresh_preview`` (a synchronous ``resolve_effective_grouping``), so
-        populating without blocking signals fires up to 4×N_groups redundant
-        resolves. Population is not a user edit, so the signal is blocked for
-        the whole rebuild; callers that need the dirty/preview side effects for
-        the triggering action invoke them explicitly once, after this returns.
+        ``_refresh_preview`` (which queues a debounced off-thread recompute on
+        the preview pane's worker — resolution no longer runs synchronously
+        here, see B3/#216), so populating without blocking signals fires up to
+        4×N_groups redundant dirty marks + queued previews. Population is not a
+        user edit, so the signal is blocked for the whole rebuild; callers that
+        need the dirty/preview side effects for the triggering action invoke
+        them explicitly once, after this returns.
         """
         blocked = self._group_table.blockSignals(True)
         try:
