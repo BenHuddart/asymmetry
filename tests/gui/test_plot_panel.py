@@ -3548,10 +3548,8 @@ class TestPlotPanel:
             panel.close()
             panel.deleteLater()
 
-    def test_frequency_panel_never_draws_fit_range_artists_or_handles(
-        self, qapp: QApplication
-    ) -> None:
-        """State-only: a frequency panel still draws no fit-range span/handles."""
+    def test_frequency_panel_draws_fit_range_span_and_handles(self, qapp: QApplication) -> None:
+        """A frequency panel now draws the fit-range span + edge handles."""
         panel, _ds = self._frequency_panel_dataset()
         try:
             if not panel._has_mpl:
@@ -3559,32 +3557,33 @@ class TestPlotPanel:
 
             panel.set_fit_range(2.0, 4.0)
 
-            assert panel._fit_span_artists == []
-            assert panel._fit_min_handles == []
-            assert panel._fit_max_handles == []
+            assert len(panel._fit_span_artists) == 1
+            assert len(panel._fit_min_handles) == 1
+            assert len(panel._fit_max_handles) == 1
         finally:
             panel.close()
             panel.deleteLater()
 
-    def test_frequency_panel_detect_handle_hit_always_none(self, qapp: QApplication) -> None:
-        """No draggable selector on a frequency panel, even at a handle-shaped position.
+    def test_frequency_panel_detect_handle_hit_finds_edge(self, qapp: QApplication) -> None:
+        """A click at a frequency fit-range edge is now reported as a handle hit.
 
-        ``_fit_x_min``/``_fit_x_max`` are non-``None`` on a frequency panel (seeded
-        by ``plot_dataset``, and now also settable via ``set_fit_range``), so a
-        click positioned exactly at one of those x-values must still not be
-        reported as a handle hit — the frequency panel draws no handles, and a
-        "drag" started from a ghost hit-test would mutate state with no visual
-        feedback.
+        ``_fit_x_min``/``_fit_x_max`` are seeded by ``plot_dataset`` and drawn as
+        a draggable span; a click at the min x-value reports ``"min"``. When the
+        spectral-moments overlay is visible its handles share the grammar and
+        coincide, so the fit hit-test defers to it (returns ``None``).
         """
         panel, _ds = self._frequency_panel_dataset()
         try:
             if not panel._has_mpl:
                 pytest.skip("matplotlib not available")
 
-            assert panel._fit_x_min is not None and panel._fit_x_max is not None
+            panel.set_fit_range(2.0, 4.0)
             px = panel._ax.transData.transform((panel._fit_x_min, 0.0))[0]
             event = SimpleNamespace(inaxes=panel._ax, x=px, y=100.0, xdata=panel._fit_x_min)
 
+            assert panel._detect_handle_hit(event) == "min"
+
+            panel._moments_overlay_visible = True
             assert panel._detect_handle_hit(event) is None
         finally:
             panel.close()
@@ -3621,10 +3620,10 @@ class TestPlotPanel:
 
                 assert restored.get_fit_range() == (pytest.approx(2.0), pytest.approx(4.0))
                 assert restored.get_view_limits() == pytest.approx(view_before)
-                # Restore must not resurrect the no-artists contract either.
-                assert restored._fit_span_artists == []
-                assert restored._fit_min_handles == []
-                assert restored._fit_max_handles == []
+                # The restored range is drawn as the fit-range span + handles.
+                assert len(restored._fit_span_artists) == 1
+                assert len(restored._fit_min_handles) == 1
+                assert len(restored._fit_max_handles) == 1
             finally:
                 restored.close()
                 restored.deleteLater()
@@ -4987,10 +4986,14 @@ class TestFrequencyLineRendering:
             panel.plot_dataset(ds)
 
             expected_x = 2000.0 * panel._mhz_per_gauss()
-            dashed = [ln for ln in panel._ax.lines if ln.get_linestyle() == "--"]
-            assert len(dashed) == 1
-            assert dashed[0].get_xdata()[0] == pytest.approx(expected_x)
-            assert dashed[0].get_label() == "_nolegend_"
+            larmor = [
+                ln
+                for ln in panel._ax.lines
+                if ln.get_linestyle() == "--" and ln.get_color() == tokens.TEXT_MUTED
+            ]
+            assert len(larmor) == 1
+            assert larmor[0].get_xdata()[0] == pytest.approx(expected_x)
+            assert larmor[0].get_label() == "_nolegend_"
         finally:
             panel.close()
             panel.deleteLater()
@@ -5013,8 +5016,12 @@ class TestFrequencyLineRendering:
             )
             panel.plot_dataset(ds)
 
-            dashed = [ln for ln in panel._ax.lines if ln.get_linestyle() == "--"]
-            assert dashed == []
+            larmor = [
+                ln
+                for ln in panel._ax.lines
+                if ln.get_linestyle() == "--" and ln.get_color() == tokens.TEXT_MUTED
+            ]
+            assert larmor == []
         finally:
             panel.close()
             panel.deleteLater()
@@ -5044,8 +5051,12 @@ class TestFrequencyLineRendering:
             panel.plot_dataset(ds)
 
             assert panel._frequency_axis_is_correlation is True
-            dashed = [ln for ln in panel._ax.lines if ln.get_linestyle() == "--"]
-            assert dashed == []
+            larmor = [
+                ln
+                for ln in panel._ax.lines
+                if ln.get_linestyle() == "--" and ln.get_color() == tokens.TEXT_MUTED
+            ]
+            assert larmor == []
         finally:
             panel.close()
             panel.deleteLater()
@@ -5075,8 +5086,12 @@ class TestFrequencyLineRendering:
             panel.plot_datasets([ds1, ds2])
 
             assert len(panel._ax.containers) == 0
-            dashed = [ln for ln in panel._ax.lines if ln.get_linestyle() == "--"]
-            assert dashed == []
+            larmor = [
+                ln
+                for ln in panel._ax.lines
+                if ln.get_linestyle() == "--" and ln.get_color() == tokens.TEXT_MUTED
+            ]
+            assert larmor == []
         finally:
             panel.close()
             panel.deleteLater()

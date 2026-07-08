@@ -494,10 +494,10 @@ def _apply_fit_range_display(
 
     In the time domain a plot always supplies a range (seeded to the full
     dataset extent), so the spins simply mirror it, disabled when the plot
-    genuinely has none (no dataset). In the frequency domain there is no
-    draggable range selector, so the spins stay editable regardless — an
-    unset range shows a "full spectrum" placeholder instead of a leftover
-    value from a previous domain/run (D6/F15).
+    genuinely has none (no dataset). In the frequency domain the spins stay
+    editable regardless of whether the plot has a range — an unset range shows
+    a "full spectrum" placeholder instead of a leftover value from a previous
+    domain/run (D6/F15).
     """
     have_range = x_min is not None and x_max is not None
     if domain == "frequency":
@@ -1569,6 +1569,26 @@ class FitParameterTable(QTableWidget):
         for entry in self._auxiliary_param_state:
             parameters.add(_parameter_from_state_dict(entry))
         return parameters
+
+    def apply_value_seeds(self, seeds: dict[str, float]) -> None:
+        """Overwrite the value cell of named rows, leaving Fix/bounds/links intact.
+
+        Used to re-derive data-driven seeds (e.g. the frequency-domain peak
+        position/height/width, which track the run's field) onto a form whose
+        model structure and user-set constraints must be preserved. Wrapped in
+        :meth:`suspend` so it does not trip the user-edit handler, then
+        fraction rows are re-synced.
+        """
+        if not seeds:
+            return
+        with self.suspend():
+            for row, name in self._iter_parameter_rows():
+                if name not in seeds:
+                    continue
+                value_item = self.item(row, self.COL_VALUE)
+                if value_item is not None:
+                    value_item.setText(str(float(seeds[name])))
+        self.synchronize_fractions()
 
     def current_seed_values(self) -> dict[str, str]:
         """Return the live seed text per parameter name (skips non-finite cells)."""

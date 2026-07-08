@@ -29,6 +29,31 @@ The fitting x axis is stored internally as absolute frequency in MHz.  Plotting
 controls may show field in gauss or a reference-relative frequency axis, but fit
 parameters remain canonical: ``nu0`` and ``fwhm`` are MHz quantities.
 
+Fit range and seeding
+----------------------
+
+The fit range (``≤ ν ≤``, in MHz) restricts the fit to a band of the spectrum.
+As in the time domain, the band is drawn on the plot as a shaded span with
+dashed edges, and either edge can be dragged directly on the spectrum or typed
+into the range fields.  When the frequency axis is displayed in gauss or
+relative to a reference field the span follows the displayed units, but the
+range is always entered and stored as absolute MHz.
+
+Peak parameters are seeded automatically from the displayed spectrum: the
+centre ``nu0``, height, and width are read from the dominant peak of the run
+being fitted, so **Preview** draws the peak in place before you fit.  Because
+the peak position tracks each run's applied field, these seeds are re-derived
+for every run rather than carried across a run series.
+
+When the model carries more than one peak (add a second ``GaussianPeak`` or
+``LorentzianPeak`` from the fit-function builder), each peak component is
+seeded from a distinct line in the spectrum — the strongest detected peak
+seeds the first component, the next strongest the second, and so on.  Adding a
+peak component is read as *"a line exists here"*, so a weak-but-real shoulder
+is seeded rather than gated out.  If the spectrum shows fewer lines than the
+model declares, the surplus components are spread across the fit window so they
+stay visible in the preview instead of collapsing to an off-screen default.
+
 Available components
 --------------------
 

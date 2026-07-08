@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.spectral import (
     default_frequency_model,
     seed_peak_parameters_from_dataset,
@@ -83,3 +84,72 @@ def test_seed_peak_fwhm_excludes_dc_spike_from_half_max_crossing() -> None:
     # True FWHM = 2.3548 * sigma ~= 3.53 MHz; a DC-contaminated crossing would
     # instead span from near the DC spike's edge to the peak's far edge (~30 MHz).
     assert seeds["fwhm"] < 10.0
+
+
+def _two_peak_spectrum(
+    *, first: float = 2.0, second: float = 3.5, second_height: float = 3.0
+) -> MuonDataset:
+    """A frequency spectrum with two Gaussian lines plus a flat background."""
+    freq = np.linspace(1.0, 5.0, 401)
+    values = (
+        0.4
+        + 6.0 * np.exp(-4.0 * np.log(2.0) * ((freq - first) / 0.2) ** 2)
+        + second_height * np.exp(-4.0 * np.log(2.0) * ((freq - second) / 0.3) ** 2)
+    )
+    return MuonDataset(
+        time=freq,
+        asymmetry=values,
+        error=np.full_like(freq, 0.05),
+        metadata={"run_number": 7, "plot_domain": "frequency"},
+    )
+
+
+def _two_peak_model() -> CompositeModel:
+    return CompositeModel(
+        ["GaussianPeak", "GaussianPeak", "ConstantBackground"], operators=["+", "+"]
+    )
+
+
+def test_seed_two_peaks_assigns_strongest_first_to_each_component() -> None:
+    dataset = _two_peak_spectrum(first=2.0, second=3.5, second_height=3.0)
+    seeds = seed_peak_parameters_from_dataset(dataset, _two_peak_model())
+
+    # Both peak components are seeded onto real lines (not the nu0=1.0 default).
+    assert seeds["nu0_1"] == pytest.approx(2.0, abs=0.05)
+    assert seeds["nu0_2"] == pytest.approx(3.5, abs=0.05)
+    # Strongest-first: the taller line seeds component 1.
+    assert seeds["height_1"] > seeds["height_2"]
+
+
+def test_seed_two_peaks_seeds_a_weak_second_line() -> None:
+    """A weak-but-real second line the user declared is still seeded (not gated)."""
+    dataset = _two_peak_spectrum(first=2.0, second=3.5, second_height=0.6)
+    seeds = seed_peak_parameters_from_dataset(dataset, _two_peak_model())
+
+    assert seeds["nu0_2"] == pytest.approx(3.5, abs=0.1)
+
+
+def test_seed_two_peaks_under_detection_stays_on_screen() -> None:
+    """One real peak but two components: the extra nu0 must stay in the window."""
+    freq = np.linspace(1.0, 5.0, 401)
+    values = 0.4 + 6.0 * np.exp(-4.0 * np.log(2.0) * ((freq - 2.0) / 0.2) ** 2)
+    dataset = MuonDataset(
+        time=freq,
+        asymmetry=values,
+        error=np.full_like(freq, 0.05),
+        metadata={"run_number": 8, "plot_domain": "frequency"},
+    )
+    seeds = seed_peak_parameters_from_dataset(dataset, _two_peak_model())
+
+    assert 1.0 <= seeds["nu0_1"] <= 5.0
+    assert 1.0 <= seeds["nu0_2"] <= 5.0
+
+
+def test_seed_two_peaks_with_linear_background_seeds_slope() -> None:
+    model = CompositeModel(
+        ["GaussianPeak", "GaussianPeak", "LinearBackground"], operators=["+", "+"]
+    )
+    seeds = seed_peak_parameters_from_dataset(_two_peak_spectrum(), model)
+
+    assert "slope" in seeds
+    assert "nu0_1" in seeds and "nu0_2" in seeds

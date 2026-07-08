@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Frequency-domain fits now show a draggable fit-range span.** The Fit
+  dock's frequency range (``≤ ν ≤``, MHz) is drawn on the spectrum as the same
+  shaded band with dashed edges used in the time domain, and either edge can be
+  dragged directly on the plot (or typed into the range fields). The span
+  follows the displayed axis when it is shown in gauss or relative to a
+  reference field, while the range stays stored in absolute MHz.
+
+### Fixed
+
+- **A Gaussian/Lorentzian preview on a Fourier spectrum now shows the peak,
+  not just the background.** The peak centre ``nu0`` (and height/width) are
+  re-derived from the displayed spectrum whenever the run changes, so they no
+  longer inherit a stale seed left over from the previous (time-domain or
+  other-run) selection — which placed the line far off the MHz axis and left
+  **Preview** showing only the flat background. A genuinely restored fit keeps
+  its recorded parameters. Multi-peak spectral models are now seeded too: each
+  ``GaussianPeak``/``LorentzianPeak`` component is placed on a distinct line
+  (strongest first), a weak declared line is seeded rather than gated out, and
+  surplus components are spread across the fit window instead of defaulting
+  off-screen.
+
 ## [0.8.0] - 2026-07-07
 
 ### Added
