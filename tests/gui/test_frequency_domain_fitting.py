@@ -131,15 +131,143 @@ def test_fit_panel_frequency_domain_defaults(qapp) -> None:
     assert panel._single_tab._fit_wizard_btn.isEnabled() is False
 
 
+def _time_domain_dataset(run_number: int = 1, *, peak_time: float = 4.1) -> MuonDataset:
+    """A time-domain dataset whose asymmetry peaks at *peak_time* µs.
+
+    Used to reproduce the stale-seed bug: switching to the frequency domain
+    seeds the peak model against whatever dataset is current, so a leftover
+    time-domain peak lands ``nu0`` at a time value (µs) far off the MHz axis.
+    """
+    time = np.linspace(0.0, 10.0, 500)
+    asym = np.exp(-((time - peak_time) ** 2) / 0.5)
+    return MuonDataset(
+        time=time,
+        asymmetry=asym,
+        error=np.full_like(time, 0.01),
+        metadata={"run_number": run_number, "field": 80000.0},
+    )
+
+
+@pytest.mark.gui
+def test_frequency_peak_seed_refreshes_from_spectrum_not_carried(qapp) -> None:
+    """Switching to a frequency run re-derives nu0 from that spectrum's peak.
+
+    Regression: the peak model was seeded during ``set_domain("frequency")``
+    against the still-current time-domain dataset (``nu0`` ≈ the peak *time*),
+    and the carry-forward branch replayed that stale seed verbatim — so the
+    Gaussian sat far off the MHz axis and a preview showed only the background.
+    """
+    from asymmetry.gui.panels.fit_panel import FitPanel
+
+    panel = FitPanel()
+    panel.set_dataset(_time_domain_dataset(1, peak_time=4.1))
+    panel.set_domain("frequency")
+    panel.set_dataset(_frequency_dataset(2, center=3.4))
+
+    seeds = panel._single_tab.current_seed_values()
+    # The peak is at 3.4 MHz; the stale time-domain seed would be ≈4.1.
+    assert float(seeds["nu0"]) == pytest.approx(3.4, abs=0.05)
+
+    # Selecting another frequency run refreshes the field-dependent peak again.
+    panel.set_dataset(_frequency_dataset(3, center=2.6))
+    assert float(panel._single_tab.current_seed_values()["nu0"]) == pytest.approx(2.6, abs=0.05)
+
+
+@pytest.mark.gui
+def test_frequency_preview_renders_a_visible_peak(qapp) -> None:
+    """The refreshed seed makes Preview draw the peak, not just the background."""
+    from asymmetry.gui.panels.fit_panel import FitPanel
+
+    panel = FitPanel()
+    panel.set_dataset(_time_domain_dataset(1, peak_time=4.1))
+    panel.set_domain("frequency")
+    panel.set_dataset(_frequency_dataset(2, center=3.4, height=7.0, bg=0.4))
+
+    captured: dict[str, np.ndarray] = {}
+    panel.preview_requested.connect(lambda _r, curve, _c: captured.update(y=curve[1]))
+    panel._single_tab._on_preview()
+
+    y = captured["y"]
+    # Peak (~bg + height) must rise well clear of the background floor.
+    assert float(np.max(y)) > float(np.min(y)) + 3.0
+
+
+@pytest.mark.gui
+def test_frequency_adding_a_second_peak_seeds_both(qapp) -> None:
+    """Switching to a two-peak model (e.g. via Edit Function) seeds both lines.
+
+    Regression: with duplicate peak components the params are suffixed
+    (``nu0_1``/``nu0_2``), so the old single-peak seeder matched only ``bg`` and
+    both peaks kept the off-screen ``nu0=1.0`` default.
+    """
+    from asymmetry.gui.panels.fit_panel import FitPanel
+
+    freq = np.linspace(1.0, 5.0, 401)
+    values = (
+        0.4
+        + 6.0 * np.exp(-4.0 * np.log(2.0) * ((freq - 2.0) / 0.2) ** 2)
+        + 3.0 * np.exp(-4.0 * np.log(2.0) * ((freq - 3.5) / 0.3) ** 2)
+    )
+    dataset = MuonDataset(
+        time=freq,
+        asymmetry=values,
+        error=np.full_like(freq, 0.05),
+        metadata={"run_number": 5, "plot_domain": "frequency", "field": 200.0},
+    )
+
+    panel = FitPanel()
+    panel.set_domain("frequency")
+    panel.set_dataset(dataset)
+    panel._single_tab._set_composite_model(
+        CompositeModel(["GaussianPeak", "GaussianPeak", "ConstantBackground"], operators=["+", "+"])
+    )
+
+    seeds = panel._single_tab.current_seed_values()
+    assert float(seeds["nu0_1"]) == pytest.approx(2.0, abs=0.05)
+    assert float(seeds["nu0_2"]) == pytest.approx(3.5, abs=0.05)
+
+    captured: dict[str, np.ndarray] = {}
+    panel.preview_requested.connect(lambda _r, curve, _c: captured.update(x=curve[0], y=curve[1]))
+    panel._single_tab._on_preview()
+
+    from scipy.signal import find_peaks
+
+    maxima, _ = find_peaks(captured["y"], prominence=0.5)
+    assert len(maxima) == 2
+
+
+@pytest.mark.gui
+def test_frequency_restored_real_fit_is_not_reseeded(qapp) -> None:
+    """A genuinely restored fit keeps its recorded parameters (no peak re-seed)."""
+    from asymmetry.gui.panels.fit_panel import FitPanel
+
+    panel = FitPanel()
+    panel.set_single_fit_restore_provider(
+        lambda _ds: {
+            "parameters": [
+                {"name": "height", "value": 42.0},
+                {"name": "nu0", "value": 999.0},
+                {"name": "fwhm", "value": 0.5},
+                {"name": "bg", "value": 0.0},
+            ]
+        }
+    )
+    panel.set_domain("frequency")
+    panel.set_dataset(_frequency_dataset(4, center=3.4))
+
+    assert float(panel._single_tab.current_seed_values()["nu0"]) == pytest.approx(999.0)
+
+
 @pytest.mark.gui
 def test_fit_panel_frequency_range_editable_with_placeholder_when_unset(qapp) -> None:
     """D6/F15: the frequency fit-range spins stay editable, never a stale value.
 
     In the time domain the plot always supplies a fit range (seeded to the
     full dataset extent), so an absent range there still disables the spins.
-    In the frequency domain there is no draggable selector, so an absent
-    range must not disable the fields or leave a leftover time-domain number
-    behind — it shows a "full spectrum" placeholder instead.
+    In the frequency domain an unset range must not disable the fields or
+    leave a leftover time-domain number behind — it shows a "full spectrum"
+    placeholder instead. (The plot span is draggable in both domains, but the
+    spins remain the keyboard entry point.)
     """
     from asymmetry.gui.panels.fit_panel import FitPanel
 
@@ -185,3 +313,72 @@ def test_fit_panel_frequency_global_missing_spectra_status(qapp) -> None:
     status = panel._global_tab._result_text.toPlainText()
     assert "2 cached frequency spectra selected" in status
     assert "Compute a Fourier spectrum for run(s) 3, 4" in status
+
+
+@pytest.mark.gui
+def test_frequency_plot_draws_fit_range_span(qapp) -> None:
+    """The frequency plot shows the fit-range span (previously drawn only in time)."""
+    from types import SimpleNamespace
+
+    from asymmetry.gui.panels.plot_panel import PlotPanel
+
+    panel = PlotPanel(domain="frequency")
+    panel.plot_dataset(_frequency_dataset(1, center=3.0))
+
+    # Auto-seeded to the full extent, so a span + two edge handles are drawn.
+    assert len(panel._fit_span_artists) == 1
+    assert len(panel._fit_min_handles) == 1
+    assert len(panel._fit_max_handles) == 1
+
+    window = panel._frequency_fit_range_display()
+    assert window is not None
+    assert window == pytest.approx((panel._fit_x_min, panel._fit_x_max))
+
+    # A hit-test near the max edge finds the handle when moments are hidden.
+    panel._set_fit_range(1.5, 4.5, emit_signal=False, redraw=True)
+    panel._active_fit_handle = "max"
+    panel._on_canvas_motion_notify(SimpleNamespace(xdata=4.0, inaxes=panel._ax))
+    assert panel._fit_x_max == pytest.approx(4.0)
+    assert panel._fit_x_min == pytest.approx(1.5)
+
+
+@pytest.mark.gui
+def test_frequency_fit_range_drag_converts_field_units_to_mhz(qapp) -> None:
+    """Dragging in a field-unit display converts the cursor back to canonical MHz."""
+    from types import SimpleNamespace
+
+    from asymmetry.gui.panels.plot_panel import PlotPanel
+
+    panel = PlotPanel(domain="frequency")
+    panel.plot_dataset(_frequency_dataset(1, center=3.0))
+    panel._set_fit_range(2.0, 4.0, emit_signal=False, redraw=True)
+
+    combo = getattr(panel, "_frequency_x_unit_combo", None)
+    assert combo is not None
+    idx = combo.findData("field_gauss")
+    assert idx >= 0
+    combo.setCurrentIndex(idx)
+    assert panel._current_frequency_x_unit == "field_gauss"
+
+    # Drag the min handle to the Gauss position for 2.5 MHz; it must store MHz.
+    gauss_2p5 = panel._convert_canonical_mhz_to_display_limit(
+        2.5, unit="field_gauss", relative=False
+    )
+    panel._active_fit_handle = "min"
+    panel._on_canvas_motion_notify(SimpleNamespace(xdata=gauss_2p5, inaxes=panel._ax))
+    assert panel._fit_x_min == pytest.approx(2.5, abs=1e-6)
+
+
+@pytest.mark.gui
+def test_frequency_fit_handle_defers_to_visible_moments_overlay(qapp) -> None:
+    """With the moments overlay visible, its handles win the click (shared grammar)."""
+    from types import SimpleNamespace
+
+    from asymmetry.gui.panels.plot_panel import PlotPanel
+
+    panel = PlotPanel(domain="frequency")
+    panel.plot_dataset(_frequency_dataset(1, center=3.0))
+    panel._moments_overlay_visible = True
+
+    hit = panel._detect_handle_hit(SimpleNamespace(inaxes=panel._ax, x=10.0, y=10.0))
+    assert hit is None

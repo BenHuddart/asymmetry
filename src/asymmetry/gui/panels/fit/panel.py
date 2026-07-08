@@ -340,6 +340,10 @@ class FitPanel(QWidget):
 
         if run_number is None:
             self._set_single_fit_provenance(None)
+            # Even without a run number the bound spectrum drives the fit, so a
+            # frequency form still needs its field-dependent peak seed refreshed
+            # (see below); a restored real fit is impossible on this path.
+            self._reseed_frequency_peaks_if_default(is_real_fit=False)
             return
 
         # The main window's restore mediator is authoritative when it has an
@@ -376,6 +380,11 @@ class FitPanel(QWidget):
             # *result* is dropped (it belongs to the run it was computed on).
             self._carry_forward_single_fit_form()
             self._set_single_fit_provenance("carried_from_run", previous_run_number)
+
+    def _reseed_frequency_peaks_if_default(self, *, is_real_fit: bool) -> None:
+        """Refresh frequency peak seeds unless a real recorded fit is shown."""
+        if not is_real_fit and self._single_tab.domain() == "frequency":
+            self._single_tab.reseed_frequency_peaks()
 
     def _set_single_fit_provenance(self, kind: str | None, source_run: int | None = None) -> None:
         """Record why the single-fit form holds its current contents and update the badge.
@@ -416,6 +425,12 @@ class FitPanel(QWidget):
         self._single_tab.restore_state(state)
         if not self._single_tab._composite_model.missing_component_names:
             self._single_tab._result_label.setText("No fit performed yet")
+        # A frequency peak (nu0/height/fwhm/bg) tracks the run's field, so it
+        # must never be carried verbatim from the previous run: re-derive it
+        # from the now-current spectrum. (Same-run session restore and project
+        # restore go through the seen-dataset / provider paths, not here, so
+        # those keep their saved values.)
+        self._reseed_frequency_peaks_if_default(is_real_fit=False)
 
     def _reset_single_fit_form(self) -> None:
         """Blank the single-fit form to its domain default ("No fit yet")."""
