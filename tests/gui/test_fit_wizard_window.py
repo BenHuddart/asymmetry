@@ -571,6 +571,35 @@ def test_fit_wizard_window_opens_on_welcome_with_collapsed_guidance(
     assert window._scope_panel.parent() is window._guidance_scope_slot
 
 
+# ── Fingerprint plot decimation (GUI-thread stall guard) ─────────────────────
+
+
+def test_fit_wizard_window_fingerprint_plot_bounds_point_count(qapp: QApplication) -> None:
+    """A huge dataset's errorbar draw stays bounded, not O(points).
+
+    Regression guard for the diagnosed stall: opening the wizard on a long
+    high-resolution run drew a matplotlib ``errorbar`` over every raw point
+    synchronously on the GUI thread, freezing it for seconds (same disease
+    PR #229 fixed for the grouping preview pane). ``set_analysis_context`` ->
+    ``_populate_fingerprint_plot`` must decimate before drawing.
+    """
+    n = 50_000
+    t = np.linspace(0.0, 8.0, n)
+    y = 0.2 * np.exp(-0.4 * t) + 0.01
+    e = np.full_like(t, 0.01)
+    big_dataset = MuonDataset(time=t, asymmetry=y, error=e, metadata={"run_number": 202})
+
+    window = FitWizardWindow()
+    window.set_analysis_context(big_dataset)
+
+    ax_time = window._fingerprint_plot_widget._figure.axes[0]
+    # errorbar(fmt=".") draws the markers as a Line2D on the axes.
+    (data_line,) = ax_time.lines
+    plotted_points = len(data_line.get_xdata())
+    assert plotted_points <= wizard_window_module._MAX_FINGERPRINT_POINTS
+    assert plotted_points < n
+
+
 # ── Scope + user peaks forwarded to the builder ──────────────────────────────
 
 

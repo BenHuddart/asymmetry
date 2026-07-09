@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Opening the Fit Wizard no longer stalls on long runs.** The wizard's
+  fingerprint plot (and the result card's data overlay) drew a matplotlib
+  errorbar over every point of the raw curve on the GUI thread; both now
+  decimate to a fixed point budget for display, via the same shared helper
+  the grouping preview uses. Stored data and fit/residual curves are
+  untouched — only the drawn preview points are strided.
+
 - **Switching FB Asymmetry ↔ FFT no longer stalls the GUI for seconds when a
   multi-peak frequency fit is set up.** Two causes, both fixed: the
   domain-switch restore path re-derived frequency peak seeds that were
