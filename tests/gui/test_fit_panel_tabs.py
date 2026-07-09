@@ -696,6 +696,71 @@ def test_view_switch_snapshot_does_not_override_a_persisted_fit(
     assert panel._single_tab._composite_model.component_names == ["StretchedExponential"]
 
 
+def test_domain_switch_on_batch_tab_does_not_replay_time_model_into_single(
+    qapp: QApplication, dataset: MuonDataset
+) -> None:
+    """FB→FFT with the Batch tab active must not leave a time model in Single.
+
+    Leaving the Single tab snapshots its (time-domain) form. Switching the plot
+    representation to FFT then runs ``set_domain("frequency")`` +
+    ``set_dataset`` (the MainWindow chain), which re-establishes the same run
+    number — so on the next visit to Single the stale snapshot matched its
+    ``(run, projection)`` binding and replayed a time-domain Exponential into
+    the frequency-domain form. The snapshot's binding identity must include
+    the domain.
+    """
+    panel = FitPanel()
+    panel.set_dataset(dataset)
+
+    single_index = panel._tabs.indexOf(panel._single_tab)
+    batch_index = panel._tabs.indexOf(panel._global_tab)
+
+    # Leaving Single snapshots the time-domain form (Exponential + Constant).
+    panel._tabs.setCurrentIndex(batch_index)
+
+    # Plot representation FB → FFT while Batch is active.
+    panel.set_domain("frequency")
+    panel.set_dataset(dataset)
+
+    # Opening Single must show the frequency default, not the stale snapshot.
+    panel._tabs.setCurrentIndex(single_index)
+    assert panel._single_tab._composite_model.component_names == [
+        "GaussianPeak",
+        "ConstantBackground",
+    ]
+
+
+def test_view_switch_snapshot_survives_domain_round_trip(
+    qapp: QApplication, dataset: MuonDataset
+) -> None:
+    """A hand-built time model still restores after FB→FFT→FB on the Batch tab.
+
+    The cross-domain fix refuses to replay a snapshot into the wrong domain;
+    it must not also discard it — returning to the time domain and the Single
+    tab should still show the model the user built before the round trip.
+    """
+    panel = FitPanel()
+    # A batched run's slot is present but empty, so every re-bind blanks the
+    # live form to the domain default (the case the snapshot exists to rescue).
+    panel.set_single_fit_restore_provider(lambda _ds: {})
+    panel.set_dataset(dataset)
+    panel._single_tab._set_composite_model(
+        CompositeModel(["Gaussian", "Constant"], operators=["+"])
+    )
+
+    single_index = panel._tabs.indexOf(panel._single_tab)
+    batch_index = panel._tabs.indexOf(panel._global_tab)
+    panel._tabs.setCurrentIndex(batch_index)
+
+    panel.set_domain("frequency")
+    panel.set_dataset(dataset)
+    panel.set_domain("time")
+    panel.set_dataset(dataset)
+
+    panel._tabs.setCurrentIndex(single_index)
+    assert panel._single_tab._composite_model.component_names == ["Gaussian", "Constant"]
+
+
 def test_unseen_dataset_inherits_custom_model_without_result(
     qapp: QApplication, dataset: MuonDataset
 ) -> None:

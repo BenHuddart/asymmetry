@@ -198,19 +198,30 @@ class FitPanel(QWidget):
         """Preserve the single-fit form across a Single↔Batch view switch.
 
         Leaving the Single tab snapshots its form; returning restores that
-        snapshot when the binding (run + projection) is unchanged. This keeps a
-        hand-built but unfit model alive across the round trip — without it, once
-        a run has been batched its per-projection slot exists but is empty, so
-        the restore provider blanks the form to the default model on re-bind.
+        snapshot when the binding (run + projection + domain) is unchanged.
+        This keeps a hand-built but unfit model alive across the round trip —
+        without it, once a run has been batched its per-projection slot exists
+        but is empty, so the restore provider blanks the form to the default
+        model on re-bind. The domain is part of the binding identity: switching
+        the plot FB→FFT while Batch is active re-establishes the same run
+        number, and without the domain check the stale time-domain snapshot
+        would replay into the frequency form on the next visit to Single. The
+        mismatched snapshot is kept (not dropped) so it still restores after a
+        domain round trip back.
         """
         single_index = self._tabs.indexOf(self._single_tab)
         if index == single_index:
             snapshot = self._single_form_snapshot
-            if snapshot is not None and snapshot.get("run") == self._active_single_run_number:
+            if (
+                snapshot is not None
+                and snapshot.get("run") == self._active_single_run_number
+                and snapshot.get("domain") == self._domain
+            ):
                 self._single_tab.restore_state(snapshot["state"])
         else:
             self._single_form_snapshot = {
                 "run": self._active_single_run_number,
+                "domain": self._domain,
                 "state": self.get_single_form_state(),
             }
         self.tab_changed.emit(index)

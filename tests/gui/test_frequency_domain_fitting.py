@@ -446,6 +446,23 @@ def test_restore_with_orphan_param_keeps_model_default(qapp) -> None:
     assert float(seeds["nu0"]) == pytest.approx(1.0)
 
 
+def test_restore_malformed_composite_falls_back_to_domain_default(qapp) -> None:
+    """Corrupt composite data restores the *frequency* default in frequency domain.
+
+    The malformed-data fallback in ``SingleFitTab.restore_state`` must pick the
+    domain-appropriate default: a time-domain Exponential + Constant landing in
+    a frequency-domain form would present a decaying time model against a
+    spectrum.
+    """
+    from asymmetry.gui.panels.fit_panel import SingleFitTab
+
+    tab = SingleFitTab()
+    tab.set_domain("frequency")
+    tab.restore_state({"composite_model": {"component_names": "garbage"}})
+
+    assert tab._composite_model.component_names == ["GaussianPeak", "ConstantBackground"]
+
+
 @pytest.mark.gui
 def test_frequency_stationary_handle_click_opens_no_modal_dialog(qapp, monkeypatch) -> None:
     """A stationary click on a frequency handle must not open a modal editor.

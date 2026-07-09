@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Switching FB Asymmetry → FFT with the Batch tab active no longer leaves a
+  time-domain model in the Single fit tab.** Leaving the Single tab snapshots
+  its form so a hand-built model survives a Single↔Batch round trip, but the
+  snapshot's binding identity did not include the fitting domain — after a
+  domain switch it replayed the time-domain form (e.g. Exponential + Constant)
+  over the frequency default on the next visit to Single. The snapshot now
+  only restores into the domain it was taken in (and still restores after a
+  round trip back). The corrupt-model restore fallback likewise now picks the
+  domain-appropriate default instead of always the time-domain one.
+
 - **Opening the Fit Wizard no longer stalls on long runs.** The wizard's
   fingerprint plot (and the result card's data overlay) drew a matplotlib
   errorbar over every point of the raw curve on the GUI thread; both now
