@@ -148,6 +148,34 @@ def test_qthread_check_reports_construction_outside_tasks_module(tmp_path: Path)
     assert "TaskRunner" in failures[0].message
 
 
+def test_current_gui_has_no_widget_screen_calls() -> None:
+    harness = _load_harness()
+
+    assert harness.find_widget_screen_call_violations() == []
+
+
+def test_widget_screen_check_reports_calls_outside_screen_guard(tmp_path: Path) -> None:
+    gui_root = tmp_path / "gui"
+    gui_root.mkdir(parents=True)
+    (gui_root / "screen_guard.py").write_text("current = window.screen()\n", encoding="utf-8")
+    stray = gui_root / "windows" / "some_dialog.py"
+    stray.parent.mkdir(parents=True)
+    stray.write_text(
+        "# prose may mention .screen() without tripping the rule\n"
+        "screen = self.screen()  # trailing comment\n",
+        encoding="utf-8",
+    )
+    harness = _load_harness()
+    harness.SCREEN_GUARD_HOME = gui_root / "screen_guard.py"
+
+    failures = harness.find_widget_screen_call_violations(gui_root)
+
+    assert len(failures) == 1
+    assert failures[0].path == stray
+    assert failures[0].line == 2
+    assert "screen_for" in failures[0].message
+
+
 def test_current_gui_has_no_bespoke_section_definitions() -> None:
     harness = _load_harness()
 

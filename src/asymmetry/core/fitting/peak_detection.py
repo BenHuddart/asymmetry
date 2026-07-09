@@ -24,6 +24,7 @@ from dataclasses import dataclass, replace
 
 import numpy as np
 from numpy.typing import NDArray
+from scipy.ndimage import median_filter
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fourier.burg import burg_spectrum
@@ -216,10 +217,11 @@ def _running_median(values: NDArray[np.float64], window: int) -> NDArray[np.floa
     window = min(window, n if n % 2 == 1 else n - 1)
     if window <= 1:
         return arr.copy()
-    pad = window // 2
-    padded = np.pad(arr, pad_width=pad, mode="edge")
-    strided = np.lib.stride_tricks.sliding_window_view(padded, window)
-    return np.median(strided, axis=1)
+    # scipy's rank filter, not a sliding_window_view + np.median(axis=1): the
+    # windowed matrix materialises n×window floats (27 GB for a 256k-bin
+    # padded spectrum — froze an 8 GB machine) and is ~1000× slower for the
+    # same result. mode="nearest" matches the previous edge padding exactly.
+    return median_filter(arr, size=window, mode="nearest")
 
 
 def _local_noise_floor(

@@ -102,10 +102,14 @@ repo-local docs and use this file as the map.
   drifting: no second `*LimitField` class outside
   `gui/widgets/axis_limits.py`, no direct `FigureCanvasQTAgg(` construction
   outside `gui/widgets/mpl_canvas.py`, no bespoke `QThread(` construction in
-  `gui/` outside `gui/tasks.py`'s `TaskRunner`, no `test_*.py` file outside
-  a sanctioned `tests/<subpackage>/` (see `tests/README.md`), and no docs
-  screenshot drift (every image referenced from the .rst sources maps to a
-  registered scenario and vice versa, within the per-image size budget).
+  `gui/` outside `gui/tasks.py`'s `TaskRunner`, no `.screen()` call on a
+  widget/window in `gui/` outside `gui/screen_guard.py` (use `screen_for` —
+  PySide's binding ties the shared `QScreen` wrapper's lifetime to the
+  caller; see `docs/investigations/tahoe-qscreen-uaf.md`), no `test_*.py`
+  file outside a sanctioned `tests/<subpackage>/` (see `tests/README.md`),
+  and no docs screenshot drift (every image referenced from the .rst sources
+  maps to a registered scenario and vice versa, within the per-image size
+  budget).
 
 ## Validation Ladder
 

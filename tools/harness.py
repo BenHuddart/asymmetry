@@ -46,6 +46,13 @@ MPL_CANVAS_CONSTRUCTION_ALLOWLIST = frozenset(
 # Canonical home for manual QThread lifecycles. Everything else in gui/ should
 # run background work via `asymmetry.gui.tasks.TaskRunner`.
 TASK_RUNNER_HOME = GUI_ROOT / "tasks.py"
+# Canonical home for QScreen resolution. PySide's `QWidget.screen()` /
+# `QWindow.screen()` bindings attach a shiboken parent link from the shared
+# QScreen wrapper to the receiver's wrapper, exposing the live C++ QScreen to
+# deletion by the Python GC (the FB↔FFT crash —
+# docs/investigations/tahoe-qscreen-uaf.md). Everything else resolves screens
+# via `asymmetry.gui.screen_guard.screen_for`.
+SCREEN_GUARD_HOME = GUI_ROOT / "screen_guard.py"
 
 # ── GLE export orchestration ──────────────────────────────────────────────────
 # Canonical home for the GLE export sequence (save dialog → build → async
@@ -352,6 +359,40 @@ def find_bespoke_qthread_violations(gui_root: Path = GUI_ROOT) -> list[HarnessFa
                         (
                             "Bespoke `QThread(` construction. "
                             "Run background work via `asymmetry.gui.tasks.TaskRunner`."
+                        ),
+                    )
+                )
+    return failures
+
+
+def find_widget_screen_call_violations(gui_root: Path = GUI_ROOT) -> list[HarnessFailure]:
+    """Return ``.screen()`` calls on widgets/windows outside the screen guard.
+
+    PySide's ``QWidget.screen()`` / ``QWindow.screen()`` bindings tie the
+    process-wide ``QScreen`` wrapper's lifetime to the receiver's wrapper
+    (shiboken parent link); a transient receiver collected by the cyclic GC
+    can then delete the live C++ ``QScreen`` while it is still in Qt's screen
+    list — the FB↔FFT crash. Resolve screens with
+    ``asymmetry.gui.screen_guard.screen_for`` instead. Comment text is
+    ignored so prose may reference the banned call.
+    """
+
+    failures: list[HarnessFailure] = []
+    for path in _iter_python_files(gui_root):
+        if path == SCREEN_GUARD_HOME:
+            continue
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            code = line.split("#", 1)[0]
+            if ".screen()" in code:
+                failures.append(
+                    HarnessFailure(
+                        path,
+                        lineno,
+                        (
+                            "`.screen()` on a widget/window ties the shared QScreen "
+                            "wrapper's lifetime to the caller (PySide wrapper-lifetime "
+                            "crash; docs/investigations/tahoe-qscreen-uaf.md). "
+                            "Use `asymmetry.gui.screen_guard.screen_for`."
                         ),
                     )
                 )
@@ -970,6 +1011,7 @@ def run_structural_checks() -> int:
         *find_duplicate_limit_field_violations(),
         *find_duplicate_mpl_canvas_violations(),
         *find_bespoke_qthread_violations(),
+        *find_widget_screen_call_violations(),
         *find_process_events_violations(),
         *find_bespoke_gle_export_violations(),
         *find_bespoke_section_violations(),

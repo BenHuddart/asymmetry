@@ -10,8 +10,9 @@ the screen-aware sizing the main window already uses.
 
 from __future__ import annotations
 
-from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QWidget
+
+from asymmetry.gui.screen_guard import screen_for
 
 
 def resize_to_available(
@@ -35,7 +36,10 @@ def resize_to_available(
     the window in the available geometry instead. Falls back to the preferred
     size verbatim when no screen can be resolved (e.g. some headless contexts).
     """
-    screen = window.screen() or QGuiApplication.primaryScreen()
+    # Never QWidget.screen(): callers here are transient dialogs, and PySide's
+    # .screen() binding ties the shared QScreen wrapper's lifetime to the
+    # receiver's wrapper (see gui/screen_guard.py — the FB↔FFT crash).
+    screen = screen_for(window)
     if screen is None:
         window.resize(preferred_width, preferred_height)
         return

@@ -44,6 +44,7 @@ from asymmetry.core.transform import (
 )
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.tasks import TaskCancelledError, TaskRunner, TaskWorker
+from asymmetry.gui.utils.plot_decimation import decimate_for_preview as _decimate_for_preview
 
 #: Debounce window for coalescing rapid edits before a recompute.
 _DEBOUNCE_MS = 300
@@ -380,26 +381,6 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
         error=error,
         run_number=request.run_number,
     )
-
-
-def _decimate_for_preview(
-    time: np.ndarray,
-    asymmetry: np.ndarray,
-    error: np.ndarray,
-    max_points: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Uniformly stride the reduced curve down to at most ``max_points``.
-
-    All three arrays share one stride so points stay aligned. Curves already
-    at or below the cap pass through unchanged. Advisory-only sampling: no
-    min/max envelope, just a plain stride — cheap and visually adequate for
-    the preview.
-    """
-    n = int(time.size)
-    if n <= max_points or max_points <= 0:
-        return time, asymmetry, error
-    step = (n + max_points - 1) // max_points  # ceil(n / max_points)
-    return time[::step], asymmetry[::step], error[::step]
 
 
 def _as_int(value: Any, default: int) -> int:

@@ -559,8 +559,14 @@ class SingleFitTab(FitTabBase):
             return
         self._set_composite_model(reduced)
 
-    def _set_composite_model(self, model: CompositeModel) -> None:
-        """Set the active composite model and rebuild the parameter table."""
+    def _set_composite_model(self, model: CompositeModel, *, seed_frequency: bool = True) -> None:
+        """Set the active composite model and rebuild the parameter table.
+
+        Restore paths pass ``seed_frequency=False`` because restored parameter
+        values are replayed by ``restore_parameters`` and must not be
+        re-derived (and the restore-time dataset may still be the previous
+        domain's).
+        """
         self._composite_model = model
         # Any model (re)build — including Reset, which reuses the same object —
         # invalidates an in-flight fit's table/diagnostic write-back. (The table
@@ -575,7 +581,7 @@ class SingleFitTab(FitTabBase):
             else 0.0
         )
         value_overrides = dict(_field_value_overrides(model, dataset_field))
-        if self._domain == "frequency" and self._current_dataset is not None:
+        if seed_frequency and self._domain == "frequency" and self._current_dataset is not None:
             # Frequency-domain peak seeds take precedence over the field seed.
             value_overrides.update(seed_peak_parameters_from_dataset(self._current_dataset, model))
 
@@ -1193,10 +1199,11 @@ class SingleFitTab(FitTabBase):
                 restored = CompositeModel.from_dict(composite_data, allow_missing=True)
             except ValueError:
                 self._set_composite_model(
-                    CompositeModel(["Exponential", "Constant"], operators=["+"])
+                    CompositeModel(["Exponential", "Constant"], operators=["+"]),
+                    seed_frequency=False,
                 )
             else:
-                self._set_composite_model(restored)
+                self._set_composite_model(restored, seed_frequency=False)
                 if restored.missing_component_names:
                     names = ", ".join(restored.missing_component_names)
                     self._result_label.setText(

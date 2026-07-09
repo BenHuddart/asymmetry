@@ -49,9 +49,18 @@ from asymmetry.gui.styles.widgets import (
     build_segmented_button_qss,
     make_confidence_chip,
 )
+from asymmetry.gui.utils.plot_decimation import decimate_for_preview
 
 #: Cap on how many alternative candidates the strip offers.
 _MAX_ALTERNATIVES = 3
+
+#: Cap on points drawn in the answer card's data errorbar. Same disease as
+#: the wizard fingerprint plot / grouping preview (see plot_decimation):
+#: matplotlib ``errorbar`` over a full high-resolution run stalls the GUI
+#: thread computing the error-bar collection's extents. Display-only — the
+#: stored arrays stay full-resolution because the residuals panel slices
+#: ``self._time[:residuals.size]`` to pair with fit-length residuals.
+_MAX_ANSWER_PLOT_POINTS = 2000
 
 
 def _strip_trailing_gloss(title: str) -> str:
@@ -471,10 +480,18 @@ class WizardAnswerCard(QWidget):
             ax_fit = figure.add_subplot(1, 1, 1)
             ax_res = None
 
-        yerr = self._error if self._error is not None else None
-        ax_fit.errorbar(
+        # Decimate the drawn points only (never the stored arrays — the
+        # residuals panel below needs full-resolution alignment).
+        plot_time, plot_asymmetry, plot_error = decimate_for_preview(
             self._time,
             self._asymmetry,
+            self._error if self._error is not None else np.zeros_like(self._time),
+            _MAX_ANSWER_PLOT_POINTS,
+        )
+        yerr = plot_error if self._error is not None else None
+        ax_fit.errorbar(
+            plot_time,
+            plot_asymmetry,
             yerr=yerr,
             fmt=".",
             markersize=3,

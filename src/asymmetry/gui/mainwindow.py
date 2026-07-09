@@ -260,6 +260,7 @@ from asymmetry.gui.panels.log_panel import LogPanel
 from asymmetry.gui.panels.maxent_panel import MaxEntPanel
 from asymmetry.gui.panels.plot_panel import PlotPanel
 from asymmetry.gui.panels.plot_workspace_panel import PlotWorkspacePanel
+from asymmetry.gui.screen_guard import screen_for
 from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.styles.typography import header_font, status_font
 from asymmetry.gui.styles.widgets import (
@@ -701,7 +702,10 @@ class MainWindow(QMainWindow):
         # Prefer the spacious default, capped at ~90% of the available screen
         # so the window opens comfortably *windowed* (never wall-to-wall) on a
         # 13-inch MacBook, and centred rather than wherever the WM drops it.
-        screen = self.screen() or QGuiApplication.primaryScreen()
+        # screen_for, not self.screen(): PySide's .screen() binding parents the
+        # shared QScreen wrapper to the receiver (per-test MainWindows would tie
+        # the screen's fate to their GC); see gui/screen_guard.py.
+        screen = screen_for(self)
         if screen is not None:
             available = screen.availableGeometry()
             self.resize(

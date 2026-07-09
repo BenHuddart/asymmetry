@@ -219,6 +219,26 @@ def test_comparable_keys_lead_alternatives(qapp: QApplication) -> None:
     assert list(card._alt_buttons.keys())[0] == "gaussian_constant"
 
 
+def test_data_errorbar_point_count_is_bounded(qapp: QApplication) -> None:
+    from asymmetry.gui.widgets.wizard_answer_card import _MAX_ANSWER_PLOT_POINTS
+
+    n = 50_000
+    t = np.linspace(0, 8, n)
+    y = 0.2 * np.exp(-0.4 * t) + 0.01
+    e = np.full_like(t, 0.01)
+    card = WizardAnswerCard()
+    card.set_plot_data(t, y, e)
+    # Stored arrays stay full-resolution (the residuals panel slices them to
+    # pair with fit-length residuals); only the drawn errorbar is decimated.
+    assert card._time.size == n
+    axes = card._plot_widget._figure.axes
+    assert axes, "redraw should have produced a data axis"
+    line_sizes = [ln.get_xdata().size for ln in axes[0].lines]
+    assert line_sizes, "redraw should have drawn the data errorbar"
+    assert max(line_sizes) <= _MAX_ANSWER_PLOT_POINTS
+    assert max(line_sizes) > 0
+
+
 def test_residuals_toggle_redraws_without_error(qapp: QApplication) -> None:
     card = WizardAnswerCard()
     card.set_plot_data(*_plot_arrays())
