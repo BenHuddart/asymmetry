@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Fixed the intermittent crash when toggling FB Asymmetry ↔ FFT (and the
+  matching Windows "no screens available" fatal exit).** The cause was a
+  PySide/shiboken object-lifetime bug, caught live under guard malloc: the
+  ``QWidget.screen()`` / ``QWindow.screen()`` bindings tie the process-wide
+  ``QScreen`` wrapper to the calling widget's wrapper, so when a transient
+  dialog (fit wizards, model dialog) was garbage-collected, Python deleted the
+  live C++ ``QScreen`` while it was still in Qt's screen list — every later
+  DPI lookup then walked freed memory. Asymmetry now resolves screens through
+  a safe helper (``screen_for``), pins the screen wrappers so the GC can never
+  reclaim them, and logs loudly if a screen is ever destroyed mid-session.
+  Full investigation: ``docs/investigations/tahoe-qscreen-uaf.md``.
+
 ## [0.9.0] - 2026-07-08
 
 ### Added

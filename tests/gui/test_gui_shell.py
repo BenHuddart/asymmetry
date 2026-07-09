@@ -324,6 +324,10 @@ def test_app_main_headless(monkeypatch: pytest.MonkeyPatch) -> None:
         def __init__(self, _argv):
             self.name = None
             self.org = None
+            # Screen-change signals consumed by install_screen_change_guard.
+            self.screenAdded = _DummySignal()
+            self.screenRemoved = _DummySignal()
+            self.primaryScreenChanged = _DummySignal()
             events.append("app-init")
 
         def setApplicationName(self, name):  # noqa: N802
@@ -426,7 +430,10 @@ def test_main_uses_resource_fallback_for_splash_logo(
 ) -> None:
     class _FakeApp:
         def __init__(self, _argv):
-            return
+            # Screen-change signals consumed by install_screen_change_guard.
+            self.screenAdded = _DummySignal()
+            self.screenRemoved = _DummySignal()
+            self.primaryScreenChanged = _DummySignal()
 
         def setApplicationName(self, _name):  # noqa: N802
             return
