@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Opening the Global Fit Wizard no longer freezes the application (and, on
+  low-memory machines, the whole system).** The wizard's candidate-portfolio
+  peak analysis estimated each spectrum's noise floor with a running median
+  built from an n×window sliding matrix — for zero-padded spectra that
+  materialised gigabytes per call on the GUI thread. The running median now
+  uses ``scipy.ndimage.median_filter`` (identical output, ~1000× faster,
+  constant memory).
+
 - **Fixed the intermittent crash when toggling FB Asymmetry ↔ FFT (and the
   matching Windows "no screens available" fatal exit).** The cause was a
   PySide/shiboken object-lifetime bug, caught live under guard malloc: the
