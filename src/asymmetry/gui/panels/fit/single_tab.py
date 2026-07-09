@@ -1198,10 +1198,12 @@ class SingleFitTab(FitTabBase):
                 # malformed data falls back to the default model.
                 restored = CompositeModel.from_dict(composite_data, allow_missing=True)
             except ValueError:
-                self._set_composite_model(
-                    CompositeModel(["Exponential", "Constant"], operators=["+"]),
-                    seed_frequency=False,
+                fallback = (
+                    default_frequency_model()
+                    if self._domain == "frequency"
+                    else CompositeModel(["Exponential", "Constant"], operators=["+"])
                 )
+                self._set_composite_model(fallback, seed_frequency=False)
             else:
                 self._set_composite_model(restored, seed_frequency=False)
                 if restored.missing_component_names:
