@@ -153,3 +153,141 @@ def test_seed_two_peaks_with_linear_background_seeds_slope() -> None:
 
     assert "slope" in seeds
     assert "nu0_1" in seeds and "nu0_2" in seeds
+
+
+# ---------------------------------------------------------------------------
+# Golden output-identity tests for the bounded (wlen) prominence search.
+#
+# ``_detect_top_n_local_maxima`` bounds find_peaks' prominence window to
+# ``max(2001, odd(n // 8))`` to avoid an O(n^2) worst case on quasi-monotonic
+# spectra.  The bound must not change which peaks are selected: each test
+# below compares the seeded parameter dict from the bounded implementation
+# against an unbounded reference (the same seeder with the ``wlen`` argument
+# stripped from find_peaks), exactly on peak positions and allclose on the
+# derived values.
+# ---------------------------------------------------------------------------
+
+
+def _golden_dataset(freq: np.ndarray, values: np.ndarray) -> MuonDataset:
+    return MuonDataset(
+        time=freq,
+        asymmetry=values,
+        error=np.full_like(freq, 0.05),
+        metadata={"run_number": 9, "plot_domain": "frequency"},
+    )
+
+
+def _golden_benign_spectrum(n: int) -> MuonDataset:
+    """Flat background, DC spike, two well-separated narrow lines, noise."""
+    rng = np.random.default_rng(0)
+    freq = np.linspace(0.0, 100.0, n)
+    values = (
+        0.2
+        + 30.0 * np.exp(-0.5 * (freq / 0.5) ** 2)
+        + 10.0 * np.exp(-0.5 * ((freq - 25.0) / 1.5) ** 2)
+        + 6.0 * np.exp(-0.5 * ((freq - 45.0) / 2.0) ** 2)
+        + rng.normal(scale=0.05, size=n)
+    )
+    return _golden_dataset(freq, values)
+
+
+def _golden_trending_spectrum(n: int) -> MuonDataset:
+    """Two lines on a quasi-monotonic drifting background (decay skirt shape).
+
+    This is the pathological regime for the unbounded prominence search: most
+    noise maxima on the drift scan all the way to the array edge.  The drift
+    magnitude is kept independent of ``n`` so the shape (not the sampling)
+    defines the regime.
+    """
+    rng = np.random.default_rng(1)
+    freq = np.linspace(0.0, 100.0, n)
+    drift = 5.0 - 0.001 * np.arange(n) * (262144.0 / n)
+    values = (
+        drift
+        + 10.0 * np.exp(-0.5 * ((freq - 25.0) / 1.5) ** 2)
+        + 6.0 * np.exp(-0.5 * ((freq - 60.0) / 2.0) ** 2)
+        + rng.normal(scale=0.02, size=n)
+    )
+    return _golden_dataset(freq, values)
+
+
+def _golden_weak_broad_spectrum(n: int, *, fwhm_fraction: float) -> MuonDataset:
+    """A tall narrow line plus a weak *broad* second line.
+
+    The broad line's FWHM is ``fwhm_fraction`` of the spectrum span — the
+    regime where a too-small ``wlen`` silently truncates the broad line's
+    prominence and a noise maximum outranks it.
+    """
+    rng = np.random.default_rng(2)
+    freq = np.linspace(0.0, 100.0, n)
+    sigma = fwhm_fraction * 100.0 / (2.0 * np.sqrt(2.0 * np.log(2.0)))
+    values = (
+        0.4
+        + 6.0 * np.exp(-0.5 * ((freq - 25.0) / 1.5) ** 2)
+        + 0.6 * np.exp(-0.5 * ((freq - 60.0) / sigma) ** 2)
+        + rng.normal(scale=0.02, size=n)
+    )
+    return _golden_dataset(freq, values)
+
+
+def _bounded_and_unbounded_seeds(
+    dataset: MuonDataset, monkeypatch: pytest.MonkeyPatch
+) -> tuple[dict[str, float], dict[str, float]]:
+    """Seed once as shipped and once with the wlen bound stripped."""
+    import scipy.signal
+
+    model = _two_peak_model()
+    bounded = seed_peak_parameters_from_dataset(dataset, model)
+
+    real_find_peaks = scipy.signal.find_peaks
+
+    def unbounded_find_peaks(y, **kwargs):  # noqa: ANN001, ANN202
+        kwargs.pop("wlen", None)
+        return real_find_peaks(y, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(scipy.signal, "find_peaks", unbounded_find_peaks)
+        reference = seed_peak_parameters_from_dataset(dataset, model)
+    return bounded, reference
+
+
+def _assert_seeds_identical(bounded: dict[str, float], reference: dict[str, float]) -> None:
+    assert set(bounded) == set(reference)
+    # Peak positions must match exactly: identical selected bins give
+    # bit-identical parabolic-refined centres.
+    assert bounded["nu0_1"] == reference["nu0_1"]
+    assert bounded["nu0_2"] == reference["nu0_2"]
+    for name in bounded:
+        assert bounded[name] == pytest.approx(reference[name], rel=1e-12, abs=1e-15)
+
+
+@pytest.mark.parametrize("n", [16384, 262144])
+def test_bounded_prominence_matches_unbounded_on_benign_spectrum(
+    n: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bounded, reference = _bounded_and_unbounded_seeds(_golden_benign_spectrum(n), monkeypatch)
+    _assert_seeds_identical(bounded, reference)
+
+
+# The trending golden uses n=65536 (not 262144) because the *unbounded
+# reference* is the O(n^2) case being fixed (~4 s at 262144); the bounded
+# path itself is fast at any n.
+@pytest.mark.parametrize("n", [16384, 65536])
+def test_bounded_prominence_matches_unbounded_on_trending_spectrum(
+    n: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bounded, reference = _bounded_and_unbounded_seeds(_golden_trending_spectrum(n), monkeypatch)
+    _assert_seeds_identical(bounded, reference)
+
+
+@pytest.mark.parametrize("n", [16384, 262144])
+@pytest.mark.parametrize("fwhm_fraction", [0.10, 0.20])
+def test_bounded_prominence_matches_unbounded_on_weak_broad_line(
+    n: int, fwhm_fraction: float, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A weak line as broad as 10-20% of the spectrum still ranks identically."""
+    dataset = _golden_weak_broad_spectrum(n, fwhm_fraction=fwhm_fraction)
+    bounded, reference = _bounded_and_unbounded_seeds(dataset, monkeypatch)
+    _assert_seeds_identical(bounded, reference)
+    # Sanity: both actually landed on the real broad line, not a noise maximum.
+    assert reference["nu0_2"] == pytest.approx(60.0, abs=3.0)
