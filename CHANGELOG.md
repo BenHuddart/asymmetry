@@ -19,6 +19,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   round trip back). The corrupt-model restore fallback likewise now picks the
   domain-appropriate default instead of always the time-domain one.
 
+- **Fixed the intermittent background-task deadlock that could wedge a whole
+  test shard (and, in principle, freeze the running app).** ``TaskRunner``
+  destroyed its worker on the worker thread (a queued ``deleteLater`` posted to
+  that thread's event loop). Destroying a Python-subclassed ``QObject`` there
+  runs shiboken's ``disconnectNotify`` override under the GIL while ``~QObject``
+  holds Qt's signal-connection mutex; if the GUI thread simultaneously builds a
+  connection under the GIL (e.g. ``QLabel.setText`` lazily constructing a
+  ``QWidgetTextControl``) and wants the same pooled mutex, the two deadlock
+  (GIL ↔ connection-mutex ABBA). The worker now moves its thread affinity back
+  to the GUI thread before ``run`` returns and is deleted there, so ``~QObject``
+  always runs on the GUI thread. See
+  ``docs/investigations/gui-shard-gil-signalslot-deadlock.md``.
+
 - **Opening the Fit Wizard no longer stalls on long runs.** The wizard's
   fingerprint plot (and the result card's data overlay) drew a matplotlib
   errorbar over every point of the raw curve on the GUI thread; both now
