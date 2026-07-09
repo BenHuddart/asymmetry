@@ -52,6 +52,15 @@ _PINNED_SCREENS: list[QScreen] = []
 #: ``id()`` of wrappers already wired to the destruction tripwire.
 _TRIPWIRED: set[int] = set()
 
+#: Set on ``aboutToQuit``: Qt legitimately destroys its screens during
+#: application teardown, so the tripwire stays quiet from then on.
+_SHUTTING_DOWN = False
+
+
+def _mark_shutting_down() -> None:
+    global _SHUTTING_DOWN
+    _SHUTTING_DOWN = True
+
 
 def _on_pinned_screen_destroyed(*_args: object) -> None:
     """Tripwire: a live ``QScreen`` was destroyed mid-session.
@@ -59,8 +68,11 @@ def _on_pinned_screen_destroyed(*_args: object) -> None:
     With the wrappers pinned this should never fire before shutdown. If it
     does, the wrapper-lifetime bug (module docstring) has another path — log
     loudly with the Python stack so the deleting context is captured without
-    needing a debugger.
+    needing a debugger. Quiet once ``aboutToQuit`` has fired: teardown
+    destroys screens legitimately.
     """
+    if _SHUTTING_DOWN:
+        return
     print(
         "screen_guard: a QScreen was destroyed while the application is "
         "running — QScreen wrapper-lifetime bug triggered. Python stack:",
@@ -147,7 +159,8 @@ def install_screen_change_guard(app: QGuiApplication) -> None:
 
     Pins the current screen wrappers immediately (see :func:`pin_screens`),
     and on display add/remove re-anchors windows off any dead screen and
-    re-pins the new wrapper set.
+    re-pins the new wrapper set. ``aboutToQuit`` silences the destruction
+    tripwire for Qt's own teardown of the screens.
     """
 
     def _on_screen_change(_screen: QScreen | None = None) -> None:
@@ -158,3 +171,4 @@ def install_screen_change_guard(app: QGuiApplication) -> None:
     app.screenAdded.connect(_on_screen_change)
     app.screenRemoved.connect(_on_screen_change)
     app.primaryScreenChanged.connect(_on_screen_change)
+    app.aboutToQuit.connect(_mark_shutting_down)

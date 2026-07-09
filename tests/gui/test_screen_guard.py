@@ -103,3 +103,25 @@ def test_install_and_run_against_real_qapp_is_inert(qapp) -> None:
     # no-op: every window is already on a live screen.
     screen_guard.install_screen_change_guard(qapp)
     screen_guard.reanchor_stale_windows()
+
+
+def test_tripwire_logs_mid_session_destruction(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(screen_guard, "_SHUTTING_DOWN", False)
+
+    screen_guard._on_pinned_screen_destroyed()
+
+    err = capsys.readouterr().err
+    assert "QScreen was destroyed" in err
+    assert "test_tripwire_logs_mid_session_destruction" in err  # the Python stack
+
+
+def test_tripwire_is_quiet_during_shutdown(monkeypatch, capsys) -> None:
+    # aboutToQuit fires _mark_shutting_down; teardown then destroys screens
+    # legitimately and the tripwire must stay silent.
+    monkeypatch.setattr(screen_guard, "_SHUTTING_DOWN", False)
+    screen_guard._mark_shutting_down()
+
+    screen_guard._on_pinned_screen_destroyed()
+
+    assert capsys.readouterr().err == ""
+    monkeypatch.setattr(screen_guard, "_SHUTTING_DOWN", False)

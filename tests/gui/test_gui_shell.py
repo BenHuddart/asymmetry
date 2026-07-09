@@ -328,6 +328,7 @@ def test_app_main_headless(monkeypatch: pytest.MonkeyPatch) -> None:
             self.screenAdded = _DummySignal()
             self.screenRemoved = _DummySignal()
             self.primaryScreenChanged = _DummySignal()
+            self.aboutToQuit = _DummySignal()
             events.append("app-init")
 
         def setApplicationName(self, name):  # noqa: N802
@@ -434,6 +435,7 @@ def test_main_uses_resource_fallback_for_splash_logo(
             self.screenAdded = _DummySignal()
             self.screenRemoved = _DummySignal()
             self.primaryScreenChanged = _DummySignal()
+            self.aboutToQuit = _DummySignal()
 
         def setApplicationName(self, _name):  # noqa: N802
             return
