@@ -1208,6 +1208,8 @@ class GlobalFitTab(FitTabBase):
         model: CompositeModel,
         seed_values: dict[str, str] | None = None,
         seed_bounds: dict[str, str] | None = None,
+        *,
+        seed_frequency: bool = True,
     ) -> None:
         """Set the active composite model and rebuild classification rows.
 
@@ -1218,6 +1220,11 @@ class GlobalFitTab(FitTabBase):
         state (BUG B8c). ``seed_bounds`` (parameter name → ``"min, max"`` text)
         likewise carries the single-fit min/max so a bound set there survives
         the hand-off rather than reverting to the model default.
+
+        Restore paths pass ``seed_frequency=False`` because restored parameter
+        values are replayed by ``restore_parameters`` and must not be
+        re-derived (and the restore-time dataset may still be the previous
+        domain's).
         """
         seed_values = seed_values or {}
         seed_bounds = seed_bounds or {}
@@ -1246,7 +1253,7 @@ class GlobalFitTab(FitTabBase):
             seed_field_gauss = float(np.mean(dataset_fields)) if dataset_fields else 0.0
         field_overrides = _field_value_overrides(model, seed_field_gauss)
         frequency_seed_values: dict[str, list[float]] = {}
-        if self._domain == "frequency":
+        if seed_frequency and self._domain == "frequency":
             for dataset in self._datasets:
                 for key, value in seed_peak_parameters_from_dataset(dataset, model).items():
                     frequency_seed_values.setdefault(key, []).append(float(value))
@@ -3925,10 +3932,11 @@ class GlobalFitTab(FitTabBase):
                 restored = CompositeModel.from_dict(composite_data, allow_missing=True)
             except ValueError:
                 self._set_composite_model(
-                    CompositeModel(["Exponential", "Constant"], operators=["+"])
+                    CompositeModel(["Exponential", "Constant"], operators=["+"]),
+                    seed_frequency=False,
                 )
             else:
-                self._set_composite_model(restored)
+                self._set_composite_model(restored, seed_frequency=False)
                 if restored.missing_component_names:
                     names = ", ".join(restored.missing_component_names)
                     self._result_text.setText(

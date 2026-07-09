@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Switching FB Asymmetry ↔ FFT no longer stalls the GUI for seconds when a
+  multi-peak frequency fit is set up.** Two causes, both fixed: the
+  domain-switch restore path re-derived frequency peak seeds that were
+  immediately overwritten by the restored values (and against the previous
+  domain's dataset — the stale-seed bug), and the seeding peak detection hit a
+  scipy ``find_peaks`` worst case that scans O(n²) on spectra with a drifting
+  background. Restore paths no longer reseed (carry-forward still reseeds
+  against the current spectrum), and the prominence search window is bounded
+  (identical peak selection, pinned by golden tests; ~8× faster in the worst
+  case measured).
+
 - **Opening the Global Fit Wizard no longer freezes the application (and, on
   low-memory machines, the whole system).** The wizard's candidate-portfolio
   peak analysis estimated each spectrum's noise floor with a running median

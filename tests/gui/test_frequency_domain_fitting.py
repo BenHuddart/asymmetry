@@ -370,6 +370,83 @@ def test_frequency_fit_range_drag_converts_field_units_to_mhz(qapp) -> None:
 
 
 @pytest.mark.gui
+def test_domain_switch_restore_does_not_reseed(qapp, monkeypatch) -> None:
+    """Restoring a saved frequency fit must not re-run peak seeding.
+
+    Regression: ``_set_composite_model`` unconditionally reseeded nu0/height/
+    fwhm/bg from the current spectrum before ``restore_parameters`` overwrote
+    those values anyway — an expensive scipy peak-detection call whose result
+    was always discarded on the restore path (and which could run against a
+    stale, previous-domain dataset).
+    """
+    import asymmetry.gui.panels.fit.single_tab as single_tab_module
+    from asymmetry.gui.panels.fit_panel import FitPanel
+
+    saved_state = {
+        "composite_model": default_frequency_model().to_dict(),
+        "parameters": [
+            {"name": "height", "value": 42.0},
+            {"name": "nu0", "value": 999.0},
+            {"name": "fwhm", "value": 0.5},
+            {"name": "bg", "value": 1.0},
+        ],
+    }
+
+    panel = FitPanel()
+    panel.set_single_fit_restore_provider(lambda _ds: saved_state)
+    panel.set_domain("frequency")
+
+    call_count = 0
+    original = single_tab_module.seed_peak_parameters_from_dataset
+
+    def _counting(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(single_tab_module, "seed_peak_parameters_from_dataset", _counting)
+
+    panel.set_dataset(_frequency_dataset(7, center=3.4))
+
+    assert call_count == 0
+    seeds = panel._single_tab.current_seed_values()
+    assert float(seeds["height"]) == pytest.approx(42.0)
+    assert float(seeds["nu0"]) == pytest.approx(999.0)
+    assert float(seeds["fwhm"]) == pytest.approx(0.5)
+    assert float(seeds["bg"]) == pytest.approx(1.0)
+
+
+@pytest.mark.gui
+def test_restore_with_orphan_param_keeps_model_default(qapp) -> None:
+    """A param missing from the saved list falls back to the model default.
+
+    Pins the intended edge-case behaviour of gating out the restore-path
+    reseed: an omitted ``nu0`` must land on the model's plain default (1.0),
+    not a spectrum-derived seed (which would sit at the dataset's peak, here
+    ~3.4) and not some leftover carried value.
+    """
+    from asymmetry.gui.panels.fit_panel import FitPanel
+
+    saved_state = {
+        "composite_model": default_frequency_model().to_dict(),
+        "parameters": [
+            {"name": "height", "value": 42.0},
+            # "nu0" deliberately omitted.
+            {"name": "fwhm", "value": 0.5},
+            {"name": "bg", "value": 1.0},
+        ],
+    }
+
+    panel = FitPanel()
+    panel.set_single_fit_restore_provider(lambda _ds: saved_state)
+    panel.set_domain("frequency")
+    panel.set_dataset(_frequency_dataset(8, center=3.4))
+
+    seeds = panel._single_tab.current_seed_values()
+    assert float(seeds["nu0"]) == pytest.approx(1.0)
+
+
+@pytest.mark.gui
 def test_frequency_stationary_handle_click_opens_no_modal_dialog(qapp, monkeypatch) -> None:
     """A stationary click on a frequency handle must not open a modal editor.
 
