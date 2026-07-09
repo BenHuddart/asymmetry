@@ -109,7 +109,32 @@ def _detect_top_n_local_maxima(
     """
     from scipy.signal import find_peaks, peak_widths
 
-    indices, properties = find_peaks(y, prominence=0.0)
+    # Bound the prominence search window (``wlen``).  Without it, find_peaks
+    # scans outward from every local maximum until a taller sample or the
+    # array edge; on quasi-monotonic spectra (decay skirts, background drift —
+    # realistic Fourier magnitudes) ~n/3 noise maxima scan to the edge, an
+    # O(n^2) worst case measured at 3.8 s for n=262144 — and this runs on the
+    # GUI thread when seeding multi-peak frequency models.
+    #
+    # The bound is ``max(2001, odd(n // 8))`` — n/8, not a smaller fraction,
+    # because the two failure modes are asymmetric: a too-small window fails
+    # *silently* (a genuine broad line's prominence is truncated and a noise
+    # maximum outranks it — a semantics bug; observed for a real line of
+    # FWHM = 20% of the spectrum width at n/16), while a too-large window
+    # costs only bounded extra latency on pathological trending shapes
+    # (scipy's scan stops early on typical data; the measured worst case for
+    # n/8 at n=262144 is ~0.45 s vs 3.8 s unbounded, and benign spectra stay
+    # in the tens of milliseconds).  n/8 is scale-invariant — the
+    # window/peak-width ratio is independent of n — and is the smallest such
+    # fraction that ranks lines up to ~20% of the spectrum width identically
+    # to the unbounded search, verified seed-for-seed against the unbounded
+    # reference across benign, trending, weak-broad (10% FWHM) and
+    # extreme-broad (20% FWHM) regimes at n = 401..262144 (pinned by the
+    # golden identity tests in tests/core/test_spectral_seed.py).  The 2001
+    # floor keeps small spectra exactly on the unbounded path; ``wlen`` is
+    # kept odd (scipy rounds even values up).
+    wlen = max(2001, (y.size // 8) | 1)
+    indices, properties = find_peaks(y, prominence=0.0, wlen=wlen)
     if indices.size == 0:
         return []
     in_band = np.isin(indices, candidates)

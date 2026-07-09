@@ -71,6 +71,7 @@ from asymmetry.core.fitting.wizard_scope import (
 from asymmetry.core.fourier.fft import fft_asymmetry
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import build_primary_button_qss, make_warning_banner
+from asymmetry.gui.utils.plot_decimation import decimate_for_preview
 from asymmetry.gui.widgets.decision_trail import DecisionTrail, TrailSeparator
 from asymmetry.gui.widgets.panel_section import PanelSection
 from asymmetry.gui.widgets.screen_sizing import resize_to_available
@@ -92,6 +93,17 @@ _MULTIPLET_KIND_LABELS = {
 _PAGE_WELCOME = 0
 _PAGE_RUNNING = 1
 _PAGE_RESULT = 2
+
+#: Cap on points drawn in the fingerprint plot's time-domain errorbar. This
+#: plot is a small visual fingerprint (not a precision analysis surface, per
+#: its module docstring) drawn synchronously on the GUI thread from
+#: ``set_analysis_context``. Same disease as the grouping preview pane fixed
+#: in PR #229: matplotlib ``errorbar`` over a long high-resolution run's full
+#: point count freezes the GUI thread for seconds computing the error-bar
+#: collection's data limits. Matches the grouping preview's budget
+#: (``preview_pane._MAX_PREVIEW_POINTS``) since both are advisory previews of
+#: similarly-shaped time-domain curves.
+_MAX_FINGERPRINT_POINTS = 2000
 
 #: Progress-message prefix → trail step key. Matched case-insensitively by
 #: prefix so the core's coarse two-message fallback and any finer emits both
@@ -912,10 +924,20 @@ class FitWizardWindow(WizardWindowBase):
         figure.clear()
         ax_time = figure.add_subplot(2, 1, 1)
         ax_fft = figure.add_subplot(2, 1, 2)
+        # Decimate for display only — the errorbar draw is O(points) and is
+        # the GUI-thread stall this plot is prone to on long runs (see
+        # _MAX_FINGERPRINT_POINTS). The FFT below still runs against the full
+        # dataset since its precision matters for the plotted peak positions.
+        plot_time, plot_asymmetry, plot_error = decimate_for_preview(
+            np.asarray(self._dataset.time, dtype=float),
+            np.asarray(self._dataset.asymmetry, dtype=float),
+            np.asarray(self._dataset.error, dtype=float),
+            _MAX_FINGERPRINT_POINTS,
+        )
         ax_time.errorbar(
-            self._dataset.time,
-            self._dataset.asymmetry,
-            yerr=self._dataset.error,
+            plot_time,
+            plot_asymmetry,
+            yerr=plot_error,
             fmt=".",
             markersize=3,
             color=tokens.PLOT_DATA,

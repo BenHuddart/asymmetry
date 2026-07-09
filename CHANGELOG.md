@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Opening the Fit Wizard no longer stalls on long runs.** The wizard's
+  fingerprint plot (and the result card's data overlay) drew a matplotlib
+  errorbar over every point of the raw curve on the GUI thread; both now
+  decimate to a fixed point budget for display, via the same shared helper
+  the grouping preview uses. Stored data and fit/residual curves are
+  untouched — only the drawn preview points are strided.
+
+- **Switching FB Asymmetry ↔ FFT no longer stalls the GUI for seconds when a
+  multi-peak frequency fit is set up.** Two causes, both fixed: the
+  domain-switch restore path re-derived frequency peak seeds that were
+  immediately overwritten by the restored values (and against the previous
+  domain's dataset — the stale-seed bug), and the seeding peak detection hit a
+  scipy ``find_peaks`` worst case that scans O(n²) on spectra with a drifting
+  background. Restore paths no longer reseed (carry-forward still reseeds
+  against the current spectrum), and the prominence search window is bounded
+  (identical peak selection, pinned by golden tests; ~8× faster in the worst
+  case measured).
+
+- **Opening the Global Fit Wizard no longer freezes the application (and, on
+  low-memory machines, the whole system).** The wizard's candidate-portfolio
+  peak analysis estimated each spectrum's noise floor with a running median
+  built from an n×window sliding matrix — for zero-padded spectra that
+  materialised gigabytes per call on the GUI thread. The running median now
+  uses ``scipy.ndimage.median_filter`` (identical output, ~1000× faster,
+  constant memory).
+
+- **Fixed the intermittent crash when toggling FB Asymmetry ↔ FFT (and the
+  matching Windows "no screens available" fatal exit).** The cause was a
+  PySide/shiboken object-lifetime bug, caught live under guard malloc: the
+  ``QWidget.screen()`` / ``QWindow.screen()`` bindings tie the process-wide
+  ``QScreen`` wrapper to the calling widget's wrapper, so when a transient
+  dialog (fit wizards, model dialog) was garbage-collected, Python deleted the
+  live C++ ``QScreen`` while it was still in Qt's screen list — every later
+  DPI lookup then walked freed memory. Asymmetry now resolves screens through
+  a safe helper (``screen_for``), pins the screen wrappers so the GC can never
+  reclaim them, and logs loudly if a screen is ever destroyed mid-session.
+  Full investigation: ``docs/investigations/tahoe-qscreen-uaf.md``.
+
 ## [0.9.0] - 2026-07-08
 
 ### Added
