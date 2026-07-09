@@ -162,6 +162,52 @@ def test_plain_callable_callbacks_run_on_gui_thread():
     runner.shutdown()
 
 
+def test_worker_destroyed_on_gui_thread():
+    """The worker is destroyed on the GUI thread, never on its worker thread.
+
+    Destroying a Python-subclassed ``QObject`` runs shiboken's
+    ``disconnectNotify`` override under the GIL while ``~QObject`` holds Qt's
+    signal-connection mutex(es). If that runs on a live worker thread while the
+    GUI thread builds a connection under the GIL (e.g. ``QLabel.setText`` lazily
+    constructing a ``QWidgetTextControl``), the two deadlock — a GIL <->
+    connection-mutex ABBA that wedges the whole shard (pytest-timeout's watchdog
+    thread also needs the GIL, so it never fires).
+
+    ``TaskWorker.run`` moves the worker back to its home (GUI) thread before
+    returning, and the runner deletes it from ``_on_thread_finished`` there, so
+    ``~QObject`` runs on the GUI thread. This pins that invariant deterministically
+    — it does not rely on the intermittent race actually firing. ``destroyed`` is
+    connected to a bare callable (no receiver QObject), so Qt invokes it directly
+    on whichever thread destroys the worker; we assert that is the GUI thread.
+    """
+    runner = TaskRunner()
+    gui_thread = QThread.currentThread()
+    # Record the identity comparison as a bool, not the QThread itself: the worker
+    # QThread's C++ object is deleted during teardown, so holding a reference to
+    # it here would break the assertion's repr.
+    destroyed_on_gui: list[bool] = []
+    done: list[object] = []
+    release = threading.Event()
+
+    def fn(worker: TaskWorker):
+        # Gate completion until after we have connected ``destroyed`` below, so a
+        # trivially-fast worker cannot be reaped before the probe is attached.
+        release.wait(10.0)
+        return "ok"
+
+    worker = runner.start(fn, on_finished=done.append)
+    worker.destroyed.connect(
+        lambda *_: destroyed_on_gui.append(QThread.currentThread() is gui_thread)
+    )
+    release.set()
+
+    _wait_until(lambda: bool(destroyed_on_gui) and runner.active_count == 0)
+
+    assert done == ["ok"]
+    assert destroyed_on_gui == [True]
+    runner.shutdown()
+
+
 def test_shutdown_cancels_running_task():
     runner = TaskRunner()
     started = threading.Event()
