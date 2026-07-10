@@ -51,8 +51,23 @@ def test_terminate_spawn_pool_kills_and_reaps_workers() -> None:
 
     # Fast: no blocking wait for the never-ending tasks to finish.
     assert elapsed < 15.0
+
     # No orphans and no zombies: every worker is dead and has been reaped
-    # (a reaped process reports a non-None exitcode; a signalled one is negative).
+    # (a reaped process reports a non-None exitcode; a signalled one is
+    # negative). Poll with a deadline rather than asserting on one
+    # instantaneous check: the executor's management thread races
+    # ``terminate_spawn_pool`` to ``waitpid`` the same child, and the loser's
+    # ``Process.poll()`` swallows ``ECHILD`` as ``None`` — so ``is_alive()``
+    # can transiently report True for an already-reaped child until the
+    # winning thread stores the exit code (a starved CI host stretches that
+    # window to seconds). A single ``join`` doesn't help, because it returns
+    # through the same ``ECHILD`` path without waiting.
+    def _dead_and_reaped() -> bool:
+        return all(not proc.is_alive() and proc.exitcode is not None for proc in processes)
+
+    deadline = time.monotonic() + 30.0
+    while time.monotonic() < deadline and not _dead_and_reaped():
+        time.sleep(0.05)
     for proc in processes:
         assert not proc.is_alive()
         assert proc.exitcode is not None
