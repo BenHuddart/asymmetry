@@ -15,11 +15,20 @@ knight_analysis.run_joint_fit`, then injected via ``restore_state`` +
 ``set_snapshot`` rather than the off-thread button so the capture stays
 deterministic), and the plot showing both realigned K(θ) branches with their
 fitted curves and assignment-swap markers.
+
+The sidebar's collapsible **Suggest next angle** section is additionally
+expanded and a D-optimal "Refine parameters" suggestion computed (calling the
+window's own ``_on_suggest_clicked`` — Refine mode is synchronous, milliseconds
+on the GUI thread, so no off-thread wait is needed), so the capture also shows
+the utility-band overlay + risk shading on the K(θ) plot and the "Measure at
+θ = …°" result line. The window is sized taller than the sidebar's four
+original sections alone need so the whole pipeline plus the expanded section
+render without scrolling.
 """
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QSplitter, QWidget
 
 from ._base import Scenario, register, _process_events_for
 
@@ -76,9 +85,11 @@ class KnightShiftWindowScenario(Scenario):
     name = "knight_shift_window"
     description = (
         "Knight shift analysis window: Source/Conversion/Branches/Model fit "
-        "sidebar and a completed joint K(theta) fit for a two-site angle scan."
+        "sidebar, a completed joint K(theta) fit, and a computed 'Suggest next "
+        "angle' D-optimal refine suggestion with its overlay, for a two-site "
+        "angle scan."
     )
-    size = (980, 810)
+    size = (1040, 1230)
     requires_fit = True  # runs the real iminuit-backed joint K(theta) fit
 
     def build(self) -> QWidget:
@@ -105,6 +116,28 @@ class KnightShiftWindowScenario(Scenario):
         window.restore_state(state)
         window.set_snapshot(snapshot)
         _process_events_for(milliseconds=150)
+
+        # The Suggest next angle section's rows (candidate range, typical
+        # run / rate) are wider than the sidebar's default 300px allocation
+        # and clip at that width; widen the sidebar within the (also widened)
+        # window so every field renders without cropping or a horizontal
+        # scrollbar.
+        splitter = window.centralWidget().findChild(QSplitter)
+        if splitter is not None:
+            splitter.setSizes([360, self.size[0] - 360])
+
+        # Expand "Suggest next angle" and compute a D-optimal "Refine
+        # parameters" suggestion (the section's default mode and target) so
+        # the capture shows the overlay + result line, not just an empty
+        # collapsed header. Real joint fit above already stores per-curve
+        # covariance (Phase 1), so the section is active once the fit lands.
+        window._suggest_section.setExpanded(True)
+        assert window._suggest_disabled_reason() is None, (
+            "Suggest next angle should be active once the joint fit and its covariance are in place"
+        )
+        window._on_suggest_clicked()  # Refine mode is synchronous (GUI thread)
+        _process_events_for(milliseconds=150)
+        assert window._last_suggestion is not None
         return window
 
 

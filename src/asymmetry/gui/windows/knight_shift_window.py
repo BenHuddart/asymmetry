@@ -32,8 +32,11 @@ curves stale (the assignment is unit-independent).
 from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING
 
+import numpy as np
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QDoubleValidator
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -60,7 +63,12 @@ from asymmetry.core.fitting.knight_analysis import (
     apply_assignment,
     assignment_swap_positions,
     evaluate,
+    joint_fit_aic_inputs,
     run_joint_fit,
+    run_joint_fit_outcome,
+    suggest_assignment_discriminating_angle,
+    suggest_model_discriminating_angle,
+    suggest_next_angle,
 )
 from asymmetry.core.fitting.knight_shift import (
     REFERENCE_APPLIED_FIELD,
@@ -77,10 +85,30 @@ from asymmetry.core.fitting.parameters import Parameter, ParameterSet, get_param
 from asymmetry.core.utils.angles import wrap_angle_deg
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.metrics import field_width_for
+from asymmetry.gui.styles.widgets import info_html, warning_html
 from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.widgets.action_footer import ActionFooter
+from asymmetry.gui.widgets.axis_limits import FloatLimitField
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollSpinBox
 from asymmetry.gui.widgets.panel_section import PanelSection
+from asymmetry.gui.widgets.suggestion_overlay import SuggestionOverlay, draw_suggestion_overlay
+
+if TYPE_CHECKING:
+    from asymmetry.core.fitting.angular_assignment import AngularAssignmentResult
+
+#: "Suggest next angle" mode selector entries, in combo order.
+_SUGGEST_MODE_REFINE = 0
+_SUGGEST_MODE_MISALIGN = 1
+_SUGGEST_MODE_ASSIGN = 2
+
+#: Digit → unicode-subscript map for plain-text branch labels in the combo.
+_SUBSCRIPT_DIGITS = str.maketrans("0123456789", "₀₁₂₃₄₅₆₇₈₉")
+
+
+def _to_subscript(text: str) -> str:
+    """Render a branch subscript with unicode subscript digits for plain text."""
+    return str(text).translate(_SUBSCRIPT_DIGITS)
+
 
 #: Display-unit choices in combo order.
 _UNIT_CHOICES: tuple[tuple[str, KnightShiftUnit], ...] = (
@@ -138,7 +166,30 @@ class KnightShiftWindow(QMainWindow):
         #: Guard so programmatic control updates never re-enter _reevaluate.
         self._updating_controls = False
         self._tasks = TaskRunner(self)
+        #: True while EITHER the joint fit or an alternative (misalignment) fit
+        #: runs off-thread — one flag makes concurrent runs impossible.
         self._joint_running = False
+        #: In-memory EM outcome (with runner-up alternatives) from the last joint
+        #: fit run; never persisted (project loads leave it None until a re-run).
+        self._joint_outcome: AngularAssignmentResult | None = None
+        #: The suggestion overlay currently drawn on the K(θ) plot (Phase 5).
+        #: Cleared whenever the joint fit or conversion config changes so a stale
+        #: band never survives a refit/reconfig/unit change.
+        self._suggestion_overlay: SuggestionOverlay | None = None
+        #: The last computed suggestion, kept so the display-only conversion
+        #: fields can re-render the result line without recomputing.
+        self._last_suggestion = None
+        #: Cached alternative (misalignment) joint fits, keyed on
+        #: (lead_model, alt_model, unit, correction_offset); invalidated wherever
+        #: the joint fit goes stale.
+        self._alt_fit_cache: dict[tuple, KnightJointFitState] = {}
+        #: (cache_key, alt_model) for an alternative fit in flight; None otherwise.
+        self._pending_alt: tuple[tuple, str] | None = None
+        #: When True, the joint fit now running was launched by a Suggest click
+        #: (assignment mode, project-loaded fit) and should suggest on completion.
+        self._pending_suggest = False
+        #: The measured angle span the candidate-range fields were last seeded to.
+        self._suggest_seeded_span: tuple[float, float] | None = None
 
         central = QWidget(self)
         self.setCentralWidget(central)
@@ -353,6 +404,9 @@ class KnightShiftWindow(QMainWindow):
         self._fit_section.addWidget(self._clear_fit_btn)
         layout.addWidget(self._fit_section)
 
+        # Suggest next angle ---------------------------------------------------
+        layout.addWidget(self._build_suggest_section(sidebar))
+
         layout.addStretch(1)
 
         scroll = QScrollArea(self)
@@ -400,6 +454,575 @@ class KnightShiftWindow(QMainWindow):
         self._fold_check.toggled.connect(self._on_view_changed)
         self._markers_check.toggled.connect(self._on_view_changed)
         return area
+
+    # ── "Suggest next angle" section (BED, Phase 5 — §3.1–3.3) ────────────────
+    #
+    # One collapsible section beneath Model fit. The utility math runs on the
+    # GUI thread (milliseconds) on the Suggest button only — never on control
+    # changes. Test misalignment runs the alternative (Fourier) joint fit
+    # off-thread via the window's TaskRunner and caches it; Resolve assignment
+    # consumes the in-memory EM runner-up alternatives from the last joint fit
+    # (re-running off-thread first when the stored fit came from a project load).
+
+    def _build_suggest_section(self, sidebar: QWidget) -> PanelSection:
+        section = PanelSection(
+            "Suggest next angle",
+            collapsible=True,
+            expanded=False,
+            hint="Plan the next scan angle from the joint K(θ) fit.",
+            settings_key="knight/sections/suggest",
+            parent=sidebar,
+        )
+        self._suggest_section = section
+
+        # Mode selector -------------------------------------------------------
+        mode_row = QWidget(sidebar)
+        mode_layout = QHBoxLayout(mode_row)
+        mode_layout.setContentsMargins(0, 0, 0, 0)
+        mode_layout.setSpacing(6)
+        mode_layout.addWidget(QLabel("Mode", mode_row))
+        self._suggest_mode_combo = QComboBox(mode_row)
+        for label, tip in (
+            (
+                "Refine parameters",
+                "Which angle most tightly constrains the fitted K(θ) curve "
+                "parameters (K_iso/K_ax/θ0 per site).",
+            ),
+            (
+                "Test misalignment",
+                "Which angle best tests for a tilted rotation axis — the "
+                "first-harmonic AngularFourier2 alternative — against the current "
+                "model.",
+            ),
+            (
+                "Resolve assignment",
+                "Which angle best resolves competing branch labellings through "
+                "crossings (near-degenerate EM assignments).",
+            ),
+        ):
+            self._suggest_mode_combo.addItem(label)
+            self._suggest_mode_combo.setItemData(
+                self._suggest_mode_combo.count() - 1, tip, Qt.ItemDataRole.ToolTipRole
+            )
+        mode_layout.addWidget(self._suggest_mode_combo, 1)
+        section.addWidget(mode_row)
+
+        # Target (Refine only) ------------------------------------------------
+        self._suggest_target_row = QWidget(sidebar)
+        target_layout = QHBoxLayout(self._suggest_target_row)
+        target_layout.setContentsMargins(0, 0, 0, 0)
+        target_layout.setSpacing(6)
+        target_layout.addWidget(QLabel("Target", self._suggest_target_row))
+        self._suggest_target_combo = QComboBox(self._suggest_target_row)
+        self._suggest_target_combo.setToolTip(
+            "The parameter to minimise the posterior uncertainty of (c-optimal), "
+            "or the whole covariance ellipsoid summed over curves (D-optimal, all "
+            "parameters)."
+        )
+        target_layout.addWidget(self._suggest_target_combo, 1)
+        section.addWidget(self._suggest_target_row)
+
+        # Candidate range -----------------------------------------------------
+        range_row = QWidget(sidebar)
+        range_layout = QHBoxLayout(range_row)
+        range_layout.setContentsMargins(0, 0, 0, 0)
+        range_layout.setSpacing(6)
+        range_layout.addWidget(QLabel("Candidate range", range_row))
+        self._suggest_min_field = FloatLimitField(
+            0.0, value_range=(-1e6, 1e6), decimals=3, parent=range_row
+        )
+        self._suggest_max_field = FloatLimitField(
+            180.0, value_range=(-1e6, 1e6), decimals=3, parent=range_row
+        )
+        self._suggest_min_field.setToolTip(
+            "Lowest candidate angle. Seeded from the measured span; widen it to "
+            "allow extrapolated suggestions (flagged in the result)."
+        )
+        self._suggest_max_field.setToolTip("Highest candidate angle.")
+        range_layout.addWidget(self._suggest_min_field)
+        range_layout.addWidget(QLabel("–", range_row))
+        range_layout.addWidget(self._suggest_max_field)
+        range_layout.addStretch(1)
+        section.addWidget(range_row)
+
+        # Precision goal (Refine only) ----------------------------------------
+        self._suggest_goal_row = QWidget(sidebar)
+        goal_layout = QHBoxLayout(self._suggest_goal_row)
+        goal_layout.setContentsMargins(0, 0, 0, 0)
+        goal_layout.setSpacing(6)
+        goal_layout.addWidget(QLabel("Precision goal", self._suggest_goal_row))
+        self._suggest_goal_edit = QLineEdit(self._suggest_goal_row)
+        self._suggest_goal_edit.setPlaceholderText("e.g. 0.1")
+        self._suggest_goal_edit.setValidator(QDoubleValidator(0.0, 1.0e12, 12, self))
+        self._suggest_goal_edit.setToolTip(
+            "Optional target σ for the selected parameter (same units). Solves for "
+            "the event-count factor needed at the suggested angle; only meaningful "
+            "for a single-parameter (c-optimal) target."
+        )
+        goal_layout.addWidget(self._suggest_goal_edit, 1)
+        section.addWidget(self._suggest_goal_row)
+
+        # Events/time conversion (Refine only; display-only) ------------------
+        self._suggest_rate_row = QWidget(sidebar)
+        rate_layout = QHBoxLayout(self._suggest_rate_row)
+        rate_layout.setContentsMargins(0, 0, 0, 0)
+        rate_layout.setSpacing(6)
+        rate_layout.addWidget(QLabel("Typical run (Mevents)", self._suggest_rate_row))
+        self._suggest_typical_run_edit = QLineEdit(self._suggest_rate_row)
+        self._suggest_typical_run_edit.setPlaceholderText("optional")
+        self._suggest_typical_run_edit.setValidator(QDoubleValidator(0.0, 1.0e12, 6, self))
+        self._suggest_typical_run_edit.setToolTip(
+            "Display-only: your instrument's typical run size, used to convert the "
+            "events factor into an approximate Mevents figure."
+        )
+        rate_layout.addWidget(self._suggest_typical_run_edit)
+        rate_layout.addWidget(QLabel("Rate (Mevents/h)", self._suggest_rate_row))
+        self._suggest_rate_edit = QLineEdit(self._suggest_rate_row)
+        self._suggest_rate_edit.setPlaceholderText("optional")
+        self._suggest_rate_edit.setValidator(QDoubleValidator(0.0, 1.0e12, 6, self))
+        self._suggest_rate_edit.setToolTip(
+            "Display-only: your instrument's count rate, used to additionally show "
+            "an equivalent counting time. Never affects the computation."
+        )
+        rate_layout.addWidget(self._suggest_rate_edit)
+        section.addWidget(self._suggest_rate_row)
+
+        # Suggest button + results --------------------------------------------
+        self._suggest_btn = QPushButton("Suggest", sidebar)
+        self._suggest_btn.setToolTip(
+            "Rank candidate angles for the selected mode and mark the best on the "
+            "K(θ) plot. Runs on demand only."
+        )
+        self._suggest_btn.clicked.connect(self._on_suggest_clicked)
+        section.addWidget(self._suggest_btn)
+
+        self._suggest_result_label = QLabel("", sidebar)
+        self._suggest_result_label.setWordWrap(True)
+        self._suggest_result_label.setTextFormat(Qt.TextFormat.RichText)
+        section.addWidget(self._suggest_result_label)
+
+        self._suggest_warning_label = QLabel("", sidebar)
+        self._suggest_warning_label.setWordWrap(True)
+        self._suggest_warning_label.setTextFormat(Qt.TextFormat.RichText)
+        self._suggest_warning_label.setVisible(False)
+        section.addWidget(self._suggest_warning_label)
+
+        self._suggest_disabled_hint = QLabel("", sidebar)
+        self._suggest_disabled_hint.setWordWrap(True)
+        self._suggest_disabled_hint.setStyleSheet(f"QLabel {{ color: {tokens.TEXT_MUTED}; }}")
+        section.addWidget(self._suggest_disabled_hint)
+
+        # Wiring (ephemeral controls: never persisted, never re-run the fit) ---
+        self._suggest_mode_combo.currentIndexChanged.connect(self._on_suggest_mode_changed)
+        self._suggest_target_combo.currentIndexChanged.connect(self._on_suggest_target_changed)
+        self._suggest_typical_run_edit.textChanged.connect(self._on_suggest_conversion_changed)
+        self._suggest_rate_edit.textChanged.connect(self._on_suggest_conversion_changed)
+        self._suggest_min_field.editingFinished.connect(self._on_suggest_range_changed)
+        self._suggest_max_field.editingFinished.connect(self._on_suggest_range_changed)
+
+        self._update_suggest_mode_visibility()
+        return section
+
+    # ── Suggest: control state ────────────────────────────────────────────────
+
+    def _update_suggest_mode_visibility(self) -> None:
+        """Show Target/goal/rate rows in Refine mode only (§4.2 item 5)."""
+        refine = self._suggest_mode_combo.currentIndex() == _SUGGEST_MODE_REFINE
+        self._suggest_target_row.setVisible(refine)
+        self._suggest_goal_row.setVisible(refine)
+        self._suggest_rate_row.setVisible(refine)
+
+    def _suggest_disabled_reason(self) -> str | None:
+        """Why the section is inactive, or ``None`` when a suggestion can run."""
+        snapshot = self._snapshot
+        if snapshot is None or snapshot.x_key != "angle":
+            return "Needs the Angle scan axis."
+        result = self._result
+        if result is None or len(result.branches) < 2:
+            return "Needs at least two Knight-shift branches."
+        joint = self._state.joint
+        if joint is None:
+            return "Run the joint K(θ) fit first."
+        if not self._joint_applies():
+            return "Re-run the joint K(θ) fit — it no longer matches the branches."
+        if not self._joint_curves_fresh():
+            return "Re-run the joint K(θ) fit — the display unit or correction changed."
+        if all(curve.covariance is None for curve in joint.curves):
+            return "Re-run the joint K(θ) fit to store fit covariance."
+        return None
+
+    def _update_suggest_controls(self) -> None:
+        """Sync the section's enabled state, target combo, and disabled hint."""
+        reason = self._suggest_disabled_reason()
+        enabled = reason is None and not self._joint_running
+        for widget in (
+            self._suggest_mode_combo,
+            self._suggest_target_combo,
+            self._suggest_min_field,
+            self._suggest_max_field,
+            self._suggest_goal_edit,
+            self._suggest_typical_run_edit,
+            self._suggest_rate_edit,
+            self._suggest_btn,
+        ):
+            widget.setEnabled(enabled)
+        # A running fit is a transient state, not a missing prerequisite: keep the
+        # last real reason (or blank) rather than flashing a hint while it runs.
+        self._suggest_disabled_hint.setText(reason or "")
+        self._suggest_disabled_hint.setVisible(reason is not None)
+        if reason is None:
+            self._maybe_seed_suggest_range()
+            self._update_suggest_target_combo()
+
+    def _maybe_seed_suggest_range(self) -> None:
+        """Seed the candidate-range fields from the measured angle span (once)."""
+        result = self._result
+        if result is None:
+            return
+        finite = [x for branch in result.branches for x in branch.x if x == x]
+        if not finite:
+            return
+        span = (min(finite), max(finite))
+        if self._suggest_seeded_span == span:
+            return
+        self._suggest_seeded_span = span
+        self._updating_controls = True
+        try:
+            self._suggest_min_field.setValue(span[0])
+            self._suggest_max_field.setValue(span[1])
+        finally:
+            self._updating_controls = False
+
+    def _update_suggest_target_combo(self) -> None:
+        """List "All parameters (D-optimal)" + one entry per (branch × free param)."""
+        from asymmetry.gui.utils.formatting import format_param_label
+
+        current = self._suggest_target_combo.currentData()
+        joint = self._state.joint
+        subscript_by_branch = (
+            {b.name: b.subscript for b in self._result.branches} if self._result else {}
+        )
+        self._updating_controls = True
+        try:
+            self._suggest_target_combo.clear()
+            self._suggest_target_combo.addItem("All parameters (D-optimal)", None)
+            if joint is not None:
+                for curve in joint.curves:
+                    subscript = subscript_by_branch.get(curve.branch_name, "?")
+                    for name, _value, _err in curve.parameters:
+                        label = f"K{_to_subscript(subscript)} · {format_param_label(name)}"
+                        self._suggest_target_combo.addItem(label, (curve.branch_name, name))
+            index = self._suggest_target_combo.findData(current)
+            self._suggest_target_combo.setCurrentIndex(max(0, index))
+        finally:
+            self._updating_controls = False
+        self._on_suggest_target_changed()
+
+    def _clear_suggestion_overlay(self) -> None:
+        """Drop the drawn suggestion band + result/warning lines (stale-guard)."""
+        self._suggestion_overlay = None
+        self._last_suggestion = None
+        if getattr(self, "_suggest_result_label", None) is not None:
+            self._suggest_result_label.setText("")
+        if getattr(self, "_suggest_warning_label", None) is not None:
+            self._suggest_warning_label.setText("")
+            self._suggest_warning_label.setVisible(False)
+
+    # ── Suggest: control-change handlers ──────────────────────────────────────
+
+    def _on_suggest_mode_changed(self, *_args: object) -> None:
+        if self._updating_controls:
+            return
+        self._clear_suggestion_overlay()
+        self._update_suggest_mode_visibility()
+        self._update_suggest_controls()
+        self._redraw()
+
+    def _on_suggest_target_changed(self, *_args: object) -> None:
+        """Precision goal + conversion only make sense for a c-optimal target."""
+        if getattr(self, "_suggest_goal_edit", None) is None:
+            return
+        target = self._suggest_target_combo.currentData()
+        is_c_optimal = target is not None
+        self._suggest_goal_edit.setEnabled(is_c_optimal)
+        if not is_c_optimal and not self._updating_controls:
+            self._suggest_goal_edit.clear()
+
+    def _on_suggest_range_changed(self, *_args: object) -> None:
+        if self._updating_controls:
+            return
+        # A changed range invalidates the drawn band (it was computed for the old
+        # candidates); the user re-clicks Suggest to recompute.
+        if self._suggestion_overlay is not None:
+            self._clear_suggestion_overlay()
+            self._redraw()
+
+    def _on_suggest_conversion_changed(self, *_args: object) -> None:
+        """Typical-run/rate are pure display — re-render the last result line."""
+        if self._updating_controls or self._last_suggestion is None:
+            return
+        if self._suggest_mode_combo.currentIndex() == _SUGGEST_MODE_REFINE:
+            self._render_refine_result(self._last_suggestion)
+
+    # ── Suggest: dispatch + off-thread fits ───────────────────────────────────
+
+    def _on_suggest_clicked(self) -> None:
+        if self._joint_running or self._suggest_disabled_reason() is not None:
+            return
+        mode = self._suggest_mode_combo.currentIndex()
+        if mode == _SUGGEST_MODE_ASSIGN and self._joint_outcome is None:
+            # A fresh fit restored from a project has no in-memory alternatives:
+            # re-run the joint fit off-thread (exact _on_run_joint_fit machinery),
+            # then suggest on completion.
+            self._pending_suggest = True
+            self._on_run_joint_fit()
+            return
+        self._compute_and_render_suggestion()
+
+    def _compute_and_render_suggestion(self) -> None:
+        if self._suggest_disabled_reason() is not None:
+            return
+        mode = self._suggest_mode_combo.currentIndex()
+        x_min = self._suggest_min_field.value()
+        x_max = self._suggest_max_field.value()
+        result = self._result
+        joint = self._state.joint
+        if mode == _SUGGEST_MODE_REFINE:
+            self._suggest_refine(result, joint, x_min, x_max)
+        elif mode == _SUGGEST_MODE_MISALIGN:
+            self._suggest_misalignment(result, joint, x_min, x_max)
+        else:
+            self._suggest_assignment(result, x_min, x_max)
+
+    def _suggest_refine(
+        self,
+        result: KnightAnalysisResult,
+        joint: KnightJointFitState,
+        x_min: float,
+        x_max: float,
+    ) -> None:
+        target = self._suggest_target_combo.currentData()
+        sigma_goal: float | None = None
+        goal_text = self._suggest_goal_edit.text().strip()
+        if target is not None and goal_text:
+            try:
+                parsed = float(goal_text)
+            except ValueError:
+                parsed = float("nan")
+            if np.isfinite(parsed) and parsed > 0.0:
+                sigma_goal = parsed
+        suggestion = suggest_next_angle(
+            result, joint, x_min=x_min, x_max=x_max, target=target, sigma_goal=sigma_goal
+        )
+        self._last_suggestion = suggestion
+        self._store_and_draw_overlay(suggestion)
+        self._render_refine_result(suggestion)
+
+    def _suggest_misalignment(
+        self,
+        result: KnightAnalysisResult,
+        joint: KnightJointFitState,
+        x_min: float,
+        x_max: float,
+    ) -> None:
+        alt_model = self._alt_model_name(joint.model_name)
+        key = self._alt_cache_key(alt_model)
+        alt_state = self._alt_fit_cache.get(key)
+        if alt_state is None:
+            # Run the alternative joint fit off-thread; rendering resumes in
+            # _on_alt_fit_ready once it lands and is cached.
+            self._pending_alt = (key, alt_model)
+            self._run_alt_fit(alt_model)
+            return
+        suggestion = suggest_model_discriminating_angle(
+            result, joint, alt_state, x_min=x_min, x_max=x_max
+        )
+        self._last_suggestion = suggestion
+        self._store_and_draw_overlay(suggestion)
+        self._render_misalignment_result(suggestion, joint, alt_state)
+
+    def _suggest_assignment(self, result: KnightAnalysisResult, x_min: float, x_max: float) -> None:
+        outcome = self._joint_outcome
+        if outcome is None:
+            return  # the re-run path in _on_suggest_clicked handles this
+        suggestion = suggest_assignment_discriminating_angle(
+            result, outcome, x_min=x_min, x_max=x_max
+        )
+        self._last_suggestion = suggestion
+        self._store_and_draw_overlay(suggestion)
+        if np.isfinite(suggestion.best_x):
+            self._suggest_result_label.setText(f"Measure at θ = {suggestion.best_x:.4g}°")
+            self._set_suggest_warnings(suggestion.warnings)
+        else:
+            # The bridge's warning IS the message ("No near-degenerate
+            # assignments to discriminate" / "predict the same value set").
+            message = " ".join(suggestion.warnings) or "No discriminating angle found."
+            self._suggest_result_label.setText(info_html(message))
+            self._set_suggest_warnings(())
+
+    @staticmethod
+    def _alt_model_name(lead_model: str) -> str:
+        """The discriminating alternative: Fourier2, or Cos2 when lead IS Fourier2."""
+        return "AngularCos2" if lead_model == "AngularFourier2" else "AngularFourier2"
+
+    def _alt_cache_key(self, alt_model: str) -> tuple:
+        joint = self._state.joint
+        lead_model = joint.model_name if joint is not None else ""
+        unit = joint.unit if joint is not None else ""
+        offset = round(self._current_correction().offset(), 12)
+        return (lead_model, alt_model, unit, offset)
+
+    def _run_alt_fit(self, alt_model: str) -> None:
+        """Fit the alternative K(θ) model off-thread (mirrors _on_run_joint_fit)."""
+        result = self._result
+        max_iter = int(self._max_iter_spin.value())
+        correction_offset = self._current_correction().offset()
+        self._joint_running = True
+        self._footer.show_progress("Fitting alternative K(θ)…")
+        self._update_fit_controls()
+        self._update_suggest_controls()
+        self._tasks.start(
+            lambda _worker: run_joint_fit(
+                result,
+                model_name=alt_model,
+                max_iter=max_iter,
+                correction_offset=correction_offset,
+            ),
+            on_finished=self._on_alt_fit_ready,
+            on_error=self._on_alt_fit_error,
+        )
+
+    def _on_alt_fit_ready(self, alt_state: KnightJointFitState) -> None:
+        self._joint_running = False
+        self._footer.hide_progress()
+        pending = self._pending_alt
+        self._pending_alt = None
+        self._update_fit_controls()
+        self._update_suggest_controls()
+        if pending is None:
+            return
+        key, alt_model = pending
+        # Only use the result if the config still matches what we launched
+        # against (a mid-fit unit/correction change would have invalidated it).
+        if self._suggest_disabled_reason() is None and self._alt_cache_key(alt_model) == key:
+            self._alt_fit_cache[key] = alt_state
+            if self._suggest_mode_combo.currentIndex() == _SUGGEST_MODE_MISALIGN:
+                self._compute_and_render_suggestion()
+
+    def _on_alt_fit_error(self, message: str) -> None:
+        self._joint_running = False
+        self._pending_alt = None
+        self._footer.hide_progress()
+        self._update_fit_controls()
+        self._update_suggest_controls()
+        self._footer.set_status(f"Alternative fit failed: {message}")
+
+    # ── Suggest: overlay + result rendering ───────────────────────────────────
+
+    def _store_and_draw_overlay(self, suggestion: object) -> None:
+        x = np.asarray(suggestion.x_candidates, dtype=float)
+        if x.size == 0:
+            self._suggestion_overlay = None
+        else:
+            risk = suggestion.risk_mask
+            self._suggestion_overlay = SuggestionOverlay(
+                x=x,
+                utility=np.asarray(suggestion.utility, dtype=float),
+                extrapolated=np.asarray(suggestion.extrapolated, dtype=bool),
+                best_x=float(suggestion.best_x),
+                risk_mask=None if risk is None else np.asarray(risk, dtype=bool),
+            )
+        self._redraw()
+
+    def _suggest_conversion_line(self, events_factor: float | None) -> str:
+        """Optional "≈ N Mevents" / "≈ N h" tail (display-only; mirrors the dialog)."""
+        if events_factor is None:
+            return ""
+        typical_text = self._suggest_typical_run_edit.text().strip()
+        if not typical_text:
+            return ""
+        try:
+            typical = float(typical_text)
+        except ValueError:
+            return ""
+        if not np.isfinite(typical) or typical <= 0.0:
+            return ""
+        mevents = events_factor * typical
+        line = f"≈ {mevents:.3g} Mevents"
+        rate_text = self._suggest_rate_edit.text().strip()
+        if rate_text:
+            try:
+                rate = float(rate_text)
+            except ValueError:
+                rate = float("nan")
+            if np.isfinite(rate) and rate > 0.0:
+                line += f" ≈ {mevents / rate:.3g} h"
+        return line
+
+    def _render_refine_result(self, suggestion: object) -> None:
+        if not np.isfinite(suggestion.best_x):
+            self._suggest_result_label.setText(
+                info_html("No informative candidate found in this range.")
+            )
+            self._set_suggest_warnings(suggestion.warnings)
+            return
+        parts = [f"Measure at θ = {suggestion.best_x:.4g}°"]
+        if suggestion.target is not None:
+            if suggestion.target_unreachable:
+                floor = suggestion.floor_sigma
+                floor_text = f" (floor σ ~ {floor:.3g})" if floor else ""
+                parts.append(
+                    f"the precision goal cannot be reached with a single new point{floor_text}"
+                )
+            elif suggestion.events_factor_to_target is not None:
+                parts.append(
+                    f"× {suggestion.events_factor_to_target:.2g} of a typical run's statistics"
+                )
+            if suggestion.predicted_post_sigma is not None and np.isfinite(
+                suggestion.predicted_post_sigma
+            ):
+                parts.append(f"→ σ ≈ {suggestion.predicted_post_sigma:.3g} (approximate)")
+            conversion = self._suggest_conversion_line(suggestion.events_factor_to_target)
+            if conversion:
+                parts.append(conversion)
+        self._suggest_result_label.setText(" ".join(parts))
+        self._set_suggest_warnings(suggestion.warnings)
+
+    def _render_misalignment_result(
+        self,
+        suggestion: object,
+        joint: KnightJointFitState,
+        alt_state: KnightJointFitState,
+    ) -> None:
+        from asymmetry.core.fitting.experiment_design import aic_weights
+
+        lead_chi2, lead_p = joint_fit_aic_inputs(joint)
+        alt_chi2, alt_p = joint_fit_aic_inputs(alt_state)
+        weights = aic_weights([lead_chi2, alt_chi2], [lead_p, alt_p])
+        lead_w, alt_w = weights[0], weights[1]
+        if alt_w >= lead_w:
+            preferred, pref_w, other_w = alt_state.model_name, alt_w, lead_w
+        else:
+            preferred, pref_w, other_w = joint.model_name, lead_w, alt_w
+        ratio = pref_w / other_w if other_w > 0.0 else float("inf")
+
+        parts: list[str] = []
+        if np.isfinite(suggestion.best_x):
+            parts.append(f"Measure at θ = {suggestion.best_x:.4g}°")
+        parts.append(
+            f"prefers {preferred} (Akaike weight {pref_w:.3g}, evidence ratio {ratio:.3g})"
+        )
+        self._suggest_result_label.setText("; ".join(parts))
+        self._set_suggest_warnings(suggestion.warnings)
+
+    def _set_suggest_warnings(self, warnings: object) -> None:
+        text = list(dict.fromkeys(w for w in warnings if w))
+        if not text:
+            self._suggest_warning_label.setText("")
+            self._suggest_warning_label.setVisible(False)
+            return
+        self._suggest_warning_label.setText(warning_html(" ".join(text)))
+        self._suggest_warning_label.setVisible(True)
 
     # ── Snapshot / state ─────────────────────────────────────────────────────
 
@@ -588,9 +1211,16 @@ class KnightShiftWindow(QMainWindow):
             self._result = None
         else:
             self._result = evaluate(self._snapshot, config, correction)
+        # A reconfig/unit/correction/snapshot change invalidates any drawn
+        # suggestion and every cached alternative fit and in-memory EM outcome:
+        # the joint curves it was computed against are now stale.
+        self._clear_suggestion_overlay()
+        self._joint_outcome = None
+        self._alt_fit_cache.clear()
         self._update_source_labels()
         self._update_branch_rows()
         self._update_fit_controls()
+        self._update_suggest_controls()
         self._update_status()
         self._redraw()
 
@@ -659,35 +1289,56 @@ class KnightShiftWindow(QMainWindow):
         self._joint_running = True
         self._fit_btn.setEnabled(False)
         self._footer.show_progress("Fitting K(θ)…")
+        self._update_suggest_controls()
         self._tasks.start(
-            lambda _worker: run_joint_fit(
+            # keep_alternatives feeds the assignment-discrimination bridge; the
+            # outcome (with runner-ups) is retained in memory, never persisted.
+            lambda _worker: run_joint_fit_outcome(
                 result,
                 model_name=model_name,
                 max_iter=max_iter,
                 correction_offset=correction_offset,
+                keep_alternatives=3,
             ),
             on_finished=self._on_joint_fit_ready,
             on_error=self._on_joint_fit_error,
         )
 
-    def _on_joint_fit_ready(self, joint: KnightJointFitState) -> None:
+    def _on_joint_fit_ready(
+        self, payload: tuple[KnightJointFitState, AngularAssignmentResult]
+    ) -> None:
+        joint, outcome = payload
         self._joint_running = False
         self._footer.hide_progress()
         self._state.joint = joint
+        self._joint_outcome = outcome
+        # A fresh fit makes any prior suggestion (from the old fit) stale.
+        self._clear_suggestion_overlay()
+        self._alt_fit_cache.clear()
         self._update_fit_controls()
         self._update_status()
+        self._update_suggest_controls()
         self._redraw()
+        if self._pending_suggest:
+            self._pending_suggest = False
+            self._compute_and_render_suggestion()
 
     def _on_joint_fit_error(self, message: str) -> None:
         self._joint_running = False
+        self._pending_suggest = False
         self._footer.hide_progress()
         self._update_fit_controls()
+        self._update_suggest_controls()
         self._footer.set_status(f"Joint fit failed: {message}")
 
     def _on_clear_joint_fit(self) -> None:
         self._state.joint = None
+        self._joint_outcome = None
+        self._alt_fit_cache.clear()
+        self._clear_suggestion_overlay()
         self._update_fit_controls()
         self._update_status()
+        self._update_suggest_controls()
         self._redraw()
 
     def _on_model_info(self) -> None:
@@ -922,6 +1573,10 @@ class KnightShiftWindow(QMainWindow):
                         ax.axvline(
                             mid, color=tokens.BORDER, linestyle="--", linewidth=1.0, zorder=0
                         )
+            # Next-angle suggestion band + risk shading (drawn unfolded: the raw
+            # scan coordinate is the frame the utility was computed in).
+            if self._suggestion_overlay is not None and not fold:
+                draw_suggestion_overlay(ax, self._suggestion_overlay, tokens.ACCENT, "suggested")
             unit_suffix = f" ({result.unit_label})" if result.unit_label else ""
             symbol = r"$K_\mu$" if self._current_correction().enabled else "K"
             ax.set_ylabel(f"{symbol}{unit_suffix}")

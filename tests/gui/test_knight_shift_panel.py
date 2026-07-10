@@ -338,3 +338,45 @@ def test_config_round_trips_through_state(qapp):
     assert cfg.reference_component == "frequency"
     assert cfg.unit is KnightShiftUnit.PPM
     assert "K[frequency_2]" in restored._knight_shift_names
+
+
+def test_knight_window_button_visible_when_series_has_knight_observables(qapp):
+    # bed-next-angle-knight-shift.md §4.3: the button is the main-GUI shortcut,
+    # shown only when the active series' model has a Knight-convertible
+    # component (non-empty _knight_observables), unlike the always-available
+    # menu action.
+    panel = FitParametersPanel()
+    panel.load_representation_series(
+        [("batch-1", "S", [_row(1, 7000.0, {"field_1": 7050.0})])],
+        knight_observables_by_id={"batch-1": {"field_1": "field"}},
+    )
+    # isHidden() reflects the explicit visibility flag without a shown ancestor
+    # (isVisible() is always False until the top-level window is shown).
+    assert not panel._knight_window_btn.isHidden()
+    assert panel._knight_window_btn.isEnabled()
+
+
+def test_knight_window_button_hidden_without_knight_observables(qapp):
+    # Rows exist, but the fitted model has no Knight-convertible component
+    # (no knight_observables_by_id passed): the button must stay hidden even
+    # though the old behaviour (bool(self._rows)) would have enabled it.
+    panel = FitParametersPanel()
+    _load(panel, [_row(1, 7000.0, {"frequency": 94.0})])
+    assert panel._knight_window_btn.isHidden()
+
+
+def test_knight_window_button_hidden_after_clear(qapp):
+    panel = FitParametersPanel()
+    panel.load_representation_series(
+        [("batch-1", "S", [_row(1, 7000.0, {"field_1": 7050.0})])],
+        knight_observables_by_id={"batch-1": {"field_1": "field"}},
+    )
+    assert not panel._knight_window_btn.isHidden()  # sanity: visible before clear
+
+    panel.clear()
+    assert panel._knight_window_btn.isHidden()
+
+
+def test_knight_window_button_hidden_on_fresh_panel(qapp):
+    panel = FitParametersPanel()
+    assert panel._knight_window_btn.isHidden()
