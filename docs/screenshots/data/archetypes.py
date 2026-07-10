@@ -466,7 +466,9 @@ def make_ybco_vortex_lattice(seed: int = 103, n0: float = 1.2e6) -> MuonDataset:
 # ---------------------------------------------------------------------------
 
 
-def make_pbf2_fmuf(seed: int = 89) -> MuonDataset:
+def make_pbf2_fmuf(
+    seed: int = 89, *, relaxation_lambda_per_us: float | None = None
+) -> MuonDataset:
     """PbF₂ F-μ-F entanglement signal at low T with r_μF=1.17 Å.
 
     PbF₂ provides a clean F-μ-F demonstration: the heavy Pb host carries no
@@ -474,15 +476,44 @@ def make_pbf2_fmuf(seed: int = 89) -> MuonDataset:
     analytical F-μ-F dipolar pattern (Brewer et al. PRB 33, 7813, 1986;
     textbook Ch 4.6). t_max = 20 μs is required to resolve the slow beat
     envelope.
+
+    ``relaxation_lambda_per_us`` optionally applies a
+    ``FmuF_Linear * Exponential`` damping envelope on top of the analytical
+    beat pattern (the ``+ Constant`` background term stays undamped) — the
+    same composite the fit wizard recommends for F-μ-F hosts (see
+    ``fit_wizard.py``'s ``FmuF_Linear * Exponential + Constant`` suggestion
+    and :doc:`/reference/fit_functions/nuclear_dipolar`'s "expected workflow"
+    note). Real F-μ-F beats in ionic-fluoride powders relax as the
+    excitation dephases across the crystallites; Brewer et al. (PRB 33, 7813,
+    1986) and the CaF₂/BaF₂ fits of Lancaster et al. (PRL 99, 267601, 2007)
+    show this damping is typically of order λ ≈ 0.2-0.5 μs⁻¹, so values in
+    that range are literature-plausible (not a fit to a specific published
+    PbF₂ run — PbF₂ itself is usually cited for its clean *undamped* limit).
+    ``None`` (the default) keeps the undamped pattern the byte-stability
+    tests in ``tests/docs/test_archetypes.py`` pin.
     """
     rng = np.random.default_rng(seed)
-    fmuf_model = CompositeModel(["FmuF_Linear", "Constant"], operators=["+"])
     time = _time_axis(n_points=1200, t_max=20.0)
 
     # CompositeModel exposes a single `.function` callable that takes the
     # mangled per-component parameter names. For a flat [FmuF_Linear, Constant]
-    # composite the names are A_1 (the FmuF amplitude), r_muF, and A_bg.
-    clean = fmuf_model.function(time, A_1=22.0, r_muF=R_MUF_ANG, A_bg=0.2)
+    # composite the names are A_1 (the FmuF amplitude), r_muF, and A_bg; adding
+    # the multiplicative Exponential envelope keeps A_1/r_muF/A_bg and adds the
+    # shared damping rate Lambda.
+    if relaxation_lambda_per_us is None:
+        fmuf_model = CompositeModel(["FmuF_Linear", "Constant"], operators=["+"])
+        clean = fmuf_model.function(time, A_1=22.0, r_muF=R_MUF_ANG, A_bg=0.2)
+    else:
+        fmuf_model = CompositeModel(
+            ["FmuF_Linear", "Exponential", "Constant"], operators=["*", "+"]
+        )
+        clean = fmuf_model.function(
+            time,
+            A_1=22.0,
+            r_muF=R_MUF_ANG,
+            Lambda=float(relaxation_lambda_per_us),
+            A_bg=0.2,
+        )
     error = _poisson_errors(clean, counts_per_bin=1.0e5)
     asymmetry = clean + rng.normal(0.0, error)
     return MuonDataset(
@@ -658,3 +689,65 @@ def make_alc_field_scan(seed: int = 111) -> list[MuonDataset]:
             )
         )
     return datasets
+
+
+def make_silicon_photomusr_periods(
+    seed: int = 129, good_frames: float = 28108.0
+) -> list[MuonDataset]:
+    """Two-period photo-μSR silicon run: red (light-ON) and green (light-OFF).
+
+    Models the archetypal photo-μSR measurement on silicon, where the sample is
+    measured with the pump laser ON and OFF in alternating periods and the
+    difference isolates the light-induced muonium dynamics. Silicon is the
+    canonical muonium host — the muon traps as normal muonium (Mu, tetrahedral
+    site) and anomalous muonium (Mu*, bond-centred site); photo-excited carriers
+    modulate the muonium charge-state dynamics and hence the relaxation
+    (B. D. Patterson, Rev. Mod. Phys. **60**, 69 (1988); R. C. Vilão et al.,
+    Phys. Rev. B **84**, 045201 (2011)).
+
+    Built through the real two-period synthesis + period-selection pipeline
+    (:func:`asymmetry.core.simulate.simulate_two_period_run` reduced with
+    :func:`~asymmetry.core.simulate.reduce_run_to_dataset`, then split with
+    :func:`asymmetry.core.io.periods.select_period`), so the returned per-period
+    datasets carry exactly the provenance a loaded HIFI period-mode file would:
+    ``metadata['period_number']`` (1 = red, 2 = green) and their own per-period
+    ``good_frames`` in ``run.grouping`` (≈ 28,108 frames each, matching the
+    :doc:`/workflows/photomusr_silicon_periods` walkthrough). Period 1 (red,
+    light-ON) carries the faster, photo-carrier-enhanced relaxation; period 2
+    (green, light-OFF) is the slower dark baseline.
+    """
+    from asymmetry.core.io.periods import select_period
+    from asymmetry.core.simulate import (
+        PeriodSpec,
+        build_builtin_template,
+        reduce_run_to_dataset,
+        simulate_two_period_run,
+    )
+
+    exp_fn = MODELS["ExponentialRelaxation"].function
+
+    # HIFI is an ISIS-style pulsed F/B spectrometer; use the built-in ideal
+    # pulsed template and pin the per-run good-frame count to the documented
+    # value so the mapping dialog's "Good frames" column reads 28108.
+    template = build_builtin_template("ideal_pulsed_fb")
+    template.grouping["good_frames"] = float(good_frames)
+    template.metadata["title"] = "Photo-µSR Si 291K"
+    template.metadata["temperature"] = 291.0
+    template.metadata["field"] = 2000.0
+
+    red = PeriodSpec(
+        exp_fn, {"A0": 20.0, "Lambda": 0.45, "baseline": 0.2}, label="red"
+    )
+    green = PeriodSpec(
+        exp_fn, {"A0": 20.0, "Lambda": 0.12, "baseline": 0.2}, label="green"
+    )
+    run = simulate_two_period_run(
+        template,
+        [red, green],
+        total_events=3.0e7,
+        seed=seed,
+        run_number=103277,
+        title="Photo-µSR Si 291K",
+    )
+    combined = reduce_run_to_dataset(run)
+    return [select_period(combined, "red"), select_period(combined, "green")]

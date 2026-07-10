@@ -4,11 +4,17 @@ Nuclear dipolar
 ===============
 
 .. image:: /_generated/screenshots/muon_fluorine_pbf2.png
-   :alt: Main window with a PbF₂ F-μ-F dataset and FmuF_Linear+Constant model selected
+   :alt: Converged FmuF_Linear*Exponential+Constant fit on a damped PbF₂ F-μ-F dataset
    :width: 100%
 
-*Synthetic PbF₂ ZF dataset with r\ :sub:`μF` = 1.17 Å, captured over 20 μs so
-the F–μ–F beat envelope is fully resolved. PbF₂ is a particularly clean
+*Synthetic PbF₂ ZF dataset with r\ :sub:`μF` = 1.17 Å and a λ = 0.3 μs⁻¹
+relaxation envelope (literature-plausible for F–μ–F powders; see*
+``make_pbf2_fmuf`` *in* ``docs/screenshots/data/archetypes.py``
+*for the reasoning), fitted with the wizard-recommended*
+``FmuF_Linear * Exponential + Constant`` *composite (converged,
+r_μF = 1.17 Å, λ = 0.30 μs⁻¹,* :math:`\chi^2_\nu = 0.98`\ *). The plot is
+shown over the first 10 μs, where both the beats and their decay are
+resolved (the underlying dataset spans 20 μs). PbF₂ is a particularly clean
 F–μ–F host: the heavy Pb nuclei carry no significant nuclear moment, so the
 analytical FmuF_Linear component captures the full polarisation.*
 

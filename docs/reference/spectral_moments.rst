@@ -16,6 +16,20 @@ and under the reconstruction in the MaxEnt panel. Pick a unit, drag a range over
 the line, and the readout updates live; **Send to trend** records the moments of
 every selected run as a trendable series.
 
+.. image:: /_generated/screenshots/spectral_moments_readout.png
+   :alt: The Spectral moments readout in the Fourier panel, computed on the
+         phase-corrected FFT of a YBCO vortex-lattice line, with the moments
+         range and cutoff drawn over the spectrum.
+   :width: 100%
+
+*The* **Spectral moments** *readout, computed on the phase-corrected real FFT of
+a YBCO vortex-lattice line. The spectrum is the asymmetric field distribution
+p(B) — a sharp low-field peak and a long high-field tail — with the moments
+range (shaded) and cutoff (dotted) drawn over it. The readout gives B_pk ≈
+1987 G, the mean B_ave sitting above the peak, the RMS width, and the positive
+skewness and asymmetry (β > 0) that are the vortex lattice's expected
+signature.*
+
 What each moment tells you
 --------------------------
 

@@ -14,6 +14,7 @@ from .archetypes import (  # noqa: F401
     make_generic_tf_for_processing,
     make_mgb2_sigma_t,
     make_pbf2_fmuf,
+    make_silicon_photomusr_periods,
     make_ybco_knight_grouped,
     make_ybco_vortex_lattice,
 )

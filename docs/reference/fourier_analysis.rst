@@ -27,7 +27,9 @@ Apodisation is the key practical knob. A Lorentzian filter sharpens an
 exponentially damped line; a Gaussian filter is the natural choice for
 nuclear-dipolar broadening; ``None`` is appropriate only when the
 signal-to-noise is high enough that the line broadening from apodisation
-would dominate the intrinsic widths. The default is Gaussian. Phase
+would dominate the intrinsic widths. The panel starts with ``None``
+selected — choose the filter matched to the expected lineshape rather
+than leaving the default in place out of habit. Phase
 correction follows the same logic: the entropy-optimised auto-phase mode
 is robust for single-frequency signals; for multi-frequency or vortex
 data, the manual per-group phase table or a future optimised phase fit
@@ -48,8 +50,18 @@ time window too short for the FFT to resolve it.
    the true lineshape, or read them from the time-domain fit directly [6]_.
 
 .. image:: /_generated/screenshots/apodisation_comparison.png
-   :alt: Apodisation comparison on a YBCO vortex-lattice TF FFT
+   :alt: Apodisation comparison on a YBCO vortex-lattice TF FFT, showing
+      None, Gaussian (Filter τ = 4.0 µs), and Lorentzian (Filter τ = 3.0 µs)
+      apodisation side by side
    :width: 100%
+
+*Same YBCO vortex-lattice run, same* **Compute FFT** *click, three*
+**Apodisation** *settings from the Fourier panel's controls: the*
+``None``/``Gaussian``/``Lorentzian`` *radios with* ``Filter τ (µs)`` *set*
+*to 4.0 and 3.0 µs respectively. Going from left to right the Larmor peak*
+*loses height and gains width — the resolution the filter trades away —*
+*while the sidelobe ripple away from the peak flattens out, exactly the*
+*resolution-for-leakage trade the note above describes.*
 
 Implementation summary
 ----------------------
@@ -628,16 +640,19 @@ sharp edge near the saddle-point field and a long tail towards the vortex cores
    :alt: FFT spectrum of a YBCO vortex-lattice transverse-field signal
    :width: 100%
 
-*The FFT: a fast, linear transform of the apodised asymmetry, framed on the
-precession line.*
+*The FFT: a fast, linear transform of the (optionally apodised) asymmetry,
+framed on the precession line. The* **Fourier** *tab alongside holds the
+transform's controls — the FFT phase mode, the* **Apodisation** *filter
+(shown at its* ``None`` *default), and* **Compute FFT**.
 
 .. image:: /_generated/screenshots/maxent_ybco.png
    :alt: MaxEnt reconstruction of the same YBCO vortex-lattice signal
    :width: 100%
 
 *The maximum-entropy reconstruction of the same run. Switch the frequency-domain
-workspace to* **MaxEnt** *and click* **Compute MaxEnt** *(or a cycle button); the
-spectrum appears once the iteration converges.*
+workspace to* **MaxEnt** *and click* **Converge** *(or a* **+1** */* **+5** */*
+**+25** *cycle button) on the* **MaxEnt** *tab alongside; the spectrum appears
+once the iteration converges.*
 
 Read on the same precession-frequency axis, the two are complementary: the FFT is
 immediate and its areas map onto the apodisation settings, while the MaxEnt

@@ -84,6 +84,15 @@ class EuoFitOscillatoryScenario(Scenario):
         # than the transient "Fitting…" state. The wait is bounded, so a stalled
         # fit cannot wedge the capture indefinitely.
         single_tab.wait_for_fit()
+
+        # ν(30 K) ≈ 22.3 MHz gives a ~0.045 µs period; the default view spans
+        # the full 6.3 µs fit range, which compresses ~140 cycles into the
+        # plot and renders the fit curve as a solid red block. Zoom to the
+        # first 0.5 µs (~11 cycles) through the real X-range toolbar fields so
+        # individual oscillations and the fit overlay are both resolved.
+        _x_min, _x_max, y_min, y_max = window._plot_panel.get_view_limits()
+        window._plot_panel.set_view_limits(0.0, 0.5, y_min, y_max)
+        _process_events_for(milliseconds=80)
         return window
 
 

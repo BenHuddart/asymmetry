@@ -175,30 +175,43 @@ Step 6 — Fit the order parameter to a power law
 -----------------------------------------------
 
 .. image:: /_generated/screenshots/temperature_trend_fit.png
-   :alt: EuO ν(T) trend with Landau power-law fit overlaid
+   :alt: Fit Parameters trending panel showing EuO ν(T) with the fitted OrderParameter (Landau) curve
    :width: 100%
 
-In the trending panel, fit :math:`\nu(T)` to a Landau power-law model
+In the trending panel, click **Model Fit** on the ``f (MHz)`` row and
+fit the built-in ``OrderParameter`` (Landau power-law) model
 
 .. math::
 
-   \nu(T) = \nu_0 \left(1 - \frac{T}{T_c}\right)^{\beta},
-   \quad T < T_c.
+   \nu(T) = y_0 \left[1 - (T/T_c)^{\alpha}\right]^{\beta},
+   \quad T < T_c,
 
-The parametric form is not yet a built-in option in the
-parameter-trending panel (see the ``order-parameter-tscan`` entry in
-``docs/porting/practical-workflows/workflow-catalogue.md``); the
-current workaround is to export the trend to Python and fit with
-``scipy.optimize.curve_fit``:
+which reduces to the Landau form
+:math:`\nu_0 (1 - T/T_c)^{\beta}` when :math:`\alpha = 1`. The model
+vanishes identically at and above :math:`T_c`, so the paramagnetic
+runs (:math:`\nu = 0`) constrain :math:`T_c` directly.
+
+For the synthetic EuO data the panel recovers
+:math:`y_0 \approx 27.5\;\mathrm{MHz}`,
+:math:`T_c \approx 69.0\;\mathrm{K}`, :math:`\beta \approx 0.39`, and
+:math:`\alpha \approx 1.0` — matching the input parameters and within
+the range expected for an isotropic 3D ferromagnet. The screenshot
+shows the six-point :math:`\nu(T)` trend (per-run ZF fit results) with
+the three points at and above :math:`T_c` — 69, 73 and 90 K — sitting
+on the :math:`\nu = 0` axis, and the fitted ``OrderParameter`` curve
+overlaid (the **Model Fit\*** button flags the active fit).
+
+The same fit can be reproduced outside the GUI by exporting the trend
+(**Export TSV**) and fitting with ``scipy.optimize.curve_fit``:
 
 .. code-block:: python
 
    import numpy as np
    from scipy.optimize import curve_fit
 
-   T = np.array([30.0, 50.0, 65.0, 69.0])
-   nu = np.array([22.29, 16.72, 8.97, 0.0])   # MHz from the fits
-   nu_err = np.full_like(T, 0.05)
+   T = np.array([30.0, 50.0, 65.0, 69.0, 73.0, 90.0])
+   nu = np.array([22.19, 16.78, 9.11, 0.0, 0.0, 0.0])   # MHz from the fits
+   nu_err = np.full_like(T, 0.4)
 
    def landau(T, nu0, Tc, beta):
        arg = np.clip(1 - T / Tc, 1e-9, None)
@@ -207,15 +220,6 @@ current workaround is to export the trend to Python and fit with
    popt, _ = curve_fit(landau, T, nu, sigma=nu_err, p0=[28.0, 69.0, 0.4])
    nu0, Tc, beta = popt
    print(f"ν0 = {nu0:.2f} MHz, Tc = {Tc:.2f} K, β = {beta:.3f}")
-
-For the synthetic EuO data the recovered values are
-:math:`\nu_0 \approx 28.0\;\mathrm{MHz}`,
-:math:`T_c \approx 69.0\;\mathrm{K}`, and :math:`\beta \approx 0.40` —
-exact matches to the input parameters and within the range expected
-for an isotropic 3D ferromagnet. The screenshot shows the data
-points (per-run ZF fit results) and the Landau power-law fit
-overlaid, with the recovered :math:`(\nu_0, T_c, \beta)` in the
-legend.
 
 Interpretation
 --------------

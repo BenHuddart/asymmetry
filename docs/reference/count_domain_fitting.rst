@@ -29,6 +29,19 @@ ordinary physics extraction from balanced data, the regular F–B asymmetry fit
 remains the faster path — count-domain fitting is a calibration and diagnostic
 tool, not a replacement for asymmetry fitting.
 
+.. image:: /_generated/screenshots/alpha_count_calibration.png
+   :alt: The Multi-Group Fit window with the Fit target set to F + B (free α),
+         the Count-fit options and Calibration sections expanded, and a completed
+         forward/backward fit reporting α = 1.250(1).
+   :width: 100%
+
+*The Multi-Group Fit window in count-domain mode. The Fit target is "F + B
+(free α)"; the "Count-fit options" section (the Cost selector, the skip window,
+the nuisance toggles and the double-pulse field) and the "Calibration" section
+(the Promote α / t₀ / background / DT₀ actions) are expanded. A Poisson
+forward/backward fit of a transverse-field calibration run recovers the detector
+balance α = 1.250(1) at χ²ᵣ ≈ 1.*
+
 What these modes fit
 --------------------
 

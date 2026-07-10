@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- **Documentation screenshot overhaul.** Repaired the captures that showed
+  unreadable or misleading state: the EuO oscillatory fit is framed on
+  resolved oscillations instead of a solid block, the grouped YBCO count fit
+  uses the damped-precession model its data calls for (χ²ᵣ ≈ 1.0, was 64),
+  the PbF₂ F–μ–F figure gains a physical relaxation envelope and a converged
+  fit, the logbook view actually shows the metadata columns, and the
+  FFT/MaxEnt views present their transform settings instead of a contradictory
+  fit verdict. Replaced the matplotlib-rendered parameter-trend, apodisation,
+  and Knight-shift figures with real GUI captures (the trend panel now
+  demonstrates its own model fits). Added first screenshots for eight
+  previously image-less pages: quickstart, loading data (run-info
+  provenance), simulation dialog, exclusions, count-domain fitting, spectral
+  moments, MINOS asymmetric errors, and photoMuSR period mapping. Corrected
+  the FFT apodisation default documented in the Fourier page ("None", not
+  "Gaussian").
+
 ## [0.9.1] - 2026-07-09
 
 ### Fixed

@@ -15,6 +15,10 @@ The scenario:
 2. Switches the workspace to the **Frequency** domain.
 3. Triggers the Fourier compute path so the frequency plot panel shows
    the FFT alongside the Fourier control dock.
+4. Raises the **Fourier** inspector tab (apodisation / padding / units —
+   the transform's own controls, which are what the embedding pages
+   discuss) rather than the Fit tab, whose carried-over state is
+   irrelevant to these pages.
 """
 
 from __future__ import annotations
@@ -25,6 +29,28 @@ from PySide6.QtWidgets import QWidget
 
 from ..data import make_ybco_vortex_lattice
 from ._base import Scenario, register, _process_events_for
+
+
+def _raise_inspector_tab(window, tab_label: str) -> None:
+    """Select *tab_label* in the right inspector deck's tab bar.
+
+    ``QDockWidget.raise_()`` (and ``MainWindow._show_panel``, which wraps it)
+    is a silent no-op for tabified docks under the offscreen QPA platform the
+    capture runs on, so the deck's ``QTabBar`` — the widget a user actually
+    clicks — is driven directly. The deck's bar is identified by containing
+    both *tab_label* and the always-present "Fit" tab, which distinguishes it
+    from every other tab bar in the window (e.g. the fit panel's own
+    Single/Batch bar).
+    """
+    from PySide6.QtWidgets import QTabBar
+
+    for tab_bar in window.findChildren(QTabBar):
+        labels = [tab_bar.tabText(i) for i in range(tab_bar.count())]
+        if tab_label in labels and "Fit" in labels:
+            tab_bar.setCurrentIndex(labels.index(tab_label))
+            _process_events_for(milliseconds=80)
+            return
+    raise RuntimeError(f"Inspector deck tab bar with {tab_label!r} not found")
 
 
 class FourierTfScenario(Scenario):
@@ -91,6 +117,20 @@ class FourierTfScenario(Scenario):
         freq_panel.set_view_limits(x_min, x_max, -0.04 * peak, 1.10 * peak)
         _process_events_for(milliseconds=120)
         return window
+
+    def settle(self, widget: QWidget) -> None:
+        # Bring the Fourier tab of the inspector deck to the front so the
+        # screenshot shows the transform's own controls (apodisation,
+        # padding, phase, units) — the settings the embedding pages actually
+        # discuss — not the Fit tab, whose carried-over model state ("Model
+        # carried — not fitted for this run") is irrelevant to these pages.
+        # Done here, not in build(): the deck's tab bar only exists once the
+        # window is shown and laid out. QDockWidget.raise_() is a silent
+        # no-op for tabified docks on the offscreen platform, so the deck's
+        # QTabBar is driven directly (see _raise_inspector_tab).
+        _process_events_for(milliseconds=100)
+        _raise_inspector_tab(widget, widget._dock_fourier.windowTitle())
+        super().settle(widget)
 
 
 # Local import alias kept inside the module to avoid leaking constants from

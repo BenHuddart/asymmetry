@@ -59,6 +59,19 @@ When asymmetric errors are present the parameter table shows them inline as
 fit report carry both sides. A parameter whose MINOS scan fails (it diverges, or
 hits a bound it cannot cross) silently keeps its Hessian error for that row.
 
+.. image:: /_generated/screenshots/fit_asymmetric_errors.png
+   :alt: Fit panel after a converged EuO fit with the Asymmetric errors
+         checkbox ticked; each parameter in the table shows its value with an
+         asymmetric plus/minus MINOS interval.
+   :width: 100%
+
+*A converged EuO T = 30 K fit run with "Asymmetric errors" ticked. With MINOS
+present the parameter table shows each fitted value inline as value +σ₊ / −σ₋
+in place of ± σ, and the "Fit converged" summary reports χ²/ν = 0.9794. At the
+high statistics of this run MINOS and HESSE agree, so the two sides are equal to
+the displayed precision; the interval visibly opens out in the low-statistics,
+at-a-bound, and strongly-correlated cases described above.*
+
 **MINOS is a display-only diagnostic.** It does not change the symmetric error
 that the rest of the program consumes: trend error bars, GLE/text export of
 trends, propagated composite-parameter uncertainties, an equality-linked
