@@ -291,6 +291,7 @@ def _import_scenarios() -> None:
         temperature_trend_fit,
         trend_model_fit_dialog,
         vector_polarization_emu,
+        waterfall_overlay,
     )
 
 
