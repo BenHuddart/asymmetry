@@ -49,7 +49,14 @@ boundary, touches shared behavior, or changes user-visible workflows.
   widgets (often a full `MainWindow`), so it takes ~2 min locally — run it once
   per task, not per iteration.
 - **`full`** — every test, including `slow`/`integration`. Runs on release tags
-  via the `Full test suite` workflow.
+  via the `Full test suite` workflow. It runs with reduced parallelism (`-n 2`
+  and a raised per-test timeout) rather than `-n auto`: the exhaustive
+  global-wizard harness test fans its own fits across a `cpu_count - 2` process
+  pool, so a worker-per-core layout oversubscribes the runner and stalls
+  neighbour fits past the timeout (historically crashing the release-tag run).
+  All tiers also pin the numeric backends to one thread each (`*_NUM_THREADS=1`)
+  so xdist's process-per-core parallelism isn't multiplied by per-process BLAS
+  threads.
 
 Tests inherit a type marker automatically: anything not explicitly marked `gui`
 or `io` is treated as `unit` (see `tests/conftest.py`). Naming explicit targets
