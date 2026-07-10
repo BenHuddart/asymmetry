@@ -213,8 +213,9 @@ and vice versa. The registry (grouped by the context that offers them) is:
   ``Lambda_bg`` background (:doc:`diffusion_ballistic_lf`); and the Brandt
   vortex-lattice second-moment models ``SC_Brandt_VortexLattice`` and its powder
   average.
-* **Angle axis** — ``KnightAnisotropy`` and ``AngularCos2`` for a Knight shift
-  mapped out by rotating a single crystal (:ref:`knight-shift`).
+* **Angle axis** — ``KnightAnisotropy``, ``AngularCos2``, and
+  ``AngularFourier2`` for a Knight shift mapped out by rotating a single
+  crystal (:ref:`knight-shift`).
 
 Any of these can be combined into a composite via **Edit Model**, which opens the
 same two-panel builder used for time-domain functions (see `Build a Parameter
@@ -1057,13 +1058,18 @@ converts a fitted precession frequency :math:`\nu` to
 
 against one of two references.
 
-The **Knight shift analysis** window (**Analysis → Knight shift analysis…**, or
-the **Knight shift window…** button in the *Derived parameters* section of the
-Fit Parameters panel) is the recommended way to set this up: it is a
-non-modal window dedicated to the conversion, so the reference, unit, and
-component choices, the resulting branches, and the scan's crossings are all
-visible together while you edit them, and nothing is written back to the
-trend table until you ask for it. Its sidebar reads top to bottom as the
+The **Knight shift analysis** window is the recommended way to set this up:
+it is a non-modal window dedicated to the conversion, so the reference,
+unit, and component choices, the resulting branches, and the scan's
+crossings are all visible together while you edit them, and nothing is
+written back to the trend table until you ask for it. **Analysis → Knight
+shift analysis…** is the unconditional entry point, always available
+regardless of the active series. The **Knight shift window…** shortcut in
+the *Derived parameters* section of the Fit Parameters panel is narrower: it
+appears only when the active series' fitted model has at least one
+Knight-convertible component (a local precession frequency or field, as
+opposed to an applied-field muonium term) — opening it on an unrelated fit
+would have nothing to convert. Its sidebar reads top to bottom as the
 pipeline:
 
 * **Source** — the fitted series supplying the frequencies (run count,
@@ -1089,6 +1095,9 @@ pipeline:
   each value quoted to the precision its uncertainty supports, with a **Scale
   errors by √χ²ᵣ** checkbox that inflates the quoted uncertainties when a
   fit's reduced :math:`\chi^2` exceeds one.
+* **Suggest next angle** — an optional section, collapsed by default, that
+  plans the *next* scan angle from the fit above: see *Suggest next angle*,
+  below.
 
 The plot area has two view toggles, **Fold 180°** (overlay symmetry-equivalent
 orientations onto one period, for an angle scan — a display choice local to
@@ -1107,14 +1116,17 @@ is untouched.
    :align: center
    :alt: The Knight shift analysis window, with the Applied field reference
       selected, two frequency branches converted, a completed joint K(theta)
-      fit in the Model fit section, and the fitted curves overlaid on the
-      K(theta) plot.
+      fit in the Model fit section, the Suggest next angle section expanded
+      with a computed D-optimal refine suggestion, and the fitted curves
+      plus the suggestion's utility band overlaid on the K(theta) plot.
 
    The Knight shift analysis window on a two-site angle scan: **Source**,
-   **Conversion**, **Branches**, and **Model fit** in the sidebar — the last
-   showing a completed joint :math:`K(\theta)` fit — and the converted
-   branches with their fitted curves and **Crossing markers** on in the plot
-   area.
+   **Conversion**, **Branches**, **Model fit**, and **Suggest next angle** in
+   the sidebar — *Model fit* showing a completed joint :math:`K(\theta)` fit
+   and *Suggest next angle* a computed **Refine parameters** / **All
+   parameters (D-optimal)** suggestion — and the converted branches with
+   their fitted curves, **Crossing markers**, and the suggestion's utility
+   band overlaid in the plot area.
 
 The window's configuration and view-toggle state — including any joint fit —
 persist with the project under the ``knight_shift_analysis_state`` key (the
@@ -1206,8 +1218,9 @@ first place.
 To *resolve* a crossing rather than just flag it, open the Knight shift
 analysis window (with at least two branches and **Angle** as the scan axis)
 and use the **Model fit** section of its sidebar: choose a **Model**
-(``KnightAnisotropy`` or ``AngularCos2``, the same two angular basis models
-described below) and a **Max iterations** bound, then press the footer's
+(``KnightAnisotropy``, ``AngularCos2``, or ``AngularFourier2`` — the same
+angular basis models described below) and a **Max iterations** bound, then
+press the footer's
 **Run joint K(θ) fit** button. The fit runs off-thread — the button reports
 progress and re-enables when it finishes — and fits one K(θ) curve per
 branch simultaneously, assigning each angle's component points one-to-one to
@@ -1239,8 +1252,8 @@ to delete them: the backing component is dropped from the conversion (via
 every component turns the conversion off.
 
 **Fitting the anisotropy** :math:`K(\theta)`. With **Angle (°)** as the trend
-x-axis, the model-fit builder offers two angle-only basis models alongside the
-usual ones:
+x-axis, the model-fit builder offers three angle-only basis models alongside
+the usual ones:
 
 .. math::
 
@@ -1248,7 +1261,7 @@ usual ones:
    \qquad\text{(}\texttt{KnightAnisotropy}\text{)}
 
 for the axial dipolar form — the isotropic contact term :math:`K_{\mathrm{iso}}`
-plus the traceless dipolar anisotropy :math:`K_{\mathrm{ax}}` — and the general
+plus the traceless dipolar anisotropy :math:`K_{\mathrm{ax}}` — the general
 two-fold modulation
 
 .. math::
@@ -1256,22 +1269,52 @@ two-fold modulation
    K(\theta) = K_{\mathrm{avg}} + K_{\mathrm{amp}}\cos 2(\theta - \theta_0)
    \qquad\text{(}\texttt{AngularCos2}\text{)}
 
-for a crystal rotated in a plane. Both models carry a :math:`\theta_0` term —
+for a crystal rotated in a plane — algebraically the same curve family as
+``KnightAnisotropy`` (:math:`K_{\mathrm{iso}} + K_{\mathrm{ax}}/4 =
+K_{\mathrm{avg}}`, :math:`3K_{\mathrm{ax}}/4 = K_{\mathrm{amp}}`, sharing
+:math:`\theta_0`) — and a misalignment-sensitive extension
+
+.. math::
+
+   K(\theta) = K_{\mathrm{avg}} + K_1\cos(\theta - \theta_1) + K_{\mathrm{amp}}\cos 2(\theta - \theta_2)
+   \qquad\text{(}\texttt{AngularFourier2}\text{)}
+
+which adds a first-harmonic term to ``AngularCos2``. A perfectly aligned
+rotation axis gives a pure second harmonic; a tilted axis leaks a first
+harmonic whose amplitude grows with the tilt, so a fitted :math:`K_1`
+significantly different from zero is fit-level evidence that the rotation
+axis is not exactly where the goniometer says it is. This is a
+phenomenological Fourier form — it does not itself solve for the physical
+tilt angle from :math:`K_1` and :math:`\theta_1` — and, with five free
+parameters, needs at least five shared angles per curve to fit. See *Suggest
+next angle*, below, for using it to test for misalignment directly rather
+than assuming an aligned axis.
+
+``KnightAnisotropy`` and ``AngularCos2`` both carry a :math:`\theta_0` term —
 the goniometer/mount misalignment between the zero of the angle scale and the
-crystal's principal axis, since a real mount is never perfectly aligned; without
-it, that misalignment would otherwise bias :math:`K_{\mathrm{iso}}` and
-:math:`K_{\mathrm{ax}}` (or :math:`K_{\mathrm{avg}}` and :math:`K_{\mathrm{amp}}`)
-directly. Both forms are invariant under a :math:`90^\circ` shift of
-:math:`\theta_0` together with a sign flip of the anisotropic amplitude, so the
-joint fit canonicalises the fitted :math:`\theta_0` into
-:math:`(-45^\circ, 45^\circ]` — folding to the small-:math:`|\theta_0|`
-representation so a mount that is nearly aligned reads with a small offset and
-a physically sensible amplitude sign, rather than an equally valid but
-larger-offset relabelling of the same curve. Both models take :math:`\theta` in
-degrees, so they fit directly against the Angle axis (folded or not). The
-diagonal dipolar-tensor components recovered for rotations about the crystal
-axes constrain the muon stopping site. For a worked example end to end, see
-:doc:`/workflows/knight_shift_angle`.
+crystal's principal axis, since a real mount is never perfectly aligned;
+without it, that misalignment would otherwise bias :math:`K_{\mathrm{iso}}`
+and :math:`K_{\mathrm{ax}}` (or :math:`K_{\mathrm{avg}}` and
+:math:`K_{\mathrm{amp}}`) directly. Both forms are invariant under a
+:math:`90^\circ` shift of :math:`\theta_0` together with a sign flip of the
+anisotropic amplitude, so the joint fit canonicalises the fitted
+:math:`\theta_0` into :math:`(-45^\circ, 45^\circ]` — folding to the
+small-:math:`|\theta_0|` representation so a mount that is nearly aligned
+reads with a small offset and a physically sensible amplitude sign, rather
+than an equally valid but larger-offset relabelling of the same curve.
+``AngularFourier2``'s second-harmonic phase :math:`\theta_2` folds the same
+way; its first-harmonic phase :math:`\theta_1` folds independently, over the
+full :math:`360^\circ` period a first harmonic repeats on, into
+:math:`(-90^\circ, 90^\circ]` with a sign flip of :math:`K_1`. Every fold is
+an exact linear reparameterisation, so the fitted covariance is carried
+through it exactly (:math:`\Sigma' = J\Sigma J^{\mathsf{T}}`) rather than
+approximated — the quoted uncertainties, and anything downstream that
+consumes the covariance (such as *Suggest next angle*, below), see the same
+figure a refit started directly in the canonical branch would have produced.
+All three models take :math:`\theta` in degrees, so they fit directly against
+the Angle axis (folded or not). The diagonal dipolar-tensor components
+recovered for rotations about the crystal axes constrain the muon stopping
+site. For a worked example end to end, see :doc:`/workflows/knight_shift_angle`.
 
 **Clogston–Jaccarino** (:math:`K` vs :math:`\chi`). Plotting the Knight shift
 against the bulk susceptibility with temperature as the implicit parameter gives
@@ -1294,6 +1337,96 @@ local susceptibility, determining a muon site from :math:`K(\theta)`, or buildin
 Clogston–Jaccarino :math:`K`–:math:`\chi` plot. Keep the raw frequency trend when
 the absolute precession frequency itself is the observable (an internal field, a
 magnetic order parameter).
+
+Suggest next angle
+~~~~~~~~~~~~~~~~~~
+
+Once the joint :math:`K(\theta)` fit above has converged, the collapsible
+**Suggest next angle** section beneath *Model fit* answers the question
+:doc:`suggest_next_point` already answers for a scalar trend — where should
+the *next* measurement go? — with three angle-specific flavours, chosen from
+a **Mode** selector: **Refine parameters**, **Test misalignment**, and
+**Resolve assignment**. All three share one **Candidate range** (seeded from
+the measured angle span; widen it to allow an extrapolated suggestion) and
+one **Suggest** button, and reuse the Laplace/Fisher acquisition machinery
+described on that page rather than a separate derivation — what is genuinely
+new here is specific to a rotation scan: one new run yields a value for
+*every* curve at once, and which measured value belongs to which physical
+curve is itself something the joint fit had to work out.
+
+The section stays inactive, with a muted hint explaining why, until every
+prerequisite is met: no joint fit ("Run the joint K(θ) fit first."), one
+that no longer matches the branches or predates the current unit/correction
+("Re-run the joint K(θ) fit — it no longer matches the branches." / "…the
+display unit or correction changed."), or — for a fit saved before this
+feature shipped — a missing stored covariance ("Re-run the joint K(θ) fit to
+store fit covariance."): the run-keyed assignment of a legacy fit survives a
+project reload, but its per-curve covariance was never recorded, so a
+next-angle suggestion needs one re-run before it becomes available.
+
+**Refine parameters** sums the expected information gain over every curve —
+one new run adds a datum to each of them, so their information gains add.
+**Target** chooses what to refine: **All parameters (D-optimal)** shrinks
+every curve's whole parameter covariance at once, or pick one curve's
+parameter from the list for a c-optimal solve, which enables **Precision
+goal** and the **Typical run (Mevents)** / **Rate (Mevents/h)** conversion —
+exactly as in :doc:`suggest_next_point`, down to the result line's phrasing:
+
+.. code-block:: text
+
+   Measure at θ = 48.2° × 0.6 of a typical run's statistics
+   → σ ≈ 0.018 (approximate)
+
+**Test misalignment** asks a different question: is the scan actually
+consistent with a perfectly aligned rotation axis, or is there evidence of a
+tilt? On **Suggest** it fits the ``AngularFourier2`` alternative (above)
+automatically, off-thread — cached against the joint fit's model, unit, and
+Lorentz/demag correction, so repeat clicks do not refit — and ranks candidate
+angles by the disagreement between the current model and that alternative,
+summed over every branch (the same model-discrimination utility
+:doc:`suggest_next_point`'s **Compare against** uses for a scalar trend). The
+result line names the currently preferred model and its Akaike weight, e.g.
+
+.. code-block:: text
+
+   Measure at θ = 71.5°; prefers AngularFourier2 (Akaike weight 0.86, evidence ratio 6.1)
+
+and when the two models already agree within noise everywhere in the
+candidate range, the section reports that instead of pointing at an
+arbitrary angle.
+
+**Resolve assignment** targets the labelling itself rather than either
+model's parameters. Near a crossing, the joint fit's classification-EM step
+can settle on more than one near-equally-good assignment of which measured
+component belongs to which physical curve; this mode ranks candidate angles
+by how well a new, unlabelled run there would separate the winning
+assignment from its near-degenerate runners-up — a minimum-cost matching
+between the two labellings' predicted value sets, zero exactly at a crossing
+(where the competing labellings coincide by construction) and largest where
+they imply genuinely different curves. The runners-up are kept only in
+memory from the last fit run, so if the stored fit came from a project load,
+**Suggest** re-runs the joint fit off-thread first to recover them; with
+none to compare against, the section reports "No near-degenerate assignments
+to discriminate."
+
+**Overlay and risk shading.** A computed suggestion draws the same utility
+band used by :doc:`suggest_next_point`, anchored beneath the
+:math:`K(\theta)` plot with the best angle marked and any extrapolated
+candidates shown at reduced opacity. Refine and Test-misalignment
+suggestions can additionally shade a candidate span with a muted hatched
+band where two curves' predicted values sit close enough (within about
+:math:`2\sigma` of each other) that a new, unlabelled run there risks being
+fitted onto the wrong curve — exactly the crossing risk the joint fit's own
+Hungarian assignment exists to resolve. A suggested angle that falls inside
+a shaded span should be read with that caveat in mind rather than acted on
+blindly.
+
+*When to use this.* Reach for **Refine parameters** while extending an
+otherwise routine scan; reach for **Test misalignment** once a fit already
+looks good but you want to actively rule out a tilted mount rather than
+assume alignment; reach for **Resolve assignment** specifically when a
+crossing has left two labellings within reach of each other and the next run
+should settle which is real.
 
 References
 ~~~~~~~~~~

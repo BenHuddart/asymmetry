@@ -132,8 +132,24 @@ Parameter trend models
    The available parameter-trend component registry is exposed as
    ``asymmetry.core.fitting.parameter_models.PARAMETER_MODEL_COMPONENTS``.
 
-   The angle-only :math:`K(\theta)` basis models ``KnightAnisotropy`` and
-   ``AngularCos2`` are registered alongside the others (``scope="angle"``).
+   The angle-only :math:`K(\theta)` basis models ``KnightAnisotropy``,
+   ``AngularCos2``, and ``AngularFourier2`` are registered alongside the
+   others (``scope="angle"``).
+
+Experiment design
+-----------------
+
+The Laplace/Fisher "where to measure next" acquisition shared by
+:doc:`/reference/suggest_next_point` (a scalar trend) and the Knight-shift
+window's *Suggest next angle* (see :ref:`knight-shift` and
+:doc:`/reference/parameter_trending`) — expected information gain, model
+discrimination, and the Hungarian set-matching utility used when a
+candidate's components are unlabelled.
+
+.. automodule:: asymmetry.core.fitting.experiment_design
+   :members:
+   :undoc-members:
+   :show-inheritance:
 
 Knight shift
 ------------
@@ -148,6 +164,11 @@ workflow.
    :show-inheritance:
 
 .. automodule:: asymmetry.core.fitting.angular_assignment
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: asymmetry.core.fitting.knight_analysis
    :members:
    :undoc-members:
    :show-inheritance:

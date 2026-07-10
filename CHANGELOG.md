@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Suggest next angle: Bayesian experimental design for a Knight-shift angle
+  scan.** Once the Knight shift analysis window's joint K(θ) fit has
+  converged, its new **Suggest next angle** section plans the next scan
+  angle from three modes: **Refine parameters** (an information-gain sum
+  over every fitted curve — c-optimal on one curve's parameter, or
+  D-optimal over all of them, with the same precision-goal/events-factor
+  conversion as trending's Suggest next point), **Test misalignment** (fits
+  the first-harmonic `AngularFourier2` alternative automatically and ranks
+  angles by how well they would tell it apart from the current model,
+  reporting the Akaike-weighted preference), and **Resolve assignment**
+  (ranks angles by how well they would separate the joint fit's winning
+  branch labelling from a near-degenerate runner-up, for a crossing the
+  classification-EM step could have assigned either way). Candidate spans
+  where two curves' predictions risk misassignment are shaded on the
+  utility overlay. Documented in *Reference ▸ Parameter trending ▸ Suggest
+  next angle*.
+
+- **`AngularFourier2`, a third K(θ) basis model for testing rotation-axis
+  misalignment.** `K(θ) = K_avg + K_1·cos(θ − θ1) + K_amp·cos(2(θ − θ2))`: a
+  perfectly aligned rotation axis gives a pure second harmonic
+  (`AngularCos2`/`KnightAnisotropy`); a tilted axis leaks a first harmonic,
+  so a fitted `K_1` significantly different from zero is fit-level evidence
+  of misalignment. Available in the Knight shift window's **Model fit**
+  selector; needs at least five shared angles per curve.
+
+### Changed
+
+- **The joint K(θ) fit now records each curve's fit covariance**, serialised
+  with the project alongside its parameters — previously
+  `KnightJointCurve` kept only value/error triples, silently discarding the
+  covariance `ParameterModelFitResult` already carried. This is the
+  prerequisite for Suggest next angle; a joint fit saved before this change
+  has no stored covariance and needs one re-run to gain it.
+
+- **Canonicalising a fitted θ0 (or, for `AngularFourier2`, θ1/θ2) into its
+  small-offset representation now folds the fit covariance exactly**
+  (Σ' = J Σ Jᵀ) instead of approximating the marginal uncertainties in
+  quadrature. The quoted K_iso/K_ax (or K_avg/K_amp/K_1) uncertainties on a
+  folded curve are now exact rather than a conservative approximation that
+  ignored their correlation.
+
+- **The Fit Parameters panel's "Knight shift window…" button now hides
+  unless the fitted model actually has a Knight-convertible component**,
+  rather than showing whenever any series is fitted. **Analysis → Knight
+  shift analysis…** remains the unconditional entry point regardless of the
+  active series' model.
+
 ## [0.9.2] - 2026-07-10
 
 ### Documentation
