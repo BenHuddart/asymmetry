@@ -615,19 +615,28 @@ def _joint_fit_matrices(
     )
 
 
-def run_joint_fit(
+def run_joint_fit_outcome(
     result: KnightAnalysisResult,
     *,
     model_name: str = "KnightAnisotropy",
     max_iter: int = 25,
     correction_offset: float = 0.0,
-) -> KnightJointFitState:
-    """Jointly fit all branches' K(θ) with per-angle component assignment.
+    keep_alternatives: int = 0,
+) -> tuple[KnightJointFitState, AngularAssignmentResult]:
+    """Run the joint K(θ) fit and return *both* the persisted state and the outcome.
 
-    A thin bridge to :func:`asymmetry.core.fitting.angular_assignment.
-    fit_assigned_angular_curves`: builds the aligned matrices in the result's
-    display unit (so curve parameters read in the plotted unit), runs the
-    classification-EM fit, and re-keys the assignment by run number.
+    The persisted :class:`KnightJointFitState` is exactly what :func:`run_joint_fit`
+    returns; the second element is the raw
+    :class:`~asymmetry.core.fitting.angular_assignment.AngularAssignmentResult`
+    from the classification-EM fit. The outcome carries the near-degenerate
+    runner-up labellings on :attr:`AngularAssignmentResult.alternatives` when
+    ``keep_alternatives > 0`` — the input the assignment-discrimination bridge
+    (:func:`suggest_assignment_discriminating_angle`) needs. It is deliberately
+    *not* folded into the state: the state is persisted, but the alternatives are
+    in-memory only (per the study), so a project load never carries them.
+
+    ``keep_alternatives`` is forwarded to
+    :func:`~asymmetry.core.fitting.angular_assignment.fit_assigned_angular_curves`.
     Raises ``ValueError`` with fewer than two branches or two shared points.
     """
     from asymmetry.core.fitting.angular_assignment import fit_assigned_angular_curves
@@ -642,7 +651,12 @@ def run_joint_fit(
     scaled_values = [[k * scale for k in row] for row in values]
     scaled_errors = [[e * scale for e in row] for row in errors]
     outcome = fit_assigned_angular_curves(
-        angles, scaled_values, scaled_errors, model_name=model_name, max_iter=max_iter
+        angles,
+        scaled_values,
+        scaled_errors,
+        model_name=model_name,
+        max_iter=max_iter,
+        keep_alternatives=keep_alternatives,
     )
 
     curves = []
@@ -670,7 +684,7 @@ def run_joint_fit(
                 covariance=covariance,
             )
         )
-    return KnightJointFitState(
+    state = KnightJointFitState(
         model_name=model_name,
         max_iter=int(max_iter),
         unit=result.unit.value,
@@ -682,6 +696,33 @@ def run_joint_fit(
         assignment={run: tuple(perm) for run, perm in zip(runs, outcome.assignment)},
         curves=tuple(curves),
     )
+    return state, outcome
+
+
+def run_joint_fit(
+    result: KnightAnalysisResult,
+    *,
+    model_name: str = "KnightAnisotropy",
+    max_iter: int = 25,
+    correction_offset: float = 0.0,
+) -> KnightJointFitState:
+    """Jointly fit all branches' K(θ) with per-angle component assignment.
+
+    A thin bridge to :func:`asymmetry.core.fitting.angular_assignment.
+    fit_assigned_angular_curves`: builds the aligned matrices in the result's
+    display unit (so curve parameters read in the plotted unit), runs the
+    classification-EM fit, and re-keys the assignment by run number. Delegates to
+    :func:`run_joint_fit_outcome` and returns only the persisted state, so its
+    public behaviour is unchanged (the EM runner-up alternatives are discarded).
+    Raises ``ValueError`` with fewer than two branches or two shared points.
+    """
+    state, _outcome = run_joint_fit_outcome(
+        result,
+        model_name=model_name,
+        max_iter=max_iter,
+        correction_offset=correction_offset,
+    )
+    return state
 
 
 def apply_assignment(

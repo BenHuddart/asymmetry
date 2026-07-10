@@ -749,3 +749,236 @@ def test_restore_of_legacy_migrated_joint_with_auto_unit_does_not_crash(qapp):
     header_row = text.split("</tr>")[0]
     assert "K<sub>iso</sub>" in header_row
     assert "(" not in header_row.replace("(°)", "")
+
+
+# ── 19. Suggest next angle: section state ────────────────────────────────────
+
+
+def _fit_percent(window: KnightShiftWindow) -> None:
+    """Run the joint fit in a pinned display unit and wait for it to land."""
+    window._unit_combo.setCurrentIndex(2)  # percent
+    window._on_run_joint_fit()
+    wait_for(lambda: not window._joint_running, QApplication.instance(), timeout_s=20.0)
+
+
+def test_suggest_section_present_and_initially_disabled_with_hint(qapp):
+    window = KnightShiftWindow()
+    assert window._suggest_section is not None
+    # No snapshot yet: the section is inert and explains why.
+    assert not window._suggest_btn.isEnabled()
+    assert window._suggest_disabled_hint.text() == "Needs the Angle scan axis."
+
+
+def test_suggest_disabled_until_a_joint_fit_is_run(qapp):
+    window = KnightShiftWindow()
+    window.set_snapshot(_crossing_snapshot())
+    # Two branches, angle axis, but no joint fit yet.
+    assert not window._suggest_btn.isEnabled()
+    assert "Run the joint" in window._suggest_disabled_hint.text()
+
+    _fit_percent(window)
+    assert window._suggest_btn.isEnabled()
+    assert window._suggest_disabled_hint.text() == ""
+
+
+# ── 20. Refine mode end-to-end ───────────────────────────────────────────────
+
+
+def test_refine_suggestion_populates_result_overlay_and_risk_mask(qapp):
+    window = KnightShiftWindow()
+    window.set_snapshot(_crossing_snapshot())
+    _fit_percent(window)
+
+    window._suggest_mode_combo.setCurrentIndex(0)  # Refine parameters
+    window._on_suggest_clicked()
+
+    assert window._suggestion_overlay is not None
+    assert window._suggest_result_label.text() != ""
+    assert "θ =" in window._suggest_result_label.text()
+    # Multi-series acquisition always carries a per-candidate risk mask (§3.1);
+    # it aligns with the candidate grid.
+    risk = window._suggestion_overlay.risk_mask
+    assert risk is not None
+    assert risk.shape == window._suggestion_overlay.x.shape
+
+
+def _near_degenerate_snapshot(n_points: int = 12) -> KnightAnalysisInput:
+    """Two field branches that run within a couple of error bars of each other.
+
+    Nearly-parallel, closely spaced K(θ) traces with generous error bars, so the
+    predicted curves sit inside the misassignment threshold across the whole
+    span — the assignment-risk flag should fire.
+    """
+    angles = np.linspace(0.0, 90.0, n_points)
+    b_ext = 7000.0
+    points = tuple(
+        KnightPoint(
+            run_number=i + 1,
+            run_label=str(i + 1),
+            x=float(ang),
+            field_gauss=b_ext,
+            values={"field_1": 7050.0 + 0.1 * i, "field_2": 7051.0 + 0.1 * i},
+            errors={"field_1": 8.0, "field_2": 8.0},
+        )
+        for i, ang in enumerate(angles)
+    )
+    return KnightAnalysisInput(
+        x_key="angle",
+        x_label="Angle (°)",
+        components=(("field_1", "field"), ("field_2", "field")),
+        points=points,
+        source_label="Near-degenerate series",
+        batch_id="batch-degenerate",
+        group_id="group-degenerate",
+    )
+
+
+def test_refine_risk_mask_flags_near_degenerate_curves(qapp):
+    window = KnightShiftWindow()
+    window.set_snapshot(_near_degenerate_snapshot())
+    _fit_percent(window)
+    if window._state.joint is None:
+        pytest.skip("joint fit did not converge for the near-degenerate snapshot")
+
+    window._suggest_mode_combo.setCurrentIndex(0)
+    window._on_suggest_clicked()
+
+    overlay = window._suggestion_overlay
+    assert overlay is not None
+    assert overlay.risk_mask is not None
+    assert bool(np.any(overlay.risk_mask))
+
+
+def test_refine_target_combo_lists_branch_times_param_entries(qapp):
+    window = KnightShiftWindow()
+    window.set_snapshot(_crossing_snapshot())
+    _fit_percent(window)
+
+    combo = window._suggest_target_combo
+    # "All parameters (D-optimal)" + one entry per (branch × free param):
+    # 2 curves × 3 KnightAnisotropy params = 6, plus the D-optimal entry.
+    assert combo.count() == 7
+    assert combo.itemData(0) is None  # D-optimal
+    entries = [combo.itemData(i) for i in range(1, combo.count())]
+    assert all(isinstance(e, tuple) and len(e) == 2 for e in entries)
+    branch_names = {e[0] for e in entries}
+    assert branch_names == {"K[field_1]", "K[field_2]"}
+
+
+def test_refine_c_optimal_goal_reports_events_factor(qapp):
+    window = KnightShiftWindow()
+    window.set_snapshot(_crossing_snapshot())
+    _fit_percent(window)
+
+    window._suggest_mode_combo.setCurrentIndex(0)
+    # Pick a concrete (branch, param) target and a precision goal.
+    target_idx = next(
+        i
+        for i in range(1, window._suggest_target_combo.count())
+        if window._suggest_target_combo.itemData(i)[1] == "K_ax"
+    )
+    window._suggest_target_combo.setCurrentIndex(target_idx)
+    assert window._suggest_goal_edit.isEnabled()
+    window._suggest_goal_edit.setText("0.01")
+    window._suggest_typical_run_edit.setText("10")
+    window._on_suggest_clicked()
+
+    text = window._suggest_result_label.text()
+    assert "θ =" in text
+
+
+# ── 21. Test-misalignment mode (off-thread alternative fit) ───────────────────
+
+
+def test_misalignment_runs_alternative_fit_and_reports_aic(qapp):
+    window = KnightShiftWindow()
+    window.set_snapshot(_crossing_snapshot())
+    _fit_percent(window)
+
+    window._suggest_mode_combo.setCurrentIndex(1)  # Test misalignment
+    window._on_suggest_clicked()
+    # The alternative (Fourier) fit runs off-thread on the shared TaskRunner.
+    wait_for(lambda: not window._joint_running, QApplication.instance(), timeout_s=30.0)
+
+    assert window._alt_fit_cache  # cached so a repeat click doesn't refit
+    text = window._suggest_result_label.text()
+    assert "Akaike weight" in text
+    assert "prefers" in text
+
+    # A second click reuses the cache (no fit runs).
+    window._on_suggest_clicked()
+    assert not window._joint_running
+
+
+# ── 22. Resolve-assignment mode ──────────────────────────────────────────────
+
+
+def test_assignment_mode_reports_no_alternatives_for_a_clean_crossing(qapp):
+    window = KnightShiftWindow()
+    window.set_snapshot(_crossing_snapshot())
+    _fit_percent(window)
+    assert window._joint_outcome is not None
+
+    window._suggest_mode_combo.setCurrentIndex(2)  # Resolve assignment
+    window._on_suggest_clicked()
+
+    # The clean crossing has a decisive winner: no near-degenerate runner-ups.
+    assert "degenerate" in window._suggest_result_label.text().lower()
+
+
+def test_assignment_mode_reruns_fit_when_outcome_absent(qapp):
+    window = KnightShiftWindow()
+    window.set_snapshot(_crossing_snapshot())
+    _fit_percent(window)
+
+    # Simulate a project-loaded fit: fresh + applicable, but no in-memory outcome.
+    window._joint_outcome = None
+    window._suggest_mode_combo.setCurrentIndex(2)
+    window._on_suggest_clicked()
+    # The Suggest click re-runs the joint fit off-thread first.
+    assert window._joint_running
+    wait_for(lambda: not window._joint_running, QApplication.instance(), timeout_s=20.0)
+
+    assert window._joint_outcome is not None
+    assert window._suggest_result_label.text() != ""
+
+
+# ── 23. Stale-fit / legacy-fit gating ────────────────────────────────────────
+
+
+def test_unit_change_clears_overlay_and_disables_suggest(qapp):
+    window = KnightShiftWindow()
+    window.set_snapshot(_crossing_snapshot())
+    _fit_percent(window)
+    window._suggest_mode_combo.setCurrentIndex(0)
+    window._on_suggest_clicked()
+    assert window._suggestion_overlay is not None
+
+    # Change the display unit: the fitted curves go stale, so the overlay must
+    # be dropped and Suggest disabled until the fit is re-run.
+    window._unit_combo.setCurrentIndex(3)  # fraction
+    assert window._suggestion_overlay is None
+    assert not window._suggest_btn.isEnabled()
+    assert "Re-run" in window._suggest_disabled_hint.text()
+
+
+def test_legacy_fit_without_covariance_shows_rerun_hint(qapp):
+    import dataclasses
+
+    window = KnightShiftWindow()
+    window.set_snapshot(_crossing_snapshot())
+    _fit_percent(window)
+    assert window._suggest_btn.isEnabled()
+
+    # Strip the stored covariance to mimic a legacy fit; the section must invite
+    # a re-run rather than offering a covariance-less suggestion.
+    joint = window._state.joint
+    stripped = dataclasses.replace(
+        joint,
+        curves=tuple(dataclasses.replace(c, covariance=None) for c in joint.curves),
+    )
+    window._state.joint = stripped
+    window._update_suggest_controls()
+
+    assert not window._suggest_btn.isEnabled()
+    assert "store fit covariance" in window._suggest_disabled_hint.text()

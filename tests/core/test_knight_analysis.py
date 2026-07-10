@@ -26,6 +26,7 @@ from asymmetry.core.fitting.knight_analysis import (
     joint_fit_aic_inputs,
     migrate_legacy_state,
     run_joint_fit,
+    run_joint_fit_outcome,
     selected_components,
     snapshot_from_rows,
     suggest_assignment_discriminating_angle,
@@ -925,6 +926,84 @@ def test_run_joint_fit_default_correction_offset_is_zero():
     joint = run_joint_fit(result, model_name="KnightAnisotropy", max_iter=25)
 
     assert joint.correction_offset == 0.0
+
+
+# --- run_joint_fit_outcome(): the outcome-bearing refactor ---------------------
+
+
+def test_run_joint_fit_outcome_state_matches_run_joint_fit():
+    """The state half of the outcome bridge is identical to run_joint_fit's."""
+    result, _curve_a, _curve_b, _angles, _runs = _two_branch_crossing_scan()
+
+    state, outcome = run_joint_fit_outcome(
+        result, model_name="KnightAnisotropy", max_iter=25, correction_offset=0.0025
+    )
+    reference = run_joint_fit(
+        result, model_name="KnightAnisotropy", max_iter=25, correction_offset=0.0025
+    )
+
+    # run_joint_fit delegates to run_joint_fit_outcome, so the persisted state
+    # must round-trip identically (both are deterministic, seed-fixed fits).
+    assert state.to_dict() == reference.to_dict()
+    assert outcome.model_name == "KnightAnisotropy"
+    assert len(outcome.curves) == len(state.curves)
+
+
+def _near_degenerate_knight_result() -> KnightAnalysisResult:
+    """A two-branch KnightAnalysisResult whose EM fit has a near-degenerate runner-up.
+
+    Mirrors ``tests/core/test_angular_assignment.py``'s
+    ``_near_degenerate_crossing_scan``: low-amplitude cos-2θ curves crossing at
+    45° with generous error bars, so the value-sorted envelope labelling survives
+    a Δχ² window alongside the continued-through-crossing winner. Unit FRACTION
+    (scale 1) keeps ``_joint_fit_matrices`` values identical to the branch k's.
+    """
+    angles = np.linspace(0.0, 90.0, 19)
+    runs = list(range(201, 201 + len(angles)))
+    a = _cos2(angles, 100.0, 8.0, 0.0)
+    b = _cos2(angles, 100.0, -8.0, 0.0)
+    past = angles > 45.0
+    comp0 = np.where(past, b, a)
+    comp1 = np.where(past, a, b)
+    noise = np.random.default_rng(3).normal(0.0, 4.0, size=(len(angles), 2))
+    comp0 = comp0 + noise[:, 0]
+    comp1 = comp1 + noise[:, 1]
+    errs = [4.0] * len(angles)
+    branch0 = _branch("K[c0]", runs, angles, comp0, component="c0", k_err=errs)
+    branch1 = _branch("K[c1]", runs, angles, comp1, component="c1", k_err=errs)
+    return _result([branch0, branch1])
+
+
+def test_run_joint_fit_outcome_carries_alternatives_when_requested():
+    """keep_alternatives surfaces near-degenerate runner-up labellings."""
+    result = _near_degenerate_knight_result()
+
+    _state_default, outcome_default = run_joint_fit_outcome(
+        result, model_name="AngularCos2", max_iter=25
+    )
+    _state_alt, outcome_alt = run_joint_fit_outcome(
+        result, model_name="AngularCos2", max_iter=25, keep_alternatives=3
+    )
+
+    # The default keeps no alternatives (behaviour parity with run_joint_fit);
+    # requesting them exposes distinct runner-up assignments for discrimination.
+    assert outcome_default.alternatives == []
+    assert len(outcome_alt.alternatives) >= 1
+    for alternative in outcome_alt.alternatives:
+        assert len(alternative.curves) == len(outcome_alt.curves)
+        assert tuple(alternative.assignment) != tuple(outcome_alt.assignment)
+
+
+def test_run_joint_fit_outcome_alternatives_not_persisted_on_state():
+    """The outcome is in-memory only: the persisted state never carries it."""
+    result, _curve_a, _curve_b, _angles, _runs = _two_branch_crossing_scan()
+
+    state, _outcome = run_joint_fit_outcome(
+        result, model_name="KnightAnisotropy", max_iter=25, keep_alternatives=3
+    )
+    # KnightJointFitState has no alternatives field; its dict form stays the
+    # stable persisted schema.
+    assert "alternatives" not in state.to_dict()
 
 
 def test_run_joint_fit_raises_with_fewer_than_two_branches():
