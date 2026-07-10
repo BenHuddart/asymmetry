@@ -54,7 +54,9 @@ def terminate_spawn_pool(pool: ProcessPoolExecutor) -> None:
         try:
             # Reap the killed child so it does not linger as a zombie. The
             # executor's own wind-down may race us to it, so tolerate an
-            # already-reaped process.
-            proc.join(timeout=1.0)
+            # already-reaped process. The timeout only binds when the child is
+            # slow to die after SIGKILL (a starved host); join returns as soon
+            # as the process is reaped, typically milliseconds.
+            proc.join(timeout=5.0)
         except (ChildProcessError, OSError, ValueError, AttributeError):
             pass
