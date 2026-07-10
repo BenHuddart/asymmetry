@@ -82,18 +82,23 @@ Walkthrough
       :align: center
       :alt: The Knight shift analysis window, with the Applied field
          reference selected, two frequency branches converted, a completed
-         joint K(theta) fit in the Model fit section, and the fitted curves
-         on the K(theta) plot.
+         joint K(theta) fit in the Model fit section, the Suggest next angle
+         section expanded with a computed D-optimal refine suggestion, and
+         the fitted curves plus the suggestion's utility band on the K(theta)
+         plot.
 
       The Knight shift analysis window on a two-site angle scan. The sidebar
       reads top to bottom as the pipeline — **Source** (the fitted series
       supplying the frequencies), **Conversion** (reference and unit),
       **Branches** (one :math:`K` trace per converted component, with a count
-      of the crossings flagged along the scan), and **Model fit** (the joint
-      :math:`K(\theta)` fit covered in a later step, shown here already run);
-      the plot shows both branches against angle with their fitted curves and
-      **Crossing markers** on, dashed at the scan intervals where the raw
-      component labels can swap. Converting here does not touch the trend
+      of the crossings flagged along the scan), **Model fit** (the joint
+      :math:`K(\theta)` fit covered in a later step, shown here already run),
+      and **Suggest next angle** (covered further below, shown here already
+      expanded with a computed **Refine parameters** suggestion); the plot
+      shows both branches against angle with their fitted curves,
+      **Crossing markers** on (dashed at the scan intervals where the raw
+      component labels can swap), and the suggestion's utility band with the
+      suggested angle marked. Converting here does not touch the trend
       table — press **Send K columns to trend table** in the footer to
       publish the :math:`K[\ldots]` columns for plotting and export (the
       joint fit runs here in the window and does not need them published
@@ -130,6 +135,34 @@ Walkthrough
    the assignment changes so each trace continues through the crossings
    along its own site.
 
+#. **Which angle next?** With the joint fit in hand, the window's own
+   collapsible **Suggest next angle** section (:ref:`knight-shift`) plans
+   the *next* run rather than just fitting the ones already taken. Leave
+   **Mode** on **Refine parameters** and **Target** on **All parameters
+   (D-optimal)** to see where a new angle would tighten both sites' fitted
+   curves at once — for this scan, still coarsely sampled every
+   :math:`15^\circ`, the suggestion lands away from the two magic-angle
+   crossings, where each site's own curve has the steepest slope (the
+   screenshot above shows this suggestion already computed).
+
+   It is also worth asking whether the rotation axis is really aligned
+   rather than assuming it, especially given how cleanly the two sites came
+   out equal-and-opposite: switch **Mode** to **Test misalignment** and
+   click **Suggest** again. This fits the first-harmonic
+   ``AngularFourier2`` alternative in the background and reports which
+   model the data currently prefer — here, correctly, the aligned
+   ``KnightAnisotropy`` fit, by a decisive Akaike weight, since the
+   synthetic scan was built from a perfectly aligned axis.
+
+   Finally, **Resolve assignment** targets the crossings themselves: near
+   :math:`54.7^\circ` and :math:`125.3^\circ` the classification-EM step
+   above had a competing, near-equally-good labelling available (the
+   envelope assignment this whole workflow exists to avoid), and this mode
+   ranks candidate angles by how well a new run would tell the winning
+   assignment apart from that runner-up — typically somewhere between the
+   crossings, where the two labellings genuinely disagree, rather than at a
+   crossing itself.
+
 Reading the result
 ------------------
 
@@ -157,8 +190,11 @@ See also
 --------
 
 - :ref:`knight-shift` — the full Knight-shift reference: the two references,
-  component crossings, the joint fit, and both angular basis models
-  (``KnightAnisotropy`` and ``AngularCos2``).
+  component crossings, the joint fit, all three angular basis models
+  (``KnightAnisotropy``, ``AngularCos2``, and ``AngularFourier2``), and
+  *Suggest next angle*.
+- :doc:`/reference/suggest_next_point` — the same Bayesian-experimental-design
+  acquisition, for a scalar trend rather than a joint angular fit.
 - :doc:`/reference/grouped_time_domain_fitting` — the individual-groups
   time-domain fit that produces the per-site frequencies.
 - :doc:`temperature_scan_magnetism` — the companion trend workflow, fitting a

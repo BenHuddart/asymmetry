@@ -201,6 +201,32 @@ PARAM_INFO_REGISTRY: dict[str, ParamInfo] = {
         "°",
         description="Angular offset of the cos2θ Knight-shift modulation.",
     ),
+    "K_1": ParamInfo(
+        "K_1",
+        "K_1",
+        "K₁",
+        r"$K_1$",
+        r"{\it K}_{1}",
+        description="First-harmonic Knight-shift amplitude from rotation-axis tilt.",
+    ),
+    "theta1": ParamInfo(
+        "theta1",
+        "theta1",
+        "θ₁",
+        r"$\theta_1$",
+        r"\theta_{1}",
+        "°",
+        description="Phase offset of the first-harmonic (cosθ) Knight-shift term.",
+    ),
+    "theta2": ParamInfo(
+        "theta2",
+        "theta2",
+        "θ₂",
+        r"$\theta_2$",
+        r"\theta_{2}",
+        "°",
+        description="Phase offset of the second-harmonic (cos2θ) Knight-shift term.",
+    ),
     "phase": ParamInfo("phase", "phase", "φ", r"$\phi$", r"\phi", "rad"),
     # The grouped fit's per-group phase nuisance. It carries the full (absolute)
     # phase of each detector group's oscillation — the shared model phase is held

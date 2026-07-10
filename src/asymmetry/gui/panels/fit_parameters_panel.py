@@ -622,13 +622,18 @@ class FitParametersPanel(QWidget):
         self._remove_composite_btn.setEnabled(False)
         self._remove_composite_btn.clicked.connect(self._remove_selected_composite_parameters)
 
+        # The "Analysis -> Knight shift analysis..." menu action (mainwindow.py)
+        # is the unconditional entry point to the Knight shift window. This
+        # button is the main-GUI shortcut, so it only surfaces when the active
+        # series looks like a Knight-shift use case; see
+        # _update_knight_window_button.
         self._knight_window_btn = QPushButton("Knight shift window…")
         self._knight_window_btn.setToolTip(
             "Open the Knight shift analysis window: convert, inspect branches and "
             "crossings, and publish K columns back to this table."
         )
-        self._knight_window_btn.setEnabled(False)
         self._knight_window_btn.clicked.connect(self.knight_window_requested.emit)
+        self._update_knight_window_button()
 
         self._derived_section = PanelSection(
             "Derived parameters",
@@ -804,6 +809,21 @@ class FitParametersPanel(QWidget):
         for table in (self._table, self._y_selector_table):
             apply_param_table_style(table)
 
+    def _update_knight_window_button(self) -> None:
+        """Show/enable the "Knight shift window…" button only when it likely applies.
+
+        The menu action (``Analysis -> Knight shift analysis…``, mainwindow.py)
+        stays the unconditional entry point regardless of the active series.
+        This button is the main-GUI shortcut in the *Derived parameters*
+        section, so it is hidden — not just disabled — whenever there is no
+        active series (``self._rows`` empty) or the active series' model has
+        no Knight-convertible component (``self._knight_observables`` empty).
+        Call this from every path that changes either of those two attributes.
+        """
+        likely_knight_case = bool(self._rows) and bool(self._knight_observables)
+        self._knight_window_btn.setVisible(likely_knight_case)
+        self._knight_window_btn.setEnabled(likely_knight_case)
+
     def clear(self) -> None:
         self._bump_data_revision()
         self._rows = []
@@ -833,7 +853,7 @@ class FitParametersPanel(QWidget):
         self._create_composite_btn.setEnabled(False)
         self._edit_composite_btn.setEnabled(False)
         self._remove_composite_btn.setEnabled(False)
-        self._knight_window_btn.setEnabled(False)
+        self._update_knight_window_button()
         self._rebuild_y_controls()
         self._refresh_plot()
 
@@ -1024,7 +1044,11 @@ class FitParametersPanel(QWidget):
         self._create_composite_btn.setEnabled(bool(self._rows))
         self._edit_composite_btn.setEnabled(False)
         self._remove_composite_btn.setEnabled(False)
-        self._knight_window_btn.setEnabled(bool(self._rows))
+        # _knight_observables isn't restored until the caller's follow-up
+        # load_representation_series() re-derivation runs (see restore_state's
+        # docstring), so this may under- or over-show transiently; that call
+        # re-invokes _update_knight_window_button with the correct value.
+        self._update_knight_window_button()
 
         varying = state.get("varying_params", [])
         if isinstance(varying, list) and all(isinstance(v, str) for v in varying):
@@ -1700,7 +1724,7 @@ class FitParametersPanel(QWidget):
             self._create_composite_btn.setEnabled(False)
             self._edit_composite_btn.setEnabled(False)
             self._remove_composite_btn.setEnabled(False)
-            self._knight_window_btn.setEnabled(False)
+            self._update_knight_window_button()
             self._rebuild_y_controls(preferred_selected=previous_selected_y)
             self._refresh_model_fit_button_labels()
             self._update_x_axis_auto_hint()
@@ -1764,7 +1788,7 @@ class FitParametersPanel(QWidget):
         self._export_gle_btn.setEnabled(has_rows)
         self._gle_format_combo.setEnabled(has_rows)
         self._create_composite_btn.setEnabled(has_rows)
-        self._knight_window_btn.setEnabled(has_rows)
+        self._update_knight_window_button()
 
         display_params = set(self._display_y_parameters())
         self._model_fits = {k: v for k, v in self._model_fits.items() if k in display_params}

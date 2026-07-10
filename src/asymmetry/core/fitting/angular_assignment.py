@@ -20,8 +20,8 @@ Pure/deterministic — no Qt. Reuses the K(θ) basis models and ``fit_parameter_
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
 
 import numpy as np
 from scipy.optimize import linear_sum_assignment
@@ -38,8 +38,25 @@ from asymmetry.core.fitting.parameter_models import (
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
-#: K(θ) basis models eligible for the joint fit (angle-scoped, Phase 5).
-ANGULAR_MODELS: tuple[str, ...] = ("KnightAnisotropy", "AngularCos2")
+#: K(θ) basis models eligible for the joint fit (angle-scoped, Phase 5/6).
+ANGULAR_MODELS: tuple[str, ...] = ("KnightAnisotropy", "AngularCos2", "AngularFourier2")
+
+
+@dataclass
+class AngularAssignmentAlternative:
+    """A near-degenerate runner-up assignment kept for discrimination (§3.3).
+
+    Carries the competing per-point ``assignment`` (distinct from the winner's),
+    its converged per-curve ``curves`` (canonicalised like the winner), the
+    seed's ``total_chi_squared`` and whether that seed ``converged``. These are
+    the labellings within a Δχ² window of the winner — the ones a new angle
+    could resolve.
+    """
+
+    assignment: list[tuple[int, ...]]
+    curves: list[ParameterModelFitResult]
+    total_chi_squared: float
+    converged: bool
 
 
 @dataclass
@@ -49,7 +66,9 @@ class AngularAssignmentResult:
     ``curves[m]`` is the fit of curve ``m``; ``curve_values[m]``/``curve_errors[m]``
     are the realigned per-point values assigned to curve ``m`` (so curve ``m`` is a
     continuous trace through crossings). ``assignment[p][c]`` gives the curve index
-    that component ``c`` at scan point ``p`` was assigned to.
+    that component ``c`` at scan point ``p`` was assigned to. ``alternatives`` holds
+    the distinct near-degenerate runner-up labellings (empty unless
+    ``keep_alternatives > 0`` was requested).
     """
 
     success: bool
@@ -63,6 +82,7 @@ class AngularAssignmentResult:
     total_chi_squared: float = 0.0
     dof: int = 0
     message: str = ""
+    alternatives: list[AngularAssignmentAlternative] = field(default_factory=list)
 
 
 def _seed_parameters(model_name: str, values: np.ndarray) -> ParameterSet:
@@ -76,6 +96,26 @@ def _seed_parameters(model_name: str, values: np.ndarray) -> ParameterSet:
                 Parameter("K_avg", centre),
                 Parameter("K_amp", spread / 2.0 or 1.0),
                 Parameter("theta0", 0.0),
+            ]
+        )
+    if model_name == "AngularFourier2":
+        return ParameterSet(
+            [
+                Parameter("K_avg", centre),
+                # Aligned start (the nested null): a misaligned axis is the
+                # exception, not the default, so K_1 = 0 lets the optimiser
+                # discover any first-harmonic leakage from the data itself.
+                Parameter("K_1", 0.0),
+                # Bounded to half the first harmonic's 360° period: beyond
+                # ±90° the same curve re-parameterises with opposite-sign
+                # K_1 (theta1 + 180 <-> -K_1), so an open bound would let the
+                # optimiser pick either label for the same physics.
+                Parameter("theta1", 0.0, min=-90.0, max=90.0),
+                Parameter("K_amp", spread / 2.0 or 1.0),
+                # Same bound rationale as AngularCos2/KnightAnisotropy's
+                # theta0: beyond ±90° the second harmonic re-parameterises
+                # with opposite-sign K_amp.
+                Parameter("theta2", 0.0, min=-90.0, max=90.0),
             ]
         )
     return ParameterSet(
@@ -278,6 +318,8 @@ def fit_assigned_angular_curves(
     *,
     model_name: str = "KnightAnisotropy",
     max_iter: int = 25,
+    keep_alternatives: int = 0,
+    alternative_delta_chi2: float = 9.0,
 ) -> AngularAssignmentResult:
     """Jointly fit ``N`` K(θ) curves, assigning each angle's components one-to-one.
 
@@ -285,6 +327,13 @@ def fit_assigned_angular_curves(
     (one per component). Returns the per-curve fits, the per-point assignment, and
     the realigned per-curve traces. The fit is seeded from both the identity
     (raw-label) and value-continuity assignments and the lowest-χ² result kept.
+
+    When ``keep_alternatives > 0``, each seed's converged outcome is collected and
+    the runners-up whose assignment differs from the winner (and each other) and
+    whose ``total_chi_squared`` lies within ``alternative_delta_chi2`` of the
+    winner are exposed, χ²-ordered and capped at ``keep_alternatives``, on
+    :attr:`AngularAssignmentResult.alternatives` (canonicalised like the winner).
+    The default (``keep_alternatives = 0``) leaves behaviour unchanged.
     """
     if model_name not in ANGULAR_MODELS:
         raise ValueError(f"Unknown angular model {model_name!r}; expected one of {ANGULAR_MODELS}")
@@ -319,12 +368,8 @@ def fit_assigned_angular_curves(
         seeds.append(_continuity_seed(x, values))
         seeds.extend(_crossing_swap_seeds(x, values))
 
-    best: tuple[list[np.ndarray], list[ParameterModelFitResult], float, bool] | None = None
-    for seed in seeds:
-        candidate = _run_em(x, values, errors, model, model_name, seed, max_iter)
-        if best is None or candidate[2] < best[2]:
-            best = candidate
-    assert best is not None
+    outcomes = [_run_em(x, values, errors, model, model_name, seed, max_iter) for seed in seeds]
+    best = min(outcomes, key=lambda candidate: candidate[2])
     assignment, fits, total, converged = best
 
     # Realigned per-curve traces: curve m takes its assigned component each point.
@@ -343,6 +388,12 @@ def fit_assigned_angular_curves(
     for fit in fits:
         _canonicalize_theta0(model_name, fit)
 
+    alternatives = (
+        _collect_alternatives(outcomes, best, model_name, keep_alternatives, alternative_delta_chi2)
+        if keep_alternatives > 0
+        else []
+    )
+
     return AngularAssignmentResult(
         success=all(fit.success for fit in fits),
         converged=converged,
@@ -354,45 +405,252 @@ def fit_assigned_angular_curves(
         curve_errors=curve_errors,
         total_chi_squared=float(total),
         dof=max(n_points * n_components - n_components * n_params, 0),
+        alternatives=alternatives,
     )
 
 
-def _canonicalize_theta0(model_name: str, fit: ParameterModelFitResult) -> None:
-    """Fold a fitted θ0 into (−45°, 45°] via the model's exact reparameterisation.
+def _assignment_key(assignment: Sequence[np.ndarray]) -> tuple[tuple[int, ...], ...]:
+    """Hashable, order-preserving key for an assignment (per-point permutations)."""
+    return tuple(tuple(int(v) for v in perm) for perm in assignment)
 
-    Both angular models are invariant under a 90° shift of θ0 with a sign flip
-    of the anisotropic amplitude (the axial form additionally shifts
-    ``K_iso → K_iso + K_ax/2``, since ``(3cos²t−1)/2 + (3sin²t−1)/2 = 1/2``), so
-    the optimiser may return either representation of the same curve. Fold to
-    the small-|θ0| one so amplitude signs read physically (a mount is expected
-    to be *nearly* aligned) and equivalent curves report comparable θ0. Under
-    the fold K_iso's uncertainty picks up K_ax's in quadrature (their covariance
-    is not propagated here — a conservative approximation). In-place.
+
+def _collect_alternatives(
+    outcomes: Sequence[tuple[list[np.ndarray], list[ParameterModelFitResult], float, bool]],
+    winner: tuple[list[np.ndarray], list[ParameterModelFitResult], float, bool],
+    model_name: str,
+    keep_alternatives: int,
+    delta_chi2: float,
+) -> list[AngularAssignmentAlternative]:
+    """Distinct near-degenerate runners-up within Δχ² of the winner, χ²-ordered.
+
+    Dedupes by exact assignment equality against the winner and each other,
+    keeps only those within ``delta_chi2`` of the winner's total χ², caps at
+    ``keep_alternatives``, and canonicalises each kept alternative's curves.
     """
-    params = {p.name: p for p in fit.parameters}
-    theta0 = params.get("theta0")
-    if theta0 is None or not math.isfinite(theta0.value):
+    winner_total = winner[2]
+    seen: set[tuple[tuple[int, ...], ...]] = {_assignment_key(winner[0])}
+    alternatives: list[AngularAssignmentAlternative] = []
+    for cand_assignment, cand_fits, cand_total, cand_converged in sorted(
+        outcomes, key=lambda candidate: candidate[2]
+    ):
+        if cand_total - winner_total > delta_chi2:
+            break  # χ²-sorted: everything further out is beyond the window too
+        key = _assignment_key(cand_assignment)
+        if key in seen:
+            continue
+        seen.add(key)
+        for fit in cand_fits:
+            _canonicalize_theta0(model_name, fit)
+        alternatives.append(
+            AngularAssignmentAlternative(
+                assignment=[tuple(int(v) for v in perm) for perm in cand_assignment],
+                curves=cand_fits,
+                total_chi_squared=float(cand_total),
+                converged=bool(cand_converged),
+            )
+        )
+        if len(alternatives) >= keep_alternatives:
+            break
+    return alternatives
+
+
+#: Odd-flip covariance Jacobian rows, keyed by a fold key -> {output parameter
+#: name: {input name: coefficient}}. The fold key is the model name for a
+#: model with a single fold (``KnightAnisotropy``, ``AngularCos2``), or
+#: ``"<model>:<angle_param>"`` for a model with more than one independent
+#: fold (``AngularFourier2``). Any name absent from an entry's coefficients
+#: (e.g. a fixed/absent parameter) keeps its identity row — unchanged by the
+#: fold.
+_FOLD_JACOBIAN_ROWS: dict[str, dict[str, dict[str, float]]] = {
+    "KnightAnisotropy": {"K_iso": {"K_iso": 1.0, "K_ax": 0.5}, "K_ax": {"K_ax": -1.0}},
+    "AngularCos2": {"K_amp": {"K_amp": -1.0}},
+    "AngularFourier2:theta2": {"K_amp": {"K_amp": -1.0}},
+    "AngularFourier2:theta1": {"K_1": {"K_1": -1.0}},
+}
+
+
+def _fold_covariance_jacobian(fold_key: str, names: Sequence[str]) -> np.ndarray | None:
+    """Build one fold's odd-flip covariance Jacobian, restricted to ``names``.
+
+    ``names`` is the covariance's own free-parameter order (fixed/absent
+    parameters simply don't appear). Rows/columns the fold doesn't touch are
+    the identity row. Returns ``None`` when ``fold_key`` has no registered
+    fold (see :data:`_FOLD_JACOBIAN_ROWS` for the key convention).
+    """
+    rows = _FOLD_JACOBIAN_ROWS.get(fold_key)
+    if rows is None:
+        return None
+    index = {name: i for i, name in enumerate(names)}
+    jac = np.eye(len(names), dtype=float)
+    for out_name, coeffs in rows.items():
+        i = index.get(out_name)
+        if i is None:
+            continue
+        jac[i, :] = 0.0
+        for in_name, coeff in coeffs.items():
+            j = index.get(in_name)
+            if j is not None:
+                jac[i, j] = coeff
+    return jac
+
+
+def _fold_covariance(fit: ParameterModelFitResult, fired_fold_keys: Sequence[str]) -> None:
+    """Propagate Σ' = J Σ Jᵀ through the fired folds and refresh the marginals.
+
+    No-op when ``fit.covariance`` is ``None`` (HESSE failed/didn't run, or a
+    legacy fit) — the caller's quadrature fallback is the only signal then, or
+    when none of ``fired_fold_keys`` has a registered Jacobian. Multiple fired
+    folds compose into a single Jacobian (``AngularFourier2``'s θ1/θ2 folds
+    are independent — each touches a disjoint parameter — so the composition
+    order does not matter); the combined transform is applied once. Otherwise
+    replaces ``fit.covariance`` with the transformed matrix (same
+    ``(names, matrix)`` shape) and every affected marginal in
+    ``fit.uncertainties`` with ``sqrt(diag(Σ'))``, exactly.
+    """
+    if fit.covariance is None:
         return
-    folded = math.remainder(float(theta0.value), 180.0)
+    names, matrix = fit.covariance
+    combined = np.eye(len(names), dtype=float)
+    applied = False
+    for fold_key in fired_fold_keys:
+        jac = _fold_covariance_jacobian(fold_key, names)
+        if jac is None:
+            continue
+        combined = jac @ combined
+        applied = True
+    if not applied:
+        return
+    sigma = np.asarray(matrix, dtype=float)
+    transformed = combined @ sigma @ combined.T
+    fit.covariance = (list(names), transformed.tolist())
+    for i, name in enumerate(names):
+        variance = transformed[i, i]
+        if math.isfinite(variance) and variance >= 0.0:
+            fit.uncertainties[name] = math.sqrt(variance)
+
+
+def _flip_knight_anisotropy(params: dict[str, Parameter], fit: ParameterModelFitResult) -> bool:
+    """K_iso -> K_iso + K_ax/2, K_ax -> -K_ax (exact under the θ0 fold)."""
+    k_iso, k_ax = params.get("K_iso"), params.get("K_ax")
+    if k_ax is None:
+        return False
+    if k_iso is not None:
+        k_iso.value = float(k_iso.value) + float(k_ax.value) / 2.0
+        if fit.covariance is None:
+            iso_err = fit.uncertainties.get("K_iso")
+            ax_err = fit.uncertainties.get("K_ax")
+            if iso_err is not None and ax_err is not None:
+                fit.uncertainties["K_iso"] = math.hypot(float(iso_err), float(ax_err) / 2.0)
+    k_ax.value = -float(k_ax.value)
+    return True
+
+
+def _make_sign_flip(name: str) -> Callable[[dict[str, Parameter], ParameterModelFitResult], bool]:
+    """A flip that only negates ``name`` (no cross-term, no quadrature fallback)."""
+
+    def _flip(params: dict[str, Parameter], fit: ParameterModelFitResult) -> bool:
+        param = params.get(name)
+        if param is None:
+            return False
+        param.value = -float(param.value)
+        return True
+
+    return _flip
+
+
+@dataclass(frozen=True)
+class _AngleFold:
+    """One periodic angle parameter and its exact reparameterisation on flip.
+
+    ``angle_param`` folds into ``(-step/2, step/2]`` in ``step``-degree
+    increments; whenever an odd number of increments is needed, ``flip`` is
+    invoked to apply the model's exact sign/shift reparameterisation to the
+    other affected parameters (in place) and ``jacobian_key`` names the
+    covariance transform in :data:`_FOLD_JACOBIAN_ROWS` for that flip.
+    """
+
+    angle_param: str
+    step: float
+    jacobian_key: str
+    flip: Callable[[dict[str, Parameter], ParameterModelFitResult], bool]
+
+
+#: Per-model fold specs. ``KnightAnisotropy``/``AngularCos2`` each have a
+#: single θ0 fold (period 180°, canonical range (−45°, 45°]) as before.
+#: ``AngularFourier2`` has two *independent* folds: θ2 folds exactly like
+#: AngularCos2's θ0 (the second-harmonic phase, K_amp sign flip), and θ1
+#: folds over the first harmonic's full 360° period (canonical range
+#: (−90°, 90°], K_1 sign flip) since ``(K_1, θ1) ≡ (−K_1, θ1 + 180°)``.
+_ANGLE_FOLDS: dict[str, tuple[_AngleFold, ...]] = {
+    "KnightAnisotropy": (_AngleFold("theta0", 90.0, "KnightAnisotropy", _flip_knight_anisotropy),),
+    "AngularCos2": (_AngleFold("theta0", 90.0, "AngularCos2", _make_sign_flip("K_amp")),),
+    "AngularFourier2": (
+        _AngleFold("theta2", 90.0, "AngularFourier2:theta2", _make_sign_flip("K_amp")),
+        _AngleFold("theta1", 180.0, "AngularFourier2:theta1", _make_sign_flip("K_1")),
+    ),
+}
+
+
+def _fold_periodic_angle(value: float, step: float) -> tuple[float, int]:
+    """Fold ``value`` into ``(-step/2, step/2]``; return ``(folded, n_flips)``.
+
+    ``n_flips`` is the number of ``step``-sized shifts applied — its parity is
+    what the caller's odd-flip reparameterisation keys on. First reduces mod
+    ``2*step`` (bringing it into ``(-step, step]``), then shifts by at most
+    one ``step`` in either direction.
+    """
+    half = step / 2.0
+    folded = math.remainder(value, 2.0 * step)
     flips = 0
-    while folded > 45.0:
-        folded -= 90.0
+    while folded > half:
+        folded -= step
         flips += 1
-    while folded <= -45.0:
-        folded += 90.0
+    while folded <= -half:
+        folded += step
         flips += 1
-    if flips % 2 == 1:
-        if model_name == "KnightAnisotropy" and "K_ax" in params:
-            k_iso, k_ax = params.get("K_iso"), params["K_ax"]
-            if k_iso is not None:
-                k_iso.value = float(k_iso.value) + float(k_ax.value) / 2.0
-                iso_err = fit.uncertainties.get("K_iso")
-                ax_err = fit.uncertainties.get("K_ax")
-                if iso_err is not None and ax_err is not None:
-                    fit.uncertainties["K_iso"] = math.hypot(float(iso_err), float(ax_err) / 2.0)
-            k_ax.value = -float(k_ax.value)
-        elif model_name == "AngularCos2" and "K_amp" in params:
-            params["K_amp"].value = -float(params["K_amp"].value)
-        else:
-            return
-    theta0.value = folded
+    return folded, flips
+
+
+def _canonicalize_theta0(model_name: str, fit: ParameterModelFitResult) -> None:
+    """Fold a fitted angle parameter into its canonical range, in place.
+
+    Each of ``model_name``'s :data:`_ANGLE_FOLDS` entries is an exact
+    reparameterisation the model is invariant under (see :class:`_AngleFold`
+    and the module-level table for the per-model periods and amplitude sign
+    flips — e.g. the axial form additionally shifts
+    ``K_iso -> K_iso + K_ax/2``, since ``(3cos²t-1)/2 + (3sin²t-1)/2 = 1/2``),
+    so the optimiser may return any equivalent representation of the same
+    curve. Folding to the small-|angle| one makes amplitude signs read
+    physically (a mount/rotation axis is expected to be *nearly* aligned) and
+    equivalent curves report comparable angles. ``AngularFourier2``'s two
+    folds (θ1, θ2) are independent and each applied when it fires.
+
+    Every fold is a linear reparameterisation, so when ``fit.covariance`` is
+    available it is propagated exactly (Σ' = J Σ Jᵀ, :func:`_fold_covariance`)
+    and the affected marginal uncertainties are recomputed from
+    ``sqrt(diag(Σ'))``. Only when no covariance is available (HESSE
+    failed/didn't run, or a legacy fit) does ``KnightAnisotropy``'s K_iso
+    uncertainty fall back to the quadrature approximation (K_ax's uncertainty
+    added in quadrature, ignoring their correlation); the other folds are pure
+    sign flips, whose marginal magnitude is unchanged either way.
+    """
+    folds = _ANGLE_FOLDS.get(model_name)
+    if not folds:
+        return
+    params = {p.name: p for p in fit.parameters}
+    fired_fold_keys: list[str] = []
+    for angle_fold in folds:
+        angle_param = params.get(angle_fold.angle_param)
+        if angle_param is None or not math.isfinite(angle_param.value):
+            continue
+        folded, flips = _fold_periodic_angle(float(angle_param.value), angle_fold.step)
+        if flips % 2 == 1:
+            # A flip that can't find its target amplitude (a model variant
+            # missing it) leaves this angle unfolded too, rather than
+            # reporting a folded angle with no corresponding sign flip.
+            if not angle_fold.flip(params, fit):
+                continue
+            fired_fold_keys.append(angle_fold.jacobian_key)
+        angle_param.value = folded
+    if fired_fold_keys:
+        _fold_covariance(fit, fired_fold_keys)

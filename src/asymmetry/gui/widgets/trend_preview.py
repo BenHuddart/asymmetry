@@ -34,6 +34,18 @@ from asymmetry.gui.panels.draggable_handles import nearest_handle
 from asymmetry.gui.styles import plots as plot_styles
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.widgets.mpl_canvas import create_canvas
+from asymmetry.gui.widgets.suggestion_overlay import (
+    SuggestionOverlay,
+    draw_suggestion_overlay,
+)
+
+__all__ = [
+    "PreviewRange",
+    "PreviewSeries",
+    "SuggestionOverlay",
+    "TrendPreviewCanvas",
+    "range_span_color",
+]
 
 #: Cursor-to-edge grab tolerance in device pixels (matches plot_panel's span).
 _DRAG_TOLERANCE_PX = 7.0
@@ -43,10 +55,6 @@ _EXCLUDE_MIN_PX = 4.0
 #: Minimum left-drag extent (device pixels) on empty space that counts as a
 #: create gesture rather than a bare click (same spirit as ``_EXCLUDE_MIN_PX``).
 _ADD_MIN_PX = 8.0
-
-#: Fraction of the axes height the BED "suggest next point" utility band's
-#: peak spans (see ``_draw_suggestion``).
-_SUGGESTION_BAND_FRACTION = 0.18
 
 #: Per-range span colour cycle: the Okabe-Ito colour-blind-safe qualitative set
 #: (same hues used for multi-run overlays elsewhere; see
@@ -84,23 +92,6 @@ class PreviewSeries:
     y: NDArray
     yerr: NDArray | None
     xerr: NDArray | None
-
-
-@dataclass
-class SuggestionOverlay:
-    """Bayesian-experimental-design "next point" overlay (see
-    ``docs/studies/bed-next-point-suggestion.md`` §5.4).
-
-    ``utility`` is the RAW (unnormalised) per-candidate utility from
-    ``NextPointSuggestion`` — the canvas normalises it for display so callers
-    never need to rescale. ``best_x`` is NaN when no suggestion is available
-    (draw everything except the marker/annotation).
-    """
-
-    x: NDArray
-    utility: NDArray
-    extrapolated: NDArray[np.bool_]
-    best_x: float
 
 
 @dataclass
@@ -916,132 +907,14 @@ class TrendPreviewCanvas(QWidget):
         colour: str,
         label: str,
     ) -> None:
-        """Draw one BED "next point" overlay band (Phase 2 §5.4 / Phase 3 §8.1).
+        """Draw one BED "next point" overlay band via the shared helper.
 
-        Utility is drawn as a translucent filled band anchored to the BOTTOM
-        of the axes via the blended x-data/y-axes-fraction transform, so it
-        reads as chrome rather than a second data series. Normalised so the
-        band's peak spans roughly ``_SUGGESTION_BAND_FRACTION`` of the axes
-        height; extrapolated candidates are drawn at reduced alpha. A vertical
-        marker + annotation mark ``best_x`` (skipped when NaN). *colour* and
-        *label* let this same routine draw the refinement suggestion band and
-        the model-discrimination band in distinct styles (see
-        :meth:`set_suggestion` / :meth:`set_discrimination`); both may be
-        drawn on the same axes.
-
-        INVARIANT: this overlay must never change the main axes' data limits/
-        autoscale. ``axhspan``/``fill_between`` with a blended transform can
-        still update the x-datalim (and, on some matplotlib versions, the
-        y-datalim) as a side effect of adding the artist, so the pre-overlay
-        ylim is captured and forcibly restored after every artist is added.
+        Delegates to
+        :func:`asymmetry.gui.widgets.suggestion_overlay.draw_suggestion_overlay`
+        so this canvas and the Knight-shift window render the band identically
+        (see :meth:`set_suggestion` / :meth:`set_discrimination`).
         """
-        if overlay is None:
-            return
-        x = np.asarray(overlay.x, dtype=float)
-        utility = np.asarray(overlay.utility, dtype=float)
-        if x.size == 0 or utility.size == 0 or x.size != utility.size:
-            return
-
-        # Capture the axes' current y-limits BEFORE adding any overlay artist,
-        # and restore them after — the overlay must never perturb autoscale.
-        try:
-            saved_ylim = ax.get_ylim()  # type: ignore[union-attr]
-        except Exception:
-            saved_ylim = None
-
-        try:
-            extrapolated = np.asarray(overlay.extrapolated, dtype=bool)
-            if extrapolated.shape != x.shape:
-                extrapolated = np.zeros_like(x, dtype=bool)
-
-            max_u = float(np.nanmax(utility)) if np.any(np.isfinite(utility)) else 0.0
-            order = np.argsort(x)
-            xs = x[order]
-            us = utility[order]
-            extra = extrapolated[order]
-            if max_u > 0.0:
-                normalised = np.clip(us / max_u, 0.0, None) * _SUGGESTION_BAND_FRACTION
-            else:
-                normalised = np.zeros_like(us)
-
-            transform = ax.get_xaxis_transform()  # type: ignore[union-attr]
-            # Split into contiguous extrapolated / in-range runs so each run
-            # gets its own alpha via a separate fill_between call.
-            for is_extra in (False, True):
-                mask = extra == is_extra
-                if not np.any(mask):
-                    continue
-                run_start = None
-                for i in range(len(xs) + 1):
-                    in_run = i < len(xs) and mask[i]
-                    if in_run and run_start is None:
-                        run_start = i
-                    elif not in_run and run_start is not None:
-                        self._fill_suggestion_run(
-                            ax,
-                            transform,
-                            xs[run_start:i],
-                            normalised[run_start:i],
-                            is_extra,
-                            colour,
-                        )
-                        run_start = None
-
-            if np.isfinite(overlay.best_x):
-                try:
-                    ax.axvline(  # type: ignore[union-attr]
-                        overlay.best_x,
-                        color=colour,
-                        linestyle=":",
-                        linewidth=1.4,
-                        zorder=7,
-                    )
-                    ax.annotate(  # type: ignore[union-attr]
-                        label,
-                        xy=(overlay.best_x, 1.0),
-                        xycoords=transform,
-                        xytext=(3, -10),
-                        textcoords="offset points",
-                        ha="left",
-                        va="top",
-                        color=colour,
-                        fontsize=8,
-                        zorder=7,
-                    )
-                except Exception:
-                    pass
-        finally:
-            if saved_ylim is not None:
-                try:
-                    ax.set_ylim(saved_ylim)  # type: ignore[union-attr]
-                except Exception:
-                    pass
-
-    def _fill_suggestion_run(
-        self,
-        ax: object,
-        transform: object,
-        xs: NDArray[np.float64],
-        heights: NDArray[np.float64],
-        extrapolated: bool,
-        colour: str,
-    ) -> None:
-        """Fill one contiguous run of the utility band at the given alpha."""
-        if xs.size == 0:
-            return
-        try:
-            ax.fill_between(  # type: ignore[union-attr]
-                xs,
-                0.0,
-                heights,
-                transform=transform,
-                facecolor=colour,
-                edgecolor="none",
-                alpha=0.10 if extrapolated else 0.28,
-                zorder=1.2,
-            )
-        except Exception:
-            pass
+        draw_suggestion_overlay(ax, overlay, colour, label)
 
     def _draw_loading_overlay(self) -> None:
         """Overlay a subtle accent "updating…" note, keeping the last content."""

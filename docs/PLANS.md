@@ -38,6 +38,48 @@ Acceptance criteria (v1 = Phases 1–2):
 - Model Fit dialog shows the utility curve + suggestion on demand, with an
   ill-conditioned-fit warning banner; `harness validate` green.
 
+### BED for Knight-Shift Angle Scans (Next Angle + Discrimination)
+
+Status: study + GUI design settled with maintainer (2026-07-10);
+awaiting execution-plan approval, then a single PR on a feature branch
+
+Extend the shipped trending BED to the Knight-shift window's angle scans:
+suggest the next rotation angle that (a) most constrains the joint K(θ)
+fit parameters (Laplace information gain summed over curves — one run
+feeds every branch), (b) best tests for rotation-axis misalignment
+against a new first+second-harmonic `AngularFourier2` model (the current
+two `ANGULAR_MODELS` are one function family, so discrimination needs
+it), or (c) best resolves competing crossing assignments (min-cost
+set-matching divergence between near-degenerate EM labellings).
+Prerequisites: `KnightJointCurve` keeps the per-curve covariance, and the
+θ0 canonicalisation fold transforms it exactly (retiring the documented
+quadrature approximation).
+
+Full study, method, MuRef survey (no BED and no new fit families to
+port), and the phased plan live in
+[studies/bed-next-angle-knight-shift.md](studies/bed-next-angle-knight-shift.md).
+
+Also in scope (settled at GUI review): the trend-panel "Knight shift
+window…" button is hidden unless the fitted model has Knight-convertible
+components (the `Analysis` menu action stays unconditional); the
+window's "Suggest next angle" section is a single mode-selector
+`PanelSection` (refine / test misalignment / resolve assignment) with
+goal + events conversion but no movement-cost grid.
+
+Acceptance criteria (v1 = Phases 1–4 of the study):
+
+- `KnightJointCurve` round-trips a `(names, matrix)` covariance; legacy
+  project dicts load with `covariance=None` and the suggestion degrades
+  with a warning, never an exception.
+- `_canonicalize_theta0` applies the exact J Σ Jᵀ fold; marginal errors
+  come from the transformed covariance.
+- `AngularFourier2` is registered, angle-scoped, joint-fit eligible, and
+  recovers synthetic tilt parameters.
+- The three suggestion bridges pass the closed-form oracles (cos 2θ
+  antinode/node geometry, vector-sum doubling, misalignment peak,
+  assignment divergence zero-at-crossing) and `harness validate` is
+  green with no Qt imports in core.
+
 ### Fit Function Builder Redesign (Option C)
 
 Status: implemented on branch `feat/fit-builder-redesign`; awaiting live GUI

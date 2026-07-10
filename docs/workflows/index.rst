@@ -59,7 +59,7 @@ Quick chooser
    * - :doc:`knight_shift_angle`
      - Find the muon site from the angle dependence of the Knight
        shift in a rotated single crystal
-     - Knight shift analysis window, Angle axis + Fold, Joint K(θ) fit, KnightAnisotropy
+     - Knight shift analysis window, Angle axis + Fold, Joint K(θ) fit, KnightAnisotropy, Suggest next angle
    * - :doc:`superconductor_penetration_depth`
      - Extract λ(T) from TF μSR in the vortex state of a
        superconductor

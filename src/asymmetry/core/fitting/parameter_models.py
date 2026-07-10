@@ -279,6 +279,34 @@ def _angular_cos2(x: NDArray, K_avg: float, K_amp: float, theta0: float) -> NDAr
     return float(K_avg) + float(K_amp) * np.cos(2.0 * (theta - theta0_rad))
 
 
+def _angular_fourier2(
+    x: NDArray,
+    K_avg: float,
+    K_1: float,
+    theta1: float,
+    K_amp: float,
+    theta2: float,
+) -> NDArray[np.float64]:
+    """Misalignment-aware Knight-shift modulation vs orientation angle θ (degrees).
+
+    ``K(θ) = K_avg + K_1*cos(θ - θ1) + K_amp*cos(2(θ - θ2))``. A perfectly
+    aligned rotation axis gives a pure second harmonic (``AngularCos2``); a
+    tilted axis leaks a first harmonic whose amplitude grows with the tilt
+    (cf. the MnSi rotation-scan analysis), so ``K_1 != 0`` is fit-level
+    evidence of sample misalignment. This is the phenomenological Fourier
+    form — the full Euler-angle solve tying ``K_1``/``theta1`` to a physical
+    tilt angle is out of scope.
+    """
+    theta_rad = np.radians(np.asarray(x, dtype=float))
+    theta1_rad = np.radians(float(theta1))
+    theta2_rad = np.radians(float(theta2))
+    return (
+        float(K_avg)
+        + float(K_1) * np.cos(theta_rad - theta1_rad)
+        + float(K_amp) * np.cos(2.0 * (theta_rad - theta2_rad))
+    )
+
+
 def _redfield(
     x: NDArray,
     D: float,
@@ -869,6 +897,30 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         latex_equation=r"K(\theta) = K_{\mathrm{avg}} + K_{\mathrm{amp}}\cos 2(\theta - \theta_0)",
         scopes=("angle",),
     ),
+    "AngularFourier2": ParameterModelComponentDefinition(
+        name="AngularFourier2",
+        description=(
+            "K_avg + K_1*cos(theta - theta1) + K_amp*cos(2*(theta - theta2))  (theta in degrees)"
+        ),
+        function=_angular_fourier2,
+        param_names=["K_avg", "K_1", "theta1", "K_amp", "theta2"],
+        param_defaults={"K_avg": 0.0, "K_1": 0.0, "theta1": 0.0, "K_amp": 1.0, "theta2": 0.0},
+        param_info={
+            "K_avg": get_param_info("K_avg"),
+            "K_1": get_param_info("K_1"),
+            "theta1": get_param_info("theta1"),
+            "K_amp": get_param_info("K_amp"),
+            "theta2": get_param_info("theta2"),
+        },
+        formula_template=(
+            "{K_avg} + {K_1}*cos(theta - {theta1}) + {K_amp}*cos(2*(theta - {theta2}))"
+        ),
+        latex_equation=(
+            r"K(\theta) = K_{\mathrm{avg}} + K_1\cos(\theta - \theta_1)"
+            r" + K_{\mathrm{amp}}\cos 2(\theta - \theta_2)"
+        ),
+        scopes=("angle",),
+    ),
 }
 
 
@@ -1259,7 +1311,7 @@ _PARAMETER_MODEL_CATEGORIES: dict[str, str] = {
         "Spin dynamics",
     ),
     "Lambda_bg": "Background",
-    **dict.fromkeys(["KnightAnisotropy", "AngularCos2"], "Angular"),
+    **dict.fromkeys(["KnightAnisotropy", "AngularCos2", "AngularFourier2"], "Angular"),
     **dict.fromkeys(
         [name for name in PARAMETER_MODEL_COMPONENTS if name.startswith("SC_")],
         "Superconducting gap",
