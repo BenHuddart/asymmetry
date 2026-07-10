@@ -28,6 +28,18 @@ statistics stay correct per period. Group, calibrate :math:`\alpha`, and
 fit each period exactly as for an ordinary single-period run
 (:doc:`calibration_grouping_emu`).
 
+.. image:: /_generated/screenshots/period_mapping_dialog.png
+   :alt: The Map Periods dialog showing period 1 assigned to Red and period 2
+         assigned to Green, each with 28108 good frames.
+   :width: 100%
+
+*The "Map Periods" dialog for HIFI00103277: one row per period, each showing its
+per-period "Good frames" count (≈ 28,108 here), with a three-way "Red" / "Green"
+/ "Ignore" choice. The defaults follow the convention this page describes —
+period 1 (laser ON) maps to "Red" and period 2 (laser OFF) to "Green" — and
+"Ignore" drops a period from both sets. The plot toolbar's RG selector then
+switches the reduced asymmetry between the Red and Green sets built here.*
+
 The scriptable API
 ------------------
 

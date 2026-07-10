@@ -30,6 +30,20 @@ grouping and α. The dialog seeds its model and parameter values from the
 template run's current fit when one exists; otherwise pick any time-domain
 model with **Edit Model…** (the same builder used by the fit panel).
 
+.. image:: /_generated/screenshots/simulate_dialog.png
+   :alt: Generate Synthetic Run dialog with the built-in ideal pulsed F/B
+      template and an EuO precession model
+   :width: 100%
+
+*The* **Generate Synthetic Run** *dialog opened with no run loaded, so the*
+**Template run** *list falls back to the two idealised instruments — here*
+**Built-in: Ideal pulsed F/B (ISIS-style)** *. The* **Model A(t)** *is a
+damped Larmor precession (an Oscillatory × Exponential composite) at ν ≈ 22
+MHz, a below-Tc EuO signal from the archetype gallery, with its parameter
+table populated in percent. The* **Total events** *budget pre-fills from the
+chosen instrument, the* **Generation** *mode is* **Forward/backward
+asymmetry**\ *, and* **Fixed seed** *keeps the draw regenerable.*
+
 Each detector in the forward group accumulates expected counts
 
 .. math::

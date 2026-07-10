@@ -124,11 +124,11 @@ Walkthrough
    instead, biasing exactly the parameters that identify the site; fitting
    :math:`\theta_0` absorbs it. If **Scale errors by √χ²ᵣ** is ticked and the
    fit's reduced :math:`\chi^2` still exceeds one after that, the quoted
-   uncertainties are inflated accordingly.
-
-.. image:: /_generated/screenshots/knight_shift_angle.png
-   :alt: Two-site angle-dependent Knight shift with a joint K(theta) anisotropy fit
-   :width: 100%
+   uncertainties are inflated accordingly. The Knight shift analysis window
+   captured above already shows the result of this step — both branches
+   converted and the joint fit run, with swap markers at the angles where
+   the assignment changes so each trace continues through the crossings
+   along its own site.
 
 Reading the result
 ------------------
