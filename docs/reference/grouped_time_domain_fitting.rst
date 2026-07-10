@@ -9,11 +9,16 @@ Grouped time-domain fitting
 *run in the normal state (T = 100 K, B = 200 G). The central plot is in*
 *the* **Individual Groups** *domain so the lifetime-corrected counts*
 *N_d(t)·exp(t/τ_μ) for each of the four detectors are shown as separate*
-*subplots, and the fit dock has auto-engaged the* **Multi-Group Fit**
-*window. Per-group N₀ values fit as* **Local** *parameters; the local*
-*field magnitude and phase are* **Shared** *— the canonical workflow for*
-*extracting the muon Knight shift in the normal state of a*
-*superconductor* (Sonier, Rev. Mod. Phys. **72**, 769 (2000)).
+*subplots (zoomed to the first 1.5 μs so the ~2.72 MHz precession*
+*resolves), and the fit dock has auto-engaged the* **Multi-Group Fit**
+*window. The grouped fit of the damped-precession polarisation model*
+``cos(2*pi*gamma_mu*field*t + phase) * exp(-Lambda*t)`` *has*
+*completed — the log reports* ``average χ²ᵣ = 0.997`` *and each subplot*
+*carries its fitted count curve. Per-group N₀, background, amplitude and*
+*phase fit as local nuisance parameters while the field magnitude and*
+*damping are shared — the canonical workflow for extracting the muon*
+*Knight shift in the normal state of a superconductor* (Sonier, Rev. Mod.
+Phys. **72**, 769 (2000)).
 
 Grouped time-domain fitting is the right tool whenever the physically
 meaningful quantity you are extracting depends on detector geometry, and

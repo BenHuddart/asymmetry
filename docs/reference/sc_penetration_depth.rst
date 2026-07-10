@@ -2,15 +2,15 @@ Superconducting penetration depth models
 ========================================
 
 .. image:: /_generated/screenshots/parameter_trending_mgb2.png
-   :alt: σ(T) two-gap fit on synthetic MgB₂ data
+   :alt: Fit Parameters trending panel with the two-gap SC_TwoGap_SS fit on MgB₂ σ(T)
    :width: 100%
 
-*Synthetic MgB₂ σ(T) data (Tc = 36 K) fitted with the two-gap*
-*``SC_TwoGap_SS`` superconductor model. The σ(T) curve maps onto the*
-*London penetration depth via ρ_s(T) ∝ 1/λ²(T) and the relation*
-*σ ∝ 1/λ², making μSR one of the few bulk probes of the superfluid*
-*density in unconventional superconductors (Sonier et al., Rev. Mod. Phys.*
-*72, 769 (2000)).*
+*The Fit Parameters trending panel showing synthetic MgB₂ σ(T) data*
+*(Tc = 36 K) fitted with the two-gap ``SC_TwoGap_SS`` superconductor model*
+*(the smooth trend curve). The σ(T) curve maps onto the London penetration*
+*depth via ρ_s(T) ∝ 1/λ²(T) and the relation σ ∝ 1/λ², making μSR one of*
+*the few bulk probes of the superfluid density in unconventional*
+*superconductors (Sonier et al., Rev. Mod. Phys. 72, 769 (2000)).*
 
 For an end-to-end walk-through that exercises every model on this
 page, see :doc:`/workflows/superconductor_penetration_depth`.

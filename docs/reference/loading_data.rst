@@ -352,6 +352,25 @@ Accessing metadata
    print(f"Field: {dataset.metadata.get('field')} G")
    print(f"Title: {dataset.metadata.get('title')}")
 
+In the GUI the same preserved provenance is surfaced by right-clicking a run in
+the Data Browser and choosing **Get Info**, which opens the run-information
+dialog:
+
+.. image:: /_generated/screenshots/run_info_provenance.png
+   :alt: The Run Info dialog's Run Parameters table listing instrument, run
+         number, title, comment, start/end times, temperature, field,
+         detector-histogram count, bins, bin width, and total counts for a
+         loaded transverse-field run.
+   :width: 100%
+
+*The* **Run Parameters** *table in the Get Info dialog for a loaded*
+*transverse-field run, with each field selectable for inclusion in the Data*
+*Browser via the* **Include in Data Browser** *column. The loader keeps the*
+*experiment provenance explicit — instrument, title, temperature, field, and*
+*the raw histogram geometry (four detector histograms, 2400 bins,*
+*0.005 μs bin width, and the summed counts) — alongside the free-text*
+*comment and run start/end timestamps.*
+
 Loading multiple files
 ~~~~~~~~~~~~~~~~~~~~~~
 

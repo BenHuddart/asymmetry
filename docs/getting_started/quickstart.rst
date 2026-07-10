@@ -63,6 +63,17 @@ The fitted field width comes out at :math:`\Delta \approx 0.39` μs⁻¹ — the
 the preset was generated from, recovered within the counting errors. That is a
 complete analysis: data in, model fitted, parameter out.
 
+.. image:: /_generated/screenshots/quickstart_first_fit.png
+   :alt: The main window after the first fit, with the fitted Gaussian
+         Kubo–Toyabe curve overlaid on the silver asymmetry data and the
+         converged parameters shown in the fit panel.
+   :width: 100%
+
+*The main window right after the walkthrough's first fit converges. The red*
+*fit curve traces the* ``StaticGKT_ZF + Constant`` *model over the silver*
+*asymmetry, and the fit panel reports* **Fit converged** *with*
+*Δ = 0.39 μs⁻¹ (row* **Δ (μs⁻¹)** *) and a reduced chi-square near 1.*
+
 Where to go next
 ----------------
 

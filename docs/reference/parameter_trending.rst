@@ -2,14 +2,16 @@ Parameter trending
 ==================
 
 .. image:: /_generated/screenshots/parameter_trending_mgb2.png
-   :alt: σ(T) plot of synthetic MgB₂ data with the two-gap SC fit overlaid
+   :alt: Fit Parameters trending panel showing MgB₂ σ(T) points with the fitted two-gap SC_TwoGap_SS curve
    :width: 100%
 
-*Synthetic MgB₂ σ(T) data (Tc = 36 K) with the SC_TwoGap_SS parametric*
-*model fit overlaid (small and large gap ratios 1.1 and 2.3 with weight*
-*0.55, the canonical MgB₂ alpha-model decomposition; Niedermayer et al.*
-*Phys. Rev. B 65, 094512, 2002). The σ(T) → λ(T) inversion that follows*
-*from this fit is discussed in* :doc:`sc_penetration_depth`.
+*The Fit Parameters trending panel with synthetic MgB₂ σ(T) data (Tc = 36 K)*
+*loaded as the* ``σ(T) — MgB₂`` *series and* ``σ (µs⁻¹)`` *selected on the*
+*y-axis. The smooth trend curve is a* ``SC_TwoGap_SS`` *two-gap fit (Model Fit\**
+*button), an MgB₂ alpha-model decomposition (small and large gap ratios;*
+*Niedermayer et al. Phys. Rev. B 65, 094512, 2002); the fit recovers*
+*σ₀ ≈ 1.24 µs⁻¹ and Tc ≈ 35.8 K. The σ(T) → λ(T) inversion that follows from*
+*this fit is discussed in* :doc:`sc_penetration_depth`.
 
 Parameter trending is the second stage of any temperature or field scan
 analysis. Once a series of runs has been individually (or globally) fitted

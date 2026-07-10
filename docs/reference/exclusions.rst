@@ -125,6 +125,19 @@ When to reach for each
   rebuilding the scan or de-selecting the run. Click the point to exclude it,
   click again to restore; it stays visible (greyed) throughout.
 
+.. image:: /_generated/screenshots/alc_scan_exclusion.png
+   :alt: Integral field scan with one run excluded (greyed) from the baseline
+      and resonance fits
+   :width: 100%
+
+*Scan-point exclusion in the integral-scan view: an avoided-level-crossing
+field scan across a resonance dip, with one run clicked out of the fit. The
+excluded point draws greyed and hollow — labelled* **excluded** *in the
+legend — and is dropped from the baseline, peak and RF fits, yet stays visible
+so a second click restores it. This is only one of the six mechanisms in the
+table above; the other five act on different domains with different semantics
+(two of them, confusingly, share a start/end time-window label).*
+
 .. note::
 
    The count-fit window is labelled "Skip window (µs)" (drop) as of

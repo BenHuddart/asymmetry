@@ -114,13 +114,17 @@ Step 3 — Trend σ(T) in the parameter-trending panel
 ---------------------------------------------------
 
 .. image:: /_generated/screenshots/parameter_trending_mgb2.png
-   :alt: MgB₂ σ(T) with two-gap SC_TwoGap_SS curve overlaid
+   :alt: Fit Parameters trending panel showing MgB₂ σ(T) with the fitted two-gap SC_TwoGap_SS curve
    :width: 100%
 
-The screenshot shows the resulting :math:`\sigma(T)` curve with the
-two-gap ``SC_TwoGap_SS`` model overlaid at the literature MgB₂
-decomposition (gap ratios 1.1 and 2.3, weight 0.55,
-:math:`T_c = 36\;\mathrm{K}`). The characteristic shape is plain:
+The screenshot shows the **Fit Parameters** trending panel: the MgB₂
+:math:`\sigma(T)` series loaded as trend points with ``σ (µs⁻¹)``
+selected on the y-axis, and the two-gap ``SC_TwoGap_SS`` model fitted
+across the trend (the smooth overlay, flagged by the **Model Fit\***
+button). The fit recovers :math:`\sigma_0 \approx 1.24\;\mathrm{\mu s^{-1}}`
+and :math:`T_c \approx 35.8\;\mathrm{K}` — both robust — while the
+gap-ratio/weight decomposition is only weakly constrained (the
+well-known alpha-model degeneracy). The characteristic shape is plain:
 the curve flattens at low :math:`T` (the large gap freezes out
 quasiparticles), shows a kink near :math:`T/T_c \approx 0.3{-}0.5`
 that marks the smaller gap's freezing scale, and drops to zero as
@@ -187,16 +191,20 @@ Step 5 — Convert σ to λ_L
 -------------------------
 
 .. image:: /_generated/screenshots/mgb2_lambda_t.png
-   :alt: MgB₂ penetration depth λ_L(T) derived from σ(T)
+   :alt: MgB₂ penetration depth λ_L(T) derived from σ(T), plotted with
+      the scripting API
    :width: 100%
 
-The screenshot shows the same data after inverting σ → λ via
+This figure is produced with the scripting API, not a GUI view — the
+trend panel has no built-in σ → λ conversion yet (a deliberate scope
+cut, not an oversight), so there is no on-screen panel to match it
+against. The plot shows the same data after inverting σ → λ via
 Asymmetry's
 :func:`asymmetry.core.fitting.sc.constants.sigma_to_lambda_nm` (which
-implements the Brandt triangular-lattice formula above), with the
-background :math:`\sigma_{bg}` subtracted before the inversion so
-that :math:`\lambda_L` reflects the superconducting contribution
-alone:
+implements the Brandt triangular-lattice formula above), applied to
+the fitted :math:`\sigma(T)` with the background :math:`\sigma_{bg}`
+subtracted before the inversion so that :math:`\lambda_L` reflects the
+superconducting contribution alone:
 
 .. code-block:: python
 
