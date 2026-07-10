@@ -25,6 +25,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the FFT apodisation default documented in the Fourier page ("None", not
   "Gaussian").
 
+### Fixed
+
+- **Count-domain fits (Multi-Group Fit window, "F + B (free α)" and "Single
+  group" targets) can now recover a realistic signal amplitude.** The grouped
+  parameter parser pins every model amplitude absent from the visible table to
+  `(1, 1)` — correct for the normalised asymmetry fit, where a per-group
+  `amplitude` nuisance carries the real value, but count fits have no such
+  nuisance and must recover the amplitude directly. The pinned bound was
+  leaking into the count-fit seed, clamping the model to a ~1% modulation
+  regardless of the true signal and producing a spuriously large reduced
+  chi-square for any realistic asymmetry. The count-fit seed now widens that
+  bound before freeing the amplitude.
+
 ## [0.9.1] - 2026-07-09
 
 ### Fixed

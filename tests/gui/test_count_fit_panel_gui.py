@@ -101,6 +101,32 @@ def test_fb_count_fit_runs_and_recovers_alpha(qapp, fb_dataset):
     assert alpha == pytest.approx(1.25, abs=0.05)
 
 
+def test_fb_count_fit_recovers_realistic_amplitude(qapp, fb_dataset):
+    """The default grouped model pins its amplitude to (1, 1) for the normalised
+    asymmetry fit (the per-group ``amplitude`` nuisance carries the real value
+    there). Count fits have no such nuisance and must recover the amplitude
+    directly, so that pinned bound must not leak into the count-fit seed —
+    otherwise the model can only ever produce a ~1% modulation and every
+    realistic-amplitude count fit reports a spuriously large reduced chi-square.
+    """
+    window = MultiGroupFitWindow()
+    window.set_dataset(fb_dataset)
+    window._target_combo.setCurrentIndex(1)  # fb
+
+    captured = []
+    window.count_fit_completed.connect(lambda dataset, payload: captured.append(payload["result"]))
+    window._single_fit_tab._run_count_domain_fit()
+    assert window._single_fit_tab.wait_for_fit()
+
+    result = captured[0]
+    assert result.success
+    forward = result.group_results[1]
+    amplitude = next(p for p in forward.parameters if p.name.startswith("A"))
+    assert amplitude.max > 1.0  # not pinned to the asymmetry-fit normalisation
+    assert amplitude.value == pytest.approx(20.0, rel=0.1)
+    assert forward.reduced_chi_squared == pytest.approx(1.0, abs=0.3)
+
+
 def test_count_fit_uses_separate_worker_handle(qapp, fb_dataset, monkeypatch):
     """A count-domain fit owns its own worker handle, distinct from _fit_worker.
 
