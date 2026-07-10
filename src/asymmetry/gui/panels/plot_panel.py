@@ -119,6 +119,7 @@ from asymmetry.gui.utils.gle_export import (
     safe_file_token,
     show_export_result_dialog,
 )
+from asymmetry.gui.utils.waterfall import auto_waterfall_delta
 from asymmetry.gui.widgets.axis_limits import AxisLimitControls, FloatLimitField
 from asymmetry.gui.widgets.mpl_canvas import create_canvas
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox
@@ -213,6 +214,9 @@ class PlotPanel(QWidget):
     #: become the single-fit target (multi-subplot / ALL view only).
     fit_target_projection_changed = Signal(str)
     overlay_toggled = Signal(bool)
+    #: Emitted when the waterfall toggle or manual-Δ field changes and the host
+    #: should re-render the overlay (mirrors ``overlay_toggled``).
+    waterfall_changed = Signal()
     time_view_changed = Signal(str)
     # Payload dict for the status-bar cursor readout, or None to clear. Keys:
     # x, y (snapped where possible), err, snr, peak (x,y)|None,
@@ -258,6 +262,33 @@ class PlotPanel(QWidget):
         #: Optional ``(run_number, time_us, signal)`` diamagnetic-fit overlay for
         #: the time view; only drawn when the displayed run matches ``run_number``.
         self._diamagnetic_overlay: tuple[int | None, np.ndarray, np.ndarray] | None = None
+        #: Waterfall overlay state (single-axis overlay path only). When enabled
+        #: each overlaid trace is shifted by ``i * Δ`` at draw time; the source
+        #: arrays are never mutated. ``_waterfall_offset`` is ``None`` for auto
+        #: spacing (:func:`auto_waterfall_delta`) or a user-entered manual Δ.
+        #: (Enablement itself lives on the checkbox — see
+        #: :meth:`is_waterfall_enabled` — mirroring the overlay pattern.)
+        self._waterfall_offset: float | None = None
+        #: Record of the *last actually drawn* stack, written only by the
+        #: ``plot_datasets`` overlay draw and cleared by every other render
+        #: entry point (see :meth:`_clear_waterfall_render_record`). The export
+        #: path reads offsets from here — never from the checkbox — so a
+        #: grouped/MaxEnt/single view can never stamp stale offsets.
+        self._waterfall_stacked = False
+        self._waterfall_drawn_offsets: dict[int, float] = {}
+        self._waterfall_resolved_delta: float = 0.0
+        #: Single-slot ``(frame identity, Δ)`` cache for the AUTO spacing. A
+        #: zoom schedules a decimation re-render of the same content through
+        #: ``plot_datasets``; without this the auto Δ would re-resolve from the
+        #: zoomed window and the stack would re-space under the user
+        #: mid-inspection. Self-invalidates on any content change (the
+        #: identity includes runs, axis, view mode, and the waterfall state).
+        self._waterfall_auto_delta_cache: tuple[tuple, float] | None = None
+        #: Raw-value saturation-sentinel mask aligned with the overlay's
+        #: concatenated ``_last_plot_*`` arrays (waterfall offsets move drawn
+        #: values across the ±100 % threshold, so sentinels must be classified
+        #: on the un-offset values). ``None`` outside the overlay draw.
+        self._last_plot_sentinel_mask: np.ndarray | None = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
@@ -345,6 +376,8 @@ class PlotPanel(QWidget):
             nav_row.addWidget(self._time_view_combo)
             nav_row.addWidget(self._log_counts_checkbox)
             nav_row.addWidget(self._overlay_checkbox)
+            nav_row.addWidget(self._waterfall_checkbox)
+            nav_row.addWidget(self._waterfall_delta_field)
             nav_row.addStretch()
             nav_row.addWidget(self._projection_bar)
             nav_row.addSpacing(4)
@@ -561,6 +594,31 @@ class PlotPanel(QWidget):
         self._overlay_checkbox = QCheckBox("Overlay")
         self._overlay_checkbox.setChecked(False)
         self._overlay_checkbox.toggled.connect(self.overlay_toggled.emit)
+        self._overlay_checkbox.toggled.connect(self._sync_waterfall_controls_enabled)
+
+        # Waterfall: a modifier on the single-axis overlay path that stacks each
+        # trace by i*Δ. Only usable while Overlay is checked, so it tracks the
+        # overlay box's enabled state. The manual-Δ field reuses the shared
+        # FloatLimitField (structural harness forbids a bespoke *LimitField);
+        # blank text means auto spacing.
+        self._waterfall_checkbox = QCheckBox("Waterfall")
+        self._waterfall_checkbox.setChecked(False)
+        self._waterfall_checkbox.setEnabled(False)
+        self._waterfall_checkbox.setToolTip(
+            "Stack overlaid traces vertically by a uniform per-trace offset so "
+            "they are cleanly resolved. Available only while Overlay is on."
+        )
+        self._waterfall_checkbox.toggled.connect(self._on_waterfall_checkbox_toggled)
+
+        self._waterfall_delta_field = FloatLimitField(
+            0.0, decimals=3, minimum_width=56, maximum_width=88, value_range=(0.0, 1e6)
+        )
+        self._waterfall_delta_field.set_unset("Auto")
+        self._waterfall_delta_field.setEnabled(False)
+        self._waterfall_delta_field.setToolTip(
+            "Manual waterfall spacing Δ between traces (blank = automatic)."
+        )
+        self._waterfall_delta_field.editingFinished.connect(self._on_waterfall_delta_edited)
 
         # ── Row 1: frequency-specific controls (surfaceAlt tinted second row) ──
         if self._is_frequency_plot_panel():
@@ -1779,6 +1837,80 @@ class PlotPanel(QWidget):
         previous = checkbox.blockSignals(not emit_signal)
         checkbox.setChecked(bool(enabled))
         checkbox.blockSignals(previous)
+        self._sync_waterfall_controls_enabled(checkbox.isChecked())
+
+    def is_waterfall_enabled(self) -> bool:
+        """Return whether waterfall stacking is currently enabled."""
+        if not self._has_mpl or not hasattr(self, "_waterfall_checkbox"):
+            return False
+        return bool(self._waterfall_checkbox.isChecked())
+
+    def set_waterfall_enabled(self, enabled: bool, *, emit_signal: bool = False) -> None:
+        """Set waterfall mode from state restore or external UI events."""
+        if not self._has_mpl or not hasattr(self, "_waterfall_checkbox"):
+            return
+        checkbox = self._waterfall_checkbox
+        previous = checkbox.blockSignals(not emit_signal)
+        checkbox.setChecked(bool(enabled))
+        checkbox.blockSignals(previous)
+        self._sync_waterfall_controls_enabled(self._overlay_checkbox.isChecked())
+
+    def waterfall_offset(self) -> float | None:
+        """Return the manual waterfall Δ, or ``None`` when spacing is automatic."""
+        return self._waterfall_offset
+
+    def set_waterfall_offset(self, offset: float | None, *, emit_signal: bool = False) -> None:
+        """Set the manual waterfall Δ (``None`` for auto), updating the field."""
+        if not self._has_mpl or not hasattr(self, "_waterfall_delta_field"):
+            self._waterfall_offset = None if offset is None else float(offset)
+            return
+        self._waterfall_offset = None if offset is None else float(offset)
+        field = self._waterfall_delta_field
+        previous = field.blockSignals(True)
+        if self._waterfall_offset is None:
+            field.set_unset("Auto")
+        else:
+            field.setValue(self._waterfall_offset)
+        field.blockSignals(previous)
+        if emit_signal:
+            self.waterfall_changed.emit()
+
+    def _sync_waterfall_controls_enabled(self, overlay_enabled: bool) -> None:
+        """Enable the waterfall controls only while overlay mode is active.
+
+        Turning overlay off unchecks waterfall (a stacked view makes no sense
+        for a single displayed trace) and disables its controls; the manual-Δ
+        field additionally follows the waterfall checkbox.
+        """
+        if not self._has_mpl or not hasattr(self, "_waterfall_checkbox"):
+            return
+        overlay_on = bool(overlay_enabled)
+        self._waterfall_checkbox.setEnabled(overlay_on)
+        if not overlay_on and self._waterfall_checkbox.isChecked():
+            previous = self._waterfall_checkbox.blockSignals(True)
+            self._waterfall_checkbox.setChecked(False)
+            self._waterfall_checkbox.blockSignals(previous)
+        self._waterfall_delta_field.setEnabled(overlay_on and self._waterfall_checkbox.isChecked())
+
+    def _on_waterfall_checkbox_toggled(self, checked: bool) -> None:
+        """Handle a user toggle of the Waterfall checkbox."""
+        self._waterfall_delta_field.setEnabled(bool(checked) and self._overlay_checkbox.isChecked())
+        self.waterfall_changed.emit()
+
+    def _on_waterfall_delta_edited(self) -> None:
+        """Adopt the manual-Δ field's value (blank = auto) and re-render."""
+        text = self._waterfall_delta_field.text().strip()
+        if not text:
+            self._waterfall_offset = None
+        else:
+            value = float(self._waterfall_delta_field.value())
+            # A non-positive manual spacing is meaningless; treat it as auto.
+            self._waterfall_offset = value if value > 0.0 else None
+            if self._waterfall_offset is None:
+                previous = self._waterfall_delta_field.blockSignals(True)
+                self._waterfall_delta_field.set_unset("Auto")
+                self._waterfall_delta_field.blockSignals(previous)
+        self.waterfall_changed.emit()
 
     def set_active_label_group(self, group_id: str | None) -> None:
         """Switch legend label-field context between ungrouped and Data Group views."""
@@ -2363,6 +2495,7 @@ class PlotPanel(QWidget):
         self._last_plot_asymmetry = None
         self._last_plot_error = None
         self._last_low_count_mask = None
+        self._clear_waterfall_render_record()
         self._reset_decimation_view_state()
         self._fit_x_min = None
         self._fit_x_max = None
@@ -3231,6 +3364,7 @@ class PlotPanel(QWidget):
         self._set_alpha_label(None)
         self._grouped_time_subplot_datasets = []
         self._reset_decimation_view_state()
+        self._clear_waterfall_render_record()
         self._vector_subplot_datasets = {k: list(v) for k, v in datasets_by_axis.items() if v}
         self._current_datasets = list(self._vector_subplot_datasets.get(order[0], []))
         self._current_dataset = self._current_datasets[-1] if self._current_datasets else None
@@ -3346,6 +3480,7 @@ class PlotPanel(QWidget):
         self._subplot_axes_by_polarization = {}
         self._vector_subplot_datasets = {}
         self._reset_decimation_view_state()
+        self._clear_waterfall_render_record()
         self._grouped_time_subplot_datasets = list(datasets)
         self._current_datasets = list(datasets)
         self._current_dataset = datasets[-1]
@@ -3446,6 +3581,7 @@ class PlotPanel(QWidget):
         """
         if not self._has_mpl or not datasets:
             return
+        self._clear_waterfall_render_record()
         if combined:
             self._plot_maxent_reconstruction_combined(datasets)
         else:
@@ -3702,6 +3838,73 @@ class PlotPanel(QWidget):
         """Set fit range limits and refresh visual handles."""
         self._set_fit_range(x_min, x_max, emit_signal=True, redraw=True)
 
+    def _waterfall_active_for(self, datasets: list[MuonDataset]) -> bool:
+        """Return True when waterfall stacking applies to this overlay draw.
+
+        Only the single-axis overlay path (>1 dataset, overlay on, waterfall on)
+        stacks; single datasets and the stacked-subplot views never do.
+        """
+        return bool(
+            self._has_mpl
+            and self.is_waterfall_enabled()
+            and self.is_overlay_enabled()
+            and len(datasets) > 1
+        )
+
+    def _clear_waterfall_render_record(self) -> None:
+        """Forget the last overlay draw's waterfall stack.
+
+        Called from every render entry point; only the ``plot_datasets``
+        overlay draw re-populates the record afterwards. The export path
+        stamps offsets solely from this record, so a view that never drew a
+        stack (single run, grouped subplots, MaxEnt, vector "ALL") can never
+        export stale offsets even while the Waterfall checkbox is checked.
+        """
+        self._waterfall_stacked = False
+        self._waterfall_drawn_offsets = {}
+        self._waterfall_resolved_delta = 0.0
+        self._last_plot_sentinel_mask = None
+
+    def _resolve_waterfall_delta(
+        self,
+        datasets: list[MuonDataset],
+        traces: list[np.ndarray],
+        *,
+        x_arrays: list[np.ndarray] | None = None,
+        x_window: tuple[float, float] | None = None,
+    ) -> float | None:
+        """Return the per-trace waterfall Δ, or ``None`` when stacking is off.
+
+        *traces* are the display asymmetry arrays the caller is about to draw
+        (already reduced through the analysis/RRF pipeline), so auto spacing is
+        computed from exactly the drawn traces; *x_arrays*/*x_window* restrict
+        the auto spacing to the samples the render will actually show (see
+        :func:`auto_waterfall_delta`). Caches the resolved Δ in
+        ``_waterfall_resolved_delta`` for the state readout.
+        """
+        if not self._waterfall_active_for(datasets) or len(traces) < 2:
+            self._waterfall_resolved_delta = 0.0
+            return None
+        if self._waterfall_offset is not None and self._waterfall_offset > 0.0:
+            delta = float(self._waterfall_offset)
+        else:
+            identity = self._current_frame_identity()
+            cached = self._waterfall_auto_delta_cache
+            if cached is not None and cached[0] == identity:
+                # Re-render of the same stacked content (a zoom's decimation
+                # viewport refresh, a bunch change): keep the plot-time Δ so
+                # the stack never re-spaces under the user mid-inspection.
+                delta = cached[1]
+            else:
+                delta = auto_waterfall_delta(
+                    [np.asarray(t, dtype=float) for t in traces],
+                    x_arrays=x_arrays,
+                    x_window=x_window,
+                )
+                self._waterfall_auto_delta_cache = (identity, delta)
+        self._waterfall_resolved_delta = delta
+        return delta
+
     def plot_datasets(self, datasets: list[MuonDataset]) -> None:
         """Plot multiple datasets on the same axes with per-dataset colours.
 
@@ -3729,6 +3932,7 @@ class PlotPanel(QWidget):
         self._set_alpha_label(None)
         self._reset_decimation_view_state()
         self._rrf_frame_drawn = None
+        self._clear_waterfall_render_record()
         self._current_dataset = datasets[-1]
         self._current_datasets = list(datasets)
         self._update_plot_header()
@@ -3741,21 +3945,85 @@ class PlotPanel(QWidget):
         all_asym: list[np.ndarray] = []
         all_err: list[np.ndarray] = []
         all_low: list[np.ndarray] = []
+        all_sentinel: list[np.ndarray] = []
         period_color_counts: dict[str, int] = {}
 
-        for i, dataset in enumerate(datasets):
+        # Materialize each dataset's display (analysis + RRF) form once: the
+        # waterfall Δ and the draw loop below consume this same list, so auto
+        # spacing is computed from exactly the traces drawn and the analysis
+        # pipeline runs once per dataset rather than twice.
+        display_entries: list[tuple[MuonDataset, MuonDataset]] = []
+        for dataset in datasets:
+            analysis_dataset = rrf_display_dataset(self, self.get_analysis_dataset(dataset))
+            if not self._has_plottable_samples(analysis_dataset):
+                continue
+            display_entries.append((dataset, analysis_dataset))
+
+        # Each trace's display x-axis, computed once and shared by the Δ
+        # resolution and the draw loop.
+        display_times = [
+            self._convert_frequency_axis_for_display(analysis.time)
+            for _, analysis in display_entries
+        ]
+
+        # Decide the x-window this render will show BEFORE resolving Δ, so the
+        # auto spacing measures only displayed samples (an FFT's long near-zero
+        # tail otherwise deflates Δ to a no-op — see auto_waterfall_delta).
+        # First-paint framing is decided here once — from the RAW (un-offset)
+        # values, whose per-trace waterfall pedestals would corrupt the
+        # peak-significance baseline — and reused by the framing block below.
+        self._reframe_if_content_changed()
+        default_x_limits: tuple[float, float] | None = None
+        if not self._limits_initialized:
+            frame_times: list[np.ndarray] = []
+            frame_raw: list[np.ndarray] = []
+            for (_, analysis), time in zip(display_entries, display_times):
+                raw = analysis.asymmetry
+                finite = np.isfinite(time) & np.isfinite(raw) & np.isfinite(analysis.error)
+                if np.any(finite):
+                    frame_times.append(time[finite])
+                    frame_raw.append(raw[finite])
+            if frame_times:
+                default_x_limits = self._default_x_limits(
+                    np.concatenate(frame_times), np.concatenate(frame_raw)
+                )
+        # The Δ window in display-axis units: the fresh first-paint frame when
+        # one was computed, else the current (persisted/manual) limit fields.
+        if default_x_limits is not None:
+            window_lo, window_hi = default_x_limits
+        else:
+            window_lo, window_hi = float(self._x_min.value()), float(self._x_max.value())
+        if self._is_frequency_plot_panel():
+            window_lo = self._convert_frequency_control_value_to_axis_limit(window_lo)
+            window_hi = self._convert_frequency_control_value_to_axis_limit(window_hi)
+
+        # Render-time waterfall offset: each drawn trace is stacked by i*Δ.
+        # None when waterfall is off (offsets collapse to 0). Source arrays are
+        # untouched; the per-dataset offsets actually drawn are recorded so the
+        # export path mirrors this render exactly.
+        waterfall_delta = self._resolve_waterfall_delta(
+            datasets,
+            [analysis.asymmetry for _, analysis in display_entries],
+            x_arrays=display_times,
+            x_window=(window_lo, window_hi),
+        )
+        self._waterfall_stacked = waterfall_delta is not None
+
+        for i, (dataset, analysis_dataset) in enumerate(display_entries):
             color = f"C{i % 10}"
             period_color = self._period_mode_color_for_dataset(dataset)
             if period_color is not None:
                 variant_idx = period_color_counts.get(period_color, 0)
                 color = self._period_mode_color_variant(period_color, variant_idx)
                 period_color_counts[period_color] = variant_idx + 1
-            analysis_dataset = rrf_display_dataset(self, self.get_analysis_dataset(dataset))
-            if not self._has_plottable_samples(analysis_dataset):
-                continue
 
-            time = self._convert_frequency_axis_for_display(analysis_dataset.time)
-            asymmetry = analysis_dataset.asymmetry
+            time = display_times[i]
+            raw_asymmetry = analysis_dataset.asymmetry
+            offset = 0.0 if waterfall_delta is None else float(i * waterfall_delta)
+            if waterfall_delta is not None:
+                self._waterfall_drawn_offsets[id(dataset)] = offset
+            # Offset is a display transform only: shift a copy, never the source.
+            asymmetry = raw_asymmetry + offset if offset else raw_asymmetry
             error = analysis_dataset.error
             low_count_mask = self._low_count_mask_for_dataset(
                 analysis_dataset,
@@ -3806,6 +4074,11 @@ class PlotPanel(QWidget):
                     color=color,
                     label=self._dataset_label_for(dataset),
                 )
+                # Faint per-trace baseline hairline at each trace's shifted zero,
+                # so a stacked curve reads against its own reference. Time domain
+                # only — spectra already sit on their baseline.
+                if waterfall_delta is not None:
+                    draw_zero_line(self._ax, offset, linewidth=0.6, alpha=0.6, zorder=1.4)
 
             # Overlay fit curve in same colour; excluded from legend by "_" prefix.
             fit_to_plot = self._fit_curve_for_dataset(dataset)
@@ -3818,13 +4091,22 @@ class PlotPanel(QWidget):
                     variant_index=i,
                     fit_label=fit_label,
                 )
-                self._ax.plot(t_fit, y_fit, "-", color=fit_color, linewidth=2, label="_nolegend_")
+                y_fit_shifted = y_fit + offset if offset else y_fit
+                self._ax.plot(
+                    t_fit, y_fit_shifted, "-", color=fit_color, linewidth=2, label="_nolegend_"
+                )
 
             if np.any(finite_mask):
                 all_times.append(time[finite_mask])
                 all_asym.append(asymmetry[finite_mask])
                 all_err.append(error[finite_mask])
                 all_low.append(low_count_mask[finite_mask])
+                # Saturation sentinels are classified on the RAW values: an
+                # offset can push a stacked trace past ±100 % (or pull a genuine
+                # sentinel inside it), so the displayed-value threshold misfires.
+                all_sentinel.append(
+                    np.abs(raw_asymmetry[finite_mask]) >= _ASYMMETRY_SATURATION_PERCENT
+                )
 
         x_label, y_label = self._axis_labels_for_dataset(
             datasets[0], self._current_polarization_axis
@@ -3837,23 +4119,24 @@ class PlotPanel(QWidget):
             self._last_plot_asymmetry = np.concatenate(all_asym)
             self._last_plot_error = np.concatenate(all_err)
             self._last_low_count_mask = np.concatenate(all_low)
+            self._last_plot_sentinel_mask = np.concatenate(all_sentinel)
             style_legend(self._ax.legend())
 
-            self._reframe_if_content_changed()
+            # First-paint framing was decided (and the default x-frame computed
+            # from the raw concatenation) before Δ resolution above, so the Δ
+            # window and the frame shown are one decision, made once.
             # Same one-view-behind guard as plot_dataset: a reframe moves the
             # axes after a draw decimated for the previous content's viewport.
             reframed = not self._limits_initialized
             if not self._limits_initialized:
-                t_all = self._last_plot_time
                 a_all = self._last_plot_asymmetry
                 e_all = self._last_plot_error
                 # X first: time panels span the full data; frequency panels frame
                 # the dominant non-DC peak (high-TF Larmor lines sit far above the
                 # DC peak that would otherwise dominate the full-Nyquist view).
-                x_limits = self._default_x_limits(t_all, a_all)
-                if x_limits is not None:
-                    self._x_min.setValue(x_limits[0])
-                    self._x_max.setValue(x_limits[1])
+                if default_x_limits is not None:
+                    self._x_min.setValue(default_x_limits[0])
+                    self._x_max.setValue(default_x_limits[1])
                 # Y framed to the signal within that window, ignoring ±100 %
                 # saturation sentinels and the error-divergent tail. Fall back to
                 # the raw envelope only when no good-bin points exist.
@@ -3881,6 +4164,7 @@ class PlotPanel(QWidget):
             self._last_plot_asymmetry = None
             self._last_plot_error = None
             self._last_low_count_mask = None
+            self._clear_waterfall_render_record()
             self._fit_x_min = None
             self._fit_x_max = None
             reframed = False
@@ -4001,6 +4285,7 @@ class PlotPanel(QWidget):
         self._grouped_time_subplot_datasets = []
         self._reset_decimation_view_state()
         self._rrf_frame_drawn = None
+        self._clear_waterfall_render_record()
         # Store the original dataset
         self._current_dataset = dataset
         self._current_datasets = [dataset]
@@ -4250,6 +4535,11 @@ class PlotPanel(QWidget):
             getattr(self, "_current_time_view_mode", None),
             self._is_frequency_plot_panel(),
             tuple(sorted(self._subplot_axes_by_polarization)),
+            # Waterfall stacking rescales the natural y-extent (each trace adds
+            # i*Δ), so toggling it — or editing the manual Δ — must re-arm
+            # first-paint framing or the stack draws outside stale limits.
+            self.is_waterfall_enabled(),
+            self._waterfall_offset,
         )
 
     def _reframe_if_content_changed(self) -> None:
@@ -4732,11 +5022,23 @@ class PlotPanel(QWidget):
         mask is returned unchanged there. If clipping would empty the mask the
         original is kept, so a degenerate all-saturated window still yields
         *some* limits rather than none.
+
+        A waterfall overlay stores displayed (offset) values in the last-plot
+        arrays, where stacked ±25 % traces legitimately cross ±100 % and a
+        genuine sentinel is shifted off it, so the threshold on *asymmetry*
+        misfires both ways. The overlay draw therefore records a raw-value
+        sentinel mask (``_last_plot_sentinel_mask``) which is preferred when it
+        aligns with the given array; every other path falls back to the
+        threshold test.
         """
         if not self._y_axis_is_asymmetry_percent():
             return mask
-        finite_asym = np.isfinite(asymmetry)
-        sentinel = finite_asym & (np.abs(asymmetry) >= _ASYMMETRY_SATURATION_PERCENT)
+        stored = self._last_plot_sentinel_mask
+        if stored is not None and stored.shape == np.shape(asymmetry):
+            sentinel = stored
+        else:
+            finite_asym = np.isfinite(asymmetry)
+            sentinel = finite_asym & (np.abs(asymmetry) >= _ASYMMETRY_SATURATION_PERCENT)
         if not np.any(sentinel):
             return mask
         trimmed = mask & ~sentinel
@@ -6137,6 +6439,7 @@ class PlotPanel(QWidget):
             self._last_plot_asymmetry = None
             self._last_plot_error = None
             self._last_low_count_mask = None
+            self._clear_waterfall_render_record()
             self._default_annotations = []
             self._annotations_by_group = {}
             self._annotations = self._default_annotations
@@ -6374,25 +6677,33 @@ class PlotPanel(QWidget):
 
             label_text = self._dataset_label_for(dataset)
 
-            payloads.append(
-                {
-                    "run_number": rn,
-                    "label": label_text,
-                    "data": {
-                        "t": analysis.time,
-                        "y": analysis.asymmetry,
-                        "err": analysis.error,
-                    },
-                    "fit": {"t": t_fit, "y": y_fit, "label": fit_label}
-                    if t_fit is not None and y_fit is not None
-                    else None,
-                    "components": [{"name": name, "y": y_vals} for name, y_vals in component_data],
-                    "fit_metadata": self._fit_metadata_for_dataset(dataset),
-                    "grouping": grouping,
-                    "run_metadata": run_metadata,
-                    "histogram_info": histogram_info,
-                }
-            )
+            payload = {
+                "run_number": rn,
+                "label": label_text,
+                "data": {
+                    "t": analysis.time,
+                    "y": analysis.asymmetry,
+                    "err": analysis.error,
+                },
+                "fit": {"t": t_fit, "y": y_fit, "label": fit_label}
+                if t_fit is not None and y_fit is not None
+                else None,
+                "components": [{"name": name, "y": y_vals} for name, y_vals in component_data],
+                "fit_metadata": self._fit_metadata_for_dataset(dataset),
+                "grouping": grouping,
+                "run_metadata": run_metadata,
+                "histogram_info": histogram_info,
+            }
+            # Mirror the waterfall stack the current render actually drew: the
+            # offset comes from the per-dataset draw record, never from the
+            # checkbox, so a non-stacked view (single run, grouped subplots,
+            # MaxEnt, vector "ALL") exports plain values even while the
+            # Waterfall box is checked.
+            if self._waterfall_stacked:
+                drawn_offset = self._waterfall_drawn_offsets.get(id(dataset))
+                if drawn_offset is not None:
+                    payload["waterfall_offset"] = float(drawn_offset)
+            payloads.append(payload)
 
         if not payloads:
             return None
@@ -6457,6 +6768,12 @@ class PlotPanel(QWidget):
             y_err = data.get("err")
             t_fit = fit.get("t")
             y_fit = fit.get("y")
+            # Mirror the on-screen waterfall stack; 0.0 (absent) leaves y as-is.
+            offset = float(payload.get("waterfall_offset", 0.0))
+            if offset and y_data is not None:
+                y_data = np.asarray(y_data, dtype=float) + offset
+            if offset and y_fit is not None:
+                y_fit = np.asarray(y_fit, dtype=float) + offset
 
             dat_path = gle_path.parent / f"{token}.dat"
             if t_data is not None and y_data is not None:
@@ -6533,10 +6850,17 @@ class PlotPanel(QWidget):
         if t_fit is None or y_fit is None:
             return
 
+        # Match the drawn fit curve's waterfall offset (see _write_data_file).
+        waterfall_offset = float(payload.get("waterfall_offset", 0.0))
+        if waterfall_offset:
+            y_fit = np.asarray(y_fit, dtype=float) + waterfall_offset
+
         meta = payload.get("fit_metadata") or {}
         with open(fit_path, "w", encoding="utf-8") as f:
             f.write(f"! Fit curve for {payload.get('label', 'dataset')}\n")
             f.write(f"! run_number: {payload.get('run_number', '')}\n")
+            if waterfall_offset:
+                f.write(f"! waterfall offset: {waterfall_offset:.10g}\n")
             fit_function = meta.get("fit_function") or fit.get("label") or "Fit"
             f.write(f"! fit_function: {fit_function}\n")
             chi2 = meta.get("chi_squared")
@@ -6586,6 +6910,13 @@ class PlotPanel(QWidget):
         y_err = data.get("err")
         if t_data is None or y_data is None:
             return
+
+        # Mirror the on-screen waterfall stack: the written asymmetry carries the
+        # per-trace offset, recorded in a header line so the raw values remain
+        # recoverable. 0.0 (absent) leaves the data untouched.
+        waterfall_offset = float(payload.get("waterfall_offset", 0.0))
+        if waterfall_offset:
+            y_data = np.asarray(y_data, dtype=float) + waterfall_offset
 
         display_label = label_text if label_text is not None else payload.get("label", "dataset")
         run_metadata = (
@@ -6773,6 +7104,8 @@ class PlotPanel(QWidget):
             f.write(f"!  Title: {display_label}\n")
             f.write("!  Xlabel: Time in microseconds\n")
             f.write(f"!  Ylabel: {ylabel}\n")
+            if waterfall_offset:
+                f.write(f"!  waterfall offset: {waterfall_offset:.10g}\n")
             f.write("! END OF DATA SET INFORMATION\n")
             f.write("! time  asymmetry  error\n")
             err_arr = y_err if y_err is not None else np.zeros_like(y_data)
@@ -7244,6 +7577,10 @@ class PlotPanel(QWidget):
             "default_label_field": self._default_label_field,
             "label_field_by_group": dict(self._label_field_by_group),
             "overlay_enabled": self.is_overlay_enabled(),
+            "waterfall": {
+                "enabled": self.is_waterfall_enabled(),
+                "offset": self.waterfall_offset(),
+            },
             "bunch_factor": self._bunch_factor.value() if self._has_mpl else 1,
             "auto_x_enabled": self._auto_x_btn.isChecked() if self._has_mpl else False,
             "auto_y_enabled": self._auto_y_btn.isChecked() if self._has_mpl else False,
@@ -7405,6 +7742,21 @@ class PlotPanel(QWidget):
         self._rebuild_label_field_combo()
 
         self.set_overlay_enabled(bool(state.get("overlay_enabled", True)), emit_signal=False)
+        waterfall_state = state.get("waterfall")
+        if isinstance(waterfall_state, dict):
+            raw_offset = waterfall_state.get("offset")
+            offset: float | None
+            try:
+                offset = None if raw_offset is None else float(raw_offset)
+            except (TypeError, ValueError):
+                offset = None
+            self.set_waterfall_offset(offset, emit_signal=False)
+            self.set_waterfall_enabled(
+                bool(waterfall_state.get("enabled", False)), emit_signal=False
+            )
+        else:
+            self.set_waterfall_offset(None, emit_signal=False)
+            self.set_waterfall_enabled(False, emit_signal=False)
         self.set_time_view_modes(
             self._available_time_view_modes,
             current_mode=state.get("time_view_mode", self._current_time_view_mode),

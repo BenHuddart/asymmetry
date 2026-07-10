@@ -11,8 +11,14 @@ Compatibility policy
 * Migration functions are one-per-step and retained for at least one major schema revision.
 * Unknown top-level fields in a valid schema are preserved on load/save cycles.
 
-Current schema (version 13)
+Current schema (version 14)
 ---------------------------
+
+Version 14 adds a per-plot-panel ``waterfall`` block — ``{"enabled": bool,
+"offset": float | null}`` (null offset = automatic spacing) — inside
+``plot_state`` and its nested ``frequency_plot_state``, recording the
+single-axis overlay waterfall stack. Additive: absent/default (disabled, auto)
+in older files; see :func:`_migrate_v13_to_v14`.
 
 Version 13 adds a top-level ``global_fit_studies`` list: each entry is a
 serialized :class:`~asymmetry.core.representation.global_fit_study.GlobalFitStudy`
@@ -81,6 +87,7 @@ Version 11 schema
             "x_max": 10.0,
             "y_min": -30.0,
             "y_max": 30.0,
+            "waterfall": {"enabled": false, "offset": null},
             "workspace_state": {
                 "active_domain": "time"
             },
@@ -91,7 +98,8 @@ Version 11 schema
                 "y_min": -1.0,
                 "y_max": 10.0,
                 "frequency_x_unit": "frequency_mhz",
-                "frequency_x_limits_by_unit": {}
+                "frequency_x_limits_by_unit": {},
+                "waterfall": {"enabled": false, "offset": null}
             },
             "fit_curve": null,
             "fit_curves": {}
@@ -146,9 +154,9 @@ import json
 import math
 from pathlib import Path
 
-CURRENT_SCHEMA_VERSION: int = 13
+CURRENT_SCHEMA_VERSION: int = 14
 
-_SUPPORTED_VERSIONS: frozenset[int] = frozenset({1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13})
+_SUPPORTED_VERSIONS: frozenset[int] = frozenset({1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14})
 
 #: Fourier-state keys that describe the FFT generation recipe (recipe-only
 #: persistence carries these into each dataset's ``freq_fft`` representation).
@@ -249,6 +257,9 @@ def migrate_to_current(data: dict) -> dict:
         version = 12
     if version == 12:
         migrated = _migrate_v12_to_v13(migrated)
+        version = 13
+    if version == 13:
+        migrated = _migrate_v13_to_v14(migrated)
     return migrated
 
 
@@ -642,6 +653,32 @@ def _migrate_v12_to_v13(data: dict) -> dict:
     migrated = dict(data)
     migrated["schema_version"] = 13
     migrated.setdefault("global_fit_studies", [])
+    return migrated
+
+
+def _migrate_v13_to_v14(data: dict) -> dict:
+    """Migrate schema v13 project state to v14.
+
+    v14 adds a per-plot-panel ``waterfall`` block ``{"enabled": bool, "offset":
+    float | null}`` (null offset = automatic spacing) recording the single-axis
+    overlay waterfall stack. It lives inside ``plot_state`` and its nested
+    ``frequency_plot_state``. This is purely additive: pre-v14 projects had no
+    such control, so the default is disabled/auto, matching what the GUI's plot
+    panel restores when the key is absent.
+    """
+    migrated = dict(data)
+    migrated["schema_version"] = 14
+    default = {"enabled": False, "offset": None}
+    plot_state = migrated.get("plot_state")
+    if isinstance(plot_state, dict):
+        plot_state = dict(plot_state)
+        plot_state.setdefault("waterfall", dict(default))
+        freq_state = plot_state.get("frequency_plot_state")
+        if isinstance(freq_state, dict):
+            freq_state = dict(freq_state)
+            freq_state.setdefault("waterfall", dict(default))
+            plot_state["frequency_plot_state"] = freq_state
+        migrated["plot_state"] = plot_state
     return migrated
 
 

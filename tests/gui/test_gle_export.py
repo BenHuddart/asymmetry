@@ -419,3 +419,115 @@ def test_cancelled_save_dialog_does_nothing(qapp, harness, monkeypatch):
     )
 
     assert not built and not any(rec.values())
+
+
+# ── Waterfall offset propagation into export payloads and .dat/.fit files ───────
+
+import numpy as np  # noqa: E402
+
+from asymmetry.core.data.dataset import MuonDataset  # noqa: E402
+from asymmetry.gui.panels.plot_panel import PlotPanel  # noqa: E402
+
+
+def _overlay_dataset(run_number: int) -> MuonDataset:
+    t = np.linspace(0.0, 10.0, 120)
+    a = 0.2 * np.exp(-0.3 * t) * np.cos(2.0 * np.pi * t)
+    e = np.full_like(t, 0.005)
+    return MuonDataset(time=t, asymmetry=a, error=e, metadata={"run_number": run_number})
+
+
+def test_export_payloads_carry_waterfall_offset(qapp):
+    panel = PlotPanel(domain="time")
+    if not panel._has_mpl:
+        panel.deleteLater()
+        pytest.skip("matplotlib not available")
+    try:
+        datasets = [_overlay_dataset(1), _overlay_dataset(2), _overlay_dataset(3)]
+        panel.set_overlay_enabled(True)
+        panel.set_waterfall_enabled(True)
+        panel.plot_datasets(datasets)
+
+        delta = panel._waterfall_resolved_delta
+        assert delta > 0.0
+        payloads = panel.get_current_plot_export_data()
+        assert payloads is not None and len(payloads) == 3
+        for i, payload in enumerate(payloads):
+            assert payload["waterfall_offset"] == pytest.approx(i * delta)
+    finally:
+        panel.close()
+        panel.deleteLater()
+
+
+def test_export_payloads_have_no_offset_when_waterfall_off(qapp):
+    panel = PlotPanel(domain="time")
+    if not panel._has_mpl:
+        panel.deleteLater()
+        pytest.skip("matplotlib not available")
+    try:
+        datasets = [_overlay_dataset(1), _overlay_dataset(2)]
+        panel.set_overlay_enabled(True)
+        panel.plot_datasets(datasets)
+        payloads = panel.get_current_plot_export_data()
+        assert payloads is not None
+        assert all("waterfall_offset" not in p for p in payloads)
+    finally:
+        panel.close()
+        panel.deleteLater()
+
+
+def test_dat_file_offsets_data_and_records_header(qapp, tmp_path):
+    panel = PlotPanel(domain="time")
+    if not panel._has_mpl:
+        panel.deleteLater()
+        pytest.skip("matplotlib not available")
+    try:
+        t = np.array([0.0, 1.0, 2.0])
+        y = np.array([0.10, 0.20, 0.30])
+        err = np.array([0.01, 0.01, 0.01])
+        payload = {
+            "run_number": 7,
+            "label": "trace",
+            "data": {"t": t, "y": y, "err": err},
+            "waterfall_offset": 5.0,
+        }
+        dat_path = tmp_path / "trace.dat"
+        panel._write_data_file(dat_path, payload)
+        text = dat_path.read_text(encoding="utf-8")
+
+        assert "! START OF RUN INFORMATION" in text
+        assert "!  waterfall offset: 5" in text
+        # Data rows carry the offset; the source array is untouched.
+        rows = [ln for ln in text.splitlines() if ln and not ln.startswith("!")]
+        values = [float(ln.split()[1]) for ln in rows]
+        np.testing.assert_allclose(values, y + 5.0)
+        np.testing.assert_allclose(payload["data"]["y"], y)
+    finally:
+        panel.close()
+        panel.deleteLater()
+
+
+def test_fit_file_offsets_curve_and_records_header(qapp, tmp_path):
+    panel = PlotPanel(domain="time")
+    if not panel._has_mpl:
+        panel.deleteLater()
+        pytest.skip("matplotlib not available")
+    try:
+        t_fit = np.array([0.0, 1.0, 2.0])
+        y_fit = np.array([0.15, 0.10, 0.05])
+        payload = {
+            "run_number": 7,
+            "label": "trace",
+            "fit": {"t": t_fit, "y": y_fit, "label": "Fit"},
+            "waterfall_offset": 2.0,
+        }
+        fit_path = tmp_path / "trace.fit"
+        panel._write_fit_file(fit_path, payload)
+        text = fit_path.read_text(encoding="utf-8")
+
+        assert "! waterfall offset: 2" in text
+        rows = [ln for ln in text.splitlines() if ln and not ln.startswith("!")]
+        values = [float(ln.split()[1]) for ln in rows]
+        np.testing.assert_allclose(values, y_fit + 2.0)
+    finally:
+        panel.close()
+        panel.deleteLater()

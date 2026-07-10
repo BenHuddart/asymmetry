@@ -96,6 +96,14 @@ class FloatLimitField(QLineEdit):
         self.setMinimumWidth(minimum_width)
         if maximum_width is not None:
             self.setMaximumWidth(maximum_width)
+        # Unset support (see set_unset): once a field has been given an unset
+        # placeholder it is "unset-capable", and blank text on it means "no
+        # value" rather than a half-finished edit — _normalise_text must then
+        # leave the blank alone instead of rewriting the stored value back,
+        # or clearing the field could never stick (it would visibly snap back
+        # after any earlier setValue, e.g. a project restore).
+        self._unset_capable = False
+        self._unset = False
         self._value = self._clamp(self._value)
         self.setText(self._format(self._value))
         # Normalise the display after a manual edit (e.g. "1" -> "1.000"). This
@@ -118,6 +126,13 @@ class FloatLimitField(QLineEdit):
         return min(max(float(value), self._validator.bottom()), self._validator.top())
 
     def _normalise_text(self) -> None:
+        if self._unset_capable and not self.text().strip():
+            # A committed blank on an unset-capable field is the unset state
+            # (placeholder shows); rewriting the stored value here would make
+            # clearing the field impossible.
+            self._unset = True
+            return
+        self._unset = False
         self.setText(self._format(self.value()))
 
     def _commit(self) -> None:
@@ -167,12 +182,23 @@ class FloatLimitField(QLineEdit):
 
     def setValue(self, value: float) -> None:  # noqa: N802 — spinbox-API shim
         self._value = self._clamp(value)
+        self._unset = False
         self.setText(self._format(self._value))
 
     def set_unset(self, placeholder: str) -> None:
         """Blank the field and show *placeholder* text (no value has been set)."""
         self.clear()
         self.setPlaceholderText(placeholder)
+        self._unset_capable = True
+        self._unset = True
+
+    def is_unset(self) -> bool:
+        """True when the field is blank in its explicit unset state.
+
+        Only meaningful on unset-capable fields (those given a placeholder via
+        :meth:`set_unset`); plain limit fields always return False.
+        """
+        return self._unset_capable and self._unset and not self.text().strip()
 
     def decimals(self) -> int:
         return self._decimals

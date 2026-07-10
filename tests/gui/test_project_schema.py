@@ -225,7 +225,38 @@ class TestSchemaMigration:
         validate(state)  # must not raise
 
     def test_current_schema_version_constant(self):
-        assert CURRENT_SCHEMA_VERSION == 13
+        assert CURRENT_SCHEMA_VERSION == 14
+
+    def test_v13_migrates_to_v14_adds_waterfall_defaults(self):
+        # v14 adds a per-plot-panel waterfall block, disabled/auto by default,
+        # to plot_state and its nested frequency_plot_state.
+        state = {
+            "schema_version": 13,
+            "datasets": [],
+            "plot_state": {
+                "x_min": 0.0,
+                "frequency_plot_state": {"x_min": 0.0},
+            },
+        }
+        result = migrate_to_current(state)
+        assert result["schema_version"] == CURRENT_SCHEMA_VERSION
+        assert result["plot_state"]["waterfall"] == {"enabled": False, "offset": None}
+        freq = result["plot_state"]["frequency_plot_state"]
+        assert freq["waterfall"] == {"enabled": False, "offset": None}
+
+    def test_v14_waterfall_block_preserved(self):
+        # An existing (enabled, manual-offset) block survives a no-op migrate.
+        state = {
+            "schema_version": CURRENT_SCHEMA_VERSION,
+            "datasets": [],
+            "plot_state": {"waterfall": {"enabled": True, "offset": 2.5}},
+        }
+        result = migrate_to_current(state)
+        assert result["plot_state"]["waterfall"] == {"enabled": True, "offset": 2.5}
+
+    def test_v13_migration_without_plot_state_is_safe(self):
+        result = migrate_to_current({"schema_version": 13, "datasets": []})
+        assert result["schema_version"] == CURRENT_SCHEMA_VERSION
 
 
 def _composite_model_dict(component: str = "Exponential") -> dict:
@@ -1070,6 +1101,49 @@ class TestPlotPanelState:
         assert 42 in panel._fit_curves
         assert 99 in panel._fit_curves
         assert panel._fit_curve is None
+
+    def test_get_state_defaults_waterfall_disabled_auto(self, qapp):
+        from asymmetry.gui.panels.plot_panel import PlotPanel
+
+        panel = PlotPanel()
+        if not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+        state = panel.get_state()
+        assert state["waterfall"] == {"enabled": False, "offset": None}
+
+    def test_waterfall_state_round_trips(self, qapp):
+        from asymmetry.gui.panels.plot_panel import PlotPanel
+
+        panel = PlotPanel()
+        if not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+        panel.set_overlay_enabled(True)
+        panel.set_waterfall_enabled(True)
+        panel.set_waterfall_offset(3.5)
+
+        state = panel.get_state()
+        assert state["waterfall"] == {"enabled": True, "offset": 3.5}
+
+        panel2 = PlotPanel()
+        panel2.set_overlay_enabled(True)
+        panel2.restore_state(state)
+        assert panel2.is_waterfall_enabled() is True
+        assert panel2.waterfall_offset() == pytest.approx(3.5)
+
+    def test_restore_state_without_waterfall_key_defaults_disabled(self, qapp):
+        from asymmetry.gui.panels.plot_panel import PlotPanel
+
+        panel = PlotPanel()
+        if not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+        panel.set_overlay_enabled(True)
+        panel.set_waterfall_enabled(True)
+        # A pre-v14 blob carries no waterfall key -> restore must clear it.
+        panel.restore_state(
+            {"bunch_factor": 1, "x_min": 0.0, "x_max": 10.0, "y_min": -30.0, "y_max": 30.0}
+        )
+        assert panel.is_waterfall_enabled() is False
+        assert panel.waterfall_offset() is None
 
 
 class TestFourierPanelState:

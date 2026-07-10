@@ -286,6 +286,62 @@ For single-dataset views, the main plot also shows the active grouping
 ``alpha`` value above the canvas when one is available. The overlay is hidden
 for multi-dataset comparisons.
 
+.. _waterfall-stacking:
+
+Waterfall stacking
+~~~~~~~~~~~~~~~~~~
+
+.. image:: /_generated/screenshots/waterfall_overlay.png
+   :alt: Waterfall-stacked time-domain overlay of an Ag LF decoupling series
+   :width: 100%
+
+*The same five-field Ag LF Kubo–Toyabe decoupling series as the*
+:doc:`LF decoupling walkthrough </workflows/lf_decoupling_dynamics>`, *now with*
+**Waterfall** *enabled: each field's trace is shifted onto its own baseline*
+*instead of sharing one axis with the rest.*
+
+An overlay of several runs is easiest to compare when every trace shares one
+baseline, but that is exactly what makes closely-spaced curves hard to read
+apart. **Waterfall** (next to **Overlay**, both on both the time-domain and
+frequency-domain plot panels) resolves this by shifting each trace vertically
+by a uniform per-trace offset :math:`i \cdot \Delta`, so an *n*-run overlay
+reads as *n* cleanly separated curves stacked bottom to top in selection
+order.
+
+Waterfall only makes sense once there is more than one trace to separate, so
+its checkbox tracks **Overlay**: it stays disabled and unchecked until Overlay
+is on, and switching Overlay off unchecks it again. Stacked-subplot views —
+Individual Groups and other multi-axis layouts — are unaffected; waterfall
+only ever modifies the single-axis overlay.
+
+The spacing Δ is automatic by default: 1.4× the median robust span (98th minus
+2nd percentile of the finite samples, which ignores a handful of
+saturation/outlier bins) across the traces about to be drawn, measured over
+the displayed x-range rather than the full arrays — an FFT magnitude spectrum
+keeps a long near-zero tail beyond the framed peak region that would otherwise
+shrink Δ to a fraction of the visible spans. Neighbouring curves therefore
+clear each other with a little breathing room without any tuning; zooming
+afterwards does not re-space an already-drawn stack.
+Type a value into the field beside the checkbox to fix Δ manually instead —
+its placeholder reads ``Auto``, and clearing the field (leaving it blank)
+returns to automatic spacing.
+
+In the time domain, each stacked trace also gets a faint horizontal hairline
+at its own shifted zero, so a curve's depolarisation or oscillation reads
+against its own reference rather than the axis origin. Frequency-domain
+waterfalls stack the same way but skip the hairline, since a spectrum already
+sits on its own zero baseline.
+
+**Export to GLE** and the plain-text data/fit exports mirror the on-screen
+stack exactly: the written asymmetry (and any overlaid fit curve) carries the
+same per-trace offset that is drawn, and each file records a
+``waterfall offset:`` header line so the raw, unshifted values stay
+recoverable — subtract the header value from every row to get back the
+original trace.
+
+The waterfall setting — on/off and the manual Δ (or automatic, if left
+blank) — is saved per plot panel in the project file and restored on reopen.
+
 Run Info and metadata columns
 -----------------------------
 
@@ -1037,7 +1093,8 @@ What is saved
 * Co-added ("combined") dataset groups
 * Data Browser sort column, sort order, column filters, selected rows, and
    dynamic metadata columns (including Run Info selections)
-* Plot axis limits (X/Y), fit range, and current run
+* Plot axis limits (X/Y), fit range, current run, overlay mode, and the
+   waterfall stacking setting (on/off and manual Δ, or automatic)
 * Grouping settings per run (groups, forward/backward selection, alpha,
    good-bin range, bunching, deadtime toggle)
 * Most-recently-displayed fit overlay curve(s)
