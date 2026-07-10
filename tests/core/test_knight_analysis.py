@@ -888,6 +888,27 @@ def test_run_joint_fit_stores_and_round_trips_correction_offset():
     assert restored.correction_offset == pytest.approx(0.0025)
 
 
+def test_run_joint_fit_populates_covariance_on_curves():
+    result, _curve_a, _curve_b, _angles, _runs = _two_branch_crossing_scan()
+
+    joint = run_joint_fit(result, model_name="KnightAnisotropy", max_iter=25)
+
+    assert joint.converged is True
+    assert len(joint.curves) == 2
+    for curve in joint.curves:
+        assert curve.covariance is not None
+        names, matrix = curve.covariance
+        assert set(names) <= {"K_iso", "K_ax", "theta0"}
+        by_name = {n: (v, e) for n, v, e in curve.parameters}
+        for i, name in enumerate(names):
+            _value, err = by_name[name]
+            assert math.sqrt(matrix[i][i]) == pytest.approx(err, rel=1e-6)
+
+    restored = KnightJointFitState.from_dict(joint.to_dict())
+    for curve, restored_curve in zip(joint.curves, restored.curves):
+        assert restored_curve.covariance == curve.covariance
+
+
 def test_run_joint_fit_default_correction_offset_is_zero():
     result, _curve_a, _curve_b, _angles, _runs = _two_branch_crossing_scan()
 
@@ -1055,6 +1076,86 @@ def test_knight_joint_curve_round_trip():
 @pytest.mark.parametrize("garbage", [None, [], "nope", 5, 3.14])
 def test_knight_joint_curve_from_dict_garbage_returns_none(garbage):
     assert KnightJointCurve.from_dict(garbage) is None
+
+
+def test_knight_joint_curve_round_trip_with_covariance():
+    curve = KnightJointCurve(
+        branch_name="K[c0]",
+        parameters=(("K_iso", 100.0, 0.5), ("K_ax", 60.0, 1.2)),
+        chi_squared=12.5,
+        reduced_chi_squared=0.8,
+        n_points=19,
+        success=True,
+        covariance=(("K_iso", "K_ax"), ((0.25, 0.1), (0.1, 1.44))),
+    )
+
+    restored = KnightJointCurve.from_dict(curve.to_dict())
+
+    assert restored == curve
+
+
+def test_knight_joint_curve_from_dict_legacy_dict_without_covariance_key_is_none():
+    curve = KnightJointCurve(
+        branch_name="K[c0]",
+        parameters=(("K_iso", 100.0, 0.5),),
+        chi_squared=1.0,
+        reduced_chi_squared=1.0,
+        n_points=5,
+        success=True,
+    )
+    data = curve.to_dict()
+    assert "covariance" not in data  # legacy shape: the key is absent entirely
+
+    restored = KnightJointCurve.from_dict(data)
+    assert restored.covariance is None
+
+
+@pytest.mark.parametrize(
+    "malformed_covariance",
+    [
+        {"names": ["K_iso", "K_ax"], "matrix": [[1.0, 0.0]]},  # non-square
+        {"names": ["K_iso"], "matrix": [[1.0, 2.0]]},  # row length mismatch
+        {"names": ["K_iso"], "matrix": [["nope"]]},  # non-numeric entry
+        {"names": "K_iso", "matrix": [[1.0]]},  # names not a list
+        {"names": ["K_iso"]},  # matrix missing
+        "not-a-dict",
+        None,
+    ],
+)
+def test_knight_joint_curve_from_dict_malformed_covariance_is_none(malformed_covariance):
+    data = {
+        "branch_name": "K[c0]",
+        "parameters": [["K_iso", 1.0, 0.1]],
+        "chi_squared": 1.0,
+        "reduced_chi_squared": 1.0,
+        "n_points": 5,
+        "success": True,
+        "covariance": malformed_covariance,
+    }
+
+    restored = KnightJointCurve.from_dict(data)
+
+    assert restored is not None
+    assert restored.covariance is None
+
+
+def test_knight_joint_curve_from_dict_covariance_allows_non_finite_entries():
+    data = {
+        "branch_name": "K[c0]",
+        "parameters": [],
+        "chi_squared": 1.0,
+        "reduced_chi_squared": 1.0,
+        "n_points": 5,
+        "success": True,
+        "covariance": {"names": ["K_iso"], "matrix": [[float("nan")]]},
+    }
+
+    restored = KnightJointCurve.from_dict(data)
+
+    assert restored.covariance is not None
+    names, matrix = restored.covariance
+    assert names == ("K_iso",)
+    assert math.isnan(matrix[0][0])
 
 
 def test_knight_joint_fit_state_round_trip_with_int_assignment_keys():

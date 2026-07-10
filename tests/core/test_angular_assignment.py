@@ -9,13 +9,16 @@ import pytest
 
 from asymmetry.core.fitting.angular_assignment import (
     _canonicalize_theta0,
+    _fold_covariance_jacobian,
     fit_assigned_angular_curves,
 )
 from asymmetry.core.fitting.parameter_models import (
     PARAMETER_MODEL_COMPONENTS,
     Parameter,
+    ParameterCompositeModel,
     ParameterModelFitResult,
     ParameterSet,
+    fit_parameter_model,
 )
 
 
@@ -259,3 +262,155 @@ def test_canonicalize_theta0_absent_is_a_no_op():
     params = {p.name: p.value for p in fit.parameters}
     assert params["K_iso"] == pytest.approx(1.0)
     assert params["K_ax"] == pytest.approx(2.0)
+
+
+# --- covariance under the fold (§3.5 / §5.5) ---------------------------------
+
+
+def test_canonicalize_theta0_covariance_none_stays_none_and_uses_quadrature_fallback():
+    """Pinned: without a covariance, K_iso's marginal falls back to quadrature."""
+    fit = _fit_result(theta0=100.0, k_iso=1.0, k_ax=2.0, k_iso_err=0.1, k_ax_err=0.2)
+    assert fit.covariance is None
+
+    _canonicalize_theta0("KnightAnisotropy", fit)
+
+    assert fit.covariance is None
+    assert fit.uncertainties["K_iso"] == pytest.approx(math.hypot(0.1, 0.1))
+
+
+def test_canonicalize_theta0_no_flip_leaves_covariance_unchanged():
+    fit = _fit_result(theta0=10.0, k_iso=1.0, k_ax=2.0)
+    names = ["K_iso", "K_ax", "theta0"]
+    sigma = [[0.04, 0.01, 0.0], [0.01, 0.09, 0.0], [0.0, 0.0, 1.0]]
+    fit.covariance = (names, [row[:] for row in sigma])
+
+    _canonicalize_theta0("KnightAnisotropy", fit)
+
+    result_names, result_matrix = fit.covariance
+    assert result_names == names
+    assert result_matrix == sigma
+
+
+def test_fold_covariance_transforms_matrix_exactly_for_knight_anisotropy():
+    fit = _fit_result(theta0=100.0, k_iso=1.0, k_ax=2.0)
+    names = ["K_iso", "K_ax", "theta0"]
+    sigma = [[0.04, 0.01, 0.0], [0.01, 0.09, 0.0], [0.0, 0.0, 1.0]]
+    fit.covariance = (names, [row[:] for row in sigma])
+
+    _canonicalize_theta0("KnightAnisotropy", fit)
+
+    jac = np.array([[1.0, 0.5, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, 1.0]])
+    expected = jac @ np.array(sigma) @ jac.T
+    result_names, result_matrix = fit.covariance
+    assert result_names == names
+    np.testing.assert_allclose(np.array(result_matrix), expected)
+    for i, name in enumerate(names):
+        assert fit.uncertainties[name] == pytest.approx(math.sqrt(expected[i, i]))
+
+
+def test_fold_covariance_transforms_matrix_exactly_for_angular_cos2():
+    fit = _fit_result(
+        theta0=100.0,
+        k_iso=5.0,
+        k_ax=3.0,
+        param_names=("K_avg", "K_amp", "theta0"),
+    )
+    names = ["K_avg", "K_amp", "theta0"]
+    sigma = [[0.05, 0.02, 0.0], [0.02, 0.07, 0.0], [0.0, 0.0, 2.0]]
+    fit.covariance = (names, [row[:] for row in sigma])
+
+    _canonicalize_theta0("AngularCos2", fit)
+
+    jac = np.diag([1.0, -1.0, 1.0])
+    expected = jac @ np.array(sigma) @ jac.T
+    result_names, result_matrix = fit.covariance
+    assert result_names == names
+    np.testing.assert_allclose(np.array(result_matrix), expected)
+    for i, name in enumerate(names):
+        assert fit.uncertainties[name] == pytest.approx(math.sqrt(expected[i, i]))
+
+
+def test_fold_covariance_jacobian_handles_fixed_parameter_absent_from_names():
+    # K_ax fixed/absent: K_iso's fold row can only keep its own variance (a
+    # fixed K_ax contributes no uncertainty to propagate).
+    jac = _fold_covariance_jacobian("KnightAnisotropy", ["K_iso", "theta0"])
+    np.testing.assert_allclose(jac, np.eye(2))
+
+
+def test_fit_assigned_angular_curves_populates_transformed_covariance_after_fold():
+    # theta0 = 60 lands outside (-45, 45] for every curve, forcing the fold on
+    # both -- covariance should come back transformed and consistent with the
+    # (now-exact) marginal uncertainties.
+    angles = np.linspace(-90.0, 90.0, 31)
+    values = np.column_stack(
+        [
+            _axial(angles, 100.0, 60.0, theta0=60.0),
+            _axial(angles, -50.0, 20.0, theta0=60.0),
+        ]
+    )
+    errors = np.full_like(values, 0.5)
+    rng = np.random.default_rng(1)
+    values = values + rng.normal(scale=0.5, size=values.shape)
+
+    result = fit_assigned_angular_curves(angles, values, errors, model_name="KnightAnisotropy")
+
+    assert result.success
+    for fit in result.curves:
+        params = {p.name: p.value for p in fit.parameters}
+        assert -45.0 < params["theta0"] <= 45.0
+        assert fit.covariance is not None
+        names, matrix = fit.covariance
+        for i, name in enumerate(names):
+            assert fit.uncertainties[name] == pytest.approx(math.sqrt(matrix[i][i]))
+
+
+def test_canonicalize_theta0_covariance_matches_oracle_refit_in_canonical_branch():
+    """Oracle (§5.5): canonicalised Sigma equals a direct refit started in-branch."""
+    rng = np.random.default_rng(0)
+    true_theta0 = 60.0  # outside (-45, 45] -> the fold applies
+    true_k_iso, true_k_ax = 50.0, 30.0
+    angles = np.linspace(-90.0, 90.0, 31)
+    clean = _axial(angles, true_k_iso, true_k_ax, theta0=true_theta0)
+    errors = np.full_like(clean, 0.5)
+    values = clean + rng.normal(scale=0.5, size=clean.shape)
+
+    model = ParameterCompositeModel(["KnightAnisotropy"])
+    # Seeded at theta0 = 0 with bounds [-90, 90]: converges to the true,
+    # out-of-canonical-range minimum (theta0 near 60).
+    seed = ParameterSet(
+        [
+            Parameter("K_iso", true_k_iso),
+            Parameter("K_ax", true_k_ax),
+            Parameter("theta0", 0.0, min=-90.0, max=90.0),
+        ]
+    )
+    fit = fit_parameter_model(angles, values, errors, model, seed)
+    assert fit.success and fit.covariance is not None
+    theta0_val = {p.name: p.value for p in fit.parameters}["theta0"]
+    assert theta0_val == pytest.approx(true_theta0, abs=5.0)
+
+    _canonicalize_theta0("KnightAnisotropy", fit)
+    folded_theta0 = {p.name: p.value for p in fit.parameters}["theta0"]
+    assert -45.0 < folded_theta0 <= 45.0
+
+    # A fresh fit seeded directly in the canonical branch of the *same* data:
+    # an equivalent minimum of the same chi^2 surface (K_ax sign-flipped,
+    # K_iso shifted, theta0 shifted by 90 degrees).
+    canonical_seed = ParameterSet(
+        [
+            Parameter("K_iso", true_k_iso + true_k_ax / 2.0),
+            Parameter("K_ax", -true_k_ax),
+            Parameter("theta0", folded_theta0, min=-90.0, max=90.0),
+        ]
+    )
+    oracle = fit_parameter_model(angles, values, errors, model, canonical_seed)
+    assert oracle.success and oracle.covariance is not None
+
+    names, matrix = fit.covariance
+    oracle_names, oracle_matrix = oracle.covariance
+    assert list(names) == list(oracle_names)
+    np.testing.assert_allclose(np.array(matrix), np.array(oracle_matrix), atol=1e-6, rtol=1e-3)
+
+    diag = np.diag(np.array(matrix))
+    for i, name in enumerate(names):
+        assert fit.uncertainties[name] == pytest.approx(math.sqrt(diag[i]))

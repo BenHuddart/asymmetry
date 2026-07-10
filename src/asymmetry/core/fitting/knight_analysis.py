@@ -394,13 +394,54 @@ def evaluate(
 # ── Joint K(θ) fit with per-angle assignment ─────────────────────────────────
 
 
+def _parse_joint_covariance(
+    raw: object,
+) -> tuple[tuple[str, ...], tuple[tuple[float, ...], ...]] | None:
+    """Parse a ``{"names": [...], "matrix": [[...]]}`` covariance block.
+
+    Tolerant: returns ``None`` for a missing/legacy key or any malformed shape
+    (non-square, row length mismatch, non-numeric entry) rather than raising.
+    Non-finite numeric entries (``nan``/``inf``) are preserved as-is — they are
+    numbers, just not usable ones; only a non-numeric entry invalidates.
+    """
+    if not isinstance(raw, dict):
+        return None
+    raw_names = raw.get("names")
+    raw_matrix = raw.get("matrix")
+    if not isinstance(raw_names, list) or not isinstance(raw_matrix, list):
+        return None
+    n = len(raw_names)
+    if n == 0 or len(raw_matrix) != n:
+        return None
+    try:
+        names = tuple(str(name) for name in raw_names)
+    except (TypeError, ValueError):
+        return None
+    rows: list[tuple[float, ...]] = []
+    for row in raw_matrix:
+        if not isinstance(row, list) or len(row) != n:
+            return None
+        try:
+            rows.append(tuple(float(v) for v in row))
+        except (TypeError, ValueError):
+            return None
+    return names, tuple(rows)
+
+
 @dataclass(frozen=True)
 class KnightJointCurve:
     """One fitted physical curve of a joint K(θ) fit.
 
     ``branch_name`` is the ``K[...]`` trace this curve occupies after
     realignment. ``parameters`` are ``(name, value, error)`` triples in the fit
-    unit (see :attr:`KnightJointFitState.unit`).
+    unit (see :attr:`KnightJointFitState.unit`). ``covariance`` mirrors
+    :attr:`ParameterModelFitResult.covariance` — ``(names, matrix)`` for the
+    curve's free parameters, in the same order as ``names``. It is already in
+    the display unit: :func:`run_joint_fit` scales the values into the display
+    unit *before* fitting, so the Minuit covariance it reads back is already
+    unit² in that display unit — no extra scaling is applied here. ``None``
+    when the underlying fit produced no covariance (HESSE failed/didn't run)
+    or the curve predates this field (legacy project).
     """
 
     branch_name: str
@@ -409,9 +450,10 @@ class KnightJointCurve:
     reduced_chi_squared: float
     n_points: int
     success: bool
+    covariance: tuple[tuple[str, ...], tuple[tuple[float, ...], ...]] | None = None
 
     def to_dict(self) -> dict:
-        return {
+        data: dict = {
             "branch_name": self.branch_name,
             "parameters": [[n, v, e] for n, v, e in self.parameters],
             "chi_squared": float(self.chi_squared),
@@ -419,6 +461,13 @@ class KnightJointCurve:
             "n_points": int(self.n_points),
             "success": bool(self.success),
         }
+        if self.covariance is not None:
+            names, matrix = self.covariance
+            data["covariance"] = {
+                "names": list(names),
+                "matrix": [list(row) for row in matrix],
+            }
+        return data
 
     @classmethod
     def from_dict(cls, data: object) -> KnightJointCurve | None:
@@ -439,6 +488,7 @@ class KnightJointCurve:
             reduced_chi_squared=_finite_or_nan(data.get("reduced_chi_squared", float("nan"))),
             n_points=int(data.get("n_points", 0) or 0),
             success=bool(data.get("success", False)),
+            covariance=_parse_joint_covariance(data.get("covariance")),
         )
 
 
@@ -598,6 +648,10 @@ def run_joint_fit(
             )
             for p in fit.parameters
         )
+        covariance = None
+        if fit.covariance is not None:
+            cov_names, cov_matrix = fit.covariance
+            covariance = (tuple(cov_names), tuple(tuple(row) for row in cov_matrix))
         curves.append(
             KnightJointCurve(
                 branch_name=branch.name,
@@ -606,6 +660,7 @@ def run_joint_fit(
                 reduced_chi_squared=float(fit.reduced_chi_squared),
                 n_points=int(fit.n_points) or len(angles),
                 success=bool(fit.success),
+                covariance=covariance,
             )
         )
     return KnightJointFitState(

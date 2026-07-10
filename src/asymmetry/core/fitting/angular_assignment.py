@@ -357,6 +357,65 @@ def fit_assigned_angular_curves(
     )
 
 
+#: Odd-flip covariance Jacobian rows, keyed by output parameter name -> {input
+#: name: coefficient}. A future model registers its own fold here; any name
+#: absent from this mapping (or absent from an entry's coefficients, e.g. a
+#: fixed/absent parameter) keeps its identity row — unchanged by the fold.
+_FOLD_JACOBIAN_ROWS: dict[str, dict[str, dict[str, float]]] = {
+    "KnightAnisotropy": {"K_iso": {"K_iso": 1.0, "K_ax": 0.5}, "K_ax": {"K_ax": -1.0}},
+    "AngularCos2": {"K_amp": {"K_amp": -1.0}},
+}
+
+
+def _fold_covariance_jacobian(model_name: str, names: Sequence[str]) -> np.ndarray | None:
+    """Build the odd-flip covariance Jacobian, restricted to ``names``.
+
+    ``names`` is the covariance's own free-parameter order (fixed/absent
+    parameters simply don't appear). Rows/columns for parameters the model's
+    fold doesn't touch are the identity row. Returns ``None`` when the model
+    has no registered fold.
+    """
+    rows = _FOLD_JACOBIAN_ROWS.get(model_name)
+    if rows is None:
+        return None
+    index = {name: i for i, name in enumerate(names)}
+    jac = np.eye(len(names), dtype=float)
+    for out_name, coeffs in rows.items():
+        i = index.get(out_name)
+        if i is None:
+            continue
+        jac[i, :] = 0.0
+        for in_name, coeff in coeffs.items():
+            j = index.get(in_name)
+            if j is not None:
+                jac[i, j] = coeff
+    return jac
+
+
+def _fold_covariance(model_name: str, fit: ParameterModelFitResult) -> None:
+    """Propagate Σ' = J Σ Jᵀ through an odd θ0 flip and refresh the marginals.
+
+    No-op when ``fit.covariance`` is ``None`` (HESSE failed/didn't run, or a
+    legacy fit) — the caller's quadrature fallback is the only signal then.
+    Otherwise replaces ``fit.covariance`` with the transformed matrix (same
+    ``(names, matrix)`` shape) and every affected marginal in
+    ``fit.uncertainties`` with ``sqrt(diag(Σ'))``, exactly.
+    """
+    if fit.covariance is None:
+        return
+    names, matrix = fit.covariance
+    jac = _fold_covariance_jacobian(model_name, names)
+    if jac is None:
+        return
+    sigma = np.asarray(matrix, dtype=float)
+    transformed = jac @ sigma @ jac.T
+    fit.covariance = (list(names), transformed.tolist())
+    for i, name in enumerate(names):
+        variance = transformed[i, i]
+        if math.isfinite(variance) and variance >= 0.0:
+            fit.uncertainties[name] = math.sqrt(variance)
+
+
 def _canonicalize_theta0(model_name: str, fit: ParameterModelFitResult) -> None:
     """Fold a fitted θ0 into (−45°, 45°] via the model's exact reparameterisation.
 
@@ -365,9 +424,14 @@ def _canonicalize_theta0(model_name: str, fit: ParameterModelFitResult) -> None:
     ``K_iso → K_iso + K_ax/2``, since ``(3cos²t−1)/2 + (3sin²t−1)/2 = 1/2``), so
     the optimiser may return either representation of the same curve. Fold to
     the small-|θ0| one so amplitude signs read physically (a mount is expected
-    to be *nearly* aligned) and equivalent curves report comparable θ0. Under
-    the fold K_iso's uncertainty picks up K_ax's in quadrature (their covariance
-    is not propagated here — a conservative approximation). In-place.
+    to be *nearly* aligned) and equivalent curves report comparable θ0. The
+    fold is a linear reparameterisation, so when ``fit.covariance`` is
+    available it is propagated exactly (Σ' = J Σ Jᵀ, :func:`_fold_covariance`)
+    and the affected marginal uncertainties are recomputed from
+    ``sqrt(diag(Σ'))``. Only when no covariance is available (HESSE
+    failed/didn't run, or a legacy fit) does K_iso's uncertainty fall back to
+    the quadrature approximation (K_ax's uncertainty added in quadrature,
+    ignoring their correlation). In-place.
     """
     params = {p.name: p for p in fit.parameters}
     theta0 = params.get("theta0")
@@ -386,13 +450,15 @@ def _canonicalize_theta0(model_name: str, fit: ParameterModelFitResult) -> None:
             k_iso, k_ax = params.get("K_iso"), params["K_ax"]
             if k_iso is not None:
                 k_iso.value = float(k_iso.value) + float(k_ax.value) / 2.0
-                iso_err = fit.uncertainties.get("K_iso")
-                ax_err = fit.uncertainties.get("K_ax")
-                if iso_err is not None and ax_err is not None:
-                    fit.uncertainties["K_iso"] = math.hypot(float(iso_err), float(ax_err) / 2.0)
+                if fit.covariance is None:
+                    iso_err = fit.uncertainties.get("K_iso")
+                    ax_err = fit.uncertainties.get("K_ax")
+                    if iso_err is not None and ax_err is not None:
+                        fit.uncertainties["K_iso"] = math.hypot(float(iso_err), float(ax_err) / 2.0)
             k_ax.value = -float(k_ax.value)
         elif model_name == "AngularCos2" and "K_amp" in params:
             params["K_amp"].value = -float(params["K_amp"].value)
         else:
             return
+        _fold_covariance(model_name, fit)
     theta0.value = folded
