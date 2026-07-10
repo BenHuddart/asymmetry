@@ -8,6 +8,10 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 
+from asymmetry.core.fitting.angular_assignment import (
+    AngularAssignmentAlternative,
+    AngularAssignmentResult,
+)
 from asymmetry.core.fitting.knight_analysis import (
     KnightAnalysisInput,
     KnightAnalysisResult,
@@ -19,10 +23,14 @@ from asymmetry.core.fitting.knight_analysis import (
     KnightPoint,
     apply_assignment,
     assignment_swap_positions,
+    joint_fit_aic_inputs,
     migrate_legacy_state,
     run_joint_fit,
     selected_components,
     snapshot_from_rows,
+    suggest_assignment_discriminating_angle,
+    suggest_model_discriminating_angle,
+    suggest_next_angle,
 )
 from asymmetry.core.fitting.knight_analysis import evaluate as knight_evaluate
 from asymmetry.core.fitting.knight_shift import (
@@ -35,6 +43,8 @@ from asymmetry.core.fitting.knight_shift import (
     larmor_frequency_mhz,
     scale_for_unit,
 )
+from asymmetry.core.fitting.parameter_models import ParameterModelFitResult
+from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
 
 def _point(
@@ -1277,3 +1287,350 @@ def test_migrate_legacy_state_lifts_joint_fit_block():
     # concrete display unit -- an 'auto' unit never matches result.unit.value,
     # so migrated curves are stale-by-construction until the fit is re-run.
     assert joint.unit == "auto"
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 next-angle BED bridges (§3.1–3.3 / §5.1, 5.5–5.8)
+# ---------------------------------------------------------------------------
+
+
+def _cos2(theta_deg, avg, amp, theta0=0.0):
+    return avg + amp * np.cos(2.0 * np.radians(np.asarray(theta_deg, dtype=float) - theta0))
+
+
+def _joint_curve(branch_name, params, *, covariance=None):
+    """A KnightJointCurve from (name, value) pairs (dummy errors/χ²)."""
+    triples = tuple((name, value, 0.1) for name, value in params)
+    return KnightJointCurve(
+        branch_name=branch_name,
+        parameters=triples,
+        chi_squared=1.0,
+        reduced_chi_squared=0.5,
+        n_points=len(triples),
+        success=True,
+        covariance=covariance,
+    )
+
+
+def _identity_joint(model_name, runs, curves):
+    return KnightJointFitState(
+        model_name=model_name,
+        converged=True,
+        assignment={run: (0, 1) for run in runs},
+        curves=tuple(curves),
+    )
+
+
+# --- suggest_next_angle() : §5.1 cos 2θ geometry via the bridge ---------------
+
+
+def test_suggest_next_angle_d_optimal_returns_a_candidate_and_risk_mask():
+    # Errors sized to the curve features (σ = 5 on amplitude-80 curves) so the
+    # ±2σ misassignment band around the magic-angle crossing is resolvable.
+    angles = np.linspace(0.0, 90.0, 19)
+    runs = list(range(101, 101 + len(angles)))
+    curve_a = _axial(angles, 100.0, 60.0)
+    curve_b = _axial(angles, 100.0, -20.0)
+    past = angles > _MAGIC_ANGLE_DEG
+    branch0 = _branch(
+        "K[c0]",
+        runs,
+        angles,
+        np.where(past, curve_b, curve_a),
+        k_err=[5.0] * len(angles),
+        component="c0",
+    )
+    branch1 = _branch(
+        "K[c1]",
+        runs,
+        angles,
+        np.where(past, curve_a, curve_b),
+        k_err=[5.0] * len(angles),
+        component="c1",
+    )
+    result = _result([branch0, branch1])
+    joint = run_joint_fit(result, model_name="KnightAnisotropy", max_iter=25)
+
+    suggestion = suggest_next_angle(result, joint, x_min=0.0, x_max=90.0)
+
+    assert not np.isnan(suggestion.best_x)
+    assert suggestion.target is None
+    assert suggestion.risk_mask is not None
+    # The two branches cross at the magic angle (~54.7°); candidates there are
+    # flagged as misassignment-risky.
+    near_crossing = np.abs(suggestion.x_candidates - _MAGIC_ANGLE_DEG) < 3.0
+    assert np.any(suggestion.risk_mask[near_crossing])
+
+
+def test_suggest_next_angle_c_optimal_targets_named_branch_parameter():
+    result, _curve_a, _curve_b, _angles, _runs = _two_branch_crossing_scan()
+    joint = run_joint_fit(result, model_name="KnightAnisotropy", max_iter=25)
+    target_branch = joint.curves[0].branch_name
+
+    suggestion = suggest_next_angle(
+        result, joint, x_min=0.0, x_max=90.0, target=(target_branch, "K_ax")
+    )
+
+    assert suggestion.target == "K_ax"
+    assert not np.isnan(suggestion.best_x)
+
+
+def test_suggest_next_angle_unknown_target_branch_degrades_with_warning():
+    result, _curve_a, _curve_b, _angles, _runs = _two_branch_crossing_scan()
+    joint = run_joint_fit(result, model_name="KnightAnisotropy", max_iter=25)
+
+    suggestion = suggest_next_angle(
+        result, joint, x_min=0.0, x_max=90.0, target=("K[nonexistent]", "K_ax")
+    )
+
+    assert suggestion.x_candidates.size == 0
+    assert any("nonexistent" in w.lower() for w in suggestion.warnings)
+
+
+# --- §5.7 degradation --------------------------------------------------------
+
+
+def test_suggest_next_angle_all_curves_without_covariance_asks_to_rerun():
+    runs = [1, 2, 3, 4]
+    angles = [0.0, 30.0, 60.0, 90.0]
+    branch_a = _branch("K[c0]", runs, angles, _cos2(angles, 100.0, 20.0), component="c0")
+    branch_b = _branch("K[c1]", runs, angles, _cos2(angles, 100.0, -20.0), component="c1")
+    result = _result([branch_a, branch_b])
+    joint = _identity_joint(
+        "AngularCos2",
+        runs,
+        [
+            _joint_curve("K[c0]", [("K_avg", 100.0), ("K_amp", 20.0), ("theta0", 0.0)]),
+            _joint_curve("K[c1]", [("K_avg", 100.0), ("K_amp", -20.0), ("theta0", 0.0)]),
+        ],
+    )
+
+    suggestion = suggest_next_angle(result, joint, x_min=0.0, x_max=90.0)
+
+    assert suggestion.x_candidates.size == 0
+    assert any("re-run the joint fit" in w.lower() for w in suggestion.warnings)
+
+
+def test_suggest_next_angle_fewer_than_two_curves_degrades():
+    branch = _branch("K[c0]", [1, 2], [0.0, 30.0], [1.0, 2.0])
+    result = _result([branch])
+    joint = _identity_joint(
+        "AngularCos2",
+        [1, 2],
+        [_joint_curve("K[c0]", [("K_avg", 1.0), ("K_amp", 1.0), ("theta0", 0.0)])],
+    )
+
+    suggestion = suggest_next_angle(result, joint, x_min=0.0, x_max=90.0)
+
+    assert suggestion.x_candidates.size == 0
+    assert any("two curves" in w.lower() for w in suggestion.warnings)
+
+
+# --- suggest_model_discriminating_angle() : §5.5 misalignment ----------------
+
+
+def _cos2_vs_fourier2_states(k1: float, theta1: float = 20.0):
+    """A lead (AngularCos2) and alt (AngularFourier2) joint fit over one scan.
+
+    The two share K_avg/K_amp/θ (so the second-harmonic parts cancel); the alt
+    adds a first harmonic K_1·cos(θ − θ1). f_lead − f_alt = −K_1 cos(θ − θ1), so
+    U_disc peaks near θ1. With ``k1 = 0`` the predictions are identical.
+    """
+    angles = np.linspace(-90.0, 90.0, 37)
+    runs = list(range(201, 201 + len(angles)))
+    branch_a = _branch(
+        "K[c0]",
+        runs,
+        angles,
+        _cos2(angles, 100.0, 20.0, 10.0),
+        k_err=[0.5] * len(angles),
+        component="c0",
+    )
+    branch_b = _branch(
+        "K[c1]",
+        runs,
+        angles,
+        _cos2(angles, 100.0, -15.0, 10.0),
+        k_err=[0.5] * len(angles),
+        component="c1",
+    )
+    result = _result([branch_a, branch_b])
+    lead = _identity_joint(
+        "AngularCos2",
+        runs,
+        [
+            _joint_curve("K[c0]", [("K_avg", 100.0), ("K_amp", 20.0), ("theta0", 10.0)]),
+            _joint_curve("K[c1]", [("K_avg", 100.0), ("K_amp", -15.0), ("theta0", 10.0)]),
+        ],
+    )
+    alt = _identity_joint(
+        "AngularFourier2",
+        runs,
+        [
+            _joint_curve(
+                "K[c0]",
+                [
+                    ("K_avg", 100.0),
+                    ("K_1", k1),
+                    ("theta1", theta1),
+                    ("K_amp", 20.0),
+                    ("theta2", 10.0),
+                ],
+            ),
+            _joint_curve(
+                "K[c1]",
+                [
+                    ("K_avg", 100.0),
+                    ("K_1", k1),
+                    ("theta1", theta1),
+                    ("K_amp", -15.0),
+                    ("theta2", 10.0),
+                ],
+            ),
+        ],
+    )
+    return result, lead, alt
+
+
+def test_model_discrimination_peaks_near_first_harmonic_phase():
+    theta1 = 20.0
+    result, lead, alt = _cos2_vs_fourier2_states(k1=5.0, theta1=theta1)
+
+    suggestion = suggest_model_discriminating_angle(result, lead, alt, x_min=-90.0, x_max=90.0)
+
+    assert not np.isnan(suggestion.best_x)
+    # U_disc ∝ cos²(θ − θ1) → peaks at θ1 (mod 180); θ1 = 20 sits in range.
+    assert suggestion.best_x == pytest.approx(theta1, abs=5.0)
+
+
+def test_model_discrimination_identical_predictions_warn_agree_within_noise():
+    result, lead, alt = _cos2_vs_fourier2_states(k1=0.0)
+
+    suggestion = suggest_model_discriminating_angle(result, lead, alt, x_min=-90.0, x_max=90.0)
+
+    assert any("agree within noise" in w.lower() for w in suggestion.warnings)
+    assert np.isnan(suggestion.best_x) or float(np.max(suggestion.utility)) == pytest.approx(
+        0.0, abs=1e-9
+    )
+
+
+def test_model_discrimination_mismatched_branch_sets_degrades():
+    result, lead, _alt = _cos2_vs_fourier2_states(k1=5.0)
+    # An alt fit whose branch set differs (K[c2] instead of K[c1]).
+    runs = list(result.branches[0].run_numbers)
+    bad_alt = _identity_joint(
+        "AngularFourier2",
+        runs,
+        [
+            _joint_curve(
+                "K[c0]",
+                [
+                    ("K_avg", 100.0),
+                    ("K_1", 5.0),
+                    ("theta1", 20.0),
+                    ("K_amp", 20.0),
+                    ("theta2", 10.0),
+                ],
+            ),
+            _joint_curve(
+                "K[c2]",
+                [
+                    ("K_avg", 100.0),
+                    ("K_1", 5.0),
+                    ("theta1", 20.0),
+                    ("K_amp", -15.0),
+                    ("theta2", 10.0),
+                ],
+            ),
+        ],
+    )
+
+    suggestion = suggest_model_discriminating_angle(result, lead, bad_alt, x_min=-90.0, x_max=90.0)
+
+    assert suggestion.x_candidates.size == 0
+    assert any("different branches" in w.lower() for w in suggestion.warnings)
+
+
+def test_joint_fit_aic_inputs_reports_chi2_and_total_free_params():
+    _result_, lead, _alt = _cos2_vs_fourier2_states(k1=5.0)
+    lead.total_chi_squared = 12.5
+
+    chi2, n_params = joint_fit_aic_inputs(lead)
+
+    assert chi2 == pytest.approx(12.5)
+    assert n_params == 2 * 3  # two AngularCos2 curves, 3 params each
+
+
+# --- suggest_assignment_discriminating_angle() : §5.6 ------------------------
+
+
+def _assignment_outcome_with_alternative():
+    """Winner + one genuinely different alternative curve set (hand-built).
+
+    The winner is two AngularCos2 curves crossing at θ = 45° (cos 2θ = 0). The
+    alternative shares one curve but replaces the other's amplitude, so the two
+    hypotheses predict the *same value set* only at the crossing and diverge
+    away from it — the assignment-discrimination signature. Built directly (the
+    standard EM fixture's runners-up are not near-degenerate enough), per §5.6.
+    """
+    angles = list(np.linspace(0.0, 90.0, 19))
+    model = "AngularCos2"
+
+    def _fit(amp):
+        return ParameterModelFitResult(
+            success=True,
+            parameters=ParameterSet(
+                [Parameter("K_avg", 100.0), Parameter("K_amp", amp), Parameter("theta0", 0.0)]
+            ),
+        )
+
+    winner = [_fit(20.0), _fit(-20.0)]
+    alt_curves = [_fit(20.0), _fit(-40.0)]
+    errors = [[1.0] * len(angles), [1.0] * len(angles)]
+    outcome = AngularAssignmentResult(
+        success=True,
+        converged=True,
+        model_name=model,
+        angles=angles,
+        curves=winner,
+        assignment=[(0, 1)] * len(angles),
+        curve_values=[list(_cos2(angles, 100.0, 20.0)), list(_cos2(angles, 100.0, -20.0))],
+        curve_errors=errors,
+        alternatives=[
+            AngularAssignmentAlternative(
+                assignment=[(1, 0)] * len(angles),
+                curves=alt_curves,
+                total_chi_squared=2.0,
+                converged=True,
+            )
+        ],
+    )
+    branch_a = _branch("K[c0]", list(range(len(angles))), angles, _cos2(angles, 100.0, 20.0))
+    branch_b = _branch("K[c1]", list(range(len(angles))), angles, _cos2(angles, 100.0, -20.0))
+    result = _result([branch_a, branch_b])
+    return result, outcome
+
+
+def test_assignment_discrimination_zero_at_crossing_positive_away():
+    result, outcome = _assignment_outcome_with_alternative()
+
+    suggestion = suggest_assignment_discriminating_angle(result, outcome, x_min=0.0, x_max=90.0)
+
+    assert not np.isnan(suggestion.best_x)
+    peak = float(np.max(suggestion.utility))
+    u_at_crossing = float(np.interp(45.0, suggestion.x_candidates, suggestion.utility))
+    u_at_edge = float(np.interp(0.0, suggestion.x_candidates, suggestion.utility))
+    assert u_at_crossing < 0.01 * peak  # ≈ 0 where the labellings coincide
+    assert u_at_edge > 0.5 * peak  # genuinely different curve sets away from it
+    # The best angle is at an end (max |cos 2θ|), not at the crossing.
+    assert abs(suggestion.best_x - 45.0) > 20.0
+
+
+def test_assignment_discrimination_no_alternatives_is_empty_with_warning():
+    result, outcome = _assignment_outcome_with_alternative()
+    outcome.alternatives = []
+
+    suggestion = suggest_assignment_discriminating_angle(result, outcome, x_min=0.0, x_max=90.0)
+
+    assert suggestion.x_candidates.size == 0
+    assert any("no near-degenerate" in w.lower() for w in suggestion.warnings)

@@ -16,12 +16,15 @@ import numpy as np
 import pytest
 
 from asymmetry.core.fitting.experiment_design import (
+    SeriesSpec,
     aic_weights,
     calibrate_events_for_goal,
     calibrate_suggestion,
     cost_weighted_utility,
+    set_matching_divergence,
     suggest_discriminating_point,
     suggest_next_point,
+    suggest_next_point_multi,
 )
 from asymmetry.core.fitting.parameter_models import (
     ParameterCompositeModel,
@@ -750,3 +753,192 @@ def test_cost_weighted_utility_non_finite_x_current_returns_utility_unchanged() 
         down_rate=1.0,
     )
     assert np.array_equal(weighted, utility)
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 (§3.1–3.3): multi-series acquisition, risk mask, set matching
+#
+# Oracles from docs/studies/bed-next-angle-knight-shift.md §5: cos 2θ geometry
+# (c-optimal antinodes/nodes, 90°-periodic D-optimal), the vector-observable
+# information sum, the assignment-risk flag near predicted crossings, and the
+# Hungarian set-matching divergence (reduces to the labelled integrand at N=1,
+# permutation-invariant, zero for coincident hypotheses).
+# ---------------------------------------------------------------------------
+
+
+def _cos2_spec(theta2: float, *, k_amp: float = 20.0, y_err: float = 0.1) -> SeriesSpec:
+    """A single AngularCos2 series with an identity covariance for the multi API.
+
+    The identity covariance (no correlations, unit variance per parameter) keeps
+    each c-optimal utility proportional to that parameter's squared sensitivity,
+    so the argmax reads the pure cos 2θ geometry.
+    """
+    model = ParameterCompositeModel(["AngularCos2"])
+    params = ParameterSet(
+        [Parameter("K_avg", 100.0), Parameter("K_amp", k_amp), Parameter("theta0", theta2)]
+    )
+    names = ["K_avg", "K_amp", "theta0"]
+    covariance = (names, np.eye(3).tolist())
+    x_data = np.linspace(0.0, 180.0, 37)
+    yerr = np.full_like(x_data, y_err)
+    return SeriesSpec(
+        model=model, parameters=params, covariance=covariance, x_data=x_data, y_err=yerr
+    )
+
+
+def test_multi_cos2_c_optimal_k_amp_peaks_at_antinode() -> None:
+    theta2 = 15.0
+    spec = _cos2_spec(theta2)
+    suggestion = suggest_next_point_multi([spec], 0.0, 180.0, target=(0, "K_amp"))
+    # |cos 2(θ − θ2)| is largest at the antinodes θ2 and θ2 + 90.
+    assert suggestion.best_x == pytest.approx(
+        theta2, abs=2.0
+    ) or suggestion.best_x == pytest.approx(theta2 + 90.0, abs=2.0)
+
+
+def test_multi_cos2_c_optimal_theta0_peaks_at_node() -> None:
+    theta2 = 15.0
+    spec = _cos2_spec(theta2)
+    suggestion = suggest_next_point_multi([spec], 0.0, 180.0, target=(0, "theta0"))
+    # |∂K/∂θ0| ∝ |sin 2(θ − θ2)| is largest at the nodes θ2 ± 45 (+ n·90).
+    nodes = [theta2 + 45.0, theta2 + 135.0]
+    assert any(suggestion.best_x == pytest.approx(node, abs=2.0) for node in nodes)
+
+
+def test_multi_cos2_d_optimal_utility_is_90_periodic() -> None:
+    spec = _cos2_spec(15.0)
+    suggestion = suggest_next_point_multi([spec], 0.0, 180.0)
+    probe = np.linspace(5.0, 85.0, 17)
+    u_here = np.interp(probe, suggestion.x_candidates, suggestion.utility)
+    u_shift = np.interp(probe + 90.0, suggestion.x_candidates, suggestion.utility)
+    np.testing.assert_allclose(u_here, u_shift, atol=1e-9)
+
+
+def test_multi_two_identical_series_double_d_optimal_utility() -> None:
+    spec = _cos2_spec(15.0)
+    single = suggest_next_point_multi([spec], 0.0, 180.0)
+    doubled = suggest_next_point_multi([spec, spec], 0.0, 180.0)
+    np.testing.assert_allclose(doubled.x_candidates, single.x_candidates)
+    np.testing.assert_allclose(doubled.utility, 2.0 * single.utility, atol=1e-9)
+    assert int(np.argmax(doubled.utility)) == int(np.argmax(single.utility))
+
+
+def test_multi_none_covariance_series_contributes_nothing_but_a_warning() -> None:
+    spec = _cos2_spec(15.0)
+    nocov = SeriesSpec(
+        model=spec.model,
+        parameters=spec.parameters,
+        covariance=None,
+        x_data=spec.x_data,
+        y_err=spec.y_err,
+    )
+    single = suggest_next_point_multi([spec], 0.0, 180.0)
+    degraded = suggest_next_point_multi([spec, nocov], 0.0, 180.0, labels=["good", "bad"])
+    np.testing.assert_allclose(degraded.x_candidates, single.x_candidates)
+    np.testing.assert_allclose(degraded.utility, single.utility, atol=1e-12)
+    assert any("bad" in w and "covariance" in w for w in degraded.warnings)
+
+
+def _line_spec(m: float, b: float, *, sigma: float = 0.5) -> SeriesSpec:
+    model = ParameterCompositeModel(["Linear"])
+    params = ParameterSet([Parameter("m", m), Parameter("b", b)])
+    covariance = (["m", "b"], np.eye(2).tolist())
+    x_data = np.linspace(0.0, 10.0, 21)
+    yerr = np.full_like(x_data, sigma)
+    return SeriesSpec(
+        model=model, parameters=params, covariance=covariance, x_data=x_data, y_err=yerr
+    )
+
+
+def test_multi_risk_mask_flags_predicted_crossing() -> None:
+    # f_A = x and f_B = 10 − x cross at x = 5; sigma = 0.5 → 2σ = 1, so only the
+    # neighbourhood of the crossing is flagged, not the well-separated ends.
+    a = _line_spec(1.0, 0.0, sigma=0.5)
+    b = _line_spec(-1.0, 10.0, sigma=0.5)
+    suggestion = suggest_next_point_multi([a, b], 0.0, 10.0)
+    assert suggestion.risk_mask is not None
+    near_crossing = np.abs(suggestion.x_candidates - 5.0) < 0.3
+    far_from_crossing = suggestion.x_candidates < 1.0
+    assert np.all(suggestion.risk_mask[near_crossing])
+    assert not np.any(suggestion.risk_mask[far_from_crossing])
+    assert any("misassignment" in w.lower() for w in suggestion.warnings)
+
+
+def test_multi_risk_mask_all_false_for_single_series() -> None:
+    suggestion = suggest_next_point_multi([_line_spec(1.0, 0.0)], 0.0, 10.0)
+    assert suggestion.risk_mask is not None
+    assert not np.any(suggestion.risk_mask)
+
+
+def _predict(model_name: str, values: dict[str, float], x: np.ndarray) -> np.ndarray:
+    model = ParameterCompositeModel([model_name])
+    return np.asarray(model.function(x, **values), dtype=float)
+
+
+def test_set_matching_divergence_n1_reduces_to_labeled_integrand() -> None:
+    model = ParameterCompositeModel(["Linear"])
+    a = [(model, ParameterSet([Parameter("m", 1.0), Parameter("b", 0.0)]))]
+    b = [(model, ParameterSet([Parameter("m", -1.0), Parameter("b", 3.0)]))]
+    x = np.linspace(0.0, 10.0, 41)
+    sigma = [np.full_like(x, 0.5)]
+    u = set_matching_divergence(a, b, sigma, x)
+    f_a = _predict("Linear", {"m": 1.0, "b": 0.0}, x)
+    f_b = _predict("Linear", {"m": -1.0, "b": 3.0}, x)
+    expected = (f_a - f_b) ** 2 / (2.0 * 0.5**2)
+    np.testing.assert_allclose(u, expected, atol=1e-9)
+
+
+def test_set_matching_divergence_invariant_under_hypothesis_reorder() -> None:
+    model = ParameterCompositeModel(["Linear"])
+    a = [
+        (model, ParameterSet([Parameter("m", 1.0), Parameter("b", 0.0)])),
+        (model, ParameterSet([Parameter("m", -0.5), Parameter("b", 8.0)])),
+    ]
+    b = [
+        (model, ParameterSet([Parameter("m", 0.8), Parameter("b", 1.0)])),
+        (model, ParameterSet([Parameter("m", -0.6), Parameter("b", 7.0)])),
+    ]
+    x = np.linspace(0.0, 10.0, 41)
+    sigma = [np.full_like(x, 0.5), np.full_like(x, 0.7)]
+    u = set_matching_divergence(a, b, sigma, x)
+    u_swapped = set_matching_divergence(a, list(reversed(b)), sigma, x)
+    np.testing.assert_allclose(u, u_swapped, atol=1e-9)
+
+
+def test_set_matching_divergence_zero_when_hypotheses_coincide() -> None:
+    model = ParameterCompositeModel(["Linear"])
+    a = [
+        (model, ParameterSet([Parameter("m", 1.0), Parameter("b", 0.0)])),
+        (model, ParameterSet([Parameter("m", -0.5), Parameter("b", 8.0)])),
+    ]
+    x = np.linspace(0.0, 10.0, 41)
+    sigma = [np.full_like(x, 0.5), np.full_like(x, 0.7)]
+    u = set_matching_divergence(a, list(a), sigma, x)
+    np.testing.assert_allclose(u, 0.0, atol=1e-12)
+
+
+def test_set_matching_divergence_mismatched_lengths_raises() -> None:
+    model = ParameterCompositeModel(["Linear"])
+    a = [(model, ParameterSet([Parameter("m", 1.0), Parameter("b", 0.0)]))]
+    b = [
+        (model, ParameterSet([Parameter("m", 1.0), Parameter("b", 0.0)])),
+        (model, ParameterSet([Parameter("m", -1.0), Parameter("b", 3.0)])),
+    ]
+    x = np.linspace(0.0, 10.0, 5)
+    with pytest.raises(ValueError):
+        set_matching_divergence(a, b, [np.ones_like(x)], x)
+
+
+def test_multi_all_unusable_series_degrade_to_empty_suggestion() -> None:
+    spec = _cos2_spec(15.0)
+    nocov = SeriesSpec(
+        model=spec.model,
+        parameters=spec.parameters,
+        covariance=None,
+        x_data=spec.x_data,
+        y_err=spec.y_err,
+    )
+    suggestion = suggest_next_point_multi([nocov, nocov], 0.0, 180.0)
+    assert suggestion.x_candidates.size == 0
+    assert np.isnan(suggestion.best_x)
+    assert suggestion.warnings

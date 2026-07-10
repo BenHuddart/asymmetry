@@ -29,6 +29,9 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+import numpy as np
 
 from asymmetry.core.fitting.component_tracking import (
     Component,
@@ -47,6 +50,10 @@ from asymmetry.core.fitting.knight_shift import (
     scale_for_unit,
 )
 from asymmetry.core.fitting.parameters import split_parameter_name
+
+if TYPE_CHECKING:
+    from asymmetry.core.fitting.angular_assignment import AngularAssignmentResult
+    from asymmetry.core.fitting.experiment_design import NextPointSuggestion
 
 #: Oscillation components convertible to a Knight shift, by base parameter name.
 #: ``frequency`` components are in MHz (referenced to γ_µ·B); ``field``
@@ -757,6 +764,377 @@ def assignment_swap_positions(
         if perm_left != perm_right:
             swaps.append(0.5 * (x_left + x_right))
     return tuple(swaps)
+
+
+# ── Next-angle BED bridges (Phase 4) ─────────────────────────────────────────
+#
+# Thin, GUI-free adapters that assemble the Knight-specific series inputs and
+# delegate the acquisition math to ``experiment_design`` (the multi-series IG
+# sum, the labelled model-discrimination sum, and the Hungarian set-matching
+# assignment-discrimination utility), returning the shared ``NextPointSuggestion``
+# so the GUI plumbing stays uniform. Curve parameters/covariance are in the
+# display unit (``run_joint_fit`` scales before fitting); the branch traces are
+# fractions, so per-curve noise is scaled by ``result.scale``.
+
+
+def _curve_series(
+    result: KnightAnalysisResult, joint: KnightJointFitState
+) -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    """Per-curve realigned ``(angles, values, errors)`` in the display unit.
+
+    Reconstructs each fitted curve's continuous trace from the joint fit's
+    run-keyed assignment over exactly the points that entered the fit
+    (``_joint_fit_matrices`` — shared, included points), scaling the fraction
+    values/errors into the display unit. Curve index ``m`` corresponds to
+    ``result.branches[m]`` (the order ``run_joint_fit`` fitted).
+    """
+    runs, angles, values, errors = _joint_fit_matrices(result)
+    scale = result.scale
+    n_curves = len(result.branches)
+    angles_arr = np.asarray(angles, dtype=float)
+    per_curve: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+    for curve in range(n_curves):
+        curve_values: list[float] = []
+        curve_errors: list[float] = []
+        for point, run in enumerate(runs):
+            perm = joint.assignment.get(run)
+            component = perm.index(curve) if perm is not None and len(perm) == n_curves else curve
+            curve_values.append(values[point][component] * scale)
+            curve_errors.append(errors[point][component] * scale)
+        per_curve.append(
+            (
+                angles_arr,
+                np.asarray(curve_values, dtype=float),
+                np.asarray(curve_errors, dtype=float),
+            )
+        )
+    return per_curve
+
+
+def suggest_next_angle(
+    result: KnightAnalysisResult,
+    joint: KnightJointFitState,
+    *,
+    x_min: float,
+    x_max: float,
+    target: tuple[str, str] | None = None,
+    sigma_goal: float | None = None,
+    n_candidates: int = 257,
+) -> NextPointSuggestion:
+    """Suggest the next scan angle that best constrains the joint K(θ) fit (§3.1).
+
+    Builds one series per fitted curve (model from ``joint.model_name``,
+    parameters/covariance from the curve, empirical noise from its realigned
+    trace) and delegates to
+    :func:`~asymmetry.core.fitting.experiment_design.suggest_next_point_multi`.
+    ``target`` names ``(branch_name, param_name)`` for a c-optimal solve (with
+    ``sigma_goal``); ``None`` gives the D-optimal information-gain sum. Curves
+    without stored covariance degrade with a warning naming the branch; when
+    *every* curve lacks covariance the suggestion is empty with a "re-run the
+    joint fit" warning (legacy fits predate stored covariance).
+    """
+    from asymmetry.core.fitting.experiment_design import (
+        SeriesSpec,
+        _empty_suggestion,
+        suggest_next_point_multi,
+    )
+    from asymmetry.core.fitting.parameter_models import ParameterCompositeModel
+    from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+
+    target_param = target[1] if target is not None else None
+    if len(result.branches) < 2 or len(joint.curves) < 2:
+        return _empty_suggestion(
+            target_param, ["The joint K(θ) fit needs at least two curves to suggest a next angle."]
+        )
+    if all(curve.covariance is None for curve in joint.curves):
+        return _empty_suggestion(
+            target_param,
+            [
+                "No stored fit covariance — re-run the joint fit to enable "
+                "next-angle suggestions (legacy fits predate stored covariance)."
+            ],
+        )
+
+    branch_index = {branch.name: i for i, branch in enumerate(result.branches)}
+    series_data = _curve_series(result, joint)
+    model = ParameterCompositeModel([joint.model_name])
+    specs: list[SeriesSpec] = []
+    labels: list[str] = []
+    for curve in joint.curves:
+        index = branch_index.get(curve.branch_name)
+        if index is None:
+            continue
+        angles_i, _values_i, errors_i = series_data[index]
+        params = ParameterSet([Parameter(name, value) for name, value, _err in curve.parameters])
+        covariance = None
+        if curve.covariance is not None:
+            names, matrix = curve.covariance
+            covariance = (list(names), [list(row) for row in matrix])
+        specs.append(
+            SeriesSpec(
+                model=model,
+                parameters=params,
+                covariance=covariance,
+                x_data=angles_i,
+                y_err=errors_i,
+            )
+        )
+        labels.append(curve.branch_name)
+
+    target_spec: tuple[int, str] | None = None
+    if target is not None:
+        branch_name, param_name = target
+        try:
+            target_spec = (labels.index(branch_name), param_name)
+        except ValueError:
+            return _empty_suggestion(
+                param_name, [f"Target branch {branch_name!r} is not among the fitted curves."]
+            )
+
+    return suggest_next_point_multi(
+        specs,
+        x_min,
+        x_max,
+        target=target_spec,
+        sigma_goal=sigma_goal,
+        n_candidates=n_candidates,
+        labels=labels,
+    )
+
+
+def joint_fit_aic_inputs(joint: KnightJointFitState) -> tuple[float, int]:
+    """``(total_chi_squared, n_curves·n_params)`` for AIC-weighting a joint fit.
+
+    Feeds :func:`~asymmetry.core.fitting.experiment_design.aic_weights` so the
+    GUI can rank an aligned (lead) fit against a misalignment (alternative) fit
+    (§3.2). ``n_params`` is per-curve free-parameter count (all curves share the
+    model), multiplied by the number of curves.
+    """
+    n_curves = len(joint.curves)
+    n_params = len(joint.curves[0].parameters) if joint.curves else 0
+    return float(joint.total_chi_squared), n_curves * n_params
+
+
+def suggest_model_discriminating_angle(
+    result: KnightAnalysisResult,
+    joint_lead: KnightJointFitState,
+    joint_alt: KnightJointFitState,
+    *,
+    x_min: float,
+    x_max: float,
+    n_candidates: int = 257,
+) -> NextPointSuggestion:
+    """Suggest the angle best distinguishing an aligned vs misaligned fit (§3.2).
+
+    Curve identity is preserved: curves are matched across the two joint states by
+    ``branch_name`` (an error if the branch sets differ), so the utility is the
+    *labelled* disagreement sum
+
+        U(θ) = Σ_m [f_m^lead(θ) − f_m^alt(θ)]² / 2σ_m²(θ)
+
+    with no matching step. σ_m is the lead fit's realigned per-curve noise (display
+    unit). When the two fits agree within noise everywhere the standard
+    "agree within noise" warning is carried (as in
+    :func:`~asymmetry.core.fitting.experiment_design.suggest_discriminating_point`).
+    """
+    from asymmetry.core.fitting.experiment_design import (
+        _DISCRIMINATION_NOISE_FLOOR,
+        NextPointSuggestion,
+        _candidate_grid,
+        _empirical_sigma,
+        _empty_suggestion,
+    )
+    from asymmetry.core.fitting.parameter_models import ParameterCompositeModel
+
+    lead_by_name = {curve.branch_name: curve for curve in joint_lead.curves}
+    alt_by_name = {curve.branch_name: curve for curve in joint_alt.curves}
+    if not lead_by_name or set(lead_by_name) != set(alt_by_name):
+        return _empty_suggestion(
+            None, ["The lead and alternative joint fits cover different branches; cannot compare."]
+        )
+    if len(result.branches) < 2:
+        return _empty_suggestion(None, ["The joint K(θ) fit needs at least two curves."])
+
+    branch_index = {branch.name: i for i, branch in enumerate(result.branches)}
+    if any(name not in branch_index for name in lead_by_name):
+        return _empty_suggestion(None, ["Fitted curves do not match the analysis branches."])
+    series_data = _curve_series(result, joint_lead)
+    lead_model = ParameterCompositeModel([joint_lead.model_name])
+    alt_model = ParameterCompositeModel([joint_alt.model_name])
+
+    warnings: list[str] = []
+    reference_name = next(iter(lead_by_name))
+    ref_angles, _ref_values, ref_errors = series_data[branch_index[reference_name]]
+    grid = _candidate_grid(ref_angles, ref_errors, x_min, x_max, n_candidates, warnings)
+    if grid is None:
+        return _empty_suggestion(None, warnings)
+    candidates, _x_meas, _sigma_new, extrapolated = grid
+
+    utility = np.zeros_like(candidates)
+    sigma_stack: list[np.ndarray] = []
+    max_variance = 0.0
+    for name in lead_by_name:
+        angles_i, _values_i, errors_i = series_data[branch_index[name]]
+        noise = _empirical_sigma(angles_i, errors_i, [])
+        if noise is None:
+            continue
+        x_meas, sigma_meas = noise
+        sigma = np.interp(candidates, x_meas, sigma_meas)
+        sigma_stack.append(sigma)
+        variance = sigma**2
+        max_variance = max(max_variance, float(np.max(variance)))
+        lead_values = {n: v for n, v, _e in lead_by_name[name].parameters}
+        alt_values = {n: v for n, v, _e in alt_by_name[name].parameters}
+        f_lead = np.nan_to_num(
+            np.asarray(lead_model.function(candidates, **lead_values), dtype=float)
+        )
+        f_alt = np.nan_to_num(np.asarray(alt_model.function(candidates, **alt_values), dtype=float))
+        with np.errstate(invalid="ignore", divide="ignore"):
+            pair = (f_lead - f_alt) ** 2 / (2.0 * variance)
+        utility = utility + np.nan_to_num(pair, nan=0.0, posinf=0.0, neginf=0.0)
+
+    sigma_new = (
+        np.mean(np.vstack(sigma_stack), axis=0) if sigma_stack else np.zeros_like(candidates)
+    )
+    relative_floor = _DISCRIMINATION_NOISE_FLOOR * max(max_variance, 1.0)
+    if not np.any(utility > relative_floor):
+        warnings.append(
+            "candidate models agree within noise everywhere in this range — no discriminating point"
+        )
+        return NextPointSuggestion(
+            x_candidates=candidates,
+            utility=utility,
+            extrapolated=extrapolated,
+            best_x=float("nan"),
+            target=None,
+            sigma_new=sigma_new,
+            warnings=tuple(warnings),
+        )
+
+    best_index = int(np.argmax(utility))
+    return NextPointSuggestion(
+        x_candidates=candidates,
+        utility=utility,
+        extrapolated=extrapolated,
+        best_x=float(candidates[best_index]),
+        target=None,
+        sigma_new=sigma_new,
+        warnings=tuple(warnings),
+    )
+
+
+def suggest_assignment_discriminating_angle(
+    result: KnightAnalysisResult,
+    outcome: AngularAssignmentResult,
+    *,
+    x_min: float,
+    x_max: float,
+    n_candidates: int = 257,
+) -> NextPointSuggestion:
+    """Suggest the angle best resolving competing per-angle assignments (§3.3).
+
+    ``outcome`` is an :class:`~asymmetry.core.fitting.angular_assignment.\
+AngularAssignmentResult` carrying near-degenerate runner-up labellings
+    (``keep_alternatives > 0``). The utility is the elementwise **max** over
+    alternatives of the Hungarian set-matching divergence between the winner's and
+    each alternative's predicted value sets (leader-vs-all — the TAS-AI lock-in
+    lesson): it is ~0 where the labellings coincide (e.g. at a crossing) and peaks
+    where they imply genuinely different curve sets. With no alternatives the
+    suggestion is empty ("no near-degenerate assignments to discriminate").
+
+    Per-curve noise comes from the winner's realigned trace errors
+    (``outcome.curve_errors``); because the utility is a value²/σ² ratio it is
+    invariant to the common display-unit scale, so ``result`` is used only to
+    confirm the curve/branch counts agree.
+    """
+    from asymmetry.core.fitting.experiment_design import (
+        _DISCRIMINATION_NOISE_FLOOR,
+        NextPointSuggestion,
+        _candidate_grid,
+        _empirical_sigma,
+        _empty_suggestion,
+        set_matching_divergence,
+    )
+    from asymmetry.core.fitting.parameter_models import ParameterCompositeModel
+
+    n_curves = len(outcome.curves)
+    if n_curves < 2 or len(result.branches) < 2:
+        return _empty_suggestion(None, ["The joint K(θ) fit needs at least two curves."])
+    if not outcome.alternatives:
+        return _empty_suggestion(None, ["No near-degenerate assignments to discriminate."])
+
+    model = ParameterCompositeModel([outcome.model_name])
+    angles = np.asarray(outcome.angles, dtype=float)
+    warnings: list[str] = []
+    err0 = (
+        np.asarray(outcome.curve_errors[0], dtype=float)
+        if outcome.curve_errors
+        else np.zeros_like(angles)
+    )
+    grid = _candidate_grid(angles, err0, x_min, x_max, n_candidates, warnings)
+    if grid is None:
+        return _empty_suggestion(None, warnings)
+    candidates, _x_meas, _sigma_new, extrapolated = grid
+
+    sigma_per_curve: list[np.ndarray] = []
+    missing_sigma = False
+    for i in range(n_curves):
+        errors_i = (
+            np.asarray(outcome.curve_errors[i], dtype=float)
+            if i < len(outcome.curve_errors)
+            else np.zeros_like(angles)
+        )
+        noise = _empirical_sigma(angles, errors_i, [])
+        if noise is None:
+            missing_sigma = True
+            sigma_per_curve.append(np.ones_like(candidates))
+        else:
+            x_meas, sigma_meas = noise
+            sigma_per_curve.append(np.interp(candidates, x_meas, sigma_meas))
+    if missing_sigma:
+        warnings.append(
+            "Some curves have no usable error bars; their divergence is weighted uniformly."
+        )
+
+    winner = [(model, curve.parameters) for curve in outcome.curves]
+    utility = np.zeros_like(candidates)
+    for alternative in outcome.alternatives:
+        if len(alternative.curves) != n_curves:
+            continue
+        alt_hypothesis = [(model, curve.parameters) for curve in alternative.curves]
+        utility = np.maximum(
+            utility,
+            set_matching_divergence(winner, alt_hypothesis, sigma_per_curve, candidates),
+        )
+
+    sigma_new = np.mean(np.vstack(sigma_per_curve), axis=0)
+    max_variance = max(float(np.max(sigma**2)) for sigma in sigma_per_curve)
+    relative_floor = _DISCRIMINATION_NOISE_FLOOR * max(max_variance, 1.0)
+    if not np.any(utility > relative_floor):
+        warnings.append(
+            "the competing assignments predict the same value set within noise "
+            "everywhere in this range — no discriminating point"
+        )
+        return NextPointSuggestion(
+            x_candidates=candidates,
+            utility=utility,
+            extrapolated=extrapolated,
+            best_x=float("nan"),
+            target=None,
+            sigma_new=sigma_new,
+            warnings=tuple(warnings),
+        )
+
+    best_index = int(np.argmax(utility))
+    return NextPointSuggestion(
+        x_candidates=candidates,
+        utility=utility,
+        extrapolated=extrapolated,
+        best_x=float(candidates[best_index]),
+        target=None,
+        sigma_new=sigma_new,
+        warnings=tuple(warnings),
+    )
 
 
 @dataclass

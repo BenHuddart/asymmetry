@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 from scipy.optimize import linear_sum_assignment
@@ -43,13 +43,32 @@ ANGULAR_MODELS: tuple[str, ...] = ("KnightAnisotropy", "AngularCos2", "AngularFo
 
 
 @dataclass
+class AngularAssignmentAlternative:
+    """A near-degenerate runner-up assignment kept for discrimination (§3.3).
+
+    Carries the competing per-point ``assignment`` (distinct from the winner's),
+    its converged per-curve ``curves`` (canonicalised like the winner), the
+    seed's ``total_chi_squared`` and whether that seed ``converged``. These are
+    the labellings within a Δχ² window of the winner — the ones a new angle
+    could resolve.
+    """
+
+    assignment: list[tuple[int, ...]]
+    curves: list[ParameterModelFitResult]
+    total_chi_squared: float
+    converged: bool
+
+
+@dataclass
 class AngularAssignmentResult:
     """Outcome of a joint K(θ) fit with per-angle component assignment.
 
     ``curves[m]`` is the fit of curve ``m``; ``curve_values[m]``/``curve_errors[m]``
     are the realigned per-point values assigned to curve ``m`` (so curve ``m`` is a
     continuous trace through crossings). ``assignment[p][c]`` gives the curve index
-    that component ``c`` at scan point ``p`` was assigned to.
+    that component ``c`` at scan point ``p`` was assigned to. ``alternatives`` holds
+    the distinct near-degenerate runner-up labellings (empty unless
+    ``keep_alternatives > 0`` was requested).
     """
 
     success: bool
@@ -63,6 +82,7 @@ class AngularAssignmentResult:
     total_chi_squared: float = 0.0
     dof: int = 0
     message: str = ""
+    alternatives: list[AngularAssignmentAlternative] = field(default_factory=list)
 
 
 def _seed_parameters(model_name: str, values: np.ndarray) -> ParameterSet:
@@ -298,6 +318,8 @@ def fit_assigned_angular_curves(
     *,
     model_name: str = "KnightAnisotropy",
     max_iter: int = 25,
+    keep_alternatives: int = 0,
+    alternative_delta_chi2: float = 9.0,
 ) -> AngularAssignmentResult:
     """Jointly fit ``N`` K(θ) curves, assigning each angle's components one-to-one.
 
@@ -305,6 +327,13 @@ def fit_assigned_angular_curves(
     (one per component). Returns the per-curve fits, the per-point assignment, and
     the realigned per-curve traces. The fit is seeded from both the identity
     (raw-label) and value-continuity assignments and the lowest-χ² result kept.
+
+    When ``keep_alternatives > 0``, each seed's converged outcome is collected and
+    the runners-up whose assignment differs from the winner (and each other) and
+    whose ``total_chi_squared`` lies within ``alternative_delta_chi2`` of the
+    winner are exposed, χ²-ordered and capped at ``keep_alternatives``, on
+    :attr:`AngularAssignmentResult.alternatives` (canonicalised like the winner).
+    The default (``keep_alternatives = 0``) leaves behaviour unchanged.
     """
     if model_name not in ANGULAR_MODELS:
         raise ValueError(f"Unknown angular model {model_name!r}; expected one of {ANGULAR_MODELS}")
@@ -339,12 +368,8 @@ def fit_assigned_angular_curves(
         seeds.append(_continuity_seed(x, values))
         seeds.extend(_crossing_swap_seeds(x, values))
 
-    best: tuple[list[np.ndarray], list[ParameterModelFitResult], float, bool] | None = None
-    for seed in seeds:
-        candidate = _run_em(x, values, errors, model, model_name, seed, max_iter)
-        if best is None or candidate[2] < best[2]:
-            best = candidate
-    assert best is not None
+    outcomes = [_run_em(x, values, errors, model, model_name, seed, max_iter) for seed in seeds]
+    best = min(outcomes, key=lambda candidate: candidate[2])
     assignment, fits, total, converged = best
 
     # Realigned per-curve traces: curve m takes its assigned component each point.
@@ -363,6 +388,12 @@ def fit_assigned_angular_curves(
     for fit in fits:
         _canonicalize_theta0(model_name, fit)
 
+    alternatives = (
+        _collect_alternatives(outcomes, best, model_name, keep_alternatives, alternative_delta_chi2)
+        if keep_alternatives > 0
+        else []
+    )
+
     return AngularAssignmentResult(
         success=all(fit.success for fit in fits),
         converged=converged,
@@ -374,7 +405,53 @@ def fit_assigned_angular_curves(
         curve_errors=curve_errors,
         total_chi_squared=float(total),
         dof=max(n_points * n_components - n_components * n_params, 0),
+        alternatives=alternatives,
     )
+
+
+def _assignment_key(assignment: Sequence[np.ndarray]) -> tuple[tuple[int, ...], ...]:
+    """Hashable, order-preserving key for an assignment (per-point permutations)."""
+    return tuple(tuple(int(v) for v in perm) for perm in assignment)
+
+
+def _collect_alternatives(
+    outcomes: Sequence[tuple[list[np.ndarray], list[ParameterModelFitResult], float, bool]],
+    winner: tuple[list[np.ndarray], list[ParameterModelFitResult], float, bool],
+    model_name: str,
+    keep_alternatives: int,
+    delta_chi2: float,
+) -> list[AngularAssignmentAlternative]:
+    """Distinct near-degenerate runners-up within Δχ² of the winner, χ²-ordered.
+
+    Dedupes by exact assignment equality against the winner and each other,
+    keeps only those within ``delta_chi2`` of the winner's total χ², caps at
+    ``keep_alternatives``, and canonicalises each kept alternative's curves.
+    """
+    winner_total = winner[2]
+    seen: set[tuple[tuple[int, ...], ...]] = {_assignment_key(winner[0])}
+    alternatives: list[AngularAssignmentAlternative] = []
+    for cand_assignment, cand_fits, cand_total, cand_converged in sorted(
+        outcomes, key=lambda candidate: candidate[2]
+    ):
+        if cand_total - winner_total > delta_chi2:
+            break  # χ²-sorted: everything further out is beyond the window too
+        key = _assignment_key(cand_assignment)
+        if key in seen:
+            continue
+        seen.add(key)
+        for fit in cand_fits:
+            _canonicalize_theta0(model_name, fit)
+        alternatives.append(
+            AngularAssignmentAlternative(
+                assignment=[tuple(int(v) for v in perm) for perm in cand_assignment],
+                curves=cand_fits,
+                total_chi_squared=float(cand_total),
+                converged=bool(cand_converged),
+            )
+        )
+        if len(alternatives) >= keep_alternatives:
+            break
+    return alternatives
 
 
 #: Odd-flip covariance Jacobian rows, keyed by a fold key -> {output parameter

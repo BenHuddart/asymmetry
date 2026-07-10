@@ -25,10 +25,11 @@ Everything here is GUI-free and pure numpy; refits happen only inside
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 from numpy.typing import NDArray
+from scipy.optimize import linear_sum_assignment
 
 from asymmetry.core.fitting.parameter_models import (
     ParameterCompositeModel,
@@ -38,6 +39,12 @@ from asymmetry.core.fitting.parameters import ParameterSet
 
 #: Condition number above which the covariance is flagged as ill-conditioned.
 _COVARIANCE_CONDITION_WARN = 1.0e4
+
+#: Proximity factor (in units of the larger per-candidate sigma) below which two
+#: series' predicted values are flagged as at-risk of misassignment (§3.1). A
+#: new datum near a predicted crossing may attach to the wrong curve, breaking
+#: the rank-one update's assumption that it belongs to the series it constrains.
+_ASSIGNMENT_RISK_K = 2.0
 
 #: Utility ratio outside which the argmax is flagged as gradient-unstable
 #: (recomputed with a 10x finite-difference step).
@@ -81,6 +88,11 @@ class NextPointSuggestion:
     #: sigma of the target in the N -> infinity limit of a single new point
     #: at ``best_x`` — the floor set by the other parameters' uncertainty.
     floor_sigma: float | None = None
+    #: Per-candidate assignment-risk flag (multi-series acquisition only). ``True``
+    #: where two series' predicted values lie within ``_ASSIGNMENT_RISK_K`` sigma
+    #: of each other, so a new datum there may attach to the wrong curve. ``None``
+    #: for single-series suggestions, which have no crossing to worry about.
+    risk_mask: NDArray[np.bool_] | None = None
     warnings: tuple[str, ...] = ()
 
 
@@ -398,6 +410,220 @@ def suggest_next_point(
     )
 
 
+@dataclass(frozen=True)
+class SeriesSpec:
+    """One series' inputs to a multi-series acquisition.
+
+    Mirrors :func:`suggest_next_point`'s per-series argument types: a fitted
+    ``model``/``parameters`` pair, the ``(names, matrix)`` fit ``covariance``
+    (``None`` when the fit produced none), and the measured ``x_data``/``y_err``
+    that define the empirical new-point noise model. One physical measurement at
+    a candidate ``x`` is assumed to yield one datum for *every* series (§3.1).
+    """
+
+    model: ParameterCompositeModel
+    parameters: ParameterSet
+    covariance: tuple[list[str], list[list[float]]] | None
+    x_data: NDArray[np.float64]
+    y_err: NDArray[np.float64]
+
+
+def _series_label(labels: Sequence[str] | None, index: int) -> str:
+    if labels is not None and 0 <= index < len(labels):
+        return str(labels[index])
+    return f"series {index}"
+
+
+def _assignment_risk_mask(
+    series: Sequence[SeriesSpec],
+    candidates: NDArray[np.float64],
+) -> tuple[NDArray[np.bool_], list[str]]:
+    """Flag candidates where two series' predictions risk misassignment (§3.1).
+
+    A candidate is at-risk when any two series' predicted values lie within
+    ``_ASSIGNMENT_RISK_K * max(sigma_m, sigma_n)`` of each other — near a
+    predicted crossing the new datum's components are unlabelled and may attach
+    to the wrong curve, so the rank-one information gain (which assumes correct
+    attachment) is optimistic there. Series without a usable noise model are
+    excluded (no sigma to compare against); with fewer than two usable series the
+    mask is all-``False`` (a lone curve has nothing to cross).
+    """
+    predictions: list[NDArray[np.float64]] = []
+    sigmas: list[NDArray[np.float64]] = []
+    for spec in series:
+        noise = _empirical_sigma(spec.x_data, spec.y_err, [])
+        if noise is None:
+            continue
+        values = {p.name: float(p.value) for p in spec.parameters}
+        raw = np.asarray(spec.model.function(candidates, **values), dtype=float)
+        x_meas, sigma_meas = noise
+        predictions.append(np.nan_to_num(raw, nan=np.inf))
+        sigmas.append(np.interp(candidates, x_meas, sigma_meas))
+
+    risk = np.zeros(candidates.shape, dtype=bool)
+    warnings: list[str] = []
+    if len(predictions) < 2:
+        return risk, warnings
+    for a in range(len(predictions)):
+        for b in range(a + 1, len(predictions)):
+            threshold = _ASSIGNMENT_RISK_K * np.maximum(sigmas[a], sigmas[b])
+            gap = np.abs(predictions[a] - predictions[b])
+            risk |= np.isfinite(gap) & (gap <= threshold)
+    if np.any(risk):
+        flagged = candidates[risk]
+        warnings.append(
+            f"Predicted curves approach within {_ASSIGNMENT_RISK_K:g}σ over "
+            f"x ∈ [{float(flagged.min()):.4g}, {float(flagged.max()):.4g}]; a new "
+            f"point there risks feeding the wrong curve (misassignment)."
+        )
+    return risk, warnings
+
+
+def suggest_next_point_multi(
+    series: Sequence[SeriesSpec],
+    x_min: float,
+    x_max: float,
+    *,
+    target: tuple[int, str] | None = None,
+    sigma_goal: float | None = None,
+    n_candidates: int = 257,
+    labels: Sequence[str] | None = None,
+) -> NextPointSuggestion:
+    """Rank candidate x by how much a shared new point constrains several series.
+
+    Each entry of ``series`` is a fitted :class:`SeriesSpec`; one measurement at
+    ``x`` adds one datum to *every* series. With ``target is None`` the utility is
+    the D-optimal information-gain sum over series (§3.1):
+
+        U(x) = Σ_m ½ log[1 + g_m(x)ᵀ Σ_m g_m(x) / σ_m²(x)]
+
+    With ``target = (series_index, param_name)`` the objective is that one
+    series' c-optimal variance reduction for ``param_name`` — the other series
+    still receive the datum but do not enter the objective — and the
+    ``sigma_goal``/event-count solve applies to the target exactly as in
+    :func:`suggest_next_point`. Either way the returned suggestion carries a
+    per-candidate :attr:`NextPointSuggestion.risk_mask` (§3.1): the rank-one
+    update assumes the new datum attaches to the right curve, so candidates near
+    a predicted crossing are flagged.
+
+    A series whose covariance is invalid (:func:`_validated_covariance`)
+    contributes nothing to the utility and adds a warning naming it (by
+    ``labels`` when supplied, else by index); the suggestion still succeeds if at
+    least one series is usable. All-unusable inputs degrade to an empty
+    suggestion. Never raises.
+    """
+    warnings: list[str] = []
+    if not series:
+        warnings.append("No series supplied for multi-series acquisition.")
+        return _empty_suggestion(None, warnings)
+
+    if target is not None:
+        target_index, target_param = target
+        if not (0 <= target_index < len(series)):
+            warnings.append(f"Target series index {target_index} is out of range.")
+            return _empty_suggestion(target_param, warnings)
+        spec = series[target_index]
+        base = suggest_next_point(
+            spec.model,
+            spec.parameters,
+            spec.covariance,
+            spec.x_data,
+            spec.y_err,
+            x_min,
+            x_max,
+            target=target_param,
+            sigma_goal=sigma_goal,
+            n_candidates=n_candidates,
+        )
+        if base.x_candidates.size == 0:
+            return base
+        risk, risk_warnings = _assignment_risk_mask(series, base.x_candidates)
+        return replace(
+            base,
+            risk_mask=risk,
+            warnings=base.warnings + tuple(risk_warnings),
+        )
+
+    # D-optimal: sum the per-series information gains over the usable series.
+    usable: list[
+        tuple[list[str], NDArray[np.float64], dict[str, float], SeriesSpec, NDArray, NDArray]
+    ] = []
+    for i, spec in enumerate(series):
+        cov_warnings: list[str] = []
+        validated = _validated_covariance(spec.covariance, cov_warnings)
+        if validated is None:
+            warnings.append(f"{_series_label(labels, i)} has no usable covariance and is skipped.")
+            continue
+        noise = _empirical_sigma(spec.x_data, spec.y_err, [])
+        if noise is None:
+            warnings.append(f"{_series_label(labels, i)} has no noise model and is skipped.")
+            continue
+        free_names, cov = validated
+        values = {p.name: float(p.value) for p in spec.parameters}
+        if any(name not in values for name in free_names):
+            warnings.append(f"{_series_label(labels, i)} is missing fitted parameter values.")
+            continue
+        usable.append((free_names, cov, values, spec, noise[0], noise[1]))
+
+    if not usable:
+        warnings.append("No usable series for the multi-series acquisition.")
+        return _empty_suggestion(None, warnings)
+
+    if not (np.isfinite(x_min) and np.isfinite(x_max)) or x_max <= x_min:
+        warnings.append("Invalid candidate range.")
+        return _empty_suggestion(None, warnings)
+
+    grid = np.linspace(float(x_min), float(x_max), int(n_candidates))
+    in_range = [
+        x_meas[(x_meas >= x_min) & (x_meas <= x_max)] for _fn, _c, _v, _s, x_meas, _sm in usable
+    ]
+    candidates = np.unique(np.concatenate([grid, *in_range]))
+
+    utility = np.zeros_like(candidates)
+    extrapolated = np.zeros(candidates.shape, dtype=bool)
+    sigma_stack: list[NDArray[np.float64]] = []
+    for free_names, cov, values, spec, x_meas, sigma_meas in usable:
+        sigma_new = np.interp(candidates, x_meas, sigma_meas)
+        sigma_stack.append(sigma_new)
+        extrapolated |= (candidates < x_meas[0]) | (candidates > x_meas[-1])
+        grads = _sensitivities(spec.model, values, free_names, candidates)
+        utility = utility + _utility_curve(grads, cov, sigma_new, None)
+    if np.any(extrapolated):
+        warnings.append(
+            "Candidate range extends beyond the measured points; suggestions "
+            "there rely entirely on the assumed model form."
+        )
+    sigma_new_mean = np.mean(np.vstack(sigma_stack), axis=0)
+
+    risk, risk_warnings = _assignment_risk_mask(series, candidates)
+    warnings.extend(risk_warnings)
+
+    if not np.any(utility > 0.0):
+        warnings.append("No candidate carries information about the fit parameters.")
+        return NextPointSuggestion(
+            x_candidates=candidates,
+            utility=utility,
+            extrapolated=extrapolated,
+            best_x=float("nan"),
+            target=None,
+            sigma_new=sigma_new_mean,
+            risk_mask=risk,
+            warnings=tuple(warnings),
+        )
+
+    best_index = int(np.argmax(utility))
+    return NextPointSuggestion(
+        x_candidates=candidates,
+        utility=utility,
+        extrapolated=extrapolated,
+        best_x=float(candidates[best_index]),
+        target=None,
+        sigma_new=sigma_new_mean,
+        risk_mask=risk,
+        warnings=tuple(warnings),
+    )
+
+
 def calibrate_suggestion(
     model: ParameterCompositeModel,
     parameters: ParameterSet,
@@ -666,6 +892,62 @@ def suggest_discriminating_point(
         sigma_new=sigma_new,
         warnings=tuple(warnings),
     )
+
+
+def set_matching_divergence(
+    hypothesis_a: Sequence[tuple[ParameterCompositeModel, ParameterSet]],
+    hypothesis_b: Sequence[tuple[ParameterCompositeModel, ParameterSet]],
+    sigma: Sequence[NDArray[np.float64]],
+    x_candidates: NDArray[np.float64],
+) -> NDArray[np.float64]:
+    """Per-candidate min-cost set-matching divergence between two hypotheses (§3.3).
+
+    Each hypothesis is an equal-length list of ``(model, parameters)`` curves. At
+    every candidate ``x`` the two hypotheses' predicted ``N``-vectors are matched
+    one-to-one (Hungarian) to minimise the total weighted cost, with per-pair cost
+
+        [f_i^A(x) − f_j^B(x)]² / (2 σ_i²(x))
+
+    (``sigma[i]`` is series ``i`` of hypothesis A's per-candidate noise). Because a
+    new run's components are *unlabelled*, two assignment hypotheses are only
+    distinguishable through the sets of values they predict — this is that
+    set-level discrepancy. It is zero where the hypotheses predict the same value
+    set (e.g. at a crossing where the labellings coincide) and peaks where they
+    imply genuinely different curve sets. For ``N = 1`` it reduces exactly to the
+    labelled discrimination integrand of :func:`suggest_discriminating_point`.
+
+    Returns ``U(x)`` over ``x_candidates``. Non-finite predictions or zero sigmas
+    are treated as a large finite cost so the matching stays well-posed.
+    """
+    x = np.asarray(x_candidates, dtype=float)
+    n = len(hypothesis_a)
+    if n != len(hypothesis_b):
+        raise ValueError("hypothesis_a and hypothesis_b must have the same length")
+    if n == 0 or x.size == 0:
+        return np.zeros(x.shape, dtype=float)
+
+    def _stack(hypothesis: Sequence[tuple[ParameterCompositeModel, ParameterSet]]) -> NDArray:
+        rows = []
+        for model, params in hypothesis:
+            values = {p.name: float(p.value) for p in params}
+            rows.append(np.asarray(model.function(x, **values), dtype=float))
+        return np.vstack(rows)  # (N, G)
+
+    f_a = _stack(hypothesis_a)
+    f_b = _stack(hypothesis_b)
+    sig = np.vstack([np.asarray(s, dtype=float) for s in sigma])  # (N, G)
+    variance = 2.0 * sig**2
+
+    large = 1e18
+    utility = np.zeros(x.shape, dtype=float)
+    for g in range(x.size):
+        diff = f_a[:, g][:, None] - f_b[:, g][None, :]  # (N, N)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            cost = diff**2 / variance[:, g][:, None]
+        cost = np.nan_to_num(cost, nan=large, posinf=large, neginf=large)
+        rows, cols = linear_sum_assignment(cost)
+        utility[g] = float(cost[rows, cols].sum())
+    return utility
 
 
 def aic_weights(chi_squareds: Sequence[float], n_free_params: Sequence[int]) -> list[float]:

@@ -414,3 +414,82 @@ def test_canonicalize_theta0_covariance_matches_oracle_refit_in_canonical_branch
     diag = np.diag(np.array(matrix))
     for i, name in enumerate(names):
         assert fit.uncertainties[name] == pytest.approx(math.sqrt(diag[i]))
+
+
+# --- EM runner-up alternatives (§3.3 / §5.8) ---------------------------------
+
+
+def _cos2(theta_deg, avg, amp, theta0=0.0):
+    return avg + amp * np.cos(2.0 * np.radians(np.asarray(theta_deg, dtype=float) - theta0))
+
+
+def _near_degenerate_crossing_scan():
+    """Two low-amplitude crossing curves with large errors → competing labellings.
+
+    Small K_amp and generous error bars make the value-sorted *envelope*
+    labelling nearly as good as the continued-through-crossing one, so a runner-up
+    survives a Δχ² ≈ 9 window. Deterministic (fixed seed).
+    """
+    angles = np.linspace(0.0, 90.0, 19)
+    a = _cos2(angles, 100.0, 8.0, 0.0)  # cross at 45 (cos 2θ = 0)
+    b = _cos2(angles, 100.0, -8.0, 0.0)
+    past = angles > 45.0
+    comp0 = np.where(past, b, a)
+    comp1 = np.where(past, a, b)
+    errors = np.full((len(angles), 2), 4.0)
+    noise = np.random.default_rng(3).normal(0.0, 4.0, size=(len(angles), 2))
+    raw = np.column_stack([comp0, comp1]) + noise
+    return angles, raw, errors
+
+
+def test_keep_alternatives_zero_default_leaves_alternatives_empty():
+    angles, raw, errors = _near_degenerate_crossing_scan()
+    result = fit_assigned_angular_curves(angles, raw, errors, model_name="AngularCos2")
+    assert result.alternatives == []
+
+
+def test_keep_alternatives_returns_deduped_chi2_ordered_canonical_alternatives():
+    angles, raw, errors = _near_degenerate_crossing_scan()
+    result = fit_assigned_angular_curves(
+        angles, raw, errors, model_name="AngularCos2", keep_alternatives=2
+    )
+    assert 1 <= len(result.alternatives) <= 2
+
+    winner_key = tuple(result.assignment)
+    seen = {winner_key}
+    prev_chi2 = result.total_chi_squared
+    for alternative in result.alternatives:
+        key = tuple(alternative.assignment)
+        # Distinct from the winner and from every earlier alternative (deduped).
+        assert key not in seen
+        seen.add(key)
+        # Within the Δχ² window and χ²-ordered (non-decreasing).
+        assert alternative.total_chi_squared - result.total_chi_squared <= 9.0
+        assert alternative.total_chi_squared >= prev_chi2 - 1e-9
+        prev_chi2 = alternative.total_chi_squared
+        # Canonicalised curves: theta0 folded into (−45, 45].
+        for fit in alternative.curves:
+            theta0 = {p.name: p.value for p in fit.parameters}["theta0"]
+            assert -45.0 < theta0 <= 45.0
+
+
+def test_keep_alternatives_caps_at_requested_count():
+    angles, raw, errors = _near_degenerate_crossing_scan()
+    result = fit_assigned_angular_curves(
+        angles, raw, errors, model_name="AngularCos2", keep_alternatives=1
+    )
+    assert len(result.alternatives) <= 1
+
+
+def test_keep_alternatives_narrow_window_keeps_none():
+    # A Δχ² window of 0 admits nothing (every runner-up has strictly higher χ²).
+    angles, raw, errors = _near_degenerate_crossing_scan()
+    result = fit_assigned_angular_curves(
+        angles,
+        raw,
+        errors,
+        model_name="AngularCos2",
+        keep_alternatives=3,
+        alternative_delta_chi2=0.0,
+    )
+    assert result.alternatives == []
