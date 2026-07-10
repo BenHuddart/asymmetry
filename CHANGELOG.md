@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Waterfall display mode for overlaid plots.** A new **Waterfall** checkbox
+  next to **Overlay** on both the time-domain and frequency-domain plot
+  panels stacks each overlaid trace vertically by a uniform `i * Δ` offset so
+  closely-spaced curves stay cleanly resolved. Δ is automatic (1.4× the
+  median robust per-trace span, measured over the displayed x-range) unless
+  a manual value is entered in the
+  adjacent offset field (blank = automatic). Time-domain waterfalls draw a
+  faint baseline hairline at each trace's shifted zero; frequency-domain
+  waterfalls do not. GLE and plain-text exports mirror the on-screen offsets
+  and record a `waterfall offset:` header so the raw values stay recoverable.
+  The setting persists in the project file (schema v14). Documented in
+  *Reference ▸ GUI usage ▸ Waterfall stacking*.
+
 ## [0.10.0] - 2026-07-10
 
 ### Added

@@ -244,10 +244,10 @@ def test_spectral_moments_info_affordance():
 
 
 def test_no_schema_version_bump():
-    # Baseline guard: bumped to 13 for global parameter fit studies — the
-    # project now carries a top-level ``global_fit_studies`` list (v12->v13).
-    # A future accidental bump must consciously update this literal.
-    assert CURRENT_SCHEMA_VERSION == 13
+    # Baseline guard: bumped to 14 for waterfall overlay stacking — plot_state
+    # (and its nested frequency_plot_state) now carries a ``waterfall`` block
+    # (v13->v14). A future accidental bump must consciously update this literal.
+    assert CURRENT_SCHEMA_VERSION == 14
 
 
 def test_restore_state_tolerates_absent_moments():

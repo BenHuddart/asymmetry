@@ -1593,8 +1593,17 @@ def test_configure_background_parent_destruction_does_not_crash(
     _wait_until(lambda: entered.is_set())  # worker inside apply_grouping -> running
     assert dialog._tasks.active_count == 1
 
-    reaper_before = tasks_mod._orphan_reaper
-    parked_before = len(reaper_before._threads) if reaper_before is not None else 0
+    # The reaper is process-global and shared across the whole xdist worker:
+    # a *previous* test's deferred deletes can drain during this test's event
+    # pump and park (or unpark) their own orphans concurrently, so an exact
+    # global count is racy under test reordering. Track this dialog's worker
+    # thread by identity instead (same discipline as the spawn-pool reaper
+    # fix in tests/core/test_process_pool.py).
+    worker_thread = dialog._tasks._live[0][0]
+
+    def _parked() -> bool:
+        reaper = tasks_mod._orphan_reaper
+        return reaper is not None and any(t is worker_thread for t, _ in reaper._threads)
 
     # Destroy WITHOUT close()/done(): deleteLater + a DeferredDelete drain.
     dialog.deleteLater()
@@ -1602,12 +1611,10 @@ def test_configure_background_parent_destruction_does_not_crash(
     qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
     qapp.processEvents()
 
-    reaper = tasks_mod._orphan_reaper
-    assert reaper is not None
-    assert len(reaper._threads) == parked_before + 1
+    _wait_until(_parked)  # worker parked in the reaper, not aborted
 
     release.set()
-    _wait_until(lambda: len(reaper._threads) == parked_before)
+    _wait_until(lambda: not _parked())
 
 
 def test_alpha_child_dialog_survives_grouping_dialog_destruction(
@@ -1655,8 +1662,15 @@ def test_alpha_child_dialog_survives_grouping_dialog_destruction(
     _wait_until(lambda: entered.is_set())  # estimate worker is in-flight
     assert child._tasks.active_count == 1
 
-    reaper_before = tasks_mod._orphan_reaper
-    parked_before = len(reaper_before._threads) if reaper_before is not None else 0
+    # Identity-based for the same reason as the background-configure test
+    # above: the process-global reaper can park/unpark other tests' orphans
+    # during this test's event pump (seen on CI when the shard schedule
+    # reshuffles), so an exact global count is racy.
+    worker_thread = child._tasks._live[0][0]
+
+    def _parked() -> bool:
+        reaper = tasks_mod._orphan_reaper
+        return reaper is not None and any(t is worker_thread for t, _ in reaper._threads)
 
     # Destroy the GroupingDialog PARENT without close()/done() on the child.
     del child
@@ -1665,12 +1679,10 @@ def test_alpha_child_dialog_survives_grouping_dialog_destruction(
     qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
     qapp.processEvents()
 
-    reaper = tasks_mod._orphan_reaper
-    assert reaper is not None
-    assert len(reaper._threads) == parked_before + 1  # child worker parked, not aborted
+    _wait_until(_parked)  # child worker parked in the reaper, not aborted
 
     release.set()
-    _wait_until(lambda: len(reaper._threads) == parked_before)
+    _wait_until(lambda: not _parked())
 
 
 # ---------------------------------------------------------------------------

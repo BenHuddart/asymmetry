@@ -116,6 +116,41 @@ def test_fit_panel_field_set_unset_shows_placeholder_and_clears_text(qapp: QAppl
     field.set_unset("full spectrum")
     assert field.text() == ""
     assert field.placeholderText() == "full spectrum"
+    assert field.is_unset() is True
+
+
+def test_plain_field_blank_commit_rewrites_stored_value(qapp: QApplication) -> None:
+    """A field never given an unset placeholder keeps the legacy revert-on-blank."""
+    field = FitPanelFloatLimitField()
+    field.setValue(3.5)
+    field.clear()
+    QTest.keyClick(field, Qt.Key.Key_Return)
+    assert field.text() == "3.500"
+    assert field.is_unset() is False
+
+
+def test_unset_capable_field_blank_commit_stays_blank(qapp: QApplication) -> None:
+    """Committing a cleared unset-capable field keeps the unset (blank) state.
+
+    ``_normalise_text`` used to rewrite the stored value back into the field
+    on every commit, so clearing a field after a ``setValue`` (e.g. a project
+    restore) visibly snapped back and "blank = auto" was unreachable.
+    """
+    field = FitPanelFloatLimitField()
+    field.set_unset("Auto")
+    field.setValue(2.5)
+    assert field.is_unset() is False
+
+    field.clear()
+    QTest.keyClick(field, Qt.Key.Key_Return)
+    assert field.text() == ""
+    assert field.placeholderText() == "Auto"
+    assert field.is_unset() is True
+
+    # setValue re-fills the field and leaves the unset state.
+    field.setValue(4.0)
+    assert field.text() == "4.000"
+    assert field.is_unset() is False
 
 
 def test_fit_panel_field_return_key_commits_typed_value(qapp: QApplication) -> None:

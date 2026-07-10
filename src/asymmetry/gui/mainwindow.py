@@ -1920,6 +1920,12 @@ class MainWindow(QMainWindow):
             self._plot_panel.overlay_toggled.connect(self._on_overlay_toggled)
         if hasattr(self._frequency_plot_panel, "overlay_toggled"):
             self._frequency_plot_panel.overlay_toggled.connect(self._on_frequency_overlay_toggled)
+        if hasattr(self._plot_panel, "waterfall_changed"):
+            self._plot_panel.waterfall_changed.connect(self._on_waterfall_changed)
+        if hasattr(self._frequency_plot_panel, "waterfall_changed"):
+            self._frequency_plot_panel.waterfall_changed.connect(
+                self._on_frequency_waterfall_changed
+            )
         if hasattr(self._plot_panel, "time_view_changed"):
             self._plot_panel.time_view_changed.connect(self._on_plot_time_view_changed)
         if hasattr(self._plot_panel, "polarization_axis_changed"):
@@ -7580,6 +7586,10 @@ class MainWindow(QMainWindow):
         """Re-render the frequency view when the overlay toggle changes."""
         self._sync_frequency_plot_for_current_dataset()
 
+    def _on_frequency_waterfall_changed(self) -> None:
+        """Re-render the frequency overlay when its waterfall setting changes."""
+        self._sync_frequency_plot_for_current_dataset()
+
     def _selected_frequency_run_numbers(self) -> list[int]:
         """Ordered, de-duplicated run numbers of the current dataset selection."""
         run_numbers: list[int] = []
@@ -9626,6 +9636,10 @@ class MainWindow(QMainWindow):
         self._update_selected_datasets()
         mode = "enabled" if enabled else "disabled"
         self._log_panel.log(f"Plot overlay {mode}.")
+
+    def _on_waterfall_changed(self) -> None:
+        """Re-render the time-domain overlay when its waterfall setting changes."""
+        self._render_current_selection_plot()
 
     def _on_plot_time_view_changed(self, _mode: str) -> None:
         """Re-render the main time-domain plot after an explicit view switch."""

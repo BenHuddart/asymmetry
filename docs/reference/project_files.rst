@@ -37,7 +37,8 @@ Project files store:
 
 * Loaded dataset references (source file paths)
 * Browser state (sorting, filters, selected runs, dynamic columns)
-* Plot state (ranges, selected run, bunch factor)
+* Plot state (ranges, selected run, bunch factor, overlay mode, and waterfall
+  stacking — see :ref:`waterfall stacking <waterfall-stacking>`)
 * Fit-panel and Fourier-panel state
 * Separate frequency-fit state for displayed Fourier spectra
 * Per-run Fourier group-phase tables, included groups, and auto-estimated

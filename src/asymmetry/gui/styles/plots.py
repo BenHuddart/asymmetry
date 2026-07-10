@@ -153,7 +153,14 @@ def draw_empty_state_message(ax: object, message: str) -> None:
         pass
 
 
-def draw_zero_line(ax: object) -> None:
+def draw_zero_line(
+    ax: object,
+    y: float = 0.0,
+    *,
+    linewidth: float = 0.8,
+    alpha: float | None = None,
+    zorder: float = 1.5,
+) -> None:
     """Draw the handoff's y = 0 reference line, excluded from autoscaling.
 
     ``axhline`` registers its y-value in the data limits, which would anchor
@@ -161,6 +168,10 @@ def draw_zero_line(ax: object) -> None:
     Building the Line2D by hand and attaching it via ``add_artist`` keeps it
     out of the autoscale computation entirely, so callers can apply it from a
     shared rendering chokepoint without per-domain branching.
+
+    *y*, *linewidth*, *alpha*, and *zorder* let the waterfall overlay reuse
+    the same idiom for its fainter per-trace baselines at each stacked
+    trace's shifted zero; the defaults preserve the classic y = 0 line.
     """
     try:
         from matplotlib import lines as mlines
@@ -169,12 +180,14 @@ def draw_zero_line(ax: object) -> None:
         transform = ax.get_yaxis_transform(which="grid")  # type: ignore[union-attr]
         line = mlines.Line2D(
             [0.0, 1.0],
-            [0.0, 0.0],
+            [float(y), float(y)],
             transform=transform,
             color=tokens.PLOT_ZERO_LINE,
-            linewidth=0.8,
-            zorder=1.5,
+            linewidth=linewidth,
+            zorder=zorder,
         )
+        if alpha is not None:
+            line.set_alpha(alpha)
         ax.add_artist(line)  # type: ignore[union-attr]
     except Exception:
         pass

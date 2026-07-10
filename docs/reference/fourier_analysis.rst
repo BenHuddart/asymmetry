@@ -729,6 +729,12 @@ Runs that cannot compute — no detector groups, or a transform that fails — a
 skipped and reported in the status line: *"Overlaying <n> runs; <m> selected
 run(s) could not be computed — check their detector grouping and the log."*
 
+Once several spectra are overlaid, **Waterfall** stacks each one onto its own
+vertical offset so nearby lines stay resolved instead of overlapping —
+see :ref:`waterfall stacking <waterfall-stacking>` for the shared control (it
+works the same way here as on the time-domain panel, except that a spectrum's
+own baseline stands in for the time-domain hairline).
+
 The first view is also **framed to where the physics is**. A narrow line at
 high frequency — a 6 T Larmor line is ~13 G wide at 813 MHz — is framed
 *around* (the line centred, the window a few dozen linewidths wide: WiMDA's
