@@ -598,6 +598,41 @@ def test_default_run_uses_standard_tier_marker_and_parallel() -> None:
     assert "-n" in command and "auto" in command
 
 
+def test_command_env_pins_numeric_backends_to_one_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = _load_harness()
+
+    for var in (
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
+    env = harness._command_env()
+
+    # One thread per process: xdist already forks a process per core, so letting
+    # OpenBLAS thread per core inside each oversubscribes the box and crashes the
+    # heavy full-tier fit-wizard workers.
+    assert env["OMP_NUM_THREADS"] == "1"
+    assert env["OPENBLAS_NUM_THREADS"] == "1"
+    assert env["MKL_NUM_THREADS"] == "1"
+    assert env["NUMEXPR_NUM_THREADS"] == "1"
+
+
+def test_command_env_respects_explicit_thread_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = _load_harness()
+
+    monkeypatch.setenv("OPENBLAS_NUM_THREADS", "4")
+
+    # setdefault leaves a deliberately-set value alone (e.g. profiling BLAS).
+    assert harness._command_env()["OPENBLAS_NUM_THREADS"] == "4"
+
+
 def test_fast_tier_marker_is_unit_only_and_parallel() -> None:
     harness = _load_harness()
 
@@ -607,6 +642,51 @@ def test_fast_tier_marker_is_unit_only_and_parallel() -> None:
     # At ~2,400 tests the fast tier is no longer worker-startup bound: measured
     # 71s serial vs 25s with `-n auto`, so it parallelizes like the other tiers.
     assert "-n" in command and "auto" in command
+
+
+def _opt_value(command: list[str], flag: str) -> str | None:
+    for i, token in enumerate(command):
+        if token == flag and i + 1 < len(command):
+            return command[i + 1]
+        if token.startswith(f"{flag}="):
+            return token.split("=", 1)[1]
+    return None
+
+
+def test_full_tier_caps_workers_and_raises_timeout() -> None:
+    harness = _load_harness()
+
+    command = harness.build_pytest_command([], tier="full")
+
+    # Two workers leaves the exhaustive-harness nested pool (cpu_count - 2)
+    # headroom so it cannot oversubscribe the runner and stall neighbour fits
+    # past the timeout — the release-tag crash. The raised timeout is the safety
+    # margin for a contention-slowed fit and the harness's own wall budget.
+    assert _opt_value(command, "-n") == "2"
+    assert _opt_value(command, "--timeout") == "600"
+
+
+def test_non_full_tiers_keep_auto_workers_and_default_timeout() -> None:
+    harness = _load_harness()
+
+    for tier in ("fast", "standard"):
+        command = harness.build_pytest_command([], tier=tier)
+        assert _opt_value(command, "-n") == "auto", tier
+        # No injected timeout — the pyproject default (120s) stands.
+        assert "--timeout" not in command, tier
+
+
+def test_full_tier_respects_explicit_worker_and_timeout_overrides() -> None:
+    harness = _load_harness()
+
+    command = harness.build_pytest_command(["-n", "4", "--timeout=30"], tier="full")
+
+    # An explicit -n suppresses the harness-injected worker cap entirely, and an
+    # explicit --timeout wins because it is placed after the injected one.
+    assert "2" not in [_opt_value(command, "-n")]
+    assert _opt_value(command, "-n") == "4"
+    timeouts = [t for t in command if t == "--timeout" or t.startswith("--timeout=")]
+    assert timeouts == ["--timeout=30"]
 
 
 def test_subset_composes_with_tier_marker() -> None:
