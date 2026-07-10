@@ -1034,6 +1034,25 @@ def run_structural_checks() -> int:
 def _command_env() -> dict[str, str]:
     env = os.environ.copy()
     env.setdefault("QT_QPA_PLATFORM", "offscreen")
+    # Pin the numeric backends to a single thread each. pytest-xdist already
+    # spreads the suite across one process per core (``-n auto``), and the
+    # fit-wizard tests fan their own fits across a spawn-based ProcessPoolExecutor
+    # (sized to ``cpu_count - 2``, blind to xdist). With OpenBLAS defaulting to a
+    # thread per core in *every* one of those processes, a heavy full-tier run
+    # oversubscribes the box into hundreds of contending BLAS threads; the native
+    # Minuit/BLAS fits then stall past the per-test timeout and xdist reports the
+    # worker as crashed ("node down: Not properly terminated"). This is why the
+    # release-tag "Full test suite" run failed on the same heavy wizard tests
+    # every time. One thread per process removes the contention (locally: the
+    # crashing wizard subset went from 3 failed in 499s to 113 passed in 243s).
+    # ``setdefault`` lets an explicit override through for deliberate profiling.
+    for _threads_var in (
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+    ):
+        env.setdefault(_threads_var, "1")
     mpl_config_dir = Path(tempfile.gettempdir()) / "asymmetry-matplotlib"
     xdg_cache_dir = Path(tempfile.gettempdir()) / "asymmetry-cache"
     mpl_config_dir.mkdir(parents=True, exist_ok=True)
@@ -1115,6 +1134,27 @@ _TIER_MARKER: dict[str, str | None] = {
     "full": None,
 }
 
+# The full tier is the only one that runs the heavy fit-wizard integration/slow
+# tests, and one of them — the exhaustive global-wizard harness — fans its fits
+# across a spawn ProcessPoolExecutor sized to ``cpu_count - 2``, blind to the
+# fact it is already one xdist worker of many. Under ``-n auto`` (one worker per
+# core) that nested pool oversubscribes the runner: the single-threaded neighbour
+# fits are starved of CPU, run past ``--timeout``, and — because the thread-method
+# timeout cannot interrupt native Minuit/BLAS code — xdist kills the stalled
+# worker as "node down: Not properly terminated". This is why the release-tag
+# "Full test suite" run failed on the same wizard tests every time.
+#
+# Two workers is the sweet spot: the harness's ``cpu_count - 2`` pool plus two
+# xdist workers fits the core count without oversubscription (the harness worker
+# is blocked on its subprocess, so the CPU-bound processes are the pool plus the
+# one neighbour test). The generous timeout is belt-and-braces — it also covers
+# the harness test's own multi-hundred-second internal wall budget. The full tier
+# runs only on release tags, so the reduced parallelism costs wall-clock we can
+# afford; other tiers keep ``-n auto`` (the standard tier is sharded across
+# runners by CI instead).
+_FULL_TIER_WORKERS = "2"
+_FULL_TIER_TIMEOUT_S = 600
+
 # CI shards the standard/full tier across two runners by Qt involvement: the GUI
 # tests carry the per-test MainWindow construction cost, so splitting them onto
 # their own runner roughly halves wall-clock. `all` is the default (no split).
@@ -1192,11 +1232,24 @@ def build_pytest_command(
     if shard:
         pytest_args = pytest_args + ["--shard", shard]
 
+    user_jobs = any(a == "-n" or a.startswith("-n") or a == "--numprocesses" for a in pytest_args)
     parallel_args: list[str] = []
-    if parallel:
-        parallel_args = ["-n", "auto", "--dist", "load"]
+    if parallel and not user_jobs:
+        # The full tier caps workers to keep the exhaustive-harness nested pool
+        # from oversubscribing the runner (see ``_FULL_TIER_WORKERS`` above);
+        # every other tier scales to the box.
+        workers = _FULL_TIER_WORKERS if tier == "full" else "auto"
+        parallel_args = ["-n", workers, "--dist", "load"]
 
-    return [sys.executable, "-m", "pytest", *parallel_args, *pytest_args]
+    user_timeout = any(a == "--timeout" or a.startswith("--timeout=") for a in pytest_args)
+    timeout_args: list[str] = []
+    if tier == "full" and not user_timeout:
+        # Raise the default 120s per-test timeout for the full tier so a fit
+        # slowed by the harness's nested pool does not trip it and kill the
+        # worker. Placed before the user args so an explicit --timeout still wins.
+        timeout_args = ["--timeout", str(_FULL_TIER_TIMEOUT_S)]
+
+    return [sys.executable, "-m", "pytest", *parallel_args, *timeout_args, *pytest_args]
 
 
 def cmd_test(args: argparse.Namespace) -> int:
