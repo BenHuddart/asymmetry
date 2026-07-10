@@ -2242,6 +2242,14 @@ class GlobalFitTab(FitTabBase):
             # parameters like ``a_L`` and misses the standard ``A0``.
             if get_param_info(name).unit == "%":
                 seed = float(model_values.get(name, 0.0))
+                if lo == hi:
+                    # The grouped-fit parser pins amplitude params absent from
+                    # the visible table to (1, 1) — that normalisation is for
+                    # the asymmetry-domain fit, where a per-group ``amplitude``
+                    # nuisance carries the real value. Count fits have no such
+                    # nuisance and recover this amplitude directly, so the
+                    # pinned bound doesn't apply here; widen it back out.
+                    lo, hi = -100.0, 100.0
                 if abs(seed) <= 1e-6 or seed == 1.0:
                     seed = 20.0  # percent; typical transverse-field calibration amplitude
                 params.add(Parameter(name=name, value=seed, min=lo, max=hi))

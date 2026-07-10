@@ -22,18 +22,15 @@ grouped-fit surface that hosts the page's *Fit target*, *Count-fit options* and
    seeds its frequency/phase to the run's own values so the fit model matches
    the generator's signal shape, then runs the real forward/backward count fit.
 
-Because the model matches the signal, the fit converges to χ²ᵣ ≈ 1.03 and
+Because the model matches the signal, the fit converges to χ²ᵣ ≈ 1 and
 recovers α = 1.250(1) — the worked-example balance the page quotes.
 
-The synthesised signal uses a deliberately small (~1 %) asymmetry amplitude:
-the grouped fit surface normalises the shared model amplitude to unity and
-carries the real amplitude in its per-group nuisance, which the forward/backward
-count driver does not consume, so the count fit's model amplitude currently
-sits pinned at that unity reference (reported as ``A_1 (%) = 1 … at bound``).
-Matching the generator's amplitude to that pinned value keeps the demonstration
-fit's χ²ᵣ at ≈ 1 and its α recovery honest; a larger amplitude would inflate
-χ²ᵣ purely from the pinned-amplitude mismatch. α itself is fixed by the
-forward/backward count ratio and is recovered correctly regardless.
+The synthesised signal uses a realistic (~20 %) transverse-field asymmetry
+amplitude. The grouped fit surface normalises the shared model amplitude to
+unity for the asymmetry-domain fit (the real amplitude lives in its per-group
+nuisance there), but the count-fit seed frees and refits that amplitude
+directly, so the count fit recovers it honestly at any scale rather than
+being pinned to the asymmetry-domain's unity reference.
 
 Marked ``requires_fit = True`` because it runs a real iminuit count-domain fit
 (``asymmetry.core.fitting.count_domain.fit_fb_alpha``), which trips on
@@ -48,7 +45,7 @@ from PySide6.QtWidgets import QWidget
 from ._base import Scenario, _process_events_for, register
 
 
-def _tf_asymmetry(t, A=1.0, f=1.5, phi=0.3):  # noqa: N803 — A is the asymmetry symbol
+def _tf_asymmetry(t, A=20.0, f=1.5, phi=0.3):  # noqa: N803 — A is the asymmetry symbol
     """Transverse-field precession asymmetry (percent): A·cos(2πft + φ)."""
     return A * np.cos(2.0 * np.pi * f * np.asarray(t, dtype=float) + phi)
 
@@ -80,7 +77,7 @@ class AlphaCountCalibrationScenario(Scenario):
         run = simulate_run(
             template,
             _tf_asymmetry,
-            {"A": 1.0, "f": 1.5, "phi": 0.3},
+            {"A": 20.0, "f": 1.5, "phi": 0.3},
             total_events=40e6,
             alpha=1.25,
             seed=1,
