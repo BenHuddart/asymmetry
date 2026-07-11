@@ -8816,6 +8816,9 @@ class MainWindow(QMainWindow):
             if "group_id" in spec
         }
         updated = self._maxent_panel.apply_phase_table(phases_deg)
+        # The exchanged table must actually drive the next reconstruction, so
+        # switch off the data-derived seeding that would otherwise override it.
+        self._maxent_panel.set_auto_phase_seed(False)
         stamp = time.strftime("%Y-%m-%d %H:%M")
         self._maxent_panel.set_phase_provenance(
             f"Phases seeded from grouped fit ({updated} groups) · {stamp}"
@@ -9002,8 +9005,24 @@ class MainWindow(QMainWindow):
         )
 
     def _confirm_maxent_workload(self, estimate, config: MaxEntConfig) -> bool:
-        """Ask the user whether to continue with a risky MaxEnt workload."""
+        """Ask the user whether to continue with a risky MaxEnt workload.
+
+        Headless sessions (offscreen/minimal QPA — CI, screenshot scenarios,
+        scripted driving) have no user to dismiss the dialog, so the warning
+        routes to the log and the calculation proceeds.  Setting
+        ``ASYMMETRY_SUPPRESS_WORKLOAD_WARNING`` does the same on a display,
+        for scripted runs that drive a visible window.
+        """
         if not self._maxent_workload_is_unsafe(estimate):
+            return True
+
+        if self._is_headless() or os.environ.get("ASYMMETRY_SUPPRESS_WORKLOAD_WARNING"):
+            self._log_panel.log(
+                "Large MaxEnt calculation: proceeding without confirmation "
+                f"(run {estimate.run_number}: {estimate.total_observations:,} observations, "
+                f"{estimate.n_spectrum_points:,} spectrum points, "
+                f"{_format_bytes(estimate.total_dense_matrix_bytes)} dense-equivalent per pass)."
+            )
             return True
 
         msg = QMessageBox(self)
@@ -9024,7 +9043,9 @@ class MainWindow(QMainWindow):
                     "Asymmetry evaluates the projection in chunks where possible, but this "
                     "setting still represents a large numerical workload.",
                     "Reducing the time range, increasing MaxEnt binning, or using fewer spectrum "
-                    "points will usually make the calculation safer.",
+                    "points will usually make the calculation safer — or tick "
+                    "“Auto workload steering” in the Time section and clear the "
+                    "End/Binning fields to size them automatically.",
                 ]
             )
         )

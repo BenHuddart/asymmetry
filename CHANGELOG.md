@@ -7,7 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **MaxEnt no longer diverges on real long-window TF data.** Three compounding
+  engine defects made out-of-the-box reconstructions of e.g. MUSR forward/back
+  TF runs collapse into spiky noise with χ² rising from cycle 1 (χ²/N ≈ 8000 on
+  a real 400 G vortex-lattice run): (1) the per-group normalisation baseline
+  was a plain mean of the lifetime-corrected counts, which the exp-amplified
+  late-time Poisson tail inflates several-fold — it is now the 1/σ²-weighted
+  mean, pinned to the high-statistics bins; (2) the per-cycle nuisance
+  amplitude fit clipped at a floor of 0.01 in units where the correct
+  amplitude is ~`A·Δν` (often 10–100× *below* the floor), forcing an oversized
+  model oscillation that the solver could only fight by decohering the
+  spectrum — the floor is now far below any physical value; (3) the nuisance
+  amplitude/background regression and phase scan were unweighted, letting the
+  junk tail dominate — both are now σ-weighted, consistent with the χ² the
+  cycles minimise. The same run now converges to χ²/N ≈ 1.0 with the peak on
+  the vortex line, full range, no manual steering.
+
 ### Added
+
+- **MaxEnt data-derived phase seeding.** New `Seed phases from data` toggle
+  (on by default; `MaxEntConfig.auto_phase_seed`) estimates each group's
+  starting phase from a σ²-weighted lock-in at the strongest line inside the
+  frequency window (pulse-shape aware). The ±4°/cycle phase refinement can
+  never reach the ~90°/45° geometric offsets of real multi-group rings from an
+  all-zero start, so unseeded groups previously either poisoned χ² or muted
+  themselves out of the joint fit. Hand-editing a phase in the Groups table or
+  clicking **Use fitted phases** unticks the toggle so the table drives.
+- **MaxEnt workload auto-steering.** New `Auto workload steering` toggle (on
+  by default; `MaxEntConfig.auto_steer`, resolver exposed as
+  `resolve_maxent_auto_steering(run, config)`) sizes workload settings the
+  user left unset to the run: binning is raised until the post-binning Nyquist
+  clears the frequency window with margin (only when the window is known from
+  the field or explicit bounds — never on data-windowed ZF runs), very large
+  post-binning grids get an end-time cap, and the scripting API's default
+  spectrum length stops growing with the raw bin count. A raw 389k-bin HiFi
+  `.mdu` run that previously implied a ~2¹⁹-point spectrum over 389k time
+  points (days of compute, guaranteed workload warning) now reconstructs its
+  813 MHz line out of the box in ~2–3 minutes. Explicit values always win;
+  the result metadata records what was steered under `auto_steer_applied`.
+
+### Changed
+
+- **The "Large MaxEnt calculation" warning no longer blocks headless
+  sessions.** Offscreen/minimal-platform sessions (CI, screenshot scenarios,
+  scripted driving) have no user to dismiss the modal, so the warning is
+  written to the log panel and the calculation proceeds; setting
+  `ASYMMETRY_SUPPRESS_WORKLOAD_WARNING` does the same on a visible display.
+  The interactive dialog now also points at `Auto workload steering`.
 
 - **Optional CUDA GPU backend for the MaxEnt engine (scripting API).**
   `MaxEntConfig(backend="cuda")` runs the projection kernels on an NVIDIA GPU

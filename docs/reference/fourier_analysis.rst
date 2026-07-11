@@ -458,11 +458,14 @@ The panel groups its controls as follows:
 * **Window** — ``Auto window from field`` (derive the frequency window from the
   applied field), ``Half width (G)``, or an explicit ``Min`` and ``Max``
   frequency.
-* **Time** — ``Start`` / ``End`` (μs) of the fitted window and a ``Binning``
-  factor.
+* **Time** — ``Auto workload steering`` (size unset workload settings to the
+  run — see below), ``Start`` / ``End`` (μs) of the fitted window, and a
+  ``Binning`` factor.
 * **Cycle Refinement** — ``Inner iterations``; ``χ² target / N``; toggles to
   ``Fit phases`` / ``amplitudes`` / ``backgrounds`` / ``constant background``;
-  and ``Use existing deadtime correction``.
+  ``Seed phases from data`` (estimate each group's starting phase from the
+  data rather than the Groups table — see below); and ``Use existing deadtime
+  correction``.
 
 The run controls sit in a footer pinned to the bottom of the panel, so they
 stay reachable however far the settings above are scrolled:
@@ -482,6 +485,57 @@ stay reachable however far the settings above are scrolled:
    running more cycles. Continuing into a stale state fails with *"MaxEnt state
    is incompatible with the current configuration."* Restart discards the
    resumable state so the next cycle button rebuilds it from the new settings.
+
+Phase seeding
+~~~~~~~~~~~~~
+
+A joint multi-group reconstruction needs each group's phase to be roughly
+right before the cycles begin: the per-cycle phase refinement only moves ±4°
+per cycle, so it can never reach the large geometric offsets real detector
+rings carry (MUSR's quadrant groups sit ~90° apart, HiFi's octants ~45°). A
+group started far off phase either poisons χ² or fits its amplitude to zero
+and drops out of the reconstruction.
+
+With ``Seed phases from data`` ticked (the default), the engine estimates
+every group's starting phase from the data itself — a weighted lock-in at the
+strongest line inside the frequency window — and the Groups table is only a
+fallback for groups with no coherent signal there. Untick it to seed from the
+table instead; hand-editing a phase in the Groups table, or clicking **Use
+fitted phases**, unticks it for you so the values you set actually drive the
+next reconstruction.
+
+Workload steering and the large-calculation warning
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Raw high-resolution data can make an unsteered reconstruction enormous: a
+HiFi/HAL ``.mdu`` run arrives with ~0.02 ns bins (≈390 000 time points and a
+20 GHz bandwidth), far beyond what any windowed reconstruction needs. With
+``Auto workload steering`` ticked (the default), settings you leave unset are
+sized to the run:
+
+* a ``Binning`` left at 1 is raised until the post-binning Nyquist frequency
+  still clears the top of the frequency window with a comfortable margin
+  (this only applies when the window is known up front — from the applied
+  field or explicit bounds — never on a zero-field run whose window is found
+  from the data);
+* an empty ``End`` time is capped on very large runs so the grid stays within
+  a fixed per-group point budget, trimming the statistically weakest
+  late-time tail first;
+* the scripting API's default spectrum length stops growing with the raw bin
+  count (the GUI always uses the explicit ``Spectrum points`` value).
+
+Explicit values always win — steering never overrides a field you set. The
+result records what was steered in its metadata (``auto_steer_applied``), and
+the scripting API exposes the resolver directly as
+``resolve_maxent_auto_steering(run, config)``.
+
+Configurations that remain very large trigger the **Large MaxEnt calculation**
+warning before launch, with a **Proceed anyway** / **Cancel** choice. In a
+headless session (offscreen/minimal platform — CI, screenshot scenarios,
+scripted driving) there is no user to dismiss a modal dialog, so the warning
+is written to the log panel and the calculation proceeds; setting the
+``ASYMMETRY_SUPPRESS_WORKLOAD_WARNING`` environment variable does the same for
+scripted runs that drive a visible window.
 
 Seeding a clean reconstruction
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
