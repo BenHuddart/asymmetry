@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-07-11
+
 ### Fixed
 
 - **Custom-column labels on the frequency (FFT / MaxEnt) view.** Choosing a
