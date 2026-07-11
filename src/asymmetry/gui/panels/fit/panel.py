@@ -499,6 +499,18 @@ class FitPanel(QWidget):
         """Return the datasets configured for the batch/integral-scan."""
         return self._global_tab.batch_datasets()
 
+    def set_bound_group(self, group_id: str | None, name: str | None = None) -> None:
+        """Bind the Batch tab to a data group ("Fit this group…", D1)."""
+        self._global_tab.set_bound_group(group_id, name)
+
+    def clear_bound_group(self) -> None:
+        """Clear the Batch tab's group binding (ad-hoc selection, D1)."""
+        self._global_tab.clear_bound_group()
+
+    def bound_group_id(self) -> str | None:
+        """Return the id of the data group the Batch tab is bound to, or ``None``."""
+        return self._global_tab.bound_group_id()
+
     def set_frequency_missing_spectra_status(
         self, missing_run_numbers: list[int], cached_count: int
     ) -> None:

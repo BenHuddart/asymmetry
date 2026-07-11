@@ -53,6 +53,8 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QPushButton,
     QSizePolicy,
@@ -260,8 +262,20 @@ class GlobalFitTab(FitTabBase):
 
         self._fit_engine = FitEngine()
         self._domain = "time"
-        self._datasets = []  # Will be set by parent
+        self._datasets = []  # Will be set by parent (the *included* member subset)
         self._current_dataset: MuonDataset | None = None
+        # Batch-member pool + per-member exclusions (D1). ``_member_pool`` is the
+        # full candidate set shown in the member list; ``_datasets`` is the pool
+        # minus the runs the user has unchecked (``_excluded_runs``) — the fit runs
+        # over ``_datasets`` only. On the runs surface these track the member list;
+        # the groups surface (D8) ignores them entirely.
+        self._member_pool: list[MuonDataset] = []
+        self._excluded_runs: set[int] = set()
+        self._suppress_member_signals = False
+        # The DataGroup this Batch tab is bound to ("Fit this group…"): set when the
+        # batch was launched from a group header, ``None`` for an ad-hoc selection
+        # (which auto-creates its group at record time). Plain attribute + accessor.
+        self._bound_group_id: str | None = None
         # Last grouped fit's per-group simulate seed, keyed by source run number
         # (shared normalised model + base values + per-group amplitude/phase),
         # for the multi-group Generate Synthetic Run dialog.
@@ -396,6 +410,28 @@ class GlobalFitTab(FitTabBase):
         _fr_layout.addWidget(self._fit_range_unit_label)
         _fr_layout.addStretch()
         layout.addWidget(_fr_group)
+
+        # Batch members (D1): the group-binding banner plus a per-member include
+        # checkbox. Unchecking a member drops it from the fit; the recorded series'
+        # exclusion list is derived at record time (group members − fitted runs).
+        # Runs surface only — detector-group series are not group-bound (D8).
+        self._members_group: PanelSection | None = None
+        self._members_list: QListWidget | None = None
+        self._group_binding_label: QLabel | None = None
+        if self._member_kind == "runs":
+            self._members_group = PanelSection("Batch members")
+            self._group_binding_label = QLabel("")
+            self._group_binding_label.setWordWrap(True)
+            self._group_binding_label.setVisible(False)
+            self._members_group.addWidget(self._group_binding_label)
+            self._members_list = QListWidget()
+            self._members_list.setToolTip(
+                "Untick a run to exclude it from this batch fit without removing it from the group."
+            )
+            self._members_list.itemChanged.connect(self._on_member_check_changed)
+            self._members_group.addWidget(self._members_list)
+            layout.addWidget(self._members_group)
+            self._members_group.setVisible(False)
 
         # Parameter classification table
         self._param_group = PanelSection("Parameter Classification")
@@ -767,10 +803,97 @@ class GlobalFitTab(FitTabBase):
         return removed
 
     def set_datasets(self, datasets: list[MuonDataset]) -> None:
-        """Set the datasets for global fitting."""
-        self._datasets = datasets
+        """Set the datasets for global fitting.
+
+        On the runs surface this becomes the batch-member *pool*: every member
+        starts included, prior exclusions are cleared (a new member set is a fresh
+        ad-hoc batch), and the include-checkbox list is repopulated.
+        """
+        self._datasets = list(datasets or [])
+        if self._member_kind == "runs":
+            self._member_pool = list(self._datasets)
+            self._excluded_runs = set()
+            self._populate_members_list()
         self._invalidate_wizard_cache_if_stale()
         self._update_mode_ui(preserve_result=False)
+        self._refresh_inherited_single_fit_defaults()
+
+    def set_bound_group(self, group_id: str | None, name: str | None = None) -> None:
+        """Bind (or unbind) this Batch tab to a data group (D1).
+
+        Binding is set by "Fit this group…" so the recorded series carries a
+        structural ``group_id``; it is cleared by an ordinary browser selection
+        change (an ad-hoc batch auto-creates its own group at record time).
+        """
+        self._bound_group_id = str(group_id) if group_id else None
+        if self._group_binding_label is None:
+            return
+        if self._bound_group_id:
+            self._group_binding_label.setText(f"Fitting group: {name or self._bound_group_id}")
+            self._group_binding_label.setVisible(True)
+        else:
+            self._group_binding_label.clear()
+            self._group_binding_label.setVisible(False)
+
+    def clear_bound_group(self) -> None:
+        """Clear any group binding (ordinary selection → ad-hoc batch)."""
+        self.set_bound_group(None)
+
+    def bound_group_id(self) -> str | None:
+        """Return the id of the data group this Batch tab is bound to, or ``None``."""
+        return self._bound_group_id
+
+    def _populate_members_list(self) -> None:
+        """Rebuild the include-checkbox list from the member pool (runs surface)."""
+        if self._members_list is None:
+            return
+        self._suppress_member_signals = True
+        try:
+            self._members_list.clear()
+            for dataset in self._member_pool:
+                try:
+                    run_number = int(dataset.run_number)
+                except (TypeError, ValueError):
+                    continue
+                item = QListWidgetItem(str(getattr(dataset, "run_label", run_number)))
+                item.setData(Qt.ItemDataRole.UserRole, run_number)
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(
+                    Qt.CheckState.Unchecked
+                    if run_number in self._excluded_runs
+                    else Qt.CheckState.Checked
+                )
+                self._members_list.addItem(item)
+        finally:
+            self._suppress_member_signals = False
+        self._update_members_visibility()
+
+    def _update_members_visibility(self) -> None:
+        """Show the members section only when there is a batch to filter."""
+        if self._members_group is None:
+            return
+        self._members_group.setVisible(len(self._member_pool) >= 2)
+
+    def _on_member_check_changed(self, item: QListWidgetItem) -> None:
+        """Recompute the included member set when a member checkbox toggles."""
+        if self._suppress_member_signals or self._members_list is None:
+            return
+        excluded: set[int] = set()
+        for row in range(self._members_list.count()):
+            entry = self._members_list.item(row)
+            run_number = entry.data(Qt.ItemDataRole.UserRole)
+            if run_number is None:
+                continue
+            if entry.checkState() != Qt.CheckState.Checked:
+                excluded.add(int(run_number))
+        self._excluded_runs = excluded
+        self._datasets = [
+            ds for ds in self._member_pool if int(ds.run_number) not in self._excluded_runs
+        ]
+        # A membership filter changes the batch's run set; keep any displayed
+        # result (the fit hasn't re-run) while refreshing the mode/seed UI.
+        self._invalidate_wizard_cache_if_stale()
+        self._update_mode_ui(preserve_result=True)
         self._refresh_inherited_single_fit_defaults()
 
     def set_member_datasets(self, datasets: list[MuonDataset]) -> None:

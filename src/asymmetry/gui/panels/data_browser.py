@@ -627,6 +627,16 @@ class DataBrowserPanel(QWidget):
     # "Show series from this group": filters the trend/parameters panel to only
     # the series whose provenance (FitSeries.source_group_id) is this group.
     show_group_series_requested = Signal(str)  # group_id
+    # "Ungroup" from a group header's context menu (D7): the panel defers to the
+    # host so it can prompt (delete vs keep the group's owned series) before the
+    # dissolve actually runs.
+    ungroup_requested = Signal(str)  # group_id
+    # A membership edit on an *existing* group (Send to Group, Remove from Group,
+    # Ungroup): the host refreshes series staleness (a group-bound series is stale
+    # when its live membership no longer matches what was last fit). Distinct from
+    # the noisy per-add ``datasets_changed`` so bulk dataset loads don't churn the
+    # trend panel.
+    group_membership_changed = Signal()
 
     # The comment rides as the Title cell's second line (see
     # _RowHighlightDelegate) instead of its own column, so long comments never
@@ -1202,13 +1212,16 @@ class DataBrowserPanel(QWidget):
         group_id: str | None = None,
         collapsed: bool = False,
         kind: str = "user",
+        order_key: str = "run",
     ) -> str | None:
         """Create a group over *run_numbers* in the canonical registry (D6).
 
         Multi-membership (D2): this **adds** a group; it never strips its runs
         from any group they already belong to. Requires at least two valid
-        (loaded) runs. Returns the new group id, or ``None`` when fewer than two
-        runs are valid or *group_id* already exists.
+        (loaded) runs. *kind* is ``"user"`` or ``"auto"`` (a machine-minted
+        batch group, D3); *order_key* seeds the group's member ordering. Returns
+        the new group id, or ``None`` when fewer than two runs are valid or
+        *group_id* already exists.
         """
         valid_runs = [rn for rn in run_numbers if rn in self._datasets]
         if len(valid_runs) < 2:
@@ -1230,7 +1243,9 @@ class DataBrowserPanel(QWidget):
                 self._display_order.remove(rn)
 
         self._display_order.insert(first_index, gid)
-        self._project_model.create_data_group(name, list(valid_runs), kind=kind, group_id=gid)
+        self._project_model.create_data_group(
+            name, list(valid_runs), kind=kind, group_id=gid, order_key=order_key
+        )
         self._collapsed[gid] = bool(collapsed)
 
         self._move_groups_to_top()
@@ -1239,18 +1254,21 @@ class DataBrowserPanel(QWidget):
         self.datasets_changed.emit()
         return gid
 
-    def ungroup(self, group_id: str) -> None:
+    def ungroup(self, group_id: str, *, orphan_series: bool = True) -> list[str]:
         """Dissolve *group_id* entirely, returning its now-orphaned runs to top level.
 
         Members still belonging to another group keep their rows; only members
         left with no group return to the ungrouped list (at the group's former
-        slot). Any series owned by the group are frozen to standalone legacy
-        analyses (``group_id=None``) rather than deleted — the delete-vs-freeze
-        prompt is Phase 3; dissolving from the browser is non-destructive here.
+        slot). *orphan_series* (D7) selects the disposition of any series the
+        group owns: ``True`` freezes each to a standalone legacy analysis
+        (``group_id=None``), ``False`` deletes them. The host prompts for this
+        choice (see ``ungroup_requested``); the browser passes it straight
+        through and returns the removed ``batch_id``\\ s (empty when freezing) so
+        the host can clean up their fit slots / panels.
         """
         group = self._project_model.data_group(group_id)
         if group is None:
-            return
+            return []
 
         insert_index = (
             self._display_order.index(group_id)
@@ -1261,7 +1279,7 @@ class DataBrowserPanel(QWidget):
             self._display_order.remove(group_id)
 
         members = list(group.member_run_numbers)
-        self._project_model.remove_data_group(group_id, orphan_series=True)
+        removed = self._project_model.remove_data_group(group_id, orphan_series=orphan_series)
         self._collapsed.pop(group_id, None)
         self._rebuild_run_to_groups()
 
@@ -1279,6 +1297,8 @@ class DataBrowserPanel(QWidget):
         self._rebuild_run_to_groups()
         self._rebuild_table()
         self.datasets_changed.emit()
+        self.group_membership_changed.emit()
+        return removed
 
     def _move_groups_to_top(self) -> None:
         """Keep all group headers above non-grouped rows in display order."""
@@ -1342,6 +1362,7 @@ class DataBrowserPanel(QWidget):
             self._rebuild_run_to_groups()
             self._rebuild_table()
             self.datasets_changed.emit()
+            self.group_membership_changed.emit()
         return added_any
 
     def remove_runs_from_group(self, run_numbers: list[int]) -> bool:
@@ -1398,6 +1419,7 @@ class DataBrowserPanel(QWidget):
         self._rebuild_run_to_groups()
         self._rebuild_table()
         self.datasets_changed.emit()
+        self.group_membership_changed.emit()
         return True
 
     def _default_group_name(self, run_numbers: list[int]) -> str:
@@ -3578,7 +3600,7 @@ class DataBrowserPanel(QWidget):
                 collapse_text = "Expand Group" if self._is_collapsed(gid) else "Collapse Group"
                 menu.addAction(collapse_text, lambda gid=gid: self._toggle_group_collapsed(gid))
                 menu.addAction("Rename Group", lambda gid=gid: self._rename_group(gid))
-                menu.addAction("Ungroup", lambda gid=gid: self.ungroup(gid))
+                menu.addAction("Ungroup", lambda gid=gid: self.ungroup_requested.emit(gid))
                 menu.addSeparator()
                 # F9 fix (Phase 7/D1): "Fit this group…" prefills the batch member
                 # set from the group's stored members rather than the live/visible
