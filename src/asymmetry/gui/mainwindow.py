@@ -180,6 +180,7 @@ from asymmetry.core.maxent import (
     estimate_maxent_workload,
     maxent,
     reconstruct_group_signals,
+    resolve_backend,
     run_log_text,
     spectrum_to_text,
 )
@@ -8728,7 +8729,9 @@ class MainWindow(QMainWindow):
             maxent_input = getattr(result, "maxent_input", None)
             if maxent_input is None:
                 maxent_input = build_maxent_input(run, config)
-            reconstructions = reconstruct_group_signals(maxent_input, result.state)
+            reconstructions = reconstruct_group_signals(
+                maxent_input, result.state, backend=resolve_backend(config.backend)
+            )
             datasets = build_maxent_reconstruction_datasets(reconstructions, run)
         except Exception:  # noqa: BLE001 — overlay is best-effort, never fatal
             return

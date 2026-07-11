@@ -46,6 +46,11 @@ gle = ["gleplot @ git+https://github.com/BenHuddart/gleplot.git@v1.6.0"]
 hdf5 = ["h5py>=3.8,<4"]
 hdf4 = ["pyhdf>=0.10,<1"]  # legacy ISIS muon NeXus v1 in an HDF4 container
 root = ["uproot>=5.0,<6"]
+# Optional CUDA acceleration for the MaxEnt engine (MaxEntConfig(backend="cuda"
+# | "auto")).  CUDA-13 wheel; on CUDA-12 systems install cupy-cuda12x instead.
+# The runtime imports plain ``cupy``, so any matching wheel works.  [ctk] bundles
+# the CUDA headers CuPy's JIT needs on machines without a system toolkit.
+gpu = ["cupy-cuda13x[ctk]>=13.0"]
 dev = [
     "pytest>=7.0,<10",
     "pytest-cov>=4.0,<8",

@@ -131,6 +131,10 @@ arguments (its first positional field is ``n_spectrum_points``):
 Passing the ``MuonDataset`` raises a ``TypeError`` telling you to pass
 ``ds.run``. See :doc:`fourier_analysis`.
 
+For a large joint reconstruction, ``MaxEntConfig(..., backend="cuda")`` runs
+the same kernels on an optional CUDA GPU (``pip install "asymmetry[gpu]"``);
+see :ref:`maxent-gpu-acceleration`.
+
 
 Field scan with a period filter
 -------------------------------

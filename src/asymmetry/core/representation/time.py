@@ -23,6 +23,7 @@ from asymmetry.core.maxent import (
     ReconstructedGroup,
     build_maxent_input,
     reconstruct_group_signals,
+    resolve_backend,
     run_cycles,
 )
 from asymmetry.core.representation.base import Representation, RepresentationType
@@ -224,7 +225,9 @@ class TimeMaxEntReconstruction(Representation):
             config.selected_group_ids = _resolve_selected_group_ids(run, config_dict)
         maxent_input = build_maxent_input(run, config)
         result = run_cycles(maxent_input, config)
-        reconstructions = reconstruct_group_signals(maxent_input, result.state)
+        reconstructions = reconstruct_group_signals(
+            maxent_input, result.state, backend=resolve_backend(config.backend)
+        )
         self.result_metadata = {
             "cycles": int(result.state.cycle),
             "maxent_chi2": result.metadata.get("maxent_chi2"),
