@@ -120,7 +120,6 @@ class SingleFitTab(FitTabBase):
     preview_requested = Signal(
         object, object, object
     )  # (FitResult, fitted_curve, component_curves)
-    share_function_with_group_requested = Signal(int)
     send_model_to_batch_requested = Signal()
     add_to_series_requested = Signal()
 
@@ -170,12 +169,12 @@ class SingleFitTab(FitTabBase):
         self._fit_wizard_btn.clicked.connect(self._open_fit_wizard)
         self._fit_wizard_btn.setEnabled(False)
 
-        # The four advanced model actions (Drop background / Share with Group /
-        # Send to Batch / Add to Series) are collapsed into a single "⋯ More…"
-        # overflow menu instead of four full-width button rows. On a 13-inch
-        # screen those rows pushed the PARAMETERS table and the Fit button below
-        # the fold; folding them lifts PARAMETERS into view (P1-2). They remain
-        # QActions so enable-state and tooltips behave as before.
+        # The three advanced model actions (Drop background / Send to Batch /
+        # Add to Series) are collapsed into a single "⋯ More…" overflow menu
+        # instead of full-width button rows. On a 13-inch screen those rows
+        # pushed the PARAMETERS table and the Fit button below the fold;
+        # folding them lifts PARAMETERS into view (P1-2). They remain QActions
+        # so enable-state and tooltips behave as before.
         self._more_menu = QMenu(self)
         self._more_menu.setToolTipsVisible(True)
         self._drop_background_action = self._more_menu.addAction("Drop background")
@@ -187,10 +186,6 @@ class SingleFitTab(FitTabBase):
         )
         self._drop_background_action.triggered.connect(self._on_drop_background)
         self._drop_background_action.setEnabled(False)
-        self._share_group_action = self._more_menu.addAction("Share with Group")
-        self._share_group_action.setToolTip("Share this fit function with the selected data group.")
-        self._share_group_action.triggered.connect(self._on_share_function_with_group)
-        self._share_group_action.setEnabled(False)
         self._send_to_batch_action = self._more_menu.addAction("Send to Batch")
         self._send_to_batch_action.setToolTip(
             "Copy this fit function into the Batch tab to seed a batch fit over the selected runs."
@@ -357,7 +352,6 @@ class SingleFitTab(FitTabBase):
             self._fit_wizard_btn.setToolTip(
                 "Fit Wizard is currently available for time-domain fits."
             )
-            self._share_group_action.setEnabled(False)
             self._set_composite_model(default_frequency_model())
         else:
             self._fit_wizard_btn.setToolTip("")
@@ -389,7 +383,6 @@ class SingleFitTab(FitTabBase):
         self._fit_btn.setEnabled(enabled)
         self._preview_btn.setEnabled(enabled)
         self._fit_wizard_btn.setEnabled(enabled and self._domain == "time")
-        self._share_group_action.setEnabled(dataset is not None and self._domain == "time")
         self._update_add_to_series_enabled()
 
     def set_has_recorded_fit(self, has_fit: bool) -> None:
@@ -536,16 +529,6 @@ class SingleFitTab(FitTabBase):
         ):
             return
         self._cache_wizard_analysis(recommendation, signature=signature, log_text=log_text)
-
-    def _on_share_function_with_group(self) -> None:
-        """Request sharing the active single-fit function with the current data group."""
-        if self._current_dataset is None:
-            return
-        try:
-            run_number = int(self._current_dataset.run_number)
-        except (TypeError, ValueError):
-            return
-        self.share_function_with_group_requested.emit(run_number)
 
     def _update_drop_background_enabled(self) -> None:
         """Enable the Drop-background affordance only when there is one to drop."""

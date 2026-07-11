@@ -80,6 +80,47 @@ Acceptance criteria (v1 = Phases 1–4 of the study):
   assignment divergence zero-at-crossing) and `harness validate` is
   green with no Qt imports in core.
 
+### DataGroup / FitSeries Unification (Option C)
+
+Status: implemented on branch `feat/datagroup-fitseries-unification`
+(Phases 1–5 — core model, browser, fit flows, carry-forward, docs — complete);
+awaiting Phase 6 full validation and PR review
+
+Make DataGroups the canonical vehicle for batch fits: a run-membered
+`FitSeries` structurally belongs to a group (`group_id`), its membership is
+live-derived (group members minus per-series exclusions) with staleness
+marking, and results stay a snapshot. Runs may belong to multiple groups
+(browser shows duplicated, marker-glyph rows; selection dedupes). Ad-hoc
+batch fits auto-create reusable `kind="auto"` groups (red-family palette;
+user groups stay blue; rename promotes auto → user). "Share with Group" is
+retired in favour of refresh-unless-fitted carry-forward (runs with a
+recorded fit are never auto-overwritten; everything else follows the latest
+fitted function). `ProjectModel.data_groups` becomes the single source of
+truth (the GUI mirror dataclass and save/load sync are deleted), and
+`_data_group_id_for_runs` provenance guessing goes away.
+
+Full decision log (D1–D9), code map, phased plan with per-phase agent
+assignments and review checklists, and migration details live in
+[studies/datagroup-fitseries-unification.md](studies/datagroup-fitseries-unification.md).
+
+Acceptance criteria:
+
+- Schema v15: series carry `group_id` / `excluded_run_numbers` /
+  `last_fitted_members`; v14 projects (including pre-Phase-7 and
+  duplicate-era saves) migrate tolerantly; group-less legacy series load as
+  frozen (`group_id=None`) — no synthesized groups on migration.
+- Every newly recorded run-membered series has a group (launched-from or
+  auto-created/reused); re-running a group analysis replaces in place;
+  detector-group series (`member_kind="groups"`) behaviour is unchanged.
+- A run in two groups renders as marked duplicate rows and reaches
+  plot/fit/co-add exactly once when selected via both.
+- A run with a recorded fit result (single or batch member) is never
+  auto-overwritten by carry-forward, across save/load; unfit runs refresh
+  from the latest fitted function; "Share with Group" is gone.
+- Docs + screenshot scenarios updated (auto vs user group colours, marked
+  rows, group-bound Batch tab); changelog calls out the Share with Group
+  removal; `harness validate` and `gui-smoke` green.
+
 ### Fit Function Builder Redesign (Option C)
 
 Status: implemented on branch `feat/fit-builder-redesign`; awaiting live GUI

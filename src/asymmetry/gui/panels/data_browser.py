@@ -3,11 +3,14 @@
 Navigation map
 --------------
 ~4.4k lines. Small support classes precede the main panel:
-``NumericTableWidgetItem`` (numeric-aware sort ordering), ``DataGroup`` /
-``ExtraColumn`` (dataclasses backing data-group and user-added-column state),
-``FilterDialog`` (per-column value filter popup), and
-``_RowHighlightDelegate`` (two-line comment/period-note cell rendering and
-series highlight painting). The bulk of the module is
+``NumericTableWidgetItem`` (numeric-aware sort ordering), ``ExtraColumn``
+(dataclass backing user-added-column state), ``FilterDialog`` (per-column value
+filter popup), and ``_RowHighlightDelegate`` (two-line comment/period-note cell
+rendering and series highlight painting). Data-group state is no longer a
+GUI-local dataclass: the canonical registry lives in
+:class:`~asymmetry.core.representation.project_model.ProjectModel.data_groups`
+(D6) and the panel is a view/controller over it (``collapsed`` stays panel-local
+view state). The bulk of the module is
 ``DataBrowserPanel(QWidget)``, whose methods cluster thematically (no
 section-comment markers in source):
 
@@ -48,8 +51,11 @@ section-comment markers in source):
   on completed-when-returned semantics.
 - **Logbook export** — ``render_logbook_tsv``/``export_logbook_tsv`` and the
   RTF equivalents (``render_logbook_rtf``/``export_logbook_rtf``).
-- **State I/O** — ``get_state``/``restore_state`` at the end serialize groups,
-  extra columns, and per-dataset log-source overrides for project persistence.
+- **State I/O** — ``get_state``/``restore_state`` at the end serialize the
+  panel-local view state (group ``collapsed`` flags + display order, extra
+  columns, per-dataset log-source overrides). Group *definitions* (name,
+  members, kind, order) round-trip through ``ProjectModel.data_groups``, not
+  ``browser_state``.
 
 Entry points GUI callers use most: ``add_dataset``/``batch_updates`` to
 populate, ``get_selected_datasets``/``get_current_dataset`` to read
@@ -109,6 +115,7 @@ from PySide6.QtWidgets import (
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.io.nexus import active_series_mean
 from asymmetry.core.io.periods import period_count, period_labels
+from asymmetry.core.representation.project_model import ProjectModel
 from asymmetry.core.transform.grouping import good_event_count, good_frames
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
@@ -133,6 +140,10 @@ _ABSOLUTE_ZERO_CELSIUS = 273.15
 _GROUP_FIELD_REL_TOL = 1e-4
 _GROUP_HEADER_BACKGROUND = QColor(tokens.GROUP_HEADER_BG)
 _GROUP_MEMBER_BACKGROUND = QColor(tokens.GROUP_MEMBER_BG)
+#: Auto-group (kind == "auto", D4) header/member tints — the red-grey analogue of
+#: the blue ramp above. Header/member painting switches on the group's ``kind``.
+_AUTO_GROUP_HEADER_BACKGROUND = QColor(tokens.AUTO_GROUP_HEADER_BG)
+_AUTO_GROUP_MEMBER_BACKGROUND = QColor(tokens.AUTO_GROUP_MEMBER_BG)
 #: Item-data role carrying the run comment shown as the Title cell's second line.
 _COMMENT_ROLE = Qt.ItemDataRole.UserRole + 1
 #: Item-data role carrying a custom column's id on its editable cells, so an edit
@@ -141,6 +152,10 @@ _CUSTOM_COLUMN_ROLE = Qt.ItemDataRole.UserRole + 2
 #: Item-data role carrying a multi-period cue (e.g. "2 periods · Red active")
 #: shown as the Title cell's second line, so a buried 2nd period is visible.
 _PERIOD_ROLE = Qt.ItemDataRole.UserRole + 3
+#: Item-data role stamped on a group-header col-0 item carrying the owning
+#: group's ``kind`` ("user"/"auto"), so the row-highlight delegate can pick the
+#: blue or red-grey selected/focused header tint without a panel lookup.
+_GROUP_KIND_ROLE = Qt.ItemDataRole.UserRole + 4
 #: Column index of the two-line Title cell.
 _TITLE_COLUMN = 1
 # Soft red tint used to mark runs that belong to the active fit series in
@@ -188,14 +203,6 @@ class NumericTableWidgetItem(QTableWidgetItem):
             return self._numeric_value < other_numeric
         except (ValueError, TypeError):
             return self.text() < other_text
-
-
-@dataclass
-class DataGroup:
-    group_id: str
-    name: str
-    member_run_numbers: list[int]
-    collapsed: bool = False
 
 
 #: Discriminators for :class:`ExtraColumn.kind`.
@@ -410,6 +417,11 @@ class _RowHighlightDelegate(QStyledItemDelegate):
     _SENTINEL = "group:"
     _HEADER_SEL_BG = QColor(tokens.GROUP_HEADER_SEL_BG)
     _HEADER_FOC_BG = QColor(tokens.GROUP_HEADER_FOCUS_BG)
+    #: Auto-group (kind == "auto", D4) selected/focused header tints — the
+    #: red-grey analogue of the blue ramp above; the row's ``kind`` is read from
+    #: :data:`_GROUP_KIND_ROLE` on its col-0 item.
+    _AUTO_HEADER_SEL_BG = QColor(tokens.AUTO_GROUP_HEADER_SEL_BG)
+    _AUTO_HEADER_FOC_BG = QColor(tokens.AUTO_GROUP_HEADER_FOCUS_BG)
     _MEMBER_FOC_BG = QColor(tokens.ACCENT_SOFT2)
     _MEMBER_SEL_BG = QColor(tokens.ACCENT_SOFT)
     _ACCENT = QColor(tokens.ACCENT)
@@ -533,11 +545,14 @@ class _RowHighlightDelegate(QStyledItemDelegate):
 
         if is_selected:
             is_focused = index.row() == table.currentRow()
-            bg = (
-                (self._HEADER_FOC_BG if is_focused else self._HEADER_SEL_BG)
-                if is_header
-                else (self._MEMBER_FOC_BG if is_focused else self._MEMBER_SEL_BG)
-            )
+            if is_header:
+                is_auto = col0 is not None and col0.data(_GROUP_KIND_ROLE) == "auto"
+                if is_auto:
+                    bg = self._AUTO_HEADER_FOC_BG if is_focused else self._AUTO_HEADER_SEL_BG
+                else:
+                    bg = self._HEADER_FOC_BG if is_focused else self._HEADER_SEL_BG
+            else:
+                bg = self._MEMBER_FOC_BG if is_focused else self._MEMBER_SEL_BG
 
             # initStyleOption() re-reads Qt.BackgroundRole from the model and overwrites
             # backgroundBrush — so we call it ourselves first, then clear the brush before
@@ -612,6 +627,16 @@ class DataBrowserPanel(QWidget):
     # "Show series from this group": filters the trend/parameters panel to only
     # the series whose provenance (FitSeries.source_group_id) is this group.
     show_group_series_requested = Signal(str)  # group_id
+    # "Ungroup" from a group header's context menu (D7): the panel defers to the
+    # host so it can prompt (delete vs keep the group's owned series) before the
+    # dissolve actually runs.
+    ungroup_requested = Signal(str)  # group_id
+    # A membership edit on an *existing* group (Send to Group, Remove from Group,
+    # Ungroup): the host refreshes series staleness (a group-bound series is stale
+    # when its live membership no longer matches what was last fit). Distinct from
+    # the noisy per-add ``datasets_changed`` so bulk dataset loads don't churn the
+    # trend panel.
+    group_membership_changed = Signal()
 
     # The comment rides as the Title cell's second line (see
     # _RowHighlightDelegate) instead of its own column, so long comments never
@@ -644,6 +669,11 @@ class DataBrowserPanel(QWidget):
     _BASE_COLUMN_OVERRIDE_KEYS = {"temperature", "field"}
     _GROUP_ROLE = Qt.ItemDataRole.UserRole
     _GROUP_SENTINEL_PREFIX = "group:"
+    #: Display key prefix for a *copy* row — a run rendered under a non-primary
+    #: group (D2). Encodes ``copy:<group_id>:<run>`` so each (run, group)
+    #: membership has a distinct table key while primary/ungrouped rows keep the
+    #: bare integer run key. Selection APIs collapse copies back to the run.
+    _COPY_SENTINEL_PREFIX = "copy:"
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -660,9 +690,32 @@ class DataBrowserPanel(QWidget):
         self._combined_methods: dict[int, str] = {}
         self._next_combined_id = -1
 
-        self._groups: dict[str, DataGroup] = {}
-        self._run_to_group: dict[int, str] = {}
+        #: Canonical group registry (D6): the panel is a view/controller over
+        #: ``ProjectModel.data_groups``, not an owner of its own group model.
+        #: MainWindow injects the live project model via :meth:`set_project_model`;
+        #: a private default keeps the panel usable standalone (tests, scripts).
+        self._project_model = ProjectModel()
+        #: Per-group collapse flag — the one piece of group state that stays
+        #: GUI-local (view state, D6), keyed by group id and persisted in
+        #: ``browser_state`` rather than the core registry.
+        self._collapsed: dict[str, bool] = {}
+        #: Derived run→groups map (D2, multi-membership): the ordered list of
+        #: group ids a run belongs to, first entry = its *primary* membership.
+        #: Recomputed from the registry + display order by
+        #: :meth:`_rebuild_run_to_groups` after any group mutation; never the
+        #: source of truth for membership (that is each group's
+        #: ``member_run_numbers``).
+        self._run_to_groups: dict[int, list[str]] = {}
+        #: Group-header ids and ungrouped run keys, in display order. Group
+        #: members are *not* listed here — they render under their group header
+        #: from the registry's ``member_run_numbers`` (a run in N groups renders
+        #: N rows: one primary + N-1 marked copies, keyed via
+        #: :attr:`_COPY_SENTINEL_PREFIX`).
         self._display_order: list[int | str] = []
+        #: Groups seeded from a legacy ``browser_state.data_groups`` block on
+        #: restore, kept until the registry is (re)synced so a pre-registry
+        #: project still shows its groups (see :meth:`sync_groups_from_project_model`).
+        self._legacy_group_seed: list[dict] = []
 
         self._column_filters: dict[int, set[str]] = {}
         self._extra_columns: list[ExtraColumn] = []
@@ -917,6 +970,193 @@ class DataBrowserPanel(QWidget):
             self._resize_columns_to_content()
 
     # ------------------------------------------------------------------
+    # Group registry (view over ProjectModel.data_groups, D6)
+    # ------------------------------------------------------------------
+
+    def set_project_model(self, project_model: ProjectModel) -> None:
+        """Bind the panel to the canonical group registry (D6).
+
+        MainWindow calls this whenever it (re)creates the project model — on
+        construction and after a project load replaces the model — so the panel
+        always reads and mutates the *live* ``data_groups``. Collapse flags for
+        ids no longer present are dropped; the group view is rebuilt from the
+        (possibly freshly loaded) registry.
+        """
+        self._project_model = project_model
+        self.sync_groups_from_project_model()
+
+    def sync_groups_from_project_model(self) -> None:
+        """Rebuild the group view from the canonical registry (D6).
+
+        Ensures every group carried by a legacy ``browser_state.data_groups``
+        block (a pre-registry project, or a standalone panel restore) exists in
+        the registry, then integrates the registry's groups into the display
+        order, re-derives multi-membership, and repaints. Idempotent — safe to
+        call after a load rebinds a fresh model or after a browser-only restore.
+        """
+        for entry in self._legacy_group_seed:
+            gid = str(entry.get("group_id") or "")
+            if not gid or gid in self._project_model.data_groups:
+                continue
+            members = [
+                int(v) for v in entry.get("member_run_numbers", []) if int(v) in self._datasets
+            ]
+            if len(members) < 2:
+                continue
+            self._project_model.create_data_group(
+                str(entry.get("name") or "").strip() or "",
+                members,
+                kind=str(entry.get("kind", "user")),
+                group_id=gid,
+            )
+            self._collapsed.setdefault(gid, bool(entry.get("collapsed", False)))
+        # Drop collapse flags for groups that no longer exist.
+        self._collapsed = {
+            gid: flag
+            for gid, flag in self._collapsed.items()
+            if gid in self._project_model.data_groups
+        }
+        self._integrate_registry_into_display()
+        self._rebuild_run_to_groups()
+        self._rebuild_table()
+        self._resize_columns_to_content()
+
+    def _integrate_registry_into_display(self) -> None:
+        """Reconcile :attr:`_display_order` with the registry's group set.
+
+        Drops headers for groups gone from the registry, appends any registry
+        group not yet displayed (in registry order), and pulls every grouped run
+        out of the ungrouped rows (its rows now render under its group headers).
+        """
+        live = self._project_model.data_groups
+        self._display_order = [
+            entry
+            for entry in self._display_order
+            if not (isinstance(entry, str) and entry not in live)
+        ]
+        for gid in live:
+            if gid not in self._display_order:
+                self._display_order.append(gid)
+        grouped_runs = {int(rn) for group in live.values() for rn in group.member_run_numbers}
+        self._display_order = [
+            entry
+            for entry in self._display_order
+            if not (isinstance(entry, int) and entry in grouped_runs)
+        ]
+        self._move_groups_to_top()
+
+    def _group_members(self, group_id: str) -> list[int]:
+        """Return the ordered member run numbers of *group_id* (empty if unknown)."""
+        group = self._project_model.data_group(group_id)
+        return [int(rn) for rn in group.member_run_numbers] if group is not None else []
+
+    def _group_kind(self, group_id: str) -> str:
+        group = self._project_model.data_group(group_id)
+        return group.kind if group is not None else "user"
+
+    def _is_collapsed(self, group_id: str) -> bool:
+        return bool(self._collapsed.get(group_id, False))
+
+    def _group_ids_for_run(self, run_number: int) -> list[str]:
+        """Return every group id *run_number* belongs to, primary first (D2)."""
+        return list(self._run_to_groups.get(int(run_number), []))
+
+    def _primary_group_id(self, run_number: int) -> str | None:
+        """Return *run_number*'s primary (first) group membership, or ``None``."""
+        groups = self._run_to_groups.get(int(run_number))
+        return groups[0] if groups else None
+
+    def _rebuild_run_to_groups(self) -> None:
+        """Reconcile :attr:`_run_to_groups` with the registry (D2).
+
+        Preserves each run's existing membership order (so its *primary* stays
+        stable across an add) while dropping memberships whose group or member
+        entry is gone, and appending any registry memberships not yet mapped (in
+        registry / creation order, so a newly-added membership is non-primary).
+        O(total memberships); called after every group mutation, never per row.
+        """
+        existing = self._run_to_groups
+        live_groups = self._project_model.data_groups
+        member_runs = {int(rn) for group in live_groups.values() for rn in group.member_run_numbers}
+        mapping: dict[int, list[str]] = {}
+        for rn in member_runs:
+            ordered = [
+                gid
+                for gid in existing.get(rn, [])
+                if gid in live_groups and rn in live_groups[gid].member_run_numbers
+            ]
+            for gid, group in live_groups.items():
+                if rn in group.member_run_numbers and gid not in ordered:
+                    ordered.append(gid)
+            mapping[rn] = ordered
+        self._run_to_groups = mapping
+
+    def _is_copy_key(self, key: object) -> bool:
+        return isinstance(key, str) and key.startswith(self._COPY_SENTINEL_PREFIX)
+
+    def _copy_key(self, group_id: str, run_number: int) -> str:
+        return f"{self._COPY_SENTINEL_PREFIX}{group_id}:{int(run_number)}"
+
+    def _member_row_group(self, key: object) -> str | None:
+        """Return the group a member row belongs to, from its table *key*.
+
+        An int key resolves to the run's primary group (``None`` when ungrouped);
+        a ``copy:`` key names the group it renders under; anything else (a group
+        header key) returns ``None``.
+        """
+        if isinstance(key, int):
+            return self._primary_group_id(key)
+        copy_parts = self._copy_key_parts(key)
+        return copy_parts[0] if copy_parts is not None else None
+
+    def _copy_key_parts(self, key: object) -> tuple[str, int] | None:
+        """Decode a ``copy:<group_id>:<run>`` key into ``(group_id, run)``."""
+        if not self._is_copy_key(key):
+            return None
+        body = str(key)[len(self._COPY_SENTINEL_PREFIX) :]
+        group_id, _, run_text = body.rpartition(":")
+        if not group_id:
+            return None
+        try:
+            return group_id, int(run_text)
+        except (TypeError, ValueError):
+            return None
+
+    def _membership_marker(self, run_number: int, group_id: str) -> str:
+        """Return the copy-row marker glyph for *run_number* under *group_id*.
+
+        Circled digits ①②③… index the run's *non-primary* memberships (D2). The
+        primary membership (or an unknown pairing) has no marker.
+        """
+        groups = self._run_to_groups.get(int(run_number), [])
+        if group_id not in groups:
+            return ""
+        index = groups.index(group_id)  # 0 == primary
+        if index <= 0:
+            return ""
+        # ① is U+2460 (index 1 -> ①); fall back to a parenthesised number past 20.
+        return chr(0x2460 + index - 1) if index <= 20 else f"({index})"
+
+    def _membership_tooltip(self, run_number: int, group_id: str) -> str:
+        """Return the "Also in: …" tooltip for a copy row (D2), or ''.
+
+        Lists the run's *other* groups by name, annotating the primary and each
+        non-primary marker so the copy's provenance is legible.
+        """
+        groups = self._run_to_groups.get(int(run_number), [])
+        others: list[str] = []
+        for index, gid in enumerate(groups):
+            if gid == group_id:
+                continue
+            name = self.get_group_name(gid) or gid
+            if index == 0:
+                others.append(f"{name} (primary)")
+            else:
+                marker = chr(0x2460 + index - 1) if index <= 20 else f"({index})"
+                others.append(f"{name} {marker}")
+        return "Also in: " + ", ".join(others) if others else ""
+
+    # ------------------------------------------------------------------
     # Dataset and grouping CRUD
     # ------------------------------------------------------------------
 
@@ -958,9 +1198,9 @@ class DataBrowserPanel(QWidget):
     def add_dataset(self, dataset: MuonDataset) -> None:
         rn = int(dataset.run_number)
         self._datasets[rn] = dataset
-        if rn not in self._display_order and rn not in self._run_to_group:
+        if rn not in self._display_order and rn not in self._run_to_groups:
             self._display_order.append(rn)
-        if self._current_sort_column >= 0 and not self._groups:
+        if self._current_sort_column >= 0 and not self._project_model.data_groups:
             self._sort_table(rebuild=False)
         self._rebuild_table()
         self._resize_columns_to_content()
@@ -972,48 +1212,68 @@ class DataBrowserPanel(QWidget):
         name: str | None = None,
         group_id: str | None = None,
         collapsed: bool = False,
+        kind: str = "user",
+        order_key: str = "run",
     ) -> str | None:
+        """Create a group over *run_numbers* in the canonical registry (D6).
+
+        Multi-membership (D2): this **adds** a group; it never strips its runs
+        from any group they already belong to. Requires at least two valid
+        (loaded) runs. *kind* is ``"user"`` or ``"auto"`` (a machine-minted
+        batch group, D3); *order_key* seeds the group's member ordering. Returns
+        the new group id, or ``None`` when fewer than two runs are valid or
+        *group_id* already exists.
+        """
         valid_runs = [rn for rn in run_numbers if rn in self._datasets]
         if len(valid_runs) < 2:
             return None
 
         gid = group_id or str(uuid.uuid4())
-        if gid in self._groups:
+        if gid in self._project_model.data_groups:
             return None
-
-        for rn in valid_runs:
-            old_gid = self._run_to_group.get(rn)
-            if old_gid is not None:
-                self._remove_run_from_group(rn, old_gid)
 
         if not name:
             name = self._default_group_name(valid_runs)
 
         first_index = min(self._display_index_for_run(rn) for rn in valid_runs)
+        # Only a run gaining its *first* membership leaves the ungrouped list;
+        # an already-grouped run keeps its existing rows and simply gains a
+        # marked copy under this group (no partition, D2).
         for rn in valid_runs:
-            if rn in self._display_order:
+            if rn not in self._run_to_groups and rn in self._display_order:
                 self._display_order.remove(rn)
 
         self._display_order.insert(first_index, gid)
-        self._groups[gid] = DataGroup(
-            group_id=gid,
-            name=name,
-            member_run_numbers=list(valid_runs),
-            collapsed=collapsed,
+        self._project_model.create_data_group(
+            name, list(valid_runs), kind=kind, group_id=gid, order_key=order_key
         )
-        for rn in valid_runs:
-            self._run_to_group[rn] = gid
+        self._collapsed[gid] = bool(collapsed)
 
         self._move_groups_to_top()
-
+        self._rebuild_run_to_groups()
         self._rebuild_table()
+        # Member rows are indented (and copies carry a marker suffix), so the
+        # Run column must be re-fit like add_dataset does — otherwise it stays
+        # sized for the un-indented labels and elides the new rows.
+        self._resize_columns_to_content()
         self.datasets_changed.emit()
         return gid
 
-    def ungroup(self, group_id: str) -> None:
-        group = self._groups.get(group_id)
+    def ungroup(self, group_id: str, *, orphan_series: bool = True) -> list[str]:
+        """Dissolve *group_id* entirely, returning its now-orphaned runs to top level.
+
+        Members still belonging to another group keep their rows; only members
+        left with no group return to the ungrouped list (at the group's former
+        slot). *orphan_series* (D7) selects the disposition of any series the
+        group owns: ``True`` freezes each to a standalone legacy analysis
+        (``group_id=None``), ``False`` deletes them. The host prompts for this
+        choice (see ``ungroup_requested``); the browser passes it straight
+        through and returns the removed ``batch_id``\\ s (empty when freezing) so
+        the host can clean up their fit slots / panels.
+        """
+        group = self._project_model.data_group(group_id)
         if group is None:
-            return
+            return []
 
         insert_index = (
             self._display_order.index(group_id)
@@ -1023,107 +1283,158 @@ class DataBrowserPanel(QWidget):
         if group_id in self._display_order:
             self._display_order.remove(group_id)
 
-        for offset, rn in enumerate(group.member_run_numbers):
-            self._run_to_group.pop(rn, None)
-            if rn in self._datasets:
-                self._display_order.insert(insert_index + offset, rn)
+        members = list(group.member_run_numbers)
+        removed = self._project_model.remove_data_group(group_id, orphan_series=orphan_series)
+        self._collapsed.pop(group_id, None)
+        self._rebuild_run_to_groups()
 
-        self._groups.pop(group_id, None)
+        offset = 0
+        for rn in members:
+            if (
+                rn in self._datasets
+                and rn not in self._run_to_groups
+                and rn not in self._display_order
+            ):
+                self._display_order.insert(insert_index + offset, rn)
+                offset += 1
+
         self._move_groups_to_top()
+        self._rebuild_run_to_groups()
         self._rebuild_table()
+        self._resize_columns_to_content()
         self.datasets_changed.emit()
+        self.group_membership_changed.emit()
+        return removed
 
     def _move_groups_to_top(self) -> None:
         """Keep all group headers above non-grouped rows in display order."""
         groups = [
             entry
             for entry in self._display_order
-            if isinstance(entry, str) and entry in self._groups
+            if isinstance(entry, str) and entry in self._project_model.data_groups
         ]
         runs = [entry for entry in self._display_order if isinstance(entry, int)]
         self._display_order = groups + runs
 
-    def _remove_run_from_group(self, run_number: int, group_id: str) -> None:
-        group = self._groups.get(group_id)
-        if group is None:
-            return
-        group.member_run_numbers = [rn for rn in group.member_run_numbers if rn != run_number]
-        self._run_to_group.pop(run_number, None)
-        if len(group.member_run_numbers) == 0:
-            self.ungroup(group_id)
+    def _drop_membership(self, run_number: int, group_id: str) -> str | None:
+        """Drop one (run, group) membership from the registry (no view refresh).
+
+        Returns *group_id* when the group is left with no members (so the caller
+        can dissolve it), else ``None``.
+        """
+        group = self._project_model.data_group(group_id)
+        if group is None or run_number not in group.member_run_numbers:
+            return None
+        remaining = [rn for rn in group.member_run_numbers if rn != run_number]
+        self._project_model.set_data_group_members(group_id, remaining)
+        return group_id if not remaining else None
+
+    def _dissolve_empty_group(self, group_id: str) -> None:
+        """Remove an empty group's header, registry entry and collapse flag."""
+        if group_id in self._display_order:
+            self._display_order.remove(group_id)
+        self._project_model.remove_data_group(group_id, orphan_series=True)
+        self._collapsed.pop(group_id, None)
 
     def add_runs_to_group(self, run_numbers: list[int], group_id: str) -> bool:
-        """Add existing dataset run rows into an existing group.
+        """Add existing dataset runs into an existing group as a new membership (D2).
 
-        Parameters
-        ----------
-        run_numbers
-            Dataset run numbers to move.
-        group_id
-            Target group identifier.
+        Multi-membership: a run already in another group keeps that membership
+        and gains this one (rendered as a marked copy); it is never stolen. A run
+        gaining its first membership leaves the ungrouped list.
 
         Returns
         -------
         bool
-            ``True`` if at least one run was moved.
+            ``True`` if at least one run was added.
         """
-        group = self._groups.get(group_id)
+        group = self._project_model.data_group(group_id)
         if group is None:
             return False
 
-        moved_any = False
+        members = list(group.member_run_numbers)
+        added_any = False
         for rn in run_numbers:
-            if rn not in self._datasets:
+            if rn not in self._datasets or rn in members:
                 continue
-            if self._run_to_group.get(rn) == group_id:
-                continue
-
-            old_gid = self._run_to_group.get(rn)
-            if old_gid is not None:
-                self._remove_run_from_group(rn, old_gid)
-
-            if rn in self._display_order:
+            if rn not in self._run_to_groups and rn in self._display_order:
                 self._display_order.remove(rn)
-            self._run_to_group[rn] = group_id
-            group.member_run_numbers.append(rn)
-            moved_any = True
+            members.append(rn)
+            added_any = True
 
-        if moved_any:
+        if added_any:
+            self._project_model.set_data_group_members(group_id, members)
             self._move_groups_to_top()
+            self._rebuild_run_to_groups()
             self._rebuild_table()
+            self._resize_columns_to_content()
             self.datasets_changed.emit()
-        return moved_any
+            self.group_membership_changed.emit()
+        return added_any
 
     def remove_runs_from_group(self, run_numbers: list[int]) -> bool:
-        """Remove selected runs from their current groups and move to top-level list."""
-        moved_any = False
+        """Remove each run's *primary* group membership (D2).
+
+        A run in several groups loses only its primary membership; the earliest
+        remaining copy is promoted to primary. A run's last membership removal
+        returns it to the ungrouped list. Returns ``True`` when at least one
+        membership was removed.
+        """
+        pairs = [
+            (rn, gid)
+            for rn in run_numbers
+            if rn in self._datasets and (gid := self._primary_group_id(rn)) is not None
+        ]
+        return self._remove_memberships(pairs)
+
+    def _remove_memberships(self, pairs: list[tuple[int, str]]) -> bool:
+        """Remove the given ``(run, group)`` memberships (D2), then refresh the view.
+
+        Runs left in no group return to the ungrouped list just below the group
+        they were removed from; groups left empty are dissolved. Promotion of a
+        new primary is automatic — :meth:`_rebuild_run_to_groups` re-derives the
+        ordered memberships from the surviving registry.
+        """
+        if not pairs:
+            return False
+        emptied: list[str] = []
+        for rn, gid in pairs:
+            result = self._drop_membership(rn, gid)
+            if result is not None and result not in emptied:
+                emptied.append(result)
+        self._rebuild_run_to_groups()
+
         insert_at = len(self._display_order)
-        for rn in run_numbers:
-            gid = self._run_to_group.get(rn)
-            if gid is None or rn not in self._datasets:
+        for rn, gid in pairs:
+            if rn in self._run_to_groups or rn not in self._datasets:
+                continue
+            if rn in self._display_order:
                 continue
             group_index = (
                 self._display_order.index(gid)
                 if gid in self._display_order
                 else len(self._display_order)
             )
-            insert_at = min(insert_at, group_index + 1)
-            self._remove_run_from_group(rn, gid)
-            if rn not in self._display_order:
-                self._display_order.insert(insert_at, rn)
-                insert_at += 1
-            moved_any = True
+            target = min(insert_at, group_index + 1)
+            self._display_order.insert(target, rn)
+            insert_at = target + 1
 
-        if moved_any:
-            self._move_groups_to_top()
-            self._rebuild_table()
-            self.datasets_changed.emit()
-        return moved_any
+        for gid in emptied:
+            self._dissolve_empty_group(gid)
+
+        self._move_groups_to_top()
+        self._rebuild_run_to_groups()
+        self._rebuild_table()
+        self._resize_columns_to_content()
+        self.datasets_changed.emit()
+        self.group_membership_changed.emit()
+        return True
 
     def _default_group_name(self, run_numbers: list[int]) -> str:
+        group_count = len(self._project_model.data_groups)
         datasets = [self._datasets[rn] for rn in run_numbers if rn in self._datasets]
         if not datasets:
-            return f"Group {len(self._groups) + 1}"
+            return f"Group {group_count + 1}"
 
         temps = [float(ds.metadata.get("temperature", np.nan)) for ds in datasets]
         fields = [float(ds.metadata.get("field", np.nan)) for ds in datasets]
@@ -1139,10 +1450,10 @@ class DataBrowserPanel(QWidget):
             rel_tol=_GROUP_FIELD_REL_TOL,
         ):
             return f"B = {float(np.nanmedian(fields)):.6g} G"
-        return f"Group {len(self._groups) + 1}"
+        return f"Group {group_count + 1}"
 
     def _display_index_for_run(self, run_number: int) -> int:
-        gid = self._run_to_group.get(run_number)
+        gid = self._primary_group_id(run_number)
         if gid is not None and gid in self._display_order:
             return self._display_order.index(gid)
         if run_number in self._display_order:
@@ -1168,13 +1479,15 @@ class DataBrowserPanel(QWidget):
             for entry in self._display_order:
                 if isinstance(entry, str):
                     self._add_group_header_row(entry)
-                    group = self._groups.get(entry)
+                    group = self._project_model.data_group(entry)
                     if group is None:
                         continue
-                    if not group.collapsed:
+                    if not self._is_collapsed(entry):
                         for rn in group.member_run_numbers:
                             if rn in self._datasets:
-                                self._add_dataset_row(self._datasets[rn], indent=True)
+                                self._add_dataset_row(
+                                    self._datasets[rn], indent=True, group_id=entry
+                                )
                 else:
                     dataset = self._datasets.get(entry)
                     if dataset is not None:
@@ -1188,30 +1501,37 @@ class DataBrowserPanel(QWidget):
             self._table.setUpdatesEnabled(True)
 
     def _add_group_header_row(self, group_id: str) -> None:
-        group = self._groups.get(group_id)
+        group = self._project_model.data_group(group_id)
         if group is None:
             return
+
+        # Auto-groups (kind == "auto", D4) wear the red-grey header ramp; user
+        # groups keep the blue one. The delegate reads the same kind off the
+        # col-0 item to pick the matching selected/focused header tint.
+        is_auto = group.kind == "auto"
+        header_bg = _AUTO_GROUP_HEADER_BACKGROUND if is_auto else _GROUP_HEADER_BACKGROUND
 
         row = self._table.rowCount()
         self._table.insertRow(row)
 
-        prefix = "▸" if group.collapsed else "▾"
+        prefix = "▸" if self._is_collapsed(group_id) else "▾"
         run_item = QTableWidgetItem(f"{prefix} {group.name}")
         run_item.setData(self._GROUP_ROLE, f"{self._GROUP_SENTINEL_PREFIX}{group.group_id}")
+        run_item.setData(_GROUP_KIND_ROLE, group.kind)
         run_item.setFlags(
             (run_item.flags() & ~Qt.ItemFlag.ItemIsEditable) | Qt.ItemFlag.ItemIsSelectable
         )
         font = QFont(self._table.font())
         font.setBold(True)
         run_item.setFont(font)
-        run_item.setBackground(_GROUP_HEADER_BACKGROUND)
+        run_item.setBackground(header_bg)
         self._table.setItem(row, 0, run_item)
 
         # Cols 1–2 (Title, T): blank
         for col in range(1, min(3, self._table.columnCount())):
             blank = QTableWidgetItem("")
             blank.setFlags(blank.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            blank.setBackground(_GROUP_HEADER_BACKGROUND)
+            blank.setBackground(header_bg)
             self._table.setItem(row, col, blank)
 
         # Last base column (B): right-aligned member count in muted mono
@@ -1223,14 +1543,14 @@ class DataBrowserPanel(QWidget):
             count_item.setFont(mono_font(10.0))
             count_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             count_item.setForeground(QColor(tokens.TEXT_MUTED))
-            count_item.setBackground(_GROUP_HEADER_BACKGROUND)
+            count_item.setBackground(header_bg)
             self._table.setItem(row, 3, count_item)
 
         # Extra columns beyond the fixed four: blank
         for col in range(len(self._COLUMNS), self._table.columnCount()):
             blank = QTableWidgetItem("")
             blank.setFlags(blank.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            blank.setBackground(_GROUP_HEADER_BACKGROUND)
+            blank.setBackground(header_bg)
             self._table.setItem(row, col, blank)
 
     @staticmethod
@@ -1327,9 +1647,15 @@ class DataBrowserPanel(QWidget):
             if self._period_state(dataset) is not None
         }
 
-    def _add_dataset_row(self, dataset: MuonDataset, *, indent: bool) -> None:
+    def _add_dataset_row(
+        self, dataset: MuonDataset, *, indent: bool, group_id: str | None = None
+    ) -> None:
         rn = int(dataset.run_number)
         meta = dataset.metadata
+        # A *copy* row (D2): the run rendered under a non-primary group. Its
+        # table key encodes the (run, group) membership so it is addressable
+        # distinctly, and its run label carries a circled-digit marker.
+        is_copy = group_id is not None and self._primary_group_id(rn) != group_id
         run_display = str(dataset.run_label)
         if rn in self._combined_datasets:
             run_display = self._combined_run_display(rn)
@@ -1343,7 +1669,7 @@ class DataBrowserPanel(QWidget):
             run_item = QTableWidgetItem(run_display)
         else:
             run_item = NumericTableWidgetItem(run_display)
-        run_item.setData(self._GROUP_ROLE, rn)
+        run_item.setData(self._GROUP_ROLE, self._copy_key(group_id, rn) if is_copy else rn)
         run_item.setFlags(run_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         self._table.setItem(row, 0, run_item)
 
@@ -1388,6 +1714,19 @@ class DataBrowserPanel(QWidget):
             override_tip = "Custom grouping — this run is released from its grouping profile."
             existing_tip = run_item.toolTip()
             run_item.setToolTip(f"{existing_tip}\n{override_tip}" if existing_tip else override_tip)
+
+        # Copy-row marker (D2): a run under a non-primary group gets a circled
+        # digit and an "Also in: …" tooltip naming its other memberships.
+        if is_copy:
+            marker = self._membership_marker(rn, group_id)
+            if marker:
+                run_item.setText(f"{run_item.text()} {marker}")
+            membership_tip = self._membership_tooltip(rn, group_id)
+            if membership_tip:
+                existing_tip = run_item.toolTip()
+                run_item.setToolTip(
+                    f"{existing_tip}\n{membership_tip}" if existing_tip else membership_tip
+                )
 
         temp = self._temperature_for_display(dataset)
         temp_item = NumericTableWidgetItem(f"{temp:.2f}")
@@ -1434,11 +1773,17 @@ class DataBrowserPanel(QWidget):
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self._table.setItem(row, i, item)
 
-        # Apply background: series-highlight takes priority over group-member tint.
+        # Apply background: series-highlight takes priority over group-member
+        # tint, which itself switches on the owning group's kind (auto vs user).
+        tint_group = group_id if group_id is not None else self._primary_group_id(rn)
         if rn in self._highlighted_runs:
             bg = _SERIES_HIGHLIGHT_BACKGROUND
-        elif self._run_to_group.get(rn) is not None:
-            bg = _GROUP_MEMBER_BACKGROUND
+        elif tint_group is not None:
+            bg = (
+                _AUTO_GROUP_MEMBER_BACKGROUND
+                if self._group_kind(tint_group) == "auto"
+                else _GROUP_MEMBER_BACKGROUND
+            )
         else:
             bg = None
         if bg is not None:
@@ -2479,23 +2824,35 @@ class DataBrowserPanel(QWidget):
         return str(key)[len(self._GROUP_SENTINEL_PREFIX) :]
 
     def _dataset_run_numbers_from_keys(self, keys: list[int | str]) -> list[int]:
+        """Resolve selection keys to underlying datasets, de-duplicated (D2).
+
+        Every underlying dataset appears **once** even when reached via several
+        keys — a bare run key, a ``copy:`` membership key for the same run, or a
+        group-header key that expands to it. This is the single dedupe choke
+        point that keeps a run selected via two group copies from double-counting
+        into co-add / subtract / batch fits.
+        """
         out: list[int] = []
         seen: set[int] = set()
+
+        def _add(run_number: int) -> None:
+            if run_number in self._datasets and run_number not in seen:
+                out.append(run_number)
+                seen.add(run_number)
+
         for key in keys:
-            if isinstance(key, int) and key in self._datasets and key not in seen:
-                out.append(key)
-                seen.add(key)
+            if isinstance(key, int):
+                _add(key)
+                continue
+            copy_parts = self._copy_key_parts(key)
+            if copy_parts is not None:
+                _add(copy_parts[1])
                 continue
             gid = self._group_id_from_key(key)
             if gid is None:
                 continue
-            group = self._groups.get(gid)
-            if group is None:
-                continue
-            for rn in group.member_run_numbers:
-                if rn in self._datasets and rn not in seen:
-                    out.append(rn)
-                    seen.add(rn)
+            for rn in self._group_members(gid):
+                _add(rn)
         return out
 
     def _get_selected_run_numbers(self) -> list[int]:
@@ -2539,33 +2896,38 @@ class DataBrowserPanel(QWidget):
         return len(self._selected_keys()) == 1 and len(self._get_selected_group_ids()) == 1
 
     def get_group_name(self, group_id: str) -> str | None:
-        group = self._groups.get(group_id)
+        group = self._project_model.data_group(group_id)
         return None if group is None else group.name
 
     def get_group_id_for_run(self, run_number: int) -> str | None:
-        """Return data-group id containing *run_number*, if any."""
+        """Return *run_number*'s **primary** data-group id, if any (D2).
+
+        Compatibility accessor: under multi-group membership a run may belong to
+        several groups; this returns only the primary (first) membership.
+        Callers that need every membership use :meth:`get_group_ids_for_run`.
+        (Phase 3 reworks the fit-flow callers that still assume single membership.)
+        """
         try:
             run_key = int(run_number)
         except (TypeError, ValueError):
             return None
-        return self._run_to_group.get(run_key)
+        return self._primary_group_id(run_key)
+
+    def get_group_ids_for_run(self, run_number: int) -> list[str]:
+        """Return every group id *run_number* belongs to, primary first (D2)."""
+        try:
+            run_key = int(run_number)
+        except (TypeError, ValueError):
+            return []
+        return self._group_ids_for_run(run_key)
 
     def get_group_member_run_numbers(self, group_id: str) -> list[int]:
         """Return run numbers currently belonging to *group_id*."""
-        group = self._groups.get(group_id)
-        if group is None:
-            return []
-        return [int(rn) for rn in group.member_run_numbers]
+        return self._group_members(group_id)
 
     def get_all_group_ids(self) -> list[str]:
-        """Return every current group id (public surface for external syncing).
-
-        Lets a host (e.g. mirroring groups into ``ProjectModel.data_groups``,
-        Phase 7/D1) enumerate groups through the same accessors as
-        :meth:`get_group_name`/:meth:`get_group_member_run_numbers`, instead of
-        reaching into the private ``_groups`` dict directly.
-        """
-        return list(self._groups)
+        """Return every current group id, from the canonical registry (D6)."""
+        return list(self._project_model.data_groups)
 
     def get_dataset(self, run_number: int) -> MuonDataset | None:
         return self._datasets.get(run_number)
@@ -2584,20 +2946,33 @@ class DataBrowserPanel(QWidget):
         self._apply_series_highlights()
 
     def _apply_series_highlights(self) -> None:
-        """Walk the table and apply/remove the series-highlight tint."""
+        """Walk the table and apply/remove the series-highlight tint.
+
+        Handles both primary run rows (int key) and copy rows (``copy:`` key,
+        D2); the member tint under each falls back to the owning group's kind
+        (auto vs user) so a re-tint after a highlight change keeps the ramp.
+        """
         for row in range(self._table.rowCount()):
             item = self._table.item(row, 0)
             if item is None:
                 continue
             key = item.data(self._GROUP_ROLE)
-            if not isinstance(key, int):
-                continue  # Skip group header rows.
-            rn = key
-            in_group = self._run_to_group.get(rn) is not None
+            if isinstance(key, int):
+                rn = key
+                tint_group = self._primary_group_id(rn)
+            else:
+                copy_parts = self._copy_key_parts(key)
+                if copy_parts is None:
+                    continue  # Skip group header rows.
+                tint_group, rn = copy_parts[0], copy_parts[1]
             if rn in self._highlighted_runs:
                 bg = _SERIES_HIGHLIGHT_BACKGROUND
-            elif in_group:
-                bg = _GROUP_MEMBER_BACKGROUND
+            elif tint_group is not None:
+                bg = (
+                    _AUTO_GROUP_MEMBER_BACKGROUND
+                    if self._group_kind(tint_group) == "auto"
+                    else _GROUP_MEMBER_BACKGROUND
+                )
             else:
                 bg = QColor(0, 0, 0, 0)  # transparent / default
             for col in range(self._table.columnCount()):
@@ -3001,7 +3376,7 @@ class DataBrowserPanel(QWidget):
 
         for entry in self._display_order:
             if isinstance(entry, str):
-                group = self._groups.get(entry)
+                group = self._project_model.data_group(entry)
                 if group is None:
                     continue
                 members = [int(rn) for rn in group.member_run_numbers if int(rn) in self._datasets]
@@ -3125,9 +3500,14 @@ class DataBrowserPanel(QWidget):
         self._temperature_from_log_overrides.pop(int(run_number), None)
         self._field_from_log_overrides.pop(int(run_number), None)
 
-        gid = self._run_to_group.get(run_number)
-        if gid is not None:
-            self._remove_run_from_group(run_number, gid)
+        # Drop the run from every group it belongs to (D2), dissolving any group
+        # left empty; a removed dataset must not linger as a phantom membership.
+        group_ids = self._group_ids_for_run(run_number)
+        for gid in group_ids:
+            if self._drop_membership(run_number, gid) is not None:
+                self._dissolve_empty_group(gid)
+        if group_ids:
+            self._rebuild_run_to_groups()
         if run_number in self._display_order:
             self._display_order.remove(run_number)
 
@@ -3168,9 +3548,10 @@ class DataBrowserPanel(QWidget):
             gid for gid in (self._group_id_from_key(k) for k in keys) if gid is not None
         ]
         expanded_selected_runs = self._dataset_run_numbers_from_keys(keys)
-        grouped_selected_runs = [
-            rn for rn in selected_runs if self._run_to_group.get(rn) is not None
-        ]
+        # Group memberships implied by the selection (D2): a copy row targets its
+        # own (run, group); a primary/ungrouped run row targets its primary
+        # membership. Drives the "Remove from Group(s)" entry and its handler.
+        selected_memberships = self._selected_memberships(keys)
 
         regular_runs = [rn for rn in expanded_selected_runs if rn not in self._combined_datasets]
         combined_runs = [rn for rn in expanded_selected_runs if rn in self._combined_datasets]
@@ -3212,22 +3593,22 @@ class DataBrowserPanel(QWidget):
         if combined_runs:
             menu.addAction("Separate Combined", self._separate_combined)
 
-        if selected_runs and self._groups:
+        if expanded_selected_runs and self._project_model.data_groups:
             send_menu = menu.addMenu("Send to Group")
-            self._populate_send_to_group_menu(send_menu, selected_runs)
+            self._populate_send_to_group_menu(send_menu, expanded_selected_runs)
 
-        if grouped_selected_runs:
-            label = "Remove from Group" if len(grouped_selected_runs) == 1 else "Remove from Groups"
+        if selected_memberships:
+            label = "Remove from Group" if len(selected_memberships) == 1 else "Remove from Groups"
             menu.addAction(label, self._remove_selected_from_group)
 
         if len(selected_group_ids) == 1 and len(keys) == 1:
             gid = selected_group_ids[0]
-            group = self._groups.get(gid)
+            group = self._project_model.data_group(gid)
             if group is not None:
-                collapse_text = "Expand Group" if group.collapsed else "Collapse Group"
+                collapse_text = "Expand Group" if self._is_collapsed(gid) else "Collapse Group"
                 menu.addAction(collapse_text, lambda gid=gid: self._toggle_group_collapsed(gid))
                 menu.addAction("Rename Group", lambda gid=gid: self._rename_group(gid))
-                menu.addAction("Ungroup", lambda gid=gid: self.ungroup(gid))
+                menu.addAction("Ungroup", lambda gid=gid: self.ungroup_requested.emit(gid))
                 menu.addSeparator()
                 # F9 fix (Phase 7/D1): "Fit this group…" prefills the batch member
                 # set from the group's stored members rather than the live/visible
@@ -3247,7 +3628,7 @@ class DataBrowserPanel(QWidget):
 
     def _populate_send_to_group_menu(self, send_menu: QMenu, selected_runs: list[int]) -> None:
         """Populate Send-to-Group submenu with current groups."""
-        groups = sorted(self._groups.values(), key=lambda g: g.name.lower())
+        groups = sorted(self._project_model.data_groups.values(), key=lambda g: g.name.lower())
         if not groups:
             action = send_menu.addAction("(No groups)")
             action.setEnabled(False)
@@ -3261,13 +3642,37 @@ class DataBrowserPanel(QWidget):
                 )
             )
 
+    def _selected_memberships(self, keys: list[int | str]) -> list[tuple[int, str]]:
+        """Return the ``(run, group)`` memberships implied by *keys* (D2).
+
+        A ``copy:`` key targets its own membership; a bare run key targets the
+        run's primary membership (ungrouped runs contribute nothing). De-duplicated
+        so the same membership selected twice removes once.
+        """
+        memberships: list[tuple[int, str]] = []
+        seen: set[tuple[int, str]] = set()
+        for key in keys:
+            copy_parts = self._copy_key_parts(key)
+            if copy_parts is not None:
+                pair = (copy_parts[1], copy_parts[0])
+            elif isinstance(key, int):
+                gid = self._primary_group_id(key)
+                pair = (key, gid) if gid is not None else None
+            else:
+                pair = None
+            if pair is not None and pair not in seen:
+                memberships.append(pair)
+                seen.add(pair)
+        return memberships
+
     def _remove_selected_from_group(self) -> None:
-        run_numbers = [
-            rn for rn in self._get_selected_run_numbers() if self._run_to_group.get(rn) is not None
-        ]
-        if not run_numbers:
+        """Remove the selected memberships (D2): a copy removes that one; a
+        primary/ungrouped run row removes the run's primary membership."""
+        memberships = self._selected_memberships(self._selected_keys(visible_only=True))
+        memberships = [(rn, gid) for rn, gid in memberships if rn in self._datasets]
+        if not memberships:
             return
-        self.remove_runs_from_group(run_numbers)
+        self._remove_memberships(memberships)
 
     def _on_degrade_statistics(self, run_number: int) -> None:
         """Prompt for a factor + seed and add the thinned run beside the source."""
@@ -3338,14 +3743,13 @@ class DataBrowserPanel(QWidget):
         self.create_data_group(run_numbers, name=group_name)
 
     def _toggle_group_collapsed(self, group_id: str) -> None:
-        group = self._groups.get(group_id)
-        if group is None:
+        if self._project_model.data_group(group_id) is None:
             return
-        group.collapsed = not group.collapsed
+        self._collapsed[group_id] = not self._is_collapsed(group_id)
         self._rebuild_table()
 
     def _rename_group(self, group_id: str) -> None:
-        group = self._groups.get(group_id)
+        group = self._project_model.data_group(group_id)
         if group is None:
             return
         name, ok = QInputDialog.getText(self, "Rename Data Group", "Group name:", text=group.name)
@@ -3354,7 +3758,10 @@ class DataBrowserPanel(QWidget):
         new_name = name.strip()
         if not new_name:
             return
-        group.name = new_name
+        # Rename through the registry: renaming an auto-group promotes it to a
+        # user group (D4, kind flips auto→user), so the row repaints from the
+        # red-grey ramp back to the blue one.
+        self._project_model.rename_data_group(group_id, new_name)
         self._rebuild_table()
 
     # ------------------------------------------------------------------
@@ -3631,16 +4038,16 @@ class DataBrowserPanel(QWidget):
         runs = [entry for entry in self._display_order if isinstance(entry, int)]
         sorted_runs = sorted(runs, key=_sort_key, reverse=reverse)
 
-        if self._groups:
+        if self._project_model.data_groups:
             groups = [
                 entry
                 for entry in self._display_order
-                if isinstance(entry, str) and entry in self._groups
+                if isinstance(entry, str) and entry in self._project_model.data_groups
             ]
             for gid in groups:
-                group = self._groups[gid]
-                group.member_run_numbers = sorted(
-                    group.member_run_numbers, key=_sort_key, reverse=reverse
+                group = self._project_model.data_group(gid)
+                self._project_model.set_data_group_members(
+                    gid, sorted(group.member_run_numbers, key=_sort_key, reverse=reverse)
                 )
             self._display_order = groups + sorted_runs
         else:
@@ -3701,20 +4108,14 @@ class DataBrowserPanel(QWidget):
                 run_item = self._table.item(row, 0)
                 if run_item is None:
                     continue
-                key = run_item.data(self._GROUP_ROLE)
-                if isinstance(key, int):
-                    gid = self._run_to_group.get(key)
-                    if (
-                        gid is not None
-                        and self._groups.get(gid) is not None
-                        and self._groups[gid].collapsed
-                    ):
-                        self._table.setRowHidden(row, True)
+                gid = self._member_row_group(run_item.data(self._GROUP_ROLE))
+                if gid is not None and self._is_collapsed(gid):
+                    self._table.setRowHidden(row, True)
             self.selection_changed.emit()
             return
 
         # First pass: hide dataset rows not matching filter or collapsed by group.
-        group_has_visible: dict[str, bool] = {gid: False for gid in self._groups}
+        group_has_visible: dict[str, bool] = {gid: False for gid in self._project_model.data_groups}
         for row in range(self._table.rowCount()):
             run_item = self._table.item(row, 0)
             if run_item is None:
@@ -3724,16 +4125,11 @@ class DataBrowserPanel(QWidget):
                 continue
 
             visible = self._row_visible_by_filters(row)
-            if isinstance(key, int):
-                gid = self._run_to_group.get(key)
-                if (
-                    gid is not None
-                    and self._groups.get(gid) is not None
-                    and self._groups[gid].collapsed
-                ):
-                    visible = False
-                if gid is not None and visible:
-                    group_has_visible[gid] = True
+            gid = self._member_row_group(key)
+            if gid is not None and self._is_collapsed(gid):
+                visible = False
+            if gid is not None and visible:
+                group_has_visible[gid] = True
             self._table.setRowHidden(row, not visible)
 
         # Second pass: hide group rows when all children filtered out.
@@ -4265,42 +4661,46 @@ class DataBrowserPanel(QWidget):
         for rn in combined_items:
             insert_index = self._display_index_for_run(rn)
             source_datasets = self._combined_source_datasets.get(rn, [])
-            restored_run_numbers.extend(int(ds.run_number) for ds in source_datasets)
-            group_id = self._run_to_group.get(rn)
-            group = self._groups.get(group_id) if group_id is not None else None
+            source_runs = [int(ds.run_number) for ds in source_datasets]
+            restored_run_numbers.extend(source_runs)
+            group_ids = self._group_ids_for_run(rn)
 
             self._datasets.pop(rn, None)
             self._combined_datasets.pop(rn, None)
             self._combined_source_datasets.pop(rn, None)
             self._combined_signs.pop(rn, None)
             self._combined_methods.pop(rn, None)
-            if group is not None:
-                try:
-                    member_index = group.member_run_numbers.index(rn)
-                except ValueError:
-                    member_index = len(group.member_run_numbers)
-                group.member_run_numbers = [
-                    member for member in group.member_run_numbers if member != rn
-                ]
-                self._run_to_group.pop(rn, None)
+            # Materialise the source datasets (idempotent across the run's groups).
+            for dataset in source_datasets:
+                self._datasets[int(dataset.run_number)] = dataset
 
-                for offset, dataset in enumerate(source_datasets):
-                    source_rn = int(dataset.run_number)
-                    self._datasets[source_rn] = dataset
-                    group.member_run_numbers.insert(member_index + offset, source_rn)
-                    self._run_to_group[source_rn] = group.group_id
-            else:
-                self._run_to_group.pop(rn, None)
+            # Replace the combined run with its source runs in every group it
+            # belonged to (D2), each at the combined run's former slot.
+            for gid in group_ids:
+                group = self._project_model.data_group(gid)
+                if group is None:
+                    continue
+                members = list(group.member_run_numbers)
+                try:
+                    member_index = members.index(rn)
+                except ValueError:
+                    member_index = len(members)
+                members = [member for member in members if member != rn]
+                for offset, source_rn in enumerate(source_runs):
+                    if source_rn not in members:
+                        members.insert(member_index + offset, source_rn)
+                self._project_model.set_data_group_members(gid, members)
+
             if rn in self._display_order:
                 self._display_order.remove(rn)
 
-            if group is None:
-                for offset, dataset in enumerate(source_datasets):
-                    source_rn = int(dataset.run_number)
-                    self._datasets[source_rn] = dataset
+            if not group_ids:
+                for offset, source_rn in enumerate(source_runs):
                     if source_rn not in self._display_order:
                         self._display_order.insert(insert_index + offset, source_rn)
 
+        self._rebuild_run_to_groups()
+        self._move_groups_to_top()
         self._rebuild_table()
         if restored_run_numbers:
             self.select_runs(set(restored_run_numbers))
@@ -4316,8 +4716,13 @@ class DataBrowserPanel(QWidget):
         self._combined_signs.clear()
         self._combined_methods.clear()
         self._next_combined_id = -1
-        self._groups.clear()
-        self._run_to_group.clear()
+        # The registry is canonical (D6); resetting the browser to empty clears
+        # its groups too (MainWindow's _clear_all_state does not otherwise touch
+        # ProjectModel, and a load replaces the model wholesale afterwards).
+        self._project_model.data_groups.clear()
+        self._collapsed.clear()
+        self._run_to_groups.clear()
+        self._legacy_group_seed = []
         self._display_order.clear()
         self._column_filters.clear()
         self._extra_columns.clear()
@@ -4408,15 +4813,28 @@ class DataBrowserPanel(QWidget):
 
     def get_state(self) -> dict:
         filters = {str(col): sorted(values) for col, values in self._column_filters.items()}
-        data_groups = [
-            {
-                "group_id": group.group_id,
-                "name": group.name,
-                "member_run_numbers": [int(rn) for rn in group.member_run_numbers],
-                "collapsed": bool(group.collapsed),
-            }
-            for group in self._groups.values()
-        ]
+        # Group *definitions* are canonical in ProjectModel.data_groups (D6). This
+        # browser_state block carries the panel-local view state — group display
+        # order and per-group ``collapsed`` — and doubles as a self-contained
+        # fallback so a standalone ``restore_state`` (tests, scripts) and a legacy
+        # pre-registry project can still rebuild the group rows. ``kind`` rides
+        # along so an auto-group's ramp survives a browser-only round-trip.
+        data_groups = []
+        for entry in self._display_order:
+            if not isinstance(entry, str):
+                continue
+            group = self._project_model.data_group(entry)
+            if group is None:
+                continue
+            data_groups.append(
+                {
+                    "group_id": group.group_id,
+                    "name": group.name,
+                    "member_run_numbers": [int(rn) for rn in group.member_run_numbers],
+                    "collapsed": self._is_collapsed(group.group_id),
+                    "kind": group.kind,
+                }
+            )
         selected_group_ids = self._get_selected_group_ids()
         return {
             # Version 2: the Comment column was removed (comments ride on the
@@ -4521,25 +4939,20 @@ class DataBrowserPanel(QWidget):
                 self._field_from_log_overrides[rn] = bool(enabled)
         self._refresh_column_headers()
 
-        for group_entry in state.get("data_groups", []):
-            if not isinstance(group_entry, dict):
-                continue
-            group_id = str(group_entry.get("group_id") or "")
-            if not group_id:
-                continue
-            run_numbers = [
-                int(v)
-                for v in group_entry.get("member_run_numbers", [])
-                if int(v) in self._datasets
-            ]
-            if len(run_numbers) < 2:
-                continue
-            self.create_data_group(
-                run_numbers,
-                name=str(group_entry.get("name") or "").strip() or None,
-                group_id=group_id,
-                collapsed=bool(group_entry.get("collapsed", False)),
-            )
+        # Capture the browser_state group block as the collapse map + legacy seed
+        # (D6). The canonical definitions live in ProjectModel.data_groups; the
+        # mainwindow load rebinds the freshly loaded model via set_project_model
+        # afterwards. Groups present here but absent from the registry (a
+        # pre-registry project, or a standalone panel) are materialised by
+        # sync_groups_from_project_model below.
+        self._legacy_group_seed = [
+            dict(entry) for entry in state.get("data_groups", []) if isinstance(entry, dict)
+        ]
+        for entry in self._legacy_group_seed:
+            gid = str(entry.get("group_id") or "")
+            if gid:
+                self._collapsed[gid] = bool(entry.get("collapsed", False))
+        self.sync_groups_from_project_model()
 
         self._sort_table(rebuild=False)
         self._move_groups_to_top()

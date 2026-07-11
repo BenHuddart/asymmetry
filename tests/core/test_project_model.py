@@ -456,18 +456,153 @@ def test_series_for_group_computes_back_references():
     assert linked.member_run_numbers == [1, 2]
 
 
-def test_remove_data_group_leaves_its_series_untouched():
+# ── group mutation API (D1/D4/D7) ─────────────────────────────────────────────
+
+
+def test_create_data_group_mints_uuid_and_honours_kind():
     model = ProjectModel()
-    model.add_data_group(DataGroup("grp-1", "T = 150 K", member_run_numbers=[1, 2]))
-    linked = _batch("b1", runs=(1, 2))
-    linked.source_group_id = "grp-1"
+    group = model.create_data_group("scan", [1, 2], kind="auto")
+    assert group.kind == "auto"
+    assert group.group_id  # a minted uuid4
+    assert model.data_group(group.group_id) is group
+    explicit = model.create_data_group("named", [3], group_id="grp-x", order_key="field")
+    assert explicit.group_id == "grp-x"
+    assert explicit.order_key == "field"
+    assert explicit.kind == "user"
+
+
+def test_rename_data_group_promotes_auto_to_user():
+    model = ProjectModel()
+    group = model.create_data_group("Runs 1–2", [1, 2], kind="auto")
+    assert model.rename_data_group(group.group_id, "Field scan")
+    assert group.name == "Field scan"
+    assert group.kind == "user"  # promoted on rename (D4)
+    # Renaming a user group leaves its kind alone.
+    assert model.rename_data_group(group.group_id, "Field scan v2")
+    assert group.kind == "user"
+    assert not model.rename_data_group("missing", "x")
+
+
+def test_set_data_group_members_replaces_membership():
+    model = ProjectModel()
+    group = model.create_data_group("scan", [1, 2])
+    assert model.set_data_group_members(group.group_id, [3, 4, 5])
+    assert group.member_run_numbers == [3, 4, 5]
+    assert not model.set_data_group_members("missing", [1])
+
+
+def test_find_auto_group_matches_member_set_only_for_auto_kind():
+    model = ProjectModel()
+    auto = model.create_data_group("auto", [2, 1], kind="auto")
+    model.create_data_group("user", [5, 6], kind="user")
+    # Set identity, order-insensitive.
+    assert model.find_auto_group([1, 2]) is auto
+    assert model.find_auto_group([2, 1]) is auto
+    # A user group with matching members is never reused.
+    assert model.find_auto_group([5, 6]) is None
+    assert model.find_auto_group([9]) is None
+
+
+def test_remove_data_group_freeze_branch_snapshots_and_orphans():
+    model = ProjectModel()
+    group = model.create_data_group("scan", [1, 2, 3])
+    linked = _batch("b1", runs=(1, 2, 3))
+    linked.group_id = group.group_id
+    # last_fitted is the actual snapshot: run 3 was excluded at fit time.
+    linked.last_fitted_members = [1, 2]
     model.add_batch(linked)
 
-    removed = model.remove_data_group("grp-1")
-    assert removed is not None and removed.group_id == "grp-1"
-    assert model.data_group("grp-1") is None
+    removed = model.remove_data_group(group.group_id, orphan_series=True)
+    assert removed == []  # nothing deleted
+    assert model.data_group(group.group_id) is None
+    # Series survives, frozen: group_id cleared, members snapshotted to what was fit.
     assert model.batch("b1") is linked
-    assert linked.source_group_id == "grp-1"
+    assert linked.group_id is None
+    assert linked.member_run_numbers == [1, 2]
+
+
+def test_remove_data_group_delete_branch_removes_series_and_returns_ids():
+    model = ProjectModel()
+    group = model.create_data_group("scan", [1, 2])
+    linked = _batch("b1", runs=(1, 2))
+    linked.group_id = group.group_id
+    # Give run 1 a FitSlot pointing at the batch so we can assert it is cleared.
+    rep1 = model.ensure_dataset(1).ensure(_FB)
+    rep1.fit = FitSlot(model=_model_dict(), provenance="batch", batch_id="b1")
+    model.add_batch(linked)
+
+    removed = model.remove_data_group(group.group_id, orphan_series=False)
+    assert removed == ["b1"]
+    assert model.batch("b1") is None
+    # remove_batch cleared the member FitSlot pointer.
+    assert rep1.fit.batch_id is None
+    assert rep1.fit.provenance == "single"
+
+
+def test_remove_data_group_resolves_legacy_source_group_id_fallback():
+    model = ProjectModel()
+    group = model.create_data_group("scan", [1, 2])
+    # A migrated/legacy series linked only by source_group_id (group_id None).
+    legacy = _batch("b1", runs=(1, 2))
+    legacy.source_group_id = group.group_id
+    model.add_batch(legacy)
+
+    removed = model.remove_data_group(group.group_id, orphan_series=False)
+    assert removed == ["b1"]
+    assert model.batch("b1") is None
+
+
+def test_remove_data_group_unknown_id_returns_empty():
+    assert ProjectModel().remove_data_group("missing", orphan_series=True) == []
+
+
+# ── series signature: group-bound vs frozen keying (D7) ───────────────────────
+
+
+def test_group_bound_series_supersede_on_same_group_model_and_exclusions():
+    model = ProjectModel()
+    group = model.create_data_group("scan", [1, 2, 3])
+    first = _batch("b1", runs=(1, 2))
+    first.group_id = group.group_id
+    first.excluded_run_numbers = [3]
+    model.add_batch(first)
+    # Re-run: same group + model + exclusions, but the group has since gained a
+    # run so the member list differs. Identity is group+model+exclusions, so it
+    # still supersedes in place.
+    second = _batch("b2", runs=(1, 2, 3))
+    second.group_id = group.group_id
+    second.excluded_run_numbers = [3]
+    assert model.remove_superseded_batches(second) == ["b1"]
+    assert second.batch_id == "b1"
+
+
+def test_group_bound_series_differing_exclusions_do_not_collide():
+    model = ProjectModel()
+    group = model.create_data_group("scan", [1, 2, 3])
+    first = _batch("b1", runs=(1, 2, 3))
+    first.group_id = group.group_id
+    first.excluded_run_numbers = []
+    model.add_batch(first)
+    other = _batch("b2", runs=(1, 2))
+    other.group_id = group.group_id
+    other.excluded_run_numbers = [3]  # a genuinely different analysis
+    assert model.remove_superseded_batches(other) == []
+
+
+def test_frozen_series_keying_unchanged_by_member_set():
+    """A frozen (group_id None) run series still keys on rep+kind+members+model."""
+    model = ProjectModel()
+    first = _batch("b1", runs=(1, 2))  # group_id None
+    model.add_batch(first)
+    same = _batch("b2", runs=(1, 2))
+    assert model.remove_superseded_batches(same) == ["b1"]
+    # A frozen series and a group-bound series over the same runs never collide.
+    model2 = ProjectModel()
+    frozen = _batch("f1", runs=(1, 2))
+    model2.add_batch(frozen)
+    bound = _batch("g1", runs=(1, 2))
+    bound.group_id = "grp-1"
+    assert model2.remove_superseded_batches(bound) == []
 
 
 def test_dedupe_relinks_member_slot_that_pointed_at_dropped_twin():

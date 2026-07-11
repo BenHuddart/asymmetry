@@ -33,6 +33,7 @@ from asymmetry.core.representation.group import DataGroup
 from asymmetry.core.representation.naming import (
     composite_model_label,
     default_series_label,
+    format_run_range,
     member_range,
 )
 from asymmetry.core.representation.series import (
@@ -75,6 +76,7 @@ __all__ = [
     "composite_model_label",
     "compute_group_input_digest",
     "default_series_label",
+    "format_run_range",
     "make_representation",
     "member_range",
     "representation_from_dict",

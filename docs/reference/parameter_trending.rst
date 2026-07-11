@@ -75,6 +75,38 @@ show-components) are not decorations: they are remembered per window, not per
 fit. Legacy projects that stored decorations under the old window-state key
 still load, and migrate to the new home on the next save.
 
+.. _group-bound-series-staleness:
+
+Group-bound series and staleness
+---------------------------------
+
+A run-membered FitSeries produced by a batch or global fit belongs to a Data
+Browser group: either the group the fit was launched from (via **Fit this
+group…**), or a group auto-created from the ad-hoc run selection. The group
+is the batch vehicle — its membership drives the series, not the other way
+round. A series' *effective* membership is derived live as the owning group's
+members minus any runs the series itself has excluded (untick a run in the
+Batch tab's member list without removing it from the group), so the same
+group can carry more than one analysis — a field scan fit with one model and,
+separately, a subset of it re-fit with another — without duplicating the run
+collection.
+
+Because membership is live-derived, adding a run to the group or excluding
+one from the series does not retroactively change already-recorded results:
+those stay a snapshot of what was actually fit. When the group's current
+effective membership no longer matches that snapshot, the series is *stale*,
+and its button in the panel's series row grows a **⚠** with the tooltip
+"Membership changed since last fit — re-run to refresh."; re-running the
+series (from the Batch tab, still bound to the same group) refreshes the
+snapshot and clears the marker. Re-running a group-bound series always
+replaces its previous results in place rather than accumulating a second
+series for the same group and model. A series with no owning group (a legacy
+analysis, or one kept as a standalone record after its group was deleted) is
+never stale — its membership is a fixed snapshot, exactly as before this
+distinction existed. See :doc:`project_files` for the persisted
+``group_id`` / ``excluded_run_numbers`` / ``last_fitted_members`` fields and
+:doc:`gui_usage` for the Data Browser and Batch tab controls that drive them.
+
 .. _trend-abscissa-coordinate:
 
 How the T / B abscissa is sourced

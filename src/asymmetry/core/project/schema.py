@@ -11,8 +11,21 @@ Compatibility policy
 * Migration functions are one-per-step and retained for at least one major schema revision.
 * Unknown top-level fields in a valid schema are preserved on load/save cycles.
 
-Current schema (version 14)
+Current schema (version 15)
 ---------------------------
+
+Version 15 unifies ``DataGroup`` and ``FitSeries`` (D1/D7/D9). Each top-level
+``data_groups`` entry gains ``kind`` (``"user"``/``"auto"``, default
+``"user"``). Each run-membered series in ``batches`` gains a structural
+``group_id`` (resolved from its legacy ``source_group_id`` when that id names a
+live group in the project's ``data_groups`` block, else ``null`` — a *frozen*
+legacy analysis; old projects must not sprout groups the user never made),
+``excluded_run_numbers`` (default empty), and ``last_fitted_members`` (seeded
+from ``member_run_numbers`` so a loaded series is not spuriously stale).
+Detector-group series (``member_kind == "groups"``) get only the additive
+defaults and are never group-resolved. Additive and tolerant: a project with
+no ``data_groups`` block, no ``batches``, or junk entries migrates cleanly. See
+:func:`_migrate_v14_to_v15`.
 
 Version 14 adds a per-plot-panel ``waterfall`` block — ``{"enabled": bool,
 "offset": float | null}`` (null offset = automatic spacing) — inside
@@ -154,9 +167,9 @@ import json
 import math
 from pathlib import Path
 
-CURRENT_SCHEMA_VERSION: int = 14
+CURRENT_SCHEMA_VERSION: int = 15
 
-_SUPPORTED_VERSIONS: frozenset[int] = frozenset({1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14})
+_SUPPORTED_VERSIONS: frozenset[int] = frozenset({1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15})
 
 #: Fourier-state keys that describe the FFT generation recipe (recipe-only
 #: persistence carries these into each dataset's ``freq_fft`` representation).
@@ -260,6 +273,9 @@ def migrate_to_current(data: dict) -> dict:
         version = 13
     if version == 13:
         migrated = _migrate_v13_to_v14(migrated)
+        version = 14
+    if version == 14:
+        migrated = _migrate_v14_to_v15(migrated)
     return migrated
 
 
@@ -679,6 +695,80 @@ def _migrate_v13_to_v14(data: dict) -> dict:
             freq_state.setdefault("waterfall", dict(default))
             plot_state["frequency_plot_state"] = freq_state
         migrated["plot_state"] = plot_state
+    return migrated
+
+
+def _migrate_v14_to_v15(data: dict) -> dict:
+    """Migrate schema v14 project state to v15.
+
+    v15 unifies ``DataGroup`` and ``FitSeries`` (D1/D7/D9). The migration is
+    additive and tolerant of every legacy shape found in the wild (pre-Phase-7
+    saves with no ``data_groups`` block, projects with no ``batches``, junk
+    entries):
+
+    * Each ``data_groups`` entry gains ``kind`` (default ``"user"``).
+    * Each run-membered series (``member_kind == "runs"``) gains:
+
+      - ``group_id`` — set to its legacy ``source_group_id`` **iff** that id
+        names a live group in this project's ``data_groups`` block, else
+        ``None``. A group-less series migrates to a *frozen legacy* analysis
+        (``group_id`` ``None``); old projects must not sprout groups the user
+        never made (D9). A later re-run creates its auto-group then.
+      - ``excluded_run_numbers`` — default empty.
+      - ``last_fitted_members`` — a copy of ``member_run_numbers`` (so a loaded
+        series is not spuriously stale).
+
+    * Detector-group series (``member_kind == "groups"``, D8) get only the
+      additive defaults (``group_id=None``, empty exclusions, ``last_fitted_members``
+      copy) — never a group resolution.
+    """
+    migrated = dict(data)
+    migrated["schema_version"] = 15
+
+    # Collect the live group ids first so series can resolve their group link.
+    known_group_ids: set[str] = set()
+    groups = migrated.get("data_groups")
+    if isinstance(groups, list):
+        updated_groups: list = []
+        for group in groups:
+            if isinstance(group, dict):
+                entry = dict(group)
+                entry.setdefault("kind", "user")
+                gid = entry.get("group_id")
+                if gid is not None:
+                    known_group_ids.add(str(gid))
+                updated_groups.append(entry)
+            else:
+                updated_groups.append(group)
+        migrated["data_groups"] = updated_groups
+
+    batches = migrated.get("batches")
+    if isinstance(batches, list):
+        updated_batches: list = []
+        for series in batches:
+            if not isinstance(series, dict):
+                updated_batches.append(series)
+                continue
+            entry = dict(series)
+            member_kind = entry.get("member_kind", "runs")
+            members = entry.get("member_run_numbers")
+            members = list(members) if isinstance(members, list) else []
+            if "group_id" not in entry:
+                source_group_id = entry.get("source_group_id")
+                if (
+                    member_kind == "runs"
+                    and source_group_id is not None
+                    and str(source_group_id) in known_group_ids
+                ):
+                    entry["group_id"] = str(source_group_id)
+                else:
+                    entry["group_id"] = None
+            entry.setdefault("excluded_run_numbers", [])
+            if "last_fitted_members" not in entry:
+                entry["last_fitted_members"] = members
+            updated_batches.append(entry)
+        migrated["batches"] = updated_batches
+
     return migrated
 
 

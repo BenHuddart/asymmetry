@@ -244,10 +244,11 @@ def test_spectral_moments_info_affordance():
 
 
 def test_no_schema_version_bump():
-    # Baseline guard: bumped to 14 for waterfall overlay stacking — plot_state
-    # (and its nested frequency_plot_state) now carries a ``waterfall`` block
-    # (v13->v14). A future accidental bump must consciously update this literal.
-    assert CURRENT_SCHEMA_VERSION == 14
+    # Baseline guard: bumped to 15 for the DataGroup/FitSeries unification —
+    # data_groups gained ``kind`` and run-membered series gained ``group_id`` /
+    # ``excluded_run_numbers`` / ``last_fitted_members`` (v14->v15). A future
+    # accidental bump must consciously update this literal.
+    assert CURRENT_SCHEMA_VERSION == 15
 
 
 def test_restore_state_tolerates_absent_moments():

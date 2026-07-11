@@ -28,6 +28,9 @@ graphical interface where the feature lives.
    * - Browse, sort, and annotate runs as a logbook
      - :doc:`logbook`
      - Data Browser
+   * - Group runs for batch fitting and organisation
+     - :doc:`gui_usage`
+     - Data Browser → context menu
    * - Save a whole analysis session to reopen later
      - :doc:`project_files`
      - File → Save Project

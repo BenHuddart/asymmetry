@@ -82,6 +82,9 @@ class FitSeries:
         diverged_runs: set[int] | list[int] | None = None,
         extra: dict | None = None,
         source_group_id: str | None = None,
+        group_id: str | None = None,
+        excluded_run_numbers: list[int] | None = None,
+        last_fitted_members: list[int] | None = None,
     ) -> None:
         self.batch_id = str(batch_id)
         self.label: str | None = str(label).strip() or None if label else None
@@ -112,13 +115,34 @@ class FitSeries:
         #: Freeform JSON-able state attached to this series (e.g. the ALC scan's
         #: baseline regions / peaks / view options). Empty for ordinary fits.
         self.extra: dict = dict(extra) if isinstance(extra, dict) else {}
-        #: Provenance only (D1, Option B): the id of the DataGroup this series
+        #: Legacy provenance (D1, Option B): the id of the DataGroup this series
         #: was launched from, when every member shared exactly one group at
-        #: record time. Deliberately excluded from the series' identity
-        #: signature (see ``_series_signature`` in ``project_model.py``) — like
-        #: ``param_roles``/``fit_range``, it is an attribute of how the series
-        #: was created, not what makes two series the same fit.
+        #: record time. Retained for backward compatibility (older GUI code and
+        #: pre-v15 saves read it); the structural ownership link is now
+        #: :attr:`group_id`. For a frozen/legacy series it may be the only
+        #: pointer back to a (possibly deleted) group.
         self.source_group_id: str | None = str(source_group_id) if source_group_id else None
+        #: Structural ownership link (D1/D7): the id of the DataGroup that *owns*
+        #: this run-membered series. Unlike ``source_group_id`` this is identity,
+        #: not provenance — it keys the series' dedupe signature (see
+        #: ``_series_signature`` in ``project_model.py``) and drives live
+        #: membership derivation (:meth:`effective_members`). ``None`` for a
+        #: *frozen* series (a legacy/orphaned analysis with snapshot membership)
+        #: and for detector-group series (``member_kind == "groups"``, D8).
+        self.group_id: str | None = str(group_id) if group_id else None
+        #: Per-series exclusions (D1): run numbers the user has dropped from this
+        #: analysis without removing them from the owning group. Effective
+        #: membership is ``group.member_run_numbers − excluded_run_numbers``.
+        #: Sorted and de-duplicated; only meaningful for a group-bound run series.
+        self.excluded_run_numbers: list[int] = sorted(
+            {int(r) for r in (excluded_run_numbers or [])}
+        )
+        #: Snapshot of the members that were actually fit on the last run (D1).
+        #: Results remain a snapshot; when the live effective membership diverges
+        #: from this list the series is *stale* (:meth:`is_stale`). Empty for a
+        #: freshly-created series that has not been fit yet; the v14→v15 migration
+        #: seeds it from ``member_run_numbers`` so a loaded series is not stale.
+        self.last_fitted_members: list[int] = [int(r) for r in (last_fitted_members or [])]
 
     # ── label ──────────────────────────────────────────────────────────────
 
@@ -188,6 +212,44 @@ class FitSeries:
             if len(shared) == len(names):
                 break
         return shared
+
+    # ── group-bound membership (D1) ──────────────────────────────────────────
+
+    def effective_members(self, group: object) -> list[int]:
+        """Return the live membership of a group-bound run series, in group order.
+
+        For a run-membered series with a :attr:`group_id`, this is the owning
+        *group*'s ``member_run_numbers`` minus :attr:`excluded_run_numbers`,
+        preserving the group's ordering. For a **frozen** series
+        (``group_id is None``), a detector-group series
+        (``member_kind == "groups"``, D8), or when *group* is ``None``, the
+        series' own :attr:`member_run_numbers` are returned unchanged (frozen
+        semantics — the snapshot is authoritative).
+        """
+        group_members = getattr(group, "member_run_numbers", None)
+        if (
+            self.group_id is None
+            or self.member_kind != "runs"
+            or group is None
+            or group_members is None
+        ):
+            return list(self.member_run_numbers)
+        excluded = set(self.excluded_run_numbers)
+        return [int(r) for r in group_members if int(r) not in excluded]
+
+    def is_stale(self, group: object) -> bool:
+        """Return ``True`` when the live membership no longer matches what was fit.
+
+        Only group-bound run series can be stale: the comparison is between
+        :meth:`effective_members` and :attr:`last_fitted_members`, done as an
+        order-insensitive *set* compare (member ordering is resolved at fit
+        time via ``order_key``, so a re-order alone is not staleness). Frozen
+        series (``group_id is None``) and detector-group series
+        (``member_kind == "groups"``, D8) are **never** stale.
+        """
+        if self.group_id is None or self.member_kind != "runs" or group is None:
+            return False
+        return set(self.effective_members(group)) != set(self.last_fitted_members)
 
     # ── membership ─────────────────────────────────────────────────────────
 
@@ -293,6 +355,9 @@ class FitSeries:
             "diverged_runs": sorted(self.diverged_runs),
             "extra": dict(self.extra),
             "source_group_id": self.source_group_id,
+            "group_id": self.group_id,
+            "excluded_run_numbers": list(self.excluded_run_numbers),
+            "last_fitted_members": list(self.last_fitted_members),
         }
 
     @classmethod
@@ -324,4 +389,12 @@ class FitSeries:
             diverged_runs=data.get("diverged_runs"),
             extra=data.get("extra"),
             source_group_id=data.get("source_group_id"),
+            # Tolerant reads: pre-v15 saves lack these. ``group_id`` stays absent
+            # until the schema migration resolves it from ``source_group_id``
+            # (this layer cannot see the group registry); ``excluded_run_numbers``
+            # defaults empty and ``last_fitted_members`` defaults empty (the
+            # migration seeds it from ``member_run_numbers``).
+            group_id=data.get("group_id"),
+            excluded_run_numbers=data.get("excluded_run_numbers"),
+            last_fitted_members=data.get("last_fitted_members"),
         )

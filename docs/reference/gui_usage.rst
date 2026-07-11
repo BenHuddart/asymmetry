@@ -146,6 +146,63 @@ Right-click any dataset row to access options:
 
 These options appear contextually based on your current selection.
 
+Data groups
+~~~~~~~~~~~
+
+.. image:: /_generated/screenshots/data_browser_groups.png
+   :alt: Data browser with a blue user group and a red-grey auto group sharing a marked duplicate row
+   :width: 100%
+
+*A user group (blue, "T < Tc — EuO") and an auto-created group (red-grey,*
+*"Runs 3003–3005", named the way an ad-hoc batch fit would mint one*
+*automatically) sharing run 3003. The shared run renders under its primary*
+*(user-group) row and again as a marked copy row under the auto group.*
+
+A **data group** is a named, ordered collection of runs — a temperature scan,
+a field sweep, or any set of runs you want to treat together. Groups organise
+the Data Browser *and* drive batch and global fitting: a group is the vehicle
+a batch fit runs over, and its owned fit series stay attached to it (see
+:ref:`group-bound-series-staleness` in :doc:`parameter_trending`).
+
+Select two or more loaded runs, right-click, and choose **Form Data Group** to
+create one; a **Group name:** prompt asks for its display name. Groups appear
+as headers in the browser with their member runs nested beneath, and a
+group's context menu (right-click its header) offers:
+
+* **Collapse Group** / **Expand Group** — hide or show its member rows.
+* **Rename Group** — change the display name.
+* **Ungroup** — dissolve the group. If it owns no fit series this happens
+  silently; if it does, a dialog asks whether to **Keep fits** (the owned
+  series become standalone, frozen analyses with their last-fitted membership
+  as a fixed snapshot) or **Delete fits** (remove the group and its series
+  together), with **Cancel** to back out.
+* **Fit this group…** — bind the fit dock's Batch tab to this group so the
+  recorded series stays attached to it; see :ref:`batch-tab-groups` below.
+* **Show series from this group** — filter the Fit Parameters panel to this
+  group's series.
+
+Right-click a selection of ungrouped (or already-grouped) runs and choose
+**Send to Group** to add them to an existing group — this always *adds* a
+membership rather than moving the run out of any group it already belongs to,
+so one run can belong to several groups at once (a run in both a field scan
+and a temperature scan, say). A run with more than one membership renders
+once per group: its entry in every group but the first (its *primary*
+membership) carries a small circled-digit marker (①, ② …), and hovering the
+marker shows an **Also in:** tooltip naming its other groups. Selecting any
+of a run's rows reaches the same underlying dataset, so plotting, fitting, and
+co-add never double-count it. **Remove from Group** (or **Remove from
+Groups**, for a multi-row selection) removes just the clicked membership;
+removing a run's primary membership promotes its earliest remaining copy to
+primary.
+
+Batch and global fits over an ad-hoc run selection (not bound to a group)
+automatically create — or, for an identical run set, reuse — a group for the
+fit, so every recorded batch series always has an owning group. These
+**auto-created** groups are named from their run range (e.g. "Runs
+1001–1010") and paint in a red-grey tint distinct from the blue used for
+groups you name yourself, so the two are easy to tell apart at a glance;
+renaming an auto-created group promotes it to an ordinary (blue) group.
+
 Co-adding datasets
 ~~~~~~~~~~~~~~~~~~
 
@@ -763,14 +820,36 @@ Fitting workflow:
 * Look for χ²ᵣ ≈ 1 (good fit); >> 1 (poor fit); << 1 (overestimated errors)
 * If fit fails to converge, try different initial values or tighter bounds
 
-**Global fitting**
-~~~~~~~~~~~~~~~~~~
+**Carrying a model forward between runs**
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The "Global" tab fits multiple datasets simultaneously with shared and
+Selecting a different run in the Data Browser does not always blank the
+Single tab's form. A run that already carries a **recorded fit result** —
+its own single fit, or its role as a member of a batch/global fit — is
+*protected*: selecting it always restores exactly that fitted state, so it is
+never silently overwritten. Every other run is *refreshable*: selecting it
+loads the composite model and parameter setup of the most recently fitted
+function in the session (superseding anything it was showing before,
+including a hand-edited form you never fitted — the protection trigger is
+"did you commit by fitting", not "did you touch the form"), with
+field-dependent parameters (a frequency seeded from the fitted peak, ``B_L``
+from the run's applied field, and similar) reseeded for the newly-selected
+run. A results box below the parameter table reads "Model carried from run
+*N* — not fitted for this run" while a refreshed or carried form is showing,
+so it is never mistaken for an actual fit of the displayed run. Only when
+nothing has been fitted anywhere in the session yet does the form fall back
+to carrying forward whatever was last *displayed*.
+
+.. _batch-tab-groups:
+
+**Batch fitting**
+~~~~~~~~~~~~~~~~~
+
+The **Batch** tab fits multiple datasets simultaneously with shared and
 per-dataset parameters:
 
 1. **Select multiple datasets** in the data browser (Ctrl+Click or Shift+Click)
-2. Switch to the **"Global"** tab in the fit panel
+2. Switch to the **Batch** tab in the fit panel
 3. Optionally click **Edit Function...** to customise the composite :math:`A(t)`
 4. **Set parameter type** in the table for each parameter:
 
@@ -782,16 +861,42 @@ per-dataset parameters:
      file). Behaves like **Fixed** for the fit itself, but the value
      differs automatically for each selected dataset.
 
-5. **Click "Run Global Fit"**
+5. **Click "Run Batch Fit"**
 
-   Global fitting follows the same rule: current grouped/bunched dataset
-   settings are applied to each selected dataset before fitting.
+   Batch/global fitting follows the same rule: current grouped/bunched
+   dataset settings are applied to each selected dataset before fitting.
 
-After a global fit completes:
+After a batch or global fit completes:
 
 * Fit curves appear on the plot for all datasets
-* The **Global Parameter Fit** window opens automatically (see below)
+* The **Global Parameter Fit** window opens automatically when the fit has at
+  least one **Global** parameter (see below)
 * The log panel shows a summary with average χ²ᵣ
+* The results are recorded as a group-bound fit series (see `Data groups`_
+  above and :ref:`group-bound-series-staleness` in :doc:`parameter_trending`)
+
+Fitting a group directly
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. image:: /_generated/screenshots/batch_tab_group_binding.png
+   :alt: Batch tab bound to a data group with one member unticked in the Batch members list
+   :width: 100%
+
+*The Batch tab bound to the "T scan — EuO" group via* **Fit this group…***,*
+*showing the group-binding banner and the* **Batch members** *checklist with*
+*the 69 K run unticked — excluded from this analysis without leaving the*
+*group.*
+
+Choosing **Fit this group…** from a data group's context menu (rather than
+just selecting its runs) binds the Batch tab to that group: a **Fitting
+group: <name>** banner appears above a new **Batch members** section listing
+every member run with a checkbox. Untick a run to exclude it from *this*
+analysis without removing it from the group — the exclusion is recorded on
+the fit series, not the group, so the same group can still be fit a second
+time with a different model over its full membership. An ordinary run
+selection (rather than **Fit this group…**) clears any existing binding, so
+the next batch fit auto-creates its own group instead of extending the
+previous one.
 
 **Grouped time-domain fitting**
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

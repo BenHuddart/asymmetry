@@ -55,6 +55,66 @@ Project files store:
   the member list, parameter roles, per-member result summaries, and divergence
   state. The Fit Parameters trending panel reads directly from these series,
   organised by the active representation.
+* **Data groups** — the top-level ``data_groups`` registry is the canonical
+  store of named run collections (:doc:`the Data Browser's groups
+  <gui_usage>`). A run-membered ``FitSeries`` that was launched from a group
+  (or auto-created for an ad-hoc batch selection) carries a structural
+  ``group_id`` back to its owning group; see `Data groups and fit series`_
+  below for the full field set this adds to both ``data_groups`` entries and
+  ``batches`` entries.
+
+.. _data-groups-and-fit-series:
+
+Data groups and fit series
+---------------------------
+
+A group owns zero or more series: the same run collection can be fit with
+several models side by side, and a series' *effective* membership is derived
+live as the owning group's members minus that series' own exclusions, so
+adding or removing a run from the group is reflected the next time the series
+is re-run rather than requiring a fresh batch fit. Each top-level
+``data_groups`` entry stores:
+
+``kind``
+    ``"user"`` for a group the user named explicitly, or ``"auto"`` for one
+    minted automatically the first time an ad-hoc run selection is batch- or
+    global-fitted (so every batch fit has an explicit owning group). Renaming
+    an ``"auto"`` group promotes it to ``"user"``.
+
+Each run-membered (``member_kind == "runs"``) entry in ``batches`` gains:
+
+``group_id``
+    The id of the ``data_groups`` entry that owns this series, or ``null`` for
+    a **frozen** series — a legacy analysis, or one whose owning group has
+    since been deleted with its fits kept (rather than deleted with the
+    group). A frozen series' membership is a fixed snapshot, exactly the
+    pre-v15 behaviour.
+
+``excluded_run_numbers``
+    Run numbers the user has dropped from *this* series without removing them
+    from the owning group — for example a member run whose data turned out to
+    be unusable, kept in the group for record-keeping but excluded from the
+    fit. Effective membership is the owning group's ``member_run_numbers``
+    minus this list.
+
+``last_fitted_members``
+    A snapshot of the members that were actually fit the last time this
+    series ran. When the group's live membership (minus exclusions) no longer
+    matches this snapshot, the series is *stale* — the Fit Parameters panel
+    marks its trend pill with a ``⚠`` and a tooltip reading "Membership
+    changed since last fit — re-run to refresh."; re-running the series
+    updates the snapshot and clears the marker. Detector-group series
+    (``member_kind == "groups"``) and frozen series are never stale.
+
+The Data Browser's ``browser_state.data_groups`` block is a separate, smaller
+structure: it is *view* state (the panel's own per-group ``collapsed`` flag)
+rather than the group registry itself, and doubles as a self-contained
+fallback for a standalone browser panel or a pre-registry project — the
+top-level ``data_groups`` list is always the source of truth when both are
+present. See :doc:`gui_usage` for the Data Browser's grouping UI (multi-group
+membership, the auto/user colour distinction, and the "Fit this group…"
+binding) and :doc:`parameter_trending` for how a stale series surfaces in the
+trending panel.
 
 For two-period NeXus runs, grouping metadata persisted with each dataset also
 includes red/green period configuration such as ``period_mode`` and per-period
@@ -179,16 +239,23 @@ Save and load
    from asymmetry.core.project.schema import load_project, save_project
 
    state = {
-       "schema_version": 7,
+       "schema_version": 15,
        "created_with_app_version": "0.1.0",
        "datasets": [{"run_number": 3077, "source_file": "run3077.nxs", "metadata_overrides": {}}],
+       "data_groups": [
+           {"group_id": "g1", "name": "B = 60 G", "member_run_numbers": [3077],
+            "order_key": "run", "kind": "user"},
+       ],
        "browser_state": {
            "sort_column": 0,
            "sort_order": "ascending",
            "filters": {},
            "selected_run_numbers": [3077],
            "selected_group_ids": [],
-           "data_groups": [],
+           "data_groups": [
+               {"group_id": "g1", "name": "B = 60 G", "member_run_numbers": [3077],
+                "collapsed": False, "kind": "user"},
+           ],
            "extra_columns": [],
        },
    }

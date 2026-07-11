@@ -14,6 +14,7 @@ replaces storing computed spectra/asymmetry in the project file.
 from __future__ import annotations
 
 import json
+import uuid
 
 from asymmetry.core.data.dataset import Run
 from asymmetry.core.fitting.composite import CompositeModel
@@ -27,23 +28,38 @@ from asymmetry.core.representation.series import FitSeries, canonical_model_matc
 def _series_signature(series: FitSeries) -> tuple:
     """A comparable identity for a fit series: same → a duplicate re-run.
 
-    Captures the representation, member kind + physical source runs, and the
-    normalised canonical model. Parameter classification (``param_roles``) and
-    the fit window (``fit_range``) are deliberately **excluded**: they are
-    attributes of a run, not identity, so re-running the same members+model with
-    a different Global/Local split (or a different fit window) supersedes the
-    earlier series in place (D4) rather than accumulating a duplicate trend pill.
+    Two regimes, keyed differently (D7):
+
+    * **Group-bound run series** (``member_kind == "runs"`` with a structural
+      ``group_id``): identity is ``(rep_type, member_kind, group_id, model,
+      exclusions)``. Membership is live-derived from the owning group, so the
+      *member list* is not identity — re-running a group analysis over the same
+      group + model + exclusions (even after the group gained or lost runs)
+      supersedes the earlier series in place. A different exclusion set is a
+      genuinely different analysis and does **not** collide.
+    * **Frozen / detector-group series** (``group_id is None``, or
+      ``member_kind == "groups"``): the *original* frozen keying is preserved
+      unchanged — ``(rep_type, member_kind, member-keys, model)``.
+
+    The frozen keys deliberately use the actual ``member_run_numbers`` keys, not
+    the deduplicated physical runs: for a group (detector-group) series those
+    keys are the synthetic ``(run, detector-group)`` keys, so two grouped fits
+    over the *same* source runs but *different* detector-group subsets stay
+    distinct (keying on ``source_runs()`` would collapse them and let one
+    wrongly supersede/merge the other). The keys are always populated — even for
+    a legacy group series with an empty ``member_source_run`` map — so this never
+    degrades to an empty ``()`` set the way ``member_source_run.values()`` would.
+
+    In both regimes, parameter classification (``param_roles``) and the fit
+    window (``fit_range``) are deliberately **excluded**: they are attributes of
+    a run, not identity, so re-running the same members+model with a different
+    Global/Local split (or a different fit window) supersedes the earlier series
+    in place rather than accumulating a duplicate trend pill.
+
+    The two regimes' tuples never collide: the group-bound tuple carries the
+    ``group_id`` and the exclusions tuple (length 5); the frozen tuple carries
+    the member-keys tuple (length 4).
     """
-    # Key on the actual member keys, not the deduplicated physical runs: for a
-    # group series ``member_run_numbers`` are the synthetic ``(run, detector-group)``
-    # keys, so two grouped fits over the *same* source runs but *different*
-    # detector-group subsets stay distinct (keying on ``source_runs()`` would
-    # collapse them and let one wrongly supersede/merge the other). The keys are
-    # always populated — even for a legacy group series with an empty
-    # ``member_source_run`` map — so this never degrades to an empty ``()`` set
-    # the way ``member_source_run.values()`` would. For a run series the keys are
-    # the physical run numbers, so this is unchanged from ``source_runs()``.
-    members = tuple(sorted(series.member_run_numbers))
     model_key: str | None = None
     if series.canonical_model is not None:
         try:
@@ -51,6 +67,15 @@ def _series_signature(series: FitSeries) -> tuple:
         except (ValueError, KeyError, TypeError):
             normalised = series.canonical_model
         model_key = json.dumps(normalised, sort_keys=True, default=str)
+    if series.member_kind == "runs" and series.group_id is not None:
+        return (
+            str(series.rep_type),
+            series.member_kind,
+            series.group_id,
+            model_key,
+            tuple(sorted(series.excluded_run_numbers)),
+        )
+    members = tuple(sorted(series.member_run_numbers))
     return (
         str(series.rep_type),
         series.member_kind,
@@ -125,24 +150,142 @@ class ProjectModel:
         """Register *group* by its id."""
         self.data_groups[group.group_id] = group
 
-    def remove_data_group(self, group_id: str) -> DataGroup | None:
-        """Remove and return the DataGroup with *group_id*, or ``None``.
+    # ── group mutation API (D1/D4/D7; plain methods, no Qt) ────────────────────
 
-        Series built from the group are left untouched (D1, Option B): their
-        ``source_group_id`` becomes a dangling provenance pointer, same as any
-        other reference to a deleted upstream object.
+    def create_data_group(
+        self,
+        name: str,
+        member_run_numbers: list[int] | None = None,
+        *,
+        kind: str = "user",
+        group_id: str | None = None,
+        order_key: str = "run",
+    ) -> DataGroup:
+        """Create, register, and return a new :class:`DataGroup`.
+
+        Mints a fresh ``uuid4`` id when *group_id* is not supplied. *kind* is
+        ``"user"`` (default) or ``"auto"`` (an auto-group minted for an ad-hoc
+        batch selection). Multi-group membership is permitted, so this does
+        **not** strip *member_run_numbers* from any other group.
         """
-        return self.data_groups.pop(str(group_id), None)
+        gid = str(group_id) if group_id else str(uuid.uuid4())
+        group = DataGroup(
+            group_id=gid,
+            name=name,
+            member_run_numbers=member_run_numbers,
+            order_key=order_key,
+            kind=kind,
+        )
+        self.data_groups[gid] = group
+        return group
+
+    def rename_data_group(self, group_id: str, name: str) -> bool:
+        """Set the display *name* of the group with *group_id*.
+
+        Renaming a ``kind="auto"`` group **promotes it to ``"user"``** (D4): a
+        user who names an auto-group has adopted it, so it should no longer read
+        as a machine-minted group. Returns ``True`` on success, ``False`` when
+        *group_id* is unknown.
+        """
+        group = self.data_groups.get(str(group_id))
+        if group is None:
+            return False
+        group.name = str(name)
+        if group.kind == "auto":
+            group.kind = "user"
+        return True
+
+    def set_data_group_members(self, group_id: str, member_run_numbers: list[int] | None) -> bool:
+        """Replace the membership of the group with *group_id*.
+
+        Returns ``True`` on success, ``False`` when *group_id* is unknown. Does
+        not touch any series built from the group (staleness is derived on
+        demand via :meth:`FitSeries.is_stale`, not pushed).
+        """
+        group = self.data_groups.get(str(group_id))
+        if group is None:
+            return False
+        group.member_run_numbers = [int(r) for r in (member_run_numbers or [])]
+        return True
+
+    def find_auto_group(self, member_run_numbers: list[int] | None) -> DataGroup | None:
+        """Return an existing ``kind="auto"`` group with the identical member *set*.
+
+        Used to reuse an auto-group when a batch is re-run over the same ad-hoc
+        selection (D3) rather than proliferating near-duplicate auto-groups. The
+        comparison is set-based (order-insensitive); only ``"auto"`` groups are
+        candidates — a user group with the same members is never silently
+        reused.
+        """
+        target = {int(r) for r in (member_run_numbers or [])}
+        for group in self.data_groups.values():
+            if group.kind == "auto" and set(group.member_run_numbers) == target:
+                return group
+        return None
+
+    def remove_data_group(self, group_id: str, *, orphan_series: bool) -> list[str]:
+        """Remove the group with *group_id* and dispose of its series (D7).
+
+        *orphan_series* selects the disposition of the run series owned by the
+        group (matched via :meth:`series_for_group`, i.e. on ``group_id`` with a
+        legacy ``source_group_id`` fallback):
+
+        * ``True`` — **freeze** each owned series into a standalone legacy
+          analysis: its structural ``group_id`` is cleared to ``None`` and its
+          ``member_run_numbers`` are snapshotted to ``last_fitted_members`` so
+          the frozen membership is exactly what was last fit (not the live,
+          possibly-drifted group membership). No batch is deleted, so no
+          ``FitSlot`` pointers change; the returned list is empty.
+        * ``False`` — **delete** each owned series from :attr:`batches` via
+          :meth:`remove_batch` (which clears the member representations'
+          ``FitSlot`` pointers) and return the removed ``batch_id``\\ s so a GUI
+          caller can clean up any further pointers it holds.
+
+        Groups with no series behave identically under either flag (nothing to
+        dispose). Unknown *group_id* removes nothing and returns ``[]``.
+        """
+        group = self.data_groups.pop(str(group_id), None)
+        if group is None:
+            return []
+        owned = self.series_for_group(group_id)
+        if orphan_series:
+            for series in owned:
+                # Only structurally-owned run series are re-snapshotted and
+                # frozen; a legacy series matched purely by the source_group_id
+                # fallback is already frozen (group_id is None) — leave its
+                # snapshot untouched.
+                if series.group_id == str(group_id):
+                    # An empty last_fitted_members means the series was never
+                    # fit — keep its existing member list rather than freezing
+                    # it to an empty snapshot.
+                    if series.last_fitted_members:
+                        series.member_run_numbers = list(series.last_fitted_members)
+                    series.group_id = None
+            return []
+        removed: list[str] = []
+        for series in owned:
+            if self.remove_batch(series.batch_id, refresh=False) is not None:
+                removed.append(series.batch_id)
+        if removed:
+            self.refresh_divergence()
+        return removed
 
     def series_for_group(self, group_id: str) -> list[FitSeries]:
-        """Return batches whose ``source_group_id`` is *group_id*.
+        """Return the series owned by the group with *group_id*.
 
-        A group's back-references to its series are always computed from the
-        batches, never stored on the group — editing a group's membership does
-        not retroactively touch any series already built from it.
+        Matches on the structural :attr:`FitSeries.group_id` (D1/D7), falling
+        back to the legacy :attr:`FitSeries.source_group_id` provenance pointer
+        so series migrated from — or frozen out of — an older project still
+        resolve. A group's back-references are always computed from the batches,
+        never stored on the group.
         """
         group_id = str(group_id)
-        return [batch for batch in self.batches.values() if batch.source_group_id == group_id]
+        return [
+            batch
+            for batch in self.batches.values()
+            if batch.group_id == group_id
+            or (batch.group_id is None and batch.source_group_id == group_id)
+        ]
 
     def superseded_batch_ids(self, series: FitSeries) -> list[str]:
         """Return ids of existing batches that *series* makes redundant.

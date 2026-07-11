@@ -1088,8 +1088,10 @@ def test_build_inherited_cross_group_config_uses_best_successful_fit(
     )
 
     assert config is not None
-    assert config["source_group_id"] == "g_best"
-    assert config["source_group_name"] == "Best"
+    # Renamed source_group_* → trend_group_* (D8) to end the collision with the
+    # unrelated FitSeries.source_group_id.
+    assert config["trend_group_id"] == "g_best"
+    assert config["trend_group_name"] == "Best"
     assert config["fit_x_min"] == pytest.approx(100.0)
     assert config["fit_x_max"] == pytest.approx(300.0)
 
