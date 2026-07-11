@@ -1,4 +1,5 @@
 """Scaffold smoke test: load one Basics run into the MainWindow and grab it."""
+
 from __future__ import annotations
 
 from PySide6.QtWidgets import QWidget

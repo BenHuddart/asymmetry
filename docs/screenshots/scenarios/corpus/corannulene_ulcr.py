@@ -62,7 +62,7 @@ _DATA = "Chemistry/Molecular dynamics of corannulene/data/HIFI00%d.nxs"
 # 40 K = setpoint 50 K (measured sample-T ≈ 42.7 K); 410 K = setpoint 420 K
 # (measured ≈ 410 K). Wide µLCR scans start at 5000 G (0.5 T); the log-spaced
 # 0–5000 G blocks are the repolarisation curves.
-_WIDE_40K = range(118259, 118417)   # 0.5–3.0 T, 158 runs (100–200 G steps)
+_WIDE_40K = range(118259, 118417)  # 0.5–3.0 T, 158 runs (100–200 G steps)
 _WIDE_410K = range(118417, 118516)  # 0.5–2.46 T, 99 runs (200 G steps)
 _REPOL_40K = range(118242, 118260)  # 0–5000 G, log-spaced (40 K repolarisation)
 _REPOL_410K = range(118204, 118222)  # 0–5000 G, log-spaced (410 K repolarisation)
@@ -138,9 +138,7 @@ def _build_scan_pct(runs):
     if key in _SCAN_CACHE:
         return _SCAN_CACHE[key]
     datasets = load_corpus_datasets(_scan_rels(runs))
-    scan = build_field_scan(
-        [d.run for d in datasets], method="integral", order_key="field"
-    )
+    scan = build_field_scan([d.run for d in datasets], method="integral", order_key="field")
     out = FieldScan(
         x=np.asarray(scan.x, dtype=float),
         value=np.asarray(scan.value, dtype=float) * 100.0,
@@ -160,8 +158,8 @@ def _subtract_baseline(scan, regions, *, x_max=None):
     Uses the same core ``fit_scan_baseline`` the GUI's Baseline button drives.
     Raises on a failed fit so a broken capture never ships a bad figure.
     """
-    from asymmetry.core.transform.integral import FieldScan
     from asymmetry.core.fitting.field_scan import fit_scan_baseline
+    from asymmetry.core.transform.integral import FieldScan
 
     x = np.asarray(scan.x, dtype=float)
     v = np.asarray(scan.value, dtype=float)
@@ -170,8 +168,13 @@ def _subtract_baseline(scan, regions, *, x_max=None):
         sel = x <= x_max
         x, v, e = x[sel], v[sel], e[sel]
     trimmed = FieldScan(
-        x=x, value=v, error=e, run_numbers=list(range(len(x))),
-        order_key="field", method="integral", x_label="B (G)",
+        x=x,
+        value=v,
+        error=e,
+        run_numbers=list(range(len(x))),
+        order_key="field",
+        method="integral",
+        x_label="B (G)",
     )
     base = fit_scan_baseline(trimmed, regions, model=_BASELINE_MODEL)
     if not base.success:
@@ -194,8 +197,13 @@ def _fit_resonances_40k():
     corr = _subtract_baseline(_build_scan_pct(_WIDE_40K), _BASELINE_40K)
     x, y, e = corr["x"], corr["corrected"], corr["error"]
     cscan = FieldScan(
-        x=x, value=y, error=e, run_numbers=list(range(len(x))),
-        order_key="field", method="integral", x_label="B (G)",
+        x=x,
+        value=y,
+        error=e,
+        run_numbers=list(range(len(x))),
+        order_key="field",
+        method="integral",
+        x_label="B (G)",
     )
 
     results: dict[str, dict] = {}
@@ -209,8 +217,11 @@ def _fit_resonances_40k():
         "R1": (22800.0, 26500.0, 24400.0, -0.8, 1000.0),
     }.items():
         fit = fit_scan_model(
-            cscan, ["GaussianLCR"],
-            initial={"f": f0, "B0": b0, "Bwid": w0}, x_min=lo, x_max=hi,
+            cscan,
+            ["GaussianLCR"],
+            initial={"f": f0, "B0": b0, "Bwid": w0},
+            x_min=lo,
+            x_max=hi,
         )
         if not fit.success:
             raise RuntimeError(f"corannulene {name} Gaussian fit did not converge")
@@ -227,12 +238,18 @@ def _fit_resonances_40k():
     # --- joint doublet: R3 + R2 ---
     doublet = as_composite_model(["GaussianLCR", "GaussianLCR"])
     dfit = fit_scan_model(
-        cscan, ["GaussianLCR", "GaussianLCR"],
+        cscan,
+        ["GaussianLCR", "GaussianLCR"],
         initial={
-            "f_1": -1.8, "B0_1": 15300.0, "Bwid_1": 600.0,
-            "f_2": -0.8, "B0_2": 18000.0, "Bwid_2": 800.0,
+            "f_1": -1.8,
+            "B0_1": 15300.0,
+            "Bwid_1": 600.0,
+            "f_2": -0.8,
+            "B0_2": 18000.0,
+            "Bwid_2": 800.0,
         },
-        x_min=13000.0, x_max=20000.0,
+        x_min=13000.0,
+        x_max=20000.0,
     )
     if not dfit.success:
         raise RuntimeError("corannulene R2/R3 doublet fit did not converge")
@@ -248,8 +265,12 @@ def _fit_resonances_40k():
         }
 
     return {
-        "x": x, "corrected": y, "error": e,
-        "x_fine": x_fine, "total_fine": total_fine, "res": results,
+        "x": x,
+        "corrected": y,
+        "error": e,
+        "x_fine": x_fine,
+        "total_fine": total_fine,
+        "res": results,
     }
 
 
@@ -271,9 +292,7 @@ class CorannuleneUlcrScanScenario(CorpusScenario):
         from asymmetry.gui.mainwindow import MainWindow
 
         window = MainWindow()
-        window.resizeDocks(
-            [window._dock_data_browser], [340], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [340], Qt.Orientation.Horizontal)
 
         datasets = load_corpus_datasets(_scan_rels(_WIDE_40K))
         with window._data_browser.batch_updates():
@@ -319,12 +338,23 @@ class CorannuleneResonanceFitScenario(CorpusScenario):
         figure, canvas = create_canvas(layout="tight")
         axes = figure.add_subplot(111)
         axes.errorbar(
-            x, fit["corrected"], yerr=fit["error"], fmt="o", ms=3.0, lw=0.0,
-            elinewidth=0.7, color=tokens.PLOT_DATA, alpha=0.8, label="Δα (40 K)",
+            x,
+            fit["corrected"],
+            yerr=fit["error"],
+            fmt="o",
+            ms=3.0,
+            lw=0.0,
+            elinewidth=0.7,
+            color=tokens.PLOT_DATA,
+            alpha=0.8,
+            label="Δα (40 K)",
         )
         axes.plot(
-            fit["x_fine"] / 1e4, fit["total_fine"], color=tokens.PLOT_FIT,
-            lw=1.8, label="4× Gaussian |ΔM|=1 fit",
+            fit["x_fine"] / 1e4,
+            fit["total_fine"],
+            color=tokens.PLOT_FIT,
+            lw=1.8,
+            label="4× Gaussian |ΔM|=1 fit",
         )
         axes.axhline(0.0, color=tokens.PLOT_ZERO_LINE, lw=0.8)
         # Mark each fitted resonance field and annotate A_µ vs the paper.
@@ -336,15 +366,17 @@ class CorannuleneResonanceFitScenario(CorpusScenario):
             axes.axvline(br_t, color=colour, ls=":", lw=1.2)
             axes.annotate(
                 f"{name}: {r['A_mu']:.0f} MHz\n(paper {_PAPER[name]['A_mu']})",
-                xy=(br_t, ymin * 0.5), xytext=(br_t + 0.04, ymin * 1.16),
-                ha="left", va="top", fontsize="small", color=colour,
+                xy=(br_t, ymin * 0.5),
+                xytext=(br_t + 0.04, ymin * 1.16),
+                ha="left",
+                va="top",
+                fontsize="small",
+                color=colour,
                 bbox=dict(boxstyle="round,pad=0.2", fc="white", ec=colour, alpha=0.85),
             )
         axes.set_xlabel("Longitudinal field B (T)")
         axes.set_ylabel("Δα integral asymmetry (%, baseline-subtracted)")
-        axes.set_title(
-            "Corannulene 40 K µLCR — four muoniated-radical |ΔM|=1 resonances"
-        )
+        axes.set_title("Corannulene 40 K µLCR — four muoniated-radical |ΔM|=1 resonances")
         axes.set_xlim(0.5, 3.0)
         axes.set_ylim(ymin * 1.30, max(0.6, -ymin * 0.35))
         axes.legend(loc="upper left", fontsize="small", framealpha=0.92)
@@ -398,22 +430,34 @@ class CorannuleneTemperatureScenario(CorpusScenario):
             (c41, "410 K", tokens.TRACE_VERMILLION, 0.0),
         ):
             axes.errorbar(
-                corr["x"] / 1e4, corr["corrected"] + off, yerr=corr["error"],
-                fmt="o", ms=3.0, lw=0.0, elinewidth=0.6, color=colour, alpha=0.55,
+                corr["x"] / 1e4,
+                corr["corrected"] + off,
+                yerr=corr["error"],
+                fmt="o",
+                ms=3.0,
+                lw=0.0,
+                elinewidth=0.6,
+                color=colour,
+                alpha=0.55,
             )
-            axes.plot(corr["x"] / 1e4, corr["corrected"] + off, color=colour,
-                      lw=1.0, alpha=0.9, label=f"{temp}  (Δα offset {off:+.1f}%)")
+            axes.plot(
+                corr["x"] / 1e4,
+                corr["corrected"] + off,
+                color=colour,
+                lw=1.0,
+                alpha=0.9,
+                label=f"{temp}  (Δα offset {off:+.1f}%)",
+            )
             axes.axhline(off, color=colour, lw=0.5, ls="--", alpha=0.4)
         for name in ("R4", "R3", "R2", "R1"):
             br_t = _PAPER[name]["B_r"]
             axes.axvline(br_t, color=tokens.TEXT_DIM, ls=":", lw=1.0)
-            axes.text(br_t, offset + 0.7, name, ha="center", fontsize="small",
-                      color=tokens.TEXT_DIM)
+            axes.text(
+                br_t, offset + 0.7, name, ha="center", fontsize="small", color=tokens.TEXT_DIM
+            )
         axes.set_xlabel("Longitudinal field B (T)")
         axes.set_ylabel("Δα integral asymmetry (%, offset)")
-        axes.set_title(
-            "Corannulene µLCR 40 K vs 410 K — R4/R3 narrow, R1/R2 broaden on warming"
-        )
+        axes.set_title("Corannulene µLCR 40 K vs 410 K — R4/R3 narrow, R1/R2 broaden on warming")
         axes.set_xlim(0.5, 2.55)
         axes.legend(loc="lower right", fontsize="small", framealpha=0.92)
         axes.grid(True, color=tokens.PLOT_GRID, linewidth=0.8)
@@ -483,18 +527,18 @@ class CorannuleneRepolarisationScenario(CorpusScenario):
             (x41, p41, bh41, "410 K", tokens.TRACE_VERMILLION),
         ):
             m = x > 0.0  # log axis: drop the true-zero-field point
-            axes.plot(x[m], p[m], "o-", ms=4.0, lw=1.4, color=colour,
-                      label=f"{temp}  (B½ ≈ {bh:.0f} G)")
+            axes.plot(
+                x[m], p[m], "o-", ms=4.0, lw=1.4, color=colour, label=f"{temp}  (B½ ≈ {bh:.0f} G)"
+            )
             axes.axvline(bh, color=colour, ls=":", lw=1.1)
         axes.axhline(0.5, color=tokens.PLOT_ZERO_LINE, lw=0.8, ls="--")
-        axes.axvspan(100.0, 400.0, color=tokens.TRACE_GREEN, alpha=0.10,
-                     label="paper 100–400 G B½ range")
+        axes.axvspan(
+            100.0, 400.0, color=tokens.TRACE_GREEN, alpha=0.10, label="paper 100–400 G B½ range"
+        )
         axes.set_xscale("log")
         axes.set_xlabel("Longitudinal field B (G, log scale)")
         axes.set_ylabel("Normalised repolarisation P_µ(B)")
-        axes.set_title(
-            "Corannulene LF repolarisation — muonium step (≈ 80 % Mu fraction)"
-        )
+        axes.set_title("Corannulene LF repolarisation — muonium step (≈ 80 % Mu fraction)")
         axes.set_xlim(8.0, 2200.0)
         axes.set_ylim(-0.05, 1.08)
         axes.legend(loc="upper left", fontsize="small", framealpha=0.92)

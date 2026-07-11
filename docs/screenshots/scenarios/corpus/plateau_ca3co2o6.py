@@ -41,12 +41,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QEventLoop, QTimer, Qt
+from PySide6.QtCore import QEventLoop, Qt, QTimer
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QApplication, QWidget
 
 from .._base import CaptureContext
-from ._corpus import CorpusScenario, load_corpus_datasets, register, _process_events_for
+from ._corpus import CorpusScenario, _process_events_for, load_corpus_datasets, register
 
 EXAMPLE = "Magnetism/Dynamics in a magnetic plateau system"
 _DATA = EXAMPLE + "/Data/HIFI0000%d.nxs"
@@ -63,9 +63,24 @@ FIT_TMAX = 16.0
 # 9031–9034 are all 0 T; a single ZF representative (9031) is enough. Runs
 # 9024–9030 are thermally unsettled cooldown points (GT §9) — excluded.
 SCAN_FIELDS_T: dict[int, float] = {
-    9031: 0.0, 9035: 0.1, 9036: 0.2, 9037: 0.3, 9038: 0.4, 9039: 0.5,
-    9040: 0.6, 9041: 0.7, 9042: 0.8, 9043: 0.9, 9044: 1.0, 9045: 1.5,
-    9046: 2.0, 9047: 2.5, 9048: 2.9, 9049: 3.2, 9050: 3.5, 9051: 3.8,
+    9031: 0.0,
+    9035: 0.1,
+    9036: 0.2,
+    9037: 0.3,
+    9038: 0.4,
+    9039: 0.5,
+    9040: 0.6,
+    9041: 0.7,
+    9042: 0.8,
+    9043: 0.9,
+    9044: 1.0,
+    9045: 1.5,
+    9046: 2.0,
+    9047: 2.5,
+    9048: 2.9,
+    9049: 3.2,
+    9050: 3.5,
+    9051: 3.8,
 }
 
 # Runs shown in the raw-spectra overlay (ZF / 0.5 / 1.5 / 3.5 T) — the
@@ -108,9 +123,7 @@ def _fit_lambda(dataset, lam_seed: float):
             Parameter("A_bg", float(np.nanmean(a[-200:]))),
         ]
     )
-    result = FitEngine().fit(
-        dataset, _exp_model().function, params, t_min=0.0, t_max=FIT_TMAX
-    )
+    result = FitEngine().fit(dataset, _exp_model().function, params, t_min=0.0, t_max=FIT_TMAX)
     lam = abs(result.parameters["Lambda"].value)
     err = float((result.uncertainties or {}).get("Lambda", 0.02) or 0.02)
     return lam, err
@@ -183,18 +196,14 @@ class PlateauLfOverlayScenario(CorpusScenario):
         from asymmetry.gui.mainwindow import MainWindow
 
         window = MainWindow()
-        window.resizeDocks(
-            [window._dock_data_browser], [320], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
         datasets = load_corpus_datasets([_rel(r) for r in _OVERLAY_RUNS])
         with window._data_browser.batch_updates():
             for dataset in datasets:
                 window._data_browser.add_dataset(dataset)
         run_numbers = [int(ds.run_number) for ds in datasets]
-        window._data_browser.create_data_group(
-            run_numbers, name="Ca₃Co₂O₆ 15 K LF scan"
-        )
+        window._data_browser.create_data_group(run_numbers, name="Ca₃Co₂O₆ 15 K LF scan")
 
         window._plot_panel.set_overlay_enabled(True, emit_signal=True)
         window._plot_panel.set_bunch_factor(10, emit_signal=True)
@@ -232,9 +241,7 @@ class PlateauExpFitScenario(CorpusScenario):
 
         window = MainWindow()
         window._on_fit()
-        window.resizeDocks(
-            [window._dock_data_browser], [320], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
         # Run 9044 — 1.0 T, mid-plateau, full asymmetry recovered.
         datasets = load_corpus_datasets([_rel(9044)])
@@ -274,9 +281,7 @@ class PlateauExpFitScenario(CorpusScenario):
         # exponential and its fitted baseline read clearly.
         window._plot_panel.set_bunch_factor(5, emit_signal=True)
         _process_events_for(milliseconds=60)
-        window._plot_panel.set_view_limits(
-            0.0, 10.0, *window._plot_panel.get_view_limits()[2:]
-        )
+        window._plot_panel.set_view_limits(0.0, 10.0, *window._plot_panel.get_view_limits()[2:])
         _process_events_for(milliseconds=60)
         self._frame_y_to_window(window, 0.0, 10.0)
         _process_events_for(milliseconds=80)
@@ -405,21 +410,39 @@ class PlateauRedfieldScenario(CorpusScenario):
 
         # Plateau points (on the line).
         ax.errorbar(
-            x, y, yerr=inv_err[plateau_mask], fmt="o", color="#1f77b4",
-            ecolor="#1f77b4", elinewidth=0.9, markersize=6, capsize=2,
+            x,
+            y,
+            yerr=inv_err[plateau_mask],
+            fmt="o",
+            color="#1f77b4",
+            ecolor="#1f77b4",
+            elinewidth=0.9,
+            markersize=6,
+            capsize=2,
             label="plateau data (0.5–3.6 T)",
         )
         # The 3.8 T saturated-phase point (excluded from the fit).
         sat = ~plateau_mask
         ax.errorbar(
-            b2[sat], inv_lam[sat], yerr=inv_err[sat], fmt="s",
-            mfc="none", color="#7f7f7f", ecolor="#7f7f7f", elinewidth=0.9,
-            markersize=7, capsize=2, label="3.8 T (saturated, excluded)",
+            b2[sat],
+            inv_lam[sat],
+            yerr=inv_err[sat],
+            fmt="s",
+            mfc="none",
+            color="#7f7f7f",
+            ecolor="#7f7f7f",
+            elinewidth=0.9,
+            markersize=7,
+            capsize=2,
+            label="3.8 T (saturated, excluded)",
         )
         # The fitted Redfield line.
         xline = np.linspace(0.0, float(b2.max()) * 1.02, 200)
         ax.plot(
-            xline, slope * xline + intercept, color="#d62728", lw=1.8,
+            xline,
+            slope * xline + intercept,
+            color="#d62728",
+            lw=1.8,
             label="Redfield linear fit",
         )
         # Shade the plateau H² window.
@@ -427,22 +450,26 @@ class PlateauRedfieldScenario(CorpusScenario):
 
         ax.set_xlabel("µ₀²H²  (T²)")
         ax.set_ylabel("λ⁻¹  (µs)")
-        ax.set_title(
-            "Ca₃Co₂O₆ 15 K — Redfield linearity: λ⁻¹ vs µ₀²H²  (paper Fig. 2(b))"
-        )
+        ax.set_title("Ca₃Co₂O₆ 15 K — Redfield linearity: λ⁻¹ vs µ₀²H²  (paper Fig. 2(b))")
         ax.set_xlim(0.0, float(b2.max()) * 1.05)
         ax.set_ylim(0.0, float(inv_lam.max()) * 1.12)
         ax.grid(True, alpha=0.25)
 
         annotation = (
-            f"slope = {slope:.3f}({slope_err*1e3:.0f}) µs T⁻²\n"
-            f"intercept = {intercept:.3f}({intercept_err*1e3:.0f}) µs\n"
-            f"→ Δ = {delta*1e3:.1f} mT   (paper 40.6 mT)\n"
-            f"→ τ = {tau*1e6:.0f} ps   (paper 880 ps)"
+            f"slope = {slope:.3f}({slope_err * 1e3:.0f}) µs T⁻²\n"
+            f"intercept = {intercept:.3f}({intercept_err * 1e3:.0f}) µs\n"
+            f"→ Δ = {delta * 1e3:.1f} mT   (paper 40.6 mT)\n"
+            f"→ τ = {tau * 1e6:.0f} ps   (paper 880 ps)"
         )
         ax.text(
-            0.03, 0.97, annotation, transform=ax.transAxes, va="top", ha="left",
-            fontsize=10.5, family="monospace",
+            0.03,
+            0.97,
+            annotation,
+            transform=ax.transAxes,
+            va="top",
+            ha="left",
+            fontsize=10.5,
+            family="monospace",
             bbox=dict(boxstyle="round", fc="white", ec="#cccccc", alpha=0.9),
         )
         ax.legend(loc="lower right", frameon=True, fontsize=9.5)

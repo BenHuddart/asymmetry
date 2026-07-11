@@ -23,7 +23,7 @@ from PySide6.QtWidgets import QApplication, QWidget
 
 from asymmetry.gui.styles import tokens
 
-from ._corpus import CorpusScenario, corpus_path, load_corpus_datasets, register
+from ._corpus import CorpusScenario, load_corpus_datasets, register
 
 # ── shared corpus run paths ───────────────────────────────────────────────
 _MUSR_GROUPING = "Basics/data/MUSR00044989.nxs"  # A3 grouping: MuSR, 64 dets, ZF
@@ -90,9 +90,7 @@ class BasicsGroupingScenario(CorpusScenario):
         # subject; the preview is support.
         if isinstance(dataset.run.grouping, dict):
             dataset.run.grouping["bunching_factor"] = 20
-        dialog = GroupingDialog(
-            [dataset], selected_run_number=int(dataset.run_number)
-        )
+        dialog = GroupingDialog([dataset], selected_run_number=int(dataset.run_number))
         dialog.resize(*self.size)
         dialog.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
         dialog.show()
@@ -126,10 +124,7 @@ class BasicsAlphaScenario(CorpusScenario):
         grouping = dataset.run.grouping
         # The dialog wants gid -> 0-based detector indices (it re-adds 1 for the
         # reduction); the corpus payload stores 1-based ids, so shift down.
-        groups = {
-            int(gid): [int(i) - 1 for i in idxs]
-            for gid, idxs in grouping["groups"].items()
-        }
+        groups = {int(gid): [int(i) - 1 for i in idxs] for gid, idxs in grouping["groups"].items()}
         dialog = AlphaCalibrationDialog(
             [dataset],
             groups=groups,
@@ -146,9 +141,7 @@ class BasicsAlphaScenario(CorpusScenario):
         # the capture shows the α value and the balanced "after" curve, never the
         # transient "Computing estimate…" state.
         dialog._estimate_btn.click()
-        _pump_until(
-            lambda: dialog._tasks.active_count == 0 and dialog._estimate is not None
-        )
+        _pump_until(lambda: dialog._tasks.active_count == 0 and dialog._estimate is not None)
         _pump_events(80)
         out = _grab_widget(dialog, self.name, ctx.output_dir)
         dialog.close()
@@ -191,12 +184,8 @@ class BasicsDeadtimeScenario(CorpusScenario):
             alpha=1.0,
             use_background=False,
         )
-        off = reduce_grouped_asymmetry(
-            use_deadtime=False, deadtime_mode="off", **common
-        )
-        on = reduce_grouped_asymmetry(
-            use_deadtime=True, deadtime_mode="file", **common
-        )
+        off = reduce_grouped_asymmetry(use_deadtime=False, deadtime_mode="off", **common)
+        on = reduce_grouped_asymmetry(use_deadtime=True, deadtime_mode="file", **common)
 
         figure, canvas = create_canvas(layout="tight")
         axes = figure.add_subplot(111)
@@ -216,9 +205,7 @@ class BasicsDeadtimeScenario(CorpusScenario):
         )
         axes.set_xlabel("Time (µs)")
         axes.set_ylabel("Asymmetry (%)")
-        axes.set_title(
-            "Silver emu00034998 — per-detector silver-derived dead-time correction"
-        )
+        axes.set_title("Silver emu00034998 — per-detector silver-derived dead-time correction")
         # Focus on the early time where the high-rate correction bites hardest,
         # and on the asymmetry band the two curves occupy (silver ZF sits near a
         # constant ~18–23 %) so the Off↔Auto-Load gap fills the panel. Scale the
@@ -316,9 +303,7 @@ class BasicsT0Scenario(CorpusScenario):
         axes.axvspan(t0_us, tgood_us, color=tokens.WARN, alpha=0.12)
         axes.set_xlabel("Time (µs)")
         axes.set_ylabel("Counts (×10³)")
-        axes.set_title(
-            "EMU00018850 — muon pulse: t0 mid-pulse, tgood after the whole pulse"
-        )
+        axes.set_title("EMU00018850 — muon pulse: t0 mid-pulse, tgood after the whole pulse")
         axes.annotate(
             f"tgood offset ≈ {(tgood_us - t0_us) * 1000:.0f} ns",
             xy=(0.5 * (t0_us + tgood_us), total[window].max() / 1e3 * 0.55),

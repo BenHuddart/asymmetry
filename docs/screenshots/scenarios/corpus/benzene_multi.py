@@ -55,7 +55,7 @@ from PySide6.QtWidgets import QApplication, QTableWidgetItem, QWidget
 
 from asymmetry.gui.styles import tokens
 
-from ._corpus import CorpusScenario, load_corpus_datasets, register, _process_events_for
+from ._corpus import CorpusScenario, _process_events_for, load_corpus_datasets, register
 
 EXAMPLE = "Chemistry/Muon spectroscopy of benzene"
 _BASE = "Chemistry/Muon spectroscopy of benzene/data"
@@ -65,11 +65,11 @@ _REPOL = f"{_BASE}/Repolarisation/EMU%08d.nxs"
 _RF = f"{_BASE}/RF resonance/%d.nxs"
 
 # ── High-TF (GT §3A) ────────────────────────────────────────────────────────
-_GPD_COADD = range(3678, 3683)          # five 3000 G high-statistics runs
+_GPD_COADD = range(3678, 3683)  # five 3000 G high-statistics runs
 _GPD_FIELD_GAUSS = 3000.0
 # Guide FFT line positions: diamagnetic ≈41 MHz, radicals ≈209 / ≈306 MHz,
 # ν1+ν2 = A_µ ≈ 515 MHz; PSI cyclotron artefact ≈51 MHz.
-_A_MU_TARGET = 514.78                    # paper Table 1 (RF-µSR), MHz
+_A_MU_TARGET = 514.78  # paper Table 1 (RF-µSR), MHz
 
 # ── ALC liquid ring-proton (Δ0) window (GT §3B / §7) ────────────────────────
 # Runs 29723–29798 span ≈28.5–30.0 kG; two Δ0 ring-proton dips. Baseline
@@ -84,14 +84,42 @@ _ALC_BASELINE_REGIONS = [(28500.0, 28850.0), (29650.0, 30000.0)]
 # (~13.5 %, a different acquisition state) and are excluded; run 15972 is the
 # physical 100 G point (~20 %). Reverse-sweep repeats (15994–16001) are dropped.
 _REPOL_PRIMARY = [
-    15959, 15960, 15961, 15962, 15963, 15964, 15965, 15967, 15968, 15969,
-    15970, 15971, 15972, 15973, 15974, 15975, 15977, 15978, 15979, 15980,
-    15981, 15982, 15983, 15984, 15985, 15987, 15988, 15989, 15990, 15991,
-    15992, 15993,
+    15959,
+    15960,
+    15961,
+    15962,
+    15963,
+    15964,
+    15965,
+    15967,
+    15968,
+    15969,
+    15970,
+    15971,
+    15972,
+    15973,
+    15974,
+    15975,
+    15977,
+    15978,
+    15979,
+    15980,
+    15981,
+    15982,
+    15983,
+    15984,
+    15985,
+    15987,
+    15988,
+    15989,
+    15990,
+    15991,
+    15992,
+    15993,
 ]
 
 # ── RF resonance (GT §3D) ───────────────────────────────────────────────────
-_RF_RUNS = range(56426, 56463)          # 560–1080 G at ν_RF = 218.5 MHz
+_RF_RUNS = range(56426, 56463)  # 560–1080 G at ν_RF = 218.5 MHz
 _RF_NU_MHZ = 218.5
 # Digitised Fig. 3a dips (GT §11): left ≈773 G, right ≈865 G.
 _RF_DIP_LEFT, _RF_DIP_RIGHT = 773.0, 865.0
@@ -128,9 +156,7 @@ def _coadd_gpd_run():
 
     datasets = load_corpus_datasets([_GPD % r for r in _GPD_COADD])
     runs = [d.run for d in datasets]
-    return combine_runs(
-        runs, sign=1, run_number=-3678, label="3678–3682 co-add · 3000 G"
-    )
+    return combine_runs(runs, sign=1, run_number=-3678, label="3678–3682 co-add · 3000 G")
 
 
 def _radical_spectrum(display: str):
@@ -159,9 +185,7 @@ def _radical_spectrum(display: str):
         t_min_us=0.0,
         t_max_us=7.0,
         subtract_average_signal=True,
-        correlation_reference_field_gauss=(
-            _GPD_FIELD_GAUSS if display == "correlation" else None
-        ),
+        correlation_reference_field_gauss=(_GPD_FIELD_GAUSS if display == "correlation" else None),
     )
     spectrum = compute_average_group_spectrum(run, cfg)
     return spectrum
@@ -226,13 +250,22 @@ class BenzeneHighTfFftScenario(CorpusScenario):
         ):
             ax.axvline(f, color=colour, ls="--", lw=1.0, alpha=0.8)
             ax.annotate(
-                label, xy=(f, 0.86 * peak), ha="center", va="top",
-                fontsize=8.5, color=colour,
+                label,
+                xy=(f, 0.86 * peak),
+                ha="center",
+                va="top",
+                fontsize=8.5,
+                color=colour,
             )
         ax.annotate(
             f"A_µ = ν₁ + ν₂ = {a_mu:.0f} MHz   (target {_A_MU_TARGET:.1f})",
-            xy=(0.98, 0.96), xycoords="axes fraction", ha="right", va="top",
-            fontsize=10, fontweight="bold", color=tokens.TEXT,
+            xy=(0.98, 0.96),
+            xycoords="axes fraction",
+            ha="right",
+            va="top",
+            fontsize=10,
+            fontweight="bold",
+            color=tokens.TEXT,
         )
         panel._canvas.draw()
         _process_events_for(milliseconds=60)
@@ -285,7 +318,9 @@ class BenzeneCorrelationScenario(CorpusScenario):
             f"A_µ = {a_peak:.1f} MHz\n(target {_A_MU_TARGET:.2f})",
             xy=(a_peak, 0.92 * peak),
             xytext=(a_peak + 52.0, 0.80 * peak),
-            fontsize=10, fontweight="bold", color=tokens.TRACE_VERMILLION,
+            fontsize=10,
+            fontweight="bold",
+            color=tokens.TRACE_VERMILLION,
             arrowprops=dict(arrowstyle="->", color=tokens.TRACE_VERMILLION, lw=1.0),
         )
         panel._canvas.draw()
@@ -311,9 +346,7 @@ class BenzeneLiquidAlcScenario(CorpusScenario):
         from asymmetry.gui.mainwindow import MainWindow
 
         window = MainWindow()
-        window.resizeDocks(
-            [window._dock_data_browser], [320], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
         datasets = load_corpus_datasets([_ALC_LIQUID % r for r in _ALC_RING_RUNS])
         with window._data_browser.batch_updates():
@@ -380,9 +413,7 @@ class BenzeneRepolarisationScenario(CorpusScenario):
         _pump(60)
 
         datasets = load_corpus_datasets([_REPOL % r for r in _REPOL_PRIMARY])
-        scan = build_field_scan(
-            [d.run for d in datasets], method="integral", order_key="field"
-        )
+        scan = build_field_scan([d.run for d in datasets], method="integral", order_key="field")
         x = np.asarray(scan.x, dtype=float)
         y = np.asarray(scan.value, dtype=float) * 100.0
         e = np.asarray(scan.error, dtype=float) * 100.0
@@ -390,15 +421,20 @@ class BenzeneRepolarisationScenario(CorpusScenario):
         figure, canvas = create_canvas(layout="tight")
         ax = figure.add_subplot(111)
         ax.errorbar(
-            x, y, yerr=e, fmt="o-", ms=4.5, lw=1.3, color=tokens.TRACE_BLUE,
-            elinewidth=0.8, capsize=2.0,
+            x,
+            y,
+            yerr=e,
+            fmt="o-",
+            ms=4.5,
+            lw=1.3,
+            color=tokens.TRACE_BLUE,
+            elinewidth=0.8,
+            capsize=2.0,
         )
         ax.set_xscale("log")
         ax.set_xlabel("Longitudinal field B (G, log scale)")
         ax.set_ylabel("Integral asymmetry (%)")
-        ax.set_title(
-            "Benzene muonium repolarisation — recoverable asymmetry vs LF field"
-        )
+        ax.set_title("Benzene muonium repolarisation — recoverable asymmetry vs LF field")
         ax.grid(True, which="both", color=tokens.PLOT_GRID, linewidth=0.8)
         ax.annotate(
             "Mu-fraction repolarises\nthrough the hyperfine field",
@@ -456,9 +492,7 @@ class BenzeneRfResonanceScenario(CorpusScenario):
         _pump(60)
 
         datasets = load_corpus_datasets([_RF % r for r in _RF_RUNS])
-        scan = build_field_scan(
-            [d.run for d in datasets], method="integral", order_key="field"
-        )
+        scan = build_field_scan([d.run for d in datasets], method="integral", order_key="field")
         result = fit_rf_resonance(scan, nu_rf=_RF_NU_MHZ, a_mu=515.0, a_p=124.0)
         if not result.success:
             raise RuntimeError(f"RFResonanceMuP fit did not converge: {result.message}")
@@ -477,8 +511,16 @@ class BenzeneRfResonanceScenario(CorpusScenario):
         figure, canvas = create_canvas(layout="tight")
         ax = figure.add_subplot(111)
         ax.errorbar(
-            x, y, yerr=e, fmt="o", ms=4.5, lw=0.0, color=tokens.TRACE_BLUE,
-            elinewidth=0.8, capsize=2.0, label="integral asymmetry",
+            x,
+            y,
+            yerr=e,
+            fmt="o",
+            ms=4.5,
+            lw=0.0,
+            color=tokens.TRACE_BLUE,
+            elinewidth=0.8,
+            capsize=2.0,
+            label="integral asymmetry",
         )
         ax.plot(xf, yf, color=tokens.TRACE_VERMILLION, lw=1.8, label="RFResonanceMuP fit")
         for b in (_RF_DIP_LEFT, _RF_DIP_RIGHT):
@@ -486,8 +528,7 @@ class BenzeneRfResonanceScenario(CorpusScenario):
         ax.set_xlabel("Longitudinal field B (G)")
         ax.set_ylabel("Integral asymmetry (%)")
         ax.set_title(
-            "Benzene RF-µSR resonance (ν_RF = 218.5 MHz) — muon+proton "
-            "spin-Hamiltonian fit"
+            "Benzene RF-µSR resonance (ν_RF = 218.5 MHz) — muon+proton spin-Hamiltonian fit"
         )
         ax.grid(True, color=tokens.PLOT_GRID, linewidth=0.8)
         ax.legend(loc="upper left", fontsize="small", framealpha=0.92)

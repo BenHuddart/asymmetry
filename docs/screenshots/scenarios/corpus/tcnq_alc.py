@@ -124,9 +124,7 @@ def _build_scan_pct(runs: range):
     from asymmetry.core.transform.integral import FieldScan, build_field_scan
 
     datasets = load_corpus_datasets(_scan_rels(runs))
-    scan = build_field_scan(
-        [d.run for d in datasets], method="integral", order_key="field"
-    )
+    scan = build_field_scan([d.run for d in datasets], method="integral", order_key="field")
     return FieldScan(
         x=np.asarray(scan.x, dtype=float),
         value=np.asarray(scan.value, dtype=float) * 100.0,
@@ -212,9 +210,7 @@ class TcnqIntegralScanScenario(CorpusScenario):
         from asymmetry.gui.mainwindow import MainWindow
 
         window = MainWindow()
-        window.resizeDocks(
-            [window._dock_data_browser], [340], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [340], Qt.Orientation.Horizontal)
 
         datasets = load_corpus_datasets(_scan_rels(_SCANS[350]))
         with window._data_browser.batch_updates():
@@ -253,9 +249,7 @@ class TcnqAlcFitScenario(CorpusScenario):
         from asymmetry.gui.mainwindow import MainWindow
 
         window = MainWindow()
-        window.resizeDocks(
-            [window._dock_data_browser], [320], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
         datasets = load_corpus_datasets(_scan_rels(_SCANS[350]))
         with window._data_browser.batch_updates():
@@ -351,9 +345,7 @@ class TcnqTemperatureScenario(CorpusScenario):
             )
         axes.set_xlabel("Longitudinal field B (G)")
         axes.set_ylabel("Integral asymmetry (%)")
-        axes.set_title(
-            "TCNQ ALC D1 resonance vs temperature — dip narrows/deepens as T rises"
-        )
+        axes.set_title("TCNQ ALC D1 resonance vs temperature — dip narrows/deepens as T rises")
         axes.set_xlim(2000.0, 5000.0)
         axes.legend(loc="lower right", fontsize="small", framealpha=0.92, title="Setpoint T")
         axes.grid(True, color=tokens.PLOT_GRID, linewidth=0.8)
@@ -415,17 +407,13 @@ class TcnqDMuTrendScenario(CorpusScenario):
 
         ax_a.plot(t, a_mu, "o-", color=tokens.TRACE_BLUE, lw=1.6, ms=6)
         # The ≈80 MHz guide target the radical's resonance is set to match (GT §6).
-        ax_a.axhline(
-            80.0, color=tokens.TEXT_DIM, ls="--", lw=1.1, label="target ≈ 80 MHz"
-        )
+        ax_a.axhline(80.0, color=tokens.TEXT_DIM, ls="--", lw=1.1, label="target ≈ 80 MHz")
         ax_a.set_ylabel("A_µ (MHz)")
         ax_a.set_ylim(min(a_mu) - 3.0, max(a_mu) + 3.0)
         ax_a.legend(loc="lower right", fontsize="small", framealpha=0.92)
         ax_a.grid(True, which="both", color=tokens.PLOT_GRID, linewidth=0.8)
         ax_a.tick_params(labelbottom=False)
-        ax_a.set_title(
-            "TCNQ hyperfine parameters vs temperature — D_µ narrows as motion grows"
-        )
+        ax_a.set_title("TCNQ hyperfine parameters vs temperature — D_µ narrows as motion grows")
 
         ax_d.plot(t, d_mu, "s-", color=tokens.TRACE_VERMILLION, lw=1.6, ms=6)
         ax_d.set_ylabel("D_µ = FWHM/68 (MHz)")

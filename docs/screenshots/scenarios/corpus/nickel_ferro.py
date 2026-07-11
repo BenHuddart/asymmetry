@@ -59,8 +59,8 @@ import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget
 
-from ._corpus import CorpusScenario, load_corpus_datasets, register
 from .._base import _process_events_for
+from ._corpus import CorpusScenario, load_corpus_datasets, register
 
 EXAMPLE = "Magnetism/Ferromagnetic nickel"
 _DATA = "Magnetism/Ferromagnetic nickel/Data/emu00%d.nxs"
@@ -176,9 +176,7 @@ class NiZfPrecessionFitScenario(CorpusScenario):
 
         window = MainWindow()
         window._on_fit()
-        window.resizeDocks(
-            [window._dock_data_browser], [320], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
         datasets = load_corpus_datasets([_DATA % _ZF_FIT_RUN])
         self.add_to_browser(window, datasets)
@@ -186,9 +184,7 @@ class NiZfPrecessionFitScenario(CorpusScenario):
         _process(80)
 
         single_tab = window._fit_panel._single_tab
-        single_tab._set_composite_model(
-            CompositeModel(_ZF_MODEL[0], operators=_ZF_MODEL[1])
-        )
+        single_tab._set_composite_model(CompositeModel(_ZF_MODEL[0], operators=_ZF_MODEL[1]))
         _process(80)
 
         table = single_tab._param_table
@@ -220,9 +216,7 @@ class NiZfPrecessionFitScenario(CorpusScenario):
         # so the damped spontaneous oscillation resolves, and frame Y to that
         # window so the precession sits large rather than as ripple on the
         # large uncalibrated baseline.
-        window._plot_panel.set_view_limits(
-            0.0, 2.2, *window._plot_panel.get_view_limits()[2:]
-        )
+        window._plot_panel.set_view_limits(0.0, 2.2, *window._plot_panel.get_view_limits()[2:])
         _process(60)
         self._frame_y_to_window(window, 0.0, 2.2)
         _process(80)
@@ -339,9 +333,7 @@ class NiNuTOrderParameterScenario(CorpusScenario):
         )
         if not result.success:
             raise RuntimeError("Ni OrderParameter ν(T) fit did not converge")
-        self._fit_summary = {
-            n: float(result.parameters[n].value) for n in model.param_names
-        }
+        self._fit_summary = {n: float(result.parameters[n].value) for n in model.param_names}
 
         fit_range = ModelFitRange(
             x_min=float(temperature.min()),
@@ -393,9 +385,7 @@ class NiZfFftScenario(CorpusScenario):
 
         window = MainWindow()
         window._on_fourier()
-        window.resizeDocks(
-            [window._dock_data_browser], [320], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
         datasets = load_corpus_datasets([_DATA % _ZF_FIT_RUN])
         self.add_to_browser(window, datasets)

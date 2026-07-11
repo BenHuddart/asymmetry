@@ -35,8 +35,8 @@ import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget
 
-from ._corpus import CorpusScenario, load_corpus_datasets, register
 from .._base import _process_events_for
+from ._corpus import CorpusScenario, load_corpus_datasets, register
 
 EXAMPLE = "Superconductivity/TRSB"
 _DATA = "Superconductivity/TRSB/data/MUSR000%d.nxs"
@@ -53,9 +53,9 @@ _ZF_RUNS = list(range(38224, 38261))
 # Dense TF 0.01–8 K scan (GT §3b); the shipped WiMDA batch-fit runs.
 _TF_RUNS = list(range(38180, 38220))
 # Base-temperature (0.3 K) pair for the LF-decoupling overlay (GT §3a/§3c).
-_ZF_BASE_RUN = 38224   # F = 0
-_LF_BASE_RUN = 38263   # F = 100 G = 10 mT
-_TF_BASE_RUN = 38180   # F = 400 G = 40 mT, T = 0.01 K
+_ZF_BASE_RUN = 38224  # F = 0
+_LF_BASE_RUN = 38263  # F = 100 G = 10 mT
+_TF_BASE_RUN = 38180  # F = 400 G = 40 mT, T = 0.01 K
 
 
 def _fit_series(runs, components, operators, seeds, bounds):
@@ -139,8 +139,13 @@ def _frame_trend_y(widget, y_lo, y_hi, *, tc_line=None):
         if tc_line is not None:
             ax.axvline(tc_line, color="0.5", linestyle="--", linewidth=1.0, zorder=1)
             ax.text(
-                tc_line, y_hi, r"  $T_\mathrm{c}$ = 6.75 K",
-                color="0.35", fontsize=9, va="top", ha="left",
+                tc_line,
+                y_hi,
+                r"  $T_\mathrm{c}$ = 6.75 K",
+                color="0.35",
+                fontsize=9,
+                va="top",
+                ha="left",
             )
         widget._canvas.draw()
     _process_events_for(milliseconds=120)
@@ -160,9 +165,7 @@ def _configure_single_fit(window, components, operators, seeds, positive):
     )
 
     single_tab = window._fit_panel._single_tab
-    single_tab._set_composite_model(
-        CompositeModel(components, operators=operators)
-    )
+    single_tab._set_composite_model(CompositeModel(components, operators=operators))
     _process_events_for(milliseconds=80)
 
     table = single_tab._param_table
@@ -189,8 +192,7 @@ def _configure_single_fit(window, components, operators, seeds, positive):
 class TrsbZfKtFitScenario(CorpusScenario):
     name = "corpus_trsb_zf_kt_fit"
     description = (
-        "Converged Gaussian Kubo–Toyabe × exp fit on the Re₆Zr base-T (0.3 K) "
-        "zero-field run 38224."
+        "Converged Gaussian Kubo–Toyabe × exp fit on the Re₆Zr base-T (0.3 K) zero-field run 38224."
     )
     example = EXAMPLE
     size = (1500, 920)
@@ -201,9 +203,7 @@ class TrsbZfKtFitScenario(CorpusScenario):
 
         window = MainWindow()
         window._on_fit()
-        window.resizeDocks(
-            [window._dock_data_browser], [320], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
         datasets = load_corpus_datasets([_DATA % _ZF_BASE_RUN])
         self.add_to_browser(window, datasets)
@@ -241,7 +241,8 @@ class TrsbSigmaTStepScenario(CorpusScenario):
 
     def build(self) -> QWidget:
         temps, sigma, sigma_err = _fit_series(
-            _ZF_RUNS, *_ZF_MODEL,
+            _ZF_RUNS,
+            *_ZF_MODEL,
             seeds={"A_1": 19.0, "Delta": 0.26, "Lambda": 0.01, "A_bg": 14.5},
             bounds={
                 "A_1": (0.0, 40.0),
@@ -273,21 +274,15 @@ class TrsbLfDecouplingScenario(CorpusScenario):
         from asymmetry.gui.mainwindow import MainWindow
 
         window = MainWindow()
-        window.resizeDocks(
-            [window._dock_data_browser], [320], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
-        datasets = load_corpus_datasets(
-            [_DATA % _ZF_BASE_RUN, _DATA % _LF_BASE_RUN]
-        )
+        datasets = load_corpus_datasets([_DATA % _ZF_BASE_RUN, _DATA % _LF_BASE_RUN])
         with window._data_browser.batch_updates():
             for dataset in datasets:
                 window._data_browser.add_dataset(dataset)
 
         run_numbers = [int(ds.run_number) for ds in datasets]
-        window._data_browser.create_data_group(
-            run_numbers, name="ZF vs 10 mT LF — Re₆Zr (0.3 K)"
-        )
+        window._data_browser.create_data_group(run_numbers, name="ZF vs 10 mT LF — Re₆Zr (0.3 K)")
 
         window._plot_panel.set_overlay_enabled(True, emit_signal=True)
         window._data_browser._table.selectAll()
@@ -322,9 +317,7 @@ class TrsbTfVortexFitScenario(CorpusScenario):
 
         window = MainWindow()
         window._on_fit()
-        window.resizeDocks(
-            [window._dock_data_browser], [320], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
         datasets = load_corpus_datasets([_DATA % _TF_BASE_RUN])
         self.add_to_browser(window, datasets)
@@ -336,8 +329,11 @@ class TrsbTfVortexFitScenario(CorpusScenario):
             window,
             *_TF_MODEL,
             seeds={
-                "A_1": 8.0, "frequency": 5.36, "phase": 2.37,
-                "sigma": 0.4, "A_bg": 0.0,
+                "A_1": 8.0,
+                "frequency": 5.36,
+                "phase": 2.37,
+                "sigma": 0.4,
+                "A_bg": 0.0,
             },
             positive=("A_1", "sigma"),
         )
@@ -365,10 +361,14 @@ class TrsbSigmaScTScenario(CorpusScenario):
 
     def build(self) -> QWidget:
         temps, sigma, sigma_err = _fit_series(
-            _TF_RUNS, *_TF_MODEL,
+            _TF_RUNS,
+            *_TF_MODEL,
             seeds={
-                "A_1": 8.0, "frequency": 5.36, "phase": 2.37,
-                "sigma": 0.4, "A_bg": 0.0,
+                "A_1": 8.0,
+                "frequency": 5.36,
+                "phase": 2.37,
+                "sigma": 0.4,
+                "A_bg": 0.0,
             },
             bounds={
                 "A_1": (0.0, 40.0),
@@ -379,9 +379,7 @@ class TrsbSigmaScTScenario(CorpusScenario):
             },
         )
         self._temps, self._sigma, self._sigma_err = temps, sigma, sigma_err
-        return _load_trend_panel(
-            temps, sigma, sigma_err, "σ_sc(T) — Re₆Zr TF 40 mT"
-        )
+        return _load_trend_panel(temps, sigma, sigma_err, "σ_sc(T) — Re₆Zr TF 40 mT")
 
     def settle(self, widget: QWidget) -> None:
         _frame_trend_y(widget, 0.10, 0.50, tc_line=6.75)

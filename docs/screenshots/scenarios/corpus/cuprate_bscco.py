@@ -53,8 +53,8 @@ import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget
 
-from ._corpus import CorpusScenario, load_corpus_datasets, register
 from .._base import CaptureContext, _process_events_for
+from ._corpus import CorpusScenario, load_corpus_datasets, register
 
 EXAMPLE = "Superconductivity/A high-Tc cuprate"
 _DATA = "Superconductivity/A high-Tc cuprate/Data/MUSR%08d.nxs"
@@ -67,11 +67,22 @@ _TF_MODEL = (["Oscillatory", "Gaussian", "Constant"], ["*", "+"])
 # (run, T[K]); the σ(T) headline series. Run 1276 (125 K) is the normal-state
 # reference run and sorts last by temperature.
 _SCAN_400G: list[tuple[int, float]] = [
-    (1277, 10.0), (1278, 30.0), (1279, 50.0), (1280, 70.0), (1281, 80.0),
-    (1282, 85.0), (1283, 90.0), (1284, 95.0), (1285, 100.0), (1286, 105.0),
-    (1287, 110.0), (1288, 115.0), (1289, 120.0), (1276, 125.0),
+    (1277, 10.0),
+    (1278, 30.0),
+    (1279, 50.0),
+    (1280, 70.0),
+    (1281, 80.0),
+    (1282, 85.0),
+    (1283, 90.0),
+    (1284, 95.0),
+    (1285, 100.0),
+    (1286, 105.0),
+    (1287, 110.0),
+    (1288, 115.0),
+    (1289, 120.0),
+    (1276, 125.0),
 ]
-_RUN_SUPER = 1277   # 10 K, deep in the mixed state (broad vortex line)
+_RUN_SUPER = 1277  # 10 K, deep in the mixed state (broad vortex line)
 _RUN_NORMAL = 1276  # 125 K, above T_c (narrow, undamped line)
 
 # MUSR 200 G temperature scan (GROUND_TRUTH §7 second table). Run 1291 (10 K)
@@ -79,8 +90,16 @@ _RUN_NORMAL = 1276  # 125 K, above T_c (narrow, undamped line)
 # fit artefact rather than a plateau point. Runs 1295/1303 ship no reference
 # and 1302 used a different model, so they are excluded too.
 _SCAN_200G: list[tuple[int, float]] = [
-    (1292, 30.0), (1293, 50.0), (1294, 70.0), (1296, 85.0), (1297, 90.0),
-    (1298, 95.0), (1299, 100.0), (1300, 105.0), (1301, 110.0), (1290, 120.0),
+    (1292, 30.0),
+    (1293, 50.0),
+    (1294, 70.0),
+    (1296, 85.0),
+    (1297, 90.0),
+    (1298, 95.0),
+    (1299, 100.0),
+    (1300, 105.0),
+    (1301, 110.0),
+    (1290, 120.0),
 ]
 
 # Guide σ↔λ relation, σ(µs⁻¹) = 75780 / λ_L²(nm) (GROUND_TRUTH §1/§6/§7).
@@ -194,9 +213,7 @@ def _configure_single_fit(window, seeds, positive):
     )
 
     single_tab = window._fit_panel._single_tab
-    single_tab._set_composite_model(
-        CompositeModel(_TF_MODEL[0], operators=_TF_MODEL[1])
-    )
+    single_tab._set_composite_model(CompositeModel(_TF_MODEL[0], operators=_TF_MODEL[1]))
     _process_events_for(milliseconds=80)
 
     table = single_tab._param_table
@@ -280,18 +297,14 @@ class BsccoTfDampingScenario(CorpusScenario):
         from asymmetry.gui.mainwindow import MainWindow
 
         window = MainWindow()
-        window.resizeDocks(
-            [window._dock_data_browser], [320], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
         datasets = load_corpus_datasets([_rel(_RUN_SUPER), _rel(_RUN_NORMAL)])
         with window._data_browser.batch_updates():
             for dataset in datasets:
                 window._data_browser.add_dataset(dataset)
         run_numbers = [int(ds.run_number) for ds in datasets]
-        window._data_browser.create_data_group(
-            run_numbers, name="BiSCCO 400 G — 10 K vs 125 K"
-        )
+        window._data_browser.create_data_group(run_numbers, name="BiSCCO 400 G — 10 K vs 125 K")
 
         window._plot_panel.set_overlay_enabled(True, emit_signal=True)
         window._data_browser._table.selectAll()
@@ -324,9 +337,7 @@ class BsccoVortexFftScenario(CorpusScenario):
 
         window = MainWindow()
         window._on_fourier()
-        window.resizeDocks(
-            [window._dock_data_browser], [320], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
         datasets = load_corpus_datasets([_rel(_RUN_SUPER)])
         self.add_to_browser(window, datasets)
@@ -362,9 +373,7 @@ class BsccoTfFitScenario(CorpusScenario):
 
         window = MainWindow()
         window._on_fit()
-        window.resizeDocks(
-            [window._dock_data_browser], [320], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
         datasets = load_corpus_datasets([_rel(_RUN_SUPER)])
         self.add_to_browser(window, datasets)
@@ -402,9 +411,7 @@ class BsccoSigmaTScenario(CorpusScenario):
     def build(self) -> QWidget:
         temps, sigma, sigma_err = _fit_sigma_series(_SCAN_400G)
         self._temps, self._sigma, self._sigma_err = temps, sigma, sigma_err
-        return _load_trend_panel(
-            temps, sigma, sigma_err, "σ(T) — BiSCCO 400 G TF (vortex state)"
-        )
+        return _load_trend_panel(temps, sigma, sigma_err, "σ(T) — BiSCCO 400 G TF (vortex state)")
 
     def settle(self, widget: QWidget) -> None:
         widget._refresh_plot()
@@ -417,19 +424,28 @@ class BsccoSigmaTScenario(CorpusScenario):
             # §6b: λ is unreliable at 400 G for pancake-vortex Bi-2212).
             ax.axvline(107.0, color="0.5", linestyle="--", linewidth=1.0, zorder=1)
             ax.text(
-                107.0, 1.30, r"  $T_\mathrm{c}\approx$ 107 K",
-                color="0.35", fontsize=9, va="top", ha="left",
+                107.0,
+                1.30,
+                r"  $T_\mathrm{c}\approx$ 107 K",
+                color="0.35",
+                fontsize=9,
+                va="top",
+                ha="left",
             )
             if getattr(self, "_sigma", None) is not None and len(self._sigma):
                 sigma0 = float(np.max(self._sigma))
                 lam = float(np.sqrt(_LAMBDA_COEFF / sigma0))
                 ax.text(
-                    0.02, 0.06,
+                    0.02,
+                    0.06,
                     rf"$\sigma(10\,\mathrm{{K}})\approx${sigma0:.2f} µs$^{{-1}}$"
                     rf"  $\Rightarrow\ \lambda_L\approx${lam:.0f} nm"
                     "\n(indicative only — pancake vortices at 400 G, GT §6b)",
-                    transform=ax.transAxes, color="0.3", fontsize=8,
-                    va="bottom", ha="left",
+                    transform=ax.transAxes,
+                    color="0.3",
+                    fontsize=8,
+                    va="bottom",
+                    ha="left",
                 )
             widget._canvas.draw()
         _process_events_for(milliseconds=120)
@@ -466,16 +482,39 @@ class BsccoFieldCompareScenario(CorpusScenario):
         figure = Figure(figsize=(10.0, 6.0), dpi=120, tight_layout=True)
         ax = figure.add_subplot(1, 1, 1)
         ax.errorbar(
-            t400, s400, yerr=e400, fmt="o", color="#1f77b4", ecolor="#1f77b4",
-            elinewidth=0.9, markersize=6, capsize=2, label="400 G TF scan",
+            t400,
+            s400,
+            yerr=e400,
+            fmt="o",
+            color="#1f77b4",
+            ecolor="#1f77b4",
+            elinewidth=0.9,
+            markersize=6,
+            capsize=2,
+            label="400 G TF scan",
         )
         ax.errorbar(
-            t200, s200, yerr=e200, fmt="s", color="#d62728", ecolor="#d62728",
-            elinewidth=0.9, markersize=6, capsize=2, label="200 G TF scan",
+            t200,
+            s200,
+            yerr=e200,
+            fmt="s",
+            color="#d62728",
+            ecolor="#d62728",
+            elinewidth=0.9,
+            markersize=6,
+            capsize=2,
+            label="200 G TF scan",
         )
         ax.axvline(107.0, color="grey", ls="--", lw=0.8, alpha=0.6)
-        ax.text(106.0, 0.62, r"$T_\mathrm{c}\approx$ 107 K", color="grey",
-                ha="right", va="center", fontsize=10)
+        ax.text(
+            106.0,
+            0.62,
+            r"$T_\mathrm{c}\approx$ 107 K",
+            color="grey",
+            ha="right",
+            va="center",
+            fontsize=10,
+        )
         ax.set_xlabel("Temperature  T (K)")
         ax.set_ylabel(r"Gaussian depolarisation rate  $\sigma$  (µs$^{-1}$)")
         ax.set_title("BiSCCO vortex-state σ(T): 400 G vs 200 G transverse field")
@@ -483,12 +522,17 @@ class BsccoFieldCompareScenario(CorpusScenario):
         ax.legend(loc="upper right", frameon=True)
         ax.grid(True, alpha=0.25)
         ax.text(
-            0.015, 0.05,
+            0.015,
+            0.05,
             "The 200 G plateau lies below the 400 G plateau — the field\n"
             "dependence of σ in Bi-2212 is pancake-vortex physics, so a single\n"
             "λ_L is unreliable here (both fields < B* ≈ 500 G; GROUND_TRUTH §6b).\n"
             "Run 1291 (200 G, 10 K) excluded: documented negative-σ fit (§9).",
-            transform=ax.transAxes, color="0.35", fontsize=8, va="bottom", ha="left",
+            transform=ax.transAxes,
+            color="0.35",
+            fontsize=8,
+            va="bottom",
+            ha="left",
         )
 
         canvas = FigureCanvasQTAgg(figure)

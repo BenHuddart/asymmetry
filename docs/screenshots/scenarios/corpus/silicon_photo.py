@@ -50,7 +50,7 @@ from PySide6.QtCore import QEventLoop, Qt, QTimer
 from PySide6.QtWidgets import QApplication, QWidget
 
 from .._base import CaptureContext
-from ._corpus import CorpusScenario, corpus_path, register, _process_events_for
+from ._corpus import CorpusScenario, _process_events_for, corpus_path, register
 
 EXAMPLE = "Semiconductors/Photo-muSR in silicon"
 _DATA = EXAMPLE + "/Data"
@@ -58,20 +58,36 @@ _DATA = EXAMPLE + "/Data"
 # Injection / calibration set (ΔT = 0): run → injected excess density Δn (cm⁻³),
 # GROUND_TRUTH §3 (exact, from the guide run table). Highest Δn first.
 CAL_RUNS: list[tuple[int, float]] = [
-    (103277, 8.9e13), (103278, 7.9e13), (103279, 7.1e13), (103280, 6.3e13),
-    (103281, 5.6e13), (103282, 4.7e13), (103283, 3.7e13), (103284, 2.7e13),
-    (103285, 1.8e13), (103286, 9.3e12),
+    (103277, 8.9e13),
+    (103278, 7.9e13),
+    (103279, 7.1e13),
+    (103280, 6.3e13),
+    (103281, 5.6e13),
+    (103282, 4.7e13),
+    (103283, 3.7e13),
+    (103284, 2.7e13),
+    (103285, 1.8e13),
+    (103286, 9.3e12),
 ]
 
 # Delay scan (fixed injected Δn): run → laser delay ΔT (µs), GROUND_TRUTH §3.
 DELAY_RUNS: list[tuple[int, float]] = [
-    (103287, 0.1), (103288, 3.0), (103289, 5.0), (103290, 10.0), (103291, 15.0),
-    (103292, 20.0), (103293, 25.0), (103294, 30.0), (103295, 40.0),
-    (103296, 50.0), (103297, 60.0), (103298, 70.0),
+    (103287, 0.1),
+    (103288, 3.0),
+    (103289, 5.0),
+    (103290, 10.0),
+    (103291, 15.0),
+    (103292, 20.0),
+    (103293, 25.0),
+    (103294, 30.0),
+    (103295, 40.0),
+    (103296, 50.0),
+    (103297, 60.0),
+    (103298, 70.0),
 ]
 
-REF_DENSITY = 8.9e13     # Δn₀ reference density (paper Fig 1d, GROUND_TRUTH §10)
-LIGHT_ON_TMAX = 1.0      # light-ON fit window: first 1 µs only (GROUND_TRUTH §4)
+REF_DENSITY = 8.9e13  # Δn₀ reference density (paper Fig 1d, GROUND_TRUTH §10)
+LIGHT_ON_TMAX = 1.0  # light-ON fit window: first 1 µs only (GROUND_TRUTH §4)
 
 
 def _rel(run: int) -> str:
@@ -81,6 +97,7 @@ def _rel(run: int) -> str:
 # --------------------------------------------------------------------------- #
 # Core λ extraction (GUI-free — used by the trend scenarios)
 # --------------------------------------------------------------------------- #
+
 
 def _fit_exponential(dataset, t_max: float, a0: float | None = None):
     """Fit a single exponential A₀·exp(−λt) to *dataset* over [0, t_max].
@@ -95,9 +112,7 @@ def _fit_exponential(dataset, t_max: float, a0: float | None = None):
 
     model = CompositeModel(["Exponential"])
     if a0 is None:
-        params = ParameterSet(
-            [Parameter("A_1", 15.0, min=0.0), Parameter("Lambda", 0.3, min=0.0)]
-        )
+        params = ParameterSet([Parameter("A_1", 15.0, min=0.0), Parameter("Lambda", 0.3, min=0.0)])
     else:
         params = ParameterSet(
             [Parameter("A_1", a0, min=0.0, fixed=True), Parameter("Lambda", 0.5, min=0.0)]
@@ -129,11 +144,19 @@ def _register_derived_labels() -> None:
     from asymmetry.core.fitting.parameters import register_derived_param_info
 
     register_derived_param_info(
-        "Dn", plain="Dn", unicode="Δn", latex=r"$\Delta n$", gle=r"\Delta n",
+        "Dn",
+        plain="Dn",
+        unicode="Δn",
+        latex=r"$\Delta n$",
+        gle=r"\Delta n",
         unit="cm⁻³",
     )
     register_derived_param_info(
-        "dT", plain="dT", unicode="ΔT", latex=r"$\Delta T$", gle=r"\Delta T",
+        "dT",
+        plain="dT",
+        unicode="ΔT",
+        latex=r"$\Delta T$",
+        gle=r"\Delta T",
         unit="µs",
     )
 
@@ -196,17 +219,13 @@ class SiOnOffOverlayScenario(CorpusScenario):
         from asymmetry.gui.mainwindow import MainWindow
 
         window = MainWindow()
-        window.resizeDocks(
-            [window._dock_data_browser], [320], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
         on_ds, off_ds = _labelled_on_off(window, 103277)
         for ds in (on_ds, off_ds):
             window._data_browser.add_dataset(ds)
         run_numbers = [int(on_ds.run_number), int(off_ds.run_number)]
-        window._data_browser.create_data_group(
-            run_numbers, name="Si 103277 — laser ON / OFF"
-        )
+        window._data_browser.create_data_group(run_numbers, name="Si 103277 — laser ON / OFF")
 
         window._plot_panel.set_overlay_enabled(True, emit_signal=True)
         window._data_browser._table.selectAll()
@@ -241,9 +260,7 @@ class SiLambdaFitScenario(CorpusScenario):
 
         window = MainWindow()
         window._on_fit()
-        window.resizeDocks(
-            [window._dock_data_browser], [300], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [300], Qt.Orientation.Horizontal)
 
         combined = load(_rel(103277))
         # A₀ from the light-OFF (Green) period, per the guide workflow.
@@ -301,7 +318,9 @@ class SiLambdaVsDnScenario(CorpusScenario):
 
     def build(self) -> QWidget:
         from asymmetry.core.fitting.parameter_models import (
-            ModelFitRange, ParameterCompositeModel, ParameterModelFit,
+            ModelFitRange,
+            ParameterCompositeModel,
+            ParameterModelFit,
             fit_parameter_model,
         )
         from asymmetry.core.fitting.parameters import Parameter, ParameterSet
@@ -341,16 +360,24 @@ class SiLambdaVsDnScenario(CorpusScenario):
             ]
         )
         result = fit_parameter_model(
-            dn, lam, np.array([0.05 * v for v in lam]), model, params,
-            x_min=float(dn.min()), x_max=float(dn.max()),
+            dn,
+            lam,
+            np.array([0.05 * v for v in lam]),
+            model,
+            params,
+            x_min=float(dn.min()),
+            x_max=float(dn.max()),
         )
         if not result.success:
             raise RuntimeError("Si λ vs Δn calibration power-law fit did not converge")
         self._alpha = float(result.parameters["n"].value)
 
         fit_range = ModelFitRange(
-            x_min=float(dn.min()), x_max=float(dn.max()), model=model,
-            parameters=result.parameters, result=result,
+            x_min=float(dn.min()),
+            x_max=float(dn.max()),
+            model=model,
+            parameters=result.parameters,
+            result=result,
         )
         panel._model_fits["Lambda"] = ParameterModelFit(
             parameter_name="Lambda", x_key="param:Dn", ranges=[fit_range], active=True
@@ -384,7 +411,9 @@ class SiTauDecayScenario(CorpusScenario):
 
     def build(self) -> QWidget:
         from asymmetry.core.fitting.parameter_models import (
-            ModelFitRange, ParameterCompositeModel, ParameterModelFit,
+            ModelFitRange,
+            ParameterCompositeModel,
+            ParameterModelFit,
             fit_parameter_model,
         )
         from asymmetry.core.fitting.parameters import Parameter, ParameterSet
@@ -431,16 +460,24 @@ class SiTauDecayScenario(CorpusScenario):
             ]
         )
         result = fit_parameter_model(
-            dt, dn_d, np.array([0.08 * v for v in dn_d]), model, params,
-            x_min=float(dt.min()), x_max=float(dt.max()),
+            dt,
+            dn_d,
+            np.array([0.08 * v for v in dn_d]),
+            model,
+            params,
+            x_min=float(dt.min()),
+            x_max=float(dt.max()),
         )
         if not result.success:
             raise RuntimeError("Si Δn vs ΔT carrier-decay fit did not converge")
         self._tau0 = float(result.parameters["tau"].value)
 
         fit_range = ModelFitRange(
-            x_min=float(dt.min()), x_max=float(dt.max()), model=model,
-            parameters=result.parameters, result=result,
+            x_min=float(dt.min()),
+            x_max=float(dt.max()),
+            model=model,
+            parameters=result.parameters,
+            result=result,
         )
         panel._model_fits["Dn"] = ParameterModelFit(
             parameter_name="Dn", x_key="param:dT", ranges=[fit_range], active=True
@@ -457,6 +494,7 @@ class SiTauDecayScenario(CorpusScenario):
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
+
 
 def _fit_power_law(dn: np.ndarray, lam: np.ndarray) -> tuple[float, float]:
     """Fit λ = β·(Δn/Δn₀)^α; return (β, α)."""
@@ -534,10 +572,7 @@ def _settle_trend(widget: QWidget) -> None:
     widget._refresh_plot()
     elapsed = 0
     while elapsed < 20000:
-        if (
-            not widget._trend_curve_compute_active
-            and widget._precomputed_trend_curves is not None
-        ):
+        if not widget._trend_curve_compute_active and widget._precomputed_trend_curves is not None:
             break
         _process_events_for(milliseconds=30)
         elapsed += 30

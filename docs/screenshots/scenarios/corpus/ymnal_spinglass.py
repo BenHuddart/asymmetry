@@ -41,8 +41,8 @@ import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QCheckBox, QWidget
 
-from ._corpus import CorpusScenario, load_corpus_datasets, register
 from .._base import _process_events_for
+from ._corpus import CorpusScenario, load_corpus_datasets, register
 
 EXAMPLE = "Magnetism/Spin Glass YMnAl"
 _DATA = "Magnetism/Spin Glass YMnAl/data/MUSR000%d.nxs"
@@ -60,14 +60,24 @@ _T_MIN, _T_MAX = 0.5, 12.0
 # ~90 K (24575/24574/24573 at 85/80/75 K) sit at/below the frozen transition,
 # outside the guide's paramagnetic series, so they are excluded from the trend.
 _SERIES: list[tuple[int, float]] = [
-    (24576, 90.0), (24587, 91.0), (24578, 92.5), (24577, 95.0), (24588, 97.5),
-    (24580, 100.0), (24581, 111.0), (24582, 120.0), (24583, 135.0),
-    (24584, 150.0), (24585, 180.0), (24586, 221.0), (24590, 280.0),
+    (24576, 90.0),
+    (24587, 91.0),
+    (24578, 92.5),
+    (24577, 95.0),
+    (24588, 97.5),
+    (24580, 100.0),
+    (24581, 111.0),
+    (24582, 120.0),
+    (24583, 135.0),
+    (24584, 150.0),
+    (24585, 180.0),
+    (24586, 221.0),
+    (24590, 280.0),
 ]
 
 # Background-fix run (90 K) and A-fix run (280 K) — GROUND_TRUTH §4 protocol.
-_BG_RUN = 24576   # 90 K
-_A_RUN = 24590    # 280 K
+_BG_RUN = 24576  # 90 K
+_A_RUN = 24590  # 280 K
 
 # Spectrum-evolution overlay: a clean descending-T spread through the series
 # down to just below T_g, to show relaxation growing toward the transition.
@@ -117,9 +127,7 @@ def _calibrate_amplitudes():
     1. Fit 90 K (24576) free → take A_bg (background level).
     2. Fit 280 K (24590) with β = 1 and A_bg fixed → take A (full t=0 asymmetry).
     """
-    bg_fit, _ = _fit_run(
-        _BG_RUN, {"A_1": 22.0, "Lambda": 0.9, "beta": 0.6, "A_bg": 2.0}
-    )
+    bg_fit, _ = _fit_run(_BG_RUN, {"A_1": 22.0, "Lambda": 0.9, "beta": 0.6, "A_bg": 2.0})
     a_bg = bg_fit["A_bg"]
     a_fit, _ = _fit_run(
         _A_RUN,
@@ -227,18 +235,14 @@ class YmnalSpectraScenario(CorpusScenario):
         from asymmetry.gui.mainwindow import MainWindow
 
         window = MainWindow()
-        window.resizeDocks(
-            [window._dock_data_browser], [340], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [340], Qt.Orientation.Horizontal)
 
         datasets = load_corpus_datasets([_DATA % r for r in _SPECTRA_RUNS])
         with window._data_browser.batch_updates():
             for dataset in datasets:
                 window._data_browser.add_dataset(dataset)
         run_numbers = [int(ds.run_number) for ds in datasets]
-        window._data_browser.create_data_group(
-            run_numbers, name="Y(Mn,Al)₂ LF 110 G — 280→85 K"
-        )
+        window._data_browser.create_data_group(run_numbers, name="Y(Mn,Al)₂ LF 110 G — 280→85 K")
 
         window._plot_panel.set_overlay_enabled(True, emit_signal=True)
         window._data_browser._table.selectAll()
@@ -282,9 +286,7 @@ class YmnalStretchedFitScenario(CorpusScenario):
 
         window = MainWindow()
         window._on_fit()
-        window.resizeDocks(
-            [window._dock_data_browser], [320], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
         datasets = load_corpus_datasets([_DATA % _FIT_RUN])
         self.add_to_browser(window, datasets)
@@ -350,9 +352,7 @@ class YmnalLambdaTScenario(CorpusScenario):
         temps, lam, _beta, lam_err, _beta_err = _fit_series()
         self._temps, self._lam = temps, lam
 
-        panel = _trend_panel(
-            temps, lam, lam_err, "Lambda", "λ(T) — Y(Mn,Al)₂ LF 110 G"
-        )
+        panel = _trend_panel(temps, lam, lam_err, "Lambda", "λ(T) — Y(Mn,Al)₂ LF 110 G")
 
         # Critical-divergence trend fit λ(T) = a·|T−T_c|^(−ν) + c. The transition
         # sits below the lowest data point (90 K), so T_c is bounded < 90 K.
@@ -376,12 +376,15 @@ class YmnalLambdaTScenario(CorpusScenario):
         # per-point uncertainties (from the series row dicts).
         err = np.full(temps.shape, 0.003)
         result = fit_parameter_model(
-            temps, lam, err, model, ParameterSet(params),
-            x_min=float(temps.min()), x_max=float(temps.max()),
+            temps,
+            lam,
+            err,
+            model,
+            ParameterSet(params),
+            x_min=float(temps.min()),
+            x_max=float(temps.max()),
         )
-        self._fit_summary = {
-            n: float(result.parameters[n].value) for n in model.param_names
-        }
+        self._fit_summary = {n: float(result.parameters[n].value) for n in model.param_names}
 
         fit_range = ModelFitRange(
             x_min=float(temps.min()),
@@ -437,9 +440,7 @@ class YmnalBetaTScenario(CorpusScenario):
     def build(self) -> QWidget:
         temps, _lam, beta, _lam_err, beta_err = _fit_series()
         self._temps, self._beta = temps, beta
-        return _trend_panel(
-            temps, beta, beta_err, "beta", "β(T) — Y(Mn,Al)₂ LF 110 G"
-        )
+        return _trend_panel(temps, beta, beta_err, "beta", "β(T) — Y(Mn,Al)₂ LF 110 G")
 
     def settle(self, widget: QWidget) -> None:
         widget._refresh_plot()
@@ -450,11 +451,20 @@ class YmnalBetaTScenario(CorpusScenario):
         if axes:
             ax = axes[0]
             ax.set_ylim(0.0, 1.12)
-            for y, label in ((1.0, r"$\beta=1$ (exponential)"),
-                             (1.0 / 3.0, r"$\beta=1/3$ (spin glass)")):
+            for y, label in (
+                (1.0, r"$\beta=1$ (exponential)"),
+                (1.0 / 3.0, r"$\beta=1/3$ (spin glass)"),
+            ):
                 ax.axhline(y, color="0.6", linestyle="--", linewidth=1.0, zorder=1)
-                ax.text(ax.get_xlim()[1], y, "  " + label, color="0.4",
-                        fontsize=9, va="center", ha="left")
+                ax.text(
+                    ax.get_xlim()[1],
+                    y,
+                    "  " + label,
+                    color="0.4",
+                    fontsize=9,
+                    va="center",
+                    ha="left",
+                )
             widget._canvas.draw()
         _process_events_for(milliseconds=150)
 

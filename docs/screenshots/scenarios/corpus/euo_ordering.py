@@ -31,7 +31,7 @@ import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget
 
-from ._corpus import CorpusScenario, load_corpus_datasets, register, _process_events_for
+from ._corpus import CorpusScenario, _process_events_for, load_corpus_datasets, register
 
 EXAMPLE = "Magnetism/Magnetic ordering in EuO"
 _DATA = "Magnetism/Magnetic ordering in EuO/data/deltat_pta_gps_%d.bin"
@@ -46,10 +46,24 @@ def _rel(run: int) -> str:
 # low statistics, §3 note); TF-60 G runs 2961–2973 excluded (paramagnetic, not
 # order-parameter data). Values are the sample-thermometer readings.
 _ZF_SCAN: list[tuple[int, float]] = [
-    (2960, 1.60), (2925, 10.05), (2928, 17.18), (2929, 24.16), (2930, 30.14),
-    (2931, 36.31), (2932, 41.28), (2933, 46.23), (2934, 50.25), (2935, 52.76),
-    (2936, 57.78), (2937, 61.32), (2938, 63.36), (2939, 64.86), (2940, 65.87),
-    (2941, 66.88), (2942, 67.90), (2943, 68.69),
+    (2960, 1.60),
+    (2925, 10.05),
+    (2928, 17.18),
+    (2929, 24.16),
+    (2930, 30.14),
+    (2931, 36.31),
+    (2932, 41.28),
+    (2933, 46.23),
+    (2934, 50.25),
+    (2935, 52.76),
+    (2936, 57.78),
+    (2937, 61.32),
+    (2938, 63.36),
+    (2939, 64.86),
+    (2940, 65.87),
+    (2941, 66.88),
+    (2942, 67.90),
+    (2943, 68.69),
 ]
 
 # Runs shown as a coarse waterfall across the transition (base → just below T_C).
@@ -70,9 +84,7 @@ def _fit_zf_frequency(dataset, nu_seed: float):
     from asymmetry.core.fitting.engine import FitEngine
     from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
-    model = CompositeModel(
-        ["Oscillatory", "Exponential", "Constant"], operators=["*", "+"]
-    )
+    model = CompositeModel(["Oscillatory", "Exponential", "Constant"], operators=["*", "+"])
     params = ParameterSet(
         [
             Parameter("A_1", 8.0),
@@ -114,9 +126,7 @@ class EuoLoadBrowseScenario(CorpusScenario):
         from asymmetry.gui.mainwindow import MainWindow
 
         window = MainWindow()
-        window.resizeDocks(
-            [window._dock_data_browser], [430], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [430], Qt.Orientation.Horizontal)
 
         # A representative spread through the transition (base → just above T_C):
         # enough rows to read the scan, few enough to stay legible when cropped.
@@ -162,9 +172,7 @@ class EuoZfFitScenario(CorpusScenario):
 
         window = MainWindow()
         window._on_fit()
-        window.resizeDocks(
-            [window._dock_data_browser], [320], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
         # Run 2960 — the lowest temperature (1.6 K), deep in the ordered phase.
         datasets = load_corpus_datasets([_rel(2960)])
@@ -174,9 +182,7 @@ class EuoZfFitScenario(CorpusScenario):
 
         single_tab = window._fit_panel._single_tab
         single_tab._set_composite_model(
-            CompositeModel(
-                ["Oscillatory", "Exponential", "Constant"], operators=["*", "+"]
-            )
+            CompositeModel(["Oscillatory", "Exponential", "Constant"], operators=["*", "+"])
         )
         _process_events_for(milliseconds=80)
 
@@ -204,9 +210,7 @@ class EuoZfFitScenario(CorpusScenario):
         # cycles into a solid block. Zoom to the first 0.45 µs (~13 cycles),
         # where the damped oscillation lives, and frame Y to that window so the
         # precession sits large on screen rather than as ripple on the baseline.
-        window._plot_panel.set_view_limits(
-            0.0, 0.45, *window._plot_panel.get_view_limits()[2:]
-        )
+        window._plot_panel.set_view_limits(0.0, 0.45, *window._plot_panel.get_view_limits()[2:])
         _process_events_for(milliseconds=60)
         self._frame_y_to_window(window, 0.0, 0.45)
         _process_events_for(milliseconds=80)
@@ -246,9 +250,7 @@ class EuoFftScenario(CorpusScenario):
 
         window = MainWindow()
         window._on_fourier()
-        window.resizeDocks(
-            [window._dock_data_browser], [320], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
         datasets = load_corpus_datasets([_rel(2960)])
         for dataset in datasets:
@@ -388,9 +390,7 @@ class EuoNuTTrendScenario(CorpusScenario):
         )
         if not result.success:
             raise RuntimeError("EuO OrderParameter ν(T) fit did not converge")
-        self._fit_summary = {
-            n: float(result.parameters[n].value) for n in model.param_names
-        }
+        self._fit_summary = {n: float(result.parameters[n].value) for n in model.param_names}
 
         fit_range = ModelFitRange(
             x_min=float(temperature.min()),
@@ -439,18 +439,14 @@ class EuoWaterfallScenario(CorpusScenario):
         from asymmetry.gui.mainwindow import MainWindow
 
         window = MainWindow()
-        window.resizeDocks(
-            [window._dock_data_browser], [320], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
         datasets = load_corpus_datasets([_rel(r) for r in _WATERFALL_RUNS])
         with window._data_browser.batch_updates():
             for dataset in datasets:
                 window._data_browser.add_dataset(dataset)
         run_numbers = [int(ds.run_number) for ds in datasets]
-        window._data_browser.create_data_group(
-            run_numbers, name="EuO ZF across T_C"
-        )
+        window._data_browser.create_data_group(run_numbers, name="EuO ZF across T_C")
 
         window._plot_panel.set_overlay_enabled(True, emit_signal=True)
         window._plot_panel.set_waterfall_enabled(True, emit_signal=True)
@@ -459,9 +455,7 @@ class EuoWaterfallScenario(CorpusScenario):
         _process_events_for(milliseconds=80)
         # Zoom into the first ~0.6 µs so the slowing precession is legible in
         # each stacked trace rather than a dense band.
-        window._plot_panel.set_view_limits(
-            0.0, 0.6, *window._plot_panel.get_view_limits()[2:]
-        )
+        window._plot_panel.set_view_limits(0.0, 0.6, *window._plot_panel.get_view_limits()[2:])
         _process_events_for(milliseconds=60)
         return window
 

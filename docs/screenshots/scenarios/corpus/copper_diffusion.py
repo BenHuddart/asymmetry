@@ -42,14 +42,12 @@ for run selection, fitted values vs the GT §6 anchors, and problems hit.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
 from PySide6.QtCore import QEventLoop, Qt, QTimer
 from PySide6.QtWidgets import QApplication, QWidget
 
-from ._corpus import CorpusScenario, load_corpus_datasets, register
 from .._base import _process_events_for
+from ._corpus import CorpusScenario, load_corpus_datasets, register
 
 EXAMPLE = "Nuclear magnetism and ionic motion/Muon diffusion and QLCR in copper"
 _DATA = EXAMPLE + "/Data"
@@ -69,10 +67,23 @@ def _argus(run: int) -> str:
 _EMU_ZF_SERIES: dict[int, float] = {
     20887: 5.0,  # set 1 K, read 5.80 K — the low-T quantum-diffusion point
     20886: 40.0,
-    20901: 60.0, 20902: 65.0, 20903: 70.0, 20904: 75.0, 20905: 80.0,
-    20906: 85.0, 20907: 90.0, 20908: 110.0, 20909: 120.0, 20910: 130.0,
-    20911: 140.0, 20912: 150.0, 20913: 160.0, 20914: 170.0, 20915: 180.0,
-    20916: 190.0, 20917: 200.0,
+    20901: 60.0,
+    20902: 65.0,
+    20903: 70.0,
+    20904: 75.0,
+    20905: 80.0,
+    20906: 85.0,
+    20907: 90.0,
+    20908: 110.0,
+    20909: 120.0,
+    20910: 130.0,
+    20911: 140.0,
+    20912: 150.0,
+    20913: 160.0,
+    20914: 170.0,
+    20915: 180.0,
+    20916: 190.0,
+    20917: 200.0,
 }
 
 # EMU 40 K LF QLCR field scan (GT §3a): densely sampled 75–90 G to catch the dip.
@@ -168,7 +179,8 @@ class CuZfStaticKtScenario(CorpusScenario):
         _process_events_for(milliseconds=80)
 
         _configure_single_fit(
-            window, *_ZF_STATIC_MODEL,
+            window,
+            *_ZF_STATIC_MODEL,
             seeds={"A_1": 21.0, "Delta": 0.4, "A_bg": 5.0},
             bounds={"A_1": (0.0, 40.0), "Delta": (0.0, 1.5), "A_bg": (-10.0, 20.0)},
             positive=("A_1", "Delta"),
@@ -208,9 +220,7 @@ class CuZfQuantumDiffusionScenario(CorpusScenario):
             for dataset in datasets:
                 window._data_browser.add_dataset(dataset)
         run_numbers = [int(ds.run_number) for ds in datasets]
-        window._data_browser.create_data_group(
-            run_numbers, name="Cu ZF — 40 K vs ~5 K (EMU)"
-        )
+        window._data_browser.create_data_group(run_numbers, name="Cu ZF — 40 K vs ~5 K (EMU)")
 
         window._plot_panel.set_overlay_enabled(True, emit_signal=True)
         # Bunch the bins ~8× so the late-time tail contrast (5 K relaxing below
@@ -256,10 +266,15 @@ class CuTfAbragamScenario(CorpusScenario):
 
         freq = _GAMMA_MU_MHZ_PER_G * 100.0  # ≈ 1.355 MHz at 100 G
         _configure_single_fit(
-            window, *_TF_ABRAGAM_MODEL,
+            window,
+            *_TF_ABRAGAM_MODEL,
             seeds={
-                "A_1": 20.0, "frequency": freq, "phase": 0.2,
-                "Delta": 0.38, "nu": 0.3, "A_bg": 0.0,
+                "A_1": 20.0,
+                "frequency": freq,
+                "phase": 0.2,
+                "Delta": 0.38,
+                "nu": 0.3,
+                "A_bg": 0.0,
             },
             bounds={
                 "A_1": (0.0, 40.0),
@@ -401,13 +416,15 @@ def _fit_nu_of_t():
     temps, nus, errs = [], [], []
     for run in sorted(_EMU_ZF_SERIES, key=lambda r: _EMU_ZF_SERIES[r]):
         dataset = load_corpus_datasets([_emu(run)])[0]
-        params = ParameterSet([
-            Parameter("A_1", value=prev["A_1"], min=0.0, max=40.0),
-            Parameter("Delta", value=prev["Delta"], min=0.1, max=0.8),
-            Parameter("nu", value=prev["nu"], min=0.0, max=20.0),
-            Parameter("B_L", value=0.0, fixed=True),
-            Parameter("A_bg", value=prev["A_bg"], min=-10.0, max=20.0),
-        ])
+        params = ParameterSet(
+            [
+                Parameter("A_1", value=prev["A_1"], min=0.0, max=40.0),
+                Parameter("Delta", value=prev["Delta"], min=0.1, max=0.8),
+                Parameter("nu", value=prev["nu"], min=0.0, max=20.0),
+                Parameter("B_L", value=0.0, fixed=True),
+                Parameter("A_bg", value=prev["A_bg"], min=-10.0, max=20.0),
+            ]
+        )
         result = engine.fit(dataset, model.function, params)
         vals = {p.name: p.value for p in result.parameters}
         unc = result.uncertainties or {}
@@ -434,22 +451,30 @@ def _build_arrhenius_fit(temps, nu, nu_err, *, x_min):
     from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
     model = ParameterCompositeModel(["Arrhenius", "Constant"])
-    params = ParameterSet([
-        Parameter(name="a", value=500.0, min=0.0, max=1e8),
-        Parameter(name="Ea", value=80.0, min=0.0, max=2000.0),  # meV
-        Parameter(name="c", value=0.02, min=-1.0, max=5.0),
-    ])
+    params = ParameterSet(
+        [
+            Parameter(name="a", value=500.0, min=0.0, max=1e8),
+            Parameter(name="Ea", value=80.0, min=0.0, max=2000.0),  # meV
+            Parameter(name="c", value=0.02, min=-1.0, max=5.0),
+        ]
+    )
     x_max = float(temps.max())
     result = fit_parameter_model(temps, nu, nu_err, model, params, x_min=x_min, x_max=x_max)
     if not result.success:
         raise RuntimeError("Cu ν(T) Arrhenius trend fit did not converge for the screenshot")
 
     fit_range = ModelFitRange(
-        x_min=x_min, x_max=x_max, model=model,
-        parameters=result.parameters, result=result,
+        x_min=x_min,
+        x_max=x_max,
+        model=model,
+        parameters=result.parameters,
+        result=result,
     )
     return ParameterModelFit(
-        parameter_name="nu", x_key="temperature", ranges=[fit_range], active=True,
+        parameter_name="nu",
+        x_key="temperature",
+        ranges=[fit_range],
+        active=True,
     )
 
 

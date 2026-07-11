@@ -39,7 +39,7 @@ import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QTabBar, QWidget
 
-from ._corpus import CorpusScenario, load_corpus_datasets, register, _process_events_for
+from ._corpus import CorpusScenario, _process_events_for, load_corpus_datasets, register
 
 EXAMPLE = "Nuclear magnetism and ionic motion/The FmuF state in PTFE"
 _DATA = "Nuclear magnetism and ionic motion/The FmuF state in PTFE/Data/musr000%d.nxs"
@@ -118,9 +118,7 @@ class PtfeZfSignatureScenario(CorpusScenario):
         from asymmetry.gui.mainwindow import MainWindow
 
         window = MainWindow()
-        window.resizeDocks(
-            [window._dock_data_browser], [320], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
         datasets = load_corpus_datasets([_rel(_ZF_BASE_RUN)])
         self.add_to_browser(window, datasets)
@@ -130,9 +128,7 @@ class PtfeZfSignatureScenario(CorpusScenario):
         # The FµF beat lives in the first ~5 µs (dip near 1.4 µs, recovery bump
         # near 2.4 µs, second dip near 3.8 µs); frame the first 8 µs so the full
         # pattern reads before it decays into the baseline and the ZF error fan.
-        window._plot_panel.set_view_limits(
-            0.0, 8.0, *window._plot_panel.get_view_limits()[2:]
-        )
+        window._plot_panel.set_view_limits(0.0, 8.0, *window._plot_panel.get_view_limits()[2:])
         _process_events_for(milliseconds=60)
         _frame_y_to_window(window, 0.0, 8.0)
         _process_events_for(milliseconds=80)
@@ -163,9 +159,7 @@ class PtfeFmuFFitScenario(CorpusScenario):
 
         window = MainWindow()
         window._on_fit()
-        window.resizeDocks(
-            [window._dock_data_browser], [320], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
         datasets = load_corpus_datasets([_rel(_ZF_BASE_RUN)])
         self.add_to_browser(window, datasets)
@@ -228,9 +222,7 @@ class PtfeFftScenario(CorpusScenario):
 
         window = MainWindow()
         window._on_fourier()
-        window.resizeDocks(
-            [window._dock_data_browser], [320], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
         datasets = load_corpus_datasets([_rel(_ZF_BASE_RUN)])
         self.add_to_browser(window, datasets)
@@ -299,9 +291,7 @@ class PtfeTfCalibrationScenario(CorpusScenario):
         from asymmetry.gui.mainwindow import MainWindow
 
         window = MainWindow()
-        window.resizeDocks(
-            [window._dock_data_browser], [320], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
         datasets = load_corpus_datasets([_rel(_TF_CAL_RUN)])
         self.add_to_browser(window, datasets)
@@ -310,9 +300,7 @@ class PtfeTfCalibrationScenario(CorpusScenario):
 
         # 20 G ⇒ γ_µ·B ≈ 0.27 MHz (~3.7 µs period); frame the first ~12 µs so
         # several precession cycles are legible.
-        window._plot_panel.set_view_limits(
-            0.0, 12.0, *window._plot_panel.get_view_limits()[2:]
-        )
+        window._plot_panel.set_view_limits(0.0, 12.0, *window._plot_panel.get_view_limits()[2:])
         _process_events_for(milliseconds=60)
         _frame_y_to_window(window, 0.0, 12.0)
         _process_events_for(milliseconds=80)

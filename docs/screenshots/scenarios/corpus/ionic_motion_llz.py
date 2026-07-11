@@ -39,7 +39,7 @@ from PySide6.QtCore import QEventLoop, Qt, QTimer
 from PySide6.QtWidgets import QApplication, QComboBox, QTableWidgetItem, QWidget
 
 from .._base import CaptureContext
-from ._corpus import CorpusScenario, load_corpus_datasets, register, _process_events_for
+from ._corpus import CorpusScenario, _process_events_for, load_corpus_datasets, register
 
 EXAMPLE = "Nuclear magnetism and ionic motion/Ionic motion in a solid electrolyte"
 _DATA = EXAMPLE + "/Data"
@@ -47,17 +47,27 @@ _DATA = EXAMPLE + "/Data"
 # ZF run number that opens each temperature's triplet; triplet = (zf, zf+1, zf+2)
 # = (0 G, 5 G, 10 G).  Setpoint temperatures from GROUND_TRUTH.md §3.
 TRIPLETS: dict[int, int] = {
-    160: 51341, 180: 51344, 200: 51347, 220: 51350, 240: 51353, 264: 51356,
-    284: 51359, 304: 51362, 324: 51365, 344: 51368, 364: 51371, 384: 51374,
+    160: 51341,
+    180: 51344,
+    200: 51347,
+    220: 51350,
+    240: 51353,
+    264: 51356,
+    284: 51359,
+    304: 51362,
+    324: 51365,
+    344: 51368,
+    364: 51371,
+    384: 51374,
     404: 51377,
 }
 
 # Guide seed values at 160 K (GROUND_TRUTH.md §4 — starting values, not results).
-SEED_A_SIGNAL = 15.0   # sample-signal amplitude (%)
-SEED_A_BG = 5.0        # background amplitude (%)
-SEED_DELTA = 0.3       # static field-distribution width Δ (µs⁻¹ / "MHz" seed)
-SEED_NU = 0.2          # fluctuation rate ν (MHz)
-FIT_TMAX = 12.0        # limit fit window to 12 µs (guide hint)
+SEED_A_SIGNAL = 15.0  # sample-signal amplitude (%)
+SEED_A_BG = 5.0  # background amplitude (%)
+SEED_DELTA = 0.3  # static field-distribution width Δ (µs⁻¹ / "MHz" seed)
+SEED_NU = 0.2  # fluctuation rate ν (MHz)
+FIT_TMAX = 12.0  # limit fit window to 12 µs (guide hint)
 
 
 def _triplet_rel_paths(zf_run: int) -> list[str]:
@@ -105,9 +115,7 @@ class LlzCalibrationScenario(CorpusScenario):
         estimate_btn = getattr(dialog, "_estimate_btn", None)
         if estimate_btn is not None:
             estimate_btn.click()
-            _pump_until(
-                lambda: dialog._tasks.active_count == 0 and dialog._estimate is not None
-            )
+            _pump_until(lambda: dialog._tasks.active_count == 0 and dialog._estimate is not None)
             _pump(60)
 
         pix = dialog.grab()
@@ -256,13 +264,15 @@ class LlzGlobalResultScenario(CorpusScenario):
         engine = FitEngine()
         initial_params: dict[int, ParameterSet] = {}
         for ds in datasets:
-            initial_params[int(ds.run_number)] = ParameterSet([
-                Parameter("A_1", value=SEED_A_SIGNAL, min=0.0, max=40.0),
-                Parameter("Delta", value=SEED_DELTA, min=0.0, max=2.0),
-                Parameter("nu", value=SEED_NU, min=0.0, max=8.0),
-                Parameter("B_L", value=float(ds.field), fixed=True),
-                Parameter("A_bg", value=SEED_A_BG, min=-10.0, max=20.0),
-            ])
+            initial_params[int(ds.run_number)] = ParameterSet(
+                [
+                    Parameter("A_1", value=SEED_A_SIGNAL, min=0.0, max=40.0),
+                    Parameter("Delta", value=SEED_DELTA, min=0.0, max=2.0),
+                    Parameter("nu", value=SEED_NU, min=0.0, max=8.0),
+                    Parameter("B_L", value=float(ds.field), fixed=True),
+                    Parameter("A_bg", value=SEED_A_BG, min=-10.0, max=20.0),
+                ]
+            )
         global_params = ["A_1", "Delta", "nu", "A_bg"]
         local_params = ["B_L"]
         results_dict, fitted_global = engine.global_fit(
@@ -353,6 +363,7 @@ class LlzNuArrheniusScenario(CorpusScenario):
 # Helpers
 # --------------------------------------------------------------------------- #
 
+
 def _configure_triplet_param_table(global_tab) -> None:
     """Set seed values and Global/File roles on the Keren+Constant param table.
 
@@ -404,13 +415,15 @@ def _fit_nu_of_t():
     for temp in sorted(TRIPLETS):
         datasets = load_corpus_datasets(_triplet_rel_paths(TRIPLETS[temp]))
         init = {
-            int(ds.run_number): ParameterSet([
-                Parameter("A_1", value=prev["A_1"], min=0.0, max=40.0),
-                Parameter("Delta", value=prev["Delta"], min=0.0, max=2.0),
-                Parameter("nu", value=prev["nu"], min=0.0, max=8.0),
-                Parameter("B_L", value=float(ds.field), fixed=True),
-                Parameter("A_bg", value=prev["A_bg"], min=-10.0, max=20.0),
-            ])
+            int(ds.run_number): ParameterSet(
+                [
+                    Parameter("A_1", value=prev["A_1"], min=0.0, max=40.0),
+                    Parameter("Delta", value=prev["Delta"], min=0.0, max=2.0),
+                    Parameter("nu", value=prev["nu"], min=0.0, max=8.0),
+                    Parameter("B_L", value=float(ds.field), fixed=True),
+                    Parameter("A_bg", value=prev["A_bg"], min=-10.0, max=20.0),
+                ]
+            )
             for ds in datasets
         }
         results, _fitted = engine.global_fit(
@@ -443,14 +456,21 @@ def _build_arrhenius_fit(temps, nu, nu_err):
     from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
     model = ParameterCompositeModel(["Arrhenius", "Constant"])
-    params = ParameterSet([
-        Parameter(name="a", value=400.0, min=0.0, max=1e6),
-        Parameter(name="Ea", value=200.0, min=0.0, max=2000.0),  # meV
-        Parameter(name="c", value=0.27, min=-1.0, max=5.0),
-    ])
+    params = ParameterSet(
+        [
+            Parameter(name="a", value=400.0, min=0.0, max=1e6),
+            Parameter(name="Ea", value=200.0, min=0.0, max=2000.0),  # meV
+            Parameter(name="c", value=0.27, min=-1.0, max=5.0),
+        ]
+    )
     result = fit_parameter_model(
-        temps, nu, nu_err, model, params,
-        x_min=float(temps.min()), x_max=float(temps.max()),
+        temps,
+        nu,
+        nu_err,
+        model,
+        params,
+        x_min=float(temps.min()),
+        x_max=float(temps.max()),
     )
     if not result.success:
         raise RuntimeError("Al-LLZ ν(T) Arrhenius trend fit did not converge for the screenshot")

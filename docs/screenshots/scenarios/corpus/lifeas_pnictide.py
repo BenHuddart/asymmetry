@@ -69,28 +69,34 @@ import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget
 
-from ._corpus import CorpusScenario, register, _process_events_for
 from .._base import CaptureContext
+from ._corpus import CorpusScenario, _process_events_for, register
 
 EXAMPLE = "Superconductivity/LiFeAs"
 _DATA = "Superconductivity/LiFeAs/data/deltat_pta_gps_%d.bin"
 
 # --- physical constants (GROUND_TRUTH §6) ---------------------------------- #
-_GAMMA = 0.8516          # µs⁻¹ per mT: σ_paper[µs⁻¹] = γ_µ · B_rms[mT]
-_SQRT2 = np.sqrt(2.0)    # Asymmetry Gaussian exp(−(σt)²) → σ_paper = √2 σ_A
+_GAMMA = 0.8516  # µs⁻¹ per mT: σ_paper[µs⁻¹] = γ_µ · B_rms[mT]
+_SQRT2 = np.sqrt(2.0)  # Asymmetry Gaussian exp(−(σt)²) → σ_paper = √2 σ_A
 _PHI0 = 2.067833848e-15  # Wb, flux quantum
 
 # --- Sample-1 (LFA) 40 mT (400 G) temperature scan, ascending T ------------ #
 # Runs 3366–3373 are the 400 G T-scan; 3373 (18 K) is above T_c = 16 K, i.e.
 # the normal-state σ_n reference at 40 mT (GROUND_TRUTH §3 note).
 _SCAN_S1: list[tuple[int, float]] = [
-    (3366, 1.5), (3367, 4.0), (3368, 7.0), (3369, 10.0),
-    (3370, 12.0), (3371, 14.0), (3372, 16.0), (3373, 18.0),
+    (3366, 1.5),
+    (3367, 4.0),
+    (3368, 7.0),
+    (3369, 10.0),
+    (3370, 12.0),
+    (3371, 14.0),
+    (3372, 16.0),
+    (3373, 18.0),
 ]
-_S1_BASE = 3366   # 1.5 K, deep in the mixed state (broad vortex line)
+_S1_BASE = 3366  # 1.5 K, deep in the mixed state (broad vortex line)
 _S1_NORMAL = 3373  # 18 K, above T_c (narrow, nuclear-only line)
-_S1_FREQ = 5.44    # 400 G Larmor line (MHz)
-_S2_BASE = 3663    # Sample 2, 1.5 K, 200 G
+_S1_FREQ = 5.44  # 400 G Larmor line (MHz)
+_S2_BASE = 3663  # Sample 2, 1.5 K, 200 G
 
 # Transverse (Up/Down) detector pair for the spin-rotated GPS runs (0-based
 # histogram indices: 0 Forw, 1 Back, 2 Up, 3 Down, 4 Righ).
@@ -100,13 +106,28 @@ _BWD_IDX = [3]
 # Digitised Fig. 1 B_rms(T) at B₀ = 40 mT (GROUND_TRUTH §11, 600 dpi). The
 # corpus grading target for the σ(T)/B_rms(T) trend shape and magnitude.
 _FIG1_S1: list[tuple[float, float]] = [
-    (1.6, 1.93), (3.9, 1.77), (7.3, 1.48), (10.4, 1.04),
-    (12.6, 0.74), (14.7, 0.43), (16.9, 0.11), (19.0, 0.02),
+    (1.6, 1.93),
+    (3.9, 1.77),
+    (7.3, 1.48),
+    (10.4, 1.04),
+    (12.6, 0.74),
+    (14.7, 0.43),
+    (16.9, 0.11),
+    (19.0, 0.02),
 ]
 _FIG1_S2: list[tuple[float, float]] = [
-    (1.4, 1.31), (2.9, 1.10), (4.0, 1.01), (5.1, 0.89), (6.1, 0.86),
-    (6.8, 0.73), (8.3, 0.45), (9.3, 0.29), (10.4, 0.17), (11.5, 0.09),
-    (12.6, 0.04), (14.7, 0.02),
+    (1.4, 1.31),
+    (2.9, 1.10),
+    (4.0, 1.01),
+    (5.1, 0.89),
+    (6.1, 0.86),
+    (6.8, 0.73),
+    (8.3, 0.45),
+    (9.3, 0.29),
+    (10.4, 0.17),
+    (11.5, 0.09),
+    (12.6, 0.04),
+    (14.7, 0.02),
 ]
 
 # Two-component signal+background TF model:
@@ -121,7 +142,7 @@ def _rel(run: int) -> str:
     return _DATA % run
 
 
-def _brms_mT(sigma_a: float, sigma_n: float) -> float:
+def _brms_mT(sigma_a: float, sigma_n: float) -> float:  # noqa: N802 (physics symbol)
     """Convert an Asymmetry Gaussian σ (main + nuclear) to VL field width B_rms.
 
     ``sigma_a`` and ``sigma_n`` are the fitted *Asymmetry* Gaussian widths of the
@@ -177,8 +198,11 @@ def _regroup(run: int, rebin: int = 10):
     time = (np.arange(n, dtype=float) - float(ct0)) * bw
     sl = slice(first, last + 1)
     ds = MuonDataset(
-        time=time[sl], asymmetry=asym[sl], error=err[sl],
-        metadata=dict(dataset.metadata), run=dataset.run,
+        time=time[sl],
+        asymmetry=asym[sl],
+        error=err[sl],
+        metadata=dict(dataset.metadata),
+        run=dataset.run,
     )
     return ds.rebin(rebin) if rebin > 1 else ds
 
@@ -188,9 +212,13 @@ def _tf2_seeds(dataset, sigma_seed: float, freq: float) -> dict:
     a = np.asarray(dataset.asymmetry, dtype=float)
     baseline = float(np.nanmedian(a[np.abs(a) < 99.0]))
     return {
-        "A_1": 12.0, "frequency_1": freq, "phase_1": 0.0,
+        "A_1": 12.0,
+        "frequency_1": freq,
+        "phase_1": 0.0,
         "sigma_2": max(sigma_seed, 0.1),
-        "A_3": 3.0, "frequency_3": freq, "phase_3": 0.0,
+        "A_3": 3.0,
+        "frequency_3": freq,
+        "phase_3": 0.0,
         "sigma_4": 0.12,
         "A_bg": baseline,
     }
@@ -200,17 +228,19 @@ def _tf2_paramset(seeds: dict, freq: float):
     """Build the bounded ParameterSet for the two-component TF fit."""
     from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
-    return ParameterSet([
-        Parameter("A_1", seeds["A_1"], min=0.0, max=40.0),
-        Parameter("frequency_1", seeds["frequency_1"], min=freq - 0.25, max=freq + 0.25),
-        Parameter("phase_1", seeds["phase_1"], min=-3.2, max=3.2),
-        Parameter("sigma_2", seeds["sigma_2"], min=0.05, max=4.0),
-        Parameter("A_3", seeds["A_3"], min=0.0, max=20.0),
-        Parameter("frequency_3", seeds["frequency_3"], min=freq - 0.25, max=freq + 0.25),
-        Parameter("phase_3", seeds["phase_3"], min=-3.2, max=3.2),
-        Parameter("sigma_4", seeds["sigma_4"], min=0.0, max=0.5),
-        Parameter("A_bg", seeds["A_bg"]),
-    ])
+    return ParameterSet(
+        [
+            Parameter("A_1", seeds["A_1"], min=0.0, max=40.0),
+            Parameter("frequency_1", seeds["frequency_1"], min=freq - 0.25, max=freq + 0.25),
+            Parameter("phase_1", seeds["phase_1"], min=-3.2, max=3.2),
+            Parameter("sigma_2", seeds["sigma_2"], min=0.05, max=4.0),
+            Parameter("A_3", seeds["A_3"], min=0.0, max=20.0),
+            Parameter("frequency_3", seeds["frequency_3"], min=freq - 0.25, max=freq + 0.25),
+            Parameter("phase_3", seeds["phase_3"], min=-3.2, max=3.2),
+            Parameter("sigma_4", seeds["sigma_4"], min=0.0, max=0.5),
+            Parameter("A_bg", seeds["A_bg"]),
+        ]
+    )
 
 
 def _fit_tf2(dataset, sigma_seed: float, freq: float):
@@ -243,13 +273,15 @@ def _fit_single_sigma(dataset, sigma_seed: float, freq: float) -> float:
     model = CompositeModel(["Oscillatory", "Gaussian", "Constant"], operators=["*", "+"])
     a = np.asarray(dataset.asymmetry, dtype=float)
     baseline = float(np.nanmedian(a[np.abs(a) < 99.0]))
-    params = ParameterSet([
-        Parameter("A_1", 12.0, min=0.0, max=40.0),
-        Parameter("frequency", freq, min=freq - 0.3, max=freq + 0.3),
-        Parameter("phase", 0.0),
-        Parameter("sigma", max(sigma_seed, 0.05), min=0.0, max=4.0),
-        Parameter("A_bg", baseline),
-    ])
+    params = ParameterSet(
+        [
+            Parameter("A_1", 12.0, min=0.0, max=40.0),
+            Parameter("frequency", freq, min=freq - 0.3, max=freq + 0.3),
+            Parameter("phase", 0.0),
+            Parameter("sigma", max(sigma_seed, 0.05), min=0.0, max=4.0),
+            Parameter("A_bg", baseline),
+        ]
+    )
     result = FitEngine().fit(dataset, model.function, params)
     return abs(float({p.name: p.value for p in result.parameters}["sigma"]))
 
@@ -305,12 +337,18 @@ class LifeasPairSelectScenario(CorpusScenario):
 
         figure = Figure(figsize=(9.6, 6.6), dpi=120, tight_layout=True)
         for ax, ds, title, color in (
-            (figure.add_subplot(2, 1, 1), fb,
-             "Default pairing  Forward / Back  —  precession cancels (WED spin rotation)",
-             "#888888"),
-            (figure.add_subplot(2, 1, 2), ud,
-             "Transverse pairing  Up / Down  —  clean 400 G vortex-damped precession",
-             "#1f77b4"),
+            (
+                figure.add_subplot(2, 1, 1),
+                fb,
+                "Default pairing  Forward / Back  —  precession cancels (WED spin rotation)",
+                "#888888",
+            ),
+            (
+                figure.add_subplot(2, 1, 2),
+                ud,
+                "Transverse pairing  Up / Down  —  clean 400 G vortex-damped precession",
+                "#1f77b4",
+            ),
         ):
             t = np.asarray(ds.time, dtype=float)
             a = np.asarray(ds.asymmetry, dtype=float)
@@ -349,9 +387,7 @@ class LifeasTfFitScenario(CorpusScenario):
 
         window = MainWindow()
         window._on_fit()
-        window.resizeDocks(
-            [window._dock_data_browser], [320], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
         dataset = _regroup(_S1_BASE)
         self.add_to_browser(window, [dataset])
@@ -359,9 +395,7 @@ class LifeasTfFitScenario(CorpusScenario):
         _process_events_for(milliseconds=80)
 
         single_tab = window._fit_panel._single_tab
-        single_tab._set_composite_model(
-            CompositeModel(_TF2_COMPONENTS, operators=_TF2_OPERATORS)
-        )
+        single_tab._set_composite_model(CompositeModel(_TF2_COMPONENTS, operators=_TF2_OPERATORS))
         _process_events_for(milliseconds=80)
 
         table = single_tab._param_table
@@ -371,8 +405,10 @@ class LifeasTfFitScenario(CorpusScenario):
         bounds = {
             "frequency_1": (_S1_FREQ - 0.25, _S1_FREQ + 0.25),
             "frequency_3": (_S1_FREQ - 0.25, _S1_FREQ + 0.25),
-            "sigma_2": (0.05, 4.0), "sigma_4": (0.0, 0.5),
-            "A_1": (0.0, 40.0), "A_3": (0.0, 20.0),
+            "sigma_2": (0.05, 4.0),
+            "sigma_4": (0.0, 0.5),
+            "A_1": (0.0, 40.0),
+            "A_3": (0.0, 20.0),
         }
         for name, value in seeds.items():
             if name in rows:
@@ -441,30 +477,57 @@ class LifeasBrmsTScenario(CorpusScenario):
 
         # Paper Fig. 1 digitised reference (guide-to-the-eye curves).
         ax.plot(s1[:, 0], s1[:, 1], "-", color="#1f77b4", lw=1.0, alpha=0.5)
-        ax.plot(s1[:, 0], s1[:, 1], "o", color="#1f77b4", ms=6,
-                label="Sample 1 — LFA, 40 mT (Pratt 2009 Fig. 1)")
+        ax.plot(
+            s1[:, 0],
+            s1[:, 1],
+            "o",
+            color="#1f77b4",
+            ms=6,
+            label="Sample 1 — LFA, 40 mT (Pratt 2009 Fig. 1)",
+        )
         ax.plot(s2[:, 0], s2[:, 1], "-", color="#d62728", lw=1.0, alpha=0.5)
-        ax.plot(s2[:, 0], s2[:, 1], "s", color="#d62728", ms=6,
-                label="Sample 2 — LFA_2, 40 mT (Pratt 2009 Fig. 1)")
+        ax.plot(
+            s2[:, 0],
+            s2[:, 1],
+            "s",
+            color="#d62728",
+            ms=6,
+            label="Sample 2 — LFA_2, 40 mT (Pratt 2009 Fig. 1)",
+        )
 
         # Real Asymmetry Sample-1 fits (open markers), where the VL signal
         # dominates the two-Gaussian split.
-        ax.plot(ft[keep], fb[keep], "D", mfc="none", mec="#0b3d63", mew=1.6,
-                ms=8, label="Sample 1 — Asymmetry two-Gaussian fit (this work)")
+        ax.plot(
+            ft[keep],
+            fb[keep],
+            "D",
+            mfc="none",
+            mec="#0b3d63",
+            mew=1.6,
+            ms=8,
+            label="Sample 1 — Asymmetry two-Gaussian fit (this work)",
+        )
 
         # λ_ab conversions via Eq. (3), drawn as plateau guide lines.
         for lam, color, sample in ((195.0, "#1f77b4", "1"), (244.0, "#d62728", "2")):
             b = _brms_from_lambda(lam)
             ax.axhline(b, color=color, ls=":", lw=1.0, alpha=0.7)
-            ax.text(19.6, b, f"  λ_ab({sample}) = {lam:.0f} nm", color=color,
-                    fontsize=8, va="center", ha="left")
+            ax.text(
+                19.6,
+                b,
+                f"  λ_ab({sample}) = {lam:.0f} nm",
+                color=color,
+                fontsize=8,
+                va="center",
+                ha="left",
+            )
 
         ax.axvline(16.0, color="#1f77b4", ls="--", lw=0.8, alpha=0.5)
         ax.axvline(12.0, color="#d62728", ls="--", lw=0.8, alpha=0.5)
-        ax.text(16.0, 2.02, r" $T_\mathrm{c}$=16 K", color="#1f77b4",
-                fontsize=8, va="bottom", ha="left")
-        ax.text(12.0, 2.02, r" 12 K", color="#d62728",
-                fontsize=8, va="bottom", ha="right")
+        ax.text(
+            16.0, 2.02, r" $T_\mathrm{c}$=16 K", color="#1f77b4", fontsize=8, va="bottom", ha="left"
+        )
+        ax.text(12.0, 2.02, r" 12 K", color="#d62728", fontsize=8, va="bottom", ha="right")
 
         ax.set_xlabel("Temperature  T (K)")
         ax.set_ylabel(r"VL field width  $B_\mathrm{rms}$  (mT)")
@@ -474,11 +537,16 @@ class LifeasBrmsTScenario(CorpusScenario):
         ax.legend(loc="upper right", frameon=True, fontsize=8)
         ax.grid(True, alpha=0.25)
         ax.text(
-            0.015, 0.03,
+            0.015,
+            0.03,
             "Eq. (3):  B_rms = √0.00371·φ₀/(3^{1/4}λ_ab)²   ⇒   195 nm→1.91 mT, 244 nm→1.22 mT.\n"
             "Asymmetry σ (Gaussian exp(−(σt)²)) → σ_paper = √2·σ; B_rms = √2·σ_VL/γ_µ, γ_µ=0.8516 µs⁻¹mT⁻¹.\n"
             "Sample-2 corpus runs are 1.5/20 K field pairs, not a T-scan — its curve is the digitised Fig. 1.",
-            transform=ax.transAxes, color="0.35", fontsize=7.5, va="bottom", ha="left",
+            transform=ax.transAxes,
+            color="0.35",
+            fontsize=7.5,
+            va="bottom",
+            ha="left",
         )
         return _save_canvas_agg(figure, ctx, self.name)
 
@@ -515,8 +583,16 @@ class LifeasVortexLineshapeScenario(CorpusScenario):
             peak = float(np.max(amp[band])) if np.any(band) else 1.0
             ax.plot(f[band], amp[band] / peak, color=color, lw=1.6, label=label)
         ax.axvline(_S1_FREQ, color="0.5", ls="--", lw=0.9)
-        ax.text(_S1_FREQ - 0.06, 0.45, f"400 G Larmor = {_S1_FREQ:.2f} MHz",
-                color="0.4", fontsize=8, va="center", ha="right", rotation=90)
+        ax.text(
+            _S1_FREQ - 0.06,
+            0.45,
+            f"400 G Larmor = {_S1_FREQ:.2f} MHz",
+            color="0.4",
+            fontsize=8,
+            va="center",
+            ha="right",
+            rotation=90,
+        )
         ax.set_xlabel("Frequency  ν (MHz)")
         ax.set_ylabel("FFT amplitude  (normalised)")
         ax.set_title("LiFeAs Sample-1 field distribution p(B) at 40 mT — normal vs superconducting")
@@ -562,8 +638,11 @@ def _regroup_pair(run: int, fwd_idx, bwd_idx, rebin: int = 10):
     time = (np.arange(n, dtype=float) - float(ct0)) * bw
     sl = slice(first, last + 1)
     ds = MuonDataset(
-        time=time[sl], asymmetry=asym[sl], error=err[sl],
-        metadata=dict(dataset.metadata), run=dataset.run,
+        time=time[sl],
+        asymmetry=asym[sl],
+        error=err[sl],
+        metadata=dict(dataset.metadata),
+        run=dataset.run,
     )
     return ds.rebin(rebin) if rebin > 1 else ds
 

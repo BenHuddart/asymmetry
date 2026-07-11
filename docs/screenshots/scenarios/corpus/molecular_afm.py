@@ -55,8 +55,8 @@ from PySide6.QtWidgets import QWidget
 
 from asymmetry.gui.styles import tokens
 
-from ._corpus import CorpusScenario, load_corpus_datasets, register
 from .._base import _process_events_for
+from ._corpus import CorpusScenario, load_corpus_datasets, register
 
 EXAMPLE = "Magnetism/A molecular antiferromagnet"
 _DATA = "Magnetism/A molecular antiferromagnet/Data/MUSR000%d.nxs"
@@ -71,8 +71,12 @@ _ZF_MODEL = (["Oscillatory", "Exponential", "Constant"], ["*", "+"])
 # coherent oscillation, 1.2 → 6 K. Above 6 K the spectrum is paramagnetic
 # (17100–17103, "gone"), so they are excluded from the ν(T) order parameter.
 _ZF_OP_RUNS: list[tuple[int, float]] = [
-    (17094, 1.2), (17095, 2.0), (17096, 3.0),
-    (17097, 4.0), (17098, 5.0), (17099, 6.0),
+    (17094, 1.2),
+    (17095, 2.0),
+    (17096, 3.0),
+    (17097, 4.0),
+    (17098, 5.0),
+    (17099, 6.0),
 ]
 
 # The money-shot run: base temperature, cleanest low-frequency oscillation.
@@ -107,8 +111,7 @@ def _fit_zf_frequency(dataset, nu_seed: float, amp_seed: float, lam_seed: float)
 
     model = CompositeModel(_ZF_MODEL[0], operators=_ZF_MODEL[1])
     bg = float(np.nanmean(dataset.asymmetry))
-    seeds = {"A_1": amp_seed, "frequency": nu_seed, "phase": 0.0,
-             "Lambda": lam_seed, "A_bg": bg}
+    seeds = {"A_1": amp_seed, "frequency": nu_seed, "phase": 0.0, "Lambda": lam_seed, "A_bg": bg}
     # ν pinned to the molecular-magnet band (≲2.5 MHz), amplitude non-negative,
     # damping capped so the near-T_N run cannot escape into a degenerate
     # high-damping "decaying baseline" minimum.
@@ -182,10 +185,7 @@ class MolAfmAlphaScenario(CorpusScenario):
         grouping = dataset.run.grouping
         # The dialog wants gid -> 0-based detector indices (it re-adds 1 for the
         # reduction); the corpus payload stores 1-based ids, so shift down.
-        groups = {
-            int(gid): [int(i) - 1 for i in idxs]
-            for gid, idxs in grouping["groups"].items()
-        }
+        groups = {int(gid): [int(i) - 1 for i in idxs] for gid, idxs in grouping["groups"].items()}
         dialog = AlphaCalibrationDialog(
             [dataset],
             groups=groups,
@@ -244,9 +244,7 @@ class MolAfmZfFitScenario(CorpusScenario):
 
         window = MainWindow()
         window._on_fit()
-        window.resizeDocks(
-            [window._dock_data_browser], [320], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
         datasets = load_corpus_datasets([_DATA % _ZF_FIT_RUN])
         self.add_to_browser(window, datasets)
@@ -254,9 +252,7 @@ class MolAfmZfFitScenario(CorpusScenario):
         _process(80)
 
         single_tab = window._fit_panel._single_tab
-        single_tab._set_composite_model(
-            CompositeModel(_ZF_MODEL[0], operators=_ZF_MODEL[1])
-        )
+        single_tab._set_composite_model(CompositeModel(_ZF_MODEL[0], operators=_ZF_MODEL[1]))
         _process(80)
 
         table = single_tab._param_table
@@ -291,9 +287,7 @@ class MolAfmZfFitScenario(CorpusScenario):
         # the slow, weakly-damped molecular-magnet oscillation resolves, and
         # frame Y to that window so the precession sits large rather than as a
         # ripple on the large uncalibrated baseline.
-        window._plot_panel.set_view_limits(
-            0.0, 5.0, *window._plot_panel.get_view_limits()[2:]
-        )
+        window._plot_panel.set_view_limits(0.0, 5.0, *window._plot_panel.get_view_limits()[2:])
         _process(60)
         self._frame_y_to_window(window, 0.0, 5.0)
         _process(80)
@@ -409,9 +403,7 @@ class MolAfmNuTScenario(CorpusScenario):
         )
         if not result.success:
             raise RuntimeError("Molecular-AFM OrderParameter ν(T) fit did not converge")
-        self._fit_summary = {
-            n: float(result.parameters[n].value) for n in model.param_names
-        }
+        self._fit_summary = {n: float(result.parameters[n].value) for n in model.param_names}
 
         fit_range = ModelFitRange(
             x_min=float(temperature.min()),
@@ -481,9 +473,7 @@ class MolAfmZfOverlayScenario(CorpusScenario):
 
         axes.set_xlabel("Time (µs)")
         axes.set_ylabel("Asymmetry (%)")
-        axes.set_title(
-            "Molecular AFM ZF spectra across T_N: 6 K oscillates, 7 K does not"
-        )
+        axes.set_title("Molecular AFM ZF spectra across T_N: 6 K oscillates, 7 K does not")
         axes.set_xlim(0.0, 8.0)
         axes.legend(loc="upper right", fontsize="small", framealpha=0.9)
         axes.text(

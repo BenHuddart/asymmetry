@@ -48,7 +48,7 @@ import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget
 
-from ._corpus import CorpusScenario, load_corpus_datasets, register, _process_events_for
+from ._corpus import CorpusScenario, _process_events_for, load_corpus_datasets, register
 
 EXAMPLE = "Magnetism/AFM transition in high TF"
 _DATA = "Magnetism/AFM transition in high TF/data/tdc_hifi_2020_%05d.mdu"
@@ -59,16 +59,30 @@ _CENTRE_8T_MHZ = 1084.0
 
 # Run → measured sample temperature (GROUND_TRUTH.md §3; from the .mdu metadata).
 _RUNS_6T: list[tuple[int, float]] = [
-    (686, 3.24), (687, 6.00), (688, 12.00), (689, 18.00),
-    (690, 24.00), (691, 27.00), (692, 30.00), (693, 50.66),
+    (686, 3.24),
+    (687, 6.00),
+    (688, 12.00),
+    (689, 18.00),
+    (690, 24.00),
+    (691, 27.00),
+    (692, 30.00),
+    (693, 50.66),
 ]
 _RUNS_8T: list[tuple[int, float]] = [
-    (730, 3.12), (731, 6.00), (732, 10.47), (733, 18.00), (734, 24.00),
-    (735, 27.00), (736, 30.00), (737, 50.00), (738, 75.00), (739, 100.00),
+    (730, 3.12),
+    (731, 6.00),
+    (732, 10.47),
+    (733, 18.00),
+    (734, 24.00),
+    (735, 27.00),
+    (736, 30.00),
+    (737, 50.00),
+    (738, 75.00),
+    (739, 100.00),
 ]
 
-_ORDERED_6T = 686   # base T, 3.24 K — deep in the ordered phase
-_PARA_6T = 693      # 50.66 K — paramagnetic reference
+_ORDERED_6T = 686  # base T, 3.24 K — deep in the ordered phase
+_PARA_6T = 693  # 50.66 K — paramagnetic reference
 
 
 def _rel(run: int) -> str:
@@ -78,8 +92,9 @@ def _rel(run: int) -> str:
 # --------------------------------------------------------------------------- #
 #  Order-parameter metric.
 # --------------------------------------------------------------------------- #
-def _line_peak_height(dataset, centre_mhz: float, *, t_max_us: float = 4.0,
-                      band_mhz: float = 25.0) -> float:
+def _line_peak_height(
+    dataset, centre_mhz: float, *, t_max_us: float = 4.0, band_mhz: float = 25.0
+) -> float:
     """Hann-windowed FFT peak height of the diamagnetic line near *centre_mhz*.
 
     Below T_N the ordered internal field broadens the precession line, moving
@@ -122,8 +137,8 @@ def _order_parameter(runs: list[tuple[int, float]], centre_mhz: float):
     heights = np.asarray(heights)
     order = np.argsort(temps)
     temps, heights = temps[order], heights[order]
-    h_para = float(heights[-1])           # warmest run — paramagnetic background
-    h0 = float(np.mean(heights[:2]))      # two coldest runs — ordered plateau
+    h_para = float(heights[-1])  # warmest run — paramagnetic background
+    h0 = float(np.mean(heights[:2]))  # two coldest runs — ordered plateau
     amp = (h_para - heights) / (h_para - h0)
     return temps, amp, np.full_like(amp, 0.05)
 
@@ -146,8 +161,13 @@ def _fit_order_parameter(temps, amp, amp_err):
         ]
     )
     result = fit_parameter_model(
-        temps, amp, amp_err, model, params,
-        x_min=float(temps.min()), x_max=float(temps.max()),
+        temps,
+        amp,
+        amp_err,
+        model,
+        params,
+        x_min=float(temps.min()),
+        x_max=float(temps.max()),
     )
     return model, result
 
@@ -171,12 +191,17 @@ def _install_model_fit(panel, model, result, temps):
     from asymmetry.core.fitting.parameter_models import ModelFitRange, ParameterModelFit
 
     fit_range = ModelFitRange(
-        x_min=float(temps.min()), x_max=float(temps.max()),
-        model=model, parameters=result.parameters, result=result,
+        x_min=float(temps.min()),
+        x_max=float(temps.max()),
+        model=model,
+        parameters=result.parameters,
+        result=result,
     )
     panel._model_fits["amplitude"] = ParameterModelFit(
-        parameter_name="amplitude", x_key="temperature",
-        ranges=[fit_range], active=True,
+        parameter_name="amplitude",
+        x_key="temperature",
+        ranges=[fit_range],
+        active=True,
     )
     panel._sync_active_group_state()
     panel._refresh_model_fit_button_labels()
@@ -208,9 +233,7 @@ class KappaClLoadBrowseScenario(CorpusScenario):
         from asymmetry.gui.mainwindow import MainWindow
 
         window = MainWindow()
-        window.resizeDocks(
-            [window._dock_data_browser], [440], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [440], Qt.Orientation.Horizontal)
 
         # A representative spread of both fields through the transition.
         runs = [686, 687, 690, 691, 692, 693, 730, 732, 735, 736, 737, 739]
@@ -249,8 +272,8 @@ class KappaClTfFftScenario(CorpusScenario):
 
     def build(self) -> QWidget:
         from asymmetry.core.fourier import (
-            compute_average_group_spectrum,
             GroupSpectrumConfig,
+            compute_average_group_spectrum,
         )
         from asymmetry.gui.panels.plot_panel import PlotPanel
 
@@ -265,10 +288,15 @@ class KappaClTfFftScenario(CorpusScenario):
             run = ds.run
             gids = list(run.grouping["groups"].keys())
             cfg = GroupSpectrumConfig(
-                display="(Power)^1/2", window="lorentzian",
-                filter_time_constant_us=3.0, selected_group_ids=gids,
-                group_phase_degrees={g: 0.0 for g in gids}, exclusion_ranges=[],
-                t_min_us=0.0, t_max_us=6.0, subtract_average_signal=True,
+                display="(Power)^1/2",
+                window="lorentzian",
+                filter_time_constant_us=3.0,
+                selected_group_ids=gids,
+                group_phase_degrees={g: 0.0 for g in gids},
+                exclusion_ranges=[],
+                t_min_us=0.0,
+                t_max_us=6.0,
+                subtract_average_signal=True,
             )
             spectrum = compute_average_group_spectrum(run, cfg)
             # The overlay legend reads ``metadata['run_label']`` (see
@@ -299,9 +327,7 @@ class KappaClTfFftScenario(CorpusScenario):
                 if band.any():
                     yd.append(float(np.nanmax(y[band])))
         peak = max(yd) if yd else 1.0
-        panel.set_view_limits(
-            _CENTRE_6T_MHZ - 4.0, _CENTRE_6T_MHZ + 4.0, -0.03 * peak, 1.10 * peak
-        )
+        panel.set_view_limits(_CENTRE_6T_MHZ - 4.0, _CENTRE_6T_MHZ + 4.0, -0.03 * peak, 1.10 * peak)
         _process_events_for(milliseconds=120)
         return panel
 
@@ -323,13 +349,12 @@ class KappaClMaxEntScenario(CorpusScenario):
 
     def build(self) -> QWidget:
         import time
+
         from asymmetry.gui.mainwindow import MainWindow
 
         window = MainWindow()
         window._on_fourier()
-        window.resizeDocks(
-            [window._dock_data_browser], [300], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [300], Qt.Orientation.Horizontal)
 
         ordered = load_corpus_datasets([_rel(_ORDERED_6T)])[0]
         window._data_browser.add_dataset(ordered)
