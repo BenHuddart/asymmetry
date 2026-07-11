@@ -46,6 +46,29 @@ Not just the headline result. Each example should yield roughly 3–6 renders:
    Knight shift, spectral moments...). Skim `docs/screenshots/scenarios/` for
    the feature surface that already has synthetic-data screenshots.
 
+## Lessons learned (waves 1–2 — read before writing a scenario)
+
+- **Serialize captures.** Concurrent `capture_corpus` processes deadlock under
+  offscreen Qt. Wrap every run:
+  `flock /tmp/asymmetry-capture.lock .venv/bin/python -m docs.screenshots.capture_corpus --only <names>`
+  and capture several scenarios in ONE process where possible.
+- **Fit range**: the single-tab fit-range spinbox does not commit values — use
+  `plot_panel.set_fit_range(t0, t1)` (known product bug, twice confirmed).
+- **Dock resizes** made in `build()` are clobbered by `MainWindow.showEvent`'s
+  adaptive widths — resize docks in `settle()`, after show.
+- **Warm-start batch fits** in temperature/field order; cold seeds walk to
+  wrong minima on real data (EuO ν, YMnAl λ/β, PTFE r all showed this).
+- **MaxEnt on real data is temperamental**: fine on κ-Cl `.mdu` high-TF;
+  diverges on BiSCCO F/B asymmetry (large baseline). Try it, keep compute
+  modest (binning/time-range), and fall back to FFT rather than shipping a
+  broken panel. Full-resolution MaxEnt can trip the workload-warning modal,
+  which blocks offscreen.
+- **Trending panel plots one active series** — for two-series comparisons use
+  a standalone matplotlib figure via the house `mgb2_lambda_t.py` pattern.
+- **Twin-axis `QWidget.grab` has a last-pixel flake offscreen** — prefer two
+  stacked single-axis subplots, or save from the canvas Agg buffer.
+- **Framing**: watch right/bottom edge clipping of dock panels (read the PNG!).
+
 ## Notes file
 
 Each example ships `NOTES_<slug>.md` alongside its module:

@@ -166,7 +166,7 @@ class LlzGlobalSetupScenario(CorpusScenario):
         "(From File) — the parameter-tying render."
     )
     example = EXAMPLE
-    size = (1500, 900)
+    size = (1680, 1000)
 
     def build(self) -> QWidget:
         from asymmetry.gui.mainwindow import MainWindow
@@ -192,6 +192,8 @@ class LlzGlobalSetupScenario(CorpusScenario):
         _configure_triplet_param_table(global_tab)
 
         window._plot_panel.set_bunch_factor(6, emit_signal=True)
+        # Select all three runs so the batch surface reflects the loaded triplet.
+        window._data_browser._table.selectAll()
         window._on_dataset_selected(run_numbers[0])
         _process_events_for(milliseconds=120)
         # Limit the fit window to 12 µs (guide hint) — set after the dataset
@@ -201,6 +203,15 @@ class LlzGlobalSetupScenario(CorpusScenario):
         window._plot_panel.set_view_limits(0.0, 12.0, -4.0, 14.0)
         _process_events_for(milliseconds=120)
         return window
+
+    def settle(self, widget: QWidget) -> None:
+        _process_events_for(milliseconds=200)
+        # Widen the fit dock *after* show: showEvent applies the adaptive
+        # default inspector width, which would clobber a resize done in
+        # build(). The extra room lets the parameter-classification table show
+        # its bounds column without clipping at the right edge.
+        widget.resizeDocks([widget._dock_fit], [560], Qt.Orientation.Horizontal)
+        _process_events_for(milliseconds=200)
 
 
 class LlzGlobalResultScenario(CorpusScenario):

@@ -8,10 +8,10 @@ These renders drive the real Asymmetry surfaces on the real corpus ``.nxs``
 runs, one figure per concept/worked-example.
 
 Every scenario resolves its data through :mod:`._corpus` (``ASYMMETRY_CORPUS_ROOT``)
-so it runs locally and in CI. None runs an iminuit fit at capture time — the α
-estimate is the algebraic diamagnetic estimator, the dead-time before/after is a
-pure-core reduction, and the steering trend is the WiMDA reference output plotted
-as trend points — so none is marked ``requires_fit``.
+so it runs locally and in CI. Only the steering scenario runs an iminuit fit at
+capture time (the a₀(I) polynomial trend fit — ``requires_fit = True``); the α
+estimate is the algebraic diamagnetic estimator and the dead-time before/after
+is a pure-core reduction, so the other four are fit-free.
 """
 
 from __future__ import annotations
@@ -362,14 +362,67 @@ _STEERING_ROWS = [
 _STEERING_CUSTOM_KEY = "custom:steering"
 
 
+def _build_steering_polynomial_fit():
+    """Fit the WiMDA-prescribed polynomial to a₀(I) via the real core minimiser.
+
+    The trending panel's Model Fit ``Cubic`` component reproduces the worked
+    WiMDA answer: the reference curve in ``steering_curve_fits.tab`` is itself
+    a cubic (refit coefficients give c3 ≈ 0.31), and the weighted iminuit fit
+    of the nine a₀ points below puts the curve minimum at **I = −0.060 A** —
+    GT §B1's "min 5.18 at −0.06 A" beam-centred current. Deterministic: fixed
+    seeds, one least-squares solve, no RNG.
+    """
+    import numpy as np
+
+    from asymmetry.core.fitting.parameter_models import (
+        ModelFitRange,
+        ParameterCompositeModel,
+        ParameterModelFit,
+        fit_parameter_model,
+    )
+    from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+
+    x = np.array([row[1] for row in _STEERING_ROWS], dtype=float)
+    y = np.array([row[2] for row in _STEERING_ROWS], dtype=float)
+    yerr = np.array([row[3] for row in _STEERING_ROWS], dtype=float)
+
+    model = ParameterCompositeModel(["Cubic"])
+    seed = ParameterSet(
+        [
+            Parameter("c0", value=5.2),
+            Parameter("c1", value=0.2),
+            Parameter("c2", value=2.3),
+            Parameter("c3", value=0.3),
+        ]
+    )
+    result = fit_parameter_model(x, y, yerr, model, seed, x_min=-1.0, x_max=1.0)
+    if not result.success:
+        raise RuntimeError("Steering a₀(I) polynomial fit did not converge")
+    fit_range = ModelFitRange(
+        x_min=-1.0,
+        x_max=1.0,
+        model=model,
+        parameters=result.parameters,
+        result=result,
+    )
+    return ParameterModelFit(
+        parameter_name="a0",
+        x_key=_STEERING_CUSTOM_KEY,
+        ranges=[fit_range],
+        active=True,
+    )
+
+
 class BasicsSteeringScenario(CorpusScenario):
     name = "corpus_basics_steering"
     description = (
         "Fit-table trend with a manual column: Ag-mask initial asymmetry a₀ vs "
-        "steering-magnet current (EMU 44989–44997), parabola minimum near 0 A."
+        "steering-magnet current (EMU 44989–44997) with the fitted polynomial "
+        "overlaid — minimum ≈ −0.06 A, the beam-centred current."
     )
     example = "Basics"
     size = (1180, 720)
+    requires_fit = True  # runs the real iminuit-backed polynomial trend fit
 
     def build(self) -> QWidget:
         from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
@@ -403,11 +456,29 @@ class BasicsSteeringScenario(CorpusScenario):
         if idx >= 0:
             panel._x_combo.setCurrentIndex(idx)
         _pump_events(80)
+
+        # Run the real polynomial trend fit and inject it as the active model
+        # fit for a₀ (the same injection route parameter_trending_mgb2 uses),
+        # so the fitted curve — minimum ≈ −0.06 A — overlays the trend points.
+        panel._model_fits["a0"] = _build_steering_polynomial_fit()
+        panel._sync_active_group_state()
+        panel._refresh_model_fit_button_labels()
+        _pump_events(80)
         return panel
 
     def settle(self, widget: QWidget) -> None:
+        # Trigger the trend redraw now the panel is shown, then wait for the
+        # off-thread overlay-curve sampler (TaskRunner worker) to populate the
+        # cache so the fitted curve is present in the grab, not a blank overlay.
         _pump_events(150)
         widget._refresh_plot()
+        _pump_until(
+            lambda: (
+                not widget._trend_curve_compute_active
+                and widget._precomputed_trend_curves is not None
+            ),
+            timeout_ms=20_000,
+        )
         _pump_events(200)
 
 
