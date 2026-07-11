@@ -50,6 +50,27 @@ from .single_tab import SingleFitTab
 from .tab_base import _get_file_value_for_parameter
 
 
+def _parse_bounds_text(bounds_text: object) -> tuple[str, str]:
+    """Parse a ``GlobalFitTab``-style ``"<lo>, <hi>"`` bounds cell into (min, max) text.
+
+    Mirrors ``GlobalFitTab._parse_parameter_configuration``'s bounds grammar
+    (``"-inf"``/``"inf"`` literals, comma-separated, any parse failure falls
+    back to unbounded on *both* sides) so a batch template row's bounds
+    survive the trip into a single-fit-tab parameter row (see
+    ``FitPanel._single_state_from_slot_result``).
+    """
+    text = str(bounds_text) if bounds_text is not None else ""
+    try:
+        lo_text, hi_text = (part.strip() for part in text.split(",", 1))
+        min_val = -float("inf") if lo_text == "-inf" else float(lo_text)
+        max_val = float("inf") if hi_text == "inf" else float(hi_text)
+    except (ValueError, IndexError):
+        min_val, max_val = -float("inf"), float("inf")
+    min_text = "-inf" if not np.isfinite(min_val) else str(min_val)
+    max_text = "inf" if not np.isfinite(max_val) else str(max_val)
+    return min_text, max_text
+
+
 class _CurrentPageTabWidget(CurrentPageSizingMixin, QTabWidget):
     """A QTabWidget sized by its *current* tab, not the maximum over all tabs.
 
@@ -78,7 +99,6 @@ class FitPanel(QWidget):
     global_fit_started = Signal()  # forwarded from GlobalFitTab at worker launch
     global_fit_completed = Signal(object, object)  # (results_dict, global_params)
     grouped_fit_completed = Signal(object, object)  # (grouped_datasets, results_dict)
-    share_function_with_group_requested = Signal(int)
     add_single_fit_to_series_requested = Signal()
     fit_range_edit_committed = Signal(float, float)  # forwarded from SingleFitTab
     # Forwarded from the Batch tab's on-tab seeding selector so the main window's
@@ -97,23 +117,36 @@ class FitPanel(QWidget):
 
         self._single_state_by_run: dict[int, dict] = {}
         self._active_single_run_number: int | None = None
-        # Provenance of the single-fit form's current contents (D2/F6):
-        # "own_slot" (a real fit recorded for this run/projection),
-        # "carried_from_run" (inherited from a specific prior run, tracked in
-        # ``_single_fit_carry_source_run``), "carried_session" (inherited from
-        # an in-session cache with no specific source run known), or
-        # "representation_default" (blanked to the domain default — no badge).
-        # Driven entirely by ``set_dataset``'s three restore branches; see its
-        # docstring for the precedence these branches implement.
+        # Provenance of the single-fit form's current contents (D2/F6, D5):
+        # "own_slot" (a recorded fit — single or batch/global member — for
+        # this run/projection: PROTECTED, never auto-overwritten),
+        # "carried_from_run" (REFRESHABLE: inherited from a specific source
+        # run, tracked in ``_single_fit_carry_source_run`` — the session's
+        # most recent *fitted* function whenever one exists), "carried_session"
+        # (REFRESHABLE, no fit exists anywhere yet: this run's own previously
+        # cached-but-never-fit form — no specific source run to name), or
+        # "representation_default" (blanked to the domain default — no
+        # badge; nothing has ever been shown/fit in this panel, or this exact
+        # slot was positively confirmed unfit with no fit anywhere yet).
+        # Driven entirely by ``set_dataset``'s restore precedence; see its
+        # docstring.
         self._single_fit_provenance: str | None = None
         self._single_fit_carry_source_run: int | None = None
+        # D5 "refresh-unless-fitted": the most recent single-tab state that was
+        # actually *fitted* in this session (and the run it was fitted for),
+        # updated at every point a fit lands in the single form's world —
+        # see ``_note_last_fitted_single_state``. ``set_dataset`` sources a
+        # non-protected run's refresh from this instead of whatever that run
+        # (or the previously active one) happened to be displaying.
+        self._last_fitted_single_state: dict | None = None
+        self._last_fitted_single_run: int | None = None
         # Optional mediator that supplies a per-(run, representation, projection)
         # single-fit restore payload, installed by the main window.  It keeps the
         # panel decoupled from the project model: ``set_dataset`` asks it for the
         # form payload to show, falling back to the run-keyed blob when unset or
         # when it returns ``None``.  See ``set_single_fit_restore_provider``.
         self._single_fit_restore_provider: Callable[[MuonDataset | None], dict | None] | None = None
-        self._all_datasets: list[MuonDataset] = []  # Track all datasets for group sharing
+        self._all_datasets: list[MuonDataset] = []  # Track all datasets fed to the panel
         # Active single-fit projection (driven by the main window via
         # ``set_active_projection_label``); part of the binding identity that
         # guards the Single↔Batch tab-switch snapshot below.
@@ -138,9 +171,6 @@ class FitPanel(QWidget):
         self._single_tab = SingleFitTab()
         self._single_tab.fit_completed.connect(self._on_single_fit_completed)
         self._single_tab.preview_requested.connect(self.preview_requested.emit)
-        self._single_tab.share_function_with_group_requested.connect(
-            self.share_function_with_group_requested.emit
-        )
         self._single_tab.send_model_to_batch_requested.connect(self._on_send_model_to_batch)
         self._single_tab.add_to_series_requested.connect(
             self.add_single_fit_to_series_requested.emit
@@ -255,6 +285,11 @@ class FitPanel(QWidget):
         self._single_state_by_run = {}
         self._active_single_run_number = None
         self._set_single_fit_provenance(None)
+        # A different domain fits a structurally different model (frequency
+        # peaks vs. time relaxation) -- the other domain's last-fitted state
+        # is not a valid D5 refresh source here, so it does not carry across.
+        self._last_fitted_single_state = None
+        self._last_fitted_single_run = None
         self._single_tab.set_domain(normalized)
         self._global_tab.set_domain(normalized)
 
@@ -277,6 +312,10 @@ class FitPanel(QWidget):
         self._single_form_snapshot = None
         self._active_single_projection = None
         self._all_datasets = []
+        # A new project has no fitted function yet: clear the D5 refresh
+        # source, or a closed project's fit would leak into the next one.
+        self._last_fitted_single_state = None
+        self._last_fitted_single_run = None
         self._domain = "time"
         self._single_tab.set_domain("time")
         self._global_tab.set_domain("time")
@@ -302,7 +341,29 @@ class FitPanel(QWidget):
             # no longer carried content, regardless of the projection it landed
             # on (D2/F6: clear the badge the moment a fit exists).
             self._set_single_fit_provenance("own_slot")
+            # D5: this run just became the session's newest fitted function —
+            # the source every non-protected run's refresh will draw from.
+            self._note_last_fitted_single_state(run_number)
         self.fit_completed.emit(fit_result, fitted_curve, component_curves)
+
+    def _note_last_fitted_single_state(self, run_number: int, state: dict | None = None) -> None:
+        """Record the session's most recent *fitted* single-tab state (D5).
+
+        Called at every point a fit lands in the single form's world: a fresh
+        single fit (above), a batch/global write-back
+        (``register_global_fit_results`` — the last successful member wins,
+        which is fine as "most recent"), and ``set_dataset`` restoring an
+        ``own_slot`` payload (a loaded project's fitted run being selected is,
+        from here on, the newest fitted function the user is looking at).
+
+        Defaults to the tab's current live state, the common case where the
+        run just fitted (or just restored) is also the active one; batch
+        write-back passes each member's own reconstructed state explicitly
+        since it is not the active tab.
+        """
+        source_state = state if state is not None else self._single_tab.get_state()
+        self._last_fitted_single_state = copy.deepcopy(source_state)
+        self._last_fitted_single_run = run_number
 
     def _run_number_from_dataset(self, dataset: MuonDataset | None) -> int | None:
         if dataset is None:
@@ -315,29 +376,36 @@ class FitPanel(QWidget):
     def set_dataset(self, dataset: MuonDataset | None) -> None:
         """Set the current dataset for single fitting tab.
 
-        Three branches decide what the form shows, in this precedence order:
+        D5 "refresh-unless-fitted": three branches decide what the form shows.
 
-        (A) The restore mediator (``_single_fit_restore_provider``) has an
-            opinion: a non-empty payload is a genuine fit recorded for this
+        (A) PROTECTED — the restore mediator (``_single_fit_restore_provider``)
+            hands back a non-empty payload: a genuine recorded fit for this
             (run, representation, projection) slot, restored verbatim
-            (provenance ``own_slot``, no badge). An *empty* payload means
-            "this projection was never fit" and blanks the form to the domain
-            default (provenance ``representation_default``, no badge — a
-            blanked default is not carried content).
-        (B) The mediator has no opinion (``None``) but this exact run has been
-            shown before in this session (``_single_state_by_run``): the
-            cached form is restored. Since the mediator already returned
-            ``None`` for this run, that cached form cannot be a genuine fit —
-            it is itself carried-forward content from an earlier visit, so no
-            specific source run is tracked (provenance ``carried_session``).
-        (C) Neither of the above: the dataset is entirely unseen. The form
-            inherits whatever the *previous* active run was showing
-            (carry-forward), tagged with that run's number (provenance
-            ``carried_from_run``) so the badge can name it explicitly.
+            (provenance ``own_slot``, no badge). This covers both a single fit
+            and a batch/global write-back — the mediator reconstructs a
+            payload from a batch member's persisted ``FitSlot`` when it has no
+            ``ui_state`` of its own (see
+            ``MainWindow._single_fit_restore_payload``), so protection here is
+            driven purely by "did the mediator hand back content", with no
+            separate probe needed. Never auto-overwritten.
+        (B) An *empty* mediator payload: the mediator has a real opinion this
+            exact slot was checked and confirmed unfit (a genuine projection,
+            or the default slot once another projection has been fit).
+            REFRESHABLE: once any fit exists in the session, refresh onto it
+            (D5 — even a "domain default" is refreshable); otherwise blank to
+            the domain default exactly as before (this slot was positively
+            checked, so there is nothing to carry from a previous run either).
+        (C) No mediator opinion at all (``None`` — a legacy/no-mediator run,
+            or the default slot with no other projection info): REFRESHABLE
+            via ``_refresh_single_fit_form``, which prefers the session's most
+            recently *fitted* state, falling back to today's pre-D5
+            behaviour (this run's own cached form, or the previously active
+            run's displayed form) only once nothing has been fitted yet.
 
-        A dismissable badge (D2/F6) surfaces branches (B) and (C) — carry-forward
-        itself is kept (useful for run series), but the panel must say so
-        instead of silently presenting another run's values as this run's own.
+        A dismissable badge (D2/F6) surfaces (B)/(C) whenever a source run is
+        named — carry-forward itself is kept (useful for run series), but the
+        panel must say so instead of silently presenting another run's values
+        as this run's own.
         """
         previous_run_number = self._active_single_run_number
         if self._active_single_run_number is not None:
@@ -358,11 +426,9 @@ class FitPanel(QWidget):
             return
 
         # The main window's restore mediator is authoritative when it has an
-        # opinion: a payload (possibly an empty dict, meaning "blank this unfit
-        # projection") restores from the per-(run, representation, projection)
-        # slot — the canonical store for single fits. ``None`` means "no
-        # opinion", so fall back to the run-keyed blob (default slot / legacy
-        # projects). Consulting it first avoids restoring the form twice.
+        # opinion: a non-empty payload is this run's own recorded fit — the
+        # canonical store for single fits, reconstructed for a batch/global
+        # member when necessary. Consulting it first avoids restoring twice.
         payload = (
             self._single_fit_restore_provider(dataset)
             if self._single_fit_restore_provider is not None
@@ -370,27 +436,68 @@ class FitPanel(QWidget):
         )
         is_real_fit = isinstance(payload, dict) and bool(payload)
         self._single_tab.set_has_recorded_fit(is_real_fit)
-        if payload is not None:
-            self.restore_single_fit_ui(payload)
-            self._set_single_fit_provenance("own_slot" if is_real_fit else "representation_default")
+        if is_real_fit:
+            self._restore_protected_single_fit_form(run_number, payload)
+        elif payload is not None:
+            self._refresh_confirmed_unfit_slot(run_number)
+        else:
+            self._refresh_single_fit_form(run_number, previous_run_number)
+
+    def _restore_protected_single_fit_form(self, run_number: int, payload: dict) -> None:
+        """PROTECTED (D5): restore this run's own recorded fit verbatim."""
+        self.restore_single_fit_ui(payload)
+        self._set_single_fit_provenance("own_slot")
+        # A loaded project's fitted run being selected is, from here on, the
+        # newest fitted function the user is looking at (D5) — count it as
+        # the refresh source for the runs that are not protected.
+        self._note_last_fitted_single_state(run_number)
+
+    def _refresh_confirmed_unfit_slot(self, run_number: int) -> None:
+        """REFRESHABLE (D5): the mediator confirmed this exact slot is unfit.
+
+        An empty payload means the per-(run, representation, projection) slot
+        was actually checked (not merely "no opinion") — refresh onto the
+        session's latest fitted function once one exists (D5: even a "domain
+        default" is refreshable), otherwise blank to the domain default
+        exactly as before: this slot has no meaningful "previous run" to carry
+        from, since it was positively confirmed unfit rather than unseen.
+        """
+        if self._last_fitted_single_state is not None:
+            self._carry_forward_single_fit_form(source_state=self._last_fitted_single_state)
+            self._set_single_fit_provenance("carried_from_run", self._last_fitted_single_run)
+            self._single_state_by_run[run_number] = self._single_tab.get_state()
+        else:
+            self._reset_single_fit_form()
+            self._set_single_fit_provenance("representation_default")
+
+    def _refresh_single_fit_form(self, run_number: int, previous_run_number: int | None) -> None:
+        """REFRESHABLE (D5): no mediator opinion at all for this run.
+
+        Sources the refresh from ``_last_fitted_single_state`` when a fit
+        exists anywhere in the session — this supersedes even this run's own
+        stale cached carry, so navigating away and back doesn't resurrect it.
+        Only once nothing has been fitted yet does it fall back to today's
+        pre-D5 behaviour verbatim: this run's own previously-cached form when
+        one exists (``carried_session`` — a legacy/no-mediator run's session
+        cache, not a confirmed fit), else the previously active run's
+        currently-displayed form (``carried_from_run``), else the untouched
+        construction-time default (no badge) when nothing has even been
+        *shown* in this panel yet (see ``_carry_forward_single_fit_form``'s
+        docstring for why that case must not be badged as "carried").
+        """
+        if self._last_fitted_single_state is not None:
+            self._carry_forward_single_fit_form(source_state=self._last_fitted_single_state)
+            self._set_single_fit_provenance("carried_from_run", self._last_fitted_single_run)
         elif run_number in self._single_state_by_run:
             self._single_tab.restore_state(self._single_state_by_run[run_number])
             self._set_single_fit_provenance("carried_session")
         elif previous_run_number is None:
-            # Nothing has ever been shown in this panel before: the form still
-            # holds its untouched construction-time default, not content
-            # inherited from a real prior selection. Badging that as "carried"
-            # would be as misleading as this fix is meant to prevent.
             self._carry_forward_single_fit_form()
             self._set_single_fit_provenance("representation_default")
         else:
-            # An unseen dataset the user has not customised inherits the model
-            # and parameter setup currently shown (carry-forward) instead of
-            # snapping back to the default on every row change. Its own model is
-            # still saved and restored on return; only the previous run's fit
-            # *result* is dropped (it belongs to the run it was computed on).
             self._carry_forward_single_fit_form()
             self._set_single_fit_provenance("carried_from_run", previous_run_number)
+        self._single_state_by_run[run_number] = self._single_tab.get_state()
 
     def _reseed_frequency_peaks_if_default(self, *, is_real_fit: bool) -> None:
         """Refresh frequency peak seeds unless a real recorded fit is shown."""
@@ -401,8 +508,10 @@ class FitPanel(QWidget):
         """Record why the single-fit form holds its current contents and update the badge.
 
         ``kind`` is one of ``own_slot`` / ``representation_default`` (no
-        badge), ``carried_session`` (generic badge, no known source run), or
-        ``carried_from_run`` (badge names ``source_run`` when known).
+        badge), ``carried_from_run`` (badge names ``source_run`` when known —
+        the session's most recent fitted function), or ``carried_session``
+        (generic badge, no fit exists anywhere yet — this run's own
+        previously cached but never-fitted form).
         """
         self._single_fit_provenance = kind
         self._single_fit_carry_source_run = source_run if kind == "carried_from_run" else None
@@ -421,18 +530,35 @@ class FitPanel(QWidget):
             f"Model carried{origin}{suffix} — not fitted for this run"
         )
 
-    def _carry_forward_single_fit_form(self) -> None:
-        """Inherit the previous selection's model + parameter setup, sans result.
+    def _carry_forward_single_fit_form(self, source_state: dict | None = None) -> None:
+        """Inherit *source_state*'s model + parameter setup, sans result.
 
         Reuses the seen-dataset restore path (so the composite model, seeds,
         bounds, fixed/free flags and link groups all transfer faithfully) but
         clears the fitted uncertainties and result label first — an unseen run
         has not been fit, so it must not display another run's result.
+
+        ``source_state`` defaults to the form currently displayed (today's
+        last-*displayed* carry-forward, used once no fit exists anywhere in
+        the session yet); ``_refresh_single_fit_form`` passes the session's
+        last-*fitted* state explicitly (D5) so a refresh sources from what was
+        actually fit, not from whatever the previously active run happened to
+        be showing.
         """
-        state = self._single_tab.get_state()
+        state = (
+            copy.deepcopy(source_state)
+            if source_state is not None
+            else self._single_tab.get_state()
+        )
         for entry in state.get("parameters", []):
             entry["uncertainty"] = None
             entry["uncertainty_asymmetric"] = None
+        # Per-target field reseeding (D5): a parameter like B_L tracks the
+        # dataset it was seeded from, so a carried/refreshed form must not
+        # keep the source run's field-derived value — reseed it from the
+        # *target* dataset now bound to the tab (ported from the retired
+        # "Share with Group" action's per-peer reseeding).
+        self._reseed_file_value_parameters(state, self._single_tab._current_dataset)
         self._single_tab.restore_state(state)
         if not self._single_tab._composite_model.missing_component_names:
             self._single_tab._result_label.setText("No fit performed yet")
@@ -442,6 +568,33 @@ class FitPanel(QWidget):
         # restore go through the seen-dataset / provider paths, not here, so
         # those keep their saved values.)
         self._reseed_frequency_peaks_if_default(is_real_fit=False)
+
+    def _reseed_file_value_parameters(self, state: dict, dataset: MuonDataset | None) -> None:
+        """Re-seed field-dependent parameters (e.g. ``B_L``) from *dataset*'s own value.
+
+        Ported from the retired ``share_single_function_state`` (D5): each
+        parameter's value is overwritten with the dataset's own file-derived
+        value (resolved via :func:`_get_file_value_for_parameter`) when one is
+        available, so a carried/refreshed form reflects the *target* run's
+        field rather than whatever run the source state was fitted/carried
+        from. Mutates ``state`` in place; a no-op without a dataset or a
+        ``parameters`` list.
+        """
+        if dataset is None:
+            return
+        parameters = state.get("parameters")
+        if not isinstance(parameters, list):
+            return
+        for param_dict in parameters:
+            if not isinstance(param_dict, dict):
+                continue
+            pname = param_dict.get("name")
+            if not isinstance(pname, str):
+                continue
+            base_name, _index = split_parameter_name(pname)
+            file_value = _get_file_value_for_parameter(dataset, base_name)
+            if file_value is not None:
+                param_dict["value"] = file_value
 
     def _reset_single_fit_form(self) -> None:
         """Blank the single-fit form to its domain default ("No fit yet")."""
@@ -479,8 +632,8 @@ class FitPanel(QWidget):
         A populated dict restores the form verbatim; an empty dict (or ``None``)
         blanks it — an unfit projection must never inherit another projection's
         fit. The run-keyed blob is deliberately *not* touched: it stays the
-        per-run store that global seeding and group sharing read, while the
-        per-projection slot is the source of truth for the single-fit form.
+        per-run store that global seeding reads, while the per-projection slot
+        is the source of truth for the single-fit form.
         """
         if isinstance(payload, dict) and payload:
             self._single_tab.restore_state(payload)
@@ -491,7 +644,7 @@ class FitPanel(QWidget):
             self._reset_single_fit_form()
 
     def set_datasets(self, datasets: list[MuonDataset]) -> None:
-        """Set the datasets for global fitting tab and track for group sharing."""
+        """Set the datasets for the global fitting tab, tracking all datasets fed in."""
         self._all_datasets = datasets
         self._global_tab.set_datasets(datasets)
 
@@ -577,6 +730,17 @@ class FitPanel(QWidget):
         active_run = self._active_single_run_number
         if active_run is not None and active_run in normalized_runs:
             self._single_tab._result_label.setText("No fit performed yet")
+
+        # D5: the session's refresh source must not survive its own run's fit
+        # being cleared -- otherwise every other unprotected run would keep
+        # refreshing onto a fit that, as far as the browser is concerned, no
+        # longer exists.
+        if (
+            self._last_fitted_single_run is not None
+            and self._last_fitted_single_run in normalized_runs
+        ):
+            self._last_fitted_single_state = None
+            self._last_fitted_single_run = None
 
         return len(changed_runs)
 
@@ -678,67 +842,6 @@ class FitPanel(QWidget):
         state["wizard_state"] = wizard_state
         self._single_state_by_run[run_key] = copy.deepcopy(state)
 
-    def share_single_function_state(
-        self,
-        source_run_number: int,
-        target_run_numbers: list[int],
-        datasets_by_run: dict[int, MuonDataset] | None = None,
-    ) -> int:
-        """Copy source single-fit function/parameter state to target runs.
-
-        The copied state intentionally clears fit-result text for targets because
-        no fit has been run for those datasets yet.
-
-        For field-specific parameters (like B_L), applies the target dataset's
-        field value when *datasets_by_run* is provided, falling back to the
-        pre-loaded ``_all_datasets`` list if it is not.
-        """
-        source_state = self.get_single_state_for_run(source_run_number)
-        if not isinstance(source_state, dict):
-            return 0
-
-        # Build a run-number lookup from the supplied mapping, then fall back to
-        # the stale _all_datasets list (populated by set_datasets).
-        def _lookup_dataset(run_key: int) -> MuonDataset | None:
-            if datasets_by_run is not None:
-                return datasets_by_run.get(run_key)
-            for ds in self._all_datasets:
-                try:
-                    if int(ds.run_number) == run_key:
-                        return ds
-                except (TypeError, ValueError):
-                    pass
-            return None
-
-        updated = 0
-        active_run = self._active_single_run_number
-        for run_number in target_run_numbers:
-            try:
-                run_key = int(run_number)
-            except (TypeError, ValueError):
-                continue
-            if run_key == int(source_run_number):
-                continue
-
-            shared_state = copy.deepcopy(source_state)
-            shared_state["result_html"] = "No fit performed yet"
-
-            target_dataset = _lookup_dataset(run_key)
-            if target_dataset is not None and isinstance(shared_state.get("parameters"), list):
-                for param_dict in shared_state["parameters"]:
-                    pname = param_dict.get("name")
-                    if isinstance(pname, str):
-                        base_name, _index = split_parameter_name(pname)
-                        file_value = _get_file_value_for_parameter(target_dataset, base_name)
-                        if file_value is not None:
-                            param_dict["value"] = file_value
-
-            self._single_state_by_run[run_key] = shared_state
-            if active_run is not None and run_key == active_run:
-                self._single_tab.restore_state(self._single_state_by_run[run_key])
-            updated += 1
-        return updated
-
     def _result_html_from_fit(self, fit_result: object, source: str) -> str:
         """Build single-fit result HTML from a completed fit result object."""
         if getattr(fit_result, "success", False) is not True:
@@ -831,6 +934,128 @@ class FitPanel(QWidget):
             "result_html": self._result_html_from_fit(fit_result, source),
         }
 
+    def build_single_fit_payload_from_slot(
+        self,
+        model: dict | None,
+        template_parameters: list[dict] | None,
+        result: dict | None,
+    ) -> dict | None:
+        """Reconstruct a single-fit-tab restore payload from a persisted ``FitSlot``.
+
+        Batch/global-member ``FitSlot``s are "pointer slots": they carry a
+        genuine fitted ``model``/``result`` but never a ``ui_state`` (only the
+        single-fit GUI path writes one). D5 protects any run with a recorded
+        result, so ``MainWindow._single_fit_restore_payload`` calls this to
+        synthesise a payload rather than treating such a run as unfit — most
+        relevantly across a project reload, before this session's
+        ``register_global_fit_results`` cache exists. Returns ``None`` when
+        there is nothing usable to build from.
+        """
+        if not isinstance(model, dict) or not isinstance(result, dict):
+            return None
+        try:
+            composite_model = CompositeModel.from_dict(model, allow_missing=True)
+        except (ValueError, KeyError, TypeError):
+            return None
+        templates = [entry for entry in (template_parameters or []) if isinstance(entry, dict)]
+        return self._single_state_from_slot_result(composite_model, templates, result)
+
+    def _single_state_from_slot_result(
+        self,
+        model: CompositeModel,
+        template_parameters: list[dict],
+        result: dict,
+    ) -> dict:
+        """Reconstruct single-tab state from a persisted ``FitSlot`` (no ``ui_state``).
+
+        Bounds/fixed classification come from the batch's shared template row
+        (``template_parameters`` — every member of a batch/global series
+        shares one model configuration, the ``GlobalFitTab.get_state()``
+        snapshot taken at fit-completion time); the fitted *value* for each
+        parameter comes from this run's own persisted ``result`` (the
+        ``MainWindow._fit_result_summary`` shape). Mirrors
+        ``_single_state_from_fit_result``'s shape but is built from serialised
+        dicts rather than a live ``FitResult`` object.
+        """
+        template_by_name: dict[str, dict] = {
+            str(entry.get("name")): entry
+            for entry in template_parameters
+            if isinstance(entry, dict)
+        }
+        fitted_values = result.get("parameters")
+        fitted_values = fitted_values if isinstance(fitted_values, dict) else {}
+
+        params: list[dict[str, object]] = []
+        for pname in model.param_names:
+            template = template_by_name.get(pname, {})
+            try:
+                raw_value = fitted_values.get(
+                    pname, template.get("value", model.param_defaults.get(pname, 0.0))
+                )
+                value = float(raw_value)
+            except (TypeError, ValueError):
+                value = float(model.param_defaults.get(pname, 0.0))
+            role = str(template.get("type") or "Local").strip().lower()
+            if role not in ("global", "local", "fixed", "file"):
+                role = None
+            min_text, max_text = _parse_bounds_text(template.get("bounds"))
+            params.append(
+                {
+                    "name": pname,
+                    "value": value,
+                    "fixed": role == "fixed",
+                    "min": min_text,
+                    "max": max_text,
+                    "role": role,
+                }
+            )
+
+        return {
+            "model_name": "Composite",
+            "composite_model": model.to_dict(),
+            "parameters": params,
+            "result_html": self._result_html_from_slot_result(result),
+        }
+
+    def _result_html_from_slot_result(self, result: dict) -> str:
+        """Build single-fit result HTML from a persisted (serialised) ``FitSlot`` result.
+
+        Mirrors ``_result_html_from_fit`` but reads the plain ``dict`` shape
+        ``MainWindow._fit_result_summary`` writes into ``FitSlot.result``
+        instead of a live ``FitResult`` object — used when reconstructing a
+        batch member's form from its persisted slot (no in-session
+        ``FitResult`` exists after a reload).
+        """
+        source = "Batch fit"
+        if not result.get("success", False):
+            message = str(result.get("message", "Fit failed"))
+            return f"<b>{source} failed:</b> {message}"
+
+        reduced = float(result.get("reduced_chi_squared", float("nan")))
+        chi2 = float(result.get("chi_squared", float("nan")))
+        lines = [
+            f"<b>{source}</b>",
+            f"<b>χ² = {chi2:.4f}</b>",
+            f"<b>χ²ᵣ = {reduced:.4f}</b>",
+            "<br><b>Parameters:</b>",
+        ]
+
+        parameters = result.get("parameters")
+        parameters = parameters if isinstance(parameters, dict) else {}
+        uncertainties = result.get("uncertainties")
+        uncertainties = uncertainties if isinstance(uncertainties, dict) else {}
+        for name, raw_value in parameters.items():
+            try:
+                value = float(raw_value)
+            except (TypeError, ValueError):
+                continue
+            try:
+                unc = float(uncertainties.get(name, 0.0) or 0.0)
+            except (TypeError, ValueError):
+                unc = 0.0
+            lines.append(f"  {format_param_label(name)} = {value:.6f} ± {unc:.6f}")
+        return "<br>".join(lines)
+
     def register_global_fit_results(
         self, results_by_run: dict[int, tuple[object, object, object]]
     ) -> None:
@@ -850,6 +1075,9 @@ class FitPanel(QWidget):
                 model, fit_result, source="Batch fit", roles=roles
             )
             self._single_state_by_run[int(run_number)] = run_state
+            # D5: a batch write-back counts as a fit landing for this member;
+            # the last successful one processed is fine as "most recent".
+            self._note_last_fitted_single_state(int(run_number), run_state)
 
             if active_run is not None and int(run_number) == int(active_run):
                 self._single_tab.restore_state(run_state)

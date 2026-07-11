@@ -15,8 +15,7 @@ markers; methods cluster thematically in roughly this order:
   parameter-classification table, and per-group model tables (deliberately
   *not* sharing a factory with ``SingleFitTab``'s single table — see
   ``docs/audit/shared-foundations/FOLLOW-UPS.md`` Phase 2 H2).
-- **Grouped/data-group model sharing** — ``_on_share_function_with_group``,
-  ``_open_grouped_initial_values_dialog``.
+- **Grouped model dialog** — ``_open_grouped_initial_values_dialog``.
 - **Per-run wizard-cache lookups** — ``_single_fit_wizard_cache_for_run``.
 - **Fraction-value linking** — ``_synchronize_fraction_value_rows`` (the
   global-tab counterpart of the single-tab fraction sync, using the shared
@@ -235,7 +234,6 @@ class GlobalFitTab(FitTabBase):
     # lifetime-corrected scale).
     count_fit_completed = Signal(object, object)
     count_grouping_promoted = Signal(object)  # (dataset) — a count calibration hit the grouping
-    share_function_with_group_requested = Signal(int)  # (source run) — single grouped surface
     send_grouped_model_to_batch_requested = Signal()  # single grouped surface → batch surface
     # Emitted with the new mode when the on-tab seeding selector changes, so the
     # Analysis ▸ Batch seeding menu can mirror it (two-way sync).
@@ -369,17 +367,7 @@ class GlobalFitTab(FitTabBase):
         model_button_layout.setSpacing(4)
         for _model_btn in (self._edit_model_btn, self._fit_wizard_btn):
             model_button_layout.addWidget(_model_btn, 0, Qt.AlignmentFlag.AlignLeft)
-        # The single grouped surface can push its function to the run's
-        # data-group peers (mirrors SingleFitTab's "Share with Group").
-        self._share_group_btn: QPushButton | None = None
         if self._grouped_single:
-            self._share_group_btn = QPushButton("Share with Group")
-            self._share_group_btn.setToolTip(
-                "Share this grouped fit function with the selected data group."
-            )
-            self._share_group_btn.setEnabled(False)
-            self._share_group_btn.clicked.connect(self._on_share_function_with_group)
-            model_button_layout.addWidget(self._share_group_btn, 0, Qt.AlignmentFlag.AlignLeft)
             self._send_to_batch_btn = QPushButton("Send to Batch")
             self._send_to_batch_btn.setToolTip(
                 "Copy this grouped fit function and its seeds to the Batch surface."
@@ -951,19 +939,6 @@ class GlobalFitTab(FitTabBase):
         # phase lives in the per-group phase nuisance, reseeded by the call below.
         self._update_group_parameter_defaults()
         self._update_mode_ui(preserve_result=False)
-        if self._share_group_btn is not None:
-            self._share_group_btn.setEnabled(dataset is not None)
-
-    def _on_share_function_with_group(self) -> None:
-        """Emit the share-with-group request for the active run (single grouped)."""
-        dataset = self._current_dataset
-        if dataset is None:
-            return
-        try:
-            run_number = int(dataset.run_number)
-        except (TypeError, ValueError):
-            return
-        self.share_function_with_group_requested.emit(run_number)
 
     def _refresh_field_parameter_defaults_for_current_dataset(self) -> None:
         """Refresh auto-seeded field values when the active dataset changes."""

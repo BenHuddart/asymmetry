@@ -2,10 +2,12 @@
 
 Covers the F3 GUI-review findings:
 
-* **P1-2** — the four advanced model actions (Drop background / Share with Group
-  / Send to Batch / Add to Series) must be folded into a single "⋯ More…"
-  overflow menu so the PARAMETERS table and the Fit button rise into view instead
-  of falling below the fold.
+* **P1-2** — the advanced model actions (Drop background / Send to Batch /
+  Add to Series) must be folded into a single "⋯ More…" overflow menu so the
+  PARAMETERS table and the Fit button rise into view instead of falling below
+  the fold. ("Share with Group" was a fourth folded action here until D5
+  (`docs/studies/datagroup-fitseries-unification.md`) retired it in favour of
+  refresh-unless-fitted carry-forward.)
 * **P1-5** — the fit wizards must open no larger than the available screen.
 * **P2-3** — ``ModelFitDialog`` must size against the available screen.
 * **P3-3** — the trend panel must show a "load a batch series" hint while empty.
@@ -32,7 +34,6 @@ _DECK_DEFAULT_WIDTH = 360  # INSPECTOR_DOCK_DEFAULT_WIDTH
 
 _ADVANCED_ACTION_LABELS = {
     "Drop background",
-    "Share with Group",
     "Send to Batch",
     "Add to Series...",
 }
@@ -133,9 +134,8 @@ def test_advanced_action_enable_state_still_tracks_domain(app):
         # Drop-background is offered for the default time-domain Exp+Const model.
         assert tab._drop_background_action.isEnabled()
         tab.set_domain("frequency")
-        # In the frequency domain there is nothing to drop and no group sharing.
+        # In the frequency domain there is nothing to drop.
         assert not tab._drop_background_action.isEnabled()
-        assert not tab._share_group_action.isEnabled()
     finally:
         tab.close()
         tab.deleteLater()

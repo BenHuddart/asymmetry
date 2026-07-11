@@ -1950,10 +1950,6 @@ class MainWindow(QMainWindow):
             self._multi_group_fit_window.set_single_grouped_restore_provider(
                 self._grouped_single_restore_payload
             )
-        if hasattr(self._multi_group_fit_window, "share_function_with_group_requested"):
-            self._multi_group_fit_window.share_function_with_group_requested.connect(
-                self._on_share_grouped_function_with_group
-            )
         # Auto-couple the single composite fit to the plot's RRF display: when
         # the rotating frame is active there, the fit runs in that frame.
         if hasattr(self._fit_panel, "set_rrf_frequency_provider"):
@@ -1979,10 +1975,6 @@ class MainWindow(QMainWindow):
             self._fit_panel.grouped_fit_completed.connect(self._on_grouped_fit_completed)
         if hasattr(self._fit_panel, "preview_requested"):
             self._fit_panel.preview_requested.connect(self._on_preview_requested)
-        if hasattr(self._fit_panel, "share_function_with_group_requested"):
-            self._fit_panel.share_function_with_group_requested.connect(
-                self._on_share_single_function_with_group
-            )
         if hasattr(self._fit_panel, "add_single_fit_to_series_requested"):
             self._fit_panel.add_single_fit_to_series_requested.connect(
                 self._on_add_single_fit_to_series_requested
@@ -10528,11 +10520,20 @@ class MainWindow(QMainWindow):
 
         Mediator for ``FitPanel.set_dataset`` (installed via
         ``set_single_fit_restore_provider``). Returns the active ``(run,
-        representation, projection)`` slot's ``ui_state`` when present; an empty
-        dict to force a blank form for a genuine-but-unfit *projection* (so
-        projections never inherit each other's fit); or ``None`` to defer to the
-        panel's run-keyed restore (the default slot and legacy projects with no
-        stored ``ui_state``).
+        representation, projection)`` slot's ``ui_state`` when present; a
+        payload *reconstructed* from the slot's ``model``/``parameters``/
+        ``result`` when it has no ``ui_state`` but does carry a genuine
+        recorded result (a batch/global member's "pointer slot" — D5:
+        protected regardless of provenance, since only the single-fit GUI
+        path ever writes ``ui_state``); an empty dict to force a blank form
+        for a genuine-but-unfit *projection* (so projections never inherit
+        each other's fit); or ``None`` to defer to the panel's run-keyed
+        restore (the default slot and legacy projects with no stored
+        ``ui_state`` or result at all).
+
+        A non-empty return here is what ``FitPanel.set_dataset`` treats as
+        "protected" (D5): reconstructing from the slot keeps that decision
+        purely mediator-driven, with no separate "has a result" probe needed.
         """
         if dataset is None:
             return None
@@ -10551,14 +10552,31 @@ class MainWindow(QMainWindow):
         ui_state = slot.ui_state if isinstance(slot.ui_state, dict) else {}
         if ui_state:
             return copy.deepcopy(ui_state)
-        # No persisted form payload for this slot. A genuine projection always
-        # blanks (it must never inherit another projection's fit). The default
-        # slot blanks too once *any* projection has been fit, because recording
-        # a projection fit writes that projection's form into the panel's
-        # run-keyed blob (`_on_single_fit_completed`) — deferring to it would let
-        # the ALL/aggregate view inherit a single projection's fit. Only a run
-        # with no projection fits defers to the blob (the default-slot and
-        # legacy-project path, where the blob is the authoritative single store).
+        # No persisted form payload for this slot. A batch/global member's
+        # slot never gets one (only `_record_single_fit_slot` writes
+        # `ui_state`), yet it still carries a genuine result — most visibly
+        # across a project reload, before this session's
+        # `register_global_fit_results` cache exists. Rebuild a payload from
+        # the slot's own stored data rather than treating that run as unfit.
+        if (
+            slot.model is not None
+            and slot.result is not None
+            and hasattr(self._fit_panel, "build_single_fit_payload_from_slot")
+        ):
+            rebuilt = self._fit_panel.build_single_fit_payload_from_slot(
+                slot.model, slot.parameters, slot.result
+            )
+            if rebuilt:
+                return rebuilt
+        # Truly nothing to restore. A genuine projection always blanks (it
+        # must never inherit another projection's fit). The default slot
+        # blanks too once *any* projection has been fit, because recording a
+        # projection fit writes that projection's form into the panel's
+        # run-keyed blob (`_on_single_fit_completed`) — deferring to it would
+        # let the ALL/aggregate view inherit a single projection's fit. Only a
+        # run with no projection fits defers to the blob (the default-slot
+        # and legacy-project path, where the blob is the authoritative single
+        # store).
         if projection is not None or representation.projection_fits:
             return {}
         return None
@@ -11973,110 +11991,6 @@ class MainWindow(QMainWindow):
             fit_result=None,
             fit_function=fit_function,
             run_number=self._single_fit_run_number(),
-        )
-
-    def _data_group_peer_runs(self, source_run_number: int) -> tuple[object, list[int]] | None:
-        """Return ``(group_name, peer_run_numbers)`` for *source_run*'s data group.
-
-        Sets an explanatory status message and returns ``None`` when the browser
-        has no data groups, the run is ungrouped, or the group has no other
-        members. Shared by the FB and grouped "Share with Group" handlers.
-
-        Phase 4 removes this together with the Share with Group affordance; it is
-        left in place here so the share feature is not half-removed. It reads the
-        run's *primary* group (``get_group_id_for_run``) — acceptable for the
-        deprecated share path.
-        """
-        if not hasattr(self._data_browser, "get_group_id_for_run"):
-            self.statusBar().showMessage("Data-group sharing unavailable in this browser mode")
-            return None
-        group_id = self._data_browser.get_group_id_for_run(source_run_number)
-        if not group_id:
-            self.statusBar().showMessage("Selected run is not in a data group")
-            return None
-        member_runs = []
-        if hasattr(self._data_browser, "get_group_member_run_numbers"):
-            member_runs = self._data_browser.get_group_member_run_numbers(group_id)
-        if not member_runs:
-            self.statusBar().showMessage("No data-group members found to share with")
-            return None
-        target_runs = [rn for rn in member_runs if int(rn) != int(source_run_number)]
-        if not target_runs:
-            self.statusBar().showMessage("Data group has no other members to share with")
-            return None
-        group_name = (
-            self._data_browser.get_group_name(group_id)
-            if hasattr(self._data_browser, "get_group_name")
-            else group_id
-        )
-        return group_name, target_runs
-
-    def _on_share_single_function_with_group(self, source_run_number: int) -> None:
-        """Copy single-fit function settings from one run to its data-group peers."""
-        resolved = self._data_group_peer_runs(source_run_number)
-        if resolved is None:
-            return
-        group_name, target_runs = resolved
-
-        # Resolve target datasets so that file-specific parameter defaults
-        # (e.g. B_L from the run's applied field) can be seeded per member.
-        all_browser_datasets: dict[int, MuonDataset] = {}
-        if hasattr(self._data_browser, "_datasets"):
-            for rn, ds in self._data_browser._datasets.items():
-                try:
-                    all_browser_datasets[int(rn)] = ds
-                except (TypeError, ValueError):
-                    pass
-
-        updated = 0
-        if hasattr(self._fit_panel, "share_single_function_state"):
-            updated = int(
-                self._fit_panel.share_single_function_state(
-                    source_run_number,
-                    target_runs,
-                    datasets_by_run=all_browser_datasets or None,
-                )
-            )
-
-        self._log_panel.log(
-            f"Shared fit function from run {source_run_number} to {updated} run(s) in group {group_name}"
-        )
-        self.statusBar().showMessage(
-            f"Shared fit function to {updated} run(s) in group {group_name}"
-        )
-
-    def _on_share_grouped_function_with_group(self, source_run_number: int) -> None:
-        """Copy the grouped single-fit function from one run to its data-group peers."""
-        resolved = self._data_group_peer_runs(source_run_number)
-        if resolved is None:
-            return
-        group_name, target_runs = resolved
-
-        # Resolve target datasets so that file-specific parameter defaults
-        # (e.g. B_L from the run's applied field) can be re-seeded per member.
-        all_browser_datasets: dict[int, MuonDataset] = {}
-        if hasattr(self._data_browser, "_datasets"):
-            for rn, ds in self._data_browser._datasets.items():
-                try:
-                    all_browser_datasets[int(rn)] = ds
-                except (TypeError, ValueError):
-                    pass
-
-        updated = 0
-        if hasattr(self._multi_group_fit_window, "share_single_grouped_function_state"):
-            updated = int(
-                self._multi_group_fit_window.share_single_grouped_function_state(
-                    source_run_number,
-                    target_runs,
-                    datasets_by_run=all_browser_datasets or None,
-                )
-            )
-        self._log_panel.log(
-            f"Shared grouped fit function from run {source_run_number} "
-            f"to {updated} run(s) in group {group_name}"
-        )
-        self.statusBar().showMessage(
-            f"Shared grouped fit function to {updated} run(s) in group {group_name}"
         )
 
     def _on_global_fit_started(self) -> None:
