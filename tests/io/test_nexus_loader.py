@@ -572,6 +572,88 @@ def test_load_v1_reads_deadtimes_from_detector_group(tmp_path, loader: NexusLoad
     assert dead_times == pytest.approx([0.011, 0.021])
 
 
+def _write_v1_file_beam_good_frames(path) -> None:
+    """V1 file whose good-frame count lives only at instrument/beam.
+
+    Mirrors real legacy ISIS muon NeXus v1 / HDF4 files (e.g. HiFi runs read
+    directly via the pyhdf path): there is *no* top-level ``good_frames`` /
+    ``goodfrm``; the authoritative good-frame count is stored under
+    ``instrument/beam`` (``frames_period`` per period, ``frames_good`` /
+    ``frames`` as the run total). Without the beam fallback the loader defaults
+    ``good_frames`` to 1.0 and the file-deadtime path over-corrects by orders of
+    magnitude.
+
+    Counts/tau/bin-width are chosen so the non-paralyzable denominator
+    ``1 - N*tau/(dt*nframes)`` clips (blows up) at ``nframes=1`` but is a benign
+    sub-percent correction at the real ``frames_good``.
+    """
+    with h5py.File(path, "w") as f:
+        run = f.create_group("run")
+        run.create_dataset("analysis", data=np.bytes_("muonTD"))
+        run.create_dataset("IDF_version", data=1)
+        run.create_dataset("number", data=162679)
+        # No good_frames / goodfrm at the run level, exactly like HDF4 originals.
+
+        instrument = run.create_group("instrument")
+        detector = instrument.create_group("detector")
+        detector.create_dataset("orientation", data=np.bytes_("L"))
+        beam = instrument.create_group("beam")
+        beam.create_dataset("frames_period", data=np.array([69322], dtype=np.int32))
+        beam.create_dataset("frames_good", data=np.array([69322], dtype=np.int32))
+        beam.create_dataset("frames", data=np.array([69322], dtype=np.int32))
+
+        sample = run.create_group("sample")
+        sample.create_dataset("temperature", data=5.0)
+        sample.create_dataset("magnetic_field", data=0.0)
+
+        h_data = run.create_group("histogram_data_1")
+        h_data.create_dataset(
+            "counts",
+            data=np.array([[1000, 1000, 1000, 1000], [900, 900, 900, 900]], dtype=np.float64),
+        )
+        h_data.create_dataset(
+            "corrected_time", data=np.array([0.0, 0.016, 0.032, 0.048], dtype=np.float64)
+        )
+        h_data.create_dataset("grouping", data=np.array([1, 2], dtype=np.int32))
+        h_data.create_dataset("dead_time", data=np.array([0.01, 0.01], dtype=np.float64))
+
+
+def test_load_v1_good_frames_from_beam_keeps_deadtime_stable(tmp_path, loader: NexusLoader) -> None:
+    """Regression: good_frames comes from instrument/beam on HDF4-style v1 files.
+
+    With good_frames absent at the run level the loader used to default it to
+    1.0, so ``prepare_histograms_with_deadtime`` over-corrected the counts by
+    ~5 orders of magnitude. Reading it from ``instrument/beam/frames_good``
+    keeps the file-deadtime correction a benign sub-percent adjustment.
+    """
+    from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
+
+    path = tmp_path / "run_v1_beam_good_frames.nxs"
+    _write_v1_file_beam_good_frames(path)
+
+    ds = loader.load(str(path))
+    assert not isinstance(ds, list)
+    assert ds.metadata["nexus_version"] == "v1"
+    assert ds.run.grouping.get("good_frames") == pytest.approx(69322.0)
+
+    histograms = ds.run.histograms
+    raw_total = float(sum(np.sum(h.counts) for h in histograms))
+    corrected, applied = prepare_histograms_with_deadtime(histograms, ds.run.grouping, True)
+    assert applied
+    corrected_total = float(sum(np.sum(h.counts) for h in corrected))
+    # Stable correction: a few percent, emphatically not the ~1000x blow-up
+    # the good_frames=1.0 default produced.
+    assert corrected_total == pytest.approx(raw_total, rel=0.05)
+    assert all(np.all(np.isfinite(h.counts)) for h in corrected)
+
+    # Contrast: the pre-fix good_frames=1.0 default blows the counts up.
+    bug_grouping = dict(ds.run.grouping)
+    bug_grouping["good_frames"] = 1.0
+    blown, _ = prepare_histograms_with_deadtime(histograms, bug_grouping, True)
+    blown_total = float(sum(np.sum(h.counts) for h in blown))
+    assert blown_total > raw_total * 100.0
+
+
 def test_load_v1_single_period(tmp_path, loader: NexusLoader) -> None:
     path = tmp_path / "run_v1.nxs"
     _write_v1_file(path)

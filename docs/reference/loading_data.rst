@@ -236,7 +236,13 @@ does not invent format rules:
 * File-based deadtime correction uses the non-paralyzable formula implemented
   by musrfit ``PRunBase::DeadTimeCorrection`` and Mantid
   ``ApplyDeadTimeCorr``:
-  ``N_corr = N / (1 - N * dead_time / (time_bin * good_frames))``.
+  ``N_corr = N / (1 - N * dead_time / (time_bin * good_frames))``. The
+  ``good_frames`` normalisation is read from the file's top-level
+  ``good_frames`` / ``goodfrm`` when present; legacy ISIS HDF4 / NeXus-V1 files
+  (e.g. HiFi runs) omit it, so Asymmetry falls back to ``instrument/beam``
+  (``frames_period`` per period, then the ``frames_good`` / ``frames`` run
+  total). Without that fallback the count defaults to 1 and the correction
+  over-normalises by orders of magnitude.
 * The Grouping dialog also exposes WiMDA-style manual, calibrated, and
   estimated deadtime workflows alongside file-provided deadtimes. ``Estimate``
   is calculated from the selected reference run only and then broadcast to all

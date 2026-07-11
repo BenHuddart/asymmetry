@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Good-frame count for legacy ISIS HDF4 / NeXus-v1 files.** The NeXus loader
+  now reads the good-frame count from `instrument/beam` (`frames_period` per
+  period, falling back to `frames_good` / `frames`) when a file carries no
+  top-level `good_frames` / `goodfrm` — as ISIS HDF4 originals (e.g. HiFi runs)
+  do. Previously `good_frames` silently defaulted to `1.0`, which made the
+  file/grouping non-paralyzable deadtime correction overstate the per-frame
+  rate by ~5 orders of magnitude and blow up the corrected counts (a ZF fit's
+  χ²/dof jumped from ~2 to ~185). The correction is now a benign sub-percent
+  adjustment. The same beam fallback applies to the v2 read path.
+
 ### Added
 
 - **Waterfall display mode for overlaid plots.** A new **Waterfall** checkbox
