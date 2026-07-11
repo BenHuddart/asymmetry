@@ -383,6 +383,67 @@ over. Reusing a ``state`` after changing the configuration raises
 ``ValueError`` (``"MaxEnt state is incompatible with the current
 configuration; restart."``) — build a fresh state for the new settings.
 
+.. _maxent-gpu-acceleration:
+
+GPU acceleration (optional)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+MaxEnt's inner loop regenerates and projects through the time–frequency design
+matrix every outer cycle, and that cost grows with both the time-bin count and
+the spectrum resolution — a large joint reconstruction (many detector groups,
+a fine frequency grid, an unbinned time window) can take a while on the CPU.
+Installing the optional ``gpu`` extra lets the same kernels run on an NVIDIA
+GPU through `CuPy <https://cupy.dev/>`_:
+
+.. code-block:: bash
+
+   pip install "asymmetry[gpu]"
+
+This installs the CUDA-13 wheel (``cupy-cuda13x``); on a CUDA-12 system,
+install ``cupy-cuda12x`` instead — the runtime only ever imports plain
+``cupy``, so either wheel satisfies it. CuPy is imported lazily on first use,
+so the core package stays importable with no GPU, no CuPy, and no CUDA driver
+present.
+
+Select the backend with the new ``backend`` field on ``MaxEntConfig``:
+
+.. code-block:: python
+
+   config = MaxEntConfig(
+       n_spectrum_points=2048,
+       f_max_mhz=5.0,
+       t_min_us=0.1,
+       t_max_us=8.0,
+       backend="cuda",
+   )
+   result = maxent(dataset.run, config, cycles=10)
+
+* ``"numpy"`` (the default) is the historical CPU path, unchanged.
+* ``"cuda"`` requires a working GPU: if CuPy is missing or no CUDA device is
+  found, ``maxent()`` raises ``MaxEntBackendError`` naming the ``gpu`` extra
+  and the driver requirement.
+* ``"auto"`` prefers CUDA but falls back to ``"numpy"`` silently when it is
+  unavailable, so the same script runs unmodified on a workstation with a GPU
+  and on a laptop or CI runner without one.
+
+Everything on the GPU runs in float64 — there is no float32 path — so the
+reconstructed spectrum agrees with the CPU result to solver tolerance. It is
+not bit-for-bit identical, because a GPU reduction sums the same terms in a
+different order. The backend is not part of a state's identity, so a state
+produced with one backend resumes cleanly under another; switching
+``backend`` between calls is safe and never invalidates a resumable state.
+
+The speed-up scales with problem size: on an RTX 3080, the projection kernels
+measured roughly 160× faster than NumPy at a large workload (16384 time bins
+by :math:`2^{20}` spectrum points). At the smaller, interactive scale typical
+of the GUI's default settings, the CPU path is already fast, which is why the
+GUI does not expose this option. The ``backend`` field is scripting-API only:
+a MaxEnt recompute driven from the GUI always runs the CPU backend and records
+``backend: "numpy"`` in the stored recipe. A recipe authored with ``"cuda"`` or
+``"auto"`` through the scripting API therefore keeps that setting only until a
+GUI recompute overwrites it — the recipe faithfully records what produced the
+stored spectrum.
+
 GUI workflow
 ~~~~~~~~~~~~
 

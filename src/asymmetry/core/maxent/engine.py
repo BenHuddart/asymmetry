@@ -28,6 +28,11 @@ from asymmetry.core.fitting.spectral import (
 )
 from asymmetry.core.fourier.grouped import build_group_signal_dataset
 from asymmetry.core.fourier.units import gauss_to_mhz
+from asymmetry.core.maxent.backend import (
+    BACKEND_CHOICES,
+    ProjectionBackend,
+    resolve_backend,
+)
 from asymmetry.core.maxent.pulse import pulse_amplitude_phase
 from asymmetry.core.maxent.specbg import apply_maxent_specbg
 from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
@@ -36,7 +41,6 @@ from asymmetry.core.utils.coerce import optional_float
 
 _MAX_SPECTRUM_POINTS = 1 << 20
 _MIN_POSITIVE = 1.0e-15
-_MAX_DESIGN_CHUNK_ELEMENTS = 2_000_000
 
 # Interior-exclusion σ-inflation factor: points inside the exclusion window keep
 # their place in the time grid but are de-weighted to ~zero (weight ∝ 1/σ²), so
@@ -179,6 +183,12 @@ class MaxEntConfig:
     # absent from ``_state_signature`` (toggling it must not invalidate a
     # resumed run).  Defaults off — the spectrum is MaxEnt's primary output.
     show_reconstruction: bool = False
+    # Projection backend for the hot loop: "numpy" (default, CPU, bit-for-bit
+    # identical to the historical path), "cuda" (optional CuPy GPU, fp64), or
+    # "auto" (CUDA if available, else NumPy).  The math is backend-independent —
+    # results agree to solver tolerance — so it is absent from
+    # ``_state_signature``: a resumed run must survive a backend switch.
+    backend: str = "numpy"
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serialisable recipe block."""
@@ -215,6 +225,7 @@ class MaxEntConfig:
             "specbg_lorentzian_width_mhz": float(self.specbg_lorentzian_width_mhz),
             "specbg_lorentzian_fraction": float(self.specbg_lorentzian_fraction),
             "show_reconstruction": bool(self.show_reconstruction),
+            "backend": str(self.backend),
         }
 
     @classmethod
@@ -271,6 +282,7 @@ class MaxEntConfig:
                 np.clip(_float_or_default(data.get("specbg_lorentzian_fraction"), 0.5), 0.0, 1.0)
             ),
             show_reconstruction=bool(data.get("show_reconstruction", False)),
+            backend=_parse_choice(data.get("backend"), BACKEND_CHOICES, "numpy"),
         )
 
 
@@ -845,11 +857,15 @@ def build_maxent_input(
     )
 
 
-def _chunk_rows(n_time: int, n_frequency: int) -> int:
+def _chunk_rows(
+    n_time: int,
+    n_frequency: int,
+    chunk_elements: int,
+) -> int:
     """Return a row chunk that bounds temporary OPUS/TROPUS matrices."""
     if n_time <= 0:
         return 1
-    return max(1, min(int(n_time), _MAX_DESIGN_CHUNK_ELEMENTS // max(1, int(n_frequency))))
+    return max(1, min(int(n_time), int(chunk_elements) // max(1, int(n_frequency))))
 
 
 def _kernel_phase_offset(
@@ -885,6 +901,7 @@ def _project_forward(
     phase_degrees: float,
     pulse_amp: NDArray[np.float64] | None = None,
     pulse_phase: NDArray[np.float64] | None = None,
+    backend: ProjectionBackend | None = None,
 ) -> NDArray[np.float64]:
     """Return dense-equivalent OPUS output without materialising all rows.
 
@@ -893,22 +910,26 @@ def _project_forward(
     ``R(ν)·cos(2πνt + φ − δ(ν))``, which preserves the OPUS/TROPUS adjoint pair
     because both maps build the identical matrix.
     """
-    time = np.asarray(time_us, dtype=np.float64)
-    frequencies = np.asarray(frequencies_mhz, dtype=np.float64)
+    backend = backend if backend is not None else resolve_backend(None)
+    xp = backend.xp
+    time = backend.asarray(time_us)
+    frequencies = backend.asarray(frequencies_mhz)
+    dev_pulse_amp = None if pulse_amp is None else backend.asarray(pulse_amp)
+    dev_pulse_phase = None if pulse_phase is None else backend.asarray(pulse_phase)
     # Fold the pulse amplitude R(ν) into the spectrum once: M @ (R⊙f) equals the
     # column-scaled kernel (M·diag(R)) @ f without allocating the scaled block.
-    f = _apply_pulse_amp(np.asarray(spectrum, dtype=np.float64), pulse_amp)
+    f = _apply_pulse_amp(backend.asarray(spectrum), dev_pulse_amp)
     phase = np.deg2rad(float(phase_degrees))
-    offset = _kernel_phase_offset(phase, pulse_phase)
-    output = np.empty(time.size, dtype=np.float64)
-    chunk = _chunk_rows(time.size, frequencies.size)
+    offset = _kernel_phase_offset(phase, dev_pulse_phase)
+    output = xp.empty(time.size, dtype=xp.float64)
+    chunk = _chunk_rows(time.size, frequencies.size, backend.chunk_elements)
     for start in range(0, time.size, chunk):
         stop = min(start + chunk, time.size)
-        matrix = np.cos(
+        matrix = xp.cos(
             2.0 * np.pi * time[start:stop, np.newaxis] * frequencies[np.newaxis, :] + offset
         )
         output[start:stop] = matrix @ f
-    return output
+    return backend.to_numpy(output)
 
 
 def _project_forward_components(
@@ -918,6 +939,7 @@ def _project_forward_components(
     *,
     pulse_amp: NDArray[np.float64] | None = None,
     pulse_phase: NDArray[np.float64] | None = None,
+    backend: ProjectionBackend | None = None,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """Return ``(C @ f, S @ f)`` for the (pulse-shaped) cosine/sine kernels.
 
@@ -926,21 +948,25 @@ def _project_forward_components(
     model at phase φ is still ``cosφ·C − sinφ·S`` — the phase scan formula is
     unchanged, the components simply carry the pulse shaping.
     """
-    time = np.asarray(time_us, dtype=np.float64)
-    frequencies = np.asarray(frequencies_mhz, dtype=np.float64)
+    backend = backend if backend is not None else resolve_backend(None)
+    xp = backend.xp
+    time = backend.asarray(time_us)
+    frequencies = backend.asarray(frequencies_mhz)
+    dev_pulse_amp = None if pulse_amp is None else backend.asarray(pulse_amp)
+    dev_pulse_phase = None if pulse_phase is None else backend.asarray(pulse_phase)
     # Fold R(ν) into the spectrum once (see :func:`_apply_pulse_amp`); both the
     # cosine and sine projections then carry the pulse shaping via this scaling.
-    f = _apply_pulse_amp(np.asarray(spectrum, dtype=np.float64), pulse_amp)
-    offset = _kernel_phase_offset(0.0, pulse_phase)
-    cos_output = np.empty(time.size, dtype=np.float64)
-    sin_output = np.empty(time.size, dtype=np.float64)
-    chunk = _chunk_rows(time.size, frequencies.size)
+    f = _apply_pulse_amp(backend.asarray(spectrum), dev_pulse_amp)
+    offset = _kernel_phase_offset(0.0, dev_pulse_phase)
+    cos_output = xp.empty(time.size, dtype=xp.float64)
+    sin_output = xp.empty(time.size, dtype=xp.float64)
+    chunk = _chunk_rows(time.size, frequencies.size, backend.chunk_elements)
     for start in range(0, time.size, chunk):
         stop = min(start + chunk, time.size)
         angle = 2.0 * np.pi * time[start:stop, np.newaxis] * frequencies[np.newaxis, :] + offset
-        cos_output[start:stop] = np.cos(angle) @ f
-        sin_output[start:stop] = np.sin(angle) @ f
-    return cos_output, sin_output
+        cos_output[start:stop] = xp.cos(angle) @ f
+        sin_output[start:stop] = xp.sin(angle) @ f
+    return backend.to_numpy(cos_output), backend.to_numpy(sin_output)
 
 
 def _project_adjoint(
@@ -951,28 +977,33 @@ def _project_adjoint(
     phase_degrees: float,
     pulse_amp: NDArray[np.float64] | None = None,
     pulse_phase: NDArray[np.float64] | None = None,
+    backend: ProjectionBackend | None = None,
 ) -> NDArray[np.float64]:
     """Return dense-equivalent TROPUS output without materialising all rows.
 
     Uses the same pulse-shaped kernel as :func:`_project_forward`, so it remains
     its exact matrix transpose (the OPUS/TROPUS adjoint property is preserved).
     """
-    time = np.asarray(time_us, dtype=np.float64)
-    frequencies = np.asarray(frequencies_mhz, dtype=np.float64)
-    v = np.asarray(values, dtype=np.float64)
+    backend = backend if backend is not None else resolve_backend(None)
+    xp = backend.xp
+    time = backend.asarray(time_us)
+    frequencies = backend.asarray(frequencies_mhz)
+    v = backend.asarray(values)
+    dev_pulse_amp = None if pulse_amp is None else backend.asarray(pulse_amp)
+    dev_pulse_phase = None if pulse_phase is None else backend.asarray(pulse_phase)
     phase = np.deg2rad(float(phase_degrees))
-    offset = _kernel_phase_offset(phase, pulse_phase)
-    output = np.zeros(frequencies.size, dtype=np.float64)
-    chunk = _chunk_rows(time.size, frequencies.size)
+    offset = _kernel_phase_offset(phase, dev_pulse_phase)
+    output = xp.zeros(frequencies.size, dtype=xp.float64)
+    chunk = _chunk_rows(time.size, frequencies.size, backend.chunk_elements)
     for start in range(0, time.size, chunk):
         stop = min(start + chunk, time.size)
-        matrix = np.cos(
+        matrix = xp.cos(
             2.0 * np.pi * time[start:stop, np.newaxis] * frequencies[np.newaxis, :] + offset
         )
         output += matrix.T @ v[start:stop]
     # Weight the accumulated adjoint by R(ν) once: R ⊙ (Mᵀ@v) is the exact
     # transpose of the column-scaled forward map M @ (R⊙f).
-    return _apply_pulse_amp(output, pulse_amp)
+    return backend.to_numpy(_apply_pulse_amp(output, dev_pulse_amp))
 
 
 def opus(
@@ -982,6 +1013,7 @@ def opus(
     phases: dict[int, float] | None = None,
     amplitudes: dict[int, float] | None = None,
     backgrounds: dict[int, float] | None = None,
+    backend: ProjectionBackend | None = None,
 ) -> dict[int, NDArray[np.float64]]:
     """Forward map from a shared spectrum to each group signal."""
     frequencies = maxent_input.frequencies_mhz
@@ -1003,6 +1035,7 @@ def opus(
                 phase_degrees=phase,
                 pulse_amp=maxent_input.pulse_amp,
                 pulse_phase=maxent_input.pulse_phase,
+                backend=backend,
             )
             + background
         )
@@ -1015,6 +1048,7 @@ def tropus(
     *,
     phases: dict[int, float] | None = None,
     amplitudes: dict[int, float] | None = None,
+    backend: ProjectionBackend | None = None,
 ) -> NDArray[np.float64]:
     """Adjoint map from group time-domain values to one spectral vector."""
     frequencies = maxent_input.frequencies_mhz
@@ -1034,6 +1068,7 @@ def tropus(
             phase_degrees=phase,
             pulse_amp=maxent_input.pulse_amp,
             pulse_phase=maxent_input.pulse_phase,
+            backend=backend,
         )
     return output
 
@@ -1062,6 +1097,8 @@ class ReconstructedGroup:
 def reconstruct_group_signals(
     maxent_input: MaxEntInput,
     state: MaxEntState,
+    *,
+    backend: ProjectionBackend | None = None,
 ) -> dict[int, ReconstructedGroup]:
     """Return the per-group time-domain reconstruction for a converged state.
 
@@ -1077,6 +1114,7 @@ def reconstruct_group_signals(
         phases=state.phases,
         amplitudes=state.amplitudes,
         backgrounds=state.backgrounds,
+        backend=backend,
     )
     reconstructions: dict[int, ReconstructedGroup] = {}
     for group in maxent_input.groups:
@@ -1102,6 +1140,9 @@ def reconstruct_group_signals(
 
 
 def _state_signature(maxent_input: MaxEntInput, config: MaxEntConfig) -> tuple[Any, ...]:
+    # ``config.backend`` is deliberately absent: the projection math is
+    # backend-independent (results agree to solver tolerance), so a state built
+    # on one backend must resume on another without a forced restart.
     return (
         int(maxent_input.run_number),
         tuple(group.group_id for group in maxent_input.groups),
@@ -1140,7 +1181,11 @@ def _state_signature(maxent_input: MaxEntInput, config: MaxEntConfig) -> tuple[A
     )
 
 
-def _initial_spectrum(maxent_input: MaxEntInput) -> NDArray[np.float64]:
+def _initial_spectrum(
+    maxent_input: MaxEntInput,
+    *,
+    backend: ProjectionBackend | None = None,
+) -> NDArray[np.float64]:
     frequencies = maxent_input.frequencies_mhz
     estimate = np.full(frequencies.size, float(maxent_input.default_level), dtype=np.float64)
     for group in maxent_input.groups:
@@ -1156,6 +1201,7 @@ def _initial_spectrum(maxent_input: MaxEntInput) -> NDArray[np.float64]:
                 phase_degrees=group.phase_degrees,
                 pulse_amp=maxent_input.pulse_amp,
                 pulse_phase=maxent_input.pulse_phase,
+                backend=backend,
             )
         )
         if power.size and np.nanmax(power) > 0.0:
@@ -1171,12 +1217,13 @@ def initialize_state(
 ) -> MaxEntState:
     """Return a fresh resumable MaxEnt state."""
     resolved_config = config if isinstance(config, MaxEntConfig) else MaxEntConfig.from_dict(config)
+    projection_backend = resolve_backend(resolved_config.backend)
     phases = {group.group_id: group.phase_degrees for group in maxent_input.groups}
     amplitudes = {group.group_id: group.amplitude for group in maxent_input.groups}
     backgrounds = {group.group_id: group.background for group in maxent_input.groups}
     return MaxEntState(
         frequencies_mhz=maxent_input.frequencies_mhz,
-        spectrum=_initial_spectrum(maxent_input),
+        spectrum=_initial_spectrum(maxent_input, backend=projection_backend),
         phases=phases,
         amplitudes=amplitudes,
         backgrounds=backgrounds,
@@ -1187,6 +1234,8 @@ def initialize_state(
 def _residual_payload(
     state: MaxEntState,
     maxent_input: MaxEntInput,
+    *,
+    backend: ProjectionBackend | None = None,
 ) -> tuple[dict[int, NDArray[np.float64]], float, int]:
     """Return the full forward predictions plus χ² for the current state."""
     predictions = opus(
@@ -1195,6 +1244,7 @@ def _residual_payload(
         phases=state.phases,
         amplitudes=state.amplitudes,
         backgrounds=state.backgrounds,
+        backend=backend,
     )
     chi2 = 0.0
     n_obs = 0
@@ -1216,6 +1266,7 @@ def _residual_gradient_payload(
     maxent_input: MaxEntInput,
     *,
     cancel_callback: MaxEntCancelCallback | None = None,
+    backend: ProjectionBackend | None = None,
 ) -> tuple[NDArray[np.float64], float, int]:
     """Return the χ² gradient (TROPUS of the weighted residuals) plus χ².
 
@@ -1225,43 +1276,67 @@ def _residual_gradient_payload(
     is checked per chunk: a full pass over a large workload can take tens of
     seconds, and window-close waits on cooperative cancel with a timeout.
     """
-    frequencies = maxent_input.frequencies_mhz
+    backend = backend if backend is not None else resolve_backend(None)
+    xp = backend.xp
+    frequencies = backend.asarray(maxent_input.frequencies_mhz)
     pulse_amp = maxent_input.pulse_amp
     pulse_phase = maxent_input.pulse_phase
+    dev_pulse_amp = None if pulse_amp is None else backend.asarray(pulse_amp)
+    dev_pulse_phase = None if pulse_phase is None else backend.asarray(pulse_phase)
     # Fold R(ν) into the spectrum once for every group's forward projection; the
     # adjoint gradient gets it back once at the end (R is common to all groups,
     # so it factors straight out of the group sum).  Net: no scaled kernel block
     # is materialised in the chunk loop.
-    f = _apply_pulse_amp(np.asarray(state.spectrum, dtype=np.float64), pulse_amp)
-    grad = np.zeros(frequencies.size, dtype=np.float64)
+    f = _apply_pulse_amp(backend.asarray(state.spectrum), dev_pulse_amp)
+    grad = xp.zeros(frequencies.size, dtype=xp.float64)
     chi2 = 0.0
     n_obs = 0
     for group in maxent_input.groups:
-        mask = group.mask if group.mask is not None else np.ones(group.time_us.size, dtype=bool)
         phase = np.deg2rad(float(state.phases.get(group.group_id, group.phase_degrees)))
-        offset = _kernel_phase_offset(phase, pulse_phase)
+        offset = _kernel_phase_offset(phase, dev_pulse_phase)
         amplitude = float(state.amplitudes.get(group.group_id, group.amplitude))
         background = float(state.backgrounds.get(group.group_id, group.background))
-        time = np.asarray(group.time_us, dtype=np.float64)
-        signal = np.asarray(group.signal, dtype=np.float64)
-        sigma = np.maximum(np.asarray(group.sigma, dtype=np.float64), _MIN_POSITIVE)
-        chunk = _chunk_rows(time.size, frequencies.size)
+        time = backend.asarray(group.time_us)
+        signal = backend.asarray(group.signal)
+        sigma = xp.maximum(backend.asarray(group.sigma), _MIN_POSITIVE)
+        # No-mask fast path: when every row is good there is no mask to apply, so
+        # use the contiguous ``start:stop`` slices directly — no ``dev_mask``
+        # upload, no per-chunk ``xp.any`` sync, no boolean row-gather.  An
+        # all-true gather equals the plain slice and the accumulation order is
+        # unchanged, so this yields identical numeric values on either backend to
+        # the masked branch below; the masked branch is kept for real masks
+        # (dropped bins, de-weighted exclusion windows).
+        dev_mask = None if group.mask is None else xp.asarray(group.mask)
+        chunk = _chunk_rows(time.size, frequencies.size, backend.chunk_elements)
         for start in range(0, time.size, chunk):
             _check_cancel(cancel_callback)
             stop = min(start + chunk, time.size)
-            rows = mask[start:stop]
-            if not np.any(rows):
-                continue
-            matrix = np.cos(
-                2.0 * np.pi * time[start:stop][rows, np.newaxis] * frequencies[np.newaxis, :]
-                + offset
+            if dev_mask is None:
+                chunk_time = time[start:stop]
+                chunk_signal = signal[start:stop]
+                chunk_sigma = sigma[start:stop]
+                n_rows = stop - start
+            else:
+                rows = dev_mask[start:stop]
+                if not bool(xp.any(rows)):
+                    continue
+                chunk_time = time[start:stop][rows]
+                chunk_signal = signal[start:stop][rows]
+                chunk_sigma = sigma[start:stop][rows]
+                n_rows = int(xp.count_nonzero(rows))
+            matrix = xp.cos(
+                2.0 * np.pi * chunk_time[:, np.newaxis] * frequencies[np.newaxis, :] + offset
             )
             pred = amplitude * (matrix @ f) + background
-            residual = (signal[start:stop][rows] - pred) / sigma[start:stop][rows]
-            chi2 += float(np.dot(residual, residual))
-            n_obs += int(np.count_nonzero(rows))
-            grad += amplitude * (matrix.T @ (residual / sigma[start:stop][rows]))
-    return _apply_pulse_amp(grad, pulse_amp), chi2, n_obs
+            residual = (chunk_signal - pred) / chunk_sigma
+            # The ``float(...)`` conversion below is the per-chunk device→host
+            # synchronization point on the CUDA path: it forces the chunk's work
+            # to complete, so a cancel requested mid-group is honoured within one
+            # chunk rather than after the whole group's rows are processed.
+            chi2 += float(xp.dot(residual, residual))
+            n_obs += n_rows
+            grad += amplitude * (matrix.T @ (residual / chunk_sigma))
+    return backend.to_numpy(_apply_pulse_amp(grad, dev_pulse_amp)), chi2, n_obs
 
 
 def _check_cancel(cancel_callback: MaxEntCancelCallback | None) -> None:
@@ -1276,6 +1351,7 @@ def _fit_group_nuisance(
     *,
     cancel_callback: MaxEntCancelCallback | None = None,
     predictions: dict[int, NDArray[np.float64]] | None = None,
+    backend: ProjectionBackend | None = None,
 ) -> None:
     # Callers that just evaluated the forward model on this exact state (the
     # end-of-cycle diagnostics) pass their predictions in to avoid a
@@ -1287,6 +1363,7 @@ def _fit_group_nuisance(
             phases=state.phases,
             amplitudes=state.amplitudes,
             backgrounds=state.backgrounds,
+            backend=backend,
         )
     for group in maxent_input.groups:
         _check_cancel(cancel_callback)
@@ -1341,6 +1418,7 @@ def _fit_group_nuisance(
                 state.spectrum,
                 pulse_amp=maxent_input.pulse_amp,
                 pulse_phase=maxent_input.pulse_phase,
+                backend=backend,
             )
             amplitude = float(state.amplitudes[group.group_id])
             background = float(state.backgrounds[group.group_id])
@@ -1437,6 +1515,10 @@ def run_cycles(
         raise ValueError("MaxEnt state is incompatible with the current configuration; restart.")
     active_state.signature = signature
 
+    # Resolve the projection backend once for the whole run: the default numpy
+    # backend is the historical CPU path; "cuda"/"auto" offload the hot kernels.
+    projection_backend = resolve_backend(resolved_config.backend)
+
     n_cycles = resolved_config.outer_cycles if cycles is None else max(0, int(cycles))
     frequencies = maxent_input.frequencies_mhz
     total_steps = max(1, n_cycles * (int(resolved_config.inner_iterations) + 1))
@@ -1462,6 +1544,7 @@ def run_cycles(
             resolved_config,
             cancel_callback=cancel_callback,
             predictions=predictions,
+            backend=projection_backend,
         )
         completed_steps += 1
         if progress_callback is not None:
@@ -1473,7 +1556,10 @@ def run_cycles(
         for _inner in range(resolved_config.inner_iterations):
             _check_cancel(cancel_callback)
             grad, chi2, n_obs = _residual_gradient_payload(
-                active_state, maxent_input, cancel_callback=cancel_callback
+                active_state,
+                maxent_input,
+                cancel_callback=cancel_callback,
+                backend=projection_backend,
             )
             entropy_grad = -np.log(
                 np.maximum(active_state.spectrum, _MIN_POSITIVE)
@@ -1499,7 +1585,9 @@ def run_cycles(
         _check_cancel(cancel_callback)
         # The end-of-cycle predictions are reused by the next cycle's nuisance
         # fit — the state does not change between here and there.
-        predictions, chi2, n_obs = _residual_payload(active_state, maxent_input)
+        predictions, chi2, n_obs = _residual_payload(
+            active_state, maxent_input, backend=projection_backend
+        )
         entropy = _entropy(active_state.spectrum, resolved_config.default_level)
         target = max(float(n_obs) * resolved_config.chi2_target_over_n, _MIN_POSITIVE)
         test = float(abs(chi2 - target) / target)
