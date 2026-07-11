@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Fit-range spinboxes now commit a programmatically set value.** Setting a
+  fit-range field's value in code (e.g. from a scripted/automated scenario)
+  used to update only the field's display while the fit kept running over the
+  old range — the range is owned by the plot panel, and a bare `setValue`
+  never reached it. The Single and Batch (and grouped multi-group) fit-range
+  fields now push a driven `setValue` through to the plot's fit range exactly
+  as a typed entry does, while the plot→field display mirror stays silent (no
+  feedback loop). Interactive editing (type + Return / focus-out) was already
+  correct and is unchanged.
+
 ### Added
 
 - **Optional CUDA GPU backend for the MaxEnt engine (scripting API).**

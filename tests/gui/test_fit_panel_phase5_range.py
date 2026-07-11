@@ -110,8 +110,9 @@ def test_spinbox_commit_emits_signal(tab: SingleFitTab, qapp: QApplication) -> N
     emitted: list[tuple[float, float]] = []
     tab.fit_range_edit_committed.connect(lambda a, b: emitted.append((a, b)))
     tab.set_fit_range_display(0.10, 5.00)
+    # A programmatic setValue commits on its own (commit_on_set_value): the
+    # field's value is plot-owned state, so a driven change must reach the fit.
     tab._fit_range_min_spin.setValue(0.25)
-    tab._fit_range_min_spin.editingFinished.emit()
     qapp.processEvents()
     assert len(emitted) == 1
     assert abs(emitted[0][0] - 0.25) < 1e-6
@@ -123,7 +124,6 @@ def test_spinbox_commit_emits_both_bounds(tab: SingleFitTab, qapp: QApplication)
     tab.fit_range_edit_committed.connect(lambda a, b: emitted.append((a, b)))
     tab.set_fit_range_display(0.10, 5.00)
     tab._fit_range_max_spin.setValue(6.00)
-    tab._fit_range_max_spin.editingFinished.emit()
     qapp.processEvents()
     assert len(emitted) == 1
     assert abs(emitted[0][0] - 0.10) < 1e-6
@@ -200,6 +200,46 @@ def test_panel_spinbox_commit_updates_plot_fit_range(win: MainWindow, qapp: QApp
     assert lo is not None and abs(lo - 0.40) < 1e-3
 
 
+def test_programmatic_spinbox_setvalue_updates_plot_fit_range(
+    win: MainWindow, qapp: QApplication
+) -> None:
+    """Regression: a bare ``setValue`` (no editingFinished, no typing) commits.
+
+    The single-fit range field is a view of plot-owned state; a driven
+    ``setValue`` used to display the new value while the fit kept running over
+    the old range. It must now push through to the plot panel's fit range.
+    """
+    win._plot_panel.set_fit_range(0.10, 5.00)
+    qapp.processEvents()
+    st = _single_tab(win)
+    st._fit_range_min_spin.setValue(0.40)
+    st._fit_range_max_spin.setValue(6.25)
+    qapp.processEvents()
+    lo, hi = win._plot_panel.get_fit_range()
+    assert lo is not None and abs(lo - 0.40) < 1e-3
+    assert hi is not None and abs(hi - 6.25) < 1e-3
+
+
+def test_typed_range_commits_to_plot_on_return(win: MainWindow, qapp: QApplication) -> None:
+    """The interactive path (type + Return) reaches the plot's fit range.
+
+    Companion to the programmatic ``setValue`` regression: a value typed into
+    the field and committed with Return must land in the plot-owned fit range,
+    not just the field display.
+    """
+    win._plot_panel.set_fit_range(0.10, 5.00)
+    qapp.processEvents()
+    st = _single_tab(win)
+    field = st._fit_range_min_spin
+    field.setFocus()
+    field.selectAll()
+    QTest.keyClicks(field, "0.55")
+    QTest.keyClick(field, Qt.Key.Key_Return)
+    qapp.processEvents()
+    lo, _hi = win._plot_panel.get_fit_range()
+    assert lo is not None and abs(lo - 0.55) < 1e-3
+
+
 def test_no_feedback_loop_on_spinbox_commit(win: MainWindow, qapp: QApplication) -> None:
     """Committing a spinbox should not cause multiple extra emissions."""
     emission_count: list[int] = [0]
@@ -212,9 +252,9 @@ def test_no_feedback_loop_on_spinbox_commit(win: MainWindow, qapp: QApplication)
     qapp.processEvents()
     st = _single_tab(win)
     st._fit_range_max_spin.setValue(7.00)
-    st._fit_range_max_spin.editingFinished.emit()
     qapp.processEvents()
-    # One emission from the user commit; the plot's response must not re-emit
+    # One emission from the setValue commit; the plot's response mirrors the
+    # value back through the blocked display path, so it must not re-emit.
     assert emission_count[0] == 1
 
 
