@@ -338,6 +338,17 @@ class TestHandoffPlotGrammar:
             assert "IBM Plex Mono" in str(text.get_fontfamily())
             assert text.get_fontsize() == pytest.approx(9.0)
 
+    def test_legend_is_excluded_from_layout(self, panel, dataset) -> None:
+        # A tall legend (many overlaid traces) must not drive tight/constrained
+        # layout to shrink the axes on a short pane — it is kept out of the
+        # layout solver so it overlaps instead of squashing the plot.
+        if not getattr(panel, "_has_mpl", False):
+            pytest.skip("matplotlib not available")
+        panel.plot_dataset(dataset)
+        legend = panel._ax.get_legend()
+        assert legend is not None
+        assert legend.get_in_layout() is False
+
 
 def _offset_dataset():
     from asymmetry.core.data.dataset import MuonDataset

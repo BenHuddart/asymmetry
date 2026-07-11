@@ -561,6 +561,13 @@ class PlotPanel(QWidget):
         #: :meth:`set_custom_label_fields`). Their per-run values are read straight
         #: from ``dataset.metadata["custom_fields"]``.
         self._custom_label_fields: list[tuple[str, str]] = []
+        #: Host-provided ``run_number -> {column-id: value}`` map (see
+        #: :meth:`set_custom_values_by_run`). Derived datasets such as averaged
+        #: FFT spectra do not carry the source run's ``custom_fields`` inline, so
+        #: this is the fallback that lets a custom-column label still resolve for
+        #: them by run number — the frequency-view analogue of the built-in
+        #: fields' ``run.metadata`` fallback.
+        self._custom_values_by_run: dict[int, dict[str, str]] = {}
 
         # Label and Overlay widgets are created here but placed in the nav row below.
         self._label_field_combo = QComboBox()
@@ -1625,11 +1632,46 @@ class PlotPanel(QWidget):
         normalized = [(str(label), str(key)) for label, key in fields]
         if normalized == self._custom_label_fields:
             return
-        active_is_custom = str(self._label_field_combo.currentData() or "").startswith("custom:")
+        active_is_custom = self._is_custom_field(self._label_field_combo.currentData())
         self._custom_label_fields = normalized
         self._rebuild_label_field_combo()
         if active_is_custom and self._has_mpl and self._current_datasets:
             self._redraw_current_view()
+
+    def set_custom_values_by_run(self, values_by_run: dict[int, dict[str, str]]) -> None:
+        """Set the ``run_number -> {column-id: value}`` custom-label fallback.
+
+        Datasets that do not carry ``custom_fields`` inline — averaged FFT
+        spectra copy their metadata from a per-group source that has none — can
+        still resolve a custom-column label from this host-provided map, keyed by
+        run number. Redraws when a custom field is active so the change is
+        reflected immediately (e.g. a value edited after the spectrum was drawn).
+        """
+        normalized = {
+            int(run): {str(k): str(v) for k, v in fields.items()}
+            for run, fields in values_by_run.items()
+            if isinstance(fields, dict)
+        }
+        if normalized == self._custom_values_by_run:
+            return
+        self._custom_values_by_run = normalized
+        active_is_custom = self._is_custom_field(self._label_field_combo.currentData())
+        if active_is_custom and self._has_mpl and self._current_datasets:
+            self._redraw_current_view()
+
+    def _is_custom_field(self, field: object) -> bool:
+        """Whether *field* names a custom data-browser column.
+
+        Most custom columns use ``custom:<hash>`` ids, but the special Angle
+        column uses the bare id ``"angle"`` — so a prefix test alone misses it
+        and its label would wrongly fall through to the generic-metadata branch.
+        A bare id is recognised via the offered custom-field list.
+        """
+        if not isinstance(field, str):
+            return False
+        if field.startswith("custom:"):
+            return True
+        return any(field == key for _, key in self._custom_label_fields)
 
     def _is_valid_label_field(self, field: object) -> bool:
         """Whether ``field`` is a selectable label key (built-in or custom column).
@@ -1640,17 +1682,42 @@ class PlotPanel(QWidget):
         """
         if not isinstance(field, str):
             return False
-        if field.startswith("custom:"):
+        if self._is_custom_field(field):
             return True
         return field in {key for _, key in _LABEL_FIELDS}
 
+    def _is_restorable_label_field(self, field: object) -> bool:
+        """Accept a saved label key even if its custom column is not yet offered.
+
+        Restore can run before ``set_custom_label_fields`` pushes the project's
+        custom columns in, so a bare custom id (e.g. the Angle column's
+        ``"angle"``) would fail :meth:`_is_valid_label_field` and be silently
+        reset to ``run``. Any non-empty string is preserved as a pending intent;
+        :meth:`_rebuild_label_field_combo` selects it once the column is offered
+        and otherwise degrades to the run label at render time.
+        """
+        return isinstance(field, str) and field != ""
+
     def _custom_field_value(self, dataset: MuonDataset, field: str) -> str | None:
-        """Resolve a ``custom:<id>`` label key to a dataset's stored text."""
+        """Resolve a ``custom:<id>`` label key to a dataset's stored text.
+
+        Prefers the dataset's own inline ``custom_fields`` and falls back to the
+        host-provided per-run map (:meth:`set_custom_values_by_run`) so derived
+        datasets that carry no inline custom fields — e.g. averaged FFT spectra —
+        still resolve the column by run number.
+        """
         fields = dataset.metadata.get("custom_fields")
         if isinstance(fields, dict):
             value = fields.get(field)
             if value is not None and str(value) != "":
                 return str(value)
+        run_number = getattr(dataset, "run_number", None)
+        if run_number is not None:
+            mapped = self._custom_values_by_run.get(int(run_number))
+            if isinstance(mapped, dict):
+                value = mapped.get(field)
+                if value is not None and str(value) != "":
+                    return str(value)
         return None
 
     def _dataset_label_for(self, dataset: MuonDataset) -> str:
@@ -1658,7 +1725,7 @@ class PlotPanel(QWidget):
         field = self._label_field_combo.currentData()
         if field == "run":
             return str(dataset.run_label)
-        if isinstance(field, str) and field.startswith("custom:"):
+        if self._is_custom_field(field):
             value = self._custom_field_value(dataset, field)
             return value if value is not None else str(dataset.run_label)
         run = dataset.run
@@ -7692,7 +7759,7 @@ class PlotPanel(QWidget):
         self._auto_y_btn.setChecked(bool(state.get("auto_y_enabled", False)))
 
         default_label_field = state.get("default_label_field", state.get("label_field", "run"))
-        if not self._is_valid_label_field(default_label_field):
+        if not self._is_restorable_label_field(default_label_field):
             default_label_field = "run"
         self._default_label_field = str(default_label_field)
 
@@ -7700,7 +7767,7 @@ class PlotPanel(QWidget):
         self._label_field_by_group = {}
         if isinstance(raw_group_label_fields, dict):
             for group_id, field in raw_group_label_fields.items():
-                if self._is_valid_label_field(field):
+                if self._is_restorable_label_field(field):
                     self._label_field_by_group[str(group_id)] = str(field)
 
         self._active_label_group_id = None
@@ -7737,7 +7804,7 @@ class PlotPanel(QWidget):
         # pushed back yet is kept as the default (not clobbered to "run") and gets
         # selected automatically once set_custom_label_fields offers it.
         label_field = state.get("label_field", self._default_label_field)
-        if self._is_valid_label_field(label_field) and self._active_label_group_id is None:
+        if self._is_restorable_label_field(label_field) and self._active_label_group_id is None:
             self._default_label_field = str(label_field)
         self._rebuild_label_field_combo()
 

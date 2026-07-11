@@ -211,6 +211,13 @@ def style_legend(legend: object) -> None:
         return
     register_matplotlib_fonts()
     try:
+        # Keep the legend out of the layout solver. With many overlaid traces
+        # (e.g. an angle scan of 20+ FFT spectra) the legend is tall; if
+        # tight/constrained layout tries to reserve room for it on a short plot
+        # pane it collapses the axes to a thin band ("squashed" plot). Ignoring
+        # it lets the legend overlap the axes (as it already does when there is
+        # room) while the plot keeps its full height.
+        legend.set_in_layout(False)  # type: ignore[union-attr]
         frame = legend.get_frame()  # type: ignore[union-attr]
         r, g, b, a = tokens.PLOT_LEGEND_BG
         frame.set_facecolor((r, g, b))

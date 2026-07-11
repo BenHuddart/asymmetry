@@ -13531,9 +13531,19 @@ class MainWindow(QMainWindow):
         trend x-axis stay in step with the user's custom columns.
         """
         fields = self._data_browser.custom_label_fields()
+        values_by_run = (
+            self._data_browser.custom_values_by_run()
+            if hasattr(self._data_browser, "custom_values_by_run")
+            else {}
+        )
         for panel in (self._plot_panel, self._frequency_plot_panel):
             if hasattr(panel, "set_custom_label_fields"):
                 panel.set_custom_label_fields(fields)
+            # Derived datasets (averaged FFT spectra) do not carry the source
+            # run's custom_fields inline, so also hand the panel the per-run map
+            # to resolve custom-column labels by run number.
+            if hasattr(panel, "set_custom_values_by_run"):
+                panel.set_custom_values_by_run(values_by_run)
         # The Angle field is promoted to a first-class trend x-axis, so it is
         # routed separately and excluded from the generic custom-x list (which
         # would otherwise also offer it, and as a non-"custom:" key resolve wrong).
