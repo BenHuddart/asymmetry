@@ -332,6 +332,11 @@ is labelled in the legend:
 * **Temperature (K)**
 * **Comment**
 
+The same **Label** dropdown is available on the frequency (FFT / MaxEnt)
+toolbar and labels the overlaid spectra there, including custom columns such
+as an **Angle (°)** field. The time-domain and frequency views keep their own
+independent **Label** selection.
+
 If the selected metadata value is unavailable for a run, Asymmetry
 automatically falls back to the run label.
 
