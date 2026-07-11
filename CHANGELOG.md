@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Custom-column labels on the frequency (FFT / MaxEnt) view.** Choosing a
+  custom data-browser column — such as an **Angle (°)** field — as the plot
+  **Label** now relabels the overlaid Fourier spectra instead of falling back
+  to `<run> Average`. The special Angle column (a bare `angle` id rather than a
+  `custom:…` id) is recognised as a custom column, and averaged spectra — which
+  carry no inline `custom_fields` of their own — resolve the value from the
+  run's stored custom columns by run number. The selection also survives a
+  project reload. The time-domain and frequency views keep independent
+  **Label** choices.
+- **Overlaid plots no longer collapse under a tall legend.** With many overlaid
+  traces (e.g. a 20+ spectrum angle scan) on a short, wide plot pane, the tall
+  legend could drive the layout to shrink the axes to a thin band, squashing
+  the plot. The legend is now kept out of the layout solver, so it overlaps the
+  plot area (as it already did when there was room) while the axes keep their
+  full height.
 - **Good-frame count for legacy ISIS HDF4 / NeXus-v1 files.** The NeXus loader
   now reads the good-frame count from `instrument/beam` (`frames_period` per
   period, falling back to `frames_good` / `frames`) when a file carries no
