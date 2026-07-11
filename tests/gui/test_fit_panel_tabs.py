@@ -2799,6 +2799,14 @@ def test_fit_panel_global_fit_results_seed_single_state_per_run(
     dataset: MuonDataset,
 ) -> None:
     panel = FitPanel()
+    # D5: a batch/global write-back protects its member runs (a recorded fit
+    # result), but that protection is mediator-driven — a real MainWindow's
+    # mediator would, by this point, resolve each member from its persisted
+    # FitSlot (reconstructed when it has no ui_state of its own, see
+    # ``build_single_fit_payload_from_slot``). Here the panel's own
+    # batch-write-back cache stands in for that persisted slot.
+    stored: dict[int, dict] = {}
+    panel.set_single_fit_restore_provider(lambda ds: stored.get(int(ds.run_number)) if ds else None)
     d1 = dataset
     d2 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
 
@@ -2824,6 +2832,8 @@ def test_fit_panel_global_fit_results_seed_single_state_per_run(
         102: (_fit_result([0.44, 0.55, 0.66]), (np.array([0.0, 1.0]), np.array([0.2, 0.1])), []),
     }
     panel.register_global_fit_results(results)
+    stored[101] = panel._single_state_by_run[101]
+    stored[102] = panel._single_state_by_run[102]
 
     assert "Batch fit" in panel._single_tab._result_label.text()
     assert float(panel._single_tab._param_table.item(0, 1).text()) == pytest.approx(0.11)
@@ -2906,40 +2916,50 @@ def test_fit_panel_batch_tab_auto_inherits_completed_single_fits(
     _assert_inherits_averaged_seeds(panel._global_tab, model)
 
 
-def test_fit_panel_share_single_function_state_to_other_runs(
+def test_fit_panel_refresh_carries_fitted_source_and_clears_result(
     qapp: QApplication,
     dataset: MuonDataset,
 ) -> None:
+    """D5: an unprotected run refreshes onto the session's last *fitted* state.
+
+    Supersedes the retired ``share_single_function_state`` — the source run's
+    model/parameters now propagate automatically via refresh-unless-fitted
+    carry-forward instead of an explicit "Share with Group" action.
+    """
     panel = FitPanel()
+    panel.set_single_fit_restore_provider(lambda ds: None)
     d1 = dataset
     d2 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
     d3 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 103})
 
     panel.set_dataset(d1)
     panel._single_tab._param_table.item(0, 1).setText("0.777")
-    panel._single_tab._result_label.setText("source fit result")
-
-    datasets_by_run = {101: d1, 102: d2, 103: d3}
-    copied = panel.share_single_function_state(101, [102, 103], datasets_by_run=datasets_by_run)
-    assert copied == 2
+    panel._single_tab.fit_completed.emit(
+        FitResult(success=True, parameters=ParameterSet()), None, []
+    )
+    assert panel._single_fit_provenance == "own_slot"
 
     panel.set_dataset(d2)
+    assert panel._single_fit_provenance == "carried_from_run"
+    assert panel._single_fit_carry_source_run == 101
     assert float(panel._single_tab._param_table.item(0, 1).text()) == pytest.approx(0.777)
     assert panel._single_tab._result_label.text() == "No fit performed yet"
 
     panel.set_dataset(d3)
+    assert panel._single_fit_carry_source_run == 101
     assert float(panel._single_tab._param_table.item(0, 1).text()) == pytest.approx(0.777)
     assert panel._single_tab._result_label.text() == "No fit performed yet"
 
 
-def test_fit_panel_share_single_function_seeds_bl_from_target_field(
+def test_fit_panel_refresh_reseeds_bl_from_target_field(
     qapp: QApplication,
     dataset: MuonDataset,
 ) -> None:
-    """B_L parameter should be seeded from each target dataset's applied field."""
-    from asymmetry.core.fitting.composite import CompositeModel
-
+    """D5: refreshing onto a run reseeds field-dependent params (e.g. B_L) from
+    *that run's own* field, ported from the retired ``share_single_function_state``.
+    """
     panel = FitPanel()
+    panel.set_single_fit_restore_provider(lambda ds: None)
     d1 = MuonDataset(
         dataset.time,
         dataset.asymmetry,
@@ -2959,38 +2979,33 @@ def test_fit_panel_share_single_function_seeds_bl_from_target_field(
         {"run_number": 103, "field": 300.0},
     )
 
-    # Set an LF-KT model on d1 and adjust B_L to 50 G (the source field).
+    def _bl_value(tab) -> float | None:
+        for row in range(tab._param_table.rowCount()):
+            item = tab._param_table.item(row, 0)
+            if item and item.data(Qt.ItemDataRole.UserRole) == "B_L":
+                return float(tab._param_table.item(row, 1).text())
+        return None
+
+    # Set an LF-KT model on d1, adjust B_L to 50 G (the source field), and fit
+    # it so it becomes the session's D5 "last fitted" refresh source.
     panel.set_dataset(d1)
     lf_model = CompositeModel(["LongitudinalFieldKT", "Constant"], operators=["+"])
     panel._single_tab._set_composite_model(lf_model)
-    # Find the B_L row and set it to the source field.
     for row in range(panel._single_tab._param_table.rowCount()):
         item = panel._single_tab._param_table.item(row, 0)
         if item and item.data(Qt.ItemDataRole.UserRole) == "B_L":
             panel._single_tab._param_table.item(row, 1).setText("50.0")
-    panel._single_tab._result_label.setText("source fit result")
+    panel._single_tab.fit_completed.emit(
+        FitResult(success=True, parameters=ParameterSet()), None, []
+    )
 
-    datasets_by_run = {101: d1, 102: d2, 103: d3}
-    copied = panel.share_single_function_state(101, [102, 103], datasets_by_run=datasets_by_run)
-    assert copied == 2
-
-    # d2 has field=150 G — B_L in shared state should be overridden to 150.
+    # d2 has field=150 G — refreshing onto it reseeds B_L to 150, not 50.
     panel.set_dataset(d2)
-    bl_value_d2 = None
-    for row in range(panel._single_tab._param_table.rowCount()):
-        item = panel._single_tab._param_table.item(row, 0)
-        if item and item.data(Qt.ItemDataRole.UserRole) == "B_L":
-            bl_value_d2 = float(panel._single_tab._param_table.item(row, 1).text())
-    assert bl_value_d2 == pytest.approx(150.0)
+    assert _bl_value(panel._single_tab) == pytest.approx(150.0)
 
     # d3 has field=300 G.
     panel.set_dataset(d3)
-    bl_value_d3 = None
-    for row in range(panel._single_tab._param_table.rowCount()):
-        item = panel._single_tab._param_table.item(row, 0)
-        if item and item.data(Qt.ItemDataRole.UserRole) == "B_L":
-            bl_value_d3 = float(panel._single_tab._param_table.item(row, 1).text())
-    assert bl_value_d3 == pytest.approx(300.0)
+    assert _bl_value(panel._single_tab) == pytest.approx(300.0)
 
 
 def test_fit_panel_clear_fits_for_runs_removes_cached_fit_state(

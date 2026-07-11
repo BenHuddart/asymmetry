@@ -99,6 +99,14 @@ order parameter of a magnetic transition or the penetration depth of a
 superconductor is extracted by fitting a model to the trend rather than to any
 single spectrum. See :doc:`/reference/parameter_trending`.
 
+A run-membered series belongs to a **data group** — the named run collection
+you organise in the Data Browser — rather than owning a frozen list of run
+numbers of its own: the group is the batch vehicle, and the series' effective
+membership tracks the group's live membership (minus any run the series has
+individually excluded). A run may sit in more than one group at once, and a
+group may carry more than one series (the same scan fit two different ways).
+See :doc:`/reference/gui_usage` for the Data Browser's grouping controls.
+
 Projects
 --------
 

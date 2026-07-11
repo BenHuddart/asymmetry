@@ -279,8 +279,13 @@ def test_batch_launched_from_group_stamps_source_group_id(win: MainWindow) -> No
     assert series.source_group_id == gid
 
 
-def test_adhoc_batch_spanning_two_groups_leaves_source_group_id_none(win: MainWindow) -> None:
-    """A batch whose members straddle two different groups has no single provenance."""
+def test_adhoc_batch_spanning_two_groups_mints_one_auto_group(win: MainWindow) -> None:
+    """An ad-hoc batch straddling two groups auto-creates its own group (D1/D3).
+
+    No single existing group covers the set, so the batch mints one red auto-group
+    over exactly the fitted runs and binds to it (structural ``group_id`` plus the
+    legacy ``source_group_id`` mirror), with no exclusions.
+    """
     coords = {1277: (10.0, 400.0), 1280: (70.0, 400.0), 1281: (90.0, 400.0), 1282: (95.0, 400.0)}
     for run, (temp, field) in coords.items():
         _add_dataset(win, run, temp, field)
@@ -290,7 +295,14 @@ def test_adhoc_batch_spanning_two_groups_leaves_source_group_id_none(win: MainWi
     # Batch over one member from each group — no single group covers this set.
     batch_id = _run_batch(win, {1277: coords[1277], 1280: coords[1280]})
     series = win._project_model.batch(batch_id)
-    assert series.source_group_id is None
+    assert series.group_id is not None
+    assert series.source_group_id == series.group_id
+    auto = win._project_model.data_group(series.group_id)
+    assert auto is not None
+    assert auto.kind == "auto"
+    assert set(auto.member_run_numbers) == {1277, 1280}
+    assert series.excluded_run_numbers == []
+    assert set(series.last_fitted_members) == {1277, 1280}
 
 
 def test_fit_this_group_prefills_batch_regardless_of_visibility(win: MainWindow) -> None:
@@ -351,8 +363,9 @@ def test_saved_project_carries_data_groups_and_reload_relinks_provenance(win: Ma
     assert gid in saved_group_ids
 
     win._data_browser.restore_state(state["browser_state"])
+    # The registry is canonical (D6): _restore_frequency_representations rebinds
+    # the freshly loaded ProjectModel into the browser; no mirror step needed.
     win._restore_frequency_representations(state)
-    win._sync_data_groups_to_project_model()
 
     assert win._project_model.data_group(gid) is not None
     reloaded_series = win._project_model.batch(batch_id)
@@ -367,11 +380,11 @@ def test_core_only_data_group_survives_reload_without_browser_state_twin(
     """A group written only via the core API (no browser_state.data_groups twin) is not
     silently dropped on load.
 
-    Regression: the sync used to run unconditionally right after
-    ProjectModel.from_project_state parsed the top-level ``data_groups`` block,
-    overwriting it with whatever the browser's legacy browser_state.data_groups
-    block restored — which is empty/absent for a project authored purely against
-    the core API (e.g. a script using ProjectModel.add_data_group directly).
+    Under the canonical registry (D6), ``ProjectModel.data_groups`` is the single
+    source of truth: ``_restore_frequency_representations`` parses the top-level
+    ``data_groups`` block and rebinds the browser to it, so a group authored
+    purely against the core API (e.g. a script using ``ProjectModel.add_data_group``
+    directly) shows up without any browser_state twin.
     """
     coords = {1277: (10.0, 400.0), 1280: (70.0, 400.0)}
     for run, (temp, field) in coords.items():
@@ -390,8 +403,6 @@ def test_core_only_data_group_survives_reload_without_browser_state_twin(
     }
     win._data_browser.restore_state(state["browser_state"])
     win._restore_frequency_representations(state)
-    win._seed_browser_groups_from_project_model()
-    win._sync_data_groups_to_project_model()
 
     assert win._data_browser.get_group_name("core-only-grp") == "Core-only group"
     assert sorted(win._data_browser.get_group_member_run_numbers("core-only-grp")) == [
@@ -401,3 +412,213 @@ def test_core_only_data_group_survives_reload_without_browser_state_twin(
     restored_group = win._project_model.data_group("core-only-grp")
     assert restored_group is not None
     assert sorted(restored_group.member_run_numbers) == [1277, 1280]
+
+
+# ── Phase 3: group-bound batches, auto-groups, exclusions, staleness ───────────
+
+
+def _stub_fit_panel(win: MainWindow) -> None:
+    """Stub the fit-panel global state the record path reads (no real fit)."""
+    win._fit_panel.get_global_state = lambda: {  # type: ignore[method-assign]
+        "parameters": [{"name": "sigma", "type": "local"}],
+        "composite_model": {"component_names": ["Gaussian", "Constant"], "operators": ["+"]},
+    }
+    win._fit_panel.batch_fit_range_text = lambda: "0-16"  # type: ignore[method-assign]
+    win._active_representation_type = (  # type: ignore[method-assign]
+        lambda: RepresentationType.TIME_FB_ASYMMETRY
+    )
+
+
+def _record_over(win: MainWindow, runs: list[int]) -> str:
+    """Record a batch over *runs* (which must already be loaded), returning its id."""
+    payloads = {
+        run: (_StubFitResult({"sigma": 1.0}), (np.zeros(2), np.zeros(2)), []) for run in runs
+    }
+    batch_id = win._record_global_fit_batch(payloads, None)
+    assert batch_id is not None
+    return batch_id
+
+
+def test_adhoc_batch_creates_one_auto_group_reused_on_rerun(win: MainWindow) -> None:
+    """Ad-hoc batch mints ONE auto-group; a re-run reuses it and supersedes in place."""
+    coords = {1277: (10.0, 400.0), 1280: (70.0, 400.0)}
+    batch_id = _run_batch(win, coords)  # no groups exist yet
+    series = win._project_model.batch(batch_id)
+    gid = series.group_id
+    assert gid is not None
+    group = win._project_model.data_group(gid)
+    assert group.kind == "auto"
+    assert group.order_key == "field"
+    assert set(group.member_run_numbers) == set(coords)
+    assert "1277" in group.name and "1280" in group.name  # "Runs 1277–1280"
+    auto_groups = [g for g in win._project_model.data_groups.values() if g.kind == "auto"]
+    assert len(auto_groups) == 1
+    n_batches = len([s for s in win._project_model.batches.values() if not s.is_computed])
+
+    # Re-run the identical selection: no new group, one series (superseded in place).
+    batch_id2 = _run_batch(win, coords)
+    assert win._project_model.batch(batch_id2).group_id == gid
+    assert len([g for g in win._project_model.data_groups.values() if g.kind == "auto"]) == 1
+    assert len([s for s in win._project_model.batches.values() if not s.is_computed]) == n_batches
+
+
+def test_fit_this_group_binds_tab_and_records_exclusions(win: MainWindow) -> None:
+    """ "Fit this group…" binds the Batch tab; unticking a member records an exclusion."""
+    coords = {2961: (10.0, 60.0), 2962: (10.0, 60.0), 2963: (10.0, 60.0)}
+    for run, (temp, field) in coords.items():
+        _add_dataset(win, run, temp, field)
+    gid = win._data_browser.create_data_group(list(coords), name="B = 60 G")
+    _stub_fit_panel(win)
+
+    win._on_fit_group_requested(gid)
+    assert win._fit_panel.bound_group_id() == gid
+
+    # Untick run 2962 in the Batch tab member list → it drops from the fit set.
+    from PySide6.QtCore import Qt
+
+    members = win._fit_panel._global_tab._members_list
+    for row in range(members.count()):
+        item = members.item(row)
+        if item.data(Qt.ItemDataRole.UserRole) == 2962:
+            item.setCheckState(Qt.CheckState.Unchecked)
+    included = sorted(int(ds.run_number) for ds in win._fit_panel.batch_datasets())
+    assert included == [2961, 2963]
+
+    batch_id = _record_over(win, included)
+    series = win._project_model.batch(batch_id)
+    assert series.group_id == gid
+    assert set(series.last_fitted_members) == {2961, 2963}
+    assert series.excluded_run_numbers == [2962]
+
+
+def test_selection_change_clears_group_binding(win: MainWindow) -> None:
+    """An ordinary selection change clears the "Fit this group…" binding (D1)."""
+    coords = {2961: (10.0, 60.0), 2962: (10.0, 60.0)}
+    for run, (temp, field) in coords.items():
+        _add_dataset(win, run, temp, field)
+    gid = win._data_browser.create_data_group(list(coords), name="B = 60 G")
+
+    win._on_fit_group_requested(gid)
+    assert win._fit_panel.bound_group_id() == gid
+
+    win._update_selected_datasets()  # reads the (empty) live selection → ad-hoc
+    assert win._fit_panel.bound_group_id() is None
+
+
+def test_group_membership_edit_marks_series_stale_and_rerun_clears(win: MainWindow) -> None:
+    """Editing a group's membership stales its series; re-running clears it (D1)."""
+    coords = {1277: (10.0, 400.0), 1280: (70.0, 400.0)}
+    for run, (temp, field) in coords.items():
+        _add_dataset(win, run, temp, field)
+    _add_dataset(win, 1281, 90.0, 400.0)
+    gid = win._data_browser.create_data_group(list(coords), name="T scan")
+    _stub_fit_panel(win)
+
+    batch_id = _record_over(win, list(coords))
+    assert win._project_model.batch(batch_id).group_id == gid
+    win._refresh_trend_panel()
+    assert batch_id not in win._fit_parameters_panel._stale_series_ids
+
+    # Add a run to the group → live membership no longer matches the last fit.
+    win._data_browser.add_runs_to_group([1281], gid)
+    win._refresh_trend_panel()
+    assert batch_id in win._fit_parameters_panel._stale_series_ids
+
+    # Re-running over the new membership clears staleness (last-fitted updated).
+    new_id = _record_over(win, [1277, 1280, 1281])
+    win._refresh_trend_panel()
+    assert new_id not in win._fit_parameters_panel._stale_series_ids
+
+
+def test_ungroup_keep_fits_freezes_owned_series(win: MainWindow, monkeypatch) -> None:
+    """Ungroup → "Keep fits" freezes owned series (survives, group_id None)."""
+    coords = {1277: (10.0, 400.0), 1280: (70.0, 400.0)}
+    for run, (temp, field) in coords.items():
+        _add_dataset(win, run, temp, field)
+    gid = win._data_browser.create_data_group(list(coords), name="T scan")
+    _stub_fit_panel(win)
+    batch_id = _record_over(win, list(coords))
+
+    _patch_ungroup_choice(monkeypatch, "keep")
+    win._on_ungroup_requested(gid)
+
+    assert win._project_model.data_group(gid) is None
+    series = win._project_model.batch(batch_id)
+    assert series is not None  # frozen, not deleted
+    assert series.group_id is None
+
+
+def test_ungroup_delete_fits_removes_series_and_slots(win: MainWindow, monkeypatch) -> None:
+    """Ungroup → "Delete fits" removes owned series and clears their FitSlot pointers."""
+    coords = {1277: (10.0, 400.0), 1280: (70.0, 400.0)}
+    for run, (temp, field) in coords.items():
+        _add_dataset(win, run, temp, field)
+    gid = win._data_browser.create_data_group(list(coords), name="T scan")
+    _stub_fit_panel(win)
+    batch_id = _record_over(win, list(coords))
+    rep = RepresentationType.TIME_FB_ASYMMETRY
+    assert win._project_model.representation(1277, rep).fit.batch_id == batch_id
+
+    _patch_ungroup_choice(monkeypatch, "delete")
+    win._on_ungroup_requested(gid)
+
+    assert win._project_model.data_group(gid) is None
+    assert win._project_model.batch(batch_id) is None  # series deleted
+    assert win._project_model.representation(1277, rep).fit.batch_id is None  # slot cleared
+
+
+def test_detector_group_series_recording_mints_no_group(win: MainWindow) -> None:
+    """Detector-group series stay provenance-only: group_id None, no auto-group (D8)."""
+    from PySide6.QtCore import Qt  # noqa: F401 - parity with other helpers
+
+    for run in (1276, 1280):
+        _add_dataset(win, run, 10.0, 400.0)
+    gid = win._data_browser.create_data_group([1276, 1280], name="grp")
+    n_groups = len(win._project_model.data_groups)
+
+    series = _group_series("batch-dg", [1276, 1280], 2, {"freq": "global"}, {1276: 5.0, 1280: 6.0})
+    series.source_group_id = win._common_group_id_for_runs([1276, 1280])
+    win._project_model.add_batch(series)
+
+    # Detector-group series carry provenance but are never group-bound and never
+    # mint a group.
+    assert series.group_id is None
+    assert series.source_group_id == gid
+    assert len(win._project_model.data_groups) == n_groups
+
+
+def _patch_ungroup_choice(monkeypatch, choice: str) -> None:
+    """Patch the ungroup dialog in mainwindow to auto-select *choice* (keep/delete/cancel)."""
+    from PySide6.QtWidgets import QMessageBox
+
+    label = {"keep": "Keep fits", "delete": "Delete fits", "cancel": "Cancel"}[choice]
+
+    class _Box:
+        Icon = QMessageBox.Icon
+        ButtonRole = QMessageBox.ButtonRole
+        StandardButton = QMessageBox.StandardButton
+
+        def __init__(self, *args, **kwargs) -> None:
+            self._buttons: dict[str, object] = {}
+            self._clicked: object = None
+
+        def setIcon(self, *a) -> None: ...  # noqa: N802 — Qt-style name
+        def setWindowTitle(self, *a) -> None: ...  # noqa: N802 — Qt-style name
+        def setText(self, *a) -> None: ...  # noqa: N802 — Qt-style name
+        def setInformativeText(self, *a) -> None: ...  # noqa: N802 — Qt-style name
+        def setDefaultButton(self, *a) -> None: ...  # noqa: N802 — Qt-style name
+
+        def addButton(self, arg, role=None) -> object:  # noqa: N802 — Qt-style name
+            btn = object()
+            key = arg if isinstance(arg, str) else "Cancel"
+            self._buttons[key] = btn
+            return btn
+
+        def exec(self) -> int:
+            self._clicked = self._buttons[label]
+            return 0
+
+        def clickedButton(self) -> object:  # noqa: N802 — Qt-style name
+            return self._clicked
+
+    monkeypatch.setattr("asymmetry.gui.mainwindow.QMessageBox", _Box)

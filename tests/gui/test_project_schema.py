@@ -225,7 +225,7 @@ class TestSchemaMigration:
         validate(state)  # must not raise
 
     def test_current_schema_version_constant(self):
-        assert CURRENT_SCHEMA_VERSION == 14
+        assert CURRENT_SCHEMA_VERSION == 15
 
     def test_v13_migrates_to_v14_adds_waterfall_defaults(self):
         # v14 adds a per-plot-panel waterfall block, disabled/auto by default,

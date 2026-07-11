@@ -251,6 +251,25 @@ def test_cross_group_dialog_shows_inherited_source_in_banner() -> None:
     assert app is not None
 
 
+def test_cross_group_dialog_reads_renamed_trend_group_name() -> None:
+    """The banner reads the renamed ``trend_group_name`` key (D8)."""
+    app = QApplication.instance() or QApplication([])
+    dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=_groups(),
+        existing_config={
+            "trend_group_name": "G-new",
+            "source_reduced_chi_squared": 0.5,
+        },
+        parent=None,
+    )
+    banner = dlg._header_slot.itemAt(0).widget()
+    assert banner is not None
+    assert "G-new" in banner.text()
+    assert app is not None
+
+
 def test_cross_group_dialog_footer_slot_holds_suggest_roles_above_buttons() -> None:
     """The suggest-roles row + rationale panel sit in the footer slot, which the
     base dialog places directly above the OK/Cancel button box (contract C6)."""

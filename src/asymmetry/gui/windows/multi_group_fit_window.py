@@ -28,12 +28,8 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.fitting.parameters import split_parameter_name
 from asymmetry.core.transform import resolve_background_mode
-from asymmetry.gui.panels.fit_panel import (
-    GlobalFitTab,
-    _get_file_value_for_parameter,
-)
+from asymmetry.gui.panels.fit_panel import GlobalFitTab
 from asymmetry.gui.styles import metrics
 from asymmetry.gui.styles.widgets import make_section
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox
@@ -59,7 +55,6 @@ class MultiGroupFitWindow(QWidget):
     fit_range_edit_committed = Signal(float, float)
     count_fit_completed = Signal(object, object)  # (dataset, {"result", "overlays"})
     count_grouping_promoted = Signal(object)  # (dataset) — a count calibration hit the grouping
-    share_function_with_group_requested = Signal(int)  # (source run) — push form to peers
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -78,10 +73,6 @@ class MultiGroupFitWindow(QWidget):
             tab.fit_range_edit_committed.connect(self.fit_range_edit_committed.emit)
             tab.count_fit_completed.connect(self.count_fit_completed.emit)
             tab.count_grouping_promoted.connect(self.count_grouping_promoted.emit)
-        # The Single surface can push its function to the run's data-group peers.
-        self._single_fit_tab.share_function_with_group_requested.connect(
-            self.share_function_with_group_requested.emit
-        )
         # A converged single grouped fit chain-seeds the batch surface per run
         # (mirrors how FB single fits seed the FB batch surface).
         self._single_fit_tab.single_grouped_fit_recorded.connect(
@@ -432,83 +423,6 @@ class MultiGroupFitWindow(QWidget):
         self._batch_fit_tab._set_composite_model(model)
         self._batch_fit_tab.apply_grouped_physics_seeds(seeds)
         self._tabs.setCurrentWidget(self._batch_fit_tab)
-
-    def share_single_grouped_function_state(
-        self,
-        source_run: int,
-        target_runs: list[int],
-        datasets_by_run: dict[int, MuonDataset] | None = None,
-    ) -> int:
-        """Copy the source run's grouped Single function into each target run's store.
-
-        Each peer inherits the function (model + seeds + Fix/role setup) on its
-        next selection via the per-run store, but **not** the source run's fit
-        result (a peer has not been fit). Returns the number of peers written.
-
-        Mirrors ``FitPanel.share_single_function_state``: for field-specific
-        parameters (like ``B_L``), the peer's own field-derived seed is applied
-        from its dataset when *datasets_by_run* is provided, so a peer at a
-        different applied field gets its own seed rather than the source run's.
-        Both the grouped-fit model parameters (``parameters``) and the per-group
-        model parameters (``group_model_parameters``) are re-seeded.
-        """
-        source = int(source_run)
-        if source == self._active_single_grouped_run:
-            source_state = self._single_fit_tab.get_state()
-        else:
-            source_state = self._single_grouped_state_by_run.get(source)
-        if not isinstance(source_state, dict) or not source_state:
-            return 0
-        written = 0
-        for target in target_runs:
-            try:
-                target_run = int(target)
-            except (TypeError, ValueError):
-                continue
-            if target_run == source:
-                continue
-            shared_state = copy.deepcopy(source_state)
-            # The peer has not been fit; carry the function, not the result.
-            shared_state["result_html"] = "No fit performed yet"
-
-            # Re-seed file-specific parameters (e.g. B_L) from the peer's own
-            # dataset so a peer at a different applied field is not stuck with
-            # the source run's field value.
-            target_dataset = (
-                datasets_by_run.get(target_run) if datasets_by_run is not None else None
-            )
-            if target_dataset is not None:
-                for key in ("parameters", "group_model_parameters"):
-                    self._reseed_field_params(shared_state.get(key), target_dataset)
-
-            self._single_grouped_state_by_run[target_run] = shared_state
-            # Refresh now only if this peer is the run currently on screen.
-            if target_run == self._active_single_grouped_run:
-                self._single_fit_tab.restore_state(shared_state)
-                self._single_fit_tab._result_text.clear()
-            written += 1
-        return written
-
-    @staticmethod
-    def _reseed_field_params(param_entries: object, dataset: MuonDataset) -> None:
-        """Apply *dataset*'s file-specific seeds onto a parameter-entry list.
-
-        Each entry is a ``{"name": ..., "value": ...}`` dict; field-like
-        parameters (resolved via :func:`split_parameter_name`) get the dataset's
-        own field-derived value. Non-field parameters are left untouched.
-        """
-        if not isinstance(param_entries, list):
-            return
-        for param_dict in param_entries:
-            if not isinstance(param_dict, dict):
-                continue
-            pname = param_dict.get("name")
-            if not isinstance(pname, str):
-                continue
-            base_name, _index = split_parameter_name(pname)
-            file_value = _get_file_value_for_parameter(dataset, base_name)
-            if file_value is not None:
-                param_dict["value"] = file_value
 
     def clear_grouped_single_state(self) -> None:
         """Drop all per-run grouped Single forms (project close / new project).

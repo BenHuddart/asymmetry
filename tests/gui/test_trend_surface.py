@@ -371,6 +371,12 @@ class TestRefreshTrendPanel:
         # Confirm the FB Asymmetry series was recorded.
         assert len(mw._project_model.batches) == 1
 
+        # The ad-hoc batch auto-created its group (D3), which refreshes the browser
+        # and re-derives the available views from the (stub) datasets; re-pin them
+        # so the rep-switch precondition holds (real grouped-capable data keeps
+        # "groups" available on its own).
+        mw._plot_workspace.set_available_views(["fb_asymmetry", "groups"])
+
         # Step 2: grouped fit in Groups representation.
         mw._plot_workspace.set_active_view("groups")
         monkeypatch.setattr(

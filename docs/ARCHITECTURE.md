@@ -263,7 +263,46 @@ Each `Representation` stores:
 - **trend_state** — opaque dict persisting the user's axis/parameter selections
   in the Fit Parameters panel.
 
-#### FitSeries
+#### DataGroup and FitSeries: the group owns its fits
+
+A `DataGroup` (`asymmetry.core.representation.group`) is a named, ordered
+collection of run numbers with a `kind` discriminator: `"user"` for a group
+the user named explicitly, `"auto"` for one minted automatically the first
+time an ad-hoc run selection is batch- or global-fitted, so every batch fit
+has an explicit owning group (no bare "batch of runs with no group" state is
+representable). Renaming an `"auto"` group promotes it to `"user"`
+(`ProjectModel.rename_data_group`). A run may belong to any number of groups —
+multi-membership is a core-layer property, not just a GUI presentation detail;
+the Data Browser's one-row-per-membership rendering (primary row plus marked
+copy rows, `docs/reference/gui_usage.rst` § "Data groups") is the GUI's own
+concern on top of it.
+
+This supersedes the earlier "D1 Option B" design, where `DataGroup` and
+`FitSeries` were only weakly linked: a series recorded the group it was
+launched from as pure provenance (`source_group_id`), and membership was
+frozen into the series at record time. Under the current model **the group
+owns its fits**: a run-membered `FitSeries` (`member_kind="runs"`) carries a
+structural `group_id` back to its owning group, and its *effective*
+membership is derived live — the group's `member_run_numbers` minus the
+series' own `excluded_run_numbers` (`FitSeries.effective_members`) — rather
+than snapshot at record time. Results remain a snapshot of what was actually fit
+(`FitSeries.last_fitted_members`); when the live effective membership no
+longer matches that snapshot the series is **stale**
+(`FitSeries.is_stale`), surfaced through the same channel as divergence (a
+`⚠` on the series' trend pill, cleared by re-running). A group with zero
+owned series behaves exactly as before this model existed; a group can also
+own several series at once (the same run collection fit two different ways).
+
+`source_group_id` is retained on `FitSeries` as a **legacy provenance**
+field only — read for backward compatibility (older saves, and the v14→v15
+migration's resolution of `group_id`) but no longer written. A series is
+**frozen** (`group_id=None`) when it predates this model, or when its owning
+group was deleted and its fits kept rather than deleted with it
+(`ProjectModel.remove_data_group(..., orphan_series=True)`); a frozen
+series' membership is the old snapshot semantics, unconditionally.
+Detector-group series (`member_kind="groups"`, § 4.3.1) are untouched by any
+of this — they are not `DataGroup`-based and keep their original frozen
+semantics.
 
 A `FitSeries` (`asymmetry.core.representation.series`) collects multiple
 member fits — either across runs (`member_kind="runs"`) or across a run's
@@ -275,8 +314,11 @@ Key attributes: `canonical_model`, `param_roles` (Global / Local / Fixed per
 physics parameter), `nuisance_params` (group-only, always local),
 `results_by_run` (per-member summary dicts that drive the trending panel),
 `diverged_runs` (members whose stored model no longer matches the canonical),
-`label` (optional user-given name, `None` when unset — the GUI renders a
-positional `"Series {idx}"` fallback).
+`group_id` (structural owning-group link, `None` for frozen/detector-group
+series), `excluded_run_numbers` (per-series exclusions from the owning
+group's membership), `last_fitted_members` (last-fitted snapshot, for
+staleness), `label` (optional user-given name, `None` when unset — the GUI
+renders a positional `"Series {idx}"` fallback).
 
 `display_name(fallback: str) -> str` returns `self.label` when set, otherwise
 the caller-supplied fallback — used in series buttons, chooser dialogs, and log
@@ -285,9 +327,27 @@ messages so that user-assigned labels appear everywhere consistently.
 #### ProjectModel
 
 `ProjectModel` (`asymmetry.core.representation.project_model`) is the
-in-memory owner of all representations and series for the active project. It
-provides:
+in-memory owner of all representations, series, **and data groups** for the
+active project — `ProjectModel.data_groups` is the single canonical registry
+(keyed by `group_id`); there is no second, GUI-owned copy to keep in sync.
+`DataBrowserPanel` holds a reference to it and is a view/controller over it —
+the browser's own `collapsed` flag is the only group-related state it still
+owns itself, persisted in `browser_state` (view state, not group identity).
+`ProjectModel` provides:
 
+- **Group mutation API** — `create_data_group` (mints or reuses a `group_id`,
+  never strips a run from a group it already belongs to), `rename_data_group`
+  (auto → user promotion), `set_data_group_members`, `find_auto_group`
+  (identical-member-set reuse for D3), and `remove_data_group(group_id, *,
+  orphan_series)` (D7's delete-fits/keep-fits choice — deletes or freezes the
+  group's owned series). `series_for_group(group_id)` resolves the owned
+  series by structural `group_id` with a legacy `source_group_id` fallback for
+  frozen series that predate the structural link.
+- `_series_signature` / `remove_superseded_batches` / `dedupe_batches` —
+  group-bound run series identify on `(rep_type, member_kind, group_id, model,
+  exclusions)`, so re-running a group's analysis replaces its series in place;
+  frozen and detector-group series keep the original frozen keying
+  (`(rep_type, member_kind, member-keys, model)`).
 - `refresh_divergence()` — re-evaluates every batch member's model against its
   series canonical model; group series are evaluated at the source-run level.
 - `trend_runs_for_batch(batch)` — returns ordered member keys where the

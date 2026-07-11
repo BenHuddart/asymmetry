@@ -1058,10 +1058,10 @@ def test_form_data_group_accepts_combined_dataset(
     monkeypatch.setattr(QInputDialog, "getText", lambda *_a, **_k: ("Mixed Group", True))
     panel._form_data_group()
 
-    group = next(iter(panel._groups.values()))
+    group = next(iter(panel._project_model.data_groups.values()))
     assert group.member_run_numbers == [combined_rn, 76]
-    assert panel._run_to_group[combined_rn] == group.group_id
-    assert panel._run_to_group[76] == group.group_id
+    assert panel.get_group_id_for_run(combined_rn) == group.group_id
+    assert panel.get_group_id_for_run(76) == group.group_id
 
 
 def test_separate_combined_inside_group_replaces_group_member_runs(qapp: QApplication) -> None:
@@ -1097,12 +1097,12 @@ def test_separate_combined_inside_group_replaces_group_member_runs(qapp: QApplic
     panel._table.selectRow(combined_row)
     panel._separate_combined()
 
-    group = panel._groups[gid]
+    group = panel._project_model.data_group(gid)
     assert group.member_run_numbers == [77, 78, 79]
-    assert panel._run_to_group[77] == gid
-    assert panel._run_to_group[78] == gid
-    assert panel._run_to_group[79] == gid
-    assert combined_rn not in panel._run_to_group
+    assert panel.get_group_id_for_run(77) == gid
+    assert panel.get_group_id_for_run(78) == gid
+    assert panel.get_group_id_for_run(79) == gid
+    assert panel.get_group_id_for_run(combined_rn) is None
     assert combined_rn not in panel._datasets
 
 
@@ -1345,7 +1345,7 @@ def test_sort_keeps_groups_top_and_sorts_ungrouped(qapp: QApplication) -> None:
     assert visible_runs == [114, 113]
 
     # Group members should also be sorted within the group (112=10K, 111=20K).
-    assert panel._groups[gid].member_run_numbers == [112, 111]
+    assert panel._project_model.data_group(gid).member_run_numbers == [112, 111]
     grouped_rows = [
         item.data(Qt.ItemDataRole.UserRole)
         for row in range(panel._table.rowCount())
@@ -1356,7 +1356,7 @@ def test_sort_keeps_groups_top_and_sorts_ungrouped(qapp: QApplication) -> None:
 
     # Reversing the sort should reverse the in-group order too.
     panel._on_header_clicked(2)
-    assert panel._groups[gid].member_run_numbers == [111, 112]
+    assert panel._project_model.data_group(gid).member_run_numbers == [111, 112]
 
 
 def test_add_runs_to_existing_group_moves_entry(qapp: QApplication) -> None:
@@ -1371,9 +1371,9 @@ def test_add_runs_to_existing_group_moves_entry(qapp: QApplication) -> None:
     moved = panel.add_runs_to_group([123], gid)
     assert moved
 
-    group = panel._groups[gid]
+    group = panel._project_model.data_group(gid)
     assert group.member_run_numbers == [121, 122, 123]
-    assert panel._run_to_group[123] == gid
+    assert panel.get_group_id_for_run(123) == gid
 
 
 def test_add_runs_to_group_rejects_unknown_group(qapp: QApplication) -> None:
@@ -1443,9 +1443,9 @@ def test_send_to_group_action_moves_selected_runs(qapp: QApplication) -> None:
     assert target_action is not None
     target_action.trigger()
 
-    group = panel._groups[gid]
+    group = panel._project_model.data_group(gid)
     assert 151 in group.member_run_numbers
-    assert panel._run_to_group[151] == gid
+    assert panel.get_group_id_for_run(151) == gid
 
 
 def test_context_menu_has_remove_from_group_for_grouped_entry(qapp: QApplication) -> None:
@@ -1484,9 +1484,9 @@ def test_remove_runs_from_group_moves_to_top_level(qapp: QApplication) -> None:
 
     moved = panel.remove_runs_from_group([171])
     assert moved
-    assert panel._run_to_group.get(171) is None
+    assert panel.get_group_id_for_run(171) is None
     assert 171 in panel._datasets
-    assert 171 not in panel._groups[gid].member_run_numbers
+    assert 171 not in panel._project_model.data_group(gid).member_run_numbers
 
 
 def test_default_group_name_detects_near_constant_temperature_with_tolerance(
@@ -1648,10 +1648,11 @@ def test_group_header_count_singular(qapp: QApplication) -> None:
     # won't change the count — so just test directly: a fresh 1-member scenario
     # is not possible via the public API (create_data_group requires >=2).
     # Test the singular branch by patching the member list length directly.
-    group = panel._groups.get(gid)
+    group = panel._project_model.data_group(gid)
     if group is None:
         return  # group dissolved — test N/A for this path
     group.member_run_numbers = [611]
+    panel._rebuild_run_to_groups()
     panel._rebuild_table()
     for row in range(panel._table.rowCount()):
         item = panel._table.item(row, 0)
@@ -1693,8 +1694,7 @@ def test_chevron_click_toggles_group_collapse(qapp: QApplication) -> None:
     gid = panel.create_data_group([801, 802], name="T = 5 K")
     assert gid is not None
 
-    group = panel._groups[gid]
-    assert not group.collapsed
+    assert not panel._is_collapsed(gid)
 
     header_row = None
     for row in range(panel._table.rowCount()):
@@ -1715,7 +1715,7 @@ def test_chevron_click_toggles_group_collapse(qapp: QApplication) -> None:
         chevron_pos,
     )
 
-    assert group.collapsed
+    assert panel._is_collapsed(gid)
 
 
 def test_non_chevron_single_click_does_not_toggle(qapp: QApplication) -> None:
@@ -1727,8 +1727,7 @@ def test_non_chevron_single_click_does_not_toggle(qapp: QApplication) -> None:
     gid = panel.create_data_group([811, 812], name="B = 100 G")
     assert gid is not None
 
-    group = panel._groups[gid]
-    assert not group.collapsed
+    assert not panel._is_collapsed(gid)
 
     header_row = None
     for row in range(panel._table.rowCount()):
@@ -1749,7 +1748,7 @@ def test_non_chevron_single_click_does_not_toggle(qapp: QApplication) -> None:
         non_chevron_pos,
     )
 
-    assert not group.collapsed
+    assert not panel._is_collapsed(gid)
 
 
 # ── select_runs ──────────────────────────────────────────────────────────────
@@ -2113,3 +2112,297 @@ def test_sort_by_run_number_ignores_combined_dataset_sentinel(qapp: QApplication
     assert panel.sort_by_run_number_if_unordered() is False
     assert panel._display_order == [100, 101, -1]  # combined row not yanked to top
     assert panel._current_sort_column == -1  # no sticky sort state imposed
+
+
+# ── Phase 2: canonical registry, multi-membership, auto-group palette ─────────
+
+
+from asymmetry.core.representation.project_model import ProjectModel  # noqa: E402
+from asymmetry.gui.panels.data_browser import (  # noqa: E402
+    _AUTO_GROUP_HEADER_BACKGROUND,
+    _AUTO_GROUP_MEMBER_BACKGROUND,
+    _GROUP_HEADER_BACKGROUND,
+    _GROUP_MEMBER_BACKGROUND,
+)
+
+
+def _row_key_texts(panel: DataBrowserPanel) -> list[tuple[object, str]]:
+    """Return ``(col-0 key, col-0 text)`` for every table row, in order."""
+    out: list[tuple[object, str]] = []
+    for row in range(panel._table.rowCount()):
+        item = panel._table.item(row, 0)
+        if item is not None:
+            out.append((item.data(panel._GROUP_ROLE), item.text()))
+    return out
+
+
+def _select_row_by_key(panel: DataBrowserPanel, key: object) -> None:
+    for row in range(panel._table.rowCount()):
+        item = panel._table.item(row, 0)
+        if item is not None and item.data(panel._GROUP_ROLE) == key:
+            idx = panel._table.model().index(row, 0)
+            panel._table.selectionModel().select(
+                idx,
+                QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+            )
+            return
+    raise AssertionError(f"no row with key {key!r}")
+
+
+def _header_row_for(panel: DataBrowserPanel, gid: str) -> int:
+    sentinel = f"{panel._GROUP_SENTINEL_PREFIX}{gid}"
+    for row in range(panel._table.rowCount()):
+        item = panel._table.item(row, 0)
+        if item is not None and item.data(panel._GROUP_ROLE) == sentinel:
+            return row
+    raise AssertionError(f"no header row for group {gid}")
+
+
+def test_run_in_two_groups_renders_two_rows_one_marked(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    for rn in (1, 2, 3):
+        panel.add_dataset(_dataset(rn))
+    gid_a = panel.create_data_group([1, 2], name="Group A")
+    gid_b = panel.create_data_group([1, 3], name="Group B")
+    assert gid_a is not None and gid_b is not None
+
+    # Run 1 belongs to both groups; A is primary (created first).
+    assert panel.get_group_id_for_run(1) == gid_a
+    assert panel.get_group_ids_for_run(1) == [gid_a, gid_b]
+
+    keys_texts = _row_key_texts(panel)
+    # The primary row for run 1 keeps the bare integer key; the copy row under
+    # group B gets a composite copy key and a circled-digit marker.
+    primary_rows = [txt for key, txt in keys_texts if key == 1]
+    copy_rows = [txt for key, txt in keys_texts if panel._copy_key_parts(key) == (gid_b, 1)]
+    assert len(primary_rows) == 1
+    assert len(copy_rows) == 1
+    assert "①" in copy_rows[0]  # ① marker on the copy row
+    assert "①" not in primary_rows[0]
+
+
+def test_group_formation_refits_run_column_for_indented_marked_rows(
+    qapp: QApplication,
+) -> None:
+    """Group mutations re-fit column widths the way ``add_dataset`` does.
+
+    Member rows are indented and copy rows carry a circled-digit marker, so a
+    Run column still sized for the bare, un-indented run numbers elides the
+    new rows to "…" (the docs screenshot scenarios originally had to call
+    ``_resize_columns_to_content()`` by hand to work around this).
+    """
+    panel = DataBrowserPanel()
+    panel.resize(700, 400)
+    for rn in (3001, 3002, 3003):
+        panel.add_dataset(_dataset(rn))
+    header = panel._table.horizontalHeader()
+    width_before = header.sectionSize(0)
+
+    assert panel.create_data_group([3001, 3002], name="Group A") is not None
+    # Run 3001 gains a second membership → an indented, ①-marked copy row.
+    assert panel.create_data_group([3001, 3003], name="Group B") is not None
+
+    # The mutation itself must have re-fit the column: the indented + marked
+    # rows need more width than the bare run numbers did…
+    width_after = header.sectionSize(0)
+    assert width_after > width_before
+    # …and an explicit re-fit is a no-op, proving the width already reflects
+    # the current content rather than a stale pre-group layout.
+    panel._resize_columns_to_content()
+    assert header.sectionSize(0) == width_after
+
+
+def test_selection_via_both_copies_yields_one_dataset(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    for rn in (1, 2, 3):
+        panel.add_dataset(_dataset(rn))
+    panel.create_data_group([1, 2], name="Group A")
+    gid_b = panel.create_data_group([1, 3], name="Group B")
+
+    panel._table.clearSelection()
+    _select_row_by_key(panel, 1)  # primary row for run 1
+    _select_row_by_key(panel, panel._copy_key(gid_b, 1))  # copy row for run 1
+
+    # The same underlying dataset selected via two rows dedupes to one.
+    assert [d.run_number for d in panel.get_selected_datasets()] == [1]
+    assert panel._get_selected_run_numbers() == [1]
+
+
+def test_remove_primary_membership_promotes_next(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    for rn in (1, 2, 3):
+        panel.add_dataset(_dataset(rn))
+    gid_a = panel.create_data_group([1, 2], name="Group A")
+    gid_b = panel.create_data_group([1, 3], name="Group B")
+    assert panel.get_group_id_for_run(1) == gid_a
+
+    # Remove run 1's primary (A) membership only — B is promoted to primary.
+    panel._remove_memberships([(1, gid_a)])
+    assert panel.get_group_ids_for_run(1) == [gid_b]
+    assert panel.get_group_id_for_run(1) == gid_b
+    # A keeps its other member; run 1 is no longer one of A's members.
+    assert 1 not in panel._project_model.data_group(gid_a).member_run_numbers
+    assert 1 in panel._project_model.data_group(gid_b).member_run_numbers
+
+
+def test_last_membership_removal_returns_run_to_ungrouped(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    for rn in (1, 2, 3):
+        panel.add_dataset(_dataset(rn))
+    gid_a = panel.create_data_group([1, 2], name="Group A")
+    gid_b = panel.create_data_group([1, 3], name="Group B")
+
+    panel._remove_memberships([(1, gid_a)])
+    panel._remove_memberships([(1, gid_b)])
+    # No memberships left -> back to the ungrouped list.
+    assert panel.get_group_ids_for_run(1) == []
+    assert 1 in panel._display_order
+
+
+def test_send_to_group_no_longer_strips_prior_membership(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    for rn in (1, 2, 3):
+        panel.add_dataset(_dataset(rn))
+    gid_a = panel.create_data_group([1, 2], name="Group A")
+    gid_b = panel.create_data_group([3, 2], name="Group B")  # 2 grouped in A already
+
+    # Send run 1 (in A) to B: it keeps A and gains B (multi-membership).
+    assert panel.add_runs_to_group([1], gid_b) is True
+    assert panel.get_group_ids_for_run(1) == [gid_a, gid_b]
+    assert 1 in panel._project_model.data_group(gid_a).member_run_numbers
+    assert 1 in panel._project_model.data_group(gid_b).member_run_numbers
+
+
+def test_group_crud_visible_in_project_model_immediately(qapp: QApplication) -> None:
+    pm = ProjectModel()
+    panel = DataBrowserPanel()
+    panel.set_project_model(pm)
+    for rn in (1, 2, 3):
+        panel.add_dataset(_dataset(rn))
+
+    gid = panel.create_data_group([1, 2], name="Grp")
+    assert gid in pm.data_groups
+    assert pm.data_group(gid).member_run_numbers == [1, 2]
+
+    # Rename is visible without any save/load, and promotes an auto group.
+    pm.data_group(gid).kind = "auto"
+    panel._project_model.rename_data_group(gid, "Renamed")  # exercised via handler below too
+    assert pm.data_group(gid).name == "Renamed"
+    assert pm.data_group(gid).kind == "user"
+
+    # Delete (ungroup) removes it from the registry immediately.
+    panel.ungroup(gid)
+    assert gid not in pm.data_groups
+
+
+def test_project_model_round_trips_group_kind(qapp: QApplication) -> None:
+    pm = ProjectModel()
+    panel = DataBrowserPanel()
+    panel.set_project_model(pm)
+    for rn in (1, 2, 3):
+        panel.add_dataset(_dataset(rn))
+    user_gid = panel.create_data_group([1, 2], name="User grp")
+    auto_gid = panel.create_data_group([2, 3], name="Auto grp", kind="auto")
+
+    project = {"datasets": [{"run_number": rn} for rn in (1, 2, 3)]}
+    pm.write_to_project_state(project)
+    pm2 = ProjectModel.from_project_state(project)
+    assert pm2.data_group(user_gid).kind == "user"
+    assert pm2.data_group(auto_gid).kind == "auto"
+    assert sorted(pm2.data_group(auto_gid).member_run_numbers) == [2, 3]
+
+
+def test_browser_state_round_trips_collapsed_and_kind(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    panel.set_project_model(ProjectModel())
+    for rn in (1, 2, 3):
+        panel.add_dataset(_dataset(rn))
+    user_gid = panel.create_data_group([1, 2], name="User grp")
+    auto_gid = panel.create_data_group([2, 3], name="Auto grp", kind="auto")
+    panel._toggle_group_collapsed(auto_gid)
+
+    state = panel.get_state()
+
+    restored = DataBrowserPanel()
+    restored.set_project_model(ProjectModel())
+    for rn in (1, 2, 3):
+        restored.add_dataset(_dataset(rn))
+    restored.restore_state(state)
+
+    assert restored._project_model.data_group(user_gid).kind == "user"
+    assert restored._project_model.data_group(auto_gid).kind == "auto"
+    assert restored._is_collapsed(auto_gid) is True
+    assert restored._is_collapsed(user_gid) is False
+
+
+def test_legacy_browser_state_groups_without_registry_still_show(qapp: QApplication) -> None:
+    """A pre-registry project carries groups only in browser_state.data_groups;
+    they must still populate the (empty) canonical registry on restore."""
+    panel = DataBrowserPanel()
+    panel.set_project_model(ProjectModel())  # empty registry
+    for rn in (1, 2, 3):
+        panel.add_dataset(_dataset(rn))
+
+    legacy_state = {
+        "data_groups": [
+            {
+                "group_id": "legacy-grp",
+                "name": "Legacy",
+                "member_run_numbers": [1, 2],
+                "collapsed": True,
+            }
+        ]
+    }
+    panel.restore_state(legacy_state)
+
+    assert panel._project_model.data_group("legacy-grp") is not None
+    assert panel.get_group_member_run_numbers("legacy-grp") == [1, 2]
+    assert panel._is_collapsed("legacy-grp") is True
+
+
+def test_header_and_member_colours_switch_on_kind(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    panel.set_project_model(ProjectModel())
+    for rn in (1, 2, 3, 4):
+        panel.add_dataset(_dataset(rn))
+    user_gid = panel.create_data_group([1, 2], name="User grp")
+    auto_gid = panel.create_data_group([3, 4], name="Auto grp", kind="auto")
+
+    user_header = panel._table.item(_header_row_for(panel, user_gid), 0)
+    auto_header = panel._table.item(_header_row_for(panel, auto_gid), 0)
+    assert user_header.background().color() == _GROUP_HEADER_BACKGROUND
+    assert auto_header.background().color() == _AUTO_GROUP_HEADER_BACKGROUND
+
+    # Member row tints switch on kind too.
+    user_member_bg = None
+    auto_member_bg = None
+    for row in range(panel._table.rowCount()):
+        key = panel._table.item(row, 0).data(panel._GROUP_ROLE)
+        if key == 1:
+            user_member_bg = panel._table.item(row, 1).background().color()
+        elif key == 3:
+            auto_member_bg = panel._table.item(row, 1).background().color()
+    assert user_member_bg == _GROUP_MEMBER_BACKGROUND
+    assert auto_member_bg == _AUTO_GROUP_MEMBER_BACKGROUND
+    # The auto member tint must stay distinct from the selected-series highlight.
+    assert auto_member_bg != QColor(245, 220, 216)  # ACCENT_RED_SOFT #f5dcd8
+
+
+def test_rename_auto_group_flips_colours_to_user(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    panel = DataBrowserPanel()
+    panel.set_project_model(ProjectModel())
+    for rn in (1, 2):
+        panel.add_dataset(_dataset(rn))
+    gid = panel.create_data_group([1, 2], name="Auto grp", kind="auto")
+
+    header = panel._table.item(_header_row_for(panel, gid), 0)
+    assert header.background().color() == _AUTO_GROUP_HEADER_BACKGROUND
+
+    monkeypatch.setattr(QInputDialog, "getText", lambda *_a, **_k: ("Adopted", True))
+    panel._rename_group(gid)
+
+    assert panel._project_model.data_group(gid).kind == "user"
+    header = panel._table.item(_header_row_for(panel, gid), 0)
+    assert header.background().color() == _GROUP_HEADER_BACKGROUND

@@ -44,16 +44,29 @@ def composite_model_label(composite: object) -> str | None:
     return " ".join(parts)
 
 
+def format_run_range(runs) -> str:
+    """Return the compact run-range string for an arbitrary run collection.
+
+    ``""`` for no runs, ``"2960"`` for a single run, ``"2923–2960"`` for a span
+    (first–last of the sorted, de-duplicated numbers). The single formatter both
+    :func:`member_range` and the auto-group namer share so a group minted from a
+    batch ("Runs 1001–1010") reads identically to the batch's own member range.
+    """
+    nums = sorted({int(r) for r in (runs or [])})
+    if not nums:
+        return ""
+    return f"{nums[0]}" if len(nums) == 1 else f"{nums[0]}–{nums[-1]}"
+
+
 def member_range(series: FitSeries) -> str:
     """Return the compact member-range string for *series*.
 
     ``""`` when it has no members, ``"2960"`` for a single run, ``"2923–2960"``
     for a span; detector-group series gain a ``"groups "`` prefix.
     """
-    runs = series.source_runs()
-    if not runs:
+    span = format_run_range(series.source_runs())
+    if not span:
         return ""
-    span = f"{runs[0]}" if len(runs) == 1 else f"{runs[0]}–{runs[-1]}"
     return f"groups {span}" if series.member_kind == "groups" else span
 
 

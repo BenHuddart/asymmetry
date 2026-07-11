@@ -475,6 +475,10 @@ class FitParametersPanel(QWidget):
         #: Run numbers to highlight in the browser for the active series (used by
         #: :meth:`load_representation_series` + ``series_selection_changed``).
         self._series_run_numbers: dict[str, list[int]] = {}
+        #: Ids of group-bound series whose live membership no longer matches what
+        #: was last fit (D1). Surfaced on the series pill exactly like the
+        #: divergence channel — a warning glyph + tooltip; cleared by re-running.
+        self._stale_series_ids: set[str] = set()
 
         # Background machinery for the trend-overlay model evaluation, which runs
         # model.function (and optional components) per fit range over an 800-pt
@@ -1297,6 +1301,7 @@ class FitParametersPanel(QWidget):
         global_params_by_id: dict[str, dict[str, dict[str, float]]] | None = None,
         knight_observables_by_id: dict[str, dict[str, str]] | None = None,
         fraction_weights_by_id: dict[str, dict[str, float]] | None = None,
+        stale_ids: set[str] | None = None,
     ) -> None:
         """Reload the panel to show all series for one representation.
 
@@ -1408,6 +1413,9 @@ class FitParametersPanel(QWidget):
         # Update per-series run-number map for browser highlighting.
         if highlight_runs_by_id is not None:
             self._series_run_numbers = dict(highlight_runs_by_id)
+        # Stale group-bound series (membership changed since last fit) — surfaced
+        # on the series pill; recomputed on every reload so a re-run clears it.
+        self._stale_series_ids = {str(s) for s in (stale_ids or set())}
         # Normalised fraction weights for the table dialog (keyed by series id, so
         # they survive group switches without per-group plumbing).
         self._fraction_weights_by_id = {
@@ -1508,7 +1516,14 @@ class FitParametersPanel(QWidget):
         self._group_button_map = {}
         groups = sorted(self._group_fit_results.values(), key=lambda g: g.group_name.lower())
         for group in groups:
-            button = QPushButton(group.group_name)
+            # A stale group-bound series (live membership ≠ last-fitted set, D1)
+            # carries a warning glyph + tooltip on its pill — the same surfacing
+            # channel as divergence. The clean ``group_name`` is left untouched so
+            # rename/sort/delete still read the user-facing label.
+            is_stale = group.group_id in self._stale_series_ids
+            button = QPushButton(f"{group.group_name} ⚠" if is_stale else group.group_name)
+            if is_stale:
+                button.setToolTip("Membership changed since last fit — re-run to refresh.")
             button.setCheckable(True)
             button.clicked.connect(self._on_group_button_clicked)
             button.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -4172,8 +4187,12 @@ class FitParametersPanel(QWidget):
             "fit_x_min": float(best_range.x_min) if best_range.x_min is not None else None,
             "fit_x_max": float(best_range.x_max) if best_range.x_max is not None else None,
             "parameter_rows": rows,
-            "source_group_id": best_group.group_id,
-            "source_group_name": best_group.group_name,
+            # Provenance of the seed used for this cross-group *trend* fit — the
+            # best single-group range it was inherited from. Named ``trend_group_*``
+            # to end the collision with the unrelated ``FitSeries.source_group_id``
+            # (D8); not persisted (dropped by _serialize_cross_group_fit_configs).
+            "trend_group_id": best_group.group_id,
+            "trend_group_name": best_group.group_name,
             "source_reduced_chi_squared": float(best_result.reduced_chi_squared),
         }
         return config

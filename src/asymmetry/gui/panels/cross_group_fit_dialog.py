@@ -124,8 +124,12 @@ class CrossGroupFitDialog(ModelFitDialog):
         self.setWindowTitle(f"Cross-group fit: {parameter_name}")
 
         banner_text = f"Cross-group mode | Parameter: <b>{parameter_name}</b> | X: <b>{self._x_display}</b> | Groups: <b>{len(groups)}</b>"
+        # Tolerant read: the field was renamed source_group_name → trend_group_name
+        # (D8); accept the legacy key from any in-flight config built pre-rename.
         source_name = (
-            existing_config.get("source_group_name") if isinstance(existing_config, dict) else None
+            (existing_config.get("trend_group_name") or existing_config.get("source_group_name"))
+            if isinstance(existing_config, dict)
+            else None
         )
         source_chi2 = (
             existing_config.get("source_reduced_chi_squared")

@@ -6,6 +6,7 @@ from asymmetry.core.data.dataset import Run
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.representation import RepresentationType
 from asymmetry.core.representation.base import FitSlot
+from asymmetry.core.representation.group import DATA_GROUP_KINDS, DataGroup
 from asymmetry.core.representation.project_model import ProjectModel
 from asymmetry.core.representation.series import FitSeries, canonical_model_matches
 
@@ -201,6 +202,104 @@ def test_round_trip_preserves_group_fields():
     assert restored.member_run_numbers == [-10001, -10002]
     assert restored.member_source_run == {-10001: 10, -10002: 10}
     assert restored.nuisance_params == ["N0", "background", "amplitude", "relative_phase"]
+
+
+# ── DataGroup.kind (D4) ───────────────────────────────────────────────────────
+
+
+def test_data_group_kind_defaults_to_user():
+    assert DataGroup("g1", "scan").kind == "user"
+    assert set(DATA_GROUP_KINDS) == {"user", "auto"}
+
+
+def test_data_group_kind_stored_and_invalid_coerced_to_user():
+    assert DataGroup("g1", "scan", kind="auto").kind == "auto"
+    assert DataGroup("g1", "scan", kind="bogus").kind == "user"  # invalid falls back
+
+
+def test_data_group_kind_round_trips_and_tolerant_read():
+    group = DataGroup("g1", "scan", member_run_numbers=[1, 2], order_key="field", kind="auto")
+    restored = DataGroup.from_dict(group.to_dict())
+    assert restored.kind == "auto"
+    assert restored.member_run_numbers == [1, 2]
+    assert restored.order_key == "field"
+    # Pre-v15 dict with no ``kind`` key defaults to "user".
+    assert DataGroup.from_dict({"group_id": "g2", "name": "old"}).kind == "user"
+
+
+# ── group_id / exclusions / staleness (D1) ────────────────────────────────────
+
+
+def test_new_series_fields_round_trip_and_default():
+    fresh = _batch()
+    assert fresh.group_id is None
+    assert fresh.excluded_run_numbers == []
+    assert fresh.last_fitted_members == []
+
+    series = _batch(
+        group_id="grp-1",
+        excluded_run_numbers=[12, 10, 12],  # deduped + sorted
+        last_fitted_members=[10, 11],
+    )
+    assert series.excluded_run_numbers == [10, 12]
+    restored = FitSeries.from_dict(series.to_dict())
+    assert restored.group_id == "grp-1"
+    assert restored.excluded_run_numbers == [10, 12]
+    assert restored.last_fitted_members == [10, 11]
+
+
+def test_effective_members_applies_exclusions_in_group_order():
+    group = DataGroup("grp-1", "scan", member_run_numbers=[30, 10, 20])
+    series = _batch(group_id="grp-1", member_run_numbers=[10, 20, 30], excluded_run_numbers=[20])
+    # Group order preserved (30, 10), excluded run dropped.
+    assert series.effective_members(group) == [30, 10]
+
+
+def test_effective_members_frozen_series_returns_member_snapshot():
+    group = DataGroup("grp-1", "scan", member_run_numbers=[30, 10, 20])
+    frozen = _batch(group_id=None, member_run_numbers=[10, 11])  # group_id None => frozen
+    assert frozen.effective_members(group) == [10, 11]
+    # Even given a group, a None group_id ignores it entirely.
+    assert frozen.effective_members(None) == [10, 11]
+
+
+def test_effective_members_groups_kind_ignores_group():
+    group = DataGroup("grp-1", "scan", member_run_numbers=[30, 10, 20])
+    grouped = _batch(member_kind="groups", group_id="grp-1", member_run_numbers=[-10001, -10002])
+    assert grouped.effective_members(group) == [-10001, -10002]
+
+
+def test_is_stale_true_when_effective_differs_from_last_fitted():
+    group = DataGroup("grp-1", "scan", member_run_numbers=[10, 20, 30])
+    series = _batch(group_id="grp-1", excluded_run_numbers=[], last_fitted_members=[10, 20])
+    # Group has a run (30) never fitted -> stale.
+    assert series.is_stale(group)
+
+
+def test_is_stale_false_when_membership_matches_order_insensitively():
+    group = DataGroup("grp-1", "scan", member_run_numbers=[30, 10, 20])
+    series = _batch(group_id="grp-1", last_fitted_members=[10, 20, 30])
+    # Same set, different order -> not stale (order resolved at fit time).
+    assert not series.is_stale(group)
+
+
+def test_is_stale_respects_exclusions():
+    group = DataGroup("grp-1", "scan", member_run_numbers=[10, 20, 30])
+    series = _batch(group_id="grp-1", excluded_run_numbers=[30], last_fitted_members=[10, 20])
+    assert not series.is_stale(group)
+
+
+def test_frozen_and_groups_series_are_never_stale():
+    group = DataGroup("grp-1", "scan", member_run_numbers=[10, 20, 30])
+    frozen = _batch(group_id=None, member_run_numbers=[10], last_fitted_members=[10])
+    assert not frozen.is_stale(group)
+    grouped = _batch(
+        member_kind="groups",
+        group_id="grp-1",
+        member_run_numbers=[-10001],
+        last_fitted_members=[-10001],
+    )
+    assert not grouped.is_stale(group)
 
 
 # ── label / display_name ─────────────────────────────────────────────────────

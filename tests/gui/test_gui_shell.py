@@ -77,7 +77,6 @@ class _StubFitPanel(QWidget):
         self.last_dataset = None
         self.last_datasets = None
         self.last_global_results = None
-        self.shared_calls = []
         self._grouped_mode = False
 
     def set_datasets(self, datasets):
@@ -94,12 +93,6 @@ class _StubFitPanel(QWidget):
     def register_global_fit_results(self, results_by_run):
         self.last_global_results = results_by_run
         return
-
-    def share_single_function_state(
-        self, source_run_number, target_run_numbers, datasets_by_run=None
-    ):
-        self.shared_calls.append((source_run_number, list(target_run_numbers)))
-        return len(target_run_numbers)
 
 
 class _StubPlotPanel(QWidget):
@@ -497,39 +490,3 @@ def test_non_macos_app_icon_pixmap_is_unchanged(
     pixmap = QPixmap(64, 64)
 
     assert app_module._macos_icon_pixmap(pixmap) is pixmap
-
-
-def test_mainwindow_share_single_fit_function_with_group(
-    monkeypatch: pytest.MonkeyPatch,
-    qapp: QApplication,
-) -> None:
-    monkeypatch.setattr(mw_module, "DataBrowserPanel", _StubDataBrowser)
-    monkeypatch.setattr(mw_module, "FitPanel", _StubFitPanel)
-    monkeypatch.setattr(mw_module, "PlotPanel", _StubPlotPanel)
-    monkeypatch.setattr(mw_module, "LogPanel", _StubLogPanel)
-    monkeypatch.setattr(mw_module, "FourierPanel", _StubFourier)
-    monkeypatch.setattr(mw_module, "FitParametersPanel", _StubFitParams)
-
-    window = mw_module.MainWindow()
-    ds42 = MuonDataset(
-        time=np.array([0.0, 1.0]),
-        asymmetry=np.array([0.2, 0.1]),
-        error=np.array([0.01, 0.01]),
-        metadata={"run_number": 42},
-    )
-    ds43 = MuonDataset(
-        time=np.array([0.0, 1.0]),
-        asymmetry=np.array([0.15, 0.08]),
-        error=np.array([0.01, 0.01]),
-        metadata={"run_number": 43},
-    )
-    window._data_browser.add_dataset(ds42)
-    window._data_browser.add_dataset(ds43)
-
-    window._on_share_single_function_with_group(42)
-
-    assert window._fit_panel.shared_calls
-    source, targets = window._fit_panel.shared_calls[-1]
-    assert source == 42
-    assert targets == [43]
-    assert "Shared fit function" in window.statusBar().currentMessage()
