@@ -351,8 +351,9 @@ def test_saved_project_carries_data_groups_and_reload_relinks_provenance(win: Ma
     assert gid in saved_group_ids
 
     win._data_browser.restore_state(state["browser_state"])
+    # The registry is canonical (D6): _restore_frequency_representations rebinds
+    # the freshly loaded ProjectModel into the browser; no mirror step needed.
     win._restore_frequency_representations(state)
-    win._sync_data_groups_to_project_model()
 
     assert win._project_model.data_group(gid) is not None
     reloaded_series = win._project_model.batch(batch_id)
@@ -367,11 +368,11 @@ def test_core_only_data_group_survives_reload_without_browser_state_twin(
     """A group written only via the core API (no browser_state.data_groups twin) is not
     silently dropped on load.
 
-    Regression: the sync used to run unconditionally right after
-    ProjectModel.from_project_state parsed the top-level ``data_groups`` block,
-    overwriting it with whatever the browser's legacy browser_state.data_groups
-    block restored — which is empty/absent for a project authored purely against
-    the core API (e.g. a script using ProjectModel.add_data_group directly).
+    Under the canonical registry (D6), ``ProjectModel.data_groups`` is the single
+    source of truth: ``_restore_frequency_representations`` parses the top-level
+    ``data_groups`` block and rebinds the browser to it, so a group authored
+    purely against the core API (e.g. a script using ``ProjectModel.add_data_group``
+    directly) shows up without any browser_state twin.
     """
     coords = {1277: (10.0, 400.0), 1280: (70.0, 400.0)}
     for run, (temp, field) in coords.items():
@@ -390,8 +391,6 @@ def test_core_only_data_group_survives_reload_without_browser_state_twin(
     }
     win._data_browser.restore_state(state["browser_state"])
     win._restore_frequency_representations(state)
-    win._seed_browser_groups_from_project_model()
-    win._sync_data_groups_to_project_model()
 
     assert win._data_browser.get_group_name("core-only-grp") == "Core-only group"
     assert sorted(win._data_browser.get_group_member_run_numbers("core-only-grp")) == [

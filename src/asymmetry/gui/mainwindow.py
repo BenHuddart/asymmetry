@@ -198,7 +198,6 @@ from asymmetry.core.project.profiles import (
     resolve_effective_grouping,
 )
 from asymmetry.core.representation import (
-    DataGroup,
     FitSeries,
     FitSlot,
     RepresentationType,
@@ -1656,6 +1655,9 @@ class MainWindow(QMainWindow):
 
         # Left dock — data browser / logbook
         self._data_browser = DataBrowserPanel()
+        # The browser is a view/controller over the canonical group registry (D6).
+        if hasattr(self._data_browser, "set_project_model"):
+            self._data_browser.set_project_model(self._project_model)
         self._dock_data_browser = QDockWidget("Data Browser", self)
         self._dock_data_browser.setWidget(self._data_browser)
         self._dock_data_browser.setFeatures(
@@ -6608,6 +6610,13 @@ class MainWindow(QMainWindow):
         recomputed keep whatever the legacy array fallback restored.
         """
         self._project_model = ProjectModel.from_project_state(state)
+        # Rebind the browser to the freshly loaded registry (D6): the panel is a
+        # view/controller over ``ProjectModel.data_groups`` and must follow the
+        # model that replaced the one its earlier ``restore_state`` seeded. This
+        # rebuilds the group rows from the canonical registry (falling back to the
+        # legacy browser_state seed for a pre-registry project).
+        if hasattr(self._data_browser, "set_project_model"):
+            self._data_browser.set_project_model(self._project_model)
         # Load-time migration (D4): projects saved before replace-in-place can
         # carry duplicate identically-keyed batch series over the same
         # members+model. Collapse them to the most recent, keeping any user label.
@@ -14315,70 +14324,11 @@ class MainWindow(QMainWindow):
         self._sync_global_fit_decorations_to_series()
         # Recipe-only representation/batch state (v6).  Frequency spectra are
         # recomputed from these recipes on load; the array snapshot above is a
-        # transitional fallback removed in cleanup.
-        self._sync_data_groups_to_project_model()
+        # transitional fallback removed in cleanup. Data groups need no mirror
+        # step: the browser mutates ``ProjectModel.data_groups`` directly (D6),
+        # so the registry is already current when it is serialised here.
         self._project_model.write_to_project_state(project_state)
         return project_state
-
-    def _seed_browser_groups_from_project_model(self) -> None:
-        """Create browser groups for any core-only entries in ``ProjectModel.data_groups``.
-
-        Called on project restore, right after ``_restore_frequency_representations``
-        has parsed the top-level ``data_groups`` block (Phase 7/D1) into
-        ``self._project_model``. The browser's own ``restore_state`` (called
-        earlier, on the legacy ``browser_state.data_groups`` block) already
-        populated its live groups for a project saved by this app — the two
-        blocks describe the same groups there. But a project authored against
-        the core API alone (e.g. by a script, with no ``browser_state`` entry)
-        would carry groups only in the top-level block; without this seeding
-        step, the unconditional mirror in :meth:`_sync_data_groups_to_project_model`
-        that runs right after this would silently overwrite them away.
-        """
-        browser_group_ids = (
-            set(self._data_browser.get_all_group_ids())
-            if hasattr(self._data_browser, "get_all_group_ids")
-            else set()
-        )
-        for group in self._project_model.data_groups.values():
-            if group.group_id not in browser_group_ids:
-                self._data_browser.create_data_group(
-                    list(group.member_run_numbers),
-                    name=group.name,
-                    group_id=group.group_id,
-                )
-
-    def _sync_data_groups_to_project_model(self) -> None:
-        """Mirror the browser's live groups into ``ProjectModel.data_groups``.
-
-        The browser's ``_groups`` dict remains the live editing surface (Phase 7
-        did not rewrite its ~30 read/write call sites); this keeps the additive
-        ``data_groups`` schema block — and therefore ``FitSeries.source_group_id``
-        provenance lookups against ``ProjectModel`` — in sync with it at the
-        load/save boundary, without threading a ``ProjectModel`` reference
-        through the browser panel. ``collapsed`` is GUI display state and is
-        deliberately not carried into the core registry.
-        """
-        browser = self._data_browser
-        if not (
-            hasattr(browser, "get_all_group_ids")
-            and hasattr(browser, "get_group_name")
-            and hasattr(browser, "get_group_member_run_numbers")
-        ):
-            return
-        previous = self._project_model.data_groups
-        self._project_model.data_groups = {
-            gid: DataGroup(
-                group_id=gid,
-                name=browser.get_group_name(gid) or gid,
-                member_run_numbers=browser.get_group_member_run_numbers(gid),
-                # The browser's own DataGroup has no order_key field to mirror;
-                # carry forward whatever the core registry already had for this
-                # id (e.g. set by a script against the core API) rather than
-                # silently resetting it to the "run" default on every sync.
-                order_key=previous[gid].order_key if gid in previous else "run",
-            )
-            for gid in browser.get_all_group_ids()
-        }
 
     def _sync_global_fit_decorations_to_series(self) -> None:
         """Stamp the Global Parameter Fit window's decorations into its series.
@@ -14872,8 +14822,6 @@ class MainWindow(QMainWindow):
         self._plot_workspace.restore_state(plot_state.get("workspace_state"))
         self._restore_frequency_spectra_state(state.get("fourier_spectra_state"))
         self._restore_frequency_representations(state)
-        self._seed_browser_groups_from_project_model()
-        self._sync_data_groups_to_project_model()
         if self._plot_workspace.active_domain() == "frequency":
             self._sync_frequency_plot_for_current_dataset()
         if (

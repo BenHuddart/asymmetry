@@ -37,10 +37,19 @@ ACCENT_RED_SOFT = "#f5dcd8"
 ACCENT_RED_SOFT2 = "#efcfca"
 
 # ── Data browser groups ───────────────────────────────────────────────────────
+# User (hand-made) groups wear the blue ramp; auto-groups (minted for an ad-hoc
+# batch selection, D4) wear a red-grey analogue mirroring the same header/sel/
+# focus/member ladder. The auto ramp is kept deliberately lighter and greyer than
+# ACCENT_RED_SOFT (#f5dcd8) — the selected-series highlight tint — so a series
+# highlight still reads clearly on top of an auto-group member row.
 GROUP_HEADER_BG = "#c8d2e1"
 GROUP_HEADER_SEL_BG = "#a8b8d0"
 GROUP_HEADER_FOCUS_BG = "#8fa3c2"
 GROUP_MEMBER_BG = "#ebeff7"
+AUTO_GROUP_HEADER_BG = "#e1cdc8"
+AUTO_GROUP_HEADER_SEL_BG = "#d0b3ab"
+AUTO_GROUP_HEADER_FOCUS_BG = "#c29a8f"
+AUTO_GROUP_MEMBER_BG = "#f7efeb"
 
 # ── Semantic states ───────────────────────────────────────────────────────────
 WARN = "#b66815"
