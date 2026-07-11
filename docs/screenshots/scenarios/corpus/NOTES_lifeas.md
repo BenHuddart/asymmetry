@@ -105,10 +105,18 @@ runs are 1.5/20 K field-dependence *pairs*, not a T-scan (see problems).
 ## Problems / honest caveats
 
 1. **Default Forward/Back pairing is wrong for these WED runs** — it cancels the
-   precession. The whole module regroups onto Up/Down. This is a real loader
-   limitation for spin-rotated GPS geometry (the default pair is geometry-blind);
-   worth flagging to the product team as a candidate for a per-instrument WED
-   preset.
+   precession. The whole module regroups onto Up/Down. The in-app fix already
+   exists, so this is a *discoverability* note, not a missing feature: the loader
+   tags these runs `field_direction="Transverse"`, so the Grouping dialog raises
+   the transverse-field nudge and `recommend_grouping_preset` returns GPS's
+   `Spin-rotated (B+U/F+D)` preset (14.5σ on run 3366). The Detector Layout editor
+   also offers `Transverse (Vector)` (matching musrfit WED(L); the Up/Down
+   projection recovers the 5.41 MHz line at 17σ) and `WEP (spin-rotated)`. The
+   correct native path is therefore Grouping dialog → transverse nudge → Detector
+   Layout → apply the spin-rotated / vector preset. (An earlier version of this
+   note flagged the lack of a "per-instrument WED preset" as a product gap — that
+   was wrong; the presets exist and are wired to the transverse nudge, disproven
+   against this branch's own `src`.)
 2. **Absolute B_rms needs the two-Gaussian model + √2 convention.** A naïve
    single Gaussian on the raw pair gives ~1.1 mT (background dilution) and, in
    Asymmetry's exp(−(σt)²) convention, is a further √2 low — three quiet factors

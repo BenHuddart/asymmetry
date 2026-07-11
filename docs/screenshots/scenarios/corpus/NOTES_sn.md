@@ -17,12 +17,17 @@ question, answered from the data). Two obstacles had to be cleared:
 1. **The standard loader grouping cancels the signal.** HIFI's 64 detectors form
    two *longitudinal* rings; the file's `grouping` array reduces them to a
    forward/backward pair, which cancels a *transverse* precession. The
-   standard-loader F−B asymmetry is noise for every run (checked in the GUI:
-   time-domain and Fourier-panel renders both empty — see "Rejected GUI
-   scenarios"). The loaded `MuonDataset` retains no histograms, so regrouping is
-   not reachable through the normal pipeline; the scenarios read the HDF4 counts
-   directly (still via `corpus_path`) and re-group each ring into left/right
-   halves (two quadrature pairs per ring → phase-insensitive line spectra).
+   standard-loader F−B asymmetry is noise for every run (checked in the GUI on
+   the *default* grouping: time-domain and Fourier-panel renders both empty — see
+   "Rejected GUI scenarios"). The fix is reachable in-app: the loaded
+   `MuonDataset`'s run holds all 64 per-detector histograms, the Grouping dialog
+   raises the transverse-field nudge, and applying the HiFi `Transverse (Vector)`
+   preset via the Detector Layout editor recovers the precession natively
+   (`reduce_grouped_asymmetry` on run 91491 lands the 2.143 MHz line at 10–12σ on
+   both projections). The standalone Matplotlib scenarios instead re-group the raw
+   HDF4 counts directly (still via `corpus_path`) into left/right ring halves (two
+   quadrature pairs per ring → phase-insensitive line spectra) purely to stay
+   self-contained and deterministic.
 2. **The nominal temperatures are wrong** (commissioning cryostat). The
    measured intermediate-state line pins the real temperatures (below).
 
@@ -100,7 +105,7 @@ the coordinator predicted *does* exist — at ≈140 G (1.9 MHz) in the 20 G and
 |---|---|---|
 | `corpus_sn_hc_dome` (**headline / top pick**) | Guidance dome (T_c, B_c(0), per-field crossings) + all 42 (nominal T, B_app) runs + the **measured B_int(T) points** from the 40 G scan computed from raw counts at capture time: red ◆ intermediate-state points falling systematically left of the parabola, grey ■ post-crossing points at B_app, thermometer-error arrow (observed crossing 2.8 K vs 3.47 K). | The phase-boundary mapping deliverable + the thermometer-error answer in one figure. |
 | `corpus_sn_intermediate_lines` | (top) base-T spectra at 20/80/160 G: 20 & 80 G lines coincide at ≈140 G (domain field independent of B_app), 160 G at applied field (normal); (bottom) 40 G-scan spectra stacked: the line marching 141→39 G with the amplitude jump at the crossing. | The spectral evidence for the intermediate state; frequency-domain teaching figure. |
-| `corpus_sn_transverse_recovery` | 160 G run 91491: standard F−B asymmetry (noise) vs L/R transverse regrouping of the same raw counts (clean 2.139 MHz ⇒ 158 G line, fitted). | The loader/grouping caveat; why the GUI shows nothing on this dataset. |
+| `corpus_sn_transverse_recovery` | 160 G run 91491: standard F−B asymmetry (noise) vs L/R transverse regrouping of the same raw counts (clean 2.139 MHz ⇒ 158 G line, fitted). | The loader/grouping caveat; why the GUI shows nothing on the *default* longitudinal grouping (before the `Transverse (Vector)` regroup). |
 
 All deterministic; PNGs read back and reframed twice for caption/edge issues;
 sizes 135/158/193 KB (budget 600 KB). No `requires_fit` (the only fit is scipy
@@ -126,13 +131,26 @@ sizes 135/158/193 KB (budget 600 KB). No `requires_fit` (the only fit is scipy
 - `corpus_sn_field_fft` (160 G, GUI Fourier panel): near-DC spike + flat noise;
   no line at the γ_μ·B marker. Dropped; the caveat figure carries the evidence.
 
+Both were captured on the file's *default* longitudinal grouping. Re-running
+either after applying the `Transverse (Vector)` preset (Grouping dialog →
+transverse nudge → Detector Layout → apply preset) recovers the line in-app
+(2.143 MHz, 10–12σ), so a GUI time-domain or Fourier-panel scenario on the
+regrouped run *is* viable and could stand in for the standalone
+`corpus_sn_transverse_recovery` render if a native UI shot is preferred.
+
 ## Problems / product notes
 
-- **Loader retains no per-detector or per-group histograms**, so HIFI TF data
-  reduced with the file's longitudinal grouping cannot be re-grouped in-app —
-  and this dataset is *unusable* in the GUI as a result. Product opportunity: a
-  reload-with-custom-grouping path (or keeping histograms on the dataset) would
-  make Asymmetry able to run this whole workflow natively.
+- **In-app regrouping already works for this dataset.** The loaded `MuonDataset`
+  retains all 64 per-detector histograms, so the HIFI TF runs *can* be re-grouped
+  through the normal pipeline. The Grouping dialog detects the transverse-field
+  geometry and nudges: "Transverse-field run: the current grouping washes out the
+  precession. Open Detector Layout… and apply 'Transverse (Vector)'." Applying
+  that preset recovers the precession line natively (run 91491: 2.143 MHz at
+  10–12σ on both projections). The standalone Matplotlib scenarios read the raw
+  counts directly only to stay self-contained and deterministic, not because the
+  GUI path is unavailable. (An earlier version of this note claimed the loader
+  kept no histograms and the dataset was unusable in the GUI — that is wrong,
+  disproven against this branch's own `src`.)
 - The 40 G base-T run 91489 shows no clean line at either B_app or B_c —
   presumably an unlucky amplitude/damping for this field/geometry; excluded
   from figures (its scan twin 91516 is used).
