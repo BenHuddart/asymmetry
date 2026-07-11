@@ -31,7 +31,7 @@ class DataBrowserGroupsScenario(Scenario):
         "Data browser with a user (blue) group and an auto (red-grey) group "
         "sharing a marked duplicate row."
     )
-    size = (620, 400)
+    size = (720, 400)
 
     def build(self) -> QWidget:
         from asymmetry.gui.panels.data_browser import DataBrowserPanel
@@ -57,6 +57,10 @@ class DataBrowserGroupsScenario(Scenario):
         # the newly-indented/marked rows would clip under the Run column's
         # width cap without this explicit nudge.
         browser._resize_columns_to_content()
+        # The Run column's automatic width cap (150 px) elides the auto-group's
+        # full name; widen it as a user would drag it, so the "Runs <range>"
+        # naming convention the docs describe is actually legible.
+        browser._table.horizontalHeader().resizeSection(0, 190)
         return browser
 
 
