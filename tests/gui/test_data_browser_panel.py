@@ -2181,6 +2181,37 @@ def test_run_in_two_groups_renders_two_rows_one_marked(qapp: QApplication) -> No
     assert "①" not in primary_rows[0]
 
 
+def test_group_formation_refits_run_column_for_indented_marked_rows(
+    qapp: QApplication,
+) -> None:
+    """Group mutations re-fit column widths the way ``add_dataset`` does.
+
+    Member rows are indented and copy rows carry a circled-digit marker, so a
+    Run column still sized for the bare, un-indented run numbers elides the
+    new rows to "…" (the docs screenshot scenarios originally had to call
+    ``_resize_columns_to_content()`` by hand to work around this).
+    """
+    panel = DataBrowserPanel()
+    panel.resize(700, 400)
+    for rn in (3001, 3002, 3003):
+        panel.add_dataset(_dataset(rn))
+    header = panel._table.horizontalHeader()
+    width_before = header.sectionSize(0)
+
+    assert panel.create_data_group([3001, 3002], name="Group A") is not None
+    # Run 3001 gains a second membership → an indented, ①-marked copy row.
+    assert panel.create_data_group([3001, 3003], name="Group B") is not None
+
+    # The mutation itself must have re-fit the column: the indented + marked
+    # rows need more width than the bare run numbers did…
+    width_after = header.sectionSize(0)
+    assert width_after > width_before
+    # …and an explicit re-fit is a no-op, proving the width already reflects
+    # the current content rather than a stale pre-group layout.
+    panel._resize_columns_to_content()
+    assert header.sectionSize(0) == width_after
+
+
 def test_selection_via_both_copies_yields_one_dataset(qapp: QApplication) -> None:
     panel = DataBrowserPanel()
     for rn in (1, 2, 3):

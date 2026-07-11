@@ -1019,6 +1019,7 @@ class DataBrowserPanel(QWidget):
         self._integrate_registry_into_display()
         self._rebuild_run_to_groups()
         self._rebuild_table()
+        self._resize_columns_to_content()
 
     def _integrate_registry_into_display(self) -> None:
         """Reconcile :attr:`_display_order` with the registry's group set.
@@ -1251,6 +1252,10 @@ class DataBrowserPanel(QWidget):
         self._move_groups_to_top()
         self._rebuild_run_to_groups()
         self._rebuild_table()
+        # Member rows are indented (and copies carry a marker suffix), so the
+        # Run column must be re-fit like add_dataset does — otherwise it stays
+        # sized for the un-indented labels and elides the new rows.
+        self._resize_columns_to_content()
         self.datasets_changed.emit()
         return gid
 
@@ -1296,6 +1301,7 @@ class DataBrowserPanel(QWidget):
         self._move_groups_to_top()
         self._rebuild_run_to_groups()
         self._rebuild_table()
+        self._resize_columns_to_content()
         self.datasets_changed.emit()
         self.group_membership_changed.emit()
         return removed
@@ -1361,6 +1367,7 @@ class DataBrowserPanel(QWidget):
             self._move_groups_to_top()
             self._rebuild_run_to_groups()
             self._rebuild_table()
+            self._resize_columns_to_content()
             self.datasets_changed.emit()
             self.group_membership_changed.emit()
         return added_any
@@ -1418,6 +1425,7 @@ class DataBrowserPanel(QWidget):
         self._move_groups_to_top()
         self._rebuild_run_to_groups()
         self._rebuild_table()
+        self._resize_columns_to_content()
         self.datasets_changed.emit()
         self.group_membership_changed.emit()
         return True

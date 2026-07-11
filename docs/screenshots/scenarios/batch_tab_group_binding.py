@@ -41,10 +41,6 @@ class BatchTabGroupBindingScenario(Scenario):
         run_numbers = [int(ds.run_number) for ds in datasets]
 
         gid = window._data_browser.create_data_group(run_numbers, name="T scan — EuO")
-        # create_data_group (unlike add_dataset) doesn't re-fit column widths,
-        # so the newly-indented Run column would clip its numbers without
-        # this explicit nudge (see data_browser_groups.py).
-        window._data_browser._resize_columns_to_content()
         # Drive the real "Fit this group..." handler so the Batch tab binds
         # to the group and its member checkboxes populate exactly as they
         # would for a user-triggered context-menu action.

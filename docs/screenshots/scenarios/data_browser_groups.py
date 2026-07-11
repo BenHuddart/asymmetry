@@ -51,12 +51,6 @@ class DataBrowserGroupsScenario(Scenario):
         browser.create_data_group([3003, 3004, 3005], name="Runs 3003–3005", kind="auto")
 
         browser.select_runs([3002])
-        # Unlike add_dataset, create_data_group doesn't re-fit column widths
-        # (a pre-existing gap: the Run column stays sized for un-indented
-        # numeric-only content until something else triggers a resize), so
-        # the newly-indented/marked rows would clip under the Run column's
-        # width cap without this explicit nudge.
-        browser._resize_columns_to_content()
         # The Run column's automatic width cap (150 px) elides the auto-group's
         # full name; widen it as a user would drag it, so the "Runs <range>"
         # naming convention the docs describe is actually legible.
