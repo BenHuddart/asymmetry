@@ -51,6 +51,7 @@ to feed data in, ``get_state``/``restore_state`` for project persistence,
 from __future__ import annotations
 
 import csv
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -85,6 +86,24 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.axis_transforms import (
+    CUSTOM as _TRANSFORM_CUSTOM,
+)
+from asymmetry.core.fitting.axis_transforms import (
+    LOG as _TRANSFORM_LOG,
+)
+from asymmetry.core.fitting.axis_transforms import (
+    LOG10 as _TRANSFORM_LOG10,
+)
+from asymmetry.core.fitting.axis_transforms import (
+    PRESET_LABELS as _TRANSFORM_PRESET_LABELS,
+)
+from asymmetry.core.fitting.axis_transforms import (
+    PRESET_ORDER as _TRANSFORM_PRESET_ORDER,
+)
+from asymmetry.core.fitting.axis_transforms import (
+    AxisTransform,
+)
 from asymmetry.core.fitting.component_tracking import (
     Component,
     ScanPoint,
@@ -347,6 +366,17 @@ class _YParamControls:
 
 
 @dataclass
+class _PlotSeries:
+    """One series to render on the trend plot (overlay = many of these)."""
+
+    group_id: str | None
+    name: str
+    color: str
+    rows: list[_FitRow]
+    is_active: bool
+
+
+@dataclass
 class _GroupFitData:
     group_id: str
     group_name: str
@@ -470,6 +500,19 @@ class FitParametersPanel(QWidget):
         #: does not leak across unrelated projects; persisted via
         #: get_state/restore_state below.
         self._trend_model_memory: dict[str, str] = {}
+        #: Per-axis display+fit transforms (Redfield 1/λ vs B², Arrhenius ln λ vs
+        #: 1/T, …). Applied at the data-assembly boundary so the plotted points,
+        #: the error bars, *and* the Model-Fit input all share one transformed
+        #: coordinate system; persisted via get_state/restore_state.
+        self._x_transform: AxisTransform = AxisTransform.identity()
+        self._y_transform: AxisTransform = AxisTransform.identity()
+        #: Last-used custom expression per axis ("x"/"y"), so re-opening the
+        #: Custom… dialog pre-fills it (project-scoped, not QSettings).
+        self._axis_transform_custom_memory: dict[str, str] = {}
+        #: The transform signature each stored model-fit was computed under, so a
+        #: transform change suppresses now-mismatched overlays (mirrors the
+        #: ``fit.x_key`` guard) until the fit is re-run.
+        self._model_fit_transform_sig: dict[str, tuple] = {}
         self._group_button_style_scale = 1.0
         self._ui_scale_sync_connected = False
         #: Run numbers to highlight in the browser for the active series (used by
@@ -638,6 +681,30 @@ class FitParametersPanel(QWidget):
         )
         self._knight_window_btn.clicked.connect(self.knight_window_requested.emit)
         self._update_knight_window_button()
+
+        # Axis transforms — a per-axis lens (1/x, x², ln, …) over the plot *and*
+        # the trend fit, so a Redfield (1/λ vs B²) or Arrhenius (ln λ vs 1/T)
+        # linearisation is a straight-line Model Fit. Advanced, so collapsible and
+        # collapsed by default (GUI_GUIDELINES § Panel anatomy); the active
+        # transforms surface in the header chip and on the plot axis labels.
+        self._transforms_section = PanelSection(
+            "Axis transforms",
+            collapsible=True,
+            expanded=False,
+            settings_key="parameters/sections/transforms",
+        )
+        self._transforms_section.setObjectName("fit-parameters-transforms-section")
+        self._transforms_section.set_hint(
+            "Plot transformed values (e.g. 1/T, ln y) to linearise physics. "
+            "Error bars are propagated; the table and exports stay raw."
+        )
+        transforms_form = QFormLayout()
+        self._x_transform_combo = self._make_axis_transform_combo("x")
+        self._y_transform_combo = self._make_axis_transform_combo("y")
+        transforms_form.addRow("X:", self._x_transform_combo)
+        transforms_form.addRow("Y:", self._y_transform_combo)
+        self._transforms_section.addLayout(transforms_form)
+        controls_layout.addWidget(self._transforms_section)
 
         self._derived_section = PanelSection(
             "Derived parameters",
@@ -927,6 +994,11 @@ class FitParametersPanel(QWidget):
             # ``model_memory`` kwarg. Kept here (not QSettings) so it does not
             # leak across unrelated projects.
             "trend_model_memory": dict(self._trend_model_memory),
+            # Per-axis transforms (identity serialises away); the last-used custom
+            # expressions are remembered per axis to pre-fill the Custom… dialog.
+            "x_transform": self._x_transform.to_dict(),
+            "y_transform": self._y_transform.to_dict(),
+            "axis_transform_custom_memory": dict(self._axis_transform_custom_memory),
         }
 
     @classmethod
@@ -1009,6 +1081,19 @@ class FitParametersPanel(QWidget):
             state.get("composite_parameters", [])
         )
         self._knight_shift_config = KnightShiftConfig.from_dict(state.get("knight_shift"))
+        # Restore the per-axis transforms early so the log-scale guard applies to
+        # the Y checkboxes when they are rebuilt below.
+        self._x_transform = AxisTransform.from_dict(state.get("x_transform"))
+        self._y_transform = AxisTransform.from_dict(state.get("y_transform"))
+        raw_custom_memory = state.get("axis_transform_custom_memory")
+        self._axis_transform_custom_memory = (
+            {str(k): str(v) for k, v in raw_custom_memory.items()}
+            if isinstance(raw_custom_memory, dict)
+            else {}
+        )
+        self._sync_axis_transform_combo("x")
+        self._sync_axis_transform_combo("y")
+        self._update_transform_suffix()
         restored_rows: list[_FitRow] = []
         if isinstance(rows_data, list):
             for entry in rows_data:
@@ -1123,6 +1208,10 @@ class FitParametersPanel(QWidget):
         self._plot_annotations = restored_annotations
 
         self._model_fits = self._deserialize_model_fits(state.get("model_fits", {}))
+        # Restored fits were saved under the restored transform, so bind their
+        # overlay-transform signature to it (a later transform change re-stales).
+        restored_sig = self._transform_signature()
+        self._model_fit_transform_sig = {name: restored_sig for name in self._model_fits}
         self._group_fit_results = self._deserialize_group_fit_results(
             state.get("group_fit_results", {})
         )
@@ -1759,6 +1848,7 @@ class FitParametersPanel(QWidget):
             self._global_param_uncertainties = dict(group.global_param_uncertainties)
             self._inferred_x_key = group.inferred_x_key
             self._model_fits = dict(group.model_fits)
+            self._model_fit_transform_sig = {}
             self._composite_parameters = list(group.composite_parameters)
             self._knight_observables = dict(group.knight_observables)
             self._plot_annotations = list(group.plot_annotations)
@@ -1786,6 +1876,7 @@ class FitParametersPanel(QWidget):
             self._global_param_uncertainties = dict(active_group.global_param_uncertainties)
             self._inferred_x_key = active_group.inferred_x_key
             self._model_fits = dict(active_group.model_fits)
+            self._model_fit_transform_sig = {}
             self._composite_parameters = list(active_group.composite_parameters)
             self._knight_observables = dict(active_group.knight_observables)
             self._plot_annotations = list(active_group.plot_annotations)
@@ -2864,6 +2955,172 @@ class FitParametersPanel(QWidget):
         self._update_angle_fold_visibility()
         self._refresh_views()
 
+    # ── Axis transforms ───────────────────────────────────────────────────────
+    def _make_axis_transform_combo(self, axis: str) -> QComboBox:
+        """Build one axis's transform chooser (None / 1/x / x² / … / Custom…)."""
+        combo = QComboBox()
+        for kind in _TRANSFORM_PRESET_ORDER:
+            label = _TRANSFORM_PRESET_LABELS[kind]
+            if axis == "y":
+                # Present the menu in terms of the axis it drives.
+                label = label.replace("x", "y")
+            combo.addItem(label, userData=kind)
+        combo.setToolTip(
+            "Transforms the plotted values themselves (error bars are "
+            "propagated) — distinct from the 'log' axis-scale checkbox, which "
+            "only changes tick spacing."
+        )
+        # ``activated`` fires on every user pick (even re-selecting the current
+        # item), so re-choosing Custom… always re-opens the editor.
+        combo.activated.connect(lambda _index, a=axis: self._on_axis_transform_activated(a))
+        return combo
+
+    def _axis_transform_combo(self, axis: str) -> QComboBox:
+        return self._x_transform_combo if axis == "x" else self._y_transform_combo
+
+    def _axis_transform(self, axis: str) -> AxisTransform:
+        return self._x_transform if axis == "x" else self._y_transform
+
+    def _on_axis_transform_activated(self, axis: str) -> None:
+        combo = self._axis_transform_combo(axis)
+        kind = combo.currentData()
+        if kind == _TRANSFORM_CUSTOM:
+            self._prompt_custom_axis_transform(axis)
+            return
+        transform = AxisTransform.identity() if kind == "identity" else AxisTransform.preset(kind)
+        self._set_axis_transform(axis, transform)
+
+    def _prompt_custom_axis_transform(self, axis: str) -> None:
+        from asymmetry.gui.panels.axis_transform_dialog import AxisTransformDialog
+
+        sample_value, sample_error = self._axis_sample_point(axis)
+        dialog = AxisTransformDialog(
+            axis_label=axis.upper(),
+            initial_expression=self._axis_transform_custom_memory.get(axis, ""),
+            sample_value=sample_value,
+            sample_error=sample_error,
+            parent=self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            # Revert the combo to whatever transform is actually active.
+            self._sync_axis_transform_combo(axis)
+            return
+        expression = dialog.expression()
+        self._axis_transform_custom_memory[axis] = expression
+        self._set_axis_transform(axis, AxisTransform.custom(expression))
+
+    def _axis_sample_point(self, axis: str) -> tuple[float | None, float | None]:
+        """A representative (value, error) for the custom-transform preview."""
+        rows = self._included_trend_rows(self._effective_x_key())
+        if not rows:
+            rows = list(self._rows)
+        if not rows:
+            return None, None
+        if axis == "x":
+            x_key = self._effective_x_key()
+            values = np.array([self._x_value(r, x_key) for r in rows], dtype=float)
+            errors = self._x_error_array(rows, x_key)
+        else:
+            y_params = self._selected_y_parameters()
+            if not y_params:
+                return None, None
+            name = y_params[0]
+            values = np.array([r.values.get(name, np.nan) for r in rows], dtype=float)
+            errors = np.array([r.errors.get(name, np.nan) for r in rows], dtype=float)
+        finite = values[np.isfinite(values)]
+        if finite.size == 0:
+            return None, None
+        median = float(np.nanmedian(finite))
+        idx = int(np.nanargmin(np.abs(values - median)))
+        error = None
+        if errors is not None and np.isfinite(errors[idx]) and errors[idx] > 0:
+            error = float(errors[idx])
+        return float(values[idx]), error
+
+    def _set_axis_transform(self, axis: str, transform: AxisTransform) -> None:
+        if axis == "x":
+            self._x_transform = transform
+        else:
+            self._y_transform = transform
+        self._sync_axis_transform_combo(axis)
+        self._apply_transform_log_guard()
+        self._update_transform_suffix()
+        self._refresh_plot()
+
+    def _sync_axis_transform_combo(self, axis: str) -> None:
+        """Make the combo's shown item match the active transform.
+
+        A custom transform relabels the Custom… item to the expression itself, so
+        the control is self-documenting; presets restore the plain menu labels.
+        """
+        combo = self._axis_transform_combo(axis)
+        transform = self._axis_transform(axis)
+        custom_index = combo.count() - 1
+        if transform.kind == _TRANSFORM_CUSTOM:
+            combo.setItemText(custom_index, transform.expression)
+            target_kind = _TRANSFORM_CUSTOM
+        else:
+            base_label = _TRANSFORM_PRESET_LABELS[_TRANSFORM_CUSTOM]
+            combo.setItemText(
+                custom_index, base_label.replace("x", "y") if axis == "y" else base_label
+            )
+            target_kind = transform.kind
+        blocker = QSignalBlocker(combo)
+        for i in range(combo.count()):
+            if combo.itemData(i) == target_kind:
+                combo.setCurrentIndex(i)
+                break
+        del blocker
+
+    def _apply_transform_log_guard(self) -> None:
+        """A log-*transform* already log-scales the numbers; disable the log-*axis*
+        checkbox on that axis so the two can't compound into nonsense."""
+        if not hasattr(self, "_log_x_check"):
+            return
+        x_is_log = self._x_transform.kind in (_TRANSFORM_LOG, _TRANSFORM_LOG10)
+        if x_is_log and self._log_x_check.isChecked():
+            blocker = QSignalBlocker(self._log_x_check)
+            self._log_x_check.setChecked(False)
+            del blocker
+        self._log_x_check.setEnabled(not x_is_log)
+        self._log_x_check.setToolTip(
+            "Values are already log-transformed — clear the X transform to use a log axis scale."
+            if x_is_log
+            else "Logarithmic axis scale (display only — values unchanged)."
+        )
+        y_is_log = self._y_transform.kind in (_TRANSFORM_LOG, _TRANSFORM_LOG10)
+        for controls in self._y_controls.values():
+            check = controls.log
+            if y_is_log and check.isChecked():
+                blocker = QSignalBlocker(check)
+                check.setChecked(False)
+                del blocker
+            check.setEnabled(not y_is_log)
+            check.setToolTip(
+                "Values are already log-transformed — clear the Y transform to "
+                "use a log axis scale."
+                if y_is_log
+                else "Logarithmic axis scale (display only — values unchanged)."
+            )
+
+    def _update_transform_suffix(self) -> None:
+        """Surface the active transforms in the collapsed section header."""
+        parts: list[str] = []
+        if not self._x_transform.is_identity:
+            parts.append(self._x_transform.describe("x"))
+        if not self._y_transform.is_identity:
+            parts.append(self._y_transform.describe("y"))
+        self._transforms_section.set_title_suffix(" · ".join(parts) if parts else None)
+
+    def _transform_signature(self) -> tuple:
+        """Identity of the current transforms, for cache/overlay invalidation."""
+        return (
+            self._x_transform.kind,
+            self._x_transform.expression,
+            self._y_transform.kind,
+            self._y_transform.expression,
+        )
+
     def _angle_axis_active(self) -> bool:
         """Whether the Angle field is the current trend x-axis."""
         angle_key = self._angle_x_key()
@@ -3272,6 +3529,9 @@ class FitParametersPanel(QWidget):
         self._y_selector_table.blockSignals(False)
         self._selected_y_param_names = self._selected_y_parameters()
         self._update_composite_action_buttons()
+        # Freshly-built per-parameter log checkboxes must honour an active
+        # ln/log₁₀ Y transform (which owns the log-scaling instead).
+        self._apply_transform_log_guard()
 
     def _set_y_table_visible_rows(self, visible_rows: int = 3) -> None:
         """Set selector table height to show at most ``visible_rows`` rows."""
@@ -3624,9 +3884,14 @@ class FitParametersPanel(QWidget):
         if not rows:
             return
 
-        x_vals = np.array([self._x_value(r, x_key) for r in rows], dtype=float)
-        y_vals = np.array([r.values.get(param_name, np.nan) for r in rows], dtype=float)
-        y_err = np.array([r.errors.get(param_name, np.nan) for r in rows], dtype=float)
+        # Transform into the coordinate the trend fit lives in, so fitting a
+        # ``Linear`` model to a Redfield (1/λ vs B²) / Arrhenius (ln λ vs 1/T)
+        # transform *is* the linearised fit — slope/intercept fall straight out.
+        x_vals, x_err = self._apply_x_transform(
+            np.array([self._x_value(r, x_key) for r in rows], dtype=float),
+            self._x_error_array(rows, x_key),
+        )
+        y_vals, y_err = self._series_y_arrays(rows, param_name)
 
         invalid_err = ~np.isfinite(y_err) | (y_err <= 0)
         if np.any(invalid_err):
@@ -3634,10 +3899,6 @@ class FitParametersPanel(QWidget):
             fallback = max(float(np.nanmedian(finite)) * 0.02, 1e-9) if finite.size else 1e-3
             y_err = y_err.copy()
             y_err[invalid_err] = fallback
-
-        # Per-point x-uncertainty for the effective-variance option — only
-        # meaningful when the abscissa is itself a fitted parameter.
-        x_err = self._x_error_array(rows, x_key)
 
         dialog = ModelFitDialog(
             parameter_name=param_name,
@@ -3648,7 +3909,7 @@ class FitParametersPanel(QWidget):
             existing_fit=self._model_fits.get(param_name),
             parent=self,
             x_errors=x_err,
-            x_label=self._x_axis_display_label(x_key),
+            x_label=self._transformed_x_display_label(x_key),
             model_memory=self._trend_model_memory,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -3656,10 +3917,14 @@ class FitParametersPanel(QWidget):
 
         if dialog.was_removed():
             self._model_fits.pop(param_name, None)
+            self._model_fit_transform_sig.pop(param_name, None)
         else:
             fit = dialog.get_model_fit()
             if fit is not None:
                 self._model_fits[param_name] = fit
+                # Record the transform this fit was computed under so a later
+                # transform change suppresses its now-mismatched overlay.
+                self._model_fit_transform_sig[param_name] = self._transform_signature()
                 # Item B: surface this single fit's per-range outputs as a
                 # trendable results series (one row per range), so a single fit's
                 # outputs can themselves be trended.
@@ -3750,9 +4015,13 @@ class FitParametersPanel(QWidget):
                 continue
             if any(param_name not in row.values for row in rows):
                 return None
-            x_vals = np.array([self._x_value(r, x_key) for r in rows], dtype=float)
-            y_vals = np.array([row.values.get(param_name, np.nan) for row in rows], dtype=float)
-            y_err = np.array([row.errors.get(param_name, np.nan) for row in rows], dtype=float)
+            # Transform into the fit coordinate so a cross-group Linear fit over a
+            # Redfield/Arrhenius transform is the linearised joint fit.
+            x_vals, xerr = self._apply_x_transform(
+                np.array([self._x_value(r, x_key) for r in rows], dtype=float),
+                self._x_error_array(rows, x_key),
+            )
+            y_vals, y_err = self._series_y_arrays(rows, param_name)
             if np.count_nonzero(np.isfinite(y_vals)) < 2:
                 continue
             invalid_err = ~np.isfinite(y_err) | (y_err <= 0)
@@ -3765,6 +4034,8 @@ class FitParametersPanel(QWidget):
                 gv_value = float(overrides[group.group_id])
             else:
                 gv_value = self._group_variable_value_for_rows(rows, x_key)
+                if not self._x_transform.is_identity and np.isfinite(gv_value):
+                    gv_value = float(self._x_transform.apply([gv_value])[0][0])
             group_payload.append(
                 ParameterGroupData(
                     group_id=group.group_id,
@@ -3775,7 +4046,7 @@ class FitParametersPanel(QWidget):
                     group_variable_value=gv_value,
                     # Per-point x-uncertainty for the effective-variance option —
                     # only present (non-None) when the abscissa is a fitted param.
-                    xerr=self._x_error_array(rows, x_key),
+                    xerr=xerr,
                 )
             )
         return group_payload
@@ -4693,11 +4964,23 @@ class FitParametersPanel(QWidget):
             return bool(self._log_y_check.isChecked())
         return bool(controls.log.isChecked() or self._log_y_check.isChecked())
 
+    def _overlay_suppressed_for_transform(self, param_name: str) -> bool:
+        """Suppress a stored fit's overlay when the axes are transformed but the
+        fit was computed under a *different* transform (its ranges live in the
+        old coordinate). No-op when both axes are untransformed, so the common
+        path is unchanged; the fit's pill/table stay usable — only the curve
+        waits for a re-fit under the current transform."""
+        if self._x_transform.is_identity and self._y_transform.is_identity:
+            return False
+        return self._model_fit_transform_sig.get(param_name) != self._transform_signature()
+
     def _draw_model_overlay_mpl(self, ax, param_name: str, color: str = "red") -> None:
         fit = self._model_fits.get(param_name)
         if fit is None or not fit.active:
             return
         if fit.x_key != self._effective_x_key():
+            return
+        if self._overlay_suppressed_for_transform(param_name):
             return
 
         show_components = self._show_components_check.isChecked()
@@ -4808,7 +5091,10 @@ class FitParametersPanel(QWidget):
         return [
             name
             for name in self._selected_y_parameters()
-            if (fit := self._model_fits.get(name)) is not None and fit.active and fit.x_key == x_key
+            if (fit := self._model_fits.get(name)) is not None
+            and fit.active
+            and fit.x_key == x_key
+            and not self._overlay_suppressed_for_transform(name)
         ]
 
     def _trend_overlay_signature(self, active: list[str]) -> tuple:
@@ -4827,6 +5113,9 @@ class FitParametersPanel(QWidget):
             x_key,
             bool(self._show_components_check.isChecked()),
             self._x_domain_for_sampling(x_key),
+            # A transform change moves the sampling domain and the fit coordinate,
+            # so the cached curves must be recomputed.
+            self._transform_signature(),
             tuple((name, id(self._model_fits.get(name))) for name in active),
         )
 
@@ -4945,15 +5234,77 @@ class FitParametersPanel(QWidget):
             return
 
         x_key = self._effective_x_key()
-        rows = sorted(self._rows, key=lambda r: self._x_value(r, x_key))
-        x_vals = np.array([self._x_value(r, x_key) for r in rows], dtype=float)
-        x_err = self._x_error_array(rows, x_key)
-        x_label = self._x_axis_label_mpl(x_key)
-        self._update_custom_x_skip_note(x_key, x_vals)
-        self._update_trend_provenance(rows)
-
+        series = self._series_to_plot()
         self._figure.clear()
         plot_mode = self._plot_mode_combo.currentText()
+
+        if len(series) > 1:
+            self._draw_multi_series(series, y_params, x_key, plot_mode, axes_by_tag)
+        else:
+            self._draw_single_series(y_params, x_key, plot_mode, axes_by_tag)
+
+        self._draw_plot_annotations(axes_by_tag)
+
+        if getattr(self._figure, "get_constrained_layout", lambda: False)():
+            layout_engine = getattr(self._figure, "get_layout_engine", lambda: None)()
+            if layout_engine is not None and hasattr(layout_engine, "set"):
+                layout_engine.set(w_pad=0.04, h_pad=0.04, hspace=0.05, wspace=0.05)
+        else:
+            self._figure.tight_layout(pad=1.2)
+        self._canvas.draw_idle()
+
+    def _series_to_plot(self) -> list[_PlotSeries]:
+        """The series to render: every checked group pill (overlay), else the one
+        active/legacy series. Colours are assigned by pill order, stable across
+        redraws."""
+        selected_ids = self._selected_group_ids_from_buttons()
+        if selected_ids and self._group_fit_results:
+            ordered = [
+                gid
+                for gid in self._group_button_map
+                if gid in selected_ids and gid in self._group_fit_results
+            ]
+            series: list[_PlotSeries] = []
+            for idx, gid in enumerate(ordered):
+                group = self._group_fit_results[gid]
+                is_active = gid == self._active_group_id
+                # The active series' rows carry live composites; others use their
+                # stored rows (real fitted params are present regardless).
+                rows = self._rows if is_active else list(group.rows)
+                series.append(
+                    _PlotSeries(
+                        group_id=gid,
+                        name=group.group_name,
+                        color=f"C{idx % 10}",
+                        rows=rows,
+                        is_active=is_active,
+                    )
+                )
+            if series:
+                return series
+        if self._rows:
+            return [
+                _PlotSeries(
+                    group_id=self._active_group_id,
+                    name="",
+                    color="C0",
+                    rows=self._rows,
+                    is_active=True,
+                )
+            ]
+        return []
+
+    def _draw_single_series(
+        self, y_params: list[str], x_key: str, plot_mode: str, axes_by_tag: dict[str, object]
+    ) -> None:
+        rows = sorted(self._rows, key=lambda r: self._x_value(r, x_key))
+        x_vals, x_err = self._apply_x_transform(
+            np.array([self._x_value(r, x_key) for r in rows], dtype=float),
+            self._x_error_array(rows, x_key),
+        )
+        x_label = self._transformed_x_axis_label(x_key)
+        self._update_custom_x_skip_note(x_key, x_vals)
+        self._update_trend_provenance(rows)
 
         if plot_mode == "Subplots" and len(y_params) > 1:
             num_params = len(y_params)
@@ -4964,8 +5315,7 @@ class FitParametersPanel(QWidget):
                 ax = self._figure.add_subplot(num_rows, num_cols, idx + 1)
                 self._axes_tag_map[id(ax)] = y_name
                 axes_by_tag[y_name] = ax
-                y_vals = np.array([r.values.get(y_name, np.nan) for r in rows], dtype=float)
-                y_err = np.array([r.errors.get(y_name, np.nan) for r in rows], dtype=float)
+                y_vals, y_err = self._series_y_arrays(rows, y_name)
 
                 self._draw_model_overlay_mpl(ax, y_name)
 
@@ -4986,7 +5336,7 @@ class FitParametersPanel(QWidget):
                     )
 
                 ax.set_xlabel(x_label)
-                ax.set_ylabel(_format_plot_label(y_name))
+                ax.set_ylabel(self._transformed_y_axis_label(y_name))
                 ax.set_title(_format_plot_label(y_name))
                 ax.set_xscale("log" if self._log_x_check.isChecked() else "linear")
                 if self._show_components_check.isChecked():
@@ -5003,10 +5353,8 @@ class FitParametersPanel(QWidget):
 
             if len(y_params) == 2:
                 left_name, right_name = y_params
-                left_vals = np.array([r.values.get(left_name, np.nan) for r in rows], dtype=float)
-                left_err = np.array([r.errors.get(left_name, np.nan) for r in rows], dtype=float)
-                right_vals = np.array([r.values.get(right_name, np.nan) for r in rows], dtype=float)
-                right_err = np.array([r.errors.get(right_name, np.nan) for r in rows], dtype=float)
+                left_vals, left_err = self._series_y_arrays(rows, left_name)
+                right_vals, right_err = self._series_y_arrays(rows, right_name)
 
                 ax2 = ax.twinx()
                 self._axes_tag_map[id(ax)] = left_name
@@ -5051,8 +5399,8 @@ class FitParametersPanel(QWidget):
                         zorder=5,
                     )
 
-                ax.set_ylabel(_format_plot_label(left_name), color=left_color)
-                ax2.set_ylabel(_format_plot_label(right_name), color=right_color)
+                ax.set_ylabel(self._transformed_y_axis_label(left_name), color=left_color)
+                ax2.set_ylabel(self._transformed_y_axis_label(right_name), color=right_color)
                 ax.tick_params(axis="y", colors=left_color)
                 ax2.tick_params(axis="y", colors=right_color)
                 if self._show_components_check.isChecked():
@@ -5068,8 +5416,7 @@ class FitParametersPanel(QWidget):
             else:
                 axes_by_tag["main"] = ax
                 for idx, y_name in enumerate(y_params):
-                    y_vals = np.array([r.values.get(y_name, np.nan) for r in rows], dtype=float)
-                    y_err = np.array([r.errors.get(y_name, np.nan) for r in rows], dtype=float)
+                    y_vals, y_err = self._series_y_arrays(rows, y_name)
                     color = f"C{idx % 10}"
                     label = _format_plot_legend_label(y_name) if len(y_params) > 1 else None
 
@@ -5092,7 +5439,7 @@ class FitParametersPanel(QWidget):
                         )
 
                 if len(y_params) == 1:
-                    ax.set_ylabel(_format_plot_label(y_params[0]))
+                    ax.set_ylabel(self._transformed_y_axis_label(y_params[0]))
                     if self._show_components_check.isChecked():
                         ax.set_yscale("linear")
                         ax.set_ylim(bottom=0.0)
@@ -5115,15 +5462,154 @@ class FitParametersPanel(QWidget):
                 ax.set_xscale("log" if self._log_x_check.isChecked() else "linear")
                 ax.grid(True, alpha=0.3)
 
-        self._draw_plot_annotations(axes_by_tag)
+    def _draw_multi_series(
+        self,
+        series: list[_PlotSeries],
+        y_params: list[str],
+        x_key: str,
+        plot_mode: str,
+        axes_by_tag: dict[str, object],
+    ) -> None:
+        """Overlay several selected series (colour = series). Parameter identity,
+        when several are also selected, is carried by the layout (Subplots) or by
+        marker shape — never by a second colour dimension. Twin-axis is suppressed
+        (its colour-codes-the-axis scheme collides with colour-codes-the-series);
+        per-series model-fit overlays are drawn only for the active series (whose
+        curves ride the off-thread cache)."""
+        multi_param = len(y_params) > 1
+        markers = ["o", "s", "^", "D", "v", "P", "X", "*"]
+        x_label = self._transformed_x_axis_label(x_key)
+        self._update_trend_provenance(self._rows)
+        log_x = self._log_x_check.isChecked()
 
-        if getattr(self._figure, "get_constrained_layout", lambda: False)():
-            layout_engine = getattr(self._figure, "get_layout_engine", lambda: None)()
-            if layout_engine is not None and hasattr(layout_engine, "set"):
-                layout_engine.set(w_pad=0.04, h_pad=0.04, hspace=0.05, wspace=0.05)
+        if plot_mode == "Subplots" and multi_param:
+            num_cols = 2
+            num_rows = (len(y_params) + num_cols - 1) // num_cols
+            for pj, y_name in enumerate(y_params):
+                ax = self._figure.add_subplot(num_rows, num_cols, pj + 1)
+                self._axes_tag_map[id(ax)] = y_name
+                axes_by_tag[y_name] = ax
+                for s in series:
+                    self._plot_series_param(
+                        ax, s, x_key, y_name, marker="o", label=s.name if pj == 0 else None
+                    )
+                ax.set_xlabel(x_label)
+                ax.set_ylabel(self._transformed_y_axis_label(y_name))
+                ax.set_title(_format_plot_label(y_name))
+                ax.set_xscale("log" if log_x else "linear")
+                ax.set_yscale("log" if self._is_log_y_for(y_name) else "linear")
+                ax.grid(True, alpha=0.3)
+            handles, labels = self._figure.axes[0].get_legend_handles_labels()
+            if handles:
+                self._figure.legend(handles, labels, loc="upper right", fontsize="small")
+            return
+
+        ax = self._figure.add_subplot(111)
+        self._axes_tag_map[id(ax)] = "main"
+        axes_by_tag["main"] = ax
+        for pj, y_name in enumerate(y_params):
+            marker = markers[pj % len(markers)] if multi_param else "o"
+            for s in series:
+                label = self._series_param_legend_label(s, y_name, multi_param)
+                self._plot_series_param(ax, s, x_key, y_name, marker=marker, label=label)
+        ax.set_xlabel(x_label)
+        ax.set_ylabel(
+            self._transformed_y_axis_label(y_params[0]) if not multi_param else "Parameter Value"
+        )
+        ax.set_xscale("log" if log_x else "linear")
+        if multi_param:
+            ax.set_yscale("log" if any(self._is_log_y_for(name) for name in y_params) else "linear")
         else:
-            self._figure.tight_layout(pad=1.2)
-        self._canvas.draw_idle()
+            ax.set_yscale("log" if self._is_log_y_for(y_params[0]) else "linear")
+        ax.legend(loc="best", fontsize="small")
+        ax.grid(True, alpha=0.3)
+
+    def _series_param_legend_label(
+        self, series: _PlotSeries, y_name: str, multi_param: bool
+    ) -> str:
+        name = series.name or "Series"
+        if multi_param:
+            return f"{name} · {format_param_label(y_name)}"
+        return name
+
+    def _plot_series_param(
+        self,
+        ax,
+        series: _PlotSeries,
+        x_key: str,
+        y_name: str,
+        *,
+        marker: str,
+        label: str | None,
+    ) -> None:
+        """Scatter one (series, parameter) pair with transformed coords + errors."""
+        rows = sorted(series.rows, key=lambda r: self._x_value(r, x_key))
+        x_vals, x_err = self._apply_x_transform(
+            np.array([self._x_value(r, x_key) for r in rows], dtype=float),
+            self._x_error_array(rows, x_key),
+        )
+        y_vals, y_err = self._series_y_arrays(rows, y_name)
+        if series.is_active:
+            self._draw_model_overlay_mpl(ax, y_name, color=series.color)
+        ax.scatter(x_vals, y_vals, s=16, zorder=6, color=series.color, marker=marker, label=label)
+        self._overlay_member_markers(ax, x_vals, y_vals, rows)
+        ye = y_err if np.any(np.isfinite(y_err) & (y_err > 0)) else None
+        if ye is not None or x_err is not None:
+            ax.errorbar(
+                x_vals,
+                y_vals,
+                yerr=ye,
+                xerr=x_err,
+                fmt="none",
+                ecolor=series.color,
+                capsize=2,
+                elinewidth=1,
+                zorder=5,
+            )
+
+    # ── Transform application at the data-assembly boundary ───────────────────
+    def _apply_x_transform(
+        self, x_vals: np.ndarray, x_err: np.ndarray | None
+    ) -> tuple[np.ndarray, np.ndarray | None]:
+        """Transform an abscissa array (and its optional per-point error)."""
+        if self._x_transform.is_identity:
+            return x_vals, x_err
+        vals, errs = self._x_transform.apply(x_vals, x_err if x_err is not None else None)
+        # Run-level axes carry no uncertainty; keep it absent after transform.
+        return vals, (errs if x_err is not None else None)
+
+    def _series_y_arrays(self, rows: list[_FitRow], y_name: str) -> tuple[np.ndarray, np.ndarray]:
+        """Build (and transform) one parameter's value/error arrays for *rows*."""
+        y_vals = np.array([r.values.get(y_name, np.nan) for r in rows], dtype=float)
+        y_err = np.array([r.errors.get(y_name, np.nan) for r in rows], dtype=float)
+        if self._y_transform.is_identity:
+            return y_vals, y_err
+        return self._y_transform.apply(y_vals, y_err)
+
+    @staticmethod
+    def _axis_symbol(label: str) -> str:
+        """Strip a trailing ``(unit)`` so a transform wraps the bare symbol."""
+        text = label.strip()
+        match = re.match(r"^(.*?)\s*\([^()]*\)\s*$", text)
+        return (match.group(1).strip() if match else text) or text
+
+    def _transformed_x_axis_label(self, x_key: str) -> str:
+        base = self._x_axis_label_mpl(x_key)
+        if self._x_transform.is_identity:
+            return base
+        return self._x_transform.describe(self._axis_symbol(self._x_axis_display_label(x_key)))
+
+    def _transformed_y_axis_label(self, y_name: str) -> str:
+        if self._y_transform.is_identity:
+            return _format_plot_label(y_name)
+        return self._y_transform.describe(self._axis_symbol(format_param_label(y_name)))
+
+    def _transformed_x_display_label(self, x_key: str) -> str:
+        """Plain-text transformed x label (for dialog titles / Model-Fit axis)."""
+        base = self._x_axis_display_label(x_key)
+        if self._x_transform.is_identity:
+            return base
+        return self._x_transform.describe(self._axis_symbol(base))
 
     def _x_axis_display_label(self, x_key: str) -> str:
         """Friendly, plain-text label for an x-axis key (for dialog titles).
@@ -5617,6 +6103,9 @@ class FitParametersPanel(QWidget):
         if not self._rows:
             return None
         x_vals = np.array([self._x_value(r, x_key) for r in self._rows], dtype=float)
+        # Sample in the transformed coordinate the fit lives in (min/max of the
+        # transformed values, robust to non-monotonic transforms).
+        x_vals, _ = self._apply_x_transform(x_vals, None)
         finite = x_vals[np.isfinite(x_vals)]
         if finite.size == 0:
             return None
@@ -5661,7 +6150,15 @@ class FitParametersPanel(QWidget):
             return None
 
         sample_count = max(2, int(num_points))
-        if x_key == "field" and float(x_min) > 0.0 and float(x_max) > 0.0:
+        # Geometric sampling suits a bare (untransformed) field axis; once the
+        # abscissa is transformed the domain is no longer a raw field, so sample
+        # it linearly.
+        if (
+            x_key == "field"
+            and self._x_transform.is_identity
+            and float(x_min) > 0.0
+            and float(x_max) > 0.0
+        ):
             xs = np.geomspace(float(x_min), float(x_max), num=sample_count, dtype=float)
         else:
             xs = np.linspace(float(x_min), float(x_max), num=sample_count, dtype=float)

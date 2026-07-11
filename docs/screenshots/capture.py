@@ -284,6 +284,7 @@ def _import_scenarios() -> None:
         muon_fluorine_pbf2,
         new_user_function_dialog,
         parameter_trending_mgb2,
+        parameter_trending_redfield,
         period_mapping_dialog,
         quickstart_first_fit,
         run_info_provenance,

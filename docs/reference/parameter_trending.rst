@@ -141,6 +141,70 @@ column** (:ref:`logbook-columns`). Custom columns hold free-form text, so when
 one is the x-axis each value is coerced to a number and runs whose value is empty
 or non-numeric are dropped, with a note reporting how many were skipped.
 
+.. _trend-axis-transforms:
+
+Axis transforms
+---------------
+
+Some of the most common µSR presentations are *linearisations* of a curved
+trend: the **Redfield** analysis plots :math:`1/\lambda` against
+:math:`(\mu_0 H)^2` so a straight line's slope and intercept give the
+fluctuation rate and field width; the **Arrhenius** analysis plots
+:math:`\ln\lambda` against :math:`1/T` so the slope is an activation energy.
+The collapsible **Axis transforms** section (below the Y-parameter list)
+applies such a transform to either axis independently.
+
+.. image:: /_generated/screenshots/parameter_trending_redfield.png
+   :alt: The trending panel showing a Redfield linearisation — 1/λ versus B² with a straight-line Linear fit
+   :width: 100%
+
+*A Redfield linearisation of a longitudinal-field* :math:`\lambda(B)` *scan:*
+*the Y axis transformed to* ``1/x  (reciprocal)`` *and the X axis to*
+``x²  (square)`` *turn the three-regime* :math:`\lambda(B)` *falloff into a*
+*straight line, and a* ``Linear`` *model fit on the transformed plateau gives*
+*the Redfield slope and intercept. The high-field saturated point is excluded*
+*from the trend, so it sits off the line.*
+
+Each axis has its own chooser — **X:** and **Y:** — offering ``None``,
+``1/x  (reciprocal)``, ``x²  (square)``, ``ln x``, ``log₁₀ x``, ``√x`` and
+``Custom…``. Choosing ``Custom…`` opens a small **Custom X transform** /
+**Custom Y transform** dialog with one field, *Expression in x:* (placeholder
+``e.g. 1000/x``); the expression is validated live and previewed on a
+representative data value. The accepted expression then labels the combo item
+itself, and the last-used custom expression is remembered per axis.
+
+The transform is applied at the point where the panel assembles its data, so it
+governs the plotted points, the propagated error bars **and the trend fit**:
+fitting a ``Linear`` model with the axes transformed to :math:`1/\lambda`
+versus :math:`(\mu_0 H)^2` *is* the Redfield line, and its slope/intercept are
+read straight from the :ref:`model-fit dialog <trend-model-fit-dialog>`. A point
+whose transform is undefined (``1/0``, ``ln`` of a non-positive value) is dropped
+like any other NaN. Changing a transform marks an existing trend fit for re-fit,
+since its curve lives in the previous coordinate.
+
+A transform is distinct from the **log** axis-scale checkbox next to the **X:**
+selector (and the per-parameter **log** checkbox in the Y-parameter list): those
+change the axis *tick spacing* while leaving the numbers alone, whereas the
+transform changes the plotted values (which is what a straight-line Arrhenius fit
+needs). To keep the two from compounding, selecting ``ln x`` / ``log₁₀ x`` on an
+axis disables that axis's ``log`` checkbox until the transform is cleared.
+
+.. _trend-series-overlay:
+
+Overlaying several series
+-------------------------
+
+The series buttons above the plot are multi-select: **Shift+click** a second
+series to overlay it on the first (the same selection also arms a joint
+`Cross-Group Fitting`_). Overlaid series are
+distinguished by colour, with a legend of their names — the natural way to
+compare, say, :math:`\sigma(T)` measured at two applied fields, or the same
+observable across two samples. When more than one parameter is also selected,
+each parameter takes a distinct marker shape so colour stays free to encode the
+series; the twin-axis layout is used only for a single series. Model-fit trend
+curves are drawn for the active (last-clicked) series, which retains ownership of
+the parameter table, composites, and the model-fit controls.
+
 Representation-aware trending
 ------------------------------
 
@@ -223,9 +287,10 @@ abscissa: the pool is drawn from ``component_names_for_x`` and filtered by each
 component's declared scope, so a temperature axis never lists a field-only form
 and vice versa. The registry (grouped by the context that offers them) is:
 
-* **Any axis** (``common``) — ``Constant``, ``Linear``, and the general
-  fifth-order ``Polynomial``; ``PowerLaw`` and its quadrature-background variant
-  ``PowerLawQuadBG``; and ``ExponentialDecay``.
+* **Any axis** (``common``) — ``Constant``, ``Linear``, ``Quadratic``
+  (:math:`c_0 + c_1 x + c_2 x^2`, the plain parabola — e.g. a steering-curve
+  minimum), and the general fifth-order ``Polynomial``; ``PowerLaw`` and its
+  quadrature-background variant ``PowerLawQuadBG``; and ``ExponentialDecay``.
 * **Temperature axis** — ``Arrhenius`` (thermal activation), ``OrderParameter``
   (a magnetic order parameter vanishing at :math:`T_c`), ``CriticalDivergence``
   (a rate diverging at :math:`T_c`), and the superconducting gap models
