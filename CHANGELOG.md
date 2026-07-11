@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Data groups are now the vehicle for batch and global fits.** A group owns
+  the fit series run over it: choose **Fit this group…** from a data group's
+  context menu to bind the fit dock's Batch tab to that group, then untick
+  members in the new **Batch members** list to exclude a run from *this*
+  analysis without removing it from the group. A series' effective membership
+  now tracks its group's live membership (minus its own exclusions) rather
+  than a fixed snapshot; when the group changes after a fit, the series'
+  trend pill grows a **⚠** ("Membership changed since last fit — re-run to
+  refresh.") until it is re-run. Re-running a group-bound series replaces its
+  previous results in place. Documented in *Reference ▸ GUI usage ▸ Data
+  groups* and *Reference ▸ Parameter trending ▸ Group-bound series and
+  staleness*.
+- **A run can belong to more than one data group.** **Send to Group** now
+  always adds a membership rather than moving the run out of whatever group
+  it was already in, so the same run can sit in, say, both a field scan and a
+  temperature scan. A run's extra memberships render as marked copy rows
+  (①, ② …) beneath its primary one, with an **Also in:** tooltip naming the
+  others; selecting any copy reaches the same underlying dataset once, so
+  plotting, fitting, and co-add never double-count it. Removing a run's
+  primary membership promotes its earliest remaining copy.
+- **Ad-hoc batch fits auto-create a data group.** Running a batch or global
+  fit over a selection that is not already bound to a group mints (or, for an
+  identical run set, reuses) a group named from the run range, e.g. "Runs
+  1001–1010", so every recorded batch series has an explicit owner. These
+  auto-created groups paint in a red-grey tint, distinct from the blue used
+  for groups you name yourself; renaming an auto-created group promotes it to
+  an ordinary (blue) group.
+- **Ungrouping a group with recorded fits now asks what to do with them.**
+  Choosing **Ungroup** on a group that owns fit series opens a prompt to
+  **Keep fits** (the series become standalone, frozen analyses) or
+  **Delete fits** (remove the group and its series together), with the option
+  to cancel.
 - **Waterfall display mode for overlaid plots.** A new **Waterfall** checkbox
   next to **Overlay** on both the time-domain and frequency-domain plot
   panels stacks each overlaid trace vertically by a uniform `i * Δ` offset so
@@ -21,6 +53,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and record a `waterfall offset:` header so the raw values stay recoverable.
   The setting persists in the project file (schema v14). Documented in
   *Reference ▸ GUI usage ▸ Waterfall stacking*.
+
+### Changed
+
+- **Single-tab carry-forward is now refresh-unless-fitted.** Previously,
+  selecting a new run always carried forward whatever the form was last
+  showing, so a hand-edited draft could silently leak onto an unrelated run.
+  Now, a run with a recorded fit result (its own single fit, or its role as a
+  batch/global member) is *protected* and always restores exactly that
+  fitted state; every other run *refreshes* from the session's most recently
+  fitted function instead (with field-dependent parameters such as ``B_L``
+  reseeded for the newly-selected run), replacing anything it was showing
+  before. A results-box message ("Model carried from run *N* — not fitted
+  for this run") makes a carried-forward form impossible to mistake for a
+  real fit of the displayed run. Documented in *Reference ▸ GUI usage ▸
+  Carrying a model forward between runs*.
+- **Project schema v15: data groups and fit series are unified.** Each data
+  group gains a ``kind`` (``"user"``/``"auto"``); each run-membered fit
+  series gains a structural ``group_id``, per-series
+  ``excluded_run_numbers``, and a ``last_fitted_members`` snapshot. Existing
+  v14 projects migrate automatically and tolerantly: a series resolves
+  ``group_id`` from its old provenance-only ``source_group_id`` only when
+  that group still exists in the project, and a group-less series migrates
+  to a frozen, standalone analysis rather than sprouting a group nobody
+  created. Detector-group (multi-group) series are unaffected. See
+  *Reference ▸ Project files* for the field-by-field detail.
+
+### Removed
+
+- **"Share with Group" is gone from the Single tab and the grouped fit
+  surface.** It used to copy the current single-fit function and seeds onto
+  every other member of the same group, unconditionally overwriting whatever
+  they held — including a run that had already been fitted. That behaviour
+  is superseded by the carry-forward rework above: a fitted run is now
+  always protected from being overwritten, and every unfitted run already
+  refreshes automatically from the most recent fit, which is what "Share
+  with Group" was mostly being reached for in the first place. Use **Fit
+  this group…**'s batch fit when you actually want one model fit across the
+  group.
 
 ## [0.10.0] - 2026-07-10
 

@@ -1,8 +1,8 @@
 # DataGroup / FitSeries Unification (Option C)
 
-Status: design settled with maintainer 2026-07-11; execution plan approved for
-a single PR on a feature branch, phases executed by subagents with an
-orchestrator review gate after every phase.
+Status: implemented on branch `feat/datagroup-fitseries-unification`
+(Phases 1–5 complete: core model, browser, fit flows, carry-forward, docs);
+awaiting orchestrator's Phase 6 validation and PR review.
 
 This document is written to be executed by subagents that have **no access to
 the design conversation**. Each phase states its scope, the invariants it must

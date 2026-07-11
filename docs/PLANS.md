@@ -82,10 +82,9 @@ Acceptance criteria (v1 = Phases 1–4 of the study):
 
 ### DataGroup / FitSeries Unification (Option C)
 
-Status: design settled with maintainer (2026-07-11); execution plan approved —
-single PR on a feature branch, phases run by subagents (Opus for the core /
-browser / fit-flow phases, Sonnet for carry-forward and docs) with an
-orchestrator review gate after every phase
+Status: implemented on branch `feat/datagroup-fitseries-unification`
+(Phases 1–5 — core model, browser, fit flows, carry-forward, docs — complete);
+awaiting Phase 6 full validation and PR review
 
 Make DataGroups the canonical vehicle for batch fits: a run-membered
 `FitSeries` structurally belongs to a group (`group_id`), its membership is
