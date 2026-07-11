@@ -270,6 +270,8 @@ class NexusLoader(BaseLoader):
                 ),
                 dtype=np.float64,
             )
+        if good_frames_values.size == 0:
+            good_frames_values = self._good_frames_from_beam(entry)
         dead_time_values = np.asarray(
             self._read_optional(h_data, "dead_time", default=[]),
             dtype=np.float64,
@@ -461,6 +463,8 @@ class NexusLoader(BaseLoader):
                 self._read_optional(entry, "goodfrm", default=[]),
                 dtype=np.float64,
             )
+        if good_frames_values.size == 0:
+            good_frames_values = self._good_frames_from_beam(entry)
         dead_time_values = np.asarray(
             self._read_optional(detector, "dead_time", default=[]),
             dtype=np.float64,
@@ -619,6 +623,28 @@ class NexusLoader(BaseLoader):
             bin_index_base=int(index_offset),
             source_file=source_file,
         )
+
+    def _good_frames_from_beam(self, entry: Any) -> np.ndarray:
+        """Good-frame count(s) from ``instrument/beam``.
+
+        Legacy ISIS muon NeXus v1 files (and the HDF4 originals read directly)
+        do not carry a top-level ``good_frames``/``goodfrm``; the authoritative
+        good-frame count lives under ``instrument/beam`` instead. Prefer the
+        per-period ``frames_period`` array so multi-period normalisation stays
+        correct, then fall back to the run totals (``frames_good`` / ``frames``).
+
+        Without this, the deadtime path defaults ``good_frames`` to ``1.0`` and
+        ``prepare_histograms_with_deadtime`` over-corrects HDF4 counts by ~5
+        orders of magnitude.
+        """
+        beam = self._read_optional(self._read_optional(entry, "instrument"), "beam")
+        if beam is None:
+            return np.asarray([], dtype=np.float64)
+        for key in ("frames_period", "frames_good", "frames"):
+            values = np.asarray(self._read_optional(beam, key, default=[]), dtype=np.float64)
+            if values.size:
+                return values
+        return np.asarray([], dtype=np.float64)
 
     def _build_period_datasets(
         self,
