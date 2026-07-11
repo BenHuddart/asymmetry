@@ -66,6 +66,88 @@ def test_general_fmuf_cache_hits_on_repeated_geometry() -> None:
     assert second_info.hits >= first_info.hits + 1
 
 
+def _general_spectral_terms_loop(
+    r1: float, r2: float, theta_deg: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """Independent per-orientation-loop reference for the general F-mu-F spectrum.
+
+    Mirrors the pre-vectorization implementation (one ``np.linalg.eigh`` per
+    powder orientation via ``three_spin_hamiltonian_rad_per_us``) so the batched
+    ``_general_spectral_terms_cached`` can be checked against it directly.
+    """
+    from asymmetry.core.fitting.muon_fluorine.dipolar import (
+        MUON_SIGMA_Z_THREE_SPIN,
+        omega_d_f_f_rad_per_us,
+        three_spin_hamiltonian_rad_per_us,
+    )
+
+    theta = np.deg2rad(theta_deg)
+    v_f1 = np.array([0.0, 0.0, 1.0])
+    v_f2 = np.array([np.sin(theta), 0.0, np.cos(theta)])
+
+    rotations, weights = polarization._powder_rotations(
+        polarization._DEFAULT_NUM_BETA,
+        polarization._DEFAULT_NUM_ALPHA,
+        polarization._DEFAULT_NUM_GAMMA,
+    )
+    n_mu_f1 = rotations @ v_f1
+    n_mu_f2 = rotations @ v_f2
+    f1_to_f2 = r2 * n_mu_f2 - r1 * n_mu_f1
+    d_f1_f2 = np.linalg.norm(f1_to_f2, axis=1)
+    n_f1_f2 = f1_to_f2 / d_f1_f2[:, None]
+
+    c1 = omega_d_mu_f_rad_per_us(r1)
+    c2 = omega_d_mu_f_rad_per_us(r2)
+    c3 = omega_d_f_f_rad_per_us(float(np.mean(d_f1_f2)))
+    dim = MUON_SIGMA_Z_THREE_SPIN.shape[0]
+
+    freqs_list, amps_list = [], []
+    for idx, w in enumerate(weights):
+        h = three_spin_hamiltonian_rad_per_us(c1, c2, c3, n_mu_f1[idx], n_mu_f2[idx], n_f1_f2[idx])
+        evals, evecs = np.linalg.eigh(h)
+        sigma_eig = evecs.conj().T @ MUON_SIGMA_Z_THREE_SPIN @ evecs
+        tw = (np.abs(sigma_eig) ** 2) / float(dim)
+        omega_mn = (evals[:, None] - evals[None, :]).real
+        freqs_list.append(omega_mn.ravel())
+        amps_list.append((float(w) * tw).ravel().real)
+
+    frequencies = np.concatenate(freqs_list)
+    amplitudes = np.concatenate(amps_list)
+    binned = np.round(frequencies, decimals=polarization._SPECTRUM_BIN_DECIMALS)
+    unique_freq, inverse = np.unique(binned, return_inverse=True)
+    binned_amps = np.zeros_like(unique_freq, dtype=float)
+    np.add.at(binned_amps, inverse, amplitudes)
+    total = float(np.sum(binned_amps))
+    if total > 0.0:
+        binned_amps /= total
+    return unique_freq, binned_amps
+
+
+def test_general_spectral_terms_match_orientation_loop() -> None:
+    """The batched spectral build must equal the per-orientation loop reference."""
+    vectorized = polarization._general_spectral_terms_cached.__wrapped__
+    for r1, r2, theta in [
+        (1.2, 1.2, 180.0),
+        (1.18, 1.24, 150.0),
+        (1.10, 1.30, 90.0),
+        (1.05, 1.05, 120.0),
+        (1.17, 1.22, 60.0),
+    ]:
+        freqs_v, amps_v = vectorized(
+            r1,
+            r2,
+            theta,
+            polarization._DEFAULT_NUM_BETA,
+            polarization._DEFAULT_NUM_ALPHA,
+            polarization._DEFAULT_NUM_GAMMA,
+        )
+        freqs_l, amps_l = _general_spectral_terms_loop(r1, r2, theta)
+
+        assert freqs_v.shape == freqs_l.shape
+        np.testing.assert_allclose(freqs_v, freqs_l, rtol=0.0, atol=1e-9)
+        np.testing.assert_allclose(amps_v, amps_l, rtol=0.0, atol=1e-12)
+
+
 def test_muon_fluorine_components_registered() -> None:
     expected = {"MuF", "FmuF_Linear", "FmuF_General", "FmuF_Triangle", "DynamicFmuF"}
     assert expected.issubset(COMPONENTS)
