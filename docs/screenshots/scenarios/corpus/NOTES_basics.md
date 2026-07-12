@@ -86,11 +86,24 @@ fit-free. All five ran fine on the env's numpy 2.2.6.
   B4's muonium-amplitude roll-off would make a striking trend render.
 - **Model Fit polynomial trend overlay** — used for steering (the `Cubic`
   component, injected as a real `ParameterModelFit` per
-  `parameter_trending_mgb2.py`). Note: the Model Fit registry has no dedicated
-  *Quadratic* component (Linear, Cubic, Quartic, quintic Polynomial, Sextic);
-  a pure parabola needs `Polynomial` with c3–c5 fixed at 0. A first-class
-  Quadratic would be a small, teachable addition — recorded as a feature
-  opportunity (worked around here, and the cubic is what WiMDA itself used).
+  `parameter_trending_mgb2.py`).
+
+  **Registry gap CLOSED by PR-248.** The earlier note here recorded that the
+  Model Fit registry had no dedicated *Quadratic* component (only Linear, Cubic,
+  Quartic, quintic Polynomial, Sextic), so a pure parabola needed `Polynomial`
+  with c3–c5 fixed at 0. PR-248 adds a first-class **`Quadratic`**
+  (c₀ + c₁x + c₂x², scopes `common`/`field`/`temperature`, so offered on every
+  trend axis — verified). Fitting it to the same 9 steering a₀(I) points
+  converges (χ²ᵣ = 0.415, c₀=5.12, c₁=0.451, c₂=2.369) with the parabola minimum
+  at **I = −0.095 A** — exactly the documented pure-quadratic shift.
+
+  **The shipped `corpus_basics_steering` scenario deliberately keeps `Cubic`**
+  (unchanged by this PR test pass): WiMDA's own reference curve
+  (`steering_curve_fits.tab`) is a cubic (refit c3 ≈ 0.31), and the cubic fit
+  reproduces WiMDA's beam-centred **I = −0.060 A** (χ²ᵣ = 0.309), whereas the
+  quadratic pulls the minimum to −0.095 A. So `Quadratic` is now available and
+  fits sanely, but `Cubic` remains the correct shipped choice for this
+  worked example. (Confirmed with a throwaway fit; no scenario/src change.)
 
 ## Problems hit / caveats
 

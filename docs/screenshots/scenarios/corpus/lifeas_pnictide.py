@@ -453,102 +453,117 @@ class LifeasTfFitScenario(CorpusScenario):
 # --------------------------------------------------------------------------- #
 #  3. Headline — two-sample B_rms(T) with λ_ab conversions.
 # --------------------------------------------------------------------------- #
+def _brms_rows(temps, brms, field, base_run, *, keep=None):
+    """Build trend-panel row dicts for one B_rms(T) series.
+
+    ``keep`` (optional, per-point bool) marks points that stay *in* the trend;
+    a ``False`` entry sets ``include_in_trend=False`` so the panel rings that
+    point in grey (a degenerate signal/background split near T_c). Absent →
+    every point is included (the digitised reference curve).
+    """
+    rows = []
+    for i, (t, b) in enumerate(zip(temps, brms)):
+        rows.append(
+            {
+                "run_number": int(base_run + i),
+                "run_label": f"{float(t):.0f} K",
+                "field": float(field),
+                "temperature": float(t),
+                "values": {"B_rms": float(b)},
+                "errors": {"B_rms": float("nan")},
+                "include_in_trend": True if keep is None else bool(keep[i]),
+            }
+        )
+    return rows
+
+
 class LifeasBrmsTScenario(CorpusScenario):
     name = "corpus_lifeas_brms_t"
     description = (
-        "LiFeAs vortex-lattice field width B_rms(T) at 40 mT for both samples: "
-        "Sample 1 (T_c = 16 K, plateau ≈ 1.9 mT ⇒ λ_ab = 195 nm) and Sample 2 "
-        "(T_c ≈ 12 K, ≈ 1.2 mT ⇒ 244 nm). Paper Fig. 1 (digitised) with the real "
-        "Asymmetry Sample-1 two-Gaussian fits overlaid."
+        "LiFeAs vortex-lattice field width B_rms(T) at 40 mT for both samples in "
+        "the real Fit-Parameters trend panel (multi-series overlay): Sample 1 (real "
+        "Asymmetry two-Gaussian fits, T_c = 16 K, plateau ≈ 1.9 mT ⇒ λ_ab = 195 nm) "
+        "overlaid on Sample 2 (digitised Pratt 2009 Fig. 1, T_c ≈ 12 K, ≈ 1.2 mT ⇒ "
+        "244 nm). Mixed provenance: real fits vs a digitised reference table."
     )
     example = EXAMPLE
     size = (1240, 820)
     requires_fit = True
 
-    def capture(self, ctx: CaptureContext):
-        from matplotlib.figure import Figure
+    def build(self) -> QWidget:
+        # Native overlay of two mixed-provenance series in the real panel (PR-248):
+        #   Sample 1 = genuine per-run Asymmetry two-Gaussian fits (this work),
+        #   Sample 2 = the digitised Pratt-2009 Fig. 1 reference curve.
+        # The two series have completely different T grids and lengths — the panel
+        # assembles each independently, so no shared-x-grid assumption applies.
+        from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
 
-        s1 = np.array(_FIG1_S1)
-        s2 = np.array(_FIG1_S2)
         ft, fb, keep = _fit_s1_brms_series()
+        s2 = np.array(_FIG1_S2)
 
-        figure = Figure(figsize=(9.6, 6.4), dpi=120, tight_layout=True)
-        ax = figure.add_subplot(1, 1, 1)
-
-        # Paper Fig. 1 digitised reference (guide-to-the-eye curves).
-        ax.plot(s1[:, 0], s1[:, 1], "-", color="#1f77b4", lw=1.0, alpha=0.5)
-        ax.plot(
-            s1[:, 0],
-            s1[:, 1],
-            "o",
-            color="#1f77b4",
-            ms=6,
-            label="Sample 1 — LFA, 40 mT (Pratt 2009 Fig. 1)",
+        panel = FitParametersPanel()
+        panel.load_representation_series(
+            [
+                (
+                    "lifeas-s1-fit",
+                    "Sample 1 — Asymmetry fit (LFA)",
+                    _brms_rows(ft, fb, 400.0, 3366, keep=keep),
+                ),
+                (
+                    "lifeas-s2-ref",
+                    "Sample 2 — Pratt 2009 Fig. 1 (LFA₂)",
+                    _brms_rows(s2[:, 0], s2[:, 1], 200.0, 3662),
+                ),
+            ],
+            select_id="lifeas-s1-fit",
         )
-        ax.plot(s2[:, 0], s2[:, 1], "-", color="#d62728", lw=1.0, alpha=0.5)
-        ax.plot(
-            s2[:, 0],
-            s2[:, 1],
-            "s",
-            color="#d62728",
-            ms=6,
-            label="Sample 2 — LFA_2, 40 mT (Pratt 2009 Fig. 1)",
-        )
+        # Overlay both (Shift+click on the second pill has no public equivalent).
+        panel._set_selected_group_ids(["lifeas-s1-fit", "lifeas-s2-ref"], emit=False)
+        _process_events_for(milliseconds=80)
+        return panel
 
-        # Real Asymmetry Sample-1 fits (open markers), where the VL signal
-        # dominates the two-Gaussian split.
-        ax.plot(
-            ft[keep],
-            fb[keep],
-            "D",
-            mfc="none",
-            mec="#0b3d63",
-            mew=1.6,
-            ms=8,
-            label="Sample 1 — Asymmetry two-Gaussian fit (this work)",
-        )
+    def settle(self, widget: QWidget) -> None:
+        widget._refresh_plot()
+        _process_events_for(milliseconds=200)
+        axes = list(widget._figure.axes)
+        if axes:
+            ax = axes[0]
+            ax.set_title(
+                "LiFeAs vortex-lattice linewidth B_rms(T) at B₀ = 40 mT — two samples",
+                fontsize=10,
+            )
+            ax.set_ylabel(r"VL field width  $B_\mathrm{rms}$  (mT)")
+            ax.set_xlim(0.0, 25.0)
+            ax.set_ylim(0.0, 2.15)
 
-        # λ_ab conversions via Eq. (3), drawn as plateau guide lines.
-        for lam, color, sample in ((195.0, "#1f77b4", "1"), (244.0, "#d62728", "2")):
-            b = _brms_from_lambda(lam)
-            ax.axhline(b, color=color, ls=":", lw=1.0, alpha=0.7)
+            # λ_ab conversions via Eq. (3): on-plot annotation for an overlaid
+            # series is not a panel feature (legend carries the series *name*
+            # only), so the λ_ab plateau lines are drawn on the axes here.
+            for lam, color, sample in ((195.0, "C0", "1"), (244.0, "C1", "2")):
+                b = _brms_from_lambda(lam)
+                ax.axhline(b, color=color, ls=":", lw=1.0, alpha=0.7)
+                ax.text(
+                    19.6, b, f"  λ_ab({sample}) = {lam:.0f} nm",
+                    color=color, fontsize=8, va="center", ha="left",
+                )
+            ax.axvline(16.0, color="C0", ls="--", lw=0.8, alpha=0.5)
+            ax.axvline(12.0, color="C1", ls="--", lw=0.8, alpha=0.5)
+            ax.text(16.0, 2.02, r" $T_\mathrm{c}$=16 K", color="C0", fontsize=8, va="bottom", ha="left")
+            ax.text(12.0, 2.02, r" 12 K", color="C1", fontsize=8, va="bottom", ha="right")
             ax.text(
-                19.6,
-                b,
-                f"  λ_ab({sample}) = {lam:.0f} nm",
-                color=color,
-                fontsize=8,
-                va="center",
+                0.015,
+                0.03,
+                "Eq. (3):  B_rms = √0.00371·φ₀/(3^{1/4}λ_ab)²   ⇒   195 nm→1.91 mT, 244 nm→1.22 mT.\n"
+                "Sample 1 = real Asymmetry two-Gaussian fits (grey-ringed points near T_c drop out\n"
+                "of the trend as the signal/background split degenerates); Sample 2 = digitised Fig. 1.",
+                transform=ax.transAxes,
+                color="0.35",
+                fontsize=7.5,
+                va="bottom",
                 ha="left",
             )
-
-        ax.axvline(16.0, color="#1f77b4", ls="--", lw=0.8, alpha=0.5)
-        ax.axvline(12.0, color="#d62728", ls="--", lw=0.8, alpha=0.5)
-        ax.text(
-            16.0, 2.02, r" $T_\mathrm{c}$=16 K", color="#1f77b4", fontsize=8, va="bottom", ha="left"
-        )
-        ax.text(12.0, 2.02, r" 12 K", color="#d62728", fontsize=8, va="bottom", ha="right")
-
-        ax.set_xlabel("Temperature  T (K)")
-        ax.set_ylabel(r"VL field width  $B_\mathrm{rms}$  (mT)")
-        ax.set_title("LiFeAs vortex-lattice linewidth B_rms(T) at B₀ = 40 mT — two samples")
-        ax.set_xlim(0.0, 25.0)
-        ax.set_ylim(0.0, 2.15)
-        ax.legend(loc="upper right", frameon=True, fontsize=8)
-        ax.grid(True, alpha=0.25)
-        ax.text(
-            0.015,
-            0.03,
-            "Eq. (3):  B_rms = √0.00371·φ₀/(3^{1/4}λ_ab)²   ⇒   195 nm→1.91 mT, 244 nm→1.22 mT.\n"
-            "Asymmetry σ (Gaussian exp(−(σt)²)) → σ_paper = √2·σ; B_rms = √2·σ_VL/γ_µ, γ_µ=0.8516 µs⁻¹mT⁻¹.\n"
-            "Sample-2 corpus runs are 1.5/20 K field pairs, not a T-scan — its curve is the digitised Fig. 1.",
-            transform=ax.transAxes,
-            color="0.35",
-            fontsize=7.5,
-            va="bottom",
-            ha="left",
-        )
-        return _save_canvas_agg(figure, ctx, self.name)
+            widget._canvas.draw()
+        _process_events_for(milliseconds=120)
 
 
 # --------------------------------------------------------------------------- #

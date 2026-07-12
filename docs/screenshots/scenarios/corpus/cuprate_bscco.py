@@ -53,7 +53,7 @@ import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget
 
-from .._base import CaptureContext, _process_events_for
+from .._base import _process_events_for
 from ._corpus import CorpusScenario, load_corpus_datasets, register
 
 EXAMPLE = "Superconductivity/A high-Tc cuprate"
@@ -179,25 +179,29 @@ def _fit_sigma_series(scan, freq=_FREQ_400G, sigma_start=1.15):
     return np.array(temps), np.array(vals), np.array(errs)
 
 
-def _load_trend_panel(temps, sigma, sigma_err, title):
-    """Build a FitParametersPanel showing the σ(T) trend points."""
-    from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
-
+def _sigma_rows(temps, sigma, sigma_err, field, base_run):
+    """Build trend-panel row dicts for one σ(T) field scan (ascending T)."""
     order = np.argsort(temps)
-    row_dicts = [
+    return [
         {
-            "run_number": int(1276 + i),
+            "run_number": int(base_run + i),
             "run_label": f"{temps[j]:.0f} K",
-            "field": 400.0,
+            "field": float(field),
             "temperature": float(temps[j]),
             "values": {"sigma": float(sigma[j])},
             "errors": {"sigma": float(sigma_err[j])},
         }
         for i, j in enumerate(order)
     ]
+
+
+def _load_trend_panel(temps, sigma, sigma_err, title):
+    """Build a FitParametersPanel showing the σ(T) trend points."""
+    from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
+
     panel = FitParametersPanel()
     panel.load_representation_series(
-        [("bscco-sigma-t", title, row_dicts)],
+        [("bscco-sigma-t", title, _sigma_rows(temps, sigma, sigma_err, 400.0, 1276))],
         select_id="bscco-sigma-t",
     )
     _process_events_for(milliseconds=80)
@@ -457,99 +461,78 @@ class BsccoSigmaTScenario(CorpusScenario):
 class BsccoFieldCompareScenario(CorpusScenario):
     name = "corpus_bscco_field_compare"
     description = (
-        "BiSCCO σ(T) at 400 G overlaid on 200 G: the 200 G plateau (~0.9 µs⁻¹) "
-        "sits below the 400 G plateau (~1.15 µs⁻¹) — the pancake-vortex field "
-        "dependence of the extremely anisotropic Bi-2212 (GROUND_TRUTH §6b)."
+        "BiSCCO σ(T) at 400 G overlaid on 200 G in the real Fit-Parameters trend "
+        "panel (multi-series overlay): the 200 G plateau (~0.9 µs⁻¹) sits below "
+        "the 400 G plateau (~1.15 µs⁻¹) — the pancake-vortex field dependence of "
+        "the extremely anisotropic Bi-2212 (GROUND_TRUTH §6b)."
     )
     example = EXAMPLE
-    size = (1200, 720)
+    size = (1240, 760)
     requires_fit = True
 
-    def capture(self, ctx: CaptureContext):  # noqa: D401
-        # Rendered as a standalone Matplotlib figure (the mgb2_lambda_t /
-        # parameter_trending pattern): the Fit-Parameters panel plots one active
-        # series at a time, so a *two-field* σ(T) overlay is drawn directly. Both
-        # series are genuine per-run TF Gaussian fits via the core FitEngine.
-        from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
-        from matplotlib.figure import Figure
-        from PySide6.QtCore import QEventLoop, QTimer
-        from PySide6.QtGui import QPixmap
-        from PySide6.QtWidgets import QApplication
+    def build(self) -> QWidget:
+        # Native two-series overlay in the real FitParametersPanel (PR-248): both
+        # σ(T) curves are genuine per-run TF Gaussian fits via the core FitEngine.
+        # The panel distinguishes them by colour + a legend of the series names.
+        from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
 
         t400, s400, e400 = _fit_sigma_series(_SCAN_400G, _FREQ_400G, sigma_start=1.15)
         t200, s200, e200 = _fit_sigma_series(_SCAN_200G, _FREQ_200G, sigma_start=0.90)
+        # Remember the plateau values for the settle() annotation.
+        self._s400_plateau = float(np.max(s400))
+        self._s200_plateau = float(np.max(s200))
 
-        figure = Figure(figsize=(10.0, 6.0), dpi=120, tight_layout=True)
-        ax = figure.add_subplot(1, 1, 1)
-        ax.errorbar(
-            t400,
-            s400,
-            yerr=e400,
-            fmt="o",
-            color="#1f77b4",
-            ecolor="#1f77b4",
-            elinewidth=0.9,
-            markersize=6,
-            capsize=2,
-            label="400 G TF scan",
+        panel = FitParametersPanel()
+        # Series names sort alphabetically for pill/colour order, so "200 G…"
+        # takes C0 and "400 G…" C1; the 400 G scan is the active series (owns the
+        # table + any model-fit overlay) via ``select_id``.
+        panel.load_representation_series(
+            [
+                ("bscco-sig-400", "400 G — TF scan", _sigma_rows(t400, s400, e400, 400.0, 1276)),
+                ("bscco-sig-200", "200 G — TF scan", _sigma_rows(t200, s200, e200, 200.0, 1292)),
+            ],
+            select_id="bscco-sig-400",
         )
-        ax.errorbar(
-            t200,
-            s200,
-            yerr=e200,
-            fmt="s",
-            color="#d62728",
-            ecolor="#d62728",
-            elinewidth=0.9,
-            markersize=6,
-            capsize=2,
-            label="200 G TF scan",
-        )
-        ax.axvline(107.0, color="grey", ls="--", lw=0.8, alpha=0.6)
-        ax.text(
-            106.0,
-            0.62,
-            r"$T_\mathrm{c}\approx$ 107 K",
-            color="grey",
-            ha="right",
-            va="center",
-            fontsize=10,
-        )
-        ax.set_xlabel("Temperature  T (K)")
-        ax.set_ylabel(r"Gaussian depolarisation rate  $\sigma$  (µs$^{-1}$)")
-        ax.set_title("BiSCCO vortex-state σ(T): 400 G vs 200 G transverse field")
-        ax.set_ylim(-0.05, 1.32)
-        ax.legend(loc="upper right", frameon=True)
-        ax.grid(True, alpha=0.25)
-        ax.text(
-            0.015,
-            0.05,
-            "The 200 G plateau lies below the 400 G plateau — the field\n"
-            "dependence of σ in Bi-2212 is pancake-vortex physics, so a single\n"
-            "λ_L is unreliable here (both fields < B* ≈ 500 G; GROUND_TRUTH §6b).\n"
-            "Run 1291 (200 G, 10 K) excluded: documented negative-σ fit (§9).",
-            transform=ax.transAxes,
-            color="0.35",
-            fontsize=8,
-            va="bottom",
-            ha="left",
-        )
+        # Overlay: the public entry point single-selects, so arm the multi-select
+        # the way a Shift+click on the second pill would (no public multi-select).
+        panel._set_selected_group_ids(["bscco-sig-400", "bscco-sig-200"], emit=False)
+        _process_events_for(milliseconds=80)
+        return panel
 
-        canvas = FigureCanvasQTAgg(figure)
-        canvas.draw()
-        pix = QPixmap(canvas.size())
-        canvas.render(pix)
-
-        out_path = ctx.output_dir / f"{self.name}.png"
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        if not pix.save(str(out_path), "PNG"):
-            raise RuntimeError(f"Failed to save screenshot to {out_path}")
-
-        loop = QEventLoop()
-        QTimer.singleShot(40, loop.quit)
-        loop.exec()
-        QApplication.processEvents()
-        return out_path
+    def settle(self, widget: QWidget) -> None:
+        widget._refresh_plot()
+        _process_events_for(milliseconds=200)
+        axes = list(widget._figure.axes)
+        if axes:
+            ax = axes[0]
+            ax.set_ylim(-0.05, 1.32)
+            ax.set_title("BiSCCO vortex-state σ(T): 400 G vs 200 G transverse field", fontsize=10)
+            ax.axvline(107.0, color="0.5", linestyle="--", linewidth=0.9, zorder=1)
+            ax.text(
+                106.0,
+                0.62,
+                r"$T_\mathrm{c}\approx$ 107 K",
+                color="0.4",
+                ha="right",
+                va="center",
+                fontsize=9,
+            )
+            ax.text(
+                0.015,
+                0.05,
+                f"400 G plateau ≈ {getattr(self, '_s400_plateau', 1.15):.2f} µs⁻¹ sits above the "
+                f"200 G plateau ≈ {getattr(self, '_s200_plateau', 0.9):.2f} µs⁻¹ — the field\n"
+                "dependence of σ in Bi-2212 is pancake-vortex physics, so a single λ_L is\n"
+                "unreliable here (both fields < B* ≈ 500 G; GROUND_TRUTH §6b).\n"
+                "Run 1291 (200 G, 10 K) excluded: documented negative-σ fit (§9).",
+                transform=ax.transAxes,
+                color="0.35",
+                fontsize=8,
+                va="bottom",
+                ha="left",
+            )
+            widget._canvas.draw()
+        _process_events_for(milliseconds=120)
 
 
 register(BsccoTfDampingScenario())

@@ -504,23 +504,88 @@ class MaleicKmuTrendScenario(CorpusScenario):
 # ══════════════════════════════════════════════════════════════════════════
 # 4. Arrhenius — λ_Mu(T) across the full-concentration temperature scan
 # ══════════════════════════════════════════════════════════════════════════
+R_GAS = 8.314  # J mol⁻¹ K⁻¹ — Arrhenius slope → E_a
+
+
+def _build_maleic_arrhenius_fit(T, lam, lam_err):  # noqa: N803 (physics symbol)
+    """Fit ``Linear`` to the *transformed* Arrhenius line ln λ_Mu vs 1/T.
+
+    Reproduces the panel's Model-Fit dialog once the axes are set to Y→``ln x``
+    and X→``reciprocal``: transform (T, λ) through the real :class:`AxisTransform`
+    presets — propagating λ's error to σ(ln λ)=σ(λ)/λ — then fit ``Linear``. The
+    slope is −E_a/R. Unlike the LLZ ν(T) case, no baseline subtraction is needed
+    here: λ_Mu(T) rises monotonically, so the plain ``ln x`` preset linearises it
+    directly. Returns ``(ParameterModelFit, summary)``.
+    """
+    from asymmetry.core.fitting.axis_transforms import AxisTransform
+    from asymmetry.core.fitting.parameter_models import (
+        ModelFitRange,
+        ParameterCompositeModel,
+        ParameterModelFit,
+        fit_parameter_model,
+    )
+    from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+
+    y_vals, y_err = AxisTransform.preset("log").apply(
+        np.asarray(lam, float), np.asarray(lam_err, float)
+    )
+    x_vals, _ = AxisTransform.preset("reciprocal").apply(np.asarray(T, float))
+
+    model = ParameterCompositeModel(["Linear"])
+    seed = ParameterSet(
+        [
+            Parameter(name="m", value=-900.0, min=-1.0e6, max=1.0e6),  # −E_a/R  [K]
+            Parameter(name="b", value=4.0, min=-50.0, max=50.0),
+        ]
+    )
+    result = fit_parameter_model(
+        x_vals, y_vals, y_err, model, seed, x_min=float(x_vals.min()), x_max=float(x_vals.max())
+    )
+    if not result.success:
+        raise RuntimeError("Maleic λ_Mu(T) Arrhenius Linear fit did not converge")
+
+    slope = float(result.parameters["m"].value)
+    unc = result.uncertainties or {}
+    ea_kj = -slope * R_GAS / 1000.0
+    ea_err_kj = float(unc.get("m", 0.0)) * R_GAS / 1000.0
+    summary = {
+        "slope_K": slope,
+        "Ea_kJ_mol": float(ea_kj),
+        "Ea_err_kJ_mol": float(ea_err_kj),
+        "chi2r": float(result.reduced_chi_squared or 0.0),
+    }
+    fit_range = ModelFitRange(
+        x_min=float(x_vals.min()),
+        x_max=float(x_vals.max()),
+        model=model,
+        parameters=result.parameters,
+        result=result,
+    )
+    fit = ParameterModelFit(
+        parameter_name="Lambda", x_key="temperature", ranges=[fit_range], active=True
+    )
+    return fit, summary
+
+
 class MaleicArrheniusScenario(CorpusScenario):
     name = "corpus_maleic_arrhenius"
     description = (
         "Arrhenius plot of the full-concentration Mu relaxation rate λ_Mu(T) "
-        "(278–358 K, 2 G): ln λ_Mu vs 1000/T is a straight line whose slope "
-        "gives the activation energy E_a."
+        "(278–358 K, 2 G) in the real trending panel: Y → ln λ_Mu, X → 1/T "
+        "(axis transforms), a Linear model fit whose slope gives E_a ≈ 7.3 "
+        "kJ/mol (a lower bound — see NOTES)."
     )
     example = EXAMPLE
-    size = (1000, 640)
+    size = (1180, 720)
     requires_fit = True
 
     def __init__(self) -> None:
         super().__init__()
         self._summary: dict[str, float] = {}
 
-    def capture(self, ctx) -> Path:
-        from asymmetry.gui.widgets.mpl_canvas import create_canvas
+    def build(self) -> QWidget:
+        from asymmetry.core.fitting.axis_transforms import AxisTransform
+        from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
 
         a_mu, phase, _ = _anchor()
         temps: list[float] = []
@@ -538,66 +603,51 @@ class MaleicArrheniusScenario(CorpusScenario):
         lam = np.array(lams)
         lam_err = np.array(errs)
 
-        # Weighted straight-line fit of ln λ_Mu vs 1/T: slope = −E_a/R.
-        x = 1.0 / T
-        y = np.log(lam)
-        yerr = lam_err / lam
-        w = 1.0 / yerr**2
-        A = np.vstack([np.ones_like(x), x]).T  # noqa: N806 (physics symbol)
-        cov = np.linalg.inv(A.T @ (w[:, None] * A))
-        beta = cov @ (A.T @ (w * y))
-        slope = beta[1]
-        slope_err = float(np.sqrt(cov[1, 1]))
-        R = 8.314  # noqa: N806 (physics symbol)
-        Ea = -slope * R / 1000.0  # kJ/mol  # noqa: N806 (physics symbol)
-        Ea_err = slope_err * R / 1000.0  # noqa: N806 (physics symbol)
-        self._summary = {"Ea_kJ_mol": float(Ea), "Ea_err": float(Ea_err)}
+        fit, self._summary = _build_maleic_arrhenius_fit(T, lam, lam_err)
 
-        figure, canvas = create_canvas(layout="tight")
-        axes = figure.add_subplot(111)
-        inv_t = 1000.0 / T
-        axes.errorbar(
-            inv_t,
-            y,
-            yerr=yerr,
-            fmt="o",
-            color=tokens.ACCENT,
-            markersize=5,
-            capsize=3,
-            linewidth=1.0,
-            label="full-conc. λ_Mu(T)",
-        )
-        grid = np.linspace(inv_t.min(), inv_t.max(), 100)
-        axes.plot(
-            grid,
-            beta[0] + beta[1] * (grid / 1000.0),
-            color=tokens.ACCENT_RED,
-            linewidth=1.8,
-            label=f"E_a = {Ea:.1f} ± {Ea_err:.1f} kJ/mol",
-        )
-        axes.set_xlabel("1000 / T  (K⁻¹)")
-        axes.set_ylabel("ln λ_Mu  (λ_Mu in µs⁻¹)")
-        axes.set_title("Mu + maleic acid (full conc.) — Arrhenius plot of the relaxation rate")
-        axes.legend(loc="upper right", fontsize="small", framealpha=0.92)
-        axes.text(
-            0.02,
-            0.04,
-            "literature (diffusion-limited): E_a ≈ 17.6 kJ/mol",
-            transform=axes.transAxes,
-            fontsize="small",
-            color=tokens.TEXT_MUTED,
-        )
+        batch_id = "maleic-arrhenius"
+        row_dicts = [
+            {
+                "run_number": run,
+                "run_label": f"{int(temp)} K",
+                "field": 2.0,
+                "temperature": float(temp),
+                "values": {"Lambda": float(lams[i])},
+                "errors": {"Lambda": float(errs[i])},
+                "model_name": "Relaxing Mu oscillation (2 G)",
+            }
+            for i, (run, temp) in enumerate(_FULL_TSCAN)
+        ]
 
-        canvas.resize(*self.size)
-        canvas.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
-        canvas.show()
-        _pump(200)
-        canvas.draw()
-        out = _grab(canvas, self.name, ctx.output_dir)
-        canvas.close()
-        canvas.deleteLater()
-        _pump(40)
-        return out
+        panel = FitParametersPanel()
+        panel.load_representation_series(
+            [(batch_id, "λ_Mu(T) — full conc.", row_dicts)], select_id=batch_id
+        )
+        idx = panel._x_combo.findData("temperature")
+        if idx >= 0:
+            panel._x_combo.setCurrentIndex(idx)
+
+        panel._set_axis_transform("y", AxisTransform.preset("log"))
+        panel._set_axis_transform("x", AxisTransform.preset("reciprocal"))
+
+        panel._model_fits["Lambda"] = fit
+        panel._model_fit_transform_sig["Lambda"] = panel._transform_signature()
+        panel._sync_active_group_state()
+        panel._refresh_model_fit_button_labels()
+        _process_events_for(milliseconds=80)
+        return panel
+
+    def settle(self, widget: QWidget) -> None:
+        _process_events_for(milliseconds=150)
+        widget._refresh_plot()
+        _pump_until(
+            lambda: (
+                not widget._trend_curve_compute_active
+                and widget._precomputed_trend_curves is not None
+            ),
+            timeout_ms=20_000,
+        )
+        _process_events_for(milliseconds=200)
 
 
 register(MaleicMuPrecessionScenario())

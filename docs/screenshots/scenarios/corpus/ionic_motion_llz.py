@@ -22,8 +22,9 @@ Scenarios registered:
   tying render — THE global-fit showcase.
 * ``corpus_llz_global_result`` — the converged triplet fit with the shared
   global parameters and per-run Keren curves overlaid on the data.
-* ``corpus_llz_nu_arrhenius`` — the fluctuation-rate trend ν(T) across the
-  series with the Arrhenius + constant-baseline curve overlaid, giving E_a.
+* ``corpus_llz_nu_arrhenius`` — the fluctuation-rate trend ν(T) rendered as a
+  native Arrhenius plot via axis transforms (X→1/T, Y→ln(ν−baseline)) with a
+  Linear fit on the activated branch, giving E_a.
 
 The Keren model named by the guide exists in Asymmetry
 (``asymmetry.core.fitting.models.keren``, params A, Δ, ν, B_L) so no model
@@ -68,6 +69,13 @@ SEED_A_BG = 5.0  # background amplitude (%)
 SEED_DELTA = 0.3  # static field-distribution width Δ (µs⁻¹ / "MHz" seed)
 SEED_NU = 0.2  # fluctuation rate ν (MHz)
 FIT_TMAX = 12.0  # limit fit window to 12 µs (guide hint)
+
+# Boltzmann constant in eV/K, for the Arrhenius slope → activation energy.
+K_B_EV = 8.617333e-5
+# Activated branch: fit the Arrhenius line only above this temperature. Below it
+# ν sits on the flat plateau (ν ≈ baseline) where ln(ν − baseline) is undefined
+# / dominated by noise — see NOTES_llz.md "transform + baseline interplay".
+ACTIVATED_MIN_T = 264.0
 
 
 def _triplet_rel_paths(zf_run: int) -> list[str]:
@@ -305,23 +313,46 @@ class LlzGlobalResultScenario(CorpusScenario):
 
 
 class LlzNuArrheniusScenario(CorpusScenario):
-    """ν(T) fluctuation-rate trend across the series with an Arrhenius fit."""
+    """ν(T) fluctuation-rate trend rendered as the native Arrhenius line.
+
+    Axis transforms turn the panel into an Arrhenius plot: X → 1/T (reciprocal)
+    and Y → ln(ν − baseline) via a **Custom** transform. The plain ``ln x``
+    preset does *not* linearise this trend, because the activated rate sits on a
+    ν ≈ 0.27 MHz plateau baseline the log cannot see — see NOTES_llz.md. A Linear
+    model fit on the activated branch then has slope −E_a/k_B.
+    """
 
     name = "corpus_llz_nu_arrhenius"
     description = (
-        "Al-LLZ fluctuation rate ν(T) across the 13-temperature series: flat "
-        "plateau then activated rise above ~290 K, with the Arrhenius + "
-        "constant-baseline curve giving the Li⁺ activation energy."
+        "Al-LLZ fluctuation rate ν(T) as a native Arrhenius plot: X → 1/T "
+        "(reciprocal), Y → ln(ν − baseline) (a Custom axis transform), and a "
+        "Linear model fit on the activated branch (≥264 K) whose slope gives the "
+        "Li⁺ activation energy E_a ≈ 0.22 eV (paper 0.19 eV)."
     )
     example = EXAMPLE
     size = (1240, 780)
     requires_fit = True
 
+    def __init__(self) -> None:
+        super().__init__()
+        self._summary: dict[str, float] = {}
+
     def build(self) -> QWidget:
+        import numpy as np
+
+        from asymmetry.core.fitting.axis_transforms import AxisTransform
         from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
 
         temps, nu, nu_err = _fit_nu_of_t()
-        fit = _build_arrhenius_fit(temps, nu, nu_err)
+        # Plateau baseline: the mean ν below the activated onset. The Custom Y
+        # transform subtracts it before the log so ln(ν − c) is a straight line
+        # in 1/T. (The transform layer has no "subtract fitted baseline" option —
+        # the constant is baked into the expression string. API note in NOTES.)
+        baseline = float(np.mean(nu[temps < ACTIVATED_MIN_T]))
+        fit, self._summary = _build_arrhenius_line_fit(temps, nu, nu_err, baseline)
+
+        y_transform = AxisTransform.custom(f"log(x - {baseline:.6g})")
+        x_transform = AxisTransform.preset("reciprocal")
 
         batch_id = "llz-nu-t"
         row_dicts = [
@@ -332,6 +363,9 @@ class LlzNuArrheniusScenario(CorpusScenario):
                 "temperature": float(t),
                 "values": {"nu": float(nu[i])},
                 "errors": {"nu": float(nu_err[i])},
+                # Only the activated branch pulls the Arrhenius line; the plateau
+                # points are shown (where finite) but excluded from the trend.
+                "include_in_trend": float(t) >= ACTIVATED_MIN_T,
             }
             for i, t in enumerate(temps)
         ]
@@ -340,7 +374,18 @@ class LlzNuArrheniusScenario(CorpusScenario):
         panel.load_representation_series(
             [(batch_id, "ν(T) — Al-LLZ", row_dicts)], select_id=batch_id
         )
+        # Pin the abscissa to temperature so the reciprocal transform is 1/T
+        # (not 1/field, which would be 1/0 → all-NaN).
+        idx = panel._x_combo.findData("temperature")
+        if idx >= 0:
+            panel._x_combo.setCurrentIndex(idx)
+
+        panel._set_axis_transform("y", y_transform)
+        panel._set_axis_transform("x", x_transform)
+        panel._axis_transform_custom_memory["y"] = y_transform.expression
+
         panel._model_fits["nu"] = fit
+        panel._model_fit_transform_sig["nu"] = panel._transform_signature()
         panel._sync_active_group_state()
         panel._refresh_model_fit_button_labels()
         _process_events_for(milliseconds=80)
@@ -445,8 +490,18 @@ def _fit_nu_of_t():
     return np.asarray(temps), np.asarray(nus), np.asarray(errs)
 
 
-def _build_arrhenius_fit(temps, nu, nu_err):
-    """Fit ν(T) = a·exp(−E_a/k_BT) + c via the trend minimiser the panel uses."""
+def _build_arrhenius_line_fit(temps, nu, nu_err, baseline):
+    """Fit ``Linear`` to the *transformed* Arrhenius line ln(ν − c) vs 1/T.
+
+    Reproduces the panel's Model-Fit dialog once the axes are set to X→1/T and
+    a Custom Y→``log(x - c)``: transform the (T, ν) arrays through the real
+    :class:`AxisTransform` machinery — propagating ν's error through the log —
+    then fit ``Linear`` on the activated branch (T ≥ ``ACTIVATED_MIN_T``). The
+    slope is −E_a/k_B. Returns ``(ParameterModelFit, summary)``.
+    """
+    import numpy as np
+
+    from asymmetry.core.fitting.axis_transforms import AxisTransform
     from asymmetry.core.fitting.parameter_models import (
         ModelFitRange,
         ParameterCompositeModel,
@@ -455,39 +510,50 @@ def _build_arrhenius_fit(temps, nu, nu_err):
     )
     from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
-    model = ParameterCompositeModel(["Arrhenius", "Constant"])
-    params = ParameterSet(
+    y_transform = AxisTransform.custom(f"log(x - {baseline:.6g})")
+    x_transform = AxisTransform.preset("reciprocal")
+    y_vals, y_err = y_transform.apply(np.asarray(nu, float), np.asarray(nu_err, float))
+    x_vals, _ = x_transform.apply(np.asarray(temps, float))
+
+    branch = (np.asarray(temps, float) >= ACTIVATED_MIN_T) & np.isfinite(y_vals) & np.isfinite(y_err)
+    x_b, y_b, e_b = x_vals[branch], y_vals[branch], y_err[branch]
+
+    model = ParameterCompositeModel(["Linear"])
+    seed = ParameterSet(
         [
-            Parameter(name="a", value=400.0, min=0.0, max=1e6),
-            Parameter(name="Ea", value=200.0, min=0.0, max=2000.0),  # meV
-            Parameter(name="c", value=0.27, min=-1.0, max=5.0),
+            Parameter(name="m", value=-2500.0, min=-1.0e6, max=1.0e6),  # −E_a/k_B  [K]
+            Parameter(name="b", value=5.0, min=-50.0, max=50.0),
         ]
     )
     result = fit_parameter_model(
-        temps,
-        nu,
-        nu_err,
-        model,
-        params,
-        x_min=float(temps.min()),
-        x_max=float(temps.max()),
+        x_b, y_b, e_b, model, seed, x_min=float(x_b.min()), x_max=float(x_b.max())
     )
     if not result.success:
-        raise RuntimeError("Al-LLZ ν(T) Arrhenius trend fit did not converge for the screenshot")
+        raise RuntimeError("Al-LLZ ν(T) Arrhenius Linear fit did not converge for the screenshot")
 
+    slope = float(result.parameters["m"].value)
+    unc = result.uncertainties or {}
+    ea_ev = -slope * K_B_EV
+    ea_err_ev = float(unc.get("m", 0.0)) * K_B_EV
+    summary = {
+        "baseline_MHz": float(baseline),
+        "slope_K": slope,
+        "Ea_eV": float(ea_ev),
+        "Ea_err_eV": float(ea_err_ev),
+        "chi2r": float(result.reduced_chi_squared or 0.0),
+        "n_branch": int(branch.sum()),
+    }
     fit_range = ModelFitRange(
-        x_min=float(temps.min()),
-        x_max=float(temps.max()),
+        x_min=float(x_b.min()),
+        x_max=float(x_b.max()),
         model=model,
         parameters=result.parameters,
         result=result,
     )
-    return ParameterModelFit(
-        parameter_name="nu",
-        x_key="temperature",
-        ranges=[fit_range],
-        active=True,
+    fit = ParameterModelFit(
+        parameter_name="nu", x_key="temperature", ranges=[fit_range], active=True
     )
+    return fit, summary
 
 
 def _wait_until(predicate, *, timeout_ms: int, poll_ms: int = 30) -> None:

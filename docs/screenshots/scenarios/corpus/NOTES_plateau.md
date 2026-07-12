@@ -17,7 +17,7 @@ internal fields inside it.
 | `corpus_plateau_lf_overlay` | Raw LF spectra at ZF / 0.5 / 1.5 / 3.5 T (runs 9031/9039/9045/9050) overlaid, 0–12 µs. The 3.5 T trace is flat and high (~40 %); low-field traces relax fast and sit lower — the decoupling + asymmetry-recovery picture. | Data-handling / overlay feature; qualitative decoupling. | no |
 | `corpus_plateau_exp_fit` | Converged `Exponential + Constant` fit on the 1.0 T run (9044): **A = 8.72 %, λ = 1.332 µs⁻¹, A_bg = 7.23 %, χ²ᵣ = 1.25**. Display bunched ×5, framed 0–10 µs so the decay + fit dominate. | Core analysis step — the per-run λ that feeds the trend. | **yes** |
 | `corpus_plateau_lambda_field` | λ(µ₀H) trend in the parameter-trending panel (paper Fig. 2(a)): three-regime falloff, ~4.2 µs⁻¹ at 0.2 T → ~0.3 µs⁻¹ at 3.8 T. B on the panel's native "B (G)" axis. | Trend-building step; the λ(B) shape. | **yes** |
-| `corpus_plateau_redfield` | **Headline.** λ⁻¹ vs µ₀²H² (paper Fig. 2(b)) as a matplotlib figure: plateau points on the linear Redfield fit, the 3.8 T saturated point excluded, annotated slope/intercept → Δ, τ. | Parameter-trending → Redfield linearity; the Δ/τ result. | **yes** |
+| `corpus_plateau_redfield` | **Headline.** λ⁻¹ vs µ₀²H² (paper Fig. 2(b)) **in the real trending panel** (PR 248 axis transforms): Y→`reciprocal` (1/λ), X→`square` (B²), a `Linear` model fit on the plateau; the 0.4 T and 3.8 T points are `include_in_trend=False` (ringed grey, off the line). Provenance chip "8/10 members in trend · 2 excluded (0.4 T, 3.8 T)". | Parameter-trending → Redfield linearity; the Δ/τ result. **The axis-transform showcase.** | **yes** |
 
 ## Run selection & workflow (GROUND_TRUTH refs)
 
@@ -59,19 +59,36 @@ points run slightly high (steep-drop regime, large read-uncertainty in the GT).
 
 ### Redfield line → Δ, τ (headline)
 
-| Quantity | Fitted here | GT target (paper §3/§6) | Note |
-|---|---:|---:|---|
-| slope d(λ⁻¹)/d(µ₀²H²) | 0.278(9) µs T⁻² | ≈ 0.267 µs T⁻² (GT §11) | ✓ |
-| intercept (H→0) | 0.434(19) µs | ≈ 0.48 µs (GT §11) | ✓ (~9 % low) |
-| **Δ (= σ_int)** | **41.1 mT** | **40.6(3) mT** | ✓ within ~0.5 mT |
-| **τ** | **940 ps** | **880(30) ps** | ✓ ~7 % high (~2σ) |
+Values below are from the **PR 248 transform path** (`AxisTransform.preset` +
+the core `fit_parameter_model` trend minimiser on the transformed 1/λ, B²
+arrays — exactly what the panel's Model-Fit dialog does once the axes are set).
+The old standalone-matplotlib figure gave 0.278 / 0.434 / 41.1 mT / 940 ps; the
+transform path agrees within rounding (they differ only in the minimiser:
+iminuit trend fit vs a hand-rolled weighted normal equation).
 
-Δ lands essentially on the paper value; τ is ~7 % high, traceable to the two
-scattered high-field points (3.2 T low / 3.2 T² region — the paper notes these
-"scatter around/below" the line, GT §11) pulling the slope up slightly. The fit
-is, as the paper states, insensitive to small changes in the window; dropping
-3.2 T brings τ closer to 880 ps but the full 0.5–3.6 T window is kept for
-faithfulness to GT §4.
+| Quantity | Old (matplotlib) | New (transform panel) | GT target (paper §3/§6) | Note |
+|---|---:|---:|---:|---|
+| slope d(λ⁻¹)/d(µ₀²H²) | 0.278(9) | **0.276(9) µs T⁻²** | ≈ 0.267 (GT §11) | ✓ |
+| intercept (H→0) | 0.434(19) | **0.442(27) µs** | ≈ 0.48 (GT §11) | ✓ (~8 % low) |
+| **Δ (= σ_int)** | 41.1 mT | **41.0 mT** | **40.6(3) mT** | ✓ within ~0.4 mT |
+| **τ** | 940 ps | **929 ps** | **880(30) ps** | ✓ ~6 % high (~2σ) |
+| χ²ᵣ (Linear on plateau) | — | 1.84 | — | 3.2 T point scatters |
+
+Δ lands essentially on the paper value; τ is ~6 % high, traceable to the two
+scattered high-field points (the paper notes these "scatter around/below" the
+line, GT §11) pulling the slope up slightly. The fit is, as the paper states,
+insensitive to small changes in the window; dropping 3.2 T brings τ closer to
+880 ps but the full 0.5–3.6 T window is kept for faithfulness to GT §4.
+
+**Transform usage (PR 248).** Field is stored in the row dicts in **tesla** (not
+the panel's native gauss) so X→`square` yields B² in T² and the Redfield slope
+comes out in µs T⁻². Y→`reciprocal` propagates σ(1/λ)=σ(λ)/λ². The `Linear` fit
+runs on the transformed plateau; the panel samples its overlay in the B² domain
+(0.25–12.25 T²), matching the scatter. The two excluded points ride off the
+line: 0.4 T near the intercept, 3.8 T (saturated) below the extrapolation at
+high B². **Axis-unit caveat:** the transformed plot labels read `B²` and `1/λ`
+with **no units** (the transform strips the base unit before wrapping the
+symbol), so the reader cannot tell B² is in T² or 1/λ in µs — see PR-248 VERDICT.
 
 ## Feature-demonstration opportunities
 
@@ -79,9 +96,11 @@ faithfulness to GT §4.
   field/temperature metadata populate the browser (`Ca3Co2O6 T=15 F=…`). Good
   "we read HiFi format" evidence.
 - **Redfield linearisation** — the λ⁻¹-vs-µ₀²H² transform is the distinctive
-  physics of this example. The parameter-trending panel cannot square/invert its
-  axes, so the headline is a matplotlib figure (mgb2 pattern) — a genuine
-  candidate feature request for the trending panel (a "derived-axis" mode).
+  physics of this example. **PR 248 delivers exactly this "derived-axis" mode**
+  (the earlier feature request), so the headline is now the *real trending panel*
+  (Y→reciprocal, X→square, Linear fit) rather than a standalone matplotlib
+  figure. This is the single best corpus demonstration of the axis-transform
+  feature: a genuine three-regime µSR field scan linearised in the GUI.
 - **Not captured but available:** (a) the **TF20 α-calibration** on run 9023
   (the AlphaCalibrationDialog pattern from `ionic_motion_llz.py`) — GT §4 Q1
   data-prep step. (b) A **P_z(t) waterfall** across the full scan. (c) The
@@ -107,14 +126,31 @@ faithfulness to GT §4.
   the `corpus_plateau_exp_fit` *display* is bunched ×5 and framed 0–10 µs so the
   decay is clean. The app tags χ²ᵣ = 1.25 as "poor" (its threshold wording) —
   the fit is in fact good.
-- **Trend axis is gauss.** The panel labels the field axis "B (G)" (0–38000),
-  not tesla; fine for Fig. 2(a), just note the unit in any caption.
+- **Trend axis is gauss (native).** `corpus_plateau_lambda_field` stores field in
+  gauss (native "B (G)" axis); `corpus_plateau_redfield` stores it in **tesla** so
+  the X→`square` transform gives B² in T² for the physics. Because a preset can
+  only square whatever number is in the column, getting T² from the native gauss
+  column would need a **Custom** `(x/10000)**2` transform — an ergonomics gap (see
+  VERDICT: transforms carry no unit awareness).
+- **PR 248 — transformed-axis labels drop units.** The plot shows `B²` and `1/λ`
+  with **no units**; a reader cannot tell B² is T² or 1/λ is µs. Reproduction:
+  set Y→reciprocal, X→square; the axis titles are bare `1/λ`, `B²`. (Root cause:
+  `_transformed_*_axis_label` calls `_axis_symbol()` to strip the `(unit)` before
+  `AxisTransform.describe()` wraps the symbol — so the unit is discarded.)
+- **PR 248 — GLE/TSV export ignores the active transform (significant).** With
+  Y→reciprocal, X→square active, **Export TSV** and **Export to GLE** stay enabled
+  and silently write the **raw** λ and raw field (headers still `Lambda (µs⁻¹)`,
+  `B (G)`), not 1/λ vs B². Worse for GLE: the model-overlay curve *is* sampled in
+  the transformed B² domain (0.25–12.25 T²) while the data `errorbar_from_file`
+  uses the raw field column (`_gle_x_column("field")→col 2`), so the exported
+  figure draws the Linear fit on a different x-scale than the points — a broken
+  plot. See VERDICT for the reproduction.
 
 ## Top pick for the docs
 
-`corpus_plateau_redfield` — the λ⁻¹-vs-µ₀²H² Redfield line is the headline result
-and reproduces the paper's Δ = 40.6 mT / τ = 880 ps within uncertainty
-(41.1 mT / 940 ps) with the derivation annotated on the figure. Pair it with
-`corpus_plateau_exp_fit` (the per-run exponential that produces each λ point) as
-the two-image story; `corpus_plateau_lambda_field` (Fig. 2(a)) is the natural
-bridge between them.
+`corpus_plateau_redfield` — the λ⁻¹-vs-µ₀²H² Redfield line, now the **real
+trending panel** (PR 248 axis transforms), is the headline result and reproduces
+the paper's Δ = 40.6 mT / τ = 880 ps within uncertainty (41.0 mT / 929 ps). Pair
+it with `corpus_plateau_exp_fit` (the per-run exponential that produces each λ
+point) as the two-image story; `corpus_plateau_lambda_field` (Fig. 2(a)) is the
+natural bridge between them.

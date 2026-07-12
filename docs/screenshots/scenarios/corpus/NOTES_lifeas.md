@@ -17,7 +17,7 @@ Fig. 1 B_rms(T) plateau → λ_ab = 195 nm.
 |---|---|---|
 | `corpus_lifeas_pair_select` | Matplotlib 2-panel, base-T run 3366: default Forward/Back (cancelled mush) vs Up/Down transverse pair (clean 5.44 MHz damped precession) | **Data-handling**: the essential detector-pairing choice for these spin-rotated (WED) runs — the loader's default pair cancels the signal |
 | `corpus_lifeas_tf_fit` | GUI single-fit panel, two-Gaussian TF fit on 3366 (1.5 K, 40 mT, Up/Down): σ_2 = 1.189, σ_4 = 0.178, χ²ᵣ = 9.71, model string + param table | **Core fit**: the vortex signal σ_2 with the weakly-relaxing Ag background σ_4 → B_rms ≈ 1.96 mT (λ_ab ≈ 195 nm) |
-| `corpus_lifeas_brms_t` | Matplotlib, two-sample B_rms(T) at 40 mT: digitised Fig. 1 (§11) both samples + real Asymmetry S1 fit overlay; λ_ab lines + T_c markers | **The headline**: plateaus ≈ 1.9 / ≈ 1.2 mT, T_c ≈ 16 / 12 K, λ_ab = 195/244 nm via Eq. (3) |
+| `corpus_lifeas_brms_t` | **Real Fit-Parameters trend panel, native multi-series overlay** (PR-248): Sample 1 real Asymmetry fits (blue, C0) + Sample 2 digitised Fig. 1 (orange, C1); λ_ab lines + T_c markers added on the axes in `settle()` | **The headline**: plateaus ≈ 1.9 / ≈ 1.2 mT, T_c ≈ 16 / 12 K, λ_ab = 195/244 nm via Eq. (3) |
 | `corpus_lifeas_vortex_lineshape` | Matplotlib FFT overlay, S1 40 mT: 18 K narrow (nuclear) vs 1.5 K broad (vortex) p(B) line at 5.44 MHz | **Normal vs SC**: the field-distribution broadening below T_c that B_rms measures |
 
 `requires_fit = True` on `tf_fit` and `brms_t` (real iminuit fits at capture).
@@ -137,6 +137,39 @@ runs are 1.5/20 K field-dependence *pairs*, not a T-scan (see problems).
 5. **No reference-program output exists** (§7) — no WiMDA `.fit`, no teaching
    docx. Grading is against the paper's printed λ_ab/n (hard) and the digitised
    Fig. 1 B_rms(T) (shape/magnitude), per §11.
+
+## PR-248 (multi-series overlay) — verdict from this rework
+
+`corpus_lifeas_brms_t` was reworked (2026-07-12) from a standalone Matplotlib
+figure to the **native PR-248 trend-panel overlay**: series A = Sample 1's real
+per-run two-Gaussian Asymmetry fits, series B = the digitised Pratt-2009 Fig. 1
+Sample-2 reference. Loaded via `load_representation_series([...two tuples...])`
+with `_set_selected_group_ids(["lifeas-s1-fit","lifeas-s2-ref"])`.
+
+- **Works — mixed provenance + mismatched x-grids.** The two series have
+  completely different temperature grids and lengths (S1: 8 pts on the 40 mT
+  scan; S2: 12 digitised pts). The panel assembles each series' arrays
+  independently (`_plot_series_param` sorts and transforms per series), so there
+  is **no shared-x-grid assumption** — real fits and a digitised table overlay
+  cleanly. S1 low-T plateau ≈ 1.96 mT, S2 ≈ 1.31 mT, both read clearly.
+- **Member markers attach to the right series.** The Sample-1 rows near T_c
+  (12/14/16/18 K, where the signal/background split degenerates) are loaded with
+  `include_in_trend=False`; the panel rings exactly those four points in grey on
+  the *active* (Sample 1) series and reports "4/8 members in trend · 4 excluded
+  (12 K, 14 K, 16 K, 18 K)" in the provenance line — the excluded-member overlay
+  is per-series and correct. (The provenance count reflects the active series
+  only, which is correct here since Sample 2 has no exclusions.)
+- **Labelling overlaid series.** What the panel supports is a **legend of series
+  names** (set via the series-name argument to `load_representation_series`);
+  there is no on-plot per-series annotation feature. So the λ_ab plateau lines,
+  T_c markers, and the Eq. (3) note are drawn on the axes in `settle()` (the same
+  channel `sigma_t`/`field_compare` use). The physics labels therefore live on
+  the figure, not attached to the series objects.
+- **Export active-series only.** As on BiSCCO, TSV/GLE export only the active
+  (Sample 1) series; the digitised Sample-2 overlay is plot-only.
+- **No errors on either series here** (`errors={"B_rms": nan}`): the real fit
+  path does not surface a B_rms uncertainty and the digitised curve has none, so
+  no error bars — the panel handles all-NaN errors gracefully (draws no bars).
 
 ## Top pick for docs
 

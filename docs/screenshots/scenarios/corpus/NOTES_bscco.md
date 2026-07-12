@@ -17,7 +17,7 @@ comparison. EMU 150 G is *not* used — its reference fits are unreliable
 | `corpus_bscco_vortex_fft` | GUI Fourier panel, run 1277 (10 K), framed 3.5–7.5 MHz | Frequency-domain: the **broad vortex p(B) line** at the ~5.4 MHz (400 G) Larmor frequency |
 | `corpus_bscco_tf_fit` | Converged Oscillatory×Gaussian single fit, run 1277, zoomed 0.1–2.5 µs | Headline fit: σ ≈ **1.164 µs⁻¹** vs WiMDA **1.1467(75)**, χ²ᵣ = 1.09, "Fit converged" |
 | `corpus_bscco_sigma_t` | Fit-Parameters trending panel, σ(T) 10–125 K (14 runs) | **The headline**: σ(T) reproducing the 14-row reference trend, with T_c ≈ 107 K marker and σ(10 K) → λ_L ≈ 255 nm note (§6b caveat inline) |
-| `corpus_bscco_field_compare` | Matplotlib figure, σ(T) 400 G vs 200 G | The guide's **field-comparison** task: 200 G plateau sits below 400 G — pancake-vortex field dependence (§6b) |
+| `corpus_bscco_field_compare` | **Real Fit-Parameters trend panel, native multi-series overlay** (PR-248): σ(T) 400 G + 200 G as two coloured series with a legend | The guide's **field-comparison** task: 200 G plateau sits below 400 G — pancake-vortex field dependence (§6b) |
 
 `requires_fit = True` on `tf_fit`, `sigma_t`, `field_compare` (real iminuit
 fits at capture time).
@@ -116,15 +116,43 @@ for Bi-2212. Captions respect that fence.
    only ~±9 % on a −23 % baseline with a growing late-time noise fan; the 10 K
    Gaussian collapse vs the 125 K persistence reads best in the 1.5–4 µs region.
    Caption carries the interpretation.
-4. **Frequency-domain overlay is not supported by the GUI panel.** The
-   Fit-Parameters trending panel plots one active series at a time (multi-select
-   via `_set_selected_group_ids` does not force a two-series overlay on
-   redraw), and the Fourier panel plots one run's spectrum. So the 10 K↔125 K
-   frequency contrast is delivered in the **time** domain (`tf_damping`), and
-   the **field** comparison (`field_compare`) is a standalone Matplotlib figure
-   — the established `mgb2_lambda_t` / `parameter_trending` house pattern for
-   comparison/derived plots the panel cannot render directly. Both series are
-   still genuine per-run core-engine fits.
+4. **Field comparison is now the PR-248 native trend-panel overlay** (reworked
+   2026-07-12). `field_compare` no longer uses a standalone Matplotlib figure:
+   both σ(T) series are loaded through `load_representation_series([...two
+   tuples...])` and overlaid by arming the multi-selection
+   (`_set_selected_group_ids(["bscco-sig-400","bscco-sig-200"])` — the
+   Shift+click a user would do). The panel draws them in distinct colours with a
+   legend of the series names; the axis-transform layer and per-point error bars
+   apply to both. See the PR-248 section below for what works and what does not.
+   The **frequency-domain** 10 K↔125 K contrast is still delivered in the **time**
+   domain (`tf_damping`) because the Fourier panel plots one run's spectrum (that
+   is a separate panel, unaffected by PR-248).
+
+## PR-248 (multi-series overlay) — verdict from this rework
+
+- **Works.** Two σ(T) series render as blue (200 G, C0) + orange (400 G, C1)
+  with a name legend; both plateaus read clearly (400 G ≈ 1.16 above 200 G ≈
+  0.91 µs⁻¹), reproducing the §6b pancake-vortex story. Error bars are drawn
+  per series in the series colour.
+- **Colour = alphabetical pill order, not load/active order.** `_series_to_plot`
+  colours by `_group_button_map` order, and `_rebuild_group_buttons` sorts pills
+  by `group_name.lower()`. So "200 G…" gets C0 even though "400 G…" is the active
+  series (via `select_id`). The active series is *not* visually distinguished on
+  the plot except by owning any model-fit overlay — a reader cannot tell from the
+  plot which series owns the table/export. Named the series so the legend carries
+  the field explicitly.
+- **One active-series model fit only.** In overlay mode `_plot_series_param`
+  draws a trend-model overlay for the *active* series alone; there is no
+  per-series fit. Left the headline overlay fit-free (the §6b story is about the
+  two plateaus, not a curve) and report the limit rather than staging a
+  misleading single-series fit.
+- **Export is active-series only (rough edge).** `_export_tsv` and
+  `_build_gle_export` both read `self._rows` (active series) — an overlaid
+  comparison exports only the 400 G data; the 200 G series is silently dropped
+  from TSV/GLE. Confirmed empirically. The overlay is a *plot-only* feature.
+- **Ergonomics.** `load_representation_series` only single-selects (`select_id`
+  is scalar); there is no public multi-select entry point, so the overlay must be
+  armed with the private `_set_selected_group_ids`.
 5. **Negative-σ pathology not reproduced as a render.** Run 1291 (200 G, 10 K)
    returns +0.176 in Asymmetry (positive minimum) rather than the reference
    −0.211; reproducing the sign would require a contrived negative seed, so it

@@ -38,14 +38,10 @@ comparison against the paper.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
-from PySide6.QtCore import QEventLoop, Qt, QTimer
-from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QWidget
 
-from .._base import CaptureContext
 from ._corpus import CorpusScenario, _process_events_for, load_corpus_datasets, register
 
 EXAMPLE = "Magnetism/Dynamics in a magnetic plateau system"
@@ -161,6 +157,70 @@ def _redfield_from_line(slope: float, intercept: float):
     return delta, tau
 
 
+def _build_redfield_linear_fit(fields_t, lam, lam_err):
+    """Fit ``Linear`` to the *transformed* Redfield plateau (1/λ vs B², T units).
+
+    Reproduces exactly what the panel's Model-Fit dialog does once the axes are
+    set to Y→``reciprocal`` and X→``square``: transform the (field, λ) arrays
+    through the real :class:`AxisTransform` presets — propagating λ's error to
+    σ(1/λ)=σ(λ)/λ² — then fit ``Linear`` on those transformed coordinates with
+    the core trend minimiser. Returns ``(ParameterModelFit, summary)``; the fit
+    is tagged with ``x_key="field"`` so the panel samples its overlay in the
+    same B² domain the scatter is drawn in.
+    """
+    from asymmetry.core.fitting.axis_transforms import AxisTransform
+    from asymmetry.core.fitting.parameter_models import (
+        ModelFitRange,
+        ParameterCompositeModel,
+        ParameterModelFit,
+        fit_parameter_model,
+    )
+    from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+
+    x2, _ = AxisTransform.preset("square").apply(np.asarray(fields_t, dtype=float))
+    inv_lam, inv_err = AxisTransform.preset("reciprocal").apply(
+        np.asarray(lam, dtype=float), np.asarray(lam_err, dtype=float)
+    )
+
+    model = ParameterCompositeModel(["Linear"])
+    seed = ParameterSet(
+        [
+            Parameter("m", value=0.27, min=0.0, max=10.0),  # slope τ/(2Δ²)  [µs T⁻²]
+            Parameter("b", value=0.45, min=0.0, max=5.0),  # intercept 1/(2γ²Δ²τ) [µs]
+        ]
+    )
+    result = fit_parameter_model(
+        x2, inv_lam, inv_err, model, seed, x_min=float(x2.min()), x_max=float(x2.max())
+    )
+    if not result.success:
+        raise RuntimeError("Redfield Linear trend fit did not converge for the screenshot")
+
+    slope = float(result.parameters["m"].value)
+    intercept = float(result.parameters["b"].value)
+    unc = result.uncertainties or {}
+    delta, tau = _redfield_from_line(slope, intercept)
+    summary = {
+        "slope": slope,
+        "slope_err": float(unc.get("m", 0.0)),
+        "intercept": intercept,
+        "intercept_err": float(unc.get("b", 0.0)),
+        "delta_mT": float(delta * 1e3),
+        "tau_ps": float(tau * 1e6),
+        "chi2r": float(result.reduced_chi_squared or 0.0),
+    }
+    fit_range = ModelFitRange(
+        x_min=float(x2.min()),
+        x_max=float(x2.max()),
+        model=model,
+        parameters=result.parameters,
+        result=result,
+    )
+    fit = ParameterModelFit(
+        parameter_name="Lambda", x_key="field", ranges=[fit_range], active=True
+    )
+    return fit, summary
+
+
 def _wait_until(predicate, *, timeout_ms: int, poll_ms: int = 30) -> None:
     elapsed = 0
     while elapsed < timeout_ms:
@@ -168,14 +228,6 @@ def _wait_until(predicate, *, timeout_ms: int, poll_ms: int = 30) -> None:
             return
         _process_events_for(milliseconds=poll_ms)
         elapsed += poll_ms
-
-
-def _save_pixmap(pix: QPixmap, ctx: CaptureContext, name: str) -> Path:
-    out_path = ctx.output_dir / f"{name}.png"
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    if not pix.save(str(out_path), "PNG"):
-        raise RuntimeError(f"Failed to save screenshot to {out_path}")
-    return out_path
 
 
 # ---------------------------------------------------------------------------
@@ -360,134 +412,90 @@ class PlateauLambdaFieldScenario(CorpusScenario):
 # ---------------------------------------------------------------------------
 # 4. Headline — λ⁻¹ vs µ₀²H² Redfield line (paper Fig. 2(b))
 # ---------------------------------------------------------------------------
+# Sub-plateau (0.4 T) and saturated (3.8 T) points: shown on the plot but
+# excluded from the Redfield trend fit (they lie off the plateau line).
+_REDFIELD_EXCLUDED = [9038, 9051]
+
+
 class PlateauRedfieldScenario(CorpusScenario):
     name = "corpus_plateau_redfield"
     description = (
-        "Headline: Ca₃Co₂O₆ λ⁻¹ vs µ₀²H² (paper Fig. 2(b)) — the linear Redfield "
-        "signature across the 0.5–3.6 T plateau, whose slope and intercept give "
-        "Δ ≈ 41 mT and τ ≈ 0.94 ns (paper Δ = 40.6 mT, τ = 880 ps)."
+        "Headline: Ca₃Co₂O₆ λ⁻¹ vs µ₀²H² (paper Fig. 2(b)) in the real trending "
+        "panel — Y axis transformed to 1/λ (reciprocal), X axis to B² (square), a "
+        "Linear model fit on the 0.5–3.6 T plateau. Slope/intercept give "
+        "Δ ≈ 41 mT and τ ≈ 0.93 ns (paper Δ = 40.6 mT, τ = 880 ps); the 0.4 T "
+        "and 3.8 T points sit off the line, excluded from the trend."
     )
     example = EXAMPLE
-    size = (1200, 760)
+    size = (1240, 760)
     requires_fit = True  # real per-run exponential fits + the linear Redfield fit
 
     def __init__(self) -> None:
         super().__init__()
         self._fit_summary: dict[str, float] = {}
 
-    def capture(self, ctx: CaptureContext) -> Path:  # noqa: D401
-        from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
-        from matplotlib.figure import Figure
+    def build(self) -> QWidget:
+        from asymmetry.core.fitting.axis_transforms import AxisTransform
+        from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
 
-        # Fit the plateau runs (0.5–3.5 T) plus the 3.8 T saturated point.
-        runs = _PLATEAU_RUNS + [9051]
-        fields_t, lam, lam_err = _lambda_of_field(runs)
-        inv_lam = 1.0 / lam
-        b2 = fields_t**2
-        # Propagate λ uncertainty to λ⁻¹:  σ(1/λ) = σ(λ)/λ².
-        inv_err = lam_err / lam**2
+        included = list(_PLATEAU_RUNS)  # 9039–9050 (0.5–3.5 T), the plateau
+        all_runs = sorted(set(included) | set(_REDFIELD_EXCLUDED), key=lambda r: SCAN_FIELDS_T[r])
+        # One per-run exponential fit pass for every plotted point (ascending
+        # field, warm-started downward). NOTE: field is stored in **tesla** here
+        # (not the panel's native gauss) so the X→square transform yields B² in
+        # T² and the Redfield slope comes out in µs T⁻² — the physics units. See
+        # NOTES_plateau.md for the axis-unit caveat this exposes.
+        fields_t, lam, lam_err = _lambda_of_field(all_runs)
+        incl_mask = np.array([r in included for r in all_runs])
 
-        # Weighted linear fit λ⁻¹ = slope·B² + intercept over the plateau only
-        # (0.5–3.5 T; the 3.8 T point is beyond the plateau — GT §4/§6).
-        plateau_mask = fields_t <= 3.6
-        x = b2[plateau_mask]
-        y = inv_lam[plateau_mask]
-        w = 1.0 / inv_err[plateau_mask] ** 2
-        design = np.vstack([x, np.ones_like(x)]).T
-        cov = np.linalg.inv(design.T @ (w[:, None] * design))
-        slope, intercept = cov @ (design.T @ (w * y))
-        slope_err, intercept_err = np.sqrt(np.diag(cov))
-        delta, tau = _redfield_from_line(slope, intercept)
-        self._fit_summary = {
-            "slope": float(slope),
-            "intercept": float(intercept),
-            "delta_mT": float(delta * 1e3),
-            "tau_ps": float(tau * 1e6),
-        }
-
-        figure = Figure(figsize=(8.5, 5.4), dpi=120, tight_layout=True)
-        ax = figure.add_subplot(1, 1, 1)
-
-        # Plateau points (on the line).
-        ax.errorbar(
-            x,
-            y,
-            yerr=inv_err[plateau_mask],
-            fmt="o",
-            color="#1f77b4",
-            ecolor="#1f77b4",
-            elinewidth=0.9,
-            markersize=6,
-            capsize=2,
-            label="plateau data (0.5–3.6 T)",
+        fit, self._fit_summary = _build_redfield_linear_fit(
+            fields_t[incl_mask], lam[incl_mask], lam_err[incl_mask]
         )
-        # The 3.8 T saturated-phase point (excluded from the fit).
-        sat = ~plateau_mask
-        ax.errorbar(
-            b2[sat],
-            inv_lam[sat],
-            yerr=inv_err[sat],
-            fmt="s",
-            mfc="none",
-            color="#7f7f7f",
-            ecolor="#7f7f7f",
-            elinewidth=0.9,
-            markersize=7,
-            capsize=2,
-            label="3.8 T (saturated, excluded)",
+
+        batch_id = "plateau-redfield"
+        row_dicts = [
+            {
+                "run_number": run,
+                "run_label": f"{SCAN_FIELDS_T[run]:.1f} T",
+                "field": float(SCAN_FIELDS_T[run]),  # TESLA — see note above
+                "temperature": 15.0,
+                "values": {"Lambda": float(lam[i])},
+                "errors": {"Lambda": float(lam_err[i])},
+                "include_in_trend": bool(incl_mask[i]),
+            }
+            for i, run in enumerate(all_runs)
+        ]
+
+        panel = FitParametersPanel()
+        panel.load_representation_series(
+            [(batch_id, "λ(B) — Ca₃Co₂O₆ 15 K", row_dicts)], select_id=batch_id
         )
-        # The fitted Redfield line.
-        xline = np.linspace(0.0, float(b2.max()) * 1.02, 200)
-        ax.plot(
-            xline,
-            slope * xline + intercept,
-            color="#d62728",
-            lw=1.8,
-            label="Redfield linear fit",
+        # The Redfield linearisation: reciprocal Y (1/λ), square X (B²). The
+        # transform drives the plotted points, the propagated error bars, AND the
+        # trend fit's coordinate system — one lens over all three.
+        panel._set_axis_transform("y", AxisTransform.preset("reciprocal"))
+        panel._set_axis_transform("x", AxisTransform.preset("square"))
+
+        # Inject the Linear fit computed on the transformed plateau, tagged with
+        # the active transform so its overlay is drawn (not suppressed as stale).
+        panel._model_fits["Lambda"] = fit
+        panel._model_fit_transform_sig["Lambda"] = panel._transform_signature()
+        panel._sync_active_group_state()
+        panel._refresh_model_fit_button_labels()
+        _process_events_for(milliseconds=80)
+        return panel
+
+    def settle(self, widget: QWidget) -> None:
+        _process_events_for(milliseconds=200)
+        widget._refresh_plot()
+        _wait_until(
+            lambda: (
+                not widget._trend_curve_compute_active
+                and widget._precomputed_trend_curves is not None
+            ),
+            timeout_ms=20000,
         )
-        # Shade the plateau H² window.
-        ax.axvspan(0.25, 3.6**2, color="#ffce56", alpha=0.12, zorder=0)
-
-        ax.set_xlabel("µ₀²H²  (T²)")
-        ax.set_ylabel("λ⁻¹  (µs)")
-        ax.set_title("Ca₃Co₂O₆ 15 K — Redfield linearity: λ⁻¹ vs µ₀²H²  (paper Fig. 2(b))")
-        ax.set_xlim(0.0, float(b2.max()) * 1.05)
-        ax.set_ylim(0.0, float(inv_lam.max()) * 1.12)
-        ax.grid(True, alpha=0.25)
-
-        annotation = (
-            f"slope = {slope:.3f}({slope_err * 1e3:.0f}) µs T⁻²\n"
-            f"intercept = {intercept:.3f}({intercept_err * 1e3:.0f}) µs\n"
-            f"→ Δ = {delta * 1e3:.1f} mT   (paper 40.6 mT)\n"
-            f"→ τ = {tau * 1e6:.0f} ps   (paper 880 ps)"
-        )
-        ax.text(
-            0.03,
-            0.97,
-            annotation,
-            transform=ax.transAxes,
-            va="top",
-            ha="left",
-            fontsize=10.5,
-            family="monospace",
-            bbox=dict(boxstyle="round", fc="white", ec="#cccccc", alpha=0.9),
-        )
-        ax.legend(loc="lower right", frameon=True, fontsize=9.5)
-
-        canvas = FigureCanvasQTAgg(figure)
-        canvas.draw()
-        pix = QPixmap(canvas.size())
-        canvas.render(pix)
-        out_path = _save_pixmap(pix, ctx, self.name)
-        _pump(40)
-        return out_path
-
-
-def _pump(milliseconds: int) -> None:
-    loop = QEventLoop()
-    QTimer.singleShot(int(milliseconds), loop.quit)
-    loop.exec()
-    QApplication.processEvents()
+        _process_events_for(milliseconds=200)
 
 
 register(PlateauLfOverlayScenario())

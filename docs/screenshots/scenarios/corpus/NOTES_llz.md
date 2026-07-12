@@ -14,7 +14,7 @@ simultaneously with the **Keren** relaxation + flat background.
 | `corpus_llz_lf_triplet` | 160 K 0/5/10 G triplet overlaid, 0–12 µs; the three fields visibly separate (0 G relaxes fastest, 10 G least) | The raw signature of weak LF decoupling | no |
 | `corpus_llz_global_setup` | Batch/global fit panel (1680×1000, fit dock widened to 560 px in `settle()`): full Keren+Constant formula, Δ/ν/amplitudes **Global**, B_L **From File**, bounds column fully visible, 12 µs window, guide seeds, all 3 runs selected — Run Batch Fit armed, batch-results box readable | THE parameter-tying showcase | no |
 | `corpus_llz_global_result` | Converged triplet fit: fitted shared Δ=0.358 µs⁻¹, ν=0.267 MHz, χ²ᵣ=1.67, red Keren curve over the ZF data | Headline global-fit result | **yes** |
-| `corpus_llz_nu_arrhenius` | ν(T) across all 13 temperatures: flat plateau then activated rise to 1.10 MHz, Arrhenius+baseline curve overlaid | Trend → activation energy | **yes** |
+| `corpus_llz_nu_arrhenius` | **Reworked for PR 248.** ν(T) as a native **Arrhenius plot**: X→`reciprocal` (1/T), Y→**Custom** `log(x − 0.274324)` (baseline-subtracted ln), a `Linear` model fit on the activated branch (T≥264 K, 8 pts). Slope → Eₐ. The 5 plateau points are `include_in_trend=False`: 3 near-plateau sit ringed-grey low with huge error bars, 2 sub-baseline (ν<c) drop out as NaN. Chip "1/x · log(y - 0.274324)". | Trend → activation energy, **and the axis-transform + baseline interplay showcase** | **yes** |
 
 ## Run selection & workflow (GROUND_TRUTH.md refs)
 
@@ -62,20 +62,35 @@ graded target (GT §10).
 | Δ(T) trend | 0.358 → 0.27 µs⁻¹ (smooth decrease, min ~0.27 near 340 K) | "smooth decrease as Li⁺ mobilises" | GT §10 (paper) |
 | ν(T) trend | flat ~0.27 MHz to ~250 K, activated rise to 1.10 MHz at 404 K | "plateau then exponential rise above ~290 K" | GT §10 (paper) |
 | ν(T) plateau χ²ᵣ | 1.1–1.7 across the series | (no benchmark χ²) | — |
-| **Eₐ (Li⁺, from ν(T))** | **0.221(10) eV** (Arrhenius+Constant, all 13 T) | **0.19(1) eV** (µSR) | GT §10 (paper) |
+| **Eₐ (Li⁺, from ν(T))** — Custom `log(ν−c)` transform, T≥264 K | **0.222(8) eV** (χ²ᵣ = 1.26, c = 0.2743 MHz) | **0.19(1) eV** (µSR) | GT §10 (paper) |
 
-Eₐ cross-checks (same ν(T) data, different extraction):
-- Arrhenius + constant baseline over all 13 T (the trend model in the render):
-  Eₐ = **221 ± 10 meV**, baseline c = 0.272 MHz, χ²ᵣ = 1.02.
-- Baseline-subtracted `ln(ν−c) vs 1/T`, T ≥ 264 K: Eₐ ≈ 0.216 eV.
-- `scipy.curve_fit` Arrhenius+baseline: Eₐ ≈ 0.251 eV.
+**PR 248 transform + baseline interplay (the key finding this rework exposes).**
+The task's literal instruction — Y→`log` preset (plain ln ν), X→`reciprocal`,
+Linear on the activated branch — does **not** land in the 0.19–0.25 eV range,
+because the activated ν(T) sits on a ν ≈ 0.274 MHz plateau baseline the bare log
+cannot subtract. With the plain `ln x` preset the extracted Eₐ is both far too
+small and **branch-dependent**:
 
-All three land at **~0.22–0.25 eV**, i.e. the same order and ~15–30 % above the
-paper's 0.19(1) eV. The residual gap is expected and attributable to free choices
-GT §9 flags as unpinned: the exact background model, the Δ MHz↔µs⁻¹ 2π convention,
-and the qualitative "above ~290 K" activated-region threshold. The **physics is
-reproduced**: flat-then-activated ν(T), smoothly falling Δ(T), and a Li⁺ Eₐ of the
-right magnitude — a paper-consistent result, not a fabricated one.
+| Transform / branch | Eₐ | note |
+|---|---:|---|
+| plain `ln ν`, T ≥ 264 K (8 pts) | **71 meV** | baseline flattens the slope |
+| plain `ln ν`, T ≥ 284 K (7 pts) | 87 meV | " (branch-dependent!) |
+| plain `ln ν`, T ≥ 304 K (6 pts) | 102 meV | " |
+| **Custom `log(ν − 0.2743)`, T ≥ 264 K** | **222 meV** | branch-**in**sensitive (222→224 meV) |
+| (old) Arrhenius+Constant model, all 13 T | 221(10) meV | the previous scenario's model |
+
+So the axis-transform feature **needs a baseline-subtracted series to give a clean
+Arrhenius line**, and the only way to express that with the current API is a
+Custom expression `log(x − c)` with the numeric baseline typed in by hand
+(0.2743 here). That recovers Eₐ = **0.222(8) eV** — matching the old
+Arrhenius+Constant fit (0.221 eV) and ~15 % above the paper's 0.19(1) eV (the
+same residual gap GT §9 attributes to the unpinned background model / MHz↔µs⁻¹ 2π
+convention). This is the rework's headline **API-ergonomics finding**: the
+transform layer has no "subtract fitted baseline before log" affordance, so the
+constant is baked into the axis label (`log(y - 0.274324)` — self-documenting but
+inelegant), and the near-plateau points' errors blow up as σ/(ν−c) (visible as the
+±2 bars on the ringed points). The **physics is still reproduced** (flat-then-
+activated ν(T), Li⁺ Eₐ of the right magnitude) — but only via the Custom route.
 (The corpus folder's `ANALYSIS_asymmetry.md` quotes Eₐ ≈ 27 meV, but that is
 program self-output, **not** ground truth per GT §7, and disagrees with the paper
 by an order of magnitude — not used.)

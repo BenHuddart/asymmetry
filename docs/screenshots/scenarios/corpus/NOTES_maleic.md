@@ -17,7 +17,7 @@ fraction.
 | `corpus_maleic_mu_precession` | GUI fit panel (MainWindow): converged relaxing-Mu-oscillation fit on the deox-water 2 G run **78251**, rebinned ×3, zoomed to ~2.5 µs (~7 Mu cycles); red fit curve traces ν_Mu ≈ 2.79 MHz. | The core "muonium in water" fit — the fit-panel surface on a real chemistry run; teaching contrast that ν_Mu is **103×** the diamagnetic 2 G Larmor (0.027 MHz). | §4 (Mu model), §6 |
 | `corpus_maleic_concentration` | Standalone matplotlib: bold fitted Mu component curves for deox water / half / full over faint binned data — same A_Mu/φ/ν, only λ_Mu differs, so they start together and damp apart. | Data-handling / physical-intuition step: relaxation visibly faster with [x] (the reaction consuming Mu). | §4, §5 |
 | `corpus_maleic_kmu_trend` | **Headline** — FitParametersPanel: per-run λ_Mu vs a **manual concentration column** (`Maleic conc (rel. units)`), fitted line λ_Mu = λ₀ + k_Mu·[x]; slope = k_Mu. | The key feature demo (manual fit-table column — concentration is in **no** file metadata) + the headline kinetics result. | §3, §4 (trend 1), §6, §9.1 |
-| `corpus_maleic_arrhenius` | Standalone matplotlib: full-conc. λ_Mu(T) over 278–358 K, ln λ_Mu vs 1000/T straight-line fit → E_a. | Distinctive extra: the overnight T-scan → activation energy. | §4 (trend 2), §6 |
+| `corpus_maleic_arrhenius` | **Reworked for PR 248** — real trending panel: full-conc. λ_Mu(T) over 278–358 K with Y→`ln` and X→`reciprocal` (1/T) axis transforms and a `Linear` model fit → E_a. Plain `ln` preset works directly (monotone rise, no plateau baseline — the clean-reproduction contrast to LLZ). | Distinctive extra: the overnight T-scan → activation energy; the *simple* axis-transform case. | §4 (trend 2), §6 |
 
 All four run real iminuit fits at capture time (`requires_fit = True`).
 
@@ -53,10 +53,18 @@ All four run real iminuit fits at capture time (`requires_fit = True`).
 | λ₀ (deox water) | 0.46 µs⁻¹ | intercept, "small for deox" (deliverable) | clean, single-minimum fit |
 | λ_Mu(quarter/half/full)@290 K | 1.63 / 2.13 / 2.80 µs⁻¹ | monotone ↑ with [x] (deliverable) | anchored fits |
 | **k_Mu (slope)** | **0.70 ± 0.02 µs⁻¹ per rel-unit**, R² ≈ 0.83 | slope of λ_Mu vs [x] (deliverable) | **relative-conc units only — no molarity in any source file (GT §9.1)**; cannot convert to the ≈1.1×10¹⁰ M⁻¹s⁻¹ literature value |
-| E_a (full-conc. λ(T)) | **≈ 7.3 ± 0.4 kJ/mol** | ≈ 17.6 kJ/mol (diffusion-limited) | see problem 3 below |
+| E_a (full-conc. λ(T)) | **7.3 ± 0.4 kJ/mol** (PR 248 transform panel: Y→ln, X→1/T, Linear; χ²ᵣ ≈ 0.9) — identical to the old standalone-matplotlib `ln λ vs 1/T` fit | ≈ 17.6 kJ/mol (diffusion-limited) | see problem 3 below |
 
 ## Feature-demonstration opportunities
 
+- **Axis transforms — the *simple* case (PR 248).** `corpus_maleic_arrhenius`
+  uses the `ln` Y-preset + `reciprocal` X-preset directly, no baseline surgery:
+  λ_Mu(T) rises monotonically (2.30 → 4.84 µs⁻¹), so ln λ_Mu vs 1/T is a straight
+  line out of the box and the Linear fit reproduces the old standalone figure's
+  Eₐ = 7.3 kJ/mol exactly. This is the clean contrast to the LLZ ν(T) case, where
+  a plateau baseline forced a *Custom* `log(x−c)` transform — a nice paired
+  "presets suffice / Custom needed" story for the docs. The `ln` Y-transform also
+  correctly greys out the per-parameter **log** axis-scale checkbox (guard works).
 - **Manual fit-table column** (headline) — concentration is relative-only and in
   no metadata; the panel's custom-x route (`set_custom_x_fields`) is exactly the
   intended surface. Strongest single reason this example earns a doc page.
