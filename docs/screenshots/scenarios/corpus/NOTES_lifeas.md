@@ -180,3 +180,26 @@ and the λ_ab = 195/244 nm conversions annotated via Eq. (3). Best companion is
 plateau point). `corpus_lifeas_pair_select` is the most *distinctive* image this
 example offers — the detector-pairing insight no other corpus example shows so
 starkly.
+
+## PR 248 round 2 (re-test, 2026-07-12)
+
+Re-tested commit 4a91420 on the real `corpus_lifeas_brms_t` overlay (Sample 1
+real two-Gaussian fits + Sample 2 digitised Fig. 1).
+
+- **CONFIRMED — `select_series()` migration.** The overlay is now armed through
+  the public `panel.select_series(["lifeas-s1-fit", "lifeas-s2-ref"])` (was the
+  private `_set_selected_group_ids`). Behaviour identical: 2 series, C0/C1,
+  Sample 1 active. Render unchanged.
+- **CONFIRMED — `(active)` legend flag.** Legend now reads
+  `Sample 1 — Asymmetry fit (LFA) (active)` / `Sample 2 — Pratt 2009 Fig. 1
+  (LFA₂)`; the flag sits on the active (Sample 1) series, which owns the
+  grey-ringed excluded-member overlay and the provenance line.
+- **CONFIRMED — TSV overlay exports both series** (the round-1 "active-series
+  only" caveat is closed): a leading `Series` column with both series' rows.
+  (This scenario has no active transform, so no transformed columns — Y is
+  `B_rms` with all-NaN errors, drawn without bars as before.)
+- GLE export remains active-series only (warns + names Sample 1) — the
+  documented fast-follow.
+- **Physics regression: none.** Sample-1 base-T plateau still lands on the paper
+  Fig. 1 (~1.96 mT ⇒ λ_ab ≈ 195 nm); render, exclusions, and annotations
+  unchanged.

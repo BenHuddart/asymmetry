@@ -517,8 +517,9 @@ class LifeasBrmsTScenario(CorpusScenario):
             ],
             select_id="lifeas-s1-fit",
         )
-        # Overlay both (Shift+click on the second pill has no public equivalent).
-        panel._set_selected_group_ids(["lifeas-s1-fit", "lifeas-s2-ref"], emit=False)
+        # Overlay both via the public PR-248 API (the equivalent of Shift-clicking
+        # the second pill): Sample 1 stays the active series.
+        panel.select_series(["lifeas-s1-fit", "lifeas-s2-ref"])
         _process_events_for(milliseconds=80)
         return panel
 

@@ -109,3 +109,19 @@ corpus of the **manual-column** feature, which this example forces because the
 independent variable (concentration) exists in no data file. Runner-up:
 `corpus_maleic_mu_precession` for a striking real "muonium in water" fit-panel
 image.
+
+## PR 248 round 2 (re-test, 2026-07-12)
+
+Re-tested commit 4a91420 on the real `corpus_maleic_arrhenius` panel (10 real
+λ_Mu(T) fits + Linear trend fit; the *simple* preset-transform case).
+
+- **CONFIRMED FIXED — unit-aware transformed labels.** The re-captured render
+  now reads:
+  - X (reciprocal on T): **`1/T (K⁻¹)`**
+  - Y (`ln` preset on λ): **`ln[λ (µs⁻¹)]`** — the dimensioned quantity is
+    bracketed under the log. Section chip: `1/x · ln y`.
+  This is the clean contrast to the LLZ Custom case: the `ln` preset linearises
+  λ_Mu(T) directly (monotone rise, no plateau baseline), a straight line out of
+  the box, and the per-parameter `log` axis-scale checkbox is correctly greyed.
+- **Physics regression: none.** The clean monotone Linear fit is unchanged
+  (E_a ≈ 7.3 kJ/mol — the lower-bound caveat of problem 3 still applies).

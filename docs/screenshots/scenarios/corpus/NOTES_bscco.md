@@ -165,3 +165,35 @@ reproducing the 14-row WiMDA reference with the T_c marker and the σ→λ_L not
 (and its §6b caveat) on the plot. `corpus_bscco_tf_fit` is the best companion
 (the converged single fit that produces the 10 K plateau point), and
 `corpus_bscco_vortex_fft` the best standalone frequency-domain image.
+
+## PR 248 round 2 (re-test, 2026-07-12) — merge-blockers verified fixed
+
+Re-tested commit 4a91420 against the real 400 G/200 G σ(T) fits (both series
+genuine per-run TF Gaussian fits via the core FitEngine).
+
+- **CONFIRMED FIXED — TSV overlay now exports every series.** `field_compare`
+  Export TSV writes a leading **`Series`** column and **both** series' rows:
+  verified `{'400 G — TF scan': 14, '200 G — TF scan': 10}` data rows (matches
+  the two scans), raw columns intact (`Run, B (G), T (K), sigma (µs⁻¹),
+  err_sigma (µs⁻¹), reduced_chi2, chi2`). The round-1 "active-series only" leak
+  is closed. (GLE export still active-series only — see below.)
+- **CONFIRMED — `(active)` legend flag.** The overlay legend now reads
+  `200 G — TF scan` / `400 G — TF scan (active)`; the flag tracks the active
+  (first-selected) series (verified: reversing the select order moves the flag).
+- **CONFIRMED — `select_series()` migration.** `field_compare` now arms the
+  overlay through the public `panel.select_series(["bscco-sig-400",
+  "bscco-sig-200"])` (was the private `_set_selected_group_ids`). Behaviour
+  identical: 2 series, C0/C1 colours, 400 G active. Render unchanged.
+- **GLE overlay → warns + active-only (as designed, fast-follow).** `_export_gle`
+  now calls `gle_export.show_warning(...)` naming the active series
+  ("GLE export currently writes only the active series ('400 G — TF scan')…")
+  *before* `run_gle_export`. Mechanism: `show_warning` → `QMessageBox.warning`
+  (modal) unless `PYTEST_CURRENT_TEST` is set — so a real GUI user sees the
+  dialog; in an offscreen pytest capture it is suppressed. A user driving the
+  GUI *would* see it; a headless non-pytest script would block on it.
+- **Physics regression: none.** 400 G plateau 1.164 µs⁻¹, 200 G 0.907 µs⁻¹
+  (NOTES table 1.16/0.91) — unchanged.
+
+The round-1 caveats "Export is active-series only" and "no public multi-select
+entry point" are now **resolved** (TSV) / **superseded** (select_series). GLE
+multi-series export remains the documented fast-follow.

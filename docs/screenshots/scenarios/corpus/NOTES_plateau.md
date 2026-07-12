@@ -154,3 +154,44 @@ the paper's Δ = 40.6 mT / τ = 880 ps within uncertainty (41.0 mT / 929 ps). Pa
 it with `corpus_plateau_exp_fit` (the per-run exponential that produces each λ
 point) as the two-image story; `corpus_plateau_lambda_field` (Fig. 2(a)) is the
 natural bridge between them.
+
+## PR 248 round 2 (re-test, 2026-07-12) — exports fixed, but a NEW unit-label defect
+
+Re-tested commit 4a91420 on the real `corpus_plateau_redfield` panel (per-run
+exponential fits + the injected Linear Redfield fit, Y→reciprocal, X→square).
+
+- **CONFIRMED FIXED — TSV/GLE now export the transformed coordinate.** The
+  round-1 merge-blocker ("export ignores the active transform") is closed.
+  Verified by reading the files:
+  - `redfield.tsv` — provenance comments `# X transform: x**2` /
+    `# Y transform: 1/x`; **raw columns retained** (`B (G)`, `Lambda (µs⁻¹)`, …)
+    and transformed columns **appended**: `B² (G²)`, `1/λ (µs)`, `err_1/λ (µs)`.
+    Numeric spot-check row 0: raw B=0.4 → B²=0.16 (exact); raw λ=2.49752 →
+    1/λ=0.400398 (=1/2.49752 ✓); err_1/λ=0.024334 (=σ_λ/λ² ✓).
+  - `redfield.dat` — same provenance, raw columns c1–c7 unchanged, transformed
+    appended c8=`B² (G²)`, c9=`1/λ (µs)`, c10=err. `_gle_effective_x_column`
+    → col 8 (transformed) and `_gle_transformed_columns_for_param("Lambda")`
+    → (9,10), so the GLE **plot + errorbar read the transformed columns**.
+- **CONFIRMED FIXED — GLE fit curve shares the data coordinate.** The sampled
+  Linear fit curve spans xs ∈ [0.25, 12.25] (= (0.5 T)²…(3.5 T)², the plateau
+  fit window) and the data B² range is [0.16, 14.44] — both in B². Round-1's
+  "model curve in B² vs data errorbar in raw field" broken-plot is fixed.
+- **CONFIRMED FIXED — stale-transform guard.** After changing X (square→
+  reciprocal) post-fit, `_overlay_suppressed_for_transform("Lambda")` → True and
+  `_iter_active_fit_ranges("field")` → `[]` (the `.fit` sidecar is *not*
+  emitted); restoring square brings the curve back. So the export can no longer
+  emit a fit curve the screen hides.
+- **NEW ISSUE (label correctness regression on the headline figure).** Round 1's
+  caveat was "transformed labels drop units" (bare `B²`, `1/λ` — incomplete but
+  not *wrong*). Round 2 makes labels unit-aware — but this scenario stores field
+  in **tesla** in the panel's gauss column (to get B² in T² for the physics),
+  and the panel hard-codes the field unit as `G`. So the X axis (and the TSV/GLE
+  headers) now read **`B² (G²)`** while the data is really **T²** — an
+  *affirmatively incorrect* unit on the shipped headline image and its exports.
+  Y is correct (`1/λ (µs)`). Root cause is `_x_axis_display_label("field")`
+  always returning "B (G)"; the scenario's tesla-in-gauss hack is now surfaced
+  as a wrong unit rather than hidden. Options: (a) reframe the caption to state
+  "B² is in T²" explicitly; (b) upstream, teach the panel a per-series field
+  unit. Not a fit/physics problem — Δ/τ are unchanged.
+- **Physics regression: none.** Δ = 41.0 mT, τ = 929 ps (NOTES table 41.0/929;
+  paper 40.6 mT/880 ps). Unchanged.

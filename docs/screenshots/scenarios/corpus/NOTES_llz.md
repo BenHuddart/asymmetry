@@ -152,3 +152,21 @@ of what a global/"Multi Fit" is and is the feature this example demonstrates
 better than any other. Pair it with **`corpus_llz_nu_arrhenius`** (the headline
 ν(T) activated rise → Eₐ) for the two-image story: *how you tie it* and *what it
 buys you*.
+
+## PR 248 round 2 (re-test, 2026-07-12)
+
+Re-tested commit 4a91420 on the real `corpus_llz_nu_arrhenius` panel
+(13 global Keren fits + Custom-transform Linear trend fit).
+
+- **CONFIRMED FIXED — unit-aware transformed labels.** Round 1's caveat was
+  bare, unit-less transformed axes. The re-captured render now reads:
+  - X (reciprocal on T): **`1/T (K⁻¹)`**
+  - Y (Custom `log(x − 0.274324)` on ν): **`log([ν (MHz)] − 0.274324)`** — the
+    whole dimensioned quantity is bracketed, so the MHz unit is carried into the
+    Custom expression. Section chip: `1/x · log(y - 0.274324)`.
+- Excluded-member overlay unchanged: "8/13 members in trend · 5 excluded
+  (160 K, 180 K, 200 K, 220 K, 240 K)"; the 5 plateau points ring grey with the
+  large propagated σ/(ν−c) bars.
+- **Physics regression: none.** The activated-branch Linear fit is unchanged
+  (E_a ≈ 0.222 eV; the Custom `log(ν−c)` baseline-subtract route is now also
+  documented in `parameter_trending.rst`'s new Arrhenius-on-a-plateau note).

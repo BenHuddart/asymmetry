@@ -493,9 +493,9 @@ class BsccoFieldCompareScenario(CorpusScenario):
             ],
             select_id="bscco-sig-400",
         )
-        # Overlay: the public entry point single-selects, so arm the multi-select
-        # the way a Shift+click on the second pill would (no public multi-select).
-        panel._set_selected_group_ids(["bscco-sig-400", "bscco-sig-200"], emit=False)
+        # Overlay via the public PR-248 API (the equivalent of Shift-clicking the
+        # second pill): the first id is the active series, both are overlaid.
+        panel.select_series(["bscco-sig-400", "bscco-sig-200"])
         _process_events_for(milliseconds=80)
         return panel
 
