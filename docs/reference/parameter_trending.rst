@@ -189,6 +189,36 @@ transform changes the plotted values (which is what a straight-line Arrhenius fi
 needs). To keep the two from compounding, selecting ``ln x`` / ``log₁₀ x`` on an
 axis disables that axis's ``log`` checkbox until the transform is cleared.
 
+.. note::
+
+   **Arrhenius on a plateau needs the baseline subtracted first.** A rate that
+   plateaus at low :math:`T` and only activates above some threshold — e.g. a
+   hop rate :math:`\nu(T) = \nu_0\,e^{-E_a/k_BT} + c` with a residual :math:`c`
+   — is *not* linearised by the plain ``ln`` preset, because
+   :math:`\ln(\nu_0 e^{-E_a/k_BT}+c)` is not linear in :math:`1/T`; fitting it
+   returns an activation energy biased low. Subtract the plateau first with a
+   ``Custom…`` expression, e.g. ``log(x - 0.274)`` with the plateau value read
+   off the low-:math:`T` end, so :math:`\ln(\nu-c)` is straight. (The plainer
+   route is to skip the linearisation and fit an ``Arrhenius`` model in raw
+   coordinates directly.)
+
+.. note::
+
+   Error bars in transformed space are propagated to **first order**
+   (:math:`\sigma_{f(x)} \approx |f'(x)|\,\sigma_x`) and drawn symmetric. This is
+   standard and accurate when the relative error is small; where it is large
+   (a low-signal point under ``ln`` or ``1/x``) the true interval is
+   asymmetric, so read such error bars as indicative.
+
+**Exports under a transform.** ``Export TSV`` keeps every raw column (the durable
+record) and *appends* the transformed columns that match the on-screen axes,
+with ``# X transform`` / ``# Y transform`` provenance comments; with several
+series overlaid it gains a leading ``Series`` column and writes every selected
+series. ``Export to GLE`` likewise appends transformed columns (and points its
+plot and fitted curve at them, so the figure matches the screen), but currently
+writes only the **active** series — it warns and names that series; export the
+others separately, or use TSV.
+
 .. _trend-series-overlay:
 
 Overlaying several series
@@ -202,8 +232,18 @@ compare, say, :math:`\sigma(T)` measured at two applied fields, or the same
 observable across two samples. When more than one parameter is also selected,
 each parameter takes a distinct marker shape so colour stays free to encode the
 series; the twin-axis layout is used only for a single series. Model-fit trend
-curves are drawn for the active (last-clicked) series, which retains ownership of
-the parameter table, composites, and the model-fit controls.
+curves are drawn for the active (last-clicked) series — flagged ``(active)`` in
+the legend — which retains ownership of the parameter table, composites, and the
+model-fit controls.
+
+.. image:: /_generated/screenshots/parameter_trending_overlay.png
+   :alt: The trending panel overlaying σ(T) at 400 G and 200 G as two colour-coded series
+   :width: 100%
+
+*Two* :math:`\sigma(T)` *series — a 400 G and a 200 G transverse-field scan —*
+*overlaid on one axis. Colour encodes the series (legend top-right, the active*
+*series flagged), and the 200 G plateau sitting below the 400 G one is the*
+*pancake-vortex field dependence of the London second moment.*
 
 Representation-aware trending
 ------------------------------

@@ -112,6 +112,37 @@ class TestDescribe:
         assert AxisTransform.identity().describe("anything") == "anything"
 
 
+class TestDescribeWithUnit:
+    @pytest.mark.parametrize(
+        "transform, symbol, unit, expected",
+        [
+            (AxisTransform.preset(RECIPROCAL), "λ", "µs⁻¹", "1/λ (µs)"),
+            (AxisTransform.preset(SQUARE), "B", "G", "B² (G²)"),
+            (AxisTransform.preset(LOG), "λ", "µs⁻¹", "ln[λ (µs⁻¹)]"),
+            (AxisTransform.preset(RECIPROCAL), "T", "K", "1/T (K⁻¹)"),
+            (AxisTransform.custom("1000/x"), "T", "K", "1000/[T (K)]"),
+        ],
+    )
+    def test_reviewer_cases(self, transform, symbol, unit, expected):
+        assert transform.describe_with_unit(symbol, unit) == expected
+
+    def test_square_of_inverse_unit(self):
+        assert AxisTransform.preset(SQUARE).describe_with_unit("λ", "µs⁻¹") == "λ² (µs⁻²)"
+
+    def test_no_unit_matches_describe(self):
+        t = AxisTransform.preset(RECIPROCAL)
+        assert t.describe_with_unit("λ") == t.describe("λ")
+        assert t.describe_with_unit("λ", "") == t.describe("λ")
+
+    def test_identity_keeps_unit(self):
+        assert AxisTransform.identity().describe_with_unit("B", "G") == "B (G)"
+
+    def test_non_simple_unit_brackets(self):
+        # A compound unit is not invertible token-wise, so bracket the whole.
+        label = AxisTransform.preset(RECIPROCAL).describe_with_unit("D", "cm² s⁻¹")
+        assert label == "1/[D (cm² s⁻¹)]"
+
+
 class TestValidation:
     def test_valid_expression(self):
         ok, msg = validate_axis_expression("1/x + 2")

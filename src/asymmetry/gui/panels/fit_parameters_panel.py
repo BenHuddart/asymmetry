@@ -52,7 +52,7 @@ from __future__ import annotations
 
 import csv
 import re
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -1598,6 +1598,21 @@ class FitParametersPanel(QWidget):
             button.blockSignals(not emit)
             button.setChecked(gid in selected)
             button.blockSignals(False)
+
+    def select_series(self, group_ids: Sequence[str]) -> None:
+        """Select (and overlay) one or more recorded series by group id.
+
+        The public entry point for arming a multi-series overlay programmatically
+        (docs scenarios, external drivers) — the equivalent of Shift-clicking the
+        series pills. The first id becomes the active series; unknown ids are
+        ignored and an all-unknown selection is a no-op.
+        """
+        valid = [gid for gid in group_ids if gid in self._group_fit_results]
+        if not valid:
+            return
+        self._active_group_id = valid[0]
+        self._set_selected_group_ids(valid, emit=False)
+        self._apply_group_selection_to_view()
 
     def _rebuild_group_buttons(self) -> None:
         clear_layout(self._group_tabs_layout)
@@ -5491,7 +5506,12 @@ class FitParametersPanel(QWidget):
                 axes_by_tag[y_name] = ax
                 for s in series:
                     self._plot_series_param(
-                        ax, s, x_key, y_name, marker="o", label=s.name if pj == 0 else None
+                        ax,
+                        s,
+                        x_key,
+                        y_name,
+                        marker="o",
+                        label=self._series_legend_name(s) if pj == 0 else None,
                     )
                 ax.set_xlabel(x_label)
                 ax.set_ylabel(self._transformed_y_axis_label(y_name))
@@ -5524,10 +5544,16 @@ class FitParametersPanel(QWidget):
         ax.legend(loc="best", fontsize="small")
         ax.grid(True, alpha=0.3)
 
+    def _series_legend_name(self, series: _PlotSeries) -> str:
+        """Series legend label, flagging the active series (which owns the table,
+        composites, Model-Fit controls, and the fit overlay)."""
+        name = series.name or "Series"
+        return f"{name} (active)" if series.is_active else name
+
     def _series_param_legend_label(
         self, series: _PlotSeries, y_name: str, multi_param: bool
     ) -> str:
-        name = series.name or "Series"
+        name = self._series_legend_name(series)
         if multi_param:
             return f"{name} · {format_param_label(y_name)}"
         return name
@@ -5589,23 +5615,36 @@ class FitParametersPanel(QWidget):
     @staticmethod
     def _axis_symbol(label: str) -> str:
         """Strip a trailing ``(unit)`` so a transform wraps the bare symbol."""
+        return FitParametersPanel._axis_symbol_and_unit(label)[0]
+
+    @staticmethod
+    def _axis_symbol_and_unit(label: str) -> tuple[str, str]:
+        """Split ``"λ (µs⁻¹)"`` into ``("λ", "µs⁻¹")`` (unit ``""`` when absent)."""
         text = label.strip()
-        match = re.match(r"^(.*?)\s*\([^()]*\)\s*$", text)
-        return (match.group(1).strip() if match else text) or text
+        match = re.match(r"^(.*?)\s*\(([^()]*)\)\s*$", text)
+        if match:
+            return (match.group(1).strip() or text), match.group(2).strip()
+        return text, ""
 
     def _transformed_x_axis_label(self, x_key: str) -> str:
         base = self._x_axis_label_mpl(x_key)
         if self._x_transform.is_identity:
             return base
-        return self._x_transform.describe(self._axis_symbol(self._x_axis_display_label(x_key)))
+        symbol, unit = self._axis_symbol_and_unit(self._x_axis_display_label(x_key))
+        return self._x_transform.describe_with_unit(symbol, unit)
 
     def _transformed_y_axis_label(self, y_name: str) -> str:
         if self._y_transform.is_identity:
             return _format_plot_label(y_name)
-        return self._y_transform.describe(self._axis_symbol(format_param_label(y_name)))
+        symbol, unit = self._axis_symbol_and_unit(format_param_label(y_name))
+        return self._y_transform.describe_with_unit(symbol, unit)
 
     def _transformed_x_display_label(self, x_key: str) -> str:
-        """Plain-text transformed x label (for dialog titles / Model-Fit axis)."""
+        """Plain-text transformed x label (for dialog titles / Model-Fit axis).
+
+        Symbol-only (no unit): units in a dialog title are noise; the plot axes
+        and exports carry the unit-aware form.
+        """
         base = self._x_axis_display_label(x_key)
         if self._x_transform.is_identity:
             return base
@@ -5789,8 +5828,24 @@ class FitParametersPanel(QWidget):
                 return row.model_name
         return ""
 
+    def _transformed_x_export_header(self, x_key: str) -> str:
+        symbol, unit = self._axis_symbol_and_unit(self._x_axis_display_label(x_key))
+        return self._x_transform.describe_with_unit(symbol, unit)
+
+    def _transformed_y_export_header(self, name: str) -> str:
+        symbol, unit = self._axis_symbol_and_unit(format_param_label(name))
+        return self._y_transform.describe_with_unit(symbol, unit)
+
+    @staticmethod
+    def _export_float(value: object) -> str:
+        if value is None:
+            return ""
+        num = float(value)
+        return "" if not np.isfinite(num) else f"{num:.6g}"
+
     def _export_tsv(self) -> None:
-        if self._table.columnCount() == 0 or self._table.rowCount() == 0:
+        series = self._series_to_plot()
+        if not series:
             return
 
         path, _ = QFileDialog.getSaveFileName(
@@ -5803,30 +5858,37 @@ class FitParametersPanel(QWidget):
             return
         remember_export_path(path)
 
-        headers = ["Run", "B (G)", "T (K)"]
-        for name in self._display_y_parameters():
+        x_key = self._effective_x_key()
+        multi = len(series) > 1
+        y_params = self._display_y_parameters()
+        selected_y = self._selected_y_parameters()
+        abscissa = self._export_abscissa_column()
+        abscissa_key = abscissa[0] if abscissa is not None else None
+        x_active = not self._x_transform.is_identity
+        y_active = not self._y_transform.is_identity
+
+        # Raw columns stay verbatim (the durable provenance record); a Series
+        # column leads only when >1 series is overlaid, and transformed columns
+        # (matching the on-screen axes) are *appended* so nothing existing shifts.
+        headers: list[str] = ["Series"] if multi else []
+        headers += ["Run", "B (G)", "T (K)"]
+        for name in y_params:
             unit = get_param_info(name).unit
             if unit:
                 headers.extend([f"{name} ({unit})", f"err_{name} ({unit})"])
             else:
                 headers.extend([name, f"err_{name}"])
-        # The Angle/custom abscissa is appended by _refresh_table as a trailing
-        # column; mirror it here so the header row matches the data cells read
-        # from the table below.
-        abscissa = self._export_abscissa_column()
         if abscissa is not None:
             headers.append(abscissa[1])
-        # Per-run goodness of fit, appended after the parameter columns so the
-        # TSV records each run's fit quality alongside its values.
         headers.extend(["reduced_chi2", "chi2"])
+        if x_active:
+            headers.append(self._transformed_x_export_header(x_key))
+        if y_active:
+            for name in selected_y:
+                header = self._transformed_y_export_header(name)
+                headers.extend([header, f"err_{header}"])
 
         model_label = self._export_model_label()
-
-        # Map each displayed table row back to its source _FitRow positionally,
-        # replaying _refresh_table's sort, so the χ² columns track the right run
-        # even when two rows share a run_label (keying on the label would
-        # silently misattribute a shadowed row's goodness of fit).
-        sorted_rows = sorted(self._rows, key=lambda r: self._x_value(r, self._effective_x_key()))
 
         with open(path, "w", newline="", encoding="utf-8") as tsvfile:
             # Provenance header (comment lines) so the TSV is self-describing and
@@ -5834,6 +5896,12 @@ class FitParametersPanel(QWidget):
             # the shared global-parameter values with uncertainties.
             if model_label:
                 tsvfile.write(f"# Model: {model_label}\n")
+            # Record the active transforms (re-executable expressions in x) so the
+            # transformed columns are self-describing.
+            if x_active:
+                tsvfile.write(f"# X transform: {self._x_transform.expression_text}\n")
+            if y_active:
+                tsvfile.write(f"# Y transform: {self._y_transform.expression_text}\n")
             if self._global_params is not None:
                 tsvfile.write("# Global fitting parameters:\n")
                 for param in self._global_params:
@@ -5847,19 +5915,36 @@ class FitParametersPanel(QWidget):
 
             writer = csv.writer(tsvfile, delimiter="\t")
             writer.writerow(headers)
-            for row in range(self._table.rowCount()):
-                values: list[str] = []
-                # Only the data columns — the trailing χ²ᵣ / Trend trend-gate
-                # columns are re-derived (χ²) or non-data (the checkbox) below.
-                for col in range(self._table_data_columns or self._table.columnCount()):
-                    item = self._table.item(row, col)
-                    values.append(item.text() if item is not None else "")
-                src = sorted_rows[row] if row < len(sorted_rows) else None
-                rchi = None if src is None else src.reduced_chi_squared
-                chi = None if src is None else src.chi_squared
-                values.append("" if rchi is None else f"{rchi:.6g}")
-                values.append("" if chi is None else f"{chi:.6g}")
-                writer.writerow(values)
+            fmt = self._export_float
+            for plot_series in series:
+                rows = sorted(plot_series.rows, key=lambda r: self._x_value(r, x_key))
+                x_transformed = (
+                    self._apply_x_transform(
+                        np.array([self._x_value(r, x_key) for r in rows], dtype=float), None
+                    )[0]
+                    if x_active
+                    else None
+                )
+                y_transformed = (
+                    {name: self._series_y_arrays(rows, name) for name in selected_y}
+                    if y_active
+                    else {}
+                )
+                for i, src in enumerate(rows):
+                    record: list[str] = [plot_series.name] if multi else []
+                    record += [str(int(src.run_number)), fmt(src.field), fmt(src.temperature)]
+                    for name in y_params:
+                        record += [fmt(src.values.get(name)), fmt(src.errors.get(name))]
+                    if abscissa_key is not None:
+                        record.append(fmt(self._x_value(src, abscissa_key)))
+                    record += [fmt(src.reduced_chi_squared), fmt(src.chi_squared)]
+                    if x_active:
+                        record.append(fmt(x_transformed[i]))
+                    if y_active:
+                        for name in selected_y:
+                            vals, errs = y_transformed[name]
+                            record += [fmt(vals[i]), fmt(errs[i])]
+                    writer.writerow(record)
 
     def _serialize_model_fits(self) -> dict:
         return self._serialize_model_fits_mapping(self._model_fits)
@@ -6072,6 +6157,11 @@ class FitParametersPanel(QWidget):
             if pname not in allowed:
                 continue
             if not fit.active or fit.x_key != x_key:
+                continue
+            # A fit computed under a different transform lives in the old
+            # coordinate; the screen suppresses its overlay, so the export must
+            # not write a `.fit` sidecar the plot deliberately hides.
+            if self._overlay_suppressed_for_transform(pname):
                 continue
             for idx, fit_range in enumerate(fit.ranges):
                 if fit_range.result is None or not fit_range.result.success:
@@ -6422,6 +6512,16 @@ class FitParametersPanel(QWidget):
             if model_label:
                 f.write(f"! Model: {model_label}\n")
 
+            x_active = not self._x_transform.is_identity
+            y_active = not self._y_transform.is_identity
+            selected_y = self._selected_y_parameters()
+            if x_active:
+                f.write(f"! X transform: {self._x_transform.expression_text}\n")
+            if y_active:
+                f.write(f"! Y transform: {self._y_transform.expression_text}\n")
+            if len(self._series_to_plot()) > 1:
+                f.write("! Note: overlaid series not exported; active series only.\n")
+
             if self._global_params is not None:
                 f.write("! Global fitting parameters:\n")
                 for param in self._global_params:
@@ -6452,6 +6552,26 @@ class FitParametersPanel(QWidget):
             # abscissa so the fixed parameter/abscissa column indices that
             # _gle_columns_for_param / _gle_x_column compute are unaffected.
             headers.extend(["reduced_chi2", "chi2"])
+            # Transformed columns are appended *after* χ² for the same reason: the
+            # raw-column indices stay put; the transformed indices are computed by
+            # _gle_transformed_x_column / _gle_transformed_columns_for_param.
+            if x_active:
+                headers.append(self._transformed_x_export_header(x_key))
+            if y_active:
+                for name in selected_y:
+                    header = self._transformed_y_export_header(name)
+                    headers.extend([header, f"err_{header}"])
+
+            x_transformed = (
+                self._apply_x_transform(
+                    np.array([self._x_value(r, x_key) for r in rows], dtype=float), None
+                )[0]
+                if x_active
+                else None
+            )
+            y_transformed = (
+                {name: self._series_y_arrays(rows, name) for name in selected_y} if y_active else {}
+            )
 
             f.write("! Column map:\n")
             for col_idx, name in enumerate(headers, start=1):
@@ -6466,7 +6586,7 @@ class FitParametersPanel(QWidget):
             f.write("!\n")
             f.write("! " + " ".join(f"{h:>16}" for h in headers) + "\n")
 
-            for row in rows:
+            for i, row in enumerate(rows):
                 values: list[float] = [
                     float(row.run_number),
                     float(row.field),
@@ -6481,6 +6601,12 @@ class FitParametersPanel(QWidget):
                     row.reduced_chi_squared if row.reduced_chi_squared is not None else np.nan
                 )
                 values.append(row.chi_squared if row.chi_squared is not None else np.nan)
+                if x_active:
+                    values.append(float(x_transformed[i]))
+                if y_active:
+                    for name in selected_y:
+                        vals, errs = y_transformed[name]
+                        values.extend([float(vals[i]), float(errs[i])])
                 f.write(" ".join(f"{v:>16.8g}" for v in values) + "\n")
 
     def _gle_x_column(self, x_key: str) -> int:
@@ -6509,6 +6635,50 @@ class FitParametersPanel(QWidget):
         error_col = value_col + 1
         return value_col, error_col
 
+    def _gle_base_column_count(self) -> int:
+        """1-indexed count of raw columns (Run/B/T, params, abscissa, χ²ᵣ, χ²)."""
+        count = 3 + 2 * len(self._display_y_parameters())
+        if self._export_abscissa_column() is not None:
+            count += 1
+        return count + 2  # reduced_chi2, chi2
+
+    def _gle_transformed_x_column(self) -> int | None:
+        """1-indexed transformed-x column (``None`` when x is untransformed)."""
+        if self._x_transform.is_identity:
+            return None
+        return self._gle_base_column_count() + 1
+
+    def _gle_transformed_columns_for_param(self, name: str) -> tuple[int, int] | None:
+        """1-indexed (value, err) transformed columns for a plotted param."""
+        if self._y_transform.is_identity:
+            return None
+        selected = self._selected_y_parameters()
+        if name not in selected:
+            return None
+        base = self._gle_base_column_count()
+        if not self._x_transform.is_identity:
+            base += 1  # the transformed-x column is written first
+        value_col = base + 1 + selected.index(name) * 2
+        return value_col, value_col + 1
+
+    def _gle_effective_x_column(self, x_key: str) -> int:
+        """The x column the GLE plot should read — transformed when active."""
+        transformed = self._gle_transformed_x_column()
+        return transformed if transformed is not None else self._gle_x_column(x_key)
+
+    def _gle_effective_columns_for_param(self, name: str) -> tuple[int, int] | None:
+        return self._gle_transformed_columns_for_param(name) or self._gle_columns_for_param(name)
+
+    def _gle_effective_x_label(self, x_key: str) -> str:
+        if self._x_transform.is_identity:
+            return _format_x_label_gle(x_key, self._custom_x_labels())
+        return self._transformed_x_export_header(x_key)
+
+    def _gle_effective_y_label(self, name: str) -> str:
+        if self._y_transform.is_identity:
+            return _format_gle_label(name)
+        return self._transformed_y_export_header(name)
+
     def _add_gle_model_overlay(
         self,
         ax,
@@ -6522,6 +6692,8 @@ class FitParametersPanel(QWidget):
         if fit is None or not fit.active:
             return
         if fit.x_key != self._effective_x_key():
+            return
+        if self._overlay_suppressed_for_transform(param_name):
             return
 
         show_components = self._show_components_check.isChecked()
@@ -6621,6 +6793,20 @@ class FitParametersPanel(QWidget):
         if not self._rows:
             return
 
+        # GLE overlay export (one .dat/figure per series) is not yet implemented;
+        # rather than silently drop the other series, tell the user and export the
+        # active one. (Export TSV already writes every overlaid series.)
+        series = self._series_to_plot()
+        if len(series) > 1:
+            active = next((s.name for s in series if s.is_active), series[0].name)
+            gle_export.show_warning(
+                self,
+                "GLE export — active series only",
+                f"GLE export currently writes only the active series ('{active}'). "
+                "Overlaid series are not included — export each series separately, "
+                "or use Export TSV, which includes all selected series.",
+            )
+
         gle_export.run_gle_export(
             self,
             tasks=self._tasks,
@@ -6663,9 +6849,9 @@ class FitParametersPanel(QWidget):
         if not y_params:
             return None
 
-        x_label = _format_x_label_gle(x_key, self._custom_x_labels())
+        x_label = self._gle_effective_x_label(x_key)
         data_file_ref = data_path.name
-        x_col = self._gle_x_column(x_key)
+        x_col = self._gle_effective_x_column(x_key)
         plot_mode = self._plot_mode_combo.currentText()
         rows = sorted(self._rows, key=lambda r: self._x_value(r, x_key))
         show_fit_legend = self._count_fit_curves(x_key, y_params) > 1
@@ -6676,7 +6862,7 @@ class FitParametersPanel(QWidget):
             )
             subplot_axes = axes if isinstance(axes, list) else [axes]
             for idx, y_name in enumerate(y_params):
-                cols = self._gle_columns_for_param(y_name)
+                cols = self._gle_effective_columns_for_param(y_name)
                 if cols is None:
                     continue
                 y_col, yerr_col = cols
@@ -6703,7 +6889,7 @@ class FitParametersPanel(QWidget):
                     capsize=2,
                 )
                 ax.set_xlabel(x_label)
-                ax.set_ylabel(_format_gle_label(y_name))
+                ax.set_ylabel(self._gle_effective_y_label(y_name))
                 if self._log_x_check.isChecked():
                     ax.set_xscale("log")
                 if not self._show_components_check.isChecked() and self._is_log_y_for(y_name):
@@ -6719,8 +6905,8 @@ class FitParametersPanel(QWidget):
 
             if len(y_params) == 2:
                 left_name, right_name = y_params
-                left_cols = self._gle_columns_for_param(left_name)
-                right_cols = self._gle_columns_for_param(right_name)
+                left_cols = self._gle_effective_columns_for_param(left_name)
+                right_cols = self._gle_effective_columns_for_param(right_name)
                 if left_cols is None or right_cols is None:
                     return None
                 left_y_col, left_err_col = left_cols
@@ -6769,8 +6955,8 @@ class FitParametersPanel(QWidget):
                     capsize=2,
                     yaxis="y2",
                 )
-                ax.set_ylabel(_format_gle_label(left_name), axis="y")
-                ax.set_ylabel(_format_gle_label(right_name), axis="y2")
+                ax.set_ylabel(self._gle_effective_y_label(left_name), axis="y")
+                ax.set_ylabel(self._gle_effective_y_label(right_name), axis="y2")
                 if self._show_components_check.isChecked():
                     ax.set_ylim(0.0, None, axis="y")
                     ax.set_ylim(0.0, None, axis="y2")
@@ -6780,7 +6966,7 @@ class FitParametersPanel(QWidget):
                     ax.legend(loc="best")
             else:
                 for idx, y_name in enumerate(y_params):
-                    cols = self._gle_columns_for_param(y_name)
+                    cols = self._gle_effective_columns_for_param(y_name)
                     if cols is None:
                         continue
                     y_col, yerr_col = cols
@@ -6806,7 +6992,7 @@ class FitParametersPanel(QWidget):
                     )
 
                 if len(y_params) == 1:
-                    ax.set_ylabel(_format_gle_label(y_params[0]))
+                    ax.set_ylabel(self._gle_effective_y_label(y_params[0]))
                 else:
                     ax.set_ylabel("Parameter Value")
                     if show_fit_legend:

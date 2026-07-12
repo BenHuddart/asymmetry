@@ -90,6 +90,20 @@ _VARIABLE_TOKEN: Final = re.compile(rf"\b{re.escape(AXIS_VARIABLE)}\b")
 # letters/digits/greek/sub-super-scripts with no spaces or operators.
 _ATOMIC_LABEL: Final = re.compile(r"^[\w°-￿]+$")
 
+# A "simple" unit is a single atomic token optionally suffixed ``⁻¹`` (covers
+# every unit ``get_param_info`` emits: G, K, T, MHz, meV, µs⁻¹, …). Only such
+# units admit the trivial reciprocal/square unit algebra; anything else is
+# rendered by bracketing the whole dimensioned quantity.
+_SIMPLE_UNIT: Final = re.compile(r"^([^\s()²³⁴⁵⁶⁷⁸⁹⁻]+)(⁻¹)?$")
+
+
+def _simple_unit(unit: str) -> tuple[str, bool] | None:
+    """Return ``(token, inverted)`` for a simple unit, else ``None``."""
+    match = _SIMPLE_UNIT.match(unit.strip())
+    if not match:
+        return None
+    return match.group(1), bool(match.group(2))
+
 
 @lru_cache(maxsize=128)
 def _compile(expression: str) -> CompositeExpression:
@@ -186,6 +200,12 @@ class AxisTransform:
         is dropped and counted rather than plotted at a bogus coordinate.  An
         input with no usable uncertainty (``NaN`` / non-positive) yields a
         ``NaN`` output uncertainty.
+
+        Uncertainties are propagated to **first order**
+        (``σ_f ≈ |f'(x)|·σ_x``) and are therefore symmetric; this is accurate
+        when the relative error is small but understates the asymmetry of the
+        true interval where it is large (e.g. ``log`` / ``1/x`` of a low-signal
+        point).
         """
         vals = np.asarray(values, dtype=float)
         if errors is None:
@@ -247,6 +267,46 @@ class AxisTransform:
             return f"√{wrapped}"
         # Custom: splice the base label in for the axis variable.
         return _VARIABLE_TOKEN.sub(wrapped, self.expression_text)
+
+    def describe_with_unit(self, symbol: str, unit: str | None = None) -> str:
+        """Return a *unit-aware* axis label for this transform.
+
+        ``symbol`` is the bare quantity symbol (``"λ"``, ``"B"``, ``"T"``) and
+        ``unit`` its unit (``"µs⁻¹"``, ``"G"``, ``"K"``).  The reciprocal and
+        square of a *simple* unit are computed exactly (``1/λ (µs)`` from
+        ``µs⁻¹``; ``B² (G²)`` from ``G``); ``ln``/``log₁₀``/``√`` and any custom
+        or non-simple case bracket the whole dimensioned quantity
+        (``ln[λ (µs⁻¹)]``, ``1000/[T (K)]``) rather than guess at the algebra of
+        a dimensioned logarithm. With no unit it matches :meth:`describe`.
+        """
+        symbol = symbol.strip()
+        unit = (unit or "").strip()
+        if self.is_identity:
+            return f"{symbol} ({unit})" if unit else symbol
+        if not unit:
+            return self.describe(symbol)
+
+        sym = symbol if _atomic(symbol) else f"({symbol})"
+        dimensioned = f"{symbol} ({unit})"
+        simple = _simple_unit(unit)
+
+        if self.kind == RECIPROCAL:
+            if simple is not None:
+                token, inverted = simple
+                new_unit = token if inverted else f"{token}⁻¹"
+                return f"1/{sym} ({new_unit})"
+            return f"1/[{dimensioned}]"
+        if self.kind == SQUARE:
+            if simple is not None:
+                token, inverted = simple
+                new_unit = f"{token}⁻²" if inverted else f"{token}²"
+                return f"{sym}² ({new_unit})"
+            return f"[{dimensioned}]²"
+        if self.kind in (LOG, LOG10, SQRT):
+            prefix = {LOG: "ln", LOG10: "log₁₀", SQRT: "√"}[self.kind]
+            return f"{prefix}[{dimensioned}]"
+        # Custom: splice the whole (bracketed) dimensioned quantity in for x.
+        return _VARIABLE_TOKEN.sub(f"[{dimensioned}]", self.expression_text)
 
     # -- serialisation ---------------------------------------------------
     def to_dict(self) -> dict[str, str]:

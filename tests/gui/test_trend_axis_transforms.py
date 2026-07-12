@@ -13,6 +13,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication
 
+import asymmetry.gui.panels.fit_parameters_panel as fpp
 from asymmetry.core.fitting.axis_transforms import AxisTransform
 from asymmetry.gui.panels.fit_parameters_panel import (
     FitParametersPanel,
@@ -90,8 +91,9 @@ def test_transformed_axis_labels(qapp):
     panel = _panel_with_rows(_lambda_series([1.0], [4.0]))
     panel._x_transform = AxisTransform.preset("square")
     panel._y_transform = AxisTransform.preset("reciprocal")
-    # Symbol-only: unit is stripped so the transform wraps a bare symbol.
-    assert panel._transformed_x_axis_label("field") == "B²"
+    # Unit-aware: the field unit (G) is squared, and the reciprocal Y keeps its
+    # transformed unit.
+    assert panel._transformed_x_axis_label("field") == "B² (G²)"
     assert panel._transformed_y_axis_label("Lambda").startswith("1/")
 
 
@@ -227,14 +229,148 @@ def test_series_to_plot_overlay_when_multiple_selected(qapp):
     assert sum(s.is_active for s in series) == 1
 
 
-def test_multi_series_draw_smoke(qapp):
+def _read_tsv(path):
+    lines = path.read_text().splitlines()
+    comments = [ln for ln in lines if ln.startswith("#")]
+    data = [ln for ln in lines if not ln.startswith("#")]
+    header = data[0].split("\t")
+    body = [ln.split("\t") for ln in data[1:]]
+    return comments, header, body
+
+
+def test_tsv_export_transformed_columns_and_provenance(qapp, tmp_path, monkeypatch):
+    panel = _panel_with_rows(_lambda_series([1.0, 2.0, 3.0], [4.0, 2.0, 1.5]))
+    panel._set_axis_transform("x", AxisTransform.preset("square"))
+    panel._set_axis_transform("y", AxisTransform.preset("reciprocal"))
+    out = tmp_path / "t.tsv"
+    monkeypatch.setattr(
+        fpp.QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (str(out), ""))
+    )
+    panel._export_tsv()
+    comments, header, body = _read_tsv(out)
+
+    assert "# X transform: x**2" in comments
+    assert "# Y transform: 1/x" in comments
+    # Raw columns stay; transformed columns are appended (unit-aware headers).
+    assert "B (G)" in header and "reduced_chi2" in header
+    assert "B² (G²)" in header
+    assert any(h.startswith("1/") for h in header)
+    assert "Series" not in header  # single series: no Series column
+    # The transformed B² column equals field² for the first data row.
+    b2_col = header.index("B² (G²)")
+    assert float(body[0][b2_col]) == pytest.approx(1.0)
+
+
+def test_tsv_export_overlay_has_series_column(qapp, tmp_path, monkeypatch):
     panel = _panel_with_two_series(qapp)
     panel._set_selected_group_ids(["A", "B"], emit=False)
+    out = tmp_path / "t.tsv"
+    monkeypatch.setattr(
+        fpp.QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (str(out), ""))
+    )
+    panel._export_tsv()
+    _comments, header, body = _read_tsv(out)
+    assert header[0] == "Series"
+    series_names = {r[0] for r in body}
+    assert series_names == {"400 G", "200 G"}
+
+
+def test_tsv_export_plain_single_series_no_extra_columns(qapp, tmp_path, monkeypatch):
+    panel = _panel_with_rows(_lambda_series([1.0, 2.0], [4.0, 2.0]))
+    out = tmp_path / "t.tsv"
+    monkeypatch.setattr(
+        fpp.QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (str(out), ""))
+    )
+    panel._export_tsv()
+    _comments, header, _body = _read_tsv(out)
+    assert "Series" not in header
+    assert header[:3] == ["Run", "B (G)", "T (K)"]
+
+
+def test_gle_data_file_appends_transformed_columns(qapp, tmp_path):
+    panel = _panel_with_rows(_lambda_series([1.0, 2.0, 3.0], [4.0, 2.0, 1.5]))
+    panel._set_axis_transform("x", AxisTransform.preset("square"))
+    panel._set_axis_transform("y", AxisTransform.preset("reciprocal"))
+    data_path = tmp_path / "fit.dat"
+    panel._write_gle_data_file(data_path)
+    text = data_path.read_text()
+
+    assert "! X transform: x**2" in text
+    assert "! Y transform: 1/x" in text
+    # Transformed columns are appended after the χ² pair, so raw column indices
+    # (B_field at c2) are unchanged and the transformed x lands past them.
+    x_col = panel._gle_transformed_x_column()
+    assert x_col is not None and x_col > panel._gle_base_column_count()
+    # First data row: raw B = 1.0 at c2, transformed B² = 1.0 at the new column.
+    data_rows = [ln for ln in text.splitlines() if not ln.startswith("!") and ln.strip()]
+    first = data_rows[0].split()
+    assert float(first[1]) == pytest.approx(1.0)  # raw B (G)
+    assert float(first[x_col - 1]) == pytest.approx(1.0)  # transformed B²
+
+
+def test_gle_effective_columns_point_at_transformed(qapp):
+    panel = _panel_with_rows(_lambda_series([1.0, 2.0], [4.0, 2.0]))
+    # Untransformed: effective == raw.
+    assert panel._gle_effective_x_column("field") == panel._gle_x_column("field")
+    panel._set_axis_transform("x", AxisTransform.preset("square"))
+    panel._set_axis_transform("y", AxisTransform.preset("reciprocal"))
+    assert panel._gle_effective_x_column("field") == panel._gle_transformed_x_column()
+    assert panel._gle_effective_columns_for_param("Lambda") == (
+        panel._gle_transformed_columns_for_param("Lambda")
+    )
+
+
+def test_gle_iter_skips_stale_transform_fits(qapp):
+    panel = _panel_with_rows(_lambda_series([1.0, 2.0], [4.0, 2.0]))
+
+    class _StubResult:
+        success = True
+
+    class _StubRange:
+        result = _StubResult()
+
+    class _StubFit:
+        active = True
+        x_key = "field"
+        ranges = [_StubRange()]
+
+    panel._model_fits["Lambda"] = _StubFit()
+    # Recorded under identity → visible under identity.
+    panel._model_fit_transform_sig["Lambda"] = panel._transform_signature()
+    assert [p for p, _i, _r in panel._iter_active_fit_ranges("field")] == ["Lambda"]
+    # A transform the fit was NOT computed under → the .fit sidecar is skipped.
+    panel._set_axis_transform("x", AxisTransform.preset("square"))
+    assert list(panel._iter_active_fit_ranges("field")) == []
+
+
+def test_select_series_public_api_arms_overlay(qapp):
+    panel = _panel_with_two_series(qapp)
+    panel.select_series(["A", "B"])
+    series = panel._series_to_plot()
+    assert {s.name for s in series} == {"400 G", "200 G"}
+    # Unknown ids are ignored; all-unknown is a no-op (selection unchanged).
+    panel.select_series(["nope"])
+    assert len(panel._series_to_plot()) == 2
+
+
+def test_active_series_flagged_in_legend(qapp):
+    panel = _panel_with_two_series(qapp)
+    panel.select_series(["A", "B"])
+    panel._draw_plot()
+    ax = panel._figure.axes[0]
+    labels = [t.get_text() for t in ax.get_legend().get_texts()]
+    assert any(lbl.endswith("(active)") for lbl in labels)
+    assert sum(lbl.endswith("(active)") for lbl in labels) == 1
+
+
+def test_multi_series_draw_smoke(qapp):
+    panel = _panel_with_two_series(qapp)
+    panel.select_series(["A", "B"])
     panel._x_transform = AxisTransform.preset("square")
     panel._y_transform = AxisTransform.preset("reciprocal")
     # Should render two overlaid, transformed series without raising.
     panel._draw_plot()
     ax = panel._figure.axes[0]
-    assert ax.get_xlabel() == "B²"
+    assert ax.get_xlabel() == "B² (G²)"
     # One scatter collection per series.
     assert len(ax.collections) >= 2
