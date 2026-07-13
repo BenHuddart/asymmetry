@@ -1,5 +1,10 @@
 """Maximum-entropy spectral reconstruction for grouped μSR counts."""
 
+from asymmetry.core.maxent.backend import (
+    MaxEntBackendError,
+    ProjectionBackend,
+    resolve_backend,
+)
 from asymmetry.core.maxent.engine import (
     MaxEntCancelledError,
     MaxEntConfig,
@@ -30,6 +35,7 @@ from asymmetry.core.maxent.specbg import apply_maxent_specbg, subtract_zero_freq
 
 __all__ = [
     "PULSE_MODES",
+    "MaxEntBackendError",
     "MaxEntConfig",
     "MaxEntDiagnostics",
     "MaxEntGroupInput",
@@ -38,6 +44,7 @@ __all__ = [
     "MaxEntState",
     "MaxEntWorkloadEstimate",
     "MaxEntCancelledError",
+    "ProjectionBackend",
     "ReconstructedGroup",
     "apply_maxent_specbg",
     "build_maxent_input",
@@ -49,6 +56,7 @@ __all__ = [
     "pulse_amplitude_phase",
     "pulse_response",
     "reconstruct_group_signals",
+    "resolve_backend",
     "run_cycles",
     "run_log_text",
     "spectrum_to_text",

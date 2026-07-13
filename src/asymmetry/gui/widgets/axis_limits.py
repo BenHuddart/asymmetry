@@ -28,6 +28,8 @@ above the top of the axis.
 
 from __future__ import annotations
 
+import math
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QDoubleValidator, QKeyEvent
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QPushButton, QSizePolicy, QWidget
@@ -69,6 +71,18 @@ class FloatLimitField(QLineEdit):
         clamp ``setValue``/typed input. Defaults to fit_panel's historical
         ±1000; plot_panel/alc_panel call sites pass ``(-1e6, 1e6)`` to
         preserve their historical, much wider axis range.
+    commit_on_set_value:
+        When true, a programmatic ``setValue`` also fires ``editingFinished``
+        (still suppressed by ``QSignalBlocker`` like any other signal), so a
+        driven value change reaches the same commit plumbing as a typed entry.
+        The fit-range fields opt in: their value is *state owned elsewhere*
+        (the plot panel's fit range), so a silent ``setValue`` leaves the fit
+        running over the old range while the field displays the new one. The
+        display-mirror path (``_apply_fit_range_display``) wraps its
+        ``setValue`` in ``QSignalBlocker``, so mirroring the owner's value back
+        into the field stays silent and there is no feedback loop. Axis-limit
+        fields keep the default (off): their many mirror call sites write
+        ``setValue`` unblocked and must not re-trigger an axis commit.
     """
 
     def __init__(
@@ -79,9 +93,11 @@ class FloatLimitField(QLineEdit):
         minimum_width: int = 56,
         maximum_width: int | None = 88,
         value_range: tuple[float, float] = (-1000.0, 1000.0),
+        commit_on_set_value: bool = False,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
+        self._commit_on_set_value = bool(commit_on_set_value)
         self._decimals = max(0, int(decimals))
         self._value = float(value)
         self._validator = QDoubleValidator(value_range[0], value_range[1], self._decimals, self)
@@ -122,8 +138,18 @@ class FloatLimitField(QLineEdit):
         entry committed on focus-out. The spin boxes this field replaces
         clamped both, so do the same here — otherwise an out-of-range limit
         could reach the engine or the plot.
+
+        NaN needs its own guard: ``min``/``max`` pass it straight through
+        (every comparison is False), so without one a programmatic
+        ``setValue(nan)`` would take residence in the field, round-trip
+        through QSettings at shutdown, and crash the next startup when the
+        restored limit reaches ``Axes.set_ylim``. Fall back to the last good
+        value instead. ±Inf already clamps to the range ends.
         """
-        return min(max(float(value), self._validator.bottom()), self._validator.top())
+        value = float(value)
+        if math.isnan(value):
+            value = self._value if math.isfinite(self._value) else 0.0
+        return min(max(value, self._validator.bottom()), self._validator.top())
 
     def _normalise_text(self) -> None:
         if self._unset_capable and not self.text().strip():
@@ -184,6 +210,12 @@ class FloatLimitField(QLineEdit):
         self._value = self._clamp(value)
         self._unset = False
         self.setText(self._format(self._value))
+        # Opt-in two-way binding: a driven value change commits like a typed
+        # one so it reaches the owner of the underlying state. Callers that
+        # only want to mirror external state blank the signal with
+        # ``QSignalBlocker`` (as the fit-range display path does).
+        if self._commit_on_set_value:
+            self.editingFinished.emit()
 
     def set_unset(self, placeholder: str) -> None:
         """Blank the field and show *placeholder* text (no value has been set)."""

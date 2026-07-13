@@ -18,6 +18,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   histogram-title guesses. Legacy TFolder-based MusrRoot and pre-2011 LEM ROOT
   files are unaffected. Instrument strings are now matched case-insensitively,
   since the new DAQ writes the lowercase `flame` instrument name.
+- **Startup crash loop from a NaN saved plot range.** If a session ever
+  persisted a non-finite axis limit (e.g. `plot/freq_y_min = nan`) to the
+  application settings at shutdown, every subsequent launch replayed it into
+  Matplotlib's `set_ylim` and crashed before the window appeared, with no way
+  to recover short of hand-editing the settings store. Non-finite values are
+  now rejected at all three layers: the axis-limit fields refuse a NaN
+  (`setValue(nan)` keeps the last good value; NaN previously slipped straight
+  through min/max clamping), shutdown skips persisting a limit set containing
+  a non-finite value, and startup falls back to the per-axis default for any
+  non-finite entry already in the settings — so existing poisoned settings
+  recover on the next launch.
+- **Fit-range spinboxes now commit a programmatically set value.** Setting a
+  fit-range field's value in code (e.g. from a scripted/automated scenario)
+  used to update only the field's display while the fit kept running over the
+  old range — the range is owned by the plot panel, and a bare `setValue`
+  never reached it. The Single and Batch (and grouped multi-group) fit-range
+  fields now push a driven `setValue` through to the plot's fit range exactly
+  as a typed entry does, while the plot→field display mirror stays silent (no
+  feedback loop). Interactive editing (type + Return / focus-out) was already
+  correct and is unchanged.
 
 ### Added
 
@@ -25,6 +45,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `RunSummary` block in the new TDirectory-based header — a block musrfit
   itself does not read — is now attached verbatim to loaded runs as
   `metadata["musrroot_run_summary"]`.
+- **Optional CUDA GPU backend for the MaxEnt engine (scripting API).**
+  `MaxEntConfig(backend="cuda")` runs the projection kernels on an NVIDIA GPU
+  via CuPy instead of NumPy — measured ~160x faster than the CPU path at
+  large workloads (16384 time bins x 2^20 spectrum points) on an RTX 3080 —
+  or `backend="auto"` prefers the GPU and falls back to NumPy silently when
+  one is unavailable. The default remains `"numpy"`, bit-for-bit identical to
+  the historical CPU path; the GPU path is float64-only and agrees with it to
+  solver tolerance, not bit-for-bit. Install with `pip install
+  "asymmetry[gpu]"` (CUDA-13 wheel; `cupy-cuda12x` on CUDA-12 systems). A
+  resumed MaxEnt state survives a backend switch. The GUI is unchanged and
+  always uses the default CPU backend. Documented in *Reference ▸ Fourier
+  analysis ▸ Maximum entropy method ▸ GPU acceleration (optional)*.
 
 ## [0.11.0] - 2026-07-11
 
